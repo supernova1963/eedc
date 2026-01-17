@@ -1,4 +1,4 @@
-# 🌞 EEDC - Electronic Energy Data Collection
+# 🌞 eedc - Electronic Energy Data Collection
 
 Komplettes Fresh Start Projekt - Sofort einsatzbereit!
 
@@ -6,7 +6,7 @@ Komplettes Fresh Start Projekt - Sofort einsatzbereit!
 
 ### 1. Projekt öffnen
 ```bash
-cd eedc-fresh-projekt
+cd eedc-webApp
 code .
 ```
 
