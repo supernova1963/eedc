@@ -2,17 +2,13 @@
 import { supabase } from '@/lib/supabase'
 import InvestitionFormSimple from '@/components/InvestitionFormSimple'
 
-async function getUserData() {
-  const { data } = await supabase.from('mitglieder').select('*').limit(1).single()
+async function getInvestition(id: string) {
+  const { data } = await supabase.from('alternative_investitionen').select('*').eq('id', id).single()
   return data
 }
 
-async function getInvestition(id: string) {
-  const { data } = await supabase
-    .from('alternative_investitionen')
-    .select('*')
-    .eq('id', id)
-    .single()
+async function getUserData() {
+  const { data } = await supabase.from('mitglieder').select('*').limit(1).single()
   return data
 }
 
