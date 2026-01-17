@@ -1,38 +1,34 @@
-# Dependencies
-node_modules/
+# dependencies
+/node_modules
 /.pnp
 .pnp.js
 
-# Next.js
-.next/
-out/
-build/
+# testing
+/coverage
 
-# Production
-/dist
+# next.js
+/.next/
+/out/
 
-# Misc
+# production
+/build
+
+# misc
 .DS_Store
 *.pem
 
-# Debug
+# debug
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-# Local env files
+# local env files
 .env*.local
 .env
 
-# Vercel
+# vercel
 .vercel
 
-# Typescript
+# typescript
 *.tsbuildinfo
 next-env.d.ts
-
-# VS Code - nur persönliche Settings ignorieren
-.vscode/*
-!.vscode/settings.json
-!.vscode/extensions.json
-!.vscode/tasks.json

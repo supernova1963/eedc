@@ -2,11 +2,6 @@
 import { supabase } from '@/lib/supabase'
 import InvestitionFormSimple from '@/components/InvestitionFormSimple'
 
-async function getUserData() {
-  const { data } = await supabase.from('mitglieder').select('*').limit(1).single()
-  return data
-}
-
 async function getInvestition(id: string) {
   const { data } = await supabase
     .from('alternative_investitionen')
@@ -16,12 +11,23 @@ async function getInvestition(id: string) {
   return data
 }
 
-export default async function BearbeitenPage({ params }: { params: Promise<{ id: string }> }) {
+async function getUserData() {
+  const { data } = await supabase.from('mitglieder').select('*').limit(1).single()
+  return data
+}
+
+export default async function BearbeitenPage({ 
+  params 
+}: { 
+  params: Promise<{ id: string }> 
+}) {
   const { id } = await params
   const mitglied = await getUserData()
   const investition = await getInvestition(id)
   
-  if (!mitglied || !investition) return <div>Nicht gefunden</div>
+  if (!mitglied || !investition) {
+    return <div className="p-8 text-center">Nicht gefunden</div>
+  }
 
   return (
     <main className="min-h-screen bg-gray-50">
