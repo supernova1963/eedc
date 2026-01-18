@@ -1,15 +1,16 @@
 // app/auswertung/page.tsx
-// Erweitert um E-Auto Details Tab
+// FIXED: waermepumpen korrekt zurückgeben und verwenden
 
 import { supabase } from '@/lib/supabase'
 import WirtschaftlichkeitStats from '@/components/WirtschaftlichkeitStats'
 import GesamtHaushaltBilanz from '@/components/GesamtHaushaltBilanz'
 import EAutoAuswertung from '@/components/EAutoAuswertung'
+import WaermepumpeAuswertung from '@/components/WaermepumpeAuswertung'
 import Link from 'next/link'
 
 async function getAuswertungData() {
   const { data: monatsdaten } = await supabase
-    .from('monatsdaten_kennzahlen')
+    .from('monatsdaten')
     .select('*')
     .order('jahr', { ascending: true })
     .order('monat', { ascending: true })
@@ -25,23 +26,28 @@ async function getAuswertungData() {
     .select('*')
     .order('anschaffungsdatum', { ascending: false })
 
-  // E-Autos für Detail-Tab
   const { data: eAutos } = await supabase
     .from('alternative_investitionen')
     .select('*')
     .eq('typ', 'e-auto')
+    .eq('aktiv', true)
+  
+  const { data: waermepumpen } = await supabase
+    .from('alternative_investitionen')
+    .select('*')
+    .eq('typ', 'waermepumpe')
     .eq('aktiv', true)
 
   return {
     monatsdaten: monatsdaten || [],
     anlage,
     investitionen: investitionen || [],
-    eAutos: eAutos || []
+    eAutos: eAutos || [],
+    waermepumpen: waermepumpen || []  // FIXED!
   }
 }
 
 async function getEAutoDetails(autoId: string) {
-  // Prognose vs. Ist
   const { data: prognoseVergleich } = await supabase
     .from('investition_prognose_ist_vergleich')
     .select('*')
@@ -50,11 +56,32 @@ async function getEAutoDetails(autoId: string) {
     .limit(1)
     .single()
 
-  // Monatsdaten
   const { data: monatsdaten } = await supabase
     .from('investition_monatsdaten_detail')
     .select('*')
     .eq('investition_id', autoId)
+    .order('jahr', { ascending: false })
+    .order('monat', { ascending: false })
+
+  return {
+    prognoseVergleich,
+    monatsdaten: monatsdaten || []
+  }
+}
+
+async function getWaermepumpeDetails(wpId: string) {
+  const { data: prognoseVergleich } = await supabase
+    .from('investition_prognose_ist_vergleich')
+    .select('*')
+    .eq('investition_id', wpId)
+    .order('jahr', { ascending: false })
+    .limit(1)
+    .single()
+
+  const { data: monatsdaten } = await supabase
+    .from('investition_monatsdaten_detail')
+    .select('*')
+    .eq('investition_id', wpId)
     .order('jahr', { ascending: false })
     .order('monat', { ascending: false })
 
@@ -69,14 +96,15 @@ export const dynamic = 'force-dynamic'
 export default async function AuswertungPage({
   searchParams,
 }: {
-  searchParams: Promise<{ tab?: string, auto?: string }>
+  searchParams: Promise<{ tab?: string, auto?: string, wp?: string }>
 }) {
-  const { monatsdaten, anlage, investitionen, eAutos } = await getAuswertungData()
+  const { monatsdaten, anlage, investitionen, eAutos, waermepumpen } = await getAuswertungData()  // FIXED!
   const params = await searchParams
   const activeTab = params.tab || 'pv'
   const selectedAutoId = params.auto
+  const selectedWpId = params.wp
 
-  // E-Auto Details laden wenn Tab aktiv
+  // E-Auto Details laden
   let eAutoDetails = null
   let selectedEAuto = null
   
@@ -84,6 +112,16 @@ export default async function AuswertungPage({
     const autoId = selectedAutoId || eAutos[0].id
     selectedEAuto = eAutos.find(a => a.id === autoId) || eAutos[0]
     eAutoDetails = await getEAutoDetails(selectedEAuto.id)
+  }
+
+  // Wärmepumpe Details laden
+  let waermepumpeDetails = null
+  let selectedWaermepumpe = null
+  
+  if (activeTab === 'waermepumpe' && waermepumpen.length > 0) {
+    const wpId = selectedWpId || waermepumpen[0].id
+    selectedWaermepumpe = waermepumpen.find(w => w.id === wpId) || waermepumpen[0]
+    waermepumpeDetails = await getWaermepumpeDetails(selectedWaermepumpe.id)
   }
 
   if (!anlage) {
@@ -151,7 +189,20 @@ export default async function AuswertungPage({
                   🚗 E-Auto Details
                 </Link>
               )}
-              
+
+              {waermepumpen.length > 0 && (
+                <Link
+                  href="/auswertung?tab=waermepumpe"
+                  className={`${
+                    activeTab === 'waermepumpe'
+                      ? 'border-blue-500 text-blue-600'
+                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  } whitespace-nowrap pb-4 px-1 border-b-2 font-medium text-sm`}
+                >
+                  🔥 Wärmepumpe Details
+                </Link>
+              )}
+
               {investitionen.length > 0 && (
                 <Link
                   href="/auswertung?tab=gesamt"
@@ -188,10 +239,9 @@ export default async function AuswertungPage({
             {activeTab === 'pv' && (
               <WirtschaftlichkeitStats monatsdaten={monatsdaten} anlage={anlage} />
             )}
-            
+
             {activeTab === 'e-auto' && selectedEAuto && eAutoDetails && (
               <div>
-                {/* Auto-Auswahl wenn mehrere */}
                 {eAutos.length > 1 && (
                   <div className="mb-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
                     <label className="block text-sm font-medium text-blue-900 mb-2">
@@ -219,6 +269,39 @@ export default async function AuswertungPage({
                   investition={selectedEAuto}
                   prognoseVergleich={eAutoDetails.prognoseVergleich}
                   monatsdaten={eAutoDetails.monatsdaten}
+                />
+              </div>
+            )}
+
+            {activeTab === 'waermepumpe' && selectedWaermepumpe && waermepumpeDetails && (
+              <div>
+                {waermepumpen.length > 1 && (
+                  <div className="mb-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
+                    <label className="block text-sm font-medium text-blue-900 mb-2">
+                      Wärmepumpe auswählen:
+                    </label>
+                    <div className="flex gap-2">
+                      {waermepumpen.map(wp => (
+                        <Link
+                          key={wp.id}
+                          href={`/auswertung?tab=waermepumpe&wp=${wp.id}`}
+                          className={`px-4 py-2 rounded-md font-medium ${
+                            selectedWaermepumpe.id === wp.id
+                              ? 'bg-blue-600 text-white'
+                              : 'bg-white text-blue-700 hover:bg-blue-100'
+                          }`}
+                        >
+                          {wp.bezeichnung}
+                        </Link>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                
+                <WaermepumpeAuswertung 
+                  investition={selectedWaermepumpe}
+                  prognoseVergleich={waermepumpeDetails.prognoseVergleich}
+                  monatsdaten={waermepumpeDetails.monatsdaten}
                 />
               </div>
             )}
