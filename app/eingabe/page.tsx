@@ -1,17 +1,40 @@
 // app/eingabe/page.tsx
+// KOMPLETT mit PV, E-Auto, Wärmepumpe, Speicher
+
 import { supabase } from '@/lib/supabase'
 import MonatsdatenForm from '@/components/MonatsdatenForm'
 import EAutoMonatsdatenForm from '@/components/EAutoMonatsdatenForm'
+import WaermepumpeMonatsdatenForm from '@/components/WaermepumpeMonatsdatenForm'
+import SpeicherMonatsdatenForm from '@/components/SpeicherMonatsdatenForm'
 import Link from 'next/link'
 
 async function getData() {
   const { data: anlage } = await supabase.from('anlagen').select('*').limit(1).single()
+  
   const { data: eAutos } = await supabase
     .from('alternative_investitionen')
     .select('*')
     .eq('typ', 'e-auto')
     .eq('aktiv', true)
-  return { anlage, eAutos: eAutos || [] }
+
+  const { data: waermepumpen } = await supabase
+    .from('alternative_investitionen')
+    .select('*')
+    .eq('typ', 'waermepumpe')
+    .eq('aktiv', true)
+
+  const { data: speicher } = await supabase
+    .from('alternative_investitionen')
+    .select('*')
+    .eq('typ', 'speicher')
+    .eq('aktiv', true)
+    
+  return { 
+    anlage, 
+    eAutos: eAutos || [], 
+    waermepumpen: waermepumpen || [],
+    speicher: speicher || []
+  }
 }
 
 export const dynamic = 'force-dynamic'
@@ -21,7 +44,7 @@ export default async function EingabePage({
 }: { 
   searchParams: Promise<{ tab?: string }> 
 }) {
-  const { anlage, eAutos } = await getData()
+  const { anlage, eAutos, waermepumpen, speicher } = await getData()
   const params = await searchParams
   const activeTab = params.tab || 'pv'
 
@@ -62,6 +85,7 @@ export default async function EingabePage({
               >
                 🌞 PV-Anlage
               </Link>
+              
               {eAutos.length > 0 && (
                 <Link 
                   href="/eingabe?tab=e-auto" 
@@ -74,6 +98,32 @@ export default async function EingabePage({
                   🚗 E-Auto ({eAutos.length})
                 </Link>
               )}
+
+              {waermepumpen.length > 0 && (
+                <Link 
+                  href="/eingabe?tab=waermepumpe" 
+                  className={`${
+                    activeTab === 'waermepumpe'
+                      ? 'border-blue-500 text-blue-600'
+                      : 'border-transparent text-gray-500 hover:text-gray-700'
+                  } whitespace-nowrap pb-4 px-1 border-b-2 font-medium text-sm`}
+                >
+                  🔥 Wärmepumpe ({waermepumpen.length})
+                </Link>
+              )}
+
+              {speicher.length > 0 && (
+                <Link 
+                  href="/eingabe?tab=speicher" 
+                  className={`${
+                    activeTab === 'speicher'
+                      ? 'border-blue-500 text-blue-600'
+                      : 'border-transparent text-gray-500 hover:text-gray-700'
+                  } whitespace-nowrap pb-4 px-1 border-b-2 font-medium text-sm`}
+                >
+                  🔋 Speicher ({speicher.length})
+                </Link>
+              )}
             </nav>
           </div>
         </div>
@@ -82,6 +132,12 @@ export default async function EingabePage({
         {activeTab === 'pv' && <MonatsdatenForm anlage={anlage} />}
         {activeTab === 'e-auto' && eAutos.length > 0 && (
           <EAutoMonatsdatenForm investition={eAutos[0]} />
+        )}
+        {activeTab === 'waermepumpe' && waermepumpen.length > 0 && (
+          <WaermepumpeMonatsdatenForm investition={waermepumpen[0]} />
+        )}
+        {activeTab === 'speicher' && speicher.length > 0 && (
+          <SpeicherMonatsdatenForm investition={speicher[0]} />
         )}
       </div>
     </main>

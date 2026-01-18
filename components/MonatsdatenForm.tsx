@@ -1,5 +1,5 @@
 // components/MonatsdatenForm.tsx
-// PV-Monatsdaten Erfassungsformular
+// MIT Betriebsausgaben
 
 'use client'
 
@@ -9,10 +9,9 @@ import { useRouter } from 'next/navigation'
 
 interface MonatsdatenFormProps {
   anlage: any
-  editId?: string
 }
 
-export default function MonatsdatenForm({ anlage, editId }: MonatsdatenFormProps) {
+export default function MonatsdatenForm({ anlage }: MonatsdatenFormProps) {
   const router = useRouter()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -21,12 +20,14 @@ export default function MonatsdatenForm({ anlage, editId }: MonatsdatenFormProps
     jahr: new Date().getFullYear(),
     monat: new Date().getMonth() + 1,
     pv_erzeugung_kwh: '',
-    eigenverbrauch_kwh: '',
+    gesamtverbrauch_kwh: '',
+    direktverbrauch_kwh: '',
+    batterieentladung_kwh: '',
     einspeisung_kwh: '',
     netzbezug_kwh: '',
-    verbrauch_gesamt_kwh: '',
-    einspeisung_preis_cent: '',
-    netzbezug_preis_cent: ''
+    einspeisung_ertrag_euro: '',
+    netzbezug_kosten_euro: '',
+    betriebsausgaben_monat_euro: ''  // NEU
   })
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
@@ -40,20 +41,28 @@ export default function MonatsdatenForm({ anlage, editId }: MonatsdatenFormProps
     setError(null)
 
     try {
-      const einspeisungPreis = parseFloat(formData.einspeisung_preis_cent) / 100
-      const netzbezugPreis = parseFloat(formData.netzbezug_preis_cent) / 100
-      
+      // Hole mitglied_id
+      const { data: mitgliedData } = await supabase
+        .from('mitglieder')
+        .select('id')
+        .limit(1)
+        .single()
+
+      if (!mitgliedData) throw new Error('Kein Mitglied gefunden')
+
       const monatsdaten = {
-        anlage_id: anlage.id,
+        mitglied_id: mitgliedData.id,
         jahr: formData.jahr,
         monat: formData.monat,
-        pv_erzeugung_kwh: parseFloat(formData.pv_erzeugung_kwh),
-        eigenverbrauch_kwh: parseFloat(formData.eigenverbrauch_kwh),
-        einspeisung_kwh: parseFloat(formData.einspeisung_kwh),
-        netzbezug_kwh: parseFloat(formData.netzbezug_kwh),
-        verbrauch_gesamt_kwh: parseFloat(formData.verbrauch_gesamt_kwh),
-        einspeisung_erloese_euro: parseFloat(formData.einspeisung_kwh) * einspeisungPreis,
-        netzbezug_kosten_euro: parseFloat(formData.netzbezug_kwh) * netzbezugPreis
+        pv_erzeugung_kwh: parseFloat(formData.pv_erzeugung_kwh) || 0,
+        gesamtverbrauch_kwh: parseFloat(formData.gesamtverbrauch_kwh) || 0,
+        direktverbrauch_kwh: parseFloat(formData.direktverbrauch_kwh) || 0,
+        batterieentladung_kwh: parseFloat(formData.batterieentladung_kwh) || 0,
+        einspeisung_kwh: parseFloat(formData.einspeisung_kwh) || 0,
+        netzbezug_kwh: parseFloat(formData.netzbezug_kwh) || 0,
+        einspeisung_ertrag_euro: parseFloat(formData.einspeisung_ertrag_euro) || 0,
+        netzbezug_kosten_euro: parseFloat(formData.netzbezug_kosten_euro) || 0,
+        betriebsausgaben_monat_euro: parseFloat(formData.betriebsausgaben_monat_euro) || 0  // NEU
       }
 
       const { error: dbError } = await supabase
@@ -80,7 +89,7 @@ export default function MonatsdatenForm({ anlage, editId }: MonatsdatenFormProps
   return (
     <div className="bg-white rounded-lg shadow p-6">
       <h2 className="text-xl font-semibold text-gray-900 mb-6">
-        🌞 {anlage.bezeichnung || 'PV-Anlage'}
+        🌞 PV-Monatsdaten erfassen
       </h2>
 
       {error && (
@@ -119,40 +128,78 @@ export default function MonatsdatenForm({ anlage, editId }: MonatsdatenFormProps
           </div>
         </div>
 
-        {/* Erzeugung */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            PV-Erzeugung (kWh) *
-          </label>
-          <input
-            type="number"
-            name="pv_erzeugung_kwh"
-            value={formData.pv_erzeugung_kwh}
-            onChange={handleChange}
-            required
-            step="0.01"
-            placeholder="z.B. 450"
-            className="w-full px-3 py-2 border border-gray-300 rounded-md"
-          />
-        </div>
-
-        {/* Verbrauch */}
+        {/* Erzeugung & Verbrauch */}
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
-              Eigenverbrauch (kWh) *
+              PV-Erzeugung (kWh) *
             </label>
             <input
               type="number"
-              name="eigenverbrauch_kwh"
-              value={formData.eigenverbrauch_kwh}
+              name="pv_erzeugung_kwh"
+              value={formData.pv_erzeugung_kwh}
               onChange={handleChange}
               required
               step="0.01"
-              placeholder="z.B. 180"
+              placeholder="z.B. 1500"
               className="w-full px-3 py-2 border border-gray-300 rounded-md"
             />
           </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Gesamt-Verbrauch (kWh) *
+            </label>
+            <input
+              type="number"
+              name="gesamtverbrauch_kwh"
+              value={formData.gesamtverbrauch_kwh}
+              onChange={handleChange}
+              required
+              step="0.01"
+              placeholder="z.B. 400"
+              className="w-full px-3 py-2 border border-gray-300 rounded-md"
+            />
+          </div>
+        </div>
+
+        {/* Eigenverbrauch */}
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Direktverbrauch (kWh) *
+            </label>
+            <input
+              type="number"
+              name="direktverbrauch_kwh"
+              value={formData.direktverbrauch_kwh}
+              onChange={handleChange}
+              required
+              step="0.01"
+              placeholder="z.B. 200"
+              className="w-full px-3 py-2 border border-gray-300 rounded-md"
+            />
+            <p className="mt-1 text-xs text-gray-500">PV direkt ins Haus</p>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Batterieentladung (kWh) *
+            </label>
+            <input
+              type="number"
+              name="batterieentladung_kwh"
+              value={formData.batterieentladung_kwh}
+              onChange={handleChange}
+              required
+              step="0.01"
+              placeholder="z.B. 150"
+              className="w-full px-3 py-2 border border-gray-300 rounded-md"
+            />
+            <p className="mt-1 text-xs text-gray-500">Aus Batterie ins Haus</p>
+          </div>
+        </div>
+
+        {/* Einspeisung & Netzbezug */}
+        <div className="grid grid-cols-2 gap-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
               Einspeisung (kWh) *
@@ -164,14 +211,10 @@ export default function MonatsdatenForm({ anlage, editId }: MonatsdatenFormProps
               onChange={handleChange}
               required
               step="0.01"
-              placeholder="z.B. 270"
+              placeholder="z.B. 1100"
               className="w-full px-3 py-2 border border-gray-300 rounded-md"
             />
           </div>
-        </div>
-
-        {/* Netzbezug & Verbrauch */}
-        <div className="grid grid-cols-2 gap-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
               Netzbezug (kWh) *
@@ -183,59 +226,63 @@ export default function MonatsdatenForm({ anlage, editId }: MonatsdatenFormProps
               onChange={handleChange}
               required
               step="0.01"
-              placeholder="z.B. 120"
-              className="w-full px-3 py-2 border border-gray-300 rounded-md"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Verbrauch gesamt (kWh) *
-            </label>
-            <input
-              type="number"
-              name="verbrauch_gesamt_kwh"
-              value={formData.verbrauch_gesamt_kwh}
-              onChange={handleChange}
-              required
-              step="0.01"
-              placeholder="z.B. 300"
+              placeholder="z.B. 50"
               className="w-full px-3 py-2 border border-gray-300 rounded-md"
             />
           </div>
         </div>
 
-        {/* Preise */}
+        {/* Kosten */}
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
-              Einspeisevergütung (ct/kWh) *
+              Einspeise-Erlöse (€) *
             </label>
             <input
               type="number"
-              name="einspeisung_preis_cent"
-              value={formData.einspeisung_preis_cent}
+              name="einspeisung_ertrag_euro"
+              value={formData.einspeisung_ertrag_euro}
               onChange={handleChange}
               required
               step="0.01"
-              placeholder="z.B. 8.2"
+              placeholder="z.B. 88.00"
               className="w-full px-3 py-2 border border-gray-300 rounded-md"
             />
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
-              Netzbezugspreis (ct/kWh) *
+              Netzbezug-Kosten (€) *
             </label>
             <input
               type="number"
-              name="netzbezug_preis_cent"
-              value={formData.netzbezug_preis_cent}
+              name="netzbezug_kosten_euro"
+              value={formData.netzbezug_kosten_euro}
               onChange={handleChange}
               required
               step="0.01"
-              placeholder="z.B. 32"
+              placeholder="z.B. 16.00"
               className="w-full px-3 py-2 border border-gray-300 rounded-md"
             />
           </div>
+        </div>
+
+        {/* NEU: Betriebsausgaben */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            Betriebsausgaben diesen Monat (€)
+          </label>
+          <input
+            type="number"
+            name="betriebsausgaben_monat_euro"
+            value={formData.betriebsausgaben_monat_euro}
+            onChange={handleChange}
+            step="0.01"
+            placeholder="z.B. 0 (oder Wartung, Reparatur)"
+            className="w-full px-3 py-2 border border-gray-300 rounded-md"
+          />
+          <p className="mt-1 text-xs text-gray-500">
+            Wartung, Reparatur, Reinigung - falls angefallen
+          </p>
         </div>
 
         {/* Buttons */}

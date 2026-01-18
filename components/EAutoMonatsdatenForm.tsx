@@ -34,7 +34,8 @@ export default function EAutoMonatsdatenForm({ investition, existingData }: EAut
     
     kosten_wartung: existingData?.kosten_daten?.wartung?.toString() || '0',
     kosten_reparatur: existingData?.kosten_daten?.reparatur?.toString() || '0',
-    notizen: existingData?.notizen || ''
+    notizen: existingData?.notizen || '',
+    betriebsausgaben_monat_euro: ''
   })
 
   // Vormonat-Preis laden
@@ -136,7 +137,8 @@ export default function EAutoMonatsdatenForm({ investition, existingData }: EAut
           strom_kwh: stromKwh,
           strom_pv_kwh: Math.round(stromPvKwh * 100) / 100,
           strom_netz_kwh: Math.round(stromNetzKwh * 100) / 100,
-          verbrauch_kwh_100km: Math.round(verbrauchPro100km * 100) / 100
+          verbrauch_kwh_100km: Math.round(verbrauchPro100km * 100) / 100,
+          betriebsausgaben_monat_euro: parseFloat(formData.betriebsausgaben_monat_euro) || 0  
         },
         kosten_daten: {
           strom: Math.round(kostenStrom * 100) / 100,
@@ -427,6 +429,25 @@ export default function EAutoMonatsdatenForm({ investition, existingData }: EAut
             placeholder="Besonderheiten diesen Monat..."
             className="w-full px-3 py-2 border border-gray-300 rounded-md"
           />
+        </div>
+
+        {/* Betriebsausgaben */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            Betriebsausgaben diesen Monat (€)
+          </label>
+          <input
+            type="number"
+            name="betriebsausgaben_monat_euro"
+            value={formData.betriebsausgaben_monat_euro}
+            onChange={handleChange}
+            step="0.01"
+            placeholder="z.B. 0 (oder Wartung, Reparatur)"
+            className="w-full px-3 py-2 border border-gray-300 rounded-md"
+          />
+          <p className="mt-1 text-xs text-gray-500">
+            Wartung, Reparatur, Versicherung - falls angefallen
+          </p>
         </div>
 
         {/* Buttons */}

@@ -97,6 +97,12 @@ export default async function DashboardPage() {
               </p>
             </div>
             <div className="flex gap-3">
+              <Link 
+                href="/anlage"
+                className="px-4 py-2 bg-orange-600 hover:bg-orange-700 rounded-md font-medium text-white"
+              >
+                ⚙️ Anlage verwalten
+              </Link>
               <Link
                 href="/auswertung"
                 className="px-4 py-2 bg-purple-100 hover:bg-purple-200 rounded-md font-medium text-purple-700"

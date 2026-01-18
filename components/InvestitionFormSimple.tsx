@@ -62,7 +62,10 @@ export default function InvestitionFormSimple({ mitgliedId, editData, onSuccess 
     
     // Balkonkraftwerk
     leistung_kwp: editData?.parameter?.leistung_kwp?.toString() || '',
-    jahresertrag_kwh_prognose: editData?.parameter?.jahresertrag_kwh_prognose?.toString() || ''
+    jahresertrag_kwh_prognose: editData?.parameter?.jahresertrag_kwh_prognose?.toString() || '',
+    
+    // Betriebskosten (für alle Typen)
+    betriebskosten_jahr_euro: editData?.parameter?.betriebskosten_jahr_euro?.toString() || ''
   })
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
@@ -112,7 +115,8 @@ export default function InvestitionFormSimple({ mitgliedId, editData, onSuccess 
         pv_ladung_kwh_jahr: Math.round(stromPV),
         netz_ladung_kwh_jahr: Math.round(stromNetz),
         vergleich_verbrenner_l_100km: verbrauchL,
-        benzinpreis_euro_liter: parseFloat(parameterData.benzinpreis_euro_liter) || 0
+        benzinpreis_euro_liter: parseFloat(parameterData.benzinpreis_euro_liter) || 0,
+        betriebskosten_jahr_euro: parseFloat(parameterData.betriebskosten_jahr_euro) || 0
       }
     } 
     else if (typ === 'waermepumpe') {
@@ -138,7 +142,8 @@ export default function InvestitionFormSimple({ mitgliedId, editData, onSuccess 
         strom_verbrauch_kwh_jahr: Math.round(stromVerbrauch),
         pv_anteil_prozent: pvAnteil,
         alter_energietraeger: parameterData.alter_energietraeger,
-        alter_preis_cent_kwh: parseFloat(parameterData.alter_preis_cent_kwh) || 0
+        alter_preis_cent_kwh: parseFloat(parameterData.alter_preis_cent_kwh) || 0,
+        betriebskosten_jahr_euro: parseFloat(parameterData.betriebskosten_jahr_euro) || 0
       }
     }
     else if (typ === 'speicher') {
@@ -153,7 +158,8 @@ export default function InvestitionFormSimple({ mitgliedId, editData, onSuccess 
         kapazitaet_kwh: kapazitaet,
         wirkungsgrad_prozent: wirkungsgrad,
         jahreszyklen: jahreszyklen,
-        nutzbare_speicherung_kwh_jahr: Math.round(nutzbareSpeicherung)
+        nutzbare_speicherung_kwh_jahr: Math.round(nutzbareSpeicherung),
+        betriebskosten_jahr_euro: parseFloat(parameterData.betriebskosten_jahr_euro) || 0
       }
     }
     else if (typ === 'balkonkraftwerk') {
@@ -162,7 +168,8 @@ export default function InvestitionFormSimple({ mitgliedId, editData, onSuccess 
       
       parameter = {
         leistung_kwp: parseFloat(parameterData.leistung_kwp) || 0,
-        jahresertrag_kwh_prognose: ertrag
+        jahresertrag_kwh_prognose: ertrag,
+        betriebskosten_jahr_euro: parseFloat(parameterData.betriebskosten_jahr_euro) || 0
       }
     }
 
@@ -336,37 +343,42 @@ export default function InvestitionFormSimple({ mitgliedId, editData, onSuccess 
             />
           </div>
 
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Alternative Anschaffungskosten
-            </label>
-            <input
-              type="number"
-              name="anschaffungskosten_alternativ"
-              value={formData.anschaffungskosten_alternativ}
-              onChange={handleChange}
-              step="0.01"
-              placeholder="z.B. 35000 (Verbrenner)"
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-            <p className="mt-1 text-xs text-gray-500">
-              Was hätte die Alternative gekostet?
-            </p>
-          </div>
+          {/* Alternative nur bei E-Auto & Wärmepumpe */}
+          {(typ === 'e-auto' || typ === 'waermepumpe') && (
+            <>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Alternative Anschaffungskosten
+                </label>
+                <input
+                  type="number"
+                  name="anschaffungskosten_alternativ"
+                  value={formData.anschaffungskosten_alternativ}
+                  onChange={handleChange}
+                  step="0.01"
+                  placeholder={typ === 'e-auto' ? 'z.B. 35000 (Verbrenner)' : 'z.B. 15000 (Gasheizung)'}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <p className="mt-1 text-xs text-gray-500">
+                  Was hätte die Alternative gekostet?
+                </p>
+              </div>
 
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Alternative Beschreibung
-            </label>
-            <input
-              type="text"
-              name="alternativ_beschreibung"
-              value={formData.alternativ_beschreibung}
-              onChange={handleChange}
-              placeholder="z.B. VW Golf Benziner"
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Alternative Beschreibung
+                </label>
+                <input
+                  type="text"
+                  name="alternativ_beschreibung"
+                  value={formData.alternativ_beschreibung}
+                  onChange={handleChange}
+                  placeholder={typ === 'e-auto' ? 'z.B. VW Golf Benziner' : 'z.B. Gasheizung'}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+            </>
+          )}
         </div>
 
         {/* Mehrkosten */}
@@ -451,6 +463,23 @@ export default function InvestitionFormSimple({ mitgliedId, editData, onSuccess 
                 <label className="block text-sm font-medium text-gray-700 mb-2">Benzinpreis (€/l)</label>
                 <input type="number" name="benzinpreis_euro_liter" value={parameterData.benzinpreis_euro_liter} onChange={handleParamChange} step="0.01" placeholder="1.69" className="w-full px-3 py-2 border border-gray-300 rounded-md" />
               </div>
+              <div className="mt-4 pt-4 border-t">
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Betriebskosten (€/Jahr) - Prognose
+                </label>
+                <input
+                  type="number"
+                  name="betriebskosten_jahr_euro"
+                  value={parameterData.betriebskosten_jahr_euro}
+                  onChange={handleParamChange}
+                  step="0.01"
+                  placeholder="z.B. 800"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                />
+                <p className="mt-1 text-xs text-gray-500">
+                  Versicherung, Wartung, Reifen (Schätzung)
+                </p>
+              </div>
             </div>
           </div>
         )}
@@ -487,6 +516,23 @@ export default function InvestitionFormSimple({ mitgliedId, editData, onSuccess 
                 <label className="block text-sm font-medium text-gray-700 mb-2">Alter Preis (ct/kWh)</label>
                 <input type="number" name="alter_preis_cent_kwh" value={parameterData.alter_preis_cent_kwh} onChange={handleParamChange} step="0.1" placeholder="8" className="w-full px-3 py-2 border border-gray-300 rounded-md" />
               </div>
+                            <div className="mt-4 pt-4 border-t">
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Betriebskosten (€/Jahr) - Prognose
+                </label>
+                <input
+                  type="number"
+                  name="betriebskosten_jahr_euro"
+                  value={parameterData.betriebskosten_jahr_euro}
+                  onChange={handleParamChange}
+                  step="0.01"
+                  placeholder="z.B. 150"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                />
+                <p className="mt-1 text-xs text-gray-500">
+                  Versicherung, Wartung, Reifen (Schätzung)
+                </p>
+              </div>
             </div>
           </div>
         )}
@@ -503,6 +549,23 @@ export default function InvestitionFormSimple({ mitgliedId, editData, onSuccess 
                 <label className="block text-sm font-medium text-gray-700 mb-2">Wirkungsgrad (%)</label>
                 <input type="number" name="wirkungsgrad_prozent" value={parameterData.wirkungsgrad_prozent} onChange={handleParamChange} step="0.1" placeholder="95" className="w-full px-3 py-2 border border-gray-300 rounded-md" />
               </div>
+                            <div className="mt-4 pt-4 border-t">
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Betriebskosten (€/Jahr) - Prognose
+                </label>
+                <input
+                  type="number"
+                  name="betriebskosten_jahr_euro"
+                  value={parameterData.betriebskosten_jahr_euro}
+                  onChange={handleParamChange}
+                  step="0.01"
+                  placeholder="z.B. 0"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                />
+                <p className="mt-1 text-xs text-gray-500">
+                  Versicherung, Wartung, ... (Schätzung)
+                </p>
+              </div>
             </div>
           </div>
         )}
@@ -518,6 +581,23 @@ export default function InvestitionFormSimple({ mitgliedId, editData, onSuccess 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">Jahresertrag (kWh) *</label>
                 <input type="number" name="jahresertrag_kwh_prognose" value={parameterData.jahresertrag_kwh_prognose} onChange={handleParamChange} required placeholder="800" className="w-full px-3 py-2 border border-gray-300 rounded-md" />
+              </div>
+              <div className="mt-4 pt-4 border-t">
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Jährliche Betriebskosten (€/Jahr) - Prognose
+                </label>
+                <input
+                  type="number"
+                  name="betriebskosten_jahr_euro"
+                  value={parameterData.betriebskosten_jahr_euro}
+                  onChange={handleParamChange}
+                  step="0.01"
+                  placeholder="z.B. 50"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                />
+                <p className="mt-1 text-xs text-gray-500">
+                  Versicherung, Wartung, ... (Schätzung)
+                </p>
               </div>
             </div>
           </div>

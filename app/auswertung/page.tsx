@@ -1,11 +1,12 @@
 // app/auswertung/page.tsx
-// FIXED: waermepumpen korrekt zurückgeben und verwenden
+// KOMPLETT mit PV, E-Auto, Wärmepumpe, Speicher, Gesamtbilanz
 
 import { supabase } from '@/lib/supabase'
 import WirtschaftlichkeitStats from '@/components/WirtschaftlichkeitStats'
 import GesamtHaushaltBilanz from '@/components/GesamtHaushaltBilanz'
 import EAutoAuswertung from '@/components/EAutoAuswertung'
 import WaermepumpeAuswertung from '@/components/WaermepumpeAuswertung'
+import SpeicherAuswertung from '@/components/SpeicherAuswertung'
 import Link from 'next/link'
 
 async function getAuswertungData() {
@@ -38,12 +39,19 @@ async function getAuswertungData() {
     .eq('typ', 'waermepumpe')
     .eq('aktiv', true)
 
+  const { data: speicher } = await supabase
+    .from('alternative_investitionen')
+    .select('*')
+    .eq('typ', 'speicher')
+    .eq('aktiv', true)
+
   return {
     monatsdaten: monatsdaten || [],
     anlage,
     investitionen: investitionen || [],
     eAutos: eAutos || [],
-    waermepumpen: waermepumpen || []  // FIXED!
+    waermepumpen: waermepumpen || [],
+    speicher: speicher || []
   }
 }
 
@@ -91,18 +99,41 @@ async function getWaermepumpeDetails(wpId: string) {
   }
 }
 
+async function getSpeicherDetails(speicherId: string) {
+  const { data: prognoseVergleich } = await supabase
+    .from('investition_prognose_ist_vergleich')
+    .select('*')
+    .eq('investition_id', speicherId)
+    .order('jahr', { ascending: false })
+    .limit(1)
+    .single()
+
+  const { data: monatsdaten } = await supabase
+    .from('investition_monatsdaten_detail')
+    .select('*')
+    .eq('investition_id', speicherId)
+    .order('jahr', { ascending: false })
+    .order('monat', { ascending: false })
+
+  return {
+    prognoseVergleich,
+    monatsdaten: monatsdaten || []
+  }
+}
+
 export const dynamic = 'force-dynamic'
 
 export default async function AuswertungPage({
   searchParams,
 }: {
-  searchParams: Promise<{ tab?: string, auto?: string, wp?: string }>
+  searchParams: Promise<{ tab?: string, auto?: string, wp?: string, speicher?: string }>
 }) {
-  const { monatsdaten, anlage, investitionen, eAutos, waermepumpen } = await getAuswertungData()  // FIXED!
+  const { monatsdaten, anlage, investitionen, eAutos, waermepumpen, speicher } = await getAuswertungData()
   const params = await searchParams
   const activeTab = params.tab || 'pv'
   const selectedAutoId = params.auto
   const selectedWpId = params.wp
+  const selectedSpeicherId = params.speicher
 
   // E-Auto Details laden
   let eAutoDetails = null
@@ -122,6 +153,16 @@ export default async function AuswertungPage({
     const wpId = selectedWpId || waermepumpen[0].id
     selectedWaermepumpe = waermepumpen.find(w => w.id === wpId) || waermepumpen[0]
     waermepumpeDetails = await getWaermepumpeDetails(selectedWaermepumpe.id)
+  }
+
+  // Speicher Details laden
+  let speicherDetails = null
+  let selectedSpeicher = null
+  
+  if (activeTab === 'speicher' && speicher.length > 0) {
+    const spId = selectedSpeicherId || speicher[0].id
+    selectedSpeicher = speicher.find(s => s.id === spId) || speicher[0]
+    speicherDetails = await getSpeicherDetails(selectedSpeicher.id)
   }
 
   if (!anlage) {
@@ -200,6 +241,19 @@ export default async function AuswertungPage({
                   } whitespace-nowrap pb-4 px-1 border-b-2 font-medium text-sm`}
                 >
                   🔥 Wärmepumpe Details
+                </Link>
+              )}
+
+              {speicher.length > 0 && (
+                <Link
+                  href="/auswertung?tab=speicher"
+                  className={`${
+                    activeTab === 'speicher'
+                      ? 'border-blue-500 text-blue-600'
+                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  } whitespace-nowrap pb-4 px-1 border-b-2 font-medium text-sm`}
+                >
+                  🔋 Speicher Details
                 </Link>
               )}
 
@@ -302,6 +356,39 @@ export default async function AuswertungPage({
                   investition={selectedWaermepumpe}
                   prognoseVergleich={waermepumpeDetails.prognoseVergleich}
                   monatsdaten={waermepumpeDetails.monatsdaten}
+                />
+              </div>
+            )}
+
+            {activeTab === 'speicher' && selectedSpeicher && speicherDetails && (
+              <div>
+                {speicher.length > 1 && (
+                  <div className="mb-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
+                    <label className="block text-sm font-medium text-blue-900 mb-2">
+                      Speicher auswählen:
+                    </label>
+                    <div className="flex gap-2">
+                      {speicher.map(sp => (
+                        <Link
+                          key={sp.id}
+                          href={`/auswertung?tab=speicher&speicher=${sp.id}`}
+                          className={`px-4 py-2 rounded-md font-medium ${
+                            selectedSpeicher.id === sp.id
+                              ? 'bg-blue-600 text-white'
+                              : 'bg-white text-blue-700 hover:bg-blue-100'
+                          }`}
+                        >
+                          {sp.bezeichnung}
+                        </Link>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                
+                <SpeicherAuswertung 
+                  investition={selectedSpeicher}
+                  prognoseVergleich={speicherDetails.prognoseVergleich}
+                  monatsdaten={speicherDetails.monatsdaten}
                 />
               </div>
             )}
