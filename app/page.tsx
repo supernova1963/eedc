@@ -1,5 +1,5 @@
 // app/page.tsx
-// FIX: Konvertiert String-Werte zu Zahlen
+// Mit Einspeisung und Erlösen
 
 import { supabase } from '@/lib/supabase'
 import Link from 'next/link'
@@ -32,7 +32,7 @@ export default async function DashboardPage() {
     return parseFloat(String(val)) || 0
   }
 
-  // Berechnungen mit String→Number Konvertierung
+  // Berechnungen
   const gesamtErzeugung = monatsdaten.reduce((sum, m) => 
     sum + toNum(m.pv_erzeugung_kwh), 0
   )
@@ -44,6 +44,22 @@ export default async function DashboardPage() {
   const gesamtVerbrauch = monatsdaten.reduce((sum, m) => 
     sum + toNum(m.gesamtverbrauch_kwh), 0
   )
+
+  // NEU: Einspeisung
+  const gesamtEinspeisung = monatsdaten.reduce((sum, m) => 
+    sum + toNum(m.einspeisung_kwh), 0
+  )
+
+  // NEU: Erlöse
+  const gesamtErloese = monatsdaten.reduce((sum, m) => 
+    sum + toNum(m.einspeisung_ertrag_euro), 0
+  )
+
+  const gesamtNetzbezugKosten = monatsdaten.reduce((sum, m) => 
+    sum + toNum(m.netzbezug_kosten_euro), 0
+  )
+
+  const nettoErtrag = gesamtErloese - gesamtNetzbezugKosten
   
   const eigenverbrauchsquote = gesamtErzeugung > 0 
     ? (gesamtEigenverbrauch / gesamtErzeugung) * 100 
@@ -54,14 +70,16 @@ export default async function DashboardPage() {
     : 0
 
   const fmt = (num: number) => num.toLocaleString('de-DE', { maximumFractionDigits: 0 })
+  const fmtDec = (num: number) => num.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
-  // Chart Daten
+  // Chart Daten mit Einspeisung
   const monatsnamen = ['', 'Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez']
   const chartData = monatsdaten.map(m => ({
     monat: `${monatsnamen[m.monat]} ${m.jahr}`,
     eigenverbrauch: toNum(m.direktverbrauch_kwh) + toNum(m.batterieentladung_kwh),
     erzeugung: toNum(m.pv_erzeugung_kwh),
-    verbrauch: toNum(m.gesamtverbrauch_kwh)
+    verbrauch: toNum(m.gesamtverbrauch_kwh),
+    einspeisung: toNum(m.einspeisung_kwh)  // NEU
   }))
 
   return (
@@ -109,7 +127,7 @@ export default async function DashboardPage() {
           </div>
         ) : (
           <div className="space-y-6">
-            {/* KPI Cards */}
+            {/* KPI Cards - Erste Reihe */}
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
               <div className="bg-white rounded-lg shadow p-6">
                 <div className="flex items-center justify-between">
@@ -147,6 +165,22 @@ export default async function DashboardPage() {
                 </div>
               </div>
 
+              {/* NEU: Einspeisung */}
+              <div className="bg-white rounded-lg shadow p-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-gray-600">Einspeisung</p>
+                    <p className="text-2xl font-bold text-gray-900 mt-1">
+                      {fmt(gesamtEinspeisung)} kWh
+                    </p>
+                  </div>
+                  <span className="text-4xl">⚡</span>
+                </div>
+              </div>
+            </div>
+
+            {/* KPI Cards - Zweite Reihe: Finanzen */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div className="bg-white rounded-lg shadow p-6">
                 <div className="flex items-center justify-between">
                   <div>
@@ -156,6 +190,32 @@ export default async function DashboardPage() {
                     </p>
                   </div>
                   <span className="text-4xl">📊</span>
+                </div>
+              </div>
+
+              {/* NEU: Erlöse */}
+              <div className="bg-white rounded-lg shadow p-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-gray-600">Erlöse (Einspeisung)</p>
+                    <p className="text-2xl font-bold text-blue-700 mt-1">
+                      {fmtDec(gesamtErloese)} €
+                    </p>
+                  </div>
+                  <span className="text-4xl">💰</span>
+                </div>
+              </div>
+
+              {/* NEU: Netto-Ertrag */}
+              <div className="bg-white rounded-lg shadow p-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-gray-600">Netto-Ertrag</p>
+                    <p className="text-2xl font-bold text-green-700 mt-1">
+                      {fmtDec(nettoErtrag)} €
+                    </p>
+                  </div>
+                  <span className="text-4xl">💎</span>
                 </div>
               </div>
             </div>

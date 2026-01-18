@@ -1,5 +1,5 @@
 // app/uebersicht/page.tsx
-// Angepasst an tatsächliches DB-Schema
+// Mit Erlöse-Spalte
 
 import { supabase } from '@/lib/supabase'
 import Link from 'next/link'
@@ -21,8 +21,12 @@ export default async function UebersichtPage() {
 
   const monatsnamen = ['', 'Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez']
   
-  const fmt = (num?: number) => {
-    if (!num && num !== 0) return '-'
+  const toNum = (val: any): number => {
+    if (val === null || val === undefined) return 0
+    return parseFloat(String(val)) || 0
+  }
+
+  const fmt = (num: number) => {
     return num.toLocaleString('de-DE', { maximumFractionDigits: 2 })
   }
 
@@ -95,6 +99,10 @@ export default async function UebersichtPage() {
                     <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">
                       Netzbezug
                     </th>
+                    {/* NEU: Erlöse */}
+                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">
+                      Erlöse
+                    </th>
                     <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">
                       Eigenverbrauch %
                     </th>
@@ -105,12 +113,16 @@ export default async function UebersichtPage() {
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
                   {monatsdaten.map((data) => {
-                    const eigenverbrauch = (data.direktverbrauch_kwh || 0) + (data.batterieentladung_kwh || 0)
-                    const eigenverbrauchsquote = data.pv_erzeugung_kwh > 0 
-                      ? (eigenverbrauch / data.pv_erzeugung_kwh) * 100 
+                    const eigenverbrauch = toNum(data.direktverbrauch_kwh) + toNum(data.batterieentladung_kwh)
+                    const erzeugung = toNum(data.pv_erzeugung_kwh)
+                    const verbrauch = toNum(data.gesamtverbrauch_kwh)
+                    const erloes = toNum(data.einspeisung_ertrag_euro)
+                    
+                    const eigenverbrauchsquote = erzeugung > 0 
+                      ? (eigenverbrauch / erzeugung) * 100 
                       : 0
-                    const autarkiegrad = data.gesamtverbrauch_kwh > 0 
-                      ? (eigenverbrauch / data.gesamtverbrauch_kwh) * 100 
+                    const autarkiegrad = verbrauch > 0 
+                      ? (eigenverbrauch / verbrauch) * 100 
                       : 0
                     
                     return (
@@ -119,19 +131,23 @@ export default async function UebersichtPage() {
                           {monatsnamen[data.monat]} {data.jahr}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-gray-900">
-                          {fmt(data.gesamtverbrauch_kwh)} kWh
+                          {fmt(verbrauch)} kWh
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-gray-900">
-                          {fmt(data.pv_erzeugung_kwh)} kWh
+                          {fmt(erzeugung)} kWh
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-green-600 font-medium">
                           {fmt(eigenverbrauch)} kWh
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-gray-900">
-                          {fmt(data.einspeisung_kwh)} kWh
+                          {fmt(toNum(data.einspeisung_kwh))} kWh
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-gray-900">
-                          {fmt(data.netzbezug_kwh)} kWh
+                          {fmt(toNum(data.netzbezug_kwh))} kWh
+                        </td>
+                        {/* NEU: Erlöse */}
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-blue-600 font-medium">
+                          {fmt(erloes)} €
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-right">
                           <span className="px-2 py-1 rounded-full bg-green-100 text-green-800 font-medium">

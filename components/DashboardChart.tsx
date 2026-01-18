@@ -9,6 +9,7 @@ interface DashboardChartProps {
     eigenverbrauch: number
     erzeugung: number
     verbrauch: number
+    einspeisung: number  // NEU
   }>
 }
 
@@ -40,6 +41,14 @@ export default function DashboardChart({ data }: DashboardChartProps) {
           dataKey="verbrauch" 
           stroke="#3b82f6" 
           name="Verbrauch"
+          strokeWidth={2}
+        />
+        {/* NEU: Einspeisung */}
+        <Line 
+          type="monotone" 
+          dataKey="einspeisung" 
+          stroke="#f97316" 
+          name="Einspeisung"
           strokeWidth={2}
         />
       </LineChart>
