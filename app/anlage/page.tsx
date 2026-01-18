@@ -1,36 +1,56 @@
 // app/anlage/page.tsx
-// Verwaltung der Haupt-PV-Anlage
+// Vereinfachtes Anlagen-Profil mit Tabs
 
 import { supabase } from '@/lib/supabase'
 import Link from 'next/link'
-import AnlageEditForm from '@/components/AnlageEditForm'
+import AnlagenProfilForm from '@/components/AnlagenProfilForm'
+import AnlagenFreigabeForm from '@/components/AnlagenFreigabeForm'
+import AnlagenTechnischesDaten from '@/components/AnlagenTechnischesDaten'
 
-async function getAnlage() {
+async function getAnlageData() {
+  // Anlage holen
   const { data: anlage } = await supabase
     .from('anlagen')
     .select('*')
     .limit(1)
     .single()
 
-  return anlage
+  if (!anlage) return { anlage: null, freigaben: null, mitglied: null }
+
+  // Freigaben holen
+  const { data: freigaben } = await supabase
+    .from('anlagen_freigaben')
+    .select('*')
+    .eq('anlage_id', anlage.id)
+    .single()
+
+  // Mitglied holen
+  const { data: mitglied } = await supabase
+    .from('mitglieder')
+    .select('id, vorname, nachname, email')
+    .eq('id', anlage.mitglied_id)
+    .single()
+
+  return { anlage, freigaben, mitglied }
 }
 
 export const dynamic = 'force-dynamic'
 
-export default async function AnlagePage() {
-  const anlage = await getAnlage()
-
-  const fmt = (num?: number) => {
-    if (!num && num !== 0) return '-'
-    return num.toLocaleString('de-DE', { maximumFractionDigits: 0 })
-  }
+export default async function AnlagePage({
+  searchParams,
+}: {
+  searchParams: Promise<{ tab?: string }>
+}) {
+  const { anlage, freigaben, mitglied } = await getAnlageData()
+  const params = await searchParams
+  const activeTab = params.tab || 'profil'
 
   if (!anlage) {
     return (
       <main className="min-h-screen bg-gray-50">
         <div className="bg-white shadow">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-            <h1 className="text-3xl font-bold text-gray-900">⚙️ PV-Anlage</h1>
+            <h1 className="text-3xl font-bold text-gray-900">🏠 PV-Anlage</h1>
           </div>
         </div>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -43,6 +63,11 @@ export default async function AnlagePage() {
     )
   }
 
+  const fmt = (num?: number) => {
+    if (!num && num !== 0) return '-'
+    return num.toLocaleString('de-DE', { maximumFractionDigits: 2 })
+  }
+
   return (
     <main className="min-h-screen bg-gray-50">
       {/* Header */}
@@ -51,99 +76,81 @@ export default async function AnlagePage() {
           <div className="flex items-center justify-between">
             <div>
               <h1 className="text-3xl font-bold text-gray-900">
-                ⚙️ PV-Anlage Stammdaten
+                🏠 {anlage.anlagenname || 'PV-Anlage'}
               </h1>
               <p className="mt-2 text-sm text-gray-600">
-                Haupt-PV-Anlage verwalten und bearbeiten
+                {mitglied ? `${mitglied.vorname} ${mitglied.nachname}` : 'Mitglied'} · {anlage.standort_ort || 'Standort'}
               </p>
             </div>
-            <Link
-              href="/"
-              className="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-md font-medium text-gray-700"
-            >
-              ← Dashboard
-            </Link>
+            <div className="flex gap-3">
+              <Link
+                href="/investitionen"
+                className="px-4 py-2 bg-blue-100 hover:bg-blue-200 text-blue-700 rounded-md font-medium"
+              >
+                💼 Investitionen
+              </Link>
+              <Link
+                href="/"
+                className="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-md font-medium text-gray-700"
+              >
+                ← Dashboard
+              </Link>
+            </div>
+          </div>
+
+          {/* Tabs */}
+          <div className="mt-6 border-b border-gray-200">
+            <nav className="-mb-px flex space-x-8">
+              <Link
+                href="/anlage?tab=profil"
+                className={`${
+                  activeTab === 'profil'
+                    ? 'border-blue-500 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                } whitespace-nowrap pb-4 px-1 border-b-2 font-medium text-sm`}
+              >
+                📋 Profil
+              </Link>
+              
+              <Link
+                href="/anlage?tab=freigabe"
+                className={`${
+                  activeTab === 'freigabe'
+                    ? 'border-blue-500 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                } whitespace-nowrap pb-4 px-1 border-b-2 font-medium text-sm`}
+              >
+                🔒 Freigabe
+              </Link>
+
+              <Link
+                href="/anlage?tab=technisch"
+                className={`${
+                  activeTab === 'technisch'
+                    ? 'border-blue-500 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                } whitespace-nowrap pb-4 px-1 border-b-2 font-medium text-sm`}
+              >
+                ⚙️ Technische Daten
+              </Link>
+            </nav>
           </div>
         </div>
       </div>
 
       {/* Content */}
       <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Aktuelle Daten */}
-        <div className="bg-white rounded-lg shadow p-6 mb-6">
-          <h2 className="text-xl font-semibold text-gray-900 mb-6">
-            📊 Aktuelle Stammdaten
-          </h2>
+        {activeTab === 'profil' && (
+          <AnlagenProfilForm anlage={anlage} mitglied={mitglied} />
+        )}
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div>
-              <div className="text-sm text-gray-600">Standort</div>
-              <div className="text-lg font-medium text-gray-900">{anlage.standort || '-'}</div>
-            </div>
+        {activeTab === 'freigabe' && (
+          <AnlagenFreigabeForm anlage={anlage} freigaben={freigaben} />
+        )}
 
-            <div>
-              <div className="text-sm text-gray-600">Inbetriebnahme</div>
-              <div className="text-lg font-medium text-gray-900">
-                {anlage.inbetriebnahme 
-                  ? new Date(anlage.inbetriebnahme).toLocaleDateString('de-DE', { 
-                      year: 'numeric', 
-                      month: 'long', 
-                      day: 'numeric' 
-                    })
-                  : '-'
-                }
-              </div>
-            </div>
-
-            <div>
-              <div className="text-sm text-gray-600">Nennleistung (kWp)</div>
-              <div className="text-lg font-medium text-gray-900">{anlage.nennleistung_kwp || '-'} kWp</div>
-            </div>
-
-            <div>
-              <div className="text-sm text-gray-600">Anschaffungskosten</div>
-              <div className="text-lg font-medium text-gray-900">{fmt(anlage.anschaffungskosten)} €</div>
-            </div>
-
-            <div>
-              <div className="text-sm text-gray-600">Einspeisevergütung</div>
-              <div className="text-lg font-medium text-gray-900">
-                {anlage.einspeisetarif_cent_kwh || '-'} ct/kWh
-              </div>
-            </div>
-
-            <div>
-              <div className="text-sm text-gray-600">Strompreis (Bezug)</div>
-              <div className="text-lg font-medium text-gray-900">
-                {anlage.strompreis_cent_kwh || '-'} ct/kWh
-              </div>
-            </div>
-
-            {anlage.hersteller && (
-              <div>
-                <div className="text-sm text-gray-600">Hersteller</div>
-                <div className="text-lg font-medium text-gray-900">{anlage.hersteller}</div>
-              </div>
-            )}
-
-            {anlage.wechselrichter && (
-              <div>
-                <div className="text-sm text-gray-600">Wechselrichter</div>
-                <div className="text-lg font-medium text-gray-900">{anlage.wechselrichter}</div>
-              </div>
-            )}
-          </div>
-
-          {anlage.notizen && (
-            <div className="mt-6 pt-6 border-t">
-              <div className="text-sm text-gray-600 mb-2">Notizen</div>
-              <div className="text-gray-900 whitespace-pre-wrap">{anlage.notizen}</div>
-            </div>
-          )}
-        </div>
-
-        {/* Edit Form */}
-        <AnlageEditForm anlage={anlage} />
+        {activeTab === 'technisch' && (
+          <AnlagenTechnischesDaten anlage={anlage} />
+        )}
       </div>
     </main>
   )
