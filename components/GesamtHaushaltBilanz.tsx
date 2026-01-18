@@ -1,5 +1,5 @@
 // components/GesamtHaushaltBilanz.tsx
-// Gesamtbilanz: PV + alle Investitionen
+// FIX: Korrekte Baum-Berechnung
 
 'use client'
 
@@ -35,6 +35,9 @@ export default function GesamtHaushaltBilanz({ monatsdaten, anlage, investitione
   // Gesamt-ROI
   const gesamtROI = gesamtInvKosten > 0 ? (gesamtInvEinsparung / gesamtInvKosten) * 100 : 0
   const gesamtAmortisation = gesamtInvEinsparung > 0 ? gesamtInvKosten / gesamtInvEinsparung : 0
+
+  // Bäume-Berechnung: 1 Baum bindet ca. 10 kg CO₂ pro Jahr
+  const anzahlBaeume = Math.round(gesamtCO2 / 10)
 
   const getIcon = (typ: string) => {
     const icons: Record<string, string> = {
@@ -149,7 +152,7 @@ export default function GesamtHaushaltBilanz({ monatsdaten, anlage, investitione
             <div className="text-sm text-gray-600">CO₂-Einsparung pro Jahr</div>
           </div>
           <div>
-            <div className="text-3xl font-bold text-blue-700">{fmt(gesamtCO2 * 10)} kg</div>
+            <div className="text-3xl font-bold text-blue-700">{fmt(anzahlBaeume)}</div>
             <div className="text-sm text-gray-600">≈ Bäume (CO₂-Bindung)</div>
           </div>
           <div>
