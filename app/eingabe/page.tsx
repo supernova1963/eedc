@@ -1,11 +1,12 @@
 // app/eingabe/page.tsx
-// KOMPLETT mit PV, E-Auto, Wärmepumpe, Speicher
+// KOMPLETT mit PV, E-Auto, Wärmepumpe, Speicher, Wechselrichter
 
 import { supabase } from '@/lib/supabase'
-import MonatsdatenForm from '@/components/MonatsdatenForm'
+import HaushaltMonatsdatenForm from '@/components/HaushaltMonatsdatenForm'
 import EAutoMonatsdatenForm from '@/components/EAutoMonatsdatenForm'
 import WaermepumpeMonatsdatenForm from '@/components/WaermepumpeMonatsdatenForm'
 import SpeicherMonatsdatenForm from '@/components/SpeicherMonatsdatenForm'
+import WechselrichterMonatsdatenForm from '@/components/WechselrichterMonatsdatenForm'
 import Link from 'next/link'
 
 async function getData() {
@@ -28,12 +29,19 @@ async function getData() {
     .select('*')
     .eq('typ', 'speicher')
     .eq('aktiv', true)
-    
-  return { 
-    anlage, 
-    eAutos: eAutos || [], 
+
+  const { data: wechselrichter } = await supabase
+    .from('alternative_investitionen')
+    .select('*')
+    .eq('typ', 'wechselrichter')
+    .eq('aktiv', true)
+
+  return {
+    anlage,
+    eAutos: eAutos || [],
     waermepumpen: waermepumpen || [],
-    speicher: speicher || []
+    speicher: speicher || [],
+    wechselrichter: wechselrichter || []
   }
 }
 
@@ -44,9 +52,9 @@ export default async function EingabePage({
 }: { 
   searchParams: Promise<{ tab?: string }> 
 }) {
-  const { anlage, eAutos, waermepumpen, speicher } = await getData()
+  const { anlage, eAutos, waermepumpen, speicher, wechselrichter } = await getData()
   const params = await searchParams
-  const activeTab = params.tab || 'pv'
+  const activeTab = params.tab || 'haushalt'
 
   if (!anlage) {
     return (
@@ -75,15 +83,15 @@ export default async function EingabePage({
           </div>
           <div className="mt-6 border-b border-gray-200">
             <nav className="-mb-px flex space-x-8">
-              <Link 
-                href="/eingabe?tab=pv" 
+              <Link
+                href="/eingabe?tab=haushalt"
                 className={`${
-                  activeTab === 'pv'
+                  activeTab === 'haushalt'
                     ? 'border-blue-500 text-blue-600'
                     : 'border-transparent text-gray-500 hover:text-gray-700'
                 } whitespace-nowrap pb-4 px-1 border-b-2 font-medium text-sm`}
               >
-                🌞 PV-Anlage
+                🏠 Haushalt
               </Link>
               
               {eAutos.length > 0 && (
@@ -113,8 +121,8 @@ export default async function EingabePage({
               )}
 
               {speicher.length > 0 && (
-                <Link 
-                  href="/eingabe?tab=speicher" 
+                <Link
+                  href="/eingabe?tab=speicher"
                   className={`${
                     activeTab === 'speicher'
                       ? 'border-blue-500 text-blue-600'
@@ -124,12 +132,25 @@ export default async function EingabePage({
                   🔋 Speicher ({speicher.length})
                 </Link>
               )}
+
+              {wechselrichter.length > 0 && (
+                <Link
+                  href="/eingabe?tab=wechselrichter"
+                  className={`${
+                    activeTab === 'wechselrichter'
+                      ? 'border-blue-500 text-blue-600'
+                      : 'border-transparent text-gray-500 hover:text-gray-700'
+                  } whitespace-nowrap pb-4 px-1 border-b-2 font-medium text-sm`}
+                >
+                  Wechselrichter ({wechselrichter.length})
+                </Link>
+              )}
             </nav>
           </div>
         </div>
       </div>
       <div className="max-w-4xl mx-auto px-4 py-8">
-        {activeTab === 'pv' && <MonatsdatenForm anlage={anlage} />}
+        {activeTab === 'haushalt' && <HaushaltMonatsdatenForm anlage={anlage} />}
         {activeTab === 'e-auto' && eAutos.length > 0 && (
           <EAutoMonatsdatenForm investition={eAutos[0]} />
         )}
@@ -138,6 +159,9 @@ export default async function EingabePage({
         )}
         {activeTab === 'speicher' && speicher.length > 0 && (
           <SpeicherMonatsdatenForm investition={speicher[0]} />
+        )}
+        {activeTab === 'wechselrichter' && wechselrichter.length > 0 && (
+          <WechselrichterMonatsdatenForm investition={wechselrichter[0]} />
         )}
       </div>
     </main>
