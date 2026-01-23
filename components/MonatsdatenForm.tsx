@@ -104,22 +104,24 @@ export default function MonatsdatenForm({ anlage }: MonatsdatenFormProps) {
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">Jahr *</label>
             <input
+              id="jahr"
               type="number"
               name="jahr"
               value={formData.jahr}
               onChange={handleChange}
               required
-              className="w-full px-3 py-2 border border-gray-300 rounded-md"
+              placeholder="z.B. 2023"
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Monat *</label>
+            <label htmlFor="monat" className="block text-sm font-medium text-gray-700 mb-2">Monat *</label>
             <select
-              name="monat"
+              id="monat"
               value={formData.monat}
               onChange={handleChange}
               required
-              className="w-full px-3 py-2 border border-gray-300 rounded-md"
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
               {monate.map((m, i) => (
                 <option key={i + 1} value={i + 1}>{m}</option>
@@ -131,18 +133,18 @@ export default function MonatsdatenForm({ anlage }: MonatsdatenFormProps) {
         {/* Erzeugung & Verbrauch */}
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <label htmlFor="pv-erzeugung" className="block text-sm font-medium text-gray-700 mb-2">
               PV-Erzeugung (kWh) *
             </label>
             <input
+              id="pv-erzeugung"
               type="number"
               name="pv_erzeugung_kwh"
               value={formData.pv_erzeugung_kwh}
               onChange={handleChange}
               required
-              step="0.01"
               placeholder="z.B. 1500"
-              className="w-full px-3 py-2 border border-gray-300 rounded-md"
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
           <div>

@@ -280,10 +280,11 @@ export default function InvestitionFormSimple({ mitgliedId, editData, onSuccess 
       <form onSubmit={handleSubmit} className="space-y-6">
         {/* Typ */}
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">
+          <label htmlFor="investitions-typ" className="block text-sm font-medium text-gray-700 mb-2">
             Investitions-Typ *
           </label>
           <select
+            id="investitions-typ"
             value={typ}
             onChange={(e) => setTyp(e.target.value as InvestitionsTyp)}
             required
@@ -299,10 +300,11 @@ export default function InvestitionFormSimple({ mitgliedId, editData, onSuccess 
         {/* Basis-Felder */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="md:col-span-2">
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <label htmlFor="bezeichnung" className="block text-sm font-medium text-gray-700 mb-2">
               Bezeichnung *
             </label>
             <input
+              id="bezeichnung"
               type="text"
               name="bezeichnung"
               value={formData.bezeichnung}
@@ -314,15 +316,17 @@ export default function InvestitionFormSimple({ mitgliedId, editData, onSuccess 
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <label htmlFor="anschaffungsdatum" className="block text-sm font-medium text-gray-700 mb-2">
               Anschaffungsdatum *
             </label>
             <input
+              id="anschaffungsdatum"
               type="date"
               name="anschaffungsdatum"
               value={formData.anschaffungsdatum}
               onChange={handleChange}
               required
+              placeholder="Wählen Sie ein Datum aus"
               className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
@@ -505,8 +509,8 @@ export default function InvestitionFormSimple({ mitgliedId, editData, onSuccess 
                 <input type="number" name="pv_anteil_prozent" value={parameterData.pv_anteil_prozent} onChange={handleParamChange} placeholder="40" className="w-full px-3 py-2 border border-gray-300 rounded-md" />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Alter Energieträger</label>
-                <select name="alter_energietraeger" value={parameterData.alter_energietraeger} onChange={handleParamChange} className="w-full px-3 py-2 border border-gray-300 rounded-md">
+                <label htmlFor="alter-energietraeger" className="block text-sm font-medium text-gray-700 mb-2">Alter Energieträger</label>
+                <select id="alter-energietraeger" name="alter_energietraeger" value={parameterData.alter_energietraeger} onChange={handleParamChange} className="w-full px-3 py-2 border border-gray-300 rounded-md">
                   <option value="Gas">Gas</option>
                   <option value="Öl">Öl</option>
                   <option value="Strom">Strom</option>
