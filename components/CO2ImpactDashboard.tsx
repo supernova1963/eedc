@@ -145,7 +145,7 @@ export default function CO2ImpactDashboard({ monatsdaten, investitionen }: CO2Im
         <div className="bg-gradient-to-br from-blue-50 to-sky-100 rounded-lg shadow p-6 border border-blue-200">
           <div className="flex items-center justify-between mb-2">
             <div className="text-sm text-blue-700 font-medium">≈ Bäume</div>
-            <span className="text-2xl">🌳</span>
+            <SimpleIcon type="tree" className="w-8 h-8 text-green-600" />
           </div>
           <div className="text-3xl font-bold text-blue-700">{fmt(gesamtBaeume)}</div>
           <div className="text-xs text-blue-600 mt-1">
@@ -177,7 +177,7 @@ export default function CO2ImpactDashboard({ monatsdaten, investitionen }: CO2Im
           <div className="text-xs text-orange-600 mt-1">
             {yoyWachstum !== 0 && letzesJahr ? (
               <span className={yoyWachstum > 0 ? 'text-green-600' : 'text-red-600'}>
-                {yoyWachstum > 0 ? '↑' : '↓'} {Math.abs(yoyWachstum).toFixed(1)}% YoY
+                {yoyWachstum > 0 ? '+' : '-'} {Math.abs(yoyWachstum).toFixed(1)}% YoY
               </span>
             ) : (
               'Durchschnitt'
