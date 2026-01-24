@@ -156,6 +156,18 @@ export default async function DatenImportPage() {
             </ul>
           </div>
         </div>
+
+        <div className="mt-3 pt-3 border-t border-gray-300">
+          <p className="font-medium text-gray-700 mb-1 flex items-center gap-1">
+            <SimpleIcon type="bulb" className="w-4 h-4 text-blue-600" />
+            Automatische Berechnungen
+          </p>
+          <ul className="space-y-0.5 text-xs">
+            <li>• <strong>Netzbezug Kosten</strong> = Netzbezug (kWh) × Netzbezugspreis + Grundpreis</li>
+            <li>• <strong>Einspeisung Ertrag</strong> = Einspeisung (kWh) × Einspeisevergütung</li>
+            <li className="text-gray-500 italic mt-1">→ Werden nur berechnet, wenn nicht manuell angegeben</li>
+          </ul>
+        </div>
       </div>
     </div>
   )

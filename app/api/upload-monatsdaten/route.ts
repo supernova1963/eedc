@@ -85,6 +85,28 @@ function validateRow(row: any, rowIndex: number): { data?: ParsedMonatsdaten, er
     return { errors }
   }
 
+  // Basis-Werte parsen
+  const netzbezug_kwh = parseNumber(row.netzbezug_kwh)
+  const einspeisung_kwh = parseNumber(row.einspeisung_kwh)
+  const netzbezugspreis_cent_kwh = parseNumber(row.netzbezugspreis_cent_kwh)
+  const einspeiseverguetung_cent_kwh = parseNumber(row.einspeiseverguetung_cent_kwh)
+  const grundpreis_euro = parseNumber(row.grundpreis_euro)
+
+  // Auto-Berechnung: Netzbezug Kosten
+  let netzbezug_kosten_euro = parseNumber(row.netzbezug_kosten_euro)
+  if (!netzbezug_kosten_euro && netzbezug_kwh && netzbezugspreis_cent_kwh) {
+    netzbezug_kosten_euro = (netzbezug_kwh * netzbezugspreis_cent_kwh) / 100
+    if (grundpreis_euro) {
+      netzbezug_kosten_euro += grundpreis_euro
+    }
+  }
+
+  // Auto-Berechnung: Einspeisung Ertrag
+  let einspeisung_ertrag_euro = parseNumber(row.einspeisung_ertrag_euro)
+  if (!einspeisung_ertrag_euro && einspeisung_kwh && einspeiseverguetung_cent_kwh) {
+    einspeisung_ertrag_euro = (einspeisung_kwh * einspeiseverguetung_cent_kwh) / 100
+  }
+
   const data: ParsedMonatsdaten = {
     jahr: jahr!,
     monat: monat!,
@@ -93,14 +115,14 @@ function validateRow(row: any, rowIndex: number): { data?: ParsedMonatsdaten, er
     direktverbrauch_kwh: parseNumber(row.direktverbrauch_kwh),
     batterieentladung_kwh: parseNumber(row.batterieentladung_kwh),
     batterieladung_kwh: parseNumber(row.batterieladung_kwh),
-    netzbezug_kwh: parseNumber(row.netzbezug_kwh),
-    einspeisung_kwh: parseNumber(row.einspeisung_kwh),
+    netzbezug_kwh,
+    einspeisung_kwh,
     ekfz_ladung_kwh: parseNumber(row.ekfz_ladung_kwh),
-    netzbezug_kosten_euro: parseNumber(row.netzbezug_kosten_euro),
-    einspeisung_ertrag_euro: parseNumber(row.einspeisung_ertrag_euro),
-    grundpreis_euro: parseNumber(row.grundpreis_euro),
-    netzbezugspreis_cent_kwh: parseNumber(row.netzbezugspreis_cent_kwh),
-    einspeiseverguetung_cent_kwh: parseNumber(row.einspeiseverguetung_cent_kwh),
+    netzbezug_kosten_euro,
+    einspeisung_ertrag_euro,
+    grundpreis_euro,
+    netzbezugspreis_cent_kwh,
+    einspeiseverguetung_cent_kwh,
     betriebsausgaben_monat_euro: parseNumber(row.betriebsausgaben_monat_euro),
     notizen: row.notizen || undefined
   }

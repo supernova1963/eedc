@@ -1,4 +1,4 @@
 Jahr,Monat,Gesamtverbrauch (kWh),PV-Erzeugung (kWh),Direktverbrauch (kWh),Batterieentladung (kWh),Batterieladung (kWh),Netzbezug (kWh),Einspeisung (kWh),E-Auto Ladung (kWh),Netzbezug Kosten (€),Einspeisung Ertrag (€),Grundpreis (€),Netzbezugspreis (Cent/kWh),Einspeisevergütung (Cent/kWh),Betriebsausgaben (€),Notizen
-2024,1,450.5,280.3,180.2,120.1,150.4,250.2,100.1,50.0,75.50,12.05,8.50,30.2,12.05,15.00,Beispieldaten Januar
-2024,2,420.8,310.5,200.3,110.5,140.2,220.0,110.2,45.0,66.00,13.22,8.50,30.0,12.0,15.00,Beispieldaten Februar
-2024,3,,,,,,,,,,,,,,,Leere Zeile wird übersprungen
+2024,1,450.5,280.3,180.2,120.1,150.4,250.2,100.1,50.0,,,8.50,30.2,12.05,15.00,Beispiel: Kosten werden automatisch berechnet
+2024,2,420.8,310.5,200.3,110.5,140.2,220.0,110.2,45.0,66.00,13.22,8.50,30.0,12.0,15.00,Beispiel: Oder manuell eintragen
+2024,3,,,,,,,,,,,,,,,Leere Zeilen werden übersprungen

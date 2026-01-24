@@ -122,6 +122,26 @@ Deutsche Spaltennamen werden automatisch auf DB-Felder gemappt:
 - Deutsche Notation: `1.234,56` → `1234.56`
 - Englische Notation: `1,234.56` → `1234.56`
 
+### Automatische Berechnungen
+
+**Netzbezug Kosten**:
+```
+Wenn nicht manuell angegeben:
+Netzbezug Kosten (€) = Netzbezug (kWh) × Netzbezugspreis (Cent/kWh) / 100 + Grundpreis (€)
+```
+
+**Einspeisung Ertrag**:
+```
+Wenn nicht manuell angegeben:
+Einspeisung Ertrag (€) = Einspeisung (kWh) × Einspeisevergütung (Cent/kWh) / 100
+```
+
+**Vorteile**:
+- Weniger Tipparbeit
+- Weniger Fehlerquellen
+- Konsistente Berechnungen
+- Manuelle Eingabe bleibt möglich (z.B. bei Sondertarifen)
+
 ### Workflow
 
 ```
