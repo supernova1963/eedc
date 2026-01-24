@@ -200,10 +200,28 @@ export default async function AuswertungPage({
             <div>
               <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-2">
                 <SimpleIcon type="chart" className="w-8 h-8 text-blue-600" />
-                Erweiterte Auswertungen
+                {activeTab === 'pv' && 'PV-Anlage Auswertung'}
+                {activeTab === 'e-auto' && 'E-Auto Details'}
+                {activeTab === 'waermepumpe' && 'Wärmepumpe Details'}
+                {activeTab === 'speicher' && 'Speicher Details'}
+                {activeTab === 'gesamt' && 'Gesamtbilanz'}
+                {activeTab === 'roi' && 'ROI-Analyse'}
+                {activeTab === 'co2' && 'CO₂-Impact'}
+                {activeTab === 'prognose' && 'Prognose vs. IST'}
+                {activeTab === 'monatsdetail' && 'Monats-Details'}
+                {activeTab === 'optimierung' && 'Optimierungsvorschläge'}
               </h1>
               <p className="mt-2 text-sm text-gray-600">
-                Wirtschaftlichkeit, ROI und CO₂-Bilanz
+                {activeTab === 'pv' && 'Wirtschaftlichkeit und Ertrag deiner PV-Anlage'}
+                {activeTab === 'e-auto' && 'Wirtschaftlichkeit und Ladeverhalten'}
+                {activeTab === 'waermepumpe' && 'Effizienz und Betriebskosten'}
+                {activeTab === 'speicher' && 'Speichernutzung und Rentabilität'}
+                {activeTab === 'gesamt' && 'Überblick über alle Investitionen'}
+                {activeTab === 'roi' && 'Return on Investment Übersicht'}
+                {activeTab === 'co2' && 'Klimabilanz und Umweltauswirkungen'}
+                {activeTab === 'prognose' && 'Vergleich zwischen Prognose und tatsächlichen Werten'}
+                {activeTab === 'monatsdetail' && 'Detaillierte Monatsansicht'}
+                {activeTab === 'optimierung' && 'KI-gestützte Empfehlungen für deine Anlage'}
               </p>
             </div>
             <Link
@@ -213,139 +231,6 @@ export default async function AuswertungPage({
               <SimpleIcon type="back" className="w-4 h-4" />
               Dashboard
             </Link>
-          </div>
-
-          {/* Tabs */}
-          <div className="mt-6 border-b border-gray-200">
-            <nav className="-mb-px flex space-x-8">
-              <Link
-                href="/auswertung?tab=pv"
-                className={`${
-                  activeTab === 'pv'
-                    ? 'border-blue-500 text-blue-600'
-                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                } whitespace-nowrap pb-4 px-1 border-b-2 font-medium text-sm flex items-center gap-2`}
-              >
-                <SimpleIcon type="sun" className="w-4 h-4 text-yellow-500" />
-                PV-Anlage
-              </Link>
-
-              {eAutos.length > 0 && (
-                <Link
-                  href="/auswertung?tab=e-auto"
-                  className={`${
-                    activeTab === 'e-auto'
-                      ? 'border-blue-500 text-blue-600'
-                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                  } whitespace-nowrap pb-4 px-1 border-b-2 font-medium text-sm flex items-center gap-2`}
-                >
-                  <SimpleIcon type="car" className="w-4 h-4" />
-                  E-Auto Details
-                </Link>
-              )}
-
-              {waermepumpen.length > 0 && (
-                <Link
-                  href="/auswertung?tab=waermepumpe"
-                  className={`${
-                    activeTab === 'waermepumpe'
-                      ? 'border-blue-500 text-blue-600'
-                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                  } whitespace-nowrap pb-4 px-1 border-b-2 font-medium text-sm flex items-center gap-2`}
-                >
-                  <SimpleIcon type="heat" className="w-4 h-4 text-red-500" />
-                  Wärmepumpe Details
-                </Link>
-              )}
-
-              {speicher.length > 0 && (
-                <Link
-                  href="/auswertung?tab=speicher"
-                  className={`${
-                    activeTab === 'speicher'
-                      ? 'border-blue-500 text-blue-600'
-                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                  } whitespace-nowrap pb-4 px-1 border-b-2 font-medium text-sm flex items-center gap-2`}
-                >
-                  <SimpleIcon type="battery" className="w-4 h-4" />
-                  Speicher Details
-                </Link>
-              )}
-
-              {investitionen.length > 0 && (
-                <Link
-                  href="/auswertung?tab=gesamt"
-                  className={`${
-                    activeTab === 'gesamt'
-                      ? 'border-blue-500 text-blue-600'
-                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                  } whitespace-nowrap pb-4 px-1 border-b-2 font-medium text-sm flex items-center gap-2`}
-                >
-                  <SimpleIcon type="gem" className="w-4 h-4 text-green-500" />
-                  Gesamtbilanz
-                </Link>
-              )}
-
-              <Link
-                href="/auswertung?tab=roi"
-                className={`${
-                  activeTab === 'roi'
-                    ? 'border-blue-500 text-blue-600'
-                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                } whitespace-nowrap pb-4 px-1 border-b-2 font-medium text-sm flex items-center gap-2`}
-              >
-                <SimpleIcon type="trend" className="w-4 h-4 text-purple-500" />
-                ROI-Analyse
-              </Link>
-
-              <Link
-                href="/auswertung?tab=co2"
-                className={`${
-                  activeTab === 'co2'
-                    ? 'border-blue-500 text-blue-600'
-                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                } whitespace-nowrap pb-4 px-1 border-b-2 font-medium text-sm flex items-center gap-2`}
-              >
-                <SimpleIcon type="globe" className="w-4 h-4 text-green-500" />
-                CO₂-Impact
-              </Link>
-
-              <Link
-                href="/auswertung?tab=prognose"
-                className={`${
-                  activeTab === 'prognose'
-                    ? 'border-blue-500 text-blue-600'
-                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                } whitespace-nowrap pb-4 px-1 border-b-2 font-medium text-sm flex items-center gap-2`}
-              >
-                <SimpleIcon type="target" className="w-4 h-4 text-blue-500" />
-                Prognose vs. IST
-              </Link>
-
-              <Link
-                href="/auswertung?tab=monatsdetail"
-                className={`${
-                  activeTab === 'monatsdetail'
-                    ? 'border-blue-500 text-blue-600'
-                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                } whitespace-nowrap pb-4 px-1 border-b-2 font-medium text-sm flex items-center gap-2`}
-              >
-                <SimpleIcon type="calendar" className="w-4 h-4 text-indigo-500" />
-                Monats-Details
-              </Link>
-
-              <Link
-                href="/auswertung?tab=optimierung"
-                className={`${
-                  activeTab === 'optimierung'
-                    ? 'border-blue-500 text-blue-600'
-                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                } whitespace-nowrap pb-4 px-1 border-b-2 font-medium text-sm flex items-center gap-2`}
-              >
-                <SimpleIcon type="bulb" className="w-4 h-4 text-yellow-500" />
-                Optimierung
-              </Link>
-            </nav>
           </div>
         </div>
       </div>

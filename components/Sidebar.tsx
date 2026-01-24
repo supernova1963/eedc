@@ -51,7 +51,19 @@ const navigation: NavItem[] = [
   {
     icon: 'trend',
     label: 'Auswertungen',
-    href: '/auswertung'
+    href: '/auswertung',
+    children: [
+      { icon: 'sun', label: 'PV-Anlage', href: '/auswertung?tab=pv' },
+      { icon: 'car', label: 'E-Auto', href: '/auswertung?tab=e-auto' },
+      { icon: 'heat', label: 'Wärmepumpe', href: '/auswertung?tab=waermepumpe' },
+      { icon: 'battery', label: 'Speicher', href: '/auswertung?tab=speicher' },
+      { icon: 'gem', label: 'Gesamtbilanz', href: '/auswertung?tab=gesamt' },
+      { icon: 'trend', label: 'ROI-Analyse', href: '/auswertung?tab=roi' },
+      { icon: 'globe', label: 'CO₂-Impact', href: '/auswertung?tab=co2' },
+      { icon: 'target', label: 'Prognose vs. IST', href: '/auswertung?tab=prognose' },
+      { icon: 'calendar', label: 'Monats-Details', href: '/auswertung?tab=monatsdetail' },
+      { icon: 'bulb', label: 'Optimierung', href: '/auswertung?tab=optimierung' },
+    ]
   },
   {
     icon: 'settings',
@@ -67,11 +79,15 @@ interface SidebarProps {
 
 export default function Sidebar({ isOpen, onClose }: SidebarProps) {
   const pathname = usePathname()
-  const [expandedItems, setExpandedItems] = useState<string[]>(['/stammdaten'])
+  const [expandedItems, setExpandedItems] = useState<string[]>(['/stammdaten', '/auswertung'])
 
   const isActive = (href: string) => {
     if (href === '/') {
       return pathname === '/'
+    }
+    // Bei Untermenü-Items mit Query-Parametern auch die aktuelle URL prüfen
+    if (href.includes('?')) {
+      return (typeof window !== 'undefined' && window.location.href.includes(href))
     }
     return pathname.startsWith(href)
   }
