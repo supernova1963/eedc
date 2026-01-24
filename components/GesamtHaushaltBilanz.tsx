@@ -26,7 +26,7 @@ export default function GesamtHaushaltBilanz({ monatsdaten, anlage, investitione
 
   // PV Berechnungen
   const gesamtErzeugung = monatsdaten.reduce((sum, m) => sum + (m.pv_erzeugung_kwh || 0), 0)
-  const gesamtErloese = monatsdaten.reduce((sum, m) => sum + (m.einspeisung_erloese_euro || 0), 0)
+  const gesamtErloese = monatsdaten.reduce((sum, m) => sum + (m.einspeisung_ertrag_euro || 0), 0)
   
   // Investitionen Summen
   const gesamtInvKosten = investitionen.reduce((sum, inv) => sum + (inv.anschaffungskosten_relevant || 0), 0)

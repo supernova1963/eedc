@@ -49,19 +49,23 @@ export default function WirtschaftlichkeitStats({ monatsdaten, anlage }: Wirtsch
     sum + toNum(m.einspeisung_kwh), 0
   )
   
-  const gesamtErloese = monatsdaten.reduce((sum, m) => 
+  const gesamtErloese = monatsdaten.reduce((sum, m) =>
     sum + toNum(m.einspeisung_ertrag_euro), 0
   )
-  
-  const gesamtNetzbezugKosten = monatsdaten.reduce((sum, m) => 
+
+  const gesamtNetzbezugKosten = monatsdaten.reduce((sum, m) =>
     sum + toNum(m.netzbezug_kosten_euro), 0
   )
-  
-  const eigenverbrauchsquote = gesamtErzeugung > 0 
-    ? (gesamtEigenverbrauch / gesamtErzeugung) * 100 
+
+  const gesamtBetriebsausgaben = monatsdaten.reduce((sum, m) =>
+    sum + toNum(m.betriebsausgaben_monat_euro), 0
+  )
+
+  const eigenverbrauchsquote = gesamtErzeugung > 0
+    ? (gesamtEigenverbrauch / gesamtErzeugung) * 100
     : 0
-    
-  const nettoErtrag = gesamtErloese - gesamtNetzbezugKosten
+
+  const nettoErtrag = gesamtErloese - gesamtNetzbezugKosten - gesamtBetriebsausgaben
 
   // Chart-Daten
   const monatsnamen = ['', 'Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez']

@@ -56,7 +56,11 @@ export default async function DashboardPage() {
     sum + toNum(m.netzbezug_kosten_euro), 0
   )
 
-  const nettoErtrag = gesamtErloese - gesamtNetzbezugKosten
+  const gesamtBetriebsausgaben = monatsdaten.reduce((sum, m) =>
+    sum + toNum(m.betriebsausgaben_monat_euro), 0
+  )
+
+  const nettoErtrag = gesamtErloese - gesamtNetzbezugKosten - gesamtBetriebsausgaben
 
   const eigenverbrauchsquote = gesamtErzeugung > 0
     ? (gesamtEigenverbrauch / gesamtErzeugung) * 100
