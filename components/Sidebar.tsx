@@ -5,8 +5,9 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import SimpleIcon from './SimpleIcon'
+import { useInvestitionsFilter } from '@/hooks/useInvestitionsFilter'
 
 interface NavItem {
   icon: string
@@ -16,61 +17,81 @@ interface NavItem {
   children?: NavItem[]
 }
 
-const navigation: NavItem[] = [
-  {
-    icon: 'dashboard',
-    label: 'Dashboard',
-    href: '/'
-  },
-  {
-    icon: 'input',
-    label: 'Daten erfassen',
-    href: '/eingabe'
-  },
-  {
-    icon: 'upload',
-    label: 'Daten importieren',
-    href: '/daten-import',
-    badge: 'NEU'
-  },
-  {
-    icon: 'briefcase',
-    label: 'Investitionen',
-    href: '/investitionen'
-  },
-  {
-    icon: 'clipboard',
-    label: 'Stammdaten',
-    href: '/stammdaten',
-    children: [
-      { icon: 'file', label: 'Übersicht', href: '/stammdaten' },
-      { icon: 'lightning', label: 'Strompreise', href: '/stammdaten/strompreise' },
-      { icon: 'link', label: 'Zuordnung', href: '/stammdaten/zuordnung' },
-    ]
-  },
-  {
-    icon: 'trend',
-    label: 'Auswertungen',
-    href: '/auswertung',
-    children: [
-      { icon: 'sun', label: 'PV-Anlage', href: '/auswertung?tab=pv' },
-      { icon: 'car', label: 'E-Auto', href: '/auswertung?tab=e-auto' },
-      { icon: 'heat', label: 'Wärmepumpe', href: '/auswertung?tab=waermepumpe' },
-      { icon: 'battery', label: 'Speicher', href: '/auswertung?tab=speicher' },
-      { icon: 'gem', label: 'Gesamtbilanz', href: '/auswertung?tab=gesamt' },
-      { icon: 'trend', label: 'ROI-Analyse', href: '/auswertung?tab=roi' },
-      { icon: 'globe', label: 'CO₂-Impact', href: '/auswertung?tab=co2' },
-      { icon: 'target', label: 'Prognose vs. IST', href: '/auswertung?tab=prognose' },
-      { icon: 'calendar', label: 'Monats-Details', href: '/auswertung?tab=monatsdetail' },
-      { icon: 'bulb', label: 'Optimierung', href: '/auswertung?tab=optimierung' },
-    ]
-  },
-  {
-    icon: 'settings',
-    label: 'Anlagen',
-    href: '/anlage'
-  },
-]
+// Basis-Navigation (wird dynamisch gefiltert basierend auf Investitionen)
+const getNavigation = (hasEAutos: boolean, hasWaermepumpen: boolean, hasSpeicher: boolean, hasInvestitionen: boolean): NavItem[] => {
+  // Auswertungen-Untermenü dynamisch zusammenstellen
+  const auswertungenChildren: NavItem[] = [
+    { icon: 'sun', label: 'PV-Anlage', href: '/auswertung?tab=pv' },
+  ]
+
+  // Nur wenn entsprechende Investitionen vorhanden sind
+  if (hasEAutos) {
+    auswertungenChildren.push({ icon: 'car', label: 'E-Auto', href: '/auswertung?tab=e-auto' })
+  }
+  if (hasWaermepumpen) {
+    auswertungenChildren.push({ icon: 'heat', label: 'Wärmepumpe', href: '/auswertung?tab=waermepumpe' })
+  }
+  if (hasSpeicher) {
+    auswertungenChildren.push({ icon: 'battery', label: 'Speicher', href: '/auswertung?tab=speicher' })
+  }
+  if (hasInvestitionen) {
+    auswertungenChildren.push({ icon: 'gem', label: 'Gesamtbilanz', href: '/auswertung?tab=gesamt' })
+  }
+
+  // Immer verfügbare Auswertungen
+  auswertungenChildren.push(
+    { icon: 'trend', label: 'ROI-Analyse', href: '/auswertung?tab=roi' },
+    { icon: 'globe', label: 'CO₂-Impact', href: '/auswertung?tab=co2' },
+    { icon: 'target', label: 'Prognose vs. IST', href: '/auswertung?tab=prognose' },
+    { icon: 'calendar', label: 'Monats-Details', href: '/auswertung?tab=monatsdetail' },
+    { icon: 'bulb', label: 'Optimierung', href: '/auswertung?tab=optimierung' }
+  )
+
+  return [
+    {
+      icon: 'dashboard',
+      label: 'Dashboard',
+      href: '/'
+    },
+    {
+      icon: 'input',
+      label: 'Daten erfassen',
+      href: '/eingabe'
+    },
+    {
+      icon: 'upload',
+      label: 'Daten importieren',
+      href: '/daten-import',
+      badge: 'NEU'
+    },
+    {
+      icon: 'briefcase',
+      label: 'Investitionen',
+      href: '/investitionen'
+    },
+    {
+      icon: 'clipboard',
+      label: 'Stammdaten',
+      href: '/stammdaten',
+      children: [
+        { icon: 'file', label: 'Übersicht', href: '/stammdaten' },
+        { icon: 'lightning', label: 'Strompreise', href: '/stammdaten/strompreise' },
+        { icon: 'link', label: 'Zuordnung', href: '/stammdaten/zuordnung' },
+      ]
+    },
+    {
+      icon: 'trend',
+      label: 'Auswertungen',
+      href: '/auswertung',
+      children: auswertungenChildren
+    },
+    {
+      icon: 'settings',
+      label: 'Anlagen',
+      href: '/anlage'
+    },
+  ]
+}
 
 interface SidebarProps {
   isOpen: boolean
@@ -80,6 +101,15 @@ interface SidebarProps {
 export default function Sidebar({ isOpen, onClose }: SidebarProps) {
   const pathname = usePathname()
   const [expandedItems, setExpandedItems] = useState<string[]>(['/stammdaten', '/auswertung'])
+
+  // Dynamische Investitions-Filter laden
+  const { hasEAutos, hasWaermepumpen, hasSpeicher, hasInvestitionen } = useInvestitionsFilter()
+
+  // Navigation basierend auf vorhandenen Investitionen generieren
+  const navigation = useMemo(
+    () => getNavigation(hasEAutos, hasWaermepumpen, hasSpeicher, hasInvestitionen),
+    [hasEAutos, hasWaermepumpen, hasSpeicher, hasInvestitionen]
+  )
 
   const isActive = (href: string) => {
     if (href === '/') {
