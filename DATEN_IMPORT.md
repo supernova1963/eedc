@@ -10,14 +10,23 @@
 
 ## Features
 
-### 1. CSV-Template
-**Datei**: `public/templates/monatsdaten_import_vorlage.csv`
+### 1. CSV-Template (Dynamisch)
+**API**: `/api/csv-template?anlageId={uuid}`
+
+**Features**:
+- ✅ **Personalisiert**: Nur Felder für spezifische Anlage
+- ✅ **Intelligente Spalten**:
+  - Batteriefelder nur wenn `batteriekapazitaet_kwh > 0`
+  - E-Auto Feld nur wenn `ekfz_vorhanden = true`
+- ✅ **Beispieldaten**: 2 Zeilen mit Muster-Werten
+- ✅ **Auto-Berechnung**: Hinweis auf automatische Kosten/Erlöse
 
 **Spalten**:
 - **Pflichtfelder**: Jahr, Monat
-- **Optional**: Alle 15 weiteren Felder aus `monatsdaten`-Tabelle
+- **Immer**: PV-Erzeugung, Verbrauch, Netzbezug, Einspeisung, Tarife
+- **Conditional**: Batterie (nur mit Speicher), E-Auto (nur mit EKFZ)
 
-**Download**: Direkt aus Upload-Komponente oder via `/templates/monatsdaten_import_vorlage.csv`
+**Download**: Link in Upload-Komponente generiert dynamisch basierend auf gewählter Anlage
 
 ### 2. Upload-Komponente
 **Komponente**: `components/MonatsdatenUpload.tsx`
@@ -237,18 +246,24 @@ const result = await response.json()
 
 ### Neu erstellt
 ```
-public/templates/
-  └── monatsdaten_import_vorlage.csv       (CSV-Template)
-
 components/
-  └── MonatsdatenUpload.tsx                (Upload-Komponente, 430 Zeilen)
+  ├── MonatsdatenUpload.tsx                (Upload-Komponente, 430 Zeilen)
+  └── MonatsdatenUploadWrapper.tsx         (Wrapper mit Anlagen-Auswahl, 120 Zeilen)
 
 app/
   ├── daten-import/
-  │   └── page.tsx                         (Upload-Seite, 180 Zeilen)
+  │   └── page.tsx                         (Upload-Seite mit Auth, 200 Zeilen)
   └── api/
-      └── upload-monatsdaten/
-          └── route.ts                     (API-Route, 280 Zeilen)
+      ├── upload-monatsdaten/
+      │   └── route.ts                     (Upload-API mit Auth, 300 Zeilen)
+      └── csv-template/
+          └── route.ts                     (Dynamisches Template, 140 Zeilen)
+
+lib/
+  └── auth.ts                              (Auth Helper Functions, 70 Zeilen)
+
+public/templates/
+  └── monatsdaten_import_vorlage.csv       (Statisches Template - deprecated)
 ```
 
 ### Modifiziert

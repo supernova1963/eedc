@@ -243,13 +243,16 @@ export default function MonatsdatenUpload({ anlageId, onSuccess }: MonatsdatenUp
 
           <div className="mt-6 pt-6 border-t border-gray-200">
             <a
-              href="/templates/monatsdaten_import_vorlage.csv"
+              href={`/api/csv-template?anlageId=${anlageId}`}
               download
-              className="inline-flex items-center gap-2 text-sm text-blue-600 hover:text-blue-700"
+              className="inline-flex items-center gap-2 text-sm text-blue-600 hover:text-blue-700 font-medium"
             >
               <SimpleIcon type="download" className="w-4 h-4" />
-              CSV-Vorlage herunterladen
+              Personalisierte CSV-Vorlage herunterladen
             </a>
+            <p className="text-xs text-gray-500 mt-2">
+              Enthält nur für deine Anlage relevante Felder
+            </p>
           </div>
         </div>
       )}

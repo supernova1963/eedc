@@ -110,7 +110,7 @@ export default async function DatenImportPage() {
           <li className="flex items-start gap-2">
             <span className="font-bold text-blue-600 flex-shrink-0">1.</span>
             <span>
-              <strong>CSV-Vorlage herunterladen</strong> und mit deinen Monatsdaten befüllen
+              <strong>Personalisierte CSV-Vorlage herunterladen</strong> (enthält nur relevante Felder für deine Anlage)
             </span>
           </li>
           <li className="flex items-start gap-2">
