@@ -198,6 +198,13 @@ export default function SimpleIcon({ type, className = '' }: SimpleIconProps) {
         <path d="M2 12h20M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z" />
       </svg>
     ),
+    tree: (
+      <svg className={className} viewBox="0 0 24 24" fill="currentColor">
+        <path d="M12 2L8 8h3v6H8l4 6 4-6h-3V8h3z"/>
+        <circle cx="12" cy="18" r="2" />
+        <ellipse cx="12" cy="20" rx="6" ry="2" opacity="0.3"/>
+      </svg>
+    ),
   }
 
   return icons[type] || <span className={className}>•</span>

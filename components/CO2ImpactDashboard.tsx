@@ -194,14 +194,18 @@ export default function CO2ImpactDashboard({ monatsdaten, investitionen }: CO2Im
         </h3>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <div className="text-center">
-            <div className="text-5xl mb-2">🌲</div>
+            <div className="flex justify-center mb-3">
+              <SimpleIcon type="tree" className="w-16 h-16 text-green-600" />
+            </div>
             <div className="text-2xl font-bold text-green-700">{fmt(gesamtBaeume)}</div>
             <div className="text-sm text-gray-600 mt-1">
               Bäume die ein Jahr lang CO₂ binden
             </div>
           </div>
           <div className="text-center">
-            <div className="text-5xl mb-2">🚗</div>
+            <div className="flex justify-center mb-3">
+              <SimpleIcon type="car" className="w-16 h-16 text-blue-600" />
+            </div>
             <div className="text-2xl font-bold text-blue-700">{fmtDec(erdumrundungen)}x</div>
             <div className="text-sm text-gray-600 mt-1">
               Erdumrundungen mit dem Auto
@@ -210,7 +214,9 @@ export default function CO2ImpactDashboard({ monatsdaten, investitionen }: CO2Im
             </div>
           </div>
           <div className="text-center">
-            <div className="text-5xl mb-2">⚡</div>
+            <div className="flex justify-center mb-3">
+              <SimpleIcon type="lightning" className="w-16 h-16 text-purple-600" />
+            </div>
             <div className="text-2xl font-bold text-purple-700">
               {fmt(gesamtCO2 / CO2_PER_KWH)}
             </div>
