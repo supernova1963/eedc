@@ -2,7 +2,7 @@
 // API-Route für Monatsdaten-Upload und Parsing
 
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/utils/supabase/server'
+import { supabase } from '@/lib/supabase'
 import Papa from 'papaparse'
 
 interface ValidationError {
@@ -210,18 +210,6 @@ export async function POST(request: NextRequest) {
         data: validatedData,
         warnings: allWarnings
       })
-    }
-
-    // Import in Datenbank
-    const supabase = await createClient()
-
-    // User-ID ermitteln
-    const { data: { user }, error: userError } = await supabase.auth.getUser()
-    if (userError || !user) {
-      return NextResponse.json({
-        success: false,
-        message: 'Nicht authentifiziert'
-      }, { status: 401 })
     }
 
     // Anlage-Zugriff prüfen

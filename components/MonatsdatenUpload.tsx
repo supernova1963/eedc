@@ -170,9 +170,14 @@ export default function MonatsdatenUpload({ anlageId, onSuccess }: MonatsdatenUp
         setPreviewData(null)
         setFile(null)
 
-        if (onSuccess) {
-          setTimeout(() => onSuccess(), 1500)
-        }
+        // Seite nach 2 Sekunden neu laden
+        setTimeout(() => {
+          if (onSuccess) {
+            onSuccess()
+          } else {
+            window.location.reload()
+          }
+        }, 2000)
       } else {
         setErrors(result.errors || [{ row: 0, field: 'general', message: result.message || 'Fehler beim Import' }])
       }
