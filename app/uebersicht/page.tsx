@@ -2,6 +2,7 @@
 // Mit Erlöse-Spalte
 
 import { supabase } from '@/lib/supabase'
+import SimpleIcon from '@/components/SimpleIcon'
 import Link from 'next/link'
 
 async function getMonatsdaten() {
@@ -36,7 +37,10 @@ export default async function UebersichtPage() {
         <div className="max-w-7xl mx-auto px-4 py-6">
           <div className="flex items-center justify-between">
             <div>
-              <h1 className="text-3xl font-bold text-gray-900">📋 PV-Monatsdaten Übersicht</h1>
+              <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-2">
+                <SimpleIcon type="file" className="w-8 h-8 text-blue-600" />
+                PV-Monatsdaten Übersicht
+              </h1>
               <p className="mt-1 text-sm text-gray-600">
                 Alle erfassten Monatsdaten deiner PV-Anlage
               </p>
@@ -44,15 +48,17 @@ export default async function UebersichtPage() {
             <div className="flex gap-3">
               <Link
                 href="/"
-                className="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-md font-medium text-gray-700"
+                className="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-md font-medium text-gray-700 flex items-center gap-2"
               >
-                ← Dashboard
+                <SimpleIcon type="back" className="w-4 h-4" />
+                Dashboard
               </Link>
               <Link
                 href="/eingabe"
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-md font-medium text-white"
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-md font-medium text-white flex items-center gap-2"
               >
-                ➕ Daten erfassen
+                <SimpleIcon type="plus" className="w-4 h-4" />
+                Daten erfassen
               </Link>
             </div>
           </div>
@@ -65,9 +71,10 @@ export default async function UebersichtPage() {
             <p className="text-gray-500 mb-4">Noch keine Monatsdaten erfasst</p>
             <Link
               href="/eingabe"
-              className="inline-block px-6 py-3 bg-blue-600 hover:bg-blue-700 rounded-md font-medium text-white"
+              className="inline-flex items-center gap-2 px-6 py-3 bg-blue-600 hover:bg-blue-700 rounded-md font-medium text-white"
             >
-              ➕ Ersten Monat erfassen
+              <SimpleIcon type="plus" className="w-5 h-5" />
+              Ersten Monat erfassen
             </Link>
           </div>
         ) : (

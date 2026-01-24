@@ -5,6 +5,7 @@
 
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
 import Link from 'next/link'
+import SimpleIcon from './SimpleIcon'
 
 interface SpeicherAuswertungProps {
   investition: any
@@ -66,8 +67,9 @@ export default function SpeicherAuswertung({
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-bold text-gray-900">
-            🔋 {investition.bezeichnung}
+          <h2 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+            <SimpleIcon type="battery" className="w-6 h-6 text-blue-600" />
+            {investition.bezeichnung}
           </h2>
           <p className="text-sm text-gray-600 mt-1">
             {prognoseKapazitaet} kWh Kapazität
@@ -75,9 +77,10 @@ export default function SpeicherAuswertung({
         </div>
         <Link
           href="/eingabe?tab=speicher"
-          className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-md font-medium text-white"
+          className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-md font-medium text-white flex items-center gap-2"
         >
-          ➕ Monat erfassen
+          <SimpleIcon type="plus" className="w-4 h-4" />
+          Monat erfassen
         </Link>
       </div>
 
@@ -108,8 +111,9 @@ export default function SpeicherAuswertung({
         <>
           {/* Wirkungsgrad-Chart */}
           <div className="bg-white rounded-lg shadow p-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">
-              📈 Wirkungsgrad-Entwicklung
+            <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+              <SimpleIcon type="trend" className="w-5 h-5 text-gray-600" />
+              Wirkungsgrad-Entwicklung
             </h3>
             <ResponsiveContainer width="100%" height={300}>
               <LineChart data={wirkungsgradChartData}>
@@ -129,8 +133,9 @@ export default function SpeicherAuswertung({
 
           {/* Durchsatz-Chart */}
           <div className="bg-white rounded-lg shadow p-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">
-              🔄 Ladung & Entladung
+            <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+              <SimpleIcon type="battery" className="w-5 h-5 text-blue-600" />
+              Ladung & Entladung
             </h3>
             <ResponsiveContainer width="100%" height={300}>
               <BarChart data={durchsatzChartData}>
@@ -151,8 +156,9 @@ export default function SpeicherAuswertung({
       {monatsdaten.length > 0 && (
         <div className="bg-white rounded-lg shadow overflow-hidden">
           <div className="px-6 py-4 border-b border-gray-200">
-            <h3 className="text-lg font-semibold text-gray-900">
-              📋 Alle Monatsdaten ({monatsdaten.length})
+            <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+              <SimpleIcon type="clipboard" className="w-5 h-5 text-gray-600" />
+              Alle Monatsdaten ({monatsdaten.length})
             </h3>
           </div>
           <div className="overflow-x-auto">
@@ -197,9 +203,10 @@ export default function SpeicherAuswertung({
           <p className="text-gray-500 mb-4">Noch keine Monatsdaten erfasst</p>
           <Link
             href="/eingabe?tab=speicher"
-            className="inline-block px-6 py-3 bg-blue-600 hover:bg-blue-700 rounded-md font-medium text-white"
+            className="inline-flex items-center gap-2 px-6 py-3 bg-blue-600 hover:bg-blue-700 rounded-md font-medium text-white"
           >
-            ➕ Ersten Monat erfassen
+            <SimpleIcon type="plus" className="w-4 h-4" />
+            Ersten Monat erfassen
           </Link>
         </div>
       )}

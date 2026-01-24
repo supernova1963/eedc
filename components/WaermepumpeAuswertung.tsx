@@ -3,6 +3,7 @@
 
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
 import Link from 'next/link'
+import SimpleIcon from './SimpleIcon'
 
 interface WaermepumpeAuswertungProps {
   investition: any
@@ -64,8 +65,9 @@ export default function WaermepumpeAuswertung({
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-bold text-gray-900">
-            🔥 {investition.bezeichnung}
+          <h2 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+            <SimpleIcon type="heat" className="w-6 h-6 text-orange-500" />
+            {investition.bezeichnung}
           </h2>
           <p className="text-sm text-gray-600 mt-1">
             {investition.parameter?.leistung_kw || '-'} kW Heizleistung
@@ -73,17 +75,19 @@ export default function WaermepumpeAuswertung({
         </div>
         <Link
           href="/eingabe?tab=waermepumpe"
-          className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-md font-medium text-white"
+          className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-md font-medium text-white flex items-center gap-2"
         >
-          ➕ Monat erfassen
+          <SimpleIcon type="plus" className="w-4 h-4" />
+          Monat erfassen
         </Link>
       </div>
 
       {/* Prognose vs. Ist */}
       {anzahlMonate >= 3 ? (
         <div className="bg-white rounded-lg shadow p-6">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">
-            📊 Prognose vs. Ist-Verbrauch
+          <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+            <SimpleIcon type="chart" className="w-5 h-5 text-gray-600" />
+            Prognose vs. Ist-Verbrauch
           </h3>
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             <div>
@@ -116,7 +120,7 @@ export default function WaermepumpeAuswertung({
       ) : (
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-6">
           <div className="flex items-start gap-3">
-            <span className="text-2xl">ℹ️</span>
+            <SimpleIcon type="info" className="w-6 h-6 text-blue-600" />
             <div>
               <h3 className="font-semibold text-blue-900">Noch nicht genug Daten</h3>
               <p className="text-sm text-blue-700 mt-1">
@@ -133,8 +137,9 @@ export default function WaermepumpeAuswertung({
         <>
           {/* Kosten-Chart */}
           <div className="bg-white rounded-lg shadow p-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">
-              💰 Monatliche Kosten
+            <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+              <SimpleIcon type="money" className="w-5 h-5 text-gray-600" />
+              Monatliche Kosten
             </h3>
             <ResponsiveContainer width="100%" height={300}>
               <BarChart data={kostenChartData}>
@@ -151,8 +156,9 @@ export default function WaermepumpeAuswertung({
 
           {/* JAZ-Chart */}
           <div className="bg-white rounded-lg shadow p-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">
-              📈 JAZ-Entwicklung (Jahresarbeitszahl)
+            <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+              <SimpleIcon type="trend" className="w-5 h-5 text-gray-600" />
+              JAZ-Entwicklung (Jahresarbeitszahl)
             </h3>
             <ResponsiveContainer width="100%" height={300}>
               <LineChart data={jazChartData}>
@@ -176,8 +182,9 @@ export default function WaermepumpeAuswertung({
       {monatsdaten.length > 0 && (
         <div className="bg-white rounded-lg shadow overflow-hidden">
           <div className="px-6 py-4 border-b border-gray-200">
-            <h3 className="text-lg font-semibold text-gray-900">
-              📋 Alle Monatsdaten ({monatsdaten.length})
+            <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+              <SimpleIcon type="clipboard" className="w-5 h-5 text-gray-600" />
+              Alle Monatsdaten ({monatsdaten.length})
             </h3>
           </div>
           <div className="overflow-x-auto">
@@ -226,9 +233,10 @@ export default function WaermepumpeAuswertung({
           <p className="text-gray-500 mb-4">Noch keine Monatsdaten erfasst</p>
           <Link
             href="/eingabe?tab=waermepumpe"
-            className="inline-block px-6 py-3 bg-blue-600 hover:bg-blue-700 rounded-md font-medium text-white"
+            className="inline-flex items-center gap-2 px-6 py-3 bg-blue-600 hover:bg-blue-700 rounded-md font-medium text-white"
           >
-            ➕ Ersten Monat erfassen
+            <SimpleIcon type="plus" className="w-4 h-4" />
+            Ersten Monat erfassen
           </Link>
         </div>
       )}

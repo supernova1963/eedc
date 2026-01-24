@@ -7,6 +7,7 @@ import GesamtHaushaltBilanz from '@/components/GesamtHaushaltBilanz'
 import EAutoAuswertung from '@/components/EAutoAuswertung'
 import WaermepumpeAuswertung from '@/components/WaermepumpeAuswertung'
 import SpeicherAuswertung from '@/components/SpeicherAuswertung'
+import SimpleIcon from '@/components/SimpleIcon'
 import Link from 'next/link'
 
 async function getAuswertungData() {
@@ -170,7 +171,10 @@ export default async function AuswertungPage({
       <main className="min-h-screen bg-gray-50">
         <div className="bg-white shadow">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-            <h1 className="text-3xl font-bold text-gray-900">📊 Auswertung</h1>
+            <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-2">
+              <SimpleIcon type="chart" className="w-8 h-8 text-blue-600" />
+              Auswertung
+            </h1>
           </div>
         </div>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -189,8 +193,9 @@ export default async function AuswertungPage({
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
           <div className="flex items-center justify-between">
             <div>
-              <h1 className="text-3xl font-bold text-gray-900">
-                📊 Erweiterte Auswertungen
+              <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-2">
+                <SimpleIcon type="chart" className="w-8 h-8 text-blue-600" />
+                Erweiterte Auswertungen
               </h1>
               <p className="mt-2 text-sm text-gray-600">
                 Wirtschaftlichkeit, ROI und CO₂-Bilanz
@@ -198,9 +203,10 @@ export default async function AuswertungPage({
             </div>
             <Link
               href="/"
-              className="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-md font-medium text-gray-700"
+              className="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-md font-medium text-gray-700 flex items-center gap-2"
             >
-              ← Dashboard
+              <SimpleIcon type="back" className="w-4 h-4" />
+              Dashboard
             </Link>
           </div>
 
@@ -213,11 +219,12 @@ export default async function AuswertungPage({
                   activeTab === 'pv'
                     ? 'border-blue-500 text-blue-600'
                     : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                } whitespace-nowrap pb-4 px-1 border-b-2 font-medium text-sm`}
+                } whitespace-nowrap pb-4 px-1 border-b-2 font-medium text-sm flex items-center gap-2`}
               >
-                🌞 PV-Anlage
+                <SimpleIcon type="sun" className="w-4 h-4 text-yellow-500" />
+                PV-Anlage
               </Link>
-              
+
               {eAutos.length > 0 && (
                 <Link
                   href="/auswertung?tab=e-auto"
@@ -225,9 +232,10 @@ export default async function AuswertungPage({
                     activeTab === 'e-auto'
                       ? 'border-blue-500 text-blue-600'
                       : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                  } whitespace-nowrap pb-4 px-1 border-b-2 font-medium text-sm`}
+                  } whitespace-nowrap pb-4 px-1 border-b-2 font-medium text-sm flex items-center gap-2`}
                 >
-                  🚗 E-Auto Details
+                  <SimpleIcon type="car" className="w-4 h-4" />
+                  E-Auto Details
                 </Link>
               )}
 
@@ -238,9 +246,10 @@ export default async function AuswertungPage({
                     activeTab === 'waermepumpe'
                       ? 'border-blue-500 text-blue-600'
                       : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                  } whitespace-nowrap pb-4 px-1 border-b-2 font-medium text-sm`}
+                  } whitespace-nowrap pb-4 px-1 border-b-2 font-medium text-sm flex items-center gap-2`}
                 >
-                  🔥 Wärmepumpe Details
+                  <SimpleIcon type="heat" className="w-4 h-4 text-red-500" />
+                  Wärmepumpe Details
                 </Link>
               )}
 
@@ -251,9 +260,10 @@ export default async function AuswertungPage({
                     activeTab === 'speicher'
                       ? 'border-blue-500 text-blue-600'
                       : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                  } whitespace-nowrap pb-4 px-1 border-b-2 font-medium text-sm`}
+                  } whitespace-nowrap pb-4 px-1 border-b-2 font-medium text-sm flex items-center gap-2`}
                 >
-                  🔋 Speicher Details
+                  <SimpleIcon type="battery" className="w-4 h-4" />
+                  Speicher Details
                 </Link>
               )}
 
@@ -264,9 +274,10 @@ export default async function AuswertungPage({
                     activeTab === 'gesamt'
                       ? 'border-blue-500 text-blue-600'
                       : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                  } whitespace-nowrap pb-4 px-1 border-b-2 font-medium text-sm`}
+                  } whitespace-nowrap pb-4 px-1 border-b-2 font-medium text-sm flex items-center gap-2`}
                 >
-                  💎 Gesamtbilanz
+                  <SimpleIcon type="gem" className="w-4 h-4 text-green-500" />
+                  Gesamtbilanz
                 </Link>
               )}
             </nav>
@@ -283,9 +294,10 @@ export default async function AuswertungPage({
             </p>
             <Link
               href="/eingabe"
-              className="inline-block px-6 py-3 bg-blue-600 hover:bg-blue-700 rounded-md font-medium text-white"
+              className="inline-flex items-center gap-2 px-6 py-3 bg-blue-600 hover:bg-blue-700 rounded-md font-medium text-white"
             >
-              ➕ Daten erfassen
+              <SimpleIcon type="plus" className="w-5 h-5" />
+              Daten erfassen
             </Link>
           </div>
         ) : (

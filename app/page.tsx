@@ -1,9 +1,10 @@
 // app/page.tsx
-// Mit Einspeisung und Erlösen
+// Dashboard - Optimiert für neues Layout
 
 import { supabase } from '@/lib/supabase'
 import Link from 'next/link'
 import DashboardChart from '@/components/DashboardChart'
+import SimpleIcon from '@/components/SimpleIcon'
 
 async function getDashboardData() {
   const { data: anlage } = await supabase
@@ -26,257 +27,231 @@ export const dynamic = 'force-dynamic'
 export default async function DashboardPage() {
   const { anlage, monatsdaten } = await getDashboardData()
 
-  // String zu Number konvertieren
   const toNum = (val: any): number => {
     if (val === null || val === undefined) return 0
     return parseFloat(String(val)) || 0
   }
 
-  // Berechnungen
-  const gesamtErzeugung = monatsdaten.reduce((sum, m) => 
+  const gesamtErzeugung = monatsdaten.reduce((sum, m) =>
     sum + toNum(m.pv_erzeugung_kwh), 0
   )
-  
-  const gesamtEigenverbrauch = monatsdaten.reduce((sum, m) => 
+
+  const gesamtEigenverbrauch = monatsdaten.reduce((sum, m) =>
     sum + toNum(m.direktverbrauch_kwh) + toNum(m.batterieentladung_kwh), 0
   )
-  
-  const gesamtVerbrauch = monatsdaten.reduce((sum, m) => 
+
+  const gesamtVerbrauch = monatsdaten.reduce((sum, m) =>
     sum + toNum(m.gesamtverbrauch_kwh), 0
   )
 
-  // NEU: Einspeisung
-  const gesamtEinspeisung = monatsdaten.reduce((sum, m) => 
+  const gesamtEinspeisung = monatsdaten.reduce((sum, m) =>
     sum + toNum(m.einspeisung_kwh), 0
   )
 
-  // NEU: Erlöse
-  const gesamtErloese = monatsdaten.reduce((sum, m) => 
+  const gesamtErloese = monatsdaten.reduce((sum, m) =>
     sum + toNum(m.einspeisung_ertrag_euro), 0
   )
 
-  const gesamtNetzbezugKosten = monatsdaten.reduce((sum, m) => 
+  const gesamtNetzbezugKosten = monatsdaten.reduce((sum, m) =>
     sum + toNum(m.netzbezug_kosten_euro), 0
   )
 
   const nettoErtrag = gesamtErloese - gesamtNetzbezugKosten
-  
-  const eigenverbrauchsquote = gesamtErzeugung > 0 
-    ? (gesamtEigenverbrauch / gesamtErzeugung) * 100 
+
+  const eigenverbrauchsquote = gesamtErzeugung > 0
+    ? (gesamtEigenverbrauch / gesamtErzeugung) * 100
     : 0
-    
-  const autarkiegrad = gesamtVerbrauch > 0 
-    ? (gesamtEigenverbrauch / gesamtVerbrauch) * 100 
+
+  const autarkiegrad = gesamtVerbrauch > 0
+    ? (gesamtEigenverbrauch / gesamtVerbrauch) * 100
     : 0
 
   const fmt = (num: number) => num.toLocaleString('de-DE', { maximumFractionDigits: 0 })
   const fmtDec = (num: number) => num.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
-  // Chart Daten mit Einspeisung
   const monatsnamen = ['', 'Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez']
   const chartData = monatsdaten.map(m => ({
     monat: `${monatsnamen[m.monat]} ${m.jahr}`,
     eigenverbrauch: toNum(m.direktverbrauch_kwh) + toNum(m.batterieentladung_kwh),
     erzeugung: toNum(m.pv_erzeugung_kwh),
     verbrauch: toNum(m.gesamtverbrauch_kwh),
-    einspeisung: toNum(m.einspeisung_kwh)  // NEU
+    einspeisung: toNum(m.einspeisung_kwh)
   }))
 
   return (
-    <main className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <div className="bg-white shadow">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-2">
-                <span>🌞</span> EEDC Dashboard
-              </h1>
-              <p className="mt-1 text-sm text-gray-600">
-                Electronic Energy Data Collection - Deine PV-Übersicht
-              </p>
+    <div>
+      <div className="mb-8">
+        <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-2">
+          <SimpleIcon type="sun" className="w-8 h-8 text-yellow-500" /> Dashboard
+        </h1>
+        <p className="mt-2 text-gray-600">
+          Übersicht deiner PV-Anlage und Energiedaten
+        </p>
+      </div>
+
+      {!anlage ? (
+        <div className="bg-white rounded-lg shadow p-8 text-center">
+          <p className="text-gray-500 mb-4">Keine Anlage gefunden</p>
+          <Link
+            href="/anlage"
+            className="inline-block px-6 py-3 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+          >
+            Jetzt Anlage anlegen
+          </Link>
+        </div>
+      ) : (
+        <div className="space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div className="bg-white rounded-lg shadow p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-gray-600">Gesamt-Verbrauch</p>
+                  <p className="text-2xl font-bold text-gray-900 mt-1">
+                    {fmt(gesamtVerbrauch)} kWh
+                  </p>
+                </div>
+                <SimpleIcon type="plug" className="w-12 h-12 text-gray-400" />
+              </div>
             </div>
-            <div className="flex gap-3">
-              <Link 
-                href="/anlage"
-                className="px-4 py-2 bg-orange-600 hover:bg-orange-700 rounded-md font-medium text-white"
-              >
-                ⚙️ Anlage verwalten
-              </Link>
-              <Link
-                href="/auswertung"
-                className="px-4 py-2 bg-purple-100 hover:bg-purple-200 rounded-md font-medium text-purple-700"
-              >
-                📊 Auswertung
-              </Link>
-              <Link
-                href="/uebersicht"
-                className="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-md font-medium text-gray-700"
-              >
-                📋 Übersicht
-              </Link>
+
+            <div className="bg-white rounded-lg shadow p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-gray-600">PV-Erzeugung</p>
+                  <p className="text-2xl font-bold text-gray-900 mt-1">
+                    {fmt(gesamtErzeugung)} kWh
+                  </p>
+                </div>
+                <SimpleIcon type="sun" className="w-12 h-12 text-yellow-500" />
+              </div>
+            </div>
+
+            <div className="bg-white rounded-lg shadow p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-gray-600">Eigenverbrauch</p>
+                  <p className="text-2xl font-bold text-gray-900 mt-1">
+                    {fmt(gesamtEigenverbrauch)} kWh
+                  </p>
+                </div>
+                <SimpleIcon type="home" className="w-12 h-12 text-blue-500" />
+              </div>
+            </div>
+
+            <div className="bg-white rounded-lg shadow p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-gray-600">Einspeisung</p>
+                  <p className="text-2xl font-bold text-gray-900 mt-1">
+                    {fmt(gesamtEinspeisung)} kWh
+                  </p>
+                </div>
+                <SimpleIcon type="lightning" className="w-12 h-12 text-orange-500" />
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="bg-white rounded-lg shadow p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-gray-600">Ø Autarkie</p>
+                  <p className="text-2xl font-bold text-gray-900 mt-1">
+                    {autarkiegrad.toFixed(0)}%
+                  </p>
+                </div>
+                <SimpleIcon type="chart" className="w-12 h-12 text-purple-500" />
+              </div>
+            </div>
+
+            <div className="bg-white rounded-lg shadow p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-gray-600">Erlöse</p>
+                  <p className="text-2xl font-bold text-blue-700 mt-1">
+                    {fmtDec(gesamtErloese)} €
+                  </p>
+                </div>
+                <SimpleIcon type="money" className="w-12 h-12 text-blue-500" />
+              </div>
+            </div>
+
+            <div className="bg-white rounded-lg shadow p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-gray-600">Netto-Ertrag</p>
+                  <p className="text-2xl font-bold text-green-700 mt-1">
+                    {fmtDec(nettoErtrag)} €
+                  </p>
+                </div>
+                <SimpleIcon type="gem" className="w-12 h-12 text-green-500" />
+              </div>
+            </div>
+          </div>
+
+          {chartData.length > 0 && (
+            <div className="bg-white rounded-lg shadow p-6">
+              <h2 className="text-xl font-semibold text-gray-900 mb-4 flex items-center gap-2">
+                <SimpleIcon type="trend" className="w-6 h-6 text-blue-600" />
+                Monatlicher Verlauf
+              </h2>
+              <DashboardChart data={chartData} />
+            </div>
+          )}
+
+          <div className="bg-gradient-to-r from-blue-50 to-green-50 border border-blue-200 rounded-lg p-6">
+            <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+              <SimpleIcon type="rocket" className="w-6 h-6 text-blue-600" />
+              Schnellzugriff
+            </h3>
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
               <Link
                 href="/eingabe"
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-md font-medium text-white"
+                className="flex items-center gap-3 p-4 bg-white rounded-lg hover:shadow-md transition-shadow"
               >
-                ➕ Daten erfassen
+                <SimpleIcon type="plus" className="w-8 h-8 text-blue-600" />
+                <div>
+                  <div className="font-medium text-gray-900">Daten erfassen</div>
+                  <div className="text-sm text-gray-600">Monatsdaten</div>
+                </div>
+              </Link>
+
+              <Link
+                href="/investitionen"
+                className="flex items-center gap-3 p-4 bg-white rounded-lg hover:shadow-md transition-shadow"
+              >
+                <SimpleIcon type="briefcase" className="w-8 h-8 text-purple-600" />
+                <div>
+                  <div className="font-medium text-gray-900">Investitionen</div>
+                  <div className="text-sm text-gray-600">Verwalten</div>
+                </div>
+              </Link>
+
+              <Link
+                href="/stammdaten"
+                className="flex items-center gap-3 p-4 bg-white rounded-lg hover:shadow-md transition-shadow border-2 border-green-500"
+              >
+                <SimpleIcon type="clipboard" className="w-8 h-8 text-green-600" />
+                <div>
+                  <div className="font-medium text-gray-900">Stammdaten</div>
+                  <div className="text-sm text-green-600 font-semibold">NEU</div>
+                </div>
+              </Link>
+
+              <Link
+                href="/auswertung"
+                className="flex items-center gap-3 p-4 bg-white rounded-lg hover:shadow-md transition-shadow"
+              >
+                <SimpleIcon type="chart" className="w-8 h-8 text-orange-600" />
+                <div>
+                  <div className="font-medium text-gray-900">Auswertungen</div>
+                  <div className="text-sm text-gray-600">ROI & Charts</div>
+                </div>
               </Link>
             </div>
           </div>
         </div>
-      </div>
-
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {!anlage ? (
-          <div className="bg-white rounded-lg shadow p-8 text-center">
-            <p className="text-gray-500">Keine Anlage gefunden</p>
-          </div>
-        ) : (
-          <div className="space-y-6">
-            {/* KPI Cards - Erste Reihe */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-              <div className="bg-white rounded-lg shadow p-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm text-gray-600">Gesamt-Verbrauch</p>
-                    <p className="text-2xl font-bold text-gray-900 mt-1">
-                      {fmt(gesamtVerbrauch)} kWh
-                    </p>
-                  </div>
-                  <span className="text-4xl">⚡</span>
-                </div>
-              </div>
-
-              <div className="bg-white rounded-lg shadow p-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm text-gray-600">PV-Erzeugung</p>
-                    <p className="text-2xl font-bold text-gray-900 mt-1">
-                      {fmt(gesamtErzeugung)} kWh
-                    </p>
-                  </div>
-                  <span className="text-4xl">☀️</span>
-                </div>
-              </div>
-
-              <div className="bg-white rounded-lg shadow p-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm text-gray-600">Eigenverbrauch</p>
-                    <p className="text-2xl font-bold text-gray-900 mt-1">
-                      {fmt(gesamtEigenverbrauch)} kWh
-                    </p>
-                  </div>
-                  <span className="text-4xl">🏠</span>
-                </div>
-              </div>
-
-              {/* NEU: Einspeisung */}
-              <div className="bg-white rounded-lg shadow p-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm text-gray-600">Einspeisung</p>
-                    <p className="text-2xl font-bold text-gray-900 mt-1">
-                      {fmt(gesamtEinspeisung)} kWh
-                    </p>
-                  </div>
-                  <span className="text-4xl">⚡</span>
-                </div>
-              </div>
-            </div>
-
-            {/* KPI Cards - Zweite Reihe: Finanzen */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="bg-white rounded-lg shadow p-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm text-gray-600">Ø Autarkie</p>
-                    <p className="text-2xl font-bold text-gray-900 mt-1">
-                      {autarkiegrad.toFixed(0)}%
-                    </p>
-                  </div>
-                  <span className="text-4xl">📊</span>
-                </div>
-              </div>
-
-              {/* NEU: Erlöse */}
-              <div className="bg-white rounded-lg shadow p-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm text-gray-600">Erlöse (Einspeisung)</p>
-                    <p className="text-2xl font-bold text-blue-700 mt-1">
-                      {fmtDec(gesamtErloese)} €
-                    </p>
-                  </div>
-                  <span className="text-4xl">💰</span>
-                </div>
-              </div>
-
-              {/* NEU: Netto-Ertrag */}
-              <div className="bg-white rounded-lg shadow p-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm text-gray-600">Netto-Ertrag</p>
-                    <p className="text-2xl font-bold text-green-700 mt-1">
-                      {fmtDec(nettoErtrag)} €
-                    </p>
-                  </div>
-                  <span className="text-4xl">💎</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Chart */}
-            {chartData.length > 0 && (
-              <div className="bg-white rounded-lg shadow p-6">
-                <h2 className="text-xl font-semibold text-gray-900 mb-4">
-                  📈 Monatlicher Verlauf
-                </h2>
-                <DashboardChart data={chartData} />
-              </div>
-            )}
-
-            {/* Quick Actions */}
-            <div className="bg-gradient-to-r from-blue-50 to-green-50 border border-blue-200 rounded-lg p-6">
-              <h3 className="text-lg font-semibold text-gray-900 mb-4">🚀 Schnellzugriff</h3>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <Link
-                  href="/eingabe"
-                  className="flex items-center gap-3 p-4 bg-white rounded-lg hover:shadow-md transition-shadow"
-                >
-                  <span className="text-3xl">➕</span>
-                  <div>
-                    <div className="font-medium text-gray-900">Monatsdaten erfassen</div>
-                    <div className="text-sm text-gray-600">PV & E-Auto Daten</div>
-                  </div>
-                </Link>
-                
-                <Link
-                  href="/investitionen"
-                  className="flex items-center gap-3 p-4 bg-white rounded-lg hover:shadow-md transition-shadow"
-                >
-                  <span className="text-3xl">💼</span>
-                  <div>
-                    <div className="font-medium text-gray-900">Investitionen</div>
-                    <div className="text-sm text-gray-600">E-Auto, Wärmepumpe, etc.</div>
-                  </div>
-                </Link>
-                
-                <Link
-                  href="/auswertung"
-                  className="flex items-center gap-3 p-4 bg-white rounded-lg hover:shadow-md transition-shadow"
-                >
-                  <span className="text-3xl">📊</span>
-                  <div>
-                    <div className="font-medium text-gray-900">Auswertungen</div>
-                    <div className="text-sm text-gray-600">ROI, Charts, Bilanz</div>
-                  </div>
-                </Link>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-    </main>
+      )}
+    </div>
   )
 }

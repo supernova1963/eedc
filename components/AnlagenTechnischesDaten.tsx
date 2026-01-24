@@ -3,6 +3,8 @@
 
 'use client'
 
+import SimpleIcon from './SimpleIcon'
+
 export default function AnlagenTechnischesDaten({ anlage }: { anlage: any }) {
   const fmt = (num?: number) => {
     if (!num && num !== 0) return '-'
@@ -11,8 +13,9 @@ export default function AnlagenTechnischesDaten({ anlage }: { anlage: any }) {
 
   return (
     <div className="bg-white rounded-lg shadow p-6">
-      <h2 className="text-xl font-semibold text-gray-900 mb-4">
-        ⚙️ Technische Daten
+      <h2 className="text-xl font-semibold text-gray-900 mb-4 flex items-center gap-2">
+        <SimpleIcon type="settings" className="w-5 h-5 text-gray-600" />
+        Technische Daten
       </h2>
 
       <p className="text-sm text-gray-600 mb-6">
@@ -172,7 +175,7 @@ export default function AnlagenTechnischesDaten({ anlage }: { anlage: any }) {
       {/* Hinweis */}
       <div className="mt-6 bg-yellow-50 border border-yellow-200 rounded-lg p-4">
         <div className="flex gap-2">
-          <span className="text-yellow-600">💡</span>
+          <SimpleIcon type="info" className="w-5 h-5 text-yellow-600" />
           <div className="text-sm text-yellow-900">
             <strong>Hinweis:</strong> Diese Daten stammen aus der ursprünglichen Anlagen-Struktur. 
             Zukünftig werden detaillierte Komponenten als separate Investitionen erfasst.

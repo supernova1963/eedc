@@ -2,6 +2,7 @@
 // Vereinfachtes Anlagen-Profil mit Tabs
 
 import { supabase } from '@/lib/supabase'
+import SimpleIcon from '@/components/SimpleIcon'
 import Link from 'next/link'
 import AnlagenProfilForm from '@/components/AnlagenProfilForm'
 import AnlagenFreigabeForm from '@/components/AnlagenFreigabeForm'
@@ -50,7 +51,10 @@ export default async function AnlagePage({
       <main className="min-h-screen bg-gray-50">
         <div className="bg-white shadow">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-            <h1 className="text-3xl font-bold text-gray-900">🏠 PV-Anlage</h1>
+            <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-2">
+              <SimpleIcon type="home" className="w-8 h-8 text-blue-600" />
+              PV-Anlage
+            </h1>
           </div>
         </div>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -75,8 +79,9 @@ export default async function AnlagePage({
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
           <div className="flex items-center justify-between">
             <div>
-              <h1 className="text-3xl font-bold text-gray-900">
-                🏠 {anlage.anlagenname || 'PV-Anlage'}
+              <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-2">
+                <SimpleIcon type="home" className="w-8 h-8 text-blue-600" />
+                {anlage.anlagenname || 'PV-Anlage'}
               </h1>
               <p className="mt-2 text-sm text-gray-600">
                 {mitglied ? `${mitglied.vorname} ${mitglied.nachname}` : 'Mitglied'} · {anlage.standort_ort || 'Standort'}
@@ -85,15 +90,17 @@ export default async function AnlagePage({
             <div className="flex gap-3">
               <Link
                 href="/investitionen"
-                className="px-4 py-2 bg-blue-100 hover:bg-blue-200 text-blue-700 rounded-md font-medium"
+                className="px-4 py-2 bg-blue-100 hover:bg-blue-200 text-blue-700 rounded-md font-medium flex items-center gap-2"
               >
-                💼 Investitionen
+                <SimpleIcon type="briefcase" className="w-4 h-4 text-purple-600" />
+                Investitionen
               </Link>
               <Link
                 href="/"
-                className="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-md font-medium text-gray-700"
+                className="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-md font-medium text-gray-700 flex items-center gap-2"
               >
-                ← Dashboard
+                <SimpleIcon type="back" className="w-4 h-4" />
+                Dashboard
               </Link>
             </div>
           </div>
@@ -107,20 +114,22 @@ export default async function AnlagePage({
                   activeTab === 'profil'
                     ? 'border-blue-500 text-blue-600'
                     : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                } whitespace-nowrap pb-4 px-1 border-b-2 font-medium text-sm`}
+                } whitespace-nowrap pb-4 px-1 border-b-2 font-medium text-sm flex items-center gap-2`}
               >
-                📋 Profil
+                <SimpleIcon type="file" className="w-4 h-4" />
+                Profil
               </Link>
-              
+
               <Link
                 href="/anlage?tab=freigabe"
                 className={`${
                   activeTab === 'freigabe'
                     ? 'border-blue-500 text-blue-600'
                     : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                } whitespace-nowrap pb-4 px-1 border-b-2 font-medium text-sm`}
+                } whitespace-nowrap pb-4 px-1 border-b-2 font-medium text-sm flex items-center gap-2`}
               >
-                🔒 Freigabe
+                <SimpleIcon type="link" className="w-4 h-4" />
+                Freigabe
               </Link>
 
               <Link
@@ -129,9 +138,10 @@ export default async function AnlagePage({
                   activeTab === 'technisch'
                     ? 'border-blue-500 text-blue-600'
                     : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                } whitespace-nowrap pb-4 px-1 border-b-2 font-medium text-sm`}
+                } whitespace-nowrap pb-4 px-1 border-b-2 font-medium text-sm flex items-center gap-2`}
               >
-                ⚙️ Technische Daten
+                <SimpleIcon type="settings" className="w-4 h-4" />
+                Technische Daten
               </Link>
             </nav>
           </div>

@@ -16,6 +16,7 @@ import BalkonkraftwerkFields from '@/components/investitionen/BalkonkraftwerkFie
 import WechselrichterFields from '@/components/investitionen/WechselrichterFields'
 import PVModuleFields from '@/components/investitionen/PVModuleFields'
 import ResultsPreview from '@/components/investitionen/ResultsPreview'
+import SimpleIcon from './SimpleIcon'
 
 interface InvestitionFormSimpleProps {
   mitgliedId: string
@@ -48,8 +49,18 @@ export default function InvestitionFormSimple({ mitgliedId, editData, onSuccess 
 
   return (
     <div className="bg-white rounded-lg shadow p-6">
-      <h2 className="text-xl font-semibold text-gray-900 mb-6">
-        {isEditing ? '✏️ Investition bearbeiten' : '➕ Neue Investition erfassen'}
+      <h2 className="text-xl font-semibold text-gray-900 mb-6 flex items-center gap-2">
+        {isEditing ? (
+          <>
+            <SimpleIcon type="edit" className="w-5 h-5 text-gray-700" />
+            Investition bearbeiten
+          </>
+        ) : (
+          <>
+            <SimpleIcon type="plus" className="w-5 h-5 text-gray-700" />
+            Neue Investition erfassen
+          </>
+        )}
       </h2>
 
       {error && <Alert type="error" className="mb-4">{error}</Alert>}
@@ -127,8 +138,9 @@ export default function InvestitionFormSimple({ mitgliedId, editData, onSuccess 
         {mehrkosten > 0 && (
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
             <div className="flex justify-between items-center">
-              <span className="text-sm font-medium text-blue-900">
-                💰 Relevante Mehrkosten (für ROI):
+              <span className="text-sm font-medium text-blue-900 flex items-center gap-2">
+                <SimpleIcon type="money" className="w-4 h-4 text-blue-700" />
+                Relevante Mehrkosten (für ROI):
               </span>
               <span className="text-lg font-bold text-blue-700">
                 {mehrkosten.toLocaleString('de-DE', { maximumFractionDigits: 0 })} €
@@ -139,7 +151,10 @@ export default function InvestitionFormSimple({ mitgliedId, editData, onSuccess 
 
         {/* Jährliche Kosten */}
         <div className="border-t pt-6">
-          <h3 className="text-lg font-medium text-gray-900 mb-4">💸 Jährliche Kosten</h3>
+          <h3 className="text-lg font-medium text-gray-900 mb-4 flex items-center gap-2">
+            <SimpleIcon type="money" className="w-5 h-5 text-gray-600" />
+            Jährliche Kosten
+          </h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <FormInput
               label="Gesamt-Kosten pro Jahr (aktuell)"
@@ -224,11 +239,16 @@ export default function InvestitionFormSimple({ mitgliedId, editData, onSuccess 
           <button
             type="submit"
             disabled={loading}
-            className={`px-6 py-3 rounded-md font-medium text-white ${
+            className={`px-6 py-3 rounded-md font-medium text-white flex items-center gap-2 ${
               loading ? 'bg-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'
             }`}
           >
-            {loading ? 'Speichert...' : isEditing ? '💾 Änderungen speichern' : '💾 Investition speichern'}
+            {loading ? 'Speichert...' : (
+              <>
+                <SimpleIcon type="save" className="w-4 h-4" />
+                {isEditing ? 'Änderungen speichern' : 'Investition speichern'}
+              </>
+            )}
           </button>
         </div>
       </form>

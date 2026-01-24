@@ -3,6 +3,8 @@
 
 'use client'
 
+import SimpleIcon from './SimpleIcon'
+
 interface DeleteButtonProps {
   investitionId: string
   bezeichnung: string
@@ -30,7 +32,7 @@ export default function DeleteButton({ investitionId, bezeichnung, deleteAction 
         className="text-red-600 hover:text-red-900"
         title="Löschen"
       >
-        🗑️
+        <SimpleIcon type="trash" className="w-4 h-4" />
       </button>
     </form>
   )

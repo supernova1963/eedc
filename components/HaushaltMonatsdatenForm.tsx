@@ -7,6 +7,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
+import SimpleIcon from './SimpleIcon'
 
 interface HaushaltMonatsdatenFormProps {
   anlage: any
@@ -172,8 +173,9 @@ export default function HaushaltMonatsdatenForm({ anlage }: HaushaltMonatsdatenF
 
   return (
     <div className="bg-white rounded-lg shadow p-6">
-      <h2 className="text-xl font-semibold text-gray-900 mb-6">
-        🏠 Haushalts-Monatsdaten
+      <h2 className="text-xl font-semibold text-gray-900 mb-6 flex items-center gap-2">
+        <SimpleIcon type="home" className="w-5 h-5 text-gray-700" />
+        Haushalts-Monatsdaten
       </h2>
 
       {error && (

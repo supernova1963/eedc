@@ -6,6 +6,7 @@
 import { InvestitionPrognoseIstVergleich, InvestitionMonatsdatenDetail } from '@/lib/supabase'
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
 import Link from 'next/link'
+import SimpleIcon from './SimpleIcon'
 
 interface EAutoAuswertungProps {
   investition: any
@@ -51,8 +52,9 @@ export default function EAutoAuswertung({
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-bold text-gray-900 mb-2">
-            🚗 {investition.bezeichnung}
+          <h2 className="text-2xl font-bold text-gray-900 mb-2 flex items-center gap-2">
+            <SimpleIcon type="car" className="w-6 h-6 text-gray-700" />
+            {investition.bezeichnung}
           </h2>
           <p className="text-sm text-gray-600">
             {investition.alternativ_beschreibung && `vs. ${investition.alternativ_beschreibung} • `}
@@ -61,17 +63,19 @@ export default function EAutoAuswertung({
         </div>
         <Link
           href="/eingabe?tab=e-auto"
-          className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-md font-medium text-white"
+          className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-md font-medium text-white flex items-center gap-2"
         >
-          ➕ Monat erfassen
+          <SimpleIcon type="plus" className="w-4 h-4" />
+          Monat erfassen
         </Link>
       </div>
 
       {/* Prognose vs. Ist */}
       {prognoseVergleich && (
         <div className="bg-white rounded-lg shadow p-6">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">
-            📊 Prognose vs. Ist ({prognoseVergleich.jahr || new Date().getFullYear()})
+          <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+            <SimpleIcon type="chart" className="w-5 h-5 text-gray-600" />
+            Prognose vs. Ist ({prognoseVergleich.jahr || new Date().getFullYear()})
           </h3>
 
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
@@ -123,11 +127,15 @@ export default function EAutoAuswertung({
             'bg-gray-50 border border-gray-200'
           }`}>
             <div className="flex items-center gap-2">
-              <span className="text-2xl">
-                {prognoseVergleich.bewertung === 'Besser als Prognose' ? '✅' :
-                 prognoseVergleich.bewertung === 'Schlechter als Prognose' ? '⚠️' :
-                 prognoseVergleich.bewertung === 'Im Rahmen der Prognose' ? '👍' : 'ℹ️'}
-              </span>
+              {prognoseVergleich.bewertung === 'Besser als Prognose' ? (
+                <SimpleIcon type="check" className="w-6 h-6 text-green-600" />
+              ) : prognoseVergleich.bewertung === 'Schlechter als Prognose' ? (
+                <SimpleIcon type="error" className="w-6 h-6 text-yellow-600" />
+              ) : prognoseVergleich.bewertung === 'Im Rahmen der Prognose' ? (
+                <SimpleIcon type="check" className="w-6 h-6 text-blue-600" />
+              ) : (
+                <SimpleIcon type="info" className="w-6 h-6 text-gray-600" />
+              )}
               <div>
                 <div className="font-medium">{prognoseVergleich.bewertung}</div>
                 {prognoseVergleich.bewertung === 'Besser als Prognose' && (
@@ -149,8 +157,9 @@ export default function EAutoAuswertung({
       {/* Charts */}
       {monatsdaten.length > 0 && (
         <div className="bg-white rounded-lg shadow p-6">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">
-            📈 Monatliche Entwicklung
+          <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+            <SimpleIcon type="trend" className="w-5 h-5 text-gray-600" />
+            Monatliche Entwicklung
           </h3>
 
           {/* Einsparung Chart */}
@@ -193,8 +202,9 @@ export default function EAutoAuswertung({
       {monatsdaten.length > 0 ? (
         <div className="bg-white rounded-lg shadow overflow-hidden">
           <div className="px-6 py-4 border-b border-gray-200">
-            <h3 className="text-lg font-semibold text-gray-900">
-              📋 Alle erfassten Monate ({monatsdaten.length})
+            <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+              <SimpleIcon type="clipboard" className="w-5 h-5 text-gray-600" />
+              Alle erfassten Monate ({monatsdaten.length})
             </h3>
           </div>
           
@@ -272,7 +282,7 @@ export default function EAutoAuswertung({
                             className="text-blue-600 hover:text-blue-900 mr-3"
                             title="Bearbeiten"
                           >
-                            ✏️
+                            <SimpleIcon type="edit" className="w-4 h-4" />
                           </Link>
                           {/* TODO: Löschen-Button */}
                         </td>
@@ -290,9 +300,10 @@ export default function EAutoAuswertung({
           </p>
           <Link
             href="/eingabe?tab=e-auto"
-            className="inline-block px-6 py-3 bg-blue-600 hover:bg-blue-700 rounded-md font-medium text-white"
+            className="inline-flex items-center gap-2 px-6 py-3 bg-blue-600 hover:bg-blue-700 rounded-md font-medium text-white"
           >
-            ➕ Ersten Monat erfassen
+            <SimpleIcon type="plus" className="w-4 h-4" />
+            Ersten Monat erfassen
           </Link>
         </div>
       )}

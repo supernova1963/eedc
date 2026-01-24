@@ -6,6 +6,7 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
+import SimpleIcon from './SimpleIcon'
 
 interface EAutoMonatsdatenFormProps {
   investition: any
@@ -198,8 +199,9 @@ export default function EAutoMonatsdatenForm({ investition, existingData }: EAut
   return (
     <div className="bg-white rounded-lg shadow p-6">
       <div className="mb-4">
-        <h3 className="text-lg font-semibold text-gray-900">
-          🚗 {investition.bezeichnung}
+        <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+          <SimpleIcon type="car" className="w-5 h-5 text-gray-700" />
+          {investition.bezeichnung}
         </h3>
         <p className="text-sm text-gray-600">
           Monatsdaten erfassen
@@ -207,8 +209,9 @@ export default function EAutoMonatsdatenForm({ investition, existingData }: EAut
       </div>
 
       {error && (
-        <div className="mb-4 bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded">
-          ❌ {error}
+        <div className="mb-4 bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded flex items-center gap-2">
+          <SimpleIcon type="error" className="w-5 h-5" />
+          {error}
         </div>
       )}
 
@@ -251,7 +254,10 @@ export default function EAutoMonatsdatenForm({ investition, existingData }: EAut
 
         {/* Verbrauchsdaten */}
         <div className="border-t pt-4">
-          <h4 className="font-medium text-gray-900 mb-3">📊 Verbrauchsdaten</h4>
+          <h4 className="font-medium text-gray-900 mb-3 flex items-center gap-2">
+            <SimpleIcon type="chart" className="w-4 h-4 text-gray-600" />
+            Verbrauchsdaten
+          </h4>
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -307,7 +313,10 @@ export default function EAutoMonatsdatenForm({ investition, existingData }: EAut
 
         {/* Strompreis + Kosten */}
         <div className="border-t pt-4">
-          <h4 className="font-medium text-gray-900 mb-3">💸 Preise & Kosten</h4>
+          <h4 className="font-medium text-gray-900 mb-3 flex items-center gap-2">
+            <SimpleIcon type="money" className="w-4 h-4 text-gray-600" />
+            Preise & Kosten
+          </h4>
           
           {/* NEU: Strompreis */}
           <div className="mb-4">
@@ -381,7 +390,10 @@ export default function EAutoMonatsdatenForm({ investition, existingData }: EAut
         {/* Berechnete Werte */}
         {km > 0 && stromKwh > 0 && (
           <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-            <h4 className="font-medium text-green-900 mb-3">🧮 Automatisch berechnet:</h4>
+            <h4 className="font-medium text-green-900 mb-3 flex items-center gap-2">
+              <SimpleIcon type="chart" className="w-4 h-4 text-green-700" />
+              Automatisch berechnet:
+            </h4>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
               <div>
                 <span className="text-green-700">Verbrauch:</span>
@@ -462,11 +474,16 @@ export default function EAutoMonatsdatenForm({ investition, existingData }: EAut
           <button
             type="submit"
             disabled={loading}
-            className={`px-4 py-2 rounded-md font-medium text-white ${
+            className={`px-4 py-2 rounded-md font-medium text-white flex items-center gap-2 ${
               loading ? 'bg-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'
             }`}
           >
-            {loading ? 'Speichert...' : '💾 Speichern'}
+            {loading ? 'Speichert...' : (
+              <>
+                <SimpleIcon type="save" className="w-4 h-4" />
+                Speichern
+              </>
+            )}
           </button>
         </div>
       </form>

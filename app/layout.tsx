@@ -1,5 +1,6 @@
 import './globals.css'
 import type { Metadata } from 'next'
+import AppLayout from '@/components/AppLayout'
 
 export const metadata: Metadata = {
   title: 'EEDC - Energy Data Collection',
@@ -13,7 +14,9 @@ export default function RootLayout({
 }) {
   return (
     <html lang="de">
-      <body>{children}</body>
+      <body>
+        <AppLayout>{children}</AppLayout>
+      </body>
     </html>
   )
 }

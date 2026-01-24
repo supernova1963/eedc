@@ -4,6 +4,7 @@
 'use client'
 
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
+import SimpleIcon from './SimpleIcon'
 
 interface WirtschaftlichkeitStatsProps {
   monatsdaten: any[]
@@ -96,8 +97,9 @@ export default function WirtschaftlichkeitStats({ monatsdaten, anlage }: Wirtsch
       {/* Chart */}
       {chartData.length > 0 && (
         <div className="bg-white rounded-lg shadow p-6">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">
-            📈 Monatliche Entwicklung
+          <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+            <SimpleIcon type="trend" className="w-5 h-5 text-gray-600" />
+            Monatliche Entwicklung
           </h3>
           <ResponsiveContainer width="100%" height={300}>
             <BarChart data={chartData}>
@@ -116,8 +118,9 @@ export default function WirtschaftlichkeitStats({ monatsdaten, anlage }: Wirtsch
       {/* Tabelle */}
       <div className="bg-white rounded-lg shadow overflow-hidden">
         <div className="px-6 py-4 border-b border-gray-200">
-          <h3 className="text-lg font-semibold text-gray-900">
-            📋 Monatsdaten ({monatsdaten.length})
+          <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+            <SimpleIcon type="clipboard" className="w-5 h-5 text-gray-600" />
+            Monatsdaten ({monatsdaten.length})
           </h3>
         </div>
         <div className="overflow-x-auto">

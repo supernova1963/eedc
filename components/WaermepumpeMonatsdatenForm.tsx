@@ -4,6 +4,7 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
+import SimpleIcon from './SimpleIcon'
 
 interface WaermepumpeMonatsdatenFormProps {
   investition: any
@@ -123,13 +124,15 @@ export default function WaermepumpeMonatsdatenForm({ investition }: WaermepumpeM
 
   return (
     <div className="bg-white rounded-lg shadow p-6">
-      <h2 className="text-xl font-semibold text-gray-900 mb-6">
-        🔥 {investition.bezeichnung}
+      <h2 className="text-xl font-semibold text-gray-900 mb-6 flex items-center gap-2">
+        <SimpleIcon type="heat" className="w-5 h-5 text-orange-500" />
+        {investition.bezeichnung}
       </h2>
 
       {error && (
-        <div className="mb-4 bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded">
-          ❌ {error}
+        <div className="mb-4 bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded flex items-center gap-2">
+          <SimpleIcon type="error" className="w-5 h-5" />
+          {error}
         </div>
       )}
 
@@ -250,7 +253,10 @@ export default function WaermepumpeMonatsdatenForm({ investition }: WaermepumpeM
         {/* Berechnete Werte - Vorschau */}
         {stromKwh > 0 && (
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-            <h3 className="text-sm font-semibold text-blue-900 mb-3">📊 Berechnete Werte:</h3>
+            <h3 className="text-sm font-semibold text-blue-900 mb-3 flex items-center gap-2">
+              <SimpleIcon type="chart" className="w-4 h-4 text-blue-700" />
+              Berechnete Werte:
+            </h3>
             <div className="grid grid-cols-2 gap-3 text-sm">
               <div>
                 <span className="text-blue-700">Strom von PV:</span>
@@ -306,11 +312,16 @@ export default function WaermepumpeMonatsdatenForm({ investition }: WaermepumpeM
           <button
             type="submit"
             disabled={loading}
-            className={`px-6 py-3 rounded-md font-medium text-white ${
+            className={`px-6 py-3 rounded-md font-medium text-white flex items-center gap-2 ${
               loading ? 'bg-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'
             }`}
           >
-            {loading ? 'Speichert...' : '💾 Speichern'}
+            {loading ? 'Speichert...' : (
+              <>
+                <SimpleIcon type="save" className="w-4 h-4" />
+                Speichern
+              </>
+            )}
           </button>
         </div>
       </form>

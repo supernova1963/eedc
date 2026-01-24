@@ -4,6 +4,7 @@
 import { useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
+import SimpleIcon from './SimpleIcon'
 
 interface AnlageEditFormProps {
   anlage: any
@@ -94,15 +95,17 @@ export default function AnlageEditForm({ anlage }: AnlageEditFormProps) {
     return (
       <div className="bg-white rounded-lg shadow p-6">
         {success && (
-          <div className="mb-4 bg-green-50 border border-green-200 text-green-800 px-4 py-3 rounded">
-            ✅ Änderungen erfolgreich gespeichert!
+          <div className="mb-4 bg-green-50 border border-green-200 text-green-800 px-4 py-3 rounded flex items-center gap-2">
+            <SimpleIcon type="check" className="w-5 h-5" />
+            Änderungen erfolgreich gespeichert!
           </div>
         )}
         <button
           onClick={() => setIsEditing(true)}
-          className="w-full px-6 py-3 bg-blue-600 hover:bg-blue-700 rounded-md font-medium text-white"
+          className="w-full px-6 py-3 bg-blue-600 hover:bg-blue-700 rounded-md font-medium text-white flex items-center justify-center gap-2"
         >
-          ✏️ Stammdaten bearbeiten
+          <SimpleIcon type="edit" className="w-4 h-4" />
+          Stammdaten bearbeiten
         </button>
       </div>
     )
@@ -110,13 +113,15 @@ export default function AnlageEditForm({ anlage }: AnlageEditFormProps) {
 
   return (
     <div className="bg-white rounded-lg shadow p-6">
-      <h2 className="text-xl font-semibold text-gray-900 mb-6">
-        ✏️ Stammdaten bearbeiten
+      <h2 className="text-xl font-semibold text-gray-900 mb-6 flex items-center gap-2">
+        <SimpleIcon type="edit" className="w-5 h-5 text-gray-700" />
+        Stammdaten bearbeiten
       </h2>
 
       {error && (
-        <div className="mb-4 bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded">
-          ❌ {error}
+        <div className="mb-4 bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded flex items-center gap-2">
+          <SimpleIcon type="error" className="w-5 h-5" />
+          {error}
         </div>
       )}
 
@@ -279,11 +284,16 @@ export default function AnlageEditForm({ anlage }: AnlageEditFormProps) {
           <button
             type="submit"
             disabled={loading}
-            className={`px-6 py-3 rounded-md font-medium text-white ${
+            className={`px-6 py-3 rounded-md font-medium text-white flex items-center gap-2 ${
               loading ? 'bg-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'
             }`}
           >
-            {loading ? 'Speichert...' : '💾 Speichern'}
+            {loading ? 'Speichert...' : (
+              <>
+                <SimpleIcon type="save" className="w-4 h-4" />
+                Speichern
+              </>
+            )}
           </button>
         </div>
       </form>

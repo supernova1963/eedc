@@ -6,6 +6,7 @@
 import { useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
+import SimpleIcon from './SimpleIcon'
 
 interface AnlagenProfilFormProps {
   anlage: any
@@ -92,20 +93,25 @@ export default function AnlagenProfilForm({ anlage, mitglied }: AnlagenProfilFor
     return (
       <div className="space-y-6">
         {success && (
-          <div className="bg-green-50 border border-green-200 text-green-800 px-4 py-3 rounded">
-            ✅ Profil erfolgreich aktualisiert!
+          <div className="bg-green-50 border border-green-200 text-green-800 px-4 py-3 rounded flex items-center gap-2">
+            <SimpleIcon type="check" className="w-5 h-5" />
+            Profil erfolgreich aktualisiert!
           </div>
         )}
 
         {/* Profil-Übersicht */}
         <div className="bg-white rounded-lg shadow p-6">
           <div className="flex items-center justify-between mb-6">
-            <h2 className="text-xl font-semibold text-gray-900">📋 Öffentliches Profil</h2>
+            <h2 className="text-xl font-semibold text-gray-900 flex items-center gap-2">
+              <SimpleIcon type="clipboard" className="w-5 h-5 text-gray-600" />
+              Öffentliches Profil
+            </h2>
             <button
               onClick={() => setIsEditing(true)}
-              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-md font-medium text-white text-sm"
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-md font-medium text-white text-sm flex items-center gap-2"
             >
-              ✏️ Bearbeiten
+              <SimpleIcon type="edit" className="w-4 h-4" />
+              Bearbeiten
             </button>
           </div>
 
@@ -149,19 +155,19 @@ export default function AnlagenProfilForm({ anlage, mitglied }: AnlagenProfilFor
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 {anlage.batterie_bezeichnung && (
                   <div className="flex items-center gap-2">
-                    <span className="text-xl">🔋</span>
+                    <SimpleIcon type="battery" className="w-5 h-5 text-gray-600" />
                     <span className="text-gray-900">{anlage.batterie_bezeichnung}</span>
                   </div>
                 )}
                 {anlage.ekfz_bezeichnung && (
                   <div className="flex items-center gap-2">
-                    <span className="text-xl">🚗</span>
+                    <SimpleIcon type="car" className="w-5 h-5 text-gray-600" />
                     <span className="text-gray-900">{anlage.ekfz_bezeichnung}</span>
                   </div>
                 )}
                 {anlage.waermepumpe_bezeichnung && (
                   <div className="flex items-center gap-2">
-                    <span className="text-xl">🔥</span>
+                    <SimpleIcon type="heat" className="w-5 h-5 text-orange-500" />
                     <span className="text-gray-900">{anlage.waermepumpe_bezeichnung}</span>
                   </div>
                 )}
@@ -186,13 +192,15 @@ export default function AnlagenProfilForm({ anlage, mitglied }: AnlagenProfilFor
 
   return (
     <div className="bg-white rounded-lg shadow p-6">
-      <h2 className="text-xl font-semibold text-gray-900 mb-6">
-        ✏️ Profil bearbeiten
+      <h2 className="text-xl font-semibold text-gray-900 mb-6 flex items-center gap-2">
+        <SimpleIcon type="edit" className="w-5 h-5 text-gray-700" />
+        Profil bearbeiten
       </h2>
 
       {error && (
-        <div className="mb-4 bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded">
-          ❌ {error}
+        <div className="mb-4 bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded flex items-center gap-2">
+          <SimpleIcon type="error" className="w-5 h-5" />
+          {error}
         </div>
       )}
 
@@ -269,8 +277,9 @@ export default function AnlagenProfilForm({ anlage, mitglied }: AnlagenProfilFor
 
           <div className="space-y-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                🔋 Batterie (optional)
+              <label className="flex items-center gap-2 text-sm font-medium text-gray-700 mb-2">
+                <SimpleIcon type="battery" className="w-4 h-4 text-gray-600" />
+                Batterie (optional)
               </label>
               <input
                 type="text"
@@ -283,8 +292,9 @@ export default function AnlagenProfilForm({ anlage, mitglied }: AnlagenProfilFor
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                🚗 E-Fahrzeug (optional)
+              <label className="flex items-center gap-2 text-sm font-medium text-gray-700 mb-2">
+                <SimpleIcon type="car" className="w-4 h-4 text-gray-600" />
+                E-Fahrzeug (optional)
               </label>
               <input
                 type="text"
@@ -297,8 +307,9 @@ export default function AnlagenProfilForm({ anlage, mitglied }: AnlagenProfilFor
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                🔥 Wärmepumpe (optional)
+              <label className="flex items-center gap-2 text-sm font-medium text-gray-700 mb-2">
+                <SimpleIcon type="heat" className="w-4 h-4 text-orange-500" />
+                Wärmepumpe (optional)
               </label>
               <input
                 type="text"
@@ -339,11 +350,16 @@ export default function AnlagenProfilForm({ anlage, mitglied }: AnlagenProfilFor
           <button
             type="submit"
             disabled={loading}
-            className={`px-6 py-3 rounded-md font-medium text-white ${
+            className={`px-6 py-3 rounded-md font-medium text-white flex items-center gap-2 ${
               loading ? 'bg-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'
             }`}
           >
-            {loading ? 'Speichert...' : '💾 Speichern'}
+            {loading ? 'Speichert...' : (
+              <>
+                <SimpleIcon type="save" className="w-4 h-4" />
+                Speichern
+              </>
+            )}
           </button>
         </div>
       </form>

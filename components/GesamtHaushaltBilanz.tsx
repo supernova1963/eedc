@@ -4,6 +4,7 @@
 'use client'
 
 import Link from 'next/link'
+import SimpleIcon from './SimpleIcon'
 
 interface GesamtHaushaltBilanzProps {
   monatsdaten: any[]
@@ -39,30 +40,32 @@ export default function GesamtHaushaltBilanz({ monatsdaten, anlage, investitione
   // Bäume-Berechnung: 1 Baum bindet ca. 10 kg CO₂ pro Jahr
   const anzahlBaeume = Math.round(gesamtCO2 / 10)
 
-  const getIcon = (typ: string) => {
-    const icons: Record<string, string> = {
-      'e-auto': '🚗',
-      'waermepumpe': '🔥',
-      'speicher': '🔋',
-      'balkonkraftwerk': '☀️',
-      'wallbox': '⚡',
-      'sonstiges': '📦'
+  const getIconType = (typ: string) => {
+    const iconTypes: Record<string, string> = {
+      'e-auto': 'car',
+      'waermepumpe': 'heat',
+      'speicher': 'battery',
+      'balkonkraftwerk': 'solar',
+      'wallbox': 'wallbox',
+      'sonstiges': 'box'
     }
-    return icons[typ] || '📦'
+    return iconTypes[typ] || 'box'
   }
 
   return (
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-bold text-gray-900">
-          💎 Gesamtbilanz Haushalt
+        <h2 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+          <SimpleIcon type="gem" className="w-6 h-6 text-blue-600" />
+          Gesamtbilanz Haushalt
         </h2>
         <Link
           href="/investitionen"
-          className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-md font-medium text-white"
+          className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-md font-medium text-white flex items-center gap-2"
         >
-          💼 Investitionen verwalten
+          <SimpleIcon type="briefcase" className="w-4 h-4" />
+          Investitionen verwalten
         </Link>
       </div>
 
@@ -89,8 +92,9 @@ export default function GesamtHaushaltBilanz({ monatsdaten, anlage, investitione
       {/* Investitions-Tabelle */}
       <div className="bg-white rounded-lg shadow overflow-hidden">
         <div className="px-6 py-4 border-b border-gray-200">
-          <h3 className="text-lg font-semibold text-gray-900">
-            📊 Alle Investitionen ({investitionen.length})
+          <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+            <SimpleIcon type="chart" className="w-5 h-5 text-gray-600" />
+            Alle Investitionen ({investitionen.length})
           </h3>
         </div>
         <div className="overflow-x-auto">
@@ -110,7 +114,7 @@ export default function GesamtHaushaltBilanz({ monatsdaten, anlage, investitione
                 <tr key={inv.id} className="hover:bg-gray-50">
                   <td className="px-6 py-4">
                     <div className="flex items-center">
-                      <span className="text-2xl mr-3">{getIcon(inv.typ)}</span>
+                      <SimpleIcon type={getIconType(inv.typ)} className="w-6 h-6 mr-3 text-gray-600" />
                       <div>
                         <div className="text-sm font-medium text-gray-900">{inv.bezeichnung}</div>
                         <div className="text-xs text-gray-500">
@@ -143,8 +147,9 @@ export default function GesamtHaushaltBilanz({ monatsdaten, anlage, investitione
 
       {/* Zusammenfassung */}
       <div className="bg-gradient-to-r from-green-50 to-blue-50 border border-green-200 rounded-lg p-6">
-        <h3 className="text-lg font-semibold text-gray-900 mb-4">
-          🌍 Umwelt-Impact
+        <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+          <SimpleIcon type="globe" className="w-5 h-5 text-green-600" />
+          Umwelt-Impact
         </h3>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-center">
           <div>

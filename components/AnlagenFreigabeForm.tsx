@@ -6,6 +6,7 @@
 import { useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
+import SimpleIcon from './SimpleIcon'
 
 interface AnlagenFreigabeFormProps {
   anlage: any
@@ -65,8 +66,9 @@ export default function AnlagenFreigabeForm({ anlage, freigaben }: AnlagenFreiga
 
   return (
     <div className="bg-white rounded-lg shadow p-6">
-      <h2 className="text-xl font-semibold text-gray-900 mb-4">
-        🔒 Privatsphäre & Freigabe
+      <h2 className="text-xl font-semibold text-gray-900 mb-4 flex items-center gap-2">
+        <SimpleIcon type="lock" className="w-5 h-5 text-gray-700" />
+        Privatsphäre & Freigabe
       </h2>
 
       <p className="text-sm text-gray-600 mb-6">
@@ -74,14 +76,16 @@ export default function AnlagenFreigabeForm({ anlage, freigaben }: AnlagenFreiga
       </p>
 
       {error && (
-        <div className="mb-4 bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded">
-          ❌ {error}
+        <div className="mb-4 bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded flex items-center gap-2">
+          <SimpleIcon type="error" className="w-5 h-5" />
+          {error}
         </div>
       )}
 
       {success && (
-        <div className="mb-4 bg-green-50 border border-green-200 text-green-800 px-4 py-3 rounded">
-          ✅ Freigabe-Einstellungen gespeichert!
+        <div className="mb-4 bg-green-50 border border-green-200 text-green-800 px-4 py-3 rounded flex items-center gap-2">
+          <SimpleIcon type="check" className="w-5 h-5" />
+          Freigabe-Einstellungen gespeichert!
         </div>
       )}
 
@@ -188,7 +192,7 @@ export default function AnlagenFreigabeForm({ anlage, freigaben }: AnlagenFreiga
         {/* Info */}
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
           <div className="flex gap-2">
-            <span className="text-blue-600">ℹ️</span>
+            <SimpleIcon type="info" className="w-5 h-5 text-blue-600" />
             <div className="text-sm text-blue-900">
               <strong>Hinweis:</strong> Diese Einstellungen wirken sich nur auf die Community-Ansicht aus. 
               Deine persönlichen Daten bleiben immer privat und werden nie weitergegeben.
@@ -201,11 +205,16 @@ export default function AnlagenFreigabeForm({ anlage, freigaben }: AnlagenFreiga
           <button
             type="submit"
             disabled={loading}
-            className={`px-6 py-3 rounded-md font-medium text-white ${
+            className={`px-6 py-3 rounded-md font-medium text-white flex items-center gap-2 ${
               loading ? 'bg-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'
             }`}
           >
-            {loading ? 'Speichert...' : '💾 Speichern'}
+            {loading ? 'Speichert...' : (
+              <>
+                <SimpleIcon type="save" className="w-4 h-4" />
+                Speichern
+              </>
+            )}
           </button>
         </div>
       </form>

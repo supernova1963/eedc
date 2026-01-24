@@ -5,6 +5,7 @@ import { supabase } from '@/lib/supabase'
 import Link from 'next/link'
 import { revalidatePath } from 'next/cache'
 import DeleteButton from '@/components/DeleteButton'
+import SimpleIcon from '@/components/SimpleIcon'
 
 async function getInvestitionen() {
   const { data } = await supabase
@@ -42,16 +43,17 @@ export default async function InvestitionenPage() {
     return num.toFixed(1) + '%'
   }
 
-  const getIcon = (typ: string) => {
+  const getIconType = (typ: string) => {
     const icons: Record<string, string> = {
-      'e-auto': '🚗',
-      'waermepumpe': '🔥',
-      'speicher': '🔋',
-      'balkonkraftwerk': '☀️',
-      'wallbox': '⚡',
-      'sonstiges': '📦'
+      'e-auto': 'car',
+      'waermepumpe': 'heat',
+      'speicher': 'battery',
+      'balkonkraftwerk': 'solar',
+      'wallbox': 'wallbox',
+      'wechselrichter': 'inverter',
+      'sonstiges': 'box'
     }
-    return icons[typ] || '📦'
+    return icons[typ] || 'box'
   }
 
   return (
@@ -61,8 +63,9 @@ export default async function InvestitionenPage() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
           <div className="flex items-center justify-between">
             <div>
-              <h1 className="text-3xl font-bold text-gray-900">
-                💼 Verwaltung Investitionen
+              <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-2">
+                <SimpleIcon type="briefcase" className="w-8 h-8 text-purple-600" />
+                Verwaltung Investitionen
               </h1>
               <p className="mt-2 text-sm text-gray-600">
                 Alle Energie-Investitionen verwalten, bearbeiten und löschen
@@ -71,15 +74,17 @@ export default async function InvestitionenPage() {
             <div className="flex gap-3">
               <Link
                 href="/auswertung?tab=gesamt"
-                className="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-md font-medium text-gray-700"
+                className="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-md font-medium text-gray-700 flex items-center gap-2"
               >
-                📊 Zur Auswertung
+                <SimpleIcon type="chart" className="w-4 h-4" />
+                Zur Auswertung
               </Link>
               <Link
                 href="/investitionen/neu"
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-md font-medium text-white"
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-md font-medium text-white flex items-center gap-2"
               >
-                ➕ Neue Investition
+                <SimpleIcon type="plus" className="w-4 h-4" />
+                Neue Investition
               </Link>
             </div>
           </div>
@@ -95,9 +100,10 @@ export default async function InvestitionenPage() {
             </p>
             <Link
               href="/investitionen/neu"
-              className="inline-block px-6 py-3 bg-blue-600 hover:bg-blue-700 rounded-md font-medium text-white"
+              className="inline-flex items-center gap-2 px-6 py-3 bg-blue-600 hover:bg-blue-700 rounded-md font-medium text-white"
             >
-              ➕ Erste Investition erfassen
+              <SimpleIcon type="plus" className="w-5 h-5" />
+              Erste Investition erfassen
             </Link>
           </div>
         ) : (
@@ -133,7 +139,9 @@ export default async function InvestitionenPage() {
                   <tr key={inv.id} className="hover:bg-gray-50">
                     <td className="px-6 py-4">
                       <div className="flex items-center">
-                        <span className="text-2xl mr-3">{getIcon(inv.typ)}</span>
+                        <div className="mr-3">
+                          <SimpleIcon type={getIconType(inv.typ)} className="w-6 h-6 text-gray-600" />
+                        </div>
                         <div>
                           <div className="text-sm font-medium text-gray-900">
                             {inv.bezeichnung}
@@ -164,12 +172,12 @@ export default async function InvestitionenPage() {
                       <div className="flex justify-center gap-2">
                         <Link
                           href={`/investitionen/bearbeiten/${inv.id}`}
-                          className="text-blue-600 hover:text-blue-900"
+                          className="text-blue-600 hover:text-blue-900 p-1"
                           title="Bearbeiten"
                         >
-                          ✏️
+                          <SimpleIcon type="edit" className="w-4 h-4" />
                         </Link>
-                        <DeleteButton 
+                        <DeleteButton
                           investitionId={inv.id}
                           bezeichnung={inv.bezeichnung}
                           deleteAction={deleteInvestition}
