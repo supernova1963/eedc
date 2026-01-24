@@ -1,19 +1,38 @@
 // app/daten-import/page.tsx
 // Seite für Monatsdaten-Import
 
-import { supabase } from '@/lib/supabase'
-import MonatsdatenUpload from '@/components/MonatsdatenUpload'
+import { getCurrentUser, getUserAnlagen } from '@/lib/auth'
+import MonatsdatenUploadWrapper from '@/components/MonatsdatenUploadWrapper'
 import SimpleIcon from '@/components/SimpleIcon'
+import { supabase } from '@/lib/supabase'
 
 export default async function DatenImportPage() {
-  // Anlagen laden (vereinfacht - in Production mit Auth)
-  const { data: anlagen, error: anlagenError } = await supabase
-    .from('anlagen')
-    .select('*')
-    .eq('aktiv', true)
-    .limit(1)
+  // User authentifizieren
+  const user = await getCurrentUser()
 
-  if (anlagenError || !anlagen || anlagen.length === 0) {
+  if (!user) {
+    return (
+      <div className="max-w-4xl mx-auto p-6">
+        <h1 className="text-3xl font-bold text-gray-900 mb-6">Daten importieren</h1>
+        <div className="bg-red-50 border border-red-200 rounded-lg p-6">
+          <div className="flex items-start gap-3">
+            <SimpleIcon type="alert" className="w-6 h-6 text-red-600 flex-shrink-0 mt-0.5" />
+            <div>
+              <h3 className="font-medium text-red-900 mb-2">Nicht angemeldet</h3>
+              <p className="text-sm text-red-700">
+                Du musst angemeldet sein, um Daten zu importieren.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // Anlagen des Users laden
+  const anlagen = await getUserAnlagen(user.id)
+
+  if (!anlagen || anlagen.length === 0) {
     return (
       <div className="max-w-4xl mx-auto p-6">
         <h1 className="text-3xl font-bold text-gray-900 mb-6">Daten importieren</h1>
@@ -39,14 +58,17 @@ export default async function DatenImportPage() {
     )
   }
 
-  // Erste aktive Anlage verwenden (oder User kann später wählen)
-  const anlage = anlagen[0]
+  // Monatsdaten für alle Anlagen zählen
+  const monatsdatenCounts = await Promise.all(
+    anlagen.map(async (anlage) => {
+      const { count } = await supabase
+        .from('monatsdaten')
+        .select('*', { count: 'exact', head: true })
+        .eq('anlage_id', anlage.id)
 
-  // Bestehende Monatsdaten zählen
-  const { count: anzahlMonatsdaten } = await supabase
-    .from('monatsdaten')
-    .select('*', { count: 'exact', head: true })
-    .eq('anlage_id', anlage.id)
+      return { anlageId: anlage.id, count: count || 0 }
+    })
+  )
 
   return (
     <div className="max-w-4xl mx-auto p-6">
@@ -65,29 +87,17 @@ export default async function DatenImportPage() {
       <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
         <div className="flex items-start gap-3">
           <SimpleIcon type="sun" className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
-          <div>
-            <p className="text-sm font-medium text-blue-900">
-              Import für: <span className="font-bold">{anlage.anlagenname}</span>
+          <div className="flex-1">
+            <p className="text-sm font-medium text-blue-900 mb-2">
+              {anlagen.length === 1
+                ? 'Deine Anlage'
+                : `Deine ${anlagen.length} Anlagen`}
             </p>
-            <p className="text-xs text-blue-700 mt-1">
-              {anlage.leistung_kwp} kWp • {anlage.standort_ort || 'Standort nicht angegeben'}
+            <p className="text-xs text-blue-700">
+              Wähle unten eine Anlage aus, für die du Daten importieren möchtest.
             </p>
-            {anzahlMonatsdaten !== null && anzahlMonatsdaten > 0 && (
-              <p className="text-xs text-blue-600 mt-2">
-                Bereits {anzahlMonatsdaten} Monatsdatensätze vorhanden
-              </p>
-            )}
           </div>
         </div>
-
-        {anlagen.length > 1 && (
-          <div className="mt-3 pt-3 border-t border-blue-200">
-            <p className="text-xs text-blue-700">
-              Du hast {anlagen.length} Anlagen. Aktuell wird für "{anlage.anlagenname}" importiert.
-              Mehrfach-Anlagen-Auswahl folgt in einem Update.
-            </p>
-          </div>
-        )}
       </div>
 
       {/* Anleitung */}
@@ -130,9 +140,12 @@ export default async function DatenImportPage() {
         </div>
       </div>
 
-      {/* Upload-Komponente */}
+      {/* Upload-Komponente mit Anlagen-Auswahl */}
       <div className="bg-white border border-gray-200 rounded-lg p-6">
-        <MonatsdatenUpload anlageId={anlage.id} />
+        <MonatsdatenUploadWrapper
+          anlagen={anlagen}
+          monatsdatenCounts={monatsdatenCounts}
+        />
       </div>
 
       {/* Weitere Infos */}

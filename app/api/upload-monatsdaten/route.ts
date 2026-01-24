@@ -3,6 +3,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
+import { getCurrentUser, hasAnlageAccess } from '@/lib/auth'
 import Papa from 'papaparse'
 
 interface ValidationError {
@@ -143,6 +144,15 @@ function validateRow(row: any, rowIndex: number): { data?: ParsedMonatsdaten, er
 
 export async function POST(request: NextRequest) {
   try {
+    // 1. Authentifizierung prüfen
+    const user = await getCurrentUser()
+    if (!user) {
+      return NextResponse.json({
+        success: false,
+        message: 'Nicht authentifiziert'
+      }, { status: 401 })
+    }
+
     const formData = await request.formData()
     const file = formData.get('file') as File
     const anlageId = formData.get('anlageId') as string
@@ -160,6 +170,15 @@ export async function POST(request: NextRequest) {
         success: false,
         message: 'Anlagen-ID fehlt'
       }, { status: 400 })
+    }
+
+    // 2. Zugriffsberechtigung prüfen
+    const hasAccess = await hasAnlageAccess(user.id, anlageId)
+    if (!hasAccess) {
+      return NextResponse.json({
+        success: false,
+        message: 'Keine Berechtigung für diese Anlage'
+      }, { status: 403 })
     }
 
     // Datei als Text lesen
@@ -234,24 +253,10 @@ export async function POST(request: NextRequest) {
       })
     }
 
-    // Anlage-Zugriff prüfen
-    const { data: anlage, error: anlageError } = await supabase
-      .from('anlagen')
-      .select('id, mitglied_id')
-      .eq('id', anlageId)
-      .single()
-
-    if (anlageError || !anlage) {
-      return NextResponse.json({
-        success: false,
-        message: 'Anlage nicht gefunden'
-      }, { status: 404 })
-    }
-
-    // Daten in DB einfügen
+    // Daten in DB einfügen (mitglied_id kommt vom authentifizierten User)
     const insertData = validatedData.map(d => ({
       anlage_id: anlageId,
-      mitglied_id: anlage.mitglied_id,
+      mitglied_id: user.id,
       ...d
     }))
 
