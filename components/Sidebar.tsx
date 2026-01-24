@@ -28,6 +28,12 @@ const navigation: NavItem[] = [
     href: '/eingabe'
   },
   {
+    icon: 'upload',
+    label: 'Daten importieren',
+    href: '/daten-import',
+    badge: 'NEU'
+  },
+  {
     icon: 'briefcase',
     label: 'Investitionen',
     href: '/investitionen'
@@ -36,7 +42,6 @@ const navigation: NavItem[] = [
     icon: 'clipboard',
     label: 'Stammdaten',
     href: '/stammdaten',
-    badge: 'NEU',
     children: [
       { icon: 'file', label: 'Übersicht', href: '/stammdaten' },
       { icon: 'lightning', label: 'Strompreise', href: '/stammdaten/strompreise' },

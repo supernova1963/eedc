@@ -99,6 +99,11 @@ export default function ROIDashboard({ anlage, monatsdaten, investitionen }: ROI
   const verbleibendeInvestition = Math.max(0, gesamtInvestition - gesamtErtrag)
   const istAmortisiert = gesamtErtrag >= gesamtInvestition
 
+  // Amortisationsfortschritt in Prozent
+  const paybackProgress = gesamtInvestition > 0
+    ? Math.min((gesamtErtrag / gesamtInvestition) * 100, 100)
+    : 0
+
   // Hochrechnung bis Amortisation
   const durchschnittErtragProJahr = yearlyStats.length > 0
     ? yearlyStats.reduce((sum, y) => sum + y.nettoErtrag, 0) / yearlyStats.length
