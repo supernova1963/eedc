@@ -7,6 +7,8 @@ import GesamtHaushaltBilanz from '@/components/GesamtHaushaltBilanz'
 import EAutoAuswertung from '@/components/EAutoAuswertung'
 import WaermepumpeAuswertung from '@/components/WaermepumpeAuswertung'
 import SpeicherAuswertung from '@/components/SpeicherAuswertung'
+import ROIDashboard from '@/components/ROIDashboard'
+import CO2ImpactDashboard from '@/components/CO2ImpactDashboard'
 import SimpleIcon from '@/components/SimpleIcon'
 import Link from 'next/link'
 
@@ -280,6 +282,30 @@ export default async function AuswertungPage({
                   Gesamtbilanz
                 </Link>
               )}
+
+              <Link
+                href="/auswertung?tab=roi"
+                className={`${
+                  activeTab === 'roi'
+                    ? 'border-blue-500 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                } whitespace-nowrap pb-4 px-1 border-b-2 font-medium text-sm flex items-center gap-2`}
+              >
+                <SimpleIcon type="trend" className="w-4 h-4 text-purple-500" />
+                ROI-Analyse
+              </Link>
+
+              <Link
+                href="/auswertung?tab=co2"
+                className={`${
+                  activeTab === 'co2'
+                    ? 'border-blue-500 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                } whitespace-nowrap pb-4 px-1 border-b-2 font-medium text-sm flex items-center gap-2`}
+              >
+                <SimpleIcon type="globe" className="w-4 h-4 text-green-500" />
+                CO₂-Impact
+              </Link>
             </nav>
           </div>
         </div>
@@ -406,9 +432,24 @@ export default async function AuswertungPage({
             )}
             
             {activeTab === 'gesamt' && investitionen.length > 0 && (
-              <GesamtHaushaltBilanz 
-                monatsdaten={monatsdaten} 
+              <GesamtHaushaltBilanz
+                monatsdaten={monatsdaten}
                 anlage={anlage}
+                investitionen={investitionen}
+              />
+            )}
+
+            {activeTab === 'roi' && (
+              <ROIDashboard
+                anlage={anlage}
+                monatsdaten={monatsdaten}
+                investitionen={investitionen}
+              />
+            )}
+
+            {activeTab === 'co2' && (
+              <CO2ImpactDashboard
+                monatsdaten={monatsdaten}
                 investitionen={investitionen}
               />
             )}

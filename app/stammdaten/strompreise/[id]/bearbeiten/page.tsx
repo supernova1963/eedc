@@ -8,12 +8,13 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
 interface BearbeitenPageProps {
-  params: {
+  params: Promise<{
     id: string
-  }
+  }>
 }
 
 export default async function StrompreisBearbeitenPage({ params }: BearbeitenPageProps) {
+  const { id } = await params
   // Hole Mitglied (vereinfacht - in Produktion mit Auth)
   const { data: mitgliedData } = await supabase
     .from('mitglieder')
@@ -35,7 +36,7 @@ export default async function StrompreisBearbeitenPage({ params }: BearbeitenPag
   const { data: strompreis, error } = await supabase
     .from('strompreise')
     .select('*')
-    .eq('id', params.id)
+    .eq('id', id)
     .eq('mitglied_id', mitgliedData.id)
     .single()
 
