@@ -208,6 +208,52 @@ export default function SimpleIcon({ type, className = '' }: SimpleIconProps) {
         <ellipse cx="12" cy="22" rx="5" ry="1" opacity="0.3"/>
       </svg>
     ),
+    target: (
+      <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <circle cx="12" cy="12" r="10" />
+        <circle cx="12" cy="12" r="6" />
+        <circle cx="12" cy="12" r="2" fill="currentColor" />
+      </svg>
+    ),
+    'trend-up': (
+      <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <path d="M23 6l-9.5 9.5-5-5L1 18M17 6h6v6" />
+      </svg>
+    ),
+    'trend-down': (
+      <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <path d="M23 18l-9.5-9.5-5 5L1 6M17 18h6v-6" />
+      </svg>
+    ),
+    trophy: (
+      <svg className={className} viewBox="0 0 24 24" fill="currentColor">
+        <path d="M7 3h10M7 3H5a2 2 0 00-2 2v3c0 3 2 5 4 5h1m10-10h2a2 2 0 012 2v3c0 3-2 5-4 5h-1M7 13v2a5 5 0 0010 0v-2m-5 7v3m-4 0h8" stroke="currentColor" strokeWidth="1.5" fill="none" />
+        <rect x="7" y="3" width="10" height="7" rx="1" />
+      </svg>
+    ),
+    alert: (
+      <svg className={className} viewBox="0 0 24 24" fill="currentColor">
+        <path d="M12 2L2 20h20L12 2z" />
+        <path d="M12 9v4m0 4h.01" stroke="white" strokeWidth="2" fill="none" strokeLinecap="round" />
+      </svg>
+    ),
+    bulb: (
+      <svg className={className} viewBox="0 0 24 24" fill="currentColor">
+        <path d="M9 21h6m-6-4h6m-3-13a6 6 0 00-4 10.5V17h8v-2.5A6 6 0 0012 4z" />
+        <circle cx="12" cy="10" r="3" fill="white" opacity="0.5" />
+      </svg>
+    ),
+    calendar: (
+      <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <rect x="3" y="4" width="18" height="18" rx="2" />
+        <path d="M8 2v4m8-4v4M3 10h18" />
+      </svg>
+    ),
+    shield: (
+      <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+      </svg>
+    ),
   }
 
   return icons[type] || <span className={className}>•</span>

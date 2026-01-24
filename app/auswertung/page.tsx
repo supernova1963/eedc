@@ -9,6 +9,8 @@ import WaermepumpeAuswertung from '@/components/WaermepumpeAuswertung'
 import SpeicherAuswertung from '@/components/SpeicherAuswertung'
 import ROIDashboard from '@/components/ROIDashboard'
 import CO2ImpactDashboard from '@/components/CO2ImpactDashboard'
+import PrognoseVsIstDashboard from '@/components/PrognoseVsIstDashboard'
+import MonatsDetailView from '@/components/MonatsDetailView'
 import SimpleIcon from '@/components/SimpleIcon'
 import Link from 'next/link'
 
@@ -306,6 +308,30 @@ export default async function AuswertungPage({
                 <SimpleIcon type="globe" className="w-4 h-4 text-green-500" />
                 CO₂-Impact
               </Link>
+
+              <Link
+                href="/auswertung?tab=prognose"
+                className={`${
+                  activeTab === 'prognose'
+                    ? 'border-blue-500 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                } whitespace-nowrap pb-4 px-1 border-b-2 font-medium text-sm flex items-center gap-2`}
+              >
+                <SimpleIcon type="target" className="w-4 h-4 text-blue-500" />
+                Prognose vs. IST
+              </Link>
+
+              <Link
+                href="/auswertung?tab=monatsdetail"
+                className={`${
+                  activeTab === 'monatsdetail'
+                    ? 'border-blue-500 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                } whitespace-nowrap pb-4 px-1 border-b-2 font-medium text-sm flex items-center gap-2`}
+              >
+                <SimpleIcon type="calendar" className="w-4 h-4 text-indigo-500" />
+                Monats-Details
+              </Link>
             </nav>
           </div>
         </div>
@@ -451,6 +477,20 @@ export default async function AuswertungPage({
               <CO2ImpactDashboard
                 monatsdaten={monatsdaten}
                 investitionen={investitionen}
+              />
+            )}
+
+            {activeTab === 'prognose' && (
+              <PrognoseVsIstDashboard
+                monatsdaten={monatsdaten}
+                anlage={anlage}
+              />
+            )}
+
+            {activeTab === 'monatsdetail' && (
+              <MonatsDetailView
+                monatsdaten={monatsdaten}
+                anlage={anlage}
               />
             )}
           </>

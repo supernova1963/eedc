@@ -6,6 +6,7 @@
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Area, AreaChart } from 'recharts'
 import SimpleIcon from './SimpleIcon'
 import ExportButton from './ExportButton'
+import PDFExportButton from './PDFExportButton'
 
 interface ROIDashboardProps {
   anlage: any
@@ -125,20 +126,42 @@ export default function ROIDashboard({ anlage, monatsdaten, investitionen }: ROI
             Detaillierte Analyse der Investitionsrendite seit {yearlyStats[0]?.jahr || 'Inbetriebnahme'}
           </p>
         </div>
-        <ExportButton
-          data={yearlyStats}
-          filename={`ROI_Analyse_${new Date().toISOString().split('T')[0]}`}
-          headers={['Jahr', 'Erzeugung (kWh)', 'Erlöse (€)', 'Kosten (€)', 'Netto-Ertrag (€)', 'Kumuliert (€)', 'Fortschritt (%)']}
-          mapDataToRow={(year) => [
-            year.jahr,
-            year.erzeugung.toFixed(2),
-            year.erloese.toFixed(2),
-            year.kosten.toFixed(2),
-            year.nettoErtrag.toFixed(2),
-            year.kumuliertErtrag.toFixed(2),
-            year.paybackProgress.toFixed(2)
-          ]}
-        />
+        <div className="flex gap-2">
+          <ExportButton
+            data={yearlyStats}
+            filename={`ROI_Analyse_${new Date().toISOString().split('T')[0]}`}
+            headers={['Jahr', 'Erzeugung (kWh)', 'Erlöse (€)', 'Kosten (€)', 'Netto-Ertrag (€)', 'Kumuliert (€)', 'Fortschritt (%)']}
+            mapDataToRow={(year) => [
+              year.jahr,
+              year.erzeugung.toFixed(2),
+              year.erloese.toFixed(2),
+              year.kosten.toFixed(2),
+              year.nettoErtrag.toFixed(2),
+              year.kumuliertErtrag.toFixed(2),
+              year.paybackProgress.toFixed(2)
+            ]}
+          />
+          <PDFExportButton
+            data={yearlyStats}
+            filename={`ROI_Analyse_${new Date().toISOString().split('T')[0]}`}
+            title="ROI-Analyse & Wirtschaftlichkeit"
+            headers={['Jahr', 'Erzeugung (kWh)', 'Erlöse (€)', 'Kosten (€)', 'Netto-Ertrag (€)', 'Kumuliert (€)', 'Fortschritt (%)']}
+            mapDataToRow={(year) => [
+              year.jahr.toString(),
+              year.erzeugung.toFixed(2),
+              year.erloese.toFixed(2),
+              year.kosten.toFixed(2),
+              year.nettoErtrag.toFixed(2),
+              year.kumuliertErtrag.toFixed(2),
+              year.paybackProgress.toFixed(2) + '%'
+            ]}
+            summary={[
+              { label: 'Gesamtertrag', value: fmtDec(gesamtErtrag) + ' €' },
+              { label: 'Investition', value: fmtDec(gesamtInvestition) + ' €' },
+              { label: 'Amortisation', value: fmtDec(paybackProgress) + '%' },
+            ]}
+          />
+        </div>
       </div>
 
       {/* KPI Cards */}
