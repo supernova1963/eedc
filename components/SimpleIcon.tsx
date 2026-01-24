@@ -200,9 +200,12 @@ export default function SimpleIcon({ type, className = '' }: SimpleIconProps) {
     ),
     tree: (
       <svg className={className} viewBox="0 0 24 24" fill="currentColor">
-        <path d="M12 2L8 8h3v6H8l4 6 4-6h-3V8h3z"/>
-        <circle cx="12" cy="18" r="2" />
-        <ellipse cx="12" cy="20" rx="6" ry="2" opacity="0.3"/>
+        {/* Baumkrone - 3 Ebenen */}
+        <path d="M12 2l-4 5h2l-3 4h2l-3.5 5h13L15 11h2l-3-4h2z" opacity="0.9"/>
+        {/* Stamm */}
+        <rect x="10" y="16" width="4" height="6" rx="0.5"/>
+        {/* Boden */}
+        <ellipse cx="12" cy="22" rx="5" ry="1" opacity="0.3"/>
       </svg>
     ),
   }
