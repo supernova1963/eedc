@@ -11,6 +11,7 @@ import ROIDashboard from '@/components/ROIDashboard'
 import CO2ImpactDashboard from '@/components/CO2ImpactDashboard'
 import PrognoseVsIstDashboard from '@/components/PrognoseVsIstDashboard'
 import MonatsDetailView from '@/components/MonatsDetailView'
+import OptimierungsvorschlaegeDashboard from '@/components/OptimierungsvorschlaegeDashboard'
 import SimpleIcon from '@/components/SimpleIcon'
 import Link from 'next/link'
 
@@ -332,6 +333,18 @@ export default async function AuswertungPage({
                 <SimpleIcon type="calendar" className="w-4 h-4 text-indigo-500" />
                 Monats-Details
               </Link>
+
+              <Link
+                href="/auswertung?tab=optimierung"
+                className={`${
+                  activeTab === 'optimierung'
+                    ? 'border-blue-500 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                } whitespace-nowrap pb-4 px-1 border-b-2 font-medium text-sm flex items-center gap-2`}
+              >
+                <SimpleIcon type="bulb" className="w-4 h-4 text-yellow-500" />
+                Optimierung
+              </Link>
             </nav>
           </div>
         </div>
@@ -491,6 +504,14 @@ export default async function AuswertungPage({
               <MonatsDetailView
                 monatsdaten={monatsdaten}
                 anlage={anlage}
+              />
+            )}
+
+            {activeTab === 'optimierung' && (
+              <OptimierungsvorschlaegeDashboard
+                monatsdaten={monatsdaten}
+                anlage={anlage}
+                investitionen={investitionen}
               />
             )}
           </>
