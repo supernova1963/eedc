@@ -38,8 +38,9 @@ export default function InvestitionAnlageZuordnung({ mitglied_id }: InvestitionA
 
   const loadData = async () => {
     try {
-      // Lade Investitionen
       const supabase = createBrowserClient()
+
+      // Lade Investitionen
       const { data: invData } = await supabase
         .from('alternative_investitionen')
         .select('id, typ, bezeichnung, anlage_id, anschaffungsdatum')
@@ -50,7 +51,6 @@ export default function InvestitionAnlageZuordnung({ mitglied_id }: InvestitionA
       setInvestitionen(invData || [])
 
       // Lade Anlagen
-      const supabase = createBrowserClient()
       const { data: anlData } = await supabase
         .from('anlagen')
         .select('id, anlagenname, leistung_kwp, installationsdatum')
@@ -69,6 +69,8 @@ export default function InvestitionAnlageZuordnung({ mitglied_id }: InvestitionA
   const updateZuordnung = async (investition_id: string, anlage_id: string | null) => {
     setSaving(investition_id)
     try {
+      const supabase = createBrowserClient()
+
       const { error } = await supabase
         .from('alternative_investitionen')
         .update({
