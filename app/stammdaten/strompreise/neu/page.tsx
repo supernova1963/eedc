@@ -1,24 +1,38 @@
 // app/stammdaten/strompreise/neu/page.tsx
 // Seite zum Erfassen eines neuen Strompreises
 
-import { supabase } from '@/lib/supabase'
+import { createClient } from '@/lib/supabase-server'
+import { getCurrentUser } from '@/lib/auth'
 import StrompreisForm from '@/components/StrompreisForm'
 import SimpleIcon from '@/components/SimpleIcon'
 import Link from 'next/link'
 
 export default async function NeuerStrompreisPage() {
-  // Hole Mitglied (vereinfacht - in Produktion mit Auth)
+  const user = await getCurrentUser()
+
+  if (!user) {
+    return (
+      <div className="max-w-7xl mx-auto px-4 py-8">
+        <div className="bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded">
+          Nicht authentifiziert
+        </div>
+      </div>
+    )
+  }
+
+  const supabase = await createClient()
+
   const { data: mitgliedData } = await supabase
     .from('mitglieder')
     .select('id, vorname, nachname')
-    .limit(1)
+    .eq('id', user.id)
     .single()
 
   if (!mitgliedData) {
     return (
       <div className="max-w-7xl mx-auto px-4 py-8">
         <div className="bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded">
-          Kein Mitglied gefunden. Bitte zuerst Mitglied anlegen.
+          Mitglied nicht gefunden
         </div>
       </div>
     )

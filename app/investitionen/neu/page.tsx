@@ -1,17 +1,31 @@
 // app/investitionen/neu/page.tsx
-import { supabase } from '@/lib/supabase'
+import { createClient } from '@/lib/supabase-server'
+import { getCurrentUser } from '@/lib/auth'
 import InvestitionFormSimple from '@/components/InvestitionFormSimple'
 
-async function getUserData() {
-  const { data } = await supabase.from('mitglieder').select('*').limit(1).single()
-  return data
-}
-
 export default async function NeueInvestitionPage() {
-  const mitglied = await getUserData()
-  
+  const user = await getCurrentUser()
+
+  if (!user) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <p className="text-gray-600">Nicht authentifiziert</p>
+        </div>
+      </div>
+    )
+  }
+
+  const supabase = await createClient()
+
+  const { data: mitglied } = await supabase
+    .from('mitglieder')
+    .select('*')
+    .eq('id', user.id)
+    .single()
+
   if (!mitglied) {
-    return <div className="p-8 text-center">Kein Mitglied gefunden</div>
+    return <div className="p-8 text-center">Mitglied nicht gefunden</div>
   }
   
   return (

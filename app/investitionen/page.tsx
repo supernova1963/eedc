@@ -1,16 +1,20 @@
 // app/investitionen/page.tsx
 // Korrigierte Version mit DeleteButton als Client Component
 
-import { supabase } from '@/lib/supabase'
+import { createClient } from '@/lib/supabase-server'
+import { getCurrentUser } from '@/lib/auth'
 import Link from 'next/link'
 import { revalidatePath } from 'next/cache'
 import DeleteButton from '@/components/DeleteButton'
 import SimpleIcon from '@/components/SimpleIcon'
 
-async function getInvestitionen() {
+async function getInvestitionen(userId: string) {
+  const supabase = await createClient()
+
   const { data } = await supabase
     .from('investitionen_uebersicht')
     .select('*')
+    .eq('mitglied_id', userId)
     .order('anschaffungsdatum', { ascending: false })
 
   return data || []
@@ -31,7 +35,19 @@ async function deleteInvestition(formData: FormData) {
 export const dynamic = 'force-dynamic'
 
 export default async function InvestitionenPage() {
-  const investitionen = await getInvestitionen()
+  const user = await getCurrentUser()
+
+  if (!user) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <p className="text-gray-600">Nicht authentifiziert</p>
+        </div>
+      </div>
+    )
+  }
+
+  const investitionen = await getInvestitionen(user.id)
 
   const formatCurrency = (num?: number) => {
     if (!num && num !== 0) return '-'
