@@ -1,14 +1,31 @@
 // app/uebersicht/page.tsx
 // Mit Erlöse-Spalte
 
-import { supabase } from '@/lib/supabase'
+import { createClient } from '@/lib/supabase-server'
+import { getCurrentUser } from '@/lib/auth'
 import SimpleIcon from '@/components/SimpleIcon'
 import Link from 'next/link'
 
-async function getMonatsdaten() {
+async function getMonatsdaten(userId: string) {
+  const supabase = await createClient()
+
+  // Erste Anlage des Users holen
+  const { data: anlage } = await supabase
+    .from('anlagen')
+    .select('id')
+    .eq('mitglied_id', userId)
+    .eq('aktiv', true)
+    .order('erstellt_am', { ascending: false })
+    .limit(1)
+    .single()
+
+  if (!anlage) return []
+
+  // Monatsdaten für diese Anlage
   const { data } = await supabase
     .from('monatsdaten')
     .select('*')
+    .eq('anlage_id', anlage.id)
     .order('jahr', { ascending: false })
     .order('monat', { ascending: false })
 
@@ -18,7 +35,19 @@ async function getMonatsdaten() {
 export const dynamic = 'force-dynamic'
 
 export default async function UebersichtPage() {
-  const monatsdaten = await getMonatsdaten()
+  const user = await getCurrentUser()
+
+  if (!user) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <p className="text-gray-600">Nicht authentifiziert</p>
+        </div>
+      </div>
+    )
+  }
+
+  const monatsdaten = await getMonatsdaten(user.id)
 
   const monatsnamen = ['', 'Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez']
   

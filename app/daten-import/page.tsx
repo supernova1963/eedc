@@ -4,7 +4,7 @@
 import { getCurrentUser, getUserAnlagen } from '@/lib/auth'
 import MonatsdatenUploadWrapper from '@/components/MonatsdatenUploadWrapper'
 import SimpleIcon from '@/components/SimpleIcon'
-import { supabase } from '@/lib/supabase'
+import { createClient } from '@/lib/supabase-server'
 
 export default async function DatenImportPage() {
   // User authentifizieren

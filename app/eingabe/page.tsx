@@ -1,7 +1,8 @@
 // app/eingabe/page.tsx
 // KOMPLETT mit PV, E-Auto, Wärmepumpe, Speicher, Wechselrichter
 
-import { supabase } from '@/lib/supabase'
+import { createClient } from '@/lib/supabase-server'
+import { getCurrentUser } from '@/lib/auth'
 import HaushaltMonatsdatenForm from '@/components/HaushaltMonatsdatenForm'
 import EAutoMonatsdatenForm from '@/components/EAutoMonatsdatenForm'
 import WaermepumpeMonatsdatenForm from '@/components/WaermepumpeMonatsdatenForm'
@@ -10,30 +11,45 @@ import WechselrichterMonatsdatenForm from '@/components/WechselrichterMonatsdate
 import SimpleIcon from '@/components/SimpleIcon'
 import Link from 'next/link'
 
-async function getData() {
-  const { data: anlage } = await supabase.from('anlagen').select('*').limit(1).single()
-  
+async function getData(userId: string) {
+  const supabase = await createClient()
+
+  // Erste Anlage des Users
+  const { data: anlage } = await supabase
+    .from('anlagen')
+    .select('*')
+    .eq('mitglied_id', userId)
+    .eq('aktiv', true)
+    .order('erstellt_am', { ascending: false })
+    .limit(1)
+    .single()
+
+  // Investitionen des Users
   const { data: eAutos } = await supabase
     .from('alternative_investitionen')
     .select('*')
+    .eq('mitglied_id', userId)
     .eq('typ', 'e-auto')
     .eq('aktiv', true)
 
   const { data: waermepumpen } = await supabase
     .from('alternative_investitionen')
     .select('*')
+    .eq('mitglied_id', userId)
     .eq('typ', 'waermepumpe')
     .eq('aktiv', true)
 
   const { data: speicher } = await supabase
     .from('alternative_investitionen')
     .select('*')
+    .eq('mitglied_id', userId)
     .eq('typ', 'speicher')
     .eq('aktiv', true)
 
   const { data: wechselrichter } = await supabase
     .from('alternative_investitionen')
     .select('*')
+    .eq('mitglied_id', userId)
     .eq('typ', 'wechselrichter')
     .eq('aktiv', true)
 
@@ -48,12 +64,24 @@ async function getData() {
 
 export const dynamic = 'force-dynamic'
 
-export default async function EingabePage({ 
-  searchParams 
-}: { 
-  searchParams: Promise<{ tab?: string }> 
+export default async function EingabePage({
+  searchParams
+}: {
+  searchParams: Promise<{ tab?: string }>
 }) {
-  const { anlage, eAutos, waermepumpen, speicher, wechselrichter } = await getData()
+  const user = await getCurrentUser()
+
+  if (!user) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <p className="text-gray-600">Nicht authentifiziert</p>
+        </div>
+      </div>
+    )
+  }
+
+  const { anlage, eAutos, waermepumpen, speicher, wechselrichter } = await getData(user.id)
   const params = await searchParams
   const activeTab = params.tab || 'haushalt'
 

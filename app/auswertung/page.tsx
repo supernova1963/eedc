@@ -1,7 +1,8 @@
 // app/auswertung/page.tsx
 // KOMPLETT mit PV, E-Auto, Wärmepumpe, Speicher, Gesamtbilanz
 
-import { supabase } from '@/lib/supabase'
+import { createClient } from '@/lib/supabase-server'
+import { getCurrentUser } from '@/lib/auth'
 import WirtschaftlichkeitStats from '@/components/WirtschaftlichkeitStats'
 import GesamtHaushaltBilanz from '@/components/GesamtHaushaltBilanz'
 import EAutoAuswertung from '@/components/EAutoAuswertung'
