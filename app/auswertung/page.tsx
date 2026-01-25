@@ -16,39 +16,61 @@ import OptimierungsvorschlaegeDashboard from '@/components/Optimierungsvorschlae
 import SimpleIcon from '@/components/SimpleIcon'
 import Link from 'next/link'
 
-async function getAuswertungData() {
-  const { data: monatsdaten } = await supabase
-    .from('monatsdaten')
-    .select('*')
-    .order('jahr', { ascending: true })
-    .order('monat', { ascending: true })
+async function getAuswertungData(userId: string) {
+  const supabase = await createClient()
 
+  // Hole die aktive Anlage des Benutzers
   const { data: anlage } = await supabase
     .from('anlagen')
     .select('*')
+    .eq('mitglied_id', userId)
+    .eq('aktiv', true)
+    .order('erstellt_am', { ascending: false })
     .limit(1)
     .single()
+
+  if (!anlage) {
+    return {
+      monatsdaten: [],
+      anlage: null,
+      investitionen: [],
+      eAutos: [],
+      waermepumpen: [],
+      speicher: []
+    }
+  }
+
+  const { data: monatsdaten } = await supabase
+    .from('monatsdaten')
+    .select('*')
+    .eq('anlage_id', anlage.id)
+    .order('jahr', { ascending: true })
+    .order('monat', { ascending: true })
 
   const { data: investitionen } = await supabase
     .from('investitionen_uebersicht')
     .select('*')
+    .eq('mitglied_id', userId)
     .order('anschaffungsdatum', { ascending: false })
 
   const { data: eAutos } = await supabase
     .from('alternative_investitionen')
     .select('*')
+    .eq('mitglied_id', userId)
     .eq('typ', 'e-auto')
     .eq('aktiv', true)
-  
+
   const { data: waermepumpen } = await supabase
     .from('alternative_investitionen')
     .select('*')
+    .eq('mitglied_id', userId)
     .eq('typ', 'waermepumpe')
     .eq('aktiv', true)
 
   const { data: speicher } = await supabase
     .from('alternative_investitionen')
     .select('*')
+    .eq('mitglied_id', userId)
     .eq('typ', 'speicher')
     .eq('aktiv', true)
 
@@ -63,6 +85,8 @@ async function getAuswertungData() {
 }
 
 async function getEAutoDetails(autoId: string) {
+  const supabase = await createClient()
+
   const { data: prognoseVergleich } = await supabase
     .from('investition_prognose_ist_vergleich')
     .select('*')
@@ -85,6 +109,8 @@ async function getEAutoDetails(autoId: string) {
 }
 
 async function getWaermepumpeDetails(wpId: string) {
+  const supabase = await createClient()
+
   const { data: prognoseVergleich } = await supabase
     .from('investition_prognose_ist_vergleich')
     .select('*')
@@ -107,6 +133,8 @@ async function getWaermepumpeDetails(wpId: string) {
 }
 
 async function getSpeicherDetails(speicherId: string) {
+  const supabase = await createClient()
+
   const { data: prognoseVergleich } = await supabase
     .from('investition_prognose_ist_vergleich')
     .select('*')
@@ -135,7 +163,29 @@ export default async function AuswertungPage({
 }: {
   searchParams: Promise<{ tab?: string, auto?: string, wp?: string, speicher?: string }>
 }) {
-  const { monatsdaten, anlage, investitionen, eAutos, waermepumpen, speicher } = await getAuswertungData()
+  const user = await getCurrentUser()
+
+  if (!user) {
+    return (
+      <main className="min-h-screen bg-gray-50">
+        <div className="bg-white shadow">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+            <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-2">
+              <SimpleIcon type="chart" className="w-8 h-8 text-blue-600" />
+              Auswertung
+            </h1>
+          </div>
+        </div>
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+          <div className="bg-white rounded-lg shadow p-8 text-center">
+            <p className="text-gray-500">Nicht authentifiziert</p>
+          </div>
+        </div>
+      </main>
+    )
+  }
+
+  const { monatsdaten, anlage, investitionen, eAutos, waermepumpen, speicher } = await getAuswertungData(user.id)
   const params = await searchParams
   const activeTab = params.tab || 'pv'
   const selectedAutoId = params.auto
