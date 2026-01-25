@@ -58,6 +58,11 @@ USING (anlage_id IN (
   SELECT a.id FROM anlagen a
   JOIN mitglieder m ON m.id = a.mitglied_id
   WHERE m.email = auth.email()
+))
+WITH CHECK (anlage_id IN (
+  SELECT a.id FROM anlagen a
+  JOIN mitglieder m ON m.id = a.mitglied_id
+  WHERE m.email = auth.email()
 ));
 
 CREATE POLICY "anlagen_freigaben_delete" ON anlagen_freigaben FOR DELETE TO authenticated
@@ -94,6 +99,11 @@ USING (anlage_id IN (
   SELECT a.id FROM anlagen a
   JOIN mitglieder m ON m.id = a.mitglied_id
   WHERE m.email = auth.email()
+))
+WITH CHECK (anlage_id IN (
+  SELECT a.id FROM anlagen a
+  JOIN mitglieder m ON m.id = a.mitglied_id
+  WHERE m.email = auth.email()
 ));
 
 CREATE POLICY "monatsdaten_delete" ON monatsdaten FOR DELETE TO authenticated
@@ -127,6 +137,11 @@ WITH CHECK (anlage_id IN (
 
 CREATE POLICY "investitionen_update" ON investitionen FOR UPDATE TO authenticated
 USING (anlage_id IN (
+  SELECT a.id FROM anlagen a
+  JOIN mitglieder m ON m.id = a.mitglied_id
+  WHERE m.email = auth.email()
+))
+WITH CHECK (anlage_id IN (
   SELECT a.id FROM anlagen a
   JOIN mitglieder m ON m.id = a.mitglied_id
   WHERE m.email = auth.email()
@@ -184,6 +199,11 @@ WITH CHECK (investition_id IN (
 
 CREATE POLICY "investition_monatsdaten_update" ON investition_monatsdaten FOR UPDATE TO authenticated
 USING (investition_id IN (
+  SELECT ai.id FROM alternative_investitionen ai
+  JOIN mitglieder m ON m.id = ai.mitglied_id
+  WHERE m.email = auth.email()
+))
+WITH CHECK (investition_id IN (
   SELECT ai.id FROM alternative_investitionen ai
   JOIN mitglieder m ON m.id = ai.mitglied_id
   WHERE m.email = auth.email()

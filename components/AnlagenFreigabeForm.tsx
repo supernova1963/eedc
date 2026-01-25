@@ -1,10 +1,10 @@
 // components/AnlagenFreigabeForm.tsx
-// FIXED: upsert mit onConflict
+// FIXED: Server Action statt Client-Side DB Call
 
 'use client'
 
 import { useState } from 'react'
-import { supabase } from '@/lib/supabase'
+import { updateFreigaben } from '@/lib/freigabe-actions'
 import { useRouter } from 'next/navigation'
 import SimpleIcon from './SimpleIcon'
 
@@ -40,17 +40,12 @@ export default function AnlagenFreigabeForm({ anlage, freigaben }: AnlagenFreiga
     setSuccess(false)
 
     try {
-      // FIXED: onConflict Parameter hinzugefügt
-      const { error: dbError } = await supabase
-        .from('anlagen_freigaben')
-        .upsert({
-          anlage_id: anlage.id,
-          ...formData
-        }, {
-          onConflict: 'anlage_id'  // ← DAS WAR DAS PROBLEM!
-        })
+      // Server Action aufrufen
+      const result = await updateFreigaben(anlage.id, formData)
 
-      if (dbError) throw dbError
+      if (result.error) {
+        throw new Error(result.error)
+      }
 
       setSuccess(true)
       router.refresh()
