@@ -5,7 +5,7 @@
 
 import { useState, useMemo, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import { supabase } from '@/lib/supabase'
+import { createBrowserClient } from '@/lib/supabase-browser'
 import {
   InvestitionsTyp,
   getInitialFormData,
@@ -37,6 +37,8 @@ export function useInvestitionForm({ mitgliedId, editData, onSuccess }: UseInves
 
   // Wechselrichter laden fur PV-Module Dropdown
   const loadWechselrichter = useCallback(async () => {
+    const supabase = createBrowserClient()
+
     const { data } = await supabase
       .from('alternative_investitionen')
       .select('id, bezeichnung, parameter')
@@ -58,6 +60,8 @@ export function useInvestitionForm({ mitgliedId, editData, onSuccess }: UseInves
   useEffect(() => {
     if (typ === 'pv-module' && !editData) {
       const loadAnlageGeokoordinaten = async () => {
+        const supabase = createBrowserClient()
+
         const { data: anlage } = await supabase
           .from('anlagen')
           .select('standort_latitude, standort_longitude')
@@ -108,6 +112,8 @@ export function useInvestitionForm({ mitgliedId, editData, onSuccess }: UseInves
     setError(null)
 
     try {
+      const supabase = createBrowserClient()
+
       const investitionData = {
         mitglied_id: mitgliedId,
         typ: typ,

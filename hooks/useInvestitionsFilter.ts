@@ -4,7 +4,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { supabase } from '@/lib/supabase'
+import { createBrowserClient } from '@/lib/supabase-browser'
 
 interface InvestitionsCounts {
   hasEAutos: boolean
@@ -24,6 +24,8 @@ export function useInvestitionsFilter(): InvestitionsCounts {
   useEffect(() => {
     async function loadCounts() {
       try {
+        const supabase = createBrowserClient()
+
         // E-Autos zählen
         const { count: eAutosCount } = await supabase
           .from('alternative_investitionen')
