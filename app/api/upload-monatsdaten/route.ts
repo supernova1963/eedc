@@ -2,7 +2,7 @@
 // API-Route für Monatsdaten-Upload und Parsing
 
 import { NextRequest, NextResponse } from 'next/server'
-import { supabase } from '@/lib/supabase'
+import { createClient } from '@/lib/supabase-server'
 import { getCurrentUser, hasAnlageAccess } from '@/lib/auth'
 import Papa from 'papaparse'
 
@@ -261,6 +261,7 @@ export async function POST(request: NextRequest) {
     }))
 
     // Prüfe auf Duplikate (Jahr/Monat/Anlage)
+    const supabase = await createClient()
     const duplicateChecks = await Promise.all(
       validatedData.map(d =>
         supabase

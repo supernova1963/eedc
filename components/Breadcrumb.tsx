@@ -19,6 +19,9 @@ const routeNames: Record<string, string> = {
   'auswertung': 'Auswertungen',
   'anlage': 'Anlagen',
   'uebersicht': 'Übersicht',
+  'community': 'Community',
+  'datenschutz': 'Datenschutz',
+  'debug': 'Debug',
 }
 
 export default function Breadcrumb() {

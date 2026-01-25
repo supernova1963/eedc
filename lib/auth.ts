@@ -1,7 +1,7 @@
 // lib/auth.ts
 // Authentication Helper Functions
 
-import { supabase } from './supabase'
+import { createClient } from './supabase-server'
 
 export interface AuthUser {
   id: string
@@ -17,16 +17,25 @@ export interface Mitglied {
 }
 
 /**
- * Holt den aktuell authentifizierten User
- * Vereinfacht: Nimmt erstes aktives Mitglied aus DB
- * TODO: Echte Supabase Auth implementieren
+ * Holt den aktuell authentifizierten User und dessen Mitgliedsdaten
+ * Verwendet echte Supabase Auth mit Session-Management
  */
 export async function getCurrentUser(): Promise<Mitglied | null> {
+  const supabase = await createClient()
+
+  // Hole aktuelle Auth Session
+  const { data: { user }, error: authError } = await supabase.auth.getUser()
+
+  if (authError || !user) {
+    return null
+  }
+
+  // Hole Mitgliedsdaten basierend auf Auth User Email
   const { data, error } = await supabase
     .from('mitglieder')
     .select('*')
+    .eq('email', user.email)
     .eq('aktiv', true)
-    .limit(1)
     .single()
 
   if (error || !data) {
@@ -37,9 +46,29 @@ export async function getCurrentUser(): Promise<Mitglied | null> {
 }
 
 /**
+ * Holt nur die Auth Session (ohne Mitgliedsdaten)
+ */
+export async function getAuthUser(): Promise<AuthUser | null> {
+  const supabase = await createClient()
+
+  const { data: { user }, error } = await supabase.auth.getUser()
+
+  if (error || !user || !user.email) {
+    return null
+  }
+
+  return {
+    id: user.id,
+    email: user.email
+  }
+}
+
+/**
  * Prüft ob User Zugriff auf eine Anlage hat
  */
 export async function hasAnlageAccess(userId: string, anlageId: string): Promise<boolean> {
+  const supabase = await createClient()
+
   const { data, error } = await supabase
     .from('anlagen')
     .select('mitglied_id')
@@ -54,6 +83,8 @@ export async function hasAnlageAccess(userId: string, anlageId: string): Promise
  * Holt alle Anlagen eines Users
  */
 export async function getUserAnlagen(userId: string) {
+  const supabase = await createClient()
+
   const { data, error } = await supabase
     .from('anlagen')
     .select('*')

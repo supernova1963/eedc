@@ -177,7 +177,7 @@ export default function OptimierungsvorschlaegeDashboard({
     }
   } else {
     // Kein Speicher vorhanden
-    if (eigenverbrauchsquote < 50 && gesamtEinspeisung > gesamtEigenverbrauch) {
+    if (eigenverbrauchsquote < 50 && gesamtEinspeisung > gesamtVerbrauch) {
       vorschlaege.push({
         kategorie: 'speicher',
         prioritaet: 'hoch',

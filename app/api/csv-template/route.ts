@@ -2,7 +2,7 @@
 // API-Route für dynamische CSV-Template-Generierung
 
 import { NextRequest, NextResponse } from 'next/server'
-import { supabase } from '@/lib/supabase'
+import { createClient } from '@/lib/supabase-server'
 import { getCurrentUser, hasAnlageAccess } from '@/lib/auth'
 
 export async function GET(request: NextRequest) {
@@ -28,6 +28,7 @@ export async function GET(request: NextRequest) {
     }
 
     // 4. Anlage laden
+    const supabase = await createClient()
     const { data: anlage, error } = await supabase
       .from('anlagen')
       .select('*')

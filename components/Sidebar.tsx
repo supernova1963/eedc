@@ -8,6 +8,7 @@ import { usePathname } from 'next/navigation'
 import { useState, useMemo } from 'react'
 import SimpleIcon from './SimpleIcon'
 import { useInvestitionsFilter } from '@/hooks/useInvestitionsFilter'
+import { signOut } from '@/lib/auth-actions'
 
 interface NavItem {
   icon: string
@@ -84,6 +85,12 @@ const getNavigation = (hasEAutos: boolean, hasWaermepumpen: boolean, hasSpeicher
       label: 'Auswertungen',
       href: '/auswertung',
       children: auswertungenChildren
+    },
+    {
+      icon: 'globe',
+      label: 'Community',
+      href: '/community',
+      badge: 'NEU'
     },
     {
       icon: 'settings',
@@ -261,7 +268,16 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
         </nav>
 
         {/* Footer */}
-        <div className="border-t border-gray-200 p-4">
+        <div className="border-t border-gray-200 p-4 space-y-2">
+          <button
+            onClick={async () => {
+              await signOut()
+            }}
+            className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-100 transition-colors"
+          >
+            <SimpleIcon type="logout" className="w-4 h-4" />
+            <span>Abmelden</span>
+          </button>
           <div className="text-xs text-gray-500 text-center">
             EEDC v1.0
           </div>
