@@ -1,21 +1,34 @@
 // app/page.tsx
 // Dashboard - Optimiert für neues Layout
 
-import { supabase } from '@/lib/supabase'
+import { createClient } from '@/lib/supabase-server'
+import { getCurrentUser } from '@/lib/auth'
 import Link from 'next/link'
 import DashboardChart from '@/components/DashboardChart'
 import SimpleIcon from '@/components/SimpleIcon'
 
-async function getDashboardData() {
+async function getDashboardData(userId: string) {
+  const supabase = await createClient()
+
+  // Erste Anlage des Users holen
   const { data: anlage } = await supabase
     .from('anlagen')
     .select('*')
+    .eq('mitglied_id', userId)
+    .eq('aktiv', true)
+    .order('erstellt_am', { ascending: false })
     .limit(1)
     .single()
 
+  if (!anlage) {
+    return { anlage: null, monatsdaten: [] }
+  }
+
+  // Monatsdaten für diese Anlage holen
   const { data: monatsdaten } = await supabase
     .from('monatsdaten')
     .select('*')
+    .eq('anlage_id', anlage.id)
     .order('jahr', { ascending: true })
     .order('monat', { ascending: true })
 
@@ -25,7 +38,19 @@ async function getDashboardData() {
 export const dynamic = 'force-dynamic'
 
 export default async function DashboardPage() {
-  const { anlage, monatsdaten } = await getDashboardData()
+  const user = await getCurrentUser()
+
+  if (!user) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <p className="text-gray-600">Nicht authentifiziert</p>
+        </div>
+      </div>
+    )
+  }
+
+  const { anlage, monatsdaten } = await getDashboardData(user.id)
 
   const toNum = (val: any): number => {
     if (val === null || val === undefined) return 0
