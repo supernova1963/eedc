@@ -3,7 +3,7 @@
 
 'use client'
 
-import { InvestitionPrognoseIstVergleich, InvestitionMonatsdatenDetail } from '@/lib/supabase'
+import { InvestitionPrognoseIstVergleich, InvestitionMonatsdatenDetail } from '@/lib/supabase-browser'
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
 import Link from 'next/link'
 import SimpleIcon from './SimpleIcon'

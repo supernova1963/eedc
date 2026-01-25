@@ -5,7 +5,7 @@
 'use client'
 
 import { useState, useEffect, useMemo } from 'react'
-import { supabase } from '@/lib/supabase'
+import { createBrowserClient } from '@/lib/supabase-browser'
 import { useRouter } from 'next/navigation'
 import SimpleIcon from './SimpleIcon'
 
@@ -41,6 +41,8 @@ export default function HaushaltMonatsdatenForm({ anlage }: HaushaltMonatsdatenF
       setLoadingAuto(true)
 
       try {
+        const supabase = createBrowserClient()
+
         // PV-Erzeugung aus Wechselrichter-Monatsdaten
         const { data: wrData } = await supabase
           .from('investition_monatsdaten')
@@ -130,6 +132,8 @@ export default function HaushaltMonatsdatenForm({ anlage }: HaushaltMonatsdatenF
     setError(null)
 
     try {
+      const supabase = createBrowserClient()
+
       const monatsdaten = {
         anlage_id: anlage.id,
         jahr: formData.jahr,

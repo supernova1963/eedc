@@ -2,7 +2,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { supabase } from '@/lib/supabase'
+import { createBrowserClient } from '@/lib/supabase-browser'
 import { useRouter } from 'next/navigation'
 import SimpleIcon from './SimpleIcon'
 
@@ -48,6 +48,7 @@ export default function WaermepumpeMonatsdatenForm({ investition }: WaermepumpeM
   // Vormonat-Preis laden
   useEffect(() => {
     async function loadVormonatPreis() {
+      const supabase = createBrowserClient()
       const { data } = await supabase
         .from('investition_monatsdaten')
         .select('kosten_daten')

@@ -2,7 +2,7 @@
 'use client'
 
 import { useState } from 'react'
-import { supabase } from '@/lib/supabase'
+import { createBrowserClient } from '@/lib/supabase-browser'
 import { useRouter } from 'next/navigation'
 import SimpleIcon from './SimpleIcon'
 
@@ -41,6 +41,8 @@ export default function AnlageEditForm({ anlage }: AnlageEditFormProps) {
     setSuccess(false)
 
     try {
+      const supabase = createBrowserClient()
+
       const updateData = {
         standort: formData.standort,
         inbetriebnahme: formData.inbetriebnahme,

@@ -4,7 +4,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { supabase } from '@/lib/supabase'
+import { createBrowserClient } from '@/lib/supabase-browser'
 import { useRouter } from 'next/navigation'
 import SimpleIcon from './SimpleIcon'
 
@@ -63,6 +63,7 @@ export default function EAutoMonatsdatenForm({ investition, existingData }: EAut
         vormonatJahr = formData.jahr - 1
       }
 
+      const supabase = createBrowserClient()
       const { data } = await supabase
         .from('investition_monatsdaten')
         .select('verbrauch_daten, kosten_daten')

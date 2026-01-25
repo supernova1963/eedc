@@ -4,7 +4,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { supabase } from '@/lib/supabase'
+import { createBrowserClient } from '@/lib/supabase-browser'
 import Link from 'next/link'
 
 interface Strompreis {
@@ -38,6 +38,7 @@ export default function StrompreisListe({ mitglied_id }: StrompreisListeProps) {
 
   const loadStrompreise = async () => {
     try {
+      const supabase = createBrowserClient()
       const { data, error } = await supabase
         .from('strompreise')
         .select(`

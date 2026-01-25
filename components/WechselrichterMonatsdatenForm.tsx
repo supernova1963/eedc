@@ -4,7 +4,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { supabase } from '@/lib/supabase'
+import { createBrowserClient } from '@/lib/supabase-browser'
 import { useRouter } from 'next/navigation'
 
 interface WechselrichterMonatsdatenFormProps {
@@ -43,6 +43,7 @@ export default function WechselrichterMonatsdatenForm({ investition }: Wechselri
   // PV-Module laden die diesem Wechselrichter zugeordnet sind
   useEffect(() => {
     const loadPvModule = async () => {
+      const supabase = createBrowserClient()
       const { data } = await supabase
         .from('alternative_investitionen')
         .select('id, bezeichnung, parameter')

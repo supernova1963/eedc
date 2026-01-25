@@ -4,7 +4,7 @@
 'use client'
 
 import { useState } from 'react'
-import { supabase } from '@/lib/supabase'
+import { createBrowserClient } from '@/lib/supabase-browser'
 import { useRouter } from 'next/navigation'
 import SimpleIcon from './SimpleIcon'
 
@@ -43,6 +43,8 @@ export default function AnlagenProfilForm({ anlage, mitglied }: AnlagenProfilFor
     setSuccess(false)
 
     try {
+      const supabase = createBrowserClient()
+
       const updateData = {
         anlagenname: formData.anlagenname,
         standort_ort: formData.standort_ort,

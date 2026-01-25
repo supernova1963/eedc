@@ -4,7 +4,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { supabase } from '@/lib/supabase'
+import { createBrowserClient } from '@/lib/supabase-browser'
 import { useRouter } from 'next/navigation'
 
 interface StrompreisFormProps {
@@ -34,6 +34,7 @@ export default function StrompreisForm({ mitglied_id, anlage_id, editData }: Str
   // Lade Anlagen des Mitglieds
   useEffect(() => {
     const loadAnlagen = async () => {
+      const supabase = createBrowserClient()
       const { data } = await supabase
         .from('anlagen')
         .select('id, anlagenname, leistung_kwp')

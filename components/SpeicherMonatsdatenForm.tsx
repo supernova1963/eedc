@@ -4,7 +4,7 @@
 'use client'
 
 import { useState } from 'react'
-import { supabase } from '@/lib/supabase'
+import { createBrowserClient } from '@/lib/supabase-browser'
 import { useRouter } from 'next/navigation'
 import SimpleIcon from './SimpleIcon'
 
@@ -62,6 +62,8 @@ export default function SpeicherMonatsdatenForm({ investition }: SpeicherMonatsd
         einsparung_monat_euro: 0,
         co2_einsparung_kg: 0
       }
+
+      const supabase = createBrowserClient()
 
       const { error: dbError } = await supabase
         .from('investition_monatsdaten')

@@ -4,7 +4,7 @@
 'use client'
 
 import { useState } from 'react'
-import { supabase } from '@/lib/supabase'
+import { createBrowserClient } from '@/lib/supabase-browser'
 import { useRouter } from 'next/navigation'
 import SimpleIcon from './SimpleIcon'
 
@@ -43,6 +43,7 @@ export default function MonatsdatenForm({ anlage }: MonatsdatenFormProps) {
 
     try {
       // Hole mitglied_id
+      const supabase = createBrowserClient()
       const { data: mitgliedData } = await supabase
         .from('mitglieder')
         .select('id')

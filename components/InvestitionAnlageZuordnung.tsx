@@ -4,7 +4,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { supabase } from '@/lib/supabase'
+import { createBrowserClient } from '@/lib/supabase-browser'
 import SimpleIcon from './SimpleIcon'
 
 interface InvestitionAnlageZuordnungProps {
@@ -39,6 +39,7 @@ export default function InvestitionAnlageZuordnung({ mitglied_id }: InvestitionA
   const loadData = async () => {
     try {
       // Lade Investitionen
+      const supabase = createBrowserClient()
       const { data: invData } = await supabase
         .from('alternative_investitionen')
         .select('id, typ, bezeichnung, anlage_id, anschaffungsdatum')
@@ -49,6 +50,7 @@ export default function InvestitionAnlageZuordnung({ mitglied_id }: InvestitionA
       setInvestitionen(invData || [])
 
       // Lade Anlagen
+      const supabase = createBrowserClient()
       const { data: anlData } = await supabase
         .from('anlagen')
         .select('id, anlagenname, leistung_kwp, installationsdatum')
