@@ -1,6 +1,6 @@
 import './globals.css'
 import type { Metadata } from 'next'
-import AppLayout from '@/components/AppLayout'
+import ConditionalLayout from '@/components/ConditionalLayout'
 
 export const metadata: Metadata = {
   title: 'EEDC - Energy Data Collection',
@@ -15,7 +15,7 @@ export default function RootLayout({
   return (
     <html lang="de">
       <body>
-        <AppLayout>{children}</AppLayout>
+        <ConditionalLayout>{children}</ConditionalLayout>
       </body>
     </html>
   )

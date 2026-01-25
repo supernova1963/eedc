@@ -109,6 +109,7 @@ export default function RegisterPage() {
                   value={formData.vorname}
                   onChange={(e) => handleChange('vorname', e.target.value)}
                   required
+                  autoComplete="given-name"
                   className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
                   placeholder="Max"
                 />
@@ -124,6 +125,7 @@ export default function RegisterPage() {
                   value={formData.nachname}
                   onChange={(e) => handleChange('nachname', e.target.value)}
                   required
+                  autoComplete="family-name"
                   className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
                   placeholder="Mustermann"
                 />
@@ -140,6 +142,7 @@ export default function RegisterPage() {
                 value={formData.email}
                 onChange={(e) => handleChange('email', e.target.value)}
                 required
+                autoComplete="email"
                 className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
                 placeholder="ihre@email.de"
               />
@@ -155,6 +158,7 @@ export default function RegisterPage() {
                   type="text"
                   value={formData.plz}
                   onChange={(e) => handleChange('plz', e.target.value)}
+                  autoComplete="postal-code"
                   className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
                   placeholder="12345"
                 />
@@ -169,6 +173,7 @@ export default function RegisterPage() {
                   type="text"
                   value={formData.ort}
                   onChange={(e) => handleChange('ort', e.target.value)}
+                  autoComplete="address-level2"
                   className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
                   placeholder="Musterstadt"
                 />
@@ -185,6 +190,7 @@ export default function RegisterPage() {
                 value={formData.password}
                 onChange={(e) => handleChange('password', e.target.value)}
                 required
+                autoComplete="new-password"
                 className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
                 placeholder="Mindestens 6 Zeichen"
               />
@@ -211,6 +217,7 @@ export default function RegisterPage() {
                 value={formData.passwordConfirm}
                 onChange={(e) => handleChange('passwordConfirm', e.target.value)}
                 required
+                autoComplete="new-password"
                 className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
                 placeholder="Passwort wiederholen"
               />

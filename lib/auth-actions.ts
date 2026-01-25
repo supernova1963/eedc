@@ -8,7 +8,7 @@ import { redirect } from 'next/navigation'
 export async function signIn(email: string, password: string) {
   const supabase = await createClient()
 
-  const { error } = await supabase.auth.signInWithPassword({
+  const { data, error } = await supabase.auth.signInWithPassword({
     email,
     password,
   })
@@ -45,21 +45,26 @@ export async function signUp(formData: {
   }
 
   // 2. Erstelle Mitglied in der Datenbank
+  const insertData = {
+    email: formData.email,
+    vorname: formData.vorname,
+    nachname: formData.nachname,
+    plz: formData.plz || null,
+    ort: formData.ort || null,
+    aktiv: true,
+  }
+
+  // Verwende UPSERT statt INSERT um Race Conditions zu vermeiden
   const { error: mitgliedError } = await supabase
     .from('mitglieder')
-    .insert({
-      email: formData.email,
-      vorname: formData.vorname,
-      nachname: formData.nachname,
-      plz: formData.plz || null,
-      ort: formData.ort || null,
-      aktiv: true,
+    .upsert(insertData, {
+      onConflict: 'email',
+      ignoreDuplicates: false
     })
+    .select()
 
   if (mitgliedError) {
-    // Wenn Mitglied-Erstellung fehlschlägt, lösche den Auth User
-    await supabase.auth.admin.deleteUser(authData.user.id)
-    return { error: 'Mitgliedsdaten konnten nicht gespeichert werden' }
+    return { error: `Mitgliedsdaten konnten nicht gespeichert werden: ${mitgliedError.message}` }
   }
 
   redirect('/')
