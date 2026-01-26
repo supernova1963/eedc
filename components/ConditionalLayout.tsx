@@ -52,7 +52,13 @@ export default function ConditionalLayout({ children }: ConditionalLayoutProps) 
   }, [])
 
   // Check if current route is a public route
-  const isPublicRoute = PUBLIC_ROUTES.some(route => pathname.startsWith(route))
+  const isPublicRoute = PUBLIC_ROUTES.some(route => {
+    // Exact match for root
+    if (route === '/' && pathname === '/') return true
+    // Prefix match for others
+    if (route !== '/' && pathname.startsWith(route)) return true
+    return false
+  })
 
   // For public routes, render children directly without AppLayout
   if (isPublicRoute) {

@@ -4,6 +4,7 @@
 import { createClient } from '@/lib/supabase-server'
 import Link from 'next/link'
 import SimpleIcon from '@/components/SimpleIcon'
+import PublicHeader from '@/components/PublicHeader'
 
 async function getCommunityStats() {
   const supabase = await createClient()
@@ -47,6 +48,9 @@ export default async function CommunityDashboardPage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-blue-50 to-white">
+      {/* Public Header */}
+      <PublicHeader />
+
       {/* Hero Section */}
       <div className="bg-gradient-to-r from-blue-600 to-green-600 text-white">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
