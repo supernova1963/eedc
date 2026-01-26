@@ -130,6 +130,8 @@ export default function EAutoMonatsdatenForm({ investition, existingData }: EAut
     setError(null)
 
     try {
+      const supabase = createBrowserClient()
+
       const monatsdatenData = {
         investition_id: investition.id,
         jahr: formData.jahr,

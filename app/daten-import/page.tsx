@@ -58,6 +58,9 @@ export default async function DatenImportPage() {
     )
   }
 
+  // Supabase Client für Server-seitige Queries
+  const supabase = await createClient()
+
   // Monatsdaten für alle Anlagen zählen
   const monatsdatenCounts = await Promise.all(
     anlagen.map(async (anlage) => {

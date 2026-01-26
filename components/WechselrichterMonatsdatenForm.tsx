@@ -83,6 +83,8 @@ export default function WechselrichterMonatsdatenForm({ investition }: Wechselri
     setError(null)
 
     try {
+      const supabase = createBrowserClient()
+
       // CO2-Einsparung berechnen (0.38 kg/kWh Netzstrom vermieden)
       const co2Einsparung = erzeugungIst * 0.38
 

@@ -81,6 +81,8 @@ export default function WaermepumpeMonatsdatenForm({ investition }: WaermepumpeM
     setError(null)
 
     try {
+      const supabase = createBrowserClient()
+
       const monatsdaten = {
         investition_id: investition.id,
         jahr: formData.jahr,

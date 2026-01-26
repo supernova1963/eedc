@@ -64,6 +64,7 @@ export default function StrompreisListe({ mitglied_id }: StrompreisListeProps) {
     if (!confirm('Strompreis wirklich löschen?')) return
 
     try {
+      const supabase = createBrowserClient()
       const { error } = await supabase
         .from('strompreise')
         .delete()

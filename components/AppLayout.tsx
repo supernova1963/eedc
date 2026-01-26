@@ -1,35 +1,27 @@
 // components/AppLayout.tsx
-// Haupt-Layout mit Sidebar und Content Area
+// Haupt-Layout mit ModernSidebar und Content Area
 
 'use client'
 
-import { useState } from 'react'
-import Sidebar from './Sidebar'
-import MobileHeader from './MobileHeader'
+import ModernSidebar from './ModernSidebar'
 import Breadcrumb from './Breadcrumb'
 
 interface AppLayoutProps {
   children: React.ReactNode
+  userName?: string
+  userEmail?: string
 }
 
-export default function AppLayout({ children }: AppLayoutProps) {
-  const [sidebarOpen, setSidebarOpen] = useState(false)
-
+export default function AppLayout({ children, userName, userEmail }: AppLayoutProps) {
   return (
     <div className="flex h-screen bg-gray-50">
-      {/* Sidebar */}
-      <Sidebar
-        isOpen={sidebarOpen}
-        onClose={() => setSidebarOpen(false)}
-      />
+      {/* Modern Sidebar */}
+      <ModernSidebar userName={userName} userEmail={userEmail} />
 
       {/* Main Content */}
-      <div className="flex-1 flex flex-col overflow-hidden">
-        {/* Mobile Header */}
-        <MobileHeader onMenuClick={() => setSidebarOpen(true)} />
-
+      <div className="flex-1 flex flex-col overflow-hidden lg:ml-0">
         {/* Content Area */}
-        <main className="flex-1 overflow-y-auto pt-16 lg:pt-0">
+        <main className="flex-1 overflow-y-auto">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
             {/* Breadcrumb */}
             <Breadcrumb />

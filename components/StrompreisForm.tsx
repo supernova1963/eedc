@@ -58,6 +58,8 @@ export default function StrompreisForm({ mitglied_id, anlage_id, editData }: Str
     setError(null)
 
     try {
+      const supabase = createBrowserClient()
+
       // Validierung
       if (formData.gueltig_bis && formData.gueltig_bis < formData.gueltig_ab) {
         throw new Error('Gültig-Bis darf nicht vor Gültig-Ab liegen')

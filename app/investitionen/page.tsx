@@ -23,12 +23,14 @@ async function getInvestitionen(userId: string) {
 async function deleteInvestition(formData: FormData) {
   'use server'
   const id = formData.get('id') as string
-  
+
+  const supabase = await createClient()
+
   await supabase
     .from('alternative_investitionen')
     .delete()
     .eq('id', id)
-  
+
   revalidatePath('/investitionen')
 }
 

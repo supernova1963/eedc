@@ -4,7 +4,9 @@
 'use client'
 
 import { usePathname } from 'next/navigation'
+import { useState, useEffect } from 'react'
 import AppLayout from './AppLayout'
+import { createBrowserClient } from '@/lib/supabase-browser'
 
 interface ConditionalLayoutProps {
   children: React.ReactNode
@@ -19,6 +21,33 @@ const PUBLIC_ROUTES = [
 
 export default function ConditionalLayout({ children }: ConditionalLayoutProps) {
   const pathname = usePathname()
+  const [userName, setUserName] = useState<string>()
+  const [userEmail, setUserEmail] = useState<string>()
+
+  // Load user data
+  useEffect(() => {
+    const loadUser = async () => {
+      const supabase = createBrowserClient()
+      const { data: { user } } = await supabase.auth.getUser()
+
+      if (user) {
+        setUserEmail(user.email)
+
+        // Lade Mitgliedsdaten für vollen Namen
+        const { data: mitglied } = await supabase
+          .from('mitglieder')
+          .select('vorname, nachname')
+          .eq('id', user.id)
+          .single()
+
+        if (mitglied) {
+          setUserName(`${mitglied.vorname} ${mitglied.nachname}`)
+        }
+      }
+    }
+
+    loadUser()
+  }, [])
 
   // Check if current route is a public route
   const isPublicRoute = PUBLIC_ROUTES.some(route => pathname.startsWith(route))
@@ -29,5 +58,9 @@ export default function ConditionalLayout({ children }: ConditionalLayoutProps) 
   }
 
   // For all other routes, wrap with AppLayout
-  return <AppLayout>{children}</AppLayout>
+  return (
+    <AppLayout userName={userName} userEmail={userEmail}>
+      {children}
+    </AppLayout>
+  )
 }

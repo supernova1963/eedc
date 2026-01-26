@@ -285,6 +285,37 @@ export default function SimpleIcon({ type, className = '' }: SimpleIconProps) {
         <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9" />
       </svg>
     ),
+    menu: (
+      <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <path d="M3 12h18M3 6h18M3 18h18" />
+      </svg>
+    ),
+    'chevron-down': (
+      <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <path d="M6 9l6 6 6-6" />
+      </svg>
+    ),
+    users: (
+      <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M9 11a4 4 0 100-8 4 4 0 000 8zM23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" />
+      </svg>
+    ),
+    map: (
+      <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <path d="M1 6v16l7-4 8 4 7-4V2l-7 4-8-4-7 4zM8 2v16M16 6v16" />
+      </svg>
+    ),
+    leaf: (
+      <svg className={className} viewBox="0 0 24 24" fill="currentColor">
+        <path d="M17 3C10 3 5 8 5 15c0 3 1 5 3 6 0-2 1-4 3-5-1-2-1-4 0-6 2 3 4 4 7 4 0-3-1-6-3-8 3 0 6 2 7 5 1-5-2-8-5-8z" />
+        <path d="M5 15c0 3 2 6 5 7-2-1-3-3-3-5s1-4 2-5c-2 1-4 2-4 3z" opacity="0.5" />
+      </svg>
+    ),
+    list: (
+      <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" />
+      </svg>
+    ),
   }
 
   return icons[type] || <span className={className}>•</span>
