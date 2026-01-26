@@ -25,7 +25,7 @@ interface ModernSidebarProps {
 export default function ModernSidebar({ userName, userEmail }: ModernSidebarProps) {
   const pathname = usePathname()
   const [isOpen, setIsOpen] = useState(false)
-  const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(['auswertungen']))
+  const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(['Meine Anlage', 'Community']))
 
   // Dynamische Investitionen
   const [eAutos, setEAutos] = useState<any[]>([])
@@ -68,66 +68,77 @@ export default function ModernSidebar({ userName, userEmail }: ModernSidebarProp
 
   // Navigation Structure
   const navItems: NavItem[] = [
-    { label: 'Dashboard', href: '/', icon: 'chart' },
-    { label: 'Daten Import', href: '/daten-import', icon: 'upload' },
-    { label: 'Eingabe', href: '/eingabe', icon: 'edit' },
-    { label: 'Übersicht', href: '/uebersicht', icon: 'list' },
+    { label: 'Dashboard', href: '/', icon: 'home' },
+
+    // === MEINE ANLAGE ===
     {
-      label: 'Auswertungen',
-      icon: 'chart',
+      label: 'Meine Anlage',
+      icon: 'solar',
       children: [
-        { label: 'Gesamt', href: '/auswertung?tab=gesamt', icon: 'home' },
-        { label: 'PV-Anlage', href: '/auswertung?tab=pv', icon: 'solar' },
-        ...(eAutos.length > 0 ? [{
-          label: 'E-Auto',
-          icon: 'car',
-          children: eAutos.map(auto => ({
-            label: auto.bezeichnung,
-            href: `/auswertung?tab=e-auto&auto=${auto.id}`,
-            icon: 'car'
-          }))
-        }] : []),
-        ...(waermepumpen.length > 0 ? [{
-          label: 'Wärmepumpe',
-          icon: 'heat',
-          children: waermepumpen.map(wp => ({
-            label: wp.bezeichnung,
-            href: `/auswertung?tab=waermepumpe&wp=${wp.id}`,
-            icon: 'heat'
-          }))
-        }] : []),
-        ...(speicher.length > 0 ? [{
-          label: 'Speicher',
-          icon: 'battery',
-          children: speicher.map(sp => ({
-            label: sp.bezeichnung,
-            href: `/auswertung?tab=speicher&speicher=${sp.id}`,
-            icon: 'battery'
-          }))
-        }] : []),
-        { label: 'ROI-Analyse', href: '/auswertung?tab=roi', icon: 'chart' },
-        { label: 'CO₂-Impact', href: '/auswertung?tab=co2', icon: 'leaf' },
-        { label: 'Prognose vs. IST', href: '/auswertung?tab=prognose', icon: 'chart' },
+        { label: 'Daten erfassen', href: '/eingabe', icon: 'edit' },
+        { label: 'Daten Import', href: '/daten-import', icon: 'upload' },
+        { label: 'Übersicht', href: '/uebersicht', icon: 'list' },
+        { label: 'Investitionen', href: '/investitionen', icon: 'briefcase' },
+        {
+          label: 'Auswertungen',
+          icon: 'chart',
+          children: [
+            { label: 'Gesamt', href: '/auswertung?tab=gesamt', icon: 'home' },
+            { label: 'PV-Anlage', href: '/auswertung?tab=pv', icon: 'solar' },
+            ...(eAutos.length > 0 ? [{
+              label: 'E-Auto',
+              icon: 'car',
+              children: eAutos.map(auto => ({
+                label: auto.bezeichnung,
+                href: `/auswertung?tab=e-auto&auto=${auto.id}`,
+                icon: 'car'
+              }))
+            }] : []),
+            ...(waermepumpen.length > 0 ? [{
+              label: 'Wärmepumpe',
+              icon: 'heat',
+              children: waermepumpen.map(wp => ({
+                label: wp.bezeichnung,
+                href: `/auswertung?tab=waermepumpe&wp=${wp.id}`,
+                icon: 'heat'
+              }))
+            }] : []),
+            ...(speicher.length > 0 ? [{
+              label: 'Speicher',
+              icon: 'battery',
+              children: speicher.map(sp => ({
+                label: sp.bezeichnung,
+                href: `/auswertung?tab=speicher&speicher=${sp.id}`,
+                icon: 'battery'
+              }))
+            }] : []),
+            { label: 'ROI-Analyse', href: '/auswertung?tab=roi', icon: 'chart' },
+            { label: 'CO₂-Impact', href: '/auswertung?tab=co2', icon: 'leaf' },
+            { label: 'Prognose vs. IST', href: '/auswertung?tab=prognose', icon: 'trend' },
+          ]
+        },
+        {
+          label: 'Stammdaten',
+          icon: 'clipboard',
+          children: [
+            { label: 'Übersicht', href: '/stammdaten', icon: 'list' },
+            { label: 'Strompreise', href: '/stammdaten/strompreise', icon: 'lightning' },
+            { label: 'Zuordnung', href: '/stammdaten/zuordnung', icon: 'link' },
+            { label: 'Anlage', href: '/anlage', icon: 'settings' },
+          ]
+        },
       ]
     },
-    { label: 'Investitionen', href: '/investitionen', icon: 'briefcase' },
-    {
-      label: 'Stammdaten',
-      icon: 'clipboard',
-      children: [
-        { label: 'Übersicht', href: '/stammdaten', icon: 'list' },
-        { label: 'Strompreise', href: '/stammdaten/strompreise', icon: 'bolt' },
-        { label: 'Zuordnung', href: '/stammdaten/zuordnung', icon: 'link' },
-        { label: 'Anlage', href: '/anlage', icon: 'solar' },
-      ]
-    },
+
+    // === COMMUNITY ===
     {
       label: 'Community',
       icon: 'users',
       children: [
-        { label: 'Anlagen', href: '/community', icon: 'solar' },
+        { label: 'Alle Anlagen', href: '/community', icon: 'globe' },
         { label: 'Vergleich', href: '/community/vergleich', icon: 'chart' },
         { label: 'Regional', href: '/community/regional', icon: 'map' },
+        { label: 'Bestenliste', href: '/community/bestenliste', icon: 'trophy' },
       ]
     },
   ]
