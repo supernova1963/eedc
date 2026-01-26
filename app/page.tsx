@@ -1,286 +1,188 @@
 // app/page.tsx
-// Dashboard - Optimiert für neues Layout
+// Community Dashboard - Öffentliche Startseite
 
 import { createClient } from '@/lib/supabase-server'
-import { getCurrentUser } from '@/lib/auth'
 import Link from 'next/link'
-import DashboardChart from '@/components/DashboardChart'
 import SimpleIcon from '@/components/SimpleIcon'
 
-async function getDashboardData(userId: string) {
+async function getCommunityStats() {
   const supabase = await createClient()
 
-  // Erste Anlage des Users holen
-  const { data: anlage } = await supabase
+  // Anzahl öffentlicher Anlagen
+  const { count: anlagenCount } = await supabase
     .from('anlagen')
-    .select('*')
-    .eq('mitglied_id', userId)
+    .select('*', { count: 'exact', head: true })
     .eq('aktiv', true)
-    .order('erstellt_am', { ascending: false })
-    .limit(1)
-    .single()
+    .eq('oeffentlich', true)
 
-  if (!anlage) {
-    return { anlage: null, monatsdaten: [] }
+  // Gesamte PV-Leistung
+  const { data: anlagen } = await supabase
+    .from('anlagen')
+    .select('leistung_kwp')
+    .eq('aktiv', true)
+    .eq('oeffentlich', true)
+
+  const gesamtLeistung = anlagen?.reduce((sum, a) => sum + (a.leistung_kwp || 0), 0) || 0
+
+  // Top 5 Anlagen nach Leistung
+  const { data: topAnlagen } = await supabase
+    .from('anlagen')
+    .select('id, anlagenname, leistung_kwp, standort_plz, standort_ort, inbetriebnahme')
+    .eq('aktiv', true)
+    .eq('oeffentlich', true)
+    .order('leistung_kwp', { ascending: false })
+    .limit(5)
+
+  return {
+    anlagenCount: anlagenCount || 0,
+    gesamtLeistung,
+    topAnlagen: topAnlagen || []
   }
-
-  // Monatsdaten für diese Anlage holen
-  const { data: monatsdaten } = await supabase
-    .from('monatsdaten')
-    .select('*')
-    .eq('anlage_id', anlage.id)
-    .order('jahr', { ascending: true })
-    .order('monat', { ascending: true })
-
-  return { anlage, monatsdaten: monatsdaten || [] }
 }
 
 export const dynamic = 'force-dynamic'
 
-export default async function DashboardPage() {
-  const user = await getCurrentUser()
-
-  if (!user) {
-    return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="text-center">
-          <p className="text-gray-600">Nicht authentifiziert</p>
-        </div>
-      </div>
-    )
-  }
-
-  const { anlage, monatsdaten } = await getDashboardData(user.id)
-
-  const toNum = (val: any): number => {
-    if (val === null || val === undefined) return 0
-    return parseFloat(String(val)) || 0
-  }
-
-  const gesamtErzeugung = monatsdaten.reduce((sum, m) =>
-    sum + toNum(m.pv_erzeugung_kwh), 0
-  )
-
-  const gesamtEigenverbrauch = monatsdaten.reduce((sum, m) =>
-    sum + toNum(m.direktverbrauch_kwh) + toNum(m.batterieentladung_kwh), 0
-  )
-
-  const gesamtVerbrauch = monatsdaten.reduce((sum, m) =>
-    sum + toNum(m.gesamtverbrauch_kwh), 0
-  )
-
-  const gesamtEinspeisung = monatsdaten.reduce((sum, m) =>
-    sum + toNum(m.einspeisung_kwh), 0
-  )
-
-  const gesamtErloese = monatsdaten.reduce((sum, m) =>
-    sum + toNum(m.einspeisung_ertrag_euro), 0
-  )
-
-  const gesamtNetzbezugKosten = monatsdaten.reduce((sum, m) =>
-    sum + toNum(m.netzbezug_kosten_euro), 0
-  )
-
-  const gesamtBetriebsausgaben = monatsdaten.reduce((sum, m) =>
-    sum + toNum(m.betriebsausgaben_monat_euro), 0
-  )
-
-  const nettoErtrag = gesamtErloese - gesamtNetzbezugKosten - gesamtBetriebsausgaben
-
-  const eigenverbrauchsquote = gesamtErzeugung > 0
-    ? (gesamtEigenverbrauch / gesamtErzeugung) * 100
-    : 0
-
-  const autarkiegrad = gesamtVerbrauch > 0
-    ? (gesamtEigenverbrauch / gesamtVerbrauch) * 100
-    : 0
-
-  const fmt = (num: number) => num.toLocaleString('de-DE', { maximumFractionDigits: 0 })
-  const fmtDec = (num: number) => num.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-
-  const monatsnamen = ['', 'Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez']
-  const chartData = monatsdaten.map(m => ({
-    monat: `${monatsnamen[m.monat]} ${m.jahr}`,
-    eigenverbrauch: toNum(m.direktverbrauch_kwh) + toNum(m.batterieentladung_kwh),
-    erzeugung: toNum(m.pv_erzeugung_kwh),
-    verbrauch: toNum(m.gesamtverbrauch_kwh),
-    einspeisung: toNum(m.einspeisung_kwh)
-  }))
+export default async function CommunityDashboardPage() {
+  const { anlagenCount, gesamtLeistung, topAnlagen } = await getCommunityStats()
 
   return (
-    <div>
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-2">
-          <SimpleIcon type="sun" className="w-8 h-8 text-yellow-500" /> Dashboard
-        </h1>
-        <p className="mt-2 text-gray-600">
-          Übersicht deiner PV-Anlage und Energiedaten
-        </p>
+    <div className="min-h-screen bg-gradient-to-b from-blue-50 to-white">
+      {/* Hero Section */}
+      <div className="bg-gradient-to-r from-blue-600 to-green-600 text-white">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
+          <div className="text-center">
+            <h1 className="text-5xl font-bold mb-4">
+              🌍 PV-Anlagen Community
+            </h1>
+            <p className="text-xl mb-8 text-blue-100">
+              Gemeinsam für mehr Transparenz und bessere Energiewende
+            </p>
+            <div className="flex justify-center gap-4">
+              <Link
+                href="/login"
+                className="px-8 py-3 bg-white text-blue-600 rounded-lg font-semibold hover:bg-blue-50 transition-colors"
+              >
+                Anmelden
+              </Link>
+              <Link
+                href="/register"
+                className="px-8 py-3 bg-blue-700 text-white rounded-lg font-semibold hover:bg-blue-800 transition-colors border-2 border-white"
+              >
+                Jetzt mitmachen
+              </Link>
+            </div>
+          </div>
+        </div>
       </div>
 
-      {!anlage ? (
-        <div className="bg-white rounded-lg shadow p-8 text-center">
-          <p className="text-gray-500 mb-4">Keine Anlage gefunden</p>
+      {/* Stats Section */}
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
+          <div className="bg-white rounded-lg shadow-lg p-6 text-center">
+            <SimpleIcon type="solar" className="w-12 h-12 text-yellow-500 mx-auto mb-4" />
+            <p className="text-4xl font-bold text-gray-900">{anlagenCount}</p>
+            <p className="text-gray-600 mt-2">Öffentliche Anlagen</p>
+          </div>
+          <div className="bg-white rounded-lg shadow-lg p-6 text-center">
+            <SimpleIcon type="lightning" className="w-12 h-12 text-orange-500 mx-auto mb-4" />
+            <p className="text-4xl font-bold text-gray-900">{gesamtLeistung.toFixed(1)} kWp</p>
+            <p className="text-gray-600 mt-2">Gesamtleistung</p>
+          </div>
+          <div className="bg-white rounded-lg shadow-lg p-6 text-center">
+            <SimpleIcon type="leaf" className="w-12 h-12 text-green-500 mx-auto mb-4" />
+            <p className="text-4xl font-bold text-gray-900">{(gesamtLeistung * 1000 * 0.38).toFixed(0)} kg</p>
+            <p className="text-gray-600 mt-2">CO₂ Einsparung/Jahr (geschätzt)</p>
+          </div>
+        </div>
+
+        {/* Top Anlagen */}
+        <div className="bg-white rounded-lg shadow-lg p-8">
+          <h2 className="text-2xl font-bold text-gray-900 mb-6 flex items-center gap-2">
+            <SimpleIcon type="trophy" className="w-6 h-6 text-yellow-500" />
+            Top 5 Anlagen nach Leistung
+          </h2>
+          {topAnlagen.length > 0 ? (
+            <div className="space-y-4">
+              {topAnlagen.map((anlage, idx) => (
+                <Link
+                  key={anlage.id}
+                  href={`/community/${anlage.id}`}
+                  className="block p-4 border rounded-lg hover:border-blue-500 hover:bg-blue-50 transition-colors"
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-4">
+                      <div className="w-8 h-8 bg-gradient-to-br from-yellow-400 to-orange-500 rounded-full flex items-center justify-center text-white font-bold">
+                        {idx + 1}
+                      </div>
+                      <div>
+                        <p className="font-semibold text-gray-900">{anlage.anlagenname || 'Anlage'}</p>
+                        <p className="text-sm text-gray-600">
+                          {anlage.standort_plz} {anlage.standort_ort}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-lg font-bold text-blue-600">{anlage.leistung_kwp} kWp</p>
+                      <p className="text-xs text-gray-500">
+                        seit {new Date(anlage.inbetriebnahme).getFullYear()}
+                      </p>
+                    </div>
+                  </div>
+                </Link>
+              ))}
+            </div>
+          ) : (
+            <p className="text-gray-500 text-center py-8">
+              Noch keine öffentlichen Anlagen verfügbar
+            </p>
+          )}
+        </div>
+
+        {/* Features Section */}
+        <div className="mt-12 grid grid-cols-1 md:grid-cols-3 gap-8">
+          <div className="text-center">
+            <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <SimpleIcon type="chart" className="w-8 h-8 text-blue-600" />
+            </div>
+            <h3 className="text-lg font-semibold mb-2">Transparente Daten</h3>
+            <p className="text-gray-600">
+              Vergleiche deine Anlage mit anderen und lerne von den Besten
+            </p>
+          </div>
+          <div className="text-center">
+            <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <SimpleIcon type="users" className="w-8 h-8 text-green-600" />
+            </div>
+            <h3 className="text-lg font-semibold mb-2">Starke Community</h3>
+            <p className="text-gray-600">
+              Tausche dich aus und profitiere vom Wissen der Community
+            </p>
+          </div>
+          <div className="text-center">
+            <div className="w-16 h-16 bg-purple-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <SimpleIcon type="target" className="w-8 h-8 text-purple-600" />
+            </div>
+            <h3 className="text-lg font-semibold mb-2">Optimierung</h3>
+            <p className="text-gray-600">
+              Erkenne Potenziale und optimiere deine Anlage kontinuierlich
+            </p>
+          </div>
+        </div>
+
+        {/* CTA */}
+        <div className="mt-12 bg-gradient-to-r from-blue-600 to-green-600 rounded-lg p-8 text-center text-white">
+          <h2 className="text-3xl font-bold mb-4">Werde Teil der Community!</h2>
+          <p className="text-lg mb-6 text-blue-100">
+            Teile deine PV-Daten und hilf anderen bei der Energiewende
+          </p>
           <Link
-            href="/anlage"
-            className="inline-block px-6 py-3 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+            href="/register"
+            className="inline-block px-8 py-3 bg-white text-blue-600 rounded-lg font-semibold hover:bg-blue-50 transition-colors"
           >
-            Jetzt Anlage anlegen
+            Kostenlos registrieren
           </Link>
         </div>
-      ) : (
-        <div className="space-y-6">
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            <div className="bg-white rounded-lg shadow p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-gray-600">Gesamt-Verbrauch</p>
-                  <p className="text-2xl font-bold text-gray-900 mt-1">
-                    {fmt(gesamtVerbrauch)} kWh
-                  </p>
-                </div>
-                <SimpleIcon type="plug" className="w-12 h-12 text-gray-400" />
-              </div>
-            </div>
-
-            <div className="bg-white rounded-lg shadow p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-gray-600">PV-Erzeugung</p>
-                  <p className="text-2xl font-bold text-gray-900 mt-1">
-                    {fmt(gesamtErzeugung)} kWh
-                  </p>
-                </div>
-                <SimpleIcon type="sun" className="w-12 h-12 text-yellow-500" />
-              </div>
-            </div>
-
-            <div className="bg-white rounded-lg shadow p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-gray-600">Eigenverbrauch</p>
-                  <p className="text-2xl font-bold text-gray-900 mt-1">
-                    {fmt(gesamtEigenverbrauch)} kWh
-                  </p>
-                </div>
-                <SimpleIcon type="home" className="w-12 h-12 text-blue-500" />
-              </div>
-            </div>
-
-            <div className="bg-white rounded-lg shadow p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-gray-600">Einspeisung</p>
-                  <p className="text-2xl font-bold text-gray-900 mt-1">
-                    {fmt(gesamtEinspeisung)} kWh
-                  </p>
-                </div>
-                <SimpleIcon type="lightning" className="w-12 h-12 text-orange-500" />
-              </div>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="bg-white rounded-lg shadow p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-gray-600">Ø Autarkie</p>
-                  <p className="text-2xl font-bold text-gray-900 mt-1">
-                    {autarkiegrad.toFixed(0)}%
-                  </p>
-                </div>
-                <SimpleIcon type="chart" className="w-12 h-12 text-purple-500" />
-              </div>
-            </div>
-
-            <div className="bg-white rounded-lg shadow p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-gray-600">Erlöse</p>
-                  <p className="text-2xl font-bold text-blue-700 mt-1">
-                    {fmtDec(gesamtErloese)} €
-                  </p>
-                </div>
-                <SimpleIcon type="money" className="w-12 h-12 text-blue-500" />
-              </div>
-            </div>
-
-            <div className="bg-white rounded-lg shadow p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-gray-600">Netto-Ertrag</p>
-                  <p className="text-2xl font-bold text-green-700 mt-1">
-                    {fmtDec(nettoErtrag)} €
-                  </p>
-                </div>
-                <SimpleIcon type="gem" className="w-12 h-12 text-green-500" />
-              </div>
-            </div>
-          </div>
-
-          {chartData.length > 0 && (
-            <div className="bg-white rounded-lg shadow p-6">
-              <h2 className="text-xl font-semibold text-gray-900 mb-4 flex items-center gap-2">
-                <SimpleIcon type="trend" className="w-6 h-6 text-blue-600" />
-                Monatlicher Verlauf
-              </h2>
-              <DashboardChart data={chartData} />
-            </div>
-          )}
-
-          <div className="bg-gradient-to-r from-blue-50 to-green-50 border border-blue-200 rounded-lg p-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-              <SimpleIcon type="rocket" className="w-6 h-6 text-blue-600" />
-              Schnellzugriff
-            </h3>
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-              <Link
-                href="/eingabe"
-                className="flex items-center gap-3 p-4 bg-white rounded-lg hover:shadow-md transition-shadow"
-              >
-                <SimpleIcon type="plus" className="w-8 h-8 text-blue-600" />
-                <div>
-                  <div className="font-medium text-gray-900">Daten erfassen</div>
-                  <div className="text-sm text-gray-600">Monatsdaten</div>
-                </div>
-              </Link>
-
-              <Link
-                href="/investitionen"
-                className="flex items-center gap-3 p-4 bg-white rounded-lg hover:shadow-md transition-shadow"
-              >
-                <SimpleIcon type="briefcase" className="w-8 h-8 text-purple-600" />
-                <div>
-                  <div className="font-medium text-gray-900">Investitionen</div>
-                  <div className="text-sm text-gray-600">Verwalten</div>
-                </div>
-              </Link>
-
-              <Link
-                href="/stammdaten"
-                className="flex items-center gap-3 p-4 bg-white rounded-lg hover:shadow-md transition-shadow border-2 border-green-500"
-              >
-                <SimpleIcon type="clipboard" className="w-8 h-8 text-green-600" />
-                <div>
-                  <div className="font-medium text-gray-900">Stammdaten</div>
-                  <div className="text-sm text-green-600 font-semibold">NEU</div>
-                </div>
-              </Link>
-
-              <Link
-                href="/auswertung"
-                className="flex items-center gap-3 p-4 bg-white rounded-lg hover:shadow-md transition-shadow"
-              >
-                <SimpleIcon type="chart" className="w-8 h-8 text-orange-600" />
-                <div>
-                  <div className="font-medium text-gray-900">Auswertungen</div>
-                  <div className="text-sm text-gray-600">ROI & Charts</div>
-                </div>
-              </Link>
-            </div>
-          </div>
-        </div>
-      )}
+      </div>
     </div>
   )
 }

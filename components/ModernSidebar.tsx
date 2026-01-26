@@ -68,13 +68,25 @@ export default function ModernSidebar({ userName, userEmail }: ModernSidebarProp
 
   // Navigation Structure
   const navItems: NavItem[] = [
-    { label: 'Dashboard', href: '/', icon: 'home' },
+    // === COMMUNITY (ÖFFENTLICH) ===
+    {
+      label: 'Community',
+      icon: 'users',
+      children: [
+        { label: 'Dashboard', href: '/', icon: 'home' },
+        { label: 'Alle Anlagen', href: '/community', icon: 'globe' },
+        { label: 'Vergleich', href: '/community/vergleich', icon: 'chart' },
+        { label: 'Regional', href: '/community/regional', icon: 'map' },
+        { label: 'Bestenliste', href: '/community/bestenliste', icon: 'trophy' },
+      ]
+    },
 
-    // === MEINE ANLAGE ===
+    // === MEINE ANLAGE (AUTH REQUIRED) ===
     {
       label: 'Meine Anlage',
       icon: 'solar',
       children: [
+        { label: 'Dashboard', href: '/meine-anlage', icon: 'home' },
         { label: 'Daten erfassen', href: '/eingabe', icon: 'edit' },
         { label: 'Daten Import', href: '/daten-import', icon: 'upload' },
         { label: 'Übersicht', href: '/uebersicht', icon: 'list' },
@@ -127,18 +139,6 @@ export default function ModernSidebar({ userName, userEmail }: ModernSidebarProp
             { label: 'Anlage', href: '/anlage', icon: 'settings' },
           ]
         },
-      ]
-    },
-
-    // === COMMUNITY ===
-    {
-      label: 'Community',
-      icon: 'users',
-      children: [
-        { label: 'Alle Anlagen', href: '/community', icon: 'globe' },
-        { label: 'Vergleich', href: '/community/vergleich', icon: 'chart' },
-        { label: 'Regional', href: '/community/regional', icon: 'map' },
-        { label: 'Bestenliste', href: '/community/bestenliste', icon: 'trophy' },
       ]
     },
   ]

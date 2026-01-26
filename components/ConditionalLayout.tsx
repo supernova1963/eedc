@@ -14,9 +14,11 @@ interface ConditionalLayoutProps {
 
 // Routes that should NOT have the AppLayout (sidebar, etc.)
 const PUBLIC_ROUTES = [
+  '/',  // Community Dashboard (öffentlich)
   '/login',
   '/register',
   '/test-register',
+  '/community',  // Community Seiten öffentlich
 ]
 
 export default function ConditionalLayout({ children }: ConditionalLayoutProps) {
