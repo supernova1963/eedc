@@ -23,7 +23,6 @@ export interface PublicAnlage {
   standort_plz?: string
   standort_latitude?: number
   standort_longitude?: number
-  profilbeschreibung?: string
   batteriekapazitaet_kwh?: number
   ekfz_vorhanden?: boolean
   waermepumpe_vorhanden?: boolean
@@ -36,6 +35,7 @@ export interface PublicAnlage {
 
 /**
  * Holt alle öffentlichen Anlagen (mit Profil-Freigabe)
+ * Nutzt Security Definer Function zur Vermeidung von RLS-Zirkelbezügen
  */
 export async function getPublicAnlagen(filters?: {
   ort?: string
@@ -48,23 +48,27 @@ export async function getPublicAnlagen(filters?: {
 }): Promise<PublicAnlage[]> {
   const supabase = await createClient()
 
-  let query = supabase
+  // Nutze die Security Definer Function (umgeht RLS)
+  const { data: basicData, error } = await supabase.rpc('get_public_anlagen_with_members')
+
+  if (error || !basicData) {
+    console.error('Error fetching public anlagen:', error)
+    return []
+  }
+
+  // Hole zusätzliche Detaildaten und Freigaben für die Anlagen
+  const anlageIds = basicData.map((a: any) => a.anlage_id)
+
+  const { data: detailData } = await supabase
     .from('anlagen')
     .select(`
       id,
-      anlagenname,
-      anlagentyp,
-      installationsdatum,
-      leistung_kwp,
-      standort_ort,
-      standort_plz,
       standort_latitude,
       standort_longitude,
-      profilbeschreibung,
       batteriekapazitaet_kwh,
       ekfz_vorhanden,
       waermepumpe_vorhanden,
-      anlagen_freigaben!inner (
+      anlagen_freigaben (
         anlage_id,
         profil_oeffentlich,
         kennzahlen_oeffentlich,
@@ -72,90 +76,98 @@ export async function getPublicAnlagen(filters?: {
         investitionen_oeffentlich,
         monatsdaten_oeffentlich,
         standort_genau
-      ),
-      mitglieder!inner (
-        vorname,
-        ort
       )
     `)
-    .eq('aktiv', true)
-    .eq('anlagen_freigaben.profil_oeffentlich', true)
+    .in('id', anlageIds)
 
-  // Filter anwenden
-  if (filters?.ort) {
-    query = query.ilike('standort_ort', `%${filters.ort}%`)
-  }
-  if (filters?.plz) {
-    query = query.eq('standort_plz', filters.plz)
-  }
-  if (filters?.minLeistung) {
-    query = query.gte('leistung_kwp', filters.minLeistung)
-  }
-  if (filters?.maxLeistung) {
-    query = query.lte('leistung_kwp', filters.maxLeistung)
-  }
-  if (filters?.hatBatterie) {
-    query = query.gt('batteriekapazitaet_kwh', 0)
-  }
-  if (filters?.hatEAuto) {
-    query = query.eq('ekfz_vorhanden', true)
-  }
-  if (filters?.hatWaermepumpe) {
-    query = query.eq('waermepumpe_vorhanden', true)
-  }
-
-  const { data, error } = await query
-
-  if (error || !data) {
-    console.error('Error fetching public anlagen:', error)
-    return []
-  }
-
-  // Daten transformieren
-  return data.map((anlage: any) => {
-    const freigabe = anlage.anlagen_freigaben
-    const mitglied = anlage.mitglieder
+  // Merge basic + detail data
+  const mergedData = basicData.map((basic: any) => {
+    const detail = detailData?.find((d: any) => d.id === basic.anlage_id)
+    const freigabe = detail?.anlagen_freigaben?.[0] || {
+      standort_genau: false,
+      kennzahlen_oeffentlich: false,
+      auswertungen_oeffentlich: false,
+      investitionen_oeffentlich: false,
+      monatsdaten_oeffentlich: false,
+    }
 
     return {
-      id: anlage.id,
-      anlagenname: anlage.anlagenname,
-      anlagentyp: anlage.anlagentyp,
-      installationsdatum: anlage.installationsdatum,
-      leistung_kwp: anlage.leistung_kwp,
-      standort_ort: anlage.standort_ort,
-      standort_plz: freigabe.standort_genau ? anlage.standort_plz : anlage.standort_plz?.substring(0, 2) + 'XXX',
-      standort_latitude: freigabe.standort_genau ? anlage.standort_latitude : null,
-      standort_longitude: freigabe.standort_genau ? anlage.standort_longitude : null,
-      profilbeschreibung: anlage.profilbeschreibung,
-      batteriekapazitaet_kwh: anlage.batteriekapazitaet_kwh,
-      ekfz_vorhanden: anlage.ekfz_vorhanden,
-      waermepumpe_vorhanden: anlage.waermepumpe_vorhanden,
+      id: basic.anlage_id,
+      anlagenname: basic.anlagenname,
+      anlagentyp: basic.anlagentyp,
+      installationsdatum: basic.installationsdatum,
+      leistung_kwp: basic.leistung_kwp,
+      standort_ort: basic.standort_ort,
+      standort_plz: freigabe.standort_genau ? basic.standort_plz : basic.standort_plz?.substring(0, 2) + 'XXX',
+      standort_latitude: freigabe.standort_genau ? detail?.standort_latitude : null,
+      standort_longitude: freigabe.standort_genau ? detail?.standort_longitude : null,
+      batteriekapazitaet_kwh: detail?.batteriekapazitaet_kwh,
+      ekfz_vorhanden: detail?.ekfz_vorhanden,
+      waermepumpe_vorhanden: detail?.waermepumpe_vorhanden,
       freigaben: freigabe,
-      mitglied_vorname: mitglied.vorname,
-      mitglied_ort: mitglied.ort,
+      mitglied_vorname: basic.mitglied_vorname,
+      mitglied_ort: basic.mitglied_ort,
     }
   })
+
+  // Filter anwenden (clientseitig nach RPC-Call)
+  let filtered = mergedData
+
+  if (filters?.ort) {
+    filtered = filtered.filter((a: any) =>
+      a.standort_ort?.toLowerCase().includes(filters.ort!.toLowerCase())
+    )
+  }
+  if (filters?.plz) {
+    filtered = filtered.filter((a: any) => a.standort_plz === filters.plz)
+  }
+  if (filters?.minLeistung) {
+    filtered = filtered.filter((a: any) => a.leistung_kwp >= filters.minLeistung!)
+  }
+  if (filters?.maxLeistung) {
+    filtered = filtered.filter((a: any) => a.leistung_kwp <= filters.maxLeistung!)
+  }
+  if (filters?.hatBatterie) {
+    filtered = filtered.filter((a: any) => (a.batteriekapazitaet_kwh || 0) > 0)
+  }
+  if (filters?.hatEAuto) {
+    filtered = filtered.filter((a: any) => a.ekfz_vorhanden === true)
+  }
+  if (filters?.hatWaermepumpe) {
+    filtered = filtered.filter((a: any) => a.waermepumpe_vorhanden === true)
+  }
+
+  return filtered
 }
 
 /**
  * Holt eine einzelne öffentliche Anlage
+ * Nutzt Security Definer Function zur Vermeidung von RLS-Zirkelbezügen
  */
 export async function getPublicAnlage(anlageId: string): Promise<PublicAnlage | null> {
   const supabase = await createClient()
 
-  const { data, error } = await supabase
+  // Nutze die Security Definer Function und filtere clientseitig
+  const { data: allPublic, error } = await supabase.rpc('get_public_anlagen_with_members')
+
+  if (error || !allPublic) {
+    console.error('Error fetching public anlagen:', error)
+    return null
+  }
+
+  // Finde die gesuchte Anlage
+  const basicData = allPublic.find((a: any) => a.anlage_id === anlageId)
+  if (!basicData) {
+    return null
+  }
+
+  // Hole zusätzliche Detaildaten
+  const { data: detailData } = await supabase
     .from('anlagen')
     .select(`
       id,
-      anlagenname,
-      anlagentyp,
-      installationsdatum,
-      leistung_kwp,
-      standort_ort,
-      standort_plz,
       standort_latitude,
       standort_longitude,
-      profilbeschreibung,
       hersteller,
       modell,
       anzahl_module,
@@ -169,7 +181,7 @@ export async function getPublicAnlage(anlageId: string): Promise<PublicAnlage | 
       ekfz_bezeichnung,
       waermepumpe_vorhanden,
       waermepumpe_bezeichnung,
-      anlagen_freigaben!inner (
+      anlagen_freigaben (
         anlage_id,
         profil_oeffentlich,
         kennzahlen_oeffentlich,
@@ -177,41 +189,39 @@ export async function getPublicAnlage(anlageId: string): Promise<PublicAnlage | 
         investitionen_oeffentlich,
         monatsdaten_oeffentlich,
         standort_genau
-      ),
-      mitglieder!inner (
-        vorname,
-        ort
       )
     `)
     .eq('id', anlageId)
-    .eq('aktiv', true)
-    .eq('anlagen_freigaben.profil_oeffentlich', true)
     .single()
 
-  if (error || !data) {
+  if (!detailData) {
     return null
   }
 
-  const freigabe = Array.isArray(data.anlagen_freigaben) ? data.anlagen_freigaben[0] : data.anlagen_freigaben
-  const mitglied = Array.isArray(data.mitglieder) ? data.mitglieder[0] : data.mitglieder
+  const freigabe = detailData.anlagen_freigaben?.[0] || {
+    standort_genau: false,
+    kennzahlen_oeffentlich: false,
+    auswertungen_oeffentlich: false,
+    investitionen_oeffentlich: false,
+    monatsdaten_oeffentlich: false,
+  }
 
   return {
-    id: data.id,
-    anlagenname: data.anlagenname,
-    anlagentyp: data.anlagentyp,
-    installationsdatum: data.installationsdatum,
-    leistung_kwp: data.leistung_kwp,
-    standort_ort: data.standort_ort,
-    standort_plz: freigabe?.standort_genau ? data.standort_plz : data.standort_plz?.substring(0, 2) + 'XXX',
-    standort_latitude: freigabe?.standort_genau ? data.standort_latitude : null,
-    standort_longitude: freigabe?.standort_genau ? data.standort_longitude : null,
-    profilbeschreibung: data.profilbeschreibung,
-    batteriekapazitaet_kwh: data.batteriekapazitaet_kwh,
-    ekfz_vorhanden: data.ekfz_vorhanden,
-    waermepumpe_vorhanden: data.waermepumpe_vorhanden,
+    id: basicData.anlage_id,
+    anlagenname: basicData.anlagenname,
+    anlagentyp: basicData.anlagentyp,
+    installationsdatum: basicData.installationsdatum,
+    leistung_kwp: basicData.leistung_kwp,
+    standort_ort: basicData.standort_ort,
+    standort_plz: freigabe.standort_genau ? basicData.standort_plz : basicData.standort_plz?.substring(0, 2) + 'XXX',
+    standort_latitude: freigabe.standort_genau ? detailData.standort_latitude : null,
+    standort_longitude: freigabe.standort_genau ? detailData.standort_longitude : null,
+    batteriekapazitaet_kwh: detailData.batteriekapazitaet_kwh,
+    ekfz_vorhanden: detailData.ekfz_vorhanden,
+    waermepumpe_vorhanden: detailData.waermepumpe_vorhanden,
     freigaben: freigabe,
-    mitglied_vorname: mitglied?.vorname,
-    mitglied_ort: mitglied?.ort,
+    mitglied_vorname: basicData.mitglied_vorname,
+    mitglied_ort: basicData.mitglied_ort,
   } as PublicAnlage
 }
 
@@ -285,6 +295,7 @@ export async function getPublicMonatsdaten(anlageId: string, jahr?: number) {
 
 /**
  * Community-Statistiken
+ * Nutzt Security Definer Function zur Vermeidung von RLS-Zirkelbezügen
  */
 export async function getCommunityStats() {
   const supabase = await createClient()
@@ -294,21 +305,15 @@ export async function getCommunityStats() {
     .select('*', { count: 'exact', head: true })
     .eq('aktiv', true)
 
-  const { count: publicCount } = await supabase
-    .from('anlagen_freigaben')
-    .select('*', { count: 'exact', head: true })
-    .eq('profil_oeffentlich', true)
+  // Nutze RPC-Function für öffentliche Anlagen (umgeht RLS-Problem)
+  const { data: publicAnlagen } = await supabase.rpc('get_public_anlagen_with_members')
 
-  const { data: leistungSum } = await supabase
-    .from('anlagen')
-    .select('leistung_kwp')
-    .eq('aktiv', true)
-
-  const gesamtleistung = leistungSum?.reduce((sum, a) => sum + (a.leistung_kwp || 0), 0) || 0
+  const publicCount = publicAnlagen?.length || 0
+  const gesamtleistung = publicAnlagen?.reduce((sum: number, a: any) => sum + (a.leistung_kwp || 0), 0) || 0
 
   return {
     gesamtAnlagen: anlagenCount || 0,
-    oeffentlicheAnlagen: publicCount || 0,
+    oeffentlicheAnlagen: publicCount,
     gesamtleistungKwp: Math.round(gesamtleistung * 10) / 10,
   }
 }

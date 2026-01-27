@@ -36,11 +36,15 @@ export default function ConditionalLayout({ children }: ConditionalLayoutProps) 
         setUserEmail(user.email)
 
         // Lade Mitgliedsdaten für vollen Namen
-        const { data: mitglied } = await supabase
+        const { data: mitglied, error } = await supabase
           .from('mitglieder')
           .select('vorname, nachname')
-          .eq('id', user.id)
+          .eq('email', user.email)
           .single()
+
+        if (error) {
+          console.error('Fehler beim Laden der Mitgliedsdaten:', error)
+        }
 
         if (mitglied) {
           setUserName(`${mitglied.vorname} ${mitglied.nachname}`)
