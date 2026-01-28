@@ -25,15 +25,20 @@ export default function AnlagenProfilForm({ anlage, mitglied }: AnlagenProfilFor
     standort_ort: anlage.standort_ort || '',
     standort_plz: anlage.standort_plz || '',
     profilbeschreibung: anlage.profilbeschreibung || '',
+    motivation: anlage.motivation || '',
+    erfahrungen: anlage.erfahrungen || '',
+    tipps_fuer_andere: anlage.tipps_fuer_andere || '',
     batterie_bezeichnung: anlage.batterie_bezeichnung || '',
     ekfz_bezeichnung: anlage.ekfz_bezeichnung || '',
     waermepumpe_bezeichnung: anlage.waermepumpe_bezeichnung || '',
-    sonstiges: anlage.sonstiges || ''
+    sonstiges: anlage.sonstiges || '',
+    kontakt_erwuenscht: anlage.kontakt_erwuenscht || false
   })
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-    const { name, value } = e.target
-    setFormData(prev => ({ ...prev, [name]: value }))
+    const { name, value, type } = e.target
+    const checked = (e.target as HTMLInputElement).checked
+    setFormData(prev => ({ ...prev, [name]: type === 'checkbox' ? checked : value }))
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -50,10 +55,14 @@ export default function AnlagenProfilForm({ anlage, mitglied }: AnlagenProfilFor
         standort_ort: formData.standort_ort,
         standort_plz: formData.standort_plz,
         profilbeschreibung: formData.profilbeschreibung || null,
+        motivation: formData.motivation || null,
+        erfahrungen: formData.erfahrungen || null,
+        tipps_fuer_andere: formData.tipps_fuer_andere || null,
         batterie_bezeichnung: formData.batterie_bezeichnung || null,
         ekfz_bezeichnung: formData.ekfz_bezeichnung || null,
         waermepumpe_bezeichnung: formData.waermepumpe_bezeichnung || null,
-        sonstiges: formData.sonstiges || null
+        sonstiges: formData.sonstiges || null,
+        kontakt_erwuenscht: formData.kontakt_erwuenscht
       }
 
       const { error: dbError } = await supabase
@@ -82,10 +91,14 @@ export default function AnlagenProfilForm({ anlage, mitglied }: AnlagenProfilFor
       standort_ort: anlage.standort_ort || '',
       standort_plz: anlage.standort_plz || '',
       profilbeschreibung: anlage.profilbeschreibung || '',
+      motivation: anlage.motivation || '',
+      erfahrungen: anlage.erfahrungen || '',
+      tipps_fuer_andere: anlage.tipps_fuer_andere || '',
       batterie_bezeichnung: anlage.batterie_bezeichnung || '',
       ekfz_bezeichnung: anlage.ekfz_bezeichnung || '',
       waermepumpe_bezeichnung: anlage.waermepumpe_bezeichnung || '',
-      sonstiges: anlage.sonstiges || ''
+      sonstiges: anlage.sonstiges || '',
+      kontakt_erwuenscht: anlage.kontakt_erwuenscht || false
     })
     setIsEditing(false)
     setError(null)
@@ -148,6 +161,35 @@ export default function AnlagenProfilForm({ anlage, mitglied }: AnlagenProfilFor
               <div>
                 <div className="text-sm text-gray-600">Beschreibung</div>
                 <div className="text-gray-900 whitespace-pre-wrap">{anlage.profilbeschreibung}</div>
+              </div>
+            )}
+
+            {/* Community-Profil Felder */}
+            {anlage.motivation && (
+              <div className="pt-4 border-t">
+                <div className="text-sm font-medium text-gray-600 mb-1">💡 Motivation</div>
+                <div className="text-gray-900 whitespace-pre-wrap">{anlage.motivation}</div>
+              </div>
+            )}
+
+            {anlage.erfahrungen && (
+              <div>
+                <div className="text-sm font-medium text-gray-600 mb-1">📝 Erfahrungen</div>
+                <div className="text-gray-900 whitespace-pre-wrap">{anlage.erfahrungen}</div>
+              </div>
+            )}
+
+            {anlage.tipps_fuer_andere && (
+              <div>
+                <div className="text-sm font-medium text-gray-600 mb-1">💭 Tipps für andere</div>
+                <div className="text-gray-900 whitespace-pre-wrap">{anlage.tipps_fuer_andere}</div>
+              </div>
+            )}
+
+            {anlage.kontakt_erwuenscht && (
+              <div className="flex items-center gap-2 text-sm">
+                <SimpleIcon type="check" className="w-4 h-4 text-green-600" />
+                <span className="text-gray-700">Kontakt von anderen Community-Mitgliedern erwünscht</span>
               </div>
             )}
 
@@ -257,16 +299,95 @@ export default function AnlagenProfilForm({ anlage, mitglied }: AnlagenProfilFor
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
-              Beschreibung (optional)
+              Kurzbeschreibung (optional)
             </label>
             <textarea
               name="profilbeschreibung"
               value={formData.profilbeschreibung}
               onChange={handleChange}
-              rows={3}
-              placeholder="Beschreibe deine Anlage für die Community..."
+              rows={2}
+              maxLength={500}
+              placeholder="Kurze Beschreibung deiner Anlage (max. 500 Zeichen)..."
               className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
+            <p className="text-xs text-gray-500 mt-1">
+              {formData.profilbeschreibung.length}/500 Zeichen
+            </p>
+          </div>
+        </div>
+
+        {/* Community-Profil (optional, öffentlich) */}
+        <div className="pt-6 border-t">
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+            <h3 className="text-lg font-medium text-blue-900 mb-2 flex items-center gap-2">
+              <SimpleIcon type="users" className="w-5 h-5" />
+              Community-Profil (freiwillig & öffentlich)
+            </h3>
+            <p className="text-sm text-blue-800">
+              Diese Informationen sind <strong>öffentlich sichtbar</strong>, wenn du deine Anlage
+              für die Community freigibst. Teile deine Erfahrungen und hilf anderen bei der Entscheidung für PV!
+            </p>
+          </div>
+
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                💡 Warum hast du dich für PV entschieden?
+              </label>
+              <textarea
+                name="motivation"
+                value={formData.motivation}
+                onChange={handleChange}
+                rows={3}
+                placeholder="Z.B. Umweltschutz, Unabhängigkeit vom Stromnetz, Kosteneinsparung..."
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                📝 Deine Erfahrungen mit der Anlage
+              </label>
+              <textarea
+                name="erfahrungen"
+                value={formData.erfahrungen}
+                onChange={handleChange}
+                rows={4}
+                placeholder="Was waren deine wichtigsten Erfahrungen? Wie läuft die Anlage? Gab es Überraschungen?"
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                💭 Tipps für andere PV-Interessierte
+              </label>
+              <textarea
+                name="tipps_fuer_andere"
+                value={formData.tipps_fuer_andere}
+                onChange={handleChange}
+                rows={3}
+                placeholder="Was würdest du anderen empfehlen? Worauf sollte man achten?"
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+
+            <div className="flex items-start gap-3">
+              <input
+                type="checkbox"
+                name="kontakt_erwuenscht"
+                checked={formData.kontakt_erwuenscht}
+                onChange={handleChange}
+                className="mt-1 w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+              />
+              <label className="text-sm text-gray-700">
+                <span className="font-medium">Kontakt erwünscht</span>
+                <p className="text-gray-600 mt-1">
+                  Ich bin offen dafür, von anderen Community-Mitgliedern kontaktiert zu werden
+                  (z.B. für Erfahrungsaustausch oder Fragen zur Anlage)
+                </p>
+              </label>
+            </div>
           </div>
         </div>
 
