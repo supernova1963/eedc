@@ -9,35 +9,29 @@ import PublicHeader from '@/components/PublicHeader'
 async function getCommunityStats() {
   const supabase = await createClient()
 
-  // Anzahl öffentlicher Anlagen
-  const { count: anlagenCount } = await supabase
-    .from('anlagen')
-    .select('*', { count: 'exact', head: true })
-    .eq('aktiv', true)
-    .eq('oeffentlich', true)
+  // Nutze RPC-Function für öffentliche Anlagen (korrekte Freigaben-Logik)
+  const { data: publicAnlagen } = await supabase.rpc('get_public_anlagen_with_members')
 
-  // Gesamte PV-Leistung
-  const { data: anlagen } = await supabase
-    .from('anlagen')
-    .select('leistung_kwp')
-    .eq('aktiv', true)
-    .eq('oeffentlich', true)
+  const anlagenCount = publicAnlagen?.length || 0
+  const gesamtLeistung = publicAnlagen?.reduce((sum: number, a: any) => sum + (a.leistung_kwp || 0), 0) || 0
 
-  const gesamtLeistung = anlagen?.reduce((sum, a) => sum + (a.leistung_kwp || 0), 0) || 0
-
-  // Top 5 Anlagen nach Leistung
-  const { data: topAnlagen } = await supabase
-    .from('anlagen')
-    .select('id, anlagenname, leistung_kwp, standort_plz, standort_ort, inbetriebnahme')
-    .eq('aktiv', true)
-    .eq('oeffentlich', true)
-    .order('leistung_kwp', { ascending: false })
-    .limit(5)
+  // Top 5 Anlagen nach Leistung sortieren
+  const topAnlagen = publicAnlagen
+    ?.sort((a: any, b: any) => (b.leistung_kwp || 0) - (a.leistung_kwp || 0))
+    .slice(0, 5)
+    .map((a: any) => ({
+      id: a.anlage_id,
+      anlagenname: a.anlagenname,
+      leistung_kwp: a.leistung_kwp,
+      standort_plz: a.standort_plz,
+      standort_ort: a.standort_ort,
+      inbetriebnahme: a.installationsdatum
+    })) || []
 
   return {
-    anlagenCount: anlagenCount || 0,
+    anlagenCount,
     gesamtLeistung,
-    topAnlagen: topAnlagen || []
+    topAnlagen
   }
 }
 
