@@ -28,9 +28,12 @@ export default function AnlagenProfilForm({ anlage, mitglied }: AnlagenProfilFor
     motivation: anlage.motivation || '',
     erfahrungen: anlage.erfahrungen || '',
     tipps_fuer_andere: anlage.tipps_fuer_andere || '',
+    wechselrichter_bezeichnung: anlage.wechselrichter_bezeichnung || '',
+    pv_module_bezeichnung: anlage.pv_module_bezeichnung || '',
     batterie_bezeichnung: anlage.batterie_bezeichnung || '',
     ekfz_bezeichnung: anlage.ekfz_bezeichnung || '',
     waermepumpe_bezeichnung: anlage.waermepumpe_bezeichnung || '',
+    solarteur_name: anlage.solarteur_name || '',
     sonstiges: anlage.sonstiges || '',
     kontakt_erwuenscht: anlage.kontakt_erwuenscht || false
   })
@@ -58,9 +61,12 @@ export default function AnlagenProfilForm({ anlage, mitglied }: AnlagenProfilFor
         motivation: formData.motivation || null,
         erfahrungen: formData.erfahrungen || null,
         tipps_fuer_andere: formData.tipps_fuer_andere || null,
+        wechselrichter_bezeichnung: formData.wechselrichter_bezeichnung || null,
+        pv_module_bezeichnung: formData.pv_module_bezeichnung || null,
         batterie_bezeichnung: formData.batterie_bezeichnung || null,
         ekfz_bezeichnung: formData.ekfz_bezeichnung || null,
         waermepumpe_bezeichnung: formData.waermepumpe_bezeichnung || null,
+        solarteur_name: formData.solarteur_name || null,
         sonstiges: formData.sonstiges || null,
         kontakt_erwuenscht: formData.kontakt_erwuenscht
       }
@@ -94,9 +100,12 @@ export default function AnlagenProfilForm({ anlage, mitglied }: AnlagenProfilFor
       motivation: anlage.motivation || '',
       erfahrungen: anlage.erfahrungen || '',
       tipps_fuer_andere: anlage.tipps_fuer_andere || '',
+      wechselrichter_bezeichnung: anlage.wechselrichter_bezeichnung || '',
+      pv_module_bezeichnung: anlage.pv_module_bezeichnung || '',
       batterie_bezeichnung: anlage.batterie_bezeichnung || '',
       ekfz_bezeichnung: anlage.ekfz_bezeichnung || '',
       waermepumpe_bezeichnung: anlage.waermepumpe_bezeichnung || '',
+      solarteur_name: anlage.solarteur_name || '',
       sonstiges: anlage.sonstiges || '',
       kontakt_erwuenscht: anlage.kontakt_erwuenscht || false
     })
@@ -197,28 +206,67 @@ export default function AnlagenProfilForm({ anlage, mitglied }: AnlagenProfilFor
             <div className="pt-4 border-t">
               <div className="text-sm font-medium text-gray-900 mb-3">Komponenten:</div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {anlage.wechselrichter_bezeichnung && (
+                  <div className="flex items-center gap-2">
+                    <SimpleIcon type="settings" className="w-5 h-5 text-gray-600" />
+                    <div>
+                      <div className="text-xs text-gray-500">Wechselrichter</div>
+                      <div className="text-gray-900">{anlage.wechselrichter_bezeichnung}</div>
+                    </div>
+                  </div>
+                )}
+                {anlage.pv_module_bezeichnung && (
+                  <div className="flex items-center gap-2">
+                    <SimpleIcon type="solar" className="w-5 h-5 text-yellow-500" />
+                    <div>
+                      <div className="text-xs text-gray-500">PV-Module</div>
+                      <div className="text-gray-900">{anlage.pv_module_bezeichnung}</div>
+                    </div>
+                  </div>
+                )}
                 {anlage.batterie_bezeichnung && (
                   <div className="flex items-center gap-2">
-                    <SimpleIcon type="battery" className="w-5 h-5 text-gray-600" />
-                    <span className="text-gray-900">{anlage.batterie_bezeichnung}</span>
+                    <SimpleIcon type="battery" className="w-5 h-5 text-green-600" />
+                    <div>
+                      <div className="text-xs text-gray-500">Batteriespeicher</div>
+                      <div className="text-gray-900">{anlage.batterie_bezeichnung}</div>
+                    </div>
                   </div>
                 )}
                 {anlage.ekfz_bezeichnung && (
                   <div className="flex items-center gap-2">
-                    <SimpleIcon type="car" className="w-5 h-5 text-gray-600" />
-                    <span className="text-gray-900">{anlage.ekfz_bezeichnung}</span>
+                    <SimpleIcon type="car" className="w-5 h-5 text-blue-600" />
+                    <div>
+                      <div className="text-xs text-gray-500">E-Fahrzeug</div>
+                      <div className="text-gray-900">{anlage.ekfz_bezeichnung}</div>
+                    </div>
                   </div>
                 )}
                 {anlage.waermepumpe_bezeichnung && (
                   <div className="flex items-center gap-2">
                     <SimpleIcon type="heat" className="w-5 h-5 text-orange-500" />
-                    <span className="text-gray-900">{anlage.waermepumpe_bezeichnung}</span>
+                    <div>
+                      <div className="text-xs text-gray-500">Wärmepumpe</div>
+                      <div className="text-gray-900">{anlage.waermepumpe_bezeichnung}</div>
+                    </div>
                   </div>
                 )}
-                {!anlage.batterie_bezeichnung && !anlage.ekfz_bezeichnung && !anlage.waermepumpe_bezeichnung && (
-                  <div className="text-gray-500 text-sm">Keine Komponenten angegeben</div>
-                )}
               </div>
+
+              {/* Solarteur */}
+              {anlage.solarteur_name && (
+                <div className="mt-3 pt-3 border-t">
+                  <div className="text-xs text-gray-500">Installateur / Solarteur</div>
+                  <div className="text-gray-900">{anlage.solarteur_name}</div>
+                </div>
+              )}
+
+              {/* Keine Komponenten */}
+              {!anlage.wechselrichter_bezeichnung && !anlage.pv_module_bezeichnung &&
+               !anlage.batterie_bezeichnung && !anlage.ekfz_bezeichnung &&
+               !anlage.waermepumpe_bezeichnung && !anlage.solarteur_name && (
+                <div className="text-gray-500 text-sm">Keine Komponenten angegeben</div>
+              )}
             </div>
 
             {/* Sonstiges */}
@@ -399,61 +447,110 @@ export default function AnlagenProfilForm({ anlage, mitglied }: AnlagenProfilFor
           </p>
 
           <div className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="flex items-center gap-2 text-sm font-medium text-gray-700 mb-2">
+                  <SimpleIcon type="settings" className="w-4 h-4 text-gray-600" />
+                  Wechselrichter
+                </label>
+                <input
+                  type="text"
+                  name="wechselrichter_bezeichnung"
+                  value={formData.wechselrichter_bezeichnung}
+                  onChange={handleChange}
+                  placeholder="z.B. SMA Sunny Tripower"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+
+              <div>
+                <label className="flex items-center gap-2 text-sm font-medium text-gray-700 mb-2">
+                  <SimpleIcon type="solar" className="w-4 h-4 text-yellow-500" />
+                  PV-Module
+                </label>
+                <input
+                  type="text"
+                  name="pv_module_bezeichnung"
+                  value={formData.pv_module_bezeichnung}
+                  onChange={handleChange}
+                  placeholder="z.B. Trina Solar Vertex 410W"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+            </div>
+
             <div>
               <label className="flex items-center gap-2 text-sm font-medium text-gray-700 mb-2">
-                <SimpleIcon type="battery" className="w-4 h-4 text-gray-600" />
-                Batterie (optional)
+                <SimpleIcon type="battery" className="w-4 h-4 text-green-600" />
+                Batteriespeicher
               </label>
               <input
                 type="text"
                 name="batterie_bezeichnung"
                 value={formData.batterie_bezeichnung}
                 onChange={handleChange}
-                placeholder="z.B. Huawei Luna 10 kWh (leer = keine Batterie)"
+                placeholder="z.B. Huawei Luna 10 kWh (leer lassen wenn keine Batterie)"
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
 
-            <div>
-              <label className="flex items-center gap-2 text-sm font-medium text-gray-700 mb-2">
-                <SimpleIcon type="car" className="w-4 h-4 text-gray-600" />
-                E-Fahrzeug (optional)
-              </label>
-              <input
-                type="text"
-                name="ekfz_bezeichnung"
-                value={formData.ekfz_bezeichnung}
-                onChange={handleChange}
-                placeholder="z.B. Tesla Model 3 (leer = kein E-Fahrzeug)"
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="flex items-center gap-2 text-sm font-medium text-gray-700 mb-2">
+                  <SimpleIcon type="car" className="w-4 h-4 text-blue-600" />
+                  E-Fahrzeug
+                </label>
+                <input
+                  type="text"
+                  name="ekfz_bezeichnung"
+                  value={formData.ekfz_bezeichnung}
+                  onChange={handleChange}
+                  placeholder="z.B. Tesla Model 3"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+
+              <div>
+                <label className="flex items-center gap-2 text-sm font-medium text-gray-700 mb-2">
+                  <SimpleIcon type="heat" className="w-4 h-4 text-orange-500" />
+                  Wärmepumpe
+                </label>
+                <input
+                  type="text"
+                  name="waermepumpe_bezeichnung"
+                  value={formData.waermepumpe_bezeichnung}
+                  onChange={handleChange}
+                  placeholder="z.B. Vaillant aroTHERM"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
             </div>
 
             <div>
               <label className="flex items-center gap-2 text-sm font-medium text-gray-700 mb-2">
-                <SimpleIcon type="heat" className="w-4 h-4 text-orange-500" />
-                Wärmepumpe (optional)
+                <SimpleIcon type="user" className="w-4 h-4 text-gray-600" />
+                Installateur / Solarteur
               </label>
               <input
                 type="text"
-                name="waermepumpe_bezeichnung"
-                value={formData.waermepumpe_bezeichnung}
+                name="solarteur_name"
+                value={formData.solarteur_name}
                 onChange={handleChange}
-                placeholder="z.B. Vaillant aroTHERM (leer = keine Wärmepumpe)"
+                placeholder="z.B. Mustermann Solar GmbH"
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
-                Sonstiges (optional)
+                Sonstiges
               </label>
               <input
                 type="text"
                 name="sonstiges"
                 value={formData.sonstiges}
                 onChange={handleChange}
-                placeholder="Weitere Komponenten..."
+                placeholder="Weitere Komponenten oder Anmerkungen..."
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
