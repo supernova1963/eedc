@@ -7,12 +7,6 @@
 -- Issues: #6, #7
 -- ============================================
 
--- Prüfe ob Tabelle existiert und zeige Schema
-SELECT column_name, data_type, is_nullable
-FROM information_schema.columns
-WHERE table_name = 'strompreise'
-ORDER BY ordinal_position;
-
 -- Alte Tabelle sichern (falls Daten vorhanden)
 DO $$
 BEGIN
@@ -184,7 +178,15 @@ WHERE tablename = 'strompreise'
 ORDER BY cmd, policyname;
 
 -- Zeige Tabellen-Info
-\d strompreise;
+SELECT
+  column_name,
+  data_type,
+  character_maximum_length,
+  is_nullable,
+  column_default
+FROM information_schema.columns
+WHERE table_name = 'strompreise'
+ORDER BY ordinal_position;
 
 -- Success Message
 DO $$
