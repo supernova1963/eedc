@@ -1,46 +1,37 @@
 // app/meine-anlage/page.tsx
-// Persönliches Dashboard - Meine Anlage
+// Persönliches Dashboard - Meine Anlage (Multi-Anlage Support)
 
 import { createClient } from '@/lib/supabase-server'
-import { getCurrentUser } from '@/lib/auth'
+import { getCurrentMitglied, getUserAnlagen, resolveAnlageId } from '@/lib/anlagen-helpers'
 import Link from 'next/link'
 import DashboardChart from '@/components/DashboardChart'
 import SimpleIcon from '@/components/SimpleIcon'
+import { AnlagenSelector } from '@/components/AnlagenSelector'
 
-async function getDashboardData(userId: string) {
+async function getDashboardData(anlageId: string) {
   const supabase = await createClient()
-
-  // Erste Anlage des Users holen
-  const { data: anlage } = await supabase
-    .from('anlagen')
-    .select('*')
-    .eq('mitglied_id', userId)
-    .eq('aktiv', true)
-    .order('erstellt_am', { ascending: false })
-    .limit(1)
-    .single()
-
-  if (!anlage) {
-    return { anlage: null, monatsdaten: [] }
-  }
 
   // Monatsdaten für diese Anlage holen
   const { data: monatsdaten } = await supabase
     .from('monatsdaten')
     .select('*')
-    .eq('anlage_id', anlage.id)
+    .eq('anlage_id', anlageId)
     .order('jahr', { ascending: true })
     .order('monat', { ascending: true })
 
-  return { anlage, monatsdaten: monatsdaten || [] }
+  return { monatsdaten: monatsdaten || [] }
 }
 
 export const dynamic = 'force-dynamic'
 
-export default async function DashboardPage() {
-  const user = await getCurrentUser()
+export default async function DashboardPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ anlageId?: string }>
+}) {
+  const mitglied = await getCurrentMitglied()
 
-  if (!user) {
+  if (!mitglied.data) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
@@ -50,7 +41,35 @@ export default async function DashboardPage() {
     )
   }
 
-  const { anlage, monatsdaten } = await getDashboardData(user.id)
+  // Alle Anlagen des Users holen
+  const { data: alleAnlagen } = await getUserAnlagen()
+
+  // Bestimme welche Anlage angezeigt werden soll
+  const params = await searchParams
+  const { anlageId, anlage } = await resolveAnlageId(params.anlageId)
+
+  if (!anlage) {
+    return (
+      <div>
+        <div className="mb-8">
+          <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-2">
+            <SimpleIcon type="sun" className="w-8 h-8 text-yellow-500" /> Dashboard
+          </h1>
+        </div>
+        <div className="bg-white rounded-lg shadow p-8 text-center">
+          <p className="text-gray-500 mb-4">Keine Anlage gefunden</p>
+          <Link
+            href="/anlage"
+            className="inline-block px-6 py-3 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+          >
+            Jetzt Anlage anlegen
+          </Link>
+        </div>
+      </div>
+    )
+  }
+
+  const { monatsdaten } = await getDashboardData(anlage.id)
 
   const toNum = (val: any): number => {
     if (val === null || val === undefined) return 0
@@ -110,26 +129,25 @@ export default async function DashboardPage() {
   return (
     <div>
       <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-2">
-          <SimpleIcon type="sun" className="w-8 h-8 text-yellow-500" /> Dashboard
-        </h1>
-        <p className="mt-2 text-gray-600">
-          Übersicht deiner PV-Anlage und Energiedaten
-        </p>
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-2">
+              <SimpleIcon type="sun" className="w-8 h-8 text-yellow-500" /> Dashboard
+            </h1>
+            <p className="mt-2 text-gray-600">
+              {anlage.anlagenname} - {anlage.leistung_kwp} kWp
+            </p>
+          </div>
+          {alleAnlagen && alleAnlagen.length > 0 && (
+            <AnlagenSelector
+              anlagen={alleAnlagen}
+              currentAnlageId={anlageId}
+            />
+          )}
+        </div>
       </div>
 
-      {!anlage ? (
-        <div className="bg-white rounded-lg shadow p-8 text-center">
-          <p className="text-gray-500 mb-4">Keine Anlage gefunden</p>
-          <Link
-            href="/anlage"
-            className="inline-block px-6 py-3 bg-blue-600 text-white rounded-md hover:bg-blue-700"
-          >
-            Jetzt Anlage anlegen
-          </Link>
-        </div>
-      ) : (
-        <div className="space-y-6">
+      <div className="space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             <div className="bg-white rounded-lg shadow p-6">
               <div className="flex items-center justify-between">
@@ -280,7 +298,7 @@ export default async function DashboardPage() {
             </div>
           </div>
         </div>
-      )}
+      </div>
     </div>
   )
 }
