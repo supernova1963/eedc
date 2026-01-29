@@ -10,8 +10,11 @@ Diese Dokumentation beschreibt verschiedene Wege zur Aktualisierung des Produkti
 
 1. [Entwicklungsrechner synchronisieren](#1-entwicklungsrechner-synchronisieren)
 2. [Produktionsserver aktualisieren](#2-produktionsserver-aktualisieren)
-3. [Problembehandlung](#3-problembehandlung)
-4. [Release-Management (Optional)](#4-release-management-optional)
+3. [Server Autostart einrichten](#3-server-autostart-einrichten)
+4. [Problembehandlung](#4-problembehandlung)
+5. [Release-Management (Optional)](#5-release-management-optional)
+6. [Checkliste für Updates](#6-checkliste-für-updates)
+7. [Kontakt & Hilfe](#7-kontakt--hilfe)
 
 ---
 
@@ -261,7 +264,302 @@ pm2 save
 
 ---
 
-## 3. Problembehandlung
+## 3. Server Autostart einrichten
+
+Die WebApp soll automatisch starten wenn der Server hochfährt. Es gibt zwei gängige Methoden: **pm2** (empfohlen, einfacher) oder **systemd** (Linux-nativ).
+
+### 3.1 Methode A: pm2 (Empfohlen)
+
+pm2 ist ein Prozess-Manager für Node.js mit eingebauter Autostart-Funktion.
+
+#### Installation von pm2
+
+```bash
+# Als root oder mit sudo
+npm install -g pm2
+```
+
+#### App mit pm2 starten
+
+```bash
+cd /var/www/eedc
+
+# App starten (Production Mode)
+pm2 start npm --name "eedc" -- start
+
+# Alternativer Start mit mehr Optionen
+pm2 start npm --name "eedc" -- start -- -p 3000
+
+# Status prüfen
+pm2 status
+
+# Logs anzeigen
+pm2 logs eedc
+```
+
+#### Autostart aktivieren
+
+```bash
+# Startup-Script generieren (einmalig)
+pm2 startup
+
+# Dieser Befehl gibt einen Befehl aus, den Sie als root ausführen müssen!
+# Beispiel-Ausgabe:
+# sudo env PATH=$PATH:/usr/bin pm2 startup systemd -u www-data --hp /home/www-data
+
+# Diesen ausgegebenen Befehl kopieren und ausführen:
+sudo env PATH=$PATH:/usr/bin pm2 startup systemd -u IHRUSER --hp /home/IHRUSER
+
+# Aktuelle Prozess-Liste speichern
+pm2 save
+```
+
+#### pm2 Befehle Übersicht
+
+```bash
+pm2 status              # Status aller Apps
+pm2 logs eedc           # Logs anzeigen
+pm2 logs eedc --lines 100  # Letzte 100 Zeilen
+pm2 restart eedc        # Neustart
+pm2 stop eedc           # Stoppen
+pm2 delete eedc         # Entfernen
+pm2 monit               # Echtzeit-Monitor
+
+# Nach Server-Neustart prüfen
+pm2 resurrect           # Gespeicherte Apps wiederherstellen (normalerweise automatisch)
+```
+
+#### pm2 Konfigurationsdatei (Optional)
+
+Für mehr Kontrolle können Sie eine `ecosystem.config.js` erstellen:
+
+```bash
+# /var/www/eedc/ecosystem.config.js
+```
+
+```javascript
+module.exports = {
+  apps: [{
+    name: 'eedc',
+    script: 'npm',
+    args: 'start',
+    cwd: '/var/www/eedc',
+    instances: 1,
+    autorestart: true,
+    watch: false,
+    max_memory_restart: '500M',
+    env: {
+      NODE_ENV: 'production',
+      PORT: 3000
+    },
+    error_file: '/var/log/eedc/error.log',
+    out_file: '/var/log/eedc/output.log',
+    log_date_format: 'YYYY-MM-DD HH:mm:ss',
+  }]
+};
+```
+
+```bash
+# Log-Verzeichnis erstellen
+sudo mkdir -p /var/log/eedc
+sudo chown $USER:$USER /var/log/eedc
+
+# Mit Konfigurationsdatei starten
+pm2 start ecosystem.config.js
+pm2 save
+```
+
+### 3.2 Methode B: systemd (Linux-nativ)
+
+systemd ist der Standard-Service-Manager auf modernen Linux-Systemen.
+
+#### Service-Datei erstellen
+
+```bash
+sudo nano /etc/systemd/system/eedc.service
+```
+
+Inhalt der Datei:
+
+```ini
+[Unit]
+Description=EEDC PV-Anlagen WebApp
+Documentation=https://github.com/supernova1963/eedc
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/var/www/eedc
+
+# Node.js Pfad - anpassen falls nötig!
+# Finden mit: which node
+Environment=NODE_ENV=production
+Environment=PORT=3000
+ExecStart=/usr/bin/npm start
+
+# Neustart bei Absturz
+Restart=on-failure
+RestartSec=10
+
+# Logging
+StandardOutput=syslog
+StandardError=syslog
+SyslogIdentifier=eedc
+
+[Install]
+WantedBy=multi-user.target
+```
+
+#### Service aktivieren und starten
+
+```bash
+# systemd neu laden
+sudo systemctl daemon-reload
+
+# Service aktivieren (Autostart)
+sudo systemctl enable eedc
+
+# Service starten
+sudo systemctl start eedc
+
+# Status prüfen
+sudo systemctl status eedc
+```
+
+#### systemd Befehle Übersicht
+
+```bash
+sudo systemctl status eedc    # Status anzeigen
+sudo systemctl start eedc     # Starten
+sudo systemctl stop eedc      # Stoppen
+sudo systemctl restart eedc   # Neustarten
+sudo systemctl enable eedc    # Autostart aktivieren
+sudo systemctl disable eedc   # Autostart deaktivieren
+
+# Logs anzeigen
+sudo journalctl -u eedc -f              # Live-Logs
+sudo journalctl -u eedc -n 100          # Letzte 100 Zeilen
+sudo journalctl -u eedc --since today   # Logs von heute
+```
+
+### 3.3 Nginx als Reverse Proxy (Optional aber empfohlen)
+
+Für Produktionsumgebungen empfiehlt sich Nginx vor der Node.js App:
+
+#### Nginx installieren
+
+```bash
+sudo apt update
+sudo apt install nginx
+```
+
+#### Nginx Konfiguration
+
+```bash
+sudo nano /etc/nginx/sites-available/eedc
+```
+
+Inhalt:
+
+```nginx
+server {
+    listen 80;
+    server_name ihre-domain.de www.ihre-domain.de;
+
+    # Weiterleitung zu HTTPS (wenn SSL eingerichtet)
+    # return 301 https://$server_name$request_uri;
+
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_cache_bypass $http_upgrade;
+
+        # Timeouts
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+    }
+
+    # Statische Dateien cachen
+    location /_next/static {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_cache_valid 60m;
+        add_header Cache-Control "public, immutable";
+    }
+}
+```
+
+#### Nginx aktivieren
+
+```bash
+# Symlink erstellen
+sudo ln -s /etc/nginx/sites-available/eedc /etc/nginx/sites-enabled/
+
+# Konfiguration testen
+sudo nginx -t
+
+# Nginx neu laden
+sudo systemctl reload nginx
+```
+
+#### SSL mit Let's Encrypt (Optional)
+
+```bash
+# Certbot installieren
+sudo apt install certbot python3-certbot-nginx
+
+# Zertifikat holen (interaktiv)
+sudo certbot --nginx -d ihre-domain.de -d www.ihre-domain.de
+
+# Auto-Renewal testen
+sudo certbot renew --dry-run
+```
+
+### 3.4 Autostart prüfen
+
+Nach der Einrichtung sollten Sie einen Neustart testen:
+
+```bash
+# Server neu starten
+sudo reboot
+
+# Nach Neustart prüfen:
+# Bei pm2:
+pm2 status
+
+# Bei systemd:
+sudo systemctl status eedc
+
+# Webseite im Browser aufrufen
+curl http://localhost:3000
+# oder
+curl http://ihre-domain.de
+```
+
+### 3.5 Vergleich pm2 vs systemd
+
+| Aspekt | pm2 | systemd |
+|--------|-----|---------|
+| Installation | npm install -g pm2 | Bereits vorhanden |
+| Komplexität | Einfacher | Mehr Konfiguration |
+| Monitoring | Eingebaut (pm2 monit) | Separat (journalctl) |
+| Cluster-Mode | Ja (pm2 -i max) | Manuell |
+| Log-Rotation | Eingebaut | Über journald |
+| Empfehlung | Für Einsteiger | Für erfahrene Admins |
+
+**Empfehlung:** Starten Sie mit **pm2** - es ist einfacher einzurichten und bietet gute Monitoring-Funktionen.
+
+---
+
+## 4. Problembehandlung
 
 ### 3.1 Server startet nicht nach Update
 
@@ -331,7 +629,7 @@ pm2 restart eedc
 
 ---
 
-## 4. Release-Management (Optional)
+## 5. Release-Management (Optional)
 
 ### 4.1 Wann Releases sinnvoll sind
 
@@ -388,7 +686,7 @@ pm2 restart eedc
 
 ---
 
-## 5. Checkliste für Updates
+## 6. Checkliste für Updates
 
 ### Vor dem Update:
 - [ ] Backup der .env.local Datei
@@ -409,7 +707,7 @@ pm2 restart eedc
 
 ---
 
-## 6. Kontakt & Hilfe
+## 7. Kontakt & Hilfe
 
 Bei Problemen:
 1. Logs sichern: `pm2 logs eedc > ~/eedc-error.log 2>&1`
