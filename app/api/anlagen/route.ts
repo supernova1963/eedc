@@ -1,13 +1,13 @@
 // app/api/anlagen/route.ts
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
-import { getCurrentUser } from '@/lib/auth'
+import { getCurrentMitglied } from '@/lib/anlagen-helpers'
 
 export async function POST(request: NextRequest) {
   try {
     // Authentifizierung prüfen
-    const user = await getCurrentUser()
-    if (!user) {
+    const mitglied = await getCurrentMitglied()
+    if (!mitglied.data) {
       return NextResponse.json({
         success: false,
         message: 'Nicht authentifiziert'
@@ -17,8 +17,8 @@ export async function POST(request: NextRequest) {
     const supabase = await createClient()
     const anlageData = await request.json()
 
-    // Sicherstellen, dass mitglied_id dem aktuellen User entspricht
-    if (anlageData.mitglied_id !== user.id) {
+    // Sicherstellen, dass mitglied_id dem aktuellen Mitglied entspricht
+    if (anlageData.mitglied_id !== mitglied.data.id) {
       return NextResponse.json({
         success: false,
         message: 'Keine Berechtigung'

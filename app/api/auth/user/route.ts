@@ -1,12 +1,12 @@
 // app/api/auth/user/route.ts
 import { NextResponse } from 'next/server'
-import { getCurrentUser } from '@/lib/auth'
+import { getCurrentMitglied } from '@/lib/anlagen-helpers'
 
 export async function GET() {
   try {
-    const user = await getCurrentUser()
+    const mitglied = await getCurrentMitglied()
 
-    if (!user) {
+    if (!mitglied.data) {
       return NextResponse.json({
         success: false,
         message: 'Nicht authentifiziert'
@@ -16,10 +16,10 @@ export async function GET() {
     return NextResponse.json({
       success: true,
       user: {
-        id: user.id,
-        email: user.email,
-        vorname: user.vorname,
-        nachname: user.nachname,
+        id: mitglied.data.id,
+        email: mitglied.data.email,
+        vorname: mitglied.data.vorname,
+        nachname: mitglied.data.nachname,
       }
     })
   } catch (error: any) {

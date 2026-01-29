@@ -3,7 +3,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
-import { getCurrentUser, hasAnlageAccess } from '@/lib/auth'
+import { getCurrentMitglied, getAnlageById } from '@/lib/anlagen-helpers'
 import Papa from 'papaparse'
 
 interface ValidationError {
@@ -145,8 +145,8 @@ function validateRow(row: any, rowIndex: number): { data?: ParsedMonatsdaten, er
 export async function POST(request: NextRequest) {
   try {
     // 1. Authentifizierung prüfen
-    const user = await getCurrentUser()
-    if (!user) {
+    const mitglied = await getCurrentMitglied()
+    if (!mitglied.data) {
       return NextResponse.json({
         success: false,
         message: 'Nicht authentifiziert'
@@ -172,9 +172,9 @@ export async function POST(request: NextRequest) {
       }, { status: 400 })
     }
 
-    // 2. Zugriffsberechtigung prüfen
-    const hasAccess = await hasAnlageAccess(user.id, anlageId)
-    if (!hasAccess) {
+    // 2. Zugriffsberechtigung prüfen (via RLS)
+    const { data: anlage } = await getAnlageById(anlageId)
+    if (!anlage) {
       return NextResponse.json({
         success: false,
         message: 'Keine Berechtigung für diese Anlage'
@@ -253,10 +253,10 @@ export async function POST(request: NextRequest) {
       })
     }
 
-    // Daten in DB einfügen (mitglied_id kommt vom authentifizierten User)
+    // Daten in DB einfügen (mitglied_id kommt vom authentifizierten Mitglied)
     const insertData = validatedData.map(d => ({
       anlage_id: anlageId,
-      mitglied_id: user.id,
+      mitglied_id: mitglied.data.id,
       ...d
     }))
 

@@ -2,16 +2,16 @@
 'use server'
 
 import { createClient } from './supabase-server'
-import { getCurrentUser } from './auth'
+import { getCurrentMitglied } from './anlagen-helpers'
 import { redirect } from 'next/navigation'
 
 export async function createAnlage(formData: FormData) {
   console.log('🚀 createAnlage called')
 
-  const user = await getCurrentUser()
-  console.log('👤 User:', user)
+  const mitglied = await getCurrentMitglied()
+  console.log('👤 Mitglied:', mitglied.data)
 
-  if (!user) {
+  if (!mitglied.data) {
     console.error('❌ Nicht authentifiziert')
     return { error: 'Nicht authentifiziert' }
   }
@@ -42,7 +42,7 @@ export async function createAnlage(formData: FormData) {
   // Anlage erstellen - nur Basis-Informationen
   // Komponenten wie Batteriespeicher werden separat als Investitionen erfasst
   const insertData: any = {
-    mitglied_id: user.id,
+    mitglied_id: mitglied.data.id,
     anlagenname,
     anlagentyp: 'Solar',
     leistung_kwp,

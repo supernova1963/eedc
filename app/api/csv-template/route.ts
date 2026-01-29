@@ -3,13 +3,13 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
-import { getCurrentUser, hasAnlageAccess } from '@/lib/auth'
+import { getCurrentMitglied, getAnlageById } from '@/lib/anlagen-helpers'
 
 export async function GET(request: NextRequest) {
   try {
     // 1. Authentifizierung
-    const user = await getCurrentUser()
-    if (!user) {
+    const mitglied = await getCurrentMitglied()
+    if (!mitglied.data) {
       return new NextResponse('Nicht authentifiziert', { status: 401 })
     }
 
@@ -21,22 +21,10 @@ export async function GET(request: NextRequest) {
       return new NextResponse('Anlagen-ID fehlt', { status: 400 })
     }
 
-    // 3. Zugriffsberechtigung prüfen
-    const hasAccess = await hasAnlageAccess(user.id, anlageId)
-    if (!hasAccess) {
+    // 3. Zugriffsberechtigung prüfen (via RLS)
+    const { data: anlage } = await getAnlageById(anlageId)
+    if (!anlage) {
       return new NextResponse('Keine Berechtigung', { status: 403 })
-    }
-
-    // 4. Anlage laden
-    const supabase = await createClient()
-    const { data: anlage, error } = await supabase
-      .from('anlagen')
-      .select('*')
-      .eq('id', anlageId)
-      .single()
-
-    if (error || !anlage) {
-      return new NextResponse('Anlage nicht gefunden', { status: 404 })
     }
 
     // 5. Spalten basierend auf Anlage generieren
