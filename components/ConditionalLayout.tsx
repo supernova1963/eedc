@@ -35,11 +35,11 @@ export default function ConditionalLayout({ children }: ConditionalLayoutProps) 
       if (user) {
         setUserEmail(user.email)
 
-        // Lade Mitgliedsdaten für vollen Namen
+        // Lade Mitgliedsdaten für vollen Namen (RLS filtert automatisch auf auth_user_id)
         const { data: mitglied, error } = await supabase
           .from('mitglieder')
           .select('vorname, nachname')
-          .eq('email', user.email)
+          .eq('auth_user_id', user.id)
           .single()
 
         if (error) {

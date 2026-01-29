@@ -32,27 +32,29 @@ export default function ModernSidebar({ userName, userEmail }: ModernSidebarProp
   const [waermepumpen, setWaermepumpen] = useState<any[]>([])
   const [speicher, setSpeicher] = useState<any[]>([])
 
-  // Lade Investitionen für dynamisches Menü
+  // Lade Komponenten für dynamisches Menü (FRESH-START Schema)
   useEffect(() => {
-    const loadInvestitionen = async () => {
+    const loadKomponenten = async () => {
       const supabase = createBrowserClient()
 
+      // E-Autos und Wärmepumpen aus haushalt_komponenten
       const { data: eAutosData } = await supabase
-        .from('alternative_investitionen')
+        .from('haushalt_komponenten')
         .select('id, bezeichnung')
         .eq('typ', 'e-auto')
         .eq('aktiv', true)
         .order('bezeichnung')
 
       const { data: wpData } = await supabase
-        .from('alternative_investitionen')
+        .from('haushalt_komponenten')
         .select('id, bezeichnung')
         .eq('typ', 'waermepumpe')
         .eq('aktiv', true)
         .order('bezeichnung')
 
+      // Speicher aus anlagen_komponenten
       const { data: speicherData } = await supabase
-        .from('alternative_investitionen')
+        .from('anlagen_komponenten')
         .select('id, bezeichnung')
         .eq('typ', 'speicher')
         .eq('aktiv', true)
@@ -63,7 +65,7 @@ export default function ModernSidebar({ userName, userEmail }: ModernSidebarProp
       setSpeicher(speicherData || [])
     }
 
-    loadInvestitionen()
+    loadKomponenten()
   }, [])
 
   // Navigation Structure

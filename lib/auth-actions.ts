@@ -3,7 +3,21 @@
 'use server'
 
 import { createClient } from './supabase-server'
+import { createClient as createSupabaseClient } from '@supabase/supabase-js'
 import { redirect } from 'next/navigation'
+
+// Admin Client mit Service Role für Operationen die RLS umgehen müssen
+function createAdminClient() {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!
+
+  return createSupabaseClient(supabaseUrl, serviceRoleKey, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false
+    }
+  })
+}
 
 export async function signIn(email: string, password: string) {
   const supabase = await createClient()
@@ -17,7 +31,7 @@ export async function signIn(email: string, password: string) {
     return { error: error.message }
   }
 
-  redirect('/')
+  redirect('/meine-anlage')
 }
 
 export async function signUp(formData: {
@@ -30,10 +44,16 @@ export async function signUp(formData: {
 }) {
   const supabase = await createClient()
 
-  // 1. Erstelle Auth User
+  // 1. Erstelle Auth User mit Metadaten (Trigger erstellt Mitglied automatisch)
   const { data: authData, error: authError } = await supabase.auth.signUp({
     email: formData.email,
     password: formData.password,
+    options: {
+      data: {
+        vorname: formData.vorname,
+        nachname: formData.nachname,
+      }
+    }
   })
 
   if (authError) {
@@ -44,30 +64,23 @@ export async function signUp(formData: {
     return { error: 'Benutzer konnte nicht erstellt werden' }
   }
 
-  // 2. Erstelle Mitglied in der Datenbank
-  const insertData = {
-    email: formData.email,
-    vorname: formData.vorname,
-    nachname: formData.nachname,
-    plz: formData.plz || null,
-    ort: formData.ort || null,
-    aktiv: true,
-  }
+  // 2. Aktualisiere Mitglied mit zusätzlichen Daten (PLZ, Ort) via Admin Client
+  const adminClient = createAdminClient()
 
-  // Verwende UPSERT statt INSERT um Race Conditions zu vermeiden
-  const { error: mitgliedError } = await supabase
+  const { error: updateError } = await adminClient
     .from('mitglieder')
-    .upsert(insertData, {
-      onConflict: 'email',
-      ignoreDuplicates: false
+    .update({
+      plz: formData.plz || null,
+      ort: formData.ort || null,
     })
-    .select()
+    .eq('auth_user_id', authData.user.id)
 
-  if (mitgliedError) {
-    return { error: `Mitgliedsdaten konnten nicht gespeichert werden: ${mitgliedError.message}` }
+  if (updateError) {
+    console.error('Fehler beim Aktualisieren der Mitgliedsdaten:', updateError)
+    // Kein harter Fehler - Basisdaten wurden vom Trigger erstellt
   }
 
-  redirect('/')
+  redirect('/meine-anlage')
 }
 
 export async function signOut() {

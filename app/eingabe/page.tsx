@@ -1,57 +1,27 @@
 // app/eingabe/page.tsx
-// Monatsdaten-Erfassung mit Multi-Anlage Support
-// Unterscheidet: anlagen_komponenten vs haushalt_komponenten
+// Monatsdaten-Erfassung mit dynamischem Formular
+// Lädt Investitionen aus alternative_investitionen
 
 import { createClient } from '@/lib/supabase-server'
 import { getCurrentMitglied, getUserAnlagen, resolveAnlageId } from '@/lib/anlagen-helpers'
-import HaushaltMonatsdatenForm from '@/components/HaushaltMonatsdatenForm'
-import EAutoMonatsdatenForm from '@/components/EAutoMonatsdatenForm'
-import WaermepumpeMonatsdatenForm from '@/components/WaermepumpeMonatsdatenForm'
-import SpeicherMonatsdatenForm from '@/components/SpeicherMonatsdatenForm'
-import WechselrichterMonatsdatenForm from '@/components/WechselrichterMonatsdatenForm'
+import MonatsdatenFormDynamic from '@/components/MonatsdatenFormDynamic'
 import SimpleIcon from '@/components/SimpleIcon'
 import Link from 'next/link'
 import { AnlagenSelector } from '@/components/AnlagenSelector'
 
-async function getData(anlageId: string, mitgliedId: string) {
+async function getInvestitionen(mitgliedId: string) {
   const supabase = await createClient()
 
-  // Anlagen-Komponenten (zur aktuellen Anlage gehörig)
-  const { data: speicher } = await supabase
-    .from('anlagen_komponenten')
-    .select('*')
-    .eq('anlage_id', anlageId)
-    .eq('typ', 'speicher')
-    .eq('aktiv', true)
-
-  const { data: wechselrichter } = await supabase
-    .from('anlagen_komponenten')
-    .select('*')
-    .eq('anlage_id', anlageId)
-    .eq('typ', 'wechselrichter')
-    .eq('aktiv', true)
-
-  // Haushalts-Komponenten (zum Mitglied gehörig, nicht zur Anlage!)
-  const { data: eAutos } = await supabase
-    .from('haushalt_komponenten')
-    .select('*')
+  // Alle aktiven Investitionen des Mitglieds holen
+  const { data } = await supabase
+    .from('alternative_investitionen')
+    .select('id, typ, bezeichnung, parameter')
     .eq('mitglied_id', mitgliedId)
-    .eq('typ', 'e-auto')
     .eq('aktiv', true)
+    .order('typ')
+    .order('bezeichnung')
 
-  const { data: waermepumpen } = await supabase
-    .from('haushalt_komponenten')
-    .select('*')
-    .eq('mitglied_id', mitgliedId)
-    .eq('typ', 'waermepumpe')
-    .eq('aktiv', true)
-
-  return {
-    speicher: speicher || [],
-    wechselrichter: wechselrichter || [],
-    eAutos: eAutos || [],
-    waermepumpen: waermepumpen || []
-  }
+  return data || []
 }
 
 export const dynamic = 'force-dynamic'
@@ -59,7 +29,7 @@ export const dynamic = 'force-dynamic'
 export default async function EingabePage({
   searchParams
 }: {
-  searchParams: Promise<{ tab?: string; anlageId?: string }>
+  searchParams: Promise<{ anlageId?: string }>
 }) {
   const mitglied = await getCurrentMitglied()
 
@@ -98,8 +68,17 @@ export default async function EingabePage({
     )
   }
 
-  const { speicher, wechselrichter, eAutos, waermepumpen } = await getData(anlage.id, mitglied.data.id)
-  const activeTab = params.tab || 'haushalt'
+  // Investitionen laden
+  const investitionen = await getInvestitionen(mitglied.data.id)
+
+  // Gruppiere nach Typ für Info-Anzeige
+  const investitionenNachTyp = {
+    wechselrichter: investitionen.filter(i => i.typ === 'wechselrichter'),
+    speicher: investitionen.filter(i => i.typ === 'speicher'),
+    eAuto: investitionen.filter(i => i.typ === 'e-auto'),
+    waermepumpe: investitionen.filter(i => i.typ === 'waermepumpe'),
+    sonstige: investitionen.filter(i => !['wechselrichter', 'speicher', 'e-auto', 'waermepumpe'].includes(i.typ))
+  }
 
   return (
     <main className="min-h-screen bg-gray-50">
@@ -131,92 +110,64 @@ export default async function EingabePage({
               </Link>
             </div>
           </div>
-          <div className="mt-6 border-b border-gray-200">
-            <nav className="-mb-px flex space-x-8">
-              <Link
-                href={`/eingabe?tab=haushalt${anlageId ? `&anlageId=${anlageId}` : ''}`}
-                className={`${
-                  activeTab === 'haushalt'
-                    ? 'border-blue-500 text-blue-600'
-                    : 'border-transparent text-gray-500 hover:text-gray-700'
-                } whitespace-nowrap pb-4 px-1 border-b-2 font-medium text-sm flex items-center gap-2`}
-              >
-                <SimpleIcon type="home" className="w-4 h-4" />
-                Haushalt
-              </Link>
 
-              {eAutos.length > 0 && (
-                <Link
-                  href={`/eingabe?tab=e-auto${anlageId ? `&anlageId=${anlageId}` : ''}`}
-                  className={`${
-                    activeTab === 'e-auto'
-                      ? 'border-blue-500 text-blue-600'
-                      : 'border-transparent text-gray-500 hover:text-gray-700'
-                  } whitespace-nowrap pb-4 px-1 border-b-2 font-medium text-sm flex items-center gap-2`}
-                >
-                  <SimpleIcon type="car" className="w-4 h-4" />
-                  E-Auto ({eAutos.length})
-                </Link>
-              )}
-
-              {waermepumpen.length > 0 && (
-                <Link
-                  href={`/eingabe?tab=waermepumpe${anlageId ? `&anlageId=${anlageId}` : ''}`}
-                  className={`${
-                    activeTab === 'waermepumpe'
-                      ? 'border-blue-500 text-blue-600'
-                      : 'border-transparent text-gray-500 hover:text-gray-700'
-                  } whitespace-nowrap pb-4 px-1 border-b-2 font-medium text-sm flex items-center gap-2`}
-                >
-                  <SimpleIcon type="heat" className="w-4 h-4" />
-                  Wärmepumpe ({waermepumpen.length})
-                </Link>
-              )}
-
-              {speicher.length > 0 && (
-                <Link
-                  href={`/eingabe?tab=speicher${anlageId ? `&anlageId=${anlageId}` : ''}`}
-                  className={`${
-                    activeTab === 'speicher'
-                      ? 'border-blue-500 text-blue-600'
-                      : 'border-transparent text-gray-500 hover:text-gray-700'
-                  } whitespace-nowrap pb-4 px-1 border-b-2 font-medium text-sm flex items-center gap-2`}
-                >
-                  <SimpleIcon type="battery" className="w-4 h-4" />
-                  Speicher ({speicher.length})
-                </Link>
-              )}
-
-              {wechselrichter.length > 0 && (
-                <Link
-                  href={`/eingabe?tab=wechselrichter${anlageId ? `&anlageId=${anlageId}` : ''}`}
-                  className={`${
-                    activeTab === 'wechselrichter'
-                      ? 'border-blue-500 text-blue-600'
-                      : 'border-transparent text-gray-500 hover:text-gray-700'
-                  } whitespace-nowrap pb-4 px-1 border-b-2 font-medium text-sm flex items-center gap-2`}
-                >
-                  <SimpleIcon type="inverter" className="w-4 h-4" />
-                  Wechselrichter ({wechselrichter.length})
-                </Link>
-              )}
-            </nav>
+          {/* Info über vorhandene Investitionen */}
+          <div className="mt-4 flex flex-wrap gap-2">
+            {investitionenNachTyp.wechselrichter.length > 0 && (
+              <span className="inline-flex items-center gap-1 px-3 py-1 bg-yellow-100 text-yellow-800 rounded-full text-sm">
+                <SimpleIcon type="sun" className="w-4 h-4" />
+                {investitionenNachTyp.wechselrichter.length} Wechselrichter
+              </span>
+            )}
+            {investitionenNachTyp.speicher.length > 0 && (
+              <span className="inline-flex items-center gap-1 px-3 py-1 bg-green-100 text-green-800 rounded-full text-sm">
+                <SimpleIcon type="battery" className="w-4 h-4" />
+                {investitionenNachTyp.speicher.length} Speicher
+              </span>
+            )}
+            {investitionenNachTyp.eAuto.length > 0 && (
+              <span className="inline-flex items-center gap-1 px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm">
+                <SimpleIcon type="car" className="w-4 h-4" />
+                {investitionenNachTyp.eAuto.length} E-Auto
+              </span>
+            )}
+            {investitionenNachTyp.waermepumpe.length > 0 && (
+              <span className="inline-flex items-center gap-1 px-3 py-1 bg-orange-100 text-orange-800 rounded-full text-sm">
+                <SimpleIcon type="heat" className="w-4 h-4" />
+                {investitionenNachTyp.waermepumpe.length} Wärmepumpe
+              </span>
+            )}
+            {investitionen.length === 0 && (
+              <span className="inline-flex items-center gap-1 px-3 py-1 bg-gray-100 text-gray-600 rounded-full text-sm">
+                Keine Investitionen erfasst - PV-Erzeugung direkt eingeben
+              </span>
+            )}
           </div>
         </div>
       </div>
+
       <div className="max-w-4xl mx-auto px-4 py-8">
-        {activeTab === 'haushalt' && <HaushaltMonatsdatenForm anlage={anlage} />}
-        {activeTab === 'e-auto' && eAutos.length > 0 && (
-          <EAutoMonatsdatenForm investition={eAutos[0]} />
-        )}
-        {activeTab === 'waermepumpe' && waermepumpen.length > 0 && (
-          <WaermepumpeMonatsdatenForm investition={waermepumpen[0]} />
-        )}
-        {activeTab === 'speicher' && speicher.length > 0 && (
-          <SpeicherMonatsdatenForm investition={speicher[0]} />
-        )}
-        {activeTab === 'wechselrichter' && wechselrichter.length > 0 && (
-          <WechselrichterMonatsdatenForm investition={wechselrichter[0]} />
+        <MonatsdatenFormDynamic
+          anlage={anlage}
+          investitionen={investitionen}
+        />
+
+        {/* Hinweis wenn keine Investitionen */}
+        {investitionen.length === 0 && (
+          <div className="mt-6 bg-amber-50 border border-amber-200 rounded-lg p-4">
+            <h3 className="text-sm font-semibold text-amber-800 mb-2">Tipp: Investitionen erfassen</h3>
+            <p className="text-sm text-amber-700 mb-3">
+              Erfasse deine Komponenten (Wechselrichter, Speicher, E-Auto, Wärmepumpe) als Investitionen,
+              um detailliertere Auswertungen und ROI-Berechnungen zu erhalten.
+            </p>
+            <Link
+              href="/investitionen/neu"
+              className="inline-flex items-center gap-2 px-4 py-2 bg-amber-600 text-white rounded-md hover:bg-amber-700 text-sm"
+            >
+              <SimpleIcon type="plus" className="w-4 h-4" />
+              Investition erfassen
+            </Link>
+          </div>
         )}
       </div>
     </main>

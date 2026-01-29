@@ -1,5 +1,6 @@
 // app/api/csv-template/route.ts
 // API-Route für dynamische CSV-Template-Generierung
+// Angepasst für FRESH-START Schema
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
@@ -27,8 +28,20 @@ export async function GET(request: NextRequest) {
       return new NextResponse('Keine Berechtigung', { status: 403 })
     }
 
+    // 4. Prüfen ob Speicher vorhanden (via anlagen_komponenten)
+    const supabase = await createClient()
+    const { data: speicher } = await supabase
+      .from('anlagen_komponenten')
+      .select('id')
+      .eq('anlage_id', anlageId)
+      .eq('typ', 'speicher')
+      .eq('aktiv', true)
+      .limit(1)
+
+    const hatSpeicher = !!(speicher && speicher.length > 0)
+
     // 5. Spalten basierend auf Anlage generieren
-    const columns = generateColumns(anlage)
+    const columns = generateColumns(hatSpeicher)
 
     // 6. CSV erstellen
     const csv = generateCSV(columns, anlage)
@@ -52,48 +65,45 @@ export async function GET(request: NextRequest) {
 
 interface Column {
   name: string
+  dbName: string  // Datenbank-Spaltenname für Mapping
   required: boolean
   example?: string
+  hint?: string
 }
 
-function generateColumns(anlage: any): Column[] {
+function generateColumns(hatSpeicher: boolean): Column[] {
   const columns: Column[] = [
     // Pflichtfelder
-    { name: 'Jahr', required: true, example: '2024' },
-    { name: 'Monat', required: true, example: '1' },
+    { name: 'Jahr', dbName: 'jahr', required: true, example: '2024' },
+    { name: 'Monat', dbName: 'monat', required: true, example: '1' },
 
-    // Basis-Energiedaten (immer)
-    { name: 'Gesamtverbrauch (kWh)', required: false, example: '450.5' },
-    { name: 'PV-Erzeugung (kWh)', required: false, example: '280.3' },
-    { name: 'Direktverbrauch (kWh)', required: false, example: '180.2' },
-    { name: 'Netzbezug (kWh)', required: false, example: '250.2' },
-    { name: 'Einspeisung (kWh)', required: false, example: '100.1' },
+    // Energie-Flüsse (kWh) - Pflicht für sinnvolle Auswertung
+    { name: 'Gesamtverbrauch (kWh)', dbName: 'gesamtverbrauch_kwh', required: true, example: '450', hint: 'Gesamter Haushalts-Stromverbrauch' },
+    { name: 'PV-Erzeugung (kWh)', dbName: 'pv_erzeugung_kwh', required: true, example: '280', hint: 'Vom Wechselrichter erzeugt' },
+    { name: 'Direktverbrauch (kWh)', dbName: 'direktverbrauch_kwh', required: true, example: '180', hint: 'PV direkt verbraucht (ohne Batterie)' },
+    { name: 'Einspeisung (kWh)', dbName: 'einspeisung_kwh', required: true, example: '100', hint: 'Ins Netz eingespeist' },
+    { name: 'Netzbezug (kWh)', dbName: 'netzbezug_kwh', required: true, example: '170', hint: 'Vom Netz bezogen' },
   ]
 
-  // Batteriespeicher
-  if (anlage.batteriekapazitaet_kwh && anlage.batteriekapazitaet_kwh > 0) {
+  // Batteriespeicher (nur wenn vorhanden)
+  if (hatSpeicher) {
     columns.push(
-      { name: 'Batterieentladung (kWh)', required: false, example: '120.1' },
-      { name: 'Batterieladung (kWh)', required: false, example: '150.4' }
+      { name: 'Batterieentladung (kWh)', dbName: 'batterieentladung_kwh', required: false, example: '50', hint: 'Aus Batterie entnommen' },
+      { name: 'Batterieladung (kWh)', dbName: 'batterieladung_kwh', required: false, example: '60', hint: 'In Batterie geladen' }
     )
   }
 
-  // E-Fahrzeug
-  if (anlage.ekfz_vorhanden) {
-    columns.push(
-      { name: 'E-Auto Ladung (kWh)', required: false, example: '50.0' }
-    )
-  }
-
-  // Finanz-Daten
+  // Strompreise (optional - für dynamische Tarife)
+  // Wenn leer, werden Stammdaten-Preise verwendet
   columns.push(
-    { name: 'Netzbezug Kosten (€)', required: false, example: '' },
-    { name: 'Einspeisung Ertrag (€)', required: false, example: '' },
-    { name: 'Grundpreis (€)', required: false, example: '8.50' },
-    { name: 'Netzbezugspreis (Cent/kWh)', required: false, example: '30.2' },
-    { name: 'Einspeisevergütung (Cent/kWh)', required: false, example: '12.05' },
-    { name: 'Betriebsausgaben (€)', required: false, example: '15.00' },
-    { name: 'Notizen', required: false, example: 'Optionale Anmerkungen' }
+    { name: 'Netzbezugspreis (Cent/kWh)', dbName: 'netzbezug_preis_cent_kwh', required: false, example: '', hint: 'Leer = Stammdaten-Preis' },
+    { name: 'Einspeisevergütung (Cent/kWh)', dbName: 'einspeisung_preis_cent_kwh', required: false, example: '', hint: 'Leer = Stammdaten-Preis' },
+  )
+
+  // Sonstiges
+  columns.push(
+    { name: 'Betriebsausgaben (€)', dbName: 'betriebsausgaben_monat_euro', required: false, example: '', hint: 'Wartung, Versicherung etc.' },
+    { name: 'Notizen', dbName: 'notizen', required: false, example: '', hint: 'Optionale Anmerkungen' }
   )
 
   return columns
@@ -103,50 +113,42 @@ function generateCSV(columns: Column[], anlage: any): string {
   // Header-Zeile
   const header = columns.map(c => c.name).join(',')
 
-  // Beispiel-Zeile 1 (mit Auto-Berechnung)
+  // Beispiel-Zeile 1 (Januar)
   const example1 = columns.map(c => {
     if (c.name === 'Jahr') return '2024'
     if (c.name === 'Monat') return '1'
-    if (c.name === 'Netzbezug Kosten (€)') return '' // Wird berechnet
-    if (c.name === 'Einspeisung Ertrag (€)') return '' // Wird berechnet
-    return c.example || ''
+    if (c.name === 'Gesamtverbrauch (kWh)') return '450'
+    if (c.name === 'PV-Erzeugung (kWh)') return '120'
+    if (c.name === 'Direktverbrauch (kWh)') return '80'
+    if (c.name === 'Einspeisung (kWh)') return '40'
+    if (c.name === 'Netzbezug (kWh)') return '370'
+    if (c.name === 'Batterieentladung (kWh)') return '30'
+    if (c.name === 'Batterieladung (kWh)') return '35'
+    // Strompreise leer = Stammdaten werden verwendet
+    return ''
   }).join(',')
 
-  // Beispiel-Zeile 2 (manuell)
+  // Beispiel-Zeile 2 (Juli - mehr PV)
   const example2 = columns.map(c => {
     if (c.name === 'Jahr') return '2024'
-    if (c.name === 'Monat') return '2'
-    if (c.name === 'Gesamtverbrauch (kWh)') return '420.8'
-    if (c.name === 'PV-Erzeugung (kWh)') return '310.5'
-    if (c.name === 'Direktverbrauch (kWh)') return '200.3'
-    if (c.name === 'Batterieentladung (kWh)') return '110.5'
-    if (c.name === 'Batterieladung (kWh)') return '140.2'
-    if (c.name === 'Netzbezug (kWh)') return '220.0'
-    if (c.name === 'Einspeisung (kWh)') return '110.2'
-    if (c.name === 'E-Auto Ladung (kWh)') return '45.0'
-    if (c.name === 'Netzbezug Kosten (€)') return '66.00'
-    if (c.name === 'Einspeisung Ertrag (€)') return '13.22'
-    if (c.name === 'Grundpreis (€)') return '8.50'
-    if (c.name === 'Netzbezugspreis (Cent/kWh)') return '30.0'
-    if (c.name === 'Einspeisevergütung (Cent/kWh)') return '12.0'
-    if (c.name === 'Betriebsausgaben (€)') return '15.00'
-    if (c.name === 'Notizen') return 'Manuelle Eingabe'
+    if (c.name === 'Monat') return '7'
+    if (c.name === 'Gesamtverbrauch (kWh)') return '380'
+    if (c.name === 'PV-Erzeugung (kWh)') return '650'
+    if (c.name === 'Direktverbrauch (kWh)') return '280'
+    if (c.name === 'Einspeisung (kWh)') return '320'
+    if (c.name === 'Netzbezug (kWh)') return '100'
+    if (c.name === 'Batterieentladung (kWh)') return '80'
+    if (c.name === 'Batterieladung (kWh)') return '130'
     return ''
   }).join(',')
 
-  // Leere Zeile
+  // Leere Zeile für eigene Daten
   const empty = columns.map(() => '').join(',')
 
-  // Kommentar-Zeile (als CSV-Zeile mit Hinweis in erster Spalte)
-  const comment1 = columns.map((c, i) => {
-    if (i === 0) return '# Beispieldaten für ' + anlage.anlagenname
-    return ''
-  }).join(',')
-
-  const comment2 = columns.map((c, i) => {
-    if (i === 0) return '# Kosten/Erlöse werden automatisch berechnet wenn leer'
-    return ''
-  }).join(',')
+  // Kommentar-Zeilen
+  const comment1 = `# CSV-Vorlage für ${anlage.anlagenname} (${anlage.leistung_kwp} kWp)`
+  const comment2 = '# Strompreise: Leer lassen um Stammdaten-Preise zu verwenden'
+  const comment3 = '# Euro-Beträge werden automatisch aus kWh × Strompreis berechnet'
 
   // UTF-8 BOM für Excel-Kompatibilität
   const bom = '\uFEFF'
@@ -154,9 +156,12 @@ function generateCSV(columns: Column[], anlage: any): string {
   return bom + [
     comment1,
     comment2,
+    comment3,
     header,
     example1,
     example2,
+    empty,
+    empty,
     empty
   ].join('\n')
 }

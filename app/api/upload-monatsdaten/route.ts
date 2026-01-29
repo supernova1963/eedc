@@ -15,6 +15,7 @@ interface ValidationError {
 interface ParsedMonatsdaten {
   jahr: number
   monat: number
+  // Energie-Flüsse (kWh)
   gesamtverbrauch_kwh?: number
   pv_erzeugung_kwh?: number
   direktverbrauch_kwh?: number
@@ -22,17 +23,16 @@ interface ParsedMonatsdaten {
   batterieladung_kwh?: number
   netzbezug_kwh?: number
   einspeisung_kwh?: number
-  ekfz_ladung_kwh?: number
-  netzbezug_kosten_euro?: number
-  einspeisung_ertrag_euro?: number
-  grundpreis_euro?: number
-  netzbezugspreis_cent_kwh?: number
-  einspeiseverguetung_cent_kwh?: number
+  // Strompreise (ct/kWh) - optional, wenn leer werden Stammdaten verwendet
+  netzbezug_preis_cent_kwh?: number
+  einspeisung_preis_cent_kwh?: number
+  // Sonstiges
   betriebsausgaben_monat_euro?: number
   notizen?: string
 }
 
 // Mapping von deutschen Spaltennamen zu DB-Feldern
+// Angepasst für FRESH-START Schema
 const columnMapping: Record<string, string> = {
   'Jahr': 'jahr',
   'Monat': 'monat',
@@ -43,12 +43,10 @@ const columnMapping: Record<string, string> = {
   'Batterieladung (kWh)': 'batterieladung_kwh',
   'Netzbezug (kWh)': 'netzbezug_kwh',
   'Einspeisung (kWh)': 'einspeisung_kwh',
-  'E-Auto Ladung (kWh)': 'ekfz_ladung_kwh',
-  'Netzbezug Kosten (€)': 'netzbezug_kosten_euro',
-  'Einspeisung Ertrag (€)': 'einspeisung_ertrag_euro',
-  'Grundpreis (€)': 'grundpreis_euro',
-  'Netzbezugspreis (Cent/kWh)': 'netzbezugspreis_cent_kwh',
-  'Einspeisevergütung (Cent/kWh)': 'einspeiseverguetung_cent_kwh',
+  // Strompreise in ct/kWh - direkt auf DB-Spaltennamen mappen
+  'Netzbezugspreis (Cent/kWh)': 'netzbezug_preis_cent_kwh',
+  'Einspeisevergütung (Cent/kWh)': 'einspeisung_preis_cent_kwh',
+  // Sonstiges
   'Betriebsausgaben (€)': 'betriebsausgaben_monat_euro',
   'Notizen': 'notizen'
 }
@@ -86,44 +84,23 @@ function validateRow(row: any, rowIndex: number): { data?: ParsedMonatsdaten, er
     return { errors }
   }
 
-  // Basis-Werte parsen
-  const netzbezug_kwh = parseNumber(row.netzbezug_kwh)
-  const einspeisung_kwh = parseNumber(row.einspeisung_kwh)
-  const netzbezugspreis_cent_kwh = parseNumber(row.netzbezugspreis_cent_kwh)
-  const einspeiseverguetung_cent_kwh = parseNumber(row.einspeiseverguetung_cent_kwh)
-  const grundpreis_euro = parseNumber(row.grundpreis_euro)
-
-  // Auto-Berechnung: Netzbezug Kosten
-  let netzbezug_kosten_euro = parseNumber(row.netzbezug_kosten_euro)
-  if (!netzbezug_kosten_euro && netzbezug_kwh && netzbezugspreis_cent_kwh) {
-    netzbezug_kosten_euro = (netzbezug_kwh * netzbezugspreis_cent_kwh) / 100
-    if (grundpreis_euro) {
-      netzbezug_kosten_euro += grundpreis_euro
-    }
-  }
-
-  // Auto-Berechnung: Einspeisung Ertrag
-  let einspeisung_ertrag_euro = parseNumber(row.einspeisung_ertrag_euro)
-  if (!einspeisung_ertrag_euro && einspeisung_kwh && einspeiseverguetung_cent_kwh) {
-    einspeisung_ertrag_euro = (einspeisung_kwh * einspeiseverguetung_cent_kwh) / 100
-  }
-
+  // Alle Daten parsen - Euro-Beträge werden NICHT mehr importiert,
+  // sie werden beim Speichern automatisch aus Strompreisen berechnet
   const data: ParsedMonatsdaten = {
     jahr: jahr!,
     monat: monat!,
+    // Energie-Flüsse
     gesamtverbrauch_kwh: parseNumber(row.gesamtverbrauch_kwh),
     pv_erzeugung_kwh: parseNumber(row.pv_erzeugung_kwh),
     direktverbrauch_kwh: parseNumber(row.direktverbrauch_kwh),
     batterieentladung_kwh: parseNumber(row.batterieentladung_kwh),
     batterieladung_kwh: parseNumber(row.batterieladung_kwh),
-    netzbezug_kwh,
-    einspeisung_kwh,
-    ekfz_ladung_kwh: parseNumber(row.ekfz_ladung_kwh),
-    netzbezug_kosten_euro,
-    einspeisung_ertrag_euro,
-    grundpreis_euro,
-    netzbezugspreis_cent_kwh,
-    einspeiseverguetung_cent_kwh,
+    netzbezug_kwh: parseNumber(row.netzbezug_kwh),
+    einspeisung_kwh: parseNumber(row.einspeisung_kwh),
+    // Strompreise (optional - für dynamische Tarife)
+    netzbezug_preis_cent_kwh: parseNumber(row.netzbezug_preis_cent_kwh),
+    einspeisung_preis_cent_kwh: parseNumber(row.einspeisung_preis_cent_kwh),
+    // Sonstiges
     betriebsausgaben_monat_euro: parseNumber(row.betriebsausgaben_monat_euro),
     notizen: row.notizen || undefined
   }
@@ -253,10 +230,11 @@ export async function POST(request: NextRequest) {
       })
     }
 
-    // Daten in DB einfügen (mitglied_id kommt vom authentifizierten Mitglied)
+    // Daten in DB einfügen
+    // Hinweis: mitglied_id nicht mehr nötig - Beziehung läuft über anlage_id
+    // Euro-Beträge werden NICHT importiert - sie werden automatisch aus Strompreisen berechnet
     const insertData = validatedData.map(d => ({
       anlage_id: anlageId,
-      mitglied_id: mitglied.data.id,
       ...d
     }))
 

@@ -26,37 +26,43 @@ export function useInvestitionsFilter(): InvestitionsCounts {
       try {
         const supabase = createBrowserClient()
 
-        // E-Autos zählen
+        // E-Autos zählen (FRESH-START: haushalt_komponenten)
         const { count: eAutosCount } = await supabase
-          .from('alternative_investitionen')
+          .from('haushalt_komponenten')
           .select('*', { count: 'exact', head: true })
           .eq('typ', 'e-auto')
           .eq('aktiv', true)
 
-        // Wärmepumpen zählen
+        // Wärmepumpen zählen (FRESH-START: haushalt_komponenten)
         const { count: waermepumpenCount } = await supabase
-          .from('alternative_investitionen')
+          .from('haushalt_komponenten')
           .select('*', { count: 'exact', head: true })
           .eq('typ', 'waermepumpe')
           .eq('aktiv', true)
 
-        // Speicher zählen
+        // Speicher zählen (FRESH-START: anlagen_komponenten)
         const { count: speicherCount } = await supabase
-          .from('alternative_investitionen')
+          .from('anlagen_komponenten')
           .select('*', { count: 'exact', head: true })
           .eq('typ', 'speicher')
           .eq('aktiv', true)
 
-        // Alle Investitionen zählen
-        const { count: investitionenCount } = await supabase
-          .from('investitionen_uebersicht')
+        // Alle Komponenten zählen (Haushalts + Anlagen)
+        const { count: haushaltCount } = await supabase
+          .from('haushalt_komponenten')
           .select('*', { count: 'exact', head: true })
+          .eq('aktiv', true)
+
+        const { count: anlagenCount } = await supabase
+          .from('anlagen_komponenten')
+          .select('*', { count: 'exact', head: true })
+          .eq('aktiv', true)
 
         setCounts({
           hasEAutos: (eAutosCount || 0) > 0,
           hasWaermepumpen: (waermepumpenCount || 0) > 0,
           hasSpeicher: (speicherCount || 0) > 0,
-          hasInvestitionen: (investitionenCount || 0) > 0
+          hasInvestitionen: ((haushaltCount || 0) + (anlagenCount || 0)) > 0
         })
       } catch (error) {
         console.error('Fehler beim Laden der Investitions-Counts:', error)
