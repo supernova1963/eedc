@@ -1,16 +1,16 @@
 // app/daten-import/page.tsx
 // Seite für Monatsdaten-Import
 
-import { getCurrentUser, getUserAnlagen } from '@/lib/auth'
+import { getCurrentMitglied, getUserAnlagen } from '@/lib/anlagen-helpers'
 import MonatsdatenUploadWrapper from '@/components/MonatsdatenUploadWrapper'
 import SimpleIcon from '@/components/SimpleIcon'
 import { createClient } from '@/lib/supabase-server'
 
 export default async function DatenImportPage() {
   // User authentifizieren
-  const user = await getCurrentUser()
+  const mitglied = await getCurrentMitglied()
 
-  if (!user) {
+  if (!mitglied.data) {
     return (
       <div className="max-w-4xl mx-auto p-6">
         <h1 className="text-3xl font-bold text-gray-900 mb-6">Daten importieren</h1>
@@ -30,7 +30,7 @@ export default async function DatenImportPage() {
   }
 
   // Anlagen des Users laden
-  const anlagen = await getUserAnlagen(user.id)
+  const { data: anlagen } = await getUserAnlagen()
 
   if (!anlagen || anlagen.length === 0) {
     return (

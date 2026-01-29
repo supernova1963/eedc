@@ -1,12 +1,12 @@
 // app/investitionen/neu/page.tsx
 import { createClient } from '@/lib/supabase-server'
-import { getCurrentUser } from '@/lib/auth'
+import { getCurrentMitglied } from '@/lib/anlagen-helpers'
 import InvestitionFormSimple from '@/components/InvestitionFormSimple'
 
 export default async function NeueInvestitionPage() {
-  const user = await getCurrentUser()
+  const mitglied = await getCurrentMitglied()
 
-  if (!user) {
+  if (!mitglied.data) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
@@ -21,7 +21,7 @@ export default async function NeueInvestitionPage() {
   const { data: mitglied } = await supabase
     .from('mitglieder')
     .select('*')
-    .eq('id', user.id)
+    .eq('id', mitglied.data.id)
     .single()
 
   if (!mitglied) {

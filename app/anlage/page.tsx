@@ -2,96 +2,25 @@
 // Vereinfachtes Anlagen-Profil mit Tabs
 
 import { createClient } from '@/lib/supabase-server'
-import { getCurrentUser } from '@/lib/auth'
+import { getCurrentMitglied, getUserAnlagen, resolveAnlageId } from '@/lib/anlagen-helpers'
 import SimpleIcon from '@/components/SimpleIcon'
 import Link from 'next/link'
 import AnlagenProfilForm from '@/components/AnlagenProfilForm'
 import AnlagenFreigabeForm from '@/components/AnlagenFreigabeForm'
 import AnlagenTechnischesDaten from '@/components/AnlagenTechnischesDaten'
+import { AnlagenSelector } from '@/components/AnlagenSelector'
 
-async function getAnlageData(userId: string, anlageId?: string) {
+async function getAnlageFreigaben(anlageId: string) {
   const supabase = await createClient()
-
-  // Wenn anlageId übergeben wurde, diese spezifische Anlage holen
-  if (anlageId) {
-    const { data: anlage } = await supabase
-      .from('anlagen')
-      .select('*')
-      .eq('id', anlageId)
-      .eq('mitglied_id', userId)
-      .single()
-
-    if (!anlage) return { anlage: null, freigaben: null, mitglied: null, alleAnlagen: [] }
-
-    // Freigaben holen
-    const { data: freigaben } = await supabase
-      .from('anlagen_freigaben')
-      .select('*')
-      .eq('anlage_id', anlage.id)
-      .single()
-
-    // Mitglied holen
-    const { data: mitglied } = await supabase
-      .from('mitglieder')
-      .select('id, vorname, nachname, email')
-      .eq('id', anlage.mitglied_id)
-      .single()
-
-    // Alle Anlagen des Users holen (für Dropdown)
-    const { data: alleAnlagen } = await supabase
-      .from('anlagen')
-      .select('id, anlagenname')
-      .eq('mitglied_id', userId)
-      .eq('aktiv', true)
-      .order('erstellt_am', { ascending: false })
-
-    return { anlage, freigaben, mitglied, alleAnlagen: alleAnlagen || [] }
-  }
-
-  // Sonst: Erste Anlage des eingeloggten Users holen
-  const { data: anlage } = await supabase
-    .from('anlagen')
-    .select('*')
-    .eq('mitglied_id', userId)
-    .eq('aktiv', true)
-    .order('erstellt_am', { ascending: false })
-    .limit(1)
-    .single()
-
-  if (!anlage) {
-    // Alle Anlagen des Users holen (sollte leer sein)
-    const { data: alleAnlagen } = await supabase
-      .from('anlagen')
-      .select('id, anlagenname')
-      .eq('mitglied_id', userId)
-      .eq('aktiv', true)
-
-    return { anlage: null, freigaben: null, mitglied: null, alleAnlagen: alleAnlagen || [] }
-  }
 
   // Freigaben holen
   const { data: freigaben } = await supabase
     .from('anlagen_freigaben')
     .select('*')
-    .eq('anlage_id', anlage.id)
+    .eq('anlage_id', anlageId)
     .single()
 
-  // Mitglied holen
-  const { data: mitglied } = await supabase
-    .from('mitglieder')
-    .select('id, vorname, nachname, email')
-    .eq('id', anlage.mitglied_id)
-    .single()
-
-  // Alle Anlagen des Users holen (für Dropdown)
-  const { data: alleAnlagen } = await supabase
-    .from('anlagen')
-    .select('id, anlagenname')
-    .eq('mitglied_id', userId)
-    .eq('aktiv', true)
-    .order('erstellt_am', { ascending: false })
-
-  return { anlage, freigaben, mitglied, alleAnlagen: alleAnlagen || [] }
+  return freigaben
 }
 
 export const dynamic = 'force-dynamic'
@@ -101,9 +30,9 @@ export default async function AnlagePage({
 }: {
   searchParams: Promise<{ tab?: string; anlageId?: string }>
 }) {
-  const user = await getCurrentUser()
+  const mitglied = await getCurrentMitglied()
 
-  if (!user) {
+  if (!mitglied.data) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
@@ -114,8 +43,11 @@ export default async function AnlagePage({
   }
 
   const params = await searchParams
-  const { anlage, freigaben, mitglied, alleAnlagen } = await getAnlageData(user.id, params.anlageId)
+  const { data: alleAnlagen } = await getUserAnlagen()
+  const { anlageId, anlage } = await resolveAnlageId(params.anlageId)
   const activeTab = params.tab || 'profil'
+
+  const freigaben = anlage ? await getAnlageFreigaben(anlage.id) : null
 
   if (!anlage) {
     return (
@@ -199,11 +131,6 @@ export default async function AnlagePage({
     )
   }
 
-  const fmt = (num?: number) => {
-    if (!num && num !== 0) return '-'
-    return num.toLocaleString('de-DE', { maximumFractionDigits: 2 })
-  }
-
   return (
     <main className="min-h-screen bg-gray-50">
       {/* Header */}
@@ -216,10 +143,16 @@ export default async function AnlagePage({
                 {anlage.anlagenname || 'PV-Anlage'}
               </h1>
               <p className="mt-2 text-sm text-gray-600">
-                {mitglied ? `${mitglied.vorname} ${mitglied.nachname}` : 'Mitglied'} · {anlage.standort_ort || 'Standort'}
+                {mitglied.data ? `${mitglied.data.vorname} ${mitglied.data.nachname}` : 'Mitglied'} · {anlage.standort_ort || 'Standort'}
               </p>
             </div>
             <div className="flex gap-3">
+              {alleAnlagen && alleAnlagen.length > 1 && (
+                <AnlagenSelector
+                  anlagen={alleAnlagen}
+                  currentAnlageId={anlageId}
+                />
+              )}
               <Link
                 href="/investitionen"
                 className="px-4 py-2 bg-blue-100 hover:bg-blue-200 text-blue-700 rounded-md font-medium flex items-center gap-2"
@@ -228,7 +161,7 @@ export default async function AnlagePage({
                 Investitionen
               </Link>
               <Link
-                href="/"
+                href="/meine-anlage"
                 className="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-md font-medium text-gray-700 flex items-center gap-2"
               >
                 <SimpleIcon type="back" className="w-4 h-4" />
@@ -241,7 +174,7 @@ export default async function AnlagePage({
           <div className="mt-6 border-b border-gray-200">
             <nav className="-mb-px flex space-x-8">
               <Link
-                href="/anlage?tab=profil"
+                href={`/anlage?tab=profil${anlageId ? `&anlageId=${anlageId}` : ''}`}
                 className={`${
                   activeTab === 'profil'
                     ? 'border-blue-500 text-blue-600'
@@ -253,7 +186,7 @@ export default async function AnlagePage({
               </Link>
 
               <Link
-                href="/anlage?tab=freigabe"
+                href={`/anlage?tab=freigabe${anlageId ? `&anlageId=${anlageId}` : ''}`}
                 className={`${
                   activeTab === 'freigabe'
                     ? 'border-blue-500 text-blue-600'
@@ -265,7 +198,7 @@ export default async function AnlagePage({
               </Link>
 
               <Link
-                href="/anlage?tab=technisch"
+                href={`/anlage?tab=technisch${anlageId ? `&anlageId=${anlageId}` : ''}`}
                 className={`${
                   activeTab === 'technisch'
                     ? 'border-blue-500 text-blue-600'
@@ -283,7 +216,7 @@ export default async function AnlagePage({
       {/* Content */}
       <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {activeTab === 'profil' && (
-          <AnlagenProfilForm anlage={anlage} mitglied={mitglied} />
+          <AnlagenProfilForm anlage={anlage} mitglied={mitglied.data} />
         )}
 
         {activeTab === 'freigabe' && (

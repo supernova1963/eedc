@@ -1,6 +1,6 @@
 // app/investitionen/bearbeiten/[id]/page.tsx
 import { createClient } from '@/lib/supabase-server'
-import { getCurrentUser } from '@/lib/auth'
+import { getCurrentMitglied } from '@/lib/anlagen-helpers'
 import InvestitionFormSimple from '@/components/InvestitionFormSimple'
 
 async function getInvestition(userId: string, id: string) {
@@ -20,9 +20,9 @@ export default async function BearbeitenPage({
 }: {
   params: Promise<{ id: string }>
 }) {
-  const user = await getCurrentUser()
+  const mitglied = await getCurrentMitglied()
 
-  if (!user) {
+  if (!mitglied.data) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
@@ -38,10 +38,10 @@ export default async function BearbeitenPage({
   const { data: mitglied } = await supabase
     .from('mitglieder')
     .select('*')
-    .eq('id', user.id)
+    .eq('id', mitglied.data.id)
     .single()
 
-  const investition = await getInvestition(user.id, id)
+  const investition = await getInvestition(mitglied.data.id, id)
 
   if (!mitglied || !investition) {
     return <div className="p-8 text-center">Nicht gefunden</div>

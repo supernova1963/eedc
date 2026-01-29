@@ -2,14 +2,14 @@
 // Übersichtsseite für alle Stammdaten
 
 import { createClient } from '@/lib/supabase-server'
-import { getCurrentUser } from '@/lib/auth'
+import { getCurrentMitglied } from '@/lib/anlagen-helpers'
 import Link from 'next/link'
 import SimpleIcon from '@/components/SimpleIcon'
 
 export default async function StammdatenPage() {
-  const user = await getCurrentUser()
+  const mitglied = await getCurrentMitglied()
 
-  if (!user) {
+  if (!mitglied.data) {
     return (
       <div className="max-w-7xl mx-auto px-4 py-8">
         <div className="bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded">
@@ -21,42 +21,34 @@ export default async function StammdatenPage() {
 
   const supabase = await createClient()
 
-  // Hole aktuelles Mitglied
-  const { data: mitgliedData } = await supabase
-    .from('mitglieder')
-    .select('id, vorname, nachname')
-    .eq('id', user.id)
-    .single()
-
-  if (!mitgliedData) {
-    return (
-      <div className="max-w-7xl mx-auto px-4 py-8">
-        <div className="bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded">
-          Mitglied nicht gefunden
-        </div>
-      </div>
-    )
-  }
-
   // Statistiken laden
   const { data: strompreise } = await supabase
     .from('strompreise')
     .select('id')
-    .eq('mitglied_id', mitgliedData.id)
+    .eq('mitglied_id', mitglied.data.id)
 
   const { data: anlagen } = await supabase
     .from('anlagen')
     .select('id')
-    .eq('mitglied_id', mitgliedData.id)
+    .eq('mitglied_id', mitglied.data.id)
     .eq('aktiv', true)
 
-  const { data: investitionen } = await supabase
-    .from('alternative_investitionen')
+  // Anlagen-Komponenten (Speicher, Wechselrichter, Wallbox) zählen
+  const { data: anlagenKomponenten } = await supabase
+    .from('anlagen_komponenten')
     .select('id, anlage_id')
-    .eq('mitglied_id', mitgliedData.id)
+    .in('anlage_id', anlagen?.map(a => a.id) || [])
     .eq('aktiv', true)
 
-  const zugeordneteInvestitionen = investitionen?.filter(i => i.anlage_id) || []
+  // Haushalts-Komponenten (E-Auto, Wärmepumpe) zählen
+  const { data: haushaltKomponenten } = await supabase
+    .from('haushalt_komponenten')
+    .select('id')
+    .eq('mitglied_id', mitglied.data.id)
+    .eq('aktiv', true)
+
+  const gesamtKomponenten = (anlagenKomponenten?.length || 0) + (haushaltKomponenten?.length || 0)
+  const zugeordneteKomponenten = anlagenKomponenten?.length || 0
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-8">
@@ -100,9 +92,9 @@ export default async function StammdatenPage() {
               <SimpleIcon type="link" className="w-12 h-12 text-green-500" />
               <div className="text-right">
                 <div className="text-3xl font-bold text-green-600">
-                  {zugeordneteInvestitionen.length}/{investitionen?.length || 0}
+                  {zugeordneteKomponenten}/{gesamtKomponenten}
                 </div>
-                <div className="text-sm text-gray-500">zugeordnet</div>
+                <div className="text-sm text-gray-500">Komponenten</div>
               </div>
             </div>
             <h3 className="text-lg font-semibold text-gray-900 mb-2">

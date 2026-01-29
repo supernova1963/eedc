@@ -2,7 +2,7 @@
 // KOMPLETT mit PV, E-Auto, Wärmepumpe, Speicher, Gesamtbilanz
 
 import { createClient } from '@/lib/supabase-server'
-import { getCurrentUser } from '@/lib/auth'
+import { getCurrentMitglied, getUserAnlagen, resolveAnlageId } from '@/lib/anlagen-helpers'
 import WirtschaftlichkeitStats from '@/components/WirtschaftlichkeitStats'
 import GesamtHaushaltBilanz from '@/components/GesamtHaushaltBilanz'
 import EAutoAuswertung from '@/components/EAutoAuswertung'
@@ -15,68 +15,49 @@ import MonatsDetailView from '@/components/MonatsDetailView'
 import OptimierungsvorschlaegeDashboard from '@/components/OptimierungsvorschlaegeDashboard'
 import SimpleIcon from '@/components/SimpleIcon'
 import Link from 'next/link'
+import { AnlagenSelector } from '@/components/AnlagenSelector'
 
-async function getAuswertungData(userId: string) {
+async function getAuswertungData(anlageId: string, mitgliedId: string) {
   const supabase = await createClient()
-
-  // Hole die aktive Anlage des Benutzers
-  const { data: anlage } = await supabase
-    .from('anlagen')
-    .select('*')
-    .eq('mitglied_id', userId)
-    .eq('aktiv', true)
-    .order('erstellt_am', { ascending: false })
-    .limit(1)
-    .single()
-
-  if (!anlage) {
-    return {
-      monatsdaten: [],
-      anlage: null,
-      investitionen: [],
-      eAutos: [],
-      waermepumpen: [],
-      speicher: []
-    }
-  }
 
   const { data: monatsdaten } = await supabase
     .from('monatsdaten')
     .select('*')
-    .eq('anlage_id', anlage.id)
+    .eq('anlage_id', anlageId)
     .order('jahr', { ascending: true })
     .order('monat', { ascending: true })
 
   const { data: investitionen } = await supabase
     .from('investitionen_uebersicht')
     .select('*')
-    .eq('mitglied_id', userId)
+    .eq('mitglied_id', mitgliedId)
     .order('anschaffungsdatum', { ascending: false })
 
+  // Haushalts-Komponenten (E-Auto, Wärmepumpe) - mitglied-bezogen
   const { data: eAutos } = await supabase
-    .from('alternative_investitionen')
+    .from('haushalt_komponenten')
     .select('*')
-    .eq('mitglied_id', userId)
+    .eq('mitglied_id', mitgliedId)
     .eq('typ', 'e-auto')
     .eq('aktiv', true)
 
   const { data: waermepumpen } = await supabase
-    .from('alternative_investitionen')
+    .from('haushalt_komponenten')
     .select('*')
-    .eq('mitglied_id', userId)
+    .eq('mitglied_id', mitgliedId)
     .eq('typ', 'waermepumpe')
     .eq('aktiv', true)
 
+  // Anlagen-Komponenten (Speicher) - anlage-bezogen
   const { data: speicher } = await supabase
-    .from('alternative_investitionen')
+    .from('anlagen_komponenten')
     .select('*')
-    .eq('mitglied_id', userId)
+    .eq('anlage_id', anlageId)
     .eq('typ', 'speicher')
     .eq('aktiv', true)
 
   return {
     monatsdaten: monatsdaten || [],
-    anlage,
     investitionen: investitionen || [],
     eAutos: eAutos || [],
     waermepumpen: waermepumpen || [],
@@ -161,11 +142,11 @@ export const dynamic = 'force-dynamic'
 export default async function AuswertungPage({
   searchParams,
 }: {
-  searchParams: Promise<{ tab?: string, auto?: string, wp?: string, speicher?: string }>
+  searchParams: Promise<{ tab?: string, auto?: string, wp?: string, speicher?: string, anlageId?: string }>
 }) {
-  const user = await getCurrentUser()
+  const mitglied = await getCurrentMitglied()
 
-  if (!user) {
+  if (!mitglied.data) {
     return (
       <main className="min-h-screen bg-gray-50">
         <div className="bg-white shadow">
@@ -185,8 +166,37 @@ export default async function AuswertungPage({
     )
   }
 
-  const { monatsdaten, anlage, investitionen, eAutos, waermepumpen, speicher } = await getAuswertungData(user.id)
   const params = await searchParams
+  const { data: alleAnlagen } = await getUserAnlagen()
+  const { anlageId, anlage } = await resolveAnlageId(params.anlageId)
+
+  if (!anlage) {
+    return (
+      <main className="min-h-screen bg-gray-50">
+        <div className="bg-white shadow">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+            <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-2">
+              <SimpleIcon type="chart" className="w-8 h-8 text-blue-600" />
+              Auswertung
+            </h1>
+          </div>
+        </div>
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+          <div className="bg-white rounded-lg shadow p-8 text-center">
+            <p className="text-gray-500 mb-4">Keine Anlage gefunden.</p>
+            <Link
+              href="/anlage"
+              className="inline-block px-6 py-3 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+            >
+              Jetzt Anlage anlegen
+            </Link>
+          </div>
+        </div>
+      </main>
+    )
+  }
+
+  const { monatsdaten, investitionen, eAutos, waermepumpen, speicher } = await getAuswertungData(anlage.id, mitglied.data.id)
   const activeTab = params.tab || 'pv'
   const selectedAutoId = params.auto
   const selectedWpId = params.wp
@@ -215,31 +225,11 @@ export default async function AuswertungPage({
   // Speicher Details laden
   let speicherDetails = null
   let selectedSpeicher = null
-  
+
   if (activeTab === 'speicher' && speicher.length > 0) {
     const spId = selectedSpeicherId || speicher[0].id
     selectedSpeicher = speicher.find(s => s.id === spId) || speicher[0]
     speicherDetails = await getSpeicherDetails(selectedSpeicher.id)
-  }
-
-  if (!anlage) {
-    return (
-      <main className="min-h-screen bg-gray-50">
-        <div className="bg-white shadow">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-            <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-2">
-              <SimpleIcon type="chart" className="w-8 h-8 text-blue-600" />
-              Auswertung
-            </h1>
-          </div>
-        </div>
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-          <div className="bg-white rounded-lg shadow p-8 text-center">
-            <p className="text-gray-500">Keine Anlage gefunden.</p>
-          </div>
-        </div>
-      </main>
-    )
   }
 
   return (
@@ -263,25 +253,24 @@ export default async function AuswertungPage({
                 {activeTab === 'optimierung' && 'Optimierungsvorschläge'}
               </h1>
               <p className="mt-2 text-sm text-gray-600">
-                {activeTab === 'pv' && 'Wirtschaftlichkeit und Ertrag deiner PV-Anlage'}
-                {activeTab === 'e-auto' && 'Wirtschaftlichkeit und Ladeverhalten'}
-                {activeTab === 'waermepumpe' && 'Effizienz und Betriebskosten'}
-                {activeTab === 'speicher' && 'Speichernutzung und Rentabilität'}
-                {activeTab === 'gesamt' && 'Überblick über alle Investitionen'}
-                {activeTab === 'roi' && 'Return on Investment Übersicht'}
-                {activeTab === 'co2' && 'Klimabilanz und Umweltauswirkungen'}
-                {activeTab === 'prognose' && 'Vergleich zwischen Prognose und tatsächlichen Werten'}
-                {activeTab === 'monatsdetail' && 'Detaillierte Monatsansicht'}
-                {activeTab === 'optimierung' && 'KI-gestützte Empfehlungen für deine Anlage'}
+                {anlage.anlagenname} - {anlage.leistung_kwp} kWp
               </p>
             </div>
-            <Link
-              href="/"
-              className="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-md font-medium text-gray-700 flex items-center gap-2"
-            >
-              <SimpleIcon type="back" className="w-4 h-4" />
-              Dashboard
-            </Link>
+            <div className="flex gap-3">
+              {alleAnlagen && alleAnlagen.length > 1 && (
+                <AnlagenSelector
+                  anlagen={alleAnlagen}
+                  currentAnlageId={anlageId}
+                />
+              )}
+              <Link
+                href="/meine-anlage"
+                className="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-md font-medium text-gray-700 flex items-center gap-2"
+              >
+                <SimpleIcon type="back" className="w-4 h-4" />
+                Dashboard
+              </Link>
+            </div>
           </div>
         </div>
       </div>

@@ -2,7 +2,7 @@
 // Verwaltung von Investitionstyp-Konfigurationen
 
 import { createClient } from '@/lib/supabase-server'
-import { getCurrentUser } from '@/lib/auth'
+import { getCurrentMitglied } from '@/lib/anlagen-helpers'
 import Link from 'next/link'
 import SimpleIcon from '@/components/SimpleIcon'
 import Breadcrumb from '@/components/Breadcrumb'
@@ -76,9 +76,9 @@ const TYP_CONFIGS: Record<string, InvestitionsTypConfig> = {
 }
 
 export default async function InvestitionstypenPage() {
-  const user = await getCurrentUser()
+  const mitglied = await getCurrentMitglied()
 
-  if (!user) {
+  if (!mitglied.data) {
     return (
       <div className="max-w-7xl mx-auto px-4 py-8">
         <div className="bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded">
@@ -90,22 +90,8 @@ export default async function InvestitionstypenPage() {
 
   const supabase = await createClient()
 
-  // Hole Mitgliedsdaten
-  const { data: mitgliedData } = await supabase
-    .from('mitglieder')
-    .select('id, vorname, nachname')
-    .eq('email', user.email)
-    .single()
-
-  if (!mitgliedData) {
-    return (
-      <div className="max-w-7xl mx-auto px-4 py-8">
-        <div className="bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded">
-          Mitglied nicht gefunden
-        </div>
-      </div>
-    )
-  }
+  // mitglied.data enthält bereits die Mitgliedsdaten
+  const mitgliedData = mitglied.data
 
   // Statistik: Anzahl Investitionen pro Typ
   const { data: investitionen } = await supabase

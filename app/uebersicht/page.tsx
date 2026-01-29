@@ -2,30 +2,18 @@
 // Mit Erlöse-Spalte
 
 import { createClient } from '@/lib/supabase-server'
-import { getCurrentUser } from '@/lib/auth'
+import { getCurrentMitglied, resolveAnlageId } from '@/lib/anlagen-helpers'
 import SimpleIcon from '@/components/SimpleIcon'
 import Link from 'next/link'
 
-async function getMonatsdaten(userId: string) {
+async function getMonatsdaten(anlageId: string) {
   const supabase = await createClient()
-
-  // Erste Anlage des Users holen
-  const { data: anlage } = await supabase
-    .from('anlagen')
-    .select('id')
-    .eq('mitglied_id', userId)
-    .eq('aktiv', true)
-    .order('erstellt_am', { ascending: false })
-    .limit(1)
-    .single()
-
-  if (!anlage) return []
 
   // Monatsdaten für diese Anlage
   const { data } = await supabase
     .from('monatsdaten')
     .select('*')
-    .eq('anlage_id', anlage.id)
+    .eq('anlage_id', anlageId)
     .order('jahr', { ascending: false })
     .order('monat', { ascending: false })
 
@@ -35,9 +23,9 @@ async function getMonatsdaten(userId: string) {
 export const dynamic = 'force-dynamic'
 
 export default async function UebersichtPage() {
-  const user = await getCurrentUser()
+  const mitglied = await getCurrentMitglied()
 
-  if (!user) {
+  if (!mitglied.data) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
@@ -47,7 +35,24 @@ export default async function UebersichtPage() {
     )
   }
 
-  const monatsdaten = await getMonatsdaten(user.id)
+  const { anlage } = await resolveAnlageId()
+  if (!anlage) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <p className="text-gray-600 mb-4">Keine Anlage gefunden</p>
+          <Link
+            href="/anlage"
+            className="inline-block px-6 py-3 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+          >
+            Jetzt Anlage anlegen
+          </Link>
+        </div>
+      </div>
+    )
+  }
+
+  const monatsdaten = await getMonatsdaten(anlage.id)
 
   const monatsnamen = ['', 'Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez']
   

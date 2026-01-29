@@ -2,7 +2,7 @@
 // Seite zum Bearbeiten eines bestehenden Strompreises
 
 import { createClient } from '@/lib/supabase-server'
-import { getCurrentUser } from '@/lib/auth'
+import { getCurrentMitglied } from '@/lib/anlagen-helpers'
 import StrompreisForm from '@/components/StrompreisForm'
 import SimpleIcon from '@/components/SimpleIcon'
 import Link from 'next/link'
@@ -15,9 +15,9 @@ interface BearbeitenPageProps {
 }
 
 export default async function StrompreisBearbeitenPage({ params }: BearbeitenPageProps) {
-  const user = await getCurrentUser()
+  const mitglied = await getCurrentMitglied()
 
-  if (!user) {
+  if (!mitglied.data) {
     return (
       <div className="max-w-7xl mx-auto px-4 py-8">
         <div className="bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded">
@@ -33,7 +33,7 @@ export default async function StrompreisBearbeitenPage({ params }: BearbeitenPag
   const { data: mitgliedData } = await supabase
     .from('mitglieder')
     .select('id, vorname, nachname')
-    .eq('id', user.id)
+    .eq('id', mitglied.data.id)
     .single()
 
   if (!mitgliedData) {

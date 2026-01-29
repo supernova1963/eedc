@@ -2,19 +2,19 @@
 // Korrigierte Version mit DeleteButton als Client Component
 
 import { createClient } from '@/lib/supabase-server'
-import { getCurrentUser } from '@/lib/auth'
+import { getCurrentMitglied } from '@/lib/anlagen-helpers'
 import Link from 'next/link'
 import { revalidatePath } from 'next/cache'
 import DeleteButton from '@/components/DeleteButton'
 import SimpleIcon from '@/components/SimpleIcon'
 
-async function getInvestitionen(userId: string) {
+async function getInvestitionen(mitgliedId: string) {
   const supabase = await createClient()
 
   const { data } = await supabase
     .from('investitionen_uebersicht')
     .select('*')
-    .eq('mitglied_id', userId)
+    .eq('mitglied_id', mitgliedId)
     .order('anschaffungsdatum', { ascending: false })
 
   return data || []
@@ -23,13 +23,22 @@ async function getInvestitionen(userId: string) {
 async function deleteInvestition(formData: FormData) {
   'use server'
   const id = formData.get('id') as string
+  const typ = formData.get('typ') as string
 
   const supabase = await createClient()
 
-  await supabase
-    .from('alternative_investitionen')
-    .delete()
-    .eq('id', id)
+  // Lösche aus der richtigen Tabelle je nach Typ
+  if (typ === 'e-auto' || typ === 'waermepumpe') {
+    await supabase
+      .from('haushalt_komponenten')
+      .delete()
+      .eq('id', id)
+  } else {
+    await supabase
+      .from('anlagen_komponenten')
+      .delete()
+      .eq('id', id)
+  }
 
   revalidatePath('/investitionen')
 }
@@ -37,9 +46,9 @@ async function deleteInvestition(formData: FormData) {
 export const dynamic = 'force-dynamic'
 
 export default async function InvestitionenPage() {
-  const user = await getCurrentUser()
+  const mitglied = await getCurrentMitglied()
 
-  if (!user) {
+  if (!mitglied.data) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
@@ -49,7 +58,7 @@ export default async function InvestitionenPage() {
     )
   }
 
-  const investitionen = await getInvestitionen(user.id)
+  const investitionen = await getInvestitionen(mitglied.data.id)
 
   const formatCurrency = (num?: number) => {
     if (!num && num !== 0) return '-'
