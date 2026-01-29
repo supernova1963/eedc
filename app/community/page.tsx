@@ -7,25 +7,22 @@ import SimpleIcon from '@/components/SimpleIcon'
 import Breadcrumb from '@/components/Breadcrumb'
 
 interface PublicAnlage {
-  id: string
+  anlage_id: string
   anlagenname: string
-  anlagentyp: string
   installationsdatum: string
   leistung_kwp: number
   standort_ort?: string
   standort_plz?: string
-  profilbeschreibung?: string
-  batteriekapazitaet_kwh?: number
-  ekfz_vorhanden?: boolean
-  waermepumpe_vorhanden?: boolean
-  mitglied_vorname?: string
-  mitglied_ort?: string
+  mitglied_display_name?: string
+  hat_speicher?: boolean
+  hat_wallbox?: boolean
+  anzahl_komponenten?: number
 }
 
 interface CommunityStats {
-  gesamtAnlagen: number
-  oeffentlicheAnlagen: number
-  gesamtleistungKwp: number
+  anzahl_anlagen: number
+  gesamtleistung_kwp: number
+  anzahl_mitglieder: number
 }
 
 export default function CommunityPage() {
@@ -34,9 +31,8 @@ export default function CommunityPage() {
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState({
     ort: '',
-    hatBatterie: false,
-    hatEAuto: false,
-    hatWaermepumpe: false,
+    hatSpeicher: false,
+    hatWallbox: false,
   })
 
   useEffect(() => {
@@ -71,9 +67,8 @@ export default function CommunityPage() {
     try {
       const params = new URLSearchParams()
       if (filter.ort) params.set('ort', filter.ort)
-      if (filter.hatBatterie) params.set('hatBatterie', 'true')
-      if (filter.hatEAuto) params.set('hatEAuto', 'true')
-      if (filter.hatWaermepumpe) params.set('hatWaermepumpe', 'true')
+      if (filter.hatSpeicher) params.set('hat_speicher', 'true')
+      if (filter.hatWallbox) params.set('hat_wallbox', 'true')
 
       const res = await fetch(`/api/community/anlagen?${params}`)
       const data = await res.json()
@@ -90,9 +85,8 @@ export default function CommunityPage() {
   function resetFilter() {
     setFilter({
       ort: '',
-      hatBatterie: false,
-      hatEAuto: false,
-      hatWaermepumpe: false,
+      hatSpeicher: false,
+      hatWallbox: false,
     })
     loadData()
   }
@@ -122,8 +116,8 @@ export default function CommunityPage() {
                 <SimpleIcon type="sun" className="w-8 h-8" />
                 <div className="text-sm opacity-90">Öffentliche Anlagen</div>
               </div>
-              <div className="text-4xl font-bold">{stats.oeffentlicheAnlagen}</div>
-              <div className="text-sm opacity-75 mt-1">von {stats.gesamtAnlagen} gesamt</div>
+              <div className="text-4xl font-bold">{stats.anzahl_anlagen}</div>
+              <div className="text-sm opacity-75 mt-1">von {stats.anzahl_mitglieder} Mitgliedern</div>
             </div>
 
             <div className="bg-gradient-to-br from-yellow-500 to-orange-500 rounded-xl p-6 text-white shadow-lg">
@@ -131,7 +125,7 @@ export default function CommunityPage() {
                 <SimpleIcon type="lightning" className="w-8 h-8" />
                 <div className="text-sm opacity-90">Gesamtleistung</div>
               </div>
-              <div className="text-4xl font-bold">{stats.gesamtleistungKwp}</div>
+              <div className="text-4xl font-bold">{stats.gesamtleistung_kwp}</div>
               <div className="text-sm opacity-75 mt-1">kWp installiert</div>
             </div>
 
@@ -167,8 +161,8 @@ export default function CommunityPage() {
               <label className="flex items-center gap-2 cursor-pointer">
                 <input
                   type="checkbox"
-                  checked={filter.hatBatterie}
-                  onChange={(e) => setFilter({ ...filter, hatBatterie: e.target.checked })}
+                  checked={filter.hatSpeicher}
+                  onChange={(e) => setFilter({ ...filter, hatSpeicher: e.target.checked })}
                   className="w-5 h-5 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
                 />
                 <span className="text-sm font-medium text-gray-700">Mit Batteriespeicher</span>
@@ -179,23 +173,11 @@ export default function CommunityPage() {
               <label className="flex items-center gap-2 cursor-pointer">
                 <input
                   type="checkbox"
-                  checked={filter.hatEAuto}
-                  onChange={(e) => setFilter({ ...filter, hatEAuto: e.target.checked })}
+                  checked={filter.hatWallbox}
+                  onChange={(e) => setFilter({ ...filter, hatWallbox: e.target.checked })}
                   className="w-5 h-5 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
                 />
-                <span className="text-sm font-medium text-gray-700">Mit E-Auto</span>
-              </label>
-            </div>
-
-            <div className="flex items-end">
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={filter.hatWaermepumpe}
-                  onChange={(e) => setFilter({ ...filter, hatWaermepumpe: e.target.checked })}
-                  className="w-5 h-5 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-                />
-                <span className="text-sm font-medium text-gray-700">Mit Wärmepumpe</span>
+                <span className="text-sm font-medium text-gray-700">Mit E-Auto/Wallbox</span>
               </label>
             </div>
           </div>
@@ -234,8 +216,8 @@ export default function CommunityPage() {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {filteredAnlagen.map((anlage) => (
               <Link
-                key={anlage.id}
-                href={`/community/${anlage.id}`}
+                key={anlage.anlage_id}
+                href={`/community/${anlage.anlage_id}`}
                 className="bg-white rounded-xl shadow-sm hover:shadow-lg transition p-6 border border-gray-200 hover:border-blue-300"
               >
                 <div className="flex items-start justify-between mb-4">
@@ -245,7 +227,7 @@ export default function CommunityPage() {
                     </div>
                     <div>
                       <h3 className="font-semibold text-gray-900">{anlage.anlagenname}</h3>
-                      <p className="text-sm text-gray-600">{anlage.standort_ort}</p>
+                      <p className="text-sm text-gray-600">{anlage.standort_ort || 'Standort nicht angegeben'}</p>
                     </div>
                   </div>
                 </div>
@@ -263,36 +245,24 @@ export default function CommunityPage() {
                   </div>
                 </div>
 
-                {anlage.profilbeschreibung && (
-                  <p className="text-sm text-gray-600 mb-4 line-clamp-2">
-                    {anlage.profilbeschreibung}
-                  </p>
-                )}
-
                 <div className="flex gap-2 flex-wrap">
-                  {anlage.batteriekapazitaet_kwh && anlage.batteriekapazitaet_kwh > 0 && (
+                  {anlage.hat_speicher && (
                     <span className="px-2 py-1 bg-blue-100 text-blue-700 text-xs rounded-full flex items-center gap-1">
                       <SimpleIcon type="battery" className="w-3 h-3" />
                       Speicher
                     </span>
                   )}
-                  {anlage.ekfz_vorhanden && (
+                  {anlage.hat_wallbox && (
                     <span className="px-2 py-1 bg-green-100 text-green-700 text-xs rounded-full flex items-center gap-1">
                       <SimpleIcon type="car" className="w-3 h-3" />
                       E-Auto
                     </span>
                   )}
-                  {anlage.waermepumpe_vorhanden && (
-                    <span className="px-2 py-1 bg-orange-100 text-orange-700 text-xs rounded-full flex items-center gap-1">
-                      <SimpleIcon type="heat" className="w-3 h-3" />
-                      Wärmepumpe
-                    </span>
-                  )}
                 </div>
 
-                {anlage.mitglied_vorname && (
+                {anlage.mitglied_display_name && (
                   <div className="mt-4 pt-4 border-t border-gray-200 text-sm text-gray-600">
-                    von {anlage.mitglied_vorname} aus {anlage.mitglied_ort}
+                    von {anlage.mitglied_display_name}
                   </div>
                 )}
               </Link>

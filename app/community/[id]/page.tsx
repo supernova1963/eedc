@@ -7,49 +7,50 @@ import SimpleIcon from '@/components/SimpleIcon'
 import Breadcrumb from '@/components/Breadcrumb'
 
 interface PublicAnlageDetail {
-  id: string
+  anlage_id: string
   anlagenname: string
-  anlagentyp: string
+  beschreibung?: string
   installationsdatum: string
   leistung_kwp: number
   standort_ort?: string
   standort_plz?: string
-  profilbeschreibung?: string
-  hersteller?: string
-  modell?: string
-  anzahl_module?: number
-  wechselrichter_modell?: string
   ausrichtung?: string
   neigungswinkel_grad?: number
-  batteriekapazitaet_kwh?: number
-  batterie_hersteller?: string
-  batterie_modell?: string
-  ekfz_vorhanden?: boolean
-  ekfz_bezeichnung?: string
-  waermepumpe_vorhanden?: boolean
-  waermepumpe_bezeichnung?: string
-  mitglied_vorname?: string
-  mitglied_ort?: string
-  freigaben: {
-    kennzahlen_oeffentlich: boolean
-    monatsdaten_oeffentlich: boolean
-    auswertungen_oeffentlich: boolean
-  }
+  mitglied_display_name?: string
+  mitglied_bio?: string
+  profilbeschreibung?: string
+  motivation?: string
+  erfahrungen?: string
+  tipps_fuer_andere?: string
+  kontakt_erwuenscht?: boolean
+  komponenten_oeffentlich?: boolean
+  monatsdaten_oeffentlich?: boolean
+  kennzahlen_oeffentlich?: boolean
 }
 
-interface Kennzahlen {
-  gesamterzeugung_kwh: number
-  gesamteinspeisung_kwh: number
-  gesamtverbrauch_kwh: number
+interface Komponente {
+  id: string
+  typ: string
+  bezeichnung: string
+  anschaffungsdatum: string
+  parameter: Record<string, any>
+}
+
+interface Monatsdaten {
+  jahr: number
+  monat: number
+  pv_erzeugung_kwh: number
+  direktverbrauch_kwh: number
+  einspeisung_kwh: number
+  netzbezug_kwh: number
   autarkiegrad_prozent: number
-  eigenverbrauchsquote_prozent: number
-  co2_einsparung_kg: number
 }
 
 export default function CommunityAnlageDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
   const [anlage, setAnlage] = useState<PublicAnlageDetail | null>(null)
-  const [kennzahlen, setKennzahlen] = useState<Kennzahlen | null>(null)
+  const [komponenten, setKomponenten] = useState<Komponente[]>([])
+  const [monatsdaten, setMonatsdaten] = useState<Monatsdaten[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
@@ -61,7 +62,7 @@ export default function CommunityAnlageDetailPage({ params }: { params: Promise<
     setLoading(true)
     setError('')
     try {
-      const res = await fetch(`/api/community/anlagen/${id}?kennzahlen=true`)
+      const res = await fetch(`/api/community/anlagen/${id}`)
       const data = await res.json()
 
       if (!data.success) {
@@ -70,7 +71,32 @@ export default function CommunityAnlageDetailPage({ params }: { params: Promise<
       }
 
       setAnlage(data.data)
-      setKennzahlen(data.kennzahlen || null)
+
+      // Lade Komponenten wenn freigegeben
+      if (data.data.komponenten_oeffentlich) {
+        try {
+          const kompRes = await fetch(`/api/community/anlagen/${id}/komponenten`)
+          const kompData = await kompRes.json()
+          if (kompData.success) {
+            setKomponenten(kompData.data || [])
+          }
+        } catch (e) {
+          console.log('Keine Komponenten verfügbar')
+        }
+      }
+
+      // Lade Monatsdaten wenn freigegeben
+      if (data.data.monatsdaten_oeffentlich) {
+        try {
+          const mdRes = await fetch(`/api/community/anlagen/${id}/monatsdaten`)
+          const mdData = await mdRes.json()
+          if (mdData.success) {
+            setMonatsdaten(mdData.data || [])
+          }
+        } catch (e) {
+          console.log('Keine Monatsdaten verfügbar')
+        }
+      }
     } catch (err) {
       setError('Fehler beim Laden der Anlage')
     } finally {
@@ -142,17 +168,17 @@ export default function CommunityAnlageDetailPage({ params }: { params: Promise<
             </div>
           </div>
 
-          {anlage.mitglied_vorname && (
+          {anlage.mitglied_display_name && (
             <div className="mt-6 pt-6 border-t border-white/20">
               <p className="text-white/90">
-                Geteilt von <span className="font-semibold">{anlage.mitglied_vorname}</span> aus {anlage.mitglied_ort}
+                Geteilt von <span className="font-semibold">{anlage.mitglied_display_name}</span>
               </p>
             </div>
           )}
         </div>
 
-        {/* Kennzahlen */}
-        {kennzahlen && anlage.freigaben.kennzahlen_oeffentlich && (
+        {/* Kennzahlen (berechnet aus Monatsdaten) */}
+        {monatsdaten.length > 0 && (
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
             <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-200">
               <div className="flex items-center gap-3 mb-3">
@@ -162,7 +188,7 @@ export default function CommunityAnlageDetailPage({ params }: { params: Promise<
                 <div className="text-sm text-gray-600">Gesamterzeugung</div>
               </div>
               <div className="text-3xl font-bold text-gray-900">
-                {(kennzahlen.gesamterzeugung_kwh / 1000).toFixed(1)}
+                {(monatsdaten.reduce((sum, m) => sum + (m.pv_erzeugung_kwh || 0), 0) / 1000).toFixed(1)}
               </div>
               <div className="text-sm text-gray-600 mt-1">MWh</div>
             </div>
@@ -172,10 +198,10 @@ export default function CommunityAnlageDetailPage({ params }: { params: Promise<
                 <div className="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center">
                   <SimpleIcon type="target" className="w-6 h-6 text-green-600" />
                 </div>
-                <div className="text-sm text-gray-600">Autarkiegrad</div>
+                <div className="text-sm text-gray-600">Durchschn. Autarkie</div>
               </div>
               <div className="text-3xl font-bold text-gray-900">
-                {kennzahlen.autarkiegrad_prozent?.toFixed(1) || 0}
+                {(monatsdaten.reduce((sum, m) => sum + (m.autarkiegrad_prozent || 0), 0) / monatsdaten.length).toFixed(1)}
               </div>
               <div className="text-sm text-gray-600 mt-1">%</div>
             </div>
@@ -183,14 +209,14 @@ export default function CommunityAnlageDetailPage({ params }: { params: Promise<
             <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-200">
               <div className="flex items-center gap-3 mb-3">
                 <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
-                  <SimpleIcon type="tree" className="w-6 h-6 text-green-700" />
+                  <SimpleIcon type="lightning" className="w-6 h-6 text-blue-600" />
                 </div>
-                <div className="text-sm text-gray-600">CO₂-Einsparung</div>
+                <div className="text-sm text-gray-600">Erfasste Monate</div>
               </div>
               <div className="text-3xl font-bold text-gray-900">
-                {(kennzahlen.co2_einsparung_kg / 1000).toFixed(1)}
+                {monatsdaten.length}
               </div>
-              <div className="text-sm text-gray-600 mt-1">Tonnen</div>
+              <div className="text-sm text-gray-600 mt-1">Monate</div>
             </div>
           </div>
         )}
@@ -199,13 +225,46 @@ export default function CommunityAnlageDetailPage({ params }: { params: Promise<
           {/* Hauptinfos */}
           <div className="lg:col-span-2 space-y-6">
             {/* Beschreibung */}
-            {anlage.profilbeschreibung && (
+            {(anlage.profilbeschreibung || anlage.beschreibung) && (
               <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-200">
                 <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
                   <SimpleIcon type="info" className="w-5 h-5 text-blue-600" />
                   Beschreibung
                 </h2>
-                <p className="text-gray-700 leading-relaxed">{anlage.profilbeschreibung}</p>
+                <p className="text-gray-700 leading-relaxed">{anlage.profilbeschreibung || anlage.beschreibung}</p>
+              </div>
+            )}
+
+            {/* Motivation & Erfahrungen */}
+            {(anlage.motivation || anlage.erfahrungen) && (
+              <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-200">
+                <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+                  <SimpleIcon type="lightbulb" className="w-5 h-5 text-yellow-600" />
+                  Motivation & Erfahrungen
+                </h2>
+                {anlage.motivation && (
+                  <div className="mb-4">
+                    <h3 className="font-medium text-gray-900 mb-2">Warum PV?</h3>
+                    <p className="text-gray-700">{anlage.motivation}</p>
+                  </div>
+                )}
+                {anlage.erfahrungen && (
+                  <div>
+                    <h3 className="font-medium text-gray-900 mb-2">Erfahrungen</h3>
+                    <p className="text-gray-700">{anlage.erfahrungen}</p>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Tipps */}
+            {anlage.tipps_fuer_andere && (
+              <div className="bg-green-50 rounded-xl p-6 border border-green-200">
+                <h2 className="text-lg font-semibold text-green-900 mb-4 flex items-center gap-2">
+                  <SimpleIcon type="lightbulb" className="w-5 h-5 text-green-600" />
+                  Tipps für andere
+                </h2>
+                <p className="text-green-800 leading-relaxed">{anlage.tipps_fuer_andere}</p>
               </div>
             )}
 
@@ -217,37 +276,13 @@ export default function CommunityAnlageDetailPage({ params }: { params: Promise<
               </h2>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <div className="text-sm text-gray-600 mb-1">Anlagentyp</div>
-                  <div className="font-medium text-gray-900">{anlage.anlagentyp}</div>
-                </div>
-                <div>
                   <div className="text-sm text-gray-600 mb-1">Leistung</div>
                   <div className="font-medium text-gray-900">{anlage.leistung_kwp} kWp</div>
                 </div>
-                {anlage.hersteller && (
-                  <div>
-                    <div className="text-sm text-gray-600 mb-1">Hersteller</div>
-                    <div className="font-medium text-gray-900">{anlage.hersteller}</div>
-                  </div>
-                )}
-                {anlage.modell && (
-                  <div>
-                    <div className="text-sm text-gray-600 mb-1">Modell</div>
-                    <div className="font-medium text-gray-900">{anlage.modell}</div>
-                  </div>
-                )}
-                {anlage.anzahl_module && (
-                  <div>
-                    <div className="text-sm text-gray-600 mb-1">Anzahl Module</div>
-                    <div className="font-medium text-gray-900">{anlage.anzahl_module}</div>
-                  </div>
-                )}
-                {anlage.wechselrichter_modell && (
-                  <div>
-                    <div className="text-sm text-gray-600 mb-1">Wechselrichter</div>
-                    <div className="font-medium text-gray-900">{anlage.wechselrichter_modell}</div>
-                  </div>
-                )}
+                <div>
+                  <div className="text-sm text-gray-600 mb-1">Inbetriebnahme</div>
+                  <div className="font-medium text-gray-900">{new Date(anlage.installationsdatum).toLocaleDateString('de-DE')}</div>
+                </div>
                 {anlage.ausrichtung && (
                   <div>
                     <div className="text-sm text-gray-600 mb-1">Ausrichtung</div>
@@ -267,56 +302,75 @@ export default function CommunityAnlageDetailPage({ params }: { params: Promise<
           {/* Sidebar */}
           <div className="space-y-6">
             {/* Komponenten */}
-            <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-200">
-              <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-                <SimpleIcon type="briefcase" className="w-5 h-5 text-blue-600" />
-                Komponenten
-              </h2>
-              <div className="space-y-3">
-                {anlage.batteriekapazitaet_kwh && anlage.batteriekapazitaet_kwh > 0 && (
-                  <div className="flex items-start gap-3 p-3 bg-blue-50 rounded-lg">
-                    <SimpleIcon type="battery" className="w-5 h-5 text-blue-600 mt-0.5" />
-                    <div className="flex-1">
-                      <div className="font-medium text-gray-900">Batteriespeicher</div>
-                      <div className="text-sm text-gray-600">{anlage.batteriekapazitaet_kwh} kWh</div>
-                      {anlage.batterie_hersteller && (
-                        <div className="text-xs text-gray-500 mt-1">
-                          {anlage.batterie_hersteller} {anlage.batterie_modell}
-                        </div>
-                      )}
+            {komponenten.length > 0 && (
+              <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-200">
+                <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+                  <SimpleIcon type="briefcase" className="w-5 h-5 text-blue-600" />
+                  Komponenten
+                </h2>
+                <div className="space-y-3">
+                  {komponenten.map((komp) => (
+                    <div
+                      key={komp.id}
+                      className={`flex items-start gap-3 p-3 rounded-lg ${
+                        komp.typ === 'speicher' ? 'bg-blue-50' :
+                        komp.typ === 'e-auto' ? 'bg-green-50' :
+                        komp.typ === 'waermepumpe' ? 'bg-orange-50' :
+                        komp.typ === 'wechselrichter' ? 'bg-purple-50' :
+                        'bg-gray-50'
+                      }`}
+                    >
+                      <SimpleIcon
+                        type={
+                          komp.typ === 'speicher' ? 'battery' :
+                          komp.typ === 'e-auto' ? 'car' :
+                          komp.typ === 'waermepumpe' ? 'heat' :
+                          komp.typ === 'wechselrichter' ? 'lightning' :
+                          'settings'
+                        }
+                        className={`w-5 h-5 mt-0.5 ${
+                          komp.typ === 'speicher' ? 'text-blue-600' :
+                          komp.typ === 'e-auto' ? 'text-green-600' :
+                          komp.typ === 'waermepumpe' ? 'text-orange-600' :
+                          komp.typ === 'wechselrichter' ? 'text-purple-600' :
+                          'text-gray-600'
+                        }`}
+                      />
+                      <div className="flex-1">
+                        <div className="font-medium text-gray-900">{komp.bezeichnung}</div>
+                        <div className="text-xs text-gray-500 capitalize">{komp.typ.replace('-', ' ')}</div>
+                      </div>
                     </div>
-                  </div>
-                )}
-
-                {anlage.ekfz_vorhanden && (
-                  <div className="flex items-start gap-3 p-3 bg-green-50 rounded-lg">
-                    <SimpleIcon type="car" className="w-5 h-5 text-green-600 mt-0.5" />
-                    <div className="flex-1">
-                      <div className="font-medium text-gray-900">E-Fahrzeug</div>
-                      {anlage.ekfz_bezeichnung && (
-                        <div className="text-sm text-gray-600">{anlage.ekfz_bezeichnung}</div>
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                {anlage.waermepumpe_vorhanden && (
-                  <div className="flex items-start gap-3 p-3 bg-orange-50 rounded-lg">
-                    <SimpleIcon type="heat" className="w-5 h-5 text-orange-600 mt-0.5" />
-                    <div className="flex-1">
-                      <div className="font-medium text-gray-900">Wärmepumpe</div>
-                      {anlage.waermepumpe_bezeichnung && (
-                        <div className="text-sm text-gray-600">{anlage.waermepumpe_bezeichnung}</div>
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                {!anlage.batteriekapazitaet_kwh && !anlage.ekfz_vorhanden && !anlage.waermepumpe_vorhanden && (
-                  <p className="text-sm text-gray-500">Keine zusätzlichen Komponenten</p>
-                )}
+                  ))}
+                </div>
               </div>
-            </div>
+            )}
+
+            {/* Mitglied-Bio */}
+            {anlage.mitglied_bio && (
+              <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-200">
+                <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+                  <SimpleIcon type="user" className="w-5 h-5 text-blue-600" />
+                  Über {anlage.mitglied_display_name}
+                </h2>
+                <p className="text-gray-700 text-sm">{anlage.mitglied_bio}</p>
+              </div>
+            )}
+
+            {/* Kontakt erwünscht */}
+            {anlage.kontakt_erwuenscht && (
+              <div className="bg-green-50 rounded-xl p-6 border border-green-200">
+                <div className="flex items-start gap-3">
+                  <SimpleIcon type="message" className="w-5 h-5 text-green-600 mt-0.5" />
+                  <div>
+                    <h3 className="font-semibold text-green-900 mb-2">Kontakt erwünscht</h3>
+                    <p className="text-sm text-green-800">
+                      Der Betreiber freut sich über Austausch mit anderen PV-Interessierten.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Datenschutz-Hinweis */}
             <div className="bg-blue-50 rounded-xl p-6 border border-blue-200">
