@@ -13,14 +13,25 @@ import { AnlagenSelector } from '@/components/AnlagenSelector'
 async function getAnlageFreigaben(anlageId: string) {
   const supabase = await createClient()
 
-  // Freigaben holen
-  const { data: freigaben } = await supabase
-    .from('anlagen_freigaben')
-    .select('*')
-    .eq('anlage_id', anlageId)
+  // FRESH-START: Freigaben sind jetzt direkt in der anlagen Tabelle
+  const { data: anlage } = await supabase
+    .from('anlagen')
+    .select('oeffentlich, standort_genau_anzeigen, kennzahlen_oeffentlich, monatsdaten_oeffentlich, komponenten_oeffentlich')
+    .eq('id', anlageId)
     .single()
 
-  return freigaben
+  if (!anlage) return null
+
+  // Rückgabe im alten Format für Kompatibilität mit AnlagenFreigabeForm
+  return {
+    anlage_id: anlageId,
+    profil_oeffentlich: anlage.oeffentlich,
+    standort_genau: anlage.standort_genau_anzeigen,
+    kennzahlen_oeffentlich: anlage.kennzahlen_oeffentlich,
+    monatsdaten_oeffentlich: anlage.monatsdaten_oeffentlich,
+    investitionen_oeffentlich: anlage.komponenten_oeffentlich, // Mapping: komponenten → investitionen (für alte Form)
+    auswertungen_oeffentlich: false, // Deprecated, wird nicht mehr verwendet
+  }
 }
 
 export const dynamic = 'force-dynamic'

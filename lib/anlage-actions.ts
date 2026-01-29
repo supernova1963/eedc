@@ -41,6 +41,7 @@ export async function createAnlage(formData: FormData) {
 
   // Anlage erstellen - nur Basis-Informationen
   // Komponenten wie Batteriespeicher werden separat als Investitionen erfasst
+  // FRESH-START: Freigaben-Spalten direkt in anlagen Tabelle (Defaults aus Schema)
   const insertData: any = {
     mitglied_id: mitglied.data.id,
     anlagenname,
@@ -48,6 +49,12 @@ export async function createAnlage(formData: FormData) {
     leistung_kwp,
     installationsdatum,
     aktiv: true,
+    // Freigaben mit Defaults (werden vom Schema gesetzt, aber explizit hier für Klarheit)
+    oeffentlich: false,
+    standort_genau_anzeigen: false,
+    kennzahlen_oeffentlich: false,
+    monatsdaten_oeffentlich: false,
+    komponenten_oeffentlich: false,
   }
 
   // Optionale Standort-Felder
@@ -68,24 +75,6 @@ export async function createAnlage(formData: FormData) {
   }
 
   console.log('✅ Anlage created:', anlage)
-
-  // Standardmäßige Freigaben erstellen (alle deaktiviert)
-  const { error: freigabenError } = await supabase
-    .from('anlagen_freigaben')
-    .insert({
-      anlage_id: anlage.id,
-      profil_oeffentlich: false,
-      kennzahlen_oeffentlich: false,
-      auswertungen_oeffentlich: false,
-      investitionen_oeffentlich: false,
-      monatsdaten_oeffentlich: false,
-      standort_genau: false,
-    })
-
-  if (freigabenError) {
-    console.error('Freigaben creation error:', freigabenError)
-    // Nicht kritisch, weitermachen
-  }
 
   console.log('✅ Success! Returning anlage ID:', anlage.id)
   return { success: true, anlageId: anlage.id }

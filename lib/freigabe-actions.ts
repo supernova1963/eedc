@@ -14,15 +14,17 @@ export async function updateFreigaben(anlageId: string, formData: {
 }) {
   const supabase = await createClient()
 
-  // UPSERT mit onConflict
+  // FRESH-START: Update Freigaben-Spalten direkt in anlagen Tabelle
   const { error } = await supabase
-    .from('anlagen_freigaben')
-    .upsert({
-      anlage_id: anlageId,
-      ...formData
-    }, {
-      onConflict: 'anlage_id'
+    .from('anlagen')
+    .update({
+      oeffentlich: formData.profil_oeffentlich,
+      kennzahlen_oeffentlich: formData.kennzahlen_oeffentlich,
+      monatsdaten_oeffentlich: formData.monatsdaten_oeffentlich,
+      komponenten_oeffentlich: formData.investitionen_oeffentlich, // Umbenannt: investitionen → komponenten
+      standort_genau_anzeigen: formData.standort_genau
     })
+    .eq('id', anlageId)
 
   if (error) {
     return { error: error.message }

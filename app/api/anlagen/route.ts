@@ -25,10 +25,21 @@ export async function POST(request: NextRequest) {
       }, { status: 403 })
     }
 
+    // FRESH-START: Freigaben-Spalten direkt in anlageData setzen (falls nicht vorhanden)
+    const insertData = {
+      ...anlageData,
+      // Defaults für Freigaben (falls nicht im Request)
+      oeffentlich: anlageData.oeffentlich ?? false,
+      standort_genau_anzeigen: anlageData.standort_genau_anzeigen ?? false,
+      kennzahlen_oeffentlich: anlageData.kennzahlen_oeffentlich ?? false,
+      monatsdaten_oeffentlich: anlageData.monatsdaten_oeffentlich ?? false,
+      komponenten_oeffentlich: anlageData.komponenten_oeffentlich ?? false,
+    }
+
     // Anlage erstellen
     const { data: anlage, error: anlageError } = await supabase
       .from('anlagen')
-      .insert(anlageData)
+      .insert(insertData)
       .select()
       .single()
 
@@ -38,24 +49,6 @@ export async function POST(request: NextRequest) {
         success: false,
         message: 'Fehler beim Erstellen der Anlage: ' + anlageError.message
       }, { status: 500 })
-    }
-
-    // Standardmäßige Freigaben erstellen (alle deaktiviert)
-    const { error: freigabenError } = await supabase
-      .from('anlagen_freigaben')
-      .insert({
-        anlage_id: anlage.id,
-        profil_oeffentlich: false,
-        kennzahlen_oeffentlich: false,
-        auswertungen_oeffentlich: false,
-        investitionen_oeffentlich: false,
-        monatsdaten_oeffentlich: false,
-        standort_genau: false,
-      })
-
-    if (freigabenError) {
-      console.error('Freigaben creation error:', freigabenError)
-      // Nicht kritisch, weitermachen
     }
 
     return NextResponse.json({

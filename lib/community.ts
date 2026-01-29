@@ -24,7 +24,7 @@ export interface PublicAnlage {
   profil_oeffentlich: boolean
   kennzahlen_oeffentlich: boolean
   monatsdaten_oeffentlich: boolean
-  investitionen_oeffentlich: boolean
+  komponenten_oeffentlich: boolean
 }
 
 export interface CommunityStats {
