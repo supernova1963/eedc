@@ -1,319 +1,293 @@
 // lib/community.ts
-// Helper-Funktionen für Community-Features
+// Helper Functions für Community-Features (öffentliche Anlagen)
 
 import { createClient } from './supabase-server'
 
-export interface AnlagenFreigabe {
-  anlage_id: string
-  profil_oeffentlich: boolean
-  kennzahlen_oeffentlich: boolean
-  auswertungen_oeffentlich: boolean
-  investitionen_oeffentlich: boolean
-  monatsdaten_oeffentlich: boolean
-  standort_genau: boolean
-}
+// ============================================
+// TYPES
+// ============================================
 
 export interface PublicAnlage {
-  id: string
+  anlage_id: string
   anlagenname: string
-  anlagentyp: string
-  installationsdatum: string
   leistung_kwp: number
-  standort_ort?: string
-  standort_plz?: string
-  standort_latitude?: number
-  standort_longitude?: number
-  batteriekapazitaet_kwh?: number
-  ekfz_vorhanden?: boolean
-  waermepumpe_vorhanden?: boolean
-  // Freigabe-Info
-  freigaben: AnlagenFreigabe
-  // Optional: Mitglied-Info (anonymisiert)
-  mitglied_vorname?: string
-  mitglied_ort?: string
+  installationsdatum: string
+  standort_plz: string | null
+  standort_ort: string | null
+  standort_latitude: number | null
+  standort_longitude: number | null
+  mitglied_id: string
+  mitglied_display_name: string
+  anzahl_komponenten: number
+  hat_speicher: boolean
+  hat_wallbox: boolean
+  profil_oeffentlich: boolean
+  kennzahlen_oeffentlich: boolean
+  monatsdaten_oeffentlich: boolean
+  investitionen_oeffentlich: boolean
 }
 
-/**
- * Holt alle öffentlichen Anlagen (mit Profil-Freigabe)
- * Nutzt Security Definer Function zur Vermeidung von RLS-Zirkelbezügen
- */
-export async function getPublicAnlagen(filters?: {
+export interface CommunityStats {
+  anzahl_anlagen: number
+  gesamtleistung_kwp: number
+  anzahl_mitglieder: number
+  durchschnitt_leistung_kwp: number
+  anzahl_mit_speicher: number
+  anzahl_mit_wallbox: number
+  neueste_anlage_datum: string | null
+  aelteste_anlage_datum: string | null
+}
+
+export interface PublicAnlageDetails {
+  anlage_id: string
+  anlagenname: string
+  beschreibung: string | null
+  leistung_kwp: number
+  installationsdatum: string
+  standort_ort: string | null
+  standort_plz: string | null
+  ausrichtung: string | null
+  neigungswinkel_grad: number | null
+  mitglied_display_name: string
+  mitglied_bio: string | null
+  komponenten: any[] | null
+  monatsdaten_summary: {
+    anzahl_monate: number
+    gesamt_erzeugung_kwh: number
+    gesamt_einspeisung_kwh: number
+    gesamt_direktverbrauch_kwh: number
+    neuester_monat: string
+    aeltester_monat: string
+  } | null
+}
+
+export interface PublicMonatsdaten {
+  jahr: number
+  monat: number
+  pv_erzeugung_kwh: number
+  direktverbrauch_kwh: number
+  einspeisung_kwh: number
+  netzbezug_kwh: number
+  gesamtverbrauch_kwh: number
+  autarkiegrad_prozent: number
+  eigenverbrauchsquote_prozent: number
+}
+
+export interface SearchFilters {
+  plz_prefix?: string
   ort?: string
-  plz?: string
-  minLeistung?: number
-  maxLeistung?: number
-  hatBatterie?: boolean
-  hatEAuto?: boolean
-  hatWaermepumpe?: boolean
-}): Promise<PublicAnlage[]> {
+  min_kwp?: number
+  max_kwp?: number
+  hat_speicher?: boolean
+  hat_wallbox?: boolean
+}
+
+// ============================================
+// COMMUNITY FUNCTIONS
+// ============================================
+
+/**
+ * Liefert alle öffentlichen Anlagen
+ * Nutzt Security Definer Function für korrekten RLS-Zugriff
+ */
+export async function getPublicAnlagen(): Promise<PublicAnlage[]> {
   const supabase = await createClient()
 
-  // Nutze die Security Definer Function (umgeht RLS)
-  const { data: basicData, error } = await supabase.rpc('get_public_anlagen_with_members')
+  const { data, error } = await supabase.rpc('get_public_anlagen')
 
-  if (error || !basicData) {
+  if (error) {
     console.error('Error fetching public anlagen:', error)
     return []
   }
 
-  // Hole zusätzliche Detaildaten und Freigaben für die Anlagen
-  const anlageIds = basicData.map((a: any) => a.anlage_id)
+  return data || []
+}
 
-  const { data: detailData } = await supabase
-    .from('anlagen')
-    .select(`
-      id,
-      standort_latitude,
-      standort_longitude,
-      batteriekapazitaet_kwh,
-      ekfz_vorhanden,
-      waermepumpe_vorhanden,
-      anlagen_freigaben (
-        anlage_id,
-        profil_oeffentlich,
-        kennzahlen_oeffentlich,
-        auswertungen_oeffentlich,
-        investitionen_oeffentlich,
-        monatsdaten_oeffentlich,
-        standort_genau
-      )
-    `)
-    .in('id', anlageIds)
+/**
+ * Liefert Community-Statistiken
+ */
+export async function getCommunityStats(): Promise<CommunityStats | null> {
+  const supabase = await createClient()
 
-  // Merge basic + detail data
-  const mergedData = basicData.map((basic: any) => {
-    const detail = detailData?.find((d: any) => d.id === basic.anlage_id)
-    const freigabe = detail?.anlagen_freigaben?.[0] || {
-      standort_genau: false,
-      kennzahlen_oeffentlich: false,
-      auswertungen_oeffentlich: false,
-      investitionen_oeffentlich: false,
-      monatsdaten_oeffentlich: false,
-    }
+  const { data, error } = await supabase.rpc('get_community_stats')
 
-    return {
-      id: basic.anlage_id,
-      anlagenname: basic.anlagenname,
-      anlagentyp: basic.anlagentyp,
-      installationsdatum: basic.installationsdatum,
-      leistung_kwp: basic.leistung_kwp,
-      standort_ort: basic.standort_ort,
-      standort_plz: freigabe.standort_genau ? basic.standort_plz : basic.standort_plz?.substring(0, 2) + 'XXX',
-      standort_latitude: freigabe.standort_genau ? detail?.standort_latitude : null,
-      standort_longitude: freigabe.standort_genau ? detail?.standort_longitude : null,
-      batteriekapazitaet_kwh: detail?.batteriekapazitaet_kwh,
-      ekfz_vorhanden: detail?.ekfz_vorhanden,
-      waermepumpe_vorhanden: detail?.waermepumpe_vorhanden,
-      freigaben: freigabe,
-      mitglied_vorname: basic.mitglied_vorname,
-      mitglied_ort: basic.mitglied_ort,
-    }
+  if (error) {
+    console.error('Error fetching community stats:', error)
+    return null
+  }
+
+  return data?.[0] || null
+}
+
+/**
+ * Liefert detaillierte Informationen zu einer öffentlichen Anlage
+ */
+export async function getPublicAnlageDetails(
+  anlageId: string
+): Promise<PublicAnlageDetails | null> {
+  const supabase = await createClient()
+
+  const { data, error } = await supabase.rpc('get_public_anlage_details', {
+    p_anlage_id: anlageId,
   })
 
-  // Filter anwenden (clientseitig nach RPC-Call)
-  let filtered = mergedData
-
-  if (filters?.ort) {
-    filtered = filtered.filter((a: any) =>
-      a.standort_ort?.toLowerCase().includes(filters.ort!.toLowerCase())
-    )
-  }
-  if (filters?.plz) {
-    filtered = filtered.filter((a: any) => a.standort_plz === filters.plz)
-  }
-  if (filters?.minLeistung) {
-    filtered = filtered.filter((a: any) => a.leistung_kwp >= filters.minLeistung!)
-  }
-  if (filters?.maxLeistung) {
-    filtered = filtered.filter((a: any) => a.leistung_kwp <= filters.maxLeistung!)
-  }
-  if (filters?.hatBatterie) {
-    filtered = filtered.filter((a: any) => (a.batteriekapazitaet_kwh || 0) > 0)
-  }
-  if (filters?.hatEAuto) {
-    filtered = filtered.filter((a: any) => a.ekfz_vorhanden === true)
-  }
-  if (filters?.hatWaermepumpe) {
-    filtered = filtered.filter((a: any) => a.waermepumpe_vorhanden === true)
+  if (error) {
+    console.error('Error fetching public anlage details:', error)
+    return null
   }
 
-  return filtered
+  return data?.[0] || null
 }
 
 /**
- * Holt eine einzelne öffentliche Anlage
- * Nutzt Security Definer Function zur Vermeidung von RLS-Zirkelbezügen
+ * Liefert öffentliche Monatsdaten einer Anlage
  */
-export async function getPublicAnlage(anlageId: string): Promise<PublicAnlage | null> {
+export async function getPublicMonatsdaten(
+  anlageId: string
+): Promise<PublicMonatsdaten[]> {
   const supabase = await createClient()
 
-  // Nutze die Security Definer Function und filtere clientseitig
-  const { data: allPublic, error } = await supabase.rpc('get_public_anlagen_with_members')
+  const { data, error } = await supabase.rpc('get_public_monatsdaten', {
+    p_anlage_id: anlageId,
+  })
 
-  if (error || !allPublic) {
-    console.error('Error fetching public anlagen:', error)
-    return null
-  }
-
-  // Finde die gesuchte Anlage
-  const basicData = allPublic.find((a: any) => a.anlage_id === anlageId)
-  if (!basicData) {
-    return null
-  }
-
-  // Hole zusätzliche Detaildaten
-  const { data: detailData } = await supabase
-    .from('anlagen')
-    .select(`
-      id,
-      standort_latitude,
-      standort_longitude,
-      hersteller,
-      modell,
-      anzahl_module,
-      wechselrichter_modell,
-      ausrichtung,
-      neigungswinkel_grad,
-      batteriekapazitaet_kwh,
-      batterie_hersteller,
-      batterie_modell,
-      ekfz_vorhanden,
-      ekfz_bezeichnung,
-      waermepumpe_vorhanden,
-      waermepumpe_bezeichnung,
-      anlagen_freigaben (
-        anlage_id,
-        profil_oeffentlich,
-        kennzahlen_oeffentlich,
-        auswertungen_oeffentlich,
-        investitionen_oeffentlich,
-        monatsdaten_oeffentlich,
-        standort_genau
-      )
-    `)
-    .eq('id', anlageId)
-    .single()
-
-  if (!detailData) {
-    return null
-  }
-
-  const freigabe = detailData.anlagen_freigaben?.[0] || {
-    standort_genau: false,
-    kennzahlen_oeffentlich: false,
-    auswertungen_oeffentlich: false,
-    investitionen_oeffentlich: false,
-    monatsdaten_oeffentlich: false,
-  }
-
-  return {
-    id: basicData.anlage_id,
-    anlagenname: basicData.anlagenname,
-    anlagentyp: basicData.anlagentyp,
-    installationsdatum: basicData.installationsdatum,
-    leistung_kwp: basicData.leistung_kwp,
-    standort_ort: basicData.standort_ort,
-    standort_plz: freigabe.standort_genau ? basicData.standort_plz : basicData.standort_plz?.substring(0, 2) + 'XXX',
-    standort_latitude: freigabe.standort_genau ? detailData.standort_latitude : null,
-    standort_longitude: freigabe.standort_genau ? detailData.standort_longitude : null,
-    batteriekapazitaet_kwh: detailData.batteriekapazitaet_kwh,
-    ekfz_vorhanden: detailData.ekfz_vorhanden,
-    waermepumpe_vorhanden: detailData.waermepumpe_vorhanden,
-    freigaben: freigabe,
-    mitglied_vorname: basicData.mitglied_vorname,
-    mitglied_ort: basicData.mitglied_ort,
-  } as PublicAnlage
-}
-
-/**
- * Holt öffentliche Kennzahlen einer Anlage
- */
-export async function getPublicKennzahlen(anlageId: string) {
-  const supabase = await createClient()
-
-  // Prüfe Freigabe
-  const { data: freigabe } = await supabase
-    .from('anlagen_freigaben')
-    .select('kennzahlen_oeffentlich')
-    .eq('anlage_id', anlageId)
-    .single()
-
-  if (!freigabe?.kennzahlen_oeffentlich) {
-    return null
-  }
-
-  // Hole Kennzahlen aus View
-  const { data, error } = await supabase
-    .from('anlagen_kennzahlen')
-    .select('*')
-    .eq('anlage_id', anlageId)
-    .single()
-
-  if (error || !data) {
-    return null
-  }
-
-  return data
-}
-
-/**
- * Holt öffentliche Monatsdaten einer Anlage
- */
-export async function getPublicMonatsdaten(anlageId: string, jahr?: number) {
-  const supabase = await createClient()
-
-  // Prüfe Freigabe
-  const { data: freigabe } = await supabase
-    .from('anlagen_freigaben')
-    .select('monatsdaten_oeffentlich')
-    .eq('anlage_id', anlageId)
-    .single()
-
-  if (!freigabe?.monatsdaten_oeffentlich) {
+  if (error) {
+    console.error('Error fetching public monatsdaten:', error)
     return []
   }
 
-  let query = supabase
-    .from('monatsdaten')
-    .select('*')
-    .eq('anlage_id', anlageId)
-    .order('jahr', { ascending: false })
-    .order('monat', { ascending: false })
-
-  if (jahr) {
-    query = query.eq('jahr', jahr)
-  }
-
-  const { data, error } = await query
-
-  if (error || !data) {
-    return []
-  }
-
-  return data
+  return data || []
 }
 
 /**
- * Community-Statistiken
- * Nutzt Security Definer Function zur Vermeidung von RLS-Zirkelbezügen
+ * Sucht öffentliche Anlagen mit Filtern
  */
-export async function getCommunityStats() {
+export async function searchPublicAnlagen(
+  filters: SearchFilters = {}
+): Promise<PublicAnlage[]> {
   const supabase = await createClient()
 
-  const { count: anlagenCount } = await supabase
-    .from('anlagen')
-    .select('*', { count: 'exact', head: true })
-    .eq('aktiv', true)
+  const { data, error } = await supabase.rpc('search_public_anlagen', {
+    p_plz_prefix: filters.plz_prefix || null,
+    p_ort: filters.ort || null,
+    p_min_kwp: filters.min_kwp || null,
+    p_max_kwp: filters.max_kwp || null,
+    p_hat_speicher: filters.hat_speicher ?? null,
+    p_hat_wallbox: filters.hat_wallbox ?? null,
+  })
 
-  // Nutze RPC-Function für öffentliche Anlagen (umgeht RLS-Problem)
-  const { data: publicAnlagen } = await supabase.rpc('get_public_anlagen_with_members')
+  if (error) {
+    console.error('Error searching public anlagen:', error)
+    return []
+  }
 
-  const publicCount = publicAnlagen?.length || 0
-  const gesamtleistung = publicAnlagen?.reduce((sum: number, a: any) => sum + (a.leistung_kwp || 0), 0) || 0
+  return data || []
+}
+
+// ============================================
+// HELPER FUNCTIONS
+// ============================================
+
+/**
+ * Formatiert PLZ für Anzeige (mit Anonymisierung wenn nötig)
+ */
+export function formatPLZ(plz: string | null, genau: boolean): string {
+  if (!plz) return 'k.A.'
+  if (genau) return plz
+  // Zeige nur erste 2 Ziffern + XXX
+  return plz.substring(0, 2) + 'XXX'
+}
+
+/**
+ * Berechnet Autarkiegrad aus Monatsdaten
+ */
+export function calculateAutarkiegrad(
+  direktverbrauch: number,
+  batterieentladung: number,
+  gesamtverbrauch: number
+): number {
+  if (gesamtverbrauch === 0) return 0
+  return Math.round(
+    ((direktverbrauch + batterieentladung) / gesamtverbrauch) * 100
+  )
+}
+
+/**
+ * Berechnet Eigenverbrauchsquote aus Monatsdaten
+ */
+export function calculateEigenverbrauchsquote(
+  direktverbrauch: number,
+  pvErzeugung: number
+): number {
+  if (pvErzeugung === 0) return 0
+  return Math.round((direktverbrauch / pvErzeugung) * 100)
+}
+
+/**
+ * Formatiert Datum für Anzeige
+ */
+export function formatInstallationsdatum(datum: string): string {
+  const date = new Date(datum)
+  return date.toLocaleDateString('de-DE', {
+    year: 'numeric',
+    month: 'long',
+  })
+}
+
+/**
+ * Gruppiert Anlagen nach PLZ-Bereich (erste 2 Ziffern)
+ */
+export function groupByPLZBereich(
+  anlagen: PublicAnlage[]
+): Map<string, PublicAnlage[]> {
+  const grouped = new Map<string, PublicAnlage[]>()
+
+  anlagen.forEach((anlage) => {
+    if (!anlage.standort_plz) return
+
+    const bereich = anlage.standort_plz.substring(0, 2)
+    if (!grouped.has(bereich)) {
+      grouped.set(bereich, [])
+    }
+    grouped.get(bereich)!.push(anlage)
+  })
+
+  return grouped
+}
+
+/**
+ * Berechnet Durchschnittswerte für eine Gruppe von Anlagen
+ */
+export function calculateGroupStats(anlagen: PublicAnlage[]): {
+  anzahl: number
+  durchschnitt_kwp: number
+  gesamt_kwp: number
+  prozent_mit_speicher: number
+  prozent_mit_wallbox: number
+} {
+  if (anlagen.length === 0) {
+    return {
+      anzahl: 0,
+      durchschnitt_kwp: 0,
+      gesamt_kwp: 0,
+      prozent_mit_speicher: 0,
+      prozent_mit_wallbox: 0,
+    }
+  }
+
+  const gesamt_kwp = anlagen.reduce((sum, a) => sum + a.leistung_kwp, 0)
+  const anzahl_mit_speicher = anlagen.filter((a) => a.hat_speicher).length
+  const anzahl_mit_wallbox = anlagen.filter((a) => a.hat_wallbox).length
 
   return {
-    gesamtAnlagen: anlagenCount || 0,
-    oeffentlicheAnlagen: publicCount,
-    gesamtleistungKwp: Math.round(gesamtleistung * 10) / 10,
+    anzahl: anlagen.length,
+    durchschnitt_kwp: Math.round((gesamt_kwp / anlagen.length) * 10) / 10,
+    gesamt_kwp: Math.round(gesamt_kwp * 10) / 10,
+    prozent_mit_speicher: Math.round(
+      (anzahl_mit_speicher / anlagen.length) * 100
+    ),
+    prozent_mit_wallbox: Math.round(
+      (anzahl_mit_wallbox / anlagen.length) * 100
+    ),
   }
 }
