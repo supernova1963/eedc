@@ -183,12 +183,18 @@ psql $DATABASE_URL -f verify.sql
 |------------|--------|--------------|
 | `lib/anlagen-helpers.ts` | ✅ NEU | Multi-Anlage Helper Functions |
 | `components/AnlagenSelector.tsx` | ✅ NEU | Dropdown für Anlagenwechsel |
+| **App-Seiten (15 Seiten)** | ✅ FERTIG | Alle auf getCurrentMitglied() umgestellt |
 | `app/meine-anlage/page.tsx` | ✅ ANGEPASST | Dashboard mit Multi-Anlage Support |
-| `app/eingabe/page.tsx` | ⚠️ TODO | Nutzt noch alte Tabellen |
-| Weitere Seiten | ⚠️ TODO | Siehe SESSION-SUMMARY.md |
+| `app/eingabe/page.tsx` | ✅ ANGEPASST | Nutzt neue Komponenten-Tabellen |
+| `app/anlage/page.tsx` | ✅ ANGEPASST | Multi-Anlage Support |
+| `app/auswertung/page.tsx` | ✅ ANGEPASST | Multi-Anlage Support |
+| `app/stammdaten/*` | ✅ ANGEPASST | 5 Unterseiten umgestellt |
+| `app/investitionen/*` | ✅ ANGEPASST | 3 Seiten umgestellt |
+| **API-Routes (4 Routes)** | ✅ FERTIG | Alle auf getCurrentMitglied() umgestellt |
+| **Server Actions** | ✅ FERTIG | lib/anlage-actions.ts umgestellt |
 
 ---
 
-**Status:** 🟢 DB KOMPLETT | 🟡 CODE 60% FERTIG
-**Nächster Schritt:** Eingabe-Seite umbauen + weitere Code-Anpassungen
-**Siehe:** [SESSION-SUMMARY.md](SESSION-SUMMARY.md) für Details
+**Status:** 🟢 **DB KOMPLETT | CODE KOMPLETT**
+**Auth-Refactoring:** ✅ **ABGESCHLOSSEN** (2026-01-29)
+**Siehe:** [SESSION-SUMMARY-AUTH-REFACTOR.md](SESSION-SUMMARY-AUTH-REFACTOR.md) für Details
