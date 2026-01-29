@@ -7,6 +7,16 @@
 -- ============================================
 
 -- ============================================
+-- 0. Alte Funktionen löschen (falls vorhanden mit anderer Signatur)
+-- ============================================
+DROP FUNCTION IF EXISTS get_public_anlagen();
+DROP FUNCTION IF EXISTS get_community_stats();
+DROP FUNCTION IF EXISTS get_public_anlage_details(uuid);
+DROP FUNCTION IF EXISTS get_public_monatsdaten(uuid);
+DROP FUNCTION IF EXISTS search_public_anlagen(text, text, numeric, numeric, boolean, boolean);
+DROP FUNCTION IF EXISTS get_public_komponenten(uuid);
+
+-- ============================================
 -- 1. get_public_anlagen - Liste öffentlicher Anlagen
 -- ============================================
 -- Benutzt von: /community (Anlagen-Liste)
@@ -19,8 +29,8 @@ RETURNS TABLE (
   installationsdatum date,
   standort_plz text,
   standort_ort text,
-  standort_latitude double precision,
-  standort_longitude double precision,
+  standort_latitude numeric,
+  standort_longitude numeric,
   mitglied_id uuid,
   mitglied_display_name text,
   anzahl_komponenten bigint,
@@ -243,8 +253,8 @@ RETURNS TABLE (
   installationsdatum date,
   standort_plz text,
   standort_ort text,
-  standort_latitude double precision,
-  standort_longitude double precision,
+  standort_latitude numeric,
+  standort_longitude numeric,
   mitglied_id uuid,
   mitglied_display_name text,
   anzahl_komponenten bigint,
