@@ -33,13 +33,6 @@ export default async function BearbeitenPage({
   }
 
   const { id } = await params
-  const supabase = await createClient()
-
-  const { data: mitglied } = await supabase
-    .from('mitglieder')
-    .select('*')
-    .eq('id', mitglied.data.id)
-    .single()
 
   const investition = await getInvestition(mitglied.data.id, id)
 
@@ -50,7 +43,7 @@ export default async function BearbeitenPage({
   return (
     <main className="min-h-screen bg-gray-50">
       <div className="max-w-4xl mx-auto px-4 py-8">
-        <InvestitionFormSimple mitgliedId={mitglied.id} editData={investition} />
+        <InvestitionFormSimple mitgliedId={mitglied.data.id} editData={investition} />
       </div>
     </main>
   )

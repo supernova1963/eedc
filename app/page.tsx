@@ -101,7 +101,7 @@ export default async function CommunityDashboardPage() {
           </h2>
           {topAnlagen.length > 0 ? (
             <div className="space-y-4">
-              {topAnlagen.map((anlage, idx) => (
+              {topAnlagen.map((anlage: any, idx: number) => (
                 <Link
                   key={anlage.id}
                   href={`/community/${anlage.id}`}
