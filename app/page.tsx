@@ -9,11 +9,21 @@ import PublicHeader from '@/components/PublicHeader'
 async function getCommunityStats() {
   const supabase = await createClient()
 
-  // Nutze RPC-Function für öffentliche Anlagen (korrekte Freigaben-Logik)
-  const { data: publicAnlagen } = await supabase.rpc('get_public_anlagen_with_members')
+  // Nutze die FRESH-START RPC-Funktionen
+  const { data: publicAnlagen, error: anlagenError } = await supabase.rpc('get_public_anlagen')
+  const { data: stats, error: statsError } = await supabase.rpc('get_community_stats')
 
-  const anlagenCount = publicAnlagen?.length || 0
-  const gesamtLeistung = publicAnlagen?.reduce((sum: number, a: any) => sum + (a.leistung_kwp || 0), 0) || 0
+  if (anlagenError) {
+    console.error('Fehler beim Laden der Anlagen:', anlagenError)
+  }
+  if (statsError) {
+    console.error('Fehler beim Laden der Stats:', statsError)
+  }
+
+  // Stats aus der RPC-Funktion verwenden
+  const communityStats = stats?.[0] || {}
+  const anlagenCount = communityStats.anzahl_anlagen || publicAnlagen?.length || 0
+  const gesamtLeistung = communityStats.gesamtleistung_kwp || 0
 
   // Top 5 Anlagen nach Leistung sortieren
   const topAnlagen = publicAnlagen
@@ -25,7 +35,8 @@ async function getCommunityStats() {
       leistung_kwp: a.leistung_kwp,
       standort_plz: a.standort_plz,
       standort_ort: a.standort_ort,
-      inbetriebnahme: a.installationsdatum
+      inbetriebnahme: a.installationsdatum,
+      mitglied_display_name: a.mitglied_display_name
     })) || []
 
   return {
@@ -88,9 +99,63 @@ export default async function CommunityDashboardPage() {
           </div>
           <div className="bg-white rounded-lg shadow-lg p-6 text-center">
             <SimpleIcon type="leaf" className="w-12 h-12 text-green-500 mx-auto mb-4" />
-            <p className="text-4xl font-bold text-gray-900">{(gesamtLeistung * 1000 * 0.38).toFixed(0)} kg</p>
+            {(() => {
+              // ca. 1000 kWh/kWp Ertrag * 0.4 kg CO2/kWh (deutscher Strommix)
+              const co2Kg = gesamtLeistung * 1000 * 0.4
+              if (co2Kg >= 1000) {
+                return <p className="text-4xl font-bold text-gray-900">{(co2Kg / 1000).toFixed(1)} t</p>
+              }
+              return <p className="text-4xl font-bold text-gray-900">{co2Kg.toFixed(0)} kg</p>
+            })()}
             <p className="text-gray-600 mt-2">CO₂ Einsparung/Jahr (geschätzt)</p>
           </div>
+        </div>
+
+        {/* Quick Navigation */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+          <Link
+            href="/community"
+            className="bg-white rounded-lg shadow p-4 hover:shadow-lg transition-shadow flex flex-col items-center text-center group"
+          >
+            <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center mb-3 group-hover:bg-blue-200 transition-colors">
+              <SimpleIcon type="globe" className="w-6 h-6 text-blue-600" />
+            </div>
+            <span className="font-medium text-gray-900">Alle Anlagen</span>
+            <span className="text-sm text-gray-500">{anlagenCount} Anlagen</span>
+          </Link>
+
+          <Link
+            href="/community/vergleich"
+            className="bg-white rounded-lg shadow p-4 hover:shadow-lg transition-shadow flex flex-col items-center text-center group"
+          >
+            <div className="w-12 h-12 bg-purple-100 rounded-full flex items-center justify-center mb-3 group-hover:bg-purple-200 transition-colors">
+              <SimpleIcon type="chart" className="w-6 h-6 text-purple-600" />
+            </div>
+            <span className="font-medium text-gray-900">Vergleich</span>
+            <span className="text-sm text-gray-500">Anlagen vergleichen</span>
+          </Link>
+
+          <Link
+            href="/community/regional"
+            className="bg-white rounded-lg shadow p-4 hover:shadow-lg transition-shadow flex flex-col items-center text-center group"
+          >
+            <div className="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center mb-3 group-hover:bg-green-200 transition-colors">
+              <SimpleIcon type="map" className="w-6 h-6 text-green-600" />
+            </div>
+            <span className="font-medium text-gray-900">Regional</span>
+            <span className="text-sm text-gray-500">Nach PLZ filtern</span>
+          </Link>
+
+          <Link
+            href="/community/bestenliste"
+            className="bg-white rounded-lg shadow p-4 hover:shadow-lg transition-shadow flex flex-col items-center text-center group"
+          >
+            <div className="w-12 h-12 bg-yellow-100 rounded-full flex items-center justify-center mb-3 group-hover:bg-yellow-200 transition-colors">
+              <SimpleIcon type="trophy" className="w-6 h-6 text-yellow-600" />
+            </div>
+            <span className="font-medium text-gray-900">Bestenliste</span>
+            <span className="text-sm text-gray-500">Top Anlagen</span>
+          </Link>
         </div>
 
         {/* Top Anlagen */}
@@ -116,6 +181,7 @@ export default async function CommunityDashboardPage() {
                         <p className="font-semibold text-gray-900">{anlage.anlagenname || 'Anlage'}</p>
                         <p className="text-sm text-gray-600">
                           {anlage.standort_plz} {anlage.standort_ort}
+                          {anlage.mitglied_display_name && ` • ${anlage.mitglied_display_name}`}
                         </p>
                       </div>
                     </div>

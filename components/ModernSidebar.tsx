@@ -25,7 +25,7 @@ interface ModernSidebarProps {
 export default function ModernSidebar({ userName, userEmail }: ModernSidebarProps) {
   const pathname = usePathname()
   const [isOpen, setIsOpen] = useState(false)
-  const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(['Meine Anlage', 'Community']))
+  const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(['Meine Anlage']))
 
   // Dynamische Investitionen
   const [eAutos, setEAutos] = useState<any[]>([])
@@ -70,19 +70,6 @@ export default function ModernSidebar({ userName, userEmail }: ModernSidebarProp
 
   // Navigation Structure
   const navItems: NavItem[] = [
-    // === COMMUNITY (ÖFFENTLICH) ===
-    {
-      label: 'Community',
-      icon: 'users',
-      children: [
-        { label: 'Dashboard', href: '/', icon: 'home' },
-        { label: 'Alle Anlagen', href: '/community', icon: 'globe' },
-        { label: 'Vergleich', href: '/community/vergleich', icon: 'chart' },
-        { label: 'Regional', href: '/community/regional', icon: 'map' },
-        { label: 'Bestenliste', href: '/community/bestenliste', icon: 'trophy' },
-      ]
-    },
-
     // === MEINE ANLAGE (AUTH REQUIRED) ===
     {
       label: 'Meine Anlage',
@@ -271,7 +258,15 @@ export default function ModernSidebar({ userName, userEmail }: ModernSidebarProp
         </nav>
 
         {/* Footer */}
-        <div className="p-4 border-t border-gray-200">
+        <div className="p-4 border-t border-gray-200 space-y-1">
+          <Link
+            href="/"
+            className="flex items-center gap-3 px-4 py-2.5 text-sm font-medium text-blue-600 hover:bg-blue-50 rounded-md transition-colors"
+            onClick={() => setIsOpen(false)}
+          >
+            <SimpleIcon type="globe" className="w-5 h-5" />
+            <span>Zur Community</span>
+          </Link>
           <Link
             href="/logout"
             className="flex items-center gap-3 px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-md transition-colors"

@@ -16,16 +16,42 @@ interface Investition {
   parameter?: any
 }
 
+interface ExistingData {
+  id: string
+  jahr: number
+  monat: number
+  pv_erzeugung_kwh?: number
+  gesamtverbrauch_kwh?: number
+  direktverbrauch_kwh?: number
+  batterieentladung_kwh?: number
+  batterieladung_kwh?: number
+  einspeisung_kwh?: number
+  netzbezug_kwh?: number
+  einspeisung_ertrag_euro?: number
+  netzbezug_kosten_euro?: number
+  betriebsausgaben_monat_euro?: number
+  netzbezug_preis_cent_kwh?: number
+  einspeisung_preis_cent_kwh?: number
+  sonnenstunden?: number
+  globalstrahlung_kwh_m2?: number
+  notizen?: string
+  datenquelle?: string
+}
+
 interface MonatsdatenFormDynamicProps {
   anlage: any
   investitionen: Investition[]
+  existingData?: ExistingData | null
+  onSuccess?: () => void
 }
 
-export default function MonatsdatenFormDynamic({ anlage, investitionen }: MonatsdatenFormDynamicProps) {
+export default function MonatsdatenFormDynamic({ anlage, investitionen, existingData, onSuccess }: MonatsdatenFormDynamicProps) {
   const router = useRouter()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
+
+  const isEditMode = !!existingData
 
   // Strompreise aus Stammdaten (Fallback)
   const [stammStrompreise, setStammStrompreise] = useState<{
@@ -39,25 +65,46 @@ export default function MonatsdatenFormDynamic({ anlage, investitionen }: Monats
   const hatEAuto = investitionen.some(i => i.typ === 'e-auto')
   const hatWaermepumpe = investitionen.some(i => i.typ === 'waermepumpe')
 
-  // Haupt-Formular State
-  const [formData, setFormData] = useState({
-    jahr: new Date().getFullYear(),
-    monat: new Date().getMonth() + 1,
-    // Haushalts-Daten
-    gesamtverbrauch_kwh: '',
-    direktverbrauch_kwh: '',
-    einspeisung_kwh: '',
-    netzbezug_kwh: '',
-    // PV-Erzeugung (direkt eingeben wenn kein Wechselrichter)
-    pv_erzeugung_kwh: '',
-    // Batterie (wenn Speicher vorhanden)
-    batterieentladung_kwh: '',
-    batterieladung_kwh: '',
-    // Optionale Strompreise (ct/kWh für dynamische Tarife)
-    einspeiseverguetung_monat_cent: '',
-    netzbezug_preis_monat_cent: '',
-    // Sonstiges
-    betriebsausgaben_monat_euro: ''
+  // Haupt-Formular State - mit existingData initialisieren wenn vorhanden
+  const [formData, setFormData] = useState(() => {
+    if (existingData) {
+      return {
+        jahr: existingData.jahr,
+        monat: existingData.monat,
+        gesamtverbrauch_kwh: existingData.gesamtverbrauch_kwh?.toString() || '',
+        direktverbrauch_kwh: existingData.direktverbrauch_kwh?.toString() || '',
+        einspeisung_kwh: existingData.einspeisung_kwh?.toString() || '',
+        netzbezug_kwh: existingData.netzbezug_kwh?.toString() || '',
+        pv_erzeugung_kwh: existingData.pv_erzeugung_kwh?.toString() || '',
+        batterieentladung_kwh: existingData.batterieentladung_kwh?.toString() || '',
+        batterieladung_kwh: existingData.batterieladung_kwh?.toString() || '',
+        einspeiseverguetung_monat_cent: existingData.einspeisung_preis_cent_kwh?.toString() || '',
+        netzbezug_preis_monat_cent: existingData.netzbezug_preis_cent_kwh?.toString() || '',
+        betriebsausgaben_monat_euro: existingData.betriebsausgaben_monat_euro?.toString() || '',
+        sonnenstunden: existingData.sonnenstunden?.toString() || '',
+        globalstrahlung_kwh_m2: existingData.globalstrahlung_kwh_m2?.toString() || '',
+        notizen: existingData.notizen || '',
+        datenquelle: existingData.datenquelle || ''
+      }
+    }
+    return {
+      jahr: new Date().getFullYear(),
+      monat: new Date().getMonth() + 1,
+      gesamtverbrauch_kwh: '',
+      direktverbrauch_kwh: '',
+      einspeisung_kwh: '',
+      netzbezug_kwh: '',
+      pv_erzeugung_kwh: '',
+      batterieentladung_kwh: '',
+      batterieladung_kwh: '',
+      einspeiseverguetung_monat_cent: '',
+      netzbezug_preis_monat_cent: '',
+      betriebsausgaben_monat_euro: '',
+      sonnenstunden: '',
+      globalstrahlung_kwh_m2: '',
+      notizen: '',
+      datenquelle: ''
+    }
   })
 
   // Investitions-spezifische Daten
@@ -187,7 +234,7 @@ export default function MonatsdatenFormDynamic({ anlage, investitionen }: Monats
       const supabase = createBrowserClient()
 
       // 1. Haushalts-Monatsdaten speichern
-      const monatsdaten = {
+      const monatsdaten: any = {
         anlage_id: anlage.id,
         jahr: formData.jahr,
         monat: formData.monat,
@@ -201,13 +248,26 @@ export default function MonatsdatenFormDynamic({ anlage, investitionen }: Monats
         einspeisung_ertrag_euro: berechneteWerte.einspeisungErtragEuro ?? 0,
         netzbezug_kosten_euro: berechneteWerte.netzbezugKostenEuro ?? 0,
         betriebsausgaben_monat_euro: parseFloat(formData.betriebsausgaben_monat_euro) || 0,
-        eigenverbrauchsquote_prozent: berechneteWerte.eigenverbrauchsquote,
-        autarkiegrad_prozent: berechneteWerte.autarkiegrad
+        // Strompreise wenn angegeben
+        netzbezug_preis_cent_kwh: formData.netzbezug_preis_monat_cent ? parseFloat(formData.netzbezug_preis_monat_cent) : null,
+        einspeisung_preis_cent_kwh: formData.einspeiseverguetung_monat_cent ? parseFloat(formData.einspeiseverguetung_monat_cent) : null,
+        // Wetter
+        sonnenstunden: formData.sonnenstunden ? parseFloat(formData.sonnenstunden) : null,
+        globalstrahlung_kwh_m2: formData.globalstrahlung_kwh_m2 ? parseFloat(formData.globalstrahlung_kwh_m2) : null,
+        // Meta
+        notizen: formData.notizen || null,
+        datenquelle: formData.datenquelle || (isEditMode ? 'bearbeitet' : 'manuell'),
+        aktualisiert_am: new Date().toISOString()
+      }
+
+      // Bei Edit: ID mitgeben für Update
+      if (isEditMode && existingData) {
+        monatsdaten.id = existingData.id
       }
 
       const { error: dbError } = await supabase
         .from('monatsdaten')
-        .upsert(monatsdaten, { onConflict: 'anlage_id,jahr,monat' })
+        .upsert(monatsdaten, { onConflict: isEditMode ? 'id' : 'anlage_id,jahr,monat' })
 
       if (dbError) throw dbError
 
@@ -261,11 +321,16 @@ export default function MonatsdatenFormDynamic({ anlage, investitionen }: Monats
         }
       }
 
-      setSuccess('Monatsdaten erfolgreich gespeichert!')
-      setTimeout(() => {
-        router.push('/auswertung')
-        router.refresh()
-      }, 1000)
+      setSuccess(isEditMode ? 'Monatsdaten erfolgreich aktualisiert!' : 'Monatsdaten erfolgreich gespeichert!')
+
+      if (onSuccess) {
+        setTimeout(() => onSuccess(), 1000)
+      } else {
+        setTimeout(() => {
+          router.push('/uebersicht')
+          router.refresh()
+        }, 1000)
+      }
 
     } catch (err: any) {
       setError(err.message || 'Fehler beim Speichern')
@@ -287,8 +352,11 @@ export default function MonatsdatenFormDynamic({ anlage, investitionen }: Monats
   return (
     <div className="bg-white rounded-lg shadow p-6">
       <h2 className="text-xl font-semibold text-gray-900 mb-6 flex items-center gap-2">
-        <SimpleIcon type="plus" className="w-5 h-5 text-blue-600" />
-        Monatsdaten erfassen
+        <SimpleIcon type={isEditMode ? 'edit' : 'plus'} className="w-5 h-5 text-blue-600" />
+        {isEditMode
+          ? `${monate[existingData!.monat - 1]} ${existingData!.jahr} bearbeiten`
+          : 'Monatsdaten erfassen'
+        }
       </h2>
 
       {error && (
@@ -314,7 +382,8 @@ export default function MonatsdatenFormDynamic({ anlage, investitionen }: Monats
               value={formData.jahr}
               onChange={handleChange}
               required
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              disabled={isEditMode}
+              className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${isEditMode ? 'bg-gray-100 cursor-not-allowed' : ''}`}
             />
           </div>
           <div>
@@ -324,7 +393,8 @@ export default function MonatsdatenFormDynamic({ anlage, investitionen }: Monats
               value={formData.monat}
               onChange={handleChange}
               required
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              disabled={isEditMode}
+              className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${isEditMode ? 'bg-gray-100 cursor-not-allowed' : ''}`}
             >
               {monate.map((m, i) => (
                 <option key={i + 1} value={i + 1}>{m}</option>
@@ -730,19 +800,86 @@ export default function MonatsdatenFormDynamic({ anlage, investitionen }: Monats
           </div>
         </div>
 
+        {/* Wetter (optional) */}
+        <div className="border-t pt-6">
+          <h3 className="text-lg font-medium text-gray-900 mb-4 flex items-center gap-2">
+            <SimpleIcon type="sun" className="w-5 h-5 text-yellow-400" />
+            Wetter (optional)
+          </h3>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Sonnenstunden
+              </label>
+              <input
+                type="number"
+                name="sonnenstunden"
+                value={formData.sonnenstunden}
+                onChange={handleChange}
+                step="0.1"
+                placeholder="z.B. 180"
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Globalstrahlung (kWh/m²)
+              </label>
+              <input
+                type="number"
+                name="globalstrahlung_kwh_m2"
+                value={formData.globalstrahlung_kwh_m2}
+                onChange={handleChange}
+                step="0.1"
+                placeholder="z.B. 120"
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+          </div>
+        </div>
+
         {/* Sonstiges */}
         <div className="border-t pt-6">
-          <div className="max-w-xs">
+          <h3 className="text-lg font-medium text-gray-900 mb-4">Sonstiges</h3>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Betriebsausgaben (Euro)
+              </label>
+              <input
+                type="number"
+                name="betriebsausgaben_monat_euro"
+                value={formData.betriebsausgaben_monat_euro}
+                onChange={handleChange}
+                step="0.01"
+                placeholder="z.B. 0"
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Datenquelle
+              </label>
+              <input
+                type="text"
+                name="datenquelle"
+                value={formData.datenquelle}
+                onChange={handleChange}
+                placeholder="z.B. Wechselrichter-App"
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+          </div>
+          <div className="mt-4">
             <label className="block text-sm font-medium text-gray-700 mb-2">
-              Betriebsausgaben (Euro)
+              Notizen
             </label>
-            <input
-              type="number"
-              name="betriebsausgaben_monat_euro"
-              value={formData.betriebsausgaben_monat_euro}
-              onChange={handleChange}
-              step="0.01"
-              placeholder="z.B. 0"
+            <textarea
+              name="notizen"
+              value={formData.notizen}
+              onChange={(e) => setFormData(prev => ({ ...prev, notizen: e.target.value }))}
+              rows={2}
+              placeholder="Optionale Anmerkungen..."
               className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
