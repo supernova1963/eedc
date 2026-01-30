@@ -71,35 +71,35 @@ export default function GesamtHaushaltBilanz({ monatsdaten, anlage, investitione
 
       {/* KPIs */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <div className="bg-white rounded-lg shadow p-6">
-          <div className="text-sm text-gray-600">Gesamt-ROI</div>
-          <div className="text-2xl font-bold text-green-700">{fmtDec(gesamtROI)}%</div>
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+          <div className="text-sm text-gray-600 dark:text-gray-400">Gesamt-ROI</div>
+          <div className="text-2xl font-bold text-green-700 dark:text-green-400">{fmtDec(gesamtROI)}%</div>
         </div>
-        <div className="bg-white rounded-lg shadow p-6">
-          <div className="text-sm text-gray-600">Amortisation</div>
-          <div className="text-2xl font-bold text-blue-700">{fmtDec(gesamtAmortisation)} J.</div>
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+          <div className="text-sm text-gray-600 dark:text-gray-400">Amortisation</div>
+          <div className="text-2xl font-bold text-blue-700 dark:text-blue-400">{fmtDec(gesamtAmortisation)} J.</div>
         </div>
-        <div className="bg-white rounded-lg shadow p-6">
-          <div className="text-sm text-gray-600">CO₂-Einsparung/Jahr</div>
-          <div className="text-2xl font-bold text-green-700">{fmtDec(gesamtCO2 / 1000)} t</div>
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+          <div className="text-sm text-gray-600 dark:text-gray-400">CO₂-Einsparung/Jahr</div>
+          <div className="text-2xl font-bold text-green-700 dark:text-green-400">{fmtDec(gesamtCO2 / 1000)} t</div>
         </div>
-        <div className="bg-white rounded-lg shadow p-6">
-          <div className="text-sm text-gray-600">Netto-Ertrag/Jahr</div>
-          <div className="text-2xl font-bold text-green-700">{fmt(gesamtInvEinsparung)} €</div>
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+          <div className="text-sm text-gray-600 dark:text-gray-400">Netto-Ertrag/Jahr</div>
+          <div className="text-2xl font-bold text-green-700 dark:text-green-400">{fmt(gesamtInvEinsparung)} €</div>
         </div>
       </div>
 
       {/* Investitions-Tabelle */}
-      <div className="bg-white rounded-lg shadow overflow-hidden">
-        <div className="px-6 py-4 border-b border-gray-200">
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
+        <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
           <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
-            <SimpleIcon type="chart" className="w-5 h-5 text-gray-600" />
+            <SimpleIcon type="chart" className="w-5 h-5 text-gray-600 dark:text-gray-400" />
             Alle Investitionen ({investitionen.length})
           </h3>
         </div>
         <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
+          <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+            <thead className="bg-gray-50 dark:bg-gray-700">
               <tr>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Investition</th>
                 <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Mehrkosten</th>
@@ -109,15 +109,15 @@ export default function GesamtHaushaltBilanz({ monatsdaten, anlage, investitione
                 <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">CO₂/Jahr</th>
               </tr>
             </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
+            <tbody className="bg-white divide-y divide-gray-200 dark:divide-gray-700">
               {investitionen.map((inv) => (
-                <tr key={inv.id} className="hover:bg-gray-50">
+                <tr key={inv.id} className="hover:bg-gray-50 dark:bg-gray-700">
                   <td className="px-6 py-4">
                     <div className="flex items-center">
-                      <SimpleIcon type={getIconType(inv.typ)} className="w-6 h-6 mr-3 text-gray-600" />
+                      <SimpleIcon type={getIconType(inv.typ)} className="w-6 h-6 mr-3 text-gray-600 dark:text-gray-400" />
                       <div>
-                        <div className="text-sm font-medium text-gray-900">{inv.bezeichnung}</div>
-                        <div className="text-xs text-gray-500">
+                        <div className="text-sm font-medium text-gray-900 dark:text-gray-100">{inv.bezeichnung}</div>
+                        <div className="text-xs text-gray-500 dark:text-gray-400">
                           seit {new Date(inv.anschaffungsdatum).toLocaleDateString('de-DE', { month: 'short', year: 'numeric' })}
                         </div>
                       </div>
@@ -129,13 +129,13 @@ export default function GesamtHaushaltBilanz({ monatsdaten, anlage, investitione
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-green-600 font-medium">
                     {fmt(inv.einsparung_gesamt_jahr)} €
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-gray-900">
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-gray-900 dark:text-gray-100">
                     {fmtDec(inv.roi_prozent)}%
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-gray-900">
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-gray-900 dark:text-gray-100">
                     {fmtDec(inv.amortisation_jahre)} J.
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-gray-900">
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-gray-900 dark:text-gray-100">
                     {fmtDec((inv.co2_einsparung_kg_jahr || 0) / 1000)} t
                   </td>
                 </tr>
@@ -153,16 +153,16 @@ export default function GesamtHaushaltBilanz({ monatsdaten, anlage, investitione
         </h3>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-center">
           <div>
-            <div className="text-3xl font-bold text-green-700">{fmtDec(gesamtCO2 / 1000)} t</div>
-            <div className="text-sm text-gray-600">CO₂-Einsparung pro Jahr</div>
+            <div className="text-3xl font-bold text-green-700 dark:text-green-400">{fmtDec(gesamtCO2 / 1000)} t</div>
+            <div className="text-sm text-gray-600 dark:text-gray-400">CO₂-Einsparung pro Jahr</div>
           </div>
           <div>
-            <div className="text-3xl font-bold text-blue-700">{fmt(anzahlBaeume)}</div>
-            <div className="text-sm text-gray-600">≈ Bäume (CO₂-Bindung)</div>
+            <div className="text-3xl font-bold text-blue-700 dark:text-blue-400">{fmt(anzahlBaeume)}</div>
+            <div className="text-sm text-gray-600 dark:text-gray-400">≈ Bäume (CO₂-Bindung)</div>
           </div>
           <div>
-            <div className="text-3xl font-bold text-green-700">{fmt(gesamtInvEinsparung)}</div>
-            <div className="text-sm text-gray-600">Euro Einsparung pro Jahr</div>
+            <div className="text-3xl font-bold text-green-700 dark:text-green-400">{fmt(gesamtInvEinsparung)}</div>
+            <div className="text-sm text-gray-600 dark:text-gray-400">Euro Einsparung pro Jahr</div>
           </div>
         </div>
       </div>

@@ -95,7 +95,7 @@ export default function AnlageEditForm({ anlage }: AnlageEditFormProps) {
 
   if (!isEditing) {
     return (
-      <div className="bg-white rounded-lg shadow p-6">
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
         {success && (
           <div className="mb-4 bg-green-50 border border-green-200 text-green-800 px-4 py-3 rounded flex items-center gap-2">
             <SimpleIcon type="check" className="w-5 h-5" />
@@ -114,9 +114,9 @@ export default function AnlageEditForm({ anlage }: AnlageEditFormProps) {
   }
 
   return (
-    <div className="bg-white rounded-lg shadow p-6">
+    <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
       <h2 className="text-xl font-semibold text-gray-900 mb-6 flex items-center gap-2">
-        <SimpleIcon type="edit" className="w-5 h-5 text-gray-700" />
+        <SimpleIcon type="edit" className="w-5 h-5 text-gray-700 dark:text-gray-300" />
         Stammdaten bearbeiten
       </h2>
 

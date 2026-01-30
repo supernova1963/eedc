@@ -35,7 +35,7 @@ export default async function DashboardPage({
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
-          <p className="text-gray-600">Nicht authentifiziert</p>
+          <p className="text-gray-600 dark:text-gray-400">Nicht authentifiziert</p>
         </div>
       </div>
     )
@@ -56,7 +56,7 @@ export default async function DashboardPage({
             <SimpleIcon type="sun" className="w-8 h-8 text-yellow-500" /> Dashboard
           </h1>
         </div>
-        <div className="bg-white rounded-lg shadow p-8 text-center">
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-8 text-center">
           <p className="text-gray-500 mb-4">Keine Anlage gefunden</p>
           <Link
             href="/anlage"
@@ -134,7 +134,7 @@ export default async function DashboardPage({
             <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-2">
               <SimpleIcon type="sun" className="w-8 h-8 text-yellow-500" /> Dashboard
             </h1>
-            <p className="mt-2 text-gray-600">
+            <p className="mt-2 text-gray-600 dark:text-gray-400">
               {anlage.anlagenname} - {anlage.leistung_kwp} kWp
             </p>
           </div>
@@ -149,10 +149,10 @@ export default async function DashboardPage({
 
       <div className="space-y-6">
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <div className="bg-white rounded-lg shadow p-6">
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-gray-600">Gesamt-Verbrauch</p>
+                <p className="text-sm text-gray-600 dark:text-gray-400">Gesamt-Verbrauch</p>
                 <p className="text-2xl font-bold text-gray-900 mt-1">
                   {fmt(gesamtVerbrauch)} kWh
                 </p>
@@ -161,10 +161,10 @@ export default async function DashboardPage({
             </div>
           </div>
 
-          <div className="bg-white rounded-lg shadow p-6">
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-gray-600">PV-Erzeugung</p>
+                <p className="text-sm text-gray-600 dark:text-gray-400">PV-Erzeugung</p>
                 <p className="text-2xl font-bold text-gray-900 mt-1">
                   {fmt(gesamtErzeugung)} kWh
                 </p>
@@ -173,10 +173,10 @@ export default async function DashboardPage({
             </div>
           </div>
 
-          <div className="bg-white rounded-lg shadow p-6">
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-gray-600">Eigenverbrauch</p>
+                <p className="text-sm text-gray-600 dark:text-gray-400">Eigenverbrauch</p>
                 <p className="text-2xl font-bold text-gray-900 mt-1">
                   {fmt(gesamtEigenverbrauch)} kWh
                 </p>
@@ -185,10 +185,10 @@ export default async function DashboardPage({
             </div>
           </div>
 
-          <div className="bg-white rounded-lg shadow p-6">
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-gray-600">Einspeisung</p>
+                <p className="text-sm text-gray-600 dark:text-gray-400">Einspeisung</p>
                 <p className="text-2xl font-bold text-gray-900 mt-1">
                   {fmt(gesamtEinspeisung)} kWh
                 </p>
@@ -199,10 +199,10 @@ export default async function DashboardPage({
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="bg-white rounded-lg shadow p-6">
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-gray-600">Ø Autarkie</p>
+                <p className="text-sm text-gray-600 dark:text-gray-400">Ø Autarkie</p>
                 <p className="text-2xl font-bold text-gray-900 mt-1">
                   {autarkiegrad.toFixed(0)}%
                 </p>
@@ -211,10 +211,10 @@ export default async function DashboardPage({
             </div>
           </div>
 
-          <div className="bg-white rounded-lg shadow p-6">
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-gray-600">Erlöse</p>
+                <p className="text-sm text-gray-600 dark:text-gray-400">Erlöse</p>
                 <p className="text-2xl font-bold text-blue-700 mt-1">
                   {fmtDec(gesamtErloese)} €
                 </p>
@@ -223,10 +223,10 @@ export default async function DashboardPage({
             </div>
           </div>
 
-          <div className="bg-white rounded-lg shadow p-6">
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-gray-600">Netto-Ertrag</p>
+                <p className="text-sm text-gray-600 dark:text-gray-400">Netto-Ertrag</p>
                 <p className="text-2xl font-bold text-green-700 mt-1">
                   {fmtDec(nettoErtrag)} €
                 </p>
@@ -237,7 +237,7 @@ export default async function DashboardPage({
         </div>
 
         {chartData.length > 0 && (
-          <div className="bg-white rounded-lg shadow p-6">
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
             <h2 className="text-xl font-semibold text-gray-900 mb-4 flex items-center gap-2">
               <SimpleIcon type="trend" className="w-6 h-6 text-blue-600" />
               Monatlicher Verlauf
@@ -258,8 +258,8 @@ export default async function DashboardPage({
             >
               <SimpleIcon type="plus" className="w-8 h-8 text-blue-600" />
               <div>
-                <div className="font-medium text-gray-900">Daten erfassen</div>
-                <div className="text-sm text-gray-600">Monatsdaten</div>
+                <div className="font-medium text-gray-900 dark:text-gray-100">Daten erfassen</div>
+                <div className="text-sm text-gray-600 dark:text-gray-400">Monatsdaten</div>
               </div>
             </Link>
 
@@ -269,8 +269,8 @@ export default async function DashboardPage({
             >
               <SimpleIcon type="briefcase" className="w-8 h-8 text-purple-600" />
               <div>
-                <div className="font-medium text-gray-900">Investitionen</div>
-                <div className="text-sm text-gray-600">Verwalten</div>
+                <div className="font-medium text-gray-900 dark:text-gray-100">Investitionen</div>
+                <div className="text-sm text-gray-600 dark:text-gray-400">Verwalten</div>
               </div>
             </Link>
 
@@ -280,7 +280,7 @@ export default async function DashboardPage({
             >
               <SimpleIcon type="clipboard" className="w-8 h-8 text-green-600" />
               <div>
-                <div className="font-medium text-gray-900">Stammdaten</div>
+                <div className="font-medium text-gray-900 dark:text-gray-100">Stammdaten</div>
                 <div className="text-sm text-green-600 font-semibold">NEU</div>
               </div>
             </Link>
@@ -291,8 +291,8 @@ export default async function DashboardPage({
             >
               <SimpleIcon type="chart" className="w-8 h-8 text-orange-600" />
               <div>
-                <div className="font-medium text-gray-900">Auswertungen</div>
-                <div className="text-sm text-gray-600">ROI & Charts</div>
+                <div className="font-medium text-gray-900 dark:text-gray-100">Auswertungen</div>
+                <div className="text-sm text-gray-600 dark:text-gray-400">ROI & Charts</div>
               </div>
             </Link>
           </div>

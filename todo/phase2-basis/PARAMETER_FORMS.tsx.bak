@@ -1,0 +1,306 @@
+{/* Wechselrichter Parameter */}
+{typ === 'wechselrichter' && (
+  <div className="border-t pt-6">
+    <h3 className="text-lg font-medium text-gray-900 mb-4">🔌 Wechselrichter Parameter</h3>
+    <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-2">
+          AC-Leistung (kW) *
+        </label>
+        <input
+          type="number"
+          name="leistung_ac_kw"
+          value={parameterData.leistung_ac_kw}
+          onChange={handleParamChange}
+          required
+          step="0.1"
+          placeholder="z.B. 5.0"
+          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+        />
+        <p className="mt-1 text-xs text-gray-500">Ausgangsseitige Leistung</p>
+      </div>
+
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-2">
+          DC-Leistung (kW) *
+        </label>
+        <input
+          type="number"
+          name="leistung_dc_kw"
+          value={parameterData.leistung_dc_kw}
+          onChange={handleParamChange}
+          required
+          step="0.1"
+          placeholder="z.B. 6.0"
+          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+        />
+        <p className="mt-1 text-xs text-gray-500">Eingangsseitige Leistung</p>
+      </div>
+
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-2">
+          Wirkungsgrad (%)
+        </label>
+        <input
+          type="number"
+          name="wirkungsgrad_prozent_wr"
+          value={parameterData.wirkungsgrad_prozent_wr}
+          onChange={handleParamChange}
+          step="0.1"
+          placeholder="98"
+          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+        />
+      </div>
+
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-2">
+          Hersteller
+        </label>
+        <input
+          type="text"
+          name="hersteller_wr"
+          value={parameterData.hersteller_wr}
+          onChange={handleParamChange}
+          placeholder="z.B. Huawei, SolarEdge"
+          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+        />
+      </div>
+
+      <div className="col-span-2">
+        <label className="block text-sm font-medium text-gray-700 mb-2">
+          Modell
+        </label>
+        <input
+          type="text"
+          name="modell_wr"
+          value={parameterData.modell_wr}
+          onChange={handleParamChange}
+          placeholder="z.B. SUN2000-5KTL-L1"
+          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+        />
+      </div>
+    </div>
+
+    {/* Betriebskosten */}
+    <div className="mt-6 pt-4 border-t">
+      <label className="block text-sm font-medium text-gray-700 mb-2">
+        Jährliche Betriebskosten (€/Jahr) - Prognose
+      </label>
+      <input
+        type="number"
+        name="betriebskosten_jahr_euro"
+        value={parameterData.betriebskosten_jahr_euro}
+        onChange={handleParamChange}
+        step="0.01"
+        placeholder="z.B. 0"
+        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+      />
+      <p className="mt-1 text-xs text-gray-500">
+        Wartung, laufende Kosten (Schätzung)
+      </p>
+    </div>
+  </div>
+)}
+
+{/* PV-Module Parameter */}
+{typ === 'pv-module' && (
+  <div className="border-t pt-6">
+    <h3 className="text-lg font-medium text-gray-900 mb-4">☀️ PV-Module Parameter</h3>
+    
+    {/* Verknüpfung mit Wechselrichter */}
+    <div className="mb-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
+      <label className="block text-sm font-medium text-gray-900 mb-2">
+        Wechselrichter zuordnen *
+      </label>
+      <select
+        value={parentInvestitionId}
+        onChange={(e) => setParentInvestitionId(e.target.value)}
+        required
+        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+      >
+        <option value="">-- Wechselrichter wählen --</option>
+        {wechselrichter.map((wr) => (
+          <option key={wr.id} value={wr.id}>
+            {wr.bezeichnung} ({wr.parameter?.leistung_ac_kw || '?'} kW AC)
+          </option>
+        ))}
+      </select>
+      {wechselrichter.length === 0 && (
+        <p className="mt-2 text-sm text-amber-700">
+          ⚠️ Bitte lege zuerst einen Wechselrichter an!
+        </p>
+      )}
+    </div>
+
+    <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-2">
+          Leistung (kWp) *
+        </label>
+        <input
+          type="number"
+          name="leistung_kwp_pv"
+          value={parameterData.leistung_kwp_pv}
+          onChange={handleParamChange}
+          required
+          step="0.01"
+          placeholder="z.B. 3.5"
+          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+        />
+      </div>
+
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-2">
+          Anzahl Module
+        </label>
+        <input
+          type="number"
+          name="anzahl_module"
+          value={parameterData.anzahl_module}
+          onChange={handleParamChange}
+          placeholder="z.B. 10"
+          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+        />
+      </div>
+
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-2">
+          Ausrichtung
+        </label>
+        <select
+          name="ausrichtung"
+          value={parameterData.ausrichtung}
+          onChange={handleParamChange}
+          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+        >
+          <option value="Süd">Süd</option>
+          <option value="Südost">Südost</option>
+          <option value="Südwest">Südwest</option>
+          <option value="Ost">Ost</option>
+          <option value="West">West</option>
+          <option value="Ost-West">Ost-West</option>
+        </select>
+      </div>
+
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-2">
+          Neigung (Grad)
+        </label>
+        <input
+          type="number"
+          name="neigung_grad"
+          value={parameterData.neigung_grad}
+          onChange={handleParamChange}
+          min="0"
+          max="90"
+          placeholder="30"
+          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+        />
+      </div>
+
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-2">
+          Hersteller
+        </label>
+        <input
+          type="text"
+          name="hersteller_pv"
+          value={parameterData.hersteller_pv}
+          onChange={handleParamChange}
+          placeholder="z.B. Longi, JA Solar"
+          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+        />
+      </div>
+
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-2">
+          Modell
+        </label>
+        <input
+          type="text"
+          name="modell_pv"
+          value={parameterData.modell_pv}
+          onChange={handleParamChange}
+          placeholder="z.B. LR5-54HPH"
+          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+        />
+      </div>
+    </div>
+
+    {/* Geokoordinaten */}
+    <div className="mt-4 pt-4 border-t">
+      <h4 className="text-sm font-medium text-gray-900 mb-3">Geokoordinaten (optional)</h4>
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            Breitengrad (Latitude)
+          </label>
+          <input
+            type="number"
+            name="geokoordinaten_lat"
+            value={parameterData.geokoordinaten_lat}
+            onChange={handleParamChange}
+            step="0.000001"
+            placeholder="z.B. 50.9"
+            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            Längengrad (Longitude)
+          </label>
+          <input
+            type="number"
+            name="geokoordinaten_lon"
+            value={parameterData.geokoordinaten_lon}
+            onChange={handleParamChange}
+            step="0.000001"
+            placeholder="z.B. 7.6"
+            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+        </div>
+      </div>
+      <p className="mt-2 text-xs text-gray-500">
+        Wird automatisch aus Anlagen-Standort vorgeschlagen
+      </p>
+    </div>
+
+    {/* Jahresertrag Prognose */}
+    <div className="mt-4">
+      <label className="block text-sm font-medium text-gray-700 mb-2">
+        Jahresertrag Prognose (kWh/Jahr)
+      </label>
+      <input
+        type="number"
+        name="jahresertrag_prognose_kwh_pv"
+        value={parameterData.jahresertrag_prognose_kwh_pv}
+        onChange={handleParamChange}
+        step="1"
+        placeholder="z.B. 3500 (später automatisch via PVGIS)"
+        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+      />
+      <p className="mt-1 text-xs text-gray-500">
+        Manuell eingeben oder später automatisch via PVGIS berechnen
+      </p>
+    </div>
+
+    {/* Betriebskosten */}
+    <div className="mt-6 pt-4 border-t">
+      <label className="block text-sm font-medium text-gray-700 mb-2">
+        Jährliche Betriebskosten (€/Jahr) - Prognose
+      </label>
+      <input
+        type="number"
+        name="betriebskosten_jahr_euro"
+        value={parameterData.betriebskosten_jahr_euro}
+        onChange={handleParamChange}
+        step="0.01"
+        placeholder="z.B. 50"
+        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+      />
+      <p className="mt-1 text-xs text-gray-500">
+        Wartung, Reinigung, laufende Kosten (Schätzung)
+      </p>
+    </div>
+  </div>
+)}

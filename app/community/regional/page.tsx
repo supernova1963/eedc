@@ -181,7 +181,7 @@ export default function CommunityRegionalPage() {
     : anlagen
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <Breadcrumb />
 
@@ -190,7 +190,7 @@ export default function CommunityRegionalPage() {
           <h1 className="text-3xl font-bold text-gray-900 mb-2">
             Regionale Verteilung
           </h1>
-          <p className="text-gray-600">
+          <p className="text-gray-600 dark:text-gray-400">
             Entdecken Sie PV-Anlagen in Ihrer Region
           </p>
         </div>
@@ -206,7 +206,7 @@ export default function CommunityRegionalPage() {
               <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
             </div>
           ) : regionStats.length === 0 ? (
-            <div className="text-center py-8 text-gray-500">
+            <div className="text-center py-8 text-gray-500 dark:text-gray-400">
               Keine regionalen Daten verfügbar
             </div>
           ) : (
@@ -222,7 +222,7 @@ export default function CommunityRegionalPage() {
                   }`}
                 >
                   <div className="flex items-center gap-2 mb-1">
-                    <span className="text-2xl font-bold text-gray-900">{stat.plz_prefix}xxx</span>
+                    <span className="text-2xl font-bold text-gray-900 dark:text-gray-100">{stat.plz_prefix}xxx</span>
                     <span className="px-2 py-0.5 bg-blue-100 text-blue-700 text-xs rounded-full">
                       {stat.anzahl}
                     </span>
@@ -240,7 +240,7 @@ export default function CommunityRegionalPage() {
 
           {plzFilter && (
             <div className="mt-4 flex items-center gap-2">
-              <span className="text-sm text-gray-600">
+              <span className="text-sm text-gray-600 dark:text-gray-400">
                 Filter aktiv: PLZ {plzFilter}xxx
               </span>
               <button
@@ -263,7 +263,7 @@ export default function CommunityRegionalPage() {
           </h2>
 
           {filteredAnlagen.length === 0 ? (
-            <div className="text-center py-8 text-gray-500">
+            <div className="text-center py-8 text-gray-500 dark:text-gray-400">
               <SimpleIcon type="map" className="w-12 h-12 mx-auto mb-2 text-gray-400" />
               <p>Keine Anlagen in dieser Region gefunden</p>
             </div>
@@ -281,15 +281,15 @@ export default function CommunityRegionalPage() {
                         <SimpleIcon type="sun" className="w-6 h-6 text-white" />
                       </div>
                       <div>
-                        <div className="font-medium text-gray-900">{anlage.anlagenname}</div>
-                        <div className="text-sm text-gray-500">
+                        <div className="font-medium text-gray-900 dark:text-gray-100">{anlage.anlagenname}</div>
+                        <div className="text-sm text-gray-500 dark:text-gray-400">
                           {anlage.standort_plz} {anlage.standort_ort || ''}
                           {anlage.mitglied_display_name && ` • ${anlage.mitglied_display_name}`}
                         </div>
                       </div>
                     </div>
                     <div className="text-right">
-                      <div className="font-bold text-gray-900">{anlage.leistung_kwp} kWp</div>
+                      <div className="font-bold text-gray-900 dark:text-gray-100">{anlage.leistung_kwp} kWp</div>
                       <div className="flex gap-1 mt-1">
                         {anlage.hat_speicher && (
                           <span className="px-2 py-0.5 bg-blue-100 text-blue-700 text-xs rounded">

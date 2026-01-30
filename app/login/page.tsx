@@ -53,7 +53,7 @@ export default function LoginPage() {
             <h1 className="text-3xl font-bold text-gray-900 mb-2">
               eedc Login
             </h1>
-            <p className="text-gray-600">
+            <p className="text-gray-600 dark:text-gray-400">
               Electronic Energy Data Collection
             </p>
           </div>
@@ -110,7 +110,7 @@ export default function LoginPage() {
 
           {/* Register Link */}
           <div className="mt-6 text-center">
-            <p className="text-sm text-gray-600">
+            <p className="text-sm text-gray-600 dark:text-gray-400">
               Noch kein Konto?{' '}
               <Link href="/register" className="text-blue-600 hover:text-blue-700 font-medium">
                 Jetzt registrieren
@@ -120,7 +120,7 @@ export default function LoginPage() {
         </div>
 
         {/* Footer Info */}
-        <div className="mt-8 text-center text-sm text-gray-600">
+        <div className="mt-8 text-center text-sm text-gray-600 dark:text-gray-400">
           <p>Verwalten Sie Ihre PV-Anlage, E-Auto und Wärmepumpe</p>
           <p className="mt-1">Profitieren Sie von detaillierten Auswertungen und ROI-Berechnungen</p>
         </div>

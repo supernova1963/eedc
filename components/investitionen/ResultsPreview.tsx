@@ -15,7 +15,7 @@ export default function ResultsPreview({ jahresEinsparung, co2Einsparung, mehrko
       <h4 className="font-medium text-green-900 mb-3">Automatisch berechnet:</h4>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
         <div>
-          <span className="text-green-700">Jahrliche Einsparung:</span>
+          <span className="text-green-700 dark:text-green-400">Jahrliche Einsparung:</span>
           <div className="font-bold text-green-900 text-lg">
             {jahresEinsparung.toLocaleString('de-DE')} Euro
           </div>
@@ -23,13 +23,13 @@ export default function ResultsPreview({ jahresEinsparung, co2Einsparung, mehrko
         {mehrkosten > 0 && (
           <>
             <div>
-              <span className="text-green-700">ROI:</span>
+              <span className="text-green-700 dark:text-green-400">ROI:</span>
               <div className="font-bold text-green-900 text-lg">
                 {((jahresEinsparung / mehrkosten) * 100).toFixed(1)}%
               </div>
             </div>
             <div>
-              <span className="text-green-700">Amortisation:</span>
+              <span className="text-green-700 dark:text-green-400">Amortisation:</span>
               <div className="font-bold text-green-900 text-lg">
                 {(mehrkosten / jahresEinsparung).toFixed(1)} Jahre
               </div>
@@ -37,7 +37,7 @@ export default function ResultsPreview({ jahresEinsparung, co2Einsparung, mehrko
           </>
         )}
         <div>
-          <span className="text-green-700">CO2-Einsparung:</span>
+          <span className="text-green-700 dark:text-green-400">CO2-Einsparung:</span>
           <div className="font-bold text-green-900 text-lg">
             {(co2Einsparung / 1000).toFixed(2)} t/Jahr
           </div>

@@ -41,7 +41,7 @@ export default function NeueAnlagePage() {
   }
 
   return (
-    <main className="min-h-screen bg-gray-50">
+    <main className="min-h-screen bg-gray-50 dark:bg-gray-700">
       <div className="bg-white shadow">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
           <div className="flex items-center gap-4">
@@ -49,7 +49,7 @@ export default function NeueAnlagePage() {
               href="/anlage"
               className="p-2 hover:bg-gray-100 rounded-lg transition"
             >
-              <SimpleIcon type="back" className="w-6 h-6 text-gray-600" />
+              <SimpleIcon type="back" className="w-6 h-6 text-gray-600 dark:text-gray-400" />
             </Link>
             <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-2">
               <SimpleIcon type="sun" className="w-8 h-8 text-yellow-500" />
@@ -66,7 +66,7 @@ export default function NeueAnlagePage() {
           </div>
         )}
 
-        <div className="bg-white rounded-xl shadow-sm p-8 border border-gray-200">
+        <div className="bg-white rounded-xl shadow-sm p-8 border border-gray-200 dark:border-gray-700">
           <form onSubmit={handleSubmit} className="space-y-6">
             {/* Basis-Informationen */}
             <div>
@@ -117,7 +117,7 @@ export default function NeueAnlagePage() {
             </div>
 
             {/* Standort */}
-            <div className="pt-6 border-t border-gray-200">
+            <div className="pt-6 border-t border-gray-200 dark:border-gray-700">
               <h2 className="text-xl font-semibold text-gray-900 mb-4 flex items-center gap-2">
                 <SimpleIcon type="globe" className="w-5 h-5 text-blue-600" />
                 Standort
@@ -150,7 +150,7 @@ export default function NeueAnlagePage() {
             </div>
 
             {/* Nächste Schritte */}
-            <div className="pt-6 border-t border-gray-200">
+            <div className="pt-6 border-t border-gray-200 dark:border-gray-700">
               <h2 className="text-xl font-semibold text-gray-900 mb-4 flex items-center gap-2">
                 <SimpleIcon type="info" className="w-5 h-5 text-blue-600" />
                 Nach der Erstellung

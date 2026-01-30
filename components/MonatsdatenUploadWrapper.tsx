@@ -36,7 +36,7 @@ export default function MonatsdatenUploadWrapper({
 
   if (!selectedAnlage) {
     return (
-      <div className="text-center py-8 text-gray-500">
+      <div className="text-center py-8 text-gray-500 dark:text-gray-400">
         Keine Anlage ausgewählt
       </div>
     )
@@ -76,7 +76,7 @@ export default function MonatsdatenUploadWrapper({
             <h3 className="font-semibold text-blue-900 mb-1">
               {selectedAnlage.anlagenname}
             </h3>
-            <div className="space-y-1 text-sm text-blue-700">
+            <div className="space-y-1 text-sm text-blue-700 dark:text-blue-400">
               <p className="flex items-center gap-2">
                 <SimpleIcon type="lightning" className="w-4 h-4" />
                 <span>{selectedAnlage.leistung_kwp} kWp Leistung</span>
@@ -110,7 +110,7 @@ export default function MonatsdatenUploadWrapper({
       </div>
 
       {/* Upload-Komponente */}
-      <div className="pt-4 border-t border-gray-200">
+      <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
         <MonatsdatenUpload anlageId={selectedAnlageId} />
       </div>
     </div>

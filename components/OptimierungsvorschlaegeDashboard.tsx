@@ -353,14 +353,14 @@ export default function OptimierungsvorschlaegeDashboard({
               <SimpleIcon type="bulb" className="w-6 h-6 text-blue-600" />
               Optimierungsvorschläge
             </h2>
-            <p className="text-sm text-gray-600">
+            <p className="text-sm text-gray-600 dark:text-gray-400">
               Intelligente Analyse deiner PV-Anlage mit konkreten Verbesserungsvorschlägen
             </p>
           </div>
           <div className="text-right">
-            <div className="text-sm text-gray-600">Gefunden</div>
+            <div className="text-sm text-gray-600 dark:text-gray-400">Gefunden</div>
             <div className="text-3xl font-bold text-blue-600">{vorschlaege.length}</div>
-            <div className="text-xs text-gray-500">Vorschläge</div>
+            <div className="text-xs text-gray-500 dark:text-gray-400">Vorschläge</div>
           </div>
         </div>
       </div>
@@ -372,7 +372,7 @@ export default function OptimierungsvorschlaegeDashboard({
           return (
             <div key={key} className="bg-white rounded-lg shadow p-4 text-center">
               <SimpleIcon type={info.icon} className={`w-8 h-8 mx-auto mb-2 text-${info.color}-600`} />
-              <div className="text-2xl font-bold text-gray-900">{count}</div>
+              <div className="text-2xl font-bold text-gray-900 dark:text-gray-100">{count}</div>
               <div className="text-xs text-gray-600 mt-1">{info.name}</div>
             </div>
           )
@@ -386,7 +386,7 @@ export default function OptimierungsvorschlaegeDashboard({
           <h3 className="text-xl font-semibold text-gray-900 mb-2">
             Perfekt optimiert!
           </h3>
-          <p className="text-gray-600">
+          <p className="text-gray-600 dark:text-gray-400">
             Deine PV-Anlage läuft bereits sehr effizient. Weiter so!
           </p>
         </div>
@@ -408,14 +408,14 @@ export default function OptimierungsvorschlaegeDashboard({
                       <SimpleIcon type={vorschlag.icon} className={`w-6 h-6 text-${vorschlag.color}-600`} />
                     </div>
                     <div>
-                      <h3 className="text-lg font-semibold text-gray-900">
+                      <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
                         {vorschlag.titel}
                       </h3>
                       <div className="flex items-center gap-2 mt-1">
                         <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${prioritaetStyle[vorschlag.prioritaet]}`}>
                           {vorschlag.prioritaet === 'hoch' ? '🔴' : vorschlag.prioritaet === 'mittel' ? '🟡' : '🟢'} {vorschlag.prioritaet.toUpperCase()}
                         </span>
-                        <span className="text-xs text-gray-500">
+                        <span className="text-xs text-gray-500 dark:text-gray-400">
                           {kategorieInfo[vorschlag.kategorie].name}
                         </span>
                       </div>
@@ -430,7 +430,7 @@ export default function OptimierungsvorschlaegeDashboard({
                 <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
                   <div className="flex items-center gap-2 mb-1">
                     <SimpleIcon type="trend-up" className="w-4 h-4 text-blue-600" />
-                    <span className="text-sm font-medium text-blue-900">Einsparpotenzial</span>
+                    <span className="text-sm font-medium text-blue-900 dark:text-blue-300">Einsparpotenzial</span>
                   </div>
                   <p className="text-sm text-blue-800 font-semibold">{vorschlag.potenzial}</p>
                 </div>
@@ -439,7 +439,7 @@ export default function OptimierungsvorschlaegeDashboard({
                   <div className="text-sm font-medium text-gray-700 mb-2">Empfohlene Maßnahmen:</div>
                   <ul className="space-y-2">
                     {vorschlag.massnahmen.map((massnahme, i) => (
-                      <li key={i} className="flex items-start gap-2 text-sm text-gray-600">
+                      <li key={i} className="flex items-start gap-2 text-sm text-gray-600 dark:text-gray-400">
                         <span className="text-blue-600 mt-0.5">▸</span>
                         <span>{massnahme}</span>
                       </li>
@@ -456,7 +456,7 @@ export default function OptimierungsvorschlaegeDashboard({
       <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
         <div className="flex items-start gap-2">
           <SimpleIcon type="info" className="w-5 h-5 text-gray-600 mt-0.5" />
-          <div className="text-sm text-gray-600">
+          <div className="text-sm text-gray-600 dark:text-gray-400">
             <strong>Hinweis:</strong> Diese Vorschläge basieren auf einer automatisierten Analyse deiner Daten.
             Für konkrete Investitionsentscheidungen (z.B. Batteriespeicher) empfehlen wir, einen Fachmann zu konsultieren
             und eine detaillierte Wirtschaftlichkeitsrechnung durchzuführen.

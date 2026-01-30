@@ -84,26 +84,26 @@ export default function WaermepumpeAuswertung({
 
       {/* Prognose vs. Ist */}
       {anzahlMonate >= 3 ? (
-        <div className="bg-white rounded-lg shadow p-6">
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
           <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-            <SimpleIcon type="chart" className="w-5 h-5 text-gray-600" />
+            <SimpleIcon type="chart" className="w-5 h-5 text-gray-600 dark:text-gray-400" />
             Prognose vs. Ist-Verbrauch
           </h3>
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             <div>
-              <div className="text-sm text-gray-600">Erfasste Monate</div>
-              <div className="text-2xl font-bold text-gray-900">{anzahlMonate}</div>
+              <div className="text-sm text-gray-600 dark:text-gray-400">Erfasste Monate</div>
+              <div className="text-2xl font-bold text-gray-900 dark:text-gray-100">{anzahlMonate}</div>
             </div>
             <div>
-              <div className="text-sm text-gray-600">Kosten (Prognose/Jahr)</div>
-              <div className="text-2xl font-bold text-blue-700">{fmt(prognoseJahr)} €</div>
+              <div className="text-sm text-gray-600 dark:text-gray-400">Kosten (Prognose/Jahr)</div>
+              <div className="text-2xl font-bold text-blue-700 dark:text-blue-400">{fmt(prognoseJahr)} €</div>
             </div>
             <div>
-              <div className="text-sm text-gray-600">Hochrechnung (Jahr)</div>
-              <div className="text-2xl font-bold text-gray-900">{fmt(hochrechnungJahr)} €</div>
+              <div className="text-sm text-gray-600 dark:text-gray-400">Hochrechnung (Jahr)</div>
+              <div className="text-2xl font-bold text-gray-900 dark:text-gray-100">{fmt(hochrechnungJahr)} €</div>
             </div>
             <div>
-              <div className="text-sm text-gray-600">Abweichung</div>
+              <div className="text-sm text-gray-600 dark:text-gray-400">Abweichung</div>
               <div className={`text-2xl font-bold ${abweichung > 0 ? 'text-orange-600' : 'text-green-600'}`}>
                 {abweichung > 0 ? '+' : ''}{fmtDec(abweichung)}%
               </div>
@@ -122,7 +122,7 @@ export default function WaermepumpeAuswertung({
           <div className="flex items-start gap-3">
             <SimpleIcon type="info" className="w-6 h-6 text-blue-600" />
             <div>
-              <h3 className="font-semibold text-blue-900">Noch nicht genug Daten</h3>
+              <h3 className="font-semibold text-blue-900 dark:text-blue-300">Noch nicht genug Daten</h3>
               <p className="text-sm text-blue-700 mt-1">
                 Erfasse mindestens 3 Monate, um einen Prognose-Vergleich zu sehen.
                 Aktuell: {anzahlMonate} {anzahlMonate === 1 ? 'Monat' : 'Monate'}
@@ -136,9 +136,9 @@ export default function WaermepumpeAuswertung({
       {monatsdaten.length > 0 && (
         <>
           {/* Kosten-Chart */}
-          <div className="bg-white rounded-lg shadow p-6">
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
             <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-              <SimpleIcon type="money" className="w-5 h-5 text-gray-600" />
+              <SimpleIcon type="money" className="w-5 h-5 text-gray-600 dark:text-gray-400" />
               Monatliche Kosten
             </h3>
             <ResponsiveContainer width="100%" height={300}>
@@ -155,9 +155,9 @@ export default function WaermepumpeAuswertung({
           </div>
 
           {/* JAZ-Chart */}
-          <div className="bg-white rounded-lg shadow p-6">
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
             <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-              <SimpleIcon type="trend" className="w-5 h-5 text-gray-600" />
+              <SimpleIcon type="trend" className="w-5 h-5 text-gray-600 dark:text-gray-400" />
               JAZ-Entwicklung (Jahresarbeitszahl)
             </h3>
             <ResponsiveContainer width="100%" height={300}>
@@ -180,16 +180,16 @@ export default function WaermepumpeAuswertung({
 
       {/* Monatsdaten-Tabelle */}
       {monatsdaten.length > 0 && (
-        <div className="bg-white rounded-lg shadow overflow-hidden">
-          <div className="px-6 py-4 border-b border-gray-200">
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
+          <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
             <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
-              <SimpleIcon type="clipboard" className="w-5 h-5 text-gray-600" />
+              <SimpleIcon type="clipboard" className="w-5 h-5 text-gray-600 dark:text-gray-400" />
               Alle Monatsdaten ({monatsdaten.length})
             </h3>
           </div>
           <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
+            <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+              <thead className="bg-gray-50 dark:bg-gray-700">
                 <tr>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Monat</th>
                   <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Strom</th>
@@ -199,22 +199,22 @@ export default function WaermepumpeAuswertung({
                   <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Kosten</th>
                 </tr>
               </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
+              <tbody className="bg-white divide-y divide-gray-200 dark:divide-gray-700">
                 {monatsdaten.map((m) => (
-                  <tr key={m.id} className="hover:bg-gray-50">
-                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                  <tr key={m.id} className="hover:bg-gray-50 dark:bg-gray-700">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">
                       {monatsnamen[m.monat]} {m.jahr}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-gray-900">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-gray-900 dark:text-gray-100">
                       {fmt(m.verbrauch_daten?.strom_kwh)} kWh
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-gray-900">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-gray-900 dark:text-gray-100">
                       {fmt(m.verbrauch_daten?.waerme_kwh)} kWh
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-right font-medium text-green-600">
                       {fmtDec(m.verbrauch_daten?.jaz)}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-gray-900">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-gray-900 dark:text-gray-100">
                       {fmt(m.verbrauch_daten?.pv_anteil_prozent)}%
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-right font-medium text-blue-600">

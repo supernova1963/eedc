@@ -51,7 +51,7 @@ export default async function NeuerStrompreisPage() {
         <h1 className="text-3xl font-bold text-gray-900 mb-2">
           Neuer Strompreis
         </h1>
-        <p className="text-gray-600">
+        <p className="text-gray-600 dark:text-gray-400">
           Erfasse einen neuen Strompreis mit Gültigkeitszeitraum
         </p>
       </div>

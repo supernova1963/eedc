@@ -168,9 +168,9 @@ export default function MonatsdatenTable({ initialData, anlageId }: Props) {
   return (
     <div className="bg-white rounded-lg shadow overflow-hidden">
       {/* Header mit Filter */}
-      <div className="px-6 py-4 border-b border-gray-200">
+      <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
         <div className="flex items-center justify-between mb-3">
-          <h2 className="text-lg font-semibold text-gray-900">
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
             Alle Monatsdaten ({data.length})
           </h2>
           {error && (
@@ -199,8 +199,8 @@ export default function MonatsdatenTable({ initialData, anlageId }: Props) {
 
       {/* Tabelle mit horizontalem Scrollen */}
       <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-gray-200">
-          <thead className="bg-gray-50">
+        <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+          <thead className="bg-gray-50 dark:bg-gray-700">
             <tr>
               {/* Sticky Aktionen-Spalte */}
               <th className="sticky left-0 z-20 bg-gray-50 px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase w-24">
@@ -219,7 +219,7 @@ export default function MonatsdatenTable({ initialData, anlageId }: Props) {
               ))}
             </tr>
           </thead>
-          <tbody className="bg-white divide-y divide-gray-200">
+          <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
             {data.map((row) => {
               const isDeleting = deleting === row.id
 
@@ -256,7 +256,7 @@ export default function MonatsdatenTable({ initialData, anlageId }: Props) {
                       return (
                         <td
                           key={spalte.key}
-                          className="sticky left-24 z-10 bg-white px-4 py-2 whitespace-nowrap text-sm font-medium text-gray-900"
+                          className="sticky left-24 z-10 bg-white px-4 py-2 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100"
                         >
                           <Link
                             href={`/uebersicht/${row.id}/bearbeiten`}
@@ -320,7 +320,7 @@ export default function MonatsdatenTable({ initialData, anlageId }: Props) {
       </div>
 
       {/* Legende */}
-      <div className="px-6 py-3 bg-gray-50 border-t border-gray-200 text-xs text-gray-500">
+      <div className="px-6 py-3 bg-gray-50 border-t border-gray-200 text-xs text-gray-500 dark:text-gray-400">
         <span className="mr-4">Tipp: Horizontal scrollen für alle Spalten | Klick auf Monat oder Stift-Icon zum Bearbeiten</span>
         <span className="mr-4">|</span>
         <span className="text-yellow-600 mr-2">●</span> PV-Erzeugung

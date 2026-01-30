@@ -51,7 +51,7 @@ export default async function ZuordnungPage() {
         <h1 className="text-3xl font-bold text-gray-900 mb-2">
           Anlage-Investition-Zuordnung
         </h1>
-        <p className="text-gray-600">
+        <p className="text-gray-600 dark:text-gray-400">
           Ordne deine Investitionen den zugehörigen Anlagen zu
         </p>
       </div>

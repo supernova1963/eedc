@@ -46,7 +46,7 @@ export default async function AnlagePage({
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
-          <p className="text-gray-600">Nicht authentifiziert</p>
+          <p className="text-gray-600 dark:text-gray-400">Nicht authentifiziert</p>
         </div>
       </div>
     )
@@ -61,7 +61,7 @@ export default async function AnlagePage({
 
   if (!anlage) {
     return (
-      <main className="min-h-screen bg-gray-50">
+      <main className="min-h-screen bg-gray-50 dark:bg-gray-700">
         <div className="bg-white shadow">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
             <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-2">
@@ -71,7 +71,7 @@ export default async function AnlagePage({
           </div>
         </div>
         <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-          <div className="bg-white rounded-xl shadow-lg p-12 text-center border-2 border-dashed border-gray-300">
+          <div className="bg-white rounded-xl shadow-lg p-12 text-center border-2 border-dashed border-gray-300 dark:border-gray-600">
             <div className="mb-6">
               <div className="inline-flex items-center justify-center w-20 h-20 bg-blue-100 rounded-full mb-4">
                 <SimpleIcon type="sun" className="w-12 h-12 text-blue-600" />
@@ -94,7 +94,7 @@ export default async function AnlagePage({
                 Erste Anlage erstellen
               </Link>
 
-              <div className="mt-8 pt-8 border-t border-gray-200">
+              <div className="mt-8 pt-8 border-t border-gray-200 dark:border-gray-700">
                 <h3 className="font-semibold text-gray-900 mb-4">Nächste Schritte:</h3>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-left">
                   <div className="flex items-start gap-3 p-4 bg-blue-50 rounded-lg">
@@ -103,7 +103,7 @@ export default async function AnlagePage({
                     </div>
                     <div>
                       <h4 className="font-medium text-gray-900 mb-1">Anlage erfassen</h4>
-                      <p className="text-sm text-gray-600">
+                      <p className="text-sm text-gray-600 dark:text-gray-400">
                         Geben Sie die Stammdaten Ihrer PV-Anlage ein
                       </p>
                     </div>
@@ -115,7 +115,7 @@ export default async function AnlagePage({
                     </div>
                     <div>
                       <h4 className="font-medium text-gray-900 mb-1">Daten erfassen</h4>
-                      <p className="text-sm text-gray-600">
+                      <p className="text-sm text-gray-600 dark:text-gray-400">
                         Erfassen Sie Ihre monatlichen Energiedaten
                       </p>
                     </div>
@@ -127,7 +127,7 @@ export default async function AnlagePage({
                     </div>
                     <div>
                       <h4 className="font-medium text-gray-900 mb-1">Auswerten</h4>
-                      <p className="text-sm text-gray-600">
+                      <p className="text-sm text-gray-600 dark:text-gray-400">
                         Analysieren Sie Ihre Kennzahlen und ROI
                       </p>
                     </div>
@@ -142,7 +142,7 @@ export default async function AnlagePage({
   }
 
   return (
-    <main className="min-h-screen bg-gray-50">
+    <main className="min-h-screen bg-gray-50 dark:bg-gray-700">
       {/* Header */}
       <div className="bg-white shadow">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
@@ -152,7 +152,7 @@ export default async function AnlagePage({
                 <SimpleIcon type="home" className="w-8 h-8 text-blue-600" />
                 {anlage.anlagenname || 'PV-Anlage'}
               </h1>
-              <p className="mt-2 text-sm text-gray-600">
+              <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">
                 {mitglied.data ? `${mitglied.data.vorname} ${mitglied.data.nachname}` : 'Mitglied'} · {anlage.standort_ort || 'Standort'}
               </p>
             </div>
@@ -181,7 +181,7 @@ export default async function AnlagePage({
           </div>
 
           {/* Tabs */}
-          <div className="mt-6 border-b border-gray-200">
+          <div className="mt-6 border-b border-gray-200 dark:border-gray-700">
             <nav className="-mb-px flex space-x-8">
               <Link
                 href={`/anlage?tab=profil${anlageId ? `&anlageId=${anlageId}` : ''}`}

@@ -103,7 +103,7 @@ export default function StrompreisForm({ mitglied_id, anlage_id, editData }: Str
   }
 
   return (
-    <div className="bg-white rounded-lg shadow p-6">
+    <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
       <h2 className="text-xl font-semibold text-gray-900 mb-6">
         {editData ? 'Strompreis bearbeiten' : 'Neuer Strompreis'}
       </h2>
@@ -131,7 +131,7 @@ export default function StrompreisForm({ mitglied_id, anlage_id, editData }: Str
                 required
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
-              <p className="mt-1 text-xs text-gray-500">
+              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
                 Ab wann gelten diese Preise?
               </p>
             </div>
@@ -146,7 +146,7 @@ export default function StrompreisForm({ mitglied_id, anlage_id, editData }: Str
                 onChange={handleChange}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
-              <p className="mt-1 text-xs text-gray-500">
+              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
                 Leer lassen = aktuell gültig
               </p>
             </div>
@@ -173,7 +173,7 @@ export default function StrompreisForm({ mitglied_id, anlage_id, editData }: Str
                 </option>
               ))}
             </select>
-            <p className="mt-1 text-xs text-gray-500">
+            <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
               Anlagenspezifischer Preis oder leer lassen für allgemeinen Preis
             </p>
           </div>
@@ -198,7 +198,7 @@ export default function StrompreisForm({ mitglied_id, anlage_id, editData }: Str
                 placeholder="z.B. 32.50"
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
-              <p className="mt-1 text-xs text-gray-500">
+              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
                 Preis pro kWh Strombezug aus dem Netz
               </p>
             </div>
@@ -216,7 +216,7 @@ export default function StrompreisForm({ mitglied_id, anlage_id, editData }: Str
                 placeholder="z.B. 12.50"
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
-              <p className="mt-1 text-xs text-gray-500">
+              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
                 Monatlicher Grundpreis (optional)
               </p>
             </div>
@@ -241,7 +241,7 @@ export default function StrompreisForm({ mitglied_id, anlage_id, editData }: Str
               placeholder="z.B. 8.20"
               className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
-            <p className="mt-1 text-xs text-gray-500">
+            <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
               Vergütung pro kWh eingespeisten Strom
             </p>
           </div>
@@ -302,20 +302,20 @@ export default function StrompreisForm({ mitglied_id, anlage_id, editData }: Str
             <h3 className="text-sm font-semibold text-blue-900 mb-3">Beispiel-Berechnung:</h3>
             <div className="grid grid-cols-2 gap-3 text-sm">
               <div>
-                <span className="text-blue-700">Netzbezug 100 kWh:</span>
+                <span className="text-blue-700 dark:text-blue-400">Netzbezug 100 kWh:</span>
                 <span className="float-right font-medium">
                   {(parseFloat(formData.netzbezug_arbeitspreis_cent_kwh) || 0).toFixed(2)} €
                 </span>
               </div>
               <div>
-                <span className="text-blue-700">Einspeisung 100 kWh:</span>
+                <span className="text-blue-700 dark:text-blue-400">Einspeisung 100 kWh:</span>
                 <span className="float-right font-medium">
                   {(parseFloat(formData.einspeiseverguetung_cent_kwh) || 0).toFixed(2)} €
                 </span>
               </div>
               <div className="col-span-2 pt-2 border-t border-blue-300">
-                <span className="text-blue-700">Eigenverbrauch lohnt sich:</span>
-                <span className="float-right font-bold text-green-700">
+                <span className="text-blue-700 dark:text-blue-400">Eigenverbrauch lohnt sich:</span>
+                <span className="float-right font-bold text-green-700 dark:text-green-400">
                   {((parseFloat(formData.netzbezug_arbeitspreis_cent_kwh) || 0) -
                     (parseFloat(formData.einspeiseverguetung_cent_kwh) || 0)).toFixed(2)} ct/kWh mehr
                 </span>

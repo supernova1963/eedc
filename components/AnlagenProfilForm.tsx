@@ -124,10 +124,10 @@ export default function AnlagenProfilForm({ anlage, mitglied }: AnlagenProfilFor
         )}
 
         {/* Profil-Übersicht */}
-        <div className="bg-white rounded-lg shadow p-6">
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
           <div className="flex items-center justify-between mb-6">
             <h2 className="text-xl font-semibold text-gray-900 flex items-center gap-2">
-              <SimpleIcon type="clipboard" className="w-5 h-5 text-gray-600" />
+              <SimpleIcon type="clipboard" className="w-5 h-5 text-gray-600 dark:text-gray-400" />
               Öffentliches Profil
             </h2>
             <button
@@ -142,22 +142,22 @@ export default function AnlagenProfilForm({ anlage, mitglied }: AnlagenProfilFor
           <div className="space-y-4">
             {/* Mitglied */}
             <div>
-              <div className="text-sm text-gray-600">Mitglied</div>
-              <div className="text-lg font-medium text-gray-900">
+              <div className="text-sm text-gray-600 dark:text-gray-400">Mitglied</div>
+              <div className="text-lg font-medium text-gray-900 dark:text-gray-100">
                 {mitglied ? `${mitglied.vorname} ${mitglied.nachname}` : '-'}
               </div>
             </div>
 
             {/* Anlagenname */}
             <div>
-              <div className="text-sm text-gray-600">Anlagenname</div>
-              <div className="text-lg font-medium text-gray-900">{anlage.anlagenname || '-'}</div>
+              <div className="text-sm text-gray-600 dark:text-gray-400">Anlagenname</div>
+              <div className="text-lg font-medium text-gray-900 dark:text-gray-100">{anlage.anlagenname || '-'}</div>
             </div>
 
             {/* Standort */}
             <div>
-              <div className="text-sm text-gray-600">Standort</div>
-              <div className="text-lg font-medium text-gray-900">
+              <div className="text-sm text-gray-600 dark:text-gray-400">Standort</div>
+              <div className="text-lg font-medium text-gray-900 dark:text-gray-100">
                 {anlage.standort_plz && anlage.standort_ort 
                   ? `${anlage.standort_plz} ${anlage.standort_ort}`
                   : '-'
@@ -168,7 +168,7 @@ export default function AnlagenProfilForm({ anlage, mitglied }: AnlagenProfilFor
             {/* Beschreibung */}
             {anlage.profilbeschreibung && (
               <div>
-                <div className="text-sm text-gray-600">Beschreibung</div>
+                <div className="text-sm text-gray-600 dark:text-gray-400">Beschreibung</div>
                 <div className="text-gray-900 whitespace-pre-wrap">{anlage.profilbeschreibung}</div>
               </div>
             )}
@@ -198,7 +198,7 @@ export default function AnlagenProfilForm({ anlage, mitglied }: AnlagenProfilFor
             {anlage.kontakt_erwuenscht && (
               <div className="flex items-center gap-2 text-sm">
                 <SimpleIcon type="check" className="w-4 h-4 text-green-600" />
-                <span className="text-gray-700">Kontakt von anderen Community-Mitgliedern erwünscht</span>
+                <span className="text-gray-700 dark:text-gray-300">Kontakt von anderen Community-Mitgliedern erwünscht</span>
               </div>
             )}
 
@@ -208,10 +208,10 @@ export default function AnlagenProfilForm({ anlage, mitglied }: AnlagenProfilFor
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 {anlage.wechselrichter_bezeichnung && (
                   <div className="flex items-center gap-2">
-                    <SimpleIcon type="settings" className="w-5 h-5 text-gray-600" />
+                    <SimpleIcon type="settings" className="w-5 h-5 text-gray-600 dark:text-gray-400" />
                     <div>
-                      <div className="text-xs text-gray-500">Wechselrichter</div>
-                      <div className="text-gray-900">{anlage.wechselrichter_bezeichnung}</div>
+                      <div className="text-xs text-gray-500 dark:text-gray-400">Wechselrichter</div>
+                      <div className="text-gray-900 dark:text-gray-100">{anlage.wechselrichter_bezeichnung}</div>
                     </div>
                   </div>
                 )}
@@ -219,8 +219,8 @@ export default function AnlagenProfilForm({ anlage, mitglied }: AnlagenProfilFor
                   <div className="flex items-center gap-2">
                     <SimpleIcon type="solar" className="w-5 h-5 text-yellow-500" />
                     <div>
-                      <div className="text-xs text-gray-500">PV-Module</div>
-                      <div className="text-gray-900">{anlage.pv_module_bezeichnung}</div>
+                      <div className="text-xs text-gray-500 dark:text-gray-400">PV-Module</div>
+                      <div className="text-gray-900 dark:text-gray-100">{anlage.pv_module_bezeichnung}</div>
                     </div>
                   </div>
                 )}
@@ -228,8 +228,8 @@ export default function AnlagenProfilForm({ anlage, mitglied }: AnlagenProfilFor
                   <div className="flex items-center gap-2">
                     <SimpleIcon type="battery" className="w-5 h-5 text-green-600" />
                     <div>
-                      <div className="text-xs text-gray-500">Batteriespeicher</div>
-                      <div className="text-gray-900">{anlage.batterie_bezeichnung}</div>
+                      <div className="text-xs text-gray-500 dark:text-gray-400">Batteriespeicher</div>
+                      <div className="text-gray-900 dark:text-gray-100">{anlage.batterie_bezeichnung}</div>
                     </div>
                   </div>
                 )}
@@ -237,8 +237,8 @@ export default function AnlagenProfilForm({ anlage, mitglied }: AnlagenProfilFor
                   <div className="flex items-center gap-2">
                     <SimpleIcon type="car" className="w-5 h-5 text-blue-600" />
                     <div>
-                      <div className="text-xs text-gray-500">E-Fahrzeug</div>
-                      <div className="text-gray-900">{anlage.ekfz_bezeichnung}</div>
+                      <div className="text-xs text-gray-500 dark:text-gray-400">E-Fahrzeug</div>
+                      <div className="text-gray-900 dark:text-gray-100">{anlage.ekfz_bezeichnung}</div>
                     </div>
                   </div>
                 )}
@@ -246,8 +246,8 @@ export default function AnlagenProfilForm({ anlage, mitglied }: AnlagenProfilFor
                   <div className="flex items-center gap-2">
                     <SimpleIcon type="heat" className="w-5 h-5 text-orange-500" />
                     <div>
-                      <div className="text-xs text-gray-500">Wärmepumpe</div>
-                      <div className="text-gray-900">{anlage.waermepumpe_bezeichnung}</div>
+                      <div className="text-xs text-gray-500 dark:text-gray-400">Wärmepumpe</div>
+                      <div className="text-gray-900 dark:text-gray-100">{anlage.waermepumpe_bezeichnung}</div>
                     </div>
                   </div>
                 )}
@@ -256,8 +256,8 @@ export default function AnlagenProfilForm({ anlage, mitglied }: AnlagenProfilFor
               {/* Solarteur */}
               {anlage.solarteur_name && (
                 <div className="mt-3 pt-3 border-t">
-                  <div className="text-xs text-gray-500">Installateur / Solarteur</div>
-                  <div className="text-gray-900">{anlage.solarteur_name}</div>
+                  <div className="text-xs text-gray-500 dark:text-gray-400">Installateur / Solarteur</div>
+                  <div className="text-gray-900 dark:text-gray-100">{anlage.solarteur_name}</div>
                 </div>
               )}
 
@@ -272,8 +272,8 @@ export default function AnlagenProfilForm({ anlage, mitglied }: AnlagenProfilFor
             {/* Sonstiges */}
             {anlage.sonstiges && (
               <div>
-                <div className="text-sm text-gray-600">Sonstiges</div>
-                <div className="text-gray-900">{anlage.sonstiges}</div>
+                <div className="text-sm text-gray-600 dark:text-gray-400">Sonstiges</div>
+                <div className="text-gray-900 dark:text-gray-100">{anlage.sonstiges}</div>
               </div>
             )}
           </div>
@@ -283,9 +283,9 @@ export default function AnlagenProfilForm({ anlage, mitglied }: AnlagenProfilFor
   }
 
   return (
-    <div className="bg-white rounded-lg shadow p-6">
+    <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
       <h2 className="text-xl font-semibold text-gray-900 mb-6 flex items-center gap-2">
-        <SimpleIcon type="edit" className="w-5 h-5 text-gray-700" />
+        <SimpleIcon type="edit" className="w-5 h-5 text-gray-700 dark:text-gray-300" />
         Profil bearbeiten
       </h2>
 
@@ -371,7 +371,7 @@ export default function AnlagenProfilForm({ anlage, mitglied }: AnlagenProfilFor
               <SimpleIcon type="users" className="w-5 h-5" />
               Community-Profil (freiwillig & öffentlich)
             </h3>
-            <p className="text-sm text-blue-800">
+            <p className="text-sm text-blue-800 dark:text-blue-300">
               Diese Informationen sind <strong>öffentlich sichtbar</strong>, wenn du deine Anlage
               für die Community freigibst. Teile deine Erfahrungen und hilf anderen bei der Entscheidung für PV!
             </p>
@@ -428,7 +428,7 @@ export default function AnlagenProfilForm({ anlage, mitglied }: AnlagenProfilFor
                 onChange={handleChange}
                 className="mt-1 w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
               />
-              <label className="text-sm text-gray-700">
+              <label className="text-sm text-gray-700 dark:text-gray-300">
                 <span className="font-medium">Kontakt erwünscht</span>
                 <p className="text-gray-600 mt-1">
                   Ich bin offen dafür, von anderen Community-Mitgliedern kontaktiert zu werden
@@ -450,7 +450,7 @@ export default function AnlagenProfilForm({ anlage, mitglied }: AnlagenProfilFor
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label className="flex items-center gap-2 text-sm font-medium text-gray-700 mb-2">
-                  <SimpleIcon type="settings" className="w-4 h-4 text-gray-600" />
+                  <SimpleIcon type="settings" className="w-4 h-4 text-gray-600 dark:text-gray-400" />
                   Wechselrichter
                 </label>
                 <input
@@ -528,7 +528,7 @@ export default function AnlagenProfilForm({ anlage, mitglied }: AnlagenProfilFor
 
             <div>
               <label className="flex items-center gap-2 text-sm font-medium text-gray-700 mb-2">
-                <SimpleIcon type="user" className="w-4 h-4 text-gray-600" />
+                <SimpleIcon type="user" className="w-4 h-4 text-gray-600 dark:text-gray-400" />
                 Installateur / Solarteur
               </label>
               <input

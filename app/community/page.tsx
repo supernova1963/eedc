@@ -94,7 +94,7 @@ export default function CommunityPage() {
   const filteredAnlagen = anlagen
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <Breadcrumb />
 
@@ -103,7 +103,7 @@ export default function CommunityPage() {
           <h1 className="text-3xl font-bold text-gray-900 mb-2">
             Community-Anlagen
           </h1>
-          <p className="text-gray-600">
+          <p className="text-gray-600 dark:text-gray-400">
             Entdecken Sie öffentliche PV-Anlagen und deren Erfahrungen
           </p>
         </div>
@@ -165,7 +165,7 @@ export default function CommunityPage() {
                   onChange={(e) => setFilter({ ...filter, hatSpeicher: e.target.checked })}
                   className="w-5 h-5 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
                 />
-                <span className="text-sm font-medium text-gray-700">Mit Batteriespeicher</span>
+                <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Mit Batteriespeicher</span>
               </label>
             </div>
 
@@ -177,7 +177,7 @@ export default function CommunityPage() {
                   onChange={(e) => setFilter({ ...filter, hatWallbox: e.target.checked })}
                   className="w-5 h-5 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
                 />
-                <span className="text-sm font-medium text-gray-700">Mit E-Auto/Wallbox</span>
+                <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Mit E-Auto/Wallbox</span>
               </label>
             </div>
           </div>
@@ -202,13 +202,13 @@ export default function CommunityPage() {
         {loading ? (
           <div className="text-center py-12">
             <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-            <p className="mt-4 text-gray-600">Lade Anlagen...</p>
+            <p className="mt-4 text-gray-600 dark:text-gray-400">Lade Anlagen...</p>
           </div>
         ) : filteredAnlagen.length === 0 ? (
           <div className="bg-white rounded-xl shadow-sm p-12 text-center">
             <SimpleIcon type="info" className="w-16 h-16 text-gray-400 mx-auto mb-4" />
             <h3 className="text-xl font-semibold text-gray-900 mb-2">Keine Anlagen gefunden</h3>
-            <p className="text-gray-600">
+            <p className="text-gray-600 dark:text-gray-400">
               Es wurden keine öffentlichen Anlagen mit den gewählten Filtern gefunden.
             </p>
           </div>
@@ -226,20 +226,20 @@ export default function CommunityPage() {
                       <SimpleIcon type="sun" className="w-7 h-7 text-white" />
                     </div>
                     <div>
-                      <h3 className="font-semibold text-gray-900">{anlage.anlagenname}</h3>
-                      <p className="text-sm text-gray-600">{anlage.standort_ort || 'Standort nicht angegeben'}</p>
+                      <h3 className="font-semibold text-gray-900 dark:text-gray-100">{anlage.anlagenname}</h3>
+                      <p className="text-sm text-gray-600 dark:text-gray-400">{anlage.standort_ort || 'Standort nicht angegeben'}</p>
                     </div>
                   </div>
                 </div>
 
                 <div className="space-y-2 mb-4">
                   <div className="flex items-center justify-between text-sm">
-                    <span className="text-gray-600">Leistung</span>
-                    <span className="font-medium text-gray-900">{anlage.leistung_kwp} kWp</span>
+                    <span className="text-gray-600 dark:text-gray-400">Leistung</span>
+                    <span className="font-medium text-gray-900 dark:text-gray-100">{anlage.leistung_kwp} kWp</span>
                   </div>
                   <div className="flex items-center justify-between text-sm">
-                    <span className="text-gray-600">In Betrieb seit</span>
-                    <span className="font-medium text-gray-900">
+                    <span className="text-gray-600 dark:text-gray-400">In Betrieb seit</span>
+                    <span className="font-medium text-gray-900 dark:text-gray-100">
                       {new Date(anlage.installationsdatum).getFullYear()}
                     </span>
                   </div>
@@ -261,7 +261,7 @@ export default function CommunityPage() {
                 </div>
 
                 {anlage.mitglied_display_name && (
-                  <div className="mt-4 pt-4 border-t border-gray-200 text-sm text-gray-600">
+                  <div className="mt-4 pt-4 border-t border-gray-200 text-sm text-gray-600 dark:text-gray-400">
                     von {anlage.mitglied_display_name}
                   </div>
                 )}

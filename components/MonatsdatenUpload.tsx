@@ -241,7 +241,7 @@ export default function MonatsdatenUpload({ anlageId, onSuccess }: MonatsdatenUp
             Datei auswählen
           </label>
 
-          <div className="mt-6 pt-6 border-t border-gray-200">
+          <div className="mt-6 pt-6 border-t border-gray-200 dark:border-gray-700">
             <a
               href={`/api/csv-template?anlageId=${anlageId}`}
               download
@@ -312,15 +312,15 @@ export default function MonatsdatenUpload({ anlageId, onSuccess }: MonatsdatenUp
             <div className="flex items-center gap-3">
               <SimpleIcon type="file" className="w-8 h-8 text-blue-600" />
               <div>
-                <p className="font-medium text-gray-900">{file.name}</p>
-                <p className="text-sm text-gray-500">
+                <p className="font-medium text-gray-900 dark:text-gray-100">{file.name}</p>
+                <p className="text-sm text-gray-500 dark:text-gray-400">
                   {(file.size / 1024).toFixed(1)} KB
                 </p>
               </div>
             </div>
             <button
               onClick={reset}
-              className="text-gray-400 hover:text-gray-600"
+              className="text-gray-400 hover:text-gray-600 dark:text-gray-400"
               title="Datei entfernen"
             >
               <SimpleIcon type="close" className="w-5 h-5" />
@@ -364,22 +364,22 @@ export default function MonatsdatenUpload({ anlageId, onSuccess }: MonatsdatenUp
           </h3>
 
           <div className="overflow-x-auto mb-4">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
+            <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+              <thead className="bg-gray-50 dark:bg-gray-700">
                 <tr>
-                  <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">Jahr</th>
-                  <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">Monat</th>
-                  <th className="px-3 py-2 text-right text-xs font-medium text-gray-500">PV (kWh)</th>
-                  <th className="px-3 py-2 text-right text-xs font-medium text-gray-500">Verbrauch (kWh)</th>
-                  <th className="px-3 py-2 text-right text-xs font-medium text-gray-500">Einspeisung (kWh)</th>
-                  <th className="px-3 py-2 text-right text-xs font-medium text-gray-500">Netzbezug (kWh)</th>
+                  <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Jahr</th>
+                  <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Monat</th>
+                  <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 dark:text-gray-400">PV (kWh)</th>
+                  <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 dark:text-gray-400">Verbrauch (kWh)</th>
+                  <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 dark:text-gray-400">Einspeisung (kWh)</th>
+                  <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 dark:text-gray-400">Netzbezug (kWh)</th>
                 </tr>
               </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
+              <tbody className="bg-white divide-y divide-gray-200 dark:divide-gray-700">
                 {previewData.slice(0, 10).map((row, i) => (
                   <tr key={i} className={i % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
-                    <td className="px-3 py-2 text-sm text-gray-900">{row.jahr}</td>
-                    <td className="px-3 py-2 text-sm text-gray-900">{monatsnamen[row.monat]}</td>
+                    <td className="px-3 py-2 text-sm text-gray-900 dark:text-gray-100">{row.jahr}</td>
+                    <td className="px-3 py-2 text-sm text-gray-900 dark:text-gray-100">{monatsnamen[row.monat]}</td>
                     <td className="px-3 py-2 text-sm text-gray-900 text-right">
                       {row.pv_erzeugung_kwh?.toFixed(1) || '-'}
                     </td>

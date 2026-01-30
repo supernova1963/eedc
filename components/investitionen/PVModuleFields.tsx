@@ -151,7 +151,7 @@ export default function PVModuleFields({
             placeholder="z.B. 7.6"
           />
         </div>
-        <p className="mt-2 text-xs text-gray-500">
+        <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
           Wird automatisch aus Anlagen-Standort vorgeschlagen
         </p>
       </div>

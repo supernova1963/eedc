@@ -99,7 +99,7 @@ export default async function BearbeitenPage({
     'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember']
 
   return (
-    <main className="min-h-screen bg-gray-50">
+    <main className="min-h-screen bg-gray-50 dark:bg-gray-700">
       <div className="bg-white shadow">
         <div className="max-w-4xl mx-auto px-4 py-6">
           <div className="flex items-center justify-between">
@@ -108,7 +108,7 @@ export default async function BearbeitenPage({
                 <SimpleIcon type="edit" className="w-8 h-8 text-blue-600" />
                 Monatsdaten bearbeiten
               </h1>
-              <p className="mt-1 text-sm text-gray-600">
+              <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
                 {monatsnamen[monatsdaten.monat]} {monatsdaten.jahr} - {anlage.anlagenname}
               </p>
             </div>

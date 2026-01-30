@@ -53,10 +53,10 @@ export default function EAutoAuswertung({
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-2xl font-bold text-gray-900 mb-2 flex items-center gap-2">
-            <SimpleIcon type="car" className="w-6 h-6 text-gray-700" />
+            <SimpleIcon type="car" className="w-6 h-6 text-gray-700 dark:text-gray-300" />
             {investition.bezeichnung}
           </h2>
-          <p className="text-sm text-gray-600">
+          <p className="text-sm text-gray-600 dark:text-gray-400">
             {investition.alternativ_beschreibung && `vs. ${investition.alternativ_beschreibung} • `}
             seit {new Date(investition.anschaffungsdatum).toLocaleDateString('de-DE', { month: 'short', year: 'numeric' })}
           </p>
@@ -72,23 +72,23 @@ export default function EAutoAuswertung({
 
       {/* Prognose vs. Ist */}
       {prognoseVergleich && (
-        <div className="bg-white rounded-lg shadow p-6">
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
           <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-            <SimpleIcon type="chart" className="w-5 h-5 text-gray-600" />
+            <SimpleIcon type="chart" className="w-5 h-5 text-gray-600 dark:text-gray-400" />
             Prognose vs. Ist ({prognoseVergleich.jahr || new Date().getFullYear()})
           </h3>
 
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
             <div>
-              <div className="text-sm text-gray-600">Prognose (Jahr)</div>
-              <div className="text-2xl font-bold text-gray-900">
+              <div className="text-sm text-gray-600 dark:text-gray-400">Prognose (Jahr)</div>
+              <div className="text-2xl font-bold text-gray-900 dark:text-gray-100">
                 {fmt(prognoseVergleich.prognose_jahr_euro)} €
               </div>
             </div>
 
             <div>
-              <div className="text-sm text-gray-600">Ist ({prognoseVergleich.anzahl_monate} Monate)</div>
-              <div className="text-2xl font-bold text-blue-700">
+              <div className="text-sm text-gray-600 dark:text-gray-400">Ist ({prognoseVergleich.anzahl_monate} Monate)</div>
+              <div className="text-2xl font-bold text-blue-700 dark:text-blue-400">
                 {fmt(prognoseVergleich.einsparung_ist_jahr_euro)} €
               </div>
             </div>
@@ -96,14 +96,14 @@ export default function EAutoAuswertung({
             {prognoseVergleich.hochrechnung_jahr_euro && (
               <>
                 <div>
-                  <div className="text-sm text-gray-600">Hochrechnung</div>
-                  <div className="text-2xl font-bold text-green-700">
+                  <div className="text-sm text-gray-600 dark:text-gray-400">Hochrechnung</div>
+                  <div className="text-2xl font-bold text-green-700 dark:text-green-400">
                     {fmt(prognoseVergleich.hochrechnung_jahr_euro)} €
                   </div>
                 </div>
 
                 <div>
-                  <div className="text-sm text-gray-600">Abweichung</div>
+                  <div className="text-sm text-gray-600 dark:text-gray-400">Abweichung</div>
                   <div className={`text-2xl font-bold ${
                     (prognoseVergleich.abweichung_hochrechnung_prozent || 0) >= 0 
                       ? 'text-green-700' 
@@ -134,17 +134,17 @@ export default function EAutoAuswertung({
               ) : prognoseVergleich.bewertung === 'Im Rahmen der Prognose' ? (
                 <SimpleIcon type="check" className="w-6 h-6 text-blue-600" />
               ) : (
-                <SimpleIcon type="info" className="w-6 h-6 text-gray-600" />
+                <SimpleIcon type="info" className="w-6 h-6 text-gray-600 dark:text-gray-400" />
               )}
               <div>
                 <div className="font-medium">{prognoseVergleich.bewertung}</div>
                 {prognoseVergleich.bewertung === 'Besser als Prognose' && (
-                  <div className="text-sm text-gray-600">
+                  <div className="text-sm text-gray-600 dark:text-gray-400">
                     Du sparst mehr als prognostiziert - super! 🎉
                   </div>
                 )}
                 {prognoseVergleich.bewertung === 'Zu wenig Daten' && (
-                  <div className="text-sm text-gray-600">
+                  <div className="text-sm text-gray-600 dark:text-gray-400">
                     Erfasse mindestens 3 Monate für eine Hochrechnung
                   </div>
                 )}
@@ -156,9 +156,9 @@ export default function EAutoAuswertung({
 
       {/* Charts */}
       {monatsdaten.length > 0 && (
-        <div className="bg-white rounded-lg shadow p-6">
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
           <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-            <SimpleIcon type="trend" className="w-5 h-5 text-gray-600" />
+            <SimpleIcon type="trend" className="w-5 h-5 text-gray-600 dark:text-gray-400" />
             Monatliche Entwicklung
           </h3>
 
@@ -200,17 +200,17 @@ export default function EAutoAuswertung({
 
       {/* Monatsdaten Tabelle */}
       {monatsdaten.length > 0 ? (
-        <div className="bg-white rounded-lg shadow overflow-hidden">
-          <div className="px-6 py-4 border-b border-gray-200">
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
+          <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
             <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
-              <SimpleIcon type="clipboard" className="w-5 h-5 text-gray-600" />
+              <SimpleIcon type="clipboard" className="w-5 h-5 text-gray-600 dark:text-gray-400" />
               Alle erfassten Monate ({monatsdaten.length})
             </h3>
           </div>
           
           <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
+            <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+              <thead className="bg-gray-50 dark:bg-gray-700">
                 <tr>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
                     Monat
@@ -238,7 +238,7 @@ export default function EAutoAuswertung({
                   </th>
                 </tr>
               </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
+              <tbody className="bg-white divide-y divide-gray-200 dark:divide-gray-700">
                 {monatsdaten
                   .sort((a, b) => {
                     if (a.jahr !== b.jahr) return b.jahr - a.jahr
@@ -250,30 +250,30 @@ export default function EAutoAuswertung({
                       : 0
 
                     return (
-                      <tr key={m.id} className="hover:bg-gray-50">
+                      <tr key={m.id} className="hover:bg-gray-50 dark:bg-gray-700">
                         <td className="px-6 py-4 whitespace-nowrap">
-                          <div className="text-sm font-medium text-gray-900">
+                          <div className="text-sm font-medium text-gray-900 dark:text-gray-100">
                             {monatsnamen[m.monat]} {m.jahr}
                           </div>
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-right text-sm text-gray-900">
+                        <td className="px-6 py-4 whitespace-nowrap text-right text-sm text-gray-900 dark:text-gray-100">
                           {fmt(m.verbrauch_daten.km_gefahren)}
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-right text-sm text-gray-900">
+                        <td className="px-6 py-4 whitespace-nowrap text-right text-sm text-gray-900 dark:text-gray-100">
                           {fmtDec(m.verbrauch_daten.strom_kwh)}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-right">
-                          <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">
+                          <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800 dark:text-green-300">
                             {fmtDec(pvAnteil)}%
                           </span>
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-right text-sm text-gray-900">
+                        <td className="px-6 py-4 whitespace-nowrap text-right text-sm text-gray-900 dark:text-gray-100">
                           {fmtDec(m.verbrauch_daten.verbrauch_kwh_100km)} kWh/100km
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium text-green-600">
                           {fmt(m.einsparung_monat_euro)} €
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-right text-sm text-gray-900">
+                        <td className="px-6 py-4 whitespace-nowrap text-right text-sm text-gray-900 dark:text-gray-100">
                           {fmtDec((m.co2_einsparung_kg || 0) / 1000)} t
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-center text-sm font-medium">

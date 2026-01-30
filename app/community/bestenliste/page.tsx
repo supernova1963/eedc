@@ -163,7 +163,7 @@ export default function CommunityBestenlistePage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <Breadcrumb />
 
@@ -172,7 +172,7 @@ export default function CommunityBestenlistePage() {
           <h1 className="text-3xl font-bold text-gray-900 mb-2">
             Bestenliste
           </h1>
-          <p className="text-gray-600">
+          <p className="text-gray-600 dark:text-gray-400">
             Die Top-Anlagen der Community nach verschiedenen Kriterien
           </p>
         </div>
@@ -205,10 +205,10 @@ export default function CommunityBestenlistePage() {
           {loading ? (
             <div className="text-center py-12">
               <div className="inline-block animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600"></div>
-              <p className="mt-4 text-gray-600">Lade Bestenliste...</p>
+              <p className="mt-4 text-gray-600 dark:text-gray-400">Lade Bestenliste...</p>
             </div>
           ) : sortierteAnlagen.length === 0 ? (
-            <div className="text-center py-12 text-gray-500">
+            <div className="text-center py-12 text-gray-500 dark:text-gray-400">
               <SimpleIcon type="trophy" className="w-16 h-16 mx-auto mb-4 text-gray-400" />
               <p>Keine Anlagen gefunden</p>
             </div>
@@ -275,7 +275,7 @@ export default function CommunityBestenlistePage() {
                       {getWert(anlage)}
                     </div>
                     {anlage.anzahl_monate && anlage.anzahl_monate > 0 && sortierung !== 'leistung' && (
-                      <div className="text-xs text-gray-500">
+                      <div className="text-xs text-gray-500 dark:text-gray-400">
                         {anlage.anzahl_monate} Monate Daten
                       </div>
                     )}

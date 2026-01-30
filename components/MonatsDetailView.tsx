@@ -19,7 +19,7 @@ export default function MonatsDetailView({ monatsdaten, anlage }: MonatsDetailVi
     return (
       <div className="bg-white rounded-lg shadow p-8 text-center">
         <SimpleIcon type="info" className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-        <p className="text-gray-500">Keine Monatsdaten vorhanden</p>
+        <p className="text-gray-500 dark:text-gray-400">Keine Monatsdaten vorhanden</p>
       </div>
     )
   }
@@ -109,7 +109,7 @@ export default function MonatsDetailView({ monatsdaten, anlage }: MonatsDetailVi
   return (
     <div className="space-y-6">
       {/* Header mit Monatsauswahl */}
-      <div className="bg-white rounded-lg shadow p-6">
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
         <div className="flex items-start justify-between mb-4">
           <div>
             <h2 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
@@ -121,7 +121,7 @@ export default function MonatsDetailView({ monatsdaten, anlage }: MonatsDetailVi
             </p>
           </div>
           <div className="text-right">
-            <div className="text-sm text-gray-600">Ausgewählter Monat</div>
+            <div className="text-sm text-gray-600 dark:text-gray-400">Ausgewählter Monat</div>
             <div className="text-2xl font-bold text-blue-600">
               {monatsnamen[currentMonth.monat]} {currentMonth.jahr}
             </div>
@@ -158,7 +158,7 @@ export default function MonatsDetailView({ monatsdaten, anlage }: MonatsDetailVi
             <div className="text-sm text-yellow-800 font-medium">PV-Erzeugung</div>
             <SimpleIcon type="sun" className="w-6 h-6 text-yellow-600" />
           </div>
-          <div className="text-3xl font-bold text-yellow-800">{fmt(erzeugung)} kWh</div>
+          <div className="text-3xl font-bold text-yellow-800 dark:text-yellow-300">{fmt(erzeugung)} kWh</div>
           <div className="text-xs text-yellow-700 mt-1">
             {fmtDec(spezifischerErtrag)} kWh/kWp
           </div>
@@ -174,7 +174,7 @@ export default function MonatsDetailView({ monatsdaten, anlage }: MonatsDetailVi
             <div className="text-sm text-blue-800 font-medium">Eigenverbrauch</div>
             <SimpleIcon type="home" className="w-6 h-6 text-blue-600" />
           </div>
-          <div className="text-3xl font-bold text-blue-800">{fmt(eigenverbrauchAbsolut)} kWh</div>
+          <div className="text-3xl font-bold text-blue-800 dark:text-blue-300">{fmt(eigenverbrauchAbsolut)} kWh</div>
           <div className="text-xs text-blue-700 mt-1">
             {fmtDec(eigenverbrauchsquote)}% Quote
           </div>
@@ -208,7 +208,7 @@ export default function MonatsDetailView({ monatsdaten, anlage }: MonatsDetailVi
       {/* Charts-Sektion */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Energiefluss */}
-        <div className="bg-white rounded-lg shadow p-6">
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
           <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
             <SimpleIcon type="lightning" className="w-5 h-5 text-blue-600" />
             PV-Energie Verwendung
@@ -236,7 +236,7 @@ export default function MonatsDetailView({ monatsdaten, anlage }: MonatsDetailVi
         </div>
 
         {/* Verbrauchsdeckung */}
-        <div className="bg-white rounded-lg shadow p-6">
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
           <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
             <SimpleIcon type="plug" className="w-5 h-5 text-purple-600" />
             Verbrauchsdeckung
@@ -265,7 +265,7 @@ export default function MonatsDetailView({ monatsdaten, anlage }: MonatsDetailVi
       </div>
 
       {/* Wirtschaftliche Aufschlüsselung */}
-      <div className="bg-white rounded-lg shadow p-6">
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
         <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
           <SimpleIcon type="money" className="w-5 h-5 text-green-600" />
           Wirtschaftliche Aufschlüsselung
@@ -288,40 +288,40 @@ export default function MonatsDetailView({ monatsdaten, anlage }: MonatsDetailVi
       {/* Detailtabellen */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Energiedaten */}
-        <div className="bg-white rounded-lg shadow overflow-hidden">
-          <div className="px-6 py-4 bg-gray-50 border-b border-gray-200">
-            <h3 className="text-lg font-semibold text-gray-900">Energiedaten (kWh)</h3>
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
+          <div className="px-6 py-4 bg-gray-50 border-b border-gray-200 dark:border-gray-700">
+            <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Energiedaten (kWh)</h3>
           </div>
           <div className="p-6">
             <table className="min-w-full">
-              <tbody className="divide-y divide-gray-200">
+              <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
                 <tr>
-                  <td className="py-2 text-sm text-gray-600">PV-Erzeugung</td>
-                  <td className="py-2 text-sm text-right font-medium text-gray-900">{fmt(erzeugung)}</td>
+                  <td className="py-2 text-sm text-gray-600 dark:text-gray-400">PV-Erzeugung</td>
+                  <td className="py-2 text-sm text-right font-medium text-gray-900 dark:text-gray-100">{fmt(erzeugung)}</td>
                 </tr>
                 <tr>
-                  <td className="py-2 text-sm text-gray-600">Direktverbrauch</td>
+                  <td className="py-2 text-sm text-gray-600 dark:text-gray-400">Direktverbrauch</td>
                   <td className="py-2 text-sm text-right font-medium text-blue-600">{fmt(direktverbrauch)}</td>
                 </tr>
                 <tr>
-                  <td className="py-2 text-sm text-gray-600">Batterieladung</td>
+                  <td className="py-2 text-sm text-gray-600 dark:text-gray-400">Batterieladung</td>
                   <td className="py-2 text-sm text-right font-medium text-purple-600">{fmt(batterieladung)}</td>
                 </tr>
                 <tr>
-                  <td className="py-2 text-sm text-gray-600">Batterieentladung</td>
+                  <td className="py-2 text-sm text-gray-600 dark:text-gray-400">Batterieentladung</td>
                   <td className="py-2 text-sm text-right font-medium text-purple-600">{fmt(batterieentladung)}</td>
                 </tr>
                 <tr>
-                  <td className="py-2 text-sm text-gray-600">Einspeisung</td>
+                  <td className="py-2 text-sm text-gray-600 dark:text-gray-400">Einspeisung</td>
                   <td className="py-2 text-sm text-right font-medium text-green-600">{fmt(einspeisung)}</td>
                 </tr>
                 <tr>
-                  <td className="py-2 text-sm text-gray-600">Netzbezug</td>
+                  <td className="py-2 text-sm text-gray-600 dark:text-gray-400">Netzbezug</td>
                   <td className="py-2 text-sm text-right font-medium text-red-600">{fmt(netzbezug)}</td>
                 </tr>
-                <tr className="bg-gray-50">
-                  <td className="py-2 text-sm font-medium text-gray-900">Gesamtverbrauch</td>
-                  <td className="py-2 text-sm text-right font-bold text-gray-900">{fmt(gesamtverbrauch)}</td>
+                <tr className="bg-gray-50 dark:bg-gray-700">
+                  <td className="py-2 text-sm font-medium text-gray-900 dark:text-gray-100">Gesamtverbrauch</td>
+                  <td className="py-2 text-sm text-right font-bold text-gray-900 dark:text-gray-100">{fmt(gesamtverbrauch)}</td>
                 </tr>
               </tbody>
             </table>
@@ -329,27 +329,27 @@ export default function MonatsDetailView({ monatsdaten, anlage }: MonatsDetailVi
         </div>
 
         {/* Finanzdaten & Kennzahlen */}
-        <div className="bg-white rounded-lg shadow overflow-hidden">
-          <div className="px-6 py-4 bg-gray-50 border-b border-gray-200">
-            <h3 className="text-lg font-semibold text-gray-900">Finanzen & Kennzahlen</h3>
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
+          <div className="px-6 py-4 bg-gray-50 border-b border-gray-200 dark:border-gray-700">
+            <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Finanzen & Kennzahlen</h3>
           </div>
           <div className="p-6">
             <table className="min-w-full">
-              <tbody className="divide-y divide-gray-200">
+              <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
                 <tr>
-                  <td className="py-2 text-sm text-gray-600">Einspeisevergütung</td>
+                  <td className="py-2 text-sm text-gray-600 dark:text-gray-400">Einspeisevergütung</td>
                   <td className="py-2 text-sm text-right font-medium text-green-600">+{fmtDec(einspeisungErtrag)} €</td>
                 </tr>
                 <tr>
-                  <td className="py-2 text-sm text-gray-600">Netzbezugskosten</td>
+                  <td className="py-2 text-sm text-gray-600 dark:text-gray-400">Netzbezugskosten</td>
                   <td className="py-2 text-sm text-right font-medium text-red-600">-{fmtDec(netzbezugKosten)} €</td>
                 </tr>
                 <tr>
-                  <td className="py-2 text-sm text-gray-600">Betriebsausgaben</td>
+                  <td className="py-2 text-sm text-gray-600 dark:text-gray-400">Betriebsausgaben</td>
                   <td className="py-2 text-sm text-right font-medium text-orange-600">-{fmtDec(betriebsausgaben)} €</td>
                 </tr>
-                <tr className="bg-gray-50">
-                  <td className="py-2 text-sm font-medium text-gray-900">Netto-Ertrag</td>
+                <tr className="bg-gray-50 dark:bg-gray-700">
+                  <td className="py-2 text-sm font-medium text-gray-900 dark:text-gray-100">Netto-Ertrag</td>
                   <td className={`py-2 text-sm text-right font-bold ${nettoErtrag >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                     {nettoErtrag >= 0 ? '+' : ''}{fmtDec(nettoErtrag)} €
                   </td>
@@ -359,16 +359,16 @@ export default function MonatsDetailView({ monatsdaten, anlage }: MonatsDetailVi
                   <td className="py-2 text-sm text-right font-medium text-blue-600 pt-4">{fmtDec(eigenverbrauchsquote)}%</td>
                 </tr>
                 <tr>
-                  <td className="py-2 text-sm text-gray-600">Autarkiegrad</td>
+                  <td className="py-2 text-sm text-gray-600 dark:text-gray-400">Autarkiegrad</td>
                   <td className="py-2 text-sm text-right font-medium text-purple-600">{fmtDec(autarkiegrad)}%</td>
                 </tr>
                 <tr>
-                  <td className="py-2 text-sm text-gray-600">Batterie-Effizienz</td>
+                  <td className="py-2 text-sm text-gray-600 dark:text-gray-400">Batterie-Effizienz</td>
                   <td className="py-2 text-sm text-right font-medium text-purple-600">{fmtDec(batterieEffizienz)}%</td>
                 </tr>
                 <tr>
-                  <td className="py-2 text-sm text-gray-600">Ø Erzeugung/Tag</td>
-                  <td className="py-2 text-sm text-right font-medium text-gray-900">{fmtDec(durchschnittTagErzeugung)} kWh</td>
+                  <td className="py-2 text-sm text-gray-600 dark:text-gray-400">Ø Erzeugung/Tag</td>
+                  <td className="py-2 text-sm text-right font-medium text-gray-900 dark:text-gray-100">{fmtDec(durchschnittTagErzeugung)} kWh</td>
                 </tr>
               </tbody>
             </table>
@@ -383,27 +383,27 @@ export default function MonatsDetailView({ monatsdaten, anlage }: MonatsDetailVi
           Monats-Insights
         </h3>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="bg-white rounded-lg p-4">
+          <div className="bg-white dark:bg-gray-700 rounded-lg p-4">
             <div className="text-sm font-medium text-gray-700 mb-2">Performance</div>
-            <div className="text-sm text-gray-600">
+            <div className="text-sm text-gray-600 dark:text-gray-400">
               {eigenverbrauchsquote > 70 ? '✓' : '⚠'} Eigenverbrauch: {eigenverbrauchsquote > 70 ? 'Sehr gut' : 'Optimierbar'}
             </div>
             <div className="text-sm text-gray-600 mt-1">
               {autarkiegrad > 60 ? '✓' : '⚠'} Autarkie: {autarkiegrad > 60 ? 'Stark' : 'Ausbaufähig'}
             </div>
           </div>
-          <div className="bg-white rounded-lg p-4">
+          <div className="bg-white dark:bg-gray-700 rounded-lg p-4">
             <div className="text-sm font-medium text-gray-700 mb-2">Wirtschaftlichkeit</div>
-            <div className="text-sm text-gray-600">
+            <div className="text-sm text-gray-600 dark:text-gray-400">
               {nettoErtrag > 0 ? '✓ Positiv' : '⚠ Negativ'}: {fmtDec(nettoErtrag)} €
             </div>
             <div className="text-sm text-gray-600 mt-1">
               Einsparung: {fmtDec(eigenverbrauchAbsolut * 0.30)} € vermieden
             </div>
           </div>
-          <div className="bg-white rounded-lg p-4">
+          <div className="bg-white dark:bg-gray-700 rounded-lg p-4">
             <div className="text-sm font-medium text-gray-700 mb-2">Speicher</div>
-            <div className="text-sm text-gray-600">
+            <div className="text-sm text-gray-600 dark:text-gray-400">
               Effizienz: {fmtDec(batterieEffizienz)}%
             </div>
             <div className="text-sm text-gray-600 mt-1">

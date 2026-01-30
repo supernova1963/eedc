@@ -108,7 +108,7 @@ export default function CommunityVergleichPage() {
   const selectedAnlagenData = anlagen.filter(a => selectedAnlagen.includes(a.anlage_id))
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <Breadcrumb />
 
@@ -117,7 +117,7 @@ export default function CommunityVergleichPage() {
           <h1 className="text-3xl font-bold text-gray-900 mb-2">
             Anlagen-Vergleich
           </h1>
-          <p className="text-gray-600">
+          <p className="text-gray-600 dark:text-gray-400">
             Vergleichen Sie bis zu 4 öffentliche Anlagen miteinander
           </p>
         </div>
@@ -153,8 +153,8 @@ export default function CommunityVergleichPage() {
                       <SimpleIcon type="sun" className="w-6 h-6" />
                     </div>
                     <div className="flex-1">
-                      <div className="font-medium text-gray-900">{anlage.anlagenname}</div>
-                      <div className="text-sm text-gray-500">
+                      <div className="font-medium text-gray-900 dark:text-gray-100">{anlage.anlagenname}</div>
+                      <div className="text-sm text-gray-500 dark:text-gray-400">
                         {anlage.leistung_kwp} kWp • {anlage.standort_ort || 'Unbekannt'}
                       </div>
                     </div>
@@ -168,7 +168,7 @@ export default function CommunityVergleichPage() {
           )}
 
           {anlagen.length === 0 && !loading && (
-            <div className="text-center py-8 text-gray-500">
+            <div className="text-center py-8 text-gray-500 dark:text-gray-400">
               <SimpleIcon type="info" className="w-12 h-12 mx-auto mb-2 text-gray-400" />
               <p>Keine öffentlichen Anlagen mit Monatsdaten-Freigabe gefunden</p>
             </div>
@@ -185,16 +185,16 @@ export default function CommunityVergleichPage() {
             {loading ? (
               <div className="text-center py-8">
                 <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-                <p className="mt-2 text-gray-600">Lade Vergleichsdaten...</p>
+                <p className="mt-2 text-gray-600 dark:text-gray-400">Lade Vergleichsdaten...</p>
               </div>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full">
                   <thead>
-                    <tr className="border-b border-gray-200">
-                      <th className="text-left py-3 px-4 font-semibold text-gray-700">Kennzahl</th>
+                    <tr className="border-b border-gray-200 dark:border-gray-700">
+                      <th className="text-left py-3 px-4 font-semibold text-gray-700 dark:text-gray-300">Kennzahl</th>
                       {vergleichsDaten.map((item) => (
-                        <th key={item.anlage?.anlage_id} className="text-center py-3 px-4 font-semibold text-gray-700">
+                        <th key={item.anlage?.anlage_id} className="text-center py-3 px-4 font-semibold text-gray-700 dark:text-gray-300">
                           {item.anlage?.anlagenname}
                         </th>
                       ))}
@@ -202,7 +202,7 @@ export default function CommunityVergleichPage() {
                   </thead>
                   <tbody>
                     <tr className="border-b border-gray-100">
-                      <td className="py-3 px-4 text-gray-600">Leistung (kWp)</td>
+                      <td className="py-3 px-4 text-gray-600 dark:text-gray-400">Leistung (kWp)</td>
                       {vergleichsDaten.map((item) => (
                         <td key={item.anlage?.anlage_id} className="text-center py-3 px-4 font-medium">
                           {item.anlage?.leistung_kwp}
@@ -210,7 +210,7 @@ export default function CommunityVergleichPage() {
                       ))}
                     </tr>
                     <tr className="border-b border-gray-100">
-                      <td className="py-3 px-4 text-gray-600">Standort</td>
+                      <td className="py-3 px-4 text-gray-600 dark:text-gray-400">Standort</td>
                       {vergleichsDaten.map((item) => (
                         <td key={item.anlage?.anlage_id} className="text-center py-3 px-4">
                           {item.anlage?.standort_ort || '-'}
@@ -218,7 +218,7 @@ export default function CommunityVergleichPage() {
                       ))}
                     </tr>
                     <tr className="border-b border-gray-100">
-                      <td className="py-3 px-4 text-gray-600">Speicher</td>
+                      <td className="py-3 px-4 text-gray-600 dark:text-gray-400">Speicher</td>
                       {vergleichsDaten.map((item) => (
                         <td key={item.anlage?.anlage_id} className="text-center py-3 px-4">
                           {item.anlage?.hat_speicher ? (
@@ -230,7 +230,7 @@ export default function CommunityVergleichPage() {
                       ))}
                     </tr>
                     <tr className="border-b border-gray-100">
-                      <td className="py-3 px-4 text-gray-600">E-Auto/Wallbox</td>
+                      <td className="py-3 px-4 text-gray-600 dark:text-gray-400">E-Auto/Wallbox</td>
                       {vergleichsDaten.map((item) => (
                         <td key={item.anlage?.anlage_id} className="text-center py-3 px-4">
                           {item.anlage?.hat_wallbox ? (

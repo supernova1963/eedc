@@ -84,7 +84,7 @@ export default function RegisterPage() {
             <h1 className="text-3xl font-bold text-gray-900 mb-2">
               Registrierung
             </h1>
-            <p className="text-gray-600">
+            <p className="text-gray-600 dark:text-gray-400">
               Erstellen Sie Ihr eedc Konto
             </p>
           </div>
@@ -194,7 +194,7 @@ export default function RegisterPage() {
                 className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
                 placeholder="Mindestens 6 Zeichen"
               />
-              <div className="mt-2 text-sm text-gray-600">
+              <div className="mt-2 text-sm text-gray-600 dark:text-gray-400">
                 <p className="font-medium mb-1">Passwort-Anforderungen:</p>
                 <ul className="list-disc list-inside space-y-1 text-xs">
                   <li className={formData.password.length >= 6 ? 'text-green-600' : ''}>
@@ -240,7 +240,7 @@ export default function RegisterPage() {
 
           {/* Login Link */}
           <div className="mt-6 text-center">
-            <p className="text-sm text-gray-600">
+            <p className="text-sm text-gray-600 dark:text-gray-400">
               Bereits registriert?{' '}
               <Link href="/login" className="text-blue-600 hover:text-blue-700 font-medium">
                 Jetzt anmelden
@@ -250,7 +250,7 @@ export default function RegisterPage() {
         </div>
 
         {/* Footer Info */}
-        <div className="mt-8 text-center text-sm text-gray-500">
+        <div className="mt-8 text-center text-sm text-gray-500 dark:text-gray-400">
           <p>* Pflichtfelder</p>
         </div>
       </div>

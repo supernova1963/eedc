@@ -86,21 +86,21 @@ export default function SpeicherAuswertung({
 
       {/* KPIs */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <div className="bg-white rounded-lg shadow p-6">
-          <div className="text-sm text-gray-600">Ø Wirkungsgrad</div>
-          <div className="text-2xl font-bold text-green-700">{fmtDec(avgWirkungsgrad)}%</div>
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+          <div className="text-sm text-gray-600 dark:text-gray-400">Ø Wirkungsgrad</div>
+          <div className="text-2xl font-bold text-green-700 dark:text-green-400">{fmtDec(avgWirkungsgrad)}%</div>
           <div className="text-xs text-gray-500 mt-1">Prognose: {prognoseWirkungsgrad}%</div>
         </div>
-        <div className="bg-white rounded-lg shadow p-6">
-          <div className="text-sm text-gray-600">Gesamt-Entladung</div>
-          <div className="text-2xl font-bold text-gray-900">{fmt(gesamtEntladung)} kWh</div>
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+          <div className="text-sm text-gray-600 dark:text-gray-400">Gesamt-Entladung</div>
+          <div className="text-2xl font-bold text-gray-900 dark:text-gray-100">{fmt(gesamtEntladung)} kWh</div>
         </div>
-        <div className="bg-white rounded-lg shadow p-6">
-          <div className="text-sm text-gray-600">Selbstentladung</div>
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+          <div className="text-sm text-gray-600 dark:text-gray-400">Selbstentladung</div>
           <div className="text-2xl font-bold text-orange-600">{fmt(gesamtSelbstentladung)} kWh</div>
         </div>
-        <div className="bg-white rounded-lg shadow p-6">
-          <div className="text-sm text-gray-600">Ungeplante Ausgaben</div>
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+          <div className="text-sm text-gray-600 dark:text-gray-400">Ungeplante Ausgaben</div>
           <div className="text-2xl font-bold text-red-600">{fmtDec(gesamtUngeplant)} €</div>
           <div className="text-xs text-gray-500 mt-1">Prognose: {fmtDec(prognoseBetriebskostenJahr)}/Jahr</div>
         </div>
@@ -110,9 +110,9 @@ export default function SpeicherAuswertung({
       {monatsdaten.length > 0 && (
         <>
           {/* Wirkungsgrad-Chart */}
-          <div className="bg-white rounded-lg shadow p-6">
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
             <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-              <SimpleIcon type="trend" className="w-5 h-5 text-gray-600" />
+              <SimpleIcon type="trend" className="w-5 h-5 text-gray-600 dark:text-gray-400" />
               Wirkungsgrad-Entwicklung
             </h3>
             <ResponsiveContainer width="100%" height={300}>
@@ -132,7 +132,7 @@ export default function SpeicherAuswertung({
           </div>
 
           {/* Durchsatz-Chart */}
-          <div className="bg-white rounded-lg shadow p-6">
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
             <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
               <SimpleIcon type="battery" className="w-5 h-5 text-blue-600" />
               Ladung & Entladung
@@ -154,16 +154,16 @@ export default function SpeicherAuswertung({
 
       {/* Monatsdaten-Tabelle */}
       {monatsdaten.length > 0 && (
-        <div className="bg-white rounded-lg shadow overflow-hidden">
-          <div className="px-6 py-4 border-b border-gray-200">
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
+          <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
             <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
-              <SimpleIcon type="clipboard" className="w-5 h-5 text-gray-600" />
+              <SimpleIcon type="clipboard" className="w-5 h-5 text-gray-600 dark:text-gray-400" />
               Alle Monatsdaten ({monatsdaten.length})
             </h3>
           </div>
           <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
+            <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+              <thead className="bg-gray-50 dark:bg-gray-700">
                 <tr>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Monat</th>
                   <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Ladung</th>
@@ -172,16 +172,16 @@ export default function SpeicherAuswertung({
                   <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Ungeplant</th>
                 </tr>
               </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
+              <tbody className="bg-white divide-y divide-gray-200 dark:divide-gray-700">
                 {monatsdaten.map((m) => (
-                  <tr key={m.id} className="hover:bg-gray-50">
-                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                  <tr key={m.id} className="hover:bg-gray-50 dark:bg-gray-700">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">
                       {monatsnamen[m.monat]} {m.jahr}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-gray-900">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-gray-900 dark:text-gray-100">
                       {fmt(m.verbrauch_daten?.batterieladung_kwh)} kWh
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-gray-900">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-gray-900 dark:text-gray-100">
                       {fmt(m.verbrauch_daten?.batterieentladung_kwh)} kWh
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-right font-medium text-green-600">

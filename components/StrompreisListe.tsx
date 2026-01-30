@@ -84,8 +84,8 @@ export default function StrompreisListe({ mitglied_id }: StrompreisListeProps) {
 
   if (loading) {
     return (
-      <div className="bg-white rounded-lg shadow p-6">
-        <p className="text-gray-500">Lade Strompreise...</p>
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+        <p className="text-gray-500 dark:text-gray-400">Lade Strompreise...</p>
       </div>
     )
   }
@@ -99,9 +99,9 @@ export default function StrompreisListe({ mitglied_id }: StrompreisListeProps) {
   }
 
   return (
-    <div className="bg-white rounded-lg shadow">
+    <div className="bg-white dark:bg-gray-800 rounded-lg shadow">
       <div className="px-6 py-4 border-b border-gray-200 flex justify-between items-center">
-        <h2 className="text-xl font-semibold text-gray-900">
+        <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">
           Strompreise ({strompreise.length})
         </h2>
         <Link
@@ -113,7 +113,7 @@ export default function StrompreisListe({ mitglied_id }: StrompreisListeProps) {
       </div>
 
       {strompreise.length === 0 ? (
-        <div className="p-6 text-center text-gray-500">
+        <div className="p-6 text-center text-gray-500 dark:text-gray-400">
           <p className="mb-4">Noch keine Strompreise erfasst.</p>
           <Link
             href="/stammdaten/strompreise/neu"
@@ -123,7 +123,7 @@ export default function StrompreisListe({ mitglied_id }: StrompreisListeProps) {
           </Link>
         </div>
       ) : (
-        <div className="divide-y divide-gray-200">
+        <div className="divide-y divide-gray-200 dark:divide-gray-700">
           {strompreise.map(preis => (
             <div
               key={preis.id}
@@ -134,7 +134,7 @@ export default function StrompreisListe({ mitglied_id }: StrompreisListeProps) {
               <div className="flex justify-between items-start">
                 <div className="flex-1">
                   <div className="flex items-center gap-3 mb-2">
-                    <h3 className="text-lg font-medium text-gray-900">
+                    <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100">
                       {preis.anlage
                         ? `${preis.anlage.anlagenname} (${preis.anlage.leistung_kwp} kWp)`
                         : 'Alle Anlagen (Standard)'}
@@ -148,31 +148,31 @@ export default function StrompreisListe({ mitglied_id }: StrompreisListeProps) {
 
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-3">
                     <div>
-                      <span className="text-sm text-gray-500">Netzbezug:</span>
-                      <div className="font-semibold text-gray-900">
+                      <span className="text-sm text-gray-500 dark:text-gray-400">Netzbezug:</span>
+                      <div className="font-semibold text-gray-900 dark:text-gray-100">
                         {preis.netzbezug_arbeitspreis_cent_kwh.toFixed(2)} ct/kWh
                       </div>
                       {preis.netzbezug_grundpreis_euro_monat > 0 && (
-                        <div className="text-xs text-gray-600">
+                        <div className="text-xs text-gray-600 dark:text-gray-400">
                           + {preis.netzbezug_grundpreis_euro_monat.toFixed(2)} €/Monat
                         </div>
                       )}
                     </div>
                     <div>
-                      <span className="text-sm text-gray-500">Einspeisung:</span>
-                      <div className="font-semibold text-gray-900">
+                      <span className="text-sm text-gray-500 dark:text-gray-400">Einspeisung:</span>
+                      <div className="font-semibold text-gray-900 dark:text-gray-100">
                         {preis.einspeiseverguetung_cent_kwh.toFixed(2)} ct/kWh
                       </div>
                     </div>
                     <div>
-                      <span className="text-sm text-gray-500">Gültig ab:</span>
-                      <div className="font-medium text-gray-900">
+                      <span className="text-sm text-gray-500 dark:text-gray-400">Gültig ab:</span>
+                      <div className="font-medium text-gray-900 dark:text-gray-100">
                         {new Date(preis.gueltig_ab).toLocaleDateString('de-DE')}
                       </div>
                     </div>
                     <div>
-                      <span className="text-sm text-gray-500">Gültig bis:</span>
-                      <div className="font-medium text-gray-900">
+                      <span className="text-sm text-gray-500 dark:text-gray-400">Gültig bis:</span>
+                      <div className="font-medium text-gray-900 dark:text-gray-100">
                         {preis.gueltig_bis
                           ? new Date(preis.gueltig_bis).toLocaleDateString('de-DE')
                           : 'Unbegrenzt'}
@@ -181,7 +181,7 @@ export default function StrompreisListe({ mitglied_id }: StrompreisListeProps) {
                   </div>
 
                   {(preis.anbieter_name || preis.vertragsart) && (
-                    <div className="flex gap-4 text-sm text-gray-600">
+                    <div className="flex gap-4 text-sm text-gray-600 dark:text-gray-400">
                       {preis.anbieter_name && (
                         <span>Anbieter: {preis.anbieter_name}</span>
                       )}
@@ -192,8 +192,8 @@ export default function StrompreisListe({ mitglied_id }: StrompreisListeProps) {
                   )}
 
                   <div className="mt-2 pt-2 border-t border-gray-200 text-sm">
-                    <span className="text-gray-600">Eigenverbrauch lohnt sich: </span>
-                    <span className="font-semibold text-green-700">
+                    <span className="text-gray-600 dark:text-gray-400">Eigenverbrauch lohnt sich: </span>
+                    <span className="font-semibold text-green-700 dark:text-green-400">
                       {(preis.netzbezug_arbeitspreis_cent_kwh - preis.einspeiseverguetung_cent_kwh).toFixed(2)} ct/kWh mehr
                     </span>
                   </div>
@@ -221,7 +221,7 @@ export default function StrompreisListe({ mitglied_id }: StrompreisListeProps) {
 
       {/* Hinweis */}
       <div className="px-6 py-4 bg-blue-50 border-t border-blue-200">
-        <p className="text-sm text-blue-800">
+        <p className="text-sm text-blue-800 dark:text-blue-300">
           <strong>Tipp:</strong> Erfasse deine Strompreise mit Gültigkeitszeiträumen, um historische
           Auswertungen und korrekte Einsparungsberechnungen zu ermöglichen. Bei Preisänderungen
           einfach einen neuen Eintrag mit neuem Gültig-Ab-Datum anlegen.

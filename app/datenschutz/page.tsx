@@ -7,17 +7,17 @@ import PublicFooter from '@/components/PublicFooter'
 
 export default function DatenschutzPage() {
   return (
-    <div className="min-h-screen flex flex-col bg-gray-50">
+    <div className="min-h-screen flex flex-col bg-gray-50 dark:bg-gray-900">
       <PublicHeader />
       <main className="flex-1 max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full">
 
-        <div className="bg-white rounded-xl shadow-sm p-8 border border-gray-200">
+        <div className="bg-white rounded-xl shadow-sm p-8 border border-gray-200 dark:border-gray-700">
           <div className="flex items-center gap-4 mb-8">
             <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
               <SimpleIcon type="shield" className="w-7 h-7 text-blue-600" />
             </div>
             <div>
-              <h1 className="text-3xl font-bold text-gray-900">Datenschutzerklärung</h1>
+              <h1 className="text-3xl font-bold text-gray-900 dark:text-gray-100">Datenschutzerklärung</h1>
               <p className="text-gray-600 mt-1">EEDC - Electronic Energy Data Collection</p>
             </div>
           </div>
@@ -68,7 +68,7 @@ export default function DatenschutzPage() {
               </ul>
 
               <h3 className="text-xl font-semibold text-gray-900 mb-3 mt-6">3.3 Automatisch erfasste Daten</h3>
-              <ul className="list-disc list-inside space-y-2 text-gray-700">
+              <ul className="list-disc list-inside space-y-2 text-gray-700 dark:text-gray-300">
                 <li>Zeitstempel bei Datenerstellung und -änderung</li>
                 <li>Session-Cookies für Authentifizierung</li>
               </ul>
@@ -76,7 +76,7 @@ export default function DatenschutzPage() {
 
             <section className="mb-8">
               <h2 className="text-2xl font-semibold text-gray-900 mb-4">4. Zweck der Datenverarbeitung</h2>
-              <ul className="list-disc list-inside space-y-2 text-gray-700">
+              <ul className="list-disc list-inside space-y-2 text-gray-700 dark:text-gray-300">
                 <li>Bereitstellung und Betrieb der EEDC-Plattform</li>
                 <li>Authentifizierung und Nutzerverwaltung</li>
                 <li>Speicherung und Auswertung Ihrer Anlagen-Daten</li>
@@ -98,42 +98,42 @@ export default function DatenschutzPage() {
                   <li className="flex items-start gap-3">
                     <SimpleIcon type="check" className="w-5 h-5 text-green-600 mt-0.5" />
                     <div>
-                      <strong className="text-gray-900">Profil öffentlich:</strong>
+                      <strong className="text-gray-900 dark:text-gray-100">Profil öffentlich:</strong>
                       <span className="text-gray-700 ml-2">Name, Standort, Komponenten der Anlage</span>
                     </div>
                   </li>
                   <li className="flex items-start gap-3">
                     <SimpleIcon type="check" className="w-5 h-5 text-green-600 mt-0.5" />
                     <div>
-                      <strong className="text-gray-900">Kennzahlen öffentlich:</strong>
+                      <strong className="text-gray-900 dark:text-gray-100">Kennzahlen öffentlich:</strong>
                       <span className="text-gray-700 ml-2">Autarkiegrad, Eigenverbrauch, CO₂-Einsparung</span>
                     </div>
                   </li>
                   <li className="flex items-start gap-3">
                     <SimpleIcon type="check" className="w-5 h-5 text-green-600 mt-0.5" />
                     <div>
-                      <strong className="text-gray-900">Monatsdaten öffentlich:</strong>
+                      <strong className="text-gray-900 dark:text-gray-100">Monatsdaten öffentlich:</strong>
                       <span className="text-gray-700 ml-2">Detaillierte monatliche Verbrauchs- und Erzeugungsdaten</span>
                     </div>
                   </li>
                   <li className="flex items-start gap-3">
                     <SimpleIcon type="check" className="w-5 h-5 text-green-600 mt-0.5" />
                     <div>
-                      <strong className="text-gray-900">Investitionen öffentlich:</strong>
+                      <strong className="text-gray-900 dark:text-gray-100">Investitionen öffentlich:</strong>
                       <span className="text-gray-700 ml-2">Kosten und Einsparungen Ihrer Investitionen</span>
                     </div>
                   </li>
                   <li className="flex items-start gap-3">
                     <SimpleIcon type="check" className="w-5 h-5 text-green-600 mt-0.5" />
                     <div>
-                      <strong className="text-gray-900">Auswertungen öffentlich:</strong>
+                      <strong className="text-gray-900 dark:text-gray-100">Auswertungen öffentlich:</strong>
                       <span className="text-gray-700 ml-2">ROI-Berechnungen und Amortisationszeiten</span>
                     </div>
                   </li>
                   <li className="flex items-start gap-3">
                     <SimpleIcon type="check" className="w-5 h-5 text-green-600 mt-0.5" />
                     <div>
-                      <strong className="text-gray-900">Standort genau:</strong>
+                      <strong className="text-gray-900 dark:text-gray-100">Standort genau:</strong>
                       <span className="text-gray-700 ml-2">Exakte Koordinaten vs. anonymisierte PLZ (XX000)</span>
                     </div>
                   </li>
@@ -151,7 +151,7 @@ export default function DatenschutzPage() {
 
             <section className="mb-8">
               <h2 className="text-2xl font-semibold text-gray-900 mb-4">6. Rechtsgrundlage</h2>
-              <ul className="list-disc list-inside space-y-2 text-gray-700">
+              <ul className="list-disc list-inside space-y-2 text-gray-700 dark:text-gray-300">
                 <li><strong>Art. 6 Abs. 1 lit. b DSGVO:</strong> Vertragserfüllung (Bereitstellung der Plattform)</li>
                 <li><strong>Art. 6 Abs. 1 lit. a DSGVO:</strong> Einwilligung (für Community-Freigaben)</li>
                 <li><strong>Art. 6 Abs. 1 lit. f DSGVO:</strong> Berechtigtes Interesse (Systemsicherheit)</li>
@@ -164,7 +164,7 @@ export default function DatenschutzPage() {
                 Ihre Daten werden in einer Supabase-Datenbank gespeichert. Supabase nutzt PostgreSQL und
                 bietet folgende Sicherheitsmaßnahmen:
               </p>
-              <ul className="list-disc list-inside space-y-2 text-gray-700">
+              <ul className="list-disc list-inside space-y-2 text-gray-700 dark:text-gray-300">
                 <li>Verschlüsselte Datenübertragung (TLS/SSL)</li>
                 <li>Verschlüsselte Datenspeicherung (AES-256)</li>
                 <li>Regelmäßige Backups</li>
@@ -177,7 +177,7 @@ export default function DatenschutzPage() {
               <p className="text-gray-700 leading-relaxed mb-4">
                 Sie haben folgende Rechte bezüglich Ihrer personenbezogenen Daten:
               </p>
-              <ul className="list-disc list-inside space-y-2 text-gray-700">
+              <ul className="list-disc list-inside space-y-2 text-gray-700 dark:text-gray-300">
                 <li><strong>Auskunftsrecht (Art. 15 DSGVO):</strong> Sie können Auskunft über Ihre gespeicherten Daten verlangen</li>
                 <li><strong>Berichtigungsrecht (Art. 16 DSGVO):</strong> Sie können falsche Daten korrigieren lassen</li>
                 <li><strong>Löschungsrecht (Art. 17 DSGVO):</strong> Sie können die Löschung Ihrer Daten verlangen</li>
@@ -193,7 +193,7 @@ export default function DatenschutzPage() {
               <p className="text-gray-700 leading-relaxed mb-4">
                 Sie können Ihre Daten jederzeit selbstständig löschen:
               </p>
-              <ul className="list-disc list-inside space-y-2 text-gray-700">
+              <ul className="list-disc list-inside space-y-2 text-gray-700 dark:text-gray-300">
                 <li>Einzelne Monatsdaten können in der Übersicht gelöscht werden</li>
                 <li>Investitionen können deaktiviert oder gelöscht werden</li>
                 <li>Anlagen können gelöscht werden</li>
@@ -210,7 +210,7 @@ export default function DatenschutzPage() {
               <p className="text-gray-700 leading-relaxed mb-4">
                 EEDC verwendet nur technisch notwendige Cookies für die Authentifizierung:
               </p>
-              <ul className="list-disc list-inside space-y-2 text-gray-700">
+              <ul className="list-disc list-inside space-y-2 text-gray-700 dark:text-gray-300">
                 <li>Session-Cookies für den Login-Status (erforderlich)</li>
                 <li>Keine Tracking-Cookies</li>
                 <li>Keine Werbe-Cookies</li>

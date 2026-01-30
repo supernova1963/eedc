@@ -51,7 +51,7 @@ export function SelectTrigger({
 }
 
 export function SelectValue({ placeholder }: { placeholder?: string }) {
-  return <span className="text-gray-700">{placeholder}</span>
+  return <span className="text-gray-700 dark:text-gray-300">{placeholder}</span>
 }
 
 export function SelectContent({ value, onValueChange, children }: { value?: string; onValueChange?: (value: string) => void; children?: React.ReactNode }) {
@@ -81,7 +81,7 @@ export function SelectItem({
   return (
     <div
       onClick={onClick}
-      className="relative flex cursor-pointer select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none hover:bg-gray-100 focus:bg-gray-100"
+      className="relative flex cursor-pointer select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none hover:bg-gray-100 focus:bg-gray-100 dark:bg-gray-700"
     >
       {children}
     </div>

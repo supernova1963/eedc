@@ -12,7 +12,7 @@ export const metadata = {
 
 export default function ImpressumPage() {
   return (
-    <div className="min-h-screen flex flex-col bg-gray-50">
+    <div className="min-h-screen flex flex-col bg-gray-50 dark:bg-gray-900">
       <PublicHeader />
       <main className="flex-1 max-w-4xl mx-auto px-4 py-8 w-full">
       <Link
@@ -34,7 +34,7 @@ export default function ImpressumPage() {
               Diese Angaben müssen noch ergänzt werden:
             </p>
           </div>
-          <p className="text-gray-700">
+          <p className="text-gray-700 dark:text-gray-300">
             [Ihr vollständiger Name / Firmenname]<br />
             [Straße und Hausnummer]<br />
             [PLZ Ort]<br />
@@ -44,7 +44,7 @@ export default function ImpressumPage() {
 
         <section>
           <h2 className="text-xl font-semibold text-gray-900 mb-4">Kontakt</h2>
-          <p className="text-gray-700">
+          <p className="text-gray-700 dark:text-gray-300">
             Telefon: [Ihre Telefonnummer]<br />
             E-Mail: [Ihre E-Mail-Adresse]
           </p>
@@ -54,7 +54,7 @@ export default function ImpressumPage() {
           <h2 className="text-xl font-semibold text-gray-900 mb-4">
             Verantwortlich für den Inhalt nach § 55 Abs. 2 RStV
           </h2>
-          <p className="text-gray-700">
+          <p className="text-gray-700 dark:text-gray-300">
             [Name des Verantwortlichen]<br />
             [Adresse]
           </p>
@@ -64,7 +64,7 @@ export default function ImpressumPage() {
           <h2 className="text-xl font-semibold text-gray-900 mb-4">
             Streitschlichtung
           </h2>
-          <p className="text-gray-700">
+          <p className="text-gray-700 dark:text-gray-300">
             Die Europäische Kommission stellt eine Plattform zur Online-Streitbeilegung (OS) bereit:{' '}
             <a
               href="https://ec.europa.eu/consumers/odr/"
@@ -85,7 +85,7 @@ export default function ImpressumPage() {
           <h2 className="text-xl font-semibold text-gray-900 mb-4">
             Haftung für Inhalte
           </h2>
-          <p className="text-gray-700">
+          <p className="text-gray-700 dark:text-gray-300">
             Als Diensteanbieter sind wir gemäß § 7 Abs.1 TMG für eigene Inhalte auf diesen Seiten
             nach den allgemeinen Gesetzen verantwortlich. Nach §§ 8 bis 10 TMG sind wir als
             Diensteanbieter jedoch nicht verpflichtet, übermittelte oder gespeicherte fremde
@@ -105,7 +105,7 @@ export default function ImpressumPage() {
           <h2 className="text-xl font-semibold text-gray-900 mb-4">
             Haftung für Links
           </h2>
-          <p className="text-gray-700">
+          <p className="text-gray-700 dark:text-gray-300">
             Unser Angebot enthält Links zu externen Websites Dritter, auf deren Inhalte wir keinen
             Einfluss haben. Deshalb können wir für diese fremden Inhalte auch keine Gewähr
             übernehmen. Für die Inhalte der verlinkten Seiten ist stets der jeweilige Anbieter oder
@@ -122,7 +122,7 @@ export default function ImpressumPage() {
 
         <section>
           <h2 className="text-xl font-semibold text-gray-900 mb-4">Urheberrecht</h2>
-          <p className="text-gray-700">
+          <p className="text-gray-700 dark:text-gray-300">
             Die durch die Seitenbetreiber erstellten Inhalte und Werke auf diesen Seiten unterliegen
             dem deutschen Urheberrecht. Die Vervielfältigung, Bearbeitung, Verbreitung und jede Art
             der Verwertung außerhalb der Grenzen des Urheberrechtes bedürfen der schriftlichen
@@ -139,7 +139,7 @@ export default function ImpressumPage() {
         </section>
       </div>
 
-      <div className="mt-8 pt-8 border-t border-gray-200">
+      <div className="mt-8 pt-8 border-t border-gray-200 dark:border-gray-700">
         <Link
           href="/datenschutz"
           className="text-blue-600 hover:text-blue-700"

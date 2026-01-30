@@ -88,25 +88,25 @@ export default async function CommunityDashboardPage() {
       {/* Stats Section */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
-          <div className="bg-white rounded-lg shadow-lg p-6 text-center">
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6 text-center">
             <SimpleIcon type="solar" className="w-12 h-12 text-yellow-500 mx-auto mb-4" />
-            <p className="text-4xl font-bold text-gray-900">{anlagenCount}</p>
+            <p className="text-4xl font-bold text-gray-900 dark:text-gray-100">{anlagenCount}</p>
             <p className="text-gray-600 mt-2">Öffentliche Anlagen</p>
           </div>
-          <div className="bg-white rounded-lg shadow-lg p-6 text-center">
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6 text-center">
             <SimpleIcon type="lightning" className="w-12 h-12 text-orange-500 mx-auto mb-4" />
-            <p className="text-4xl font-bold text-gray-900">{gesamtLeistung.toFixed(1)} kWp</p>
+            <p className="text-4xl font-bold text-gray-900 dark:text-gray-100">{gesamtLeistung.toFixed(1)} kWp</p>
             <p className="text-gray-600 mt-2">Gesamtleistung</p>
           </div>
-          <div className="bg-white rounded-lg shadow-lg p-6 text-center">
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6 text-center">
             <SimpleIcon type="leaf" className="w-12 h-12 text-green-500 mx-auto mb-4" />
             {(() => {
               // ca. 1000 kWh/kWp Ertrag * 0.4 kg CO2/kWh (deutscher Strommix)
               const co2Kg = gesamtLeistung * 1000 * 0.4
               if (co2Kg >= 1000) {
-                return <p className="text-4xl font-bold text-gray-900">{(co2Kg / 1000).toFixed(1)} t</p>
+                return <p className="text-4xl font-bold text-gray-900 dark:text-gray-100">{(co2Kg / 1000).toFixed(1)} t</p>
               }
-              return <p className="text-4xl font-bold text-gray-900">{co2Kg.toFixed(0)} kg</p>
+              return <p className="text-4xl font-bold text-gray-900 dark:text-gray-100">{co2Kg.toFixed(0)} kg</p>
             })()}
             <p className="text-gray-600 mt-2">CO₂ Einsparung/Jahr (geschätzt)</p>
           </div>
@@ -116,51 +116,51 @@ export default async function CommunityDashboardPage() {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
           <Link
             href="/community"
-            className="bg-white rounded-lg shadow p-4 hover:shadow-lg transition-shadow flex flex-col items-center text-center group"
+            className="bg-white dark:bg-gray-800 rounded-lg shadow p-4 hover:shadow-lg transition-shadow flex flex-col items-center text-center group"
           >
             <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center mb-3 group-hover:bg-blue-200 transition-colors">
               <SimpleIcon type="globe" className="w-6 h-6 text-blue-600" />
             </div>
-            <span className="font-medium text-gray-900">Alle Anlagen</span>
-            <span className="text-sm text-gray-500">{anlagenCount} Anlagen</span>
+            <span className="font-medium text-gray-900 dark:text-gray-100">Alle Anlagen</span>
+            <span className="text-sm text-gray-500 dark:text-gray-400">{anlagenCount} Anlagen</span>
           </Link>
 
           <Link
             href="/community/vergleich"
-            className="bg-white rounded-lg shadow p-4 hover:shadow-lg transition-shadow flex flex-col items-center text-center group"
+            className="bg-white dark:bg-gray-800 rounded-lg shadow p-4 hover:shadow-lg transition-shadow flex flex-col items-center text-center group"
           >
             <div className="w-12 h-12 bg-purple-100 rounded-full flex items-center justify-center mb-3 group-hover:bg-purple-200 transition-colors">
               <SimpleIcon type="chart" className="w-6 h-6 text-purple-600" />
             </div>
-            <span className="font-medium text-gray-900">Vergleich</span>
-            <span className="text-sm text-gray-500">Anlagen vergleichen</span>
+            <span className="font-medium text-gray-900 dark:text-gray-100">Vergleich</span>
+            <span className="text-sm text-gray-500 dark:text-gray-400">Anlagen vergleichen</span>
           </Link>
 
           <Link
             href="/community/regional"
-            className="bg-white rounded-lg shadow p-4 hover:shadow-lg transition-shadow flex flex-col items-center text-center group"
+            className="bg-white dark:bg-gray-800 rounded-lg shadow p-4 hover:shadow-lg transition-shadow flex flex-col items-center text-center group"
           >
             <div className="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center mb-3 group-hover:bg-green-200 transition-colors">
               <SimpleIcon type="map" className="w-6 h-6 text-green-600" />
             </div>
-            <span className="font-medium text-gray-900">Regional</span>
-            <span className="text-sm text-gray-500">Nach PLZ filtern</span>
+            <span className="font-medium text-gray-900 dark:text-gray-100">Regional</span>
+            <span className="text-sm text-gray-500 dark:text-gray-400">Nach PLZ filtern</span>
           </Link>
 
           <Link
             href="/community/bestenliste"
-            className="bg-white rounded-lg shadow p-4 hover:shadow-lg transition-shadow flex flex-col items-center text-center group"
+            className="bg-white dark:bg-gray-800 rounded-lg shadow p-4 hover:shadow-lg transition-shadow flex flex-col items-center text-center group"
           >
             <div className="w-12 h-12 bg-yellow-100 rounded-full flex items-center justify-center mb-3 group-hover:bg-yellow-200 transition-colors">
               <SimpleIcon type="trophy" className="w-6 h-6 text-yellow-600" />
             </div>
-            <span className="font-medium text-gray-900">Bestenliste</span>
-            <span className="text-sm text-gray-500">Top Anlagen</span>
+            <span className="font-medium text-gray-900 dark:text-gray-100">Bestenliste</span>
+            <span className="text-sm text-gray-500 dark:text-gray-400">Top Anlagen</span>
           </Link>
         </div>
 
         {/* Top Anlagen */}
-        <div className="bg-white rounded-lg shadow-lg p-8">
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg p-8">
           <h2 className="text-2xl font-bold text-gray-900 mb-6 flex items-center gap-2">
             <SimpleIcon type="trophy" className="w-6 h-6 text-yellow-500" />
             Top 5 Anlagen nach Leistung
@@ -179,8 +179,8 @@ export default async function CommunityDashboardPage() {
                         {idx + 1}
                       </div>
                       <div>
-                        <p className="font-semibold text-gray-900">{anlage.anlagenname || 'Anlage'}</p>
-                        <p className="text-sm text-gray-600">
+                        <p className="font-semibold text-gray-900 dark:text-gray-100">{anlage.anlagenname || 'Anlage'}</p>
+                        <p className="text-sm text-gray-600 dark:text-gray-400">
                           {anlage.standort_plz} {anlage.standort_ort}
                           {anlage.mitglied_display_name && ` • ${anlage.mitglied_display_name}`}
                         </p>
@@ -188,7 +188,7 @@ export default async function CommunityDashboardPage() {
                     </div>
                     <div className="text-right">
                       <p className="text-lg font-bold text-blue-600">{anlage.leistung_kwp} kWp</p>
-                      <p className="text-xs text-gray-500">
+                      <p className="text-xs text-gray-500 dark:text-gray-400">
                         seit {new Date(anlage.inbetriebnahme).getFullYear()}
                       </p>
                     </div>
@@ -210,7 +210,7 @@ export default async function CommunityDashboardPage() {
               <SimpleIcon type="chart" className="w-8 h-8 text-blue-600" />
             </div>
             <h3 className="text-lg font-semibold mb-2">Transparente Daten</h3>
-            <p className="text-gray-600">
+            <p className="text-gray-600 dark:text-gray-400">
               Vergleiche deine Anlage mit anderen und lerne von den Besten
             </p>
           </div>
@@ -219,7 +219,7 @@ export default async function CommunityDashboardPage() {
               <SimpleIcon type="users" className="w-8 h-8 text-green-600" />
             </div>
             <h3 className="text-lg font-semibold mb-2">Starke Community</h3>
-            <p className="text-gray-600">
+            <p className="text-gray-600 dark:text-gray-400">
               Tausche dich aus und profitiere vom Wissen der Community
             </p>
           </div>
@@ -228,7 +228,7 @@ export default async function CommunityDashboardPage() {
               <SimpleIcon type="target" className="w-8 h-8 text-purple-600" />
             </div>
             <h3 className="text-lg font-semibold mb-2">Optimierung</h3>
-            <p className="text-gray-600">
+            <p className="text-gray-600 dark:text-gray-400">
               Erkenne Potenziale und optimiere deine Anlage kontinuierlich
             </p>
           </div>

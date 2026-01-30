@@ -81,7 +81,7 @@ export default async function DatenImportPage() {
           <SimpleIcon type="upload" className="w-8 h-8 text-blue-600" />
           Monatsdaten importieren
         </h1>
-        <p className="text-gray-600">
+        <p className="text-gray-600 dark:text-gray-400">
           Lade deine Monatsdaten aus einer CSV- oder Excel-Datei hoch
         </p>
       </div>
@@ -109,7 +109,7 @@ export default async function DatenImportPage() {
           <SimpleIcon type="bulb" className="w-5 h-5 text-yellow-600" />
           So funktioniert's
         </h2>
-        <ol className="space-y-2 text-sm text-gray-700">
+        <ol className="space-y-2 text-sm text-gray-700 dark:text-gray-300">
           <li className="flex items-start gap-2">
             <span className="font-bold text-blue-600 flex-shrink-0">1.</span>
             <span>
@@ -136,8 +136,8 @@ export default async function DatenImportPage() {
           </li>
         </ol>
 
-        <div className="mt-4 pt-4 border-t border-gray-200">
-          <p className="text-xs text-gray-500">
+        <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
+          <p className="text-xs text-gray-500 dark:text-gray-400">
             <strong>Hinweis:</strong> Duplikate (gleiche Jahr/Monat-Kombination) werden automatisch erkannt und übersprungen.
           </p>
         </div>
@@ -152,7 +152,7 @@ export default async function DatenImportPage() {
       </div>
 
       {/* Weitere Infos */}
-      <div className="mt-6 bg-gray-50 rounded-lg p-4 text-sm text-gray-600">
+      <div className="mt-6 bg-gray-50 rounded-lg p-4 text-sm text-gray-600 dark:text-gray-400">
         <h3 className="font-medium text-gray-900 mb-2">Unterstützte Datenfelder</h3>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
           <div>
@@ -173,7 +173,7 @@ export default async function DatenImportPage() {
           </div>
         </div>
 
-        <div className="mt-3 pt-3 border-t border-gray-300">
+        <div className="mt-3 pt-3 border-t border-gray-300 dark:border-gray-600">
           <p className="font-medium text-gray-700 mb-1 flex items-center gap-1">
             <SimpleIcon type="bulb" className="w-4 h-4 text-blue-600" />
             Automatische Berechnungen

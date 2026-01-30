@@ -99,20 +99,20 @@ export default function EAutoFields({ parameterData, onChange }: EAutoFieldsProp
         </h4>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
           <div>
-            <span className="text-blue-700">Stromverbrauch/Jahr:</span>
-            <span className="block font-semibold text-blue-900">{berechneteWerte.stromGesamt} kWh</span>
+            <span className="text-blue-700 dark:text-blue-400">Stromverbrauch/Jahr:</span>
+            <span className="block font-semibold text-blue-900 dark:text-blue-300">{berechneteWerte.stromGesamt} kWh</span>
           </div>
           <div>
-            <span className="text-blue-700">Davon PV ({parameterData.pv_anteil_prozent || 70}%):</span>
-            <span className="block font-semibold text-green-700">{berechneteWerte.stromPV} kWh (kostenlos)</span>
+            <span className="text-blue-700 dark:text-blue-400">Davon PV ({parameterData.pv_anteil_prozent || 70}%):</span>
+            <span className="block font-semibold text-green-700 dark:text-green-400">{berechneteWerte.stromPV} kWh (kostenlos)</span>
           </div>
           <div>
-            <span className="text-blue-700">Davon Netz:</span>
-            <span className="block font-semibold text-blue-900">{berechneteWerte.stromNetz} kWh</span>
+            <span className="text-blue-700 dark:text-blue-400">Davon Netz:</span>
+            <span className="block font-semibold text-blue-900 dark:text-blue-300">{berechneteWerte.stromNetz} kWh</span>
           </div>
           <div>
-            <span className="text-blue-700">Stromkosten/Jahr:</span>
-            <span className="block font-semibold text-blue-900">{berechneteWerte.stromkosten} €</span>
+            <span className="text-blue-700 dark:text-blue-400">Stromkosten/Jahr:</span>
+            <span className="block font-semibold text-blue-900 dark:text-blue-300">{berechneteWerte.stromkosten} €</span>
           </div>
         </div>
         <div className="mt-3 pt-3 border-t border-blue-200">
@@ -146,8 +146,8 @@ export default function EAutoFields({ parameterData, onChange }: EAutoFieldsProp
         />
         {berechneteWerte.gesamtkostenEAuto > 0 && (
           <div className="mt-3 pt-3 border-t border-gray-300 flex justify-between items-center">
-            <span className="font-medium text-gray-700">Gesamtkosten E-Auto/Jahr:</span>
-            <span className="text-lg font-bold text-gray-900">
+            <span className="font-medium text-gray-700 dark:text-gray-300">Gesamtkosten E-Auto/Jahr:</span>
+            <span className="text-lg font-bold text-gray-900 dark:text-gray-100">
               {berechneteWerte.gesamtkostenEAuto.toLocaleString('de-DE')} €
             </span>
           </div>

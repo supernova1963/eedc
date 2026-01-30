@@ -114,7 +114,7 @@ export default async function InvestitionstypenPage() {
         <h1 className="text-3xl font-bold text-gray-900 mb-2">
           Investitionstypen-Konfiguration
         </h1>
-        <p className="text-gray-600">
+        <p className="text-gray-600 dark:text-gray-400">
           Übersicht der verfügbaren Investitionstypen und deren Zuordnungsempfehlungen
         </p>
       </div>
@@ -150,13 +150,13 @@ export default async function InvestitionstypenPage() {
           return (
             <div
               key={key}
-              className={`bg-white rounded-lg shadow-sm border-l-4 p-6 ${
+              className={`bg-white dark:bg-gray-800 rounded-lg shadow-sm border-l-4 p-6 ${
                 isAnlagenTyp ? 'border-green-500' : 'border-purple-500'
               }`}
             >
               <div className="flex items-start justify-between mb-4">
                 <div>
-                  <h3 className="text-lg font-semibold text-gray-900">
+                  <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
                     {config.typ}
                   </h3>
                   <span
@@ -170,19 +170,19 @@ export default async function InvestitionstypenPage() {
                   </span>
                 </div>
                 <div className="text-right">
-                  <div className="text-2xl font-bold text-gray-700">{count}</div>
-                  <div className="text-xs text-gray-500">erfasst</div>
+                  <div className="text-2xl font-bold text-gray-700 dark:text-gray-300">{count}</div>
+                  <div className="text-xs text-gray-500 dark:text-gray-400">erfasst</div>
                 </div>
               </div>
 
               {/* Empfehlung */}
-              <div className="mt-4 pt-4 border-t border-gray-200">
+              <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
                 <div className="flex items-start gap-2">
                   <SimpleIcon
                     type={isAnlagenTyp ? 'solar' : 'home'}
                     className="w-4 h-4 text-gray-500 mt-0.5"
                   />
-                  <p className="text-sm text-gray-600">
+                  <p className="text-sm text-gray-600 dark:text-gray-400">
                     {isAnlagenTyp
                       ? 'Sollte einer PV-Anlage zugeordnet werden'
                       : 'Wird dem Haushalt zugeordnet (keine Anlagen-Zuordnung nötig)'}
@@ -196,7 +196,7 @@ export default async function InvestitionstypenPage() {
                   <p className="text-xs font-medium text-gray-700 mb-2">Standardparameter:</p>
                   <div className="space-y-1">
                     {Object.entries(config.standardparameter || {}).map(([param, value]) => (
-                      <div key={param} className="flex justify-between text-xs text-gray-600">
+                      <div key={param} className="flex justify-between text-xs text-gray-600 dark:text-gray-400">
                         <span className="capitalize">{param.replace(/_/g, ' ')}</span>
                         <span className="font-medium">{value}</span>
                       </div>

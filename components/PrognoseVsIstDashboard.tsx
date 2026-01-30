@@ -29,7 +29,7 @@ export default function PrognoseVsIstDashboard({ monatsdaten, anlage }: Prognose
     return (
       <div className="bg-white rounded-lg shadow p-8 text-center">
         <SimpleIcon type="info" className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-        <p className="text-gray-500">Keine Daten für Prognose-Vergleich vorhanden</p>
+        <p className="text-gray-500 dark:text-gray-400">Keine Daten für Prognose-Vergleich vorhanden</p>
       </div>
     )
   }
@@ -180,7 +180,7 @@ export default function PrognoseVsIstDashboard({ monatsdaten, anlage }: Prognose
             <SimpleIcon type="target" className="w-6 h-6 text-blue-600" />
             Prognose vs. IST-Vergleich
           </h2>
-          <p className="text-sm text-gray-600">
+          <p className="text-sm text-gray-600 dark:text-gray-400">
             Vergleich prognostizierte und tatsächliche PV-Erzeugung
           </p>
         </div>
@@ -202,7 +202,7 @@ export default function PrognoseVsIstDashboard({ monatsdaten, anlage }: Prognose
 
       {/* KPI Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <div className="bg-white rounded-lg shadow p-6">
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
           <div className="flex items-center justify-between mb-2">
             <div className="text-sm text-gray-600 font-medium">Gesamt-Abweichung</div>
             <SimpleIcon
@@ -223,7 +223,7 @@ export default function PrognoseVsIstDashboard({ monatsdaten, anlage }: Prognose
             <div className="text-sm text-blue-700 font-medium">Prognose-Genauigkeit</div>
             <SimpleIcon type="check" className="w-6 h-6 text-blue-600" />
           </div>
-          <div className="text-3xl font-bold text-blue-700">
+          <div className="text-3xl font-bold text-blue-700 dark:text-blue-400">
             {fmtDec(durchschnittGenauigkeit)}%
           </div>
           <div className="text-xs text-blue-600 mt-1">
@@ -236,7 +236,7 @@ export default function PrognoseVsIstDashboard({ monatsdaten, anlage }: Prognose
             <div className="text-sm text-green-700 font-medium">Beste Übererfüllung</div>
             <SimpleIcon type="trophy" className="w-6 h-6 text-green-600" />
           </div>
-          <div className="text-3xl font-bold text-green-700">
+          <div className="text-3xl font-bold text-green-700 dark:text-green-400">
             +{fmt(maxUebererfuellung?.abweichungKwh || 0)}
           </div>
           <div className="text-xs text-green-600 mt-1">
@@ -259,7 +259,7 @@ export default function PrognoseVsIstDashboard({ monatsdaten, anlage }: Prognose
       </div>
 
       {/* Haupt-Chart: IST vs. Prognose */}
-      <div className="bg-white rounded-lg shadow p-6">
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
         <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
           <SimpleIcon type="chart" className="w-5 h-5 text-blue-600" />
           IST vs. Prognose - Monatliche Erzeugung
@@ -295,7 +295,7 @@ export default function PrognoseVsIstDashboard({ monatsdaten, anlage }: Prognose
       </div>
 
       {/* Abweichungs-Chart */}
-      <div className="bg-white rounded-lg shadow p-6">
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
         <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
           <SimpleIcon type="trend" className="w-5 h-5 text-purple-600" />
           Abweichungen von Prognose
@@ -334,7 +334,7 @@ export default function PrognoseVsIstDashboard({ monatsdaten, anlage }: Prognose
       </div>
 
       {/* Genauigkeits-Trend */}
-      <div className="bg-white rounded-lg shadow p-6">
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
         <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
           <SimpleIcon type="target" className="w-5 h-5 text-green-600" />
           Prognose-Genauigkeit im Zeitverlauf
@@ -369,16 +369,16 @@ export default function PrognoseVsIstDashboard({ monatsdaten, anlage }: Prognose
       </div>
 
       {/* Detailtabelle */}
-      <div className="bg-white rounded-lg shadow overflow-hidden">
-        <div className="px-6 py-4 border-b border-gray-200">
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
+        <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
           <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
-            <SimpleIcon type="clipboard" className="w-5 h-5 text-gray-600" />
+            <SimpleIcon type="clipboard" className="w-5 h-5 text-gray-600 dark:text-gray-400" />
             Detaillierte Monatsdaten
           </h3>
         </div>
         <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
+          <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+            <thead className="bg-gray-50 dark:bg-gray-700">
               <tr>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Monat</th>
                 <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">IST-Erzeugung</th>
@@ -388,16 +388,16 @@ export default function PrognoseVsIstDashboard({ monatsdaten, anlage }: Prognose
                 <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Genauigkeit</th>
               </tr>
             </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
+            <tbody className="bg-white divide-y divide-gray-200 dark:divide-gray-700">
               {prognoseData
                 .slice()
                 .reverse()
                 .map((m, i) => (
-                  <tr key={i} className="hover:bg-gray-50">
-                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                  <tr key={i} className="hover:bg-gray-50 dark:bg-gray-700">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">
                       {m.monatName}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-gray-900">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-gray-900 dark:text-gray-100">
                       {fmt(m.istErzeugung)} kWh
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-blue-600">
@@ -436,7 +436,7 @@ export default function PrognoseVsIstDashboard({ monatsdaten, anlage }: Prognose
           Prognose-Insights
         </h3>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="bg-white rounded-lg p-4">
+          <div className="bg-white dark:bg-gray-700 rounded-lg p-4">
             <div className="text-sm font-medium text-gray-700 mb-2">Prognose-Methodik</div>
             <ul className="text-sm text-gray-600 space-y-1">
               <li>• 70% historischer Durchschnitt (gleicher Monat)</li>
@@ -444,7 +444,7 @@ export default function PrognoseVsIstDashboard({ monatsdaten, anlage }: Prognose
               <li>• Berücksichtigt {toNum(anlage?.leistung_kwp || 0)} kWp Leistung</li>
             </ul>
           </div>
-          <div className="bg-white rounded-lg p-4">
+          <div className="bg-white dark:bg-gray-700 rounded-lg p-4">
             <div className="text-sm font-medium text-gray-700 mb-2">Verbesserungspotenzial</div>
             <ul className="text-sm text-gray-600 space-y-1">
               <li>• Integration von Wetterdaten möglich</li>

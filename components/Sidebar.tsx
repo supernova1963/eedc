@@ -160,10 +160,10 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
         `}
       >
         {/* Header */}
-        <div className="h-16 flex items-center justify-between px-6 border-b border-gray-200">
+        <div className="h-16 flex items-center justify-between px-6 border-b border-gray-200 dark:border-gray-700">
           <Link href="/" className="flex items-center gap-2">
             <SimpleIcon type="sun" className="w-7 h-7 text-yellow-500" />
-            <span className="text-xl font-bold text-gray-900">EEDC</span>
+            <span className="text-xl font-bold text-gray-900 dark:text-gray-100">EEDC</span>
           </Link>
           {/* Close Button (nur Mobile) */}
           <button

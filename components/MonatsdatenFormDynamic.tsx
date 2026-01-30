@@ -350,7 +350,7 @@ export default function MonatsdatenFormDynamic({ anlage, investitionen, existing
                          formData.netzbezug_preis_monat_cent !== ''
 
   return (
-    <div className="bg-white rounded-lg shadow p-6">
+    <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
       <h2 className="text-xl font-semibold text-gray-900 mb-6 flex items-center gap-2">
         <SimpleIcon type={isEditMode ? 'edit' : 'plus'} className="w-5 h-5 text-blue-600" />
         {isEditMode
@@ -451,7 +451,7 @@ export default function MonatsdatenFormDynamic({ anlage, investitionen, existing
                 placeholder="z.B. 450"
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
-              <p className="mt-1 text-xs text-gray-500">
+              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
                 Gesamte Erzeugung vom Wechselrichter ablesen
               </p>
             </div>
@@ -494,7 +494,7 @@ export default function MonatsdatenFormDynamic({ anlage, investitionen, existing
                 placeholder="z.B. 280"
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
-              <p className="mt-1 text-xs text-gray-500">PV direkt verbraucht</p>
+              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">PV direkt verbraucht</p>
             </div>
           </div>
         </div>
@@ -502,7 +502,7 @@ export default function MonatsdatenFormDynamic({ anlage, investitionen, existing
         {/* Netz-Interaktion */}
         <div className="border-t pt-6">
           <h3 className="text-lg font-medium text-gray-900 mb-4 flex items-center gap-2">
-            <SimpleIcon type="grid" className="w-5 h-5 text-gray-500" />
+            <SimpleIcon type="grid" className="w-5 h-5 text-gray-500 dark:text-gray-400" />
             Netz-Interaktion
           </h3>
           <div className="grid grid-cols-2 gap-4">
@@ -891,36 +891,36 @@ export default function MonatsdatenFormDynamic({ anlage, investitionen, existing
             <h3 className="text-sm font-semibold text-blue-900 mb-3">Berechnete Kennzahlen:</h3>
             <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
               <div>
-                <span className="text-blue-700">PV-Erzeugung:</span>
+                <span className="text-blue-700 dark:text-blue-400">PV-Erzeugung:</span>
                 <span className="float-right font-medium">{berechneteWerte.pvErzeugung.toFixed(1)} kWh</span>
               </div>
               <div>
-                <span className="text-blue-700">Eigenverbrauch:</span>
+                <span className="text-blue-700 dark:text-blue-400">Eigenverbrauch:</span>
                 <span className="float-right font-medium">{berechneteWerte.eigenverbrauch.toFixed(1)} kWh</span>
               </div>
               <div>
-                <span className="text-blue-700">Eigenverbrauchsquote:</span>
+                <span className="text-blue-700 dark:text-blue-400">Eigenverbrauchsquote:</span>
                 <span className="float-right font-medium">{berechneteWerte.eigenverbrauchsquote.toFixed(1)}%</span>
               </div>
               <div>
-                <span className="text-blue-700">Autarkiegrad:</span>
+                <span className="text-blue-700 dark:text-blue-400">Autarkiegrad:</span>
                 <span className="float-right font-medium">{berechneteWerte.autarkiegrad.toFixed(1)}%</span>
               </div>
               <div>
-                <span className="text-blue-700">Bilanz:</span>
+                <span className="text-blue-700 dark:text-blue-400">Bilanz:</span>
                 <span className={`float-right font-medium ${berechneteWerte.bilanzOk ? 'text-green-600' : 'text-amber-600'}`}>
                   {berechneteWerte.bilanzOk ? 'OK' : 'Prüfen!'}
                 </span>
               </div>
               {berechneteWerte.einspeisungErtragEuro !== null && (
                 <div>
-                  <span className="text-blue-700">Einspeisevergütung:</span>
+                  <span className="text-blue-700 dark:text-blue-400">Einspeisevergütung:</span>
                   <span className="float-right font-medium text-green-600">{berechneteWerte.einspeisungErtragEuro.toFixed(2)} €</span>
                 </div>
               )}
               {berechneteWerte.netzbezugKostenEuro !== null && (
                 <div>
-                  <span className="text-blue-700">Netzbezugskosten:</span>
+                  <span className="text-blue-700 dark:text-blue-400">Netzbezugskosten:</span>
                   <span className="float-right font-medium text-red-600">-{berechneteWerte.netzbezugKostenEuro.toFixed(2)} €</span>
                 </div>
               )}

@@ -109,7 +109,7 @@ export default function CommunityAnlageDetailPage({ params }: { params: Promise<
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
           <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-          <p className="mt-4 text-gray-600">Lade Anlage...</p>
+          <p className="mt-4 text-gray-600 dark:text-gray-400">Lade Anlage...</p>
         </div>
       </div>
     )
@@ -117,7 +117,7 @@ export default function CommunityAnlageDetailPage({ params }: { params: Promise<
 
   if (error || !anlage) {
     return (
-      <div className="min-h-screen bg-gray-50">
+      <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
         <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           <div className="bg-white rounded-xl shadow-sm p-12 text-center">
             <SimpleIcon type="error" className="w-16 h-16 text-red-500 mx-auto mb-4" />
@@ -139,7 +139,7 @@ export default function CommunityAnlageDetailPage({ params }: { params: Promise<
   const betriebsjahre = new Date().getFullYear() - new Date(anlage.installationsdatum).getFullYear()
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
       <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <Breadcrumb />
 
@@ -180,40 +180,40 @@ export default function CommunityAnlageDetailPage({ params }: { params: Promise<
         {/* Kennzahlen (berechnet aus Monatsdaten) */}
         {monatsdaten.length > 0 && (
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-            <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-200">
+            <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-200 dark:border-gray-700">
               <div className="flex items-center gap-3 mb-3">
                 <div className="w-10 h-10 bg-yellow-100 rounded-lg flex items-center justify-center">
                   <SimpleIcon type="sun" className="w-6 h-6 text-yellow-600" />
                 </div>
-                <div className="text-sm text-gray-600">Gesamterzeugung</div>
+                <div className="text-sm text-gray-600 dark:text-gray-400">Gesamterzeugung</div>
               </div>
-              <div className="text-3xl font-bold text-gray-900">
+              <div className="text-3xl font-bold text-gray-900 dark:text-gray-100">
                 {(monatsdaten.reduce((sum, m) => sum + (m.pv_erzeugung_kwh || 0), 0) / 1000).toFixed(1)}
               </div>
               <div className="text-sm text-gray-600 mt-1">MWh</div>
             </div>
 
-            <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-200">
+            <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-200 dark:border-gray-700">
               <div className="flex items-center gap-3 mb-3">
                 <div className="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center">
                   <SimpleIcon type="target" className="w-6 h-6 text-green-600" />
                 </div>
-                <div className="text-sm text-gray-600">Durchschn. Autarkie</div>
+                <div className="text-sm text-gray-600 dark:text-gray-400">Durchschn. Autarkie</div>
               </div>
-              <div className="text-3xl font-bold text-gray-900">
+              <div className="text-3xl font-bold text-gray-900 dark:text-gray-100">
                 {(monatsdaten.reduce((sum, m) => sum + (m.autarkiegrad_prozent || 0), 0) / monatsdaten.length).toFixed(1)}
               </div>
               <div className="text-sm text-gray-600 mt-1">%</div>
             </div>
 
-            <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-200">
+            <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-200 dark:border-gray-700">
               <div className="flex items-center gap-3 mb-3">
                 <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
                   <SimpleIcon type="lightning" className="w-6 h-6 text-blue-600" />
                 </div>
-                <div className="text-sm text-gray-600">Erfasste Monate</div>
+                <div className="text-sm text-gray-600 dark:text-gray-400">Erfasste Monate</div>
               </div>
-              <div className="text-3xl font-bold text-gray-900">
+              <div className="text-3xl font-bold text-gray-900 dark:text-gray-100">
                 {monatsdaten.length}
               </div>
               <div className="text-sm text-gray-600 mt-1">Monate</div>
@@ -226,7 +226,7 @@ export default function CommunityAnlageDetailPage({ params }: { params: Promise<
           <div className="lg:col-span-2 space-y-6">
             {/* Beschreibung */}
             {(anlage.profilbeschreibung || anlage.beschreibung) && (
-              <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-200">
+              <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-200 dark:border-gray-700">
                 <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
                   <SimpleIcon type="info" className="w-5 h-5 text-blue-600" />
                   Beschreibung
@@ -237,7 +237,7 @@ export default function CommunityAnlageDetailPage({ params }: { params: Promise<
 
             {/* Motivation & Erfahrungen */}
             {(anlage.motivation || anlage.erfahrungen) && (
-              <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-200">
+              <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-200 dark:border-gray-700">
                 <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
                   <SimpleIcon type="lightbulb" className="w-5 h-5 text-yellow-600" />
                   Motivation & Erfahrungen
@@ -245,13 +245,13 @@ export default function CommunityAnlageDetailPage({ params }: { params: Promise<
                 {anlage.motivation && (
                   <div className="mb-4">
                     <h3 className="font-medium text-gray-900 mb-2">Warum PV?</h3>
-                    <p className="text-gray-700">{anlage.motivation}</p>
+                    <p className="text-gray-700 dark:text-gray-300">{anlage.motivation}</p>
                   </div>
                 )}
                 {anlage.erfahrungen && (
                   <div>
                     <h3 className="font-medium text-gray-900 mb-2">Erfahrungen</h3>
-                    <p className="text-gray-700">{anlage.erfahrungen}</p>
+                    <p className="text-gray-700 dark:text-gray-300">{anlage.erfahrungen}</p>
                   </div>
                 )}
               </div>
@@ -269,7 +269,7 @@ export default function CommunityAnlageDetailPage({ params }: { params: Promise<
             )}
 
             {/* Technische Daten */}
-            <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-200">
+            <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-200 dark:border-gray-700">
               <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
                 <SimpleIcon type="settings" className="w-5 h-5 text-blue-600" />
                 Technische Daten
@@ -277,22 +277,22 @@ export default function CommunityAnlageDetailPage({ params }: { params: Promise<
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <div className="text-sm text-gray-600 mb-1">Leistung</div>
-                  <div className="font-medium text-gray-900">{anlage.leistung_kwp} kWp</div>
+                  <div className="font-medium text-gray-900 dark:text-gray-100">{anlage.leistung_kwp} kWp</div>
                 </div>
                 <div>
                   <div className="text-sm text-gray-600 mb-1">Inbetriebnahme</div>
-                  <div className="font-medium text-gray-900">{new Date(anlage.installationsdatum).toLocaleDateString('de-DE')}</div>
+                  <div className="font-medium text-gray-900 dark:text-gray-100">{new Date(anlage.installationsdatum).toLocaleDateString('de-DE')}</div>
                 </div>
                 {anlage.ausrichtung && (
                   <div>
                     <div className="text-sm text-gray-600 mb-1">Ausrichtung</div>
-                    <div className="font-medium text-gray-900">{anlage.ausrichtung}</div>
+                    <div className="font-medium text-gray-900 dark:text-gray-100">{anlage.ausrichtung}</div>
                   </div>
                 )}
                 {anlage.neigungswinkel_grad && (
                   <div>
                     <div className="text-sm text-gray-600 mb-1">Neigungswinkel</div>
-                    <div className="font-medium text-gray-900">{anlage.neigungswinkel_grad}°</div>
+                    <div className="font-medium text-gray-900 dark:text-gray-100">{anlage.neigungswinkel_grad}°</div>
                   </div>
                 )}
               </div>
@@ -303,7 +303,7 @@ export default function CommunityAnlageDetailPage({ params }: { params: Promise<
           <div className="space-y-6">
             {/* Komponenten */}
             {komponenten.length > 0 && (
-              <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-200">
+              <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-200 dark:border-gray-700">
                 <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
                   <SimpleIcon type="briefcase" className="w-5 h-5 text-blue-600" />
                   Komponenten
@@ -337,7 +337,7 @@ export default function CommunityAnlageDetailPage({ params }: { params: Promise<
                         }`}
                       />
                       <div className="flex-1">
-                        <div className="font-medium text-gray-900">{komp.bezeichnung}</div>
+                        <div className="font-medium text-gray-900 dark:text-gray-100">{komp.bezeichnung}</div>
                         <div className="text-xs text-gray-500 capitalize">{komp.typ.replace('-', ' ')}</div>
                       </div>
                     </div>
@@ -348,7 +348,7 @@ export default function CommunityAnlageDetailPage({ params }: { params: Promise<
 
             {/* Mitglied-Bio */}
             {anlage.mitglied_bio && (
-              <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-200">
+              <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-200 dark:border-gray-700">
                 <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
                   <SimpleIcon type="user" className="w-5 h-5 text-blue-600" />
                   Über {anlage.mitglied_display_name}

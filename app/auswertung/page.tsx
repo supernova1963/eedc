@@ -148,7 +148,7 @@ export default async function AuswertungPage({
 
   if (!mitglied.data) {
     return (
-      <main className="min-h-screen bg-gray-50">
+      <main className="min-h-screen bg-gray-50 dark:bg-gray-700">
         <div className="bg-white shadow">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
             <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-2">
@@ -158,8 +158,8 @@ export default async function AuswertungPage({
           </div>
         </div>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-          <div className="bg-white rounded-lg shadow p-8 text-center">
-            <p className="text-gray-500">Nicht authentifiziert</p>
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-8 text-center">
+            <p className="text-gray-500 dark:text-gray-400">Nicht authentifiziert</p>
           </div>
         </div>
       </main>
@@ -172,7 +172,7 @@ export default async function AuswertungPage({
 
   if (!anlage) {
     return (
-      <main className="min-h-screen bg-gray-50">
+      <main className="min-h-screen bg-gray-50 dark:bg-gray-700">
         <div className="bg-white shadow">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
             <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-2">
@@ -182,7 +182,7 @@ export default async function AuswertungPage({
           </div>
         </div>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-          <div className="bg-white rounded-lg shadow p-8 text-center">
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-8 text-center">
             <p className="text-gray-500 mb-4">Keine Anlage gefunden.</p>
             <Link
               href="/anlage"
@@ -233,7 +233,7 @@ export default async function AuswertungPage({
   }
 
   return (
-    <main className="min-h-screen bg-gray-50">
+    <main className="min-h-screen bg-gray-50 dark:bg-gray-700">
       {/* Header */}
       <div className="bg-white shadow">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
@@ -252,7 +252,7 @@ export default async function AuswertungPage({
                 {activeTab === 'monatsdetail' && 'Monats-Details'}
                 {activeTab === 'optimierung' && 'Optimierungsvorschläge'}
               </h1>
-              <p className="mt-2 text-sm text-gray-600">
+              <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">
                 {anlage.anlagenname} - {anlage.leistung_kwp} kWp
               </p>
             </div>
@@ -278,7 +278,7 @@ export default async function AuswertungPage({
       {/* Content */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {monatsdaten.length === 0 && activeTab === 'pv' ? (
-          <div className="bg-white rounded-lg shadow p-8 text-center">
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-8 text-center">
             <p className="text-gray-500 mb-4">
               Keine Daten vorhanden. Erfasse zunächst einige Monatsdaten.
             </p>

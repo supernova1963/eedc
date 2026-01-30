@@ -49,7 +49,7 @@ export default async function StammdatenPage() {
     <div className="max-w-7xl mx-auto px-4 py-8">
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-gray-900 mb-2">Stammdaten</h1>
-        <p className="text-gray-600">
+        <p className="text-gray-600 dark:text-gray-400">
           Verwalte deine Stammdaten für aussagekräftige Auswertungen
         </p>
       </div>
@@ -58,20 +58,20 @@ export default async function StammdatenPage() {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
         {/* Strompreise */}
         <Link href="/stammdaten/strompreise" className="block">
-          <div className="bg-white rounded-lg shadow hover:shadow-lg transition-shadow p-6 border-l-4 border-blue-500">
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow hover:shadow-lg transition-shadow p-6 border-l-4 border-blue-500">
             <div className="flex items-center justify-between mb-4">
               <SimpleIcon type="lightning" className="w-12 h-12 text-blue-500" />
               <div className="text-right">
                 <div className="text-3xl font-bold text-blue-600">
                   {strompreise?.length || 0}
                 </div>
-                <div className="text-sm text-gray-500">erfasst</div>
+                <div className="text-sm text-gray-500 dark:text-gray-400">erfasst</div>
               </div>
             </div>
             <h3 className="text-lg font-semibold text-gray-900 mb-2">
               Strompreise
             </h3>
-            <p className="text-sm text-gray-600">
+            <p className="text-sm text-gray-600 dark:text-gray-400">
               Netzbezug- und Einspeisepreise mit Gültigkeitszeiträumen
             </p>
             <div className="mt-4 text-blue-600 font-medium text-sm">
@@ -82,20 +82,20 @@ export default async function StammdatenPage() {
 
         {/* Anlage-Investition-Zuordnung */}
         <Link href="/stammdaten/zuordnung" className="block">
-          <div className="bg-white rounded-lg shadow hover:shadow-lg transition-shadow p-6 border-l-4 border-green-500">
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow hover:shadow-lg transition-shadow p-6 border-l-4 border-green-500">
             <div className="flex items-center justify-between mb-4">
               <SimpleIcon type="link" className="w-12 h-12 text-green-500" />
               <div className="text-right">
                 <div className="text-3xl font-bold text-green-600">
                   {zugeordneteKomponenten}/{gesamtKomponenten}
                 </div>
-                <div className="text-sm text-gray-500">Komponenten</div>
+                <div className="text-sm text-gray-500 dark:text-gray-400">Komponenten</div>
               </div>
             </div>
             <h3 className="text-lg font-semibold text-gray-900 mb-2">
               Anlagen-Zuordnung
             </h3>
-            <p className="text-sm text-gray-600">
+            <p className="text-sm text-gray-600 dark:text-gray-400">
               Ordne Investitionen ihren Anlagen zu
             </p>
             <div className="mt-4 text-green-600 font-medium text-sm">
@@ -106,18 +106,18 @@ export default async function StammdatenPage() {
 
         {/* Investitionstyp-Konfiguration */}
         <Link href="/stammdaten/investitionstypen" className="block">
-          <div className="bg-white rounded-lg shadow hover:shadow-lg transition-shadow p-6 border-l-4 border-purple-500">
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow hover:shadow-lg transition-shadow p-6 border-l-4 border-purple-500">
             <div className="flex items-center justify-between mb-4">
               <SimpleIcon type="settings" className="w-12 h-12 text-purple-500" />
               <div className="text-right">
                 <div className="text-3xl font-bold text-purple-600">8</div>
-                <div className="text-sm text-gray-500">Typen</div>
+                <div className="text-sm text-gray-500 dark:text-gray-400">Typen</div>
               </div>
             </div>
             <h3 className="text-lg font-semibold text-gray-900 mb-2">
               Investitionstypen
             </h3>
-            <p className="text-sm text-gray-600">
+            <p className="text-sm text-gray-600 dark:text-gray-400">
               Berechnungsparameter pro Investitionstyp
             </p>
             <div className="mt-4 text-purple-600 font-medium text-sm">
@@ -158,25 +158,25 @@ export default async function StammdatenPage() {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <Link
             href="/stammdaten/strompreise/neu"
-            className="px-4 py-3 bg-white border border-gray-300 rounded-md hover:bg-gray-50 text-center text-sm font-medium text-gray-700"
+            className="px-4 py-3 bg-white border border-gray-300 rounded-md hover:bg-gray-50 text-center text-sm font-medium text-gray-700 dark:text-gray-300"
           >
             + Strompreis erfassen
           </Link>
           <Link
             href="/anlage"
-            className="px-4 py-3 bg-white border border-gray-300 rounded-md hover:bg-gray-50 text-center text-sm font-medium text-gray-700"
+            className="px-4 py-3 bg-white border border-gray-300 rounded-md hover:bg-gray-50 text-center text-sm font-medium text-gray-700 dark:text-gray-300"
           >
             Anlagen verwalten
           </Link>
           <Link
             href="/investitionen"
-            className="px-4 py-3 bg-white border border-gray-300 rounded-md hover:bg-gray-50 text-center text-sm font-medium text-gray-700"
+            className="px-4 py-3 bg-white border border-gray-300 rounded-md hover:bg-gray-50 text-center text-sm font-medium text-gray-700 dark:text-gray-300"
           >
             Investitionen verwalten
           </Link>
           <Link
             href="/auswertung"
-            className="px-4 py-3 bg-white border border-gray-300 rounded-md hover:bg-gray-50 text-center text-sm font-medium text-gray-700"
+            className="px-4 py-3 bg-white border border-gray-300 rounded-md hover:bg-gray-50 text-center text-sm font-medium text-gray-700 dark:text-gray-300"
           >
             Zu Auswertungen
           </Link>
