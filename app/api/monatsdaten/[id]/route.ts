@@ -38,10 +38,22 @@ export async function PUT(
       return NextResponse.json({ success: false, error: 'Nicht authentifiziert' }, { status: 401 })
     }
 
-    // Erst Monatsdaten holen
+    // Hole Monatsdaten mit Anlage und Mitglied in einem JOIN
+    // Das umgeht RLS-Probleme bei separaten Abfragen
     const { data: monatsdaten, error: mdError } = await supabase
       .from('monatsdaten')
-      .select('id, anlage_id')
+      .select(`
+        id,
+        anlage_id,
+        anlagen!inner (
+          id,
+          mitglied_id,
+          mitglieder!inner (
+            id,
+            user_id
+          )
+        )
+      `)
       .eq('id', id)
       .single()
 
@@ -50,25 +62,11 @@ export async function PUT(
       return NextResponse.json({ success: false, error: 'Monatsdaten nicht gefunden' }, { status: 404 })
     }
 
-    // Dann Anlage prüfen
-    const { data: anlage, error: anlageError } = await supabase
-      .from('anlagen')
-      .select('id, mitglied_id')
-      .eq('id', monatsdaten.anlage_id)
-      .single()
+    // Berechtigung prüfen - über den JOIN haben wir direkten Zugriff
+    const anlage = monatsdaten.anlagen as any
+    const mitglied = anlage?.mitglieder as any
 
-    if (anlageError || !anlage) {
-      return NextResponse.json({ success: false, error: 'Anlage nicht gefunden' }, { status: 404 })
-    }
-
-    // Dann Mitglied prüfen
-    const { data: mitglied, error: mitgliedError } = await supabase
-      .from('mitglieder')
-      .select('id, user_id')
-      .eq('id', anlage.mitglied_id)
-      .single()
-
-    if (mitgliedError || !mitglied || mitglied.user_id !== user.id) {
+    if (!mitglied || mitglied.user_id !== user.id) {
       return NextResponse.json({ success: false, error: 'Keine Berechtigung' }, { status: 403 })
     }
 
@@ -119,10 +117,22 @@ export async function DELETE(
       return NextResponse.json({ success: false, error: 'Nicht authentifiziert' }, { status: 401 })
     }
 
-    // Erst Monatsdaten holen
+    // Hole Monatsdaten mit Anlage und Mitglied in einem JOIN
+    // Das umgeht RLS-Probleme bei separaten Abfragen
     const { data: monatsdaten, error: mdError } = await supabase
       .from('monatsdaten')
-      .select('id, anlage_id')
+      .select(`
+        id,
+        anlage_id,
+        anlagen!inner (
+          id,
+          mitglied_id,
+          mitglieder!inner (
+            id,
+            user_id
+          )
+        )
+      `)
       .eq('id', id)
       .single()
 
@@ -131,32 +141,11 @@ export async function DELETE(
       return NextResponse.json({ success: false, error: 'Monatsdaten nicht gefunden' }, { status: 404 })
     }
 
-    // Dann Anlage prüfen
-    const { data: anlage, error: anlageError } = await supabase
-      .from('anlagen')
-      .select('id, mitglied_id')
-      .eq('id', monatsdaten.anlage_id)
-      .single()
+    // Berechtigung prüfen - über den JOIN haben wir direkten Zugriff
+    const anlage = monatsdaten.anlagen as any
+    const mitglied = anlage?.mitglieder as any
 
-    if (anlageError || !anlage) {
-      console.error('Anlage lookup error:', anlageError)
-      return NextResponse.json({ success: false, error: 'Anlage nicht gefunden' }, { status: 404 })
-    }
-
-    // Dann Mitglied prüfen
-    const { data: mitglied, error: mitgliedError } = await supabase
-      .from('mitglieder')
-      .select('id, user_id')
-      .eq('id', anlage.mitglied_id)
-      .single()
-
-    if (mitgliedError || !mitglied) {
-      console.error('Mitglied lookup error:', mitgliedError)
-      return NextResponse.json({ success: false, error: 'Mitglied nicht gefunden' }, { status: 404 })
-    }
-
-    // Berechtigung prüfen
-    if (mitglied.user_id !== user.id) {
+    if (!mitglied || mitglied.user_id !== user.id) {
       return NextResponse.json({ success: false, error: 'Keine Berechtigung' }, { status: 403 })
     }
 
