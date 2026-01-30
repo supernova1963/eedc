@@ -80,28 +80,28 @@ export default function WirtschaftlichkeitStats({ monatsdaten, anlage }: Wirtsch
     <div className="space-y-6">
       {/* KPIs */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <div className="bg-white rounded-lg shadow p-6">
-          <div className="text-sm text-gray-600">Gesamt-Erzeugung</div>
-          <div className="text-2xl font-bold text-gray-900">{fmt(gesamtErzeugung)} kWh</div>
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+          <div className="text-sm text-gray-600 dark:text-gray-400">Gesamt-Erzeugung</div>
+          <div className="text-2xl font-bold text-gray-900 dark:text-gray-100">{fmt(gesamtErzeugung)} kWh</div>
         </div>
-        <div className="bg-white rounded-lg shadow p-6">
-          <div className="text-sm text-gray-600">Eigenverbrauch</div>
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+          <div className="text-sm text-gray-600 dark:text-gray-400">Eigenverbrauch</div>
           <div className="text-2xl font-bold text-green-700">{fmtDec(eigenverbrauchsquote)}%</div>
         </div>
-        <div className="bg-white rounded-lg shadow p-6">
-          <div className="text-sm text-gray-600">Erlöse</div>
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+          <div className="text-sm text-gray-600 dark:text-gray-400">Erlöse</div>
           <div className="text-2xl font-bold text-blue-700">{fmtDec(gesamtErloese)} €</div>
         </div>
-        <div className="bg-white rounded-lg shadow p-6">
-          <div className="text-sm text-gray-600">Netto-Ertrag</div>
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+          <div className="text-sm text-gray-600 dark:text-gray-400">Netto-Ertrag</div>
           <div className="text-2xl font-bold text-green-700">{fmtDec(nettoErtrag)} €</div>
         </div>
       </div>
 
       {/* Chart */}
       {chartData.length > 0 && (
-        <div className="bg-white rounded-lg shadow p-6">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+          <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4 flex items-center gap-2">
             <SimpleIcon type="trend" className="w-5 h-5 text-gray-600" />
             Monatliche Entwicklung
           </h3>
@@ -120,16 +120,16 @@ export default function WirtschaftlichkeitStats({ monatsdaten, anlage }: Wirtsch
       )}
 
       {/* Tabelle */}
-      <div className="bg-white rounded-lg shadow overflow-hidden">
-        <div className="px-6 py-4 border-b border-gray-200">
-          <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
+        <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+          <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 flex items-center gap-2">
             <SimpleIcon type="clipboard" className="w-5 h-5 text-gray-600" />
             Monatsdaten ({monatsdaten.length})
           </h3>
         </div>
         <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
+          <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+            <thead className="bg-gray-50 dark:bg-gray-700">
               <tr>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Monat</th>
                 <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Erzeugung</th>
@@ -138,24 +138,24 @@ export default function WirtschaftlichkeitStats({ monatsdaten, anlage }: Wirtsch
                 <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Erlöse</th>
               </tr>
             </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
+            <tbody className="bg-white divide-y divide-gray-200 dark:divide-gray-700">
               {monatsdaten
                 .sort((a, b) => {
                   if (a.jahr !== b.jahr) return b.jahr - a.jahr
                   return b.monat - a.monat
                 })
                 .map((m, i) => (
-                  <tr key={i} className="hover:bg-gray-50">
-                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                  <tr key={i} className="hover:bg-gray-50 dark:bg-gray-700">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">
                       {monatsnamen[m.monat] || m.monat} {m.jahr}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-gray-900">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-gray-900 dark:text-gray-100">
                       {fmt(toNum(m.pv_erzeugung_kwh))} kWh
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-gray-900">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-gray-900 dark:text-gray-100">
                       {fmt(toNum(m.direktverbrauch_kwh) + toNum(m.batterieentladung_kwh))} kWh
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-gray-900">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-gray-900 dark:text-gray-100">
                       {fmt(toNum(m.einspeisung_kwh))} kWh
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-right font-medium text-green-600">

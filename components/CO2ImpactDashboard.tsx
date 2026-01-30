@@ -106,11 +106,11 @@ export default function CO2ImpactDashboard({ monatsdaten, investitionen }: CO2Im
       {/* Header */}
       <div className="flex items-start justify-between">
         <div>
-          <h2 className="text-2xl font-bold text-gray-900 flex items-center gap-2 mb-2">
+          <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100 flex items-center gap-2 mb-2">
             <SimpleIcon type="globe" className="w-6 h-6 text-green-600" />
             CO₂-Impact & Umweltbilanz
           </h2>
-          <p className="text-sm text-gray-600">
+          <p className="text-sm text-gray-600 dark:text-gray-400">
             Dein Beitrag zum Klimaschutz seit {yearlyCO2Stats[0]?.jahr || 'Inbetriebnahme'}
           </p>
         </div>
@@ -188,7 +188,7 @@ export default function CO2ImpactDashboard({ monatsdaten, investitionen }: CO2Im
 
       {/* Fun Facts */}
       <div className="bg-gradient-to-r from-green-50 via-blue-50 to-purple-50 border-2 border-green-300 rounded-lg p-6">
-        <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+        <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4 flex items-center gap-2">
           <SimpleIcon type="rocket" className="w-5 h-5 text-green-600" />
           Das entspricht...
         </h3>
@@ -198,7 +198,7 @@ export default function CO2ImpactDashboard({ monatsdaten, investitionen }: CO2Im
               <SimpleIcon type="tree" className="w-16 h-16 text-green-600" />
             </div>
             <div className="text-2xl font-bold text-green-700">{fmt(gesamtBaeume)}</div>
-            <div className="text-sm text-gray-600 mt-1">
+            <div className="text-sm text-gray-600 dark:text-gray-400 mt-1">
               Bäume die ein Jahr lang CO₂ binden
             </div>
           </div>
@@ -207,7 +207,7 @@ export default function CO2ImpactDashboard({ monatsdaten, investitionen }: CO2Im
               <SimpleIcon type="car" className="w-16 h-16 text-blue-600" />
             </div>
             <div className="text-2xl font-bold text-blue-700">{fmtDec(erdumrundungen)}x</div>
-            <div className="text-sm text-gray-600 mt-1">
+            <div className="text-sm text-gray-600 dark:text-gray-400 mt-1">
               Erdumrundungen mit dem Auto
               <br />
               <span className="text-xs text-gray-500">({fmt(gesamtAutoKm)} km)</span>
@@ -220,7 +220,7 @@ export default function CO2ImpactDashboard({ monatsdaten, investitionen }: CO2Im
             <div className="text-2xl font-bold text-purple-700">
               {fmt(gesamtCO2 / CO2_PER_KWH)}
             </div>
-            <div className="text-sm text-gray-600 mt-1">
+            <div className="text-sm text-gray-600 dark:text-gray-400 mt-1">
               kWh saubere Energie erzeugt
             </div>
           </div>
@@ -228,8 +228,8 @@ export default function CO2ImpactDashboard({ monatsdaten, investitionen }: CO2Im
       </div>
 
       {/* Cumulative CO₂ Chart */}
-      <div className="bg-white rounded-lg shadow p-6">
-        <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+        <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4 flex items-center gap-2">
           <SimpleIcon type="trend" className="w-5 h-5 text-gray-600" />
           Kumulierte CO₂-Einsparung
         </h3>
@@ -264,8 +264,8 @@ export default function CO2ImpactDashboard({ monatsdaten, investitionen }: CO2Im
       </div>
 
       {/* Yearly CO₂ Savings */}
-      <div className="bg-white rounded-lg shadow p-6">
-        <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+        <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4 flex items-center gap-2">
           <SimpleIcon type="chart" className="w-5 h-5 text-gray-600" />
           Jährliche CO₂-Einsparung
         </h3>
@@ -285,16 +285,16 @@ export default function CO2ImpactDashboard({ monatsdaten, investitionen }: CO2Im
       </div>
 
       {/* Yearly Details Table */}
-      <div className="bg-white rounded-lg shadow overflow-hidden">
-        <div className="px-6 py-4 border-b border-gray-200">
-          <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
+        <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+          <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 flex items-center gap-2">
             <SimpleIcon type="clipboard" className="w-5 h-5 text-gray-600" />
             Jahresübersicht CO₂-Impact
           </h3>
         </div>
         <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
+          <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+            <thead className="bg-gray-50 dark:bg-gray-700">
               <tr>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Jahr</th>
                 <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">CO₂-Einsparung</th>
@@ -303,10 +303,10 @@ export default function CO2ImpactDashboard({ monatsdaten, investitionen }: CO2Im
                 <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Kumuliert</th>
               </tr>
             </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
+            <tbody className="bg-white divide-y divide-gray-200 dark:divide-gray-700">
               {yearlyCO2Stats.map((year) => (
-                <tr key={year.jahr} className="hover:bg-gray-50">
-                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                <tr key={year.jahr} className="hover:bg-gray-50 dark:bg-gray-700">
+                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">
                     {year.jahr}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-right font-bold text-green-600">
@@ -336,8 +336,8 @@ export default function CO2ImpactDashboard({ monatsdaten, investitionen }: CO2Im
             Zusätzliche CO₂-Einsparungen durch Investitionen
           </h3>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="bg-white rounded-lg p-4">
-              <div className="text-sm text-gray-600">Jährlich zusätzlich</div>
+            <div className="bg-white dark:bg-gray-700 rounded-lg p-4">
+              <div className="text-sm text-gray-600 dark:text-gray-400">Jährlich zusätzlich</div>
               <div className="text-xl font-bold text-blue-700">
                 {fmtDec(investitionenCO2 / 1000)} t CO₂
               </div>
@@ -345,15 +345,15 @@ export default function CO2ImpactDashboard({ monatsdaten, investitionen }: CO2Im
                 durch {investitionen.length} Investition{investitionen.length !== 1 ? 'en' : ''}
               </div>
             </div>
-            <div className="bg-white rounded-lg p-4">
-              <div className="text-sm text-gray-600">≈ Bäume äquivalent</div>
+            <div className="bg-white dark:bg-gray-700 rounded-lg p-4">
+              <div className="text-sm text-gray-600 dark:text-gray-400">≈ Bäume äquivalent</div>
               <div className="text-xl font-bold text-green-700">
                 {fmt(investitionenCO2 / CO2_PER_BAUM_JAHR)}
               </div>
               <div className="text-xs text-gray-500 mt-1">pro Jahr</div>
             </div>
-            <div className="bg-white rounded-lg p-4">
-              <div className="text-sm text-gray-600">Gesamt über {yearlyCO2Stats.length} Jahre</div>
+            <div className="bg-white dark:bg-gray-700 rounded-lg p-4">
+              <div className="text-sm text-gray-600 dark:text-gray-400">Gesamt über {yearlyCO2Stats.length} Jahre</div>
               <div className="text-xl font-bold text-purple-700">
                 {fmtDec((investitionenCO2 * yearlyCO2Stats.length) / 1000)} t
               </div>
