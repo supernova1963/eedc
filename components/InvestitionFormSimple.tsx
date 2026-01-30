@@ -47,6 +47,11 @@ export default function InvestitionFormSimple({ mitgliedId, editData, onSuccess 
   const typConfig = INVESTITION_TYPEN[typ]
   const showAlternative = typConfig?.hasAlternative ?? false
 
+  // Haushalt-Komponenten (keine Anlagen-Zuordnung erforderlich)
+  const isHaushaltKomponente = typ === 'e-auto' || typ === 'waermepumpe' || typ === 'wallbox'
+  // Anlagen-Komponenten (sollten einer Anlage zugeordnet werden)
+  const isAnlagenKomponente = typ === 'pv-module' || typ === 'wechselrichter' || typ === 'speicher' || typ === 'balkonkraftwerk'
+
   return (
     <div className="bg-white rounded-lg shadow p-6">
       <h2 className="text-xl font-semibold text-gray-900 mb-6 flex items-center gap-2">
@@ -77,6 +82,24 @@ export default function InvestitionFormSimple({ mitgliedId, editData, onSuccess 
           disabled={isEditing}
           id="investitions-typ"
         />
+
+        {/* Hinweis zur Zuordnung */}
+        {!isEditing && isHaushaltKomponente && (
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 flex items-start gap-2">
+            <SimpleIcon type="info" className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
+            <p className="text-sm text-blue-800">
+              <strong>{typConfig?.label}</strong> wird als Haushalt-Komponente erfasst und muss keiner PV-Anlage zugeordnet werden.
+            </p>
+          </div>
+        )}
+        {!isEditing && isAnlagenKomponente && (
+          <div className="bg-green-50 border border-green-200 rounded-lg p-3 flex items-start gap-2">
+            <SimpleIcon type="link" className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" />
+            <p className="text-sm text-green-800">
+              <strong>{typConfig?.label}</strong> kann nach dem Speichern einer PV-Anlage zugeordnet werden (unter Stammdaten → Zuordnung).
+            </p>
+          </div>
+        )}
 
         {/* Basis-Felder */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

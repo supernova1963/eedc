@@ -15,6 +15,7 @@ export interface EAutoParams {
   pv_anteil_prozent: string
   vergleich_verbrenner_l_100km: string
   benzinpreis_euro_liter: string
+  strompreis_cent_kwh: string
   betriebskosten_jahr_euro: string
 }
 
@@ -85,6 +86,9 @@ export function berechneEAutoEinsparungen(params: EAutoParams): { co2Einsparung:
   const co2Strom = stromNetz * CO2_FAKTOREN.strom_netz_pro_kwh
   const co2Einsparung = co2Benzin - co2Strom
 
+  const strompreis = parseFloat(params.strompreis_cent_kwh) || 30
+  const stromkostenNetz = (stromNetz * strompreis) / 100
+
   return {
     co2Einsparung: Math.round(co2Einsparung),
     parameter: {
@@ -94,6 +98,8 @@ export function berechneEAutoEinsparungen(params: EAutoParams): { co2Einsparung:
       pv_anteil_prozent: pvAnteil,
       pv_ladung_kwh_jahr: Math.round(stromPV),
       netz_ladung_kwh_jahr: Math.round(stromNetz),
+      strompreis_cent_kwh: strompreis,
+      stromkosten_jahr_euro: Math.round(stromkostenNetz),
       vergleich_verbrenner_l_100km: verbrauchL,
       benzinpreis_euro_liter: parseFloat(params.benzinpreis_euro_liter) || 0,
       betriebskosten_jahr_euro: parseFloat(params.betriebskosten_jahr_euro) || 0

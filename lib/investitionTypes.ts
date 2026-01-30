@@ -141,6 +141,7 @@ export function getInitialParameterData(editData?: any) {
     pv_anteil_prozent: editData?.parameter?.pv_anteil_prozent?.toString() || '70',
     vergleich_verbrenner_l_100km: editData?.parameter?.vergleich_verbrenner_l_100km?.toString() || '',
     benzinpreis_euro_liter: editData?.parameter?.benzinpreis_euro_liter?.toString() || '1.69',
+    strompreis_cent_kwh: editData?.parameter?.strompreis_cent_kwh?.toString() || '30',
 
     // Warmepumpe
     heizlast_kw: editData?.parameter?.heizlast_kw?.toString() || '',
