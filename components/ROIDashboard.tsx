@@ -123,11 +123,11 @@ export default function ROIDashboard({ anlage, monatsdaten, investitionen }: ROI
       {/* Header */}
       <div className="flex items-start justify-between">
         <div>
-          <h2 className="text-2xl font-bold text-gray-900 flex items-center gap-2 mb-2">
-            <SimpleIcon type="trend" className="w-6 h-6 text-blue-600" />
+          <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100 flex items-center gap-2 mb-2">
+            <SimpleIcon type="trend" className="w-6 h-6 text-blue-600 dark:text-blue-400" />
             ROI-Analyse & Wirtschaftlichkeit
           </h2>
-          <p className="text-sm text-gray-600">
+          <p className="text-sm text-gray-600 dark:text-gray-400">
             Detaillierte Analyse der Investitionsrendite seit {yearlyStats[0]?.jahr || 'Inbetriebnahme'}
           </p>
         </div>
@@ -171,28 +171,28 @@ export default function ROIDashboard({ anlage, monatsdaten, investitionen }: ROI
 
       {/* KPI Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <div className="bg-white rounded-lg shadow p-6">
-          <div className="text-sm text-gray-600 mb-1">Gesamtertrag</div>
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+          <div className="text-sm text-gray-600 dark:text-gray-400 mb-1">Gesamtertrag</div>
           <div className="text-2xl font-bold text-green-700">{fmtDec(gesamtErtrag)} €</div>
-          <div className="text-xs text-gray-500 mt-1">
+          <div className="text-xs text-gray-500 dark:text-gray-500 mt-1">
             seit {yearlyStats.length} Jahr{yearlyStats.length !== 1 ? 'en' : ''}
           </div>
         </div>
 
-        <div className="bg-white rounded-lg shadow p-6">
-          <div className="text-sm text-gray-600 mb-1">Amortisation</div>
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+          <div className="text-sm text-gray-600 dark:text-gray-400 mb-1">Amortisation</div>
           <div className={`text-2xl font-bold ${istAmortisiert ? 'text-green-700' : 'text-blue-700'}`}>
             {istAmortisiert ? '✓ Erreicht' : `${fmtDec(verbleibendeJahre)} J.`}
           </div>
-          <div className="text-xs text-gray-500 mt-1">
+          <div className="text-xs text-gray-500 dark:text-gray-500 mt-1">
             {istAmortisiert ? `+${fmtDec(gesamtErtrag - gesamtInvestition)} € Gewinn` : 'bis Payback'}
           </div>
         </div>
 
-        <div className="bg-white rounded-lg shadow p-6">
-          <div className="text-sm text-gray-600 mb-1">Ø Ertrag/Jahr</div>
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+          <div className="text-sm text-gray-600 dark:text-gray-400 mb-1">Ø Ertrag/Jahr</div>
           <div className="text-2xl font-bold text-blue-700">{fmt(durchschnittErtragProJahr)} €</div>
-          <div className="text-xs text-gray-500 mt-1">
+          <div className="text-xs text-gray-500 dark:text-gray-500 mt-1">
             {yoyWachstum !== 0 && letzesJahr ? (
               <span className={yoyWachstum > 0 ? 'text-green-600' : 'text-red-600'}>
                 {yoyWachstum > 0 ? '+' : ''}{fmtDec(yoyWachstum)}% YoY
@@ -203,22 +203,22 @@ export default function ROIDashboard({ anlage, monatsdaten, investitionen }: ROI
           </div>
         </div>
 
-        <div className="bg-white rounded-lg shadow p-6">
-          <div className="text-sm text-gray-600 mb-1">ROI aktuell</div>
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+          <div className="text-sm text-gray-600 dark:text-gray-400 mb-1">ROI aktuell</div>
           <div className="text-2xl font-bold text-purple-700">
             {fmtDec((gesamtErtrag / gesamtInvestition) * 100)}%
           </div>
-          <div className="text-xs text-gray-500 mt-1">
+          <div className="text-xs text-gray-500 dark:text-gray-500 mt-1">
             von {fmt(gesamtInvestition)} €
           </div>
         </div>
       </div>
 
       {/* Payback Progress Bar */}
-      <div className="bg-white rounded-lg shadow p-6">
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
         <div className="flex items-center justify-between mb-3">
-          <h3 className="text-lg font-semibold text-gray-900">Amortisations-Fortschritt</h3>
-          <span className="text-sm font-medium text-gray-600">
+          <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Amortisations-Fortschritt</h3>
+          <span className="text-sm font-medium text-gray-600 dark:text-gray-400">
             {fmtDec(Math.min((gesamtErtrag / gesamtInvestition) * 100, 100))}%
           </span>
         </div>
@@ -247,8 +247,8 @@ export default function ROIDashboard({ anlage, monatsdaten, investitionen }: ROI
       </div>
 
       {/* Cumulative Savings Chart */}
-      <div className="bg-white rounded-lg shadow p-6">
-        <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+        <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4 flex items-center gap-2">
           <SimpleIcon type="chart" className="w-5 h-5 text-gray-600" />
           Kumulierte Erträge vs. Investition
         </h3>
@@ -292,8 +292,8 @@ export default function ROIDashboard({ anlage, monatsdaten, investitionen }: ROI
       </div>
 
       {/* Yearly Comparison */}
-      <div className="bg-white rounded-lg shadow p-6">
-        <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+        <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4 flex items-center gap-2">
           <SimpleIcon type="trend" className="w-5 h-5 text-gray-600" />
           Jahresvergleich: Erträge & Kosten
         </h3>
@@ -317,7 +317,7 @@ export default function ROIDashboard({ anlage, monatsdaten, investitionen }: ROI
       {/* Yearly Stats Table */}
       <div className="bg-white rounded-lg shadow overflow-hidden">
         <div className="px-6 py-4 border-b border-gray-200">
-          <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+          <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 flex items-center gap-2">
             <SimpleIcon type="clipboard" className="w-5 h-5 text-gray-600" />
             Jahresübersicht
           </h3>
@@ -375,7 +375,7 @@ export default function ROIDashboard({ anlage, monatsdaten, investitionen }: ROI
       {/* Investment Breakdown */}
       {investitionen.length > 0 && (
         <div className="bg-gradient-to-r from-blue-50 to-purple-50 border border-blue-200 rounded-lg p-6">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+          <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4 flex items-center gap-2">
             <SimpleIcon type="gem" className="w-5 h-5 text-blue-600" />
             Investitionsübersicht
           </h3>
@@ -383,14 +383,14 @@ export default function ROIDashboard({ anlage, monatsdaten, investitionen }: ROI
             <div className="bg-white rounded-lg p-4">
               <div className="text-sm text-gray-600">PV-Anlage</div>
               <div className="text-xl font-bold text-gray-900">{fmt(gesamtInvestition)} €</div>
-              <div className="text-xs text-gray-500 mt-1">Hauptinvestition</div>
+              <div className="text-xs text-gray-500 dark:text-gray-500 mt-1">Hauptinvestition</div>
             </div>
             <div className="bg-white rounded-lg p-4">
               <div className="text-sm text-gray-600">Zusatzinvestitionen</div>
               <div className="text-xl font-bold text-gray-900">
                 {fmt(investitionen.reduce((sum, inv) => sum + (inv.anschaffungskosten_relevant || 0), 0))} €
               </div>
-              <div className="text-xs text-gray-500 mt-1">{investitionen.length} Positionen</div>
+              <div className="text-xs text-gray-500 dark:text-gray-500 mt-1">{investitionen.length} Positionen</div>
             </div>
             <div className="bg-white rounded-lg p-4">
               <div className="text-sm text-gray-600">Gesamtinvestition</div>
@@ -400,7 +400,7 @@ export default function ROIDashboard({ anlage, monatsdaten, investitionen }: ROI
                   investitionen.reduce((sum, inv) => sum + (inv.anschaffungskosten_relevant || 0), 0)
                 )} €
               </div>
-              <div className="text-xs text-gray-500 mt-1">Inklusive Zusätze</div>
+              <div className="text-xs text-gray-500 dark:text-gray-500 mt-1">Inklusive Zusätze</div>
             </div>
           </div>
         </div>

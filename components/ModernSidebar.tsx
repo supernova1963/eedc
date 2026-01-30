@@ -7,6 +7,7 @@ import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import SimpleIcon from './SimpleIcon'
+import ThemeToggle from './ThemeToggle'
 import { createBrowserClient } from '@/lib/supabase-browser'
 
 interface NavItem {
@@ -164,8 +165,8 @@ export default function ModernSidebar({ userName, userEmail }: ModernSidebarProp
             onClick={() => toggleSection(item.label)}
             className={`w-full flex items-center justify-between px-4 py-2.5 text-sm font-medium rounded-md transition-colors ${
               active
-                ? 'bg-blue-50 text-blue-700'
-                : 'text-gray-700 hover:bg-gray-100'
+                ? 'bg-blue-50 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300'
+                : 'text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700'
             }`}
             style={{ paddingLeft }}
           >
@@ -195,8 +196,8 @@ export default function ModernSidebar({ userName, userEmail }: ModernSidebarProp
         href={item.href}
         className={`flex items-center gap-3 px-4 py-2.5 text-sm font-medium rounded-md transition-colors ${
           active
-            ? 'bg-blue-50 text-blue-700'
-            : 'text-gray-700 hover:bg-gray-100'
+            ? 'bg-blue-50 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300'
+            : 'text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700'
         }`}
         style={{ paddingLeft }}
         onClick={() => setIsOpen(false)}
@@ -212,9 +213,9 @@ export default function ModernSidebar({ userName, userEmail }: ModernSidebarProp
       {/* Mobile Menu Button */}
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="lg:hidden fixed top-4 left-4 z-50 p-2 rounded-md bg-white shadow-lg"
+        className="lg:hidden fixed top-4 left-4 z-50 p-2 rounded-md bg-white dark:bg-gray-800 shadow-lg"
       >
-        <SimpleIcon type={isOpen ? 'close' : 'menu'} className="w-6 h-6" />
+        <SimpleIcon type={isOpen ? 'close' : 'menu'} className="w-6 h-6 text-gray-700 dark:text-gray-300" />
       </button>
 
       {/* Mobile Overlay */}
@@ -228,7 +229,7 @@ export default function ModernSidebar({ userName, userEmail }: ModernSidebarProp
       {/* Sidebar */}
       <aside
         className={`
-          fixed top-0 left-0 h-full w-64 bg-white border-r border-gray-200 z-40
+          fixed top-0 left-0 h-full w-64 bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 z-40
           transform transition-transform duration-200 ease-in-out
           ${isOpen ? 'translate-x-0' : '-translate-x-full'}
           lg:translate-x-0 lg:static
@@ -236,16 +237,16 @@ export default function ModernSidebar({ userName, userEmail }: ModernSidebarProp
         `}
       >
         {/* User Section */}
-        <div className="p-4 border-b border-gray-200">
+        <div className="p-4 border-b border-gray-200 dark:border-gray-700">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-full bg-blue-600 flex items-center justify-center text-white font-semibold">
               {userName ? userName.charAt(0).toUpperCase() : 'U'}
             </div>
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-semibold text-gray-900 truncate">
+              <p className="text-sm font-semibold text-gray-900 dark:text-gray-100 truncate">
                 {userName || 'Benutzer'}
               </p>
-              <p className="text-xs text-gray-500 truncate">
+              <p className="text-xs text-gray-500 dark:text-gray-400 truncate">
                 {userEmail}
               </p>
             </div>
@@ -258,10 +259,15 @@ export default function ModernSidebar({ userName, userEmail }: ModernSidebarProp
         </nav>
 
         {/* Footer */}
-        <div className="p-4 border-t border-gray-200 space-y-1">
+        <div className="p-4 border-t border-gray-200 dark:border-gray-700 space-y-1">
+          {/* Theme Toggle */}
+          <div className="flex items-center gap-3 px-4 py-2.5 text-sm font-medium text-gray-700 dark:text-gray-300">
+            <ThemeToggle showLabel />
+          </div>
+
           <Link
             href="/"
-            className="flex items-center gap-3 px-4 py-2.5 text-sm font-medium text-blue-600 hover:bg-blue-50 rounded-md transition-colors"
+            className="flex items-center gap-3 px-4 py-2.5 text-sm font-medium text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded-md transition-colors"
             onClick={() => setIsOpen(false)}
           >
             <SimpleIcon type="globe" className="w-5 h-5" />
@@ -269,7 +275,7 @@ export default function ModernSidebar({ userName, userEmail }: ModernSidebarProp
           </Link>
           <Link
             href="/logout"
-            className="flex items-center gap-3 px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-md transition-colors"
+            className="flex items-center gap-3 px-4 py-2.5 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md transition-colors"
             onClick={() => setIsOpen(false)}
           >
             <SimpleIcon type="logout" className="w-5 h-5" />

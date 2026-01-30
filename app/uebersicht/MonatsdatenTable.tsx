@@ -210,11 +210,11 @@ export default function MonatsdatenTable({ initialData, anlageId }: Props) {
                 <th
                   key={spalte.key}
                   className={`px-4 py-3 text-xs font-medium text-gray-500 uppercase whitespace-nowrap ${
-                    spalte.align === 'left' ? 'text-left' : 'text-right'
-                  } ${spalte.sticky ? 'sticky left-24 z-10 bg-gray-50' : ''}`}
+                    'align' in spalte && spalte.align === 'left' ? 'text-left' : 'text-right'
+                  } ${'sticky' in spalte && spalte.sticky ? 'sticky left-24 z-10 bg-gray-50' : ''}`}
                 >
                   {spalte.label}
-                  {spalte.unit && <span className="text-gray-400 ml-1">({spalte.unit})</span>}
+                  {'unit' in spalte && spalte.unit && <span className="text-gray-400 ml-1">({spalte.unit})</span>}
                 </th>
               ))}
             </tr>
@@ -297,14 +297,16 @@ export default function MonatsdatenTable({ initialData, anlageId }: Props) {
                     }
 
                     // Normale Anzeige
+                    const unit = 'unit' in spalte ? spalte.unit : undefined
+                    const color = 'color' in spalte ? spalte.color : undefined
                     const displayValue = typeof value === 'number'
-                      ? fmt(value, spalte.unit === 'ct/kWh' ? 2 : 1)
+                      ? fmt(value, unit === 'ct/kWh' ? 2 : 1)
                       : (value || '-')
 
                     return (
                       <td
                         key={spalte.key}
-                        className={`px-4 py-2 whitespace-nowrap text-sm text-right ${spalte.color || 'text-gray-900'}`}
+                        className={`px-4 py-2 whitespace-nowrap text-sm text-right ${color || 'text-gray-900'}`}
                       >
                         {displayValue}
                       </td>

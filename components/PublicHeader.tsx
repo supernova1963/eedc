@@ -8,6 +8,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { createBrowserClient } from '@/lib/supabase-browser'
 import SimpleIcon from './SimpleIcon'
+import ThemeToggle from './ThemeToggle'
 
 export default function PublicHeader() {
   const [user, setUser] = useState<any>(null)
@@ -35,13 +36,13 @@ export default function PublicHeader() {
   const isActive = (href: string) => pathname === href
 
   return (
-    <header className="bg-white shadow-sm border-b border-gray-200 sticky top-0 z-50">
+    <header className="bg-white dark:bg-gray-800 shadow-sm border-b border-gray-200 dark:border-gray-700 sticky top-0 z-50">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
           {/* Logo */}
           <Link href="/" className="flex items-center gap-2">
-            <SimpleIcon type="solar" className="w-8 h-8 text-blue-600" />
-            <span className="text-xl font-bold text-gray-900">PV Community</span>
+            <SimpleIcon type="solar" className="w-8 h-8 text-blue-600 dark:text-blue-400" />
+            <span className="text-xl font-bold text-gray-900 dark:text-gray-100">PV Community</span>
           </Link>
 
           {/* Desktop Navigation */}
@@ -52,8 +53,8 @@ export default function PublicHeader() {
                 href={link.href}
                 className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
                   isActive(link.href)
-                    ? 'bg-blue-100 text-blue-700'
-                    : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                    ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300'
+                    : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-gray-100 dark:hover:bg-gray-700'
                 }`}
               >
                 <SimpleIcon type={link.icon as any} className="w-4 h-4" />
@@ -64,8 +65,11 @@ export default function PublicHeader() {
 
           {/* User Actions */}
           <div className="flex items-center gap-3">
+            {/* Theme Toggle */}
+            <ThemeToggle />
+
             {loading ? (
-              <div className="w-20 h-8 bg-gray-100 rounded animate-pulse" />
+              <div className="w-20 h-8 bg-gray-100 dark:bg-gray-700 rounded animate-pulse" />
             ) : user ? (
               <Link
                 href="/meine-anlage"
@@ -78,7 +82,7 @@ export default function PublicHeader() {
               <div className="flex items-center gap-2">
                 <Link
                   href="/login"
-                  className="hidden sm:inline text-gray-600 hover:text-gray-900 transition-colors text-sm"
+                  className="hidden sm:inline text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 transition-colors text-sm"
                 >
                   Anmelden
                 </Link>
@@ -94,7 +98,7 @@ export default function PublicHeader() {
             {/* Mobile Menu Button */}
             <button
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-              className="md:hidden p-2 rounded-lg text-gray-600 hover:bg-gray-100"
+              className="md:hidden p-2 rounded-lg text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700"
             >
               <SimpleIcon type={mobileMenuOpen ? 'close' : 'menu'} className="w-6 h-6" />
             </button>
@@ -103,7 +107,7 @@ export default function PublicHeader() {
 
         {/* Mobile Navigation */}
         {mobileMenuOpen && (
-          <div className="md:hidden border-t border-gray-200 py-2">
+          <div className="md:hidden border-t border-gray-200 dark:border-gray-700 py-2">
             {navLinks.map((link) => (
               <Link
                 key={link.href}
@@ -111,8 +115,8 @@ export default function PublicHeader() {
                 onClick={() => setMobileMenuOpen(false)}
                 className={`flex items-center gap-3 px-4 py-3 text-sm font-medium transition-colors ${
                   isActive(link.href)
-                    ? 'bg-blue-50 text-blue-700'
-                    : 'text-gray-600 hover:bg-gray-50'
+                    ? 'bg-blue-50 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300'
+                    : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700'
                 }`}
               >
                 <SimpleIcon type={link.icon as any} className="w-5 h-5" />
@@ -123,7 +127,7 @@ export default function PublicHeader() {
               <Link
                 href="/login"
                 onClick={() => setMobileMenuOpen(false)}
-                className="flex items-center gap-3 px-4 py-3 text-sm font-medium text-gray-600 hover:bg-gray-50 sm:hidden"
+                className="flex items-center gap-3 px-4 py-3 text-sm font-medium text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700 sm:hidden"
               >
                 <SimpleIcon type="user" className="w-5 h-5" />
                 Anmelden

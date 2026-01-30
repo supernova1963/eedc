@@ -24,7 +24,7 @@ export default function EAutoFields({ parameterData, onChange }: EAutoFieldsProp
     const kmJahr = parseFloat(parameterData.km_jahr) || 0
     const verbrauchKwh100 = parseFloat(parameterData.verbrauch_kwh_100km) || 0
     const pvAnteil = parseFloat(parameterData.pv_anteil_prozent) || 70
-    const strompreis = parseFloat(parameterData.strompreis_cent_kwh) || 30
+    const strompreis = parseFloat(parameterData.strompreis_cent_kwh || '') || 30
     const benzinpreis = parseFloat(parameterData.benzinpreis_euro_liter) || 1.69
     const verbrauchLiter100 = parseFloat(parameterData.vergleich_verbrenner_l_100km) || 0
     const betriebskosten = parseFloat(parameterData.betriebskosten_jahr_euro) || 0

@@ -2,10 +2,94 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Light Mode (default) */
 :root {
   --foreground-rgb: 0, 0, 0;
   --background-start-rgb: 214, 219, 220;
   --background-end-rgb: 255, 255, 255;
+
+  /* Surface colors */
+  --surface: #ffffff;
+  --surface-secondary: #f9fafb; /* gray-50 */
+  --surface-tertiary: #f3f4f6; /* gray-100 */
+
+  /* Border colors */
+  --border: #e5e7eb; /* gray-200 */
+  --border-secondary: #d1d5db; /* gray-300 */
+
+  /* Text colors */
+  --text-primary: #111827; /* gray-900 */
+  --text-secondary: #4b5563; /* gray-600 */
+  --text-tertiary: #6b7280; /* gray-500 */
+  --text-muted: #9ca3af; /* gray-400 */
+
+  /* Brand colors */
+  --primary: #2563eb; /* blue-600 */
+  --primary-hover: #1d4ed8; /* blue-700 */
+  --primary-light: #dbeafe; /* blue-100 */
+  --primary-surface: #eff6ff; /* blue-50 */
+
+  /* Status colors */
+  --success: #16a34a; /* green-600 */
+  --success-light: #dcfce7; /* green-100 */
+  --success-surface: #f0fdf4; /* green-50 */
+
+  --warning: #ca8a04; /* yellow-600 */
+  --warning-light: #fef9c3; /* yellow-100 */
+  --warning-surface: #fefce8; /* yellow-50 */
+
+  --error: #dc2626; /* red-600 */
+  --error-light: #fee2e2; /* red-100 */
+  --error-surface: #fef2f2; /* red-50 */
+
+  --info: #0284c7; /* sky-600 */
+  --info-light: #e0f2fe; /* sky-100 */
+  --info-surface: #f0f9ff; /* sky-50 */
+}
+
+/* Dark Mode */
+.dark {
+  --foreground-rgb: 255, 255, 255;
+  --background-start-rgb: 17, 24, 39;
+  --background-end-rgb: 31, 41, 55;
+
+  /* Surface colors - dark */
+  --surface: #1f2937; /* gray-800 */
+  --surface-secondary: #111827; /* gray-900 */
+  --surface-tertiary: #374151; /* gray-700 */
+
+  /* Border colors - dark */
+  --border: #374151; /* gray-700 */
+  --border-secondary: #4b5563; /* gray-600 */
+
+  /* Text colors - dark */
+  --text-primary: #f9fafb; /* gray-50 */
+  --text-secondary: #d1d5db; /* gray-300 */
+  --text-tertiary: #9ca3af; /* gray-400 */
+  --text-muted: #6b7280; /* gray-500 */
+
+  /* Brand colors - dark */
+  --primary: #3b82f6; /* blue-500 */
+  --primary-hover: #60a5fa; /* blue-400 */
+  --primary-light: #1e3a5f; /* custom dark blue */
+  --primary-surface: #172554; /* blue-950 */
+
+  /* Status colors - dark */
+  --success: #22c55e; /* green-500 */
+  --success-light: #14532d; /* green-900 */
+  --success-surface: #052e16; /* green-950 */
+
+  --warning: #eab308; /* yellow-500 */
+  --warning-light: #713f12; /* yellow-900 */
+  --warning-surface: #422006; /* yellow-950 */
+
+  --error: #ef4444; /* red-500 */
+  --error-light: #7f1d1d; /* red-900 */
+  --error-surface: #450a0a; /* red-950 */
+
+  --info: #0ea5e9; /* sky-500 */
+  --info-light: #0c4a6e; /* sky-900 */
+  --info-surface: #082f49; /* sky-950 */
 }
 
 body {
@@ -17,4 +101,14 @@ body {
     )
     rgb(var(--background-start-rgb));
   font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Color Emoji', 'Apple Color Emoji', 'Segoe UI Emoji', sans-serif;
+}
+
+/* Smooth theme transitions */
+* {
+  transition: background-color 0.2s ease, border-color 0.2s ease, color 0.15s ease;
+}
+
+/* Disable transitions on initial load to prevent flash */
+.no-transitions * {
+  transition: none !important;
 }
