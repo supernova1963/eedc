@@ -28,20 +28,41 @@ export async function GET(request: NextRequest) {
       return new NextResponse('Keine Berechtigung', { status: 403 })
     }
 
-    // 4. Prüfen ob Speicher vorhanden (via anlagen_komponenten)
+    // 4. Prüfen welche Investitionen vorhanden sind (via alternative_investitionen)
     const supabase = await createClient()
+
+    // Speicher prüfen (der Anlage zugeordnet)
     const { data: speicher } = await supabase
-      .from('anlagen_komponenten')
+      .from('alternative_investitionen')
       .select('id')
       .eq('anlage_id', anlageId)
       .eq('typ', 'speicher')
       .eq('aktiv', true)
       .limit(1)
-
     const hatSpeicher = !!(speicher && speicher.length > 0)
 
+    // E-Auto prüfen (Mitglied-Ebene, da Haushalt-Komponente)
+    const { data: eAuto } = await supabase
+      .from('alternative_investitionen')
+      .select('id')
+      .eq('mitglied_id', mitglied.data.id)
+      .eq('typ', 'e-auto')
+      .eq('aktiv', true)
+      .limit(1)
+    const hatEAuto = !!(eAuto && eAuto.length > 0)
+
+    // Wärmepumpe prüfen (Mitglied-Ebene, da Haushalt-Komponente)
+    const { data: waermepumpe } = await supabase
+      .from('alternative_investitionen')
+      .select('id')
+      .eq('mitglied_id', mitglied.data.id)
+      .eq('typ', 'waermepumpe')
+      .eq('aktiv', true)
+      .limit(1)
+    const hatWaermepumpe = !!(waermepumpe && waermepumpe.length > 0)
+
     // 5. Spalten basierend auf Anlage generieren
-    const columns = generateColumns(hatSpeicher)
+    const columns = generateColumns(hatSpeicher, hatEAuto, hatWaermepumpe)
 
     // 6. CSV erstellen
     const csv = generateCSV(columns, anlage)
@@ -71,7 +92,7 @@ interface Column {
   hint?: string
 }
 
-function generateColumns(hatSpeicher: boolean): Column[] {
+function generateColumns(hatSpeicher: boolean, hatEAuto: boolean, hatWaermepumpe: boolean): Column[] {
   const columns: Column[] = [
     // Pflichtfelder
     { name: 'Jahr', dbName: 'jahr', required: true, example: '2024' },
@@ -90,6 +111,22 @@ function generateColumns(hatSpeicher: boolean): Column[] {
     columns.push(
       { name: 'Batterieentladung (kWh)', dbName: 'batterieentladung_kwh', required: false, example: '50', hint: 'Aus Batterie entnommen' },
       { name: 'Batterieladung (kWh)', dbName: 'batterieladung_kwh', required: false, example: '60', hint: 'In Batterie geladen' }
+    )
+  }
+
+  // E-Auto (nur wenn vorhanden)
+  if (hatEAuto) {
+    columns.push(
+      { name: 'E-Auto Ladung (kWh)', dbName: 'ekfz_ladung_kwh', required: false, example: '120', hint: 'Gesamte E-Auto Ladung (PV + Netz)' },
+      { name: 'E-Auto km gefahren', dbName: 'ekfz_km', required: false, example: '800', hint: 'Gefahrene Kilometer im Monat' }
+    )
+  }
+
+  // Wärmepumpe (nur wenn vorhanden)
+  if (hatWaermepumpe) {
+    columns.push(
+      { name: 'Wärmepumpe (kWh)', dbName: 'waermepumpe_kwh', required: false, example: '350', hint: 'Stromverbrauch Wärmepumpe' },
+      { name: 'Heizwärme (kWh)', dbName: 'heizwaerme_kwh', required: false, example: '1200', hint: 'Erzeugte Heizwärme' }
     )
   }
 
@@ -113,7 +150,7 @@ function generateCSV(columns: Column[], anlage: any): string {
   // Header-Zeile
   const header = columns.map(c => c.name).join(',')
 
-  // Beispiel-Zeile 1 (Januar)
+  // Beispiel-Zeile 1 (Januar - wenig PV, mehr Netzbezug)
   const example1 = columns.map(c => {
     if (c.name === 'Jahr') return '2024'
     if (c.name === 'Monat') return '1'
@@ -124,11 +161,15 @@ function generateCSV(columns: Column[], anlage: any): string {
     if (c.name === 'Netzbezug (kWh)') return '370'
     if (c.name === 'Batterieentladung (kWh)') return '30'
     if (c.name === 'Batterieladung (kWh)') return '35'
+    if (c.name === 'E-Auto Ladung (kWh)') return '100'
+    if (c.name === 'E-Auto km gefahren') return '650'
+    if (c.name === 'Wärmepumpe (kWh)') return '450'
+    if (c.name === 'Heizwärme (kWh)') return '1600'
     // Strompreise leer = Stammdaten werden verwendet
     return ''
   }).join(',')
 
-  // Beispiel-Zeile 2 (Juli - mehr PV)
+  // Beispiel-Zeile 2 (Juli - viel PV, wenig Heizung)
   const example2 = columns.map(c => {
     if (c.name === 'Jahr') return '2024'
     if (c.name === 'Monat') return '7'
@@ -139,6 +180,10 @@ function generateCSV(columns: Column[], anlage: any): string {
     if (c.name === 'Netzbezug (kWh)') return '100'
     if (c.name === 'Batterieentladung (kWh)') return '80'
     if (c.name === 'Batterieladung (kWh)') return '130'
+    if (c.name === 'E-Auto Ladung (kWh)') return '150'
+    if (c.name === 'E-Auto km gefahren') return '950'
+    if (c.name === 'Wärmepumpe (kWh)') return '80'
+    if (c.name === 'Heizwärme (kWh)') return '250'
     return ''
   }).join(',')
 

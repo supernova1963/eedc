@@ -19,6 +19,8 @@ const PUBLIC_ROUTES = [
   '/register',
   '/test-register',
   '/community',  // Community Seiten öffentlich
+  '/impressum',  // Rechtliche Seiten öffentlich
+  '/datenschutz',
 ]
 
 export default function ConditionalLayout({ children }: ConditionalLayoutProps) {

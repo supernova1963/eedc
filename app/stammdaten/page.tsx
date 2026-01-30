@@ -33,22 +33,17 @@ export default async function StammdatenPage() {
     .eq('mitglied_id', mitglied.data.id)
     .eq('aktiv', true)
 
-  // Anlagen-Komponenten (Speicher, Wechselrichter, Wallbox) zählen
-  const { data: anlagenKomponenten } = await supabase
-    .from('anlagen_komponenten')
-    .select('id, anlage_id')
-    .in('anlage_id', anlagen?.map(a => a.id) || [])
-    .eq('aktiv', true)
-
-  // Haushalts-Komponenten (E-Auto, Wärmepumpe) zählen
-  const { data: haushaltKomponenten } = await supabase
-    .from('haushalt_komponenten')
-    .select('id')
+  // Investitionen aus alternative_investitionen zählen (FRESH-START Schema)
+  const { data: investitionen } = await supabase
+    .from('alternative_investitionen')
+    .select('id, anlage_id, typ')
     .eq('mitglied_id', mitglied.data.id)
     .eq('aktiv', true)
 
-  const gesamtKomponenten = (anlagenKomponenten?.length || 0) + (haushaltKomponenten?.length || 0)
-  const zugeordneteKomponenten = anlagenKomponenten?.length || 0
+  // Gesamt = alle Investitionen
+  const gesamtKomponenten = investitionen?.length || 0
+  // Zugeordnet = Investitionen mit anlage_id
+  const zugeordneteKomponenten = investitionen?.filter(i => i.anlage_id !== null).length || 0
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-8">

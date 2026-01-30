@@ -56,6 +56,36 @@ export function useInvestitionForm({ mitgliedId, editData, onSuccess }: UseInves
     }
   }, [typ, loadWechselrichter])
 
+  // Formular zurücksetzen wenn Typ geändert wird (nur bei neuen Investitionen)
+  // Dies ist ein separater State um den initialen Typ zu tracken
+  const [initialTyp] = useState<InvestitionsTyp>(editData?.typ || 'e-auto')
+
+  useEffect(() => {
+    // Nur zurücksetzen wenn:
+    // 1. Nicht im Edit-Modus UND
+    // 2. Der Typ sich vom initialen Typ unterscheidet (d.h. User hat gewechselt)
+    if (!isEditing && typ !== initialTyp) {
+      // Kosten- und Alternative-Felder zurücksetzen
+      setFormData(prev => ({
+        ...prev,
+        // Diese Felder behalten:
+        // - bezeichnung (User möchte wahrscheinlich einen neuen Namen eingeben)
+        // - anschaffungsdatum (bleibt meist gleich)
+        // Diese Felder zurücksetzen:
+        anschaffungskosten_gesamt: '',
+        anschaffungskosten_alternativ: '',
+        alternativ_beschreibung: '',
+        kosten_jahr_gesamt: '',
+        kosten_jahr_alternativ_gesamt: '',
+        notizen: ''
+      }))
+      // Parameter für den neuen Typ zurücksetzen (behält Default-Werte)
+      setParameterData(getInitialParameterData())
+      // Parent-Investition zurücksetzen
+      setParentInvestitionId('')
+    }
+  }, [typ, isEditing, initialTyp])
+
   // Geokoordinaten aus Anlage vorschlagen (nur bei neuen PV-Modulen)
   useEffect(() => {
     if (typ === 'pv-module' && !editData) {

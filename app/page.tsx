@@ -5,6 +5,7 @@ import { createClient } from '@/lib/supabase-server'
 import Link from 'next/link'
 import SimpleIcon from '@/components/SimpleIcon'
 import PublicHeader from '@/components/PublicHeader'
+import PublicFooter from '@/components/PublicFooter'
 
 async function getCommunityStats() {
   const supabase = await createClient()
@@ -247,6 +248,9 @@ export default async function CommunityDashboardPage() {
           </Link>
         </div>
       </div>
+
+      {/* Footer */}
+      <PublicFooter />
     </div>
   )
 }

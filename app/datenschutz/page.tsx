@@ -2,13 +2,14 @@
 
 import Link from 'next/link'
 import SimpleIcon from '@/components/SimpleIcon'
-import Breadcrumb from '@/components/Breadcrumb'
+import PublicHeader from '@/components/PublicHeader'
+import PublicFooter from '@/components/PublicFooter'
 
 export default function DatenschutzPage() {
   return (
-    <div className="min-h-screen bg-gray-50">
-      <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <Breadcrumb />
+    <div className="min-h-screen flex flex-col bg-gray-50">
+      <PublicHeader />
+      <main className="flex-1 max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full">
 
         <div className="bg-white rounded-xl shadow-sm p-8 border border-gray-200">
           <div className="flex items-center gap-4 mb-8">
@@ -250,16 +251,23 @@ export default function DatenschutzPage() {
           </div>
         </div>
 
-        <div className="mt-8">
+        <div className="mt-8 flex gap-4">
           <Link
             href="/"
             className="inline-flex items-center gap-2 px-6 py-3 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition shadow-sm"
           >
             <SimpleIcon type="back" className="w-5 h-5" />
-            Zurück zum Dashboard
+            Zurück zur Startseite
+          </Link>
+          <Link
+            href="/impressum"
+            className="inline-flex items-center gap-2 px-6 py-3 text-blue-600 hover:text-blue-700"
+          >
+            Impressum →
           </Link>
         </div>
-      </div>
+      </main>
+      <PublicFooter />
     </div>
   )
 }

@@ -38,26 +38,37 @@ export async function PUT(
       return NextResponse.json({ success: false, error: 'Nicht authentifiziert' }, { status: 401 })
     }
 
-    // Prüfen ob Monatsdaten dem User gehören
-    const { data: monatsdaten, error: checkError } = await supabase
+    // Erst Monatsdaten holen
+    const { data: monatsdaten, error: mdError } = await supabase
       .from('monatsdaten')
-      .select(`
-        id,
-        anlage_id,
-        anlagen!inner(
-          mitglied_id,
-          mitglieder!inner(user_id)
-        )
-      `)
+      .select('id, anlage_id')
       .eq('id', id)
       .single()
 
-    if (checkError || !monatsdaten) {
+    if (mdError || !monatsdaten) {
+      console.error('Monatsdaten lookup error:', mdError)
       return NextResponse.json({ success: false, error: 'Monatsdaten nicht gefunden' }, { status: 404 })
     }
 
-    // @ts-ignore - Supabase typing issue
-    if (monatsdaten.anlagen.mitglieder.user_id !== user.id) {
+    // Dann Anlage prüfen
+    const { data: anlage, error: anlageError } = await supabase
+      .from('anlagen')
+      .select('id, mitglied_id')
+      .eq('id', monatsdaten.anlage_id)
+      .single()
+
+    if (anlageError || !anlage) {
+      return NextResponse.json({ success: false, error: 'Anlage nicht gefunden' }, { status: 404 })
+    }
+
+    // Dann Mitglied prüfen
+    const { data: mitglied, error: mitgliedError } = await supabase
+      .from('mitglieder')
+      .select('id, user_id')
+      .eq('id', anlage.mitglied_id)
+      .single()
+
+    if (mitgliedError || !mitglied || mitglied.user_id !== user.id) {
       return NextResponse.json({ success: false, error: 'Keine Berechtigung' }, { status: 403 })
     }
 
@@ -108,26 +119,44 @@ export async function DELETE(
       return NextResponse.json({ success: false, error: 'Nicht authentifiziert' }, { status: 401 })
     }
 
-    // Prüfen ob Monatsdaten dem User gehören
-    const { data: monatsdaten, error: checkError } = await supabase
+    // Erst Monatsdaten holen
+    const { data: monatsdaten, error: mdError } = await supabase
       .from('monatsdaten')
-      .select(`
-        id,
-        anlage_id,
-        anlagen!inner(
-          mitglied_id,
-          mitglieder!inner(user_id)
-        )
-      `)
+      .select('id, anlage_id')
       .eq('id', id)
       .single()
 
-    if (checkError || !monatsdaten) {
+    if (mdError || !monatsdaten) {
+      console.error('Monatsdaten lookup error:', mdError)
       return NextResponse.json({ success: false, error: 'Monatsdaten nicht gefunden' }, { status: 404 })
     }
 
-    // @ts-ignore - Supabase typing issue
-    if (monatsdaten.anlagen.mitglieder.user_id !== user.id) {
+    // Dann Anlage prüfen
+    const { data: anlage, error: anlageError } = await supabase
+      .from('anlagen')
+      .select('id, mitglied_id')
+      .eq('id', monatsdaten.anlage_id)
+      .single()
+
+    if (anlageError || !anlage) {
+      console.error('Anlage lookup error:', anlageError)
+      return NextResponse.json({ success: false, error: 'Anlage nicht gefunden' }, { status: 404 })
+    }
+
+    // Dann Mitglied prüfen
+    const { data: mitglied, error: mitgliedError } = await supabase
+      .from('mitglieder')
+      .select('id, user_id')
+      .eq('id', anlage.mitglied_id)
+      .single()
+
+    if (mitgliedError || !mitglied) {
+      console.error('Mitglied lookup error:', mitgliedError)
+      return NextResponse.json({ success: false, error: 'Mitglied nicht gefunden' }, { status: 404 })
+    }
+
+    // Berechtigung prüfen
+    if (mitglied.user_id !== user.id) {
       return NextResponse.json({ success: false, error: 'Keine Berechtigung' }, { status: 403 })
     }
 
