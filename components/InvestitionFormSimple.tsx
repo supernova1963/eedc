@@ -17,6 +17,7 @@ import WechselrichterFields from '@/components/investitionen/WechselrichterField
 import PVModuleFields from '@/components/investitionen/PVModuleFields'
 import ResultsPreview from '@/components/investitionen/ResultsPreview'
 import SimpleIcon from './SimpleIcon'
+import { card, text, border, alert, btn, input } from '@/lib/styles'
 
 interface InvestitionFormSimpleProps {
   mitgliedId: string
@@ -53,16 +54,16 @@ export default function InvestitionFormSimple({ mitgliedId, editData, onSuccess 
   const isAnlagenKomponente = typ === 'pv-module' || typ === 'wechselrichter' || typ === 'speicher' || typ === 'balkonkraftwerk'
 
   return (
-    <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-      <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-6 flex items-center gap-2">
+    <div className={card.padded}>
+      <h2 className={`${text.h2} mb-6 flex items-center gap-2`}>
         {isEditing ? (
           <>
-            <SimpleIcon type="edit" className="w-5 h-5 text-gray-700" />
+            <SimpleIcon type="edit" className="w-5 h-5 text-gray-700 dark:text-gray-300" />
             Investition bearbeiten
           </>
         ) : (
           <>
-            <SimpleIcon type="plus" className="w-5 h-5 text-gray-700" />
+            <SimpleIcon type="plus" className="w-5 h-5 text-gray-700 dark:text-gray-300" />
             Neue Investition erfassen
           </>
         )}
@@ -85,17 +86,17 @@ export default function InvestitionFormSimple({ mitgliedId, editData, onSuccess 
 
         {/* Hinweis zur Zuordnung */}
         {!isEditing && isHaushaltKomponente && (
-          <div className="bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-800 rounded-lg p-3 flex items-start gap-2">
+          <div className={`${alert.infoInline} flex items-start gap-2`}>
             <SimpleIcon type="info" className="w-5 h-5 text-blue-600 dark:text-blue-400 flex-shrink-0 mt-0.5" />
-            <p className="text-sm text-blue-800 dark:text-blue-300">
+            <p className="text-sm">
               <strong>{typConfig?.label}</strong> wird als Haushalt-Komponente erfasst und muss keiner PV-Anlage zugeordnet werden.
             </p>
           </div>
         )}
         {!isEditing && isAnlagenKomponente && (
-          <div className="bg-green-50 dark:bg-green-900/30 border border-green-200 dark:border-green-800 rounded-lg p-3 flex items-start gap-2">
+          <div className={`${alert.successInline} flex items-start gap-2`}>
             <SimpleIcon type="link" className="w-5 h-5 text-green-600 dark:text-green-400 flex-shrink-0 mt-0.5" />
-            <p className="text-sm text-green-800 dark:text-green-300">
+            <p className="text-sm">
               <strong>{typConfig?.label}</strong> kann nach dem Speichern einer PV-Anlage zugeordnet werden (unter Stammdaten → Zuordnung).
             </p>
           </div>
@@ -159,7 +160,7 @@ export default function InvestitionFormSimple({ mitgliedId, editData, onSuccess 
 
         {/* Mehrkosten-Anzeige */}
         {mehrkosten > 0 && (
-          <div className="bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
+          <div className={alert.info}>
             <div className="flex justify-between items-center">
               <span className="text-sm font-medium text-blue-900 dark:text-blue-300 flex items-center gap-2">
                 <SimpleIcon type="money" className="w-4 h-4 text-blue-700 dark:text-blue-400" />
@@ -173,8 +174,8 @@ export default function InvestitionFormSimple({ mitgliedId, editData, onSuccess 
         )}
 
         {/* Jährliche Kosten */}
-        <div className="border-t border-gray-200 dark:border-gray-700 pt-6">
-          <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100 mb-4 flex items-center gap-2">
+        <div className={`border-t ${border.default} pt-6`}>
+          <h3 className={`${text.h3} mb-4 flex items-center gap-2`}>
             <SimpleIcon type="money" className="w-5 h-5 text-gray-600 dark:text-gray-400" />
             Jährliche Kosten
           </h3>
@@ -237,7 +238,7 @@ export default function InvestitionFormSimple({ mitgliedId, editData, onSuccess 
 
         {/* Notizen */}
         <div>
-          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+          <label className={input.label}>
             Notizen (optional)
           </label>
           <textarea
@@ -246,7 +247,7 @@ export default function InvestitionFormSimple({ mitgliedId, editData, onSuccess 
             onChange={handleChange}
             rows={3}
             placeholder="Zusätzliche Informationen..."
-            className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
+            className={input.textarea}
           />
         </div>
 
@@ -255,16 +256,14 @@ export default function InvestitionFormSimple({ mitgliedId, editData, onSuccess 
           <button
             type="button"
             onClick={goBack}
-            className="px-6 py-3 rounded-md font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600"
+            className={btn.secondaryLg}
           >
             Abbrechen
           </button>
           <button
             type="submit"
             disabled={loading}
-            className={`px-6 py-3 rounded-md font-medium text-white flex items-center gap-2 ${
-              loading ? 'bg-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'
-            }`}
+            className={`${loading ? btn.disabled : btn.primaryLg} flex items-center gap-2`}
           >
             {loading ? 'Speichert...' : (
               <>

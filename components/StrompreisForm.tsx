@@ -6,6 +6,7 @@
 import { useState, useEffect } from 'react'
 import { createBrowserClient } from '@/lib/supabase-browser'
 import { useRouter } from 'next/navigation'
+import { card, text, border, alert, btn, input } from '@/lib/styles'
 
 interface StrompreisFormProps {
   mitglied_id: string
@@ -103,24 +104,24 @@ export default function StrompreisForm({ mitglied_id, anlage_id, editData }: Str
   }
 
   return (
-    <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-      <h2 className="text-xl font-semibold text-gray-900 mb-6">
+    <div className={card.padded}>
+      <h2 className={`${text.h2} mb-6`}>
         {editData ? 'Strompreis bearbeiten' : 'Neuer Strompreis'}
       </h2>
 
       {error && (
-        <div className="mb-4 bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded">
+        <div className={`${alert.errorInline} mb-4`}>
           {error}
         </div>
       )}
 
       <form onSubmit={handleSubmit} className="space-y-6">
         {/* Gültigkeitszeitraum */}
-        <div className="border-b pb-6">
-          <h3 className="text-lg font-medium text-gray-900 mb-4">Gültigkeitszeitraum</h3>
+        <div className={`border-b ${border.default} pb-6`}>
+          <h3 className={`${text.h3} mb-4`}>Gültigkeitszeitraum</h3>
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label className={input.label}>
                 Gültig ab *
               </label>
               <input
@@ -129,14 +130,14 @@ export default function StrompreisForm({ mitglied_id, anlage_id, editData }: Str
                 value={formData.gueltig_ab}
                 onChange={handleChange}
                 required
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className={input.base}
               />
-              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              <p className={input.hint}>
                 Ab wann gelten diese Preise?
               </p>
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label className={input.label}>
                 Gültig bis
               </label>
               <input
@@ -144,9 +145,9 @@ export default function StrompreisForm({ mitglied_id, anlage_id, editData }: Str
                 name="gueltig_bis"
                 value={formData.gueltig_bis}
                 onChange={handleChange}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className={input.base}
               />
-              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              <p className={input.hint}>
                 Leer lassen = aktuell gültig
               </p>
             </div>
@@ -154,17 +155,17 @@ export default function StrompreisForm({ mitglied_id, anlage_id, editData }: Str
         </div>
 
         {/* Zuordnung */}
-        <div className="border-b pb-6">
-          <h3 className="text-lg font-medium text-gray-900 mb-4">Zuordnung</h3>
+        <div className={`border-b ${border.default} pb-6`}>
+          <h3 className={`${text.h3} mb-4`}>Zuordnung</h3>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <label className={input.label}>
               Anlage (optional)
             </label>
             <select
               name="anlage_id"
               value={formData.anlage_id}
               onChange={handleChange}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className={input.select}
             >
               <option value="">Alle Anlagen (Standard-Strompreis)</option>
               {anlagen.map(anlage => (
@@ -173,18 +174,18 @@ export default function StrompreisForm({ mitglied_id, anlage_id, editData }: Str
                 </option>
               ))}
             </select>
-            <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+            <p className={input.hint}>
               Anlagenspezifischer Preis oder leer lassen für allgemeinen Preis
             </p>
           </div>
         </div>
 
         {/* Netzbezug */}
-        <div className="border-b pb-6">
-          <h3 className="text-lg font-medium text-gray-900 mb-4">Netzbezug (Strombezug)</h3>
+        <div className={`border-b ${border.default} pb-6`}>
+          <h3 className={`${text.h3} mb-4`}>Netzbezug (Strombezug)</h3>
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label className={input.label}>
                 Arbeitspreis (ct/kWh) *
               </label>
               <input
@@ -196,14 +197,14 @@ export default function StrompreisForm({ mitglied_id, anlage_id, editData }: Str
                 step="0.01"
                 min="0"
                 placeholder="z.B. 32.50"
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className={input.base}
               />
-              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              <p className={input.hint}>
                 Preis pro kWh Strombezug aus dem Netz
               </p>
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label className={input.label}>
                 Grundpreis (€/Monat)
               </label>
               <input
@@ -214,9 +215,9 @@ export default function StrompreisForm({ mitglied_id, anlage_id, editData }: Str
                 step="0.01"
                 min="0"
                 placeholder="z.B. 12.50"
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className={input.base}
               />
-              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              <p className={input.hint}>
                 Monatlicher Grundpreis (optional)
               </p>
             </div>
@@ -224,10 +225,10 @@ export default function StrompreisForm({ mitglied_id, anlage_id, editData }: Str
         </div>
 
         {/* Einspeisung */}
-        <div className="border-b pb-6">
-          <h3 className="text-lg font-medium text-gray-900 mb-4">Einspeisevergütung</h3>
+        <div className={`border-b ${border.default} pb-6`}>
+          <h3 className={`${text.h3} mb-4`}>Einspeisevergütung</h3>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <label className={input.label}>
               Vergütung (ct/kWh) *
             </label>
             <input
@@ -239,20 +240,20 @@ export default function StrompreisForm({ mitglied_id, anlage_id, editData }: Str
               step="0.01"
               min="0"
               placeholder="z.B. 8.20"
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className={input.base}
             />
-            <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+            <p className={input.hint}>
               Vergütung pro kWh eingespeisten Strom
             </p>
           </div>
         </div>
 
         {/* Zusatzinformationen */}
-        <div className="border-b pb-6">
-          <h3 className="text-lg font-medium text-gray-900 mb-4">Zusatzinformationen</h3>
+        <div className={`border-b ${border.default} pb-6`}>
+          <h3 className={`${text.h3} mb-4`}>Zusatzinformationen</h3>
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label className={input.label}>
                 Stromanbieter
               </label>
               <input
@@ -261,18 +262,18 @@ export default function StrompreisForm({ mitglied_id, anlage_id, editData }: Str
                 value={formData.anbieter_name}
                 onChange={handleChange}
                 placeholder="z.B. Stadtwerke, E.ON"
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className={input.base}
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label className={input.label}>
                 Vertragsart
               </label>
               <select
                 name="vertragsart"
                 value={formData.vertragsart}
                 onChange={handleChange}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className={input.select}
               >
                 <option value="Grundversorgung">Grundversorgung</option>
                 <option value="Sondervertrag">Sondervertrag</option>
@@ -282,7 +283,7 @@ export default function StrompreisForm({ mitglied_id, anlage_id, editData }: Str
             </div>
           </div>
           <div className="mt-4">
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <label className={input.label}>
               Notizen
             </label>
             <textarea
@@ -291,15 +292,15 @@ export default function StrompreisForm({ mitglied_id, anlage_id, editData }: Str
               onChange={handleChange}
               rows={3}
               placeholder="z.B. Vertragsnummer, Besonderheiten..."
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className={input.textarea}
             />
           </div>
         </div>
 
         {/* Vorschau Berechnung */}
         {formData.netzbezug_arbeitspreis_cent_kwh && formData.einspeiseverguetung_cent_kwh && (
-          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-            <h3 className="text-sm font-semibold text-blue-900 mb-3">Beispiel-Berechnung:</h3>
+          <div className={alert.info}>
+            <h3 className="text-sm font-semibold text-blue-900 dark:text-blue-200 mb-3">Beispiel-Berechnung:</h3>
             <div className="grid grid-cols-2 gap-3 text-sm">
               <div>
                 <span className="text-blue-700 dark:text-blue-400">Netzbezug 100 kWh:</span>
@@ -313,7 +314,7 @@ export default function StrompreisForm({ mitglied_id, anlage_id, editData }: Str
                   {(parseFloat(formData.einspeiseverguetung_cent_kwh) || 0).toFixed(2)} €
                 </span>
               </div>
-              <div className="col-span-2 pt-2 border-t border-blue-300">
+              <div className="col-span-2 pt-2 border-t border-blue-300 dark:border-blue-600">
                 <span className="text-blue-700 dark:text-blue-400">Eigenverbrauch lohnt sich:</span>
                 <span className="float-right font-bold text-green-700 dark:text-green-400">
                   {((parseFloat(formData.netzbezug_arbeitspreis_cent_kwh) || 0) -
@@ -329,16 +330,14 @@ export default function StrompreisForm({ mitglied_id, anlage_id, editData }: Str
           <button
             type="button"
             onClick={() => router.back()}
-            className="px-6 py-3 rounded-md font-medium text-gray-700 bg-gray-100 hover:bg-gray-200"
+            className={btn.secondaryLg}
           >
             Abbrechen
           </button>
           <button
             type="submit"
             disabled={loading}
-            className={`px-6 py-3 rounded-md font-medium text-white ${
-              loading ? 'bg-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'
-            }`}
+            className={loading ? btn.disabled : btn.primaryLg}
           >
             {loading ? 'Speichert...' : 'Speichern'}
           </button>
