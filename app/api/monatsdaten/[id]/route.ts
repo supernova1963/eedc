@@ -38,38 +38,6 @@ export async function PUT(
       return NextResponse.json({ success: false, error: 'Nicht authentifiziert' }, { status: 401 })
     }
 
-    // Hole Monatsdaten mit Anlage und Mitglied in einem JOIN
-    // Das umgeht RLS-Probleme bei separaten Abfragen
-    const { data: monatsdaten, error: mdError } = await supabase
-      .from('monatsdaten')
-      .select(`
-        id,
-        anlage_id,
-        anlagen!inner (
-          id,
-          mitglied_id,
-          mitglieder!inner (
-            id,
-            user_id
-          )
-        )
-      `)
-      .eq('id', id)
-      .single()
-
-    if (mdError || !monatsdaten) {
-      console.error('Monatsdaten lookup error:', mdError)
-      return NextResponse.json({ success: false, error: 'Monatsdaten nicht gefunden' }, { status: 404 })
-    }
-
-    // Berechtigung prüfen - über den JOIN haben wir direkten Zugriff
-    const anlage = monatsdaten.anlagen as any
-    const mitglied = anlage?.mitglieder as any
-
-    if (!mitglied || mitglied.user_id !== user.id) {
-      return NextResponse.json({ success: false, error: 'Keine Berechtigung' }, { status: 403 })
-    }
-
     // Update-Daten filtern
     const body = await request.json()
     const updateData: Record<string, any> = {
@@ -82,20 +50,24 @@ export async function PUT(
       }
     }
 
-    // Update durchführen
+    // Update durchführen - RLS prüft die Berechtigung
     const { data: updated, error: updateError } = await supabase
       .from('monatsdaten')
       .update(updateData)
       .eq('id', id)
       .select()
-      .single()
 
     if (updateError) {
       console.error('Update error:', updateError)
       return NextResponse.json({ success: false, error: updateError.message }, { status: 500 })
     }
 
-    return NextResponse.json({ success: true, data: updated })
+    // Prüfen ob etwas aktualisiert wurde
+    if (!updated || updated.length === 0) {
+      return NextResponse.json({ success: false, error: 'Monatsdaten nicht gefunden oder keine Berechtigung' }, { status: 404 })
+    }
+
+    return NextResponse.json({ success: true, data: updated[0] })
 
   } catch (error: any) {
     console.error('API error:', error)
@@ -117,53 +89,30 @@ export async function DELETE(
       return NextResponse.json({ success: false, error: 'Nicht authentifiziert' }, { status: 401 })
     }
 
-    // Hole Monatsdaten mit Anlage und Mitglied in einem JOIN
-    // Das umgeht RLS-Probleme bei separaten Abfragen
-    const { data: monatsdaten, error: mdError } = await supabase
+    // Erst prüfen ob Monatsdaten existieren und Zugriff möglich ist
+    const { data: existing, error: selectError } = await supabase
       .from('monatsdaten')
-      .select(`
-        id,
-        anlage_id,
-        anlagen!inner (
-          id,
-          mitglied_id,
-          mitglieder!inner (
-            id,
-            user_id
-          )
-        )
-      `)
+      .select('id')
       .eq('id', id)
       .single()
 
-    if (mdError || !monatsdaten) {
-      console.error('Monatsdaten lookup error:', mdError)
-      return NextResponse.json({ success: false, error: 'Monatsdaten nicht gefunden' }, { status: 404 })
+    if (selectError || !existing) {
+      return NextResponse.json({ success: false, error: 'Monatsdaten nicht gefunden oder keine Berechtigung' }, { status: 404 })
     }
 
-    // Berechtigung prüfen - über den JOIN haben wir direkten Zugriff
-    const anlage = monatsdaten.anlagen as any
-    const mitglied = anlage?.mitglieder as any
-
-    if (!mitglied || mitglied.user_id !== user.id) {
-      return NextResponse.json({ success: false, error: 'Keine Berechtigung' }, { status: 403 })
-    }
-
-    // Löschen
+    // Löschen - RLS prüft die Berechtigung
     const { error: deleteError } = await supabase
       .from('monatsdaten')
       .delete()
       .eq('id', id)
 
     if (deleteError) {
-      console.error('Delete error:', deleteError)
       return NextResponse.json({ success: false, error: deleteError.message }, { status: 500 })
     }
 
     return NextResponse.json({ success: true })
 
   } catch (error: any) {
-    console.error('API error:', error)
     return NextResponse.json({ success: false, error: error.message }, { status: 500 })
   }
 }
