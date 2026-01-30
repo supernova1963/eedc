@@ -26,28 +26,45 @@ interface ParsedMonatsdaten {
   // Strompreise (ct/kWh) - optional, wenn leer werden Stammdaten verwendet
   netzbezug_preis_cent_kwh?: number
   einspeisung_preis_cent_kwh?: number
-  // Sonstiges
+  // Finanzen (optional - werden aus kWh × Preis berechnet wenn leer)
+  einspeisung_ertrag_euro?: number
+  netzbezug_kosten_euro?: number
   betriebsausgaben_monat_euro?: number
+  // Wetter (optional)
+  sonnenstunden?: number
+  globalstrahlung_kwh_m2?: number
+  // Meta
+  datenquelle?: string
   notizen?: string
 }
 
 // Mapping von deutschen Spaltennamen zu DB-Feldern
-// Angepasst für FRESH-START Schema
+// Angepasst für FRESH-START Schema - ALLE möglichen Spalten
 const columnMapping: Record<string, string> = {
+  // Pflichtfelder
   'Jahr': 'jahr',
   'Monat': 'monat',
-  'Gesamtverbrauch (kWh)': 'gesamtverbrauch_kwh',
+  // Energie-Flüsse (Kern-Daten)
   'PV-Erzeugung (kWh)': 'pv_erzeugung_kwh',
+  'Gesamtverbrauch (kWh)': 'gesamtverbrauch_kwh',
   'Direktverbrauch (kWh)': 'direktverbrauch_kwh',
-  'Batterieentladung (kWh)': 'batterieentladung_kwh',
-  'Batterieladung (kWh)': 'batterieladung_kwh',
-  'Netzbezug (kWh)': 'netzbezug_kwh',
   'Einspeisung (kWh)': 'einspeisung_kwh',
-  // Strompreise in ct/kWh - direkt auf DB-Spaltennamen mappen
+  'Netzbezug (kWh)': 'netzbezug_kwh',
+  // Batteriespeicher (optional)
+  'Batterieladung (kWh)': 'batterieladung_kwh',
+  'Batterieentladung (kWh)': 'batterieentladung_kwh',
+  // Strompreise (optional)
   'Netzbezugspreis (Cent/kWh)': 'netzbezug_preis_cent_kwh',
   'Einspeisevergütung (Cent/kWh)': 'einspeisung_preis_cent_kwh',
-  // Sonstiges
+  // Finanzen (optional - werden aus kWh × Preis berechnet wenn leer)
+  'Einspeise-Ertrag (€)': 'einspeisung_ertrag_euro',
+  'Netzbezug-Kosten (€)': 'netzbezug_kosten_euro',
   'Betriebsausgaben (€)': 'betriebsausgaben_monat_euro',
+  // Wetter (optional)
+  'Sonnenstunden': 'sonnenstunden',
+  'Globalstrahlung (kWh/m²)': 'globalstrahlung_kwh_m2',
+  // Meta (optional)
+  'Datenquelle': 'datenquelle',
   'Notizen': 'notizen'
 }
 
@@ -84,24 +101,31 @@ function validateRow(row: any, rowIndex: number): { data?: ParsedMonatsdaten, er
     return { errors }
   }
 
-  // Alle Daten parsen - Euro-Beträge werden NICHT mehr importiert,
-  // sie werden beim Speichern automatisch aus Strompreisen berechnet
+  // Alle Daten parsen - Euro-Beträge werden aus kWh × Preis berechnet wenn leer
   const data: ParsedMonatsdaten = {
     jahr: jahr!,
     monat: monat!,
-    // Energie-Flüsse
-    gesamtverbrauch_kwh: parseNumber(row.gesamtverbrauch_kwh),
+    // Energie-Flüsse (Kern-Daten)
     pv_erzeugung_kwh: parseNumber(row.pv_erzeugung_kwh),
+    gesamtverbrauch_kwh: parseNumber(row.gesamtverbrauch_kwh),
     direktverbrauch_kwh: parseNumber(row.direktverbrauch_kwh),
-    batterieentladung_kwh: parseNumber(row.batterieentladung_kwh),
-    batterieladung_kwh: parseNumber(row.batterieladung_kwh),
-    netzbezug_kwh: parseNumber(row.netzbezug_kwh),
     einspeisung_kwh: parseNumber(row.einspeisung_kwh),
+    netzbezug_kwh: parseNumber(row.netzbezug_kwh),
+    // Batteriespeicher (optional)
+    batterieladung_kwh: parseNumber(row.batterieladung_kwh),
+    batterieentladung_kwh: parseNumber(row.batterieentladung_kwh),
     // Strompreise (optional - für dynamische Tarife)
     netzbezug_preis_cent_kwh: parseNumber(row.netzbezug_preis_cent_kwh),
     einspeisung_preis_cent_kwh: parseNumber(row.einspeisung_preis_cent_kwh),
-    // Sonstiges
+    // Finanzen (optional - werden berechnet wenn leer)
+    einspeisung_ertrag_euro: parseNumber(row.einspeisung_ertrag_euro),
+    netzbezug_kosten_euro: parseNumber(row.netzbezug_kosten_euro),
     betriebsausgaben_monat_euro: parseNumber(row.betriebsausgaben_monat_euro),
+    // Wetter (optional)
+    sonnenstunden: parseNumber(row.sonnenstunden),
+    globalstrahlung_kwh_m2: parseNumber(row.globalstrahlung_kwh_m2),
+    // Meta
+    datenquelle: row.datenquelle || undefined,
     notizen: row.notizen || undefined
   }
 
@@ -232,7 +256,7 @@ export async function POST(request: NextRequest) {
 
     // Daten in DB einfügen
     // Hinweis: mitglied_id nicht mehr nötig - Beziehung läuft über anlage_id
-    // Euro-Beträge werden NICHT importiert - sie werden automatisch aus Strompreisen berechnet
+    // Euro-Beträge werden importiert falls vorhanden, sonst später aus Strompreisen berechnet
     const insertData = validatedData.map(d => ({
       anlage_id: anlageId,
       ...d
