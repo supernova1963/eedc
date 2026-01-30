@@ -6,6 +6,7 @@
 import { useState } from 'react'
 import { updateFreigaben } from '@/lib/freigabe-actions'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import SimpleIcon from './SimpleIcon'
 
 interface AnlagenFreigabeFormProps {
@@ -195,8 +196,19 @@ export default function AnlagenFreigabeForm({ anlage, freigaben }: AnlagenFreiga
           </div>
         </div>
 
-        {/* Button */}
-        <div className="flex justify-end pt-4">
+        {/* Buttons */}
+        <div className="flex justify-between items-center pt-4">
+          {/* Vorschau-Button */}
+          <Link
+            href={`/community/${anlage.id}`}
+            target="_blank"
+            className="px-4 py-2 rounded-md font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 flex items-center gap-2"
+          >
+            <SimpleIcon type="link" className="w-4 h-4" />
+            Öffentliches Profil ansehen
+          </Link>
+
+          {/* Speichern-Button */}
           <button
             type="submit"
             disabled={loading}
@@ -213,6 +225,19 @@ export default function AnlagenFreigabeForm({ anlage, freigaben }: AnlagenFreiga
           </button>
         </div>
       </form>
+
+      {/* Vorschau-Hinweis */}
+      {!formData.profil_oeffentlich && (
+        <div className="mt-4 bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+          <div className="flex gap-2">
+            <SimpleIcon type="info" className="w-5 h-5 text-yellow-600" />
+            <div className="text-sm text-yellow-900">
+              <strong>Hinweis:</strong> Dein Profil ist derzeit nicht öffentlich sichtbar.
+              Aktiviere &quot;Profil öffentlich zeigen&quot;, damit andere Community-Mitglieder deine Anlage sehen können.
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

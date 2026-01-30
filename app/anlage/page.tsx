@@ -7,7 +7,6 @@ import SimpleIcon from '@/components/SimpleIcon'
 import Link from 'next/link'
 import AnlagenProfilForm from '@/components/AnlagenProfilForm'
 import AnlagenFreigabeForm from '@/components/AnlagenFreigabeForm'
-import AnlagenTechnischesDaten from '@/components/AnlagenTechnischesDaten'
 import { AnlagenSelector } from '@/components/AnlagenSelector'
 
 async function getAnlageFreigaben(anlageId: string) {
@@ -205,19 +204,7 @@ export default async function AnlagePage({
                 } whitespace-nowrap pb-4 px-1 border-b-2 font-medium text-sm flex items-center gap-2`}
               >
                 <SimpleIcon type="link" className="w-4 h-4" />
-                Freigabe
-              </Link>
-
-              <Link
-                href={`/anlage?tab=technisch${anlageId ? `&anlageId=${anlageId}` : ''}`}
-                className={`${
-                  activeTab === 'technisch'
-                    ? 'border-blue-500 text-blue-600'
-                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                } whitespace-nowrap pb-4 px-1 border-b-2 font-medium text-sm flex items-center gap-2`}
-              >
-                <SimpleIcon type="settings" className="w-4 h-4" />
-                Technische Daten
+                Freigabe & Vorschau
               </Link>
             </nav>
           </div>
@@ -232,10 +219,6 @@ export default async function AnlagePage({
 
         {activeTab === 'freigabe' && (
           <AnlagenFreigabeForm anlage={anlage} freigaben={freigaben} />
-        )}
-
-        {activeTab === 'technisch' && (
-          <AnlagenTechnischesDaten anlage={anlage} />
         )}
       </div>
     </main>
