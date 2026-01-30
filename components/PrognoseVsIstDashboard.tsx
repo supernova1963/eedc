@@ -6,6 +6,7 @@
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ComposedChart } from 'recharts'
 import SimpleIcon from './SimpleIcon'
 import ExportButton from './ExportButton'
+import { text, card, border, table, gradient, colors, badge } from '@/lib/styles'
 
 interface PrognoseVsIstDashboardProps {
   monatsdaten: any[]
@@ -27,9 +28,9 @@ export default function PrognoseVsIstDashboard({ monatsdaten, anlage }: Prognose
 
   if (!monatsdaten || monatsdaten.length === 0) {
     return (
-      <div className="bg-white rounded-lg shadow p-8 text-center">
+      <div className={`${card.padded} p-8 text-center`}>
         <SimpleIcon type="info" className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-        <p className="text-gray-500 dark:text-gray-400">Keine Daten für Prognose-Vergleich vorhanden</p>
+        <p className={text.muted}>Keine Daten für Prognose-Vergleich vorhanden</p>
       </div>
     )
   }
@@ -176,11 +177,11 @@ export default function PrognoseVsIstDashboard({ monatsdaten, anlage }: Prognose
       {/* Header */}
       <div className="flex items-start justify-between">
         <div>
-          <h2 className="text-2xl font-bold text-gray-900 flex items-center gap-2 mb-2">
-            <SimpleIcon type="target" className="w-6 h-6 text-blue-600" />
+          <h2 className={`${text.h1} flex items-center gap-2 mb-2`}>
+            <SimpleIcon type="target" className="w-6 h-6 text-blue-600 dark:text-blue-400" />
             Prognose vs. IST-Vergleich
           </h2>
-          <p className="text-sm text-gray-600 dark:text-gray-400">
+          <p className={text.sm}>
             Vergleich prognostizierte und tatsächliche PV-Erzeugung
           </p>
         </div>
@@ -202,66 +203,66 @@ export default function PrognoseVsIstDashboard({ monatsdaten, anlage }: Prognose
 
       {/* KPI Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+        <div className={card.padded}>
           <div className="flex items-center justify-between mb-2">
-            <div className="text-sm text-gray-600 font-medium">Gesamt-Abweichung</div>
+            <div className={`${text.sm} font-medium`}>Gesamt-Abweichung</div>
             <SimpleIcon
               type={gesamtAbweichung >= 0 ? 'trend-up' : 'trend-down'}
-              className={`w-6 h-6 ${gesamtAbweichung >= 0 ? 'text-green-600' : 'text-red-600'}`}
+              className={`w-6 h-6 ${gesamtAbweichung >= 0 ? colors.positive : colors.negative}`}
             />
           </div>
-          <div className={`text-3xl font-bold ${gesamtAbweichung >= 0 ? 'text-green-700' : 'text-red-700'}`}>
+          <div className={`text-3xl font-bold ${gesamtAbweichung >= 0 ? 'text-green-700 dark:text-green-400' : 'text-red-700 dark:text-red-400'}`}>
             {gesamtAbweichung >= 0 ? '+' : ''}{fmtDec(gesamtAbweichungProzent)}%
           </div>
-          <div className="text-xs text-gray-500 mt-1">
+          <div className={`${text.xs} mt-1`}>
             {gesamtAbweichung >= 0 ? '+' : ''}{fmt(gesamtAbweichung)} kWh
           </div>
         </div>
 
-        <div className="bg-gradient-to-br from-blue-50 to-sky-100 rounded-lg shadow p-6 border border-blue-200">
+        <div className={`${gradient.kpiBlue} rounded-lg shadow p-6`}>
           <div className="flex items-center justify-between mb-2">
-            <div className="text-sm text-blue-700 font-medium">Prognose-Genauigkeit</div>
-            <SimpleIcon type="check" className="w-6 h-6 text-blue-600" />
+            <div className="text-sm text-blue-700 dark:text-blue-300 font-medium">Prognose-Genauigkeit</div>
+            <SimpleIcon type="check" className="w-6 h-6 text-blue-600 dark:text-blue-400" />
           </div>
-          <div className="text-3xl font-bold text-blue-700 dark:text-blue-400">
+          <div className="text-3xl font-bold text-blue-700 dark:text-blue-300">
             {fmtDec(durchschnittGenauigkeit)}%
           </div>
-          <div className="text-xs text-blue-600 mt-1">
+          <div className="text-xs text-blue-600 dark:text-blue-400 mt-1">
             Durchschnitt über alle Monate
           </div>
         </div>
 
-        <div className="bg-gradient-to-br from-green-50 to-emerald-100 rounded-lg shadow p-6 border border-green-200">
+        <div className={`${gradient.kpiGreen} rounded-lg shadow p-6`}>
           <div className="flex items-center justify-between mb-2">
-            <div className="text-sm text-green-700 font-medium">Beste Übererfüllung</div>
-            <SimpleIcon type="trophy" className="w-6 h-6 text-green-600" />
+            <div className="text-sm text-green-700 dark:text-green-300 font-medium">Beste Übererfüllung</div>
+            <SimpleIcon type="trophy" className="w-6 h-6 text-green-600 dark:text-green-400" />
           </div>
-          <div className="text-3xl font-bold text-green-700 dark:text-green-400">
+          <div className="text-3xl font-bold text-green-700 dark:text-green-300">
             +{fmt(maxUebererfuellung?.abweichungKwh || 0)}
           </div>
-          <div className="text-xs text-green-600 mt-1">
+          <div className="text-xs text-green-600 dark:text-green-400 mt-1">
             {maxUebererfuellung?.monatName || '-'} kWh
           </div>
         </div>
 
-        <div className="bg-gradient-to-br from-orange-50 to-amber-100 rounded-lg shadow p-6 border border-orange-200">
+        <div className={`${gradient.kpiOrange} rounded-lg shadow p-6`}>
           <div className="flex items-center justify-between mb-2">
-            <div className="text-sm text-orange-700 font-medium">Größte Untererfüllung</div>
-            <SimpleIcon type="alert" className="w-6 h-6 text-orange-600" />
+            <div className="text-sm text-orange-700 dark:text-orange-300 font-medium">Größte Untererfüllung</div>
+            <SimpleIcon type="alert" className="w-6 h-6 text-orange-600 dark:text-orange-400" />
           </div>
-          <div className="text-3xl font-bold text-orange-700">
+          <div className="text-3xl font-bold text-orange-700 dark:text-orange-300">
             {fmt(maxUntererfuellung?.abweichungKwh || 0)}
           </div>
-          <div className="text-xs text-orange-600 mt-1">
+          <div className="text-xs text-orange-600 dark:text-orange-400 mt-1">
             {maxUntererfuellung?.monatName || '-'} kWh
           </div>
         </div>
       </div>
 
       {/* Haupt-Chart: IST vs. Prognose */}
-      <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-        <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-          <SimpleIcon type="chart" className="w-5 h-5 text-blue-600" />
+      <div className={card.padded}>
+        <h3 className={`${text.h3} mb-4 flex items-center gap-2`}>
+          <SimpleIcon type="chart" className="w-5 h-5 text-blue-600 dark:text-blue-400" />
           IST vs. Prognose - Monatliche Erzeugung
         </h3>
         <ResponsiveContainer width="100%" height={350}>
@@ -295,9 +296,9 @@ export default function PrognoseVsIstDashboard({ monatsdaten, anlage }: Prognose
       </div>
 
       {/* Abweichungs-Chart */}
-      <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-        <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-          <SimpleIcon type="trend" className="w-5 h-5 text-purple-600" />
+      <div className={card.padded}>
+        <h3 className={`${text.h3} mb-4 flex items-center gap-2`}>
+          <SimpleIcon type="trend" className="w-5 h-5 text-purple-600 dark:text-purple-400" />
           Abweichungen von Prognose
         </h3>
         <ResponsiveContainer width="100%" height={300}>
@@ -334,9 +335,9 @@ export default function PrognoseVsIstDashboard({ monatsdaten, anlage }: Prognose
       </div>
 
       {/* Genauigkeits-Trend */}
-      <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-        <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-          <SimpleIcon type="target" className="w-5 h-5 text-green-600" />
+      <div className={card.padded}>
+        <h3 className={`${text.h3} mb-4 flex items-center gap-2`}>
+          <SimpleIcon type="target" className="w-5 h-5 text-green-600 dark:text-green-400" />
           Prognose-Genauigkeit im Zeitverlauf
         </h3>
         <ResponsiveContainer width="100%" height={300}>
@@ -369,56 +370,56 @@ export default function PrognoseVsIstDashboard({ monatsdaten, anlage }: Prognose
       </div>
 
       {/* Detailtabelle */}
-      <div className="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
-        <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
-          <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+      <div className={card.overflow}>
+        <div className={`px-6 py-4 border-b ${border.default}`}>
+          <h3 className={`${text.h3} flex items-center gap-2`}>
             <SimpleIcon type="clipboard" className="w-5 h-5 text-gray-600 dark:text-gray-400" />
             Detaillierte Monatsdaten
           </h3>
         </div>
-        <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-            <thead className="bg-gray-50 dark:bg-gray-700">
+        <div className={table.wrapper}>
+          <table className={table.base}>
+            <thead className={table.thead}>
               <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Monat</th>
-                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">IST-Erzeugung</th>
-                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Prognose</th>
-                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Abweichung</th>
-                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Abweichung %</th>
-                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Genauigkeit</th>
+                <th className={table.th}>Monat</th>
+                <th className={table.thRight}>IST-Erzeugung</th>
+                <th className={table.thRight}>Prognose</th>
+                <th className={table.thRight}>Abweichung</th>
+                <th className={table.thRight}>Abweichung %</th>
+                <th className={table.thRight}>Genauigkeit</th>
               </tr>
             </thead>
-            <tbody className="bg-white divide-y divide-gray-200 dark:divide-gray-700">
+            <tbody className={table.tbody}>
               {prognoseData
                 .slice()
                 .reverse()
                 .map((m, i) => (
-                  <tr key={i} className="hover:bg-gray-50 dark:bg-gray-700">
-                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">
+                  <tr key={i} className={table.tr}>
+                    <td className={`${table.td} font-medium`}>
                       {m.monatName}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-gray-900 dark:text-gray-100">
+                    <td className={table.tdRight}>
                       {fmt(m.istErzeugung)} kWh
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-blue-600">
+                    <td className={`${table.tdRight} ${colors.accent}`}>
                       {fmt(m.prognoseErzeugung)} kWh
                     </td>
-                    <td className={`px-6 py-4 whitespace-nowrap text-sm text-right font-medium ${
-                      m.abweichungKwh >= 0 ? 'text-green-600' : 'text-red-600'
+                    <td className={`${table.tdRight} font-medium ${
+                      m.abweichungKwh >= 0 ? colors.positive : colors.negative
                     }`}>
                       {m.abweichungKwh >= 0 ? '+' : ''}{fmt(m.abweichungKwh)} kWh
                     </td>
-                    <td className={`px-6 py-4 whitespace-nowrap text-sm text-right ${
-                      m.abweichungProzent >= 0 ? 'text-green-600' : 'text-red-600'
+                    <td className={`${table.tdRight} ${
+                      m.abweichungProzent >= 0 ? colors.positive : colors.negative
                     }`}>
                       {m.abweichungProzent >= 0 ? '+' : ''}{fmtDec(m.abweichungProzent)}%
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-right">
-                      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                        m.genauigkeit >= 90 ? 'bg-green-100 text-green-800' :
-                        m.genauigkeit >= 75 ? 'bg-yellow-100 text-yellow-800' :
-                        'bg-red-100 text-red-800'
-                      }`}>
+                      <span className={
+                        m.genauigkeit >= 90 ? badge.success :
+                        m.genauigkeit >= 75 ? badge.warning :
+                        badge.error
+                      }>
                         {fmtDec(m.genauigkeit)}%
                       </span>
                     </td>
@@ -430,23 +431,23 @@ export default function PrognoseVsIstDashboard({ monatsdaten, anlage }: Prognose
       </div>
 
       {/* Insights & Analyse */}
-      <div className="bg-gradient-to-r from-blue-50 to-purple-50 border-2 border-blue-300 rounded-lg p-6">
-        <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-          <SimpleIcon type="bulb" className="w-5 h-5 text-blue-600" />
+      <div className={`${gradient.infoBox} rounded-lg p-6 border-2`}>
+        <h3 className={`${text.h3} mb-4 flex items-center gap-2`}>
+          <SimpleIcon type="bulb" className="w-5 h-5 text-blue-600 dark:text-blue-400" />
           Prognose-Insights
         </h3>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="bg-white dark:bg-gray-700 rounded-lg p-4">
-            <div className="text-sm font-medium text-gray-700 mb-2">Prognose-Methodik</div>
-            <ul className="text-sm text-gray-600 space-y-1">
+          <div className={card.inner}>
+            <div className={`${text.label} mb-2`}>Prognose-Methodik</div>
+            <ul className={`${text.sm} space-y-1`}>
               <li>• 70% historischer Durchschnitt (gleicher Monat)</li>
               <li>• 30% Anlagenleistung + Saisonfaktoren</li>
               <li>• Berücksichtigt {toNum(anlage?.leistung_kwp || 0)} kWp Leistung</li>
             </ul>
           </div>
-          <div className="bg-white dark:bg-gray-700 rounded-lg p-4">
-            <div className="text-sm font-medium text-gray-700 mb-2">Verbesserungspotenzial</div>
-            <ul className="text-sm text-gray-600 space-y-1">
+          <div className={card.inner}>
+            <div className={`${text.label} mb-2`}>Verbesserungspotenzial</div>
+            <ul className={`${text.sm} space-y-1`}>
               <li>• Integration von Wetterdaten möglich</li>
               <li>• Verschattungs-Analyse empfohlen</li>
               <li>• Wartungs-Check bei Untererfüllung</li>

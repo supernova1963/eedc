@@ -7,6 +7,7 @@ import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, L
 import SimpleIcon from './SimpleIcon'
 import ExportButton from './ExportButton'
 import PDFExportButton from './PDFExportButton'
+import { text, card, border, table, gradient, colors, badge } from '@/lib/styles'
 
 interface ROIDashboardProps {
   anlage: any
@@ -123,11 +124,11 @@ export default function ROIDashboard({ anlage, monatsdaten, investitionen }: ROI
       {/* Header */}
       <div className="flex items-start justify-between">
         <div>
-          <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100 flex items-center gap-2 mb-2">
+          <h2 className={`${text.h1} flex items-center gap-2 mb-2`}>
             <SimpleIcon type="trend" className="w-6 h-6 text-blue-600 dark:text-blue-400" />
             ROI-Analyse & Wirtschaftlichkeit
           </h2>
-          <p className="text-sm text-gray-600 dark:text-gray-400">
+          <p className={text.sm}>
             Detaillierte Analyse der Investitionsrendite seit {yearlyStats[0]?.jahr || 'Inbetriebnahme'}
           </p>
         </div>
@@ -171,30 +172,30 @@ export default function ROIDashboard({ anlage, monatsdaten, investitionen }: ROI
 
       {/* KPI Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-          <div className="text-sm text-gray-600 dark:text-gray-400 mb-1">Gesamtertrag</div>
-          <div className="text-2xl font-bold text-green-700">{fmtDec(gesamtErtrag)} €</div>
-          <div className="text-xs text-gray-500 dark:text-gray-500 mt-1">
+        <div className={card.padded}>
+          <div className={`${text.sm} mb-1`}>Gesamtertrag</div>
+          <div className={`text-2xl ${colors.positiveBold}`}>{fmtDec(gesamtErtrag)} €</div>
+          <div className={`${text.xs} mt-1`}>
             seit {yearlyStats.length} Jahr{yearlyStats.length !== 1 ? 'en' : ''}
           </div>
         </div>
 
-        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-          <div className="text-sm text-gray-600 dark:text-gray-400 mb-1">Amortisation</div>
-          <div className={`text-2xl font-bold ${istAmortisiert ? 'text-green-700' : 'text-blue-700'}`}>
+        <div className={card.padded}>
+          <div className={`${text.sm} mb-1`}>Amortisation</div>
+          <div className={`text-2xl font-bold ${istAmortisiert ? 'text-green-700 dark:text-green-400' : colors.accent}`}>
             {istAmortisiert ? '✓ Erreicht' : `${fmtDec(verbleibendeJahre)} J.`}
           </div>
-          <div className="text-xs text-gray-500 dark:text-gray-500 mt-1">
+          <div className={`${text.xs} mt-1`}>
             {istAmortisiert ? `+${fmtDec(gesamtErtrag - gesamtInvestition)} € Gewinn` : 'bis Payback'}
           </div>
         </div>
 
-        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-          <div className="text-sm text-gray-600 dark:text-gray-400 mb-1">Ø Ertrag/Jahr</div>
-          <div className="text-2xl font-bold text-blue-700">{fmt(durchschnittErtragProJahr)} €</div>
-          <div className="text-xs text-gray-500 dark:text-gray-500 mt-1">
+        <div className={card.padded}>
+          <div className={`${text.sm} mb-1`}>Ø Ertrag/Jahr</div>
+          <div className={`text-2xl ${colors.accentBold}`}>{fmt(durchschnittErtragProJahr)} €</div>
+          <div className={`${text.xs} mt-1`}>
             {yoyWachstum !== 0 && letzesJahr ? (
-              <span className={yoyWachstum > 0 ? 'text-green-600' : 'text-red-600'}>
+              <span className={yoyWachstum > 0 ? colors.positive : colors.negative}>
                 {yoyWachstum > 0 ? '+' : ''}{fmtDec(yoyWachstum)}% YoY
               </span>
             ) : (
@@ -203,26 +204,26 @@ export default function ROIDashboard({ anlage, monatsdaten, investitionen }: ROI
           </div>
         </div>
 
-        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-          <div className="text-sm text-gray-600 dark:text-gray-400 mb-1">ROI aktuell</div>
-          <div className="text-2xl font-bold text-purple-700">
+        <div className={card.padded}>
+          <div className={`${text.sm} mb-1`}>ROI aktuell</div>
+          <div className={`text-2xl ${colors.specialBold}`}>
             {fmtDec((gesamtErtrag / gesamtInvestition) * 100)}%
           </div>
-          <div className="text-xs text-gray-500 dark:text-gray-500 mt-1">
+          <div className={`${text.xs} mt-1`}>
             von {fmt(gesamtInvestition)} €
           </div>
         </div>
       </div>
 
       {/* Payback Progress Bar */}
-      <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+      <div className={card.padded}>
         <div className="flex items-center justify-between mb-3">
-          <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Amortisations-Fortschritt</h3>
-          <span className="text-sm font-medium text-gray-600 dark:text-gray-400">
+          <h3 className={text.h3}>Amortisations-Fortschritt</h3>
+          <span className={`text-sm font-medium ${text.secondary}`}>
             {fmtDec(Math.min((gesamtErtrag / gesamtInvestition) * 100, 100))}%
           </span>
         </div>
-        <div className="w-full bg-gray-200 rounded-full h-6 overflow-hidden">
+        <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-6 overflow-hidden">
           <div
             className={`h-full transition-all duration-500 ${
               istAmortisiert ? 'bg-green-500' : 'bg-blue-500'
@@ -237,7 +238,7 @@ export default function ROIDashboard({ anlage, monatsdaten, investitionen }: ROI
           </div>
         </div>
         {istAmortisiert && (
-          <div className="mt-3 flex items-center gap-2 text-green-700">
+          <div className={`mt-3 flex items-center gap-2 ${colors.positive}`}>
             <SimpleIcon type="check" className="w-5 h-5" />
             <span className="font-medium">
               Investition amortisiert! {fmtDec(gesamtErtrag - gesamtInvestition)} € Gewinn
@@ -247,9 +248,9 @@ export default function ROIDashboard({ anlage, monatsdaten, investitionen }: ROI
       </div>
 
       {/* Cumulative Savings Chart */}
-      <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-        <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4 flex items-center gap-2">
-          <SimpleIcon type="chart" className="w-5 h-5 text-gray-600" />
+      <div className={card.padded}>
+        <h3 className={`${text.h3} mb-4 flex items-center gap-2`}>
+          <SimpleIcon type="chart" className="w-5 h-5 text-gray-600 dark:text-gray-400" />
           Kumulierte Erträge vs. Investition
         </h3>
         <ResponsiveContainer width="100%" height={350}>
@@ -292,9 +293,9 @@ export default function ROIDashboard({ anlage, monatsdaten, investitionen }: ROI
       </div>
 
       {/* Yearly Comparison */}
-      <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-        <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4 flex items-center gap-2">
-          <SimpleIcon type="trend" className="w-5 h-5 text-gray-600" />
+      <div className={card.padded}>
+        <h3 className={`${text.h3} mb-4 flex items-center gap-2`}>
+          <SimpleIcon type="trend" className="w-5 h-5 text-gray-600 dark:text-gray-400" />
           Jahresvergleich: Erträge & Kosten
         </h3>
         <ResponsiveContainer width="100%" height={350}>
@@ -315,53 +316,49 @@ export default function ROIDashboard({ anlage, monatsdaten, investitionen }: ROI
       </div>
 
       {/* Yearly Stats Table */}
-      <div className="bg-white rounded-lg shadow overflow-hidden">
-        <div className="px-6 py-4 border-b border-gray-200">
-          <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 flex items-center gap-2">
-            <SimpleIcon type="clipboard" className="w-5 h-5 text-gray-600" />
+      <div className={card.overflow}>
+        <div className={`px-6 py-4 border-b ${border.default}`}>
+          <h3 className={`${text.h3} flex items-center gap-2`}>
+            <SimpleIcon type="clipboard" className="w-5 h-5 text-gray-600 dark:text-gray-400" />
             Jahresübersicht
           </h3>
         </div>
-        <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
+        <div className={table.wrapper}>
+          <table className={table.base}>
+            <thead className={table.thead}>
               <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Jahr</th>
-                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Erzeugung</th>
-                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Erlöse</th>
-                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Kosten</th>
-                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Netto</th>
-                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Kumuliert</th>
-                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Fortschritt</th>
+                <th className={table.th}>Jahr</th>
+                <th className={table.thRight}>Erzeugung</th>
+                <th className={table.thRight}>Erlöse</th>
+                <th className={table.thRight}>Kosten</th>
+                <th className={table.thRight}>Netto</th>
+                <th className={table.thRight}>Kumuliert</th>
+                <th className={table.thRight}>Fortschritt</th>
               </tr>
             </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
+            <tbody className={table.tbody}>
               {yearlyStats.map((year) => (
-                <tr key={year.jahr} className="hover:bg-gray-50">
-                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                <tr key={year.jahr} className={table.tr}>
+                  <td className={`${table.td} font-medium`}>
                     {year.jahr}
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-gray-900">
+                  <td className={table.tdRight}>
                     {fmt(year.erzeugung)} kWh
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-green-600 font-medium">
+                  <td className={`${table.tdRight} ${colors.positive} font-medium`}>
                     {fmtDec(year.erloese)} €
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-red-600 font-medium">
+                  <td className={`${table.tdRight} ${colors.negative} font-medium`}>
                     {fmtDec(year.kosten)} €
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-blue-700 font-bold">
+                  <td className={`${table.tdRight} ${colors.accentBold}`}>
                     {fmtDec(year.nettoErtrag)} €
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-gray-900 font-medium">
+                  <td className={`${table.tdRight} font-medium`}>
                     {fmtDec(year.kumuliertErtrag)} €
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-right">
-                    <span className={`px-2 py-1 rounded-full text-xs font-semibold ${
-                      year.paybackProgress >= 100
-                        ? 'bg-green-100 text-green-800'
-                        : 'bg-blue-100 text-blue-800'
-                    }`}>
+                    <span className={year.paybackProgress >= 100 ? badge.success : badge.info}>
                       {fmtDec(year.paybackProgress)}%
                     </span>
                   </td>
@@ -374,33 +371,33 @@ export default function ROIDashboard({ anlage, monatsdaten, investitionen }: ROI
 
       {/* Investment Breakdown */}
       {investitionen.length > 0 && (
-        <div className="bg-gradient-to-r from-blue-50 to-purple-50 border border-blue-200 rounded-lg p-6">
-          <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4 flex items-center gap-2">
-            <SimpleIcon type="gem" className="w-5 h-5 text-blue-600" />
+        <div className={`${gradient.infoBox} rounded-lg p-6`}>
+          <h3 className={`${text.h3} mb-4 flex items-center gap-2`}>
+            <SimpleIcon type="gem" className="w-5 h-5 text-blue-600 dark:text-blue-400" />
             Investitionsübersicht
           </h3>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="bg-white rounded-lg p-4">
-              <div className="text-sm text-gray-600">PV-Anlage</div>
-              <div className="text-xl font-bold text-gray-900">{fmt(gesamtInvestition)} €</div>
-              <div className="text-xs text-gray-500 dark:text-gray-500 mt-1">Hauptinvestition</div>
+            <div className={card.inner}>
+              <div className={text.sm}>PV-Anlage</div>
+              <div className={`text-xl font-bold ${text.primary}`}>{fmt(gesamtInvestition)} €</div>
+              <div className={`${text.xs} mt-1`}>Hauptinvestition</div>
             </div>
-            <div className="bg-white rounded-lg p-4">
-              <div className="text-sm text-gray-600">Zusatzinvestitionen</div>
-              <div className="text-xl font-bold text-gray-900">
+            <div className={card.inner}>
+              <div className={text.sm}>Zusatzinvestitionen</div>
+              <div className={`text-xl font-bold ${text.primary}`}>
                 {fmt(investitionen.reduce((sum, inv) => sum + (inv.anschaffungskosten_relevant || 0), 0))} €
               </div>
-              <div className="text-xs text-gray-500 dark:text-gray-500 mt-1">{investitionen.length} Positionen</div>
+              <div className={`${text.xs} mt-1`}>{investitionen.length} Positionen</div>
             </div>
-            <div className="bg-white rounded-lg p-4">
-              <div className="text-sm text-gray-600">Gesamtinvestition</div>
-              <div className="text-xl font-bold text-blue-700">
+            <div className={card.inner}>
+              <div className={text.sm}>Gesamtinvestition</div>
+              <div className={`text-xl ${colors.accentBold}`}>
                 {fmt(
                   gesamtInvestition +
                   investitionen.reduce((sum, inv) => sum + (inv.anschaffungskosten_relevant || 0), 0)
                 )} €
               </div>
-              <div className="text-xs text-gray-500 dark:text-gray-500 mt-1">Inklusive Zusätze</div>
+              <div className={`${text.xs} mt-1`}>Inklusive Zusätze</div>
             </div>
           </div>
         </div>

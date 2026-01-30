@@ -5,6 +5,7 @@
 
 import ModernSidebar from './ModernSidebar'
 import Breadcrumb from './Breadcrumb'
+import { bg } from '@/lib/styles'
 
 interface AppLayoutProps {
   children: React.ReactNode
@@ -14,7 +15,7 @@ interface AppLayoutProps {
 
 export default function AppLayout({ children, userName, userEmail }: AppLayoutProps) {
   return (
-    <div className="flex h-screen bg-gray-50 dark:bg-gray-900">
+    <div className={`flex h-screen ${bg.page}`}>
       {/* Modern Sidebar */}
       <ModernSidebar userName={userName} userEmail={userEmail} />
 

@@ -4,6 +4,7 @@
 'use client'
 
 import SimpleIcon from './SimpleIcon'
+import { text, card, gradient, alert } from '@/lib/styles'
 
 interface OptimierungsvorschlaegeDashboardProps {
   monatsdaten: any[]
@@ -338,29 +339,29 @@ export default function OptimierungsvorschlaegeDashboard({
   }
 
   const prioritaetStyle = {
-    hoch: 'bg-red-50 border-red-300 text-red-900',
-    mittel: 'bg-yellow-50 border-yellow-300 text-yellow-900',
-    niedrig: 'bg-green-50 border-green-300 text-green-900'
+    hoch: 'bg-red-50 dark:bg-red-900/30 border-red-300 dark:border-red-700 text-red-900 dark:text-red-300',
+    mittel: 'bg-yellow-50 dark:bg-yellow-900/30 border-yellow-300 dark:border-yellow-700 text-yellow-900 dark:text-yellow-300',
+    niedrig: 'bg-green-50 dark:bg-green-900/30 border-green-300 dark:border-green-700 text-green-900 dark:text-green-300'
   }
 
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="bg-gradient-to-r from-blue-50 to-purple-50 rounded-lg shadow p-6 border-2 border-blue-300">
+      <div className={`${gradient.infoBox} rounded-lg shadow p-6 border-2`}>
         <div className="flex items-start justify-between">
           <div>
-            <h2 className="text-2xl font-bold text-gray-900 flex items-center gap-2 mb-2">
-              <SimpleIcon type="bulb" className="w-6 h-6 text-blue-600" />
+            <h2 className={`${text.h1} flex items-center gap-2 mb-2`}>
+              <SimpleIcon type="bulb" className="w-6 h-6 text-blue-600 dark:text-blue-400" />
               Optimierungsvorschläge
             </h2>
-            <p className="text-sm text-gray-600 dark:text-gray-400">
+            <p className={text.sm}>
               Intelligente Analyse deiner PV-Anlage mit konkreten Verbesserungsvorschlägen
             </p>
           </div>
           <div className="text-right">
-            <div className="text-sm text-gray-600 dark:text-gray-400">Gefunden</div>
-            <div className="text-3xl font-bold text-blue-600">{vorschlaege.length}</div>
-            <div className="text-xs text-gray-500 dark:text-gray-400">Vorschläge</div>
+            <div className={text.sm}>Gefunden</div>
+            <div className="text-3xl font-bold text-blue-600 dark:text-blue-400">{vorschlaege.length}</div>
+            <div className={text.xs}>Vorschläge</div>
           </div>
         </div>
       </div>
@@ -370,10 +371,10 @@ export default function OptimierungsvorschlaegeDashboard({
         {Object.entries(kategorieInfo).map(([key, info]) => {
           const count = vorschlaege.filter(v => v.kategorie === key).length
           return (
-            <div key={key} className="bg-white rounded-lg shadow p-4 text-center">
-              <SimpleIcon type={info.icon} className={`w-8 h-8 mx-auto mb-2 text-${info.color}-600`} />
-              <div className="text-2xl font-bold text-gray-900 dark:text-gray-100">{count}</div>
-              <div className="text-xs text-gray-600 mt-1">{info.name}</div>
+            <div key={key} className={`${card.paddedSm} text-center`}>
+              <SimpleIcon type={info.icon} className={`w-8 h-8 mx-auto mb-2 text-${info.color}-600 dark:text-${info.color}-400`} />
+              <div className={`text-2xl font-bold ${text.primary}`}>{count}</div>
+              <div className={`${text.xs} mt-1`}>{info.name}</div>
             </div>
           )
         })}
@@ -381,12 +382,12 @@ export default function OptimierungsvorschlaegeDashboard({
 
       {/* Vorschläge */}
       {vorschlaege.length === 0 ? (
-        <div className="bg-white rounded-lg shadow p-12 text-center">
-          <SimpleIcon type="trophy" className="w-16 h-16 text-green-600 mx-auto mb-4" />
-          <h3 className="text-xl font-semibold text-gray-900 mb-2">
+        <div className={`${card.padded} p-12 text-center`}>
+          <SimpleIcon type="trophy" className="w-16 h-16 text-green-600 dark:text-green-400 mx-auto mb-4" />
+          <h3 className={`${text.h2} mb-2`}>
             Perfekt optimiert!
           </h3>
-          <p className="text-gray-600 dark:text-gray-400">
+          <p className={text.secondary}>
             Deine PV-Anlage läuft bereits sehr effizient. Weiter so!
           </p>
         </div>
@@ -395,7 +396,7 @@ export default function OptimierungsvorschlaegeDashboard({
           {vorschlaege.map((vorschlag, index) => (
             <div
               key={index}
-              className={`bg-white rounded-lg shadow-md border-l-4 overflow-hidden transition-all hover:shadow-lg ${
+              className={`${card.base} shadow-md border-l-4 overflow-hidden transition-all hover:shadow-lg ${
                 vorschlag.prioritaet === 'hoch' ? 'border-red-500' :
                 vorschlag.prioritaet === 'mittel' ? 'border-yellow-500' :
                 'border-green-500'
@@ -404,18 +405,18 @@ export default function OptimierungsvorschlaegeDashboard({
               <div className="p-6">
                 <div className="flex items-start justify-between mb-4">
                   <div className="flex items-center gap-3">
-                    <div className={`p-3 rounded-full bg-${vorschlag.color}-100`}>
-                      <SimpleIcon type={vorschlag.icon} className={`w-6 h-6 text-${vorschlag.color}-600`} />
+                    <div className={`p-3 rounded-full bg-${vorschlag.color}-100 dark:bg-${vorschlag.color}-900/30`}>
+                      <SimpleIcon type={vorschlag.icon} className={`w-6 h-6 text-${vorschlag.color}-600 dark:text-${vorschlag.color}-400`} />
                     </div>
                     <div>
-                      <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+                      <h3 className={text.h3}>
                         {vorschlag.titel}
                       </h3>
                       <div className="flex items-center gap-2 mt-1">
                         <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${prioritaetStyle[vorschlag.prioritaet]}`}>
                           {vorschlag.prioritaet === 'hoch' ? '🔴' : vorschlag.prioritaet === 'mittel' ? '🟡' : '🟢'} {vorschlag.prioritaet.toUpperCase()}
                         </span>
-                        <span className="text-xs text-gray-500 dark:text-gray-400">
+                        <span className={text.xs}>
                           {kategorieInfo[vorschlag.kategorie].name}
                         </span>
                       </div>
@@ -423,24 +424,24 @@ export default function OptimierungsvorschlaegeDashboard({
                   </div>
                 </div>
 
-                <p className="text-gray-700 mb-4">
+                <p className={`${text.secondary} mb-4`}>
                   {vorschlag.beschreibung}
                 </p>
 
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+                <div className={`${alert.info} mb-4`}>
                   <div className="flex items-center gap-2 mb-1">
-                    <SimpleIcon type="trend-up" className="w-4 h-4 text-blue-600" />
+                    <SimpleIcon type="trend-up" className="w-4 h-4 text-blue-600 dark:text-blue-400" />
                     <span className="text-sm font-medium text-blue-900 dark:text-blue-300">Einsparpotenzial</span>
                   </div>
-                  <p className="text-sm text-blue-800 font-semibold">{vorschlag.potenzial}</p>
+                  <p className="text-sm text-blue-800 dark:text-blue-200 font-semibold">{vorschlag.potenzial}</p>
                 </div>
 
                 <div>
-                  <div className="text-sm font-medium text-gray-700 mb-2">Empfohlene Maßnahmen:</div>
+                  <div className={`${text.label} mb-2`}>Empfohlene Maßnahmen:</div>
                   <ul className="space-y-2">
                     {vorschlag.massnahmen.map((massnahme, i) => (
-                      <li key={i} className="flex items-start gap-2 text-sm text-gray-600 dark:text-gray-400">
-                        <span className="text-blue-600 mt-0.5">▸</span>
+                      <li key={i} className={`flex items-start gap-2 text-sm ${text.secondary}`}>
+                        <span className="text-blue-600 dark:text-blue-400 mt-0.5">▸</span>
                         <span>{massnahme}</span>
                       </li>
                     ))}
@@ -453,10 +454,10 @@ export default function OptimierungsvorschlaegeDashboard({
       )}
 
       {/* Disclaimer */}
-      <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+      <div className="bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
         <div className="flex items-start gap-2">
-          <SimpleIcon type="info" className="w-5 h-5 text-gray-600 mt-0.5" />
-          <div className="text-sm text-gray-600 dark:text-gray-400">
+          <SimpleIcon type="info" className="w-5 h-5 text-gray-600 dark:text-gray-400 mt-0.5" />
+          <div className={text.sm}>
             <strong>Hinweis:</strong> Diese Vorschläge basieren auf einer automatisierten Analyse deiner Daten.
             Für konkrete Investitionsentscheidungen (z.B. Batteriespeicher) empfehlen wir, einen Fachmann zu konsultieren
             und eine detaillierte Wirtschaftlichkeitsrechnung durchzuführen.

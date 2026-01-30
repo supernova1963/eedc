@@ -5,6 +5,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+import { text } from '@/lib/styles'
 
 const routeNames: Record<string, string> = {
   '': 'Dashboard',
@@ -22,6 +23,8 @@ const routeNames: Record<string, string> = {
   'community': 'Community',
   'datenschutz': 'Datenschutz',
   'debug': 'Debug',
+  'meine-anlage': 'Meine Anlage',
+  'daten-import': 'Daten Import',
 }
 
 export default function Breadcrumb() {
@@ -46,15 +49,15 @@ export default function Breadcrumb() {
   ]
 
   return (
-    <nav className="flex items-center space-x-2 text-sm text-gray-600 dark:text-gray-400 mb-4">
+    <nav className={`flex items-center space-x-2 ${text.sm} mb-4`}>
       {breadcrumbs.map((crumb, index) => (
         <div key={crumb.href} className="flex items-center">
           {index > 0 && (
-            <span className="mx-2 text-gray-400 dark:text-gray-500">›</span>
+            <span className={`mx-2 ${text.muted}`}>›</span>
           )}
           {index === breadcrumbs.length - 1 ? (
             // Letzter Breadcrumb (aktuelle Seite)
-            <span className="text-gray-900 dark:text-gray-100 font-medium">
+            <span className={`${text.primary} font-medium`}>
               {crumb.label}
             </span>
           ) : (
