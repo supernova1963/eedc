@@ -33,9 +33,9 @@ export default async function StammdatenPage() {
     .eq('mitglied_id', mitglied.data.id)
     .eq('aktiv', true)
 
-  // Investitionen aus alternative_investitionen zählen (FRESH-START Schema)
+  // Investitionen zählen
   const { data: investitionen } = await supabase
-    .from('alternative_investitionen')
+    .from('investitionen')
     .select('id, anlage_id, typ')
     .eq('mitglied_id', mitglied.data.id)
     .eq('aktiv', true)

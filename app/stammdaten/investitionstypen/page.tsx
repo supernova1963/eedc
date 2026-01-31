@@ -95,7 +95,7 @@ export default async function InvestitionstypenPage() {
 
   // Statistik: Anzahl Investitionen pro Typ
   const { data: investitionen } = await supabase
-    .from('alternative_investitionen')
+    .from('investitionen')
     .select('typ')
     .eq('mitglied_id', mitgliedData.id)
     .eq('aktiv', true)

@@ -42,7 +42,7 @@ export default function InvestitionAnlageZuordnung({ mitglied_id }: InvestitionA
 
       // Lade Investitionen
       const { data: invData } = await supabase
-        .from('alternative_investitionen')
+        .from('investitionen')
         .select('id, typ, bezeichnung, anlage_id, anschaffungsdatum')
         .eq('mitglied_id', mitglied_id)
         .eq('aktiv', true)
@@ -72,7 +72,7 @@ export default function InvestitionAnlageZuordnung({ mitglied_id }: InvestitionA
       const supabase = createBrowserClient()
 
       const { error } = await supabase
-        .from('alternative_investitionen')
+        .from('investitionen')
         .update({
           anlage_id: anlage_id || null,
           aktualisiert_am: new Date().toISOString()

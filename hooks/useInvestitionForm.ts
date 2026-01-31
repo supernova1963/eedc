@@ -40,7 +40,7 @@ export function useInvestitionForm({ mitgliedId, editData, onSuccess }: UseInves
     const supabase = createBrowserClient()
 
     const { data } = await supabase
-      .from('alternative_investitionen')
+      .from('investitionen')
       .select('id, bezeichnung, parameter')
       .eq('mitglied_id', mitgliedId)
       .eq('typ', 'wechselrichter')
@@ -167,14 +167,14 @@ export function useInvestitionForm({ mitgliedId, editData, onSuccess }: UseInves
 
       if (isEditing) {
         const { error: updateError } = await supabase
-          .from('alternative_investitionen')
+          .from('investitionen')
           .update(investitionData)
           .eq('id', editData.id)
 
         if (updateError) throw updateError
       } else {
         const { error: insertError } = await supabase
-          .from('alternative_investitionen')
+          .from('investitionen')
           .insert(investitionData)
 
         if (insertError) throw insertError

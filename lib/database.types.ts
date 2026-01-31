@@ -14,114 +14,6 @@ export type Database = {
   }
   public: {
     Tables: {
-      alternative_investitionen: {
-        Row: {
-          aktiv: boolean | null
-          aktualisiert_am: string | null
-          alternativ_beschreibung: string | null
-          anlage_id: string | null
-          anschaffungsdatum: string
-          anschaffungskosten_alternativ: number | null
-          anschaffungskosten_gesamt: number
-          anschaffungskosten_relevant: number | null
-          bezeichnung: string
-          co2_einsparung_kg_jahr: number | null
-          einsparung_gesamt_jahr: number | null
-          einsparungen_jahr: Json | null
-          erstellt_am: string | null
-          id: string
-          kosten_jahr_aktuell: Json | null
-          kosten_jahr_alternativ: Json | null
-          mitglied_id: string
-          notizen: string | null
-          parameter: Json | null
-          parent_investition_id: string | null
-          typ: string
-        }
-        Insert: {
-          aktiv?: boolean | null
-          aktualisiert_am?: string | null
-          alternativ_beschreibung?: string | null
-          anlage_id?: string | null
-          anschaffungsdatum: string
-          anschaffungskosten_alternativ?: number | null
-          anschaffungskosten_gesamt: number
-          anschaffungskosten_relevant?: number | null
-          bezeichnung: string
-          co2_einsparung_kg_jahr?: number | null
-          einsparung_gesamt_jahr?: number | null
-          einsparungen_jahr?: Json | null
-          erstellt_am?: string | null
-          id?: string
-          kosten_jahr_aktuell?: Json | null
-          kosten_jahr_alternativ?: Json | null
-          mitglied_id: string
-          notizen?: string | null
-          parameter?: Json | null
-          parent_investition_id?: string | null
-          typ: string
-        }
-        Update: {
-          aktiv?: boolean | null
-          aktualisiert_am?: string | null
-          alternativ_beschreibung?: string | null
-          anlage_id?: string | null
-          anschaffungsdatum?: string
-          anschaffungskosten_alternativ?: number | null
-          anschaffungskosten_gesamt?: number
-          anschaffungskosten_relevant?: number | null
-          bezeichnung?: string
-          co2_einsparung_kg_jahr?: number | null
-          einsparung_gesamt_jahr?: number | null
-          einsparungen_jahr?: Json | null
-          erstellt_am?: string | null
-          id?: string
-          kosten_jahr_aktuell?: Json | null
-          kosten_jahr_alternativ?: Json | null
-          mitglied_id?: string
-          notizen?: string | null
-          parameter?: Json | null
-          parent_investition_id?: string | null
-          typ?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "alternative_investitionen_anlage_id_fkey"
-            columns: ["anlage_id"]
-            isOneToOne: false
-            referencedRelation: "anlagen"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "alternative_investitionen_mitglied_id_fkey"
-            columns: ["mitglied_id"]
-            isOneToOne: false
-            referencedRelation: "mitglieder"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "alternative_investitionen_parent_investition_id_fkey"
-            columns: ["parent_investition_id"]
-            isOneToOne: false
-            referencedRelation: "alternative_investitionen"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "alternative_investitionen_parent_investition_id_fkey"
-            columns: ["parent_investition_id"]
-            isOneToOne: false
-            referencedRelation: "investition_prognose_ist_vergleich"
-            referencedColumns: ["investition_id"]
-          },
-          {
-            foreignKeyName: "alternative_investitionen_parent_investition_id_fkey"
-            columns: ["parent_investition_id"]
-            isOneToOne: false
-            referencedRelation: "investitionen_uebersicht"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       anlagen: {
         Row: {
           aktiv: boolean | null
@@ -342,146 +234,6 @@ export type Database = {
           },
         ]
       }
-      anlagen_komponenten: {
-        Row: {
-          aktiv: boolean | null
-          aktualisiert_am: string | null
-          anlage_id: string
-          anschaffungsdatum: string
-          anschaffungskosten_euro: number | null
-          beschreibung: string | null
-          bezeichnung: string
-          erstellt_am: string | null
-          foerderung_euro: number | null
-          hersteller: string | null
-          id: string
-          modell: string | null
-          seriennummer: string | null
-          technische_daten: Json | null
-          typ: string
-        }
-        Insert: {
-          aktiv?: boolean | null
-          aktualisiert_am?: string | null
-          anlage_id: string
-          anschaffungsdatum: string
-          anschaffungskosten_euro?: number | null
-          beschreibung?: string | null
-          bezeichnung: string
-          erstellt_am?: string | null
-          foerderung_euro?: number | null
-          hersteller?: string | null
-          id?: string
-          modell?: string | null
-          seriennummer?: string | null
-          technische_daten?: Json | null
-          typ: string
-        }
-        Update: {
-          aktiv?: boolean | null
-          aktualisiert_am?: string | null
-          anlage_id?: string
-          anschaffungsdatum?: string
-          anschaffungskosten_euro?: number | null
-          beschreibung?: string | null
-          bezeichnung?: string
-          erstellt_am?: string | null
-          foerderung_euro?: number | null
-          hersteller?: string | null
-          id?: string
-          modell?: string | null
-          seriennummer?: string | null
-          technische_daten?: Json | null
-          typ?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "anlagen_komponenten_anlage_id_fkey"
-            columns: ["anlage_id"]
-            isOneToOne: false
-            referencedRelation: "anlagen"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      haushalt_komponenten: {
-        Row: {
-          aktiv: boolean | null
-          aktualisiert_am: string | null
-          alternative_kosten_jahr: Json | null
-          anschaffungsdatum: string
-          anschaffungskosten_euro: number | null
-          beschreibung: string | null
-          bezeichnung: string
-          ersetzt_technologie: string | null
-          erstellt_am: string | null
-          foerderung_euro: number | null
-          hauptanlage_id: string | null
-          hersteller: string | null
-          id: string
-          mitglied_id: string
-          modell: string | null
-          oeffentlich: boolean | null
-          technische_daten: Json | null
-          typ: string
-        }
-        Insert: {
-          aktiv?: boolean | null
-          aktualisiert_am?: string | null
-          alternative_kosten_jahr?: Json | null
-          anschaffungsdatum: string
-          anschaffungskosten_euro?: number | null
-          beschreibung?: string | null
-          bezeichnung: string
-          ersetzt_technologie?: string | null
-          erstellt_am?: string | null
-          foerderung_euro?: number | null
-          hauptanlage_id?: string | null
-          hersteller?: string | null
-          id?: string
-          mitglied_id: string
-          modell?: string | null
-          oeffentlich?: boolean | null
-          technische_daten?: Json | null
-          typ: string
-        }
-        Update: {
-          aktiv?: boolean | null
-          aktualisiert_am?: string | null
-          alternative_kosten_jahr?: Json | null
-          anschaffungsdatum?: string
-          anschaffungskosten_euro?: number | null
-          beschreibung?: string | null
-          bezeichnung?: string
-          ersetzt_technologie?: string | null
-          erstellt_am?: string | null
-          foerderung_euro?: number | null
-          hauptanlage_id?: string | null
-          hersteller?: string | null
-          id?: string
-          mitglied_id?: string
-          modell?: string | null
-          oeffentlich?: boolean | null
-          technische_daten?: Json | null
-          typ?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "haushalt_komponenten_hauptanlage_id_fkey"
-            columns: ["hauptanlage_id"]
-            isOneToOne: false
-            referencedRelation: "anlagen"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "haushalt_komponenten_mitglied_id_fkey"
-            columns: ["mitglied_id"]
-            isOneToOne: false
-            referencedRelation: "mitglieder"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       investition_kennzahlen: {
         Row: {
           amortisationszeit_monate: number | null
@@ -533,15 +285,15 @@ export type Database = {
             foreignKeyName: "investition_kennzahlen_investition_id_fkey"
             columns: ["investition_id"]
             isOneToOne: true
-            referencedRelation: "alternative_investitionen"
-            referencedColumns: ["id"]
+            referencedRelation: "investition_prognose_ist_vergleich"
+            referencedColumns: ["investition_id"]
           },
           {
             foreignKeyName: "investition_kennzahlen_investition_id_fkey"
             columns: ["investition_id"]
             isOneToOne: true
-            referencedRelation: "investition_prognose_ist_vergleich"
-            referencedColumns: ["investition_id"]
+            referencedRelation: "investitionen"
+            referencedColumns: ["id"]
           },
           {
             foreignKeyName: "investition_kennzahlen_investition_id_fkey"
@@ -597,15 +349,15 @@ export type Database = {
             foreignKeyName: "investition_monatsdaten_investition_id_fkey"
             columns: ["investition_id"]
             isOneToOne: false
-            referencedRelation: "alternative_investitionen"
-            referencedColumns: ["id"]
+            referencedRelation: "investition_prognose_ist_vergleich"
+            referencedColumns: ["investition_id"]
           },
           {
             foreignKeyName: "investition_monatsdaten_investition_id_fkey"
             columns: ["investition_id"]
             isOneToOne: false
-            referencedRelation: "investition_prognose_ist_vergleich"
-            referencedColumns: ["investition_id"]
+            referencedRelation: "investitionen"
+            referencedColumns: ["id"]
           },
           {
             foreignKeyName: "investition_monatsdaten_investition_id_fkey"
@@ -616,58 +368,110 @@ export type Database = {
           },
         ]
       }
-      komponenten_monatsdaten: {
+      investitionen: {
         Row: {
+          aktiv: boolean | null
           aktualisiert_am: string | null
-          alternative_kosten_euro: number | null
-          co2_einsparung_kg: number | null
-          einsparung_euro: number | null
-          energiekosten_euro: number | null
+          alternativ_beschreibung: string | null
+          anlage_id: string | null
+          anschaffungsdatum: string
+          anschaffungskosten_alternativ: number | null
+          anschaffungskosten_gesamt: number
+          anschaffungskosten_relevant: number | null
+          bezeichnung: string
+          co2_einsparung_kg_jahr: number | null
+          einsparung_gesamt_jahr: number | null
+          einsparungen_jahr: Json | null
           erstellt_am: string | null
           id: string
-          jahr: number
-          komponente_id: string
-          monat: number
+          kosten_jahr_aktuell: Json | null
+          kosten_jahr_alternativ: Json | null
+          mitglied_id: string
           notizen: string | null
-          verbrauch_daten: Json | null
-          wartungskosten_euro: number | null
+          parameter: Json | null
+          parent_investition_id: string | null
+          typ: string
         }
         Insert: {
+          aktiv?: boolean | null
           aktualisiert_am?: string | null
-          alternative_kosten_euro?: number | null
-          co2_einsparung_kg?: number | null
-          einsparung_euro?: number | null
-          energiekosten_euro?: number | null
+          alternativ_beschreibung?: string | null
+          anlage_id?: string | null
+          anschaffungsdatum: string
+          anschaffungskosten_alternativ?: number | null
+          anschaffungskosten_gesamt: number
+          anschaffungskosten_relevant?: number | null
+          bezeichnung: string
+          co2_einsparung_kg_jahr?: number | null
+          einsparung_gesamt_jahr?: number | null
+          einsparungen_jahr?: Json | null
           erstellt_am?: string | null
           id?: string
-          jahr: number
-          komponente_id: string
-          monat: number
+          kosten_jahr_aktuell?: Json | null
+          kosten_jahr_alternativ?: Json | null
+          mitglied_id: string
           notizen?: string | null
-          verbrauch_daten?: Json | null
-          wartungskosten_euro?: number | null
+          parameter?: Json | null
+          parent_investition_id?: string | null
+          typ: string
         }
         Update: {
+          aktiv?: boolean | null
           aktualisiert_am?: string | null
-          alternative_kosten_euro?: number | null
-          co2_einsparung_kg?: number | null
-          einsparung_euro?: number | null
-          energiekosten_euro?: number | null
+          alternativ_beschreibung?: string | null
+          anlage_id?: string | null
+          anschaffungsdatum?: string
+          anschaffungskosten_alternativ?: number | null
+          anschaffungskosten_gesamt?: number
+          anschaffungskosten_relevant?: number | null
+          bezeichnung?: string
+          co2_einsparung_kg_jahr?: number | null
+          einsparung_gesamt_jahr?: number | null
+          einsparungen_jahr?: Json | null
           erstellt_am?: string | null
           id?: string
-          jahr?: number
-          komponente_id?: string
-          monat?: number
+          kosten_jahr_aktuell?: Json | null
+          kosten_jahr_alternativ?: Json | null
+          mitglied_id?: string
           notizen?: string | null
-          verbrauch_daten?: Json | null
-          wartungskosten_euro?: number | null
+          parameter?: Json | null
+          parent_investition_id?: string | null
+          typ?: string
         }
         Relationships: [
           {
-            foreignKeyName: "komponenten_monatsdaten_komponente_id_fkey"
-            columns: ["komponente_id"]
+            foreignKeyName: "alternative_investitionen_anlage_id_fkey"
+            columns: ["anlage_id"]
             isOneToOne: false
-            referencedRelation: "haushalt_komponenten"
+            referencedRelation: "anlagen"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "alternative_investitionen_mitglied_id_fkey"
+            columns: ["mitglied_id"]
+            isOneToOne: false
+            referencedRelation: "mitglieder"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "alternative_investitionen_parent_investition_id_fkey"
+            columns: ["parent_investition_id"]
+            isOneToOne: false
+            referencedRelation: "investition_prognose_ist_vergleich"
+            referencedColumns: ["investition_id"]
+          },
+          {
+            foreignKeyName: "alternative_investitionen_parent_investition_id_fkey"
+            columns: ["parent_investition_id"]
+            isOneToOne: false
+            referencedRelation: "investitionen"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "alternative_investitionen_parent_investition_id_fkey"
+            columns: ["parent_investition_id"]
+            isOneToOne: false
+            referencedRelation: "investitionen_uebersicht"
             referencedColumns: ["id"]
           },
         ]
@@ -781,11 +585,13 @@ export type Database = {
         Row: {
           aktualisiert_am: string | null
           anlage_id: string
+          autarkiegrad_prozent: number | null
           batterieentladung_kwh: number | null
           batterieladung_kwh: number | null
           betriebsausgaben_monat_euro: number | null
           datenquelle: string | null
           direktverbrauch_kwh: number | null
+          eigenverbrauchsquote_prozent: number | null
           einspeisung_ertrag_euro: number | null
           einspeisung_kwh: number | null
           einspeisung_preis_cent_kwh: number | null
@@ -805,11 +611,13 @@ export type Database = {
         Insert: {
           aktualisiert_am?: string | null
           anlage_id: string
+          autarkiegrad_prozent?: number | null
           batterieentladung_kwh?: number | null
           batterieladung_kwh?: number | null
           betriebsausgaben_monat_euro?: number | null
           datenquelle?: string | null
           direktverbrauch_kwh?: number | null
+          eigenverbrauchsquote_prozent?: number | null
           einspeisung_ertrag_euro?: number | null
           einspeisung_kwh?: number | null
           einspeisung_preis_cent_kwh?: number | null
@@ -829,11 +637,13 @@ export type Database = {
         Update: {
           aktualisiert_am?: string | null
           anlage_id?: string
+          autarkiegrad_prozent?: number | null
           batterieentladung_kwh?: number | null
           batterieladung_kwh?: number | null
           betriebsausgaben_monat_euro?: number | null
           datenquelle?: string | null
           direktverbrauch_kwh?: number | null
+          eigenverbrauchsquote_prozent?: number | null
           einspeisung_ertrag_euro?: number | null
           einspeisung_kwh?: number | null
           einspeisung_preis_cent_kwh?: number | null
@@ -954,15 +764,15 @@ export type Database = {
             foreignKeyName: "investition_monatsdaten_investition_id_fkey"
             columns: ["investition_id"]
             isOneToOne: false
-            referencedRelation: "alternative_investitionen"
-            referencedColumns: ["id"]
+            referencedRelation: "investition_prognose_ist_vergleich"
+            referencedColumns: ["investition_id"]
           },
           {
             foreignKeyName: "investition_monatsdaten_investition_id_fkey"
             columns: ["investition_id"]
             isOneToOne: false
-            referencedRelation: "investition_prognose_ist_vergleich"
-            referencedColumns: ["investition_id"]
+            referencedRelation: "investitionen"
+            referencedColumns: ["id"]
           },
           {
             foreignKeyName: "investition_monatsdaten_investition_id_fkey"
@@ -1009,15 +819,15 @@ export type Database = {
             foreignKeyName: "investition_monatsdaten_investition_id_fkey"
             columns: ["investition_id"]
             isOneToOne: false
-            referencedRelation: "alternative_investitionen"
-            referencedColumns: ["id"]
+            referencedRelation: "investition_prognose_ist_vergleich"
+            referencedColumns: ["investition_id"]
           },
           {
             foreignKeyName: "investition_monatsdaten_investition_id_fkey"
             columns: ["investition_id"]
             isOneToOne: false
-            referencedRelation: "investition_prognose_ist_vergleich"
-            referencedColumns: ["investition_id"]
+            referencedRelation: "investitionen"
+            referencedColumns: ["id"]
           },
           {
             foreignKeyName: "investition_monatsdaten_investition_id_fkey"
@@ -1102,15 +912,15 @@ export type Database = {
             foreignKeyName: "alternative_investitionen_parent_investition_id_fkey"
             columns: ["parent_investition_id"]
             isOneToOne: false
-            referencedRelation: "alternative_investitionen"
-            referencedColumns: ["id"]
+            referencedRelation: "investition_prognose_ist_vergleich"
+            referencedColumns: ["investition_id"]
           },
           {
             foreignKeyName: "alternative_investitionen_parent_investition_id_fkey"
             columns: ["parent_investition_id"]
             isOneToOne: false
-            referencedRelation: "investition_prognose_ist_vergleich"
-            referencedColumns: ["investition_id"]
+            referencedRelation: "investitionen"
+            referencedColumns: ["id"]
           },
           {
             foreignKeyName: "alternative_investitionen_parent_investition_id_fkey"
@@ -1158,15 +968,21 @@ export type Database = {
           anlagenname: string
           ausrichtung: string
           beschreibung: string
+          erfahrungen: string
           installationsdatum: string
-          komponenten: Json
+          kennzahlen_oeffentlich: boolean
+          komponenten_oeffentlich: boolean
+          kontakt_erwuenscht: boolean
           leistung_kwp: number
           mitglied_bio: string
           mitglied_display_name: string
-          monatsdaten_summary: Json
+          monatsdaten_oeffentlich: boolean
+          motivation: string
           neigungswinkel_grad: number
+          profilbeschreibung: string
           standort_ort: string
           standort_plz: string
+          tipps_fuer_andere: string
         }[]
       }
       get_public_anlagen: {
@@ -1189,6 +1005,16 @@ export type Database = {
           standort_longitude: number
           standort_ort: string
           standort_plz: string
+        }[]
+      }
+      get_public_komponenten: {
+        Args: { p_anlage_id: string }
+        Returns: {
+          anschaffungsdatum: string
+          bezeichnung: string
+          id: string
+          parameter: Json
+          typ: string
         }[]
       }
       get_public_monatsdaten: {
@@ -1221,8 +1047,15 @@ export type Database = {
           hat_speicher: boolean
           hat_wallbox: boolean
           installationsdatum: string
+          kennzahlen_oeffentlich: boolean
+          komponenten_oeffentlich: boolean
           leistung_kwp: number
           mitglied_display_name: string
+          mitglied_id: string
+          monatsdaten_oeffentlich: boolean
+          profil_oeffentlich: boolean
+          standort_latitude: number
+          standort_longitude: number
           standort_ort: string
           standort_plz: string
         }[]

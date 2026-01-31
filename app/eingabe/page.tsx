@@ -1,6 +1,6 @@
 // app/eingabe/page.tsx
 // Monatsdaten-Erfassung mit dynamischem Formular
-// Lädt Investitionen aus alternative_investitionen
+// Lädt Investitionen aus investitionen-Tabelle
 
 import { createClient } from '@/lib/supabase-server'
 import { getCurrentMitglied, getUserAnlagen, resolveAnlageId } from '@/lib/anlagen-helpers'
@@ -14,7 +14,7 @@ async function getInvestitionen(mitgliedId: string) {
 
   // Alle aktiven Investitionen des Mitglieds holen
   const { data } = await supabase
-    .from('alternative_investitionen')
+    .from('investitionen')
     .select('id, typ, bezeichnung, parameter')
     .eq('mitglied_id', mitgliedId)
     .eq('aktiv', true)

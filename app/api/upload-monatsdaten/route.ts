@@ -1,6 +1,6 @@
 // app/api/upload-monatsdaten/route.ts
 // API-Route für Monatsdaten-Upload und Parsing
-// Unterstützt Basis-Monatsdaten + personalisierte Investitions-Daten
+// Neues Konzept: Nur Rohdaten importieren, Summen automatisch berechnen
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
@@ -14,30 +14,14 @@ interface ValidationError {
   message: string
 }
 
-interface ParsedMonatsdaten {
+interface ParsedRow {
   jahr: number
   monat: number
-  // Energie-Flüsse (kWh)
-  gesamtverbrauch_kwh?: number
-  pv_erzeugung_kwh?: number
-  direktverbrauch_kwh?: number
-  batterieentladung_kwh?: number
-  batterieladung_kwh?: number
-  netzbezug_kwh?: number
-  einspeisung_kwh?: number
-  // Strompreise (ct/kWh)
-  netzbezug_preis_cent_kwh?: number
-  einspeisung_preis_cent_kwh?: number
-  // Finanzen
-  einspeisung_ertrag_euro?: number
-  netzbezug_kosten_euro?: number
-  betriebsausgaben_monat_euro?: number
-  // Wetter
-  sonnenstunden?: number
-  globalstrahlung_kwh_m2?: number
-  // Meta
+  einspeisung_kwh: number
+  netzbezug_kwh: number
   datenquelle?: string
   notizen?: string
+  // Investitions-Daten werden separat gesammelt
 }
 
 interface ParsedInvestitionMonatsdaten {
@@ -51,60 +35,43 @@ interface Investition {
   id: string
   typ: string
   bezeichnung: string
+  parameter?: any
 }
 
-// Mapping von deutschen Spaltennamen zu DB-Feldern
+// Mapping von deutschen Spaltennamen zu DB-Feldern (nur Basis-Felder)
 const columnMapping: Record<string, string> = {
-  // Pflichtfelder
   'Jahr': 'jahr',
   'Monat': 'monat',
-  // Energie-Flüsse (Kern-Daten)
-  'PV-Erzeugung (kWh)': 'pv_erzeugung_kwh',
-  'Gesamtverbrauch (kWh)': 'gesamtverbrauch_kwh',
-  'Direktverbrauch (kWh)': 'direktverbrauch_kwh',
   'Einspeisung (kWh)': 'einspeisung_kwh',
   'Netzbezug (kWh)': 'netzbezug_kwh',
-  // Batteriespeicher (optional)
-  'Batterieladung (kWh)': 'batterieladung_kwh',
-  'Batterieentladung (kWh)': 'batterieentladung_kwh',
-  // Strompreise (optional)
-  'Netzbezugspreis (Cent/kWh)': 'netzbezug_preis_cent_kwh',
-  'Einspeisevergütung (Cent/kWh)': 'einspeisung_preis_cent_kwh',
-  // Finanzen (optional)
-  'Einspeise-Ertrag (€)': 'einspeisung_ertrag_euro',
-  'Netzbezug-Kosten (€)': 'netzbezug_kosten_euro',
-  'Betriebsausgaben (€)': 'betriebsausgaben_monat_euro',
-  // Wetter (optional)
-  'Sonnenstunden': 'sonnenstunden',
-  'Globalstrahlung (kWh/m²)': 'globalstrahlung_kwh_m2',
-  // Meta (optional)
   'Datenquelle': 'datenquelle',
   'Notizen': 'notizen'
 }
 
 // Generiert dynamisches Mapping für Investitions-Spalten
-function generateInvestitionMapping(investitionen: Investition[]): Record<string, { investitionId: string, jsonField: string }> {
-  const mapping: Record<string, { investitionId: string, jsonField: string }> = {}
+function generateInvestitionMapping(investitionen: Investition[]): Record<string, { investitionId: string, investitionTyp: string, jsonField: string }> {
+  const mapping: Record<string, { investitionId: string, investitionTyp: string, jsonField: string }> = {}
 
   for (const inv of investitionen) {
     const prefix = inv.bezeichnung
 
-    if (inv.typ === 'e-auto') {
-      mapping[`${prefix} - km gefahren`] = { investitionId: inv.id, jsonField: 'km_gefahren' }
-      mapping[`${prefix} - Strom (kWh)`] = { investitionId: inv.id, jsonField: 'strom_kwh' }
-      mapping[`${prefix} - Strom PV (kWh)`] = { investitionId: inv.id, jsonField: 'strom_pv_kwh' }
-      mapping[`${prefix} - Strom Netz (kWh)`] = { investitionId: inv.id, jsonField: 'strom_netz_kwh' }
-    } else if (inv.typ === 'waermepumpe') {
-      mapping[`${prefix} - Wärme (kWh)`] = { investitionId: inv.id, jsonField: 'waerme_kwh' }
-      mapping[`${prefix} - Strom (kWh)`] = { investitionId: inv.id, jsonField: 'strom_kwh' }
-      mapping[`${prefix} - Strom PV (kWh)`] = { investitionId: inv.id, jsonField: 'strom_pv_kwh' }
+    if (inv.typ === 'wechselrichter') {
+      mapping[`${prefix} - PV-Erzeugung (kWh)`] = { investitionId: inv.id, investitionTyp: 'wechselrichter', jsonField: 'pv_erzeugung_ist_kwh' }
     } else if (inv.typ === 'speicher') {
-      mapping[`${prefix} - Ladung (kWh)`] = { investitionId: inv.id, jsonField: 'gespeichert_kwh' }
-      mapping[`${prefix} - Entladung (kWh)`] = { investitionId: inv.id, jsonField: 'entladen_kwh' }
-      mapping[`${prefix} - Zyklen`] = { investitionId: inv.id, jsonField: 'zyklen' }
+      mapping[`${prefix} - Ladung (kWh)`] = { investitionId: inv.id, investitionTyp: 'speicher', jsonField: 'ladung_kwh' }
+      mapping[`${prefix} - Entladung (kWh)`] = { investitionId: inv.id, investitionTyp: 'speicher', jsonField: 'entladung_kwh' }
+    } else if (inv.typ === 'e-auto') {
+      mapping[`${prefix} - km gefahren`] = { investitionId: inv.id, investitionTyp: 'e-auto', jsonField: 'km_gefahren' }
+      mapping[`${prefix} - Verbrauch (kWh)`] = { investitionId: inv.id, investitionTyp: 'e-auto', jsonField: 'verbrauch_kwh' }
+      mapping[`${prefix} - Ladung PV (kWh)`] = { investitionId: inv.id, investitionTyp: 'e-auto', jsonField: 'ladung_pv_kwh' }
+      mapping[`${prefix} - Ladung Netz (kWh)`] = { investitionId: inv.id, investitionTyp: 'e-auto', jsonField: 'ladung_netz_kwh' }
+    } else if (inv.typ === 'waermepumpe') {
+      mapping[`${prefix} - Heizenergie (kWh)`] = { investitionId: inv.id, investitionTyp: 'waermepumpe', jsonField: 'heizenergie_kwh' }
+      mapping[`${prefix} - Warmwasser (kWh)`] = { investitionId: inv.id, investitionTyp: 'waermepumpe', jsonField: 'warmwasser_kwh' }
+      mapping[`${prefix} - Stromverbrauch (kWh)`] = { investitionId: inv.id, investitionTyp: 'waermepumpe', jsonField: 'stromverbrauch_kwh' }
     } else if (inv.typ === 'wallbox') {
-      mapping[`${prefix} - Ladung (kWh)`] = { investitionId: inv.id, jsonField: 'ladung_kwh' }
-      mapping[`${prefix} - Ladevorgänge`] = { investitionId: inv.id, jsonField: 'ladevorgaenge' }
+      mapping[`${prefix} - Ladung (kWh)`] = { investitionId: inv.id, investitionTyp: 'wallbox', jsonField: 'ladung_kwh' }
+      mapping[`${prefix} - Ladevorgänge`] = { investitionId: inv.id, investitionTyp: 'wallbox', jsonField: 'ladevorgaenge' }
     }
   }
 
@@ -121,7 +88,7 @@ function parseNumber(value: any): number | undefined {
   return isNaN(parsed) ? undefined : parsed
 }
 
-function validateRow(row: any, rowIndex: number): { data?: ParsedMonatsdaten, errors: ValidationError[] } {
+function validateRow(row: any, rowIndex: number): { data?: ParsedRow, errors: ValidationError[] } {
   const errors: ValidationError[] = []
 
   // Jahr und Monat sind Pflichtfelder
@@ -140,44 +107,31 @@ function validateRow(row: any, rowIndex: number): { data?: ParsedMonatsdaten, er
     errors.push({ row: rowIndex, field: 'Monat', message: 'Monat muss zwischen 1 und 12 liegen' })
   }
 
+  // Einspeisung und Netzbezug sind Pflichtfelder
+  const einspeisung_kwh = parseNumber(row.einspeisung_kwh)
+  const netzbezug_kwh = parseNumber(row.netzbezug_kwh)
+
+  if (einspeisung_kwh === undefined) {
+    errors.push({ row: rowIndex, field: 'Einspeisung', message: 'Einspeisung ist erforderlich' })
+  }
+  if (netzbezug_kwh === undefined) {
+    errors.push({ row: rowIndex, field: 'Netzbezug', message: 'Netzbezug ist erforderlich' })
+  }
+
   if (errors.length > 0) {
     return { errors }
   }
 
-  // Alle Daten parsen
-  const data: ParsedMonatsdaten = {
+  const data: ParsedRow = {
     jahr: jahr!,
     monat: monat!,
-    pv_erzeugung_kwh: parseNumber(row.pv_erzeugung_kwh),
-    gesamtverbrauch_kwh: parseNumber(row.gesamtverbrauch_kwh),
-    direktverbrauch_kwh: parseNumber(row.direktverbrauch_kwh),
-    einspeisung_kwh: parseNumber(row.einspeisung_kwh),
-    netzbezug_kwh: parseNumber(row.netzbezug_kwh),
-    batterieladung_kwh: parseNumber(row.batterieladung_kwh),
-    batterieentladung_kwh: parseNumber(row.batterieentladung_kwh),
-    netzbezug_preis_cent_kwh: parseNumber(row.netzbezug_preis_cent_kwh),
-    einspeisung_preis_cent_kwh: parseNumber(row.einspeisung_preis_cent_kwh),
-    einspeisung_ertrag_euro: parseNumber(row.einspeisung_ertrag_euro),
-    netzbezug_kosten_euro: parseNumber(row.netzbezug_kosten_euro),
-    betriebsausgaben_monat_euro: parseNumber(row.betriebsausgaben_monat_euro),
-    sonnenstunden: parseNumber(row.sonnenstunden),
-    globalstrahlung_kwh_m2: parseNumber(row.globalstrahlung_kwh_m2),
-    datenquelle: row.datenquelle || undefined,
+    einspeisung_kwh: einspeisung_kwh!,
+    netzbezug_kwh: netzbezug_kwh!,
+    datenquelle: row.datenquelle || 'CSV-Import',
     notizen: row.notizen || undefined
   }
 
-  // Plausibilitätsprüfungen (Warnungen, keine harten Fehler)
-  const warnings: ValidationError[] = []
-
-  if (data.pv_erzeugung_kwh !== undefined && data.pv_erzeugung_kwh > 10000) {
-    warnings.push({ row: rowIndex, field: 'PV-Erzeugung', message: 'Sehr hoher Wert (> 10.000 kWh)' })
-  }
-
-  if (data.gesamtverbrauch_kwh !== undefined && data.gesamtverbrauch_kwh > 20000) {
-    warnings.push({ row: rowIndex, field: 'Gesamtverbrauch', message: 'Sehr hoher Wert (> 20.000 kWh)' })
-  }
-
-  return { data, errors: warnings }
+  return { data, errors: [] }
 }
 
 // Extrahiert Investitions-Daten aus einer CSV-Zeile
@@ -185,7 +139,7 @@ function extractInvestitionsDaten(
   row: any,
   jahr: number,
   monat: number,
-  investitionMapping: Record<string, { investitionId: string, jsonField: string }>
+  investitionMapping: Record<string, { investitionId: string, investitionTyp: string, jsonField: string }>
 ): ParsedInvestitionMonatsdaten[] {
   // Gruppiere nach investition_id
   const grouped: Record<string, Record<string, number>> = {}
@@ -212,6 +166,65 @@ function extractInvestitionsDaten(
       monat,
       verbrauch_daten
     }))
+}
+
+// Berechnet abgeleitete Werte aus Rohdaten (wie im Formular)
+function calculateDerivedValues(
+  einspeisung: number,
+  netzbezug: number,
+  investitionsDaten: ParsedInvestitionMonatsdaten[],
+  investitionen: Investition[]
+): {
+  pvErzeugung: number
+  batterieLadung: number
+  batterieEntladung: number
+  direktverbrauch: number
+  eigenverbrauch: number
+  gesamtverbrauch: number
+  eigenverbrauchsquote: number
+  autarkiegrad: number
+} {
+  // Summen aus Investitionen
+  let pvErzeugung = 0
+  let batterieLadung = 0
+  let batterieEntladung = 0
+
+  for (const invData of investitionsDaten) {
+    const inv = investitionen.find(i => i.id === invData.investition_id)
+    if (!inv) continue
+
+    if (inv.typ === 'wechselrichter') {
+      pvErzeugung += invData.verbrauch_daten.pv_erzeugung_ist_kwh || 0
+    } else if (inv.typ === 'speicher') {
+      batterieLadung += invData.verbrauch_daten.ladung_kwh || 0
+      batterieEntladung += invData.verbrauch_daten.entladung_kwh || 0
+    }
+  }
+
+  // Berechnungen (wie im Formular)
+  // Direktverbrauch = Was direkt von der PV verbraucht wird (ohne Batterie-Umweg)
+  const direktverbrauch = pvErzeugung - einspeisung - batterieLadung
+
+  // Eigenverbrauch = Direktverbrauch + was aus der Batterie kommt
+  const eigenverbrauch = direktverbrauch + batterieEntladung
+
+  // Gesamtverbrauch = Eigenverbrauch + Netzbezug
+  const gesamtverbrauch = eigenverbrauch + netzbezug
+
+  // Kennzahlen
+  const eigenverbrauchsquote = pvErzeugung > 0 ? (eigenverbrauch / pvErzeugung) * 100 : 0
+  const autarkiegrad = gesamtverbrauch > 0 ? (eigenverbrauch / gesamtverbrauch) * 100 : 0
+
+  return {
+    pvErzeugung,
+    batterieLadung,
+    batterieEntladung,
+    direktverbrauch,
+    eigenverbrauch,
+    gesamtverbrauch,
+    eigenverbrauchsquote,
+    autarkiegrad
+  }
 }
 
 export async function POST(request: NextRequest) {
@@ -256,18 +269,28 @@ export async function POST(request: NextRequest) {
     // 3. Investitionen des Mitglieds laden für dynamisches Mapping
     const supabase = await createClient()
     const { data: investitionen } = await supabase
-      .from('alternative_investitionen')
-      .select('id, typ, bezeichnung')
+      .from('investitionen')
+      .select('id, typ, bezeichnung, parameter')
       .eq('mitglied_id', mitglied.data.id)
       .eq('aktiv', true)
 
     const investitionMapping = generateInvestitionMapping(investitionen || [])
 
+    // 4. Strompreise laden (für Berechnungen)
+    const loadStrompreise = async (jahr: number, monat: number) => {
+      const stichtag = `${jahr}-${String(monat).padStart(2, '0')}-15`
+      const { data } = await supabase.rpc('get_aktueller_strompreis', {
+        p_mitglied_id: mitglied.data!.id,
+        p_anlage_id: anlageId,
+        p_stichtag: stichtag
+      })
+      return data && data.length > 0 ? data[0] : null
+    }
+
     // Datei als Text lesen
     const fileContent = await file.text()
 
     // CSV parsen mit PapaParse
-    // Wir behalten Original-Header und mappen manuell
     const parseResult = await new Promise<Papa.ParseResult<any>>((resolve) => {
       Papa.parse(fileContent, {
         header: true,
@@ -295,18 +318,17 @@ export async function POST(request: NextRequest) {
     const transformedData = parseResult.data.map((row: any) => {
       const transformed: any = {}
       for (const [key, value] of Object.entries(row)) {
-        const mappedKey = columnMapping[key.trim()] || key.trim()
+        const trimmedKey = key.trim()
+        const mappedKey = columnMapping[trimmedKey] || trimmedKey
         transformed[mappedKey] = value
         // Original-Key behalten für Investitions-Spalten
-        if (!columnMapping[key.trim()]) {
-          transformed[key.trim()] = value
-        }
+        transformed[trimmedKey] = value
       }
       return transformed
     })
 
-    // Validiere und transformiere Monatsdaten
-    const validatedData: ParsedMonatsdaten[] = []
+    // Validiere und sammle Daten
+    const validatedRows: ParsedRow[] = []
     const allInvestitionsDaten: ParsedInvestitionMonatsdaten[] = []
     const allErrors: ValidationError[] = []
     const allWarnings: ValidationError[] = []
@@ -315,12 +337,25 @@ export async function POST(request: NextRequest) {
       const { data, errors } = validateRow(row, index + 2)
 
       if (data) {
-        validatedData.push(data)
-        allWarnings.push(...errors.filter(e => e.message.includes('Sehr hoher Wert')))
+        validatedRows.push(data)
 
         // Investitions-Daten extrahieren
         const invDaten = extractInvestitionsDaten(row, data.jahr, data.monat, investitionMapping)
         allInvestitionsDaten.push(...invDaten)
+
+        // Prüfe ob mindestens ein Wechselrichter Daten hat
+        const hatWechselrichterDaten = invDaten.some(d => {
+          const inv = investitionen?.find(i => i.id === d.investition_id)
+          return inv?.typ === 'wechselrichter'
+        })
+
+        if (!hatWechselrichterDaten && investitionen?.some(i => i.typ === 'wechselrichter')) {
+          allWarnings.push({
+            row: index + 2,
+            field: 'PV-Erzeugung',
+            message: 'Keine PV-Erzeugung für Wechselrichter angegeben'
+          })
+        }
       } else {
         allErrors.push(...errors)
       }
@@ -334,38 +369,98 @@ export async function POST(request: NextRequest) {
       })
     }
 
-    if (validatedData.length === 0) {
+    if (validatedRows.length === 0) {
       return NextResponse.json({
         success: false,
         message: 'Keine gültigen Datensätze gefunden'
       }, { status: 400 })
     }
 
+    // Berechne abgeleitete Werte für jeden Monat
+    const processedData: any[] = []
+
+    for (const row of validatedRows) {
+      // Finde zugehörige Investitions-Daten
+      const rowInvDaten = allInvestitionsDaten.filter(d => d.jahr === row.jahr && d.monat === row.monat)
+
+      // Berechne abgeleitete Werte
+      const calculated = calculateDerivedValues(
+        row.einspeisung_kwh,
+        row.netzbezug_kwh,
+        rowInvDaten,
+        investitionen || []
+      )
+
+      // Plausibilitätsprüfung
+      if (calculated.direktverbrauch < 0) {
+        allWarnings.push({
+          row: 0,
+          field: 'Direktverbrauch',
+          message: `${row.jahr}-${String(row.monat).padStart(2, '0')}: Direktverbrauch negativ (${calculated.direktverbrauch.toFixed(1)} kWh). Prüfen Sie PV-Erzeugung, Einspeisung und Batterieladung.`
+        })
+      }
+
+      // Strompreise für diesen Monat laden
+      const strompreise = await loadStrompreise(row.jahr, row.monat)
+
+      // Finanzwerte berechnen
+      const einspeisungErtragEuro = strompreise?.einspeiseverguetung_cent_kwh
+        ? (row.einspeisung_kwh * strompreise.einspeiseverguetung_cent_kwh / 100)
+        : 0
+
+      const netzbezugKostenEuro = strompreise?.netzbezug_cent_kwh
+        ? (row.netzbezug_kwh * strompreise.netzbezug_cent_kwh / 100)
+        : 0
+
+      processedData.push({
+        anlage_id: anlageId,
+        jahr: row.jahr,
+        monat: row.monat,
+        // Eingabewerte
+        einspeisung_kwh: row.einspeisung_kwh,
+        netzbezug_kwh: row.netzbezug_kwh,
+        // Berechnete Werte
+        pv_erzeugung_kwh: calculated.pvErzeugung,
+        batterieladung_kwh: calculated.batterieLadung,
+        batterieentladung_kwh: calculated.batterieEntladung,
+        direktverbrauch_kwh: calculated.direktverbrauch,
+        gesamtverbrauch_kwh: calculated.gesamtverbrauch,
+        // Kennzahlen
+        eigenverbrauchsquote_prozent: calculated.eigenverbrauchsquote,
+        autarkiegrad_prozent: calculated.autarkiegrad,
+        // Finanzen
+        einspeisung_ertrag_euro: einspeisungErtragEuro,
+        netzbezug_kosten_euro: netzbezugKostenEuro,
+        einspeisung_preis_cent_kwh: strompreise?.einspeiseverguetung_cent_kwh || null,
+        netzbezug_preis_cent_kwh: strompreise?.netzbezug_cent_kwh || null,
+        // Meta
+        datenquelle: row.datenquelle || 'CSV-Import',
+        notizen: row.notizen || null,
+        aktualisiert_am: new Date().toISOString()
+      })
+    }
+
     // Preview-Modus: Nur Daten zurückgeben, nicht importieren
     if (isPreview) {
       return NextResponse.json({
         success: true,
-        data: validatedData,
+        data: processedData,
         investitionsDaten: allInvestitionsDaten,
         warnings: allWarnings
       })
     }
 
     // === WETTERDATEN AUTOMATISCH ERGÄNZEN ===
-    // Für jeden Monat Wetterdaten von Open-Meteo API holen (wenn PLZ vorhanden)
     let weatherDataFetched = 0
     const coords = anlage.standort_plz ? getCoordinatesFromPLZ(anlage.standort_plz) : null
 
     if (coords) {
-      for (const data of validatedData) {
-        // Nur abrufen wenn Wetterdaten nicht bereits vorhanden
-        if (data.sonnenstunden === undefined && data.globalstrahlung_kwh_m2 === undefined) {
-          const weather = await getMonthlyWeatherData(coords.lat, coords.lon, data.jahr, data.monat)
-          if (weather) {
-            data.sonnenstunden = weather.sonnenstunden
-            data.globalstrahlung_kwh_m2 = weather.globalstrahlung_kwh_m2
-            weatherDataFetched++
-          }
+      for (const data of processedData) {
+        const weather = await getMonthlyWeatherData(coords.lat, coords.lon, data.jahr, data.monat)
+        if (weather) {
+          data.sonnenstunden = weather.sonnenstunden
+          data.globalstrahlung_kwh_m2 = weather.globalstrahlung_kwh_m2
+          weatherDataFetched++
         }
       }
     }
@@ -374,7 +469,7 @@ export async function POST(request: NextRequest) {
 
     // Prüfe auf Duplikate (Jahr/Monat/Anlage) für Monatsdaten
     const duplicateChecks = await Promise.all(
-      validatedData.map(d =>
+      processedData.map(d =>
         supabase
           .from('monatsdaten')
           .select('id')
@@ -386,7 +481,7 @@ export async function POST(request: NextRequest) {
     )
 
     const duplicates = duplicateChecks
-      .map((result, i) => result.data ? validatedData[i] : null)
+      .map((result, i) => result.data ? processedData[i] : null)
       .filter(Boolean)
 
     if (duplicates.length > 0) {
@@ -402,14 +497,9 @@ export async function POST(request: NextRequest) {
     }
 
     // Monatsdaten einfügen
-    const insertData = validatedData.map(d => ({
-      anlage_id: anlageId,
-      ...d
-    }))
-
     const { error: insertError } = await supabase
       .from('monatsdaten')
-      .insert(insertData)
+      .insert(processedData)
 
     if (insertError) {
       console.error('Insert error:', insertError)
@@ -443,7 +533,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Erfolgs-Message
-    let message = `${validatedData.length} Monatsdatensätze erfolgreich importiert`
+    let message = `${processedData.length} Monatsdatensätze erfolgreich importiert`
     if (investitionenImported > 0) {
       message += `, ${investitionenImported} Investitions-Datensätze`
     }
@@ -454,8 +544,9 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       message,
-      data: validatedData,
-      investitionsDaten: allInvestitionsDaten
+      data: processedData,
+      investitionsDaten: allInvestitionsDaten,
+      warnings: allWarnings
     })
 
   } catch (error: any) {

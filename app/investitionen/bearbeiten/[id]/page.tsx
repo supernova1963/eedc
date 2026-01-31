@@ -7,7 +7,7 @@ async function getInvestition(userId: string, id: string) {
   const supabase = await createClient()
 
   const { data } = await supabase
-    .from('alternative_investitionen')
+    .from('investitionen')
     .select('*')
     .eq('id', id)
     .eq('mitglied_id', userId)

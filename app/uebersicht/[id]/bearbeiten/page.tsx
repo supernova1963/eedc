@@ -29,7 +29,7 @@ async function getInvestitionen(mitgliedId: string) {
   const supabase = await createClient()
 
   const { data } = await supabase
-    .from('alternative_investitionen')
+    .from('investitionen')
     .select('id, typ, bezeichnung, parameter')
     .eq('mitglied_id', mitgliedId)
     .eq('aktiv', true)
@@ -37,6 +37,27 @@ async function getInvestitionen(mitgliedId: string) {
     .order('bezeichnung')
 
   return data || []
+}
+
+async function getInvestitionMonatsdaten(jahr: number, monat: number, investitionIds: string[]) {
+  if (investitionIds.length === 0) return {}
+
+  const supabase = await createClient()
+
+  const { data } = await supabase
+    .from('investition_monatsdaten')
+    .select('investition_id, verbrauch_daten')
+    .eq('jahr', jahr)
+    .eq('monat', monat)
+    .in('investition_id', investitionIds)
+
+  // In ein Record umwandeln
+  const result: Record<string, any> = {}
+  data?.forEach(item => {
+    result[item.investition_id] = item.verbrauch_daten
+  })
+
+  return result
 }
 
 export const dynamic = 'force-dynamic'
@@ -95,6 +116,14 @@ export default async function BearbeitenPage({
   // Investitionen laden
   const investitionen = await getInvestitionen(mitglied.data.id)
 
+  // Investitions-Monatsdaten laden (für Edit-Mode)
+  const investitionIds = investitionen.map(i => i.id)
+  const existingInvestitionsDaten = await getInvestitionMonatsdaten(
+    monatsdaten.jahr,
+    monatsdaten.monat,
+    investitionIds
+  )
+
   const monatsnamen = ['', 'Januar', 'Februar', 'März', 'April', 'Mai', 'Juni',
     'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember']
 
@@ -128,6 +157,7 @@ export default async function BearbeitenPage({
           anlage={anlage}
           investitionen={investitionen}
           existingData={monatsdaten}
+          existingInvestitionsDaten={existingInvestitionsDaten}
         />
       </div>
     </main>
