@@ -23,21 +23,18 @@ async function getInvestitionen(mitgliedId: string) {
 async function deleteInvestition(formData: FormData) {
   'use server'
   const id = formData.get('id') as string
-  const typ = formData.get('typ') as string
 
   const supabase = await createClient()
 
-  // Lösche aus der richtigen Tabelle je nach Typ
-  if (typ === 'e-auto' || typ === 'waermepumpe') {
-    await supabase
-      .from('haushalt_komponenten')
-      .delete()
-      .eq('id', id)
-  } else {
-    await supabase
-      .from('anlagen_komponenten')
-      .delete()
-      .eq('id', id)
+  // Lösche aus investitionen Tabelle (früher alternative_investitionen)
+  // Die zugehörigen investition_monatsdaten werden via ON DELETE CASCADE gelöscht
+  const { error } = await supabase
+    .from('investitionen')
+    .delete()
+    .eq('id', id)
+
+  if (error) {
+    console.error('Fehler beim Löschen der Investition:', error)
   }
 
   revalidatePath('/investitionen')
