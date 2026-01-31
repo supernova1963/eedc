@@ -1,5 +1,6 @@
 // app/api/upload-monatsdaten/route.ts
 // API-Route für Monatsdaten-Upload und Parsing
+// Unterstützt Basis-Monatsdaten + personalisierte Investitions-Daten
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
@@ -23,14 +24,14 @@ interface ParsedMonatsdaten {
   batterieladung_kwh?: number
   netzbezug_kwh?: number
   einspeisung_kwh?: number
-  // Strompreise (ct/kWh) - optional, wenn leer werden Stammdaten verwendet
+  // Strompreise (ct/kWh)
   netzbezug_preis_cent_kwh?: number
   einspeisung_preis_cent_kwh?: number
-  // Finanzen (optional - werden aus kWh × Preis berechnet wenn leer)
+  // Finanzen
   einspeisung_ertrag_euro?: number
   netzbezug_kosten_euro?: number
   betriebsausgaben_monat_euro?: number
-  // Wetter (optional)
+  // Wetter
   sonnenstunden?: number
   globalstrahlung_kwh_m2?: number
   // Meta
@@ -38,8 +39,20 @@ interface ParsedMonatsdaten {
   notizen?: string
 }
 
+interface ParsedInvestitionMonatsdaten {
+  investition_id: string
+  jahr: number
+  monat: number
+  verbrauch_daten: Record<string, number>
+}
+
+interface Investition {
+  id: string
+  typ: string
+  bezeichnung: string
+}
+
 // Mapping von deutschen Spaltennamen zu DB-Feldern
-// Angepasst für FRESH-START Schema - ALLE möglichen Spalten
 const columnMapping: Record<string, string> = {
   // Pflichtfelder
   'Jahr': 'jahr',
@@ -56,7 +69,7 @@ const columnMapping: Record<string, string> = {
   // Strompreise (optional)
   'Netzbezugspreis (Cent/kWh)': 'netzbezug_preis_cent_kwh',
   'Einspeisevergütung (Cent/kWh)': 'einspeisung_preis_cent_kwh',
-  // Finanzen (optional - werden aus kWh × Preis berechnet wenn leer)
+  // Finanzen (optional)
   'Einspeise-Ertrag (€)': 'einspeisung_ertrag_euro',
   'Netzbezug-Kosten (€)': 'netzbezug_kosten_euro',
   'Betriebsausgaben (€)': 'betriebsausgaben_monat_euro',
@@ -66,6 +79,35 @@ const columnMapping: Record<string, string> = {
   // Meta (optional)
   'Datenquelle': 'datenquelle',
   'Notizen': 'notizen'
+}
+
+// Generiert dynamisches Mapping für Investitions-Spalten
+function generateInvestitionMapping(investitionen: Investition[]): Record<string, { investitionId: string, jsonField: string }> {
+  const mapping: Record<string, { investitionId: string, jsonField: string }> = {}
+
+  for (const inv of investitionen) {
+    const prefix = inv.bezeichnung
+
+    if (inv.typ === 'e-auto') {
+      mapping[`${prefix} - km gefahren`] = { investitionId: inv.id, jsonField: 'km_gefahren' }
+      mapping[`${prefix} - Strom (kWh)`] = { investitionId: inv.id, jsonField: 'strom_kwh' }
+      mapping[`${prefix} - Strom PV (kWh)`] = { investitionId: inv.id, jsonField: 'strom_pv_kwh' }
+      mapping[`${prefix} - Strom Netz (kWh)`] = { investitionId: inv.id, jsonField: 'strom_netz_kwh' }
+    } else if (inv.typ === 'waermepumpe') {
+      mapping[`${prefix} - Wärme (kWh)`] = { investitionId: inv.id, jsonField: 'waerme_kwh' }
+      mapping[`${prefix} - Strom (kWh)`] = { investitionId: inv.id, jsonField: 'strom_kwh' }
+      mapping[`${prefix} - Strom PV (kWh)`] = { investitionId: inv.id, jsonField: 'strom_pv_kwh' }
+    } else if (inv.typ === 'speicher') {
+      mapping[`${prefix} - Ladung (kWh)`] = { investitionId: inv.id, jsonField: 'gespeichert_kwh' }
+      mapping[`${prefix} - Entladung (kWh)`] = { investitionId: inv.id, jsonField: 'entladen_kwh' }
+      mapping[`${prefix} - Zyklen`] = { investitionId: inv.id, jsonField: 'zyklen' }
+    } else if (inv.typ === 'wallbox') {
+      mapping[`${prefix} - Ladung (kWh)`] = { investitionId: inv.id, jsonField: 'ladung_kwh' }
+      mapping[`${prefix} - Ladevorgänge`] = { investitionId: inv.id, jsonField: 'ladevorgaenge' }
+    }
+  }
+
+  return mapping
 }
 
 function parseNumber(value: any): number | undefined {
@@ -101,30 +143,24 @@ function validateRow(row: any, rowIndex: number): { data?: ParsedMonatsdaten, er
     return { errors }
   }
 
-  // Alle Daten parsen - Euro-Beträge werden aus kWh × Preis berechnet wenn leer
+  // Alle Daten parsen
   const data: ParsedMonatsdaten = {
     jahr: jahr!,
     monat: monat!,
-    // Energie-Flüsse (Kern-Daten)
     pv_erzeugung_kwh: parseNumber(row.pv_erzeugung_kwh),
     gesamtverbrauch_kwh: parseNumber(row.gesamtverbrauch_kwh),
     direktverbrauch_kwh: parseNumber(row.direktverbrauch_kwh),
     einspeisung_kwh: parseNumber(row.einspeisung_kwh),
     netzbezug_kwh: parseNumber(row.netzbezug_kwh),
-    // Batteriespeicher (optional)
     batterieladung_kwh: parseNumber(row.batterieladung_kwh),
     batterieentladung_kwh: parseNumber(row.batterieentladung_kwh),
-    // Strompreise (optional - für dynamische Tarife)
     netzbezug_preis_cent_kwh: parseNumber(row.netzbezug_preis_cent_kwh),
     einspeisung_preis_cent_kwh: parseNumber(row.einspeisung_preis_cent_kwh),
-    // Finanzen (optional - werden berechnet wenn leer)
     einspeisung_ertrag_euro: parseNumber(row.einspeisung_ertrag_euro),
     netzbezug_kosten_euro: parseNumber(row.netzbezug_kosten_euro),
     betriebsausgaben_monat_euro: parseNumber(row.betriebsausgaben_monat_euro),
-    // Wetter (optional)
     sonnenstunden: parseNumber(row.sonnenstunden),
     globalstrahlung_kwh_m2: parseNumber(row.globalstrahlung_kwh_m2),
-    // Meta
     datenquelle: row.datenquelle || undefined,
     notizen: row.notizen || undefined
   }
@@ -141,6 +177,40 @@ function validateRow(row: any, rowIndex: number): { data?: ParsedMonatsdaten, er
   }
 
   return { data, errors: warnings }
+}
+
+// Extrahiert Investitions-Daten aus einer CSV-Zeile
+function extractInvestitionsDaten(
+  row: any,
+  jahr: number,
+  monat: number,
+  investitionMapping: Record<string, { investitionId: string, jsonField: string }>
+): ParsedInvestitionMonatsdaten[] {
+  // Gruppiere nach investition_id
+  const grouped: Record<string, Record<string, number>> = {}
+
+  for (const [header, value] of Object.entries(row)) {
+    const mapping = investitionMapping[header]
+    if (mapping && value !== undefined && value !== null && value !== '') {
+      const numValue = parseNumber(value)
+      if (numValue !== undefined) {
+        if (!grouped[mapping.investitionId]) {
+          grouped[mapping.investitionId] = {}
+        }
+        grouped[mapping.investitionId][mapping.jsonField] = numValue
+      }
+    }
+  }
+
+  // Konvertiere zu Array
+  return Object.entries(grouped)
+    .filter(([_, daten]) => Object.keys(daten).length > 0)
+    .map(([investitionId, verbrauch_daten]) => ({
+      investition_id: investitionId,
+      jahr,
+      monat,
+      verbrauch_daten
+    }))
 }
 
 export async function POST(request: NextRequest) {
@@ -182,18 +252,26 @@ export async function POST(request: NextRequest) {
       }, { status: 403 })
     }
 
+    // 3. Investitionen des Mitglieds laden für dynamisches Mapping
+    const supabase = await createClient()
+    const { data: investitionen } = await supabase
+      .from('alternative_investitionen')
+      .select('id, typ, bezeichnung')
+      .eq('mitglied_id', mitglied.data.id)
+      .eq('aktiv', true)
+
+    const investitionMapping = generateInvestitionMapping(investitionen || [])
+
     // Datei als Text lesen
     const fileContent = await file.text()
 
     // CSV parsen mit PapaParse
+    // Wir behalten Original-Header und mappen manuell
     const parseResult = await new Promise<Papa.ParseResult<any>>((resolve) => {
       Papa.parse(fileContent, {
         header: true,
         skipEmptyLines: true,
-        transformHeader: (header: string) => {
-          // Mapping von deutschen Namen zu DB-Feldern
-          return columnMapping[header.trim()] || header.trim()
-        },
+        comments: '#',  // Kommentarzeilen ignorieren
         complete: resolve
       })
     })
@@ -212,20 +290,37 @@ export async function POST(request: NextRequest) {
       })
     }
 
-    // Validiere und transformiere Daten
+    // Transformiere Headers manuell (für Basis-Felder)
+    const transformedData = parseResult.data.map((row: any) => {
+      const transformed: any = {}
+      for (const [key, value] of Object.entries(row)) {
+        const mappedKey = columnMapping[key.trim()] || key.trim()
+        transformed[mappedKey] = value
+        // Original-Key behalten für Investitions-Spalten
+        if (!columnMapping[key.trim()]) {
+          transformed[key.trim()] = value
+        }
+      }
+      return transformed
+    })
+
+    // Validiere und transformiere Monatsdaten
     const validatedData: ParsedMonatsdaten[] = []
+    const allInvestitionsDaten: ParsedInvestitionMonatsdaten[] = []
     const allErrors: ValidationError[] = []
     const allWarnings: ValidationError[] = []
 
-    parseResult.data.forEach((row, index) => {
-      const { data, errors } = validateRow(row, index + 2) // +2 wegen Header und 1-basiertem Index
+    transformedData.forEach((row: any, index: number) => {
+      const { data, errors } = validateRow(row, index + 2)
 
       if (data) {
         validatedData.push(data)
-        // Warnungen sammeln
         allWarnings.push(...errors.filter(e => e.message.includes('Sehr hoher Wert')))
+
+        // Investitions-Daten extrahieren
+        const invDaten = extractInvestitionsDaten(row, data.jahr, data.monat, investitionMapping)
+        allInvestitionsDaten.push(...invDaten)
       } else {
-        // Echte Fehler
         allErrors.push(...errors)
       }
     })
@@ -250,20 +345,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({
         success: true,
         data: validatedData,
+        investitionsDaten: allInvestitionsDaten,
         warnings: allWarnings
       })
     }
 
-    // Daten in DB einfügen
-    // Hinweis: mitglied_id nicht mehr nötig - Beziehung läuft über anlage_id
-    // Euro-Beträge werden importiert falls vorhanden, sonst später aus Strompreisen berechnet
-    const insertData = validatedData.map(d => ({
-      anlage_id: anlageId,
-      ...d
-    }))
+    // === DATEN IN DB EINFÜGEN ===
 
-    // Prüfe auf Duplikate (Jahr/Monat/Anlage)
-    const supabase = await createClient()
+    // Prüfe auf Duplikate (Jahr/Monat/Anlage) für Monatsdaten
     const duplicateChecks = await Promise.all(
       validatedData.map(d =>
         supabase
@@ -292,6 +381,12 @@ export async function POST(request: NextRequest) {
       }, { status: 409 })
     }
 
+    // Monatsdaten einfügen
+    const insertData = validatedData.map(d => ({
+      anlage_id: anlageId,
+      ...d
+    }))
+
     const { error: insertError } = await supabase
       .from('monatsdaten')
       .insert(insertData)
@@ -305,10 +400,39 @@ export async function POST(request: NextRequest) {
       }, { status: 500 })
     }
 
+    // Investitions-Monatsdaten einfügen (upsert für Duplikate)
+    let investitionenImported = 0
+    if (allInvestitionsDaten.length > 0) {
+      for (const invData of allInvestitionsDaten) {
+        const { error: invError } = await supabase
+          .from('investition_monatsdaten')
+          .upsert({
+            investition_id: invData.investition_id,
+            jahr: invData.jahr,
+            monat: invData.monat,
+            verbrauch_daten: invData.verbrauch_daten,
+            aktualisiert_am: new Date().toISOString()
+          }, { onConflict: 'investition_id,jahr,monat' })
+
+        if (invError) {
+          console.error('Investition insert error:', invError)
+        } else {
+          investitionenImported++
+        }
+      }
+    }
+
+    // Erfolgs-Message
+    let message = `${validatedData.length} Monatsdatensätze erfolgreich importiert`
+    if (investitionenImported > 0) {
+      message += `, ${investitionenImported} Investitions-Datensätze`
+    }
+
     return NextResponse.json({
       success: true,
-      message: `${validatedData.length} Datensätze erfolgreich importiert`,
-      data: validatedData
+      message,
+      data: validatedData,
+      investitionsDaten: allInvestitionsDaten
     })
 
   } catch (error: any) {
