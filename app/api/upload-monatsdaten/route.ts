@@ -5,6 +5,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { getCurrentMitglied, getAnlageById } from '@/lib/anlagen-helpers'
+import { getCoordinatesFromPLZ, getMonthlyWeatherData } from '@/lib/weather-api'
 import Papa from 'papaparse'
 
 interface ValidationError {
@@ -350,6 +351,25 @@ export async function POST(request: NextRequest) {
       })
     }
 
+    // === WETTERDATEN AUTOMATISCH ERGÄNZEN ===
+    // Für jeden Monat Wetterdaten von Open-Meteo API holen (wenn PLZ vorhanden)
+    let weatherDataFetched = 0
+    const coords = anlage.standort_plz ? getCoordinatesFromPLZ(anlage.standort_plz) : null
+
+    if (coords) {
+      for (const data of validatedData) {
+        // Nur abrufen wenn Wetterdaten nicht bereits vorhanden
+        if (data.sonnenstunden === undefined && data.globalstrahlung_kwh_m2 === undefined) {
+          const weather = await getMonthlyWeatherData(coords.lat, coords.lon, data.jahr, data.monat)
+          if (weather) {
+            data.sonnenstunden = weather.sonnenstunden
+            data.globalstrahlung_kwh_m2 = weather.globalstrahlung_kwh_m2
+            weatherDataFetched++
+          }
+        }
+      }
+    }
+
     // === DATEN IN DB EINFÜGEN ===
 
     // Prüfe auf Duplikate (Jahr/Monat/Anlage) für Monatsdaten
@@ -426,6 +446,9 @@ export async function POST(request: NextRequest) {
     let message = `${validatedData.length} Monatsdatensätze erfolgreich importiert`
     if (investitionenImported > 0) {
       message += `, ${investitionenImported} Investitions-Datensätze`
+    }
+    if (weatherDataFetched > 0) {
+      message += ` (${weatherDataFetched}× Wetterdaten ergänzt)`
     }
 
     return NextResponse.json({

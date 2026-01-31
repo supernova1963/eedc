@@ -107,9 +107,8 @@ function generateAllColumns(investitionen: Investition[]): Column[] {
     { name: 'Netzbezug-Kosten (€)', dbName: 'netzbezug_kosten_euro', required: false, example: '', hint: 'Wird berechnet wenn leer' },
     { name: 'Betriebsausgaben (€)', dbName: 'betriebsausgaben_monat_euro', required: false, example: '', hint: 'Wartung, Versicherung etc.' },
 
-    // === WETTER (optional) ===
-    { name: 'Sonnenstunden', dbName: 'sonnenstunden', required: false, example: '180', hint: 'Sonnenstunden im Monat' },
-    { name: 'Globalstrahlung (kWh/m²)', dbName: 'globalstrahlung_kwh_m2', required: false, example: '120', hint: 'Solare Einstrahlung' },
+    // === WETTER: Wird automatisch von Open-Meteo API geholt ===
+    // Sonnenstunden und Globalstrahlung werden beim Import automatisch ergänzt
 
     // === META (optional) ===
     { name: 'Datenquelle', dbName: 'datenquelle', required: false, example: 'CSV-Import', hint: 'z.B. Wechselrichter-App, Zähler' },
@@ -169,8 +168,6 @@ function generateCSV(columns: Column[], anlage: any, investitionen: Investition[
       case 'netzbezug_kwh': return '340'
       case 'batterieladung_kwh': return '20'
       case 'batterieentladung_kwh': return '30'
-      case 'sonnenstunden': return '45'
-      case 'globalstrahlung_kwh_m2': return '25'
       case 'datenquelle': return 'CSV-Import'
     }
     // Investitions-Spalten - Beispielwerte für Winter
@@ -205,8 +202,6 @@ function generateCSV(columns: Column[], anlage: any, investitionen: Investition[
       case 'netzbezug_kwh': return '50'
       case 'batterieladung_kwh': return '60'
       case 'batterieentladung_kwh': return '80'
-      case 'sonnenstunden': return '260'
-      case 'globalstrahlung_kwh_m2': return '180'
       case 'datenquelle': return 'CSV-Import'
     }
     // Investitions-Spalten - Beispielwerte für Sommer
@@ -252,6 +247,7 @@ function generateCSV(columns: Column[], anlage: any, investitionen: Investition[
     '# - Batterieladung/-entladung: Nur ausfüllen wenn Speicher vorhanden',
     '# - Strompreise: Leer lassen = Stammdaten-Preise werden verwendet',
     '# - Euro-Beträge: Werden automatisch berechnet wenn leer (kWh × Preis)',
+    '# - Wetterdaten: Werden automatisch von Open-Meteo API ergänzt (Sonnenstunden, Globalstrahlung)',
     '# - Investitions-Spalten: Nur ausfüllen wenn Sie diese Daten haben',
     '# - Die beiden Beispielzeilen können gelöscht oder überschrieben werden',
     '#',
