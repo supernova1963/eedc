@@ -87,32 +87,32 @@ export default function EAutoAuswertung({
             </div>
 
             <div>
-              <div className="text-sm text-gray-600 dark:text-gray-400">Ist ({prognoseVergleich.anzahl_monate} Monate)</div>
+              <div className="text-sm text-gray-600 dark:text-gray-400">Ist ({prognoseVergleich.anzahl_monate_erfasst || prognoseVergleich.anzahl_monate} Monate)</div>
               <div className="text-2xl font-bold text-blue-700 dark:text-blue-400">
-                {fmt(prognoseVergleich.einsparung_ist_jahr_euro)} €
+                {fmt(prognoseVergleich.ist_gesamt_euro || prognoseVergleich.einsparung_ist_jahr_euro)} €
               </div>
             </div>
 
-            {prognoseVergleich.hochrechnung_jahr_euro && (
+            {(prognoseVergleich.ist_hochrechnung_jahr_euro || prognoseVergleich.hochrechnung_jahr_euro) && (
               <>
                 <div>
                   <div className="text-sm text-gray-600 dark:text-gray-400">Hochrechnung</div>
                   <div className="text-2xl font-bold text-green-700 dark:text-green-400">
-                    {fmt(prognoseVergleich.hochrechnung_jahr_euro)} €
+                    {fmt(prognoseVergleich.ist_hochrechnung_jahr_euro || prognoseVergleich.hochrechnung_jahr_euro)} €
                   </div>
                 </div>
 
                 <div>
                   <div className="text-sm text-gray-600 dark:text-gray-400">Abweichung</div>
                   <div className={`text-2xl font-bold ${
-                    (prognoseVergleich.abweichung_hochrechnung_prozent || 0) >= 0 
-                      ? 'text-green-700' 
+                    (prognoseVergleich.abweichung_prozent || prognoseVergleich.abweichung_hochrechnung_prozent || 0) >= 0
+                      ? 'text-green-700'
                       : 'text-red-700'
                   }`}>
-                    {prognoseVergleich.abweichung_hochrechnung_prozent && 
-                      (prognoseVergleich.abweichung_hochrechnung_prozent > 0 ? '+' : '')
+                    {(prognoseVergleich.abweichung_prozent || prognoseVergleich.abweichung_hochrechnung_prozent) &&
+                      ((prognoseVergleich.abweichung_prozent || prognoseVergleich.abweichung_hochrechnung_prozent || 0) > 0 ? '+' : '')
                     }
-                    {fmtDec(prognoseVergleich.abweichung_hochrechnung_prozent)}%
+                    {fmtDec(prognoseVergleich.abweichung_prozent || prognoseVergleich.abweichung_hochrechnung_prozent)}%
                   </div>
                 </div>
               </>
@@ -120,37 +120,50 @@ export default function EAutoAuswertung({
           </div>
 
           {/* Bewertung */}
-          <div className={`p-4 rounded-lg ${
-            prognoseVergleich.bewertung === 'Besser als Prognose' ? 'bg-green-50 border border-green-200' :
-            prognoseVergleich.bewertung === 'Schlechter als Prognose' ? 'bg-yellow-50 border border-yellow-200' :
-            prognoseVergleich.bewertung === 'Im Rahmen der Prognose' ? 'bg-blue-50 border border-blue-200' :
-            'bg-gray-50 border border-gray-200'
-          }`}>
-            <div className="flex items-center gap-2">
-              {prognoseVergleich.bewertung === 'Besser als Prognose' ? (
-                <SimpleIcon type="check" className="w-6 h-6 text-green-600" />
-              ) : prognoseVergleich.bewertung === 'Schlechter als Prognose' ? (
-                <SimpleIcon type="error" className="w-6 h-6 text-yellow-600" />
-              ) : prognoseVergleich.bewertung === 'Im Rahmen der Prognose' ? (
-                <SimpleIcon type="check" className="w-6 h-6 text-blue-600" />
-              ) : (
-                <SimpleIcon type="info" className="w-6 h-6 text-gray-600 dark:text-gray-400" />
-              )}
-              <div>
-                <div className="font-medium">{prognoseVergleich.bewertung}</div>
-                {prognoseVergleich.bewertung === 'Besser als Prognose' && (
-                  <div className="text-sm text-gray-600 dark:text-gray-400">
-                    Du sparst mehr als prognostiziert - super! 🎉
+          {(() => {
+            const anzahlMonate = prognoseVergleich.anzahl_monate_erfasst || prognoseVergleich.anzahl_monate || 0
+            const abweichung = prognoseVergleich.abweichung_prozent || prognoseVergleich.abweichung_hochrechnung_prozent || 0
+            let bewertung = 'Zu wenig Daten'
+            if (anzahlMonate >= 3) {
+              if (abweichung > 10) bewertung = 'Besser als Prognose'
+              else if (abweichung >= -10) bewertung = 'Im Rahmen der Prognose'
+              else bewertung = 'Schlechter als Prognose'
+            }
+
+            return (
+              <div className={`p-4 rounded-lg ${
+                bewertung === 'Besser als Prognose' ? 'bg-green-50 border border-green-200' :
+                bewertung === 'Schlechter als Prognose' ? 'bg-yellow-50 border border-yellow-200' :
+                bewertung === 'Im Rahmen der Prognose' ? 'bg-blue-50 border border-blue-200' :
+                'bg-gray-50 border border-gray-200'
+              }`}>
+                <div className="flex items-center gap-2">
+                  {bewertung === 'Besser als Prognose' ? (
+                    <SimpleIcon type="check" className="w-6 h-6 text-green-600" />
+                  ) : bewertung === 'Schlechter als Prognose' ? (
+                    <SimpleIcon type="error" className="w-6 h-6 text-yellow-600" />
+                  ) : bewertung === 'Im Rahmen der Prognose' ? (
+                    <SimpleIcon type="check" className="w-6 h-6 text-blue-600" />
+                  ) : (
+                    <SimpleIcon type="info" className="w-6 h-6 text-gray-600 dark:text-gray-400" />
+                  )}
+                  <div>
+                    <div className="font-medium">{bewertung}</div>
+                    {bewertung === 'Besser als Prognose' && (
+                      <div className="text-sm text-gray-600 dark:text-gray-400">
+                        Du sparst mehr als prognostiziert!
+                      </div>
+                    )}
+                    {bewertung === 'Zu wenig Daten' && (
+                      <div className="text-sm text-gray-600 dark:text-gray-400">
+                        Erfasse mindestens 3 Monate für eine Hochrechnung
+                      </div>
+                    )}
                   </div>
-                )}
-                {prognoseVergleich.bewertung === 'Zu wenig Daten' && (
-                  <div className="text-sm text-gray-600 dark:text-gray-400">
-                    Erfasse mindestens 3 Monate für eine Hochrechnung
-                  </div>
-                )}
+                </div>
               </div>
-            </div>
-          </div>
+            )
+          })()}
         </div>
       )}
 

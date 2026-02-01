@@ -1,6 +1,51 @@
 # EEDC-Webapp - Entwicklungsstand 01.02.2026
 
-## Letzte Änderungen (Session 01.02.2026)
+## Letzte Änderungen (Session 01.02.2026 - Nachmittag)
+
+### 8. Auswertungsseite komplett überarbeitet
+**Problem:** Auswertungsseite nutzte alte Tabellen (`haushalt_komponenten`, `anlagen_komponenten`) die durch Migration entfernt wurden.
+
+**Lösung in `app/auswertung/page.tsx`:**
+- Datenquelle korrigiert: Alle Investitions-Daten kommen jetzt aus `investitionen` Tabelle
+- Abfragen für Views korrigiert (`investition_prognose_ist_vergleich` hat kein `jahr` Feld)
+- Wallbox-Tab und Details-Laden hinzugefügt
+
+### 9. Auswertungs-Komponenten Feldnamen korrigiert
+**Dateien:**
+- `components/EAutoAuswertung.tsx` - Neue View-Feldnamen (anzahl_monate_erfasst, ist_gesamt_euro, etc.)
+- `components/WaermepumpeAuswertung.tsx` - Angepasste Feldnamen mit Fallback
+- `lib/supabase-browser.ts` - TypeScript Interface `InvestitionPrognoseIstVergleich` erweitert
+
+**Feldname-Mapping (Alt → Neu):**
+- `anzahl_monate` → `anzahl_monate_erfasst`
+- `einsparung_ist_jahr_euro` → `ist_gesamt_euro`
+- `hochrechnung_jahr_euro` → `ist_hochrechnung_jahr_euro`
+- `abweichung_hochrechnung_prozent` → `abweichung_prozent`
+
+### 10. Wallbox-Auswertung hinzugefügt
+**Neue Datei:** `components/WallboxAuswertung.tsx`
+
+**Features:**
+- KPIs: Gesamt geladen, PV-Anteil, Ladevorgänge, Ø pro Ladevorgang
+- Stacked Bar Chart: PV-Strom vs. Netzstrom pro Monat
+- Pie Chart: Stromquellen-Verteilung
+- Monatsdaten-Tabelle mit PV-Anteil-Badges
+
+### 11. Neue Auswertungs-Komponenten-Bibliothek
+**Neue Dateien:**
+- `components/auswertungen/AuswertungLayout.tsx` - Gemeinsame Layout-Komponenten
+- `components/auswertungen/EAutoAuswertungV2.tsx` - Überarbeitete E-Auto Auswertung mit Hints & Tips
+
+**Gemeinsame Komponenten:**
+- `HeaderKPIs` - 4er Grid für Haupt-Kennzahlen
+- `KPICard` - Einzelne KPI-Karte
+- `BewertungsBox` - Farbkodierte Bewertungsanzeige
+- `HintBox` - Hinweise und Tipps (info/success/warning/tip)
+- `EmptyState` - Anzeige wenn keine Daten vorhanden
+
+---
+
+## Änderungen vom Vormittag (Session 01.02.2026)
 
 ### 1. Monatsdaten-Ergebnisansicht überarbeitet
 **Datei:** `components/MonatsdatenFormDynamic.tsx`
@@ -96,13 +141,16 @@ npx tsx scripts/recalculate-investition-prognosen.ts
 
 ### Views
 - `investitionen_uebersicht` - Investitionen mit ROI, Amortisation
+- `investition_monatsdaten_detail` - Monatsdaten mit Investitions-Info
 - `investition_prognose_ist_vergleich` - Prognose vs. Ist Vergleich
+- `investition_jahres_zusammenfassung` - Jahres-Aggregat pro Investition
 
 ---
 
 ## Offene Punkte / Nächste Schritte
-- [ ] Meine Anlage: Auswertungen überarbeiten, korrigieren, strukturiert ausweiten
-- [ ] Meine Anlage: Analysieren, Hinweise und Tips ergänzen
+- [x] Auswertungsseite: Datenquellen korrigieren
+- [x] Wallbox-Auswertung hinzufügen
+- [ ] Meine Anlage: Dashboard mit Hints & Tips erweitern
 - [ ] Community Feature: Kommunikationsfeatures erweitern
 
 ---

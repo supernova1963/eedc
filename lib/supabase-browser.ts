@@ -106,8 +106,17 @@ export interface InvestitionPrognoseIstVergleich {
   typ: string
   bezeichnung: string
   mitglied_id: string
-  jahr?: number
+  anschaffungsdatum?: string
+  anschaffungskosten_relevant?: number
   prognose_jahr_euro?: number
+  // Neue Feldnamen (aus aktueller View)
+  ist_gesamt_euro?: number
+  anzahl_monate_erfasst?: number
+  ist_hochrechnung_jahr_euro?: number
+  abweichung_prozent?: number
+  co2_ist_gesamt_kg?: number
+  // Legacy Feldnamen (für Kompatibilität)
+  jahr?: number
   prognose_co2_kg_jahr?: number
   anzahl_monate?: number
   einsparung_ist_jahr_euro?: number
@@ -115,4 +124,7 @@ export interface InvestitionPrognoseIstVergleich {
   co2_einsparung_ist_kg?: number
   abweichung_hochrechnung_prozent?: number
   bewertung?: string
+  // Mitglieder-Info
+  vorname?: string
+  nachname?: string
 }

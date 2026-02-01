@@ -8,6 +8,7 @@ import GesamtHaushaltBilanz from '@/components/GesamtHaushaltBilanz'
 import EAutoAuswertung from '@/components/EAutoAuswertung'
 import WaermepumpeAuswertung from '@/components/WaermepumpeAuswertung'
 import SpeicherAuswertung from '@/components/SpeicherAuswertung'
+import WallboxAuswertung from '@/components/WallboxAuswertung'
 import ROIDashboard from '@/components/ROIDashboard'
 import CO2ImpactDashboard from '@/components/CO2ImpactDashboard'
 import PrognoseVsIstDashboard from '@/components/PrognoseVsIstDashboard'
@@ -33,27 +34,36 @@ async function getAuswertungData(anlageId: string, mitgliedId: string) {
     .eq('mitglied_id', mitgliedId)
     .order('anschaffungsdatum', { ascending: false })
 
-  // Haushalts-Komponenten (E-Auto, Wärmepumpe) - mitglied-bezogen
+  // E-Autos aus Investitionen-Tabelle
   const { data: eAutos } = await supabase
-    .from('haushalt_komponenten')
+    .from('investitionen')
     .select('*')
     .eq('mitglied_id', mitgliedId)
     .eq('typ', 'e-auto')
     .eq('aktiv', true)
 
+  // Wärmepumpen aus Investitionen-Tabelle
   const { data: waermepumpen } = await supabase
-    .from('haushalt_komponenten')
+    .from('investitionen')
     .select('*')
     .eq('mitglied_id', mitgliedId)
     .eq('typ', 'waermepumpe')
     .eq('aktiv', true)
 
-  // Anlagen-Komponenten (Speicher) - anlage-bezogen
+  // Speicher aus Investitionen-Tabelle
   const { data: speicher } = await supabase
-    .from('anlagen_komponenten')
+    .from('investitionen')
     .select('*')
-    .eq('anlage_id', anlageId)
+    .eq('mitglied_id', mitgliedId)
     .eq('typ', 'speicher')
+    .eq('aktiv', true)
+
+  // Wallboxen aus Investitionen-Tabelle
+  const { data: wallboxen } = await supabase
+    .from('investitionen')
+    .select('*')
+    .eq('mitglied_id', mitgliedId)
+    .eq('typ', 'wallbox')
     .eq('aktiv', true)
 
   return {
@@ -61,19 +71,19 @@ async function getAuswertungData(anlageId: string, mitgliedId: string) {
     investitionen: investitionen || [],
     eAutos: eAutos || [],
     waermepumpen: waermepumpen || [],
-    speicher: speicher || []
+    speicher: speicher || [],
+    wallboxen: wallboxen || []
   }
 }
 
 async function getEAutoDetails(autoId: string) {
   const supabase = await createClient()
 
+  // Prognose vs. Ist Vergleich - View aggregiert alle Monate einer Investition
   const { data: prognoseVergleich } = await supabase
     .from('investition_prognose_ist_vergleich')
     .select('*')
     .eq('investition_id', autoId)
-    .order('jahr', { ascending: false })
-    .limit(1)
     .single()
 
   const { data: monatsdaten } = await supabase
@@ -96,8 +106,6 @@ async function getWaermepumpeDetails(wpId: string) {
     .from('investition_prognose_ist_vergleich')
     .select('*')
     .eq('investition_id', wpId)
-    .order('jahr', { ascending: false })
-    .limit(1)
     .single()
 
   const { data: monatsdaten } = await supabase
@@ -120,8 +128,6 @@ async function getSpeicherDetails(speicherId: string) {
     .from('investition_prognose_ist_vergleich')
     .select('*')
     .eq('investition_id', speicherId)
-    .order('jahr', { ascending: false })
-    .limit(1)
     .single()
 
   const { data: monatsdaten } = await supabase
@@ -137,12 +143,34 @@ async function getSpeicherDetails(speicherId: string) {
   }
 }
 
+async function getWallboxDetails(wallboxId: string) {
+  const supabase = await createClient()
+
+  const { data: prognoseVergleich } = await supabase
+    .from('investition_prognose_ist_vergleich')
+    .select('*')
+    .eq('investition_id', wallboxId)
+    .single()
+
+  const { data: monatsdaten } = await supabase
+    .from('investition_monatsdaten_detail')
+    .select('*')
+    .eq('investition_id', wallboxId)
+    .order('jahr', { ascending: false })
+    .order('monat', { ascending: false })
+
+  return {
+    prognoseVergleich,
+    monatsdaten: monatsdaten || []
+  }
+}
+
 export const dynamic = 'force-dynamic'
 
 export default async function AuswertungPage({
   searchParams,
 }: {
-  searchParams: Promise<{ tab?: string, auto?: string, wp?: string, speicher?: string, anlageId?: string }>
+  searchParams: Promise<{ tab?: string, auto?: string, wp?: string, speicher?: string, wallbox?: string, anlageId?: string }>
 }) {
   const mitglied = await getCurrentMitglied()
 
@@ -196,16 +224,17 @@ export default async function AuswertungPage({
     )
   }
 
-  const { monatsdaten, investitionen, eAutos, waermepumpen, speicher } = await getAuswertungData(anlage.id, mitglied.data.id)
+  const { monatsdaten, investitionen, eAutos, waermepumpen, speicher, wallboxen } = await getAuswertungData(anlage.id, mitglied.data.id)
   const activeTab = params.tab || 'pv'
   const selectedAutoId = params.auto
   const selectedWpId = params.wp
   const selectedSpeicherId = params.speicher
+  const selectedWallboxId = params.wallbox
 
   // E-Auto Details laden
   let eAutoDetails = null
   let selectedEAuto = null
-  
+
   if (activeTab === 'e-auto' && eAutos.length > 0) {
     const autoId = selectedAutoId || eAutos[0].id
     selectedEAuto = eAutos.find(a => a.id === autoId) || eAutos[0]
@@ -215,7 +244,7 @@ export default async function AuswertungPage({
   // Wärmepumpe Details laden
   let waermepumpeDetails = null
   let selectedWaermepumpe = null
-  
+
   if (activeTab === 'waermepumpe' && waermepumpen.length > 0) {
     const wpId = selectedWpId || waermepumpen[0].id
     selectedWaermepumpe = waermepumpen.find(w => w.id === wpId) || waermepumpen[0]
@@ -232,6 +261,16 @@ export default async function AuswertungPage({
     speicherDetails = await getSpeicherDetails(selectedSpeicher.id)
   }
 
+  // Wallbox Details laden
+  let wallboxDetails = null
+  let selectedWallbox = null
+
+  if (activeTab === 'wallbox' && wallboxen.length > 0) {
+    const wbId = selectedWallboxId || wallboxen[0].id
+    selectedWallbox = wallboxen.find(w => w.id === wbId) || wallboxen[0]
+    wallboxDetails = await getWallboxDetails(selectedWallbox.id)
+  }
+
   return (
     <main className="min-h-screen bg-gray-50 dark:bg-gray-700">
       {/* Header */}
@@ -245,6 +284,7 @@ export default async function AuswertungPage({
                 {activeTab === 'e-auto' && 'E-Auto Details'}
                 {activeTab === 'waermepumpe' && 'Wärmepumpe Details'}
                 {activeTab === 'speicher' && 'Speicher Details'}
+                {activeTab === 'wallbox' && 'Wallbox Details'}
                 {activeTab === 'gesamt' && 'Gesamtbilanz'}
                 {activeTab === 'roi' && 'ROI-Analyse'}
                 {activeTab === 'co2' && 'CO₂-Impact'}
@@ -386,15 +426,48 @@ export default async function AuswertungPage({
                     </div>
                   </div>
                 )}
-                
-                <SpeicherAuswertung 
+
+                <SpeicherAuswertung
                   investition={selectedSpeicher}
                   prognoseVergleich={speicherDetails.prognoseVergleich}
                   monatsdaten={speicherDetails.monatsdaten}
                 />
               </div>
             )}
-            
+
+            {activeTab === 'wallbox' && selectedWallbox && wallboxDetails && (
+              <div>
+                {wallboxen.length > 1 && (
+                  <div className="mb-6 bg-purple-50 border border-purple-200 rounded-lg p-4">
+                    <label className="block text-sm font-medium text-purple-900 mb-2">
+                      Wallbox auswählen:
+                    </label>
+                    <div className="flex gap-2">
+                      {wallboxen.map(wb => (
+                        <Link
+                          key={wb.id}
+                          href={`/auswertung?tab=wallbox&wallbox=${wb.id}`}
+                          className={`px-4 py-2 rounded-md font-medium ${
+                            selectedWallbox.id === wb.id
+                              ? 'bg-purple-600 text-white'
+                              : 'bg-white text-purple-700 hover:bg-purple-100'
+                          }`}
+                        >
+                          {wb.bezeichnung}
+                        </Link>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <WallboxAuswertung
+                  investition={selectedWallbox}
+                  prognoseVergleich={wallboxDetails.prognoseVergleich}
+                  monatsdaten={wallboxDetails.monatsdaten}
+                />
+              </div>
+            )}
+
             {activeTab === 'gesamt' && investitionen.length > 0 && (
               <GesamtHaushaltBilanz
                 monatsdaten={monatsdaten}

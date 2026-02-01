@@ -30,13 +30,20 @@ export default function WaermepumpeAuswertung({
   // Prognose-Werte
   const prognoseJahr = prognoseVergleich?.prognose_jahr_euro || 0
   const prognoseJAZ = investition.parameter?.jaz || 0
-  
-  // Ist-Werte
-  const anzahlMonate = prognoseVergleich?.anzahl_monate || 0
-  const einsparungIst = prognoseVergleich?.einsparung_ist_jahr_euro || 0
-  const hochrechnungJahr = prognoseVergleich?.hochrechnung_jahr_euro || 0
-  const abweichung = prognoseVergleich?.abweichung_hochrechnung_prozent || 0
-  const bewertung = prognoseVergleich?.bewertung || 'Keine Daten'
+
+  // Ist-Werte (kompatibel mit beiden View-Versionen)
+  const anzahlMonate = prognoseVergleich?.anzahl_monate_erfasst || prognoseVergleich?.anzahl_monate || 0
+  const einsparungIst = prognoseVergleich?.ist_gesamt_euro || prognoseVergleich?.einsparung_ist_jahr_euro || 0
+  const hochrechnungJahr = prognoseVergleich?.ist_hochrechnung_jahr_euro || prognoseVergleich?.hochrechnung_jahr_euro || 0
+  const abweichung = prognoseVergleich?.abweichung_prozent || prognoseVergleich?.abweichung_hochrechnung_prozent || 0
+
+  // Bewertung berechnen
+  let bewertung = 'Keine Daten'
+  if (anzahlMonate >= 3) {
+    if (abweichung > 10) bewertung = 'Besser als Prognose'
+    else if (abweichung >= -10) bewertung = 'Im Rahmen der Prognose'
+    else bewertung = 'Schlechter als Prognose'
+  }
 
   // Bewertungs-Farbe
   const getBewertungColor = () => {
