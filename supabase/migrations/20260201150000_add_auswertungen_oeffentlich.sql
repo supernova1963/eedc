@@ -18,6 +18,9 @@ COMMENT ON COLUMN anlagen.auswertungen_oeffentlich IS 'Auswertungen öffentlich 
 -- 2. get_public_anlage_details aktualisieren - auswertungen_oeffentlich hinzufügen
 -- ============================================
 
+-- Alte Funktion löschen (Return-Type ändert sich)
+DROP FUNCTION IF EXISTS get_public_anlage_details(uuid);
+
 CREATE OR REPLACE FUNCTION get_public_anlage_details(p_anlage_id uuid)
 RETURNS TABLE (
   anlage_id uuid,
