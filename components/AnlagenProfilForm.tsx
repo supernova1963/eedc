@@ -24,9 +24,6 @@ export default function AnlagenProfilForm({ anlage, mitglied }: AnlagenProfilFor
     anlagenname: anlage.anlagenname || '',
     standort_ort: anlage.standort_ort || '',
     standort_plz: anlage.standort_plz || '',
-    leistung_kwp: anlage.leistung_kwp || '',
-    anschaffungskosten_euro: anlage.anschaffungskosten_euro || '',
-    einspeiseverguetung_cent_kwh: anlage.einspeiseverguetung_cent_kwh || '',
     profilbeschreibung: anlage.profilbeschreibung || '',
     motivation: anlage.motivation || '',
     erfahrungen: anlage.erfahrungen || '',
@@ -56,13 +53,10 @@ export default function AnlagenProfilForm({ anlage, mitglied }: AnlagenProfilFor
     try {
       const supabase = createBrowserClient()
 
-      const updateData: any = {
+      const updateData = {
         anlagenname: formData.anlagenname,
         standort_ort: formData.standort_ort,
         standort_plz: formData.standort_plz,
-        leistung_kwp: formData.leistung_kwp ? parseFloat(String(formData.leistung_kwp)) : null,
-        anschaffungskosten_euro: formData.anschaffungskosten_euro ? parseFloat(String(formData.anschaffungskosten_euro)) : null,
-        einspeiseverguetung_cent_kwh: formData.einspeiseverguetung_cent_kwh ? parseFloat(String(formData.einspeiseverguetung_cent_kwh)) : null,
         profilbeschreibung: formData.profilbeschreibung || null,
         motivation: formData.motivation || null,
         erfahrungen: formData.erfahrungen || null,
@@ -102,9 +96,6 @@ export default function AnlagenProfilForm({ anlage, mitglied }: AnlagenProfilFor
       anlagenname: anlage.anlagenname || '',
       standort_ort: anlage.standort_ort || '',
       standort_plz: anlage.standort_plz || '',
-      leistung_kwp: anlage.leistung_kwp || '',
-      anschaffungskosten_euro: anlage.anschaffungskosten_euro || '',
-      einspeiseverguetung_cent_kwh: anlage.einspeiseverguetung_cent_kwh || '',
       profilbeschreibung: anlage.profilbeschreibung || '',
       motivation: anlage.motivation || '',
       erfahrungen: anlage.erfahrungen || '',
@@ -349,56 +340,6 @@ export default function AnlagenProfilForm({ anlage, mitglied }: AnlagenProfilFor
                 onChange={handleChange}
                 required
                 placeholder="Nümbrecht"
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-          </div>
-
-          {/* Technische & Finanzielle Daten */}
-          <div className="grid grid-cols-3 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Leistung (kWp)
-              </label>
-              <input
-                type="number"
-                name="leistung_kwp"
-                value={formData.leistung_kwp}
-                onChange={handleChange}
-                step="0.01"
-                min="0"
-                placeholder="9.8"
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Anschaffungskosten (€)
-              </label>
-              <input
-                type="number"
-                name="anschaffungskosten_euro"
-                value={formData.anschaffungskosten_euro}
-                onChange={handleChange}
-                step="0.01"
-                min="0"
-                placeholder="15000"
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-              <p className="text-xs text-gray-500 mt-1">Für ROI-Berechnung</p>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Einspeisevergütung (ct/kWh)
-              </label>
-              <input
-                type="number"
-                name="einspeiseverguetung_cent_kwh"
-                value={formData.einspeiseverguetung_cent_kwh}
-                onChange={handleChange}
-                step="0.01"
-                min="0"
-                placeholder="8.20"
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
