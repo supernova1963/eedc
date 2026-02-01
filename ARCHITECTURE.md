@@ -4,7 +4,11 @@
 
 ### Investitionen vs. Anlagen
 
-**WICHTIG:** Anschaffungskosten gehören NICHT in die `anlagen`-Tabelle!
+**WICHTIG:** Anschaffungskosten für ROI gehören in die `investitionen`-Tabelle!
+
+> ⚠️ **Hinweis:** Die `anlagen`-Tabelle hat zwar ein Feld `anschaffungskosten_euro`,
+> aber dieses wird NICHT für ROI-Berechnungen verwendet! Es ist ein Legacy-Feld
+> und sollte ignoriert werden. ROI-Berechnungen IMMER aus `investitionen` berechnen!
 
 ```
 anlagen                          investitionen
@@ -12,10 +16,11 @@ anlagen                          investitionen
 ├── mitglied_id                  ├── mitglied_id
 ├── anlagenname                  ├── anlage_id (FK → anlagen)
 ├── leistung_kwp                 ├── typ (pv-anlage, speicher, e-auto, ...)
-├── installationsdatum           ├── anschaffungskosten_gesamt ← HIER!
+├── installationsdatum           ├── anschaffungskosten_gesamt ← HIER FÜR ROI!
 ├── standort_*                   ├── anschaffungskosten_alternativ
-├── (KEIN anschaffungskosten!)   ├── anschaffungskosten_relevant
-└── ...                          └── ...
+├── anschaffungskosten_euro      ├── anschaffungskosten_relevant
+│   ↑ NICHT VERWENDEN!           └── ...
+└── ...
 ```
 
 ### Warum diese Trennung?
@@ -51,10 +56,10 @@ const gesamtInvestition = anlageInvestitionen.reduce((sum, inv) =>
 
 ### Tabellen-Übersicht
 
-| Tabelle | Zweck | Anschaffungskosten? |
+| Tabelle | Zweck | Anschaffungskosten für ROI? |
 |---------|-------|---------------------|
-| `anlagen` | Stammdaten der PV-Anlage (Leistung, Standort) | NEIN |
-| `investitionen` | Alle Anschaffungen mit Kosten | JA |
+| `anlagen` | Stammdaten der PV-Anlage (Leistung, Standort) | ❌ NEIN (Feld existiert, aber NICHT verwenden!) |
+| `investitionen` | Alle Anschaffungen mit Kosten | ✅ JA |
 | `monatsdaten` | Energiedaten pro Monat | NEIN |
 | `investition_monatsdaten` | Verbrauchsdaten pro Investition/Monat | NEIN |
 
