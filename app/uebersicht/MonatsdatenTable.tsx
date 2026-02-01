@@ -238,12 +238,13 @@ export default function MonatsdatenTable({
       return preis > 0 ? eigenverbrauch * preis / 100 : 0
     }
     if (key === 'gesamt_ersparnis_euro') {
+      // Gesamtersparnis durch PV = Eigenverbrauch-Einsparung + Einspeise-Erlös
+      // OHNE Netzbezugskosten - diese sind allgemeiner Haushaltsverbrauch
       const eigenverbrauch = toNum(row.direktverbrauch_kwh) + toNum(row.batterieentladung_kwh)
       const preis = toNum(row.netzbezug_preis_cent_kwh)
       const evEinsparung = preis > 0 ? eigenverbrauch * preis / 100 : 0
       const einspeiseErtrag = toNum(row.einspeisung_ertrag_euro)
-      const netzbezugKosten = toNum(row.netzbezug_kosten_euro)
-      return evEinsparung + einspeiseErtrag - netzbezugKosten
+      return evEinsparung + einspeiseErtrag
     }
 
     // Investitions-spezifische Werte

@@ -262,9 +262,11 @@ export default function MonatsdatenFormDynamic({
       ? (eigenverbrauch * stammStrompreise.netzbezug_cent_kwh / 100)
       : null
 
-    // Gesamtersparnis = Einspeise-Erlös + Eigenverbrauch-Einsparung - Netzbezugskosten
-    const gesamtErsparnisEuro = (eigenverbrauchEinsparungEuro !== null && einspeisungErtragEuro !== null && netzbezugKostenEuro !== null)
-      ? (eigenverbrauchEinsparungEuro + einspeisungErtragEuro - netzbezugKostenEuro)
+    // Gesamtersparnis durch PV-Anlage = Einspeise-Erlös + Eigenverbrauch-Einsparung
+    // OHNE Netzbezugskosten! Der Netzbezug ist allgemeiner Haushaltsverbrauch,
+    // keine Kosten der Anlage - diese würden auch ohne PV anfallen.
+    const gesamtErsparnisEuro = (eigenverbrauchEinsparungEuro !== null && einspeisungErtragEuro !== null)
+      ? (eigenverbrauchEinsparungEuro + einspeisungErtragEuro)
       : null
 
     return {

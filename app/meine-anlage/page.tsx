@@ -92,7 +92,7 @@ export default async function DashboardPage({
     sum + toNum(m.einspeisung_kwh), 0
   )
 
-  const gesamtErloese = monatsdaten.reduce((sum, m) =>
+  const gesamtEinspeiseErloese = monatsdaten.reduce((sum, m) =>
     sum + toNum(m.einspeisung_ertrag_euro), 0
   )
 
@@ -104,7 +104,16 @@ export default async function DashboardPage({
     sum + toNum(m.betriebsausgaben_monat_euro), 0
   )
 
-  const nettoErtrag = gesamtErloese - gesamtNetzbezugKosten - gesamtBetriebsausgaben
+  // Eigenverbrauch-Einsparung = Was durch Eigenverbrauch an Netzbezug gespart wurde
+  // Vereinfachte Berechnung: Eigenverbrauch * durchschnittlicher Netzbezugspreis
+  const durchschnittNetzbezugPreis = monatsdaten.length > 0
+    ? monatsdaten.reduce((sum, m) => sum + toNum(m.netzbezug_preis_cent_kwh), 0) / monatsdaten.length
+    : 0
+  const eigenverbrauchEinsparung = gesamtEigenverbrauch * durchschnittNetzbezugPreis / 100
+
+  // Gesamtersparnis durch PV = Eigenverbrauch-Einsparung + Einspeise-Erlöse
+  // OHNE Netzbezugskosten - diese sind allgemeiner Haushaltsverbrauch!
+  const gesamtErsparnisPV = eigenverbrauchEinsparung + gesamtEinspeiseErloese - gesamtBetriebsausgaben
 
   const eigenverbrauchsquote = gesamtErzeugung > 0
     ? (gesamtEigenverbrauch / gesamtErzeugung) * 100
@@ -214,9 +223,9 @@ export default async function DashboardPage({
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-gray-600 dark:text-gray-400">Erlöse</p>
+                <p className="text-sm text-gray-600 dark:text-gray-400">Einspeise-Erlöse</p>
                 <p className="text-2xl font-bold text-blue-700 mt-1">
-                  {fmtDec(gesamtErloese)} €
+                  {fmtDec(gesamtEinspeiseErloese)} €
                 </p>
               </div>
               <SimpleIcon type="money" className="w-12 h-12 text-blue-500" />
@@ -226,9 +235,9 @@ export default async function DashboardPage({
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-gray-600 dark:text-gray-400">Netto-Ertrag</p>
+                <p className="text-sm text-gray-600 dark:text-gray-400">Ersparnis PV</p>
                 <p className="text-2xl font-bold text-green-700 mt-1">
-                  {fmtDec(nettoErtrag)} €
+                  {fmtDec(gesamtErsparnisPV)} €
                 </p>
               </div>
               <SimpleIcon type="gem" className="w-12 h-12 text-green-500" />
