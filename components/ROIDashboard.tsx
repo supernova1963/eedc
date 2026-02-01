@@ -46,8 +46,11 @@ export default function ROIDashboard({ anlage, monatsdaten, investitionen }: ROI
     return parseFloat(String(val)) || 0
   }
 
-  // Gesamtinvestition berechnen (Feld heißt anschaffungskosten_euro in der anlagen-Tabelle)
-  const gesamtInvestition = toNum(anlage?.anschaffungskosten_euro)
+  // Gesamtinvestition berechnen aus Investitionen-Tabelle (nicht aus anlage!)
+  // Nur Investitionen die zur aktuellen Anlage gehören (anlage_id)
+  const anlageInvestitionen = investitionen.filter(inv => inv.anlage_id === anlage?.id)
+  const gesamtInvestition = anlageInvestitionen.reduce((sum, inv) =>
+    sum + toNum(inv.anschaffungskosten_gesamt), 0)
 
   // Gruppiere Monatsdaten nach Jahr
   const yearlyData: Record<number, any[]> = {}
