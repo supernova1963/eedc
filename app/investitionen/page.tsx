@@ -150,7 +150,7 @@ export default async function InvestitionenPage() {
             </Link>
           </div>
         ) : (
-          <div className="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
               <thead className="bg-gray-50 dark:bg-gray-700">
                 <tr>
@@ -175,7 +175,7 @@ export default async function InvestitionenPage() {
                   <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Amortisation
                   </th>
-                  <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider sticky right-0 bg-gray-50 dark:bg-gray-700">
                     Aktionen
                   </th>
                 </tr>
@@ -236,7 +236,7 @@ export default async function InvestitionenPage() {
                     <td className="px-6 py-4 text-right text-sm text-gray-900 dark:text-gray-100">
                       {inv.amortisation_jahre ? `${inv.amortisation_jahre.toFixed(1)} J.` : '-'}
                     </td>
-                    <td className="px-6 py-4 text-center text-sm font-medium">
+                    <td className="px-6 py-4 text-center text-sm font-medium sticky right-0 bg-white dark:bg-gray-700">
                       <div className="flex justify-center gap-2">
                         <Link
                           href={`/investitionen/bearbeiten/${inv.id}`}
