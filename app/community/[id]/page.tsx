@@ -46,11 +46,43 @@ interface Monatsdaten {
   autarkiegrad_prozent: number
 }
 
+interface Auswertung {
+  anlage_id: string
+  gesamt_erzeugung_kwh: number
+  gesamt_einspeisung_kwh: number
+  gesamt_eigenverbrauch_kwh: number
+  gesamt_netzbezug_kwh: number
+  durchschnitt_autarkie_prozent: number
+  durchschnitt_eigenverbrauchsquote_prozent: number
+  durchschnitt_erzeugung_monat_kwh: number
+  spezifischer_ertrag_kwh_kwp: number
+  anzahl_monate: number
+  erster_monat: string
+  letzter_monat: string
+  gesamt_einspeisung_ertrag_euro: number
+  gesamt_ev_einsparung_euro: number
+  durchschnitt_netto_ertrag_monat_euro: number
+  jahresvergleich?: JahresVergleich[]
+}
+
+interface JahresVergleich {
+  jahr: number
+  anzahl_monate: number
+  erzeugung_kwh: number
+  eigenverbrauch_kwh: number
+  einspeisung_kwh: number
+  netzbezug_kwh: number
+  autarkie_prozent: number
+  eigenverbrauchsquote_prozent: number
+  spezifischer_ertrag_kwh_kwp: number
+}
+
 export default function CommunityAnlageDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
   const [anlage, setAnlage] = useState<PublicAnlageDetail | null>(null)
   const [komponenten, setKomponenten] = useState<Komponente[]>([])
   const [monatsdaten, setMonatsdaten] = useState<Monatsdaten[]>([])
+  const [auswertung, setAuswertung] = useState<Auswertung | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
@@ -95,6 +127,19 @@ export default function CommunityAnlageDetailPage({ params }: { params: Promise<
           }
         } catch (e) {
           console.log('Keine Monatsdaten verfügbar')
+        }
+      }
+
+      // Lade Auswertung wenn Kennzahlen freigegeben
+      if (data.data.kennzahlen_oeffentlich) {
+        try {
+          const ausRes = await fetch(`/api/community/anlagen/${id}/auswertung`)
+          const ausData = await ausRes.json()
+          if (ausData.success) {
+            setAuswertung(ausData.data)
+          }
+        } catch (e) {
+          console.log('Keine Auswertung verfügbar')
         }
       }
     } catch (err) {
@@ -177,8 +222,146 @@ export default function CommunityAnlageDetailPage({ params }: { params: Promise<
           )}
         </div>
 
-        {/* Kennzahlen (berechnet aus Monatsdaten) */}
-        {monatsdaten.length > 0 && (
+        {/* Auswertung & Kennzahlen */}
+        {auswertung && (
+          <div className="space-y-6 mb-8">
+            {/* Haupt-KPIs */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="bg-gradient-to-br from-yellow-50 to-orange-100 rounded-xl shadow-sm p-5 border border-yellow-200">
+                <div className="flex items-center gap-2 mb-2">
+                  <SimpleIcon type="sun" className="w-5 h-5 text-yellow-600" />
+                  <div className="text-xs text-yellow-800 font-medium">Gesamterzeugung</div>
+                </div>
+                <div className="text-2xl font-bold text-yellow-900">
+                  {(auswertung.gesamt_erzeugung_kwh / 1000).toFixed(1)} MWh
+                </div>
+                <div className="text-xs text-yellow-700 mt-1">
+                  {auswertung.spezifischer_ertrag_kwh_kwp?.toFixed(0)} kWh/kWp
+                </div>
+              </div>
+
+              <div className="bg-gradient-to-br from-blue-50 to-sky-100 rounded-xl shadow-sm p-5 border border-blue-200">
+                <div className="flex items-center gap-2 mb-2">
+                  <SimpleIcon type="home" className="w-5 h-5 text-blue-600" />
+                  <div className="text-xs text-blue-800 font-medium">Eigenverbrauch</div>
+                </div>
+                <div className="text-2xl font-bold text-blue-900">
+                  {auswertung.durchschnitt_eigenverbrauchsquote_prozent?.toFixed(1)}%
+                </div>
+                <div className="text-xs text-blue-700 mt-1">
+                  {(auswertung.gesamt_eigenverbrauch_kwh / 1000).toFixed(1)} MWh gesamt
+                </div>
+              </div>
+
+              <div className="bg-gradient-to-br from-purple-50 to-violet-100 rounded-xl shadow-sm p-5 border border-purple-200">
+                <div className="flex items-center gap-2 mb-2">
+                  <SimpleIcon type="shield" className="w-5 h-5 text-purple-600" />
+                  <div className="text-xs text-purple-800 font-medium">Autarkiegrad</div>
+                </div>
+                <div className="text-2xl font-bold text-purple-900">
+                  {auswertung.durchschnitt_autarkie_prozent?.toFixed(1)}%
+                </div>
+                <div className="text-xs text-purple-700 mt-1">
+                  Unabhängigkeit vom Netz
+                </div>
+              </div>
+
+              <div className="bg-gradient-to-br from-green-50 to-emerald-100 rounded-xl shadow-sm p-5 border border-green-200">
+                <div className="flex items-center gap-2 mb-2">
+                  <SimpleIcon type="money" className="w-5 h-5 text-green-600" />
+                  <div className="text-xs text-green-800 font-medium">Ø Netto-Ertrag</div>
+                </div>
+                <div className="text-2xl font-bold text-green-900">
+                  {auswertung.durchschnitt_netto_ertrag_monat_euro?.toFixed(0)} €
+                </div>
+                <div className="text-xs text-green-700 mt-1">
+                  pro Monat
+                </div>
+              </div>
+            </div>
+
+            {/* Wirtschaftlichkeits-Details */}
+            <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-200">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+                <SimpleIcon type="chart" className="w-5 h-5 text-blue-600" />
+                Wirtschaftlichkeit ({auswertung.anzahl_monate} Monate)
+              </h3>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div className="text-center p-3 bg-gray-50 rounded-lg">
+                  <div className="text-sm text-gray-600">EV-Einsparung</div>
+                  <div className="text-xl font-bold text-green-600">
+                    +{auswertung.gesamt_ev_einsparung_euro?.toFixed(0)} €
+                  </div>
+                </div>
+                <div className="text-center p-3 bg-gray-50 rounded-lg">
+                  <div className="text-sm text-gray-600">Einspeise-Erlös</div>
+                  <div className="text-xl font-bold text-green-600">
+                    +{auswertung.gesamt_einspeisung_ertrag_euro?.toFixed(0)} €
+                  </div>
+                </div>
+                <div className="text-center p-3 bg-gray-50 rounded-lg">
+                  <div className="text-sm text-gray-600">Ø Erzeugung/Monat</div>
+                  <div className="text-xl font-bold text-yellow-600">
+                    {auswertung.durchschnitt_erzeugung_monat_kwh?.toFixed(0)} kWh
+                  </div>
+                </div>
+                <div className="text-center p-3 bg-gray-50 rounded-lg">
+                  <div className="text-sm text-gray-600">Erfasst seit</div>
+                  <div className="text-xl font-bold text-gray-700">
+                    {auswertung.erster_monat ? new Date(auswertung.erster_monat).toLocaleDateString('de-DE', { month: 'short', year: 'numeric' }) : '-'}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Jahresvergleich */}
+            {auswertung.jahresvergleich && auswertung.jahresvergleich.length > 0 && (
+              <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-200">
+                <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+                  <SimpleIcon type="calendar" className="w-5 h-5 text-blue-600" />
+                  Jahresvergleich
+                </h3>
+                <div className="overflow-x-auto">
+                  <table className="min-w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-gray-200">
+                        <th className="text-left py-2 px-3 font-medium text-gray-600">Jahr</th>
+                        <th className="text-right py-2 px-3 font-medium text-gray-600">Erzeugung</th>
+                        <th className="text-right py-2 px-3 font-medium text-gray-600">kWh/kWp</th>
+                        <th className="text-right py-2 px-3 font-medium text-gray-600">Autarkie</th>
+                        <th className="text-right py-2 px-3 font-medium text-gray-600">EV-Quote</th>
+                        <th className="text-right py-2 px-3 font-medium text-gray-600">Monate</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {auswertung.jahresvergleich.map((jahr) => (
+                        <tr key={jahr.jahr} className="border-b border-gray-100 hover:bg-gray-50">
+                          <td className="py-2 px-3 font-medium text-gray-900">{jahr.jahr}</td>
+                          <td className="py-2 px-3 text-right text-yellow-700">{(jahr.erzeugung_kwh / 1000).toFixed(2)} MWh</td>
+                          <td className="py-2 px-3 text-right text-gray-700">{jahr.spezifischer_ertrag_kwh_kwp?.toFixed(0)}</td>
+                          <td className="py-2 px-3 text-right">
+                            <span className={`font-medium ${jahr.autarkie_prozent >= 50 ? 'text-green-600' : 'text-orange-600'}`}>
+                              {jahr.autarkie_prozent?.toFixed(1)}%
+                            </span>
+                          </td>
+                          <td className="py-2 px-3 text-right">
+                            <span className={`font-medium ${jahr.eigenverbrauchsquote_prozent >= 50 ? 'text-blue-600' : 'text-gray-600'}`}>
+                              {jahr.eigenverbrauchsquote_prozent?.toFixed(1)}%
+                            </span>
+                          </td>
+                          <td className="py-2 px-3 text-right text-gray-500">{jahr.anzahl_monate}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Fallback: Einfache Kennzahlen wenn keine Auswertung aber Monatsdaten */}
+        {!auswertung && monatsdaten.length > 0 && (
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
             <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-200 dark:border-gray-700">
               <div className="flex items-center gap-3 mb-3">
