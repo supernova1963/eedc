@@ -87,9 +87,9 @@ export default async function UebersichtPage() {
   const vorhandeneTypen = [...new Set(investitionen.map(i => i.typ))]
 
   return (
-    <main className="min-h-screen bg-gray-50 dark:bg-gray-700">
-      <div className="bg-white shadow">
-        <div className="max-w-full mx-auto px-4 py-6">
+    <div className="h-[calc(100vh-120px)] flex flex-col -mx-4 sm:-mx-6 lg:-mx-8 -my-8">
+      <div className="bg-white shadow flex-shrink-0">
+        <div className="max-w-full mx-auto px-4 py-4">
           <div className="flex items-center justify-between">
             <div>
               <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-2">
@@ -120,7 +120,7 @@ export default async function UebersichtPage() {
         </div>
       </div>
 
-      <div className="max-w-full mx-auto px-4 py-8">
+      <div className="flex-1 min-h-0 max-w-full mx-auto px-4 py-2 w-full bg-gray-50 dark:bg-gray-700">
         {monatsdaten.length === 0 ? (
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-8 text-center">
             <p className="text-gray-500 mb-4">Noch keine Monatsdaten erfasst</p>
@@ -142,6 +142,6 @@ export default async function UebersichtPage() {
           />
         )}
       </div>
-    </main>
+    </div>
   )
 }

@@ -8,6 +8,7 @@ import SimpleIcon from './SimpleIcon'
 import ExportButton from './ExportButton'
 import PDFExportButton from './PDFExportButton'
 import { text, card, border, table, gradient, colors, badge } from '@/lib/styles'
+import FormelTooltip from './FormelTooltip'
 
 interface ROIDashboardProps {
   anlage: any
@@ -17,11 +18,14 @@ interface ROIDashboardProps {
 
 interface YearlyStats {
   jahr: number
+  anzahlMonate: number // Für Unterjährigkeit
   erzeugung: number
   eigenverbrauch: number
   einspeisung: number
-  erloese: number
-  kosten: number
+  einspeiseErloese: number
+  eigenverbrauchEinsparung: number
+  erloese: number // Gesamt: Einspeisung + EV-Einsparung
+  kosten: number // Nur Betriebsausgaben
   nettoErtrag: number
   kumuliertErtrag: number
   kumuliertVsInvestition: number
@@ -42,8 +46,8 @@ export default function ROIDashboard({ anlage, monatsdaten, investitionen }: ROI
     return parseFloat(String(val)) || 0
   }
 
-  // Gesamtinvestition berechnen
-  const gesamtInvestition = anlage?.anschaffungskosten_gesamt || 0
+  // Gesamtinvestition berechnen (Feld heißt anschaffungskosten_euro in der anlagen-Tabelle)
+  const gesamtInvestition = toNum(anlage?.anschaffungskosten_euro)
 
   // Gruppiere Monatsdaten nach Jahr
   const yearlyData: Record<number, any[]> = {}
@@ -54,6 +58,9 @@ export default function ROIDashboard({ anlage, monatsdaten, investitionen }: ROI
     yearlyData[m.jahr].push(m)
   })
 
+  // Gesamtzahl der erfassten Monate für korrekte Durchschnittsberechnung
+  const gesamtMonate = monatsdaten.length
+
   // Berechne Jahresstatistiken
   const yearlyStats: YearlyStats[] = []
   let kumuliertErtrag = 0
@@ -62,16 +69,29 @@ export default function ROIDashboard({ anlage, monatsdaten, investitionen }: ROI
     .sort((a, b) => parseInt(a) - parseInt(b))
     .forEach(jahr => {
       const jahresMonatsdaten = yearlyData[parseInt(jahr)]
+      const anzahlMonate = jahresMonatsdaten.length // Für Unterjährigkeits-Anzeige
 
       const erzeugung = jahresMonatsdaten.reduce((sum, m) => sum + toNum(m.pv_erzeugung_kwh), 0)
       const eigenverbrauch = jahresMonatsdaten.reduce((sum, m) =>
         sum + toNum(m.direktverbrauch_kwh) + toNum(m.batterieentladung_kwh), 0)
       const einspeisung = jahresMonatsdaten.reduce((sum, m) => sum + toNum(m.einspeisung_kwh), 0)
-      const erloese = jahresMonatsdaten.reduce((sum, m) => sum + toNum(m.einspeisung_ertrag_euro), 0)
-      const kosten = jahresMonatsdaten.reduce((sum, m) => sum + toNum(m.netzbezug_kosten_euro), 0)
+
+      // Einspeise-Erlöse
+      const einspeiseErloese = jahresMonatsdaten.reduce((sum, m) => sum + toNum(m.einspeisung_ertrag_euro), 0)
+
+      // Eigenverbrauch-Einsparung = gesparter Netzbezug durch Eigenverbrauch
+      // Berechnung: Eigenverbrauch * durchschnittlicher Netzbezugspreis
+      const durchschnittNetzbezugPreis = jahresMonatsdaten.reduce((sum, m) => sum + toNum(m.netzbezug_preis_cent_kwh), 0) / anzahlMonate
+      const eigenverbrauchEinsparung = eigenverbrauch * durchschnittNetzbezugPreis / 100
+
+      // Gesamterlöse = Einspeise-Erlöse + Eigenverbrauch-Einsparung
+      const erloese = einspeiseErloese + eigenverbrauchEinsparung
+
+      // Nur Betriebsausgaben als Kosten (NICHT Netzbezugskosten!)
       const betriebsausgaben = jahresMonatsdaten.reduce((sum, m) => sum + toNum(m.betriebsausgaben_monat_euro), 0)
 
-      const nettoErtrag = erloese - kosten - betriebsausgaben
+      // Netto-Ertrag = Erlöse - Betriebsausgaben
+      const nettoErtrag = erloese - betriebsausgaben
       kumuliertErtrag += nettoErtrag
 
       const paybackProgress = gesamtInvestition > 0
@@ -80,11 +100,14 @@ export default function ROIDashboard({ anlage, monatsdaten, investitionen }: ROI
 
       yearlyStats.push({
         jahr: parseInt(jahr),
+        anzahlMonate,
         erzeugung,
         eigenverbrauch,
         einspeisung,
+        einspeiseErloese,
+        eigenverbrauchEinsparung,
         erloese,
-        kosten: kosten + betriebsausgaben,
+        kosten: betriebsausgaben,
         nettoErtrag,
         kumuliertErtrag,
         kumuliertVsInvestition: kumuliertErtrag - gesamtInvestition,
@@ -105,10 +128,11 @@ export default function ROIDashboard({ anlage, monatsdaten, investitionen }: ROI
     ? Math.min((gesamtErtrag / gesamtInvestition) * 100, 100)
     : 0
 
-  // Hochrechnung bis Amortisation
-  const durchschnittErtragProJahr = yearlyStats.length > 0
-    ? yearlyStats.reduce((sum, y) => sum + y.nettoErtrag, 0) / yearlyStats.length
+  // Hochrechnung bis Amortisation - basierend auf Monaten für korrekte Unterjährigkeitsberechnung
+  const durchschnittErtragProMonat = gesamtMonate > 0
+    ? yearlyStats.reduce((sum, y) => sum + y.nettoErtrag, 0) / gesamtMonate
     : 0
+  const durchschnittErtragProJahr = durchschnittErtragProMonat * 12
 
   const verbleibendeJahre = durchschnittErtragProJahr > 0
     ? verbleibendeInvestition / durchschnittErtragProJahr
@@ -173,45 +197,69 @@ export default function ROIDashboard({ anlage, monatsdaten, investitionen }: ROI
       {/* KPI Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <div className={card.padded}>
-          <div className={`${text.sm} mb-1`}>Gesamtertrag</div>
-          <div className={`text-2xl ${colors.positiveBold}`}>{fmtDec(gesamtErtrag)} €</div>
-          <div className={`${text.xs} mt-1`}>
-            seit {yearlyStats.length} Jahr{yearlyStats.length !== 1 ? 'en' : ''}
-          </div>
+          <FormelTooltip
+            formel="Summe aller Jahres-Nettoerträge"
+            berechnung={`${yearlyStats.length} Jahre × Ø ${fmt(durchschnittErtragProJahr)} €`}
+            ergebnis={`= ${fmtDec(gesamtErtrag)} €`}
+          >
+            <div className={`${text.sm} mb-1`}>Gesamtertrag</div>
+            <div className={`text-2xl ${colors.positiveBold}`}>{fmtDec(gesamtErtrag)} €</div>
+            <div className={`${text.xs} mt-1`}>
+              seit {yearlyStats.length} Jahr{yearlyStats.length !== 1 ? 'en' : ''} ({gesamtMonate} Monate)
+            </div>
+          </FormelTooltip>
         </div>
 
         <div className={card.padded}>
-          <div className={`${text.sm} mb-1`}>Amortisation</div>
-          <div className={`text-2xl font-bold ${istAmortisiert ? 'text-green-700 dark:text-green-400' : colors.accent}`}>
-            {istAmortisiert ? '✓ Erreicht' : `${fmtDec(verbleibendeJahre)} J.`}
-          </div>
-          <div className={`${text.xs} mt-1`}>
-            {istAmortisiert ? `+${fmtDec(gesamtErtrag - gesamtInvestition)} € Gewinn` : 'bis Payback'}
-          </div>
+          <FormelTooltip
+            formel="Verbleibende Investition ÷ Ø Ertrag/Jahr"
+            berechnung={`${fmtDec(verbleibendeInvestition)} € ÷ ${fmt(durchschnittErtragProJahr)} €`}
+            ergebnis={istAmortisiert ? 'Bereits amortisiert!' : `= ${fmtDec(verbleibendeJahre)} Jahre`}
+          >
+            <div className={`${text.sm} mb-1`}>Amortisation</div>
+            <div className={`text-2xl font-bold ${istAmortisiert ? 'text-green-700 dark:text-green-400' : colors.accent}`}>
+              {istAmortisiert ? '✓ Erreicht' : `${fmtDec(verbleibendeJahre)} J.`}
+            </div>
+            <div className={`${text.xs} mt-1`}>
+              {istAmortisiert ? `+${fmtDec(gesamtErtrag - gesamtInvestition)} € Gewinn` : 'bis Payback'}
+            </div>
+          </FormelTooltip>
         </div>
 
         <div className={card.padded}>
-          <div className={`${text.sm} mb-1`}>Ø Ertrag/Jahr</div>
-          <div className={`text-2xl ${colors.accentBold}`}>{fmt(durchschnittErtragProJahr)} €</div>
-          <div className={`${text.xs} mt-1`}>
-            {yoyWachstum !== 0 && letzesJahr ? (
-              <span className={yoyWachstum > 0 ? colors.positive : colors.negative}>
-                {yoyWachstum > 0 ? '+' : ''}{fmtDec(yoyWachstum)}% YoY
-              </span>
-            ) : (
-              'Durchschnitt'
-            )}
-          </div>
+          <FormelTooltip
+            formel="Gesamtertrag ÷ Anzahl Monate × 12"
+            berechnung={`${fmtDec(gesamtErtrag)} € ÷ ${gesamtMonate} × 12`}
+            ergebnis={`= ${fmt(durchschnittErtragProJahr)} €/Jahr`}
+          >
+            <div className={`${text.sm} mb-1`}>Ø Ertrag/Jahr</div>
+            <div className={`text-2xl ${colors.accentBold}`}>{fmt(durchschnittErtragProJahr)} €</div>
+            <div className={`${text.xs} mt-1`}>
+              {yoyWachstum !== 0 && letzesJahr ? (
+                <span className={yoyWachstum > 0 ? colors.positive : colors.negative}>
+                  {yoyWachstum > 0 ? '+' : ''}{fmtDec(yoyWachstum)}% YoY
+                </span>
+              ) : (
+                'Durchschnitt'
+              )}
+            </div>
+          </FormelTooltip>
         </div>
 
         <div className={card.padded}>
-          <div className={`${text.sm} mb-1`}>ROI aktuell</div>
-          <div className={`text-2xl ${colors.specialBold}`}>
-            {fmtDec((gesamtErtrag / gesamtInvestition) * 100)}%
-          </div>
-          <div className={`${text.xs} mt-1`}>
-            von {fmt(gesamtInvestition)} €
-          </div>
+          <FormelTooltip
+            formel="Gesamtertrag ÷ Investition × 100"
+            berechnung={`${fmtDec(gesamtErtrag)} € ÷ ${fmt(gesamtInvestition)} € × 100`}
+            ergebnis={`= ${fmtDec((gesamtErtrag / gesamtInvestition) * 100)}%`}
+          >
+            <div className={`${text.sm} mb-1`}>ROI aktuell</div>
+            <div className={`text-2xl ${colors.specialBold}`}>
+              {fmtDec((gesamtErtrag / gesamtInvestition) * 100)}%
+            </div>
+            <div className={`${text.xs} mt-1`}>
+              von {fmt(gesamtInvestition)} €
+            </div>
+          </FormelTooltip>
         </div>
       </div>
 
@@ -328,9 +376,11 @@ export default function ROIDashboard({ anlage, monatsdaten, investitionen }: ROI
             <thead className={table.thead}>
               <tr>
                 <th className={table.th}>Jahr</th>
+                <th className={table.thRight}>Monate</th>
                 <th className={table.thRight}>Erzeugung</th>
-                <th className={table.thRight}>Erlöse</th>
-                <th className={table.thRight}>Kosten</th>
+                <th className={table.thRight}>EV-Einsparung</th>
+                <th className={table.thRight}>Einspeisung</th>
+                <th className={table.thRight}>Betriebsk.</th>
                 <th className={table.thRight}>Netto</th>
                 <th className={table.thRight}>Kumuliert</th>
                 <th className={table.thRight}>Fortschritt</th>
@@ -342,13 +392,19 @@ export default function ROIDashboard({ anlage, monatsdaten, investitionen }: ROI
                   <td className={`${table.td} font-medium`}>
                     {year.jahr}
                   </td>
+                  <td className={`${table.tdRight} ${year.anzahlMonate < 12 ? 'text-orange-600' : ''}`}>
+                    {year.anzahlMonate}{year.anzahlMonate < 12 ? '*' : ''}
+                  </td>
                   <td className={table.tdRight}>
                     {fmt(year.erzeugung)} kWh
                   </td>
-                  <td className={`${table.tdRight} ${colors.positive} font-medium`}>
-                    {fmtDec(year.erloese)} €
+                  <td className={`${table.tdRight} ${colors.positive}`}>
+                    {fmtDec(year.eigenverbrauchEinsparung)} €
                   </td>
-                  <td className={`${table.tdRight} ${colors.negative} font-medium`}>
+                  <td className={`${table.tdRight} ${colors.positive}`}>
+                    {fmtDec(year.einspeiseErloese)} €
+                  </td>
+                  <td className={`${table.tdRight} ${colors.negative}`}>
                     {fmtDec(year.kosten)} €
                   </td>
                   <td className={`${table.tdRight} ${colors.accentBold}`}>
@@ -366,6 +422,23 @@ export default function ROIDashboard({ anlage, monatsdaten, investitionen }: ROI
               ))}
             </tbody>
           </table>
+        </div>
+        {/* Legende für unterjährige Jahre */}
+        {yearlyStats.some(y => y.anzahlMonate < 12) && (
+          <div className={`px-6 py-3 border-t ${border.default} ${text.xs}`}>
+            <span className="text-orange-600">*</span> Unterjährig erfasst (weniger als 12 Monate). Der Ø Ertrag/Jahr wird korrekt auf Basis aller erfassten Monate hochgerechnet.
+          </div>
+        )}
+      </div>
+
+      {/* Berechnungs-Erläuterung */}
+      <div className={`${gradient.infoBox} rounded-lg p-4`}>
+        <h4 className={`${text.sm} font-medium mb-2`}>Berechnungsgrundlage</h4>
+        <div className={`${text.xs} space-y-1`}>
+          <div><strong>EV-Einsparung:</strong> Eigenverbrauch × Netzbezugspreis (gesparter Stromeinkauf)</div>
+          <div><strong>Einspeisung:</strong> Eingespeiste kWh × Einspeisevergütung</div>
+          <div><strong>Netto-Ertrag:</strong> EV-Einsparung + Einspeisung − Betriebskosten</div>
+          <div className="text-gray-500 italic mt-2">Netzbezugskosten werden nicht abgezogen, da diese auch ohne PV-Anlage anfallen würden.</div>
         </div>
       </div>
 

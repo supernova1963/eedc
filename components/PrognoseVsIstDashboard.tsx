@@ -3,6 +3,7 @@
 
 'use client'
 
+import { useState } from 'react'
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ComposedChart } from 'recharts'
 import SimpleIcon from './SimpleIcon'
 import ExportButton from './ExportButton'
@@ -22,9 +23,12 @@ interface MonatsPrognose {
   abweichungKwh: number
   abweichungProzent: number
   genauigkeit: number
+  istInstallationsmonat: boolean
 }
 
 export default function PrognoseVsIstDashboard({ monatsdaten, anlage }: PrognoseVsIstDashboardProps) {
+  // Toggle um Installationsmonat ein-/auszuschließen
+  const [excludeInstallationsmonat, setExcludeInstallationsmonat] = useState(true)
 
   if (!monatsdaten || monatsdaten.length === 0) {
     return (
@@ -39,6 +43,15 @@ export default function PrognoseVsIstDashboard({ monatsdaten, anlage }: Prognose
     if (val === null || val === undefined) return 0
     return parseFloat(String(val)) || 0
   }
+
+  // Ermittle den Installationsmonat (erster Monat mit Daten oder aus Anlage)
+  const sortedData = [...monatsdaten].sort((a, b) => {
+    if (a.jahr !== b.jahr) return a.jahr - b.jahr
+    return a.monat - b.monat
+  })
+  const ersterMonat = sortedData[0]
+  const installationsJahr = ersterMonat?.jahr
+  const installationsMonat = ersterMonat?.monat
 
   const fmt = (num: number): string => {
     return num.toLocaleString('de-DE', { maximumFractionDigits: 0 })
@@ -88,8 +101,11 @@ export default function PrognoseVsIstDashboard({ monatsdaten, anlage }: Prognose
   })
 
   // Berechne Prognose für jeden Monat
-  const prognoseData: MonatsPrognose[] = monatsdaten.map(m => {
+  const prognoseDataAll: MonatsPrognose[] = monatsdaten.map(m => {
     const istErzeugung = toNum(m.pv_erzeugung_kwh)
+
+    // Prüfe ob dies der Installationsmonat ist
+    const istInstallationsmonat = m.jahr === installationsJahr && m.monat === installationsMonat
 
     // Methode 1: Durchschnitt gleicher Monat in Vorjahren
     const gleicheMonateDaten = monatsdatenByMonat[m.monat] || []
@@ -122,14 +138,23 @@ export default function PrognoseVsIstDashboard({ monatsdaten, anlage }: Prognose
     return {
       jahr: m.jahr,
       monat: m.monat,
-      monatName: `${monatsnamen[m.monat]} ${m.jahr}`,
+      monatName: `${monatsnamen[m.monat]} ${m.jahr}${istInstallationsmonat ? '*' : ''}`,
       istErzeugung,
       prognoseErzeugung,
       abweichungKwh,
       abweichungProzent,
-      genauigkeit
+      genauigkeit,
+      istInstallationsmonat
     }
   })
+
+  // Filtere Installationsmonat wenn gewünscht
+  const prognoseData = excludeInstallationsmonat
+    ? prognoseDataAll.filter(m => !m.istInstallationsmonat)
+    : prognoseDataAll
+
+  // Info über Installationsmonat
+  const installationsmonatData = prognoseDataAll.find(m => m.istInstallationsmonat)
 
   // Sortiere chronologisch
   prognoseData.sort((a, b) => {
@@ -185,7 +210,8 @@ export default function PrognoseVsIstDashboard({ monatsdaten, anlage }: Prognose
             Vergleich prognostizierte und tatsächliche PV-Erzeugung
           </p>
         </div>
-        <ExportButton
+        <div className="flex items-center gap-4">
+          <ExportButton
           data={prognoseData}
           filename={`Prognose_vs_IST_${new Date().toISOString().split('T')[0]}`}
           headers={['Jahr', 'Monat', 'IST-Erzeugung (kWh)', 'Prognose (kWh)', 'Abweichung (kWh)', 'Abweichung (%)', 'Genauigkeit (%)']}
@@ -199,7 +225,46 @@ export default function PrognoseVsIstDashboard({ monatsdaten, anlage }: Prognose
             m.genauigkeit.toFixed(2)
           ]}
         />
+        </div>
       </div>
+
+      {/* Installationsmonat Hinweis und Toggle */}
+      {installationsmonatData && (
+        <div className="bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-700 rounded-lg p-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <SimpleIcon type="alert" className="w-5 h-5 text-orange-600 dark:text-orange-400" />
+              <div>
+                <div className={`${text.sm} font-medium text-orange-800 dark:text-orange-200`}>
+                  Installationsmonat erkannt: {monatsnamen[installationsMonat]} {installationsJahr}
+                </div>
+                <div className={`${text.xs} text-orange-600 dark:text-orange-400`}>
+                  Bei untermonatlicher Installation ist die Erzeugung typischerweise geringer als die Prognose.
+                  IST: {fmt(installationsmonatData.istErzeugung)} kWh vs. Prognose: {fmt(installationsmonatData.prognoseErzeugung)} kWh
+                  ({fmtDec(installationsmonatData.abweichungProzent)}%)
+                </div>
+              </div>
+            </div>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <span className={`${text.xs} text-orange-700 dark:text-orange-300`}>
+                {excludeInstallationsmonat ? 'Ausgeblendet' : 'Einbezogen'}
+              </span>
+              <button
+                onClick={() => setExcludeInstallationsmonat(!excludeInstallationsmonat)}
+                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                  excludeInstallationsmonat ? 'bg-orange-500' : 'bg-gray-300 dark:bg-gray-600'
+                }`}
+              >
+                <span
+                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                    excludeInstallationsmonat ? 'translate-x-6' : 'translate-x-1'
+                  }`}
+                />
+              </button>
+            </label>
+          </div>
+        </div>
+      )}
 
       {/* KPI Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">

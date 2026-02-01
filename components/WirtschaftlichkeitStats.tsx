@@ -5,6 +5,7 @@
 
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
 import SimpleIcon from './SimpleIcon'
+import FormelTooltip, { fmtCalc } from './FormelTooltip'
 
 interface WirtschaftlichkeitStatsProps {
   monatsdaten: any[]
@@ -49,13 +50,19 @@ export default function WirtschaftlichkeitStats({ monatsdaten, anlage }: Wirtsch
     sum + toNum(m.einspeisung_kwh), 0
   )
   
-  const gesamtErloese = monatsdaten.reduce((sum, m) =>
+  // Einspeise-Erlöse
+  const gesamtEinspeiseErloese = monatsdaten.reduce((sum, m) =>
     sum + toNum(m.einspeisung_ertrag_euro), 0
   )
 
-  const gesamtNetzbezugKosten = monatsdaten.reduce((sum, m) =>
-    sum + toNum(m.netzbezug_kosten_euro), 0
-  )
+  // Eigenverbrauch-Einsparung = gesparter Netzbezug durch Eigenverbrauch
+  const durchschnittNetzbezugPreis = monatsdaten.length > 0
+    ? monatsdaten.reduce((sum, m) => sum + toNum(m.netzbezug_preis_cent_kwh), 0) / monatsdaten.length
+    : 0
+  const eigenverbrauchEinsparung = gesamtEigenverbrauch * durchschnittNetzbezugPreis / 100
+
+  // Gesamterlöse = Einspeise-Erlöse + Eigenverbrauch-Einsparung
+  const gesamtErloese = gesamtEinspeiseErloese + eigenverbrauchEinsparung
 
   const gesamtBetriebsausgaben = monatsdaten.reduce((sum, m) =>
     sum + toNum(m.betriebsausgaben_monat_euro), 0
@@ -65,7 +72,8 @@ export default function WirtschaftlichkeitStats({ monatsdaten, anlage }: Wirtsch
     ? (gesamtEigenverbrauch / gesamtErzeugung) * 100
     : 0
 
-  const nettoErtrag = gesamtErloese - gesamtNetzbezugKosten - gesamtBetriebsausgaben
+  // Netto-Ertrag = Erlöse - Betriebsausgaben (OHNE Netzbezugskosten!)
+  const nettoErtrag = gesamtErloese - gesamtBetriebsausgaben
 
   // Chart-Daten
   const monatsnamen = ['', 'Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez']
@@ -81,20 +89,47 @@ export default function WirtschaftlichkeitStats({ monatsdaten, anlage }: Wirtsch
       {/* KPIs */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-          <div className="text-sm text-gray-600 dark:text-gray-400">Gesamt-Erzeugung</div>
-          <div className="text-2xl font-bold text-gray-900 dark:text-gray-100">{fmt(gesamtErzeugung)} kWh</div>
+          <FormelTooltip
+            formel="Summe aller monatlichen PV-Erzeugungen"
+            berechnung={`${monatsdaten.length} Monate summiert`}
+            ergebnis={`= ${fmt(gesamtErzeugung)} kWh`}
+          >
+            <div className="text-sm text-gray-600 dark:text-gray-400">Gesamt-Erzeugung</div>
+            <div className="text-2xl font-bold text-gray-900 dark:text-gray-100">{fmt(gesamtErzeugung)} kWh</div>
+          </FormelTooltip>
         </div>
         <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-          <div className="text-sm text-gray-600 dark:text-gray-400">Eigenverbrauch</div>
-          <div className="text-2xl font-bold text-green-700">{fmtDec(eigenverbrauchsquote)}%</div>
+          <FormelTooltip
+            formel="Eigenverbrauch ÷ Erzeugung × 100"
+            berechnung={`${fmt(gesamtEigenverbrauch)} kWh ÷ ${fmt(gesamtErzeugung)} kWh × 100`}
+            ergebnis={`= ${fmtDec(eigenverbrauchsquote)}%`}
+          >
+            <div className="text-sm text-gray-600 dark:text-gray-400">Eigenverbrauchsquote</div>
+            <div className="text-2xl font-bold text-green-700">{fmtDec(eigenverbrauchsquote)}%</div>
+          </FormelTooltip>
         </div>
         <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-          <div className="text-sm text-gray-600 dark:text-gray-400">Erlöse</div>
-          <div className="text-2xl font-bold text-blue-700">{fmtDec(gesamtErloese)} €</div>
+          <FormelTooltip
+            formel="EV-Einsparung + Einspeise-Erlöse"
+            berechnung={`${fmtDec(eigenverbrauchEinsparung)} € + ${fmtDec(gesamtEinspeiseErloese)} €`}
+            ergebnis={`= ${fmtDec(gesamtErloese)} €`}
+          >
+            <div className="text-sm text-gray-600 dark:text-gray-400">Erlöse (gesamt)</div>
+            <div className="text-2xl font-bold text-blue-700">{fmtDec(gesamtErloese)} €</div>
+            <div className="text-xs text-gray-500 mt-1">
+              EV: {fmtDec(eigenverbrauchEinsparung)} € | Einsp: {fmtDec(gesamtEinspeiseErloese)} €
+            </div>
+          </FormelTooltip>
         </div>
         <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-          <div className="text-sm text-gray-600 dark:text-gray-400">Netto-Ertrag</div>
-          <div className="text-2xl font-bold text-green-700">{fmtDec(nettoErtrag)} €</div>
+          <FormelTooltip
+            formel="Erlöse − Betriebsausgaben"
+            berechnung={`${fmtDec(gesamtErloese)} € − ${fmtDec(gesamtBetriebsausgaben)} €`}
+            ergebnis={`= ${fmtDec(nettoErtrag)} €`}
+          >
+            <div className="text-sm text-gray-600 dark:text-gray-400">Netto-Ertrag</div>
+            <div className="text-2xl font-bold text-green-700">{fmtDec(nettoErtrag)} €</div>
+          </FormelTooltip>
         </div>
       </div>
 
@@ -118,6 +153,17 @@ export default function WirtschaftlichkeitStats({ monatsdaten, anlage }: Wirtsch
           </ResponsiveContainer>
         </div>
       )}
+
+      {/* Berechnungs-Erläuterung */}
+      <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg p-4">
+        <h4 className="text-sm font-medium text-gray-900 mb-2">Berechnungsgrundlage</h4>
+        <div className="text-xs text-gray-600 space-y-1">
+          <div><strong>Eigenverbrauch:</strong> Direktverbrauch + Batterieentladung = {fmt(gesamtEigenverbrauch)} kWh</div>
+          <div><strong>EV-Einsparung:</strong> {fmt(gesamtEigenverbrauch)} kWh × {fmtDec(durchschnittNetzbezugPreis)} ct/kWh = {fmtDec(eigenverbrauchEinsparung)} €</div>
+          <div><strong>Einspeise-Erlös:</strong> Einspeisung × Einspeisevergütung = {fmtDec(gesamtEinspeiseErloese)} €</div>
+          <div className="text-gray-500 italic mt-2">Netzbezugskosten werden nicht abgezogen, da diese auch ohne PV-Anlage anfallen würden.</div>
+        </div>
+      </div>
 
       {/* Tabelle */}
       <div className="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">

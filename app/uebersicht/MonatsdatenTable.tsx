@@ -5,6 +5,7 @@ import { useState, useMemo } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import SimpleIcon from '@/components/SimpleIcon'
+import { SimpleTooltip } from '@/components/FormelTooltip'
 
 interface Monatsdaten {
   id: string
@@ -67,24 +68,25 @@ interface Spalte {
   align?: string
   sticky?: boolean
   computed?: boolean
+  tooltip?: string // Formel-Erklärung für berechnete Werte
 }
 
 // Basis-Spalten-Definition
 const BASIS_SPALTEN: Spalte[] = [
   { key: 'monat', label: 'Monat', group: 'basis', align: 'left', sticky: true },
   // Energie
-  { key: 'pv_erzeugung_kwh', label: 'PV-Erzeugung', group: 'energie', unit: 'kWh', color: 'text-yellow-600' },
-  { key: 'gesamtverbrauch_kwh', label: 'Verbrauch', group: 'energie', unit: 'kWh' },
-  { key: 'direktverbrauch_kwh', label: 'Direktverbr.', group: 'energie', unit: 'kWh', color: 'text-green-600' },
+  { key: 'pv_erzeugung_kwh', label: 'PV-Erzeugung', group: 'energie', unit: 'kWh', color: 'text-yellow-600', tooltip: 'Einspeisung + Eigenverbrauch' },
+  { key: 'gesamtverbrauch_kwh', label: 'Verbrauch', group: 'energie', unit: 'kWh', tooltip: 'Eigenverbrauch + Netzbezug' },
+  { key: 'direktverbrauch_kwh', label: 'Direktverbr.', group: 'energie', unit: 'kWh', color: 'text-green-600', tooltip: 'Eigenverbrauch − Batterieentladung' },
   { key: 'batterieladung_kwh', label: 'Batt. Ladung', group: 'energie', unit: 'kWh', color: 'text-blue-500' },
   { key: 'batterieentladung_kwh', label: 'Batt. Entladung', group: 'energie', unit: 'kWh', color: 'text-blue-600' },
   { key: 'einspeisung_kwh', label: 'Einspeisung', group: 'energie', unit: 'kWh', color: 'text-orange-500' },
   { key: 'netzbezug_kwh', label: 'Netzbezug', group: 'energie', unit: 'kWh', color: 'text-red-500' },
   // Finanzen
-  { key: 'eigenverbrauch_einsparung_euro', label: 'EV-Einsparung', group: 'finanzen', unit: '€', color: 'text-green-700', computed: true },
-  { key: 'einspeisung_ertrag_euro', label: 'Einspeise-Erlös', group: 'finanzen', unit: '€', color: 'text-green-600' },
-  { key: 'netzbezug_kosten_euro', label: 'Bezugskosten', group: 'finanzen', unit: '€', color: 'text-red-600' },
-  { key: 'gesamt_ersparnis_euro', label: 'Ersparnis', group: 'finanzen', unit: '€', color: 'text-green-800', computed: true },
+  { key: 'eigenverbrauch_einsparung_euro', label: 'EV-Einsparung', group: 'finanzen', unit: '€', color: 'text-green-700', computed: true, tooltip: 'Eigenverbrauch × Netzbezugspreis' },
+  { key: 'einspeisung_ertrag_euro', label: 'Einspeise-Erlös', group: 'finanzen', unit: '€', color: 'text-green-600', tooltip: 'Einspeisung × Einspeisevergütung' },
+  { key: 'netzbezug_kosten_euro', label: 'Bezugskosten', group: 'finanzen', unit: '€', color: 'text-red-600', tooltip: 'Netzbezug × Netzbezugspreis' },
+  { key: 'gesamt_ersparnis_euro', label: 'Ersparnis', group: 'finanzen', unit: '€', color: 'text-green-800', computed: true, tooltip: 'EV-Einsparung + Einspeise-Erlös (ohne Netzbezugskosten!)' },
   { key: 'betriebsausgaben_monat_euro', label: 'Betriebsausg.', group: 'finanzen', unit: '€' },
   { key: 'netzbezug_preis_cent_kwh', label: 'Bezugspreis', group: 'finanzen', unit: 'ct/kWh' },
   { key: 'einspeisung_preis_cent_kwh', label: 'Einspeisepreis', group: 'finanzen', unit: 'ct/kWh' },
@@ -92,8 +94,8 @@ const BASIS_SPALTEN: Spalte[] = [
   { key: 'sonnenstunden', label: 'Sonnenstd.', group: 'wetter', unit: 'h' },
   { key: 'globalstrahlung_kwh_m2', label: 'Strahlung', group: 'wetter', unit: 'kWh/m²' },
   // Berechnet
-  { key: 'eigenverbrauchsquote', label: 'Eigenverbr.', group: 'berechnet', unit: '%', computed: true, color: 'text-green-700' },
-  { key: 'autarkiegrad', label: 'Autarkie', group: 'berechnet', unit: '%', computed: true, color: 'text-blue-700' },
+  { key: 'eigenverbrauchsquote', label: 'Eigenverbr.', group: 'berechnet', unit: '%', computed: true, color: 'text-green-700', tooltip: 'Eigenverbrauch ÷ PV-Erzeugung × 100' },
+  { key: 'autarkiegrad', label: 'Autarkie', group: 'berechnet', unit: '%', computed: true, color: 'text-blue-700', tooltip: 'Eigenverbrauch ÷ Gesamtverbrauch × 100' },
   // Meta
   { key: 'datenquelle', label: 'Quelle', group: 'meta' },
   { key: 'notizen', label: 'Notizen', group: 'meta' },
@@ -368,9 +370,9 @@ export default function MonatsdatenTable({
   }, [vorhandeneTypen])
 
   return (
-    <div className="bg-white rounded-lg shadow overflow-hidden">
+    <div className="bg-white rounded-lg shadow overflow-hidden h-full flex flex-col">
       {/* Header mit Filter */}
-      <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+      <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
             Alle Monatsdaten ({data.length})
@@ -400,9 +402,8 @@ export default function MonatsdatenTable({
         </div>
       </div>
 
-      {/* Tabelle mit horizontalem und vertikalem Scrollen - dynamische Höhe bis Bildschirmende */}
-      {/* 280px = Header (~180px) + Filter (~60px) + Legende (~40px) */}
-      <div className="overflow-auto" style={{ maxHeight: 'calc(100vh - 280px)' }}>
+      {/* Tabelle mit horizontalem und vertikalem Scrollen - füllt verfügbaren Platz */}
+      <div className="overflow-auto flex-1 min-h-0">
         <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
           <thead className="bg-gray-50 dark:bg-gray-700 sticky top-0 z-30">
             <tr>
@@ -417,7 +418,15 @@ export default function MonatsdatenTable({
                     'align' in spalte && spalte.align === 'left' ? 'text-left' : 'text-right'
                   } ${'sticky' in spalte && spalte.sticky ? 'sticky left-24 z-40 bg-gray-50 dark:bg-gray-700' : ''}`}
                 >
-                  {spalte.label}
+                  {spalte.tooltip ? (
+                    <SimpleTooltip text={spalte.tooltip} position="bottom">
+                      <span className="cursor-help border-b border-dotted border-gray-400">
+                        {spalte.label}
+                      </span>
+                    </SimpleTooltip>
+                  ) : (
+                    spalte.label
+                  )}
                   {'unit' in spalte && spalte.unit && <span className="text-gray-400 ml-1">({spalte.unit})</span>}
                 </th>
               ))}
@@ -524,7 +533,7 @@ export default function MonatsdatenTable({
       </div>
 
       {/* Legende */}
-      <div className="px-6 py-3 bg-gray-50 border-t border-gray-200 text-xs text-gray-500 dark:text-gray-400">
+      <div className="px-6 py-3 bg-gray-50 border-t border-gray-200 text-xs text-gray-500 dark:text-gray-400 flex-shrink-0">
         <span className="mr-4">Tipp: Horizontal scrollen für alle Spalten | Klick auf Monat oder Stift-Icon zum Bearbeiten</span>
         <span className="mr-4">|</span>
         <span className="text-yellow-600 mr-2">●</span> PV-Erzeugung
