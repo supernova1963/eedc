@@ -254,7 +254,9 @@ AS $$
       COALESCE(SUM(md.netzbezug_kwh), 0) as gesamt_netzbezug,
       COALESCE(SUM(md.gesamtverbrauch_kwh), 0) as gesamt_verbrauch,
       -- Finanzen
-      COALESCE(SUM(md.einspeisung_ertrag_euro), 0) as gesamt_einspeisung_ertrag
+      COALESCE(SUM(md.einspeisung_ertrag_euro), 0) as gesamt_einspeisung_ertrag,
+      -- Durchschnittlicher Strompreis aus Monatsdaten (in ct -> /100 für Euro)
+      COALESCE(AVG(md.netzbezug_preis_cent_kwh), 30) / 100.0 as avg_strompreis_euro
     FROM monatsdaten md
     WHERE md.anlage_id = p_anlage_id
     GROUP BY md.anlage_id
@@ -285,10 +287,10 @@ AS $$
     ma.anzahl_monate::integer,
     ma.erster_monat,
     ma.letzter_monat,
-    -- Wirtschaftlich
+    -- Wirtschaftlich (Strompreis aus Monatsdaten, Fallback 0.30 €/kWh)
     ROUND(ma.gesamt_einspeisung_ertrag, 2) as gesamt_einspeisung_ertrag_euro,
-    ROUND(ma.gesamt_eigenverbrauch * COALESCE(a.netzbezugspreis_euro_kwh, 0.30), 2) as gesamt_ev_einsparung_euro,
-    ROUND((ma.gesamt_eigenverbrauch * COALESCE(a.netzbezugspreis_euro_kwh, 0.30) + ma.gesamt_einspeisung_ertrag) / NULLIF(ma.anzahl_monate, 0), 2) as durchschnitt_netto_ertrag_monat_euro
+    ROUND(ma.gesamt_eigenverbrauch * ma.avg_strompreis_euro, 2) as gesamt_ev_einsparung_euro,
+    ROUND((ma.gesamt_eigenverbrauch * ma.avg_strompreis_euro + ma.gesamt_einspeisung_ertrag) / NULLIF(ma.anzahl_monate, 0), 2) as durchschnitt_netto_ertrag_monat_euro
   FROM anlagen a
   LEFT JOIN monatsdaten_agg ma ON ma.anlage_id = a.id
   WHERE a.id = p_anlage_id
