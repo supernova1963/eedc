@@ -6,6 +6,7 @@
 import { useState } from 'react'
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend, BarChart, Bar, XAxis, YAxis, CartesianGrid } from 'recharts'
 import SimpleIcon from './SimpleIcon'
+import FormelTooltip, { fmtCalc } from './FormelTooltip'
 
 interface MonatsDetailViewProps {
   monatsdaten: any[]
@@ -159,9 +160,15 @@ export default function MonatsDetailView({ monatsdaten, anlage }: MonatsDetailVi
             <SimpleIcon type="sun" className="w-6 h-6 text-yellow-600" />
           </div>
           <div className="text-3xl font-bold text-yellow-800 dark:text-yellow-300">{fmt(erzeugung)} kWh</div>
-          <div className="text-xs text-yellow-700 mt-1">
-            {fmtDec(spezifischerErtrag)} kWh/kWp
-          </div>
+          <FormelTooltip
+            formel="Erzeugung ÷ Anlagenleistung"
+            berechnung={`${fmtCalc(erzeugung, 0)} kWh ÷ ${fmtCalc(anlage?.leistung_kwp)} kWp`}
+            ergebnis={`= ${fmtCalc(spezifischerErtrag)} kWh/kWp`}
+          >
+            <span className="text-xs text-yellow-700 mt-1">
+              {fmtDec(spezifischerErtrag)} kWh/kWp
+            </span>
+          </FormelTooltip>
           {vormonat && (
             <div className={`text-xs mt-1 ${veraenderungErzeugung >= 0 ? 'text-green-600' : 'text-red-600'}`}>
               {veraenderungErzeugung >= 0 ? '+' : ''}{fmtDec(veraenderungErzeugung)}% zum Vormonat
@@ -174,10 +181,22 @@ export default function MonatsDetailView({ monatsdaten, anlage }: MonatsDetailVi
             <div className="text-sm text-blue-800 font-medium">Eigenverbrauch</div>
             <SimpleIcon type="home" className="w-6 h-6 text-blue-600" />
           </div>
-          <div className="text-3xl font-bold text-blue-800 dark:text-blue-300">{fmt(eigenverbrauchAbsolut)} kWh</div>
-          <div className="text-xs text-blue-700 mt-1">
-            {fmtDec(eigenverbrauchsquote)}% Quote
-          </div>
+          <FormelTooltip
+            formel="Direktverbrauch + Batterieentladung"
+            berechnung={`${fmtCalc(direktverbrauch, 0)} + ${fmtCalc(batterieentladung, 0)} kWh`}
+            ergebnis={`= ${fmtCalc(eigenverbrauchAbsolut, 0)} kWh`}
+          >
+            <span className="text-3xl font-bold text-blue-800 dark:text-blue-300">{fmt(eigenverbrauchAbsolut)} kWh</span>
+          </FormelTooltip>
+          <FormelTooltip
+            formel="Eigenverbrauch ÷ Erzeugung × 100"
+            berechnung={`${fmtCalc(eigenverbrauchAbsolut, 0)} ÷ ${fmtCalc(erzeugung, 0)} × 100`}
+            ergebnis={`= ${fmtCalc(eigenverbrauchsquote)}%`}
+          >
+            <span className="text-xs text-blue-700 mt-1">
+              {fmtDec(eigenverbrauchsquote)}% Quote
+            </span>
+          </FormelTooltip>
         </div>
 
         <div className="bg-gradient-to-br from-purple-50 to-violet-100 rounded-lg shadow p-6 border border-purple-200">
@@ -185,7 +204,13 @@ export default function MonatsDetailView({ monatsdaten, anlage }: MonatsDetailVi
             <div className="text-sm text-purple-800 font-medium">Autarkiegrad</div>
             <SimpleIcon type="shield" className="w-6 h-6 text-purple-600" />
           </div>
-          <div className="text-3xl font-bold text-purple-800">{fmtDec(autarkiegrad)}%</div>
+          <FormelTooltip
+            formel="Eigenverbrauch ÷ Gesamtverbrauch × 100"
+            berechnung={`${fmtCalc(eigenverbrauch, 0)} ÷ ${fmtCalc(gesamtverbrauch, 0)} × 100`}
+            ergebnis={`= ${fmtCalc(autarkiegrad)}%`}
+          >
+            <span className="text-3xl font-bold text-purple-800">{fmtDec(autarkiegrad)}%</span>
+          </FormelTooltip>
           <div className="text-xs text-purple-700 mt-1">
             Unabhängigkeit vom Netz
           </div>
@@ -196,9 +221,15 @@ export default function MonatsDetailView({ monatsdaten, anlage }: MonatsDetailVi
             <div className="text-sm text-green-800 font-medium">Netto-Ertrag</div>
             <SimpleIcon type="money" className="w-6 h-6 text-green-600" />
           </div>
-          <div className={`text-3xl font-bold ${nettoErtrag >= 0 ? 'text-green-800' : 'text-red-800'}`}>
-            {nettoErtrag >= 0 ? '+' : ''}{fmtDec(nettoErtrag)} €
-          </div>
+          <FormelTooltip
+            formel="Einspeise-Erlöse − Netzbezugskosten − Betriebsausgaben"
+            berechnung={`${fmtCalc(einspeisungErtrag)} € − ${fmtCalc(netzbezugKosten)} € − ${fmtCalc(betriebsausgaben)} €`}
+            ergebnis={`= ${fmtCalc(nettoErtrag)} €`}
+          >
+            <span className={`text-3xl font-bold ${nettoErtrag >= 0 ? 'text-green-800' : 'text-red-800'}`}>
+              {nettoErtrag >= 0 ? '+' : ''}{fmtDec(nettoErtrag)} €
+            </span>
+          </FormelTooltip>
           <div className="text-xs text-green-700 mt-1">
             Erlöse - Kosten
           </div>
@@ -355,19 +386,51 @@ export default function MonatsDetailView({ monatsdaten, anlage }: MonatsDetailVi
                   </td>
                 </tr>
                 <tr>
-                  <td className="py-2 text-sm text-gray-600 pt-4">Eigenverbrauchsquote</td>
+                  <td className="py-2 text-sm text-gray-600 pt-4">
+                    <FormelTooltip
+                      formel="Eigenverbrauch ÷ Erzeugung × 100"
+                      berechnung={`${fmtCalc(eigenverbrauch, 0)} ÷ ${fmtCalc(erzeugung, 0)} × 100`}
+                      ergebnis={`= ${fmtCalc(eigenverbrauchsquote)}%`}
+                    >
+                      <span>Eigenverbrauchsquote</span>
+                    </FormelTooltip>
+                  </td>
                   <td className="py-2 text-sm text-right font-medium text-blue-600 pt-4">{fmtDec(eigenverbrauchsquote)}%</td>
                 </tr>
                 <tr>
-                  <td className="py-2 text-sm text-gray-600 dark:text-gray-400">Autarkiegrad</td>
+                  <td className="py-2 text-sm text-gray-600 dark:text-gray-400">
+                    <FormelTooltip
+                      formel="Eigenverbrauch ÷ Gesamtverbrauch × 100"
+                      berechnung={`${fmtCalc(eigenverbrauch, 0)} ÷ ${fmtCalc(gesamtverbrauch, 0)} × 100`}
+                      ergebnis={`= ${fmtCalc(autarkiegrad)}%`}
+                    >
+                      <span>Autarkiegrad</span>
+                    </FormelTooltip>
+                  </td>
                   <td className="py-2 text-sm text-right font-medium text-purple-600">{fmtDec(autarkiegrad)}%</td>
                 </tr>
                 <tr>
-                  <td className="py-2 text-sm text-gray-600 dark:text-gray-400">Batterie-Effizienz</td>
+                  <td className="py-2 text-sm text-gray-600 dark:text-gray-400">
+                    <FormelTooltip
+                      formel="Batterieentladung ÷ Batterieladung × 100"
+                      berechnung={`${fmtCalc(batterieentladung, 0)} ÷ ${fmtCalc(batterieladung, 0)} × 100`}
+                      ergebnis={`= ${fmtCalc(batterieEffizienz)}%`}
+                    >
+                      <span>Batterie-Effizienz</span>
+                    </FormelTooltip>
+                  </td>
                   <td className="py-2 text-sm text-right font-medium text-purple-600">{fmtDec(batterieEffizienz)}%</td>
                 </tr>
                 <tr>
-                  <td className="py-2 text-sm text-gray-600 dark:text-gray-400">Ø Erzeugung/Tag</td>
+                  <td className="py-2 text-sm text-gray-600 dark:text-gray-400">
+                    <FormelTooltip
+                      formel="Erzeugung ÷ 30 Tage"
+                      berechnung={`${fmtCalc(erzeugung, 0)} kWh ÷ 30`}
+                      ergebnis={`= ${fmtCalc(durchschnittTagErzeugung)} kWh/Tag`}
+                    >
+                      <span>Ø Erzeugung/Tag</span>
+                    </FormelTooltip>
+                  </td>
                   <td className="py-2 text-sm text-right font-medium text-gray-900 dark:text-gray-100">{fmtDec(durchschnittTagErzeugung)} kWh</td>
                 </tr>
               </tbody>
@@ -397,9 +460,15 @@ export default function MonatsDetailView({ monatsdaten, anlage }: MonatsDetailVi
             <div className="text-sm text-gray-600 dark:text-gray-400">
               {nettoErtrag > 0 ? '✓ Positiv' : '⚠ Negativ'}: {fmtDec(nettoErtrag)} €
             </div>
-            <div className="text-sm text-gray-600 mt-1">
-              Einsparung: {fmtDec(eigenverbrauchAbsolut * 0.30)} € vermieden
-            </div>
+            <FormelTooltip
+              formel="Eigenverbrauch × Ø Strompreis (0,30 €/kWh)"
+              berechnung={`${fmtCalc(eigenverbrauchAbsolut, 0)} kWh × 0,30 €/kWh`}
+              ergebnis={`= ${fmtCalc(eigenverbrauchAbsolut * 0.30)} € vermieden`}
+            >
+              <span className="text-sm text-gray-600 mt-1">
+                Einsparung: {fmtDec(eigenverbrauchAbsolut * 0.30)} € vermieden
+              </span>
+            </FormelTooltip>
           </div>
           <div className="bg-white dark:bg-gray-700 rounded-lg p-4">
             <div className="text-sm font-medium text-gray-700 mb-2">Speicher</div>
