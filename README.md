@@ -1,8 +1,72 @@
 # 🌞 eedc - Electronic Energy Data Collection
 
-Webanwendung zur Verwaltung und Auswertung von PV-Anlagen, E-Autos und Investitionen.
+Webanwendung zur Verwaltung und Auswertung von PV-Anlagen, E-Autos, Wärmepumpen, Speicher und Wallboxen.
 
-## 🚀 Schnellstart
+---
+
+## 🧪 Alpha-Tester Kurzanleitung
+
+> **Ziel:** Schnell loslegen und erste Ergebnisse sehen!
+
+### 1. Registrieren & Einloggen
+- Öffne die App und registriere dich mit E-Mail
+- Nach Login landest du auf dem Dashboard
+
+### 2. Anlage anlegen (2 Min.)
+**Menü → Anlagendaten** oder direkt `/anlage`
+- Anlagenname eingeben (z.B. "Meine PV")
+- **Leistung (kWp)** - wichtig für Kennzahlen!
+- Einspeisevergütung (ct/kWh)
+- Netzbezugspreis (€/kWh)
+- **Speichern**
+
+### 3. Investitionen erfassen (optional, für ROI)
+**Menü → Investitionen → Neue Investition**
+- **PV-Anlage**: Anschaffungskosten, Inbetriebnahme
+- **Speicher**: Kapazität, Kosten
+- **E-Auto**: km/Jahr, Verbrauch
+- **Wärmepumpe**: JAZ, Wärmebedarf
+- **Wallbox**: Kosten
+
+### 4. Monatsdaten erfassen (5 Min.)
+**Menü → Daten erfassen** oder `/eingabe`
+
+**Wichtigste Felder:**
+| Feld | Quelle | Hinweis |
+|------|--------|---------|
+| PV-Erzeugung (kWh) | Wechselrichter-App | Monatswert |
+| Einspeisung (kWh) | Zähler/App | Was ins Netz ging |
+| Netzbezug (kWh) | Stromzähler | Was aus dem Netz kam |
+| Direktverbrauch (kWh) | Erzeugung - Einspeisung - Batterieladung | Wird oft berechnet |
+
+**Mit Speicher zusätzlich:**
+- Batterieladung (kWh)
+- Batterieentladung (kWh)
+
+**Tipp:** Die App berechnet Gesamtverbrauch, Eigenverbrauchsquote und Autarkiegrad automatisch!
+
+### 5. Auswertungen ansehen
+**Menü → Auswertungen** - verschiedene Tabs:
+- **PV-Anlage**: Wirtschaftlichkeit, Charts
+- **Monats-Details**: Detailanalyse mit Tooltips (Formeln!)
+- **ROI-Analyse**: Return on Investment
+- **Prognose vs. IST**: Vergleich mit Erwartung
+- **KI-Analyse**: Automatische Empfehlungen
+
+### 💡 Tipps für schnelle Ergebnisse
+
+1. **Mindestens 3 Monate** erfassen für aussagekräftige Trends
+2. **Hover über Werte** → Tooltips zeigen Berechnungsformeln
+3. **Investitionen anlegen** → ROI und Amortisation werden berechnet
+4. **CSV-Import** unter `/daten-import` für Bulk-Erfassung
+
+### 🐛 Feedback & Bugs
+
+Bitte melden unter: https://github.com/supernova1963/eedc/issues
+
+---
+
+## 🚀 Entwickler-Schnellstart
 
 ### 1. Installation
 ```bash
