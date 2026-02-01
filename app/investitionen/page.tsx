@@ -11,13 +11,32 @@ import SimpleIcon from '@/components/SimpleIcon'
 async function getInvestitionen(mitgliedId: string) {
   const supabase = await createClient()
 
-  const { data } = await supabase
+  // Hole Investitionen-Übersicht (Prognosen)
+  const { data: investitionen } = await supabase
     .from('investitionen_uebersicht')
     .select('*')
     .eq('mitglied_id', mitgliedId)
     .order('anschaffungsdatum', { ascending: false })
 
-  return data || []
+  // Hole Ist-Werte aus investition_prognose_ist_vergleich
+  const { data: istVergleich } = await supabase
+    .from('investition_prognose_ist_vergleich')
+    .select('*')
+    .eq('mitglied_id', mitgliedId)
+
+  // Merge die Daten
+  const investitionenMitIst = (investitionen || []).map(inv => {
+    const ist = istVergleich?.find(i => i.investition_id === inv.id)
+    return {
+      ...inv,
+      ist_gesamt_euro: ist?.ist_gesamt_euro ?? null,
+      ist_hochrechnung_jahr_euro: ist?.ist_hochrechnung_jahr_euro ?? null,
+      anzahl_monate_erfasst: ist?.anzahl_monate_erfasst ?? 0,
+      abweichung_prozent: ist?.abweichung_prozent ?? null
+    }
+  })
+
+  return investitionenMitIst
 }
 
 async function deleteInvestition(formData: FormData) {
@@ -145,10 +164,13 @@ export default async function InvestitionenPage() {
                     Mehrkosten
                   </th>
                   <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Einsparung/Jahr
+                    <span className="text-gray-400">Prognose</span>/Jahr
                   </th>
                   <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    ROI
+                    <span className="text-green-600">Ist</span>/Jahr
+                  </th>
+                  <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Abweichung
                   </th>
                   <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Amortisation
@@ -183,11 +205,33 @@ export default async function InvestitionenPage() {
                     <td className="px-6 py-4 text-right text-sm font-medium text-blue-600">
                       +{formatCurrency(inv.anschaffungskosten_relevant)}
                     </td>
-                    <td className="px-6 py-4 text-right text-sm font-medium text-green-600">
+                    <td className="px-6 py-4 text-right text-sm text-gray-500">
                       {formatCurrency(inv.einsparung_gesamt_jahr)}
                     </td>
-                    <td className="px-6 py-4 text-right text-sm text-gray-900 dark:text-gray-100">
-                      {formatPercent(inv.roi_prozent)}
+                    <td className="px-6 py-4 text-right text-sm">
+                      {inv.anzahl_monate_erfasst > 0 ? (
+                        <div>
+                          <span className="font-medium text-green-600">
+                            {formatCurrency(inv.ist_hochrechnung_jahr_euro)}
+                          </span>
+                          <div className="text-xs text-gray-400">
+                            ({inv.anzahl_monate_erfasst} Mon.)
+                          </div>
+                        </div>
+                      ) : (
+                        <span className="text-gray-400 text-xs">keine Daten</span>
+                      )}
+                    </td>
+                    <td className="px-6 py-4 text-right text-sm">
+                      {inv.abweichung_prozent !== null ? (
+                        <span className={`font-medium ${
+                          inv.abweichung_prozent >= 0 ? 'text-green-600' : 'text-red-600'
+                        }`}>
+                          {inv.abweichung_prozent >= 0 ? '+' : ''}{inv.abweichung_prozent.toFixed(1)}%
+                        </span>
+                      ) : (
+                        <span className="text-gray-400">-</span>
+                      )}
                     </td>
                     <td className="px-6 py-4 text-right text-sm text-gray-900 dark:text-gray-100">
                       {inv.amortisation_jahre ? `${inv.amortisation_jahre.toFixed(1)} J.` : '-'}

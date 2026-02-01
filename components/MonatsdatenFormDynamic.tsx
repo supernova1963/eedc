@@ -69,6 +69,7 @@ export default function MonatsdatenFormDynamic({
   const hatSpeicher = investitionen.some(i => i.typ === 'speicher')
   const hatEAuto = investitionen.some(i => i.typ === 'e-auto')
   const hatWaermepumpe = investitionen.some(i => i.typ === 'waermepumpe')
+  const hatWallbox = investitionen.some(i => i.typ === 'wallbox')
 
   // Formular State - NUR Rohdaten
   const [formData, setFormData] = useState(() => ({
@@ -112,6 +113,11 @@ export default function MonatsdatenFormDynamic({
           heizenergie_kwh: existing?.heizenergie_kwh?.toString() || '',
           warmwasser_kwh: existing?.warmwasser_kwh?.toString() || '',
           stromverbrauch_kwh: existing?.stromverbrauch_kwh?.toString() || ''
+        }
+      } else if (inv.typ === 'wallbox') {
+        initial[inv.id] = {
+          ladung_kwh: existing?.ladung_kwh?.toString() || '',
+          ladevorgaenge: existing?.ladevorgaenge?.toString() || ''
         }
       }
     })
@@ -173,6 +179,8 @@ export default function MonatsdatenFormDynamic({
     let waermepumpeStrom = 0
     let waermepumpeHeizenergie = 0
     let waermepumpeWarmwasser = 0
+    let wallboxLadung = 0
+    let wallboxLadevorgaenge = 0
 
     investitionen.forEach(inv => {
       const daten = investitionsDaten[inv.id]
@@ -193,6 +201,9 @@ export default function MonatsdatenFormDynamic({
         waermepumpeStrom += parseFloat(daten?.stromverbrauch_kwh) || 0
         waermepumpeHeizenergie += parseFloat(daten?.heizenergie_kwh) || 0
         waermepumpeWarmwasser += parseFloat(daten?.warmwasser_kwh) || 0
+      } else if (inv.typ === 'wallbox') {
+        wallboxLadung += parseFloat(daten?.ladung_kwh) || 0
+        wallboxLadevorgaenge += parseFloat(daten?.ladevorgaenge) || 0
       }
     })
 
@@ -229,6 +240,11 @@ export default function MonatsdatenFormDynamic({
     const waermepumpeArbeitszahl = waermepumpeStrom > 0 ? waermepumpeWaermeGesamt / waermepumpeStrom : 0
     const waermepumpeHeizanteil = waermepumpeWaermeGesamt > 0 ? (waermepumpeHeizenergie / waermepumpeWaermeGesamt) * 100 : 0
 
+    // Wallbox Kennzahlen - Vergleich mit E-Auto Ladung
+    // Wenn Wallbox-Ladung < E-Auto-Ladung gesamt → extern geladen
+    const wallboxExternGeladen = eAutoLadungGesamt > wallboxLadung ? eAutoLadungGesamt - wallboxLadung : 0
+    const wallboxKwhProLadevorgang = wallboxLadevorgaenge > 0 ? wallboxLadung / wallboxLadevorgaenge : 0
+
     // Plausibilitätsprüfung
     const bilanzOk = direktverbrauch >= 0 && eigenverbrauch >= 0
 
@@ -239,6 +255,16 @@ export default function MonatsdatenFormDynamic({
 
     const netzbezugKostenEuro = stammStrompreise.netzbezug_cent_kwh
       ? (netzbezug * stammStrompreise.netzbezug_cent_kwh / 100)
+      : null
+
+    // Eigenverbrauch-Einsparung = Was wir durch Eigenverbrauch an Netzbezugskosten gespart haben
+    const eigenverbrauchEinsparungEuro = stammStrompreise.netzbezug_cent_kwh
+      ? (eigenverbrauch * stammStrompreise.netzbezug_cent_kwh / 100)
+      : null
+
+    // Gesamtersparnis = Einspeise-Erlös + Eigenverbrauch-Einsparung - Netzbezugskosten
+    const gesamtErsparnisEuro = (eigenverbrauchEinsparungEuro !== null && einspeisungErtragEuro !== null && netzbezugKostenEuro !== null)
+      ? (eigenverbrauchEinsparungEuro + einspeisungErtragEuro - netzbezugKostenEuro)
       : null
 
     return {
@@ -256,6 +282,10 @@ export default function MonatsdatenFormDynamic({
       waermepumpeHeizenergie,
       waermepumpeWarmwasser,
       waermepumpeWaermeGesamt,
+      wallboxLadung,
+      wallboxLadevorgaenge,
+      wallboxExternGeladen,
+      wallboxKwhProLadevorgang,
       // Berechnete Werte
       direktverbrauch,
       eigenverbrauch,
@@ -277,7 +307,9 @@ export default function MonatsdatenFormDynamic({
       bilanzOk,
       // Finanzen
       einspeisungErtragEuro,
-      netzbezugKostenEuro
+      netzbezugKostenEuro,
+      eigenverbrauchEinsparungEuro,
+      gesamtErsparnisEuro
     }
   }, [formData, investitionsDaten, investitionen, stammStrompreise])
 
@@ -343,35 +375,90 @@ export default function MonatsdatenFormDynamic({
 
       if (dbError) throw dbError
 
-      // 2. Investitions-Monatsdaten speichern
+      // 2. Investitions-Monatsdaten speichern mit Einsparungs-Berechnung
+      const strompreisNetz = stammStrompreise.netzbezug_cent_kwh || 30 // Fallback 30 ct/kWh
+
       for (const inv of investitionen) {
         const daten = investitionsDaten[inv.id]
         if (!daten) continue
 
         let verbrauchDaten: any = {}
+        let einsparungMonatEuro: number | null = null
+        let co2EinsparungKg: number | null = null
 
         if (inv.typ === 'wechselrichter') {
           verbrauchDaten = {
             pv_erzeugung_ist_kwh: parseFloat(daten.pv_erzeugung_kwh) || 0
           }
+          // Wechselrichter hat keine direkte Einsparung (wird über Eigenverbrauch erfasst)
         } else if (inv.typ === 'speicher') {
+          const entladung = parseFloat(daten.entladung_kwh) || 0
+          const ladung = parseFloat(daten.ladung_kwh) || 0
           verbrauchDaten = {
-            entladung_kwh: parseFloat(daten.entladung_kwh) || 0,
-            ladung_kwh: parseFloat(daten.ladung_kwh) || 0
+            entladung_kwh: entladung,
+            ladung_kwh: ladung
           }
+          // Speicher-Einsparung: Entladung wird zum Eigenverbrauch und spart Netzbezug
+          // Aber: Ladung kommt oft aus PV, daher nur die Netto-Einsparung durch Entladung
+          // Vereinfachte Berechnung: Entladung × Strompreis (weil wir sonst Netz bezogen hätten)
+          einsparungMonatEuro = entladung * strompreisNetz / 100
+          co2EinsparungKg = entladung * 0.4 // ~400g CO2/kWh Strommix
         } else if (inv.typ === 'e-auto') {
+          const kmGefahren = parseFloat(daten.km_gefahren) || 0
+          const verbrauchKwh = parseFloat(daten.verbrauch_kwh) || 0
+          const ladungPvKwh = parseFloat(daten.ladung_pv_kwh) || 0
+          const ladungNetzKwh = parseFloat(daten.ladung_netz_kwh) || 0
           verbrauchDaten = {
-            km_gefahren: parseFloat(daten.km_gefahren) || 0,
-            verbrauch_kwh: parseFloat(daten.verbrauch_kwh) || 0,
-            ladung_pv_kwh: parseFloat(daten.ladung_pv_kwh) || 0,
-            ladung_netz_kwh: parseFloat(daten.ladung_netz_kwh) || 0
+            km_gefahren: kmGefahren,
+            verbrauch_kwh: verbrauchKwh,
+            ladung_pv_kwh: ladungPvKwh,
+            ladung_netz_kwh: ladungNetzKwh
           }
+
+          // E-Auto Einsparung: Vergleich mit Verbrenner-Alternative
+          const benzinPreis = parseFloat(inv.parameter?.benzinpreis_euro_liter) || 1.69
+          const verbrennerVerbrauch = parseFloat(inv.parameter?.vergleich_verbrenner_l_100km) || 7.0 // Fallback 7L/100km
+
+          // Spritkosten die wir hätten zahlen müssen
+          const spritKostenAlternativ = (kmGefahren / 100) * verbrennerVerbrauch * benzinPreis
+
+          // Tatsächliche Stromkosten (nur Netz-Ladung kostet, PV ist "gratis")
+          const stromKostenEAuto = ladungNetzKwh * strompreisNetz / 100
+
+          einsparungMonatEuro = spritKostenAlternativ - stromKostenEAuto
+          co2EinsparungKg = (kmGefahren / 100) * verbrennerVerbrauch * 2.37 // ~2.37 kg CO2/Liter Benzin
         } else if (inv.typ === 'waermepumpe') {
+          const heizenergie = parseFloat(daten.heizenergie_kwh) || 0
+          const warmwasser = parseFloat(daten.warmwasser_kwh) || 0
+          const stromverbrauch = parseFloat(daten.stromverbrauch_kwh) || 0
           verbrauchDaten = {
-            heizenergie_kwh: parseFloat(daten.heizenergie_kwh) || 0,
-            warmwasser_kwh: parseFloat(daten.warmwasser_kwh) || 0,
-            stromverbrauch_kwh: parseFloat(daten.stromverbrauch_kwh) || 0
+            heizenergie_kwh: heizenergie,
+            warmwasser_kwh: warmwasser,
+            stromverbrauch_kwh: stromverbrauch
           }
+
+          // Wärmepumpe Einsparung: Vergleich mit altem Energieträger (Gas/Öl)
+          const alterPreisCent = parseFloat(inv.parameter?.alter_preis_cent_kwh) || 8 // Fallback 8 ct/kWh
+          const waermeGesamt = heizenergie + warmwasser
+
+          // Kosten die wir mit Gas/Öl hätten zahlen müssen
+          const alterEnergieKosten = waermeGesamt * alterPreisCent / 100
+
+          // Tatsächliche Stromkosten der WP (vereinfacht: ganzer Stromverbrauch × Netzpreis)
+          // Bei PV-Eigenverbrauch wäre es weniger, aber das ist in Eigenverbrauch-Einsparung erfasst
+          const wpStromKosten = stromverbrauch * strompreisNetz / 100
+
+          einsparungMonatEuro = alterEnergieKosten - wpStromKosten
+
+          // CO2: Gas ~0.2 kg/kWh, Öl ~0.27 kg/kWh, Strom-Mix ~0.4 kg/kWh
+          const alterCo2Faktor = inv.parameter?.alter_energietraeger === 'Öl' ? 0.27 : 0.20
+          co2EinsparungKg = waermeGesamt * alterCo2Faktor - stromverbrauch * 0.4
+        } else if (inv.typ === 'wallbox') {
+          verbrauchDaten = {
+            ladung_kwh: parseFloat(daten.ladung_kwh) || 0,
+            ladevorgaenge: parseFloat(daten.ladevorgaenge) || 0
+          }
+          // Wallbox selbst hat keine Einsparung - die wird beim E-Auto erfasst
         }
 
         const hatDaten = Object.values(verbrauchDaten).some((v: any) => v > 0)
@@ -382,7 +469,9 @@ export default function MonatsdatenFormDynamic({
               investition_id: inv.id,
               jahr: formData.jahr,
               monat: formData.monat,
-              verbrauch_daten: verbrauchDaten
+              verbrauch_daten: verbrauchDaten,
+              einsparung_monat_euro: einsparungMonatEuro,
+              co2_einsparung_kg: co2EinsparungKg
             }, { onConflict: 'investition_id,jahr,monat' })
 
           if (invError) {
@@ -460,7 +549,8 @@ export default function MonatsdatenFormDynamic({
   if (savedData) {
     return (
       <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-        <div className="flex items-center gap-3 mb-6">
+        {/* Header */}
+        <div className="flex items-center gap-3 mb-6 pb-4 border-b border-gray-200">
           <div className="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center">
             <SimpleIcon type="check" className="w-6 h-6 text-green-600" />
           </div>
@@ -468,221 +558,281 @@ export default function MonatsdatenFormDynamic({
             <h2 className="text-xl font-semibold text-gray-900">
               {monate[formData.monat - 1]} {formData.jahr} gespeichert
             </h2>
-            <p className="text-sm text-gray-600">Hier ist die Zusammenfassung der erfassten und berechneten Werte</p>
+            <p className="text-sm text-gray-600">Zusammenfassung der erfassten und berechneten Werte</p>
           </div>
         </div>
 
-        {/* Erfasste Rohdaten */}
-        <div className="mb-6">
-          <h3 className="text-lg font-medium text-gray-900 mb-3 flex items-center gap-2">
-            <SimpleIcon type="edit" className="w-5 h-5 text-blue-500" />
-            Erfasste Werte
-          </h3>
-          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-              <div>
-                <span className="text-blue-700">Einspeisung:</span>
-                <span className="float-right font-medium">{savedData.einspeisung_kwh.toFixed(1)} kWh</span>
+        {/* Hauptkennzahlen - immer sichtbar, kompakt */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+          <div className="bg-gradient-to-br from-yellow-50 to-yellow-100 border border-yellow-200 rounded-xl p-4 text-center">
+            <div className="text-3xl font-bold text-yellow-700">{berechneteWerte.autarkiegrad.toFixed(0)}%</div>
+            <div className="text-xs text-yellow-600 font-medium">Autarkiegrad</div>
+          </div>
+          <div className="bg-gradient-to-br from-green-50 to-green-100 border border-green-200 rounded-xl p-4 text-center">
+            <div className="text-3xl font-bold text-green-700">{berechneteWerte.eigenverbrauchsquote.toFixed(0)}%</div>
+            <div className="text-xs text-green-600 font-medium">Eigenverbrauch</div>
+          </div>
+          <div className="bg-gradient-to-br from-blue-50 to-blue-100 border border-blue-200 rounded-xl p-4 text-center">
+            <div className="text-3xl font-bold text-blue-700">{berechneteWerte.pvErzeugung.toFixed(0)}</div>
+            <div className="text-xs text-blue-600 font-medium">kWh erzeugt</div>
+          </div>
+          {berechneteWerte.gesamtErsparnisEuro !== null ? (
+            <div className={`bg-gradient-to-br rounded-xl p-4 text-center ${
+              berechneteWerte.gesamtErsparnisEuro >= 0
+                ? 'from-green-50 to-green-100 border border-green-200'
+                : 'from-red-50 to-red-100 border border-red-200'
+            }`}>
+              <div className={`text-3xl font-bold ${
+                berechneteWerte.gesamtErsparnisEuro >= 0
+                  ? 'text-green-700' : 'text-red-700'
+              }`}>
+                {berechneteWerte.gesamtErsparnisEuro >= 0 ? '+' : ''}
+                {berechneteWerte.gesamtErsparnisEuro.toFixed(0)}€
               </div>
-              <div>
-                <span className="text-blue-700">Netzbezug:</span>
-                <span className="float-right font-medium">{savedData.netzbezug_kwh.toFixed(1)} kWh</span>
-              </div>
-              {berechneteWerte.pvErzeugung > 0 && (
-                <div>
-                  <span className="text-blue-700">PV (Σ Wechselrichter):</span>
-                  <span className="float-right font-medium">{berechneteWerte.pvErzeugung.toFixed(1)} kWh</span>
+              <div className="text-xs text-gray-600 font-medium">Ersparnis</div>
+            </div>
+          ) : (
+            <div className="bg-gradient-to-br from-gray-50 to-gray-100 border border-gray-200 rounded-xl p-4 text-center">
+              <div className="text-3xl font-bold text-gray-700">{berechneteWerte.gesamtverbrauch.toFixed(0)}</div>
+              <div className="text-xs text-gray-600 font-medium">kWh Verbrauch</div>
+            </div>
+          )}
+        </div>
+
+        {/* Zwei-Spalten-Layout für Details */}
+        <div className="grid md:grid-cols-2 gap-6">
+
+          {/* Linke Spalte: Energiebilanz */}
+          <div className="space-y-4">
+            {/* Energieflüsse */}
+            <div className="bg-gray-50 rounded-lg p-4">
+              <h4 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
+                <SimpleIcon type="grid" className="w-4 h-4" />
+                Energiebilanz
+              </h4>
+              <div className="space-y-2 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-gray-600">PV-Erzeugung</span>
+                  <span className="font-medium text-yellow-700">{berechneteWerte.pvErzeugung.toFixed(1)} kWh</span>
                 </div>
-              )}
-              {berechneteWerte.batterieEntladung > 0 && (
-                <div>
-                  <span className="text-blue-700">Batterie (Σ Speicher):</span>
-                  <span className="float-right font-medium">
-                    +{berechneteWerte.batterieEntladung.toFixed(1)} / -{berechneteWerte.batterieLadung.toFixed(1)} kWh
-                  </span>
+                <div className="flex justify-between">
+                  <span className="text-gray-600">Direktverbrauch</span>
+                  <span className="font-medium">{berechneteWerte.direktverbrauch.toFixed(1)} kWh</span>
                 </div>
-              )}
+                <div className="flex justify-between">
+                  <span className="text-gray-600">Eigenverbrauch</span>
+                  <span className="font-medium text-green-700">{berechneteWerte.eigenverbrauch.toFixed(1)} kWh</span>
+                </div>
+                <div className="border-t border-gray-200 pt-2 flex justify-between">
+                  <span className="text-gray-600">Gesamtverbrauch</span>
+                  <span className="font-semibold">{berechneteWerte.gesamtverbrauch.toFixed(1)} kWh</span>
+                </div>
+              </div>
             </div>
-          </div>
-        </div>
 
-        {/* Berechnete Werte */}
-        <div className="mb-6">
-          <h3 className="text-lg font-medium text-gray-900 mb-3 flex items-center gap-2">
-            <SimpleIcon type="calculator" className="w-5 h-5 text-green-500" />
-            Berechnete Werte
-          </h3>
-          <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
-              <div>
-                <span className="text-green-700">Direktverbrauch:</span>
-                <span className="float-right font-medium">{berechneteWerte.direktverbrauch.toFixed(1)} kWh</span>
-              </div>
-              <div>
-                <span className="text-green-700">Eigenverbrauch:</span>
-                <span className="float-right font-medium">{berechneteWerte.eigenverbrauch.toFixed(1)} kWh</span>
-              </div>
-              <div>
-                <span className="text-green-700">Gesamtverbrauch:</span>
-                <span className="float-right font-medium">{berechneteWerte.gesamtverbrauch.toFixed(1)} kWh</span>
+            {/* Netz */}
+            <div className="bg-gray-50 rounded-lg p-4">
+              <h4 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
+                <SimpleIcon type="grid" className="w-4 h-4" />
+                Netz
+              </h4>
+              <div className="space-y-2 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-gray-600">Einspeisung</span>
+                  <span className="font-medium text-green-600">+{savedData.einspeisung_kwh.toFixed(1)} kWh</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-600">Netzbezug</span>
+                  <span className="font-medium text-red-600">-{savedData.netzbezug_kwh.toFixed(1)} kWh</span>
+                </div>
+                {berechneteWerte.eigenverbrauchEinsparungEuro !== null && (
+                  <div className="flex justify-between border-t border-gray-200 pt-2">
+                    <span className="text-gray-600">Eigenverbrauch-Einsparung</span>
+                    <span className="font-medium text-green-600">+{berechneteWerte.eigenverbrauchEinsparungEuro.toFixed(2)} €</span>
+                  </div>
+                )}
+                {berechneteWerte.einspeisungErtragEuro !== null && (
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">Einspeise-Erlös</span>
+                    <span className="font-medium text-green-600">+{berechneteWerte.einspeisungErtragEuro.toFixed(2)} €</span>
+                  </div>
+                )}
+                {berechneteWerte.netzbezugKostenEuro !== null && (
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">Netzbezugskosten</span>
+                    <span className="font-medium text-red-600">-{berechneteWerte.netzbezugKostenEuro.toFixed(2)} €</span>
+                  </div>
+                )}
+                {berechneteWerte.gesamtErsparnisEuro !== null && (
+                  <div className="flex justify-between border-t border-gray-200 pt-2 mt-2">
+                    <span className="font-semibold text-gray-700">Gesamtersparnis</span>
+                    <span className={`font-bold ${berechneteWerte.gesamtErsparnisEuro >= 0 ? 'text-green-700' : 'text-red-700'}`}>
+                      {berechneteWerte.gesamtErsparnisEuro >= 0 ? '+' : ''}{berechneteWerte.gesamtErsparnisEuro.toFixed(2)} €
+                    </span>
+                  </div>
+                )}
               </div>
             </div>
-          </div>
-        </div>
 
-        {/* Kennzahlen */}
-        <div className="mb-6">
-          <h3 className="text-lg font-medium text-gray-900 mb-3 flex items-center gap-2">
-            <SimpleIcon type="chart" className="w-5 h-5 text-purple-500" />
-            Kennzahlen
-          </h3>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-center">
-              <div className="text-2xl font-bold text-yellow-700">{berechneteWerte.eigenverbrauchsquote.toFixed(1)}%</div>
-              <div className="text-xs text-yellow-600">Eigenverbrauchsquote</div>
-            </div>
-            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-center">
-              <div className="text-2xl font-bold text-yellow-700">{berechneteWerte.direktverbrauchsquote.toFixed(1)}%</div>
-              <div className="text-xs text-yellow-600">Direktverbrauchsquote</div>
-            </div>
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-center">
-              <div className="text-2xl font-bold text-blue-700">{berechneteWerte.autarkiegrad.toFixed(1)}%</div>
-              <div className="text-xs text-blue-600">Autarkiegrad</div>
-            </div>
+            {/* PV-Kennzahlen */}
             {berechneteWerte.spezifischerErtrag > 0 && (
-              <div className="bg-orange-50 border border-orange-200 rounded-lg p-3 text-center">
-                <div className="text-2xl font-bold text-orange-700">{berechneteWerte.spezifischerErtrag.toFixed(1)}</div>
-                <div className="text-xs text-orange-600">kWh/kWp</div>
+              <div className="bg-yellow-50 rounded-lg p-4">
+                <h4 className="text-sm font-semibold text-yellow-800 mb-3 flex items-center gap-2">
+                  <SimpleIcon type="sun" className="w-4 h-4" />
+                  PV-Anlage
+                </h4>
+                <div className="grid grid-cols-2 gap-3 text-sm">
+                  <div className="text-center">
+                    <div className="text-xl font-bold text-yellow-700">{berechneteWerte.spezifischerErtrag.toFixed(1)}</div>
+                    <div className="text-xs text-yellow-600">kWh/kWp</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-xl font-bold text-yellow-700">{berechneteWerte.direktverbrauchsquote.toFixed(1)}%</div>
+                    <div className="text-xs text-yellow-600">Direktverbrauch</div>
+                  </div>
+                </div>
               </div>
             )}
           </div>
 
-          {/* Batterie-Kennzahlen (nur wenn Speicher vorhanden) */}
-          {berechneteWerte.batterieLadung > 0 && (
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-4">
-              <div className="bg-green-50 border border-green-200 rounded-lg p-3 text-center">
-                <div className="text-2xl font-bold text-green-700">{berechneteWerte.batteriezyklen.toFixed(1)}</div>
-                <div className="text-xs text-green-600">Batteriezyklen</div>
-              </div>
-              <div className="bg-green-50 border border-green-200 rounded-lg p-3 text-center">
-                <div className="text-2xl font-bold text-green-700">{berechneteWerte.batterieWirkungsgrad.toFixed(1)}%</div>
-                <div className="text-xs text-green-600">Batterie-Wirkungsgrad</div>
-              </div>
-              {berechneteWerte.speicherKapazitaet > 0 && (
-                <div className="bg-green-50 border border-green-200 rounded-lg p-3 text-center">
-                  <div className="text-2xl font-bold text-green-700">{berechneteWerte.speicherKapazitaet.toFixed(1)} kWh</div>
-                  <div className="text-xs text-green-600">Speicherkapazität</div>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* E-Auto-Kennzahlen (nur wenn E-Auto Daten vorhanden) */}
-          {berechneteWerte.eAutoLadungGesamt > 0 && (
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-center">
-                <div className="text-2xl font-bold text-blue-700">{berechneteWerte.eAutoVerbrauchPro100km.toFixed(1)}</div>
-                <div className="text-xs text-blue-600">kWh/100km</div>
-              </div>
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-center">
-                <div className="text-2xl font-bold text-blue-700">{berechneteWerte.eAutoPvLadeanteil.toFixed(1)}%</div>
-                <div className="text-xs text-blue-600">PV-Ladeanteil</div>
-              </div>
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-center">
-                <div className="text-2xl font-bold text-blue-700">{berechneteWerte.eAutoLadungGesamt.toFixed(1)} kWh</div>
-                <div className="text-xs text-blue-600">Ladung Gesamt</div>
-              </div>
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-center">
-                <div className="text-2xl font-bold text-blue-700">{berechneteWerte.eAutoKmGefahren.toFixed(0)} km</div>
-                <div className="text-xs text-blue-600">Gefahrene km</div>
-              </div>
-            </div>
-          )}
-
-          {/* Wärmepumpe-Kennzahlen (nur wenn Wärmepumpe Daten vorhanden) */}
-          {berechneteWerte.waermepumpeWaermeGesamt > 0 && (
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-              <div className="bg-orange-50 border border-orange-200 rounded-lg p-3 text-center">
-                <div className="text-2xl font-bold text-orange-700">{berechneteWerte.waermepumpeArbeitszahl.toFixed(2)}</div>
-                <div className="text-xs text-orange-600">Arbeitszahl (COP)</div>
-              </div>
-              <div className="bg-orange-50 border border-orange-200 rounded-lg p-3 text-center">
-                <div className="text-2xl font-bold text-orange-700">{berechneteWerte.waermepumpeHeizanteil.toFixed(1)}%</div>
-                <div className="text-xs text-orange-600">Heizanteil</div>
-              </div>
-              <div className="bg-orange-50 border border-orange-200 rounded-lg p-3 text-center">
-                <div className="text-2xl font-bold text-orange-700">{berechneteWerte.waermepumpeWaermeGesamt.toFixed(1)} kWh</div>
-                <div className="text-xs text-orange-600">Wärme Gesamt</div>
-              </div>
-              <div className="bg-orange-50 border border-orange-200 rounded-lg p-3 text-center">
-                <div className="text-2xl font-bold text-orange-700">{berechneteWerte.waermepumpeStrom.toFixed(1)} kWh</div>
-                <div className="text-xs text-orange-600">Stromverbrauch</div>
-              </div>
-            </div>
-          )}
-
-          {/* Finanz-Kennzahlen */}
-          {(berechneteWerte.einspeisungErtragEuro !== null || berechneteWerte.netzbezugKostenEuro !== null) && (
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-              {berechneteWerte.einspeisungErtragEuro !== null && (
-                <div className="bg-green-50 border border-green-200 rounded-lg p-3 text-center">
-                  <div className="text-2xl font-bold text-green-700">+{berechneteWerte.einspeisungErtragEuro.toFixed(2)} €</div>
-                  <div className="text-xs text-green-600">Einspeise-Erlös</div>
-                </div>
-              )}
-              {berechneteWerte.netzbezugKostenEuro !== null && (
-                <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-center">
-                  <div className="text-2xl font-bold text-red-700">-{berechneteWerte.netzbezugKostenEuro.toFixed(2)} €</div>
-                  <div className="text-xs text-red-600">Netzbezugskosten</div>
-                </div>
-              )}
-              {berechneteWerte.einspeisungErtragEuro !== null && berechneteWerte.netzbezugKostenEuro !== null && (
-                <div className={`rounded-lg p-3 text-center ${
-                  (berechneteWerte.einspeisungErtragEuro - berechneteWerte.netzbezugKostenEuro) >= 0
-                    ? 'bg-green-100 border border-green-300'
-                    : 'bg-red-100 border border-red-300'
-                }`}>
-                  <div className={`text-2xl font-bold ${
-                    (berechneteWerte.einspeisungErtragEuro - berechneteWerte.netzbezugKostenEuro) >= 0
-                      ? 'text-green-800'
-                      : 'text-red-800'
-                  }`}>
-                    {(berechneteWerte.einspeisungErtragEuro - berechneteWerte.netzbezugKostenEuro) >= 0 ? '+' : ''}
-                    {(berechneteWerte.einspeisungErtragEuro - berechneteWerte.netzbezugKostenEuro).toFixed(2)} €
+          {/* Rechte Spalte: Komponenten */}
+          <div className="space-y-4">
+            {/* Batteriespeicher */}
+            {berechneteWerte.batterieLadung > 0 && (
+              <div className="bg-green-50 rounded-lg p-4">
+                <h4 className="text-sm font-semibold text-green-800 mb-3 flex items-center gap-2">
+                  <SimpleIcon type="battery" className="w-4 h-4" />
+                  Batteriespeicher
+                </h4>
+                <div className="grid grid-cols-3 gap-2 text-sm">
+                  <div className="text-center">
+                    <div className="text-xl font-bold text-green-700">{berechneteWerte.batteriezyklen.toFixed(1)}</div>
+                    <div className="text-xs text-green-600">Zyklen</div>
                   </div>
-                  <div className="text-xs text-gray-600">Bilanz Monat</div>
+                  <div className="text-center">
+                    <div className="text-xl font-bold text-green-700">{berechneteWerte.batterieWirkungsgrad.toFixed(0)}%</div>
+                    <div className="text-xs text-green-600">Wirkungsgrad</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-xl font-bold text-green-700">{berechneteWerte.batterieEntladung.toFixed(0)}</div>
+                    <div className="text-xs text-green-600">kWh entladen</div>
+                  </div>
                 </div>
-              )}
-            </div>
-          )}
-        </div>
+                <div className="mt-3 pt-3 border-t border-green-200 text-xs text-green-700">
+                  Ladung: {berechneteWerte.batterieLadung.toFixed(1)} kWh | Kapazität: {berechneteWerte.speicherKapazitaet.toFixed(1)} kWh
+                </div>
+              </div>
+            )}
 
-        {/* Wetterdaten */}
-        <div className="mb-6">
-          <h3 className="text-lg font-medium text-gray-900 mb-3 flex items-center gap-2">
-            <SimpleIcon type="sun" className="w-5 h-5 text-yellow-500" />
-            Wetterdaten (Open-Meteo)
-          </h3>
-          {loadingWeather ? (
-            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 text-center">
-              <p className="text-sm text-yellow-700">Wetterdaten werden abgerufen...</p>
-            </div>
-          ) : savedData.wetterDaten ? (
-            <div className="grid grid-cols-2 gap-4">
-              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-center">
-                <div className="text-2xl font-bold text-yellow-700">{savedData.wetterDaten.sonnenstunden.toFixed(1)} h</div>
-                <div className="text-xs text-yellow-600">Sonnenstunden</div>
+            {/* E-Auto */}
+            {berechneteWerte.eAutoLadungGesamt > 0 && (
+              <div className="bg-blue-50 rounded-lg p-4">
+                <h4 className="text-sm font-semibold text-blue-800 mb-3 flex items-center gap-2">
+                  <SimpleIcon type="car" className="w-4 h-4" />
+                  E-Auto
+                </h4>
+                <div className="grid grid-cols-3 gap-2 text-sm">
+                  <div className="text-center">
+                    <div className="text-xl font-bold text-blue-700">{berechneteWerte.eAutoVerbrauchPro100km.toFixed(1)}</div>
+                    <div className="text-xs text-blue-600">kWh/100km</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-xl font-bold text-blue-700">{berechneteWerte.eAutoPvLadeanteil.toFixed(0)}%</div>
+                    <div className="text-xs text-blue-600">PV-Anteil</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-xl font-bold text-blue-700">{berechneteWerte.eAutoKmGefahren.toFixed(0)}</div>
+                    <div className="text-xs text-blue-600">km gefahren</div>
+                  </div>
+                </div>
+                <div className="mt-3 pt-3 border-t border-blue-200 text-xs text-blue-700">
+                  Ladung: {berechneteWerte.eAutoLadungGesamt.toFixed(1)} kWh (PV: {berechneteWerte.eAutoLadungPv.toFixed(1)} | Netz: {berechneteWerte.eAutoLadungNetz.toFixed(1)})
+                </div>
               </div>
-              <div className="bg-orange-50 border border-orange-200 rounded-lg p-3 text-center">
-                <div className="text-2xl font-bold text-orange-700">{savedData.wetterDaten.globalstrahlung_kwh_m2.toFixed(1)} kWh/m²</div>
-                <div className="text-xs text-orange-600">Globalstrahlung</div>
+            )}
+
+            {/* Wärmepumpe */}
+            {berechneteWerte.waermepumpeWaermeGesamt > 0 && (
+              <div className="bg-orange-50 rounded-lg p-4">
+                <h4 className="text-sm font-semibold text-orange-800 mb-3 flex items-center gap-2">
+                  <SimpleIcon type="heat" className="w-4 h-4" />
+                  Wärmepumpe
+                </h4>
+                <div className="grid grid-cols-3 gap-2 text-sm">
+                  <div className="text-center">
+                    <div className="text-xl font-bold text-orange-700">{berechneteWerte.waermepumpeArbeitszahl.toFixed(2)}</div>
+                    <div className="text-xs text-orange-600">COP</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-xl font-bold text-orange-700">{berechneteWerte.waermepumpeHeizanteil.toFixed(0)}%</div>
+                    <div className="text-xs text-orange-600">Heizanteil</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-xl font-bold text-orange-700">{berechneteWerte.waermepumpeWaermeGesamt.toFixed(0)}</div>
+                    <div className="text-xs text-orange-600">kWh Wärme</div>
+                  </div>
+                </div>
+                <div className="mt-3 pt-3 border-t border-orange-200 text-xs text-orange-700">
+                  Heizung: {berechneteWerte.waermepumpeHeizenergie.toFixed(0)} kWh | Warmwasser: {berechneteWerte.waermepumpeWarmwasser.toFixed(0)} kWh | Strom: {berechneteWerte.waermepumpeStrom.toFixed(0)} kWh
+                </div>
               </div>
-            </div>
-          ) : (
-            <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 text-center">
-              <p className="text-sm text-gray-600">Wetterdaten nicht verfügbar (Monat evtl. noch nicht abgeschlossen)</p>
-            </div>
-          )}
+            )}
+
+            {/* Wallbox */}
+            {berechneteWerte.wallboxLadung > 0 && (
+              <div className="bg-purple-50 rounded-lg p-4">
+                <h4 className="text-sm font-semibold text-purple-800 mb-3 flex items-center gap-2">
+                  <SimpleIcon type="wallbox" className="w-4 h-4" />
+                  Wallbox
+                </h4>
+                <div className="grid grid-cols-3 gap-2 text-sm">
+                  <div className="text-center">
+                    <div className="text-xl font-bold text-purple-700">{berechneteWerte.wallboxLadung.toFixed(0)}</div>
+                    <div className="text-xs text-purple-600">kWh geladen</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-xl font-bold text-purple-700">{berechneteWerte.wallboxLadevorgaenge.toFixed(0)}</div>
+                    <div className="text-xs text-purple-600">Ladevorgänge</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-xl font-bold text-purple-700">{berechneteWerte.wallboxKwhProLadevorgang.toFixed(1)}</div>
+                    <div className="text-xs text-purple-600">kWh/Ladung</div>
+                  </div>
+                </div>
+                {berechneteWerte.wallboxExternGeladen > 0 && (
+                  <div className="mt-3 pt-3 border-t border-purple-200 text-xs text-purple-700">
+                    Extern geladen: ca. {berechneteWerte.wallboxExternGeladen.toFixed(1)} kWh (E-Auto-Ladung &gt; Wallbox)
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Wetter */}
+            {savedData.wetterDaten && (
+              <div className="bg-sky-50 rounded-lg p-4">
+                <h4 className="text-sm font-semibold text-sky-800 mb-3 flex items-center gap-2">
+                  <SimpleIcon type="sun" className="w-4 h-4" />
+                  Wetter
+                </h4>
+                <div className="grid grid-cols-2 gap-3 text-sm">
+                  <div className="text-center">
+                    <div className="text-xl font-bold text-sky-700">{savedData.wetterDaten.sonnenstunden.toFixed(0)}h</div>
+                    <div className="text-xs text-sky-600">Sonnenstunden</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-xl font-bold text-sky-700">{savedData.wetterDaten.globalstrahlung_kwh_m2.toFixed(0)}</div>
+                    <div className="text-xs text-sky-600">kWh/m² Strahlung</div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {loadingWeather && (
+              <div className="bg-sky-50 rounded-lg p-4 text-center">
+                <p className="text-sm text-sky-700">Wetterdaten werden abgerufen...</p>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Buttons */}
@@ -706,6 +856,7 @@ export default function MonatsdatenFormDynamic({
                   else if (inv.typ === 'speicher') reset[inv.id] = { entladung_kwh: '', ladung_kwh: '' }
                   else if (inv.typ === 'e-auto') reset[inv.id] = { km_gefahren: '', verbrauch_kwh: '', ladung_pv_kwh: '', ladung_netz_kwh: '' }
                   else if (inv.typ === 'waermepumpe') reset[inv.id] = { heizenergie_kwh: '', warmwasser_kwh: '', stromverbrauch_kwh: '' }
+                  else if (inv.typ === 'wallbox') reset[inv.id] = { ladung_kwh: '', ladevorgaenge: '' }
                 })
                 setInvestitionsDaten(reset)
               }
@@ -1031,6 +1182,55 @@ export default function MonatsdatenFormDynamic({
                 </div>
               </div>
             ))}
+          </div>
+        )}
+
+        {/* Wallbox */}
+        {hatWallbox && (
+          <div className="border-t pt-6">
+            <h3 className="text-lg font-medium text-gray-900 mb-4 flex items-center gap-2">
+              <SimpleIcon type="wallbox" className="w-5 h-5 text-purple-500" />
+              Wallbox
+            </h3>
+            <p className="text-sm text-gray-600 mb-4">
+              Erfasse hier die Ladedaten der Wallbox. Vergleich mit E-Auto zeigt, wie viel extern geladen wurde.
+            </p>
+            {investitionen.filter(i => i.typ === 'wallbox').map(inv => (
+              <div key={inv.id} className="bg-purple-50 border border-purple-200 rounded-lg p-4 mb-3">
+                <p className="text-sm font-medium text-purple-800 mb-3">{inv.bezeichnung}</p>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-purple-700 mb-2">Ladung gesamt (kWh)</label>
+                    <input
+                      type="number"
+                      value={investitionsDaten[inv.id]?.ladung_kwh || ''}
+                      onChange={(e) => handleInvestitionChange(inv.id, 'ladung_kwh', e.target.value)}
+                      step="0.1"
+                      placeholder="200"
+                      className="w-full px-3 py-2 border border-purple-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-purple-700 mb-2">Ladevorgänge</label>
+                    <input
+                      type="number"
+                      value={investitionsDaten[inv.id]?.ladevorgaenge || ''}
+                      onChange={(e) => handleInvestitionChange(inv.id, 'ladevorgaenge', e.target.value)}
+                      step="1"
+                      placeholder="12"
+                      className="w-full px-3 py-2 border border-purple-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500"
+                    />
+                  </div>
+                </div>
+              </div>
+            ))}
+            {/* Hinweis wenn E-Auto und Wallbox vorhanden */}
+            {hatEAuto && berechneteWerte.wallboxExternGeladen > 0 && (
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-blue-700">
+                <strong>Hinweis:</strong> Ca. {berechneteWerte.wallboxExternGeladen.toFixed(1)} kWh wurden extern geladen
+                (E-Auto-Ladung {berechneteWerte.eAutoLadungGesamt.toFixed(1)} kWh &gt; Wallbox {berechneteWerte.wallboxLadung.toFixed(1)} kWh)
+              </div>
+            )}
           </div>
         )}
 

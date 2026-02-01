@@ -71,11 +71,13 @@ const CO2_FAKTOREN = {
   oel_pro_kwh: 0.266
 }
 
-export function berechneEAutoEinsparungen(params: EAutoParams): { co2Einsparung: number; parameter: Record<string, any> } {
+export function berechneEAutoEinsparungen(params: EAutoParams): { co2Einsparung: number; jahresEinsparung: number; parameter: Record<string, any> } {
   const kmJahr = parseFloat(params.km_jahr) || 0
   const verbrauchKwh = parseFloat(params.verbrauch_kwh_100km) || 0
-  const pvAnteil = parseFloat(params.pv_anteil_prozent) || 0
+  const pvAnteil = parseFloat(params.pv_anteil_prozent) || 70
   const verbrauchL = parseFloat(params.vergleich_verbrenner_l_100km) || 0
+  const benzinpreis = parseFloat(params.benzinpreis_euro_liter) || 1.69
+  const betriebskosten = parseFloat(params.betriebskosten_jahr_euro) || 0
 
   const stromGesamt = (kmJahr / 100) * verbrauchKwh
   const stromPV = stromGesamt * (pvAnteil / 100)
@@ -89,8 +91,18 @@ export function berechneEAutoEinsparungen(params: EAutoParams): { co2Einsparung:
   const strompreis = parseFloat(params.strompreis_cent_kwh) || 30
   const stromkostenNetz = (stromNetz * strompreis) / 100
 
+  // Kosten E-Auto: Stromkosten (nur Netz) + Betriebskosten
+  const kostenEAuto = stromkostenNetz + betriebskosten
+
+  // Kosten Verbrenner: Benzinkosten (Betriebskosten Verbrenner nicht berücksichtigt, da in Alternative separat)
+  const benzinkosten = (kmJahr / 100) * verbrauchL * benzinpreis
+
+  // Jahres-Einsparung = Verbrenner-Kosten - E-Auto-Kosten
+  const jahresEinsparung = benzinkosten - kostenEAuto
+
   return {
     co2Einsparung: Math.round(co2Einsparung),
+    jahresEinsparung: Math.round(jahresEinsparung),
     parameter: {
       km_jahr: kmJahr,
       verbrauch_kwh_100km: verbrauchKwh,
@@ -101,16 +113,21 @@ export function berechneEAutoEinsparungen(params: EAutoParams): { co2Einsparung:
       strompreis_cent_kwh: strompreis,
       stromkosten_jahr_euro: Math.round(stromkostenNetz),
       vergleich_verbrenner_l_100km: verbrauchL,
-      benzinpreis_euro_liter: parseFloat(params.benzinpreis_euro_liter) || 0,
-      betriebskosten_jahr_euro: parseFloat(params.betriebskosten_jahr_euro) || 0
+      benzinpreis_euro_liter: benzinpreis,
+      benzinkosten_jahr_euro: Math.round(benzinkosten),
+      betriebskosten_jahr_euro: betriebskosten,
+      kosten_eauto_jahr_euro: Math.round(kostenEAuto)
     }
   }
 }
 
-export function berechneWaermepumpeEinsparungen(params: WaermepumpeParams): { co2Einsparung: number; parameter: Record<string, any> } {
+export function berechneWaermepumpeEinsparungen(params: WaermepumpeParams, strompreis?: number): { co2Einsparung: number; jahresEinsparung: number; parameter: Record<string, any> } {
   const waermebedarf = parseFloat(params.waermebedarf_kwh_jahr) || 0
   const jaz = parseFloat(params.jaz) || 3.5
   const pvAnteil = parseFloat(params.pv_anteil_prozent) || 40
+  const alterPreis = parseFloat(params.alter_preis_cent_kwh) || 8
+  const betriebskosten = parseFloat(params.betriebskosten_jahr_euro) || 0
+  const strompreisNetz = strompreis || 30
 
   const stromVerbrauch = waermebedarf / jaz
   const stromPV = stromVerbrauch * (pvAnteil / 100)
@@ -119,44 +136,73 @@ export function berechneWaermepumpeEinsparungen(params: WaermepumpeParams): { co
   let co2Alt = 0
   if (params.alter_energietraeger === 'Gas') {
     co2Alt = waermebedarf * CO2_FAKTOREN.gas_pro_kwh
-  } else if (params.alter_energietraeger === 'Ol') {
+  } else if (params.alter_energietraeger === 'Öl' || params.alter_energietraeger === 'Ol') {
     co2Alt = waermebedarf * CO2_FAKTOREN.oel_pro_kwh
   }
 
   const co2Neu = stromNetz * CO2_FAKTOREN.strom_netz_pro_kwh
   const co2Einsparung = co2Alt - co2Neu
 
+  // Kosten alte Heizung: Wärmebedarf × alter Preis
+  const kostenAlt = (waermebedarf * alterPreis) / 100
+
+  // Kosten WP: Stromkosten (nur Netz) + Betriebskosten
+  const stromkostenNetz = (stromNetz * strompreisNetz) / 100
+  const kostenWP = stromkostenNetz + betriebskosten
+
+  // Jahres-Einsparung = alte Kosten - WP-Kosten
+  const jahresEinsparung = kostenAlt - kostenWP
+
   return {
     co2Einsparung: Math.round(co2Einsparung),
+    jahresEinsparung: Math.round(jahresEinsparung),
     parameter: {
       heizlast_kw: parseFloat(params.heizlast_kw) || 0,
       jaz: jaz,
       waermebedarf_kwh_jahr: waermebedarf,
       strom_verbrauch_kwh_jahr: Math.round(stromVerbrauch),
+      strom_pv_kwh_jahr: Math.round(stromPV),
+      strom_netz_kwh_jahr: Math.round(stromNetz),
       pv_anteil_prozent: pvAnteil,
+      strompreis_cent_kwh: strompreisNetz,
+      stromkosten_jahr_euro: Math.round(stromkostenNetz),
       alter_energietraeger: params.alter_energietraeger,
-      alter_preis_cent_kwh: parseFloat(params.alter_preis_cent_kwh) || 0,
-      betriebskosten_jahr_euro: parseFloat(params.betriebskosten_jahr_euro) || 0
+      alter_preis_cent_kwh: alterPreis,
+      kosten_alt_jahr_euro: Math.round(kostenAlt),
+      betriebskosten_jahr_euro: betriebskosten,
+      kosten_wp_jahr_euro: Math.round(kostenWP)
     }
   }
 }
 
-export function berechneSpeicherEinsparungen(params: SpeicherParams): { co2Einsparung: number; parameter: Record<string, any> } {
+export function berechneSpeicherEinsparungen(params: SpeicherParams, strompreis?: number, einspeiseverguetung?: number): { co2Einsparung: number; jahresEinsparung: number; parameter: Record<string, any> } {
   const kapazitaet = parseFloat(params.kapazitaet_kwh) || 0
   const wirkungsgrad = parseFloat(params.wirkungsgrad_prozent) || 95
   const jahreszyklen = 250
+  const betriebskosten = parseFloat(params.betriebskosten_jahr_euro) || 0
+  const strompreisNetz = strompreis || 30
+  const einspeisePreis = einspeiseverguetung || 8
 
   const nutzbareSpeicherung = kapazitaet * jahreszyklen * (wirkungsgrad / 100)
   const co2Einsparung = nutzbareSpeicherung * CO2_FAKTOREN.strom_netz_pro_kwh
 
+  // Einsparung durch Speicher: Statt Einspeisung zum niedrigen Preis → Eigenverbrauch zum hohen Preis
+  // Differenz pro kWh = Netzbezugspreis - Einspeisevergütung
+  const differenzProKwh = (strompreisNetz - einspeisePreis) / 100
+  const jahresEinsparung = nutzbareSpeicherung * differenzProKwh - betriebskosten
+
   return {
     co2Einsparung: Math.round(co2Einsparung),
+    jahresEinsparung: Math.round(jahresEinsparung),
     parameter: {
       kapazitaet_kwh: kapazitaet,
       wirkungsgrad_prozent: wirkungsgrad,
       jahreszyklen: jahreszyklen,
       nutzbare_speicherung_kwh_jahr: Math.round(nutzbareSpeicherung),
-      betriebskosten_jahr_euro: parseFloat(params.betriebskosten_jahr_euro) || 0
+      strompreis_cent_kwh: strompreisNetz,
+      einspeiseverguetung_cent_kwh: einspeisePreis,
+      differenz_cent_kwh: Math.round((strompreisNetz - einspeisePreis) * 10) / 10,
+      betriebskosten_jahr_euro: betriebskosten
     }
   }
 }
@@ -222,7 +268,8 @@ export function berechneEinsparungen(
   kostenAlternativ: number,
   parameterData: Record<string, any>
 ): BerechnungsErgebnis {
-  const jahresEinsparung = kostenAlternativ - kostenGesamt
+  // Fallback: Manuelle Einsparung aus Kosten-Differenz
+  let jahresEinsparung = kostenAlternativ - kostenGesamt
   let co2Einsparung = 0
   let parameter: Record<string, any> = {}
 
@@ -231,18 +278,28 @@ export function berechneEinsparungen(
       const result = berechneEAutoEinsparungen(parameterData as EAutoParams)
       co2Einsparung = result.co2Einsparung
       parameter = result.parameter
+      // Automatische Berechnung aus Parametern hat Vorrang
+      if (result.jahresEinsparung !== 0) {
+        jahresEinsparung = result.jahresEinsparung
+      }
       break
     }
     case 'waermepumpe': {
       const result = berechneWaermepumpeEinsparungen(parameterData as WaermepumpeParams)
       co2Einsparung = result.co2Einsparung
       parameter = result.parameter
+      if (result.jahresEinsparung !== 0) {
+        jahresEinsparung = result.jahresEinsparung
+      }
       break
     }
     case 'speicher': {
       const result = berechneSpeicherEinsparungen(parameterData as SpeicherParams)
       co2Einsparung = result.co2Einsparung
       parameter = result.parameter
+      if (result.jahresEinsparung !== 0) {
+        jahresEinsparung = result.jahresEinsparung
+      }
       break
     }
     case 'balkonkraftwerk': {

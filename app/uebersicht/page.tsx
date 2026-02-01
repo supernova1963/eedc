@@ -20,6 +20,34 @@ async function getMonatsdaten(anlageId: string) {
   return data || []
 }
 
+async function getInvestitionenMitMonatsdaten(mitgliedId: string) {
+  const supabase = await createClient()
+
+  // Investitionen laden
+  const { data: investitionen } = await supabase
+    .from('investitionen')
+    .select('id, typ, bezeichnung')
+    .eq('mitglied_id', mitgliedId)
+    .eq('aktiv', true)
+
+  if (!investitionen || investitionen.length === 0) {
+    return { investitionen: [], investitionMonatsdaten: [] }
+  }
+
+  // Investition-Monatsdaten laden
+  const { data: investitionMonatsdaten } = await supabase
+    .from('investition_monatsdaten')
+    .select('id, investition_id, jahr, monat, verbrauch_daten')
+    .in('investition_id', investitionen.map(i => i.id))
+    .order('jahr', { ascending: false })
+    .order('monat', { ascending: false })
+
+  return {
+    investitionen: investitionen || [],
+    investitionMonatsdaten: investitionMonatsdaten || []
+  }
+}
+
 export const dynamic = 'force-dynamic'
 
 export default async function UebersichtPage() {
@@ -53,6 +81,10 @@ export default async function UebersichtPage() {
   }
 
   const monatsdaten = await getMonatsdaten(anlage.id)
+  const { investitionen, investitionMonatsdaten } = await getInvestitionenMitMonatsdaten(mitglied.data.id)
+
+  // Vorhandene Investitionstypen ermitteln
+  const vorhandeneTypen = [...new Set(investitionen.map(i => i.typ))]
 
   return (
     <main className="min-h-screen bg-gray-50 dark:bg-gray-700">
@@ -101,7 +133,13 @@ export default async function UebersichtPage() {
             </Link>
           </div>
         ) : (
-          <MonatsdatenTable initialData={monatsdaten} anlageId={anlage.id} />
+          <MonatsdatenTable
+            initialData={monatsdaten}
+            anlageId={anlage.id}
+            investitionen={investitionen}
+            investitionMonatsdaten={investitionMonatsdaten}
+            vorhandeneTypen={vorhandeneTypen}
+          />
         )}
       </div>
     </main>

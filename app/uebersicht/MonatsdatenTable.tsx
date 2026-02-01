@@ -1,7 +1,7 @@
 // app/uebersicht/MonatsdatenTable.tsx
 'use client'
 
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import SimpleIcon from '@/components/SimpleIcon'
@@ -33,15 +33,44 @@ interface Monatsdaten {
   datenquelle: string | null
 }
 
+interface Investition {
+  id: string
+  typ: string
+  bezeichnung: string
+}
+
+interface InvestitionMonatsdaten {
+  id: string
+  investition_id: string
+  jahr: number
+  monat: number
+  verbrauch_daten: any
+}
+
 interface Props {
   initialData: Monatsdaten[]
   anlageId: string
+  investitionen?: Investition[]
+  investitionMonatsdaten?: InvestitionMonatsdaten[]
+  vorhandeneTypen?: string[]
 }
 
 const MONATSNAMEN = ['', 'Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez']
 
-// Spalten-Definition für bessere Wartbarkeit
-const SPALTEN = [
+// Spalten-Typ Definition
+interface Spalte {
+  key: string
+  label: string
+  group: string
+  unit?: string
+  color?: string
+  align?: string
+  sticky?: boolean
+  computed?: boolean
+}
+
+// Basis-Spalten-Definition
+const BASIS_SPALTEN: Spalte[] = [
   { key: 'monat', label: 'Monat', group: 'basis', align: 'left', sticky: true },
   // Energie
   { key: 'pv_erzeugung_kwh', label: 'PV-Erzeugung', group: 'energie', unit: 'kWh', color: 'text-yellow-600' },
@@ -52,8 +81,10 @@ const SPALTEN = [
   { key: 'einspeisung_kwh', label: 'Einspeisung', group: 'energie', unit: 'kWh', color: 'text-orange-500' },
   { key: 'netzbezug_kwh', label: 'Netzbezug', group: 'energie', unit: 'kWh', color: 'text-red-500' },
   // Finanzen
+  { key: 'eigenverbrauch_einsparung_euro', label: 'EV-Einsparung', group: 'finanzen', unit: '€', color: 'text-green-700', computed: true },
   { key: 'einspeisung_ertrag_euro', label: 'Einspeise-Erlös', group: 'finanzen', unit: '€', color: 'text-green-600' },
   { key: 'netzbezug_kosten_euro', label: 'Bezugskosten', group: 'finanzen', unit: '€', color: 'text-red-600' },
+  { key: 'gesamt_ersparnis_euro', label: 'Ersparnis', group: 'finanzen', unit: '€', color: 'text-green-800', computed: true },
   { key: 'betriebsausgaben_monat_euro', label: 'Betriebsausg.', group: 'finanzen', unit: '€' },
   { key: 'netzbezug_preis_cent_kwh', label: 'Bezugspreis', group: 'finanzen', unit: 'ct/kWh' },
   { key: 'einspeisung_preis_cent_kwh', label: 'Einspeisepreis', group: 'finanzen', unit: 'ct/kWh' },
@@ -66,11 +97,56 @@ const SPALTEN = [
   // Meta
   { key: 'datenquelle', label: 'Quelle', group: 'meta' },
   { key: 'notizen', label: 'Notizen', group: 'meta' },
-] as const
+]
 
-type SpaltenKey = typeof SPALTEN[number]['key']
+// Investitions-spezifische Spalten
+const INVESTITIONS_SPALTEN: Record<string, Spalte[]> = {
+  speicher: [
+    { key: 'speicher_ladung', label: 'Ladung', group: 'speicher', unit: 'kWh', color: 'text-blue-500' },
+    { key: 'speicher_entladung', label: 'Entladung', group: 'speicher', unit: 'kWh', color: 'text-blue-600' },
+    { key: 'speicher_zyklen', label: 'Zyklen', group: 'speicher', color: 'text-blue-700' },
+  ],
+  'e-auto': [
+    { key: 'eauto_km', label: 'km gefahren', group: 'e-auto', unit: 'km', color: 'text-green-600' },
+    { key: 'eauto_verbrauch', label: 'Verbrauch', group: 'e-auto', unit: 'kWh', color: 'text-green-500' },
+    { key: 'eauto_ladung_pv', label: 'Ladung PV', group: 'e-auto', unit: 'kWh', color: 'text-green-600' },
+    { key: 'eauto_ladung_netz', label: 'Ladung Netz', group: 'e-auto', unit: 'kWh', color: 'text-red-400' },
+  ],
+  wallbox: [
+    { key: 'wallbox_ladung', label: 'Geladen', group: 'wallbox', unit: 'kWh', color: 'text-purple-600' },
+    { key: 'wallbox_ladevorgaenge', label: 'Ladevorgänge', group: 'wallbox', color: 'text-purple-500' },
+  ],
+  waermepumpe: [
+    { key: 'wp_heizenergie', label: 'Heizenergie', group: 'waermepumpe', unit: 'kWh', color: 'text-orange-500' },
+    { key: 'wp_warmwasser', label: 'Warmwasser', group: 'waermepumpe', unit: 'kWh', color: 'text-orange-400' },
+    { key: 'wp_stromverbrauch', label: 'Stromverbr.', group: 'waermepumpe', unit: 'kWh', color: 'text-orange-600' },
+    { key: 'wp_cop', label: 'COP', group: 'waermepumpe', color: 'text-orange-700' },
+  ],
+}
 
-export default function MonatsdatenTable({ initialData, anlageId }: Props) {
+// Gruppen-Konfiguration mit Farben
+const GRUPPEN_CONFIG: Record<string, { label: string; color: string; activeColor: string }> = {
+  basis: { label: 'Basis', color: 'bg-gray-100 text-gray-500', activeColor: 'bg-gray-200 text-gray-700' },
+  energie: { label: 'Energie', color: 'bg-gray-100 text-gray-500', activeColor: 'bg-yellow-100 text-yellow-700' },
+  finanzen: { label: 'Finanzen', color: 'bg-gray-100 text-gray-500', activeColor: 'bg-green-100 text-green-700' },
+  wetter: { label: 'Wetter', color: 'bg-gray-100 text-gray-500', activeColor: 'bg-sky-100 text-sky-700' },
+  berechnet: { label: 'Kennzahlen', color: 'bg-gray-100 text-gray-500', activeColor: 'bg-indigo-100 text-indigo-700' },
+  meta: { label: 'Meta', color: 'bg-gray-100 text-gray-500', activeColor: 'bg-gray-200 text-gray-600' },
+  speicher: { label: 'Speicher', color: 'bg-gray-100 text-gray-500', activeColor: 'bg-blue-100 text-blue-700' },
+  'e-auto': { label: 'E-Auto', color: 'bg-gray-100 text-gray-500', activeColor: 'bg-green-100 text-green-700' },
+  wallbox: { label: 'Wallbox', color: 'bg-gray-100 text-gray-500', activeColor: 'bg-purple-100 text-purple-700' },
+  waermepumpe: { label: 'Wärmepumpe', color: 'bg-gray-100 text-gray-500', activeColor: 'bg-orange-100 text-orange-700' },
+}
+
+type SpaltenKey = string
+
+export default function MonatsdatenTable({
+  initialData,
+  anlageId,
+  investitionen = [],
+  investitionMonatsdaten = [],
+  vorhandeneTypen = []
+}: Props) {
   const router = useRouter()
   const [data, setData] = useState<Monatsdaten[]>(initialData)
   const [deleting, setDeleting] = useState<string | null>(null)
@@ -78,6 +154,47 @@ export default function MonatsdatenTable({ initialData, anlageId }: Props) {
   const [visibleGroups, setVisibleGroups] = useState<Set<string>>(
     new Set(['basis', 'energie', 'finanzen', 'berechnet'])
   )
+
+  // Spalten dynamisch zusammenstellen basierend auf vorhandenen Investitionstypen
+  const SPALTEN = useMemo(() => {
+    const spalten = [...BASIS_SPALTEN]
+
+    // Investitions-Spalten nur hinzufügen wenn Typ vorhanden
+    vorhandeneTypen.forEach(typ => {
+      const typSpalten = INVESTITIONS_SPALTEN[typ]
+      if (typSpalten) {
+        spalten.push(...typSpalten)
+      }
+    })
+
+    return spalten
+  }, [vorhandeneTypen])
+
+  // Investitions-Monatsdaten nach Jahr/Monat indexieren für schnellen Zugriff
+  const investitionsDatenIndex = useMemo(() => {
+    const index: Record<string, Record<string, any>> = {}
+
+    investitionMonatsdaten.forEach(imd => {
+      const key = `${imd.jahr}-${imd.monat}`
+      if (!index[key]) index[key] = {}
+
+      const inv = investitionen.find(i => i.id === imd.investition_id)
+      if (inv && imd.verbrauch_daten) {
+        // Daten nach Typ zusammenführen (falls mehrere Investitionen gleichen Typs)
+        if (!index[key][inv.typ]) {
+          index[key][inv.typ] = { ...imd.verbrauch_daten }
+        } else {
+          // Werte addieren für gleiche Typen
+          Object.keys(imd.verbrauch_daten).forEach(k => {
+            const val = parseFloat(imd.verbrauch_daten[k]) || 0
+            index[key][inv.typ][k] = (parseFloat(index[key][inv.typ][k]) || 0) + val
+          })
+        }
+      }
+    })
+
+    return index
+  }, [investitionMonatsdaten, investitionen])
 
   const toNum = (val: any): number => {
     if (val === null || val === undefined || val === '') return 0
@@ -113,6 +230,78 @@ export default function MonatsdatenTable({ initialData, anlageId }: Props) {
     if (key === 'autarkiegrad') {
       return berechneKennzahlen(row).autarkiegrad
     }
+
+    // Berechnete Finanzwerte
+    if (key === 'eigenverbrauch_einsparung_euro') {
+      const eigenverbrauch = toNum(row.direktverbrauch_kwh) + toNum(row.batterieentladung_kwh)
+      const preis = toNum(row.netzbezug_preis_cent_kwh)
+      return preis > 0 ? eigenverbrauch * preis / 100 : 0
+    }
+    if (key === 'gesamt_ersparnis_euro') {
+      const eigenverbrauch = toNum(row.direktverbrauch_kwh) + toNum(row.batterieentladung_kwh)
+      const preis = toNum(row.netzbezug_preis_cent_kwh)
+      const evEinsparung = preis > 0 ? eigenverbrauch * preis / 100 : 0
+      const einspeiseErtrag = toNum(row.einspeisung_ertrag_euro)
+      const netzbezugKosten = toNum(row.netzbezug_kosten_euro)
+      return evEinsparung + einspeiseErtrag - netzbezugKosten
+    }
+
+    // Investitions-spezifische Werte
+    const indexKey = `${row.jahr}-${row.monat}`
+    const invData = investitionsDatenIndex[indexKey]
+
+    // Speicher
+    if (key === 'speicher_ladung' && invData?.speicher) {
+      return parseFloat(invData.speicher.ladung_kwh) || 0
+    }
+    if (key === 'speicher_entladung' && invData?.speicher) {
+      return parseFloat(invData.speicher.entladung_kwh) || 0
+    }
+    if (key === 'speicher_zyklen' && invData?.speicher) {
+      const ladung = parseFloat(invData.speicher.ladung_kwh) || 0
+      // Annahme: 10 kWh Kapazität pro Zyklus (vereinfacht)
+      return ladung > 0 ? Math.round(ladung / 10 * 10) / 10 : 0
+    }
+
+    // E-Auto
+    if (key === 'eauto_km' && invData?.['e-auto']) {
+      return parseFloat(invData['e-auto'].km_gefahren) || 0
+    }
+    if (key === 'eauto_verbrauch' && invData?.['e-auto']) {
+      return parseFloat(invData['e-auto'].verbrauch_kwh) || 0
+    }
+    if (key === 'eauto_ladung_pv' && invData?.['e-auto']) {
+      return parseFloat(invData['e-auto'].ladung_pv_kwh) || 0
+    }
+    if (key === 'eauto_ladung_netz' && invData?.['e-auto']) {
+      return parseFloat(invData['e-auto'].ladung_netz_kwh) || 0
+    }
+
+    // Wallbox
+    if (key === 'wallbox_ladung' && invData?.wallbox) {
+      return parseFloat(invData.wallbox.ladung_kwh) || 0
+    }
+    if (key === 'wallbox_ladevorgaenge' && invData?.wallbox) {
+      return parseInt(invData.wallbox.ladevorgaenge) || 0
+    }
+
+    // Wärmepumpe
+    if (key === 'wp_heizenergie' && invData?.waermepumpe) {
+      return parseFloat(invData.waermepumpe.heizenergie_kwh) || 0
+    }
+    if (key === 'wp_warmwasser' && invData?.waermepumpe) {
+      return parseFloat(invData.waermepumpe.warmwasser_kwh) || 0
+    }
+    if (key === 'wp_stromverbrauch' && invData?.waermepumpe) {
+      return parseFloat(invData.waermepumpe.stromverbrauch_kwh) || 0
+    }
+    if (key === 'wp_cop' && invData?.waermepumpe) {
+      const heiz = parseFloat(invData.waermepumpe.heizenergie_kwh) || 0
+      const ww = parseFloat(invData.waermepumpe.warmwasser_kwh) || 0
+      const strom = parseFloat(invData.waermepumpe.stromverbrauch_kwh) || 0
+      return strom > 0 ? Math.round((heiz + ww) / strom * 10) / 10 : 0
+    }
+
     const val = row[key as keyof Monatsdaten]
     return val !== null && val !== undefined ? val as string | number : ''
   }
@@ -156,14 +345,26 @@ export default function MonatsdatenTable({ initialData, anlageId }: Props) {
 
   const visibleSpalten = SPALTEN.filter(s => visibleGroups.has(s.group))
 
-  const groups = [
-    { key: 'basis', label: 'Basis' },
-    { key: 'energie', label: 'Energie' },
-    { key: 'finanzen', label: 'Finanzen' },
-    { key: 'wetter', label: 'Wetter' },
-    { key: 'berechnet', label: 'Kennzahlen' },
-    { key: 'meta', label: 'Meta' },
-  ]
+  // Dynamische Gruppen basierend auf vorhandenen Spalten
+  const groups = useMemo(() => {
+    const basisGruppen = [
+      { key: 'basis', label: 'Basis' },
+      { key: 'energie', label: 'Energie' },
+      { key: 'finanzen', label: 'Finanzen' },
+      { key: 'wetter', label: 'Wetter' },
+      { key: 'berechnet', label: 'Kennzahlen' },
+    ]
+
+    // Investitions-Gruppen nur hinzufügen wenn vorhanden
+    const invGruppen = vorhandeneTypen
+      .filter(typ => INVESTITIONS_SPALTEN[typ])
+      .map(typ => ({
+        key: typ,
+        label: GRUPPEN_CONFIG[typ]?.label || typ,
+      }))
+
+    return [...basisGruppen, ...invGruppen, { key: 'meta', label: 'Meta' }]
+  }, [vorhandeneTypen])
 
   return (
     <div className="bg-white rounded-lg shadow overflow-hidden">
@@ -181,37 +382,39 @@ export default function MonatsdatenTable({ initialData, anlageId }: Props) {
         </div>
         <div className="flex flex-wrap gap-2">
           <span className="text-sm text-gray-500 mr-2">Spalten:</span>
-          {groups.map(g => (
-            <button
-              key={g.key}
-              onClick={() => toggleGroup(g.key)}
-              className={`px-3 py-1 text-xs rounded-full transition ${
-                visibleGroups.has(g.key)
-                  ? 'bg-blue-100 text-blue-700'
-                  : 'bg-gray-100 text-gray-500'
-              }`}
-            >
-              {g.label}
-            </button>
-          ))}
+          {groups.map(g => {
+            const config = GRUPPEN_CONFIG[g.key] || { color: 'bg-gray-100 text-gray-500', activeColor: 'bg-blue-100 text-blue-700' }
+            return (
+              <button
+                key={g.key}
+                onClick={() => toggleGroup(g.key)}
+                className={`px-3 py-1 text-xs rounded-full transition ${
+                  visibleGroups.has(g.key) ? config.activeColor : config.color
+                }`}
+              >
+                {g.label}
+              </button>
+            )
+          })}
         </div>
       </div>
 
-      {/* Tabelle mit horizontalem Scrollen */}
-      <div className="overflow-x-auto">
+      {/* Tabelle mit horizontalem und vertikalem Scrollen - dynamische Höhe bis Bildschirmende */}
+      {/* 280px = Header (~180px) + Filter (~60px) + Legende (~40px) */}
+      <div className="overflow-auto" style={{ maxHeight: 'calc(100vh - 280px)' }}>
         <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-          <thead className="bg-gray-50 dark:bg-gray-700">
+          <thead className="bg-gray-50 dark:bg-gray-700 sticky top-0 z-30">
             <tr>
-              {/* Sticky Aktionen-Spalte */}
-              <th className="sticky left-0 z-20 bg-gray-50 px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase w-24">
+              {/* Sticky Aktionen-Spalte (horizontal + vertikal) */}
+              <th className="sticky left-0 top-0 z-40 bg-gray-50 dark:bg-gray-700 px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase w-24">
                 Aktion
               </th>
               {visibleSpalten.map(spalte => (
                 <th
                   key={spalte.key}
-                  className={`px-4 py-3 text-xs font-medium text-gray-500 uppercase whitespace-nowrap ${
+                  className={`px-4 py-3 text-xs font-medium text-gray-500 uppercase whitespace-nowrap bg-gray-50 dark:bg-gray-700 ${
                     'align' in spalte && spalte.align === 'left' ? 'text-left' : 'text-right'
-                  } ${'sticky' in spalte && spalte.sticky ? 'sticky left-24 z-10 bg-gray-50' : ''}`}
+                  } ${'sticky' in spalte && spalte.sticky ? 'sticky left-24 z-40 bg-gray-50 dark:bg-gray-700' : ''}`}
                 >
                   {spalte.label}
                   {'unit' in spalte && spalte.unit && <span className="text-gray-400 ml-1">({spalte.unit})</span>}
