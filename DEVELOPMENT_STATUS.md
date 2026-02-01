@@ -1,6 +1,48 @@
 # EEDC-Webapp - Entwicklungsstand 01.02.2026
 
-## Letzte Änderungen (Session 01.02.2026 - Abend)
+## Letzte Änderungen (Session 01.02.2026 - Spät-Abend)
+
+### 20. Community: Öffentliche Auswertungen & Monatsdetails
+**Neue Dateien:**
+- `components/CommunityMonatsDetailView.tsx` - Detaillierte Monatsansicht für Community
+- `app/api/community/anlagen/[id]/auswertung/route.ts` - API für öffentliche Auswertungen
+- `supabase/migrations/20260201140000_community_auswertungen.sql` - Community-Funktionen
+- `supabase/migrations/20260201150000_add_auswertungen_oeffentlich.sql` - Auswertungen-Freigabe
+- `supabase/migrations/20260201160000_extended_public_monatsdaten.sql` - Erweiterte Monatsdaten
+
+**Features:**
+- **Neues Freigabe-Feld `auswertungen_oeffentlich`:** Separate Freigabe für Auswertungen (war vorher nicht persistiert!)
+- **Community-Monatsdetails:** Komplette Monatsansicht mit PieCharts, FormelTooltips, Insights
+- **RPC-Funktionen:**
+  - `get_public_auswertung(uuid)` - Gesamt-Auswertung inkl. Wirtschaftlichkeit
+  - `get_public_jahresvergleich(uuid)` - Jahresvergleich
+  - `get_public_monatsdaten(uuid)` - Erweiterte Monatsdaten mit Batterie- & Finanzdaten
+
+**Bug-Fixes:**
+- `auswertungen_oeffentlich` wurde nicht gespeichert/geladen (hardcoded false)
+- Strompreis kommt aus `monatsdaten.netzbezug_preis_cent_kwh` (nicht aus anlagen)
+- DROP FUNCTION vor Signaturänderung erforderlich
+
+**Dateien geändert:**
+- `lib/freigabe-actions.ts` - Speichert jetzt `auswertungen_oeffentlich`
+- `app/anlage/page.tsx` - Lädt jetzt `auswertungen_oeffentlich`
+- `app/community/[id]/page.tsx` - Zeigt Auswertungen & Monatsdetails
+
+### 21. Alpha-Tester Kurzanleitung
+**Datei:** `README.md`
+
+**Features:**
+- Schnellstart-Anleitung für Alpha-Tester
+- Schritt-für-Schritt Beschreibung
+- Link zur ausführlichen Dokumentation
+
+### 22. Sicherheit: .env.local aus Git entfernt
+- `.env.local` aus Git-Tracking entfernt (enthielt Credentials)
+- Bereits in `.gitignore` eingetragen
+
+---
+
+## Änderungen vom Abend (Session 01.02.2026)
 
 ### 12. KI-Insights Dashboard
 **Neue Datei:** `components/KIInsightsDashboard.tsx`
@@ -228,8 +270,16 @@ npx tsx scripts/recalculate-investition-prognosen.ts
 - [x] KI-Insights Dashboard mit Analyse & Empfehlungen
 - [x] Formel-Tooltips für berechnete Werte
 - [x] Installationsmonat-Handling in Prognose
+- [x] Community: Auswertungen öffentlich freigeben
+- [x] Community: Monatsdetails mit Charts & Tooltips
 - [ ] Community Feature: Kommunikationsfeatures erweitern
 - [ ] KI-Insights: Community-Durchschnittswerte einbinden
+
+## Ausstehende Migrationen
+Die folgenden Migrationen müssen noch in Supabase ausgeführt werden:
+- `20260201140000_community_auswertungen.sql`
+- `20260201150000_add_auswertungen_oeffentlich.sql`
+- `20260201160000_extended_public_monatsdaten.sql`
 
 ---
 
@@ -239,10 +289,11 @@ npx tsx scripts/recalculate-investition-prognosen.ts
 
 ## Letzte Commits
 ```
-475a22e 🗑️ Alte Sidebar.tsx entfernt (ModernSidebar ist aktiv)
-1b5cf7b 🔧 ModernSidebar: Fehlende Auswertungen hinzugefügt
-13ff287 🔧 Dashboard KPIs & Monatsdaten-Formular Refactoring
-eed6d5b ✨ KI-Insights Dashboard mit automatischer Anlagen-Analyse
-d0e4191 ✨ Formel-Tooltips & Auswertungs-Verbesserungen
-53f608b 🐛 Fix: Ersparnis-Berechnung korrigiert
+0f42e9d ✨ Community: Monatsdetail-Ansicht für öffentliche Auswertungen
+14a7d6f 🐛 Fix: DROP FUNCTION vor Signaturänderung
+aa16b52 🐛 Fix: auswertungen_oeffentlich Feld korrekt implementieren
+a843799 🐛 Fix: Strompreis aus monatsdaten statt anlagen
+8173fe1 🔒 Security: .env.local aus Git entfernen
+746a2df 📚 README: Alpha-Tester Kurzanleitung hinzugefügt
+c88123c 🐛 MonatsDetailView: Netto-Ertrag Formel korrigiert
 ```
