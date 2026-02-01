@@ -1,6 +1,80 @@
 # EEDC-Webapp - Entwicklungsstand 01.02.2026
 
-## Letzte Änderungen (Session 01.02.2026 - Nachmittag)
+## Letzte Änderungen (Session 01.02.2026 - Abend)
+
+### 12. KI-Insights Dashboard
+**Neue Datei:** `components/KIInsightsDashboard.tsx`
+
+**Features:**
+- Automatische regelbasierte Analyse der PV-Anlage
+- **Erfolge erkennen:** Hohe EV-Quote (≥50%), gute Autarkie (≥50%), überdurchschnittlicher Ertrag (≥1000 kWh/kWp)
+- **Warnungen:** Niedrige EV-Quote (<30%), Ertrag unter Erwartung (<800 kWh/kWp), Batterie-Effizienz (<85%), saisonale Schwankungen
+- **Optimierungsvorschläge:** Konkrete Handlungsempfehlungen mit geschätztem €-Potenzial
+- **Erweiterungsempfehlungen:** Batteriespeicher, Wallbox/E-Auto, Wärmepumpe (basierend auf vorhandenen Investitionen)
+- **Preis-Info:** Bezugs- vs. Einspeisepreis mit Spread-Berechnung
+
+**Navigation:** Auswertungen → KI-Analyse (`/auswertung?tab=insights`)
+
+### 13. Formel-Tooltips für berechnete Werte
+**Neue Datei:** `components/FormelTooltip.tsx`
+
+**Features:**
+- `SimpleTooltip` Komponente mit `position: fixed` für Portal-ähnliches Verhalten
+- Dynamische Positionierung (auto/top/bottom)
+- Tooltips zeigen Berechnungsformeln für alle berechneten Felder
+
+**Implementiert in:**
+- `app/uebersicht/MonatsdatenTable.tsx` - Tooltips für Header-Spalten
+- `components/ROIDashboard.tsx` - KPI-Tooltips
+- `components/WirtschaftlichkeitStats.tsx` - KPI-Tooltips
+- `components/GesamtHaushaltBilanz.tsx` - KPI-Tooltips
+
+### 14. Übersichtsseite Layout-Fix
+**Dateien:** `app/uebersicht/page.tsx`, `app/uebersicht/MonatsdatenTable.tsx`
+
+**Fixes:**
+- Dynamische Tabellenhöhe mit Flexbox (`h-full`, `flex-1`, `min-h-0`)
+- Nur ein vertikaler Scrollbalken (vorher zwei)
+- Calc-basierte Höhe für optimale Platznutzung
+
+### 15. ROI-Berechnung korrigiert
+**Datei:** `components/ROIDashboard.tsx`
+
+**Fixes:**
+- Feldname korrigiert: `anschaffungskosten_euro` statt `anschaffungskosten_gesamt`
+- Korrekte Netto-Ertrag Formel: EV-Einsparung + Einspeise-Erlöse − Betriebsausgaben (OHNE Netzbezugskosten)
+- Monatsbasierte Durchschnittsberechnung für Unterjährigkeit
+
+### 16. Prognose vs. IST - Installationsmonat-Handling
+**Datei:** `components/PrognoseVsIstDashboard.tsx`
+
+**Features:**
+- Toggle zum Ein-/Ausblenden des Installationsmonats (Standard: ausgeblendet)
+- Orange Info-Box mit erkanntem Installationsmonat und IST vs. Prognose-Werten
+- Sternchen-Markierung (*) im Monatsnamen für Installationsmonat
+- Alle KPIs und Charts berücksichtigen die Filterung
+
+### 17. GesamtHaushaltBilanz erweitert
+**Datei:** `components/GesamtHaushaltBilanz.tsx`
+
+**Features:**
+- PV-Erträge werden jetzt aus Monatsdaten berechnet (nicht nur aus investitionen-Tabelle)
+- PV-Anlage als erste Zeile mit gelber Hinterlegung
+- Investitionen gruppiert nach Anlage (gelbe Hervorhebung, Einrückung)
+
+### 18. Sidebar aufgeräumt
+- `components/Sidebar.tsx` entfernt (war nicht mehr in Verwendung)
+- `components/ModernSidebar.tsx` ist die aktive Sidebar
+- Fehlende Menüpunkte hinzugefügt: Monats-Details, Optimierung, KI-Analyse
+
+### 19. Dashboard KPIs Refactoring
+**Neue Dateien:**
+- `components/DashboardKPIs.tsx` - Wiederverwendbare KPI-Komponente
+- `components/DashboardKPICard.tsx` - Einzelne KPI-Karte
+
+---
+
+## Änderungen vom Nachmittag (Session 01.02.2026)
 
 ### 8. Auswertungsseite komplett überarbeitet
 **Problem:** Auswertungsseite nutzte alte Tabellen (`haushalt_komponenten`, `anlagen_komponenten`) die durch Migration entfernt wurden.
@@ -150,11 +224,24 @@ npx tsx scripts/recalculate-investition-prognosen.ts
 ## Offene Punkte / Nächste Schritte
 - [x] Auswertungsseite: Datenquellen korrigieren
 - [x] Wallbox-Auswertung hinzufügen
-- [ ] Meine Anlage: Dashboard mit Hints & Tips erweitern
+- [x] KI-Insights Dashboard mit Analyse & Empfehlungen
+- [x] Formel-Tooltips für berechnete Werte
+- [x] Installationsmonat-Handling in Prognose
 - [ ] Community Feature: Kommunikationsfeatures erweitern
+- [ ] KI-Insights: Community-Durchschnittswerte einbinden
 
 ---
 
 ## Wichtige URLs
 - GitHub: https://github.com/supernova1963/eedc.git
 - Branch: main
+
+## Letzte Commits
+```
+475a22e 🗑️ Alte Sidebar.tsx entfernt (ModernSidebar ist aktiv)
+1b5cf7b 🔧 ModernSidebar: Fehlende Auswertungen hinzugefügt
+13ff287 🔧 Dashboard KPIs & Monatsdaten-Formular Refactoring
+eed6d5b ✨ KI-Insights Dashboard mit automatischer Anlagen-Analyse
+d0e4191 ✨ Formel-Tooltips & Auswertungs-Verbesserungen
+53f608b 🐛 Fix: Ersparnis-Berechnung korrigiert
+```
