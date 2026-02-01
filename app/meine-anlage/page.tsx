@@ -7,6 +7,7 @@ import Link from 'next/link'
 import DashboardChart from '@/components/DashboardChart'
 import SimpleIcon from '@/components/SimpleIcon'
 import { AnlagenSelector } from '@/components/AnlagenSelector'
+import DashboardKPIs from '@/components/DashboardKPIs'
 
 async function getDashboardData(anlageId: string) {
   const supabase = await createClient()
@@ -123,8 +124,10 @@ export default async function DashboardPage({
     ? (gesamtEigenverbrauch / gesamtVerbrauch) * 100
     : 0
 
-  const fmt = (num: number) => num.toLocaleString('de-DE', { maximumFractionDigits: 0 })
-  const fmtDec = (num: number) => num.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  // Durchschnittlicher Einspeisepreis berechnen
+  const durchschnittEinspeisePreis = monatsdaten.length > 0
+    ? monatsdaten.reduce((sum, m) => sum + toNum(m.einspeise_verguetung_cent_kwh), 0) / monatsdaten.length
+    : 0
 
   const monatsnamen = ['', 'Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez']
   const chartData = monatsdaten.map(m => ({
@@ -157,93 +160,20 @@ export default async function DashboardPage({
       </div>
 
       <div className="space-y-6">
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-gray-600 dark:text-gray-400">Gesamt-Verbrauch</p>
-                <p className="text-2xl font-bold text-gray-900 mt-1">
-                  {fmt(gesamtVerbrauch)} kWh
-                </p>
-              </div>
-              <SimpleIcon type="plug" className="w-12 h-12 text-gray-400" />
-            </div>
-          </div>
-
-          <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-gray-600 dark:text-gray-400">PV-Erzeugung</p>
-                <p className="text-2xl font-bold text-gray-900 mt-1">
-                  {fmt(gesamtErzeugung)} kWh
-                </p>
-              </div>
-              <SimpleIcon type="sun" className="w-12 h-12 text-yellow-500" />
-            </div>
-          </div>
-
-          <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-gray-600 dark:text-gray-400">Eigenverbrauch</p>
-                <p className="text-2xl font-bold text-gray-900 mt-1">
-                  {fmt(gesamtEigenverbrauch)} kWh
-                </p>
-              </div>
-              <SimpleIcon type="home" className="w-12 h-12 text-blue-500" />
-            </div>
-          </div>
-
-          <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-gray-600 dark:text-gray-400">Einspeisung</p>
-                <p className="text-2xl font-bold text-gray-900 mt-1">
-                  {fmt(gesamtEinspeisung)} kWh
-                </p>
-              </div>
-              <SimpleIcon type="lightning" className="w-12 h-12 text-orange-500" />
-            </div>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-gray-600 dark:text-gray-400">Ø Autarkie</p>
-                <p className="text-2xl font-bold text-gray-900 mt-1">
-                  {autarkiegrad.toFixed(0)}%
-                </p>
-              </div>
-              <SimpleIcon type="chart" className="w-12 h-12 text-purple-500" />
-            </div>
-          </div>
-
-          <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-gray-600 dark:text-gray-400">Einspeise-Erlöse</p>
-                <p className="text-2xl font-bold text-blue-700 mt-1">
-                  {fmtDec(gesamtEinspeiseErloese)} €
-                </p>
-              </div>
-              <SimpleIcon type="money" className="w-12 h-12 text-blue-500" />
-            </div>
-          </div>
-
-          <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-gray-600 dark:text-gray-400">Ersparnis PV</p>
-                <p className="text-2xl font-bold text-green-700 mt-1">
-                  {fmtDec(gesamtErsparnisPV)} €
-                </p>
-              </div>
-              <SimpleIcon type="gem" className="w-12 h-12 text-green-500" />
-            </div>
-          </div>
-        </div>
+        <DashboardKPIs
+          gesamtVerbrauch={gesamtVerbrauch}
+          gesamtErzeugung={gesamtErzeugung}
+          gesamtEigenverbrauch={gesamtEigenverbrauch}
+          gesamtEinspeisung={gesamtEinspeisung}
+          autarkiegrad={autarkiegrad}
+          eigenverbrauchsquote={eigenverbrauchsquote}
+          gesamtEinspeiseErloese={gesamtEinspeiseErloese}
+          eigenverbrauchEinsparung={eigenverbrauchEinsparung}
+          gesamtErsparnisPV={gesamtErsparnisPV}
+          gesamtBetriebsausgaben={gesamtBetriebsausgaben}
+          durchschnittNetzbezugPreis={durchschnittNetzbezugPreis}
+          durchschnittEinspeisePreis={durchschnittEinspeisePreis}
+        />
 
         {chartData.length > 0 && (
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">

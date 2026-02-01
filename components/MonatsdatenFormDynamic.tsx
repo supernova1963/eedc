@@ -6,6 +6,7 @@ import { useState, useEffect, useMemo } from 'react'
 import { createBrowserClient } from '@/lib/supabase-browser'
 import { useRouter } from 'next/navigation'
 import SimpleIcon from './SimpleIcon'
+import FormelTooltip, { fmtCalc } from './FormelTooltip'
 import { getMonthlyWeatherData, getCoordinatesFromPLZ } from '@/lib/weather-api'
 
 interface Investition {
@@ -567,15 +568,33 @@ export default function MonatsdatenFormDynamic({
         {/* Hauptkennzahlen - immer sichtbar, kompakt */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
           <div className="bg-gradient-to-br from-yellow-50 to-yellow-100 border border-yellow-200 rounded-xl p-4 text-center">
-            <div className="text-3xl font-bold text-yellow-700">{berechneteWerte.autarkiegrad.toFixed(0)}%</div>
+            <FormelTooltip
+              formel="Eigenverbrauch ÷ Gesamtverbrauch × 100"
+              berechnung={`${fmtCalc(berechneteWerte.eigenverbrauch, 1)} kWh ÷ ${fmtCalc(berechneteWerte.gesamtverbrauch, 1)} kWh × 100`}
+              ergebnis={`= ${fmtCalc(berechneteWerte.autarkiegrad, 1)}%`}
+            >
+              <div className="text-3xl font-bold text-yellow-700">{berechneteWerte.autarkiegrad.toFixed(0)}%</div>
+            </FormelTooltip>
             <div className="text-xs text-yellow-600 font-medium">Autarkiegrad</div>
           </div>
           <div className="bg-gradient-to-br from-green-50 to-green-100 border border-green-200 rounded-xl p-4 text-center">
-            <div className="text-3xl font-bold text-green-700">{berechneteWerte.eigenverbrauchsquote.toFixed(0)}%</div>
+            <FormelTooltip
+              formel="Eigenverbrauch ÷ PV-Erzeugung × 100"
+              berechnung={`${fmtCalc(berechneteWerte.eigenverbrauch, 1)} kWh ÷ ${fmtCalc(berechneteWerte.pvErzeugung, 1)} kWh × 100`}
+              ergebnis={`= ${fmtCalc(berechneteWerte.eigenverbrauchsquote, 1)}%`}
+            >
+              <div className="text-3xl font-bold text-green-700">{berechneteWerte.eigenverbrauchsquote.toFixed(0)}%</div>
+            </FormelTooltip>
             <div className="text-xs text-green-600 font-medium">Eigenverbrauch</div>
           </div>
           <div className="bg-gradient-to-br from-blue-50 to-blue-100 border border-blue-200 rounded-xl p-4 text-center">
-            <div className="text-3xl font-bold text-blue-700">{berechneteWerte.pvErzeugung.toFixed(0)}</div>
+            <FormelTooltip
+              formel="Einspeisung + Eigenverbrauch"
+              berechnung={`${fmtCalc(savedData?.einspeisung_kwh || parseFloat(formData.einspeisung_kwh) || 0, 1)} kWh + ${fmtCalc(berechneteWerte.eigenverbrauch, 1)} kWh`}
+              ergebnis={`= ${fmtCalc(berechneteWerte.pvErzeugung, 1)} kWh`}
+            >
+              <div className="text-3xl font-bold text-blue-700">{berechneteWerte.pvErzeugung.toFixed(0)}</div>
+            </FormelTooltip>
             <div className="text-xs text-blue-600 font-medium">kWh erzeugt</div>
           </div>
           {berechneteWerte.gesamtErsparnisEuro !== null ? (
@@ -584,18 +603,30 @@ export default function MonatsdatenFormDynamic({
                 ? 'from-green-50 to-green-100 border border-green-200'
                 : 'from-red-50 to-red-100 border border-red-200'
             }`}>
-              <div className={`text-3xl font-bold ${
-                berechneteWerte.gesamtErsparnisEuro >= 0
-                  ? 'text-green-700' : 'text-red-700'
-              }`}>
-                {berechneteWerte.gesamtErsparnisEuro >= 0 ? '+' : ''}
-                {berechneteWerte.gesamtErsparnisEuro.toFixed(0)}€
-              </div>
+              <FormelTooltip
+                formel="EV-Einsparung + Einspeise-Erlös"
+                berechnung={`${fmtCalc(berechneteWerte.eigenverbrauchEinsparungEuro)} € + ${fmtCalc(berechneteWerte.einspeisungErtragEuro)} €`}
+                ergebnis={`= ${fmtCalc(berechneteWerte.gesamtErsparnisEuro)} € (ohne Netzbezugskosten)`}
+              >
+                <div className={`text-3xl font-bold ${
+                  berechneteWerte.gesamtErsparnisEuro >= 0
+                    ? 'text-green-700' : 'text-red-700'
+                }`}>
+                  {berechneteWerte.gesamtErsparnisEuro >= 0 ? '+' : ''}
+                  {berechneteWerte.gesamtErsparnisEuro.toFixed(0)}€
+                </div>
+              </FormelTooltip>
               <div className="text-xs text-gray-600 font-medium">Ersparnis</div>
             </div>
           ) : (
             <div className="bg-gradient-to-br from-gray-50 to-gray-100 border border-gray-200 rounded-xl p-4 text-center">
-              <div className="text-3xl font-bold text-gray-700">{berechneteWerte.gesamtverbrauch.toFixed(0)}</div>
+              <FormelTooltip
+                formel="Eigenverbrauch + Netzbezug"
+                berechnung={`${fmtCalc(berechneteWerte.eigenverbrauch, 1)} kWh + ${fmtCalc(parseFloat(formData.netzbezug_kwh) || 0, 1)} kWh`}
+                ergebnis={`= ${fmtCalc(berechneteWerte.gesamtverbrauch, 1)} kWh`}
+              >
+                <div className="text-3xl font-bold text-gray-700">{berechneteWerte.gesamtverbrauch.toFixed(0)}</div>
+              </FormelTooltip>
               <div className="text-xs text-gray-600 font-medium">kWh Verbrauch</div>
             </div>
           )}
@@ -615,19 +646,43 @@ export default function MonatsdatenFormDynamic({
               <div className="space-y-2 text-sm">
                 <div className="flex justify-between">
                   <span className="text-gray-600">PV-Erzeugung</span>
-                  <span className="font-medium text-yellow-700">{berechneteWerte.pvErzeugung.toFixed(1)} kWh</span>
+                  <FormelTooltip
+                    formel="Einspeisung + Eigenverbrauch"
+                    berechnung={`${fmtCalc(savedData?.einspeisung_kwh, 1)} kWh + ${fmtCalc(berechneteWerte.eigenverbrauch, 1)} kWh`}
+                    ergebnis={`= ${fmtCalc(berechneteWerte.pvErzeugung, 1)} kWh`}
+                  >
+                    <span className="font-medium text-yellow-700">{berechneteWerte.pvErzeugung.toFixed(1)} kWh</span>
+                  </FormelTooltip>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-gray-600">Direktverbrauch</span>
-                  <span className="font-medium">{berechneteWerte.direktverbrauch.toFixed(1)} kWh</span>
+                  <FormelTooltip
+                    formel="Eigenverbrauch − Batterieentladung"
+                    berechnung={`${fmtCalc(berechneteWerte.eigenverbrauch, 1)} kWh − ${fmtCalc(berechneteWerte.batterieEntladung, 1)} kWh`}
+                    ergebnis={`= ${fmtCalc(berechneteWerte.direktverbrauch, 1)} kWh (direkt von PV verbraucht)`}
+                  >
+                    <span className="font-medium">{berechneteWerte.direktverbrauch.toFixed(1)} kWh</span>
+                  </FormelTooltip>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-gray-600">Eigenverbrauch</span>
-                  <span className="font-medium text-green-700">{berechneteWerte.eigenverbrauch.toFixed(1)} kWh</span>
+                  <FormelTooltip
+                    formel="Direktverbrauch + Batterieentladung"
+                    berechnung={`${fmtCalc(berechneteWerte.direktverbrauch, 1)} kWh + ${fmtCalc(berechneteWerte.batterieEntladung, 1)} kWh`}
+                    ergebnis={`= ${fmtCalc(berechneteWerte.eigenverbrauch, 1)} kWh (selbst genutzter PV-Strom)`}
+                  >
+                    <span className="font-medium text-green-700">{berechneteWerte.eigenverbrauch.toFixed(1)} kWh</span>
+                  </FormelTooltip>
                 </div>
                 <div className="border-t border-gray-200 pt-2 flex justify-between">
                   <span className="text-gray-600">Gesamtverbrauch</span>
-                  <span className="font-semibold">{berechneteWerte.gesamtverbrauch.toFixed(1)} kWh</span>
+                  <FormelTooltip
+                    formel="Eigenverbrauch + Netzbezug"
+                    berechnung={`${fmtCalc(berechneteWerte.eigenverbrauch, 1)} kWh + ${fmtCalc(savedData?.netzbezug_kwh, 1)} kWh`}
+                    ergebnis={`= ${fmtCalc(berechneteWerte.gesamtverbrauch, 1)} kWh`}
+                  >
+                    <span className="font-semibold">{berechneteWerte.gesamtverbrauch.toFixed(1)} kWh</span>
+                  </FormelTooltip>
                 </div>
               </div>
             </div>
@@ -650,27 +705,51 @@ export default function MonatsdatenFormDynamic({
                 {berechneteWerte.eigenverbrauchEinsparungEuro !== null && (
                   <div className="flex justify-between border-t border-gray-200 pt-2">
                     <span className="text-gray-600">Eigenverbrauch-Einsparung</span>
-                    <span className="font-medium text-green-600">+{berechneteWerte.eigenverbrauchEinsparungEuro.toFixed(2)} €</span>
+                    <FormelTooltip
+                      formel="Eigenverbrauch × Netzbezugspreis"
+                      berechnung={`${fmtCalc(berechneteWerte.eigenverbrauch, 1)} kWh × ${fmtCalc(stammStrompreise.netzbezug_cent_kwh)} ct/kWh ÷ 100`}
+                      ergebnis={`= ${fmtCalc(berechneteWerte.eigenverbrauchEinsparungEuro)} €`}
+                    >
+                      <span className="font-medium text-green-600">+{berechneteWerte.eigenverbrauchEinsparungEuro.toFixed(2)} €</span>
+                    </FormelTooltip>
                   </div>
                 )}
                 {berechneteWerte.einspeisungErtragEuro !== null && (
                   <div className="flex justify-between">
                     <span className="text-gray-600">Einspeise-Erlös</span>
-                    <span className="font-medium text-green-600">+{berechneteWerte.einspeisungErtragEuro.toFixed(2)} €</span>
+                    <FormelTooltip
+                      formel="Einspeisung × Einspeisevergütung"
+                      berechnung={`${fmtCalc(savedData.einspeisung_kwh, 1)} kWh × ${fmtCalc(stammStrompreise.einspeiseverguetung_cent_kwh)} ct/kWh ÷ 100`}
+                      ergebnis={`= ${fmtCalc(berechneteWerte.einspeisungErtragEuro)} €`}
+                    >
+                      <span className="font-medium text-green-600">+{berechneteWerte.einspeisungErtragEuro.toFixed(2)} €</span>
+                    </FormelTooltip>
                   </div>
                 )}
                 {berechneteWerte.netzbezugKostenEuro !== null && (
                   <div className="flex justify-between">
                     <span className="text-gray-600">Netzbezugskosten</span>
-                    <span className="font-medium text-red-600">-{berechneteWerte.netzbezugKostenEuro.toFixed(2)} €</span>
+                    <FormelTooltip
+                      formel="Netzbezug × Netzbezugspreis"
+                      berechnung={`${fmtCalc(savedData.netzbezug_kwh, 1)} kWh × ${fmtCalc(stammStrompreise.netzbezug_cent_kwh)} ct/kWh ÷ 100`}
+                      ergebnis={`= ${fmtCalc(berechneteWerte.netzbezugKostenEuro)} € (Info, kein Abzug!)`}
+                    >
+                      <span className="font-medium text-red-600">-{berechneteWerte.netzbezugKostenEuro.toFixed(2)} €</span>
+                    </FormelTooltip>
                   </div>
                 )}
                 {berechneteWerte.gesamtErsparnisEuro !== null && (
                   <div className="flex justify-between border-t border-gray-200 pt-2 mt-2">
                     <span className="font-semibold text-gray-700">Gesamtersparnis</span>
-                    <span className={`font-bold ${berechneteWerte.gesamtErsparnisEuro >= 0 ? 'text-green-700' : 'text-red-700'}`}>
-                      {berechneteWerte.gesamtErsparnisEuro >= 0 ? '+' : ''}{berechneteWerte.gesamtErsparnisEuro.toFixed(2)} €
-                    </span>
+                    <FormelTooltip
+                      formel="EV-Einsparung + Einspeise-Erlös"
+                      berechnung={`${fmtCalc(berechneteWerte.eigenverbrauchEinsparungEuro)} € + ${fmtCalc(berechneteWerte.einspeisungErtragEuro)} €`}
+                      ergebnis={`= ${fmtCalc(berechneteWerte.gesamtErsparnisEuro)} € (ohne Netzbezugskosten!)`}
+                    >
+                      <span className={`font-bold ${berechneteWerte.gesamtErsparnisEuro >= 0 ? 'text-green-700' : 'text-red-700'}`}>
+                        {berechneteWerte.gesamtErsparnisEuro >= 0 ? '+' : ''}{berechneteWerte.gesamtErsparnisEuro.toFixed(2)} €
+                      </span>
+                    </FormelTooltip>
                   </div>
                 )}
               </div>
