@@ -14,6 +14,7 @@ import CO2ImpactDashboard from '@/components/CO2ImpactDashboard'
 import PrognoseVsIstDashboard from '@/components/PrognoseVsIstDashboard'
 import MonatsDetailView from '@/components/MonatsDetailView'
 import OptimierungsvorschlaegeDashboard from '@/components/OptimierungsvorschlaegeDashboard'
+import KIInsightsDashboard from '@/components/KIInsightsDashboard'
 import SimpleIcon from '@/components/SimpleIcon'
 import Link from 'next/link'
 import { AnlagenSelector } from '@/components/AnlagenSelector'
@@ -291,6 +292,7 @@ export default async function AuswertungPage({
                 {activeTab === 'prognose' && 'Prognose vs. IST'}
                 {activeTab === 'monatsdetail' && 'Monats-Details'}
                 {activeTab === 'optimierung' && 'Optimierungsvorschläge'}
+                {activeTab === 'insights' && 'KI-Analyse'}
               </h1>
               <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">
                 {anlage.anlagenname} - {anlage.leistung_kwp} kWp
@@ -507,6 +509,14 @@ export default async function AuswertungPage({
 
             {activeTab === 'optimierung' && (
               <OptimierungsvorschlaegeDashboard
+                monatsdaten={monatsdaten}
+                anlage={anlage}
+                investitionen={investitionen}
+              />
+            )}
+
+            {activeTab === 'insights' && (
+              <KIInsightsDashboard
                 monatsdaten={monatsdaten}
                 anlage={anlage}
                 investitionen={investitionen}

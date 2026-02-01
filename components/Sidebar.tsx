@@ -45,7 +45,8 @@ const getNavigation = (hasEAutos: boolean, hasWaermepumpen: boolean, hasSpeicher
     { icon: 'globe', label: 'CO₂-Impact', href: '/auswertung?tab=co2' },
     { icon: 'target', label: 'Prognose vs. IST', href: '/auswertung?tab=prognose' },
     { icon: 'calendar', label: 'Monats-Details', href: '/auswertung?tab=monatsdetail' },
-    { icon: 'bulb', label: 'Optimierung', href: '/auswertung?tab=optimierung' }
+    { icon: 'bulb', label: 'Optimierung', href: '/auswertung?tab=optimierung' },
+    { icon: 'rocket', label: 'KI-Analyse', href: '/auswertung?tab=insights' }
   )
 
   return [
