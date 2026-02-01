@@ -117,6 +117,9 @@ export default function ModernSidebar({ userName, userEmail }: ModernSidebarProp
             { label: 'ROI-Analyse', href: '/auswertung?tab=roi', icon: 'chart' },
             { label: 'CO₂-Impact', href: '/auswertung?tab=co2', icon: 'leaf' },
             { label: 'Prognose vs. IST', href: '/auswertung?tab=prognose', icon: 'trend' },
+            { label: 'Monats-Details', href: '/auswertung?tab=monatsdetail', icon: 'calendar' },
+            { label: 'Optimierung', href: '/auswertung?tab=optimierung', icon: 'bulb' },
+            { label: 'KI-Analyse', href: '/auswertung?tab=insights', icon: 'rocket' },
           ]
         },
         {
