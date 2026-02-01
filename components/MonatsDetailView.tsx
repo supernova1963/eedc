@@ -65,7 +65,11 @@ export default function MonatsDetailView({ monatsdaten, anlage }: MonatsDetailVi
   const netzbezugKosten = toNum(currentMonth.netzbezug_kosten_euro)
   const einspeisungErtrag = toNum(currentMonth.einspeisung_ertrag_euro)
   const betriebsausgaben = toNum(currentMonth.betriebsausgaben_monat_euro)
-  const nettoErtrag = einspeisungErtrag - netzbezugKosten - betriebsausgaben
+  // Strompreis für EV-Einsparung (aus Anlage oder Fallback)
+  const strompreis = toNum(anlage?.netzbezugspreis_euro_kwh) || 0.30
+  const evEinsparung = eigenverbrauch * strompreis
+  // Netto-Ertrag OHNE Netzbezugskosten (diese fallen auch ohne PV an)
+  const nettoErtrag = evEinsparung + einspeisungErtrag - betriebsausgaben
 
   // Pie Chart Daten - Energiefluss
   const energieflussData = [
@@ -222,8 +226,8 @@ export default function MonatsDetailView({ monatsdaten, anlage }: MonatsDetailVi
             <SimpleIcon type="money" className="w-6 h-6 text-green-600" />
           </div>
           <FormelTooltip
-            formel="Einspeise-Erlöse − Netzbezugskosten − Betriebsausgaben"
-            berechnung={`${fmtCalc(einspeisungErtrag)} € − ${fmtCalc(netzbezugKosten)} € − ${fmtCalc(betriebsausgaben)} €`}
+            formel="EV-Einsparung + Einspeise-Erlöse − Betriebsausgaben"
+            berechnung={`${fmtCalc(evEinsparung)} € + ${fmtCalc(einspeisungErtrag)} € − ${fmtCalc(betriebsausgaben)} €`}
             ergebnis={`= ${fmtCalc(nettoErtrag)} €`}
           >
             <span className={`text-3xl font-bold ${nettoErtrag >= 0 ? 'text-green-800' : 'text-red-800'}`}>
@@ -231,7 +235,7 @@ export default function MonatsDetailView({ monatsdaten, anlage }: MonatsDetailVi
             </span>
           </FormelTooltip>
           <div className="text-xs text-green-700 mt-1">
-            Erlöse - Kosten
+            EV-Ersparnis + Erlöse − Betrieb
           </div>
         </div>
       </div>
