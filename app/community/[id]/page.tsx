@@ -5,6 +5,7 @@ import { use, useEffect, useState } from 'react'
 import Link from 'next/link'
 import SimpleIcon from '@/components/SimpleIcon'
 import Breadcrumb from '@/components/Breadcrumb'
+import CommunityMonatsDetailView from '@/components/CommunityMonatsDetailView'
 
 interface PublicAnlageDetail {
   anlage_id: string
@@ -44,7 +45,16 @@ interface Monatsdaten {
   direktverbrauch_kwh: number
   einspeisung_kwh: number
   netzbezug_kwh: number
+  gesamtverbrauch_kwh: number
+  batterieladung_kwh: number
+  batterieentladung_kwh: number
+  einspeisung_ertrag_euro: number
+  netzbezug_kosten_euro: number
+  betriebsausgaben_monat_euro: number
+  eigenverbrauch_kwh: number
   autarkiegrad_prozent: number
+  eigenverbrauchsquote_prozent: number
+  strompreis_cent_kwh: number
 }
 
 interface Auswertung {
@@ -118,8 +128,8 @@ export default function CommunityAnlageDetailPage({ params }: { params: Promise<
         }
       }
 
-      // Lade Monatsdaten wenn freigegeben
-      if (data.data.monatsdaten_oeffentlich) {
+      // Lade Monatsdaten wenn freigegeben (auch für Auswertungen benötigt)
+      if (data.data.monatsdaten_oeffentlich || data.data.auswertungen_oeffentlich) {
         try {
           const mdRes = await fetch(`/api/community/anlagen/${id}/monatsdaten`)
           const mdData = await mdRes.json()
@@ -358,6 +368,16 @@ export default function CommunityAnlageDetailPage({ params }: { params: Promise<
                 </div>
               </div>
             )}
+          </div>
+        )}
+
+        {/* Monatsdetail-Ansicht wenn Auswertungen freigegeben */}
+        {anlage.auswertungen_oeffentlich && monatsdaten.length > 0 && (
+          <div className="mb-8">
+            <CommunityMonatsDetailView
+              monatsdaten={monatsdaten}
+              leistung_kwp={anlage.leistung_kwp}
+            />
           </div>
         )}
 
