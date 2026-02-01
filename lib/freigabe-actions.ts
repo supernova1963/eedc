@@ -20,6 +20,7 @@ export async function updateFreigaben(anlageId: string, formData: {
     .update({
       oeffentlich: formData.profil_oeffentlich,
       kennzahlen_oeffentlich: formData.kennzahlen_oeffentlich,
+      auswertungen_oeffentlich: formData.auswertungen_oeffentlich, // NEU: Auswertungen separat
       monatsdaten_oeffentlich: formData.monatsdaten_oeffentlich,
       komponenten_oeffentlich: formData.investitionen_oeffentlich, // Umbenannt: investitionen → komponenten
       standort_genau_anzeigen: formData.standort_genau

@@ -26,6 +26,7 @@ interface PublicAnlageDetail {
   komponenten_oeffentlich?: boolean
   monatsdaten_oeffentlich?: boolean
   kennzahlen_oeffentlich?: boolean
+  auswertungen_oeffentlich?: boolean
 }
 
 interface Komponente {
@@ -130,8 +131,8 @@ export default function CommunityAnlageDetailPage({ params }: { params: Promise<
         }
       }
 
-      // Lade Auswertung wenn Kennzahlen freigegeben
-      if (data.data.kennzahlen_oeffentlich) {
+      // Lade Auswertung wenn Auswertungen freigegeben
+      if (data.data.auswertungen_oeffentlich) {
         try {
           const ausRes = await fetch(`/api/community/anlagen/${id}/auswertung`)
           const ausData = await ausRes.json()

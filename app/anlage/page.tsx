@@ -15,7 +15,7 @@ async function getAnlageFreigaben(anlageId: string) {
   // FRESH-START: Freigaben sind jetzt direkt in der anlagen Tabelle
   const { data: anlage } = await supabase
     .from('anlagen')
-    .select('oeffentlich, standort_genau_anzeigen, kennzahlen_oeffentlich, monatsdaten_oeffentlich, komponenten_oeffentlich')
+    .select('oeffentlich, standort_genau_anzeigen, kennzahlen_oeffentlich, auswertungen_oeffentlich, monatsdaten_oeffentlich, komponenten_oeffentlich')
     .eq('id', anlageId)
     .single()
 
@@ -27,9 +27,9 @@ async function getAnlageFreigaben(anlageId: string) {
     profil_oeffentlich: anlage.oeffentlich,
     standort_genau: anlage.standort_genau_anzeigen,
     kennzahlen_oeffentlich: anlage.kennzahlen_oeffentlich,
+    auswertungen_oeffentlich: anlage.auswertungen_oeffentlich, // Auswertungen (Wirtschaftlichkeit, Jahresvergleich)
     monatsdaten_oeffentlich: anlage.monatsdaten_oeffentlich,
     investitionen_oeffentlich: anlage.komponenten_oeffentlich, // Mapping: komponenten → investitionen (für alte Form)
-    auswertungen_oeffentlich: false, // Deprecated, wird nicht mehr verwendet
   }
 }
 
