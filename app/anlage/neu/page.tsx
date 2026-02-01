@@ -113,6 +113,35 @@ export default function NeueAnlagePage() {
                     className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   />
                 </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Anschaffungskosten (€)
+                  </label>
+                  <input
+                    type="number"
+                    name="anschaffungskosten_euro"
+                    step="0.01"
+                    min="0"
+                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    placeholder="15000"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">Für ROI-Berechnung benötigt</p>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Einspeisevergütung (ct/kWh)
+                  </label>
+                  <input
+                    type="number"
+                    name="einspeiseverguetung_cent_kwh"
+                    step="0.01"
+                    min="0"
+                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    placeholder="8.20"
+                  />
+                </div>
               </div>
             </div>
 

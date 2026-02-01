@@ -24,6 +24,11 @@ export async function createAnlage(formData: FormData) {
   const installationsdatum = formData.get('installationsdatum') as string
   const standort_plz = formData.get('standort_plz') as string
   const standort_ort = formData.get('standort_ort') as string
+  const anschaffungskosten_euro_str = formData.get('anschaffungskosten_euro') as string
+  const einspeiseverguetung_cent_kwh_str = formData.get('einspeiseverguetung_cent_kwh') as string
+
+  const anschaffungskosten_euro = anschaffungskosten_euro_str ? parseFloat(anschaffungskosten_euro_str) : null
+  const einspeiseverguetung_cent_kwh = einspeiseverguetung_cent_kwh_str ? parseFloat(einspeiseverguetung_cent_kwh_str) : null
 
   console.log('📝 FormData:', {
     anlagenname,
@@ -31,6 +36,8 @@ export async function createAnlage(formData: FormData) {
     installationsdatum,
     standort_plz,
     standort_ort,
+    anschaffungskosten_euro,
+    einspeiseverguetung_cent_kwh,
   })
 
   // Validierung
@@ -57,9 +64,11 @@ export async function createAnlage(formData: FormData) {
     komponenten_oeffentlich: false,
   }
 
-  // Optionale Standort-Felder
+  // Optionale Felder
   if (standort_plz) insertData.standort_plz = standort_plz
   if (standort_ort) insertData.standort_ort = standort_ort
+  if (anschaffungskosten_euro) insertData.anschaffungskosten_euro = anschaffungskosten_euro
+  if (einspeiseverguetung_cent_kwh) insertData.einspeiseverguetung_cent_kwh = einspeiseverguetung_cent_kwh
 
   console.log('💾 Inserting anlage:', insertData)
 
