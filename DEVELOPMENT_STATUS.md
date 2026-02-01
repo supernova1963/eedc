@@ -28,6 +28,7 @@
 - `components/ROIDashboard.tsx` - KPI-Tooltips
 - `components/WirtschaftlichkeitStats.tsx` - KPI-Tooltips
 - `components/GesamtHaushaltBilanz.tsx` - KPI-Tooltips
+- `components/MonatsDetailView.tsx` - KPI-Tooltips (kWh/kWp, EV, Autarkie, Netto-Ertrag, Batterie-Effizienz)
 
 ### 14. Übersichtsseite Layout-Fix
 **Dateien:** `app/uebersicht/page.tsx`, `app/uebersicht/MonatsdatenTable.tsx`
