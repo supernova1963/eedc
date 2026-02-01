@@ -126,14 +126,8 @@ AS $$
     i.typ,
     i.bezeichnung,
     i.anschaffungsdatum,
-    -- Parameter aus relevanten Feldern zusammenbauen
-    jsonb_build_object(
-      'kapazitaet_kwh', i.kapazitaet_kwh,
-      'leistung_kw', i.leistung_kw,
-      'jaz', i.jaz,
-      'km_pro_jahr', i.km_pro_jahr,
-      'verbrauch_kwh_100km', i.verbrauch_kwh_100km
-    ) as parameter
+    -- Parameter direkt aus JSONB-Feld (ohne sensible Kostendaten)
+    i.parameter
   FROM investitionen i
   JOIN anlagen a ON a.id = i.anlage_id
   WHERE i.anlage_id = p_anlage_id
