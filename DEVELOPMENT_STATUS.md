@@ -2,6 +2,21 @@
 
 ## Letzte Änderungen (Session 02.02.2026)
 
+### 26. Arbitrage & V2H in Auswertungen anzeigen
+**Dateien geändert:**
+- `components/SpeicherAuswertung.tsx` - Arbitrage-KPI und Tabellenspalten
+- `components/EAutoAuswertung.tsx` - V2H-Info-Box und Tabellenspalte
+- `components/MonatsDetailView.tsx` - Arbitrage/V2H Info-Boxen
+- `app/auswertung/page.tsx` - Investitionen an MonatsDetailView übergeben
+
+**Features:**
+- **SpeicherAuswertung:** Neue KPI-Box "Arbitrage-Ertrag" mit Gesamt-Netzladung, Tabellenspalten für monatliche Netzladung und Arbitrage-Ertrag
+- **EAutoAuswertung:** V2H-Info-Box mit Rückspeisung, Ersparnis und Entladepreis, V2H-Spalte in Monatstabelle
+- **MonatsDetailView:** Info-Boxen für Arbitrage und V2H mit Monatswerten oder Hinweistext wenn keine Daten erfasst
+- Alle Anzeigen nur sichtbar wenn entsprechendes Feature (nutzt_arbitrage / nutzt_v2h) aktiviert
+
+---
+
 ### 25. Vehicle-to-Home (V2H) Unterstützung für E-Autos
 **Dateien geändert:**
 - `lib/investitionTypes.ts` - Neue Parameter für E-Auto (`nutzt_v2h`, `v2h_entlade_preis_cent`)
@@ -333,8 +348,15 @@ npx tsx scripts/recalculate-investition-prognosen.ts
 - [x] Speicher: Arbitrage-Unterstützung für dynamische Tarife
 - [x] Speicher: Manuelle Netzladung-Eingabe
 - [x] E-Auto: Vehicle-to-Home (V2H) Unterstützung
+- [x] Auswertungen: Arbitrage & V2H anzeigen (Phase 1)
 - [ ] Community Feature: Kommunikationsfeatures erweitern
 - [ ] KI-Insights: Community-Durchschnittswerte einbinden
+
+### Optional: Arbitrage/V2H Erweiterungen (Phase 2)
+- [ ] ROIDashboard: Arbitrage & V2H in Amortisations-Hochrechnung einbeziehen
+- [ ] OptimierungsvorschlaegeDashboard: Neue Kategorien für Arbitrage & V2H Empfehlungen
+- [ ] WirtschaftlichkeitStats: Arbitrage/V2H Erlöse separat ausweisen
+- [ ] CO2ImpactDashboard: V2H zusätzliche CO₂-Einsparung berücksichtigen
 
 ## Ausstehende Migrationen
 Keine ausstehenden Migrationen - alle V2H- und Arbitrage-Daten werden im bestehenden JSONB-Feld `parameter` gespeichert.
@@ -347,11 +369,11 @@ Keine ausstehenden Migrationen - alle V2H- und Arbitrage-Daten werden im bestehe
 
 ## Letzte Commits
 ```
+31b1549 ✨ Feature: Arbitrage & V2H in Auswertungen anzeigen
+d961825 🐛 Fix: V2H-Parameter werden jetzt in Datenbank gespeichert
+a702990 🐛 Fix: Checkbox-Parameter (V2H, Arbitrage) werden jetzt gespeichert
+6173e96 📚 DEVELOPMENT_STATUS: V2H-Feature dokumentiert
 a31e406 ✨ Feature: Vehicle-to-Home (V2H) Unterstützung für E-Autos
 fc468a2 ✨ CSV-Vorlage: Arbitrage-Spalten für Speicher
 f78c39e ✨ Feature: Manuelle Eingabe der Netzladung für Arbitrage-Speicher
-1f6407d 📚 DEVELOPMENT_STATUS: Arbitrage-Feature dokumentiert
-9992327 ✨ Feature: Arbitrage-Unterstützung für Speicher mit dynamischen Stromtarifen
-6615ced 🐛 Fix: Batterieladung aus Netz wird jetzt berücksichtigt
-d33c1ae 🐛 Fix: Investitionen Aktionsspalte sichtbar machen
 ```
