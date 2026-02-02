@@ -119,7 +119,7 @@ function generateAllColumns(investitionen: Investition[]): Column[] {
           dbName: `inv_${inv.id}_ladung`,
           required: false,
           example: '60',
-          hint: 'In Batterie geladen',
+          hint: 'In Batterie geladen (gesamt)',
           investitionId: inv.id,
           investitionTyp: 'speicher',
           jsonField: 'ladung_kwh'
@@ -135,6 +135,31 @@ function generateAllColumns(investitionen: Investition[]): Column[] {
           jsonField: 'entladung_kwh'
         }
       )
+      // Arbitrage-Felder nur wenn aktiviert
+      if (inv.parameter?.nutzt_arbitrage) {
+        columns.push(
+          {
+            name: `${prefix} - Ladung Netz (kWh)`,
+            dbName: `inv_${inv.id}_ladung_netz`,
+            required: false,
+            example: '20',
+            hint: 'Davon aus Netz geladen (Arbitrage)',
+            investitionId: inv.id,
+            investitionTyp: 'speicher',
+            jsonField: 'ladung_netz_kwh'
+          },
+          {
+            name: `${prefix} - Ladepreis (ct/kWh)`,
+            dbName: `inv_${inv.id}_ladepreis`,
+            required: false,
+            example: '12',
+            hint: 'Ø Strompreis bei Netzladung',
+            investitionId: inv.id,
+            investitionTyp: 'speicher',
+            jsonField: 'ladepreis_cent'
+          }
+        )
+      }
     } else if (inv.typ === 'e-auto') {
       columns.push(
         {
@@ -264,6 +289,8 @@ function generateCSV(columns: Column[], anlage: any, investitionen: Investition[
     if (c.investitionTyp === 'speicher') {
       if (c.jsonField === 'ladung_kwh') return '20'
       if (c.jsonField === 'entladung_kwh') return '18'
+      if (c.jsonField === 'ladung_netz_kwh') return '5'
+      if (c.jsonField === 'ladepreis_cent') return '12'
     }
     if (c.investitionTyp === 'e-auto') {
       if (c.jsonField === 'km_gefahren') return '1200'
@@ -295,6 +322,8 @@ function generateCSV(columns: Column[], anlage: any, investitionen: Investition[
     if (c.investitionTyp === 'speicher') {
       if (c.jsonField === 'ladung_kwh') return '80'
       if (c.jsonField === 'entladung_kwh') return '75'
+      if (c.jsonField === 'ladung_netz_kwh') return '15'
+      if (c.jsonField === 'ladepreis_cent') return '10'
     }
     if (c.investitionTyp === 'e-auto') {
       if (c.jsonField === 'km_gefahren') return '1500'
