@@ -209,13 +209,21 @@ export default function MonatsdatenFormDynamic({
     })
 
     // Berechnungen
+    // Verfügbare PV-Energie nach Einspeisung
+    const pvNachEinspeisung = pvErzeugung - einspeisung
+
+    // Batterieladung kann aus PV ODER aus Netz kommen
+    // Ladung aus PV ist maximal das, was nach Einspeisung noch da ist
+    const batterieLadungAusPV = Math.min(batterieLadung, Math.max(0, pvNachEinspeisung))
+    const batterieLadungAusNetz = batterieLadung - batterieLadungAusPV
+
     // Direktverbrauch = Was direkt von der PV verbraucht wird (ohne Batterie-Umweg)
-    const direktverbrauch = pvErzeugung - einspeisung - batterieLadung
+    const direktverbrauch = pvNachEinspeisung - batterieLadungAusPV
 
     // Eigenverbrauch = Direktverbrauch + was aus der Batterie kommt
     const eigenverbrauch = direktverbrauch + batterieEntladung
 
-    // Gesamtverbrauch = Eigenverbrauch + Netzbezug
+    // Gesamtverbrauch = Eigenverbrauch + Netzbezug (Netzbezug inkl. Batterie-Ladung aus Netz)
     const gesamtverbrauch = eigenverbrauch + netzbezug
 
     // Kennzahlen
@@ -274,6 +282,8 @@ export default function MonatsdatenFormDynamic({
       // Summen
       pvErzeugung,
       batterieLadung,
+      batterieLadungAusPV,
+      batterieLadungAusNetz,
       batterieEntladung,
       speicherKapazitaet,
       eAutoLadungPv,
@@ -1407,6 +1417,11 @@ export default function MonatsdatenFormDynamic({
             {!berechneteWerte.bilanzOk && (
               <p className="mt-2 text-xs text-red-600">
                 Hinweis: Direktverbrauch ist negativ. Bitte Eingaben prüfen (PV-Erzeugung, Einspeisung, Batterieladung).
+              </p>
+            )}
+            {berechneteWerte.batterieLadungAusNetz > 0 && (
+              <p className="mt-2 text-xs text-blue-600">
+                ℹ️ {berechneteWerte.batterieLadungAusNetz.toFixed(1)} kWh Batterieladung aus dem Netz erkannt (Ladung &gt; verfügbare PV).
               </p>
             )}
           </div>
