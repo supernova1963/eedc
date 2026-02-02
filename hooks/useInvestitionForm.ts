@@ -118,7 +118,9 @@ export function useInvestitionForm({ mitgliedId, editData, onSuccess }: UseInves
 
   const handleParamChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target
-    setParameterData(prev => ({ ...prev, [name]: value }))
+    // Boolean-Werte direkt übernehmen (für Checkboxen)
+    const finalValue = typeof value === 'boolean' ? value : value
+    setParameterData(prev => ({ ...prev, [name]: finalValue }))
   }
 
   const mehrkosten = useMemo(() =>

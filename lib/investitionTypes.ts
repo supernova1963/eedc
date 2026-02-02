@@ -102,7 +102,10 @@ export const DEFAULT_PARAMETER = {
     alter_preis_cent_kwh: '8'
   },
   'speicher': {
-    wirkungsgrad_prozent: '95'
+    wirkungsgrad_prozent: '95',
+    nutzt_arbitrage: false,              // Flag: Dynamischer Tarif mit gezielter Netzladung
+    lade_durchschnittspreis_cent: '',    // Typischer Preis beim Laden aus Netz
+    entlade_vermiedener_preis_cent: ''   // Typischer vermiedener Preis bei Entladung
   },
   'balkonkraftwerk': {},
   'wechselrichter': {
@@ -153,6 +156,9 @@ export function getInitialParameterData(editData?: any) {
     // Speicher
     kapazitaet_kwh: editData?.parameter?.kapazitaet_kwh?.toString() || '',
     wirkungsgrad_prozent: editData?.parameter?.wirkungsgrad_prozent?.toString() || '95',
+    nutzt_arbitrage: editData?.parameter?.nutzt_arbitrage || false,
+    lade_durchschnittspreis_cent: editData?.parameter?.lade_durchschnittspreis_cent?.toString() || '',
+    entlade_vermiedener_preis_cent: editData?.parameter?.entlade_vermiedener_preis_cent?.toString() || '',
 
     // Balkonkraftwerk
     leistung_kwp: editData?.parameter?.leistung_kwp?.toString() || '',

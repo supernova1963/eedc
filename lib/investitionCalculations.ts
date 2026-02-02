@@ -33,6 +33,10 @@ export interface SpeicherParams {
   kapazitaet_kwh: string
   wirkungsgrad_prozent: string
   betriebskosten_jahr_euro: string
+  // Arbitrage (dynamische Stromtarife)
+  nutzt_arbitrage?: boolean
+  lade_durchschnittspreis_cent?: string
+  entlade_vermiedener_preis_cent?: string
 }
 
 export interface BalkonkraftwerkParams {
@@ -183,13 +187,38 @@ export function berechneSpeicherEinsparungen(params: SpeicherParams, strompreis?
   const strompreisNetz = strompreis || 30
   const einspeisePreis = einspeiseverguetung || 8
 
+  // Arbitrage-Parameter
+  const nutztArbitrage = params.nutzt_arbitrage === true
+  const ladeDurchschnittspreis = parseFloat(params.lade_durchschnittspreis_cent || '') || 15 // Typischer Nachtpreis
+  const entladeVermiedenerPreis = parseFloat(params.entlade_vermiedener_preis_cent || '') || strompreisNetz
+
   const nutzbareSpeicherung = kapazitaet * jahreszyklen * (wirkungsgrad / 100)
   const co2Einsparung = nutzbareSpeicherung * CO2_FAKTOREN.strom_netz_pro_kwh
 
-  // Einsparung durch Speicher: Statt Einspeisung zum niedrigen Preis → Eigenverbrauch zum hohen Preis
-  // Differenz pro kWh = Netzbezugspreis - Einspeisevergütung
-  const differenzProKwh = (strompreisNetz - einspeisePreis) / 100
-  const jahresEinsparung = nutzbareSpeicherung * differenzProKwh - betriebskosten
+  let jahresEinsparung: number
+  let differenzProKwh: number
+
+  if (nutztArbitrage) {
+    // Arbitrage-Modus: Günstig aus Netz laden, teuer entladen (vermiedene Kosten)
+    // Annahme: 30% der Zyklen nutzen Arbitrage (Netzladung), 70% PV-Überschuss
+    const arbitrageAnteil = 0.30
+    const pvAnteil = 0.70
+
+    // PV-Überschuss-Teil: Statt Einspeisung → Eigenverbrauch
+    const pvDifferenz = (strompreisNetz - einspeisePreis) / 100
+    const pvEinsparung = nutzbareSpeicherung * pvAnteil * pvDifferenz
+
+    // Arbitrage-Teil: Günstig laden, teuer entladen
+    const arbitrageDifferenz = (entladeVermiedenerPreis - ladeDurchschnittspreis) / 100
+    const arbitrageEinsparung = nutzbareSpeicherung * arbitrageAnteil * arbitrageDifferenz
+
+    jahresEinsparung = pvEinsparung + arbitrageEinsparung - betriebskosten
+    differenzProKwh = (pvDifferenz * pvAnteil + arbitrageDifferenz * arbitrageAnteil) * 100
+  } else {
+    // Standard-Modus: Statt Einspeisung zum niedrigen Preis → Eigenverbrauch zum hohen Preis
+    differenzProKwh = strompreisNetz - einspeisePreis
+    jahresEinsparung = nutzbareSpeicherung * (differenzProKwh / 100) - betriebskosten
+  }
 
   return {
     co2Einsparung: Math.round(co2Einsparung),
@@ -201,8 +230,12 @@ export function berechneSpeicherEinsparungen(params: SpeicherParams, strompreis?
       nutzbare_speicherung_kwh_jahr: Math.round(nutzbareSpeicherung),
       strompreis_cent_kwh: strompreisNetz,
       einspeiseverguetung_cent_kwh: einspeisePreis,
-      differenz_cent_kwh: Math.round((strompreisNetz - einspeisePreis) * 10) / 10,
-      betriebskosten_jahr_euro: betriebskosten
+      differenz_cent_kwh: Math.round(differenzProKwh * 10) / 10,
+      betriebskosten_jahr_euro: betriebskosten,
+      // Arbitrage-Parameter
+      nutzt_arbitrage: nutztArbitrage,
+      lade_durchschnittspreis_cent: nutztArbitrage ? ladeDurchschnittspreis : undefined,
+      entlade_vermiedener_preis_cent: nutztArbitrage ? entladeVermiedenerPreis : undefined
     }
   }
 }

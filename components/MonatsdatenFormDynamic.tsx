@@ -257,6 +257,35 @@ export default function MonatsdatenFormDynamic({
     // Plausibilitätsprüfung
     const bilanzOk = direktverbrauch >= 0 && eigenverbrauch >= 0
 
+    // Arbitrage-Berechnung für Speicher mit dynamischem Tarif
+    const speicherInv = investitionen.find(i => i.typ === 'speicher')
+    const nutztArbitrage = speicherInv?.parameter?.nutzt_arbitrage === true
+    let arbitrageLadekosten = 0
+    let arbitrageErsparnis = 0
+    let arbitrageGewinn = 0
+    let arbitrageLadepreisCent = 0
+    let arbitrageEntladepreisCent = 0
+
+    if (nutztArbitrage && batterieLadungAusNetz > 0 && speicherInv) {
+      // Ladepreis: Monatseingabe > Stammdaten-Parameter > Fallback Netzbezug
+      const speicherDaten = investitionsDaten[speicherInv.id]
+      arbitrageLadepreisCent =
+        parseFloat(speicherDaten?.ladepreis_cent) ||
+        parseFloat(speicherInv.parameter?.lade_durchschnittspreis_cent) ||
+        stammStrompreise.netzbezug_cent_kwh ||
+        30
+
+      // Entladepreis: Stammdaten-Parameter > Netzbezug (man vermeidet teuren Strom)
+      arbitrageEntladepreisCent =
+        parseFloat(speicherInv.parameter?.entlade_vermiedener_preis_cent) ||
+        stammStrompreise.netzbezug_cent_kwh ||
+        30
+
+      arbitrageLadekosten = batterieLadungAusNetz * arbitrageLadepreisCent / 100
+      arbitrageErsparnis = batterieEntladung * arbitrageEntladepreisCent / 100
+      arbitrageGewinn = arbitrageErsparnis - arbitrageLadekosten
+    }
+
     // Finanzwerte
     const einspeisungErtragEuro = stammStrompreise.einspeiseverguetung_cent_kwh
       ? (einspeisung * stammStrompreise.einspeiseverguetung_cent_kwh / 100)
@@ -322,7 +351,14 @@ export default function MonatsdatenFormDynamic({
       einspeisungErtragEuro,
       netzbezugKostenEuro,
       eigenverbrauchEinsparungEuro,
-      gesamtErsparnisEuro
+      gesamtErsparnisEuro,
+      // Arbitrage (für Speicher mit dynamischem Tarif)
+      nutztArbitrage,
+      arbitrageLadekosten,
+      arbitrageErsparnis,
+      arbitrageGewinn,
+      arbitrageLadepreisCent,
+      arbitrageEntladepreisCent
     }
   }, [formData, investitionsDaten, investitionen, stammStrompreise])
 
@@ -1060,17 +1096,17 @@ export default function MonatsdatenFormDynamic({
 
         {/* Speicher */}
         {hatSpeicher && (
-          <div className="border-t pt-6">
-            <h3 className="text-lg font-medium text-gray-900 mb-4 flex items-center gap-2">
+          <div className="border-t pt-6 dark:border-gray-700">
+            <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100 mb-4 flex items-center gap-2">
               <SimpleIcon type="battery" className="w-5 h-5 text-green-500" />
               Batteriespeicher
             </h3>
             {investitionen.filter(i => i.typ === 'speicher').map(inv => (
-              <div key={inv.id} className="bg-green-50 border border-green-200 rounded-lg p-4 mb-3">
-                <p className="text-sm font-medium text-green-800 mb-3">{inv.bezeichnung}</p>
+              <div key={inv.id} className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg p-4 mb-3">
+                <p className="text-sm font-medium text-green-800 dark:text-green-300 mb-3">{inv.bezeichnung}</p>
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-sm font-medium text-green-700 mb-2">
+                    <label className="block text-sm font-medium text-green-700 dark:text-green-400 mb-2">
                       Ladung (kWh)
                     </label>
                     <input
@@ -1079,11 +1115,11 @@ export default function MonatsdatenFormDynamic({
                       onChange={(e) => handleInvestitionChange(inv.id, 'ladung_kwh', e.target.value)}
                       step="0.1"
                       placeholder="z.B. 60"
-                      className="w-full px-3 py-2 border border-green-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
+                      className="w-full px-3 py-2 border border-green-300 dark:border-green-700 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 dark:bg-gray-800 dark:text-gray-100"
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-green-700 mb-2">
+                    <label className="block text-sm font-medium text-green-700 dark:text-green-400 mb-2">
                       Entladung (kWh)
                     </label>
                     <input
@@ -1092,10 +1128,43 @@ export default function MonatsdatenFormDynamic({
                       onChange={(e) => handleInvestitionChange(inv.id, 'entladung_kwh', e.target.value)}
                       step="0.1"
                       placeholder="z.B. 50"
-                      className="w-full px-3 py-2 border border-green-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
+                      className="w-full px-3 py-2 border border-green-300 dark:border-green-700 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 dark:bg-gray-800 dark:text-gray-100"
                     />
                   </div>
                 </div>
+
+                {/* Arbitrage-Eingabe für Speicher mit dynamischem Tarif */}
+                {inv.parameter?.nutzt_arbitrage && berechneteWerte.batterieLadungAusNetz > 0 && (
+                  <div className="mt-4 pt-4 border-t border-green-200 dark:border-green-800">
+                    <div className="flex items-start gap-2 mb-3">
+                      <SimpleIcon type="money" className="w-4 h-4 text-blue-500 mt-0.5" />
+                      <div>
+                        <p className="text-sm font-medium text-blue-700 dark:text-blue-400">
+                          Arbitrage-Modus aktiv
+                        </p>
+                        <p className="text-xs text-blue-600 dark:text-blue-500">
+                          {berechneteWerte.batterieLadungAusNetz.toFixed(1)} kWh wurden aus dem Netz geladen
+                        </p>
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-blue-700 dark:text-blue-400 mb-2">
+                        Ø Ladepreis diesen Monat (ct/kWh)
+                      </label>
+                      <input
+                        type="number"
+                        value={investitionsDaten[inv.id]?.ladepreis_cent || ''}
+                        onChange={(e) => handleInvestitionChange(inv.id, 'ladepreis_cent', e.target.value)}
+                        step="0.1"
+                        placeholder={inv.parameter?.lade_durchschnittspreis_cent || '15'}
+                        className="w-full px-3 py-2 border border-blue-300 dark:border-blue-700 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-800 dark:text-gray-100"
+                      />
+                      <p className="mt-1 text-xs text-blue-600 dark:text-blue-500">
+                        Durchschnittlicher Strompreis für die Netzladung (z.B. aus Tibber-App)
+                      </p>
+                    </div>
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -1419,10 +1488,55 @@ export default function MonatsdatenFormDynamic({
                 Hinweis: Direktverbrauch ist negativ. Bitte Eingaben prüfen (PV-Erzeugung, Einspeisung, Batterieladung).
               </p>
             )}
-            {berechneteWerte.batterieLadungAusNetz > 0 && (
-              <p className="mt-2 text-xs text-blue-600">
+            {berechneteWerte.batterieLadungAusNetz > 0 && !berechneteWerte.nutztArbitrage && (
+              <p className="mt-2 text-xs text-blue-600 dark:text-blue-400">
                 ℹ️ {berechneteWerte.batterieLadungAusNetz.toFixed(1)} kWh Batterieladung aus dem Netz erkannt (Ladung &gt; verfügbare PV).
               </p>
+            )}
+
+            {/* Arbitrage-Bilanz für Speicher mit dynamischem Tarif */}
+            {berechneteWerte.nutztArbitrage && berechneteWerte.batterieLadungAusNetz > 0 && (
+              <div className="mt-4 p-4 bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-800 rounded-lg">
+                <h4 className="font-medium text-blue-800 dark:text-blue-300 mb-3 flex items-center gap-2">
+                  <SimpleIcon type="money" className="w-4 h-4" />
+                  Arbitrage-Bilanz (Speicher)
+                </h4>
+                <div className="grid grid-cols-2 gap-4 text-sm">
+                  <div>
+                    <p className="text-blue-600 dark:text-blue-400">Ladung aus Netz:</p>
+                    <p className="font-medium text-blue-800 dark:text-blue-200">
+                      {berechneteWerte.batterieLadungAusNetz.toFixed(1)} kWh × {berechneteWerte.arbitrageLadepreisCent.toFixed(1)} ct
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-blue-600 dark:text-blue-400">Ladekosten:</p>
+                    <p className="font-medium text-red-600 dark:text-red-400">
+                      -{berechneteWerte.arbitrageLadekosten.toFixed(2)} €
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-blue-600 dark:text-blue-400">Entladung (vermieden):</p>
+                    <p className="font-medium text-blue-800 dark:text-blue-200">
+                      {berechneteWerte.batterieEntladung.toFixed(1)} kWh × {berechneteWerte.arbitrageEntladepreisCent.toFixed(1)} ct
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-blue-600 dark:text-blue-400">Vermiedene Kosten:</p>
+                    <p className="font-medium text-green-600 dark:text-green-400">
+                      +{berechneteWerte.arbitrageErsparnis.toFixed(2)} €
+                    </p>
+                  </div>
+                </div>
+                <div className="mt-3 pt-3 border-t border-blue-200 dark:border-blue-700 flex justify-between items-center">
+                  <span className="font-medium text-blue-800 dark:text-blue-300">Arbitrage-Gewinn:</span>
+                  <span className={`text-lg font-bold ${berechneteWerte.arbitrageGewinn >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+                    {berechneteWerte.arbitrageGewinn >= 0 ? '+' : ''}{berechneteWerte.arbitrageGewinn.toFixed(2)} €
+                  </span>
+                </div>
+                <p className="mt-2 text-xs text-blue-600 dark:text-blue-500">
+                  Netzladung bei günstigem Preis, Entladung zu Spitzenzeiten = Ersparnis durch Preisdifferenz
+                </p>
+              </div>
             )}
           </div>
         )}
