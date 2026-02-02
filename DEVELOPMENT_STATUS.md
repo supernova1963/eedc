@@ -392,6 +392,12 @@ npx tsx scripts/recalculate-investition-prognosen.ts
 - [ ] Community Feature: Kommunikationsfeatures erweitern
 - [ ] KI-Insights: Community-Durchschnittswerte einbinden
 
+### Produktionssystem: Sicherheitseinstellungen
+- [ ] **Leaked Password Protection aktivieren** (Supabase Dashboard → Authentication → Settings → Security)
+  - Prüft Passwörter gegen HaveIBeenPwned-Datenbank
+  - Verhindert Verwendung kompromittierter Passwörter
+  - Empfohlen für Produktionsumgebungen
+
 ### Optional: Arbitrage/V2H Erweiterungen (Phase 2)
 - [ ] ROIDashboard: Arbitrage & V2H in Amortisations-Hochrechnung einbeziehen
 - [ ] OptimierungsvorschlaegeDashboard: Neue Kategorien für Arbitrage & V2H Empfehlungen
