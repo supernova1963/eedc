@@ -2,6 +2,40 @@
 
 ## Letzte Änderungen (Session 02.02.2026)
 
+### 25. Vehicle-to-Home (V2H) Unterstützung für E-Autos
+**Dateien geändert:**
+- `lib/investitionTypes.ts` - Neue Parameter für E-Auto (`nutzt_v2h`, `v2h_entlade_preis_cent`)
+- `components/investitionen/EAutoFields.tsx` - Checkbox + bedingtes Feld für V2H
+- `components/MonatsdatenFormDynamic.tsx` - V2H-Entladung in Monatseingabe + Berechnungen
+- `app/api/csv-template/route.ts` - V2H-Spalte in CSV-Vorlage
+- `app/api/upload-monatsdaten/route.ts` - V2H-Import und Berechnungslogik
+
+**Features:**
+- **Neuer Parameter `nutzt_v2h`:** Opt-in für bidirektionales Laden (Vehicle-to-Home)
+- **Entladepreis-Feld:** Typischer vermiedener Strompreis bei V2H-Entladung (ct/kWh)
+- **Monatsdaten-Erfassung:** Neues Feld "V2H-Entladung ins Haus (kWh)"
+- **Berechnungslogik:** Eigenverbrauch = Direktverbrauch + Batterieentladung + **V2H-Entladung**
+- **Einsparungsberechnung:** V2H-Entladung × Entladepreis = vermiedener Netzbezug
+- **CSV-Template:** Neue Spalte bei aktiviertem V2H
+
+**Konzept analog zu Speicher-Arbitrage:**
+Bei dynamischen Tarifen wird das E-Auto günstig geladen (z.B. 12 ct nachts) und kann bei teuren Zeiten (z.B. 35 ct abends) Strom zurück ins Haus speisen. Das E-Auto dient so als mobiler Speicher.
+
+**Keine Datenbankänderung nötig** - alle Parameter werden im bestehenden JSONB-Feld `parameter` gespeichert.
+
+---
+
+### 24. Manuelle Netzladung für Arbitrage-Speicher
+**Dateien geändert:**
+- `components/MonatsdatenFormDynamic.tsx` - Neues Eingabefeld "davon aus Netz (kWh)" für Arbitrage-Speicher
+- `app/api/upload-monatsdaten/route.ts` - Import-Logik angepasst
+- `app/api/csv-template/route.ts` - Arbitrage-Spalten (Ladung Netz, Ladepreis) in Vorlage
+
+**Hintergrund:**
+Die automatische Berechnung (Ladung > PV → Netzladung) ist ungenau bei Arbitrage, da auch bei verfügbarer PV aus dem Netz geladen werden kann. Die manuelle Eingabe ermöglicht eine präzisere Erfassung.
+
+---
+
 ### 23. Arbitrage-Unterstützung für Speicher mit dynamischen Stromtarifen
 **Dateien geändert:**
 - `lib/investitionTypes.ts` - Neue Parameter für Speicher (nutzt_arbitrage, lade_durchschnittspreis_cent, entlade_vermiedener_preis_cent)
@@ -296,14 +330,14 @@ npx tsx scripts/recalculate-investition-prognosen.ts
 - [x] Installationsmonat-Handling in Prognose
 - [x] Community: Auswertungen öffentlich freigeben
 - [x] Community: Monatsdetails mit Charts & Tooltips
+- [x] Speicher: Arbitrage-Unterstützung für dynamische Tarife
+- [x] Speicher: Manuelle Netzladung-Eingabe
+- [x] E-Auto: Vehicle-to-Home (V2H) Unterstützung
 - [ ] Community Feature: Kommunikationsfeatures erweitern
 - [ ] KI-Insights: Community-Durchschnittswerte einbinden
 
 ## Ausstehende Migrationen
-Die folgenden Migrationen müssen noch in Supabase ausgeführt werden:
-- `20260201140000_community_auswertungen.sql`
-- `20260201150000_add_auswertungen_oeffentlich.sql`
-- `20260201160000_extended_public_monatsdaten.sql`
+Keine ausstehenden Migrationen - alle V2H- und Arbitrage-Daten werden im bestehenden JSONB-Feld `parameter` gespeichert.
 
 ---
 
@@ -313,11 +347,11 @@ Die folgenden Migrationen müssen noch in Supabase ausgeführt werden:
 
 ## Letzte Commits
 ```
-0f42e9d ✨ Community: Monatsdetail-Ansicht für öffentliche Auswertungen
-14a7d6f 🐛 Fix: DROP FUNCTION vor Signaturänderung
-aa16b52 🐛 Fix: auswertungen_oeffentlich Feld korrekt implementieren
-a843799 🐛 Fix: Strompreis aus monatsdaten statt anlagen
-8173fe1 🔒 Security: .env.local aus Git entfernen
-746a2df 📚 README: Alpha-Tester Kurzanleitung hinzugefügt
-c88123c 🐛 MonatsDetailView: Netto-Ertrag Formel korrigiert
+a31e406 ✨ Feature: Vehicle-to-Home (V2H) Unterstützung für E-Autos
+fc468a2 ✨ CSV-Vorlage: Arbitrage-Spalten für Speicher
+f78c39e ✨ Feature: Manuelle Eingabe der Netzladung für Arbitrage-Speicher
+1f6407d 📚 DEVELOPMENT_STATUS: Arbitrage-Feature dokumentiert
+9992327 ✨ Feature: Arbitrage-Unterstützung für Speicher mit dynamischen Stromtarifen
+6615ced 🐛 Fix: Batterieladung aus Netz wird jetzt berücksichtigt
+d33c1ae 🐛 Fix: Investitionen Aktionsspalte sichtbar machen
 ```
