@@ -183,6 +183,9 @@ export default function MonatsdatenFormDynamic({
     let wallboxLadung = 0
     let wallboxLadevorgaenge = 0
 
+    // Manuelle Netzladung sammeln (für Arbitrage-Speicher)
+    let manuelleBatterieLadungAusNetz = 0
+
     investitionen.forEach(inv => {
       const daten = investitionsDaten[inv.id]
 
@@ -193,6 +196,10 @@ export default function MonatsdatenFormDynamic({
         batterieEntladung += parseFloat(daten?.entladung_kwh) || 0
         // Speicherkapazität aus Parameter lesen
         speicherKapazitaet += parseFloat(inv.parameter?.kapazitaet_kwh) || 0
+        // Manuelle Netzladung (für Arbitrage)
+        if (inv.parameter?.nutzt_arbitrage && daten?.ladung_netz_kwh) {
+          manuelleBatterieLadungAusNetz += parseFloat(daten.ladung_netz_kwh) || 0
+        }
       } else if (inv.typ === 'e-auto') {
         eAutoLadungPv += parseFloat(daten?.ladung_pv_kwh) || 0
         eAutoLadungNetz += parseFloat(daten?.ladung_netz_kwh) || 0
@@ -213,9 +220,20 @@ export default function MonatsdatenFormDynamic({
     const pvNachEinspeisung = pvErzeugung - einspeisung
 
     // Batterieladung kann aus PV ODER aus Netz kommen
-    // Ladung aus PV ist maximal das, was nach Einspeisung noch da ist
-    const batterieLadungAusPV = Math.min(batterieLadung, Math.max(0, pvNachEinspeisung))
-    const batterieLadungAusNetz = batterieLadung - batterieLadungAusPV
+    // Wenn manuelle Netzladung angegeben (Arbitrage), diese verwenden
+    // Sonst: Schätzung - Ladung aus PV ist maximal das, was nach Einspeisung noch da ist
+    let batterieLadungAusNetz: number
+    let batterieLadungAusPV: number
+
+    if (manuelleBatterieLadungAusNetz > 0) {
+      // Manuelle Eingabe verwenden (genauer bei Arbitrage)
+      batterieLadungAusNetz = Math.min(manuelleBatterieLadungAusNetz, batterieLadung)
+      batterieLadungAusPV = batterieLadung - batterieLadungAusNetz
+    } else {
+      // Automatische Schätzung (Fallback)
+      batterieLadungAusPV = Math.min(batterieLadung, Math.max(0, pvNachEinspeisung))
+      batterieLadungAusNetz = batterieLadung - batterieLadungAusPV
+    }
 
     // Direktverbrauch = Was direkt von der PV verbraucht wird (ohne Batterie-Umweg)
     const direktverbrauch = pvNachEinspeisung - batterieLadungAusPV
@@ -443,14 +461,26 @@ export default function MonatsdatenFormDynamic({
         } else if (inv.typ === 'speicher') {
           const entladung = parseFloat(daten.entladung_kwh) || 0
           const ladung = parseFloat(daten.ladung_kwh) || 0
+          const ladungNetz = parseFloat(daten.ladung_netz_kwh) || 0
+          const ladepreisCent = parseFloat(daten.ladepreis_cent) || 0
+
           verbrauchDaten = {
             entladung_kwh: entladung,
-            ladung_kwh: ladung
+            ladung_kwh: ladung,
+            ladung_netz_kwh: ladungNetz,
+            ladepreis_cent: ladepreisCent
           }
-          // Speicher-Einsparung: Entladung wird zum Eigenverbrauch und spart Netzbezug
-          // Aber: Ladung kommt oft aus PV, daher nur die Netto-Einsparung durch Entladung
-          // Vereinfachte Berechnung: Entladung × Strompreis (weil wir sonst Netz bezogen hätten)
-          einsparungMonatEuro = entladung * strompreisNetz / 100
+
+          // Speicher-Einsparung: Entladung spart Netzbezug, aber Netzladung kostet
+          if (inv.parameter?.nutzt_arbitrage && ladungNetz > 0 && ladepreisCent > 0) {
+            // Arbitrage: Entladung × Netzbezugspreis - Netzladung × Ladepreis
+            const ersparnisDurchEntladung = entladung * strompreisNetz / 100
+            const kostenDurchNetzladung = ladungNetz * ladepreisCent / 100
+            einsparungMonatEuro = ersparnisDurchEntladung - kostenDurchNetzladung
+          } else {
+            // Standard: Entladung × Strompreis (weil wir sonst Netz bezogen hätten)
+            einsparungMonatEuro = entladung * strompreisNetz / 100
+          }
           co2EinsparungKg = entladung * 0.4 // ~400g CO2/kWh Strommix
         } else if (inv.typ === 'e-auto') {
           const kmGefahren = parseFloat(daten.km_gefahren) || 0
@@ -1104,10 +1134,10 @@ export default function MonatsdatenFormDynamic({
             {investitionen.filter(i => i.typ === 'speicher').map(inv => (
               <div key={inv.id} className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg p-4 mb-3">
                 <p className="text-sm font-medium text-green-800 dark:text-green-300 mb-3">{inv.bezeichnung}</p>
-                <div className="grid grid-cols-2 gap-4">
+                <div className={`grid gap-4 ${inv.parameter?.nutzt_arbitrage ? 'grid-cols-3' : 'grid-cols-2'}`}>
                   <div>
                     <label className="block text-sm font-medium text-green-700 dark:text-green-400 mb-2">
-                      Ladung (kWh)
+                      Ladung gesamt (kWh)
                     </label>
                     <input
                       type="number"
@@ -1118,6 +1148,24 @@ export default function MonatsdatenFormDynamic({
                       className="w-full px-3 py-2 border border-green-300 dark:border-green-700 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 dark:bg-gray-800 dark:text-gray-100"
                     />
                   </div>
+                  {inv.parameter?.nutzt_arbitrage && (
+                    <div>
+                      <label className="block text-sm font-medium text-blue-700 dark:text-blue-400 mb-2">
+                        davon aus Netz (kWh)
+                      </label>
+                      <input
+                        type="number"
+                        value={investitionsDaten[inv.id]?.ladung_netz_kwh || ''}
+                        onChange={(e) => handleInvestitionChange(inv.id, 'ladung_netz_kwh', e.target.value)}
+                        step="0.1"
+                        placeholder="z.B. 20"
+                        className="w-full px-3 py-2 border border-blue-300 dark:border-blue-700 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-800 dark:text-gray-100"
+                      />
+                      <p className="mt-1 text-xs text-blue-600 dark:text-blue-500">
+                        Netzladung (Tibber, aWATTar)
+                      </p>
+                    </div>
+                  )}
                   <div>
                     <label className="block text-sm font-medium text-green-700 dark:text-green-400 mb-2">
                       Entladung (kWh)
@@ -1134,7 +1182,7 @@ export default function MonatsdatenFormDynamic({
                 </div>
 
                 {/* Arbitrage-Eingabe für Speicher mit dynamischem Tarif */}
-                {inv.parameter?.nutzt_arbitrage && berechneteWerte.batterieLadungAusNetz > 0 && (
+                {inv.parameter?.nutzt_arbitrage && (
                   <div className="mt-4 pt-4 border-t border-green-200 dark:border-green-800">
                     <div className="flex items-start gap-2 mb-3">
                       <SimpleIcon type="money" className="w-4 h-4 text-blue-500 mt-0.5" />
@@ -1142,9 +1190,11 @@ export default function MonatsdatenFormDynamic({
                         <p className="text-sm font-medium text-blue-700 dark:text-blue-400">
                           Arbitrage-Modus aktiv
                         </p>
-                        <p className="text-xs text-blue-600 dark:text-blue-500">
-                          {berechneteWerte.batterieLadungAusNetz.toFixed(1)} kWh wurden aus dem Netz geladen
-                        </p>
+                        {berechneteWerte.batterieLadungAusNetz > 0 && (
+                          <p className="text-xs text-blue-600 dark:text-blue-500">
+                            {berechneteWerte.batterieLadungAusNetz.toFixed(1)} kWh Netzladung erkannt
+                          </p>
+                        )}
                       </div>
                     </div>
                     <div>

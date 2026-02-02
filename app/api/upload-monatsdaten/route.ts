@@ -60,6 +60,8 @@ function generateInvestitionMapping(investitionen: Investition[]): Record<string
     } else if (inv.typ === 'speicher') {
       mapping[`${prefix} - Ladung (kWh)`] = { investitionId: inv.id, investitionTyp: 'speicher', jsonField: 'ladung_kwh' }
       mapping[`${prefix} - Entladung (kWh)`] = { investitionId: inv.id, investitionTyp: 'speicher', jsonField: 'entladung_kwh' }
+      mapping[`${prefix} - Ladung Netz (kWh)`] = { investitionId: inv.id, investitionTyp: 'speicher', jsonField: 'ladung_netz_kwh' }
+      mapping[`${prefix} - Ladepreis (ct/kWh)`] = { investitionId: inv.id, investitionTyp: 'speicher', jsonField: 'ladepreis_cent' }
     } else if (inv.typ === 'e-auto') {
       mapping[`${prefix} - km gefahren`] = { investitionId: inv.id, investitionTyp: 'e-auto', jsonField: 'km_gefahren' }
       mapping[`${prefix} - Verbrauch (kWh)`] = { investitionId: inv.id, investitionTyp: 'e-auto', jsonField: 'verbrauch_kwh' }
@@ -178,6 +180,7 @@ function calculateDerivedValues(
   pvErzeugung: number
   batterieLadung: number
   batterieEntladung: number
+  batterieLadungAusNetz: number
   direktverbrauch: number
   eigenverbrauch: number
   gesamtverbrauch: number
@@ -188,6 +191,7 @@ function calculateDerivedValues(
   let pvErzeugung = 0
   let batterieLadung = 0
   let batterieEntladung = 0
+  let manuelleBatterieLadungAusNetz = 0
 
   for (const invData of investitionsDaten) {
     const inv = investitionen.find(i => i.id === invData.investition_id)
@@ -198,12 +202,34 @@ function calculateDerivedValues(
     } else if (inv.typ === 'speicher') {
       batterieLadung += invData.verbrauch_daten.ladung_kwh || 0
       batterieEntladung += invData.verbrauch_daten.entladung_kwh || 0
+      // Manuelle Netzladung (für Arbitrage)
+      if (inv.parameter?.nutzt_arbitrage && invData.verbrauch_daten.ladung_netz_kwh) {
+        manuelleBatterieLadungAusNetz += invData.verbrauch_daten.ladung_netz_kwh || 0
+      }
     }
   }
 
   // Berechnungen (wie im Formular)
+  // Verfügbare PV-Energie nach Einspeisung
+  const pvNachEinspeisung = pvErzeugung - einspeisung
+
+  // Batterieladung kann aus PV ODER aus Netz kommen
+  // Wenn manuelle Netzladung angegeben (Arbitrage), diese verwenden
+  let batterieLadungAusNetz: number
+  let batterieLadungAusPV: number
+
+  if (manuelleBatterieLadungAusNetz > 0) {
+    // Manuelle Eingabe verwenden (genauer bei Arbitrage)
+    batterieLadungAusNetz = Math.min(manuelleBatterieLadungAusNetz, batterieLadung)
+    batterieLadungAusPV = batterieLadung - batterieLadungAusNetz
+  } else {
+    // Automatische Schätzung (Fallback)
+    batterieLadungAusPV = Math.min(batterieLadung, Math.max(0, pvNachEinspeisung))
+    batterieLadungAusNetz = batterieLadung - batterieLadungAusPV
+  }
+
   // Direktverbrauch = Was direkt von der PV verbraucht wird (ohne Batterie-Umweg)
-  const direktverbrauch = pvErzeugung - einspeisung - batterieLadung
+  const direktverbrauch = pvNachEinspeisung - batterieLadungAusPV
 
   // Eigenverbrauch = Direktverbrauch + was aus der Batterie kommt
   const eigenverbrauch = direktverbrauch + batterieEntladung
@@ -219,6 +245,7 @@ function calculateDerivedValues(
     pvErzeugung,
     batterieLadung,
     batterieEntladung,
+    batterieLadungAusNetz,
     direktverbrauch,
     eigenverbrauch,
     gesamtverbrauch,
