@@ -17,6 +17,9 @@ export interface EAutoParams {
   benzinpreis_euro_liter: string
   strompreis_cent_kwh: string
   betriebskosten_jahr_euro: string
+  // V2H (Vehicle-to-Home)
+  nutzt_v2h?: boolean
+  v2h_entlade_preis_cent?: string
 }
 
 export interface WaermepumpeParams {
@@ -104,6 +107,10 @@ export function berechneEAutoEinsparungen(params: EAutoParams): { co2Einsparung:
   // Jahres-Einsparung = Verbrenner-Kosten - E-Auto-Kosten
   const jahresEinsparung = benzinkosten - kostenEAuto
 
+  // V2H-Parameter
+  const nutztV2h = params.nutzt_v2h === true
+  const v2hEntladepreis = parseFloat(params.v2h_entlade_preis_cent || '') || 0
+
   return {
     co2Einsparung: Math.round(co2Einsparung),
     jahresEinsparung: Math.round(jahresEinsparung),
@@ -120,7 +127,10 @@ export function berechneEAutoEinsparungen(params: EAutoParams): { co2Einsparung:
       benzinpreis_euro_liter: benzinpreis,
       benzinkosten_jahr_euro: Math.round(benzinkosten),
       betriebskosten_jahr_euro: betriebskosten,
-      kosten_eauto_jahr_euro: Math.round(kostenEAuto)
+      kosten_eauto_jahr_euro: Math.round(kostenEAuto),
+      // V2H-Parameter
+      nutzt_v2h: nutztV2h,
+      v2h_entlade_preis_cent: nutztV2h ? v2hEntladepreis : undefined
     }
   }
 }
