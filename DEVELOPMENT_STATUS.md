@@ -2,6 +2,46 @@
 
 ## Letzte Änderungen (Session 02.02.2026)
 
+### 27. Supabase Security: search_path für alle Funktionen fixiert
+**Neue Datei:** `supabase/migrations/20260202100000_fix_function_search_path.sql`
+
+**Problem:** Supabase Security Warning "function_search_path_mutable" für 17 Funktionen.
+
+**Lösung:** Alle SECURITY DEFINER Funktionen erhalten `SET search_path = public`.
+
+**Betroffene Funktionen:**
+- `auth_user_id()`, `current_mitglied_id()`, `user_owns_anlage(uuid)`, `anlage_is_public(uuid)`
+- `user_owns_investition(uuid)`, `validate_investition_monatsdaten()`
+- `create_anlage_freigabe(uuid)`, `update_anlagen_freigaben_timestamp()`
+- `get_aktueller_strompreis(uuid)`, `get_public_anlagen()`, `get_community_stats()`
+- `search_public_anlagen(...)`, `get_public_anlage_details(uuid)`
+- `get_public_komponenten(uuid)`, `get_public_auswertung(uuid)`
+- `get_public_jahresvergleich(uuid)`, `get_public_monatsdaten(uuid)`
+
+**Hinweis:** Falls nach der Migration noch Warnungen für `create_anlage_freigabe` oder `get_aktueller_strompreis` erscheinen, existieren möglicherweise alte Funktionsversionen mit anderen Signaturen. Diese können über das Supabase Dashboard (Database → Functions) manuell gelöscht werden.
+
+---
+
+### 28. Supabase Security: Leaked Password Protection aktivieren (manuell)
+**Status:** Manuelle Aktivierung erforderlich
+
+**Was ist das?**
+- Integration mit HaveIBeenPwned (HIBP)
+- Prüft Passwörter gegen bekannte Datenlecks (Milliarden kompromittierter Passwörter)
+- Datenschutzkonform über k-Anonymity (nur Hash-Präfix wird gesendet)
+
+**Auswirkungen:**
+- Benutzer können keine Passwörter verwenden, die in Datenlecks vorkommen
+- Erhöht Schutz gegen Credential-Stuffing-Angriffe
+- Benutzer mit schwachen/kompromittierten Passwörtern müssen ein neues wählen
+
+**Aktivierung:**
+1. Supabase Dashboard öffnen
+2. **Authentication** → **Settings** → **Security**
+3. **Leaked Password Protection** aktivieren
+
+---
+
 ### 26. Arbitrage & V2H in Auswertungen anzeigen
 **Dateien geändert:**
 - `components/SpeicherAuswertung.tsx` - Arbitrage-KPI und Tabellenspalten
@@ -369,6 +409,8 @@ Keine ausstehenden Migrationen - alle V2H- und Arbitrage-Daten werden im bestehe
 
 ## Letzte Commits
 ```
+4f6bc1d 🔒 Fix: Supabase Security Warning search_path für alle Funktionen
+e95d55f 📚 DEVELOPMENT_STATUS: Auswertungs-Features und Phase 2 dokumentiert
 31b1549 ✨ Feature: Arbitrage & V2H in Auswertungen anzeigen
 d961825 🐛 Fix: V2H-Parameter werden jetzt in Datenbank gespeichert
 a702990 🐛 Fix: Checkbox-Parameter (V2H, Arbitrage) werden jetzt gespeichert
