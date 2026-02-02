@@ -504,6 +504,7 @@ export default async function AuswertungPage({
               <MonatsDetailView
                 monatsdaten={monatsdaten}
                 anlage={anlage}
+                investitionen={investitionen}
               />
             )}
 

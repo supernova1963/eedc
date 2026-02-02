@@ -11,9 +11,10 @@ import FormelTooltip, { fmtCalc } from './FormelTooltip'
 interface MonatsDetailViewProps {
   monatsdaten: any[]
   anlage: any
+  investitionen?: any[]
 }
 
-export default function MonatsDetailView({ monatsdaten, anlage }: MonatsDetailViewProps) {
+export default function MonatsDetailView({ monatsdaten, anlage, investitionen = [] }: MonatsDetailViewProps) {
   const [selectedMonth, setSelectedMonth] = useState<any>(null)
 
   if (!monatsdaten || monatsdaten.length === 0) {
@@ -110,6 +111,23 @@ export default function MonatsDetailView({ monatsdaten, anlage }: MonatsDetailVi
   const veraenderungErzeugung = vormonat && vormonatErzeugung > 0
     ? ((erzeugung - vormonatErzeugung) / vormonatErzeugung) * 100
     : 0
+
+  // Arbitrage- und V2H-Erkennung aus Investitionen
+  const speicherMitArbitrage = investitionen.find(inv => inv.typ === 'speicher' && inv.parameter?.nutzt_arbitrage === true)
+  const eAutoMitV2h = investitionen.find(inv => inv.typ === 'e-auto' && inv.parameter?.nutzt_v2h === true)
+
+  // Arbitrage/V2H-Werte aus aktuellem Monat (falls in Monatsdaten vorhanden)
+  const arbitrageNetzladung = toNum(currentMonth.batterie_ladung_netz_kwh)
+  const arbitrageLadepreis = toNum(currentMonth.arbitrage_ladepreis_cent) || toNum(speicherMitArbitrage?.parameter?.lade_durchschnittspreis_cent) || 15
+  const arbitrageEntladepreis = toNum(speicherMitArbitrage?.parameter?.entlade_vermiedener_preis_cent) || toNum(currentMonth.netzbezug_preis_cent_kwh) || 30
+  const arbitrageErtrag = arbitrageNetzladung > 0
+    ? (batterieentladung * arbitrageEntladepreis / 100) - (arbitrageNetzladung * arbitrageLadepreis / 100)
+    : 0
+
+  // V2H-Werte (würden aus investition_monatsdaten kommen, hier Platzhalter)
+  const v2hEntladung = toNum(currentMonth.v2h_entladung_kwh)
+  const v2hEntladepreis = toNum(eAutoMitV2h?.parameter?.v2h_entlade_preis_cent) || 30
+  const v2hErsparnis = v2hEntladung * v2hEntladepreis / 100
 
   return (
     <div className="space-y-6">
@@ -239,6 +257,73 @@ export default function MonatsDetailView({ monatsdaten, anlage }: MonatsDetailVi
           </div>
         </div>
       </div>
+
+      {/* Arbitrage & V2H Info-Boxen */}
+      {(speicherMitArbitrage || eAutoMitV2h) && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {speicherMitArbitrage && (
+            <div className="bg-purple-50 dark:bg-purple-900/30 border border-purple-200 dark:border-purple-700 rounded-lg p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <SimpleIcon type="lightning" className="w-5 h-5 text-purple-600" />
+                <h4 className="text-sm font-semibold text-purple-900 dark:text-purple-100">Speicher-Arbitrage</h4>
+              </div>
+              {arbitrageNetzladung > 0 ? (
+                <div className="grid grid-cols-3 gap-2 text-sm">
+                  <div>
+                    <div className="text-purple-700 dark:text-purple-300">Netzladung</div>
+                    <div className="font-bold text-purple-900 dark:text-purple-100">{fmt(arbitrageNetzladung)} kWh</div>
+                  </div>
+                  <div>
+                    <div className="text-purple-700 dark:text-purple-300">Ø Ladepreis</div>
+                    <div className="font-bold text-purple-900 dark:text-purple-100">{fmtDec(arbitrageLadepreis)} ct</div>
+                  </div>
+                  <div>
+                    <div className="text-purple-700 dark:text-purple-300">Ertrag</div>
+                    <div className={`font-bold ${arbitrageErtrag >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                      {arbitrageErtrag >= 0 ? '+' : ''}{fmtDec(arbitrageErtrag)} €
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-sm text-purple-600 dark:text-purple-400">
+                  Keine Netzladung in diesem Monat erfasst.
+                  Bei der Monatseingabe kann die Netzladung für Arbitrage-Speicher angegeben werden.
+                </p>
+              )}
+            </div>
+          )}
+
+          {eAutoMitV2h && (
+            <div className="bg-indigo-50 dark:bg-indigo-900/30 border border-indigo-200 dark:border-indigo-700 rounded-lg p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <SimpleIcon type="car" className="w-5 h-5 text-indigo-600" />
+                <h4 className="text-sm font-semibold text-indigo-900 dark:text-indigo-100">Vehicle-to-Home (V2H)</h4>
+              </div>
+              {v2hEntladung > 0 ? (
+                <div className="grid grid-cols-3 gap-2 text-sm">
+                  <div>
+                    <div className="text-indigo-700 dark:text-indigo-300">Rückspeisung</div>
+                    <div className="font-bold text-indigo-900 dark:text-indigo-100">{fmt(v2hEntladung)} kWh</div>
+                  </div>
+                  <div>
+                    <div className="text-indigo-700 dark:text-indigo-300">Vermiedener Preis</div>
+                    <div className="font-bold text-indigo-900 dark:text-indigo-100">{fmtDec(v2hEntladepreis)} ct</div>
+                  </div>
+                  <div>
+                    <div className="text-indigo-700 dark:text-indigo-300">Ersparnis</div>
+                    <div className="font-bold text-green-600">+{fmtDec(v2hErsparnis)} €</div>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-sm text-indigo-600 dark:text-indigo-400">
+                  Keine V2H-Rückspeisung in diesem Monat erfasst.
+                  Bei der Monatseingabe kann die V2H-Entladung für E-Autos mit bidirektionalem Laden angegeben werden.
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Charts-Sektion */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
