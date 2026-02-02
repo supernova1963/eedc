@@ -107,7 +107,8 @@ export default function MonatsdatenFormDynamic({
           km_gefahren: existing?.km_gefahren?.toString() || '',
           verbrauch_kwh: existing?.verbrauch_kwh?.toString() || '',
           ladung_pv_kwh: existing?.ladung_pv_kwh?.toString() || '',
-          ladung_netz_kwh: existing?.ladung_netz_kwh?.toString() || ''
+          ladung_netz_kwh: existing?.ladung_netz_kwh?.toString() || '',
+          entladung_v2h_kwh: existing?.entladung_v2h_kwh?.toString() || ''
         }
       } else if (inv.typ === 'waermepumpe') {
         initial[inv.id] = {
@@ -177,6 +178,7 @@ export default function MonatsdatenFormDynamic({
     let eAutoLadungNetz = 0
     let eAutoKmGefahren = 0
     let eAutoVerbrauch = 0
+    let eAutoEntladungV2h = 0
     let waermepumpeStrom = 0
     let waermepumpeHeizenergie = 0
     let waermepumpeWarmwasser = 0
@@ -205,6 +207,10 @@ export default function MonatsdatenFormDynamic({
         eAutoLadungNetz += parseFloat(daten?.ladung_netz_kwh) || 0
         eAutoKmGefahren += parseFloat(daten?.km_gefahren) || 0
         eAutoVerbrauch += parseFloat(daten?.verbrauch_kwh) || 0
+        // V2H-Entladung nur bei aktiviertem V2H
+        if (inv.parameter?.nutzt_v2h) {
+          eAutoEntladungV2h += parseFloat(daten?.entladung_v2h_kwh) || 0
+        }
       } else if (inv.typ === 'waermepumpe') {
         waermepumpeStrom += parseFloat(daten?.stromverbrauch_kwh) || 0
         waermepumpeHeizenergie += parseFloat(daten?.heizenergie_kwh) || 0
@@ -238,8 +244,9 @@ export default function MonatsdatenFormDynamic({
     // Direktverbrauch = Was direkt von der PV verbraucht wird (ohne Batterie-Umweg)
     const direktverbrauch = pvNachEinspeisung - batterieLadungAusPV
 
-    // Eigenverbrauch = Direktverbrauch + was aus der Batterie kommt
-    const eigenverbrauch = direktverbrauch + batterieEntladung
+    // Eigenverbrauch = Direktverbrauch + was aus der Batterie kommt + V2H-Entladung
+    // V2H-Entladung: E-Auto-Batterie speist ins Haus zurück (wie Speicher-Entladung)
+    const eigenverbrauch = direktverbrauch + batterieEntladung + eAutoEntladungV2h
 
     // Gesamtverbrauch = Eigenverbrauch + Netzbezug (Netzbezug inkl. Batterie-Ladung aus Netz)
     const gesamtverbrauch = eigenverbrauch + netzbezug
@@ -304,6 +311,23 @@ export default function MonatsdatenFormDynamic({
       arbitrageGewinn = arbitrageErsparnis - arbitrageLadekosten
     }
 
+    // V2H-Berechnung für E-Autos mit bidirektionalem Laden
+    const eAutoV2hInv = investitionen.find(i => i.typ === 'e-auto' && i.parameter?.nutzt_v2h)
+    const nutztV2h = !!eAutoV2hInv
+    let v2hErsparnis = 0
+    let v2hEntladepreisCent = 0
+
+    if (nutztV2h && eAutoEntladungV2h > 0 && eAutoV2hInv) {
+      // V2H-Entladepreis: Parameter > Netzbezug (vermiedener Strombezug)
+      v2hEntladepreisCent =
+        parseFloat(eAutoV2hInv.parameter?.v2h_entlade_preis_cent) ||
+        stammStrompreise.netzbezug_cent_kwh ||
+        30
+
+      // Ersparnis = vermiedener Netzbezug durch V2H-Einspeisung
+      v2hErsparnis = eAutoEntladungV2h * v2hEntladepreisCent / 100
+    }
+
     // Finanzwerte
     const einspeisungErtragEuro = stammStrompreise.einspeiseverguetung_cent_kwh
       ? (einspeisung * stammStrompreise.einspeiseverguetung_cent_kwh / 100)
@@ -338,6 +362,7 @@ export default function MonatsdatenFormDynamic({
       eAutoLadungGesamt,
       eAutoKmGefahren,
       eAutoVerbrauch,
+      eAutoEntladungV2h,
       waermepumpeStrom,
       waermepumpeHeizenergie,
       waermepumpeWarmwasser,
@@ -376,7 +401,11 @@ export default function MonatsdatenFormDynamic({
       arbitrageErsparnis,
       arbitrageGewinn,
       arbitrageLadepreisCent,
-      arbitrageEntladepreisCent
+      arbitrageEntladepreisCent,
+      // V2H (für E-Autos mit bidirektionalem Laden)
+      nutztV2h,
+      v2hErsparnis,
+      v2hEntladepreisCent
     }
   }, [formData, investitionsDaten, investitionen, stammStrompreise])
 
@@ -487,11 +516,13 @@ export default function MonatsdatenFormDynamic({
           const verbrauchKwh = parseFloat(daten.verbrauch_kwh) || 0
           const ladungPvKwh = parseFloat(daten.ladung_pv_kwh) || 0
           const ladungNetzKwh = parseFloat(daten.ladung_netz_kwh) || 0
+          const entladungV2hKwh = inv.parameter?.nutzt_v2h ? (parseFloat(daten.entladung_v2h_kwh) || 0) : 0
           verbrauchDaten = {
             km_gefahren: kmGefahren,
             verbrauch_kwh: verbrauchKwh,
             ladung_pv_kwh: ladungPvKwh,
-            ladung_netz_kwh: ladungNetzKwh
+            ladung_netz_kwh: ladungNetzKwh,
+            entladung_v2h_kwh: entladungV2hKwh
           }
 
           // E-Auto Einsparung: Vergleich mit Verbrenner-Alternative
@@ -505,6 +536,14 @@ export default function MonatsdatenFormDynamic({
           const stromKostenEAuto = ladungNetzKwh * strompreisNetz / 100
 
           einsparungMonatEuro = spritKostenAlternativ - stromKostenEAuto
+
+          // V2H-Einsparung: Entladung ins Haus vermeidet Netzbezug
+          if (inv.parameter?.nutzt_v2h && entladungV2hKwh > 0) {
+            const v2hEntladepreis = parseFloat(inv.parameter?.v2h_entlade_preis_cent) || strompreisNetz
+            const v2hErsparung = entladungV2hKwh * v2hEntladepreis / 100
+            einsparungMonatEuro += v2hErsparung
+          }
+
           co2EinsparungKg = (kmGefahren / 100) * verbrennerVerbrauch * 2.37 // ~2.37 kg CO2/Liter Benzin
         } else if (inv.typ === 'waermepumpe') {
           const heizenergie = parseFloat(daten.heizenergie_kwh) || 0
@@ -1011,7 +1050,7 @@ export default function MonatsdatenFormDynamic({
                 investitionen.forEach(inv => {
                   if (inv.typ === 'wechselrichter') reset[inv.id] = { pv_erzeugung_kwh: '' }
                   else if (inv.typ === 'speicher') reset[inv.id] = { entladung_kwh: '', ladung_kwh: '' }
-                  else if (inv.typ === 'e-auto') reset[inv.id] = { km_gefahren: '', verbrauch_kwh: '', ladung_pv_kwh: '', ladung_netz_kwh: '' }
+                  else if (inv.typ === 'e-auto') reset[inv.id] = { km_gefahren: '', verbrauch_kwh: '', ladung_pv_kwh: '', ladung_netz_kwh: '', entladung_v2h_kwh: '' }
                   else if (inv.typ === 'waermepumpe') reset[inv.id] = { heizenergie_kwh: '', warmwasser_kwh: '', stromverbrauch_kwh: '' }
                   else if (inv.typ === 'wallbox') reset[inv.id] = { ladung_kwh: '', ladevorgaenge: '' }
                 })
@@ -1340,6 +1379,31 @@ export default function MonatsdatenFormDynamic({
                     />
                   </div>
                 </div>
+                {/* V2H-Feld nur wenn aktiviert */}
+                {inv.parameter?.nutzt_v2h && (
+                  <div className="mt-4 pt-4 border-t border-purple-200 bg-purple-50 -mx-4 -mb-4 px-4 pb-4 rounded-b-lg">
+                    <h5 className="text-sm font-medium text-purple-800 mb-3 flex items-center gap-2">
+                      <SimpleIcon type="battery" className="w-4 h-4" />
+                      Vehicle-to-Home (V2H)
+                    </h5>
+                    <div className="grid grid-cols-1 gap-4">
+                      <div>
+                        <label className="block text-sm font-medium text-purple-700 mb-2">V2H-Entladung ins Haus (kWh)</label>
+                        <input
+                          type="number"
+                          value={investitionsDaten[inv.id]?.entladung_v2h_kwh || ''}
+                          onChange={(e) => handleInvestitionChange(inv.id, 'entladung_v2h_kwh', e.target.value)}
+                          step="0.1"
+                          placeholder="20"
+                          className="w-full px-3 py-2 border border-purple-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500"
+                        />
+                        <p className="text-xs text-purple-600 mt-1">
+                          Strom, der vom E-Auto zurück ins Haus gespeist wurde
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             ))}
           </div>

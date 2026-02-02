@@ -93,7 +93,9 @@ export const INVESTITION_TYP_OPTIONS = [
 export const DEFAULT_PARAMETER = {
   'e-auto': {
     pv_anteil_prozent: '70',
-    benzinpreis_euro_liter: '1.69'
+    benzinpreis_euro_liter: '1.69',
+    nutzt_v2h: false,                    // Flag: Bidirektionales Laden (Vehicle-to-Home)
+    v2h_entlade_preis_cent: ''           // Typischer vermiedener Preis bei V2H-Entladung
   },
   'waermepumpe': {
     jaz: '3.5',
@@ -145,6 +147,8 @@ export function getInitialParameterData(editData?: any) {
     vergleich_verbrenner_l_100km: editData?.parameter?.vergleich_verbrenner_l_100km?.toString() || '',
     benzinpreis_euro_liter: editData?.parameter?.benzinpreis_euro_liter?.toString() || '1.69',
     strompreis_cent_kwh: editData?.parameter?.strompreis_cent_kwh?.toString() || '30',
+    nutzt_v2h: editData?.parameter?.nutzt_v2h || false,
+    v2h_entlade_preis_cent: editData?.parameter?.v2h_entlade_preis_cent?.toString() || '',
 
     // Warmepumpe
     heizlast_kw: editData?.parameter?.heizlast_kw?.toString() || '',

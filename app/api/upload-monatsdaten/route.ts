@@ -67,6 +67,10 @@ function generateInvestitionMapping(investitionen: Investition[]): Record<string
       mapping[`${prefix} - Verbrauch (kWh)`] = { investitionId: inv.id, investitionTyp: 'e-auto', jsonField: 'verbrauch_kwh' }
       mapping[`${prefix} - Ladung PV (kWh)`] = { investitionId: inv.id, investitionTyp: 'e-auto', jsonField: 'ladung_pv_kwh' }
       mapping[`${prefix} - Ladung Netz (kWh)`] = { investitionId: inv.id, investitionTyp: 'e-auto', jsonField: 'ladung_netz_kwh' }
+      // V2H-Feld wenn aktiviert
+      if (inv.parameter?.nutzt_v2h) {
+        mapping[`${prefix} - V2H-Entladung (kWh)`] = { investitionId: inv.id, investitionTyp: 'e-auto', jsonField: 'entladung_v2h_kwh' }
+      }
     } else if (inv.typ === 'waermepumpe') {
       mapping[`${prefix} - Heizenergie (kWh)`] = { investitionId: inv.id, investitionTyp: 'waermepumpe', jsonField: 'heizenergie_kwh' }
       mapping[`${prefix} - Warmwasser (kWh)`] = { investitionId: inv.id, investitionTyp: 'waermepumpe', jsonField: 'warmwasser_kwh' }
@@ -181,6 +185,7 @@ function calculateDerivedValues(
   batterieLadung: number
   batterieEntladung: number
   batterieLadungAusNetz: number
+  eAutoEntladungV2h: number
   direktverbrauch: number
   eigenverbrauch: number
   gesamtverbrauch: number
@@ -192,6 +197,7 @@ function calculateDerivedValues(
   let batterieLadung = 0
   let batterieEntladung = 0
   let manuelleBatterieLadungAusNetz = 0
+  let eAutoEntladungV2h = 0
 
   for (const invData of investitionsDaten) {
     const inv = investitionen.find(i => i.id === invData.investition_id)
@@ -205,6 +211,11 @@ function calculateDerivedValues(
       // Manuelle Netzladung (für Arbitrage)
       if (inv.parameter?.nutzt_arbitrage && invData.verbrauch_daten.ladung_netz_kwh) {
         manuelleBatterieLadungAusNetz += invData.verbrauch_daten.ladung_netz_kwh || 0
+      }
+    } else if (inv.typ === 'e-auto') {
+      // V2H-Entladung nur bei aktiviertem V2H
+      if (inv.parameter?.nutzt_v2h && invData.verbrauch_daten.entladung_v2h_kwh) {
+        eAutoEntladungV2h += invData.verbrauch_daten.entladung_v2h_kwh || 0
       }
     }
   }
@@ -231,8 +242,9 @@ function calculateDerivedValues(
   // Direktverbrauch = Was direkt von der PV verbraucht wird (ohne Batterie-Umweg)
   const direktverbrauch = pvNachEinspeisung - batterieLadungAusPV
 
-  // Eigenverbrauch = Direktverbrauch + was aus der Batterie kommt
-  const eigenverbrauch = direktverbrauch + batterieEntladung
+  // Eigenverbrauch = Direktverbrauch + was aus der Batterie kommt + V2H-Entladung
+  // V2H-Entladung: E-Auto-Batterie speist ins Haus zurück (wie Speicher-Entladung)
+  const eigenverbrauch = direktverbrauch + batterieEntladung + eAutoEntladungV2h
 
   // Gesamtverbrauch = Eigenverbrauch + Netzbezug
   const gesamtverbrauch = eigenverbrauch + netzbezug
@@ -246,6 +258,7 @@ function calculateDerivedValues(
     batterieLadung,
     batterieEntladung,
     batterieLadungAusNetz,
+    eAutoEntladungV2h,
     direktverbrauch,
     eigenverbrauch,
     gesamtverbrauch,

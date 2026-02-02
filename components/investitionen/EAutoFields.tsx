@@ -14,6 +14,8 @@ interface EAutoFieldsProps {
     benzinpreis_euro_liter: string
     betriebskosten_jahr_euro: string
     strompreis_cent_kwh?: string
+    nutzt_v2h?: boolean
+    v2h_entlade_preis_cent?: string
   }
   onChange: (e: React.ChangeEvent<HTMLInputElement>) => void
 }
@@ -150,6 +152,45 @@ export default function EAutoFields({ parameterData, onChange }: EAutoFieldsProp
             <span className="text-lg font-bold text-gray-900 dark:text-gray-100">
               {berechneteWerte.gesamtkostenEAuto.toLocaleString('de-DE')} €
             </span>
+          </div>
+        )}
+      </div>
+
+      {/* V2H (Vehicle-to-Home) */}
+      <div className="bg-purple-50 border border-purple-200 rounded-lg p-4 mb-6">
+        <h4 className="text-sm font-semibold text-purple-900 mb-3 flex items-center gap-2">
+          <SimpleIcon type="battery" className="w-4 h-4" />
+          Vehicle-to-Home (V2H) - Bidirektionales Laden
+        </h4>
+        <p className="text-sm text-purple-700 mb-3">
+          Mit V2H kann das E-Auto als mobiler Speicher dienen und Strom zurück ins Haus speisen -
+          z.B. bei günstigen dynamischen Tarifen laden und bei teuren Zeiten entladen.
+        </p>
+        <div className="flex items-center gap-3 mb-3">
+          <input
+            type="checkbox"
+            id="nutzt_v2h"
+            name="nutzt_v2h"
+            checked={parameterData.nutzt_v2h || false}
+            onChange={onChange}
+            className="h-4 w-4 text-purple-600 border-gray-300 rounded focus:ring-purple-500"
+          />
+          <label htmlFor="nutzt_v2h" className="text-sm font-medium text-purple-900">
+            Nutzt bidirektionales Laden (V2H)
+          </label>
+        </div>
+        {parameterData.nutzt_v2h && (
+          <div className="mt-3 pt-3 border-t border-purple-200">
+            <FormInput
+              label="Typischer vermiedener Preis bei V2H-Entladung (Cent/kWh)"
+              name="v2h_entlade_preis_cent"
+              value={parameterData.v2h_entlade_preis_cent || ''}
+              onChange={onChange}
+              type="number"
+              step="0.1"
+              placeholder="35"
+              hint="z.B. 35ct wenn abends bei teurem Tarif entladen wird"
+            />
           </div>
         )}
       </div>

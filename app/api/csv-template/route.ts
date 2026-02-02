@@ -202,6 +202,21 @@ function generateAllColumns(investitionen: Investition[]): Column[] {
           jsonField: 'ladung_netz_kwh'
         }
       )
+      // V2H-Felder nur wenn aktiviert
+      if (inv.parameter?.nutzt_v2h) {
+        columns.push(
+          {
+            name: `${prefix} - V2H-Entladung (kWh)`,
+            dbName: `inv_${inv.id}_v2h_entladung`,
+            required: false,
+            example: '15',
+            hint: 'Entladung vom E-Auto ins Haus (V2H)',
+            investitionId: inv.id,
+            investitionTyp: 'e-auto',
+            jsonField: 'entladung_v2h_kwh'
+          }
+        )
+      }
     } else if (inv.typ === 'waermepumpe') {
       columns.push(
         {
@@ -297,6 +312,7 @@ function generateCSV(columns: Column[], anlage: any, investitionen: Investition[
       if (c.jsonField === 'verbrauch_kwh') return '240'
       if (c.jsonField === 'ladung_pv_kwh') return '48'
       if (c.jsonField === 'ladung_netz_kwh') return '192'
+      if (c.jsonField === 'entladung_v2h_kwh') return '10'
     }
     if (c.investitionTyp === 'waermepumpe') {
       if (c.jsonField === 'heizenergie_kwh') return '800'
@@ -330,6 +346,7 @@ function generateCSV(columns: Column[], anlage: any, investitionen: Investition[
       if (c.jsonField === 'verbrauch_kwh') return '300'
       if (c.jsonField === 'ladung_pv_kwh') return '240'
       if (c.jsonField === 'ladung_netz_kwh') return '60'
+      if (c.jsonField === 'entladung_v2h_kwh') return '25'
     }
     if (c.investitionTyp === 'waermepumpe') {
       if (c.jsonField === 'heizenergie_kwh') return '100'
