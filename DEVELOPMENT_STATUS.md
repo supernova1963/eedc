@@ -1,6 +1,30 @@
-# EEDC-Webapp - Entwicklungsstand 01.02.2026
+# EEDC-Webapp - Entwicklungsstand 02.02.2026
 
-## Letzte Änderungen (Session 01.02.2026 - Spät-Abend)
+## Letzte Änderungen (Session 02.02.2026)
+
+### 23. Arbitrage-Unterstützung für Speicher mit dynamischen Stromtarifen
+**Dateien geändert:**
+- `lib/investitionTypes.ts` - Neue Parameter für Speicher (nutzt_arbitrage, lade_durchschnittspreis_cent, entlade_vermiedener_preis_cent)
+- `lib/investitionCalculations.ts` - Erweiterte Speicher-Einsparungsberechnung für Arbitrage-Modus
+- `components/investitionen/SpeicherFields.tsx` - Checkbox + bedingte Felder für Arbitrage
+- `components/MonatsdatenFormDynamic.tsx` - Arbitrage-Logik, Eingabefeld für Ladepreis, Anzeige der Arbitrage-Bilanz
+- `hooks/useInvestitionForm.ts` - Boolean-Handling für Checkbox
+
+**Features:**
+- **Neuer Parameter `nutzt_arbitrage`:** Opt-in für Speicher mit dynamischen Tarifen (Tibber, aWATTar)
+- **Optionale Felder:** Typischer Ladepreis (ct/kWh), typischer Entladepreis (ct/kWh)
+- **Monatsdaten-Erfassung:** Bei erkannter Netzladung erscheint Eingabefeld für Ø Ladepreis des Monats
+- **Arbitrage-Bilanz:** Anzeige von Ladekosten, vermiedenen Kosten und Arbitrage-Gewinn
+- **Erweiterte Berechnung:** 30% Arbitrage-Anteil / 70% PV-Überschuss für Jahresprognose
+
+**Hintergrund:**
+Bei dynamischen Tarifen wird günstig aus dem Netz geladen (z.B. 12 ct nachts) und teuer entladen (z.B. 35 ct abends). Der Monatsdurchschnitt würde diese Ersparnis verfälschen. Mit den neuen Feldern wird die wirtschaftliche Betrachtung korrekt abgebildet.
+
+**Keine Datenbankänderung nötig** - alle Parameter werden im bestehenden JSONB-Feld `parameter` gespeichert.
+
+---
+
+## Frühere Änderungen (Session 01.02.2026 - Spät-Abend)
 
 ### 20. Community: Öffentliche Auswertungen & Monatsdetails
 **Neue Dateien:**
