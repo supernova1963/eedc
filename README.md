@@ -1,4 +1,9 @@
 # 🌞 eedc - Electronic Energy Data Collection
+---
+
+**DEPRECATED:** Dieses Projekt wird nicht mehr gepflegt.
+
+---
 
 Webanwendung zur Verwaltung und Auswertung von PV-Anlagen, E-Autos, Wärmepumpen, Speicher und Wallboxen.
 
