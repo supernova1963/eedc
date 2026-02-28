@@ -17,7 +17,7 @@ export function useHAAvailable(): boolean {
       .then(res => res.json())
       .then(data => {
         cachedResult = data.ha_integration_available ?? false
-        setAvailable(cachedResult)
+        setAvailable(cachedResult!)
       })
       .catch(() => {
         cachedResult = false

@@ -124,15 +124,6 @@ const einstellungenGruppen: TabGroup[] = [
   },
 ]
 
-/** Findet die Einstellungen-Gruppe anhand des aktuellen Pfads */
-function getEinstellungenGruppe(pathname: string): TabGroup | null {
-  return (
-    einstellungenGruppen.find(g =>
-      g.prefixes.some(p => pathname.startsWith(p))
-    ) ?? null
-  )
-}
-
 export default function SubTabs() {
   const location = useLocation()
   const path = location.pathname
