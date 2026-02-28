@@ -2,7 +2,8 @@
 EEDC Konfiguration
 
 Lädt Einstellungen aus Umgebungsvariablen.
-Diese werden vom run.sh Script aus der Home Assistant Konfiguration gesetzt.
+Im HA-Add-on werden diese vom run.sh Script gesetzt.
+Im Standalone-Modus gelten die Defaults.
 """
 
 import os
@@ -15,6 +16,12 @@ from pydantic_settings import BaseSettings
 APP_VERSION = "2.4.1"
 APP_NAME = "eedc"
 APP_FULL_NAME = "Energie Effizienz Data Center"
+
+# =============================================================================
+# Deployment-Modus Erkennung
+# =============================================================================
+# HA-Add-on setzt SUPERVISOR_TOKEN automatisch
+HA_INTEGRATION_AVAILABLE = bool(os.environ.get("SUPERVISOR_TOKEN"))
 
 
 def get_default_database_url() -> str:

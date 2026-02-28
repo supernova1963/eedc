@@ -3,11 +3,12 @@
  * Hauptnavigation oben mit Logo, Tabs und Einstellungen-Dropdown
  */
 
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useMemo } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
 import { Moon, Sun as SunIcon, Monitor, Settings, ChevronDown, LayoutDashboard, BarChart3, TrendingUp, Users } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useTheme } from '../../context/ThemeContext'
+import { useHAAvailable } from '../../hooks/useHAAvailable'
 import eedcIcon from '../../assets/eedc-icon.svg'
 
 // Haupttabs mit Icons
@@ -66,6 +67,15 @@ export default function TopNavigation() {
   const location = useLocation()
   const [settingsOpen, setSettingsOpen] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
+  const haAvailable = useHAAvailable()
+
+  // HA-Kategorie nur anzeigen wenn HA verfügbar
+  const filteredSettingsMenu = useMemo(() =>
+    haAvailable
+      ? settingsMenu
+      : settingsMenu.filter(s => s.category !== 'Home Assistant'),
+    [haAvailable]
+  )
 
   // Bestimme aktiven Haupttab
   const getActiveMainTab = () => {
@@ -164,7 +174,7 @@ export default function TopNavigation() {
               {/* Dropdown Menu */}
               {settingsOpen && (
                 <div className="absolute right-0 mt-2 w-56 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 py-2 z-50">
-                  {settingsMenu.map((section, idx) => (
+                  {filteredSettingsMenu.map((section, idx) => (
                     <div key={section.category}>
                       {idx > 0 && <div className="my-2 border-t border-gray-200 dark:border-gray-700" />}
                       <div className="px-3 py-1">

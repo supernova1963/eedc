@@ -2,8 +2,9 @@
 EEDC - Energie Effizienz Data Center
 FastAPI Backend Application
 
-Dieses Backend dient als API-Server für das EEDC Home Assistant Add-on.
-Es stellt Endpoints für Anlagen, Monatsdaten, Investitionen und Auswertungen bereit.
+Standalone PV-Analyse mit optionaler Home Assistant Integration.
+HA-spezifische Features (MQTT, Sensor-Mapping, HA-Statistik) werden
+nur geladen wenn SUPERVISOR_TOKEN gesetzt ist.
 """
 
 from contextlib import asynccontextmanager
@@ -15,14 +16,18 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, HTMLResponse
 
 from sqlalchemy import select, func
-from backend.core.config import settings, APP_VERSION, APP_NAME, APP_FULL_NAME
+from backend.core.config import settings, APP_VERSION, APP_NAME, APP_FULL_NAME, HA_INTEGRATION_AVAILABLE
 from backend.core.database import init_db, get_session
-from backend.api.routes import anlagen, monatsdaten, investitionen, strompreise, import_export, ha_integration, ha_export, ha_import, pvgis, cockpit, wetter, aussichten, solar_prognose, sensor_mapping, monatsabschluss, ha_statistics, community
+from backend.api.routes import anlagen, monatsdaten, investitionen, strompreise, import_export, pvgis, cockpit, wetter, aussichten, solar_prognose, monatsabschluss, community
 from backend.models.anlage import Anlage
 from backend.models.monatsdaten import Monatsdaten
 from backend.models.investition import Investition, InvestitionMonatsdaten
 from backend.models.strompreis import Strompreis
 from backend.services.scheduler import start_scheduler, stop_scheduler, get_scheduler
+
+# HA-spezifische Imports (nur wenn HA verfügbar)
+if HA_INTEGRATION_AVAILABLE:
+    from backend.api.routes import ha_integration, ha_export, ha_import, ha_statistics, sensor_mapping
 
 
 @asynccontextmanager
@@ -81,27 +86,35 @@ app.add_middleware(
 
 
 # =============================================================================
-# API Routes
+# API Routes - Core (immer verfügbar)
 # =============================================================================
 
-# Prefix /api für alle Backend-Endpoints
 app.include_router(anlagen.router, prefix="/api/anlagen", tags=["Anlagen"])
 app.include_router(monatsdaten.router, prefix="/api/monatsdaten", tags=["Monatsdaten"])
 app.include_router(investitionen.router, prefix="/api/investitionen", tags=["Investitionen"])
 app.include_router(strompreise.router, prefix="/api/strompreise", tags=["Strompreise"])
 app.include_router(import_export.router, prefix="/api/import", tags=["Import/Export"])
-app.include_router(ha_integration.router, prefix="/api/ha", tags=["Home Assistant"])
-app.include_router(ha_export.router, prefix="/api", tags=["HA Export"])
 app.include_router(pvgis.router, prefix="/api/pvgis", tags=["PVGIS"])
 app.include_router(cockpit.router, prefix="/api/cockpit", tags=["Cockpit"])
 app.include_router(wetter.router, prefix="/api/wetter", tags=["Wetter"])
-app.include_router(ha_import.router, prefix="/api/ha-import", tags=["HA Import"])
 app.include_router(aussichten.router, prefix="/api/aussichten", tags=["Aussichten"])
 app.include_router(solar_prognose.router, prefix="/api/solar-prognose", tags=["Solar-Prognose"])
-app.include_router(sensor_mapping.router, prefix="/api/sensor-mapping", tags=["Sensor Mapping"])
 app.include_router(monatsabschluss.router, prefix="/api", tags=["Monatsabschluss"])
-app.include_router(ha_statistics.router, prefix="/api/ha-statistics", tags=["HA Statistics"])
 app.include_router(community.router, prefix="/api", tags=["Community"])
+
+# =============================================================================
+# API Routes - Home Assistant (nur mit SUPERVISOR_TOKEN)
+# =============================================================================
+
+if HA_INTEGRATION_AVAILABLE:
+    app.include_router(ha_integration.router, prefix="/api/ha", tags=["Home Assistant"])
+    app.include_router(ha_export.router, prefix="/api", tags=["HA Export"])
+    app.include_router(ha_import.router, prefix="/api/ha-import", tags=["HA Import"])
+    app.include_router(sensor_mapping.router, prefix="/api/sensor-mapping", tags=["Sensor Mapping"])
+    app.include_router(ha_statistics.router, prefix="/api/ha-statistics", tags=["HA Statistics"])
+    print(f"  HA-Integration: aktiv (SUPERVISOR_TOKEN gesetzt)")
+else:
+    print(f"  HA-Integration: nicht verfügbar (Standalone-Modus)")
 
 
 # =============================================================================
@@ -216,25 +229,29 @@ async def get_settings():
     Returns:
         dict: Öffentliche Konfiguration
     """
-    return {
+    result = {
         "version": APP_VERSION,
         "database_path": str(settings.database_path),
+        "ha_integration_available": HA_INTEGRATION_AVAILABLE,
         "ha_integration_enabled": bool(settings.supervisor_token),
-        "ha_sensors_configured": {
+    }
+    # HA-spezifische Details nur wenn verfügbar
+    if HA_INTEGRATION_AVAILABLE:
+        result["ha_sensors_configured"] = {
             "pv_erzeugung": bool(settings.ha_sensor_pv),
             "einspeisung": bool(settings.ha_sensor_einspeisung),
             "netzbezug": bool(settings.ha_sensor_netzbezug),
             "batterie_ladung": bool(settings.ha_sensor_batterie_ladung),
             "batterie_entladung": bool(settings.ha_sensor_batterie_entladung),
-        },
-        "ha_sensors": {
+        }
+        result["ha_sensors"] = {
             "pv_erzeugung": settings.ha_sensor_pv,
             "einspeisung": settings.ha_sensor_einspeisung,
             "netzbezug": settings.ha_sensor_netzbezug,
             "batterie_ladung": settings.ha_sensor_batterie_ladung,
             "batterie_entladung": settings.ha_sensor_batterie_entladung,
         }
-    }
+    return result
 
 
 @app.get("/api/scheduler", tags=["System"])

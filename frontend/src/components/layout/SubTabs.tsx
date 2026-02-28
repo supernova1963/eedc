@@ -6,6 +6,7 @@
 
 import { NavLink, useLocation } from 'react-router-dom'
 import type { LucideIcon } from 'lucide-react'
+import { useHAAvailable } from '../../hooks/useHAAvailable'
 import {
   LayoutDashboard,
   Car,
@@ -135,6 +136,7 @@ function getEinstellungenGruppe(pathname: string): TabGroup | null {
 export default function SubTabs() {
   const location = useLocation()
   const path = location.pathname
+  const haAvailable = useHAAvailable()
 
   // ── Cockpit ──────────────────────────────────────────────────────────────
   if (path.startsWith('/cockpit')) {
@@ -143,7 +145,13 @@ export default function SubTabs() {
 
   // ── Einstellungen – gruppen-aware ────────────────────────────────────────
   if (path.startsWith('/einstellungen')) {
-    const gruppe = getEinstellungenGruppe(path)
+    // HA-Gruppe nur anzeigen wenn HA verfügbar
+    const filteredGruppen = haAvailable
+      ? einstellungenGruppen
+      : einstellungenGruppen.filter(g => g.label !== 'Home Assistant')
+    const gruppe = filteredGruppen.find(g =>
+      g.prefixes.some(p => path.startsWith(p))
+    ) ?? null
     if (!gruppe) return null
     return <TabBar tabs={gruppe.tabs} groupLabel={gruppe.label} />
   }
