@@ -7,6 +7,15 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ---
 
+## [2.5.1] - 2026-03-01
+
+### Geändert
+
+- docker-compose.yml: Image von lokalem Build auf ghcr.io (`ghcr.io/supernova1963/eedc`) umgestellt
+- Dokumentation aktualisiert
+
+---
+
 ## [2.5.0] - 2026-03-01
 
 ### Hinzugefügt
