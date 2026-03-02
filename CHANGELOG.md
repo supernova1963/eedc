@@ -7,6 +7,22 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ---
 
+## [2.5.3] - 2026-03-02
+
+### Hinzugefügt
+
+- **WP Dashboard: COP Monatsvergleich** – Gleiche Monate über Jahre nebeneinander (z.B. Jan 24 vs Jan 25 vs Jan 26) statt Zeitreihe, volle Breite
+- **Monatsabschluss: Fehlende Felder ergänzt**
+  - E-Auto: Externe Ladung (kWh) und Externe Ladekosten (€)
+  - Wallbox: PV-Ladung (kWh) und Ladevorgänge (Anzahl)
+
+### Behoben
+
+- HA-Statistik Werte wurden nicht ins Monatsabschluss-Formular übernommen (Feldnamen-Mapping fehlte: `einspeisung` → `einspeisung_kwh`)
+- Degradation: Positive Werte (+5.92%) durch Wetterschwankungen werden auf 0% gekappt, Warnung bei weniger als 3 Datenjahren
+
+---
+
 ## [2.5.2] - 2026-03-01
 
 ### Hinzugefügt
