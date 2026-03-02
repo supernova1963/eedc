@@ -2,7 +2,7 @@
  * Trend-Tab: Historische Analyse und Degradation
  */
 import { useState, useEffect } from 'react'
-import { TrendingUp, TrendingDown, Minus, Calendar, Zap, AlertTriangle, Award } from 'lucide-react'
+import { TrendingDown, Minus, Calendar, Zap, AlertTriangle, Award } from 'lucide-react'
 import { Card, LoadingSpinner, Alert } from '../../components/ui'
 import { aussichtenApi, TrendAnalyseResponse } from '../../api/aussichten'
 import {
@@ -136,17 +136,17 @@ export default function TrendTab({ anlageId }: Props) {
         <Card className="p-4">
           <div className="flex items-center gap-3">
             {degradation !== null ? (
-              degradation > 0 ? (
-                <div className="p-2 bg-green-100 dark:bg-green-900/30 rounded-lg">
-                  <TrendingUp className="h-5 w-5 text-green-600 dark:text-green-400" />
-                </div>
-              ) : degradation < -1 ? (
+              degradation < -1 ? (
                 <div className="p-2 bg-red-100 dark:bg-red-900/30 rounded-lg">
                   <TrendingDown className="h-5 w-5 text-red-600 dark:text-red-400" />
                 </div>
+              ) : degradation < 0 ? (
+                <div className="p-2 bg-yellow-100 dark:bg-yellow-900/30 rounded-lg">
+                  <TrendingDown className="h-5 w-5 text-yellow-600 dark:text-yellow-400" />
+                </div>
               ) : (
-                <div className="p-2 bg-gray-100 dark:bg-gray-800 rounded-lg">
-                  <Minus className="h-5 w-5 text-gray-600 dark:text-gray-400" />
+                <div className="p-2 bg-green-100 dark:bg-green-900/30 rounded-lg">
+                  <Minus className="h-5 w-5 text-green-600 dark:text-green-400" />
                 </div>
               )
             ) : (
@@ -158,9 +158,13 @@ export default function TrendTab({ anlageId }: Props) {
               <p className="text-sm text-gray-500 dark:text-gray-400">Degradation/Jahr</p>
               <p className="text-xl font-bold text-gray-900 dark:text-white">
                 {degradation !== null ? (
-                  <span className={degradation > 0 ? 'text-green-600' : degradation < -1 ? 'text-red-600' : ''}>
-                    {degradation > 0 ? '+' : ''}{degradation.toFixed(1)}%
-                  </span>
+                  degradation === 0 ? (
+                    <span className="text-green-600">keine messbar</span>
+                  ) : (
+                    <span className={degradation < -1 ? 'text-red-600' : 'text-yellow-600'}>
+                      {degradation.toFixed(1)}%
+                    </span>
+                  )
                 ) : (
                   <span className="text-gray-400">-</span>
                 )}
@@ -336,16 +340,16 @@ export default function TrendTab({ anlageId }: Props) {
           {degradation !== null ? (
             <div className="space-y-2">
               <p className="text-lg font-medium text-gray-900 dark:text-white">
-                {degradation > 0 ? (
+                {degradation === 0 ? (
                   <span className="text-green-600">
-                    +{degradation.toFixed(2)}% pro Jahr
+                    Keine messbare Degradation
                   </span>
                 ) : degradation < -1 ? (
                   <span className="text-red-600">
                     {degradation.toFixed(2)}% pro Jahr
                   </span>
                 ) : (
-                  <span className="text-gray-600">
+                  <span className="text-yellow-600 dark:text-yellow-400">
                     {degradation.toFixed(2)}% pro Jahr
                   </span>
                 )}
@@ -357,6 +361,12 @@ export default function TrendTab({ anlageId }: Props) {
                 <p className="text-sm text-blue-600 dark:text-blue-400 mt-2">
                   Unvollständige Jahre wurden mit PVGIS TMY-Prognosewerten ergänzt.
                 </p>
+              )}
+              {!trend.degradation.zuverlaessig && (
+                <div className="flex items-start gap-1.5 text-sm text-amber-600 dark:text-amber-400 mt-2">
+                  <AlertTriangle className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                  <span>Weniger als 3 vollständige Jahre – Wert ist durch Wetterschwankungen beeinflusst und nur eingeschränkt aussagekräftig.</span>
+                </div>
               )}
               {degradation < -1 && (
                 <p className="text-sm text-yellow-600 dark:text-yellow-400 mt-2">

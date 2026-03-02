@@ -460,6 +460,9 @@ async def get_trend_analyse(
                 if jahre_diff > 0:
                     aenderung = (letztes[1] - erstes[1]) / erstes[1] * 100
                     degradation_prozent = round(aenderung / jahre_diff, 2)
+                    # Positive Werte kappen (physikalisch nicht möglich, Wetterschwankung)
+                    if degradation_prozent > 0:
+                        degradation_prozent = 0.0
 
     return {
         "anlage_id": anlage_id,
@@ -476,7 +479,11 @@ async def get_trend_analyse(
         },
         "degradation": {
             "geschaetzt_prozent_jahr": degradation_prozent,
-            "hinweis": "Positive Werte = Leistungssteigerung, negative Werte = Degradation" if degradation_prozent else "Nicht genügend Daten für Schätzung",
+            "hinweis": (
+                f"Basierend auf {len(ertraege)} Jahren" + (" – Wert mit Vorsicht interpretieren (min. 3 Jahre empfohlen)" if len(ertraege) < 3 else "")
+                if degradation_prozent is not None
+                else "Nicht genügend Daten für Schätzung"
+            ),
         },
         "datenquellen": ["historische-daten"],
     }

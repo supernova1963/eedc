@@ -95,6 +95,7 @@ export interface Degradation {
   geschaetzt_prozent_jahr: number | null
   hinweis: string
   methode: string | null
+  zuverlaessig?: boolean
 }
 
 export interface TrendAnalyseResponse {
