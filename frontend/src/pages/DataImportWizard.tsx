@@ -470,6 +470,16 @@ export default function DataImportWizard() {
             </Alert>
           )}
 
+          {result.erfolg && (
+            <Alert type="info" title="Nächster Schritt: Monatsabschluss">
+              <p>
+                Der Portal-Import erfasst PV-Erzeugung, Einspeisung, Netzbezug und Batterie-Daten.
+                Für einen vollständigen Monatsabschluss müssen ggf. noch weitere Daten ergänzt werden
+                (z.B. Wallbox, Wärmepumpe, E-Auto).
+              </p>
+            </Alert>
+          )}
+
           <div className="flex items-center gap-3">
             <Button
               variant="ghost"
@@ -484,6 +494,14 @@ export default function DataImportWizard() {
               <Upload className="w-4 h-4 mr-1" />
               Weiteren Import starten
             </Button>
+            {selectedAnlageId && (
+              <Button
+                variant="secondary"
+                onClick={() => navigate(`/monatsabschluss/${selectedAnlageId}`)}
+              >
+                Monatsabschluss starten
+              </Button>
+            )}
             <Button
               variant="primary"
               onClick={() => navigate('/einstellungen/monatsdaten')}
