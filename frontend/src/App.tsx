@@ -39,6 +39,7 @@ import MonatsabschlussWizard from './pages/MonatsabschlussWizard'
 import HAStatistikImport from './pages/HAStatistikImport'
 import CommunityShare from './pages/CommunityShare'
 import Community from './pages/Community'
+import DataImportWizard from './pages/DataImportWizard'
 
 function App() {
   // HashRouter für HA Ingress Support (Ingress-Pfad ist dynamisch)
@@ -83,6 +84,7 @@ function App() {
           <Route path="monatsabschluss/:anlageId/:jahr/:monat" element={<MonatsabschlussWizard />} />
           <Route path="einstellungen/import" element={<Import />} />
           <Route path="einstellungen/demo" element={<Import />} /> {/* Redirects to Import with demo section */}
+          <Route path="einstellungen/portal-import" element={<DataImportWizard />} />
 
           {/* Einstellungen - System */}
           <Route path="einstellungen/backup" element={<Backup />} />
