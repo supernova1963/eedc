@@ -146,6 +146,7 @@ class AnlageExport(BaseModel):
     versorger_daten: Optional[dict] = None
     wetter_provider: Optional[str] = None
     sensor_mapping: Optional[dict] = None
+    connector_config: Optional[dict] = None
     steuerliche_behandlung: Optional[str] = None
     ust_satz_prozent: Optional[float] = None
     horizont_daten: Optional[list] = None
@@ -170,6 +171,16 @@ InvestitionExport.model_rebuild()
 # =============================================================================
 # Helper Functions
 # =============================================================================
+
+def _sanitize_connector_config(config: dict | None) -> dict | None:
+    """Entfernt Passwort aus connector_config für den Export."""
+    if not config:
+        return None
+    sanitized = dict(config)
+    sanitized.pop("password", None)
+    # Snapshots enthalten keine sensiblen Daten, werden mitexportiert
+    return sanitized
+
 
 async def _generate_unique_anlage_name(db: AsyncSession, base_name: str) -> str:
     """
@@ -258,6 +269,7 @@ async def _export_anlage_full_impl(anlage_id: int, db: AsyncSession):
         versorger_daten=anlage.versorger_daten,
         wetter_provider=anlage.wetter_provider,
         sensor_mapping=anlage.sensor_mapping,
+        connector_config=_sanitize_connector_config(anlage.connector_config),
         steuerliche_behandlung=getattr(anlage, 'steuerliche_behandlung', None),
         ust_satz_prozent=getattr(anlage, 'ust_satz_prozent', None),
         horizont_daten=anlage.horizont_daten,
@@ -563,6 +575,7 @@ async def import_json(
             versorger_daten=anlage_data.get("versorger_daten"),
             wetter_provider=anlage_data.get("wetter_provider", "auto"),
             sensor_mapping=imported_sensor_mapping,
+            connector_config=None,  # Connector muss nach Import neu konfiguriert werden
             steuerliche_behandlung=anlage_data.get("steuerliche_behandlung", "keine_ust"),
             ust_satz_prozent=anlage_data.get("ust_satz_prozent", 19.0),
             horizont_daten=anlage_data.get("horizont_daten"),

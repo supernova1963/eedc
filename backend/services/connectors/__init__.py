@@ -1,0 +1,21 @@
+"""
+Geräte-Connector Package.
+
+Ermöglicht die direkte Verbindung zu Wechselrichtern und Energiemanagement-Systemen
+über deren lokale REST-API, um kumulative Zählerstände auszulesen.
+"""
+
+from .base import DeviceConnector, ConnectorInfo, MeterSnapshot, ConnectionTestResult
+from .registry import list_connectors, get_connector
+
+# Connectoren hier importieren damit sie sich registrieren
+from . import sma_ennexos  # noqa: F401
+
+__all__ = [
+    "DeviceConnector",
+    "ConnectorInfo",
+    "MeterSnapshot",
+    "ConnectionTestResult",
+    "list_connectors",
+    "get_connector",
+]
