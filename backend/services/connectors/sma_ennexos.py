@@ -1,8 +1,11 @@
 """
 SMA ennexOS Connector.
 
-Verbindet sich über die lokale REST-API mit SMA Tripower X (und anderen ennexOS-Geräten)
-und liest kumulative Zählerstände (kWh) aus.
+Verbindet sich über die lokale REST-API mit SMA ennexOS-Geräten
+(Tripower X, Wallbox EVC, etc.) und liest kumulative Zählerstände (kWh) aus.
+
+Liest automatisch alle angeschlossenen Sub-Geräte (z.B. Energy Meter) aus
+und aggregiert die Sensor-Werte.
 
 Nutzt die pysma-plus Bibliothek für Auth, Token-Refresh und Sensor-Mapping.
 """
@@ -46,27 +49,70 @@ def _create_ssl_context() -> ssl.SSLContext:
 
 @register_connector
 class SMAennexOSConnector(DeviceConnector):
-    """Connector für SMA ennexOS Geräte (Tripower X, etc.)."""
+    """Connector für SMA ennexOS Geräte (Tripower X, Wallbox, etc.)."""
 
     def info(self) -> ConnectorInfo:
         return ConnectorInfo(
             id="sma_ennexos",
-            name="SMA ennexOS (Tripower X)",
+            name="SMA ennexOS (Tripower X / Wallbox)",
             hersteller="SMA",
             beschreibung=(
-                "Direkte Verbindung zum SMA Wechselrichter über die lokale ennexOS REST-API. "
+                "Direkte Verbindung zum SMA Gerät über die lokale ennexOS REST-API. "
                 "Liest kumulative Zählerstände (PV-Erzeugung, Einspeisung, Netzbezug, Batterie) "
-                "direkt vom Gerät aus."
+                "direkt vom Gerät aus. Angeschlossene Sub-Geräte wie SMA Energy Meter "
+                "werden automatisch erkannt und ausgelesen."
             ),
             anleitung=(
-                "1. IP-Adresse des Wechselrichters im lokalen Netzwerk ermitteln\n"
+                "1. IP-Adresse des ennexOS-Geräts im lokalen Netzwerk ermitteln\n"
                 "   (z.B. über Router-Oberfläche oder SMA Sunny Portal)\n"
-                "2. Benutzername: 'User' (Standard für ennexOS Installer/User)\n"
+                "2. Benutzername: z.B. 'User' oder 'installer'\n"
                 "3. Passwort: Das bei der Inbetriebnahme vergebene Geräte-Passwort\n"
                 "4. Verbindung testen → Geräteinfo und aktuelle Zählerstände werden angezeigt\n"
-                "5. Connector einrichten → Zählerstände werden gespeichert"
+                "5. Angeschlossene Energy Meter werden automatisch mit ausgelesen\n"
+                "6. Connector einrichten → Zählerstände werden gespeichert"
             ),
         )
+
+    async def _collect_all_sensor_values(self, device) -> tuple[
+        dict[str, float], list[str], dict
+    ]:
+        """Liest Sensoren von allen Geräten und gibt aggregierte Werte zurück.
+
+        Returns:
+            tuple: (sensor_values, sensor_keys_mit_prefix, device_list)
+        """
+        device_list = await device.device_list()
+        all_sensor_values: dict[str, float] = {}
+        all_sensor_keys: list[str] = []
+
+        # IGULD:SELF zuerst (höchste Priorität), dann EM:* und andere
+        priority_order = []
+        if "IGULD:SELF" in device_list:
+            priority_order.append("IGULD:SELF")
+        for did in device_list:
+            if did not in ("IGULD:SELF", "Plant:1"):
+                priority_order.append(did)
+
+        for did in priority_order:
+            try:
+                sensors = await device.get_sensors(deviceID=did)
+                await device.read(sensors, deviceID=did)
+                for s in sensors:
+                    if not s.key:
+                        continue
+                    all_sensor_keys.append(f"{did}:{s.key}")
+                    if s.value is not None:
+                        try:
+                            val = float(s.value)
+                            # Nur setzen wenn nicht schon vorhanden (Priorität)
+                            if s.key not in all_sensor_values:
+                                all_sensor_values[s.key] = val
+                        except (ValueError, TypeError):
+                            pass
+            except Exception as e:
+                logger.warning(f"Fehler beim Lesen von Gerät {did}: {e}")
+
+        return all_sensor_values, all_sensor_keys, device_list
 
     async def test_connection(
         self, host: str, username: str, password: str
@@ -86,7 +132,6 @@ class SMAennexOSConnector(DeviceConnector):
 
         try:
             async with aiohttp.ClientSession(connector=connector) as session:
-                # Gerät erkennen und verbinden (getDevice ist synchron)
                 device = pysmaplus.getDevice(
                     session, url, password, groupuser=username, accessmethod="ennexos"
                 )
@@ -97,7 +142,6 @@ class SMAennexOSConnector(DeviceConnector):
                         "Bitte IP-Adresse und Zugangsdaten prüfen.",
                     )
 
-                # Session starten (Auth)
                 try:
                     await device.new_session()
                 except SmaAuthenticationException:
@@ -108,28 +152,25 @@ class SMAennexOSConnector(DeviceConnector):
                     )
 
                 try:
-                    # Geräteliste abrufen
-                    device_list = await device.device_list()
+                    # Alle Geräte auslesen (inkl. Energy Meter)
+                    sensor_values, sensor_keys, device_list = (
+                        await self._collect_all_sensor_values(device)
+                    )
+
+                    # Geräteinfo vom Hauptgerät
                     geraet_name = None
                     geraet_typ = None
                     seriennummer = None
                     firmware = None
 
                     if device_list:
-                        # Erstes Gerät als Hauptgerät
                         first_device = next(iter(device_list.values()))
                         geraet_name = first_device.name
                         geraet_typ = first_device.type
                         seriennummer = first_device.serial
                         firmware = first_device.sw_version
 
-                    # Sensoren abrufen
-                    sensors = await device.get_sensors()
-                    verfuegbare = [s.key for s in sensors if s.key]
-
-                    # Aktuelle Werte lesen
-                    await device.read(sensors)
-                    snapshot = self._build_snapshot(sensors)
+                    snapshot = self._build_snapshot(sensor_values)
 
                     return ConnectionTestResult(
                         erfolg=True,
@@ -137,7 +178,7 @@ class SMAennexOSConnector(DeviceConnector):
                         geraet_typ=geraet_typ,
                         seriennummer=seriennummer,
                         firmware=firmware,
-                        verfuegbare_sensoren=verfuegbare,
+                        verfuegbare_sensoren=sensor_keys,
                         aktuelle_werte=snapshot,
                     )
 
@@ -148,7 +189,7 @@ class SMAennexOSConnector(DeviceConnector):
             return ConnectionTestResult(
                 erfolg=False,
                 fehler=f"Verbindung zu {url} fehlgeschlagen. "
-                "Ist der Wechselrichter eingeschaltet und im Netzwerk erreichbar?",
+                "Ist das Gerät eingeschaltet und im Netzwerk erreichbar?",
             )
         except SmaAuthenticationException:
             return ConnectionTestResult(
@@ -186,24 +227,13 @@ class SMAennexOSConnector(DeviceConnector):
                 raise PermissionError("Authentifizierung fehlgeschlagen.")
 
             try:
-                sensors = await device.get_sensors()
-                await device.read(sensors)
-                return self._build_snapshot(sensors)
+                sensor_values, _, _ = await self._collect_all_sensor_values(device)
+                return self._build_snapshot(sensor_values)
             finally:
                 await device.close_session()
 
-    def _build_snapshot(self, sensors) -> MeterSnapshot:
-        """Baut MeterSnapshot aus pysma-plus Sensor-Werten."""
-        # Sensor-Werte nach Key indexieren
-        sensor_values: dict[str, Optional[float]] = {}
-        for s in sensors:
-            if s.key and s.value is not None:
-                try:
-                    sensor_values[s.key] = float(s.value)
-                except (ValueError, TypeError):
-                    pass
-
-        # EEDC-Felder aus Sensor-Mapping befüllen
+    def _build_snapshot(self, sensor_values: dict[str, float]) -> MeterSnapshot:
+        """Baut MeterSnapshot aus aggregierten Sensor-Werten."""
         result: dict[str, Optional[float]] = {}
         for eedc_feld, sensor_keys in SENSOR_MAPPING.items():
             for key in sensor_keys:

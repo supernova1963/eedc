@@ -10,6 +10,7 @@ from .registry import list_connectors, get_connector
 
 # Connectoren hier importieren damit sie sich registrieren
 from . import sma_ennexos  # noqa: F401
+from . import sma_webconnect  # noqa: F401
 
 __all__ = [
     "DeviceConnector",
