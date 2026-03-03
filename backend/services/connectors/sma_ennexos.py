@@ -17,6 +17,12 @@ import aiohttp
 from .base import DeviceConnector, ConnectorInfo, MeterSnapshot, ConnectionTestResult
 from .registry import register_connector
 
+try:
+    from pysmaplus.exceptions import SmaAuthenticationException, SmaConnectionException
+except ImportError:
+    SmaAuthenticationException = Exception
+    SmaConnectionException = Exception
+
 logger = logging.getLogger(__name__)
 
 # Sensor-Mapping: ennexOS Channel-Key → EEDC-Feld
@@ -92,8 +98,9 @@ class SMAennexOSConnector(DeviceConnector):
                     )
 
                 # Session starten (Auth)
-                auth_ok = await device.new_session()
-                if not auth_ok:
+                try:
+                    await device.new_session()
+                except SmaAuthenticationException:
                     return ConnectionTestResult(
                         erfolg=False,
                         fehler="Authentifizierung fehlgeschlagen. "
@@ -137,11 +144,17 @@ class SMAennexOSConnector(DeviceConnector):
                 finally:
                     await device.close_session()
 
-        except aiohttp.ClientConnectorError:
+        except (aiohttp.ClientConnectorError, SmaConnectionException):
             return ConnectionTestResult(
                 erfolg=False,
                 fehler=f"Verbindung zu {url} fehlgeschlagen. "
                 "Ist der Wechselrichter eingeschaltet und im Netzwerk erreichbar?",
+            )
+        except SmaAuthenticationException:
+            return ConnectionTestResult(
+                erfolg=False,
+                fehler="Authentifizierung fehlgeschlagen. "
+                "Bitte Benutzername und Passwort prüfen.",
             )
         except Exception as e:
             logger.exception(f"ennexOS Verbindungstest fehlgeschlagen: {e}")
@@ -167,8 +180,9 @@ class SMAennexOSConnector(DeviceConnector):
             if device is None:
                 raise ConnectionError(f"Kein ennexOS-Gerät unter {url} gefunden.")
 
-            auth_ok = await device.new_session()
-            if not auth_ok:
+            try:
+                await device.new_session()
+            except SmaAuthenticationException:
                 raise PermissionError("Authentifizierung fehlgeschlagen.")
 
             try:
