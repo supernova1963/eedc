@@ -7,6 +7,23 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ---
 
+## [2.5.5] - 2026-03-03
+
+### Hinzugefügt
+
+- **Hamburger-Menu auf Mobile** ([#18](https://github.com/supernova1963/eedc-homeassistant/issues/18)): Navigation auf schmalen Displays (< 768px) über ausklappbares Menü statt horizontaler Tab-Leiste
+- **Energie-Bilanz Perspektiv-Toggle** ([#19](https://github.com/supernova1963/eedc-homeassistant/issues/19)): Umschaltung zwischen Erzeugungs- und Verbrauchsperspektive im Energie-Chart, optionale Autarkie-Linie
+- **WP Monatsvergleich – Toggle zwischen Stromverbrauch und COP**
+
+### Behoben
+
+- **Mobile Tab-Overflow:** Tab-Navigationen auf Auswertung, Aussichten und HA-Export liefen auf schmalen Displays über den Rand – jetzt horizontal scrollbar
+- **Backup im Einstellungen-Dropdown ergänzt**
+- **PVGIS Monatswerte Export:** list statt dict erlauben bei der Serialisierung
+- **Bessere Fehlerbehandlung im JSON-Export Endpoint**
+
+---
+
 ## [2.5.3] - 2026-03-02
 
 ### Hinzugefügt
