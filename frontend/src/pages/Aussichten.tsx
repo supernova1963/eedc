@@ -73,7 +73,7 @@ export default function Aussichten() {
     <div className="space-y-6">
       {/* Sticky Header mit Filter */}
       <div className="sticky -top-6 z-10 bg-gray-50 dark:bg-gray-900 pb-4 -mx-6 px-6 pt-6">
-        <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center justify-between gap-2 mb-4 flex-wrap">
           <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Aussichten</h1>
           <div className="flex items-center gap-3">
             {/* Anlagen-Filter */}
@@ -93,14 +93,14 @@ export default function Aussichten() {
 
         {/* Tabs */}
         <div className="border-b border-gray-200 dark:border-gray-700">
-          <nav className="flex gap-4">
+          <nav className="flex gap-4 overflow-x-auto">
             {tabs.map((tab) => {
               const Icon = tab.icon
               return (
                 <SimpleTooltip key={tab.key} text={tab.tooltip}>
                   <button
                     onClick={() => setActiveTab(tab.key)}
-                    className={`py-3 px-1 border-b-2 text-sm font-medium transition-colors flex items-center gap-2 ${
+                    className={`py-3 px-1 border-b-2 text-sm font-medium whitespace-nowrap transition-colors flex items-center gap-2 ${
                       activeTab === tab.key
                         ? 'border-primary-500 text-primary-600 dark:text-primary-400'
                         : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'

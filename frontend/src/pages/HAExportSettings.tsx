@@ -333,7 +333,7 @@ export default function HAExportSettings() {
 
       {/* Tabs */}
       <div className="border-b border-gray-200 dark:border-gray-700">
-        <nav className="flex gap-4">
+        <nav className="flex gap-4 overflow-x-auto">
           <button
             onClick={() => setActiveTab('mqtt')}
             className={`pb-3 text-sm font-medium border-b-2 transition-colors ${
