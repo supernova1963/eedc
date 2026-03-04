@@ -99,6 +99,19 @@ async def lade_tarife_fuer_anlage(db: AsyncSession, anlage_id: int) -> dict[str,
     return tarife
 
 
+def resolve_netzbezug_preis_cent(monatsdaten_obj, tarif_preis_cent: float) -> float:
+    """
+    Löst den effektiven Netzbezugspreis für einen Monat auf.
+
+    Fallback-Kette:
+    1. monatsdaten.netzbezug_durchschnittspreis_cent (dynamischer Tarif-Ø)
+    2. tarif_preis_cent (fixer Preis aus Stammdaten)
+    """
+    if monatsdaten_obj and getattr(monatsdaten_obj, 'netzbezug_durchschnittspreis_cent', None) is not None:
+        return monatsdaten_obj.netzbezug_durchschnittspreis_cent
+    return tarif_preis_cent
+
+
 # =============================================================================
 # Router
 # =============================================================================

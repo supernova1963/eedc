@@ -53,6 +53,7 @@ class BasisMapping(BaseModel):
     einspeisung: Optional[FeldMapping] = None
     netzbezug: Optional[FeldMapping] = None
     pv_gesamt: Optional[FeldMapping] = None  # Optional, für kWp-Verteilung
+    strompreis: Optional[FeldMapping] = None  # Ø Strompreis bei dyn. Tarif (direktes Lesen, kein MWD)
 
 
 class InvestitionFelder(BaseModel):
@@ -260,10 +261,10 @@ async def get_available_sensors(
                 # Filter auf Energy-relevante Sensoren
                 if filter_energy:
                     # Erlaubt: Bestimmte device_class
-                    if device_class in ["energy", "power", "battery", "temperature", "distance"]:
+                    if device_class in ["energy", "power", "battery", "temperature", "distance", "monetary"]:
                         pass  # OK
                     # Erlaubt: Bestimmte Einheiten
-                    elif unit in ["kWh", "Wh", "W", "kW", "km", "°C"]:
+                    elif unit in ["kWh", "Wh", "W", "kW", "km", "°C", "EUR/kWh", "ct/kWh", "€/kWh"]:
                         pass  # OK
                     # Erlaubt: Zähler-Sensoren (state_class=measurement oder total_increasing) ohne Einheit
                     # z.B. Ladevorgänge, Zyklen, etc.
@@ -320,6 +321,8 @@ async def save_sensor_mapping(
             mapping_dict["basis"]["netzbezug"] = mapping.basis.netzbezug.model_dump()
         if mapping.basis.pv_gesamt:
             mapping_dict["basis"]["pv_gesamt"] = mapping.basis.pv_gesamt.model_dump()
+        if mapping.basis.strompreis:
+            mapping_dict["basis"]["strompreis"] = mapping.basis.strompreis.model_dump()
 
         # Investitionen
         for inv_id, inv_mapping in mapping.investitionen.items():
@@ -509,9 +512,14 @@ async def init_start_values(anlage_id: int):
         updated_fields = 0
         errors: list[str] = []
 
+        # Felder, die direkt gelesen werden (kein MWD-Startwert nötig)
+        DIRECT_READ_FIELDS = {"strompreis"}
+
         # Basis-Sensoren (Einspeisung, Netzbezug, etc.)
         basis = mapping.get("basis", {})
         for feld, config in basis.items():
+            if feld in DIRECT_READ_FIELDS:
+                continue  # Direktes Lesen, kein MWD-Startwert
             if config and config.get("strategie") == "sensor" and config.get("sensor_id"):
                 sensor_id = config["sensor_id"]
                 wert = await ha_state.get_sensor_state(sensor_id)

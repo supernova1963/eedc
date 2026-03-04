@@ -15,7 +15,7 @@ from backend.api.deps import get_db
 from backend.models.monatsdaten import Monatsdaten
 from backend.models.anlage import Anlage
 from backend.models.investition import Investition, InvestitionMonatsdaten
-from backend.api.routes.strompreise import lade_tarife_fuer_anlage
+from backend.api.routes.strompreise import lade_tarife_fuer_anlage, resolve_netzbezug_preis_cent
 from backend.core.calculations import CO2_FAKTOR_STROM_KG_KWH, CO2_FAKTOR_GAS_KG_KWH, CO2_FAKTOR_BENZIN_KG_LITER, berechne_ust_eigenverbrauch
 from backend.models.pvgis_prognose import PVGISPrognose as PVGISPrognoseModel
 from backend.utils.sonstige_positionen import berechne_sonstige_summen
@@ -329,8 +329,16 @@ async def get_cockpit_uebersicht(
     # Finanzen
     # ==========================================================================
 
+    # Gewichteter Ø-Netzbezugspreis (für dynamische Tarife)
+    gew_preis_sum = sum(
+        resolve_netzbezug_preis_cent(m, netzbezug_preis_cent) * (m.netzbezug_kwh or 0)
+        for m in monatsdaten_list
+    )
+    gew_kwh_sum = sum(m.netzbezug_kwh or 0 for m in monatsdaten_list)
+    eff_netzbezug_preis = gew_preis_sum / gew_kwh_sum if gew_kwh_sum > 0 else netzbezug_preis_cent
+
     einspeise_erloes = einspeisung * einspeise_verguetung_cent / 100
-    ev_ersparnis = eigenverbrauch * netzbezug_preis_cent / 100
+    ev_ersparnis = eigenverbrauch * eff_netzbezug_preis / 100
     netto_ertrag = einspeise_erloes + ev_ersparnis
 
     # Investition mit Mehrkosten-Ansatz (analog zu aussichten.py)
@@ -379,7 +387,7 @@ async def get_cockpit_uebersicht(
         netto_ertrag -= ust_eigenverbrauch
 
     # BKW: Eigenverbrauch spart Netzbezug (wird separat getrackt, nicht in netto_ertrag)
-    bkw_ersparnis = bkw_eigenverbrauch * netzbezug_preis_cent / 100
+    bkw_ersparnis = bkw_eigenverbrauch * eff_netzbezug_preis / 100
     # Sonstige Positionen netto (BHKW-Ertrag, THG-Quote minus Wartungskosten etc.)
     sonstige_netto = sonstige_ertraege_gesamt - sonstige_ausgaben_gesamt
 
@@ -1985,7 +1993,7 @@ async def get_share_text(
     tarife = await lade_tarife_fuer_anlage(db, anlage_id)
     allgemein_tarif = tarife.get("allgemein")
     einspeise_cent = allgemein_tarif.einspeiseverguetung_cent_kwh if allgemein_tarif else 8.2
-    netzbezug_cent = allgemein_tarif.netzbezug_arbeitspreis_cent_kwh if allgemein_tarif else 30.0
+    netzbezug_cent = resolve_netzbezug_preis_cent(md, allgemein_tarif.netzbezug_arbeitspreis_cent_kwh if allgemein_tarif else 30.0)
     netto_ertrag = (einspeisung * einspeise_cent + eigenverbrauch * netzbezug_cent) / 100
 
     # PVGIS-Prognose

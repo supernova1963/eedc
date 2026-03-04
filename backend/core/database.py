@@ -79,6 +79,8 @@ async def run_migrations(conn):
                 # Steuerliche Behandlung (Kleinunternehmerregelung)
                 ('steuerliche_behandlung', "VARCHAR(30) DEFAULT 'keine_ust'"),
                 ('ust_satz_prozent', 'FLOAT DEFAULT 19.0'),
+                # v2.6.0: Connector-Konfiguration für direkte Geräteverbindung
+                ('connector_config', 'JSON'),
             ]
             for col_name, col_type in new_columns:
                 if col_name not in existing_columns:
@@ -92,6 +94,7 @@ async def run_migrations(conn):
                 ('sonderkosten_euro', 'FLOAT'),
                 ('sonderkosten_beschreibung', 'VARCHAR(500)'),
                 ('notizen', 'VARCHAR(1000)'),
+                ('netzbezug_durchschnittspreis_cent', 'FLOAT'),
             ]
             for col_name, col_type in new_columns:
                 if col_name not in existing_columns:

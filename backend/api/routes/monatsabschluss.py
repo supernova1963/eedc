@@ -26,6 +26,7 @@ from backend.models.investition import Investition, InvestitionMonatsdaten
 from backend.services.vorschlag_service import VorschlagService, Vorschlag, VorschlagQuelle, PlausibilitaetsWarnung
 from backend.services.ha_mqtt_sync import get_ha_mqtt_sync_service
 from backend.services.ha_state_service import get_ha_state_service
+from backend.api.routes.strompreise import lade_tarife_fuer_anlage
 
 
 router = APIRouter(prefix="/monatsabschluss", tags=["Monatsabschluss"])
@@ -85,6 +86,7 @@ class MonatsabschlussResponse(BaseModel):
     monat: int
     ist_abgeschlossen: bool
     ha_mapping_konfiguriert: bool
+    connector_konfiguriert: bool = False
 
     # Basis-Felder (Zählerdaten)
     basis_felder: list[FeldStatus]
@@ -120,6 +122,7 @@ class MonatsabschlussInput(BaseModel):
     durchschnittstemperatur: Optional[float] = None
 
     # Optionale manuelle Felder (nicht aus HA)
+    netzbezug_durchschnittspreis_cent: Optional[float] = None
     sonderkosten_euro: Optional[float] = None
     sonderkosten_beschreibung: Optional[str] = None
     notizen: Optional[str] = None
@@ -279,6 +282,37 @@ async def get_monatsabschluss(
     basis_mapping = sensor_mapping.get("basis", {})
     inv_mappings = sensor_mapping.get("investitionen", {})
 
+    # Connector-Status und Monatswerte berechnen
+    connector_config = anlage.connector_config
+    connector_konfiguriert = bool(connector_config and connector_config.get("connector_id"))
+    connector_delta: Optional[dict] = None
+    connector_inv_verteilung: dict[int, dict[str, float]] = {}
+
+    if connector_konfiguriert:
+        from backend.api.routes.connector import _calc_month_delta, _distribute_by_param
+        snapshots = connector_config.get("meter_snapshots", {})
+        if snapshots:
+            connector_delta = _calc_month_delta(snapshots, jahr, monat)
+            # PV auf Module verteilen
+            if connector_delta:
+                pv_kwh = connector_delta.get("pv_erzeugung_kwh")
+                if pv_kwh is not None and pv_kwh > 0:
+                    pv_module = [i for i in anlage.investitionen if i.typ == "pv-module"]
+                    if pv_module:
+                        for inv, anteil in _distribute_by_param(pv_module, pv_kwh, "leistung_kwp"):
+                            connector_inv_verteilung.setdefault(inv.id, {})["pv_erzeugung_kwh"] = anteil
+                # Batterie auf Speicher verteilen
+                for bat_feld, inv_feld in [
+                    ("batterie_ladung_kwh", "ladung_kwh"),
+                    ("batterie_entladung_kwh", "entladung_kwh"),
+                ]:
+                    bat_val = connector_delta.get(bat_feld)
+                    if bat_val is not None and bat_val > 0:
+                        speicher = [i for i in anlage.investitionen if i.typ == "speicher"]
+                        if speicher:
+                            for inv, anteil in _distribute_by_param(speicher, bat_val, "kapazitaet_kwh"):
+                                connector_inv_verteilung.setdefault(inv.id, {})[inv_feld] = anteil
+
     # Bestehende Monatsdaten laden
     md_result = await db.execute(
         select(Monatsdaten)
@@ -293,6 +327,9 @@ async def get_monatsabschluss(
     # HA State Service für MQTT-Sensor-Vorschläge
     ha_state_service = get_ha_state_service()
 
+    # Datenquelle des Monats ermitteln
+    datenquelle = getattr(monatsdaten, "datenquelle", None) if monatsdaten else None
+
     # Basis-Felder aufbereiten
     basis_felder: list[FeldStatus] = []
     for feld_config in BASIS_FELDER:
@@ -304,6 +341,11 @@ async def get_monatsabschluss(
         mapping_info = basis_mapping.get(mapping_key, {})
         strategie = mapping_info.get("strategie") if mapping_info else None
         sensor_id = mapping_info.get("sensor_id") if mapping_info else None
+
+        # Quelle bestimmen
+        quelle = None
+        if aktueller_wert is not None:
+            quelle = datenquelle if datenquelle else "manuell"
 
         # Vorschläge holen (historische Daten)
         vorschlaege = await vorschlag_service.get_vorschlaege(
@@ -322,6 +364,17 @@ async def get_monatsabschluss(
                     beschreibung="Aus HA-Sensor (aktueller Monatswert)",
                 ))
 
+        # Connector-Vorschlag einfügen
+        if connector_delta and feld in connector_delta:
+            conn_wert = connector_delta[feld]
+            if conn_wert is not None and conn_wert > 0:
+                vorschlaege.insert(0, Vorschlag(
+                    wert=round(conn_wert, 1),
+                    quelle=VorschlagQuelle.LOCAL_CONNECTOR,
+                    konfidenz=90,
+                    beschreibung="Vom Wechselrichter (Zählerstand-Differenz)",
+                ))
+
         # Warnungen prüfen (nur wenn Wert vorhanden)
         warnungen = []
         if aktueller_wert is not None:
@@ -334,11 +387,46 @@ async def get_monatsabschluss(
             label=feld_config["label"],
             einheit=feld_config["einheit"],
             aktueller_wert=aktueller_wert,
-            quelle="manuell" if aktueller_wert is not None else None,
+            quelle=quelle,
             vorschlaege=[_vorschlag_to_response(v) for v in vorschlaege],
             warnungen=[_warnung_to_response(w) for w in warnungen],
             strategie=strategie,
             sensor_id=sensor_id,
+        ))
+
+    # Dynamischer Tarif: Durchschnittspreis-Feld bedingt hinzufügen
+    tarife = await lade_tarife_fuer_anlage(db, anlage_id)
+    allgemein_tarif = tarife.get("allgemein")
+    if allgemein_tarif and allgemein_tarif.vertragsart == "dynamisch":
+        feld = "netzbezug_durchschnittspreis_cent"
+        aktueller_wert = getattr(monatsdaten, feld, None) if monatsdaten else None
+
+        # HA-Sensor-Vorschlag: Direktes Lesen (kein MWD)
+        strompreis_vorschlaege: list[VorschlagResponse] = []
+        strompreis_mapping = basis_mapping.get("strompreis", {})
+        strompreis_strategie = strompreis_mapping.get("strategie") if strompreis_mapping else None
+        strompreis_sensor_id = strompreis_mapping.get("sensor_id") if strompreis_mapping else None
+
+        if strompreis_strategie == "sensor" and strompreis_sensor_id:
+            sensor_wert = await ha_state_service.get_sensor_state(strompreis_sensor_id)
+            if sensor_wert is not None:
+                strompreis_vorschlaege.append(VorschlagResponse(
+                    wert=round(sensor_wert, 2),
+                    quelle="ha_sensor",
+                    konfidenz=90,
+                    beschreibung="Aus HA-Sensor (Ø Strompreis)",
+                ))
+
+        basis_felder.append(FeldStatus(
+            feld=feld,
+            label="Ø Strompreis",
+            einheit="ct/kWh",
+            aktueller_wert=aktueller_wert,
+            quelle="manuell" if aktueller_wert else None,
+            vorschlaege=strompreis_vorschlaege,
+            warnungen=[],
+            strategie=strompreis_strategie,
+            sensor_id=strompreis_sensor_id,
         ))
 
     # Investitionen aufbereiten
@@ -401,6 +489,18 @@ async def get_monatsabschluss(
                         quelle=VorschlagQuelle.HA_SENSOR,
                         konfidenz=95,
                         beschreibung="Aus HA-Sensor (aktueller Monatswert)",
+                    ))
+
+            # Connector-Vorschlag einfügen (verteilte Werte)
+            inv_conn_values = connector_inv_verteilung.get(inv.id, {})
+            if feld in inv_conn_values:
+                conn_wert = inv_conn_values[feld]
+                if conn_wert > 0:
+                    vorschlaege.insert(0, Vorschlag(
+                        wert=round(conn_wert, 1),
+                        quelle=VorschlagQuelle.LOCAL_CONNECTOR,
+                        konfidenz=90,
+                        beschreibung="Vom Wechselrichter (Zählerstand-Differenz)",
                     ))
 
             # Warnungen prüfen
@@ -470,6 +570,7 @@ async def get_monatsabschluss(
         monat=monat,
         ist_abgeschlossen=monatsdaten is not None,
         ha_mapping_konfiguriert=sensor_mapping.get("mqtt_setup_complete", False),
+        connector_konfiguriert=connector_konfiguriert,
         basis_felder=basis_felder,
         optionale_felder=optionale_felder,
         investitionen=investitionen_status,
@@ -544,6 +645,8 @@ async def save_monatsabschluss(
         monatsdaten.sonnenstunden = daten.sonnenstunden
     if daten.durchschnittstemperatur is not None:
         monatsdaten.durchschnittstemperatur = daten.durchschnittstemperatur
+    if daten.netzbezug_durchschnittspreis_cent is not None:
+        monatsdaten.netzbezug_durchschnittspreis_cent = daten.netzbezug_durchschnittspreis_cent
     if daten.sonderkosten_euro is not None:
         monatsdaten.sonderkosten_euro = daten.sonderkosten_euro
     if daten.sonderkosten_beschreibung is not None:
