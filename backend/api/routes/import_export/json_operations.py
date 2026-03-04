@@ -92,6 +92,8 @@ class MonatsdatenExport(BaseModel):
     batterie_entladung_kwh: Optional[float] = None
     batterie_ladung_netz_kwh: Optional[float] = None
     batterie_ladepreis_cent: Optional[float] = None
+    # Dynamischer Tarif
+    netzbezug_durchschnittspreis_cent: Optional[float] = None
     # Wetterdaten
     globalstrahlung_kwh_m2: Optional[float] = None
     sonnenstunden: Optional[float] = None
@@ -385,6 +387,7 @@ async def _export_anlage_full_impl(anlage_id: int, db: AsyncSession):
             batterie_entladung_kwh=md.batterie_entladung_kwh,
             batterie_ladung_netz_kwh=md.batterie_ladung_netz_kwh,
             batterie_ladepreis_cent=md.batterie_ladepreis_cent,
+            netzbezug_durchschnittspreis_cent=md.netzbezug_durchschnittspreis_cent,
             globalstrahlung_kwh_m2=md.globalstrahlung_kwh_m2,
             sonnenstunden=md.sonnenstunden,
             durchschnittstemperatur=md.durchschnittstemperatur,
@@ -697,6 +700,7 @@ async def import_json(
                 batterie_entladung_kwh=md_data.get("batterie_entladung_kwh"),
                 batterie_ladung_netz_kwh=md_data.get("batterie_ladung_netz_kwh"),
                 batterie_ladepreis_cent=md_data.get("batterie_ladepreis_cent"),
+                netzbezug_durchschnittspreis_cent=md_data.get("netzbezug_durchschnittspreis_cent"),
                 globalstrahlung_kwh_m2=md_data.get("globalstrahlung_kwh_m2"),
                 sonnenstunden=md_data.get("sonnenstunden"),
                 durchschnittstemperatur=md_data.get("durchschnittstemperatur"),

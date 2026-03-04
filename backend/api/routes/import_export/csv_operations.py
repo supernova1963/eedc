@@ -19,6 +19,7 @@ from backend.models.monatsdaten import Monatsdaten
 from backend.models.investition import Investition, InvestitionMonatsdaten
 from backend.services.wetter_service import get_wetterdaten
 from backend.utils.sonstige_positionen import berechne_sonstige_summen, get_sonstige_positionen
+from backend.api.routes.strompreise import lade_tarife_fuer_anlage
 
 from .schemas import ImportResult, CSVTemplateInfo
 from .helpers import (
@@ -54,6 +55,13 @@ async def get_csv_template_info(anlage_id: int, db: AsyncSession = Depends(get_d
         "Einspeisung_kWh": "Ins Netz eingespeiste Energie (Zählerwert)",
         "Netzbezug_kWh": "Aus dem Netz bezogene Energie (Zählerwert)",
     }
+
+    # Bei dynamischem Tarif: Durchschnittspreis-Spalte
+    tarife = await lade_tarife_fuer_anlage(db, anlage_id)
+    allgemein_tarif = tarife.get("allgemein")
+    if allgemein_tarif and allgemein_tarif.vertragsart == "dynamisch":
+        spalten.append("Durchschnittspreis_Cent")
+        beschreibung["Durchschnittspreis_Cent"] = "Ø Strompreis bei dynamischem Tarif (ct/kWh)"
 
     # Investitionen laden, nach Typ und ID sortiert
     inv_result = await db.execute(
@@ -314,6 +322,7 @@ async def import_csv(
             einspeisung = einspeisung_raw or 0
             netzbezug = netzbezug_raw or 0
 
+            durchschnittspreis = parse_float(row.get("Durchschnittspreis_Cent", ""))
             globalstrahlung = parse_float_positive(row.get("Globalstrahlung_kWh_m2", ""), "Globalstrahlung")
             sonnenstunden = parse_float_positive(row.get("Sonnenstunden", ""), "Sonnenstunden")
             notizen = row.get("Notizen", "").strip() or None
@@ -467,6 +476,8 @@ async def import_csv(
                 existing_md.batterie_entladung_kwh = batterie_entladung
                 existing_md.globalstrahlung_kwh_m2 = globalstrahlung
                 existing_md.sonnenstunden = sonnenstunden
+                if durchschnittspreis is not None:
+                    existing_md.netzbezug_durchschnittspreis_cent = durchschnittspreis
                 existing_md.notizen = notizen
                 existing_md.datenquelle = "csv"
             else:
@@ -484,6 +495,7 @@ async def import_csv(
                     batterie_entladung_kwh=batterie_entladung,
                     globalstrahlung_kwh_m2=globalstrahlung,
                     sonnenstunden=sonnenstunden,
+                    netzbezug_durchschnittspreis_cent=durchschnittspreis,
                     notizen=notizen,
                     datenquelle="csv"
                 )
@@ -563,6 +575,14 @@ async def export_csv(
     writer = csv.writer(output, delimiter=";")
 
     header = ["Jahr", "Monat", "Einspeisung_kWh", "Netzbezug_kWh"]
+
+    # Bei dynamischem Tarif: Durchschnittspreis-Spalte
+    export_tarife = await lade_tarife_fuer_anlage(db, anlage_id)
+    export_allgemein = export_tarife.get("allgemein")
+    hat_dynamisch_export = export_allgemein and export_allgemein.vertragsart == "dynamisch"
+    if hat_dynamisch_export:
+        header.append("Durchschnittspreis_Cent")
+
     inv_columns: list[tuple[Investition, str, str]] = []
 
     for inv in investitionen:
@@ -648,6 +668,8 @@ async def export_csv(
             md.einspeisung_kwh,
             md.netzbezug_kwh,
         ]
+        if hat_dynamisch_export:
+            row.append(md.netzbezug_durchschnittspreis_cent if md.netzbezug_durchschnittspreis_cent else "")
 
         for inv, suffix, data_key in inv_columns:
             inv_data = inv_monatsdaten_map.get((inv.id, md.jahr, md.monat), {})

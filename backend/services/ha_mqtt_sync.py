@@ -47,6 +47,10 @@ class RolloverResult:
     errors: list[str]
 
 
+# Basis-Felder, die direkt gelesen werden (kein MWD-Sensorpaar nötig)
+# z.B. Strompreis: aktueller Wert wird direkt vom HA-Sensor gelesen
+DIRECT_READ_FIELDS = {"strompreis"}
+
 # Mapping von EEDC-Feldern zu Display-Namen und Icons
 FELD_CONFIG = {
     # Basis-Sensoren
@@ -165,6 +169,8 @@ class HAMqttSyncService:
         # Basis-Sensoren
         basis = mapping.get("basis", {})
         for feld, config in basis.items():
+            if feld in DIRECT_READ_FIELDS:
+                continue  # Direktes Lesen, kein MWD-Paar
             if config and config.get("strategie") == "sensor" and config.get("sensor_id"):
                 success = await self._create_mwd_sensor_pair(
                     anlage_id=anlage.id,
@@ -390,9 +396,11 @@ class HAMqttSyncService:
 
         keys_to_remove: list[str] = []
 
-        # Basis-Sensoren
+        # Basis-Sensoren (strompreis hat kein MWD-Paar)
         basis = anlage.sensor_mapping.get("basis", {})
         for feld, config in basis.items():
+            if feld in DIRECT_READ_FIELDS:
+                continue
             if config and config.get("strategie") == "sensor":
                 keys_to_remove.append(feld)
 

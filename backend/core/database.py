@@ -94,6 +94,7 @@ async def run_migrations(conn):
                 ('sonderkosten_euro', 'FLOAT'),
                 ('sonderkosten_beschreibung', 'VARCHAR(500)'),
                 ('notizen', 'VARCHAR(1000)'),
+                ('netzbezug_durchschnittspreis_cent', 'FLOAT'),
             ]
             for col_name, col_type in new_columns:
                 if col_name not in existing_columns:

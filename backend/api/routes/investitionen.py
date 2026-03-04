@@ -16,7 +16,7 @@ from backend.models.investition import Investition, InvestitionTyp, InvestitionM
 from backend.models.anlage import Anlage
 from backend.models.monatsdaten import Monatsdaten
 from backend.models.strompreis import Strompreis
-from backend.api.routes.strompreise import lade_tarife_fuer_anlage
+from backend.api.routes.strompreise import lade_tarife_fuer_anlage, resolve_netzbezug_preis_cent
 from backend.utils.sonstige_positionen import berechne_sonstige_summen
 
 
@@ -1611,6 +1611,22 @@ async def get_speicher_dashboard(
     if not speicher_list:
         return []
 
+    # Monatsdaten für Durchschnittspreis-Fallback laden
+    anlage_md_result = await db.execute(
+        select(Monatsdaten).where(Monatsdaten.anlage_id == anlage_id)
+    )
+    anlage_md_dict = {
+        (m.jahr, m.monat): m for m in anlage_md_result.scalars().all()
+    }
+
+    # Gewichteter Ø-Netzbezugspreis für Spread-Berechnung
+    gew_preis_sum = sum(
+        resolve_netzbezug_preis_cent(m, strompreis_cent) * (m.netzbezug_kwh or 0)
+        for m in anlage_md_dict.values()
+    )
+    gew_kwh_sum = sum(m.netzbezug_kwh or 0 for m in anlage_md_dict.values())
+    eff_strompreis_cent = gew_preis_sum / gew_kwh_sum if gew_kwh_sum > 0 else strompreis_cent
+
     dashboards = []
     for speicher in speicher_list:
         md_result = await db.execute(
@@ -1635,6 +1651,11 @@ async def get_speicher_dashboard(
             if netzladung > 0:
                 gesamt_arbitrage_kwh += netzladung
                 preis = d.get('speicher_ladepreis_cent', 0) or 0
+                # Fallback: Monatsdaten Ø-Preis für dynamische Tarife
+                if preis <= 0:
+                    anlage_md = anlage_md_dict.get((md.jahr, md.monat))
+                    if anlage_md and anlage_md.netzbezug_durchschnittspreis_cent:
+                        preis = anlage_md.netzbezug_durchschnittspreis_cent
                 if preis > 0:
                     arbitrage_preis_sum += preis * netzladung
                     arbitrage_count += netzladung
@@ -1649,12 +1670,12 @@ async def get_speicher_dashboard(
         vollzyklen = gesamt_ladung / kapazitaet if kapazitaet > 0 else 0
 
         # Ersparnis: Entladung ersetzt Netzbezug (Spread zwischen Netzbezug und Einspeisung)
-        spread = strompreis_cent - einspeiseverguetung_cent
+        spread = eff_strompreis_cent - einspeiseverguetung_cent
         ersparnis = gesamt_entladung * spread / 100
 
         # Arbitrage-Gewinn: (Strompreis - Ladepreis) * Netzladung
         arbitrage_avg_preis = (arbitrage_preis_sum / arbitrage_count) if arbitrage_count > 0 else 0
-        arbitrage_gewinn = gesamt_arbitrage_kwh * (strompreis_cent - arbitrage_avg_preis) / 100 if gesamt_arbitrage_kwh > 0 else 0
+        arbitrage_gewinn = gesamt_arbitrage_kwh * (eff_strompreis_cent - arbitrage_avg_preis) / 100 if gesamt_arbitrage_kwh > 0 else 0
 
         zusammenfassung = {
             'gesamt_ladung_kwh': round(gesamt_ladung, 1),

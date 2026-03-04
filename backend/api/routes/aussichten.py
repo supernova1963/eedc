@@ -20,7 +20,7 @@ from backend.models.investition import Investition, InvestitionMonatsdaten
 from backend.models.pvgis_prognose import PVGISPrognose
 from backend.models.strompreis import Strompreis
 from backend.models.monatsdaten import Monatsdaten
-from backend.api.routes.strompreise import lade_tarife_fuer_anlage
+from backend.api.routes.strompreise import lade_tarife_fuer_anlage, resolve_netzbezug_preis_cent
 from backend.core.calculations import berechne_ust_eigenverbrauch
 from backend.utils.sonstige_positionen import berechne_sonstige_netto
 from backend.services.wetter_service import (
@@ -1132,12 +1132,13 @@ async def get_finanz_prognose(
     bisherige_eauto_ersparnis = 0.0
 
     for md in monatsdaten:
+        md_preis = resolve_netzbezug_preis_cent(md, netzbezug_preis)
         # Einspeise-Erlös
         if md.einspeisung_kwh:
             bisherige_ertraege += md.einspeisung_kwh * einspeiseverguetung / 100
         # EV-Ersparnis (beinhaltet bereits Speicher + V2H)
         if md.eigenverbrauch_kwh:
-            bisherige_ertraege += md.eigenverbrauch_kwh * netzbezug_preis / 100
+            bisherige_ertraege += md.eigenverbrauch_kwh * md_preis / 100
 
     # Wärmepumpe Alternativkosten-Ersparnis
     # Ersparnis = Gas-Kosten (was es kosten würde) - WP-Stromkosten

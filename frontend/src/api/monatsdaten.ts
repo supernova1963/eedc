@@ -16,6 +16,7 @@ export interface MonatsdatenCreate {
   batterie_entladung_kwh?: number
   batterie_ladung_netz_kwh?: number
   batterie_ladepreis_cent?: number
+  netzbezug_durchschnittspreis_cent?: number
   globalstrahlung_kwh_m2?: number
   sonnenstunden?: number
   datenquelle?: string
@@ -30,6 +31,7 @@ export interface MonatsdatenUpdate {
   batterie_entladung_kwh?: number
   batterie_ladung_netz_kwh?: number
   batterie_ladepreis_cent?: number
+  netzbezug_durchschnittspreis_cent?: number
   globalstrahlung_kwh_m2?: number
   sonnenstunden?: number
   notizen?: string

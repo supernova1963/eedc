@@ -26,6 +26,7 @@ from backend.models.investition import Investition, InvestitionMonatsdaten
 from backend.services.vorschlag_service import VorschlagService, Vorschlag, VorschlagQuelle, PlausibilitaetsWarnung
 from backend.services.ha_mqtt_sync import get_ha_mqtt_sync_service
 from backend.services.ha_state_service import get_ha_state_service
+from backend.api.routes.strompreise import lade_tarife_fuer_anlage
 
 
 router = APIRouter(prefix="/monatsabschluss", tags=["Monatsabschluss"])
@@ -121,6 +122,7 @@ class MonatsabschlussInput(BaseModel):
     durchschnittstemperatur: Optional[float] = None
 
     # Optionale manuelle Felder (nicht aus HA)
+    netzbezug_durchschnittspreis_cent: Optional[float] = None
     sonderkosten_euro: Optional[float] = None
     sonderkosten_beschreibung: Optional[str] = None
     notizen: Optional[str] = None
@@ -392,6 +394,41 @@ async def get_monatsabschluss(
             sensor_id=sensor_id,
         ))
 
+    # Dynamischer Tarif: Durchschnittspreis-Feld bedingt hinzufügen
+    tarife = await lade_tarife_fuer_anlage(db, anlage_id)
+    allgemein_tarif = tarife.get("allgemein")
+    if allgemein_tarif and allgemein_tarif.vertragsart == "dynamisch":
+        feld = "netzbezug_durchschnittspreis_cent"
+        aktueller_wert = getattr(monatsdaten, feld, None) if monatsdaten else None
+
+        # HA-Sensor-Vorschlag: Direktes Lesen (kein MWD)
+        strompreis_vorschlaege: list[VorschlagResponse] = []
+        strompreis_mapping = basis_mapping.get("strompreis", {})
+        strompreis_strategie = strompreis_mapping.get("strategie") if strompreis_mapping else None
+        strompreis_sensor_id = strompreis_mapping.get("sensor_id") if strompreis_mapping else None
+
+        if strompreis_strategie == "sensor" and strompreis_sensor_id:
+            sensor_wert = await ha_state_service.get_sensor_state(strompreis_sensor_id)
+            if sensor_wert is not None:
+                strompreis_vorschlaege.append(VorschlagResponse(
+                    wert=round(sensor_wert, 2),
+                    quelle="ha_sensor",
+                    konfidenz=90,
+                    beschreibung="Aus HA-Sensor (Ø Strompreis)",
+                ))
+
+        basis_felder.append(FeldStatus(
+            feld=feld,
+            label="Ø Strompreis",
+            einheit="ct/kWh",
+            aktueller_wert=aktueller_wert,
+            quelle="manuell" if aktueller_wert else None,
+            vorschlaege=strompreis_vorschlaege,
+            warnungen=[],
+            strategie=strompreis_strategie,
+            sensor_id=strompreis_sensor_id,
+        ))
+
     # Investitionen aufbereiten
     investitionen_status: list[InvestitionStatus] = []
     for inv in anlage.investitionen:
@@ -608,6 +645,8 @@ async def save_monatsabschluss(
         monatsdaten.sonnenstunden = daten.sonnenstunden
     if daten.durchschnittstemperatur is not None:
         monatsdaten.durchschnittstemperatur = daten.durchschnittstemperatur
+    if daten.netzbezug_durchschnittspreis_cent is not None:
+        monatsdaten.netzbezug_durchschnittspreis_cent = daten.netzbezug_durchschnittspreis_cent
     if daten.sonderkosten_euro is not None:
         monatsdaten.sonderkosten_euro = daten.sonderkosten_euro
     if daten.sonderkosten_beschreibung is not None:

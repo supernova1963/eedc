@@ -7,6 +7,25 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ---
 
+## [2.6.0] - 2026-03-04
+
+### Hinzugefügt
+
+- **Dynamischer Tarif: Monatlicher Durchschnittspreis** – Neues optionales Feld `netzbezug_durchschnittspreis_cent` auf Monatsdaten
+  - Wird nur bei dynamischen Tarifen (Tibber, aWATTar) abgefragt
+  - Alle Finanzberechnungen nutzen den Monatsdurchschnitt statt des fixen Stammdatenpreises
+  - Fallback-Kette: Monats-Durchschnittspreis → Fixer Tarif aus Stammdaten
+  - Gewichteter Durchschnittspreis (nach kWh) bei Jahresaggregation im Cockpit
+- **Arbitrage-Fallback** – `speicher_ladepreis_cent` → `netzbezug_durchschnittspreis_cent` → Stammdaten-Tarif
+- **CSV-Template/Export/Import** – Bedingte Spalte `Durchschnittspreis_Cent` bei dynamischem Tarif
+- **JSON-Export/Import** – Neues Feld in Export-Schema
+- **MonatsdatenForm** – Bedingtes Eingabefeld "Ø Strompreis (dynamisch)" bei dynamischem Tarif
+- **Monatsabschluss-Wizard** – Bedingtes Feld mit HA-Sensor-Vorschlag bei dynamischem Tarif
+- **HA-Sensormapping** – Neues Basis-Feld `strompreis` für direktes Sensor-Lesen (kein MWD-Paar)
+  - Sensor-Filter erweitert um `monetary` device_class und Preis-Einheiten (EUR/kWh, ct/kWh)
+
+---
+
 ## [2.5.3] - 2026-03-02
 
 ### Hinzugefügt

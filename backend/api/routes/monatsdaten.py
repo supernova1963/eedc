@@ -16,6 +16,7 @@ from backend.models.anlage import Anlage
 from backend.models.strompreis import Strompreis
 from backend.models.investition import Investition, InvestitionMonatsdaten
 from backend.core.calculations import berechne_monatskennzahlen, MonatsKennzahlen
+from backend.api.routes.strompreise import resolve_netzbezug_preis_cent
 
 
 # =============================================================================
@@ -33,6 +34,7 @@ class MonatsdatenBase(BaseModel):
     batterie_entladung_kwh: Optional[float] = Field(None, ge=0)
     batterie_ladung_netz_kwh: Optional[float] = Field(None, ge=0)
     batterie_ladepreis_cent: Optional[float] = Field(None, ge=0)
+    netzbezug_durchschnittspreis_cent: Optional[float] = Field(None, ge=0)
     globalstrahlung_kwh_m2: Optional[float] = Field(None, ge=0)
     sonnenstunden: Optional[float] = Field(None, ge=0)
     datenquelle: Optional[str] = Field(None, max_length=50)
@@ -57,6 +59,7 @@ class MonatsdatenUpdate(BaseModel):
     batterie_entladung_kwh: Optional[float] = Field(None, ge=0)
     batterie_ladung_netz_kwh: Optional[float] = Field(None, ge=0)
     batterie_ladepreis_cent: Optional[float] = Field(None, ge=0)
+    netzbezug_durchschnittspreis_cent: Optional[float] = Field(None, ge=0)
     globalstrahlung_kwh_m2: Optional[float] = Field(None, ge=0)
     sonnenstunden: Optional[float] = Field(None, ge=0)
     notizen: Optional[str] = Field(None, max_length=1000)
@@ -363,7 +366,7 @@ async def get_monatsdaten(monatsdaten_id: int, db: AsyncSession = Depends(get_db
         batterie_ladung_kwh=md.batterie_ladung_kwh or 0,
         batterie_entladung_kwh=md.batterie_entladung_kwh or 0,
         einspeiseverguetung_cent=strompreis.einspeiseverguetung_cent_kwh if strompreis else 8.2,
-        netzbezug_preis_cent=strompreis.netzbezug_arbeitspreis_cent_kwh if strompreis else 30.0,
+        netzbezug_preis_cent=resolve_netzbezug_preis_cent(md, strompreis.netzbezug_arbeitspreis_cent_kwh if strompreis else 30.0),
         grundpreis_euro_monat=strompreis.grundpreis_euro_monat or 0 if strompreis else 0,
         leistung_kwp=anlage.leistung_kwp,
     )

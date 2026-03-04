@@ -5,7 +5,7 @@
 
 import { useState, useEffect, useMemo, FormEvent } from 'react'
 import { Button, Input, Alert, Select } from '../ui'
-import { useInvestitionen } from '../../hooks'
+import { useInvestitionen, useAktuellerStrompreis } from '../../hooks'
 import { investitionenApi, wetterApi } from '../../api'
 import type { Monatsdaten, Investition } from '../../types'
 import { Car, Battery, Plug, Sun, Flame, Zap, MoreHorizontal, Cloud, Loader2 } from 'lucide-react'
@@ -39,6 +39,7 @@ export interface MonatsdatenSubmitData {
   pv_erzeugung_kwh?: number
   batterie_ladung_kwh?: number
   batterie_entladung_kwh?: number
+  netzbezug_durchschnittspreis_cent?: number
   globalstrahlung_kwh_m2?: number
   sonnenstunden?: number
   notizen?: string
@@ -118,6 +119,10 @@ export default function MonatsdatenForm({ monatsdaten, anlageId, onSubmit, onCan
     [investitionen]
   )
 
+  // Strompreis für dynamischen Tarif prüfen
+  const { strompreis } = useAktuellerStrompreis(anlageId)
+  const hatDynamischenTarif = strompreis?.vertragsart === 'dynamisch'
+
   // Welche Investitionstypen sind vorhanden?
   const hatSpeicher = aktiveInvestitionen.some(i => i.typ === 'speicher')
   const hatEAuto = aktiveInvestitionen.some(i => i.typ === 'e-auto')
@@ -146,6 +151,7 @@ export default function MonatsdatenForm({ monatsdaten, anlageId, onSubmit, onCan
     batterie_entladung_kwh: monatsdaten?.batterie_entladung_kwh?.toString() || '',
     globalstrahlung_kwh_m2: monatsdaten?.globalstrahlung_kwh_m2?.toString() || '',
     sonnenstunden: monatsdaten?.sonnenstunden?.toString() || '',
+    netzbezug_durchschnittspreis_cent: monatsdaten?.netzbezug_durchschnittspreis_cent?.toString() || '',
     notizen: monatsdaten?.notizen || '',
   })
 
@@ -576,6 +582,7 @@ export default function MonatsdatenForm({ monatsdaten, anlageId, onSubmit, onCan
         pv_erzeugung_kwh: pvErz,
         batterie_ladung_kwh: battLadung,
         batterie_entladung_kwh: battEntladung,
+        netzbezug_durchschnittspreis_cent: formData.netzbezug_durchschnittspreis_cent ? parseFloat(formData.netzbezug_durchschnittspreis_cent) : undefined,
         globalstrahlung_kwh_m2: formData.globalstrahlung_kwh_m2 ? parseFloat(formData.globalstrahlung_kwh_m2) : undefined,
         sonnenstunden: formData.sonnenstunden ? parseFloat(formData.sonnenstunden) : undefined,
         notizen: formData.notizen || undefined,
@@ -659,6 +666,19 @@ export default function MonatsdatenForm({ monatsdaten, anlageId, onSubmit, onCan
             placeholder="z.B. 120"
             required
           />
+          {hatDynamischenTarif && (
+            <Input
+              label="Ø Strompreis (dynamisch)"
+              name="netzbezug_durchschnittspreis_cent"
+              type="number"
+              step="0.01"
+              min="0"
+              value={formData.netzbezug_durchschnittspreis_cent}
+              onChange={handleChange}
+              placeholder="z.B. 25.3"
+              hint="Monatsdurchschnitt bei dynamischem Tarif (ct/kWh)"
+            />
+          )}
           {/* PV-Erzeugung: readonly wenn PV-Module mit Werten vorhanden, sonst editierbar (Legacy) */}
           {(hatPVModule || hatWechselrichter) && berechneteWerte.pvErzeugung > 0 ? (
             <div>
