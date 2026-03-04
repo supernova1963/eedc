@@ -14,10 +14,12 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 from sqlalchemy.orm.attributes import flag_modified
 
 from backend.api.deps import get_db
 from backend.models.anlage import Anlage
+from backend.models.investition import Investition
 from backend.services.connectors import list_connectors, get_connector
 
 logger = logging.getLogger(__name__)
@@ -264,6 +266,119 @@ async def remove_connector(
     return {"erfolg": True}
 
 
+@router.get("/monatswerte/{anlage_id}/{jahr}/{monat}")
+async def get_connector_monatswerte(
+    anlage_id: int,
+    jahr: int,
+    monat: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Berechnet Monatswerte aus Connector-Snapshots.
+
+    Findet zwei Snapshots die den Monat umrahmen und berechnet die Differenz.
+    Verteilt System-Level-Werte auf Investitionen (PV-Module nach kWp,
+    Speicher nach Kapazität).
+
+    Returns:
+        Format kompatibel mit HA-Statistics Monatswerte (basis + investitionen).
+    """
+    result = await db.execute(
+        select(Anlage)
+        .options(selectinload(Anlage.investitionen))
+        .where(Anlage.id == anlage_id)
+    )
+    anlage = result.scalar_one_or_none()
+    if not anlage:
+        raise HTTPException(status_code=404, detail="Anlage nicht gefunden")
+
+    config = anlage.connector_config
+    if not config:
+        raise HTTPException(status_code=400, detail="Kein Connector konfiguriert")
+
+    snapshots = config.get("meter_snapshots", {})
+    if not snapshots:
+        raise HTTPException(status_code=404, detail="Keine Snapshots vorhanden")
+
+    # Snapshots die den Monat umrahmen finden
+    diff = _calc_month_delta(snapshots, jahr, monat)
+    if not diff:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Nicht genügend Snapshots für {monat:02d}/{jahr}. "
+            "Mindestens ein Snapshot vor und einer nach dem Monatsbeginn nötig."
+        )
+
+    # System-Level-Werte auf Investitionen verteilen
+    basis_felder = []
+    investitionen_felder = []
+
+    # Basis-Felder (direkt auf Monatsdaten)
+    for feld, label in [
+        ("einspeisung_kwh", "Einspeisung"),
+        ("netzbezug_kwh", "Netzbezug"),
+    ]:
+        if feld in diff:
+            basis_felder.append({
+                "feld": feld,
+                "label": label,
+                "wert": diff[feld],
+                "einheit": "kWh",
+            })
+
+    # PV-Erzeugung auf Module verteilen
+    pv_kwh = diff.get("pv_erzeugung_kwh")
+    if pv_kwh is not None and pv_kwh > 0:
+        pv_module = [i for i in anlage.investitionen if i.typ == "pv-module"]
+        if pv_module:
+            verteilung = _distribute_by_param(pv_module, pv_kwh, "leistung_kwp")
+            for inv, anteil in verteilung:
+                investitionen_felder.append({
+                    "investition_id": inv.id,
+                    "bezeichnung": inv.bezeichnung,
+                    "typ": inv.typ,
+                    "felder": [{"feld": "pv_erzeugung_kwh", "label": "PV Erzeugung", "wert": anteil, "einheit": "kWh"}],
+                })
+
+    # Batterie auf Speicher verteilen
+    bat_ladung = diff.get("batterie_ladung_kwh")
+    bat_entladung = diff.get("batterie_entladung_kwh")
+    if (bat_ladung is not None and bat_ladung > 0) or (bat_entladung is not None and bat_entladung > 0):
+        speicher = [i for i in anlage.investitionen if i.typ == "speicher"]
+        if speicher:
+            felder_per_speicher: dict[int, list] = {}
+            if bat_ladung is not None and bat_ladung > 0:
+                for inv, anteil in _distribute_by_param(speicher, bat_ladung, "kapazitaet_kwh"):
+                    felder_per_speicher.setdefault(inv.id, {"inv": inv, "felder": []})
+                    felder_per_speicher[inv.id]["felder"].append(
+                        {"feld": "ladung_kwh", "label": "Ladung", "wert": anteil, "einheit": "kWh"}
+                    )
+            if bat_entladung is not None and bat_entladung > 0:
+                for inv, anteil in _distribute_by_param(speicher, bat_entladung, "kapazitaet_kwh"):
+                    felder_per_speicher.setdefault(inv.id, {"inv": inv, "felder": []})
+                    felder_per_speicher[inv.id]["felder"].append(
+                        {"feld": "entladung_kwh", "label": "Entladung", "wert": anteil, "einheit": "kWh"}
+                    )
+            for data in felder_per_speicher.values():
+                inv = data["inv"]
+                # Prüfen ob bereits ein Eintrag für diese Investition existiert
+                existing = next((i for i in investitionen_felder if i["investition_id"] == inv.id), None)
+                if existing:
+                    existing["felder"].extend(data["felder"])
+                else:
+                    investitionen_felder.append({
+                        "investition_id": inv.id,
+                        "bezeichnung": inv.bezeichnung,
+                        "typ": inv.typ,
+                        "felder": data["felder"],
+                    })
+
+    return {
+        "basis": basis_felder,
+        "investitionen": investitionen_felder,
+    }
+
+
 # =============================================================================
 # Helper Functions
 # =============================================================================
@@ -292,3 +407,88 @@ def _calc_difference(prev: dict, current: dict) -> dict:
         if curr_val is not None and prev_val is not None:
             diff[field] = round(curr_val - prev_val, 2)
     return diff
+
+
+def _calc_month_delta(snapshots: dict, jahr: int, monat: int) -> Optional[dict]:
+    """Berechnet die Monatsdifferenz aus verfügbaren Snapshots.
+
+    Sucht den letzten Snapshot VOR dem Monat als Start und den letzten
+    Snapshot IM Monat (oder den ersten danach) als Ende.
+
+    Returns:
+        Dict mit Felddifferenzen oder None wenn nicht genug Snapshots.
+    """
+    from datetime import datetime as dt
+
+    monat_start = dt(jahr, monat, 1)
+    if monat == 12:
+        monat_ende = dt(jahr + 1, 1, 1)
+    else:
+        monat_ende = dt(jahr, monat + 1, 1)
+
+    # Snapshots sortiert mit Timestamps
+    sorted_snaps = []
+    for ts_str, snap in snapshots.items():
+        try:
+            ts = dt.fromisoformat(ts_str.replace("Z", "+00:00")).replace(tzinfo=None)
+            sorted_snaps.append((ts, snap))
+        except (ValueError, TypeError):
+            continue
+
+    sorted_snaps.sort(key=lambda x: x[0])
+    if len(sorted_snaps) < 2:
+        return None
+
+    # Start-Snapshot: letzter VOR dem Monat, oder erster im Monat
+    start_snap = None
+    for ts, snap in sorted_snaps:
+        if ts < monat_start:
+            start_snap = snap
+        elif ts <= monat_ende and start_snap is None:
+            start_snap = snap
+            break
+
+    # End-Snapshot: letzter IM Monat, oder erster danach
+    end_snap = None
+    for ts, snap in sorted_snaps:
+        if monat_start <= ts < monat_ende:
+            end_snap = snap  # Letzter im Monat
+        elif ts >= monat_ende and end_snap is None:
+            end_snap = snap
+            break
+
+    if not start_snap or not end_snap or start_snap is end_snap:
+        return None
+
+    return _calc_difference(start_snap, end_snap)
+
+
+def _distribute_by_param(
+    investitionen: list,
+    total: float,
+    param_key: str,
+) -> list[tuple]:
+    """Verteilt einen Gesamtwert proportional auf Investitionen nach Parameter.
+
+    Args:
+        investitionen: Liste von Investition-Objekten
+        total: Zu verteilender Gesamtwert
+        param_key: Schlüssel im parameter-Dict (z.B. "leistung_kwp", "kapazitaet_kwh")
+
+    Returns:
+        Liste von (Investition, anteil) Tupeln
+    """
+    total_param = sum(
+        (inv.parameter or {}).get(param_key, 0) or 0
+        for inv in investitionen
+    )
+
+    result = []
+    for inv in investitionen:
+        inv_param = (inv.parameter or {}).get(param_key, 0) or 0
+        if total_param > 0:
+            anteil = round(total * inv_param / total_param, 2)
+        else:
+            anteil = round(total / len(investitionen), 2)
+        result.append((inv, anteil))
+    return result

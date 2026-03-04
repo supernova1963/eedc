@@ -166,4 +166,41 @@ export const connectorApi = {
       throw new Error(error.detail || 'Entfernen fehlgeschlagen')
     }
   },
+
+  /**
+   * Monatswerte aus Connector-Snapshots berechnen (für Monatsabschluss-Prefill)
+   */
+  async getMonatswerte(
+    anlageId: number,
+    jahr: number,
+    monat: number
+  ): Promise<ConnectorMonatswerte> {
+    const response = await fetch(`${API_BASE}/connectors/monatswerte/${anlageId}/${jahr}/${monat}`)
+
+    if (!response.ok) {
+      const error = await response.json()
+      throw new Error(error.detail || 'Keine Connector-Daten für diesen Monat')
+    }
+
+    return response.json()
+  },
+}
+
+export interface ConnectorMonatswertFeld {
+  feld: string
+  label: string
+  wert: number
+  einheit: string
+}
+
+export interface ConnectorInvestitionWerte {
+  investition_id: number
+  bezeichnung: string
+  typ: string
+  felder: ConnectorMonatswertFeld[]
+}
+
+export interface ConnectorMonatswerte {
+  basis: ConnectorMonatswertFeld[]
+  investitionen: ConnectorInvestitionWerte[]
 }
