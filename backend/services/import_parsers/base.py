@@ -22,6 +22,9 @@ class ParsedMonthData:
     batterie_ladung_kwh: Optional[float] = None
     batterie_entladung_kwh: Optional[float] = None
     eigenverbrauch_kwh: Optional[float] = None
+    # Wallbox / Ladestation
+    wallbox_ladung_kwh: Optional[float] = None
+    wallbox_ladevorgaenge: Optional[int] = None
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -37,6 +40,7 @@ class ParsedMonthData:
                 self.batterie_ladung_kwh,
                 self.batterie_entladung_kwh,
                 self.eigenverbrauch_kwh,
+                self.wallbox_ladung_kwh,
             ]
         )
 

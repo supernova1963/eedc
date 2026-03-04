@@ -264,6 +264,14 @@ class SMASunnyPortalParser(PortalExportParser):
         # ennexOS Metadata-Header erkennen ("Id der Anlage", "Name der Anlage")
         all_text = "\n".join(lines).lower()
         if "id der anlage" in all_text or "name der anlage" in all_text:
+            # Wallbox/Ladestation-CSVs ohne PV-Daten ausschließen (eigener Parser)
+            has_wallbox = "ladestation" in all_text or ("wallbox" in all_text and "name des" in all_text)
+            has_pv = any(ind in all_text for ind in [
+                "gesamterzeugung", "direktverbrauch", "netzeinspeisung",
+                "eigenverbrauch", "einspeisung", "ertrag",
+            ])
+            if has_wallbox and not has_pv:
+                return False
             return True
 
         # Alle Zeilen auf SMA-typische Spaltennamen prüfen

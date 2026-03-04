@@ -56,6 +56,8 @@ class ParsedMonthResponse(BaseModel):
     batterie_ladung_kwh: Optional[float] = None
     batterie_entladung_kwh: Optional[float] = None
     eigenverbrauch_kwh: Optional[float] = None
+    wallbox_ladung_kwh: Optional[float] = None
+    wallbox_ladevorgaenge: Optional[int] = None
 
 
 class PreviewResponse(BaseModel):
@@ -73,6 +75,8 @@ class ApplyMonthInput(BaseModel):
     batterie_ladung_kwh: Optional[float] = None
     batterie_entladung_kwh: Optional[float] = None
     eigenverbrauch_kwh: Optional[float] = None
+    wallbox_ladung_kwh: Optional[float] = None
+    wallbox_ladevorgaenge: Optional[int] = None
 
 
 class ApplyRequest(BaseModel):
@@ -167,6 +171,7 @@ async def apply_import(
     investitionen = inv_result.scalars().all()
     pv_module = [i for i in investitionen if i.typ == "pv-module"]
     speicher = [i for i in investitionen if i.typ == "speicher"]
+    wallboxen = [i for i in investitionen if i.typ == "wallbox"]
 
     importiert = 0
     uebersprungen = 0
@@ -240,6 +245,29 @@ async def apply_import(
                 )
                 if importiert == 0:
                     warnungen.extend(w)
+
+            # Wallbox-Ladung auf Wallbox-Investition verteilen
+            if monat_input.wallbox_ladung_kwh is not None and monat_input.wallbox_ladung_kwh > 0:
+                if wallboxen:
+                    # Erste Wallbox verwenden (bei mehreren: proportional wäre Overkill)
+                    wb = wallboxen[0]
+                    verbrauch = {"ladung_kwh": monat_input.wallbox_ladung_kwh}
+                    if monat_input.wallbox_ladevorgaenge is not None:
+                        verbrauch["ladevorgaenge"] = monat_input.wallbox_ladevorgaenge
+                    await _upsert_investition_monatsdaten(
+                        db, wb.id, jahr, monat, verbrauch, ueberschreiben
+                    )
+                    if len(wallboxen) > 1 and importiert == 0:
+                        warnungen.append(
+                            f"Mehrere Wallboxen vorhanden – Ladedaten wurden der ersten "
+                            f"Wallbox '{wb.bezeichnung or wb.typ}' zugeordnet."
+                        )
+                else:
+                    if importiert == 0:
+                        warnungen.append(
+                            "Wallbox-Ladedaten gefunden, aber keine Wallbox als Investition angelegt. "
+                            "Bitte zuerst eine Wallbox unter Investitionen anlegen."
+                        )
 
             importiert += 1
 
