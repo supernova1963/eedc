@@ -379,11 +379,13 @@ async def get_cockpit_uebersicht(
     if investition_gesamt <= 0:
         investition_gesamt = sum(i.anschaffungskosten_gesamt or 0 for i in investitionen)
 
+    # Betriebskosten aller Investitionen (Wartung, Versicherung etc.)
+    betriebskosten_ges = sum(i.betriebskosten_jahr or 0 for i in investitionen)
+
     # USt auf Eigenverbrauch bei Regelbesteuerung
     ust_eigenverbrauch = 0.0
     steuerliche_beh = getattr(anlage, 'steuerliche_behandlung', None) or 'keine_ust'
     if steuerliche_beh == "regelbesteuerung":
-        betriebskosten_ges = sum(i.betriebskosten_jahr or 0 for i in investitionen)
         ust_eigenverbrauch = berechne_ust_eigenverbrauch(
             eigenverbrauch_kwh=eigenverbrauch,
             investition_gesamt_euro=investition_gesamt,
@@ -397,9 +399,6 @@ async def get_cockpit_uebersicht(
     bkw_ersparnis = bkw_eigenverbrauch * eff_netzbezug_preis / 100
     # Sonstige Positionen netto (BHKW-Ertrag, THG-Quote minus Wartungskosten etc.)
     sonstige_netto = sonstige_ertraege_gesamt - sonstige_ausgaben_gesamt
-
-    kumulative_ersparnis = netto_ertrag + wp_ersparnis + emob_ersparnis + bkw_ersparnis + sonstige_netto
-    roi_fortschritt = (kumulative_ersparnis / investition_gesamt * 100) if investition_gesamt > 0 else None
 
     # ==========================================================================
     # CO2-Bilanz
@@ -433,6 +432,11 @@ async def get_cockpit_uebersicht(
         zeitraum_von = f"{first.jahr}-{first.monat:02d}"
         zeitraum_bis = f"{last.jahr}-{last.monat:02d}"
         anzahl_monate = len(monatsdaten_list)
+
+    # Kumulative Ersparnis inkl. anteilige Betriebskosten
+    betriebskosten_zeitraum = betriebskosten_ges * anzahl_monate / 12 if anzahl_monate > 0 else 0
+    kumulative_ersparnis = netto_ertrag + wp_ersparnis + emob_ersparnis + bkw_ersparnis + sonstige_netto - betriebskosten_zeitraum
+    roi_fortschritt = (kumulative_ersparnis / investition_gesamt * 100) if investition_gesamt > 0 else None
 
     return CockpitUebersichtResponse(
         # Energie
