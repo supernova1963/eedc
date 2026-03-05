@@ -28,13 +28,21 @@ jobs:
           # Write to file for gh release
           echo "$NOTES" > /tmp/release-notes.md
 
-      - name: Create GitHub Release
+      - name: Create or update GitHub Release
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "$GITHUB_REF_NAME" \
-            --title "eedc $GITHUB_REF_NAME" \
-            --notes-file /tmp/release-notes.md
+          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            echo "Release $GITHUB_REF_NAME already exists, updating notes..."
+            gh release edit "$GITHUB_REF_NAME" \
+              --title "eedc $GITHUB_REF_NAME" \
+              --notes-file /tmp/release-notes.md
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              --title "eedc $GITHUB_REF_NAME" \
+              --notes-file /tmp/release-notes.md
+          fi
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
