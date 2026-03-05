@@ -183,6 +183,7 @@ class FinanzPrognoseResponse(BaseModel):
     # Strompreise
     einspeiseverguetung_cent_kwh: float
     netzbezug_preis_cent_kwh: float
+    grundpreis_euro_monat: float = 0
 
     # Jahresprognose
     jahres_erzeugung_kwh: float
@@ -1480,6 +1481,7 @@ async def get_finanz_prognose(
         },
         einspeiseverguetung_cent_kwh=einspeiseverguetung,
         netzbezug_preis_cent_kwh=netzbezug_preis,
+        grundpreis_euro_monat=allgemein_tarif.grundpreis_euro_monat or 0 if allgemein_tarif else 0,
         jahres_erzeugung_kwh=round(jahres_erzeugung, 0),
         jahres_eigenverbrauch_kwh=round(jahres_eigenverbrauch, 0),
         jahres_einspeisung_kwh=round(jahres_einspeisung, 0),

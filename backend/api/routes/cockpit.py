@@ -74,6 +74,7 @@ class CockpitUebersichtResponse(BaseModel):
     # Finanzen (Euro)
     einspeise_erloes_euro: float
     ev_ersparnis_euro: float
+    netzbezug_kosten_euro: float = 0       # Netzbezugskosten inkl. Grundpreis
     ust_eigenverbrauch_euro: Optional[float] = None  # USt auf Eigenverbrauch (nur bei Regelbesteuerung)
     netto_ertrag_euro: float
     bkw_ersparnis_euro: float = 0          # BKW Eigenverbrauch-Ersparnis
@@ -337,6 +338,12 @@ async def get_cockpit_uebersicht(
     gew_kwh_sum = sum(m.netzbezug_kwh or 0 for m in monatsdaten_list)
     eff_netzbezug_preis = gew_preis_sum / gew_kwh_sum if gew_kwh_sum > 0 else netzbezug_preis_cent
 
+    grundpreis = allgemein_tarif.grundpreis_euro_monat or 0 if allgemein_tarif else 0
+    netzbezug_kosten = sum(
+        (m.netzbezug_kwh or 0) * resolve_netzbezug_preis_cent(m, netzbezug_preis_cent) / 100 + grundpreis
+        for m in monatsdaten_list
+    )
+
     einspeise_erloes = einspeisung * einspeise_verguetung_cent / 100
     ev_ersparnis = eigenverbrauch * eff_netzbezug_preis / 100
     netto_ertrag = einspeise_erloes + ev_ersparnis
@@ -473,6 +480,7 @@ async def get_cockpit_uebersicht(
         # Finanzen
         einspeise_erloes_euro=round(einspeise_erloes, 2),
         ev_ersparnis_euro=round(ev_ersparnis, 2),
+        netzbezug_kosten_euro=round(netzbezug_kosten, 2),
         ust_eigenverbrauch_euro=round(ust_eigenverbrauch, 2) if ust_eigenverbrauch > 0 else None,
         netto_ertrag_euro=round(netto_ertrag, 2),
         bkw_ersparnis_euro=round(bkw_ersparnis, 2),
