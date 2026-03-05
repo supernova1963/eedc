@@ -321,9 +321,15 @@ export default function ConnectorSetupWizard() {
                   className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
                 >
                   {connectors.map(c => (
-                    <option key={c.id} value={c.id}>{c.name}</option>
+                    <option key={c.id} value={c.id}>{c.name}{!c.getestet ? ' (*)' : ''}</option>
                   ))}
                 </select>
+                {connectors.some(c => !c.getestet) && (
+                  <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    (*) Ungetestet – basiert auf Hersteller-Dokumentation, aber noch nicht mit echten
+                    Gerätedaten verifiziert. Feedback willkommen!
+                  </p>
+                )}
               </div>
 
               {/* Anleitung */}
