@@ -222,10 +222,17 @@ export default function DataImportWizard() {
                 <option value="">Automatisch erkennen</option>
                 {parsers.map((p) => (
                   <option key={p.id} value={p.id}>
-                    {p.name} ({p.hersteller})
+                    {p.name} ({p.hersteller}){!p.getestet ? ' (*)' : ''}
                   </option>
                 ))}
               </select>
+
+              {parsers.some((p) => !p.getestet) && (
+                <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                  (*) Ungetestet – basiert auf Hersteller-Dokumentation, aber noch nicht mit echten
+                  Gerätedaten verifiziert. Feedback willkommen!
+                </p>
+              )}
 
               {selectedParser && (
                 <div className="mt-3 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg">

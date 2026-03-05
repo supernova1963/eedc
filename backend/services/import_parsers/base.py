@@ -24,7 +24,10 @@ class ParsedMonthData:
     eigenverbrauch_kwh: Optional[float] = None
     # Wallbox / Ladestation
     wallbox_ladung_kwh: Optional[float] = None
+    wallbox_ladung_pv_kwh: Optional[float] = None
     wallbox_ladevorgaenge: Optional[int] = None
+    # E-Auto
+    eauto_km_gefahren: Optional[float] = None
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -41,6 +44,8 @@ class ParsedMonthData:
                 self.batterie_entladung_kwh,
                 self.eigenverbrauch_kwh,
                 self.wallbox_ladung_kwh,
+                self.wallbox_ladung_pv_kwh,
+                self.eauto_km_gefahren,
             ]
         )
 
@@ -56,6 +61,7 @@ class ParserInfo:
     erwartetes_format: str
     anleitung: str
     beispiel_header: str
+    getestet: bool = True
 
     def to_dict(self) -> dict:
         return asdict(self)

@@ -19,6 +19,7 @@ class ConnectorInfo:
     hersteller: str
     beschreibung: str
     anleitung: str
+    getestet: bool = True
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -34,6 +35,7 @@ class MeterSnapshot:
     netzbezug_kwh: Optional[float] = None
     batterie_ladung_kwh: Optional[float] = None
     batterie_entladung_kwh: Optional[float] = None
+    wallbox_ladung_kwh: Optional[float] = None
 
     def to_dict(self) -> dict:
         return asdict(self)

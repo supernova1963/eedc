@@ -45,6 +45,7 @@ class ParserInfoResponse(BaseModel):
     erwartetes_format: str
     anleitung: str
     beispiel_header: str
+    getestet: bool = True
 
 
 class ParsedMonthResponse(BaseModel):
@@ -57,7 +58,9 @@ class ParsedMonthResponse(BaseModel):
     batterie_entladung_kwh: Optional[float] = None
     eigenverbrauch_kwh: Optional[float] = None
     wallbox_ladung_kwh: Optional[float] = None
+    wallbox_ladung_pv_kwh: Optional[float] = None
     wallbox_ladevorgaenge: Optional[int] = None
+    eauto_km_gefahren: Optional[float] = None
 
 
 class PreviewResponse(BaseModel):
@@ -76,7 +79,9 @@ class ApplyMonthInput(BaseModel):
     batterie_entladung_kwh: Optional[float] = None
     eigenverbrauch_kwh: Optional[float] = None
     wallbox_ladung_kwh: Optional[float] = None
+    wallbox_ladung_pv_kwh: Optional[float] = None
     wallbox_ladevorgaenge: Optional[int] = None
+    eauto_km_gefahren: Optional[float] = None
 
 
 class ApplyRequest(BaseModel):
@@ -252,6 +257,8 @@ async def apply_import(
                     # Erste Wallbox verwenden (bei mehreren: proportional wäre Overkill)
                     wb = wallboxen[0]
                     verbrauch = {"ladung_kwh": monat_input.wallbox_ladung_kwh}
+                    if monat_input.wallbox_ladung_pv_kwh is not None:
+                        verbrauch["ladung_pv_kwh"] = monat_input.wallbox_ladung_pv_kwh
                     if monat_input.wallbox_ladevorgaenge is not None:
                         verbrauch["ladevorgaenge"] = monat_input.wallbox_ladevorgaenge
                     await _upsert_investition_monatsdaten(
@@ -268,6 +275,17 @@ async def apply_import(
                             "Wallbox-Ladedaten gefunden, aber keine Wallbox als Investition angelegt. "
                             "Bitte zuerst eine Wallbox unter Investitionen anlegen."
                         )
+
+            # E-Auto km_gefahren auf E-Auto-Investition verteilen
+            if monat_input.eauto_km_gefahren is not None and monat_input.eauto_km_gefahren > 0:
+                eautos = [i for i in investitionen if i.typ == "eauto"]
+                if eautos:
+                    ea = eautos[0]
+                    await _upsert_investition_monatsdaten(
+                        db, ea.id, jahr, monat,
+                        {"km_gefahren": monat_input.eauto_km_gefahren},
+                        ueberschreiben,
+                    )
 
             importiert += 1
 

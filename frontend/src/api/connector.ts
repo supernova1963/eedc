@@ -11,6 +11,7 @@ export interface ConnectorInfo {
   hersteller: string
   beschreibung: string
   anleitung: string
+  getestet: boolean
 }
 
 export interface MeterSnapshot {
