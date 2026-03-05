@@ -97,6 +97,7 @@ class EVCCParser(PortalExportParser):
         col_startzeit = self._find_col(normalized_headers, ["startzeit", "start"])
         col_energie = self._find_col(normalized_headers, ["energie"])
         col_sonne = self._find_col(normalized_headers, ["sonne"])
+        col_solarenergie = self._find_col(normalized_headers, ["solarenergie"])
         col_km = self._find_col(normalized_headers, ["kilometerstand"])
 
         if col_startzeit is None or col_energie is None:
@@ -127,8 +128,12 @@ class EVCCParser(PortalExportParser):
             monthly_energie[key] += energie
             monthly_sessions[key] += 1
 
-            # PV-Anteil berechnen
-            if col_sonne is not None and col_sonne < len(row):
+            # PV-Anteil: Solarenergie (kWh) bevorzugen, Fallback auf Sonne (%)
+            if col_solarenergie is not None and col_solarenergie < len(row):
+                solar_kwh = _parse_float(row[col_solarenergie])
+                if solar_kwh is not None:
+                    monthly_pv_kwh[key] += solar_kwh
+            elif col_sonne is not None and col_sonne < len(row):
                 sonne_pct = _parse_float(row[col_sonne])
                 if sonne_pct is not None:
                     monthly_pv_kwh[key] += energie * sonne_pct / 100.0
@@ -149,11 +154,22 @@ class EVCCParser(PortalExportParser):
             if kwh <= 0:
                 continue
 
+            pv_kwh = round(monthly_pv_kwh.get((jahr, monat), 0), 2) or None
+
+            # km gefahren = Differenz max - min Kilometerstand im Monat
+            km = None
+            if (jahr, monat) in monthly_km_max and (jahr, monat) in monthly_km_min:
+                delta = round(monthly_km_max[(jahr, monat)] - monthly_km_min[(jahr, monat)], 1)
+                if delta > 0:
+                    km = delta
+
             result.append(ParsedMonthData(
                 jahr=jahr,
                 monat=monat,
                 wallbox_ladung_kwh=kwh,
+                wallbox_ladung_pv_kwh=pv_kwh,
                 wallbox_ladevorgaenge=monthly_sessions[(jahr, monat)],
+                eauto_km_gefahren=km,
             ))
 
         return result

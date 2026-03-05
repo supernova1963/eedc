@@ -13,6 +13,7 @@ export interface ParserInfo {
   erwartetes_format: string
   anleitung: string
   beispiel_header: string
+  getestet: boolean
 }
 
 export interface ParsedMonth {
