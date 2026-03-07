@@ -82,6 +82,7 @@ const einstellungenGruppen: TabGroup[] = [
       '/einstellungen/import',
       '/einstellungen/portal-import',
       '/einstellungen/cloud-import',
+      '/einstellungen/custom-import',
       '/einstellungen/connector',
     ],
     tabs: [
