@@ -7,6 +7,14 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ---
 
+## [2.8.1] - 2026-03-07
+
+### Behoben
+
+- **Custom-Import:** DATEN-Navigationsleiste fehlte auf der Custom-Import-Seite
+
+---
+
 ## [2.8.0] - 2026-03-07
 
 ### Hinzugefügt
