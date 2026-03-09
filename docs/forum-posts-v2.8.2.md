@@ -6,7 +6,7 @@ Erstellt: 2026-03-09
 
 | Forum | Typ | Status |
 |---|---|---|
-| Photovoltaikforum – Monitoring & Systemanbindung | Hauptbeitrag (neu) | gepostet |
+| Photovoltaikforum – Monitoring & Systemanbindung | Hauptbeitrag (neu) | NEU SCHREIBEN (alter Thread gelöscht) |
 | Photovoltaikforum – Balkonkraftwerke | Kurzversion BKW | offen |
 | Photovoltaikforum – Sungrow Logger/Kommunikation | Herstellerspezifisch | offen |
 | Photovoltaikforum – Fronius Datenkommunikation | Herstellerspezifisch | offen |
@@ -17,12 +17,86 @@ Erstellt: 2026-03-09
 
 ---
 
-## 1. Photovoltaikforum – Monitoring & Systemanbindung (GEPOSTET)
+## 1. Photovoltaikforum – Monitoring & Systemanbindung (NEU – Ersatz für gelöschten Thread)
 
-**Titel:** EEDC v2.8 – Automatischer Cloud-Import für 11 Hersteller, Tester gesucht
-**Tags:** monitoring, cloud-import, api, open-source, datenimport, pv-auswertung
+**Titel:** EEDC – Open-Source PV-Auswertung mit Cloud-Import für 11 Hersteller (Tester gesucht)
+**Tags:** monitoring, cloud-import, open-source, pv-auswertung, wirtschaftlichkeit, roi
+**Hinweis:** Ersetzt den gelöschten Ursprungsthread (Mod-Fehler beim Zusammenlegen)
 
-(Bereits gepostet)
+Hallo zusammen,
+
+ich entwickle **EEDC** (Energie Effizienz Data Center) – ein kostenloses Open-Source-Tool für **PV-Langzeitauswertung und Wirtschaftlichkeitsberechnung**. Läuft standalone per Docker oder als Home-Assistant-Add-on. Alle Daten bleiben lokal, kein Account, kein Abo.
+
+(Mein ursprünglicher Thread wurde beim Zusammenlegen leider versehentlich gelöscht – daher hier nochmal von vorn.)
+
+### Was kann EEDC?
+
+- **ROI-Dashboard** mit Amortisationskurve und Renditeberechnung
+- **SOLL-IST-Vergleich** mit PVGIS-Prognose (standortgenau)
+- **Autarkie- und Eigenverbrauchsquote** (monatlich + kumuliert)
+- **Finanzübersicht** – Einsparung, Einspeisevergütung, Amortisation
+- **Community-Benchmark** – anonymer Vergleich mit anderen Anlagen auf [energy.raunet.eu](https://energy.raunet.eu)
+- **Wetterprognose** – DWD, Open-Meteo, PVGIS
+- **PDF-Berichte, CSV/JSON-Export**
+
+Unterstützt: **Wechselrichter, PV-Module, Batteriespeicher, Wallbox, E-Auto, Wärmepumpe** – alles als Investitions-Komponenten mit eigener ROI-Berechnung.
+
+### Wie kommen die Daten rein?
+
+EEDC bietet 5 Wege zur Datenerfassung – vom vollautomatisch bis manuell:
+
+**1. Cloud-Import (NEU in v2.8)** – Monatsdaten direkt aus der Hersteller-Cloud:
+
+| Hersteller | Cloud-Plattform | Zugangsdaten |
+|---|---|---|
+| SolarEdge | Monitoring Portal | API Key + Site ID |
+| Fronius | Solar.web | Access Key + PV-System-ID |
+| Huawei | FusionSolar | Northbound API Account |
+| Growatt | ShineServer | Benutzername + Passwort |
+| Sungrow | iSolarCloud | E-Mail + Passwort |
+| Deye / Solarman | Solarman Smart | App ID + Secret |
+| Viessmann | GridBox | E-Mail + Passwort |
+| EcoFlow | Developer API | Access Key + Secret Key |
+| Anker SOLIX | Anker Cloud | E-Mail + Passwort |
+| Hoymiles | S-Miles Cloud | E-Mail + Passwort |
+
+4-Schritt-Wizard: Verbinden → Zeitraum wählen → Vorschau → Import. Credentials werden pro Anlage gespeichert.
+
+**2. Custom-Import** – Beliebige CSV/JSON-Dateien mit Feld-Mapping importieren. Auto-Erkennung von Spalten, Einheit wählbar (Wh/kWh/MWh), Mapping als Template speicherbar.
+
+**3. Portal-Import (CSV-Upload)** – Automatische Erkennung von Exporten aus:
+- SMA Sunny Portal, SMA eCharger, EVCC, Fronius Solarweb
+
+**4. Geräte-Connectors** – Direkte Abfrage über das lokale Netzwerk:
+- SMA ennexOS, SMA WebConnect, Fronius Solar API, go-eCharger, Shelly 3EM, OpenDTU, Kostal Plenticore, sonnenBatterie, Tasmota SML
+
+**5. Home Assistant** – HA-Sensor-History-Import, MQTT-Export, dynamischer Tarif aus HA-Sensor (Tibber, aWATTar)
+
+**6. Manuell** – Monatsabschluss-Wizard mit Quellenanzeige und Vorschlägen
+
+### Installation
+
+**Docker (standalone):**
+```
+docker-compose up -d
+```
+→ http://localhost:8099
+
+**Home Assistant Add-on:** Repo `https://github.com/supernova1963/eedc-homeassistant` in HACS einbinden → Add-on installieren → starten.
+
+Einrichtung: Kurzer Assistent (Anlage anlegen, Strompreise eintragen) – dauert ca. 2-3 Minuten, alle Werte sind nachträglich änderbar.
+
+### Tester gesucht!
+
+Die **11 Cloud-Import-Provider** sind alle implementiert, aber **noch nicht mit echten Geräten getestet**. Die Implementierung basiert auf offizieller API-Doku und Community-Projekten, aber in der Praxis können Feldnamen oder Datenformate abweichen.
+
+Wer einen der genannten Wechselrichter/Speicher hat und 10 Minuten investieren mag: EEDC installieren → Cloud-Import → Hersteller wählen → testen. **Rückmeldung über Fehler ist genauso wertvoll wie Erfolgsmeldungen.**
+
+### Links
+
+- GitHub: https://github.com/supernova1963/eedc
+- Doku: https://supernova1963.github.io/eedc-homeassistant/
+- Community-Benchmark: https://energy.raunet.eu
 
 ---
 
