@@ -6,57 +6,41 @@
 
 **GitHub:** https://github.com/supernova1963/eedc
 
-## Git-Workflow (WICHTIG – gilt für alle Sessions und Rechner!)
+## WICHTIG: Dieses Repo ist ein Spiegel!
 
-1. **Immer auf `main` arbeiten** — keine Feature-Branches. Einzelentwickler-Projekt.
-2. **`eedc` (dieses Repo) ist Source of Truth** für shared Code (backend/, frontend/). Hier zuerst ändern.
-3. **Nach Push auf `eedc/main`** → sofort `subtree pull` in `eedc-homeassistant`.
-4. **Versionsnummern + Release** nur wenn der User es explizit anfordert.
-5. **`eedc-community`** ist unabhängig, aber bei Datenmodell-Änderungen beide Repos synchron anpassen.
-6. **Versionen synchron halten** – `eedc` und `eedc-homeassistant` bekommen immer die gleiche Versionsnummer. Release in `eedc` → sofort Subtree Pull + Release in `eedc-homeassistant`.
+**Source of Truth ist `eedc-homeassistant`** (`/home/gernot/claude/eedc-homeassistant`).
 
-## Verboten ohne explizite Aufforderung durch den User!
+Dieses Repo wird **ausschließlich per Release-Script** aktualisiert:
+```bash
+cd /home/gernot/claude/eedc-homeassistant
+./scripts/release.sh 2.8.6
+```
 
-- **`git push`** – nur erlaubt über `scripts/release.sh`. Kein manuelles `git push` ohne User-Aufforderung.
-- **`git subtree pull/push`** – Sync nur auf Anweisung
-- **Releases, Tags, Versionsnummern ändern**
-- **Änderungen in `eedc-homeassistant` oder `eedc-community`** – nur dieses Repo bearbeiten, es sei denn der User fordert es explizit
+**NICHT direkt in diesem Repo arbeiten!** Alle Änderungen in `eedc-homeassistant/eedc/` machen.
+
+## Verboten
+
+- **Code hier ändern** — immer in eedc-homeassistant arbeiten
+- **`git push`** — wird nur vom Release-Script gemacht
+- **`git subtree`** — wird nicht mehr verwendet
+- **Releases, Tags, Versionsnummern ändern** — nur auf User-Aufforderung via Release-Script
 
 ## Verbundene Repositories
 
-| Repository | Zweck | Technik |
-| --- | --- | --- |
-| **eedc** (dieses) | Standalone EEDC (Source of Truth) | FastAPI, React, SQLite |
-| **[eedc-homeassistant](https://github.com/supernova1963/eedc-homeassistant)** | HA-Add-on + Website + Docs | HA-Config, Subtree |
-| **[eedc-community](https://github.com/supernova1963/eedc-community)** | Anonymer Community-Benchmark-Server | FastAPI, React, PostgreSQL |
+| Repository | Zweck |
+| --- | --- |
+| **[eedc-homeassistant](https://github.com/supernova1963/eedc-homeassistant)** | Source of Truth, HA-Add-on, Website, Docs |
+| **eedc** (dieses) | Standalone-Distribution (Spiegel) |
+| **[eedc-community](https://github.com/supernova1963/eedc-community)** | Anonymer Community-Benchmark-Server |
 
-**Lokale Pfade:**
-- eedc-homeassistant: `/home/gernot/claude/eedc-homeassistant`
-- eedc-community: `/home/gernot/claude/eedc-community`
+## Unterschiede zum HA-Add-on
 
-## Quick Reference
+Dieses Repo enthält NICHT:
+- `config.yaml`, `run.sh` (HA-spezifisch)
+- `icon.png`, `logo.png` (HA-Icons)
+- `website/`, `docs/` (nur in eedc-homeassistant)
 
-### Entwicklungsserver starten
-
-```bash
-# Backend (Terminal 1)
-source backend/venv/bin/activate
-uvicorn backend.main:app --reload --port 8099
-
-# Frontend (Terminal 2)
-cd frontend && npm run dev
-
-# URLs: Frontend http://localhost:3000 | API Docs http://localhost:8099/api/docs
-```
-
-### Versionierung (bei Releases aktualisieren!)
-
-```text
-backend/core/config.py            → APP_VERSION
-frontend/src/config/version.ts    → APP_VERSION
-config.yaml                       → version
-run.sh                            → Echo-Statement
-```
+Das `Dockerfile` hier ist die Standalone-Version (ohne HA-Labels, ohne jq, ohne run.sh).
 
 ## Architektur-Prinzipien
 
@@ -81,16 +65,6 @@ db.commit()
 # FALSCH: if val:     → 0 wird als False gewertet
 # RICHTIG: if val is not None:
 ```
-
-## Bekannte Fallstricke
-
-| Problem | Lösung |
-|---------|--------|
-| JSON-Änderungen werden nicht gespeichert | `flag_modified(obj, "field_name")` aufrufen |
-| 0-Werte verschwinden | `is not None` statt `if val` |
-| SOLL-IST zeigt falsches Jahr | `jahr` Parameter explizit übergeben |
-| Legacy pv_erzeugung_kwh wird verwendet | InvestitionMonatsdaten abfragen |
-| ROI-Werte unterschiedlich | Cockpit = Jahres-%, Aussichten = Kumuliert-% |
 
 ## Deprecated (nicht löschen!)
 
