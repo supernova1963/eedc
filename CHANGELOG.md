@@ -7,6 +7,18 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ---
 
+## [2.9.0] - 2026-03-12
+
+### Hinzugefügt
+
+- **Aktueller-Monat-Dashboard** – Neues Cockpit-Sub-Tab zeigt den laufenden Monat mit Daten aus HA-Sensoren (95%), Connectors (90%) und gespeicherten Monatsdaten (85%). Enthält Energie-Bilanz-Charts, Komponenten-Karten, Finanz-Übersicht, Vorjahresvergleich und SOLL/IST-Vergleich.
+- **Anlage-Selektor** – Cockpit-Übersicht und Aktueller Monat zeigen jetzt einen Anlage-Selektor wenn mehrere Anlagen vorhanden sind
+- **Datenquellen-Badges** – Farbige Indikatoren zeigen pro Feld die Herkunft (HA-Sensor, Connector, Gespeichert)
+- **Leerer-Zustand-Aktionen** – Wenn keine Daten vorliegen, werden konkrete Import-Möglichkeiten (Monatsabschluss, Connector, Cloud-Import, Portal-Import) als Aktionskarten angeboten
+- **Live-Dashboard Plan** – Architekturplan für Stufe 2 (Echtzeit-Leistungsdaten kW) dokumentiert
+
+---
+
 ## [2.8.5] - 2026-03-11
 
 ### Behoben
@@ -68,11 +80,7 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
   - Auto-Detect für Spaltenbezeichnungen (deutsch + englisch)
   - Einheit wählbar (Wh/kWh/MWh) mit automatischer Umrechnung
   - Dezimalzeichen konfigurierbar (Auto/Punkt/Komma)
-<<<<<<< Updated upstream
-  - Kombinierte Datumsspalte oder separate Jahr/Monat-Spalten
-=======
   - Kombinierte Datumsspalte (z.B. "2024-01") oder separate Jahr/Monat-Spalten
->>>>>>> Stashed changes
   - Mapping als wiederverwendbares Template speichern/laden
   - 4-Schritt-Wizard: Upload → Mapping → Vorschau → Import
   - Neue Kachel "Eigene Datei importieren" auf der Einrichtung-Seite
@@ -80,12 +88,8 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 ### Entfernt
 
 - **Kostal Plenticore** und **SMA Local** Cloud-Import-Provider entfernt
-<<<<<<< Updated upstream
-  (nur aktuelle Zählerstände, keine historischen Monatsdaten)
-=======
   (liefern nur aktuelle Zählerstände, keine historischen Monatsdaten –
   für diese Geräte die Geräte-Connectors verwenden)
->>>>>>> Stashed changes
 
 (*) Ungetestet – basiert auf Hersteller-API-Dokumentation
 
