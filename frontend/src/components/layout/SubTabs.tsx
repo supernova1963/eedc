@@ -88,6 +88,7 @@ const einstellungenGruppen: TabGroup[] = [
       '/einstellungen/cloud-import',
       '/einstellungen/custom-import',
       '/einstellungen/connector',
+      '/einstellungen/mqtt-inbound',
       '/einstellungen/daten-checker',
     ],
     tabs: [
@@ -138,6 +139,9 @@ export default function SubTabs() {
   const location = useLocation()
   const path = location.pathname
   const haAvailable = useHAAvailable()
+
+  // ── Live (keine Sub-Tabs) ────────────────────────────────────────────────
+  if (path.startsWith('/live')) return null
 
   // ── Cockpit ──────────────────────────────────────────────────────────────
   if (path.startsWith('/cockpit')) {

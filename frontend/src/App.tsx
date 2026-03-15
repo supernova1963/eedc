@@ -11,6 +11,7 @@ import WallboxDashboard from './pages/WallboxDashboard'
 import BalkonkraftwerkDashboard from './pages/BalkonkraftwerkDashboard'
 import SonstigesDashboard from './pages/SonstigesDashboard'
 import AktuellerMonat from './pages/AktuellerMonat'
+import LiveDashboard from './pages/LiveDashboard'
 
 // Auswertungen
 import Auswertung from './pages/Auswertung'
@@ -29,6 +30,7 @@ import Investitionen from './pages/Investitionen'
 import Monatsdaten from './pages/Monatsdaten'
 import Import from './pages/Import'
 import Einrichtung from './pages/Einrichtung'
+import MqttInboundSetup from './pages/MqttInboundSetup'
 
 // Einstellungen - System & HA
 import Backup from './pages/Backup'
@@ -67,6 +69,9 @@ function App() {
           <Route path="cockpit/aktueller-monat" element={<AktuellerMonat />} />
           <Route path="cockpit/sonstiges" element={<SonstigesDashboard />} />
 
+          {/* Live Dashboard */}
+          <Route path="live" element={<LiveDashboard />} />
+
           {/* Auswertungen */}
           <Route path="auswertungen" element={<Auswertung />} />
           <Route path="auswertungen/roi" element={<ROIDashboard />} />
@@ -97,6 +102,7 @@ function App() {
           <Route path="einstellungen/cloud-import" element={<CloudImportWizard />} />
           <Route path="einstellungen/custom-import" element={<CustomImportWizard />} />
           <Route path="einstellungen/connector" element={<ConnectorSetupWizard />} />
+          <Route path="einstellungen/mqtt-inbound" element={<MqttInboundSetup />} />
 
           {/* Einstellungen - Home Assistant */}
           <Route path="einstellungen/sensor-mapping" element={<SensorMappingWizard />} />

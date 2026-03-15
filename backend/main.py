@@ -7,11 +7,15 @@ HA-spezifische Features (MQTT, Sensor-Mapping, HA-Statistik) werden
 nur geladen wenn SUPERVISOR_TOKEN gesetzt ist.
 """
 
+import asyncio
+import logging
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 import httpx
+
+logger = logging.getLogger(__name__)
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -20,7 +24,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 from sqlalchemy import select, func
 from backend.core.config import settings, APP_VERSION, APP_NAME, APP_FULL_NAME, HA_INTEGRATION_AVAILABLE
 from backend.core.database import init_db, get_session
-from backend.api.routes import anlagen, monatsdaten, investitionen, strompreise, import_export, pvgis, cockpit, wetter, aussichten, solar_prognose, monatsabschluss, community, data_import, connector, cloud_import, custom_import, system_logs, daten_checker, aktueller_monat
+from backend.api.routes import anlagen, monatsdaten, investitionen, strompreise, import_export, pvgis, cockpit, wetter, aussichten, solar_prognose, monatsabschluss, community, data_import, connector, cloud_import, custom_import, system_logs, daten_checker, aktueller_monat, live_dashboard
 from backend.core.log_buffer import setup_log_buffer
 from backend.models.anlage import Anlage
 from backend.models.monatsdaten import Monatsdaten
@@ -31,6 +35,31 @@ from backend.services.scheduler import start_scheduler, stop_scheduler, get_sche
 # HA-spezifische Imports (nur wenn HA verfügbar)
 if HA_INTEGRATION_AVAILABLE:
     from backend.api.routes import ha_integration, ha_export, ha_import, ha_statistics, sensor_mapping
+
+
+async def _load_mqtt_config() -> dict | None:
+    """Lädt MQTT-Config: DB-Settings (Priorität) → Env-Vars (Fallback)."""
+    try:
+        from backend.models.settings import Settings as SettingsModel
+        async with get_session() as session:
+            result = await session.execute(
+                select(SettingsModel).where(SettingsModel.key == "mqtt_inbound")
+            )
+            setting = result.scalar_one_or_none()
+            if setting and setting.value and setting.value.get("host"):
+                return setting.value
+    except Exception:
+        pass
+    # Fallback: Env-Vars
+    if settings.mqtt_enabled:
+        return {
+            "enabled": True,
+            "host": settings.mqtt_host,
+            "port": settings.mqtt_port,
+            "username": settings.mqtt_username,
+            "password": settings.mqtt_password,
+        }
+    return None
 
 
 @asynccontextmanager
@@ -58,9 +87,40 @@ async def lifespan(app: FastAPI):
     else:
         print("Scheduler konnte nicht gestartet werden (APScheduler nicht installiert?).")
 
+    # MQTT-Inbound starten (DB-Settings haben Vorrang vor Env-Vars)
+    mqtt_inbound = None
+    mqtt_cfg = await _load_mqtt_config()
+    if mqtt_cfg and mqtt_cfg.get("enabled"):
+        from backend.services.mqtt_inbound_service import init_mqtt_inbound_service
+        host = mqtt_cfg["host"]
+        port = mqtt_cfg["port"]
+        mqtt_inbound = init_mqtt_inbound_service(
+            host=host, port=port,
+            username=mqtt_cfg.get("username") or None,
+            password=mqtt_cfg.get("password") or None,
+        )
+        if await mqtt_inbound.start():
+            print(f"  MQTT-Inbound: aktiv ({host}:{port})")
+            # Initialer Energy-Snapshot nach kurzem Delay (Cache braucht erste Nachrichten)
+            async def _initial_snapshot():
+                import asyncio
+                await asyncio.sleep(10)
+                try:
+                    from backend.services.mqtt_energy_history_service import snapshot_energy_cache
+                    count = await snapshot_energy_cache()
+                    if count > 0:
+                        logger.info(f"MQTT Energy: Initialer Snapshot ({count} Einträge)")
+                except Exception as e:
+                    logger.debug(f"Initialer MQTT Energy Snapshot fehlgeschlagen: {e}")
+            asyncio.create_task(_initial_snapshot())
+        else:
+            print("  MQTT-Inbound: konnte nicht gestartet werden")
+
     yield
 
     # Shutdown
+    if mqtt_inbound:
+        await mqtt_inbound.stop()
     stop_scheduler()
     print("EEDC Backend wird beendet...")
 
@@ -112,6 +172,7 @@ app.include_router(custom_import.router, prefix="/api/custom-import", tags=["Cus
 app.include_router(system_logs.router, prefix="/api/system", tags=["System"])
 app.include_router(daten_checker.router, prefix="/api/system", tags=["System"])
 app.include_router(aktueller_monat.router, prefix="/api/aktueller-monat", tags=["Aktueller Monat"])
+app.include_router(live_dashboard.router, prefix="/api/live", tags=["Live Dashboard"])
 
 # =============================================================================
 # API Routes - Home Assistant (nur mit SUPERVISOR_TOKEN)
