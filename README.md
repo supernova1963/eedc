@@ -5,7 +5,7 @@ Standalone PV-Analyse-Software mit optionalem Live-Monitoring.
 ## Features
 
 - **Live Dashboard** - Echtzeit-Energiefluss mit animiertem SVG-Diagramm, SoC-Gauges, Tagesverlauf, Wetter-Prognose
-- **MQTT-Inbound** - Universelle Datenbrücke für jedes Smarthome-System (HA, Node-RED, ioBroker, FHEM, openHAB)
+- **MQTT-Inbound** - Universelle Datenbrücke für jedes Smarthome-System (HA, Node-RED, ioBroker, FHEM, openHAB). Auch als Alternative für HA-Nutzer mit MariaDB/MySQL statt SQLite als Recorder-DB.
 - **Aktueller Monat** - Live-Cockpit mit Energie-Bilanz, Vorjahresvergleich und Datenquellen-Indikatoren
 - **PV-Anlagen-Management** - Wechselrichter, PV-Module, Speicher, E-Auto, Wärmepumpe, Wallbox, BKW
 - **Monatliche Auswertung** - Eigenverbrauchsquote, Autarkiegrad, ROI-Analyse (6 Tabs + Community)
