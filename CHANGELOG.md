@@ -7,11 +7,23 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ---
 
+## [3.2.2] - 2026-03-20
+
+### Behoben
+
+- **Tooltip-Farben im Dark Mode** (#31): Chart-Tooltips zeigten seit v3.1.9 keine farbigen Serieneinträge mehr und hatten im Dark Mode teilweise hellen Hintergrund. Neue zentrale `ChartTooltip`-Komponente mit Tailwind-basiertem Dark Mode ersetzt die fehleranfälligen CSS-Variablen. Alle 35 Recharts-Tooltips (Bar, Line, Area, Pie/Donut) einheitlich formatiert.
+- **Pie/Donut-Labels im Dark Mode**: Label-Texte an Pie-Charts, Achsenbeschriftungen und Legenden sind im Dark Mode jetzt lesbar.
+
+### Geändert
+
+- **Benutzerhandbuch aufgeteilt** (#32): Monolithisches Handbuch (1.661 Zeilen) in drei Teile gesplittet — Installation, Bedienung, Einstellungen — plus separates Glossar. Website-Navigation angepasst.
+
 ## [3.2.1] - 2026-03-19
 
 ### Hinzugefügt
 
 - **Italien als Standort-Land** (#30): IT im Land-Dropdown mit automatischem USt-Satz 22%. Italienische PLZ (CAP) korrekt unterstützt, Community-Vergleich mit Länderkennung IT.
+- **Dynamisches WP-Icon im Live Dashboard**: Das Wärmepumpen-Icon wechselt je nach Betriebsmodus (Heizen/Warmwasser/Kühlen).
 
 ### Behoben
 
