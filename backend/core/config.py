@@ -13,7 +13,7 @@ from pydantic_settings import BaseSettings
 # =============================================================================
 # Zentrale Versionskonfiguration
 # =============================================================================
-APP_VERSION = "3.4.10"
+APP_VERSION = "3.4.11"
 APP_NAME = "eedc"
 APP_FULL_NAME = "Energie Effizienz Data Center"
 
@@ -65,6 +65,10 @@ class Settings(BaseSettings):
     ha_sensor_netzbezug: str = os.environ.get("HA_SENSOR_NETZBEZUG", "")
     ha_sensor_batterie_ladung: str = os.environ.get("HA_SENSOR_BATTERIE_LADUNG", "")
     ha_sensor_batterie_entladung: str = os.environ.get("HA_SENSOR_BATTERIE_ENTLADUNG", "")
+
+    # HA Recorder Datenbank (optional, für MariaDB/MySQL statt SQLite)
+    # z.B. "mysql+pymysql://user:pass@core-mariadb/homeassistant"
+    ha_recorder_db_url: str = os.environ.get("HA_RECORDER_DB_URL", "")
 
     # API URLs
     ha_api_url: str = "http://supervisor/core/api"
