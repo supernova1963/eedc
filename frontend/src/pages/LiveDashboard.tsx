@@ -19,13 +19,14 @@ import type { SolarPrognoseTag } from '../api/wetter'
 import EnergieFluss from '../components/live/EnergieFluss'
 import TagesverlaufChart from '../components/live/TagesverlaufChart'
 import WetterWidget from '../components/live/WetterWidget'
+import { CommunityNudge } from '../components/dashboard'
 
 const REFRESH_INTERVAL = 5_000 // 5 Sekunden
 const WETTER_REFRESH_INTERVAL = 300_000 // 5 Minuten
 const TAGESVERLAUF_REFRESH_INTERVAL = 60_000 // 1 Minute
 
 export default function LiveDashboard() {
-  const { anlagen, selectedAnlageId, setSelectedAnlageId, loading: anlagenLoading } = useSelectedAnlage()
+  const { anlagen, selectedAnlageId, setSelectedAnlageId, selectedAnlage, loading: anlagenLoading } = useSelectedAnlage()
   const [searchParams] = useSearchParams()
   const isDebug = searchParams.has('debug')
   const [data, setData] = useState<LiveDashboardResponse | null>(null)
@@ -241,6 +242,7 @@ export default function LiveDashboard() {
                 komponenten={data.komponenten}
                 summeErzeugung={data.summe_erzeugung_kw}
                 summeVerbrauch={data.summe_verbrauch_kw}
+                summePv={data.summe_pv_kw}
                 tagesWerte={data.heute_kwh_pro_komponente ?? undefined}
                 gauges={data.gauges}
                 pvSollKw={(() => {
@@ -517,6 +519,9 @@ export default function LiveDashboard() {
               <TagesverlaufChart serien={tagesverlauf.serien} punkte={tagesverlauf.punkte} />
             </div>
           )}
+
+          {/* Community-Nudge (wenn noch nicht geteilt) */}
+          {!selectedAnlage?.community_hash && <CommunityNudge />}
 
         </div>
       )}
