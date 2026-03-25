@@ -85,6 +85,8 @@ async def run_migrations(conn):
                 ('wetter_modell', "VARCHAR(50) DEFAULT 'auto'"),
                 # v3.5.0: Community Auto-Share nach Monatsabschluss
                 ('community_auto_share', 'BOOLEAN DEFAULT 0'),
+                # v3.5.0: Netz-Puffer für Energiefluss-Farbwechsel (Watt)
+                ('netz_puffer_w', 'INTEGER DEFAULT 100'),
             ]
             for col_name, col_type in new_columns:
                 if col_name not in existing_columns:
@@ -140,6 +142,12 @@ async def run_migrations(conn):
             existing_columns = {col['name'] for col in inspector.get_columns('strompreise')}
             if 'verwendung' not in existing_columns:
                 connection.execute(text("ALTER TABLE strompreise ADD COLUMN verwendung VARCHAR(30) DEFAULT 'allgemein'"))
+
+        # v3.5.0: Preset-ID für MQTT-Gateway-Mappings
+        if 'mqtt_gateway_mappings' in inspector.get_table_names():
+            existing_columns = {col['name'] for col in inspector.get_columns('mqtt_gateway_mappings')}
+            if 'preset_id' not in existing_columns:
+                connection.execute(text('ALTER TABLE mqtt_gateway_mappings ADD COLUMN preset_id VARCHAR(50)'))
 
         # v3.2.0: Per-Komponenten kWh in TagesZusammenfassung
         if 'tages_zusammenfassung' in inspector.get_table_names():
