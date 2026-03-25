@@ -64,6 +64,7 @@ export default function EAutoDashboard() {
         </div>
         {anlagen.length > 1 && (
           <Select
+            compact
             value={selectedAnlageId?.toString() || ''}
             onChange={(e) => setSelectedAnlageId(parseInt(e.target.value))}
             options={anlagen.map(a => ({ value: a.id.toString(), label: a.anlagenname }))}
@@ -135,7 +136,7 @@ function EAutoCard({ dashboard }: { dashboard: EAutoDashboardResponse }) {
       </div>
 
       {/* KPIs */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
         <KPICard
           title="Gefahren"
           value={z.gesamt_km?.toLocaleString('de-DE') || '0'}

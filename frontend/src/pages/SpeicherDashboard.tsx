@@ -61,6 +61,7 @@ export default function SpeicherDashboard() {
         </div>
         {anlagen.length > 1 && (
           <Select
+            compact
             value={selectedAnlageId?.toString() || ''}
             onChange={(e) => setSelectedAnlageId(parseInt(e.target.value))}
             options={anlagen.map(a => ({ value: a.id.toString(), label: a.anlagenname }))}
@@ -123,7 +124,7 @@ function SpeicherCard({ dashboard }: { dashboard: SpeicherDashboardResponse }) {
       </div>
 
       {/* KPIs */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
         <KPICard
           title="Vollzyklen"
           value={z.vollzyklen.toFixed(0)}
@@ -167,7 +168,7 @@ function SpeicherCard({ dashboard }: { dashboard: SpeicherDashboardResponse }) {
       </div>
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
         <div className="bg-blue-50 dark:bg-blue-900/20 rounded-lg p-4">
           <p className="text-sm text-blue-600 dark:text-blue-400">Ladung gesamt</p>
           <p className="text-2xl font-bold text-blue-700 dark:text-blue-300">
@@ -213,7 +214,7 @@ function SpeicherCard({ dashboard }: { dashboard: SpeicherDashboardResponse }) {
             <DollarSign className="h-5 w-5 text-amber-600 dark:text-amber-400" />
             <h3 className="font-medium text-amber-800 dark:text-amber-200">Arbitrage (Netzladung)</h3>
           </div>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
             <div>
               <p className="text-sm text-amber-600 dark:text-amber-400">Netzladung</p>
               <p className="text-xl font-bold text-amber-700 dark:text-amber-300">

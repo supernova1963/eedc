@@ -128,6 +128,7 @@ export default function Dashboard() {
         <div className="flex items-center gap-2">
           {anlagen.length > 1 && (
             <Select
+              compact
               value={selectedAnlageId?.toString() || ''}
               onChange={(e) => setSelectedAnlageId(parseInt(e.target.value))}
               options={anlagen.map(a => ({ value: a.id.toString(), label: a.anlagenname }))}
@@ -170,7 +171,7 @@ export default function Dashboard() {
 
       {/* Sektion 1: Energie-Bilanz */}
       <Section title="Energie-Bilanz" icon={Zap}>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
           <KPICard
             title="PV-Erzeugung"
             value={(data.pv_erzeugung_kwh / 1000).toFixed(1)}
@@ -222,7 +223,7 @@ export default function Dashboard() {
 
       {/* Sektion 2: Effizienz-Quoten */}
       <Section title="Effizienz-Quoten" icon={Percent}>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
           <RingGaugeCard
             title="Autarkie"
             value={data.autarkie_prozent}
@@ -271,7 +272,7 @@ export default function Dashboard() {
       {/* Sektion 3: Speicher */}
       {data.hat_speicher && (
         <SectionLink title="Speicher" icon={Battery} onClick={() => navigate('/cockpit/speicher')}>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
             <KPICard
               title="Ladung gesamt"
               value={(data.speicher_ladung_kwh / 1000).toFixed(2)}
@@ -324,7 +325,7 @@ export default function Dashboard() {
       {/* Sektion 4: Wärmepumpe */}
       {data.hat_waermepumpe && (
         <SectionLink title="Wärmepumpe" icon={Flame} onClick={() => navigate('/cockpit/waermepumpe')}>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
             <KPICard
               title="Wärme erzeugt"
               value={(data.wp_waerme_kwh / 1000).toFixed(2)}
@@ -376,7 +377,7 @@ export default function Dashboard() {
       {/* Sektion 5: E-Mobilität */}
       {data.hat_emobilitaet && (
         <SectionLink title="E-Mobilität" icon={Car} onClick={() => navigate('/cockpit/e-auto')}>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
             <KPICard
               title="Gefahrene km"
               value={(data.emob_km / 1000).toFixed(1)}
@@ -427,7 +428,7 @@ export default function Dashboard() {
 
       {/* Sektion 6: Finanzen */}
       <Section title="Finanzen" icon={Euro}>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
           <KPICard
             title="Einspeiseerlös"
             value={data.einspeise_erloes_euro.toFixed(0)}
@@ -510,7 +511,7 @@ export default function Dashboard() {
 
       {/* Sektion 7: CO₂-Bilanz */}
       <Section title="CO₂-Bilanz" icon={Leaf}>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
           <KPICard
             title="CO₂ PV"
             value={(data.co2_pv_kg / 1000).toFixed(1)}

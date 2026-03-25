@@ -7,6 +7,8 @@
 import { NavLink, useLocation } from 'react-router-dom'
 import type { LucideIcon } from 'lucide-react'
 import { useHAAvailable } from '../../hooks/useHAAvailable'
+import { useSelectedAnlage, useInvestitionen } from '../../hooks'
+import type { InvestitionTyp } from '../../types'
 import {
   LayoutDashboard,
   Car,
@@ -46,17 +48,22 @@ interface TabGroup {
   prefixes: string[]
 }
 
-// ─── Cockpit Tabs (statisch) ─────────────────────────────────────────────────
-const cockpitTabs: TabItem[] = [
+// ─── Cockpit Tabs ────────────────────────────────────────────────────────────
+// Basis-Tabs werden immer angezeigt
+const cockpitBaseTabs: TabItem[] = [
   { name: 'Übersicht',       href: '/cockpit',                  icon: LayoutDashboard, exact: true },
   { name: 'Aktueller Monat', href: '/cockpit/aktueller-monat',  icon: CalendarClock },
   { name: 'PV-Anlage',       href: '/cockpit/pv-anlage',        icon: Sun },
-  { name: 'E-Auto',          href: '/cockpit/e-auto',           icon: Car },
-  { name: 'Wärmepumpe',      href: '/cockpit/waermepumpe',      icon: Flame },
-  { name: 'Speicher',        href: '/cockpit/speicher',         icon: Battery },
-  { name: 'Wallbox',         href: '/cockpit/wallbox',          icon: Plug },
-  { name: 'Balkonkraftwerk', href: '/cockpit/balkonkraftwerk',  icon: Sun },
-  { name: 'Sonstiges',       href: '/cockpit/sonstiges',        icon: Wrench },
+]
+
+// Investitions-Tabs: werden nur angezeigt wenn der Typ als Investition existiert
+const cockpitInvestitionTabs: (TabItem & { typen: InvestitionTyp[] })[] = [
+  { name: 'E-Auto',          href: '/cockpit/e-auto',           icon: Car,     typen: ['e-auto'] },
+  { name: 'Wärmepumpe',      href: '/cockpit/waermepumpe',      icon: Flame,   typen: ['waermepumpe'] },
+  { name: 'Speicher',        href: '/cockpit/speicher',         icon: Battery, typen: ['speicher'] },
+  { name: 'Wallbox',         href: '/cockpit/wallbox',          icon: Plug,    typen: ['wallbox'] },
+  { name: 'Balkonkraftwerk', href: '/cockpit/balkonkraftwerk',  icon: Sun,     typen: ['balkonkraftwerk'] },
+  { name: 'Sonstiges',       href: '/cockpit/sonstiges',        icon: Wrench,  typen: ['sonstiges'] },
 ]
 
 // ─── Einstellungen-Gruppen ────────────────────────────────────────────────────
@@ -145,7 +152,7 @@ export default function SubTabs() {
 
   // ── Cockpit ──────────────────────────────────────────────────────────────
   if (path.startsWith('/cockpit')) {
-    return <TabBar tabs={cockpitTabs} />
+    return <CockpitTabBar />
   }
 
   // ── Einstellungen – gruppen-aware ────────────────────────────────────────
@@ -164,6 +171,24 @@ export default function SubTabs() {
   return null
 }
 
+// ─── Cockpit Tab-Leiste (dynamisch nach Investitionen) ───────────────────────
+function CockpitTabBar() {
+  const { selectedAnlageId } = useSelectedAnlage()
+  const { investitionen, loading } = useInvestitionen(selectedAnlageId)
+
+  const vorhandeneTypen = new Set(investitionen.map(i => i.typ))
+
+  const tabs = [
+    ...cockpitBaseTabs,
+    ...cockpitInvestitionTabs.filter(tab =>
+      tab.typen.some(typ => vorhandeneTypen.has(typ))
+    ),
+  ]
+
+  // Während dem Laden nur Basis-Tabs zeigen (kein Flicker)
+  return <TabBar tabs={loading ? cockpitBaseTabs : tabs} />
+}
+
 // ─── Wiederverwendbare Tab-Leiste ─────────────────────────────────────────────
 function TabBar({ tabs, groupLabel }: { tabs: TabItem[]; groupLabel?: string }) {
   if (tabs.length === 0) return null
@@ -171,7 +196,7 @@ function TabBar({ tabs, groupLabel }: { tabs: TabItem[]; groupLabel?: string }) 
   return (
     <div className="bg-gray-50 dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700">
       <div className="px-4 sm:px-6">
-        <nav className="flex items-center gap-1 py-2 overflow-x-auto">
+        <nav aria-label={groupLabel ? `${groupLabel}-Tabs` : 'Cockpit-Tabs'} className="flex items-center gap-1 py-2 overflow-x-auto snap-x snap-proximity scrollbar-none">
           {groupLabel && (
             <>
               <span className="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wide whitespace-nowrap pr-2">
@@ -186,7 +211,7 @@ function TabBar({ tabs, groupLabel }: { tabs: TabItem[]; groupLabel?: string }) 
               to={tab.href}
               end={tab.exact}
               className={({ isActive }) =>
-                `flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium whitespace-nowrap transition-colors ${
+                `flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium whitespace-nowrap transition-colors snap-start ${
                   isActive
                     ? 'bg-white dark:bg-gray-800 text-primary-700 dark:text-primary-300 shadow-sm'
                     : 'text-gray-600 hover:bg-white/50 dark:text-gray-400 dark:hover:bg-gray-800/50'
