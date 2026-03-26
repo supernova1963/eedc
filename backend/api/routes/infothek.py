@@ -1,0 +1,806 @@
+"""
+Infothek API Router
+
+CRUD-Endpunkte für Infothek-Einträge (Verträge, Zähler, Kontakte, Dokumentation).
+"""
+
+from datetime import datetime
+from typing import Optional
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, status
+from fastapi.responses import Response, StreamingResponse
+from pydantic import BaseModel, Field
+from sqlalchemy import select, func
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from backend.api.deps import get_db
+from backend.models.infothek import InfothekEintrag, InfothekDatei
+from backend.models.anlage import Anlage
+from backend.models.strompreis import Strompreis
+from backend.models.investition import Investition
+from backend.services.infothek_pdf_service import generate_infothek_pdf
+from backend.services.infothek_datei_service import (
+    validiere_dateityp, verarbeite_bild, validiere_pdf,
+    ERLAUBTE_TYPES, MAX_DATEIEN_PRO_EINTRAG,
+)
+
+from sqlalchemy import desc
+from backend.services.infothek_migration import check_migration_status, migrate_investition
+
+
+# =============================================================================
+# Kategorie-Registry — Schema-Definition pro Kategorie
+# =============================================================================
+
+INFOTHEK_KATEGORIEN: dict[str, dict] = {
+    "stromvertrag": {
+        "label": "Stromvertrag",
+        "icon": "Zap",
+        "felder": {
+            "zaehler_nummer": {"type": "string", "label": "Zählernummer"},
+            "anbieter": {"type": "string", "label": "Anbieter"},
+            "netzbetreiber": {"type": "string", "label": "Netzbetreiber"},
+            "tarif_ct_kwh": {"type": "number", "label": "Tarif (ct/kWh)"},
+            "vertragsbeginn": {"type": "date", "label": "Vertragsbeginn"},
+            "vertragslaufzeit_monate": {"type": "number", "label": "Vertragslaufzeit (Monate)"},
+            "kuendigungsfrist_monate": {"type": "number", "label": "Kündigungsfrist (Monate)"},
+            "kundennummer": {"type": "string", "label": "Kundennummer"},
+        },
+    },
+    "einspeisevertrag": {
+        "label": "Einspeisevertrag",
+        "icon": "Sun",
+        "felder": {
+            "zaehler_nummer": {"type": "string", "label": "Zählernummer"},
+            "verguetung_ct_kwh": {"type": "number", "label": "Vergütung (ct/kWh)"},
+            "eeg_anlagen_nr": {"type": "string", "label": "EEG-Anlagen-Nr."},
+            "inbetriebnahme_datum": {"type": "date", "label": "Inbetriebnahme"},
+            "anbieter": {"type": "string", "label": "Anbieter"},
+            "kundennummer": {"type": "string", "label": "Kundennummer"},
+        },
+    },
+    "gasvertrag": {
+        "label": "Gasvertrag",
+        "icon": "Flame",
+        "felder": {
+            "zaehler_nummer": {"type": "string", "label": "Zählernummer"},
+            "anbieter": {"type": "string", "label": "Anbieter"},
+            "tarif_ct_kwh": {"type": "number", "label": "Tarif (ct/kWh)"},
+            "jahresverbrauch_kwh": {"type": "number", "label": "Jahresverbrauch (kWh)"},
+            "kundennummer": {"type": "string", "label": "Kundennummer"},
+            "vertragsbeginn": {"type": "date", "label": "Vertragsbeginn"},
+            "kuendigungsfrist_monate": {"type": "number", "label": "Kündigungsfrist (Monate)"},
+        },
+    },
+    "wasservertrag": {
+        "label": "Wasservertrag",
+        "icon": "Droplets",
+        "felder": {
+            "zaehler_nummer": {"type": "string", "label": "Zählernummer"},
+            "anbieter": {"type": "string", "label": "Anbieter"},
+            "eichdatum": {"type": "date", "label": "Eichdatum"},
+            "naechste_ablesung": {"type": "date", "label": "Nächste Ablesung"},
+            "kundennummer": {"type": "string", "label": "Kundennummer"},
+        },
+    },
+    "fernwaerme": {
+        "label": "Fernwärme",
+        "icon": "Thermometer",
+        "felder": {
+            "zaehler_nummer": {"type": "string", "label": "Zählernummer"},
+            "anbieter": {"type": "string", "label": "Anbieter"},
+            "anschlussleistung_kw": {"type": "number", "label": "Anschlussleistung (kW)"},
+            "tarif_ct_kwh": {"type": "number", "label": "Tarif (ct/kWh)"},
+            "kundennummer": {"type": "string", "label": "Kundennummer"},
+        },
+    },
+    "brennstoff": {
+        "label": "Brennstoff (Heizöl / Flüssiggas / Pellets)",
+        "icon": "Logs",
+        "felder": {
+            "brennstoff_art": {"type": "select", "label": "Brennstoff-Art", "options": ["Heizöl", "Flüssiggas", "Pellets", "Holz"]},
+            "lieferant": {"type": "string", "label": "Lieferant"},
+            "tankgroesse": {"type": "string", "label": "Tankgröße"},
+            "letzte_lieferung_datum": {"type": "date", "label": "Letzte Lieferung (Datum)"},
+            "letzte_lieferung_menge": {"type": "number", "label": "Letzte Lieferung (Menge)"},
+            "preis_pro_einheit": {"type": "number", "label": "Preis pro Einheit (€)"},
+            "einheit": {"type": "select", "label": "Einheit", "options": ["Liter", "kg", "Ster"]},
+            "kundennummer": {"type": "string", "label": "Kundennummer"},
+        },
+    },
+    "versicherung": {
+        "label": "Versicherung",
+        "icon": "Shield",
+        "felder": {
+            "versicherungsnummer": {"type": "string", "label": "Versicherungsnummer"},
+            "anbieter": {"type": "string", "label": "Anbieter"},
+            "deckungssumme_euro": {"type": "number", "label": "Deckungssumme (€)"},
+            "jahresbeitrag_euro": {"type": "number", "label": "Jahresbeitrag (€)"},
+            "vertragsbeginn": {"type": "date", "label": "Vertragsbeginn"},
+            "kuendigungsfrist_monate": {"type": "number", "label": "Kündigungsfrist (Monate)"},
+        },
+    },
+    "ansprechpartner": {
+        "label": "Vertragspartner",
+        "icon": "User",
+        "felder": {
+            "firma": {"type": "string", "label": "Firma"},
+            "strasse": {"type": "string", "label": "Straße + Nr."},
+            "plz_ort": {"type": "string", "label": "PLZ / Ort"},
+            "kundennummer": {"type": "string", "label": "Kundennummer"},
+            "name": {"type": "string", "label": "Name (Ansprechpartner)"},
+            "position": {"type": "string", "label": "Position"},
+            "telefon": {"type": "string", "label": "Telefon"},
+            "email": {"type": "string", "label": "E-Mail"},
+            "ticketsystem_url": {"type": "string", "label": "Ticketsystem / Portal"},
+        },
+    },
+    "wartungsvertrag": {
+        "label": "Wartungs-/Pflegevertrag",
+        "icon": "Wrench",
+        "felder": {
+            "anbieter": {"type": "string", "label": "Anbieter"},
+            "vertragsnummer": {"type": "string", "label": "Vertragsnummer"},
+            "leistungsumfang": {"type": "string", "label": "Leistungsumfang"},
+            "gueltig_bis": {"type": "date", "label": "Gültig bis"},
+            "kuendigungsfrist_monate": {"type": "number", "label": "Kündigungsfrist (Monate)"},
+            "jahreskosten_euro": {"type": "number", "label": "Jahreskosten (€)"},
+        },
+    },
+    "marktstammdatenregister": {
+        "label": "Marktstammdatenregister",
+        "icon": "Landmark",
+        "felder": {
+            "mastr_nummer": {"type": "string", "label": "MaStR-Nummer"},
+            "anlage_typ": {"type": "string", "label": "Anlage-Typ"},
+            "inbetriebnahme_datum": {"type": "date", "label": "Inbetriebnahme"},
+            "status": {"type": "string", "label": "Status"},
+            "letzte_aktualisierung": {"type": "date", "label": "Letzte Aktualisierung"},
+        },
+    },
+    "foerderung": {
+        "label": "Förderung",
+        "icon": "Coins",
+        "felder": {
+            "aktenzeichen": {"type": "string", "label": "Aktenzeichen"},
+            "foerderprogramm": {"type": "string", "label": "Förderprogramm"},
+            "betrag_euro": {"type": "number", "label": "Betrag (€)"},
+            "bewilligungsdatum": {"type": "date", "label": "Bewilligungsdatum"},
+            "laufzeit_monate": {"type": "number", "label": "Laufzeit (Monate)"},
+            "auflagen": {"type": "string", "label": "Auflagen"},
+        },
+    },
+    "garantie": {
+        "label": "Garantie",
+        "icon": "BadgeCheck",
+        "felder": {
+            "hersteller": {"type": "string", "label": "Hersteller"},
+            "produkt": {"type": "string", "label": "Produkt"},
+            "garantie_nummer": {"type": "string", "label": "Garantie-Nummer"},
+            "garantie_bis": {"type": "date", "label": "Garantie bis"},
+            "erweiterung": {"type": "select", "label": "Erweiterung", "options": ["Ja", "Nein"]},
+            "bedingungen": {"type": "string", "label": "Bedingungen"},
+        },
+    },
+    "steuerdaten": {
+        "label": "Steuerdaten",
+        "icon": "Calculator",
+        "felder": {
+            "finanzamt": {"type": "string", "label": "Finanzamt"},
+            "steuernummer": {"type": "string", "label": "Steuernummer"},
+            "abschreibungszeitraum_jahre": {"type": "number", "label": "Abschreibungszeitraum (Jahre)"},
+            "afa_typ": {"type": "select", "label": "AfA-Typ", "options": ["linear", "degressiv"]},
+            "restwert_euro": {"type": "number", "label": "Restwert (€)"},
+        },
+    },
+    "sonstiges": {
+        "label": "Sonstiges",
+        "icon": "FileText",
+        "felder": {},
+    },
+}
+
+# Übergreifende optionale Felder
+UEBERGREIFENDE_FELDER = {
+    "kontakt": {
+        "label": "Kontakt",
+        "felder": {
+            "kontakt_firma": {"type": "string", "label": "Firma"},
+            "kontakt_name": {"type": "string", "label": "Name"},
+            "kontakt_telefon": {"type": "string", "label": "Telefon"},
+            "kontakt_email": {"type": "string", "label": "E-Mail"},
+        },
+    },
+    "vertrag": {
+        "label": "Vertragsdaten",
+        "felder": {
+            "vertragsnummer": {"type": "string", "label": "Vertragsnummer"},
+            "vertragsbeginn": {"type": "date", "label": "Vertragsbeginn"},
+            "kuendigungsfrist_monate": {"type": "number", "label": "Kündigungsfrist (Monate)"},
+        },
+    },
+}
+
+
+# =============================================================================
+# Pydantic Schemas
+# =============================================================================
+
+class InfothekEintragBase(BaseModel):
+    """Basis-Schema für Infothek-Einträge."""
+    bezeichnung: str = Field(..., min_length=1, max_length=255)
+    kategorie: str = Field(..., min_length=1, max_length=50)
+    notizen: Optional[str] = None
+    parameter: Optional[dict] = None
+    sortierung: int = Field(default=0)
+    aktiv: bool = Field(default=True)
+
+
+class InfothekEintragCreate(InfothekEintragBase):
+    """Schema für Erstellung."""
+    anlage_id: int
+    investition_id: Optional[int] = None
+    ansprechpartner_id: Optional[int] = None
+
+
+class InfothekEintragUpdate(BaseModel):
+    """Schema für Update — alle Felder optional."""
+    bezeichnung: Optional[str] = Field(None, min_length=1, max_length=255)
+    kategorie: Optional[str] = Field(None, min_length=1, max_length=50)
+    notizen: Optional[str] = None
+    parameter: Optional[dict] = None
+    investition_id: Optional[int] = None
+    ansprechpartner_id: Optional[int] = None
+    sortierung: Optional[int] = None
+    aktiv: Optional[bool] = None
+
+
+class InfothekEintragResponse(InfothekEintragBase):
+    """Schema für Response."""
+    id: int
+    anlage_id: int
+    investition_id: Optional[int] = None
+    ansprechpartner_id: Optional[int] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class SortierungItem(BaseModel):
+    """Ein Item für Batch-Sortierung."""
+    id: int
+    sortierung: int
+
+
+class InfothekDateiResponse(BaseModel):
+    """Schema für Datei-Response (ohne BLOB-Daten)."""
+    id: int
+    eintrag_id: int
+    dateiname: str
+    dateityp: str
+    mime_type: str
+    beschreibung: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+# =============================================================================
+# Router
+# =============================================================================
+
+router = APIRouter()
+
+
+@router.get("/", response_model=list[InfothekEintragResponse])
+async def list_eintraege(
+    anlage_id: int = Query(..., description="Anlage-ID"),
+    kategorie: Optional[str] = Query(None, description="Filter nach Kategorie"),
+    aktiv: Optional[bool] = Query(None, description="Filter nach Status"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Gibt alle Infothek-Einträge einer Anlage zurück."""
+    query = (
+        select(InfothekEintrag)
+        .where(InfothekEintrag.anlage_id == anlage_id)
+        .order_by(InfothekEintrag.sortierung, InfothekEintrag.created_at.desc())
+    )
+
+    if kategorie is not None:
+        query = query.where(InfothekEintrag.kategorie == kategorie)
+    if aktiv is not None:
+        query = query.where(InfothekEintrag.aktiv == aktiv)
+
+    result = await db.execute(query)
+    return result.scalars().all()
+
+
+@router.get("/kategorien")
+async def get_kategorien():
+    """Gibt alle verfügbaren Kategorien mit Feld-Schemas zurück."""
+    return {
+        "kategorien": INFOTHEK_KATEGORIEN,
+        "uebergreifende_felder": UEBERGREIFENDE_FELDER,
+    }
+
+
+@router.get("/count")
+async def get_count(
+    anlage_id: int = Query(..., description="Anlage-ID"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Gibt die Anzahl der Infothek-Einträge zurück (für bedingte Menü-Anzeige)."""
+    result = await db.execute(
+        select(func.count(InfothekEintrag.id))
+        .where(InfothekEintrag.anlage_id == anlage_id)
+    )
+    return {"count": result.scalar() or 0}
+
+
+@router.get("/{eintrag_id}", response_model=InfothekEintragResponse)
+async def get_eintrag(
+    eintrag_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Gibt einen einzelnen Infothek-Eintrag zurück."""
+    result = await db.execute(
+        select(InfothekEintrag).where(InfothekEintrag.id == eintrag_id)
+    )
+    eintrag = result.scalar_one_or_none()
+    if not eintrag:
+        raise HTTPException(status_code=404, detail="Eintrag nicht gefunden")
+    return eintrag
+
+
+@router.post("/", response_model=InfothekEintragResponse, status_code=status.HTTP_201_CREATED)
+async def create_eintrag(
+    item: InfothekEintragCreate,
+    db: AsyncSession = Depends(get_db),
+):
+    """Erstellt einen neuen Infothek-Eintrag."""
+    db_item = InfothekEintrag(**item.model_dump())
+    db.add(db_item)
+    await db.commit()
+    await db.refresh(db_item)
+    return db_item
+
+
+@router.put("/{eintrag_id}", response_model=InfothekEintragResponse)
+async def update_eintrag(
+    eintrag_id: int,
+    item: InfothekEintragUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    """Updated einen Infothek-Eintrag."""
+    result = await db.execute(
+        select(InfothekEintrag).where(InfothekEintrag.id == eintrag_id)
+    )
+    db_item = result.scalar_one_or_none()
+    if not db_item:
+        raise HTTPException(status_code=404, detail="Eintrag nicht gefunden")
+
+    update_data = item.model_dump(exclude_unset=True)
+    for key, value in update_data.items():
+        setattr(db_item, key, value)
+
+    db.add(db_item)
+    await db.commit()
+    await db.refresh(db_item)
+    return db_item
+
+
+@router.delete("/{eintrag_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_eintrag(
+    eintrag_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Löscht einen Infothek-Eintrag."""
+    result = await db.execute(
+        select(InfothekEintrag).where(InfothekEintrag.id == eintrag_id)
+    )
+    db_item = result.scalar_one_or_none()
+    if not db_item:
+        raise HTTPException(status_code=404, detail="Eintrag nicht gefunden")
+    await db.delete(db_item)
+    await db.commit()
+
+
+@router.put("/sortierung/batch")
+async def update_sortierung(
+    items: list[SortierungItem],
+    db: AsyncSession = Depends(get_db),
+):
+    """Aktualisiert die Reihenfolge mehrerer Einträge."""
+    for item in items:
+        result = await db.execute(
+            select(InfothekEintrag).where(InfothekEintrag.id == item.id)
+        )
+        db_item = result.scalar_one_or_none()
+        if db_item:
+            db_item.sortierung = item.sortierung
+            db.add(db_item)
+
+    await db.commit()
+    return {"status": "ok", "updated": len(items)}
+
+
+# =============================================================================
+# Vorbelegung (Etappe 3) — Felder aus Systemdaten vorbelegen
+# =============================================================================
+
+@router.get("/vorbelegung/{kategorie}")
+async def get_vorbelegung(
+    kategorie: str,
+    anlage_id: int = Query(..., description="Anlage-ID"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Gibt Vorbelegungsdaten für eine Kategorie aus vorhandenen Systemdaten zurück."""
+    prefill: dict[str, object] = {}
+
+    if kategorie == "stromvertrag":
+        # Aktuellsten Strompreis-Tarif laden (verwendung=allgemein)
+        result = await db.execute(
+            select(Strompreis)
+            .where(Strompreis.anlage_id == anlage_id, Strompreis.verwendung == "allgemein")
+            .order_by(desc(Strompreis.gueltig_ab))
+            .limit(1)
+        )
+        tarif = result.scalar_one_or_none()
+        if tarif:
+            if tarif.anbieter:
+                prefill["anbieter"] = tarif.anbieter
+            if tarif.netzbezug_arbeitspreis_cent_kwh is not None:
+                prefill["tarif_ct_kwh"] = tarif.netzbezug_arbeitspreis_cent_kwh
+
+        # versorger_daten aus Anlage
+        anlage_result = await db.execute(
+            select(Anlage).where(Anlage.id == anlage_id)
+        )
+        anlage = anlage_result.scalar_one_or_none()
+        if anlage and anlage.versorger_daten:
+            strom = anlage.versorger_daten.get("strom", {})
+            if strom.get("kundennummer"):
+                prefill.setdefault("kundennummer", strom["kundennummer"])
+            if strom.get("name") and "anbieter" not in prefill:
+                prefill["anbieter"] = strom["name"]
+
+    elif kategorie == "einspeisevertrag":
+        # Einspeisevergütung aus Strompreis
+        result = await db.execute(
+            select(Strompreis)
+            .where(Strompreis.anlage_id == anlage_id)
+            .order_by(desc(Strompreis.gueltig_ab))
+            .limit(1)
+        )
+        tarif = result.scalar_one_or_none()
+        if tarif and tarif.einspeiseverguetung_cent_kwh is not None:
+            prefill["verguetung_ct_kwh"] = tarif.einspeiseverguetung_cent_kwh
+
+        # Inbetriebnahme aus Anlage
+        anlage_result = await db.execute(
+            select(Anlage).where(Anlage.id == anlage_id)
+        )
+        anlage = anlage_result.scalar_one_or_none()
+        if anlage and anlage.installationsdatum:
+            prefill["inbetriebnahme_datum"] = str(anlage.installationsdatum)
+
+    elif kategorie == "marktstammdatenregister":
+        anlage_result = await db.execute(
+            select(Anlage).where(Anlage.id == anlage_id)
+        )
+        anlage = anlage_result.scalar_one_or_none()
+        if anlage:
+            if anlage.mastr_id:
+                prefill["mastr_nummer"] = anlage.mastr_id
+            if anlage.installationsdatum:
+                prefill["inbetriebnahme_datum"] = str(anlage.installationsdatum)
+
+    return {"kategorie": kategorie, "parameter": prefill}
+
+
+# =============================================================================
+# Investition-Verknüpfung (Etappe 3)
+# =============================================================================
+
+@router.put("/{eintrag_id}/verknuepfung", response_model=InfothekEintragResponse)
+async def update_verknuepfung(
+    eintrag_id: int,
+    investition_id: Optional[int] = Query(None, description="Investition-ID (null zum Lösen)"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Verknüpft oder löst einen Infothek-Eintrag mit/von einer Investition."""
+    result = await db.execute(
+        select(InfothekEintrag).where(InfothekEintrag.id == eintrag_id)
+    )
+    eintrag = result.scalar_one_or_none()
+    if not eintrag:
+        raise HTTPException(status_code=404, detail="Eintrag nicht gefunden")
+
+    if investition_id is not None:
+        inv_result = await db.execute(
+            select(Investition).where(Investition.id == investition_id)
+        )
+        if not inv_result.scalar_one_or_none():
+            raise HTTPException(status_code=404, detail="Investition nicht gefunden")
+
+    eintrag.investition_id = investition_id
+    db.add(eintrag)
+    await db.commit()
+    await db.refresh(eintrag)
+    return eintrag
+
+
+@router.get("/investition/{investition_id}", response_model=list[InfothekEintragResponse])
+async def list_eintraege_fuer_investition(
+    investition_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Gibt alle Infothek-Einträge zurück, die mit einer Investition verknüpft sind."""
+    result = await db.execute(
+        select(InfothekEintrag)
+        .where(InfothekEintrag.investition_id == investition_id)
+        .order_by(InfothekEintrag.sortierung)
+    )
+    return result.scalars().all()
+
+
+# =============================================================================
+# PDF-Export (Etappe 4)
+# =============================================================================
+
+@router.get("/export/pdf")
+async def export_pdf(
+    anlage_id: int = Query(..., description="Anlage-ID"),
+    kategorie: Optional[str] = Query(None, description="Nur diese Kategorie exportieren"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Exportiert Infothek-Einträge als PDF."""
+    # Anlage laden
+    anlage_result = await db.execute(select(Anlage).where(Anlage.id == anlage_id))
+    anlage = anlage_result.scalar_one_or_none()
+    if not anlage:
+        raise HTTPException(status_code=404, detail="Anlage nicht gefunden")
+
+    # Einträge laden (nur aktive)
+    query = (
+        select(InfothekEintrag)
+        .where(InfothekEintrag.anlage_id == anlage_id, InfothekEintrag.aktiv == True)
+        .order_by(InfothekEintrag.sortierung, InfothekEintrag.created_at.desc())
+    )
+    if kategorie:
+        query = query.where(InfothekEintrag.kategorie == kategorie)
+    result = await db.execute(query)
+    eintraege_obj = result.scalars().all()
+
+    if not eintraege_obj:
+        raise HTTPException(status_code=404, detail="Keine Einträge zum Exportieren")
+
+    # Vertragspartner-Map aufbauen
+    vp_result = await db.execute(
+        select(InfothekEintrag)
+        .where(InfothekEintrag.anlage_id == anlage_id, InfothekEintrag.kategorie == "ansprechpartner")
+    )
+    vp_map = {e.id: e.bezeichnung for e in vp_result.scalars().all()}
+
+    # Einträge als Dicts
+    eintraege = [
+        {
+            "bezeichnung": e.bezeichnung,
+            "kategorie": e.kategorie,
+            "parameter": e.parameter or {},
+            "notizen": e.notizen,
+            "ansprechpartner_id": e.ansprechpartner_id,
+        }
+        for e in eintraege_obj
+    ]
+
+    pdf_bytes = generate_infothek_pdf(
+        anlagen_name=anlage.anlagenname,
+        eintraege=eintraege,
+        vertragspartner_map=vp_map,
+        kategorie_schemas=INFOTHEK_KATEGORIEN,
+        filter_kategorie=kategorie,
+    )
+
+    filename = f"infothek_{anlage.anlagenname.replace(' ', '_')}"
+    if kategorie:
+        filename += f"_{kategorie}"
+    filename += f"_{datetime.now().strftime('%Y%m%d')}.pdf"
+
+    return StreamingResponse(
+        iter([pdf_bytes]),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+# =============================================================================
+# Migration (Etappe 3) — stamm_* → Infothek
+# =============================================================================
+
+@router.get("/migration/status")
+async def get_migration_status(
+    anlage_id: int = Query(..., description="Anlage-ID"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Prüft welche Investitionen migrierbate Stammdaten haben."""
+    return await check_migration_status(db, anlage_id)
+
+
+@router.post("/migration/{investition_id}")
+async def migrate_stammdaten(
+    investition_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Migriert stamm_*-Daten einer Investition in Infothek-Einträge."""
+    created = await migrate_investition(db, investition_id)
+    return {"created": created, "count": len(created)}
+
+
+@router.post("/migration/batch")
+async def migrate_all(
+    anlage_id: int = Query(..., description="Anlage-ID"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Migriert alle Investitionen einer Anlage auf einmal."""
+    status = await check_migration_status(db, anlage_id)
+    total_created = []
+    for inv in status["investitionen"]:
+        created = await migrate_investition(db, inv["id"])
+        total_created.extend(created)
+    return {"created": total_created, "count": len(total_created)}
+
+
+# =============================================================================
+# Datei-Endpunkte (Etappe 2)
+# =============================================================================
+
+@router.post("/{eintrag_id}/dateien", response_model=InfothekDateiResponse, status_code=status.HTTP_201_CREATED)
+async def upload_datei(
+    eintrag_id: int,
+    datei: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+):
+    """Lädt eine Datei (Bild oder PDF) zu einem Eintrag hoch."""
+    # Eintrag prüfen
+    result = await db.execute(
+        select(InfothekEintrag).where(InfothekEintrag.id == eintrag_id)
+    )
+    eintrag = result.scalar_one_or_none()
+    if not eintrag:
+        raise HTTPException(status_code=404, detail="Eintrag nicht gefunden")
+
+    # Anzahl prüfen
+    count_result = await db.execute(
+        select(func.count(InfothekDatei.id))
+        .where(InfothekDatei.eintrag_id == eintrag_id)
+    )
+    count = count_result.scalar() or 0
+    if count >= MAX_DATEIEN_PRO_EINTRAG:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Maximal {MAX_DATEIEN_PRO_EINTRAG} Dateien pro Eintrag erlaubt."
+        )
+
+    # Dateityp validieren
+    mime_type = datei.content_type or "application/octet-stream"
+    try:
+        dateityp = validiere_dateityp(mime_type)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    # Daten lesen
+    raw_daten = await datei.read()
+
+    # Verarbeiten
+    thumbnail = None
+    if dateityp == "image":
+        try:
+            daten, thumbnail, mime_type = verarbeite_bild(raw_daten, mime_type)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+    else:
+        try:
+            daten = validiere_pdf(raw_daten)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    # Speichern
+    db_datei = InfothekDatei(
+        eintrag_id=eintrag_id,
+        dateiname=datei.filename or "unbekannt",
+        dateityp=dateityp,
+        mime_type=mime_type,
+        daten=daten,
+        thumbnail=thumbnail,
+    )
+    db.add(db_datei)
+    await db.commit()
+    await db.refresh(db_datei)
+    return db_datei
+
+
+@router.get("/{eintrag_id}/dateien", response_model=list[InfothekDateiResponse])
+async def list_dateien(
+    eintrag_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Listet alle Dateien eines Eintrags (ohne BLOB-Daten)."""
+    result = await db.execute(
+        select(InfothekDatei)
+        .where(InfothekDatei.eintrag_id == eintrag_id)
+        .order_by(InfothekDatei.created_at)
+    )
+    return result.scalars().all()
+
+
+@router.get("/{eintrag_id}/dateien/{datei_id}")
+async def get_datei(
+    eintrag_id: int,
+    datei_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Gibt eine Datei (volle Auflösung) zurück."""
+    result = await db.execute(
+        select(InfothekDatei).where(
+            InfothekDatei.id == datei_id,
+            InfothekDatei.eintrag_id == eintrag_id,
+        )
+    )
+    datei = result.scalar_one_or_none()
+    if not datei:
+        raise HTTPException(status_code=404, detail="Datei nicht gefunden")
+
+    return Response(
+        content=datei.daten,
+        media_type=datei.mime_type,
+        headers={"Content-Disposition": f'inline; filename="{datei.dateiname}"'},
+    )
+
+
+@router.get("/{eintrag_id}/dateien/{datei_id}/thumb")
+async def get_thumbnail(
+    eintrag_id: int,
+    datei_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Gibt das Thumbnail eines Bildes zurück."""
+    result = await db.execute(
+        select(InfothekDatei).where(
+            InfothekDatei.id == datei_id,
+            InfothekDatei.eintrag_id == eintrag_id,
+        )
+    )
+    datei = result.scalar_one_or_none()
+    if not datei:
+        raise HTTPException(status_code=404, detail="Datei nicht gefunden")
+
+    if datei.thumbnail is None:
+        raise HTTPException(status_code=404, detail="Kein Thumbnail vorhanden (PDF)")
+
+    return Response(
+        content=datei.thumbnail,
+        media_type="image/jpeg",
+    )
+
+
+@router.delete("/{eintrag_id}/dateien/{datei_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_datei(
+    eintrag_id: int,
+    datei_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Löscht eine Datei."""
+    result = await db.execute(
+        select(InfothekDatei).where(
+            InfothekDatei.id == datei_id,
+            InfothekDatei.eintrag_id == eintrag_id,
+        )
+    )
+    datei = result.scalar_one_or_none()
+    if not datei:
+        raise HTTPException(status_code=404, detail="Datei nicht gefunden")
+    await db.delete(datei)
+    await db.commit()
