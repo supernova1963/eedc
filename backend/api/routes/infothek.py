@@ -192,6 +192,22 @@ INFOTHEK_KATEGORIEN: dict[str, dict] = {
             "restwert_euro": {"type": "number", "label": "Restwert (€)"},
         },
     },
+    "messstellenbetreiber": {
+        "label": "Messstellenbetreiber",
+        "icon": "Gauge",
+        "felder": {
+            "zaehler_nummer": {"type": "string", "label": "Zählernummer"},
+            "betreiber": {"type": "string", "label": "Messstellenbetreiber"},
+            "zaehler_typ": {"type": "select", "label": "Zähler-Typ", "options": ["Konventionell", "Moderne Messeinrichtung (mME)", "Intelligentes Messsystem (iMSys/Smart Meter)"]},
+            "zaehler_hersteller": {"type": "string", "label": "Zähler-Hersteller"},
+            "einbaudatum": {"type": "date", "label": "Einbaudatum"},
+            "eichdatum": {"type": "date", "label": "Eichdatum"},
+            "naechster_wechsel": {"type": "date", "label": "Nächster Wechsel / Eichfrist"},
+            "messstellenvertrag_nr": {"type": "string", "label": "Vertragsnummer"},
+            "jahresgebuehr_euro": {"type": "number", "label": "Jahresgebühr (€)"},
+            "kundennummer": {"type": "string", "label": "Kundennummer"},
+        },
+    },
     "sonstiges": {
         "label": "Sonstiges",
         "icon": "FileText",
@@ -629,16 +645,6 @@ async def get_migration_status(
     return await check_migration_status(db, anlage_id)
 
 
-@router.post("/migration/{investition_id}")
-async def migrate_stammdaten(
-    investition_id: int,
-    db: AsyncSession = Depends(get_db),
-):
-    """Migriert stamm_*-Daten einer Investition in Infothek-Einträge."""
-    created = await migrate_investition(db, investition_id)
-    return {"created": created, "count": len(created)}
-
-
 @router.post("/migration/batch")
 async def migrate_all(
     anlage_id: int = Query(..., description="Anlage-ID"),
@@ -651,6 +657,16 @@ async def migrate_all(
         created = await migrate_investition(db, inv["id"])
         total_created.extend(created)
     return {"created": total_created, "count": len(total_created)}
+
+
+@router.post("/migration/{investition_id}")
+async def migrate_stammdaten(
+    investition_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Migriert stamm_*-Daten einer Investition in Infothek-Einträge."""
+    created = await migrate_investition(db, investition_id)
+    return {"created": created, "count": len(created)}
 
 
 # =============================================================================
