@@ -96,12 +96,34 @@ class EEDCScheduler:
                 replace_existing=True,
             )
 
-            # Energie-Profil Aggregation: Täglich um 00:15 (Vortag)
+            # MQTT Auto-Publish: Intervall aus settings (nur wenn MQTT_AUTO_PUBLISH=true)
+            from backend.core.config import settings as app_settings
+            if app_settings.mqtt_auto_publish:
+                interval = max(5, app_settings.mqtt_publish_interval)  # Minimum 5 Minuten
+                self._scheduler.add_job(
+                    mqtt_auto_publish_job,
+                    IntervalTrigger(minutes=interval),
+                    id="mqtt_auto_publish",
+                    name=f"MQTT Auto-Publish (alle {interval} Min)",
+                    replace_existing=True,
+                )
+                logger.info(f"MQTT Auto-Publish aktiviert: alle {interval} Minuten")
+
+            # Energie-Profil Heute: Alle 15 Minuten (rollierend, laufender Tag)
+            self._scheduler.add_job(
+                energie_profil_heute_job,
+                IntervalTrigger(minutes=15),
+                id="energie_profil_heute",
+                name="Energie-Profil Heute (rollierend)",
+                replace_existing=True,
+            )
+
+            # Energie-Profil Vortag: Täglich um 00:15 (Finalisierung + Cleanup)
             self._scheduler.add_job(
                 energie_profil_aggregation_job,
                 CronTrigger(hour=0, minute=15),
                 id="energie_profil_aggregation",
-                name="Energie-Profil Aggregation",
+                name="Energie-Profil Vortag (Finalisierung)",
                 replace_existing=True,
             )
 
@@ -267,13 +289,25 @@ async def mqtt_energy_cleanup_job() -> None:
         )
 
 
+async def energie_profil_heute_job() -> None:
+    """Schreibt abgeschlossene Stunden des laufenden Tages (alle 15 Min)."""
+    try:
+        from backend.services.energie_profil_service import aggregate_today_all
+        results = await aggregate_today_all()
+        if results:
+            ok = sum(1 for r in results.values() if r["status"] == "ok")
+            logger.debug(f"Energie-Profil Heute: {ok}/{len(results)} Anlagen aktualisiert")
+    except Exception as e:
+        logger.debug(f"Energie-Profil Heute fehlgeschlagen: {type(e).__name__}: {e}")
+
+
 async def energie_profil_aggregation_job() -> None:
-    """Aggregiert Energieprofil des Vortags für alle Anlagen (täglich um 00:15)."""
+    """Finalisiert Energieprofil des Vortags für alle Anlagen (täglich um 00:15)."""
     try:
         from backend.services.energie_profil_service import aggregate_yesterday_all
         results = await aggregate_yesterday_all()
         ok = sum(1 for r in results.values() if r["status"] == "ok")
-        logger.info(f"Energie-Profil Aggregation: {ok}/{len(results)} Anlagen erfolgreich")
+        logger.info(f"Energie-Profil Vortag: {ok}/{len(results)} Anlagen finalisiert")
         await log_activity(
             kategorie="scheduler",
             aktion="Energie-Profil Aggregation",
@@ -313,6 +347,70 @@ async def api_cache_cleanup_job() -> None:
             )
     except Exception as e:
         logger.warning(f"API-Cache Cleanup fehlgeschlagen: {type(e).__name__}: {e}")
+
+
+async def mqtt_auto_publish_job() -> None:
+    """
+    Publiziert EEDC-KPIs für alle Anlagen via MQTT nach Home Assistant.
+
+    Wird periodisch ausgeführt wenn MQTT_AUTO_PUBLISH=true gesetzt ist.
+    Interval: MQTT_PUBLISH_INTERVAL Minuten (Default: 60).
+    """
+    try:
+        from backend.core.database import get_session
+        from backend.models.anlage import Anlage
+        from backend.api.routes.ha_export import calculate_anlage_sensors
+        from backend.services.mqtt_client import MQTTClient, MQTTConfig
+        import os
+        from sqlalchemy import select
+
+        mqtt_config = MQTTConfig(
+            host=os.environ.get("MQTT_HOST", "core-mosquitto"),
+            port=int(os.environ.get("MQTT_PORT", "1883")),
+            username=os.environ.get("MQTT_USER") or None,
+            password=os.environ.get("MQTT_PASSWORD") or None,
+        )
+        client = MQTTClient(mqtt_config)
+
+        if not client.is_available:
+            logger.warning("MQTT Auto-Publish: aiomqtt nicht verfügbar")
+            return
+
+        published_total = 0
+        anlagen_count = 0
+
+        async with get_session() as db:
+            result = await db.execute(select(Anlage))
+            anlagen = result.scalars().all()
+
+            for anlage in anlagen:
+                try:
+                    sensor_values = await calculate_anlage_sensors(db, anlage)
+                    if not sensor_values:
+                        continue
+                    pub_result = await client.publish_all_sensors(
+                        sensor_values, anlage.id, anlage.anlagenname
+                    )
+                    published_total += pub_result.get("published", 0)
+                    anlagen_count += 1
+                except Exception as e:
+                    logger.warning(f"MQTT Auto-Publish Anlage {anlage.id}: {type(e).__name__}: {e}")
+
+        logger.info(f"MQTT Auto-Publish: {published_total} Sensoren für {anlagen_count} Anlagen")
+        await log_activity(
+            kategorie="ha_export",
+            aktion="MQTT Auto-Publish",
+            erfolg=True,
+            details=f"{published_total} Sensoren für {anlagen_count} Anlagen",
+        )
+    except Exception as e:
+        logger.error(f"MQTT Auto-Publish fehlgeschlagen: {type(e).__name__}: {e}")
+        await log_activity(
+            kategorie="ha_export",
+            aktion="MQTT Auto-Publish fehlgeschlagen",
+            erfolg=False,
+            details=f"{type(e).__name__}: {e}",
+        )
 
 
 # Singleton-Instanz

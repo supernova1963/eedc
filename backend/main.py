@@ -95,6 +95,7 @@ async def lifespan(app: FastAPI):
     print("Datenbank initialisiert.")
 
     # L2-Cache → L1-Cache Warmup (sofort, bevor irgendein Request kommt)
+    _cache_cold = True
     try:
         from backend.services.wetter_service import warmup_l1_from_l2, _loop_running
         import backend.services.wetter_service as _ws
@@ -102,8 +103,19 @@ async def lifespan(app: FastAPI):
         count = await warmup_l1_from_l2()
         if count > 0:
             print(f"Cache-Warmup: {count} Einträge aus L2 geladen.")
+            _cache_cold = False
     except Exception as e:
         logger.debug(f"Cache-Warmup fehlgeschlagen: {e}")
+
+    # Kein L2-Inhalt → Prefetch sofort im Hintergrund starten
+    # Damit ist der Cache warm bevor der erste User die Seite lädt.
+    if _cache_cold:
+        try:
+            from backend.services.prefetch_service import prefetch_all_prognosen
+            asyncio.create_task(prefetch_all_prognosen(skip_jitter=True))
+            print("Cache kalt — Sofort-Prefetch gestartet.")
+        except Exception as e:
+            logger.debug(f"Sofort-Prefetch fehlgeschlagen: {e}")
 
     # Scheduler starten
     if start_scheduler():
@@ -275,8 +287,8 @@ app = FastAPI(
 # CORS Middleware (für Development)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In Produktion einschränken
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -680,12 +692,18 @@ if frontend_dist.exists():
         Alle Routen die nicht mit /api beginnen werden an das Frontend weitergeleitet.
         """
         # Versuche zuerst die Datei direkt zu finden
-        file_path = frontend_dist / full_path
-        if file_path.is_file():
-            return FileResponse(file_path)
+        # Path-Traversal-Schutz: resolved path muss innerhalb frontend_dist liegen
+        resolved = (frontend_dist / full_path).resolve()
+        if not str(resolved).startswith(str(frontend_dist.resolve())):
+            raise HTTPException(status_code=404)
+        if resolved.is_file():
+            return FileResponse(resolved)
 
-        # Sonst index.html für SPA Routing
-        return FileResponse(frontend_dist / "index.html")
+        # Sonst index.html für SPA Routing — kein Cache damit Browser nach Updates neue Bundle-Hashes lädt
+        return FileResponse(
+            frontend_dist / "index.html",
+            headers={"Cache-Control": "no-cache, no-store, must-revalidate"}
+        )
 else:
     @app.get("/")
     async def no_frontend():

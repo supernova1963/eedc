@@ -7,6 +7,219 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ---
 
+## [3.8.3] - 2026-03-30
+
+### Behoben
+
+- **Social-Media-Text: Ausrichtung + Anlagengröße (#84)**: Balkonkraftwerk-Leistung wird zur Gesamtleistung addiert. Ausrichtung wird nur angezeigt wenn eindeutig (1 String oder alle gleich) — Multi-String-Anlagen mit verschiedenen Ausrichtungen zeigen kein Label. Exakter Azimut-Grad aus den Einstellungen hat Vorrang vor dem Dropdown-Label.
+
+## [3.8.2] - 2026-03-30
+
+### Verbessert
+
+- **Aussichten Kurzfristig: 14-Tage-Cache beim Start vorwärmen**: Beim Laden des Live-Dashboards wird die 14-Tage-Solarprognose jetzt im Hintergrund vorab gecacht (fire-and-forget). Wenn der User zu Aussichten navigiert, ist der Cache bereits warm — kein Warten mehr auf Open-Meteo (#82).
+
+---
+
+## [3.8.1] - 2026-03-30
+
+### Behoben
+
+- **Monatsabschluss: UNIQUE constraint bei Energieprofil (#80)**: Seit v3.8.0 liefert `get_tagesverlauf()` 10-Minuten-Daten (144 Punkte). Der `energie_profil_service` las diese Punkte direkt ein und versuchte pro Stunde 6× dieselbe `stunde`-Zeile zu INSERT-en → UNIQUE constraint. Fix: Sub-stündliche Punkte werden vor der Verarbeitung auf Stundenmittelwerte aggregiert.
+- **Sensor-Mapping Dropdown: ESC und Click-outside schließen jetzt (#81)**: Im `FeldMappingInput` fehlten ESC-Handler und Click-outside-Handler. Das Dropdown ließ sich nur durch Auswahl eines Eintrags schließen. Beide Handler sind jetzt per `useEffect` registriert.
+
+---
+
+## [3.8.0] - 2026-03-29
+
+### Verbessert
+
+- **Tagesverlauf-Chart: 10-Minuten-Auflösung** (#77): Der Live-Tagesverlauf zeigt jetzt 10-Minuten-Mittelwerte statt Stundenwerte (144 Datenpunkte statt 24). WP-Zyklen, Batterie-Ladekurven und kurzfristige Verbrauchsspitzen werden damit sichtbar. Die "Jetzt"-Referenzlinie wird auf den korrekten 10-Min-Bucket gerundet. Gilt für HA-Nutzer (HA Recorder liefert Sub-Minuten-Rohdaten).
+- **Kurzfristig-Prognose: Immer 14 Tage** (#75): Das Tage-Auswahlfeld (7/14/16) wurde entfernt. 14 Tage sind fest eingestellt — Open-Meteo liefert diese Auflösung zuverlässig und schnell. Die 16-Tage-Option entfällt (höhere Ladezeit, kein Mehrwert).
+- **KPI-Kacheln leicht transparent** (#78): Hintergrund der Werte-Kacheln auf 90% (Light) bzw. 85% (Dark) Deckkraft reduziert für bessere optische Integration.
+
+### Behoben
+
+- **BKW-Leistung in kWp-Vergleich und Solarprognose** (#74): Der Daten-Checker verglich bisher nur PV-Module gegen den manuellen kWp-Wert und ignorierte Balkonkraftwerke. Jetzt fließt BKW-Leistung korrekt in den Checker-Vergleich ein (Meldung: "Summe PV-Module + BKW"). Außerdem berücksichtigt die Solarprognose (`prognose_service`) die BKW-Leistung beim Gesamt-kWp — BKW ist genauso wetterabhängig wie normale PV.
+
+---
+
+## [3.7.6] - 2026-03-29
+
+### Verbessert
+
+- **Ladezeit Kurzfristig & Live deutlich reduziert**: Zwei gezielte Optimierungen für den ersten Seitenaufruf:
+  1. **Jitter bei User-Request deaktiviert**: Der zufällige Verzögerung (bisher 1–30 Sekunden) vor Open-Meteo-API-Calls greift jetzt nur noch beim Hintergrund-Prefetch, nicht beim direkten Aufruf durch den User. Cache-Miss-Latenz sinkt um bis zu 30 Sekunden.
+  2. **Sofort-Prefetch nach Kaltstart**: Wenn der Container mit leerem L2-Cache startet (z. B. Erstinstallation oder abgelaufene SQLite-Daten), wird der Prefetch sofort im Hintergrund ausgelöst — ohne den Job-Jitter (5–60s). Der Cache ist warm, bevor der erste User die Seite öffnet.
+
+## [3.7.5] - 2026-03-29
+
+### Behoben
+
+- **„Noch offen" nach Sonnenuntergang ausgeblendet (#72)**: Nach Sonnenuntergang wurde fälschlicherweise noch eine verbleibende Solarprognose angezeigt (z.B. >5 kWh um 21:30 Uhr). Ursache: die Berechnung `Tagesprognose − bisher erzeugte kWh` berücksichtigte nicht, ob die Sonne bereits untergegangen ist. Fix: `wetter.sunset` wird geprüft — nach Sonnenuntergang wird das KPI ausgeblendet.
+
+## [3.7.4] - 2026-03-29
+
+### Verbessert
+
+- **Kostentabelle im Energie-Explorer**: Die Finanzspalten (Einspeise-Erlös, EV-Ersparnis, Netzbezug-Kosten) sind jetzt standardmäßig sichtbar. Neue Spalte **Netto-Bilanz** (Erlös + Ersparnis − Netzbezugskosten) zeigt das monatliche Gesamtergebnis. Vorjahresvergleich mit Δ-Farbkodierung funktioniert wie bei allen anderen Spalten.
+
+## [3.7.2] - 2026-03-29
+
+### Behoben
+
+- **Heute-kWh: kumulierte Monatsabschluss-Sensoren korrekt genutzt (#64 Follow-up)**: Seit v3.6.8 wurden die bereits konfigurierten Energy-Sensoren (Einspeisung, Netzbezug, PV-Erzeugung, Batterie-Ladung/-Entladung) aus dem Monatsabschluss-Mapping für die Live-Dashboard „Heute"-Berechnung nicht genutzt, weil der interne Schlüssel `sensors` statt des korrekten `felder` verwendet wurde und die `FeldMapping`-Struktur (`{strategie, sensor_id}`) nicht ausgelesen wurde. Folge: nach Container-Neustart am Morgen (vor Sonnenaufgang) fehlten PV, Einspeisung, Eigenverbrauch und Batterie-kWh im „Heute"-Abschnitt.
+- **Prioritätskette jetzt vollständig**: Basis Einspeisung/Netzbezug und PV-Investitionen nutzen jetzt ebenfalls kumulative Energy-Sensoren als Priorität 1 — keine Trapez-Abhängigkeit mehr wenn kWh-Sensoren konfiguriert sind.
+- **`_trapez_kwh` mit 1 Datenpunkt**: Gibt jetzt `0.0` zurück statt `None` (mathematisch korrekt: kein Intervall = 0 kWh). Safety-Net für W-only Setups ohne konfigurierte Energy-Sensoren.
+
+## [3.7.3] - 2026-03-29
+
+### Behoben
+
+- **Foto-Hintergründe im HA Add-on**: Bilder wurden im HA-Ingress-Kontext nicht gefunden (Fragezeichen-Icon). Ursache: absolute Pfade (`/backgrounds/...`) funktionieren hinter HA-Ingress nicht — auf relative Pfade (`./backgrounds/...`) umgestellt.
+
+## [3.7.1] - 2026-03-29
+
+### Verbessert
+
+- **Foto-Hintergründe im Energiefluss**: 6 neue Foto-Varianten wählbar — Alpenpanorama, Milchstraße, Dolomiten, Nebula, Sternennacht, Exoplanet. Der bisherige Wechsel-Button wurde durch ein Dropdown mit allen 9 Varianten (inkl. Tech, Sunset, Alpen) ersetzt. Bilder liegen als WebP vor (413 KB gesamt). Die Auswahl wird per localStorage gespeichert.
+
+## [3.7.0] - 2026-03-28
+
+### Verbessert
+
+- **Batterie Live-kWh: optionale Tages-kWh-Slots (#64)**: Neue optionale Felder im Live-Sensor-Mapping für Speicher: „Ladung heute (kWh)" und „Entladung heute (kWh)". Wer separate Tages-kWh-Sensoren hat (die täglich auf 0 zurückgesetzt werden), kann diese direkt eintragen — sie haben Vorrang vor der bisherigen Berechnung. Vollständige Prioritätskette: (1) Live-Tages-kWh-Sensoren, (2) kumulative Monatsabschluss-Sensoren mit Delta ab Mitternacht, (3) W-Sensor mit Trapez-Integration.
+- **WP und Wallbox Live-kWh aus Monatsabschluss-Mapping**: Sind `stromverbrauch_kwh` (WP) bzw. `ladung_kwh` (Wallbox) im Monatsabschluss-Sensor-Mapping konfiguriert, werden diese jetzt ebenfalls für die Live-Dashboard-Tooltips genutzt statt der Trapez-Integration.
+
+## [3.6.9] - 2026-03-28
+
+### Verbessert
+
+- **Energieprofil-Revision (Etappe 1)**: Vorzeichenbasierte Aggregation ersetzt die fehlerhafte kategorie-basierte Logik. BHKW und Sonstiges-Erzeuger fließen korrekt in `pv_kw` ein, V2H wird in `batterie_kw` einbezogen, Wärmepumpe und Wallbox erhalten eigene Spalten (`waermepumpe_kw`, `wallbox_kw`) für spätere Effizienz- und Musteranalyse.
+- **Rollierender Energieprofil-Scheduler**: Neuer Job alle 15 Minuten schreibt abgeschlossene Stunden des laufenden Tages — heute's Profil wächst jetzt laufend mit statt erst um 00:15 des Folgetags verfügbar zu sein.
+- **Retention-Cleanup**: `TagesEnergieProfil`-Stundenwerte älter als 2 Jahre werden täglich um 00:15 gelöscht. `TagesZusammenfassung` bleibt dauerhaft erhalten.
+
+### Hinweis
+
+Bestehende Energieprofil-Daten werden bei diesem Update einmalig gelöscht und neu aufgebaut (fehlerhafte Aggregation der Vorgängerversion). Die Neusammlung beginnt automatisch.
+
+## [3.6.8] - 2026-03-28
+
+### Behoben
+
+- **Batterie Laden/Entladen kWh im Live-Dashboard zu hoch (#64)**: Wenn Batterie-Sensoren Leistung (W) mit Rauschen um 0 W meldeten, summierte die Trapez-Integration das Rauschen über den Tag auf → überhöhte Werte. Fix: Sind `ladung_kwh`/`entladung_kwh` bereits im Monatsabschluss-Sensor-Mapping konfiguriert, werden diese kumulativen Sensoren direkt via Delta (aktuell − Mitternacht) genutzt — kein Trapez, kein Rauschen. Der W-Sensor-Pfad bleibt als Fallback erhalten.
+
+## [3.6.7] - 2026-03-28
+
+### Behoben
+
+- **MQTT Auto-Publish war nicht aktiv**: Die Einstellung `MQTT_AUTO_PUBLISH=true` wurde zwar gespeichert, aber nie ausgewertet — kein Scheduler-Job war verknüpft. Fix: Bei aktiviertem `MQTT_AUTO_PUBLISH` wird jetzt ein periodischer Job gestartet, der alle `MQTT_PUBLISH_INTERVAL` Minuten (Default: 60) die KPIs aller Anlagen via MQTT Discovery nach Home Assistant publiziert.
+
+## [3.6.6] - 2026-03-28
+
+### Behoben
+
+- **Energie-Explorer Tabelle: Jahresvergleich-Dropdown im Dark Mode unleserlich**: Vergleichsjahr-Select hatte semi-transparenten Hintergrund (`primary-900/30`), der von nativen Dropdowns ignoriert wird. Fix: opaker Dark-Mode-Hintergrund (`gray-800`).
+
+## [3.6.5] - 2026-03-28
+
+### Behoben
+
+- **Cockpit Jahresauswahl: Optionen verschwinden nach Jahreswechsel (#71)**: Beim Wechsel auf ein konkretes Jahr wurden die anderen Jahre aus dem Dropdown entfernt, weil `availableYears` aus der gefilterten API-Antwort berechnet wurde. Fix: Jahre werden jetzt aus den ungefilterten Monatsdaten abgeleitet.
+
+## [3.6.4] - 2026-03-28
+
+### Verbessert
+
+- **Energie-Explorer Tabelle: Sticky Header**: Der Tabellenkopf bleibt beim Scrollen durch lange Datenlisten fixiert (max. 600 px Tabellenhöhe, scrollbar). Wunsch: MartyBr.
+- **Energie-Explorer Tabelle: Freie Jahreswahl im Jahresvergleich**: Beim Jahresvergleich kann jetzt ein beliebiges Vergleichsjahr aus einem Dropdown gewählt werden (statt fix Vorjahr). Standard bleibt das Vorjahr, sofern Daten vorhanden. Wunsch: MartyBr.
+
+## [3.6.3] - 2026-03-28
+
+### Behoben
+
+- **Cockpit Zeitraum und Jahresauswahl (#71)**: Bei Anlagen mit Monatsdaten (z.B. Netzbezug) vor der ersten PV-Investition wurde der Zeitraum nur aus InvestitionMonatsdaten berechnet — ältere Monate und Jahre fehlten in der Auswahl. Fix: frühestes und spätestes Datum aus beiden Quellen (Monatsdaten + InvestitionMonatsdaten) kombiniert.
+- **FormelTooltip am linken Rand (#70)**: Tooltip wurde am linken Viewport-Rand abgeschnitten. Fix: horizontale Position wird jetzt viewport-bewusst berechnet und bei Bedarf nach rechts verschoben.
+
+## [3.6.2] - 2026-03-28
+
+### Behoben
+
+- **JAZ Heizen/Warmwasser falsch berechnet (#67)**: Wärmemenge summierte über alle Monate, Strom nur über Monate mit getrennter Strommessung → absurde Werte (z.B. 89, 297). Fix in WP-Dashboard und Auswertungen → Komponenten.
+- **BKW-Anlagenleistung ignoriert Anzahl Module (#66)**: Im Cockpit wurde nur die Leistung eines einzelnen Moduls in kWp umgerechnet, die Modulanzahl blieb unberücksichtigt.
+- **Security: Path Traversal in SPA-Serving (#65)**: `.resolve()` + Prefix-Check verhindert das Auslesen von Dateien außerhalb des Frontend-Ordners.
+- **Security: CORS allow_credentials (#65)**: Ungültige Kombination `allow_origins=["*"]` + `allow_credentials=True` korrigiert.
+- **Security: Infothek-Upload ohne Größenlimit (#65)**: 50 MB Limit für Datei-Uploads eingebaut.
+
+### Geändert
+
+- **JAZ statt COP im WP-Dashboard (#67)**: Labels umbenannt — "Ø COP" → "JAZ (gesamt)", "COP Heizen" → "JAZ Heizen", "COP Warmwasser" → "JAZ Warmwasser".
+- **JAZ in Auswertungen → Komponenten (#67)**: JAZ, JAZ Heizen und JAZ Warmwasser mit Jahresfilter verfügbar (nur bei getrennter Strommessung).
+
+## [3.6.1] - 2026-03-28
+
+### Behoben
+
+- **Browser-Cache nach Updates (#69)**: Nach einem Add-on-Update zeigte der Browser weiterhin die alte Oberfläche, weil `index.html` aus dem Browser-Cache geladen wurde. Fix: `Cache-Control: no-cache` Header für `index.html` — der Browser prüft nun bei jedem Aufruf ob eine neue Version vorliegt. JS/CSS-Bundles bleiben weiterhin gecacht (kein Performance-Verlust).
+- **Tabellen-Tab: Render-Crash bei Vorjahresvergleich**: Fehlende Keys auf `React.Fragment` in `map()`-Aufrufen konnten die Auswertungs-Seite zum Absturz bringen sobald der Vorjahresvergleich aktiviert wurde.
+- **Monatsabschluss-Tooltip**: Hover über den roten Punkt in der Kopfzeile zeigt jetzt welcher Monat offen ist (z.B. "Monatsabschluss Februar 2026 offen").
+
+## [3.6.0] - 2026-03-28
+
+### Neu
+
+- **Interaktiver Energie-Explorer (Auswertungen → Tabelle)**: Neuer Tab mit vollständiger Tabellenansicht aller Monatsdaten — als Ergänzung zu den Grafiken für präzise Zahlen und individuelle Auswertungen.
+  - **22 Spalten** in 7 Gruppen: Energie, Quoten, Speicher, Wärmepumpe, E-Auto, Finanzen, CO₂
+  - **Sortierung** per Klick auf jeden Spaltenheader (auf-/absteigend)
+  - **Spaltenauswahl** via Dropdown mit Gruppen-Gliederung — Konfiguration wird automatisch im Browser gespeichert (localStorage)
+  - **Aggregationszeile** am Ende: Summe für kWh/km/€, Durchschnitt (Ø) für Prozentwerte und COP
+  - **Vorjahres-Vergleich**: Toggle-Button zeigt Δ-Spalte pro Metrik mit farbiger Bewertung (grün/rot je nach Richtung)
+  - **Finanzen** mit historisch korrektem Tarif pro Monat aus der Strompreise-Tabelle
+  - **Deutsches Zahlenformat** mit Tausender-Punkt und Komma-Dezimalstelle
+  - **CSV-Export** inkl. Δ-Spalten bei aktivem Vorjahresvergleich
+
+## [3.5.11] - 2026-03-28
+
+### Behoben
+
+- **JAZ Heizen/Warmwasser in Auswertungen → Komponenten (#67)**: Gleicher Monate-Bug wie im WP-Dashboard — Heizung/Warmwasser wurde über alle Monate summiert, Strom nur über Monate mit getrennter Messung. Fix: Nur Monate mit vorhandener getrennter Strommessung fließen in JAZ Heizen/Warmwasser ein.
+
+## [3.5.10] - 2026-03-28
+
+### Behoben
+
+- **JAZ Heizen/Warmwasser falsch berechnet (#67)**: Wärmemenge summierte über alle Monate, Strom nur über Monate mit getrennter Strommessung → absurde Werte (z.B. 89, 297). Fix: Wärme und Strom werden jetzt aus denselben Monaten summiert.
+- **BKW-Anlagenleistung ignoriert Anzahl Module (#66)**: Im Cockpit wurde nur die Leistung eines einzelnen Moduls in kWp umgerechnet, die Modulanzahl blieb unberücksichtigt. 2 × 490 Wp ergab fälschlicherweise 0,49 statt 0,98 kWp.
+- **Security: Path Traversal in SPA-Serving (#65)**: `.resolve()` + Prefix-Check verhindert jetzt das Auslesen von Dateien außerhalb des Frontend-Ordners über präparierte URL-Pfade.
+- **Security: CORS allow_credentials (#65)**: Ungültige Kombination `allow_origins=["*"]` + `allow_credentials=True` korrigiert (`allow_credentials=False`).
+- **Security: Infothek-Upload ohne Größenlimit (#65)**: 50 MB Limit für Datei-Uploads eingebaut.
+
+### Geändert
+
+- **JAZ statt COP im WP-Dashboard (#67)**: Labels umbenannt — "Ø COP" → "JAZ (gesamt)", "COP Heizen" → "JAZ Heizen", "COP Warmwasser" → "JAZ Warmwasser". Hinweistext erklärt Gesamtlaufzeit-Bezug.
+- **JAZ in Auswertungen → Komponenten (#67)**: JAZ, JAZ Heizen und JAZ Warmwasser jetzt auch im Auswertungs-Tab mit Jahresfilter verfügbar (nur wenn getrennte Strommessung vorhanden).
+
+## [3.5.9] - 2026-03-27
+
+### Neu
+
+- **Hintergrund-Varianten im Energiefluss-Diagramm**: Neuer Toggle-Button (Tech → Sunset → Alpen) mit automatischer Speicherung der Auswahl.
+  - **Sunset**: Krepuskulare Sonnenstrahlen im Himmel, elliptische Wellenebenen auf dem Meer, goldene Lichtfunken auf dem Wasser — vollständig in Light und Dark Mode.
+  - **Alpen**: Drei Bergketten-Silhouetten mit Schneekuppen. Light Mode mit Sonnenscheibe und goldenen Strahlen. Dark Mode mit Granit-Grau, Nadelwald-Grün, Mondlicht, Sternenhimmel und Aurora-Hauch.
+
+## [3.5.8] - 2026-03-27
+
+### Behoben
+
+- **Kurzfrist-Prognose lädt langsam**: Cache-Key-Mismatch — Frontend fragt standardmäßig `tage=14` an, Prefetch wärmte aber nur `days=7` und `days=16`. Dadurch traf jeder Aufruf der Kurzfrist-Seite einen leeren Cache und wartete 1–30s Jitter + API-Call. Prefetch jetzt für alle drei Werte (7, 14, 16).
+
+## [3.5.7] - 2026-03-27
+
+### Behoben
+
+- **Wärmepumpenart im Investitionsformular (#63)**: Das Dropdown "Wärmepumpenart" (Luft-Wasser, Sole-Wasser, Grundwasser, Luft-Luft) war im Backend bereits definiert, fehlte aber im Frontend-Formular. Jetzt sichtbar unter Investitionen → Wärmepumpe.
+- **Historische Tarife in Finanzauswertung (#63)**: Tarif-Auflösung komplett ins Frontend verlagert — alle Stromtarife werden geladen und pro Monat der zum 1. des Monats gültige Tarif verwendet. Funktioniert jetzt auch ohne Investitions-Komponenten.
+
 ## [3.5.6] - 2026-03-27
 
 ### Behoben

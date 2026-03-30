@@ -31,14 +31,18 @@ logger = logging.getLogger(__name__)
 PREFETCH_JITTER_MAX = 60  # Ein Jitter pro Durchlauf, nicht pro Call
 
 
-async def prefetch_all_prognosen() -> dict:
+async def prefetch_all_prognosen(skip_jitter: bool = False) -> dict:
     """
     Scheduler-Job: Prefetcht Solar- und Wetterprognosen für alle Anlagen.
 
     Ein einzelner Random-Jitter am Anfang verteilt die Last auf Open-Meteo.
     Danach werden alle API-Calls ohne zusätzlichen Jitter ausgeführt.
+
+    Args:
+        skip_jitter: True beim Kaltstart-Prefetch (kein Wartezeit gewünscht).
     """
-    await asyncio.sleep(random.uniform(5, PREFETCH_JITTER_MAX))
+    if not skip_jitter:
+        await asyncio.sleep(random.uniform(5, PREFETCH_JITTER_MAX))
 
     results = {}
     async with get_session() as db:
@@ -144,8 +148,14 @@ async def _prefetch_for_anlage(anlage: Anlage, db) -> dict:
             ))
 
     # Wetter-Forecast (für Aussichten kurzfristig)
+    # days=7  → /aussichten/wetter/{id} (default)
+    # days=14 → /aussichten/kurzfristig/{id} (default, Kurzfrist-Prognose)
+    # days=16 → 14-Tage-Ansicht
     coros.append(fetch_open_meteo_forecast(
         anlage.latitude, anlage.longitude, days=7, skip_jitter=True,
+    ))
+    coros.append(fetch_open_meteo_forecast(
+        anlage.latitude, anlage.longitude, days=14, skip_jitter=True,
     ))
     coros.append(fetch_open_meteo_forecast(
         anlage.latitude, anlage.longitude, days=16, skip_jitter=True,

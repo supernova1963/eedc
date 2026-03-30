@@ -281,9 +281,12 @@ async def get_cockpit_uebersicht(
         if inv.typ == "pv-module" and inv.leistung_kwp:
             anlagenleistung_kwp += inv.leistung_kwp
         elif inv.typ == "balkonkraftwerk":
-            params = inv.parameter or {}
-            bkw_leistung = params.get("leistung_wp", 0) / 1000
-            anlagenleistung_kwp += bkw_leistung
+            if inv.leistung_kwp:
+                anlagenleistung_kwp += inv.leistung_kwp
+            else:
+                params = inv.parameter or {}
+                bkw_anzahl = params.get("anzahl", 1) or 1
+                anlagenleistung_kwp += params.get("leistung_wp", 0) * bkw_anzahl / 1000
 
     # Fallback auf Anlage.leistung_kwp wenn keine PV-Module als Investitionen
     if anlagenleistung_kwp == 0 and anlage.leistung_kwp:
@@ -437,21 +440,18 @@ async def get_cockpit_uebersicht(
     zeitraum_bis = None
     anzahl_monate = 0
 
-    # Primär: Zeitraum aus InvestitionMonatsdaten
-    if zeitraum_monate:
-        sorted_monate = sorted(zeitraum_monate)
-        first = sorted_monate[0]
-        last = sorted_monate[-1]
+    # Zeitraum: Frühestes und spätestes Datum aus BEIDEN Quellen
+    alle_monate: set[tuple[int, int]] = set(zeitraum_monate)
+    for md in monatsdaten_list:
+        alle_monate.add((md.jahr, md.monat))
+
+    if alle_monate:
+        sorted_alle = sorted(alle_monate)
+        first = sorted_alle[0]
+        last = sorted_alle[-1]
         zeitraum_von = f"{first[0]}-{first[1]:02d}"
         zeitraum_bis = f"{last[0]}-{last[1]:02d}"
-        anzahl_monate = len(zeitraum_monate)
-    # Fallback: Zeitraum aus Monatsdaten
-    elif monatsdaten_list:
-        first = monatsdaten_list[0]
-        last = monatsdaten_list[-1]
-        zeitraum_von = f"{first.jahr}-{first.monat:02d}"
-        zeitraum_bis = f"{last.jahr}-{last.monat:02d}"
-        anzahl_monate = len(monatsdaten_list)
+        anzahl_monate = len(alle_monate)
 
     # Kumulative Ersparnis inkl. anteilige Betriebskosten
     betriebskosten_zeitraum = betriebskosten_ges * anzahl_monate / 12 if anzahl_monate > 0 else 0
@@ -910,8 +910,10 @@ class KomponentenMonat(BaseModel):
     wp_waerme_kwh: float
     wp_strom_kwh: float
     wp_cop: Optional[float]
-    wp_heizung_kwh: float  # NEU: getrennt
-    wp_warmwasser_kwh: float  # NEU: getrennt
+    wp_heizung_kwh: float
+    wp_warmwasser_kwh: float
+    wp_strom_heizen_kwh: float
+    wp_strom_warmwasser_kwh: float
 
     # E-Mobilität
     emob_km: float
@@ -1047,6 +1049,7 @@ async def get_komponenten_zeitreihe(
             "speicher_arbitrage": 0, "speicher_arbitrage_preis_sum": 0, "speicher_arbitrage_count": 0,
             # Wärmepumpe
             "wp_waerme": 0, "wp_strom": 0, "wp_heizung": 0, "wp_warmwasser": 0,
+            "wp_strom_heizen": 0, "wp_strom_warmwasser": 0,
             # E-Mobilität
             "emob_km": 0, "emob_ladung": 0, "emob_pv_ladung": 0,
             "emob_netz_ladung": 0, "emob_extern_ladung": 0, "emob_extern_euro": 0, "emob_v2h": 0,
@@ -1109,6 +1112,9 @@ async def get_komponenten_zeitreihe(
                 data.get("strom_kwh", 0) or
                 data.get("verbrauch_kwh", 0) or 0
             )
+            if "strom_heizen_kwh" in data:
+                d["wp_strom_heizen"] += data.get("strom_heizen_kwh", 0) or 0
+                d["wp_strom_warmwasser"] += data.get("strom_warmwasser_kwh", 0) or 0
 
         elif inv.typ in ("e-auto", "wallbox"):
             d["emob_km"] += data.get("km_gefahren", 0) or 0
@@ -1197,6 +1203,8 @@ async def get_komponenten_zeitreihe(
             wp_cop=round(wp_cop, 2) if wp_cop else None,
             wp_heizung_kwh=round(d["wp_heizung"], 1),
             wp_warmwasser_kwh=round(d["wp_warmwasser"], 1),
+            wp_strom_heizen_kwh=round(d["wp_strom_heizen"], 1),
+            wp_strom_warmwasser_kwh=round(d["wp_strom_warmwasser"], 1),
             # E-Mobilität
             emob_km=round(d["emob_km"], 0),
             emob_ladung_kwh=round(d["emob_ladung"], 1),
@@ -1934,18 +1942,37 @@ async def get_share_text(
     )
     investitionen = inv_result.scalars().all()
 
-    # Hauptausrichtung: PV-Modul mit größter Leistung
+    # Ausrichtung: nur anzeigen wenn eindeutig (1 String oder alle gleich)
     pv_module = [i for i in investitionen if i.typ == "pv-module"]
-    if pv_module:
-        haupt_pv = max(pv_module, key=lambda i: i.leistung_kwp or 0)
-        ausrichtung = haupt_pv.ausrichtung or "Süd"
-        neigung = haupt_pv.neigung_grad if haupt_pv.neigung_grad is not None else 30
-    else:
-        ausrichtung = "Süd"
-        neigung = 30
 
-    # Anlagenleistung
+    def _ausrichtung_label(inv) -> str:
+        """Gibt den besten verfügbaren Ausrichtungs-String zurück.
+        Bevorzugt ausrichtung_grad aus parameter (exakter Wert), sonst Label."""
+        grad = (inv.parameter or {}).get("ausrichtung_grad")
+        if grad is not None:
+            try:
+                return f"{float(grad):+.0f}°"
+            except (TypeError, ValueError):
+                pass
+        return inv.ausrichtung or "Süd"
+
+    ausrichtung_anzeigen: str | None = None
+    neigung = 30
+    if len(pv_module) == 1:
+        ausrichtung_anzeigen = _ausrichtung_label(pv_module[0])
+        neigung = pv_module[0].neigung_grad if pv_module[0].neigung_grad is not None else 30
+    elif len(pv_module) > 1:
+        labels = [_ausrichtung_label(m) for m in pv_module]
+        if len(set(labels)) == 1:
+            ausrichtung_anzeigen = labels[0]
+            neigung = pv_module[0].neigung_grad if pv_module[0].neigung_grad is not None else 30
+        # else: mehrere verschiedene → kein Ausrichtungs-Label
+
+    # Anlagenleistung (PV-Module + Balkonkraftwerk)
     kwp = sum(i.leistung_kwp or 0 for i in investitionen if i.typ == "pv-module")
+    for i in investitionen:
+        if i.typ == "balkonkraftwerk":
+            kwp += (i.parameter or {}).get("leistung_wp", 0) / 1000
     if kwp == 0 and anlage.leistung_kwp:
         kwp = anlage.leistung_kwp
 
@@ -2084,13 +2111,14 @@ async def get_share_text(
 
     monat_name = MONATSNAMEN[monat]
     standort = f" | {bundesland}" if bundesland else ""
+    ausrichtung_str = f" | {ausrichtung_anzeigen}" if ausrichtung_anzeigen else ""
 
     # Text generieren
     if variante == "ausfuehrlich":
         lines = [
             f"☀️ PV-Monatsreport {monat_name} {jahr}",
             "",
-            f"🔧 Anlage: {f(kwp, 1)} kWp | {ausrichtung} {neigung}°{standort}",
+            f"🔧 Anlage: {f(kwp, 1)} kWp{ausrichtung_str}{standort}",
             f"⚡ Erzeugung: {f(pv_erzeugung)} kWh ({f(spez_ertrag, 1)} kWh/kWp)",
         ]
 
@@ -2128,7 +2156,7 @@ async def get_share_text(
     else:
         # Kompakt
         lines = [
-            f"☀️ PV-Bilanz {monat_name} {jahr} | {f(kwp, 1)} kWp | {ausrichtung} {neigung}°{standort}",
+            f"☀️ PV-Bilanz {monat_name} {jahr} | {f(kwp, 1)} kWp{ausrichtung_str}{standort}",
             "",
             f"Erzeugung: {f(pv_erzeugung)} kWh ({f(spez_ertrag, 1)} kWh/kWp)",
             f"Autarkie: {f(autarkie)}% | Eigenverbrauch: {f(ev_quote)}%",

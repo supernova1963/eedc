@@ -3,10 +3,10 @@ import { useState, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Sun, ArrowRight, Calendar } from 'lucide-react'
 import { Card, Button, LoadingSpinner, Alert } from '../components/ui'
-import { useSelectedAnlage, useAggregierteDaten, useAggregierteStats, useAktuellerStrompreis } from '../hooks'
-import { EnergieTab, KomponentenTab, FinanzenTab, CO2Tab, InvestitionenTab, PVAnlageTab } from './auswertung/index'
+import { useSelectedAnlage, useAggregierteDaten, useAggregierteStats, useAktuellerStrompreis, useStrompreise } from '../hooks'
+import { EnergieTab, KomponentenTab, FinanzenTab, CO2Tab, InvestitionenTab, PVAnlageTab, TabelleTab } from './auswertung/index'
 
-type TabType = 'energie' | 'pv' | 'komponenten' | 'finanzen' | 'co2' | 'investitionen'
+type TabType = 'energie' | 'pv' | 'komponenten' | 'finanzen' | 'co2' | 'investitionen' | 'tabelle'
 
 // Zeitraum-Label für Anzeige erstellen
 function getZeitraumLabel(selectedYear: number | 'all', verfuegbareJahre: number[]): string {
@@ -31,6 +31,7 @@ export default function Auswertung() {
   // Aggregierte Daten verwenden für korrekte PV-Erzeugung aus InvestitionMonatsdaten
   const { daten: aggregierteDaten, loading: mdLoading } = useAggregierteDaten(anlageId)
   const { strompreis } = useAktuellerStrompreis(anlageId ?? null)
+  const { strompreise: alleTarife } = useStrompreise(anlageId)
 
   // Verfügbare Jahre
   const verfuegbareJahre = useMemo(() => {
@@ -92,6 +93,7 @@ export default function Auswertung() {
     { key: 'finanzen', label: 'Finanzen' },
     { key: 'co2', label: 'CO2' },
     { key: 'investitionen', label: 'Investitionen' },
+    { key: 'tabelle', label: 'Tabelle' },
   ]
 
   // Zeitraum-Label berechnen
@@ -157,7 +159,7 @@ export default function Auswertung() {
       {/* Tab Content */}
       <div>
         {activeTab === 'energie' && (
-          <EnergieTab data={filteredData} stats={filteredStats} anlage={anlage} strompreis={strompreis} zeitraumLabel={zeitraumLabel} />
+          <EnergieTab data={filteredData} stats={filteredStats} anlage={anlage} strompreis={strompreis} alleTarife={alleTarife} zeitraumLabel={zeitraumLabel} />
         )}
         {activeTab === 'pv' && anlageId && (
           <PVAnlageTab anlageId={anlageId} selectedYear={selectedYear} verfuegbareJahre={verfuegbareJahre} zeitraumLabel={zeitraumLabel} />
@@ -166,13 +168,16 @@ export default function Auswertung() {
           <KomponentenTab anlage={anlage} strompreis={strompreis} selectedYear={selectedYear} zeitraumLabel={zeitraumLabel} />
         )}
         {activeTab === 'finanzen' && (
-          <FinanzenTab data={filteredData} stats={filteredStats} strompreis={strompreis} anlageId={anlageId} zeitraumLabel={zeitraumLabel} />
+          <FinanzenTab data={filteredData} stats={filteredStats} strompreis={strompreis} alleTarife={alleTarife} anlageId={anlageId} zeitraumLabel={zeitraumLabel} />
         )}
         {activeTab === 'co2' && (
           <CO2Tab data={filteredData} stats={filteredStats} zeitraumLabel={zeitraumLabel} />
         )}
         {activeTab === 'investitionen' && anlageId && (
           <InvestitionenTab anlageId={anlageId} strompreis={strompreis} selectedYear={selectedYear} zeitraumLabel={zeitraumLabel} />
+        )}
+        {activeTab === 'tabelle' && (
+          <TabelleTab data={filteredData} stats={filteredStats} anlage={anlage} strompreis={strompreis} alleTarife={alleTarife} zeitraumLabel={zeitraumLabel} alleDaten={aggregierteDaten} selectedYear={selectedYear} />
         )}
       </div>
     </div>
