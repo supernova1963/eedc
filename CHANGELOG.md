@@ -7,6 +7,27 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ---
 
+## [3.8.14] - 2026-04-02
+
+### Behoben
+
+- **Batterie-Ladung heute falsch bei Huawei (und ähnlichen) Sensoren (#93 #94)**: Die HA History API liefert als ersten Datenpunkt den letzten bekannten State vor Mitternacht (z.B. 23:59 gestern mit 10,48 kWh) — auch wenn der Sensor kurz danach auf 0 zurückgesetzt wurde. Die bisherige Delta-Berechnung (`val_end − pts[0]`) erkannte diesen Fall nicht (kein Negativsprung im Gesamtdelta) und lieferte z.B. 0,1 statt 10,6 kWh für Batterie-Ladung heute → dadurch war auch der Hausverbrauch ~10 kWh zu hoch. Fix: `pts[0]` durch `min(pts)` ersetzt — der Minimalwert entspricht dem Post-Reset-Wert (≈ 0) und liefert die korrekte Tages-Akkumulation unabhängig davon, ob der Reset-Zeitpunkt im History-Fenster liegt. Betrifft alle kumulativen kWh-Sensoren (Batterie Ladung/Entladung, WP, Wallbox etc.). Zusätzlich: Double-Scale-Bug im Reset-Zweig behoben.
+
+---
+
+## [3.8.13] - 2026-04-02
+
+### Verbessert
+
+- **Daten-Checker: umfassend erweitert** — Der Checker prüft jetzt alle Investitionstypen und Monatsdaten deutlich detaillierter:
+  - *Stammdaten*: Standort (Ort/PLZ) für Community-Benchmark-Vergleich
+  - *Strompreise*: WP- und E-Auto-Spezialtarife auf Existenz geprüft
+  - *Investitionen*: Balkonkraftwerk (`leistung_wp`), Wallbox (`leistung_kw`), Wechselrichter (`leistung_ac_kw`) — bisher ohne Checks. Speicher prüft Arbitrage-Preise wenn aktiv, E-Auto prüft V2H-Entladepreis wenn aktiv. WP prüft JAZ/SCOP/COPs je nach gewähltem Effizienz-Modus auf Plausibilität
+  - *Investitions-Monatsdaten*: Vollständigkeit wird jetzt gegen die Hauptmonatsdaten als Referenz geprüft (ab `anschaffungsdatum` der jeweiligen Investition) — fehlende Einträge werden erkannt, nicht nur fehlende Felder in vorhandenen Einträgen. WP berücksichtigt `getrennte_strommessung`
+  - *Monatsdaten-Plausibilität*: Pflichtfelder (`einspeisung_kwh`, `netzbezug_kwh`) werden auf `None` geprüft; Batterie-Felder wenn Speicher vorhanden. Neuer Energiebilanz-Check: negativer Hausverbrauch (`PV − Einspeisung + Netzbezug ± Batterie < 0`) wird als ERROR mit vollständiger Wert-Aufschlüsselung gemeldet
+
+---
+
 ## [3.8.12] - 2026-04-01
 
 ### Behoben
