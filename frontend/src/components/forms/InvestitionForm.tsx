@@ -31,14 +31,15 @@ function gradToAusrichtung(grad: number): string {
 }
 
 // Parent-Kind Beziehungen (analog zu useSetupWizard.ts)
-const PARENT_MAPPING: Partial<Record<InvestitionTyp, InvestitionTyp>> = {
-  'pv-module': 'wechselrichter',  // Pflicht
-  'speicher': 'wechselrichter',    // Optional
+const PARENT_MAPPING: Partial<Record<InvestitionTyp, InvestitionTyp | InvestitionTyp[]>> = {
+  'pv-module': 'wechselrichter',                          // Pflicht
+  'speicher': ['wechselrichter', 'balkonkraftwerk'],       // Optional — Hybrid-WR oder BKW mit integriertem Speicher
 }
 const PARENT_REQUIRED: InvestitionTyp[] = ['pv-module']
 
 const PARENT_TYPE_LABELS: Record<string, string> = {
   'wechselrichter': 'Wechselrichter',
+  'balkonkraftwerk': 'Balkonkraftwerk',
 }
 
 interface InvestitionFormProps {
@@ -97,20 +98,26 @@ export default function InvestitionForm({ investition, anlageId, typ, anlage, on
     ha_entity_id: investition?.ha_entity_id || '',
   })
 
-  // Parent-Typ für diesen Investitions-Typ ermitteln
-  const parentTyp = PARENT_MAPPING[typ]
+  // Parent-Typ(en) für diesen Investitions-Typ ermitteln
+  const parentTypRaw = PARENT_MAPPING[typ]
+  const parentTypen: InvestitionTyp[] = parentTypRaw
+    ? (Array.isArray(parentTypRaw) ? parentTypRaw : [parentTypRaw])
+    : []
   const isParentRequired = PARENT_REQUIRED.includes(typ)
+  const parentLabel = parentTypen.map(t => PARENT_TYPE_LABELS[t] || t).join(' / ')
 
-  // Parent-Investitionen laden wenn nötig
+  // Parent-Investitionen laden wenn nötig (alle erlaubten Parent-Typen)
   useEffect(() => {
-    if (parentTyp) {
-      setLoadingParents(true)
-      investitionenApi.list(anlageId, parentTyp, true)
-        .then(parents => setPossibleParents(parents.filter(p => p.id !== investition?.id)))
-        .catch(() => setPossibleParents([]))
-        .finally(() => setLoadingParents(false))
-    }
-  }, [parentTyp, anlageId, investition?.id])
+    if (parentTypen.length === 0) return
+    setLoadingParents(true)
+    Promise.all(parentTypen.map(t => investitionenApi.list(anlageId, t, true)))
+      .then(results => {
+        const merged = results.flat().filter(p => p.id !== investition?.id)
+        setPossibleParents(merged)
+      })
+      .catch(() => setPossibleParents([]))
+      .finally(() => setLoadingParents(false))
+  }, [typ, anlageId, investition?.id])
 
   // Typ-spezifische Parameter
   const params = investition?.parameter || {}
@@ -316,7 +323,7 @@ export default function InvestitionForm({ investition, anlageId, typ, anlage, on
 
       // Validierung: Parent erforderlich?
       if (isParentRequired && possibleParents.length > 0 && !formData.parent_investition_id) {
-        setError(`${typLabels[typ]} müssen einem ${PARENT_TYPE_LABELS[parentTyp!] || parentTyp} zugeordnet werden`)
+        setError(`${typLabels[typ]} müssen einem ${parentLabel} zugeordnet werden`)
         return
       }
 
@@ -436,12 +443,12 @@ export default function InvestitionForm({ investition, anlageId, typ, anlage, on
       </div>
 
       {/* Parent-Zuordnung (z.B. PV-Module → Wechselrichter) */}
-      {parentTyp && (
+      {parentTypen.length > 0 && (
         <div className="space-y-4">
           <h3 className="text-sm font-medium text-gray-900 dark:text-white">Zuordnung</h3>
           <div>
             <label htmlFor="parent_investition_id" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-              Gehört zu ({PARENT_TYPE_LABELS[parentTyp] || parentTyp})
+              Gehört zu ({parentLabel})
               {isParentRequired ? ' *' : ' (optional)'}
               {loadingParents && <span className="text-xs text-gray-400 ml-2">(Laden...)</span>}
             </label>
@@ -477,12 +484,12 @@ export default function InvestitionForm({ investition, anlageId, typ, anlage, on
                   <AlertCircle className="w-4 h-4 flex-shrink-0" />
                   {isParentRequired ? (
                     <span>
-                      Bitte legen Sie zuerst einen <strong>{PARENT_TYPE_LABELS[parentTyp] || parentTyp}</strong> an,
+                      Bitte legen Sie zuerst einen <strong>{parentLabel}</strong> an,
                       bevor Sie {typLabels[typ]} erstellen können.
                     </span>
                   ) : (
                     <span>
-                      Kein {PARENT_TYPE_LABELS[parentTyp] || parentTyp} vorhanden.
+                      Kein {parentLabel} vorhanden.
                       Zuordnung ist optional.
                     </span>
                   )}
@@ -1285,16 +1292,23 @@ function TypSpecificFields({ typ, paramData, onChange }: TypSpecificFieldsProps)
             <span className="text-gray-700 dark:text-gray-300">Mit Speicher (z.B. Anker SOLIX)</span>
           </label>
           {paramData.hat_speicher && (
-            <Input
-              label="Speicher-Kapazität (Wh)"
-              name="param_speicher_kapazitaet_wh"
-              type="number"
-              step="1"
-              min="0"
-              value={paramData.speicher_kapazitaet_wh as string}
-              onChange={onChange}
-              hint="z.B. 1600 Wh für Anker SOLIX"
-            />
+            <>
+              <Input
+                label="Speicher-Kapazität (Wh)"
+                name="param_speicher_kapazitaet_wh"
+                type="number"
+                step="1"
+                min="0"
+                value={paramData.speicher_kapazitaet_wh as string}
+                onChange={onChange}
+                hint="z.B. 1600 Wh für Anker SOLIX"
+              />
+              <p className="text-xs text-amber-600 dark:text-amber-400 mt-2">
+                Für vollständige Auswertungen (Live-Dashboard, Cockpit, Tagesverlauf) bitte den Speicher
+                zusätzlich als separate <strong>Speicher-Investition</strong> erfassen und dort die
+                Batterieleistung sowie den SoC-Sensor zuordnen.
+              </p>
+            </>
           )}
         </div>
       )
