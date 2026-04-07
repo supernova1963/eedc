@@ -1,0 +1,7 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Bug melden oder Feature anfragen
+    url: https://github.com/supernova1963/eedc-homeassistant/issues/new
+    about: >
+      Dieses Repo ist ein Spiegel von eedc-homeassistant.
+      Bitte melde Issues dort — sie werden sonst leicht übersehen.
