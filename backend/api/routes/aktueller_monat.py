@@ -46,6 +46,19 @@ class DatenquelleInfo(BaseModel):
     zeitpunkt: Optional[str] = None
 
 
+class InvestitionFinancialDetail(BaseModel):
+    """Finanzielle Details einer einzelnen Investition für den T-Konto-View."""
+    investition_id: int
+    bezeichnung: str
+    typ: str
+    betriebskosten_monat_euro: float = 0.0
+    erloes_euro: Optional[float] = None      # z.B. BKW-Einspeisung
+    ersparnis_euro: Optional[float] = None   # Eigenverbrauch, WP, eMob, Speicher, ...
+    ersparnis_label: str = ""                # "Eigenverbrauch-Ersparnis", "Ersparnis vs. Gas", ...
+    formel: Optional[str] = None
+    berechnung: Optional[str] = None
+
+
 class AktuellerMonatResponse(BaseModel):
     """Aggregierte Übersicht des aktuellen Monats."""
     anlage_id: int
@@ -69,18 +82,44 @@ class AktuellerMonatResponse(BaseModel):
     autarkie_prozent: Optional[float] = None
     eigenverbrauch_quote_prozent: Optional[float] = None
 
-    # Komponenten
+    # Komponenten — Speicher
     speicher_ladung_kwh: Optional[float] = None
     speicher_entladung_kwh: Optional[float] = None
+    speicher_ladung_netz_kwh: Optional[float] = None   # Arbitrage-Ladung vom Netz
+    speicher_wirkungsgrad_prozent: Optional[float] = None  # Entladung / Ladung * 100
+    speicher_vollzyklen: Optional[float] = None        # Ladung / Kapazität
+    speicher_kapazitaet_kwh: Optional[float] = None    # Aus Investition.parameter
     hat_speicher: bool = False
+
+    # Komponenten — Wärmepumpe
     wp_strom_kwh: Optional[float] = None
     wp_waerme_kwh: Optional[float] = None
+    wp_heizung_kwh: Optional[float] = None
+    wp_warmwasser_kwh: Optional[float] = None
     hat_waermepumpe: bool = False
+
+    # Komponenten — E-Mobilität
     emob_ladung_kwh: Optional[float] = None
     emob_km: Optional[float] = None
+    emob_ladung_pv_kwh: Optional[float] = None       # PV-Anteil der Ladung
+    emob_ladung_netz_kwh: Optional[float] = None     # Netz-Anteil
+    emob_ladung_extern_kwh: Optional[float] = None   # Extern (Ladesäule o.ä.)
+    emob_v2h_kwh: Optional[float] = None             # V2H-Rückspeisung
     hat_emobilitaet: bool = False
+
+    # Komponenten — BKW
     bkw_erzeugung_kwh: Optional[float] = None
+    bkw_eigenverbrauch_kwh: Optional[float] = None
     hat_balkonkraftwerk: bool = False
+
+    # Komponenten — Sonstiges
+    sonstiges_erzeugung_kwh: Optional[float] = None    # Erzeuger-Typ
+    sonstiges_eigenverbrauch_kwh: Optional[float] = None
+    sonstiges_einspeisung_kwh: Optional[float] = None
+    sonstiges_verbrauch_kwh: Optional[float] = None    # Verbraucher-Typ
+    sonstiges_bezug_pv_kwh: Optional[float] = None
+    sonstiges_bezug_netz_kwh: Optional[float] = None
+    hat_sonstiges: bool = False
 
     # Finanzen (Euro)
     einspeise_erloes_euro: Optional[float] = None
@@ -89,10 +128,22 @@ class AktuellerMonatResponse(BaseModel):
     netto_ertrag_euro: Optional[float] = None
     wp_ersparnis_euro: Optional[float] = None
     emob_ersparnis_euro: Optional[float] = None
+    gesamtnettoertrag_euro: Optional[float] = None  # Erlöse + Einsparungen − Kosten
+
+    # Tarif-Info
+    netzbezug_preis_cent: Optional[float] = None      # Verwendeter Tarif
+    einspeise_preis_cent: Optional[float] = None
+    netzbezug_durchschnittspreis_cent: Optional[float] = None  # Flexibler Tarif (Monatsdurchschnitt)
 
     # Vergleiche
     vorjahr: Optional[dict] = None
     soll_pv_kwh: Optional[float] = None
+
+    # Betriebskosten (anteilig, Σ betriebskosten_jahr / 12 aller aktiven Investitionen)
+    betriebskosten_anteilig_euro: Optional[float] = None
+
+    # Per-Investition Finanzdetails (für T-Konto)
+    investitionen_financials: list[InvestitionFinancialDetail] = []
 
     # Quellenangabe pro Feld
     feld_quellen: dict[str, DatenquelleInfo] = {}
@@ -364,7 +415,8 @@ async def _collect_mqtt_inbound_data(anlage: Anlage, investitionen: list[Investi
 # =============================================================================
 
 async def _load_vorjahr(anlage_id: int, investitionen: list[Investition], jahr: int, monat: int, db: AsyncSession) -> Optional[dict]:
-    """Lädt Vorjahres-Monatsdaten für Vergleich."""
+    """Lädt Vorjahres-Monatsdaten für Vergleich (Energie + Finanzen)."""
+    from datetime import date as date_type
     vj = jahr - 1
 
     md_result = await db.execute(
@@ -381,12 +433,16 @@ async def _load_vorjahr(anlage_id: int, investitionen: list[Investition], jahr: 
     result: dict = {
         "einspeisung_kwh": md.einspeisung_kwh,
         "netzbezug_kwh": md.netzbezug_kwh,
+        "netzbezug_durchschnittspreis_cent": md.netzbezug_durchschnittspreis_cent,
     }
 
-    # PV-Erzeugung + Batterie aus InvestitionMonatsdaten
+    # PV-Erzeugung + Batterie + WP + eMob aus InvestitionMonatsdaten
     pv_inv_ids = [i.id for i in investitionen if i.typ in ("pv-module", "balkonkraftwerk")]
     bat_inv_ids = [i.id for i in investitionen if i.typ == "speicher"]
-    all_inv_ids = pv_inv_ids + bat_inv_ids
+    wp_inv_ids = [i.id for i in investitionen if i.typ == "waermepumpe"]
+    emob_inv_ids = [i.id for i in investitionen if i.typ in ("e-auto", "wallbox") and not (i.parameter or {}).get("ist_dienstlich", False)]
+    all_inv_ids = pv_inv_ids + bat_inv_ids + wp_inv_ids + emob_inv_ids
+
     if all_inv_ids:
         imd_result = await db.execute(
             select(InvestitionMonatsdaten).where(
@@ -398,6 +454,11 @@ async def _load_vorjahr(anlage_id: int, investitionen: list[Investition], jahr: 
         pv_vj = 0.0
         bat_ladung_vj = 0.0
         bat_entladung_vj = 0.0
+        wp_strom_vj = 0.0
+        wp_waerme_vj = 0.0
+        emob_ladung_vj = 0.0
+        emob_km_vj = 0.0
+
         for imd in imd_result.scalars().all():
             data = imd.verbrauch_daten or {}
             if imd.investition_id in pv_inv_ids:
@@ -405,14 +466,34 @@ async def _load_vorjahr(anlage_id: int, investitionen: list[Investition], jahr: 
             elif imd.investition_id in bat_inv_ids:
                 bat_ladung_vj += data.get("ladung_kwh", 0) or 0
                 bat_entladung_vj += data.get("entladung_kwh", 0) or 0
+            elif imd.investition_id in wp_inv_ids:
+                wp_strom_vj += (
+                    data.get("stromverbrauch_kwh", 0) or
+                    (data.get("strom_heizen_kwh", 0) or 0) + (data.get("strom_warmwasser_kwh", 0) or 0) or 0
+                )
+                wp_waerme_vj += (
+                    (data.get("heizenergie_kwh", 0) or 0) + (data.get("warmwasser_kwh", 0) or 0)
+                )
+            elif imd.investition_id in emob_inv_ids:
+                emob_ladung_vj += data.get("ladung_kwh", 0) or data.get("verbrauch_kwh", 0) or 0
+                emob_km_vj += data.get("km_gefahren", 0) or 0
+
         if pv_vj > 0:
             result["pv_erzeugung_kwh"] = round(pv_vj, 1)
         if bat_ladung_vj > 0:
             result["speicher_ladung_kwh"] = round(bat_ladung_vj, 1)
         if bat_entladung_vj > 0:
             result["speicher_entladung_kwh"] = round(bat_entladung_vj, 1)
+        if wp_strom_vj > 0:
+            result["wp_strom_kwh"] = round(wp_strom_vj, 1)
+        if wp_waerme_vj > 0:
+            result["wp_waerme_kwh"] = round(wp_waerme_vj, 1)
+        if emob_ladung_vj > 0:
+            result["emob_ladung_kwh"] = round(emob_ladung_vj, 1)
+        if emob_km_vj > 0:
+            result["emob_km"] = round(emob_km_vj, 1)
 
-    # Berechnete Werte (mit Batterie-Korrektur)
+    # Berechnete Energie-Werte (mit Batterie-Korrektur)
     pv = result.get("pv_erzeugung_kwh", 0) or 0
     einsp = result.get("einspeisung_kwh", 0) or 0
     netz = result.get("netzbezug_kwh", 0) or 0
@@ -423,6 +504,32 @@ async def _load_vorjahr(anlage_id: int, investitionen: list[Investition], jahr: 
     gv = ev + netz
     result["eigenverbrauch_kwh"] = round(ev, 1)
     result["autarkie_prozent"] = round(ev / gv * 100, 1) if gv > 0 else None
+
+    # Finanzen mit historisch korrektem Tarif berechnen
+    try:
+        stichtag_vj = date_type(vj, monat, 1)
+        tarife_vj = await lade_tarife_fuer_anlage(db, anlage_id, target_date=stichtag_vj)
+        tarif_vj = tarife_vj.get("allgemein")
+        if tarif_vj:
+            netz_preis = tarif_vj.netzbezug_arbeitspreis_cent_kwh or 30.0
+            einsp_preis = tarif_vj.einspeiseverguetung_cent_kwh or 8.2
+            grundpreis = tarif_vj.grundpreis_euro_monat or 0
+            # Flexibler Tarif überschreibt wenn vorhanden
+            if result.get("netzbezug_durchschnittspreis_cent"):
+                netz_preis = result["netzbezug_durchschnittspreis_cent"]
+            if einsp > 0:
+                result["einspeise_erloes_euro"] = round(einsp * einsp_preis / 100, 2)
+            if netz > 0:
+                result["netzbezug_kosten_euro"] = round(netz * netz_preis / 100 + grundpreis, 2)
+            if ev > 0:
+                result["ev_ersparnis_euro"] = round(ev * netz_preis / 100, 2)
+            einspeise_e = result.get("einspeise_erloes_euro", 0) or 0
+            ev_e = result.get("ev_ersparnis_euro", 0) or 0
+            netz_k = result.get("netzbezug_kosten_euro", 0) or 0
+            if einspeise_e or ev_e:
+                result["gesamtnettoertrag_euro"] = round(einspeise_e + ev_e - netz_k, 2)
+    except Exception:
+        logger.warning("Vorjahr-Finanzen konnten nicht berechnet werden")
 
     return result
 
@@ -572,12 +679,16 @@ async def get_aktueller_monat(
     netzbezug_kosten = None
     ev_ersparnis = None
     netto_ertrag = None
+    netzbezug_preis_cent = None
+    einspeise_cent = None
 
     tarife = await lade_tarife_fuer_anlage(db, anlage_id)
     allgemein_tarif = tarife.get("allgemein")
     if allgemein_tarif:
         netzbezug_preis_cent = allgemein_tarif.netzbezug_arbeitspreis_cent_kwh if allgemein_tarif.netzbezug_arbeitspreis_cent_kwh is not None else 30.0
         einspeise_cent = allgemein_tarif.einspeiseverguetung_cent_kwh if allgemein_tarif.einspeiseverguetung_cent_kwh is not None else 8.2
+        # Flexibler Durchschnittspreis überschreibt Netzbezugspreis für Finanzberechnung
+        # (wird nach dem Monatsdaten-Laden gesetzt, hier Platzhalter für spätere Überschreibung)
 
         if einspeisung is not None:
             einspeise_erloes = round(einspeisung * einspeise_cent / 100, 2)
@@ -625,6 +736,191 @@ async def get_aktueller_monat(
     # BKW-Ersparnis wird NICHT separat ausgewiesen — BKW-Erzeugung fließt in
     # pv_erzeugung_total und damit in eigenverbrauch ein → bereits in ev_ersparnis enthalten.
 
+    # ── Betriebskosten anteilig ──
+    betriebskosten_anteilig = None
+    bk_summe = sum(
+        (i.betriebskosten_jahr or 0) / 12
+        for i in investitionen
+        if (i.betriebskosten_jahr or 0) > 0
+    )
+    if bk_summe > 0:
+        betriebskosten_anteilig = round(bk_summe, 2)
+
+    # ── Gesamtnettoertrag = Erlöse + Einsparungen − Kosten ──
+    gesamtnettoertrag = None
+    if einspeise_erloes is not None and ev_ersparnis is not None and netzbezug_kosten is not None:
+        gesamtnettoertrag = round(
+            einspeise_erloes + ev_ersparnis
+            + (wp_ersparnis or 0)
+            + (emob_ersparnis or 0)
+            - netzbezug_kosten,
+            2,
+        )
+
+    # ── Komponenten-Detail aus gespeicherten InvestitionMonatsdaten ──
+    # Speicher: Kapazität, Arbitrage-Ladung, Wirkungsgrad, Vollzyklen
+    speicher_ladung_netz = None
+    speicher_wirkungsgrad = None
+    speicher_vollzyklen = None
+    speicher_kapazitaet = None
+
+    speicher_invs = [i for i in investitionen if i.typ == "speicher"]
+    if speicher_invs:
+        # Kapazität aus parameter
+        kap_sum = sum((i.parameter or {}).get("kapazitaet_kwh", 0) or 0 for i in speicher_invs)
+        if kap_sum > 0:
+            speicher_kapazitaet = round(kap_sum, 1)
+
+        # Arbitrage-Ladung aus gespeicherten Daten
+        sp_ids = [i.id for i in speicher_invs]
+        sp_imd = await db.execute(
+            select(InvestitionMonatsdaten).where(
+                InvestitionMonatsdaten.investition_id.in_(sp_ids),
+                InvestitionMonatsdaten.jahr == jahr,
+                InvestitionMonatsdaten.monat == monat,
+            )
+        )
+        ladung_netz_total = 0.0
+        for imd in sp_imd.scalars().all():
+            data = imd.verbrauch_daten or {}
+            ladung_netz_total += data.get("ladung_netz_kwh", 0) or 0
+        if ladung_netz_total > 0:
+            speicher_ladung_netz = round(ladung_netz_total, 2)
+
+        # Wirkungsgrad und Vollzyklen
+        sl = speicher_ladung or 0
+        se = speicher_entladung or 0
+        if sl > 0 and se > 0:
+            speicher_wirkungsgrad = round(se / sl * 100, 1)
+        if sl > 0 and speicher_kapazitaet and speicher_kapazitaet > 0:
+            speicher_vollzyklen = round(sl / speicher_kapazitaet, 2)
+
+    # WP: Heizung/Warmwasser-Split
+    wp_heizung = None
+    wp_warmwasser = None
+    wp_invs = [i for i in investitionen if i.typ == "waermepumpe"]
+    if wp_invs:
+        wp_ids = [i.id for i in wp_invs]
+        wp_imd = await db.execute(
+            select(InvestitionMonatsdaten).where(
+                InvestitionMonatsdaten.investition_id.in_(wp_ids),
+                InvestitionMonatsdaten.jahr == jahr,
+                InvestitionMonatsdaten.monat == monat,
+            )
+        )
+        h_total = 0.0
+        ww_total = 0.0
+        for imd in wp_imd.scalars().all():
+            data = imd.verbrauch_daten or {}
+            h_total += data.get("heizenergie_kwh", 0) or data.get("heizung_kwh", 0) or 0
+            ww_total += data.get("warmwasser_kwh", 0) or 0
+        if h_total > 0:
+            wp_heizung = round(h_total, 2)
+        if ww_total > 0:
+            wp_warmwasser = round(ww_total, 2)
+
+    # E-Mobilität: PV/Netz/Extern-Split + V2H
+    emob_pv = get_val("emob_pv_ladung_kwh")
+    emob_ladung_netz = None
+    emob_ladung_extern = None
+    emob_v2h = None
+
+    emob_invs = [i for i in investitionen if i.typ in ("e-auto", "wallbox") and not (i.parameter or {}).get("ist_dienstlich", False)]
+    if emob_invs:
+        emob_ids = [i.id for i in emob_invs]
+        emob_imd = await db.execute(
+            select(InvestitionMonatsdaten).where(
+                InvestitionMonatsdaten.investition_id.in_(emob_ids),
+                InvestitionMonatsdaten.jahr == jahr,
+                InvestitionMonatsdaten.monat == monat,
+            )
+        )
+        netz_total = 0.0
+        extern_total = 0.0
+        v2h_total = 0.0
+        for imd in emob_imd.scalars().all():
+            data = imd.verbrauch_daten or {}
+            netz_total += data.get("ladung_netz_kwh", 0) or 0
+            extern_total += data.get("ladung_extern_kwh", 0) or 0
+            v2h_total += data.get("v2h_entladung_kwh", 0) or 0
+        if netz_total > 0:
+            emob_ladung_netz = round(netz_total, 2)
+        if extern_total > 0:
+            emob_ladung_extern = round(extern_total, 2)
+        if v2h_total > 0:
+            emob_v2h = round(v2h_total, 2)
+
+    # BKW: Eigenverbrauch
+    bkw_eigenverbrauch = None
+    bkw_invs = [i for i in investitionen if i.typ == "balkonkraftwerk"]
+    if bkw_invs:
+        bkw_ids = [i.id for i in bkw_invs]
+        bkw_imd = await db.execute(
+            select(InvestitionMonatsdaten).where(
+                InvestitionMonatsdaten.investition_id.in_(bkw_ids),
+                InvestitionMonatsdaten.jahr == jahr,
+                InvestitionMonatsdaten.monat == monat,
+            )
+        )
+        ev_total = 0.0
+        for imd in bkw_imd.scalars().all():
+            data = imd.verbrauch_daten or {}
+            ev_total += data.get("eigenverbrauch_kwh", 0) or 0
+        if ev_total > 0:
+            bkw_eigenverbrauch = round(ev_total, 2)
+
+    # Sonstiges: erzeuger + verbraucher aggregieren
+    sonstiges_erzeugung = None
+    sonstiges_eigenverbrauch = None
+    sonstiges_einspeisung = None
+    sonstiges_verbrauch = None
+    sonstiges_bezug_pv = None
+    sonstiges_bezug_netz = None
+
+    sonstiges_invs = [i for i in investitionen if i.typ == "sonstiges"]
+    if sonstiges_invs:
+        sonstiges_ids = [i.id for i in sonstiges_invs]
+        sonstiges_imd = await db.execute(
+            select(InvestitionMonatsdaten).where(
+                InvestitionMonatsdaten.investition_id.in_(sonstiges_ids),
+                InvestitionMonatsdaten.jahr == jahr,
+                InvestitionMonatsdaten.monat == monat,
+            )
+        )
+        se_total = 0.0
+        sev_total = 0.0
+        sei_total = 0.0
+        sv_total = 0.0
+        sbpv_total = 0.0
+        sbnetz_total = 0.0
+        for imd in sonstiges_imd.scalars().all():
+            data = imd.verbrauch_daten or {}
+            se_total   += data.get("erzeugung_kwh", 0) or 0
+            sev_total  += data.get("eigenverbrauch_kwh", 0) or 0
+            sei_total  += data.get("einspeisung_kwh", 0) or 0
+            sv_total   += data.get("verbrauch_sonstig_kwh", 0) or 0
+            sbpv_total += data.get("bezug_pv_kwh", 0) or 0
+            sbnetz_total += data.get("bezug_netz_kwh", 0) or 0
+        if se_total > 0:   sonstiges_erzeugung    = round(se_total, 2)
+        if sev_total > 0:  sonstiges_eigenverbrauch = round(sev_total, 2)
+        if sei_total > 0:  sonstiges_einspeisung  = round(sei_total, 2)
+        if sv_total > 0:   sonstiges_verbrauch    = round(sv_total, 2)
+        if sbpv_total > 0: sonstiges_bezug_pv     = round(sbpv_total, 2)
+        if sbnetz_total > 0: sonstiges_bezug_netz = round(sbnetz_total, 2)
+
+    # Flexibler Tarif: Durchschnittspreis aus Monatsdaten lesen
+    netzbezug_durchschnittspreis = None
+    md_flex_result = await db.execute(
+        select(Monatsdaten).where(
+            Monatsdaten.anlage_id == anlage_id,
+            Monatsdaten.jahr == jahr,
+            Monatsdaten.monat == monat,
+        )
+    )
+    md_flex = md_flex_result.scalar_one_or_none()
+    if md_flex and md_flex.netzbezug_durchschnittspreis_cent is not None:
+        netzbezug_durchschnittspreis = md_flex.netzbezug_durchschnittspreis_cent
+
     # ── Komponenten-Flags ──
     hat_speicher = any(i.typ == "speicher" for i in investitionen)
     hat_waermepumpe = any(i.typ == "waermepumpe" for i in investitionen)
@@ -633,6 +929,7 @@ async def get_aktueller_monat(
         for i in investitionen
     )
     hat_balkonkraftwerk = any(i.typ == "balkonkraftwerk" for i in investitionen)
+    hat_sonstiges = any(i.typ == "sonstiges" for i in investitionen)
 
     # ── Vergleichsdaten ──
     vorjahr = await _load_vorjahr(anlage_id, investitionen, jahr, monat, db)
@@ -653,6 +950,122 @@ async def get_aktueller_monat(
         if not feld.startswith("inv_")  # Investitions-Detail-Felder ausblenden
     }
 
+    # ── Per-Investition Finanzdetails (T-Konto) ──
+    investitionen_financials: list[InvestitionFinancialDetail] = []
+    if investitionen and allgemein_tarif:
+        netz_p = netzbezug_preis_cent or 30.0
+        if netzbezug_durchschnittspreis:
+            netz_p = netzbezug_durchschnittspreis
+        einsp_p = einspeise_cent or 8.2
+        wp_tarif_obj = tarife.get("waermepumpe")
+        wp_p = (wp_tarif_obj.netzbezug_arbeitspreis_cent_kwh
+                if wp_tarif_obj and wp_tarif_obj.netzbezug_arbeitspreis_cent_kwh is not None
+                else netz_p)
+        wb_tarif_obj = tarife.get("wallbox")
+        wb_p = (wb_tarif_obj.netzbezug_arbeitspreis_cent_kwh
+                if wb_tarif_obj and wb_tarif_obj.netzbezug_arbeitspreis_cent_kwh is not None
+                else netz_p)
+        GAS_PREIS_CENT = 10.0
+
+        # Alle InvestitionMonatsdaten in einem Query laden
+        all_ids = [i.id for i in investitionen]
+        all_imd_result = await db.execute(
+            select(InvestitionMonatsdaten).where(
+                InvestitionMonatsdaten.investition_id.in_(all_ids),
+                InvestitionMonatsdaten.jahr == jahr,
+                InvestitionMonatsdaten.monat == monat,
+            )
+        )
+        imd_by_inv: dict[int, dict] = {}
+        for imd in all_imd_result.scalars().all():
+            imd_by_inv[imd.investition_id] = imd.verbrauch_daten or {}
+
+        for inv in investitionen:
+            if not inv.aktiv:
+                continue
+            data = imd_by_inv.get(inv.id, {})
+            bk_monat = round((inv.betriebskosten_jahr or 0) / 12, 2)
+            inv_erloes: Optional[float] = None
+            inv_ersparnis: Optional[float] = None
+            inv_label = ""
+            inv_formel: Optional[str] = None
+            inv_berechnung: Optional[str] = None
+
+            if inv.typ == "balkonkraftwerk":
+                ev_kwh = data.get("eigenverbrauch_kwh") or data.get("pv_erzeugung_kwh")
+                einsp_kwh = data.get("einspeisung_kwh")
+                if ev_kwh:
+                    inv_ersparnis = round(ev_kwh * netz_p / 100, 2)
+                    inv_label = "Eigenverbrauch-Ersparnis"
+                    inv_formel = "BKW-Eigenverbrauch × Netzbezugspreis"
+                    inv_berechnung = f"{ev_kwh:.1f} kWh × {netz_p:.2f} ct/kWh"
+                if einsp_kwh and einsp_kwh > 0:
+                    inv_erloes = round(einsp_kwh * einsp_p / 100, 2)
+
+            elif inv.typ == "speicher":
+                entl_kwh = data.get("entladung_kwh")
+                if entl_kwh and entl_kwh > 0:
+                    inv_ersparnis = round(entl_kwh * netz_p / 100, 2)
+                    inv_label = "Entladung-Ersparnis"
+                    inv_formel = "Speicher-Entladung × Netzbezugspreis"
+                    inv_berechnung = f"{entl_kwh:.1f} kWh × {netz_p:.2f} ct/kWh"
+
+            elif inv.typ == "waermepumpe":
+                waerme = (data.get("heizenergie_kwh", 0) or data.get("heizung_kwh", 0) or 0)
+                ww = data.get("warmwasser_kwh", 0) or 0
+                strom = data.get("stromverbrauch_kwh")
+                waerme_total = (waerme or 0) + (ww or 0)
+                if waerme_total > 0 and strom is not None:
+                    inv_ersparnis = round(
+                        (waerme_total / 0.9 * GAS_PREIS_CENT - strom * wp_p) / 100, 2
+                    )
+                    inv_label = "Ersparnis vs. Gas"
+                    inv_formel = "(Wärme ÷ 0,9 × Gaspreis) − Strom × WP-Strompreis"
+                    inv_berechnung = f"{waerme_total:.1f} kWh / 0,9 × 10 ct − {strom:.1f} kWh × {wp_p:.2f} ct"
+
+            elif inv.typ in ("e-auto", "wallbox") and not (inv.parameter or {}).get("ist_dienstlich", False):
+                km = data.get("km_gefahren")
+                ladung = data.get("ladung_kwh") or data.get("verbrauch_kwh")
+                ladung_netz = data.get("ladung_netz_kwh")
+                ladung_pv = data.get("ladung_pv_kwh")
+                if km and km > 0:
+                    benzin_kosten = km * 7 / 100 * 1.80
+                    netz_kwh = ladung_netz if ladung_netz is not None else ((ladung or 0) - (ladung_pv or 0))
+                    strom_kosten = max(0, netz_kwh) * wb_p / 100
+                    inv_ersparnis = round(benzin_kosten - strom_kosten, 2)
+                    inv_label = "Ersparnis vs. Verbrenner"
+                    inv_formel = "(km × 7 L/100km × 1,80 €/L) − Netzladung × Strompreis"
+                    inv_berechnung = f"{km:.0f} km × 7/100 × 1,80 €"
+                elif inv.typ == "wallbox" and ladung_pv and ladung_pv > 0:
+                    inv_ersparnis = round(ladung_pv * wb_p / 100, 2)
+                    inv_label = "PV-Ladung-Ersparnis"
+                    inv_formel = "PV-Ladung × Netzbezugspreis"
+                    inv_berechnung = f"{ladung_pv:.1f} kWh × {wb_p:.2f} ct/kWh"
+
+            elif inv.typ == "sonstiges":
+                ev_kwh = data.get("eigenverbrauch_kwh")
+                einsp_kwh = data.get("einspeisung_kwh")
+                if ev_kwh and ev_kwh > 0:
+                    inv_ersparnis = round(ev_kwh * netz_p / 100, 2)
+                    inv_label = "Eigenverbrauch-Ersparnis"
+                    inv_formel = "Eigenverbrauch × Netzbezugspreis"
+                    inv_berechnung = f"{ev_kwh:.1f} kWh × {netz_p:.2f} ct/kWh"
+                if einsp_kwh and einsp_kwh > 0:
+                    inv_erloes = round(einsp_kwh * einsp_p / 100, 2)
+
+            if bk_monat > 0 or inv_ersparnis is not None or inv_erloes is not None:
+                investitionen_financials.append(InvestitionFinancialDetail(
+                    investition_id=inv.id,
+                    bezeichnung=inv.bezeichnung,
+                    typ=inv.typ,
+                    betriebskosten_monat_euro=bk_monat,
+                    erloes_euro=inv_erloes,
+                    ersparnis_euro=inv_ersparnis,
+                    ersparnis_label=inv_label,
+                    formel=inv_formel,
+                    berechnung=inv_berechnung,
+                ))
+
     return AktuellerMonatResponse(
         anlage_id=anlage.id,
         anlage_name=anlage.anlagenname,
@@ -669,18 +1082,40 @@ async def get_aktueller_monat(
         gesamtverbrauch_kwh=gesamtverbrauch,
         autarkie_prozent=autarkie,
         eigenverbrauch_quote_prozent=ev_quote,
-        # Komponenten
+        # Komponenten — Speicher
         speicher_ladung_kwh=speicher_ladung,
         speicher_entladung_kwh=speicher_entladung,
+        speicher_ladung_netz_kwh=speicher_ladung_netz,
+        speicher_wirkungsgrad_prozent=speicher_wirkungsgrad,
+        speicher_vollzyklen=speicher_vollzyklen,
+        speicher_kapazitaet_kwh=speicher_kapazitaet,
         hat_speicher=hat_speicher,
+        # Komponenten — WP
         wp_strom_kwh=get_val("wp_strom_kwh"),
         wp_waerme_kwh=get_val("wp_waerme_kwh"),
+        wp_heizung_kwh=wp_heizung,
+        wp_warmwasser_kwh=wp_warmwasser,
         hat_waermepumpe=hat_waermepumpe,
+        # Komponenten — E-Mobilität
         emob_ladung_kwh=get_val("emob_ladung_kwh"),
         emob_km=get_val("emob_km"),
+        emob_ladung_pv_kwh=emob_pv if emob_pv else None,
+        emob_ladung_netz_kwh=emob_ladung_netz,
+        emob_ladung_extern_kwh=emob_ladung_extern,
+        emob_v2h_kwh=emob_v2h,
         hat_emobilitaet=hat_emobilitaet,
+        # Komponenten — BKW
         bkw_erzeugung_kwh=get_val("bkw_erzeugung_kwh"),
+        bkw_eigenverbrauch_kwh=bkw_eigenverbrauch,
         hat_balkonkraftwerk=hat_balkonkraftwerk,
+        # Komponenten — Sonstiges
+        sonstiges_erzeugung_kwh=sonstiges_erzeugung,
+        sonstiges_eigenverbrauch_kwh=sonstiges_eigenverbrauch,
+        sonstiges_einspeisung_kwh=sonstiges_einspeisung,
+        sonstiges_verbrauch_kwh=sonstiges_verbrauch,
+        sonstiges_bezug_pv_kwh=sonstiges_bezug_pv,
+        sonstiges_bezug_netz_kwh=sonstiges_bezug_netz,
+        hat_sonstiges=hat_sonstiges,
         # Finanzen
         einspeise_erloes_euro=einspeise_erloes,
         netzbezug_kosten_euro=netzbezug_kosten,
@@ -688,9 +1123,17 @@ async def get_aktueller_monat(
         netto_ertrag_euro=netto_ertrag,
         wp_ersparnis_euro=wp_ersparnis,
         emob_ersparnis_euro=emob_ersparnis,
+        gesamtnettoertrag_euro=gesamtnettoertrag,
+        betriebskosten_anteilig_euro=betriebskosten_anteilig,
+        # Tarif-Info
+        netzbezug_preis_cent=netzbezug_preis_cent if allgemein_tarif else None,
+        einspeise_preis_cent=einspeise_cent if allgemein_tarif else None,
+        netzbezug_durchschnittspreis_cent=netzbezug_durchschnittspreis,
         # Vergleiche
         vorjahr=vorjahr,
         soll_pv_kwh=soll_pv,
+        # Per-Investition Finanzdetails
+        investitionen_financials=investitionen_financials,
         # Quellen
         feld_quellen=feld_quellen,
     )

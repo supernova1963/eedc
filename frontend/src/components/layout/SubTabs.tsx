@@ -31,7 +31,7 @@ import {
   HardDrive,
   ClipboardCheck,
   ScrollText,
-  CalendarClock,
+  FileText,
 } from 'lucide-react'
 
 interface TabItem {
@@ -51,9 +51,9 @@ interface TabGroup {
 // ─── Cockpit Tabs ────────────────────────────────────────────────────────────
 // Basis-Tabs werden immer angezeigt
 const cockpitBaseTabs: TabItem[] = [
-  { name: 'Übersicht',       href: '/cockpit',                  icon: LayoutDashboard, exact: true },
-  { name: 'Aktueller Monat', href: '/cockpit/aktueller-monat',  icon: CalendarClock },
-  { name: 'PV-Anlage',       href: '/cockpit/pv-anlage',        icon: Sun },
+  { name: 'Übersicht',       href: '/cockpit',                    icon: LayoutDashboard, exact: true },
+  { name: 'Monatsberichte',  href: '/cockpit/monatsberichte',     icon: FileText },
+  { name: 'PV-Anlage',       href: '/cockpit/pv-anlage',          icon: Sun },
 ]
 
 // Investitions-Tabs: werden nur angezeigt wenn der Typ als Investition existiert

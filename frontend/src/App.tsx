@@ -11,13 +11,13 @@ import SpeicherDashboard from './pages/SpeicherDashboard'
 import WallboxDashboard from './pages/WallboxDashboard'
 import BalkonkraftwerkDashboard from './pages/BalkonkraftwerkDashboard'
 import SonstigesDashboard from './pages/SonstigesDashboard'
-import AktuellerMonat from './pages/AktuellerMonat'
 import LiveDashboard from './pages/LiveDashboard'
 
 // Auswertungen
 import Auswertung from './pages/Auswertung'
 import ROIDashboard from './pages/ROIDashboard'
 import PrognoseVsIst from './pages/PrognoseVsIst'
+import MonatsabschlussView from './pages/MonatsabschlussView'
 
 // Aussichten (Prognosen)
 import Aussichten from './pages/Aussichten'
@@ -69,7 +69,8 @@ function App() {
           <Route path="cockpit/speicher" element={<SpeicherDashboard />} />
           <Route path="cockpit/wallbox" element={<WallboxDashboard />} />
           <Route path="cockpit/balkonkraftwerk" element={<BalkonkraftwerkDashboard />} />
-          <Route path="cockpit/aktueller-monat" element={<AktuellerMonat />} />
+          <Route path="cockpit/aktueller-monat" element={<Navigate to="/cockpit/monatsberichte" replace />} />
+          <Route path="cockpit/monatsberichte" element={<MonatsabschlussView />} />
           <Route path="cockpit/sonstiges" element={<SonstigesDashboard />} />
 
           {/* Live Dashboard */}
