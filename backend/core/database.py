@@ -172,7 +172,7 @@ async def run_migrations(conn):
                 connection.execute(text('DELETE FROM tages_zusammenfassung'))
                 connection.execute(text('ALTER TABLE tages_energie_profil ADD COLUMN waermepumpe_kw FLOAT'))
                 connection.execute(text('ALTER TABLE tages_energie_profil ADD COLUMN wallbox_kw FLOAT'))
-            # v3.12.1: Per-Komponenten-Aufschlüsselung für Backfill
+            # v3.12.3: Per-Komponenten-Aufschlüsselung für Vollbackfill
             if 'komponenten' not in existing_columns:
                 connection.execute(text('ALTER TABLE tages_energie_profil ADD COLUMN komponenten JSON'))
 
