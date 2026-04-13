@@ -7,12 +7,13 @@
  *                Max/Min/Ø-Einordnung, Wasserfall, Komponenten-Detail.
  */
 
-import { useState, useMemo, useEffect, useCallback, useRef } from 'react'
+import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Sun, Battery, Flame, Car, Euro,
   ChevronDown, BarChart3, Wrench, Home, Zap, TrendingUp,
   Plug, Gauge, ArrowUpDown, RefreshCw, CalendarClock, Users, Share2,
+  ArrowUp, ArrowDown,
 } from 'lucide-react'
 import { Card, LoadingSpinner, Alert, KPICard, FormelTooltip, fmtCalc } from '../components/ui'
 import { useSelectedAnlage, useAggregierteDaten } from '../hooks'
@@ -87,6 +88,7 @@ function VglZeile({ label, aktuell, vm, vj, unit, inv = false, formel, ergebnis 
 // ─── Accordion ────────────────────────────────────────────────────────────────
 function Section({
   icon: Icon, title, summary, children, defaultOpen = false, color = 'text-blue-500',
+  onMoveUp, onMoveDown,
 }: {
   icon: React.ElementType
   title: string
@@ -94,6 +96,9 @@ function Section({
   children: React.ReactNode
   defaultOpen?: boolean
   color?: string
+  onMoveUp?: () => void
+  onMoveDown?: () => void
+  sectionId?: string  // nur als Marker für <OrderedSections> — nicht gerendert
 }) {
   const storageKey = `monatsberichte_section_${title}`
   const [open, setOpen] = useState(() => {
@@ -112,6 +117,7 @@ function Section({
       return next
     })
   }
+  const stop = (e: React.MouseEvent) => { e.stopPropagation(); e.preventDefault() }
   return (
     <Card className="!p-0">
       <button
@@ -122,6 +128,30 @@ function Section({
         <Icon className={`h-5 w-5 shrink-0 ${color}`} />
         <span className="font-semibold text-gray-900 dark:text-white text-sm">{title}</span>
         <span className="ml-2 text-sm text-gray-500 dark:text-gray-400 flex-1 min-w-0 truncate">{summary}</span>
+        {(onMoveUp || onMoveDown) && (
+          <span className="flex items-center gap-0.5 shrink-0 mr-1 border-r border-gray-200 dark:border-gray-700 pr-2" onClick={stop}>
+            <button
+              type="button"
+              onClick={(e) => { stop(e); onMoveUp?.() }}
+              disabled={!onMoveUp}
+              className="p-1 rounded text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-20 disabled:cursor-not-allowed transition-colors"
+              title="Sektion nach oben verschieben"
+              aria-label="Sektion nach oben verschieben"
+            >
+              <ArrowUp className="h-3.5 w-3.5" strokeWidth={2.5} />
+            </button>
+            <button
+              type="button"
+              onClick={(e) => { stop(e); onMoveDown?.() }}
+              disabled={!onMoveDown}
+              className="p-1 rounded text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-20 disabled:cursor-not-allowed transition-colors"
+              title="Sektion nach unten verschieben"
+              aria-label="Sektion nach unten verschieben"
+            >
+              <ArrowDown className="h-3.5 w-3.5" strokeWidth={2.5} />
+            </button>
+          </span>
+        )}
         <ChevronDown className={`h-4 w-4 text-gray-400 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
       {open && (
@@ -130,6 +160,79 @@ function Section({
         </div>
       )}
     </Card>
+  )
+}
+
+// ─── Sektions-Reihenfolge (individuell pro Nutzer, localStorage) ──────────────
+const DEFAULT_SECTION_ORDER = [
+  'energie', 'finanzen', 'community',
+  'speicher', 'waermepumpe', 'emobilitaet', 'balkonkraftwerk', 'sonstiges',
+] as const
+const SECTION_ORDER_KEY = 'monatsberichte_section_order'
+
+function loadSectionOrder(): string[] {
+  try {
+    const stored = localStorage.getItem(SECTION_ORDER_KEY)
+    if (stored) {
+      const parsed = JSON.parse(stored)
+      if (Array.isArray(parsed)) {
+        const valid = parsed.filter((id: unknown): id is string =>
+          typeof id === 'string' && (DEFAULT_SECTION_ORDER as readonly string[]).includes(id))
+        // Fehlende Defaults hinten anhängen
+        for (const def of DEFAULT_SECTION_ORDER) {
+          if (!valid.includes(def)) valid.push(def)
+        }
+        return valid
+      }
+    }
+  } catch {}
+  return [...DEFAULT_SECTION_ORDER]
+}
+
+function saveSectionOrder(order: string[]) {
+  try { localStorage.setItem(SECTION_ORDER_KEY, JSON.stringify(order)) } catch {}
+}
+
+/**
+ * Rendert JSX-Kinder (Section-Komponenten mit `sectionId="<id>"`-Prop)
+ * in der durch `order` definierten Reihenfolge und injiziert
+ * Up/Down-Handler. Kinder ohne sectionId oder mit unbekannter ID
+ * werden am Ende angehängt.
+ */
+function OrderedSections({
+  order, onMove, children, className,
+}: {
+  order: string[]
+  onMove: (id: string, dir: 'up' | 'down') => void
+  children: React.ReactNode
+  className?: string
+}) {
+  const all = React.Children.toArray(children).filter(React.isValidElement) as React.ReactElement<{ sectionId?: string }>[]
+  const byId = new Map<string, React.ReactElement<{ sectionId?: string }>>()
+  for (const child of all) {
+    const id = child.props.sectionId
+    if (id) byId.set(id, child)
+  }
+  const ordered: { id: string; el: React.ReactElement<{ sectionId?: string }> }[] = []
+  for (const id of order) {
+    const el = byId.get(id)
+    if (el) ordered.push({ id, el })
+  }
+  // Kinder ohne bekannte ID hinten anhängen
+  for (const child of all) {
+    const id = child.props.sectionId
+    if (!id || !order.includes(id)) {
+      ordered.push({ id: id || `_${ordered.length}`, el: child })
+    }
+  }
+  return (
+    <div className={className}>
+      {ordered.map(({ id, el }, i) => React.cloneElement(el, {
+        key: id,
+        onMoveUp: i > 0 ? () => onMove(id, 'up') : undefined,
+        onMoveDown: i < ordered.length - 1 ? () => onMove(id, 'down') : undefined,
+      } as Partial<React.ComponentProps<typeof Section>>))}
+    </div>
   )
 }
 
@@ -238,6 +341,21 @@ export default function MonatsabschlussView() {
   const navigate = useNavigate()
   const { anlagen, selectedAnlageId, setSelectedAnlageId, selectedAnlage, loading: anlagenLoading } = useSelectedAnlage()
   const { daten: alleMonate, loading: monateLoading } = useAggregierteDaten(selectedAnlageId)
+
+  // Individuelle Sektions-Reihenfolge
+  const [sectionOrder, setSectionOrder] = useState<string[]>(loadSectionOrder)
+  const moveSection = useCallback((id: string, dir: 'up' | 'down') => {
+    setSectionOrder(prev => {
+      const idx = prev.indexOf(id)
+      if (idx < 0) return prev
+      const target = dir === 'up' ? idx - 1 : idx + 1
+      if (target < 0 || target >= prev.length) return prev
+      const next = [...prev]
+      ;[next[idx], next[target]] = [next[target], next[idx]]
+      saveSectionOrder(next)
+      return next
+    })
+  }, [])
 
   const heute = useMemo(() => new Date(), [])
   const heuteJahr  = heute.getFullYear()
@@ -480,10 +598,10 @@ export default function MonatsabschlussView() {
         {monatError   && <Alert type="error">{monatError}</Alert>}
 
         {d && !monatLoading && (
-          <div className="space-y-3">
+          <OrderedSections order={sectionOrder} onMove={moveSection} className="space-y-3">
 
             {/* ════ SEKTION 1: Energie-Bilanz ════════════════════════════ */}
-            <Section icon={Sun} color="text-yellow-500" title="Energie-Bilanz" defaultOpen
+            <Section sectionId="energie" icon={Sun} color="text-yellow-500" title="Energie-Bilanz" defaultOpen
               summary={
                 <span className="flex items-center gap-3">
                   {d.pv_erzeugung_kwh != null && <span className="font-medium text-gray-700 dark:text-gray-300">{fmt(d.pv_erzeugung_kwh, 0)} kWh PV</span>}
@@ -643,7 +761,7 @@ export default function MonatsabschlussView() {
 
             {/* ════ SEKTION 2: Finanzen ══════════════════════════════════ */}
             {d.einspeise_erloes_euro != null && (
-              <Section icon={Euro} color="text-green-500" title="Finanzen" defaultOpen
+              <Section sectionId="finanzen" icon={Euro} color="text-green-500" title="Finanzen" defaultOpen
                 summary={
                   <span className="flex items-center gap-3">
                     {nettoNachAllem != null && (
@@ -942,47 +1060,66 @@ export default function MonatsabschlussView() {
                                 </tbody>
                               </table>
 
-                              {/* ── Mobile: SOLL oben, HABEN unten ── */}
+                              {/* ── Mobile: Gewinn-und-Verlust-Rechnung (Kosten-Block, Ertrags-Block, Ergebnis) ── */}
                               <div className="sm:hidden">
-                                {/* SOLL */}
+                                {/* Kosten */}
                                 <table className="w-full text-sm">
                                   <thead>
                                     <tr className="border-b border-gray-200 dark:border-gray-600">
-                                      <th colSpan={4} className={thSoll}>SOLL — Kosten</th>
+                                      <th colSpan={4} className={thSoll}>Kosten</th>
                                     </tr>
                                   </thead>
                                   <tbody>
-                                    {sollRows.filter(r => r !== null).map((s, i) => (
+                                    {sollPosten.map((s, i) => (
                                       <tr key={i} className="hover:bg-gray-50 dark:hover:bg-gray-700/20 transition-colors">
                                         {renderCell(s, 'soll')}
                                       </tr>
                                     ))}
                                     <tr className={sumRow}>
-                                      <td className="py-2 pl-4 pr-2 text-xs font-bold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Σ Soll</td>
-                                      <td className="py-2 pr-3 text-right tabular-nums whitespace-nowrap font-bold text-gray-900 dark:text-white">{fmtCalc(sumSoll, 2)} €</td>
-                                      <td className="py-2 pr-2 text-right tabular-nums whitespace-nowrap text-xs text-gray-400 dark:text-gray-500">{vjSumSoll != null ? `VJ: ${fmtCalc(vjSumSoll, 2)} €` : ''}</td>
-                                      <td className="py-2 pr-4 text-right whitespace-nowrap">{vjSumSoll != null ? <Δ a={sumSoll} b={vjSumSoll} inv /> : null}</td>
+                                      <td className="py-2 pl-4 pr-2 text-xs font-bold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Summe Kosten</td>
+                                      <td className="py-2 pr-3 text-right tabular-nums whitespace-nowrap font-bold text-gray-900 dark:text-white">{fmtCalc(rawSoll, 2)} €</td>
+                                      <td className="py-2 pr-2 text-right tabular-nums whitespace-nowrap text-xs text-gray-400 dark:text-gray-500">{vj?.netzbezug_kosten_euro != null ? `VJ: ${fmtCalc(vj.netzbezug_kosten_euro, 2)} €` : ''}</td>
+                                      <td className="py-2 pr-4 text-right whitespace-nowrap">{vj?.netzbezug_kosten_euro != null ? <Δ a={rawSoll} b={vj.netzbezug_kosten_euro} inv /> : null}</td>
                                     </tr>
                                   </tbody>
                                 </table>
-                                {/* HABEN */}
+                                {/* Erlöse + Einsparungen */}
                                 <table className="w-full text-sm border-t-2 border-gray-300 dark:border-gray-600">
                                   <thead>
                                     <tr className="border-b border-gray-200 dark:border-gray-600">
-                                      <th colSpan={4} className={thHaben}>HABEN — Erlöse + Einsparungen</th>
+                                      <th colSpan={4} className={thHaben}>Erlöse + Einsparungen</th>
                                     </tr>
                                   </thead>
                                   <tbody>
-                                    {habenRows.filter(r => r !== null).map((h, i) => (
+                                    {habenPosten.map((h, i) => (
                                       <tr key={i} className="hover:bg-gray-50 dark:hover:bg-gray-700/20 transition-colors">
                                         {renderCell(h, 'haben')}
                                       </tr>
                                     ))}
                                     <tr className={sumRow}>
-                                      <td className="py-2 pl-4 pr-2 text-xs font-bold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Σ Haben</td>
-                                      <td className="py-2 pr-3 text-right tabular-nums whitespace-nowrap font-bold text-gray-900 dark:text-white">{fmtCalc(sumHaben, 2)} €</td>
-                                      <td className="py-2 pr-2 text-right tabular-nums whitespace-nowrap text-xs text-gray-400 dark:text-gray-500">{vjSumHaben != null ? `VJ: ${fmtCalc(vjSumHaben, 2)} €` : ''}</td>
-                                      <td className="py-2 pr-4 text-right whitespace-nowrap">{vjSumHaben != null ? <Δ a={sumHaben} b={vjSumHaben} /> : null}</td>
+                                      <td className="py-2 pl-4 pr-2 text-xs font-bold text-gray-600 dark:text-gray-400 uppercase tracking-wider">Summe Erträge</td>
+                                      <td className="py-2 pr-3 text-right tabular-nums whitespace-nowrap font-bold text-gray-900 dark:text-white">{fmtCalc(rawHaben, 2)} €</td>
+                                      <td className="py-2 pr-2 text-right tabular-nums whitespace-nowrap text-xs text-gray-400 dark:text-gray-500">{(vj?.einspeise_erloes_euro != null || vj?.ev_ersparnis_euro != null) ? `VJ: ${fmtCalc((vj.einspeise_erloes_euro ?? 0) + (vj.ev_ersparnis_euro ?? 0), 2)} €` : ''}</td>
+                                      <td className="py-2 pr-4 text-right whitespace-nowrap">{(vj?.einspeise_erloes_euro != null || vj?.ev_ersparnis_euro != null) ? <Δ a={rawHaben} b={(vj.einspeise_erloes_euro ?? 0) + (vj.ev_ersparnis_euro ?? 0)} /> : null}</td>
+                                    </tr>
+                                  </tbody>
+                                </table>
+                                {/* Netto-Ergebnis */}
+                                <table className="w-full text-sm border-t-2 border-gray-400 dark:border-gray-500">
+                                  <tbody>
+                                    <tr className="bg-gray-100 dark:bg-gray-700/60">
+                                      <td className="py-2 pl-4 pr-2 text-sm font-bold text-gray-900 dark:text-white uppercase tracking-wider">
+                                        {nettoT >= 0 ? 'Gewinn' : 'Verlust'}
+                                      </td>
+                                      <td className={`py-2 pr-3 text-right tabular-nums whitespace-nowrap font-bold ${nettoT >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+                                        {fmtCalc(Math.abs(nettoT), 2)} €
+                                      </td>
+                                      <td className="py-2 pr-2 text-right tabular-nums whitespace-nowrap text-xs text-gray-400 dark:text-gray-500">
+                                        {vj?.gesamtnettoertrag_euro != null ? `VJ: ${fmtCalc(vj.gesamtnettoertrag_euro, 2)} €` : ''}
+                                      </td>
+                                      <td className="py-2 pr-4 text-right whitespace-nowrap">
+                                        {vj?.gesamtnettoertrag_euro != null ? <Δ a={nettoT} b={vj.gesamtnettoertrag_euro} /> : null}
+                                      </td>
                                     </tr>
                                   </tbody>
                                 </table>
@@ -1008,7 +1145,7 @@ export default function MonatsabschlussView() {
 
             {/* ════ SEKTION 2b: Community-Vergleich ═══════════════════════ */}
             {(monatsVergleich || !selectedAnlage?.community_hash) && (
-              <Section icon={Users} color="text-blue-400" title="Community-Vergleich"
+              <Section sectionId="community" icon={Users} color="text-blue-400" title="Community-Vergleich"
                 summary={
                   monatsVergleich
                     ? <span className="text-xs text-gray-400">{monatsVergleich.anzahl_anlagen} Anlagen im {MONAT_NAMEN[selectedMonat!]} {selectedJahr}</span>
@@ -1131,7 +1268,7 @@ export default function MonatsabschlussView() {
 
             {/* ════ SEKTION 3: Speicher ══════════════════════════════════ */}
             {d.hat_speicher && (
-              <Section icon={Battery} color="text-blue-500" title="Speicher"
+              <Section sectionId="speicher" icon={Battery} color="text-blue-500" title="Speicher"
                 summary={
                   <span className="flex gap-3 text-sm">
                     {d.speicher_ladung_kwh != null && <span>{fmt(d.speicher_ladung_kwh, 0)} kWh geladen</span>}
@@ -1173,13 +1310,52 @@ export default function MonatsabschlussView() {
                       </span>
                     </div>
                   )}
+                  {/* Wirkungsverluste in Euro — Opportunitätskosten des Roundtrip-Verlusts */}
+                  {d.speicher_ladung_kwh != null && d.speicher_entladung_kwh != null
+                    && d.speicher_ladung_kwh > d.speicher_entladung_kwh
+                    && (d.einspeise_preis_cent != null || d.netzbezug_preis_cent != null)
+                    && (() => {
+                      const verlust_kwh = d.speicher_ladung_kwh! - d.speicher_entladung_kwh!
+                      const netz_kwh = d.speicher_ladung_netz_kwh ?? 0
+                      const anteil_netz = d.speicher_ladung_kwh! > 0
+                        ? Math.min(1, netz_kwh / d.speicher_ladung_kwh!) : 0
+                      const anteil_pv = 1 - anteil_netz
+                      const eins_p = d.einspeise_preis_cent ?? 0
+                      const bez_p  = d.netzbezug_durchschnittspreis_cent ?? d.netzbezug_preis_cent ?? 0
+                      const verlust_pv_euro   = verlust_kwh * anteil_pv   * eins_p / 100
+                      const verlust_netz_euro = verlust_kwh * anteil_netz * bez_p  / 100
+                      const verlust_euro = verlust_pv_euro + verlust_netz_euro
+                      const teile: string[] = []
+                      if (anteil_pv > 0 && eins_p > 0) {
+                        teile.push(`${fmt(verlust_kwh * anteil_pv, 1)} kWh × ${fmtCalc(eins_p, 2)} ct (entg. Einspeisung)`)
+                      }
+                      if (anteil_netz > 0 && bez_p > 0) {
+                        teile.push(`${fmt(verlust_kwh * anteil_netz, 1)} kWh × ${fmtCalc(bez_p, 2)} ct (Netzbezug)`)
+                      }
+                      return (
+                        <div className="flex justify-between py-1.5 text-sm">
+                          <span className="text-gray-500 dark:text-gray-400">
+                            <FormelTooltip
+                              formel="Verlust × (PV-Anteil × Einspeisepreis + Netz-Anteil × Bezugspreis)"
+                              berechnung={teile.join(' + ')}
+                              ergebnis={`= ${fmtCalc(verlust_euro, 2)} €`}
+                            >
+                              Wirkungsverluste (Opportunitätskosten)
+                            </FormelTooltip>
+                          </span>
+                          <span className="font-semibold text-amber-600 dark:text-amber-400">
+                            −{fmtCalc(verlust_euro, 2)} €
+                          </span>
+                        </div>
+                      )
+                    })()}
                 </div>
               </Section>
             )}
 
             {/* ════ SEKTION 4: Wärmepumpe ═══════════════════════════════ */}
             {d.hat_waermepumpe && (
-              <Section icon={Flame} color="text-orange-500" title="Wärmepumpe"
+              <Section sectionId="waermepumpe" icon={Flame} color="text-orange-500" title="Wärmepumpe"
                 summary={
                   <span className="flex gap-3 text-sm">
                     {d.wp_strom_kwh != null && <span>{fmt(d.wp_strom_kwh, 0)} kWh Strom</span>}
@@ -1220,7 +1396,7 @@ export default function MonatsabschlussView() {
 
             {/* ════ SEKTION 5: E-Mobilität ═══════════════════════════════ */}
             {d.hat_emobilitaet && (
-              <Section icon={Car} color="text-purple-500" title="E-Mobilität"
+              <Section sectionId="emobilitaet" icon={Car} color="text-purple-500" title="E-Mobilität"
                 summary={
                   <span className="flex gap-3 text-sm">
                     {d.emob_ladung_kwh != null && <span>{fmt(d.emob_ladung_kwh, 0)} kWh geladen</span>}
@@ -1269,7 +1445,7 @@ export default function MonatsabschlussView() {
 
             {/* ════ SEKTION 6: Balkonkraftwerk ══════════════════════════ */}
             {d.hat_balkonkraftwerk && (
-              <Section icon={Sun} color="text-yellow-400" title="Balkonkraftwerk"
+              <Section sectionId="balkonkraftwerk" icon={Sun} color="text-yellow-400" title="Balkonkraftwerk"
                 summary={<span className="text-sm">{fmt(d.bkw_erzeugung_kwh, 0)} kWh erzeugt · in Gesamt-PV enthalten</span>}
               >
                 <div className="mt-2 grid grid-cols-2 sm:grid-cols-3 gap-3">
@@ -1289,7 +1465,7 @@ export default function MonatsabschlussView() {
 
             {/* ════ SEKTION 7: Sonstiges ═════════════════════════════════ */}
             {d.hat_sonstiges && (
-              <Section icon={Wrench} color="text-gray-500" title="Sonstiges"
+              <Section sectionId="sonstiges" icon={Wrench} color="text-gray-500" title="Sonstiges"
                 summary={
                   <span className="flex gap-3 text-sm text-gray-400">
                     {d.sonstiges_erzeugung_kwh != null && <span>{fmt(d.sonstiges_erzeugung_kwh, 0)} kWh erzeugt</span>}
@@ -1322,7 +1498,7 @@ export default function MonatsabschlussView() {
 
             {/* Jahres-Kontext entfernt — vertikaler Zeitstrahl übernimmt die Orientierung */}
 
-          </div>
+          </OrderedSections>
         )}
       </main>
     </div>
