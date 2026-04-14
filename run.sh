@@ -20,8 +20,12 @@ if [ -f "$CONFIG_PATH" ]; then
 
     # HA Recorder Datenbank (optional, für MariaDB/MySQL)
     export HA_RECORDER_DB_URL=$(jq -r '.ha_recorder_db_url // ""' $CONFIG_PATH)
+
+    # PDF-Engine (Issue #121, opt-in für die neue WeasyPrint-Pipeline)
+    export PDF_ENGINE=$(jq -r '.pdf_engine // "reportlab"' $CONFIG_PATH)
 else
     export LOG_LEVEL="info"
+    export PDF_ENGINE="reportlab"
 fi
 
 # Datenbank-Pfad (aiosqlite für async SQLAlchemy)
@@ -32,7 +36,7 @@ export DATABASE_URL="sqlite+aiosqlite:////data/eedc.db"
 
 echo "==================================="
 echo "  EEDC - Energie Daten Center"
-echo "  Version: 3.13.3"
+echo "  Version: 3.13.4"
 echo "==================================="
 echo "Log Level: $LOG_LEVEL"
 echo "Database: /data/eedc.db"
