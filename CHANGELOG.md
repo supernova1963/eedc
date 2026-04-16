@@ -7,6 +7,74 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ---
 
+## [3.15.1] - 2026-04-16
+
+### Feat — Auto-Vollbackfill aus HA Long-Term Statistics
+
+- **Erster Monatsabschluss nach Upgrade befüllt automatisch die komplette HA-History** ins Energieprofil. Bisher wurde nur der Monat des jeweiligen Monatsabschlusses per `backfill_range` aufgefüllt — die HA Long-Term Statistics (Jahre zurück) wurden nicht angetastet. Wer auf v3.1.x+ upgegradet hatte, blieb folglich ohne Energieprofil-Historie aus der Zeit vor dem Upgrade. Bisher gab es nur den manuellen „Vollständig nachberechnen"-Button im Sensor-Mapping-Wizard (v3.12.1) — wer den nicht aktiv geklickt hat, hatte schlicht nichts. Mit v3.16.0 läuft der Vollbackfill jetzt **einmalig pro Anlage** automatisch im Hintergrund mit, sobald der erste Monatsabschluss nach dem Upgrade gespeichert wird (manuell ODER per Scheduler — beide Pfade durchlaufen `_post_save_hintergrund`).
+- **Neues Anlage-Feld `vollbackfill_durchgefuehrt`**: Wird gesetzt, sobald entweder der manuelle Wizard-Button oder der Auto-Lauf durch ist (Erfolg oder Fehler). Damit greift der Auto-Vollbackfill garantiert nur einmal pro Anlage und führt auch bei defekter HA-DB nicht zu Endlos-Retries. Beim **Löschen der Energieprofil-Rohdaten** (Single-Anlage und Bulk-Endpoint) wird das Flag zurückgesetzt → der nächste Monatsabschluss zieht die History erneut nach. Das Feld ist server-intern, nicht über die Anlage-API editierbar.
+- **Bestandsdaten-Heuristik** in der DB-Migration: Anlagen mit mehr als 30 Tagen Energieprofil-Historie werden bei der Migration auf v3.16.0 direkt mit `vollbackfill_durchgefuehrt = True` markiert. So bekommt z.B. Rainer (578 Tage) keinen überraschenden Multi-Jahres-Backfill beim ersten Scheduler-Lauf — wer das explizit will, kann den Wizard-Button weiter manuell anstoßen.
+- **Verhalten in Edge-Cases**: HA Statistics nicht verfügbar → Flag wird trotzdem gesetzt, kein Retry. Keine validen Sensoren konfiguriert → Flag wird trotzdem gesetzt. Frische Installation ohne Profile-Daten → Flag bleibt False, erster Monatsabschluss zieht die komplette History. Wizard-Vollbackfill bereits gelaufen → Flag ist True, kein erneuter Auto-Lauf.
+
+### Fix
+
+- **Infothek-Kategorie „Garantie" → „Komponente / Datenblatt"**: Das Label in der Infothek-UI stimmte nicht mit dem Verweis in der Anlagendokumentation überein. Nutzer, die dem Hinweis „Kategorie Komponente / Datenblatt" folgten, fanden die Kategorie nicht, weil sie im Frontend noch „Garantie" hieß. Auslöser: Rainer.
+
+### Maintenance
+
+- Neue gemeinsame Helper-Funktion `resolve_and_backfill_from_statistics()` in `backend/services/energie_profil_service.py` mit `BackfillResult`-Dataclass. Vereint die zuvor ~50 Zeilen duplizierte Orchestrierungs-Logik (Sensor-Discovery, ungültige Sensoren filtern, frühestes Datum aus HA Statistics ermitteln, Backfill auslösen) zwischen dem manuellen Vollbackfill-Endpoint und dem neuen Auto-Vollbackfill im Background-Task. Beide Call-Sites mappen den `BackfillResult.status` ("ok"/"ha_unavailable"/"no_sensors"/"no_valid_sensors"/"earliest_unknown"/"empty_range") auf ihre eigene Fehlerbehandlung (HTTPException vs. Log-Warnung).
+- `_post_save_hintergrund` lädt die `Anlage` jetzt nur noch einmal (vorher: separate Sessions für Rollup und Auto-Vollbackfill, zwei SELECTs auf jedem Save). Closing-Month-Backfill, Rollup und Auto-Vollbackfill teilen sich dieselbe DB-Session.
+- Konstante `VOLLBACKFILL_BESTAND_SCHWELLE_TAGE = 30` in `backend/core/database.py`.
+
+---
+
+## [3.15.0] - 2026-04-15
+
+### Feat — Anlagendokumentation & Finanzbericht (Issue #121 Phase 4, Beta)
+
+- **Neuer zentraler „Dokumente"-Dialog pro Anlage**: Der bisherige Einzel-Button auf der Anlagen-Seite wird abgelöst durch einen **Dokumente**-Button (orangefarbenes Ordner-Icon), der einen Download-Hub mit allen verfügbaren PDF-Dokumenten öffnet. Aktuell vier Karten: **Jahresbericht**, **Infothek-Dossier**, **Anlagendokumentation** (Beta) und **Finanzbericht** (Beta). Die beiden neuen Dokumente sind mit einem amber-farbenen „Beta"-Badge gekennzeichnet und verlinken direkt auf Issue #121 für Feedback.
+- **Anlagendokumentation (Beta)** — neues PDF im V4-Layout mit Urkunden-Charakter: Titelseite mit Anlagenfoto, gesperrter Headline, großem Anlagennamen, Meta-Zeile (Leistung / Inbetriebnahme / MaStR) und Komponenten-Übersicht. Folgeseiten mit **Hybrid-Gruppierung**: alle PV-Modulfelder werden gesammelt auf einer Seite gerendert, alle anderen Investitionstypen (Wechselrichter, Speicher, Wärmepumpe, Wallbox, E-Fahrzeug, Balkonkraftwerk, Sonstiges) bekommen eine eigene Folgeseite. Unter der Technik jeder Investition wird der Komponenten-Akte-Block aus verknüpften Infothek-Einträgen der Kategorie „Komponente / Datenblatt" gerendert — mit allen gepflegten Feldern (Hersteller, Seriennummer, Garantie, Prüftermine, Datenblatt-URL), mehrzeiligen Freitext-Blöcken (Technische Daten, Garantie-Bedingungen, Sonstige Verträge) und der Liste angehängter Dateien inkl. Beschreibung. Ist keine Komponenten-Akte verknüpft, zeigt die Seite eine freundliche Hinweis-Box mit dem Pflege-Pfad. **Keine Geldbeträge** — die Anlagendokumentation ist bewusst für Versicherung, Nachlass und Archiv konzipiert und kann ohne Finanzbedenken weitergegeben werden.
+- **Finanzbericht (Beta)** — neues PDF mit allen monetären Kennzahlen zur Anlage: Investitions-Tabelle mit Bezeichnung, Kategorie, Inbetriebnahme, Kosten, Alternativ-Kosten und Jahres-Ersparnis je Investition; Summenzeile; KPI-Block mit Amortisations-Prognose, Differenz zum Alt-Szenario und Netto-Kosten nach Förderung; gruppierte Sektionen **Förderungen**, **Versicherung** und **Steuerdaten** aus den jeweiligen Infothek-Kategorien (`foerderung`, `versicherung`, `steuerdaten`) mit allen Einzel-Einträgen. Abgeschlossen mit einem Vertraulichkeits-Hinweis.
+- **Anlagenfoto am Anlage-Modell**: Neuer Upload-Bereich in der Anlage-Stammdaten-Form — Drag & Drop oder Klick, Vorschau als 128 × 128-Thumbnail, Ersetzen und Entfernen. Die bestehende Bildpipeline aus der Infothek wird wiederverwendet (EXIF-Rotation, HEIC→JPEG, Resize auf ~500 kB, 200 × 200-Thumbnail). Gespeichert wird in einer neuen Tabelle `anlage_foto` (1:1 zu `anlagen`, Cascade-Delete). Ein Foto pro Anlage — ein neues Foto überschreibt das alte. Genutzt wird es auf der Titelseite der Anlagendokumentation; ohne Foto bleibt die Titelseite aufgeräumt ohne Platzhalter.
+- **Neue API-Routen** unter `/api/anlagen/{id}/foto` (POST/GET/GET/thumb/DELETE) und unter `/api/dokumentation/anlagendokumentation/{id}` sowie `/api/dokumentation/finanzbericht/{id}`. Die beiden Dokumentations-Routen sind **WeasyPrint-only** — bei `PDF_ENGINE=reportlab` liefern sie `HTTP 503` mit klarem Hinweistext („Im HA-Add-on in der Konfiguration umschaltbar, im Standalone-Docker via Umgebungsvariable"). Begründung: Das V4-Layout (mehrseitige Komponenten-Blöcke, seitenübergreifende 3-Farben-Leiste, CSS-Gradients, `position: fixed`) ist auf WeasyPrint + Pango/Cairo ausgelegt und im reportlab-Builder nicht realistisch abbildbar.
+
+### Beta-Hinweis & Feedback-Einladung
+
+Die beiden neuen Dokumente sind bewusst als **Beta** markiert und werden über Issue [#121](https://github.com/supernova1963/eedc-homeassistant/issues/121) iteriert. Die Grundstruktur ist freigegeben (V4-Layout von rapahl approved, Hybrid-Gruppierung und B1-Datenquelle abgestimmt), aber Feld-Auswahl und Layout-Details werden nach Community-Praxis-Tests verfeinert. Feedback bitte konkret: „X fehlt, weil Y beim Ausfüllen/Drucken nicht passt". Das Fundament (Komponentenakte) aus v3.14.0 bleibt stabil, strukturelle Änderungen sind damit zukünftig reine Builder-/Template-Anpassungen — keine Datenmodell-Brüche.
+
+### Maintenance
+
+- Neuer PDF-Builder-Modul: `backend/services/pdf/builders/anlagendokumentation.py` und `backend/services/pdf/builders/finanzbericht.py`, Templates analog unter `backend/services/pdf/templates/`.
+- Seitenübergreifende 3-Farben-Leiste via `position: fixed` (WeasyPrint repliziert fixed-Elemente auf jeder physischen Seite) und `@page { margin: 22mm 22mm 22mm 38mm }` — damit starten auch automatisch umgebrochene Überlauf-Seiten auf Höhe des Streifen-Oberrands statt am Papier-Rand.
+- Neue Frontend-Komponenten: `AnlagenfotoSection.tsx`, `DokumentationsDialog.tsx`. Bestehender `ApiClient.upload()` um optionalen `extraFields`-Parameter erweitert (wurde für die Datei-Beschreibungen in v3.14.0 bereits vorbereitet).
+
+---
+
+## [3.14.0] - 2026-04-15
+
+### Fix
+
+- **Historische Aggregate blenden deaktivierte Investitionen nicht mehr aus (#123)**: Bis jetzt haben ~32 Call-Sites im Backend (Monatsdaten-Aggregation, Cockpit-KPIs, PDF-Jahresbericht, Nachhaltigkeit, Social-Text, PV-Strings-Vergleich, Export-Routen) Investitionen strikt mit `aktiv == True` gefiltert. Folge: Sobald ein Nutzer eine Komponente deaktiviert hat (z.B. nach WR-Upgrade oder Verkauf), sind ihre historischen Werte **rückwirkend und stillschweigend** aus allen Auswertungen verschwunden — Rohdaten in `InvestitionMonatsdaten` blieben zwar erhalten, wurden aber nicht mehr summiert. Aufgefallen ist das bei MartyBr (community.simon42.com #297), der seinen zweiten WR in Betrieb genommen hat. Fix in zwei Richtungen: (1) Alle historischen Auswertungen laden Investitionen jetzt ohne `aktiv`-Filter, sodass vergangene Werte erhalten bleiben. (2) Neues optionales Feld **Stilllegungsdatum** auf jeder Investition als finaler Endmarker — bis dahin zählt die Komponente für Historie und Live/Prognose, danach nur noch für Historie. Live-/Prognose-Queries (Solar-Forecast, Live-Dashboard, Sensor-Mapping, MQTT-Routing, PVGIS-Refresh) respektieren das neue Feld zusätzlich zum bestehenden `aktiv`-Flag. Empfehlung für Gerätewechsel: neue Investition anlegen (Anschaffungsdatum = Umbautag) + Stilllegungsdatum auf alter Investition setzen (nicht mehr deaktivieren).
+
+### Feat
+
+- **Infothek-Komponentenakte — Garantie-Kategorie zum vollwertigen Datenblatt ausgebaut (#121)**: Erste testbare Beta der Komponentenakte für die kommende Anlagendokumentation (Phase 4). Die bestehende Kategorie `garantie` wird als **„Komponente / Datenblatt"** umgelabelt und um acht Felder erweitert: Seriennummer, Einbau-Datum, Installations-Firma, Letzte/Nächste Prüfung, Link zum Hersteller-Datenblatt sowie zwei mehrzeilige Freitextfelder **„Technische Daten"** (typ-spezifisch — von Kabelquerschnitt bis COP) und **„Sonstige zugehörige Verträge / Dokumente"**. Der interne Key bleibt `garantie`, bestehende Einträge sind unverändert gültig, keine DB-Migration nötig. Neuer Feld-Typ `text` wird im Formular-Renderer als `<textarea>` dargestellt. **Datei-Upload**: Limit von 3 auf 15 Dateien pro Eintrag erhöht, PDF-Größe von 5 auf 10 MB. Pro Datei kann jetzt eine optionale **Beschreibung** mitgegeben werden (Staging-Queue im Upload-Widget, Beschreibung später unter dem Thumbnail sichtbar). Damit ist das Fundament gelegt, auf dem der Anlagendokumentations-Builder verknüpfte Komponenten-Daten je Investition rendern wird. Feedback aus der Praxis wird über Issue #121 gesammelt — bitte testen und fehlende/überflüssige Felder melden.
+- **Stilllegungsdatum in der Investitions-Form**: Neuer DatePicker unter dem Anschaffungsdatum in allen Investitions-Typen (E-Auto, WP, Speicher, Wallbox, WR, PV-Module, Balkonkraftwerk, Sonstiges). Validierung: nicht vor dem Anschaffungsdatum. In der Investitions-Übersicht zeigt ein neuer amber-farbener **Stillgelegt**-Badge den Zustand an (mit Tooltip `Stillgelegt seit YYYY-MM-DD`).
+- **MonatsdatenForm-Editor zeigt historisch aktive Komponenten**: Beim Bearbeiten eines Monats sieht man jetzt alle Investitionen, die in diesem Monat (mindestens teilweise) in Betrieb waren — auch inzwischen stillgelegte. Vorher waren die für historische Nachträge unsichtbar.
+
+### Maintenance
+
+- Neues Helper-Modul `backend/utils/investition_filter.py` mit wiederverwendbaren Filter-Funktionen `aktiv_jetzt()`, `aktiv_im_zeitraum()`, `aktiv_im_monat()`, `aktiv_im_jahr()` und Model-Methoden `Investition.ist_aktiv_an()`, `ist_aktiv_im_zeitraum()`, `ist_aktiv_im_monat()` für In-Memory-Checks in Aggregations-Loops.
+- `aussichten.py`-Langfristbericht: historische Aggregation vs. Prognose-Basis sauber getrennt — Prognose-kWp kommt nur aus aktuell aktiven PV-Modulen, historische Werte aus allen je vorhandenen.
+- JSON-Backup-Export/Import persistiert Stilllegungsdatum.
+- DB-Migration `investitionen.stilllegungsdatum DATE` (SQLite + MariaDB/MySQL), rückwärtskompatibel — bestehende Installationen behalten ihr Verhalten, solange kein Datum gesetzt ist.
+
+### Bekannter Folgepunkt
+
+- **ROI-Dashboard zeitanteilige Gewichtung**: Der eigentliche Bug (stillschweigend falsche historische Zahlen) ist in v3.14.0 behoben. Offene Verfeinerung: Das ROI-Modell geht aktuell von "Investition läuft das ganze Jahr" aus — bei mitten im Jahr stillgelegten Komponenten wäre eine zeitanteilige Gewichtung sauberer. Nicht dringend; wird in einem späteren Release angegangen.
+
+---
+
 ## [3.13.5] - 2026-04-15
 
 ### Fix
