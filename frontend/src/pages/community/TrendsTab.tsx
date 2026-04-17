@@ -42,12 +42,9 @@ import {
   Legend,
 } from 'recharts'
 
-// Monatsnamen
-const MONATSNAMEN = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez']
-const MONATSNAMEN_LANG = [
-  'Januar', 'Februar', 'März', 'April', 'Mai', 'Juni',
-  'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'
-]
+import { MONAT_KURZ, MONAT_NAMEN } from '../../lib/constants'
+const MONATSNAMEN = MONAT_KURZ.slice(1)     // 0-basiert
+const MONATSNAMEN_LANG = MONAT_NAMEN.slice(1) // 0-basiert
 
 // Jahreszeiten
 const JAHRESZEITEN = {
@@ -60,39 +57,36 @@ const JAHRESZEITEN = {
 interface TrendsTabProps {
   anlageId: number
   zeitraum: ZeitraumTyp
+  benchmark: CommunityBenchmarkResponse | null
+  benchmarkLoading: boolean
+  benchmarkError: string | null
 }
 
-export default function TrendsTab({ anlageId, zeitraum }: TrendsTabProps) {
-  const [benchmark, setBenchmark] = useState<CommunityBenchmarkResponse | null>(null)
+export default function TrendsTab({ benchmark, benchmarkLoading, benchmarkError }: TrendsTabProps) {
   const [communityTrends, setCommunityTrends] = useState<TrendDaten | null>(null)
   const [degradation, setDegradation] = useState<DegradationsAnalyse | null>(null)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [extraLoading, setExtraLoading] = useState(false)
 
-  // Benchmark und Community-Trends laden
+  const loading = benchmarkLoading || extraLoading
+  const error = benchmarkError
+
+  // Community-Trends und Degradation laden (unabhängig vom Benchmark)
   useEffect(() => {
-    const loadData = async () => {
-      setLoading(true)
-      setError(null)
+    const loadExtra = async () => {
+      setExtraLoading(true)
       try {
-        // Alle Daten parallel laden
-        const [benchmarkData, trendsData, degradationData] = await Promise.all([
-          communityApi.getBenchmark(anlageId, zeitraum),
+        const [trendsData, degradationData] = await Promise.all([
           communityApi.getTrends('12_monate').catch(() => null),
           communityApi.getDegradation().catch(() => null),
         ])
-        setBenchmark(benchmarkData)
         setCommunityTrends(trendsData)
         setDegradation(degradationData)
-      } catch (e) {
-        setError(e instanceof Error ? e.message : 'Fehler beim Laden')
       } finally {
-        setLoading(false)
+        setExtraLoading(false)
       }
     }
-
-    loadData()
-  }, [anlageId, zeitraum])
+    loadExtra()
+  }, [])
 
   // Ertragsverlauf aufbereiten - chronologisch sortiert
   const ertragsverlauf = useMemo(() => {

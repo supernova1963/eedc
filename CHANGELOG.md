@@ -7,6 +7,70 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ---
 
+## [3.15.7] - 2026-04-17
+
+### Fix — Stillgelegte Komponenten in Gesamt-kWp (MartyBr Forum #308)
+
+- **Cockpit kWp-Summe**: Stillgelegte/deaktivierte PV-Module und BKW werden nicht mehr zur Gesamtleistung addiert
+- **Komponenten-Flags**: Speicher, Wärmepumpe, E-Mobilität und BKW-Sektionen respektieren jetzt Stilllegungsdatum
+- **Sensor-Mapping gesamt_kwp**: Nur noch aktive Module in der kWp-Summe
+
+### Fix — WetterWidget Tooltip zeigt irrelevante Kategorien (av3 Forum #311)
+
+- **Tooltip**: Verbrauchskategorien (Wallbox, WP, Sonstige) werden nur angezeigt, wenn entsprechende Investitionen existieren
+- **Legende**: Verbrauchs-Kategorien als gefüllte Rechtecke statt Linien-Symbole (passend zur Flächendarstellung)
+
+---
+
+## [3.15.6] - 2026-04-17
+
+### Verbesserung — PDF-Anlagenbericht nach Rainer-Feedback
+
+- **EEDC-Vermerk entfernt**: Titelseite zeigt nur noch "Stand DD.MM.YYYY" statt redundantem EEDC-Branding
+- **Kompaktere Komponenten**: Zeilenabstand in Komponenten-Blöcken reduziert
+- **Hinweis-Box entfernt**: "Keine Komponenten-Akte verknüpft" (Beta-Phase vorbei)
+- **Logo-Fallback**: EEDC-Logo wird angezeigt wenn kein eigenes Anlagenfoto hochgeladen ist
+- **PV-Komponenten dedupliziert**: Bei n:m-Verknüpfung wird jede Komponente nur einmal angezeigt, mit "Gilt für"-Hinweis (z.B. "alle Modulfelder" oder "Süddach")
+- **Farbstreifen subtiler**: Durchgehend dünne 1.5mm-Linie statt dominantem 6mm-Streifen
+- **Logo einzeilig**: "ENERGIE EFFIZIENZ DATA CENTER" auf einer Zeile (SVG + PNG aktualisiert)
+- **Duplicate Macro entfernt**: `komponente_block` war im Template doppelt definiert
+
+---
+
+## [3.15.5] - 2026-04-16
+
+### Fix — PDF-Download Mobile 401 Unauthorized
+
+- **PDF-Download auf Mobile (HA Companion App)**: `target="_blank"` Links verloren den Ingress-Auth-Token → 401 Unauthorized. PDFs werden jetzt per `fetch()` im aktuellen Auth-Kontext geladen und als Blob-Download angeboten. Spinner während der PDF-Generierung.
+
+---
+
+## [3.15.4] - 2026-04-16
+
+### Fix — Anlagendokumentation PDF + Foto-Upload
+
+- **PDF Jinja-Fehler behoben**: `TemplateSyntaxError` bei Anlagendokumentation — `elif`-Block stand nach `else` im Template (ungültig in Jinja). Reihenfolge korrigiert.
+- **Anlagenfoto verschwindet nach Upload**: HEAD-Request feuerte nach jedem Upload erneut und setzte das Foto bei Timing-Problemen zurück. Check läuft jetzt nur noch beim Öffnen des Dialogs.
+
+---
+
+## [3.15.3] - 2026-04-16
+
+### Perf — N+1 Queries, Code-Splitting, Konstanten-Bereinigung
+
+- **Backend: N+1 Queries eliminiert**: 6 Dashboard-Endpoints (`investitionen.py`) von Loop-Queries auf Batch-Queries (`WHERE investition_id IN`) umgestellt. E-Auto, Wärmepumpe, Speicher, Wallbox (3 Schleifen → 1 Query), BKW und Monatsdaten-by-Month.
+- **Backend: aktueller_monat.py**: 5 sequentielle InvestitionMonatsdaten-Queries (Speicher/WP/EMob/BKW/Sonstiges) zu einer Batch-Query zusammengefasst.
+- **Backend: aussichten.py**: Shared Helper `_lade_anlage_mit_pv()` extrahiert — 3 Forecast-Endpoints sparen je 3 duplizierte Queries (Anlage + PV + BKW → 1 kombinierte Query).
+- **Frontend: React.lazy Code-Splitting**: 33 Seiten als Lazy-Imports, nur LiveDashboard (Startseite) bleibt eager. Vite erzeugt separate Chunks pro Route — Initial-Bundle deutlich kleiner.
+- **Frontend: Community-Benchmark zentralisiert**: `getBenchmark()` wird einmal im Parent geladen und als Props an alle 6 Tabs weitergereicht. Kein Re-Fetch bei Tab-Wechsel.
+- **Frontend: Duplizierte Konstanten bereinigt**: `REGION_NAMEN` (4×), `MONAT_NAMEN`/`MONAT_KURZ` (4×) zentralisiert in `lib/constants.ts`.
+
+### Fix
+
+- **Daten-Checker: Dienstwagen ausgenommen**: E-Autos mit `ist_dienstlich`-Flag werden im Daten-Checker komplett übersprungen — keine PV-Ladungs-, Alternativkosten- oder Anschaffungskosten-Checks mehr.
+
+---
+
 ## [3.15.2] - 2026-04-16
 
 ### Feat — Infothek N:M Verknüpfung + Komponenten-Akte am Investment (#121)

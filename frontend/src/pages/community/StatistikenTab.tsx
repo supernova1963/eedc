@@ -33,63 +33,41 @@ import { communityApi } from '../../api'
 import type { CommunityBenchmarkResponse, ZeitraumTyp, GlobaleStatistik, Ranking } from '../../api/community'
 
 // Bundesland-Namen
-const REGION_NAMEN: Record<string, string> = {
-  BW: 'Baden-Württemberg',
-  BY: 'Bayern',
-  BE: 'Berlin',
-  BB: 'Brandenburg',
-  HB: 'Bremen',
-  HH: 'Hamburg',
-  HE: 'Hessen',
-  MV: 'Mecklenburg-Vorpommern',
-  NI: 'Niedersachsen',
-  NW: 'Nordrhein-Westfalen',
-  RP: 'Rheinland-Pfalz',
-  SL: 'Saarland',
-  SN: 'Sachsen',
-  ST: 'Sachsen-Anhalt',
-  SH: 'Schleswig-Holstein',
-  TH: 'Thüringen',
-  AT: 'Österreich',
-  CH: 'Schweiz',
-}
+import { REGION_NAMEN } from '../../lib/constants'
 
 interface StatistikenTabProps {
   anlageId: number
   zeitraum: ZeitraumTyp
+  benchmark: CommunityBenchmarkResponse | null
+  benchmarkLoading: boolean
+  benchmarkError: string | null
 }
 
-export default function StatistikenTab({ anlageId, zeitraum }: StatistikenTabProps) {
-  const [benchmark, setBenchmark] = useState<CommunityBenchmarkResponse | null>(null)
+export default function StatistikenTab({ benchmark, benchmarkLoading, benchmarkError }: StatistikenTabProps) {
   const [globalStats, setGlobalStats] = useState<GlobaleStatistik | null>(null)
   const [ranking, setRanking] = useState<Ranking | null>(null)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [extraLoading, setExtraLoading] = useState(false)
 
-  // Benchmark und globale Statistiken laden
+  const loading = benchmarkLoading || extraLoading
+  const error = benchmarkError
+
+  // Globale Statistiken und Ranking laden (unabhängig vom Benchmark)
   useEffect(() => {
-    const loadData = async () => {
-      setLoading(true)
-      setError(null)
+    const loadExtra = async () => {
+      setExtraLoading(true)
       try {
-        // Alle Daten parallel laden
-        const [benchmarkData, globalData, rankingData] = await Promise.all([
-          communityApi.getBenchmark(anlageId, zeitraum),
+        const [globalData, rankingData] = await Promise.all([
           communityApi.getGlobalStatistics().catch(() => null),
           communityApi.getRanking('spez_ertrag', 10).catch(() => null),
         ])
-        setBenchmark(benchmarkData)
         setGlobalStats(globalData)
         setRanking(rankingData)
-      } catch (e) {
-        setError(e instanceof Error ? e.message : 'Fehler beim Laden')
       } finally {
-        setLoading(false)
+        setExtraLoading(false)
       }
     }
-
-    loadData()
-  }, [anlageId, zeitraum])
+    loadExtra()
+  }, [])
 
   // Community-Statistiken aus Benchmark ableiten
   const communityStats = useMemo(() => {
