@@ -13,7 +13,7 @@ from pydantic_settings import BaseSettings
 # =============================================================================
 # Zentrale Versionskonfiguration
 # =============================================================================
-APP_VERSION = "3.16.3"
+APP_VERSION = "3.16.4"
 APP_NAME = "eedc"
 APP_FULL_NAME = "Energie Effizienz Data Center"
 
@@ -95,6 +95,9 @@ class Settings(BaseSettings):
     # Open-Meteo Solar API (GTI + PV-Prognose)
     open_meteo_solar_enabled: bool = os.environ.get("OPEN_METEO_SOLAR_ENABLED", "true").lower() == "true"
     open_meteo_solar_api_url: str = "https://api.open-meteo.com/v1/forecast"
+
+    # Solcast PV Forecast API
+    solcast_api_url: str = "https://api.solcast.com.au"
 
     # PDF-Engine: "reportlab" (alt) oder "weasyprint" (neu).
     # Während der Migration (Issue #121) parallel — Default bleibt reportlab,
