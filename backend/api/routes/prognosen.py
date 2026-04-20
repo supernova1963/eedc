@@ -118,6 +118,9 @@ class PrognosenVergleichResponse(BaseModel):
 
     # Verbleibend: Hochrechnung basierend auf IST + beste Prognose für Rest
     verbleibend_kwh: Optional[float] = None
+    verbleibend_om_kwh: Optional[float] = None
+    verbleibend_eedc_kwh: Optional[float] = None
+    verbleibend_solcast_kwh: Optional[float] = None
 
     # OpenMeteo Stundenprofil (GTI-basiert, roh)
     openmeteo_stundenprofil: List[StundenProfilEintrag] = []
@@ -214,7 +217,7 @@ async def get_prognosen_vergleich(
 
     # Wettermodell + Orientierung
     wetter_modell = anlage.wetter_modell or "auto"
-    model_name, _ = WETTER_MODELLE.get(wetter_modell, (None, 16))
+    model_name, max_days = WETTER_MODELLE.get(wetter_modell, (None, 16))
 
     haupt_neigung = 35
     haupt_azimut = 0
@@ -229,9 +232,37 @@ async def get_prognosen_vergleich(
     now = datetime.now(ZoneInfo("Europe/Berlin"))
     heute = date.today()
 
+    # ── Wetter-Abruf: Kaskade bei Modellen mit kurzem Horizont (z.B. icon_d2 = 2 Tage) ──
+    needs_fallback = wetter_modell != "auto" and 14 > max_days
+
+    async def _fetch_wetter_mit_fallback():
+        """Primary-Modell + best_match Fallback parallel abrufen und mergen."""
+        primary, fallback = await asyncio.gather(
+            fetch_open_meteo_forecast(
+                latitude=anlage.latitude, longitude=anlage.longitude,
+                days=max_days, skip_jitter=True, model=model_name,
+            ),
+            fetch_open_meteo_forecast(
+                latitude=anlage.latitude, longitude=anlage.longitude,
+                days=14, skip_jitter=True, model=None,
+            ),
+        )
+        if not primary and not fallback:
+            return None
+        if not primary:
+            return fallback
+        if not fallback:
+            return primary
+        # Beide verfügbar → Primary-Tage haben Vorrang, Fallback füllt auf
+        primary_dates = {t["datum"] for t in primary.get("tage", [])}
+        merged_tage = list(primary.get("tage", []))
+        merged_tage.extend(t for t in fallback.get("tage", []) if t["datum"] not in primary_dates)
+        merged_tage.sort(key=lambda t: t["datum"])
+        return {**primary, "tage": merged_tage}
+
     # ── Parallele Datenabrufe (return_exceptions: ein API-Timeout crasht nicht alles) ──
     wetter, gti_data, solcast, ist_rows = await asyncio.gather(
-        fetch_open_meteo_forecast(
+        _fetch_wetter_mit_fallback() if needs_fallback else fetch_open_meteo_forecast(
             latitude=anlage.latitude, longitude=anlage.longitude,
             days=14, skip_jitter=True, model=model_name,
         ),
@@ -347,6 +378,9 @@ async def get_prognosen_vergleich(
     # ── Verbleibend ──
     aktuelle_stunde = now.hour
     verbleibend_kwh = None
+    verbleibend_om_kwh = None
+    verbleibend_eedc_kwh = None
+    verbleibend_solcast_kwh = None
     if ist_heute_kwh > 0 or openmeteo_stundenprofil:
         rest_prognose = 0.0
         for h in range(aktuelle_stunde + 1, 24):
@@ -355,6 +389,13 @@ async def get_prognosen_vergleich(
             elif h < len(openmeteo_stundenprofil):
                 rest_prognose += openmeteo_stundenprofil[h].kw
         verbleibend_kwh = round(ist_heute_kwh + rest_prognose, 1)
+    # Pro Quelle: Tagesprognose - bisheriger IST
+    if openmeteo_heute_kwh is not None and ist_heute_kwh > 0:
+        verbleibend_om_kwh = round(max(0, openmeteo_heute_kwh - ist_heute_kwh), 1)
+    if eedc_heute_kwh is not None and ist_heute_kwh > 0:
+        verbleibend_eedc_kwh = round(max(0, eedc_heute_kwh - ist_heute_kwh), 1)
+    if solcast and solcast.daily_kwh is not None and ist_heute_kwh > 0:
+        verbleibend_solcast_kwh = round(max(0, solcast.daily_kwh - ist_heute_kwh), 1)
 
     # ── Solcast aufbereiten ──
     solcast_stundenprofil = []
@@ -442,6 +483,9 @@ async def get_prognosen_vergleich(
         ist_stundenprofil=ist_stundenprofil,
         ist_tageshaelfte=ist_th,
         verbleibend_kwh=verbleibend_kwh,
+        verbleibend_om_kwh=verbleibend_om_kwh,
+        verbleibend_eedc_kwh=verbleibend_eedc_kwh,
+        verbleibend_solcast_kwh=verbleibend_solcast_kwh,
         openmeteo_stundenprofil=openmeteo_stundenprofil,
         solcast_letzter_abruf=datetime.now().isoformat(),
         openmeteo_modell=wetter_modell,

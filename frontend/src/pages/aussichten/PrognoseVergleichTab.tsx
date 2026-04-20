@@ -180,9 +180,9 @@ export default function PrognoseVergleichTab({ anlageId }: Props) {
                     <span>↳ Verbleibend</span>
                   </SimpleTooltip>
                 </td>
-                <td className="py-2 px-3"></td>
-                {hasEedc && <td className="py-2 px-3"></td>}
-                {hasSolcast && <td className="py-2 px-3"></td>}
+                <td className="py-2 px-3 text-right font-mono text-xs text-gray-500">{fmtKwh(data.verbleibend_om_kwh)}</td>
+                {hasEedc && <td className="py-2 px-3 text-right font-mono text-xs text-gray-500">{fmtKwh(data.verbleibend_eedc_kwh)}</td>}
+                {hasSolcast && <td className="py-2 px-3 text-right font-mono text-xs text-gray-500">{fmtKwh(data.verbleibend_solcast_kwh)}</td>}
                 <td className="py-2 px-3 text-right font-mono text-emerald-500">{fmtKwh(data.verbleibend_kwh)}</td>
               </tr>
               {/* VM/NM Heute */}
@@ -274,8 +274,6 @@ export default function PrognoseVergleichTab({ anlageId }: Props) {
                   label={{ value: 'Jetzt', position: 'top', fontSize: 10, fill: '#9ca3af' }} />
               )}
               <Area dataKey="ist" stroke="#22c55e" fill="#22c55e" fillOpacity={0.3} strokeWidth={2} dot={false} name="ist" connectNulls={false} />
-              {hasSolcast && <Area dataKey="solcast_p90" stroke="none" fill="#3b82f6" fillOpacity={0.08} legendType="none" />}
-              {hasSolcast && <Area dataKey="solcast_p10" stroke="none" fill="#ffffff" fillOpacity={0} legendType="none" />}
               {hasSolcast && <Line dataKey="solcast" stroke="#3b82f6" strokeWidth={2} dot={false} name="solcast" />}
               {hasEedc && <Line dataKey="eedc" stroke="#f97316" strokeWidth={2} dot={false} name="eedc" />}
               <Line dataKey="openmeteo" stroke="#eab308" strokeWidth={1.5} strokeDasharray="5 3" dot={false} name="openmeteo" />
@@ -289,7 +287,7 @@ export default function PrognoseVergleichTab({ anlageId }: Props) {
         <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
           Stundenvergleich heute
         </h3>
-        <div className="overflow-x-auto max-h-96">
+        <div className="overflow-auto max-h-96">
           <table className="w-full text-xs">
             <thead className="sticky top-0 bg-white dark:bg-gray-900">
               <tr className="border-b border-gray-200 dark:border-gray-700">
@@ -330,6 +328,8 @@ export default function PrognoseVergleichTab({ anlageId }: Props) {
                   </tr>
                 )
               })}
+            </tbody>
+            <tfoot className="sticky bottom-0 bg-white dark:bg-gray-900">
               {(() => {
                 const omSum = chartData.reduce((s, r) => s + r.openmeteo, 0)
                 const eedcSum = chartData.reduce((s, r) => s + (r.eedc ?? 0), 0)
@@ -358,7 +358,7 @@ export default function PrognoseVergleichTab({ anlageId }: Props) {
                   </tr>
                 )
               })()}
-            </tbody>
+            </tfoot>
           </table>
         </div>
       </Card>
