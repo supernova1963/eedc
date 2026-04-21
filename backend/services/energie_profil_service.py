@@ -787,24 +787,6 @@ async def backfill_from_statistics(
         stunden_count = 0
         komponenten_summen: dict[str, float] = {}
 
-        # Alte Daten für diesen Tag löschen (Upsert)
-        await db.execute(
-            sa_delete(TagesEnergieProfil).where(
-                sa_and(
-                    TagesEnergieProfil.anlage_id == anlage.id,
-                    TagesEnergieProfil.datum == current,
-                )
-            )
-        )
-        await db.execute(
-            sa_delete(TagesZusammenfassung).where(
-                sa_and(
-                    TagesZusammenfassung.anlage_id == anlage.id,
-                    TagesZusammenfassung.datum == current,
-                )
-            )
-        )
-
         # Serien filtern: nur Investitionen die an diesem Tag aktiv waren
         tages_serien = [
             s for s in serien
@@ -814,6 +796,7 @@ async def backfill_from_statistics(
         ]
 
         stunden_mit_daten = 0
+        pending_tep: list[TagesEnergieProfil] = []
         for h in range(24):
             # werte-Dict aus Statistics aufbauen (spiegelt live_tagesverlauf_service.py)
             werte: dict[str, float] = {}
@@ -919,7 +902,7 @@ async def backfill_from_statistics(
             for komp_key, komp_kw in werte.items():
                 komponenten_summen[komp_key] = komponenten_summen.get(komp_key, 0.0) + komp_kw
 
-            db.add(TagesEnergieProfil(
+            pending_tep.append(TagesEnergieProfil(
                 anlage_id=anlage.id,
                 datum=current,
                 stunde=h,
@@ -943,6 +926,46 @@ async def backfill_from_statistics(
             current += timedelta(days=1)
             continue
 
+        # Erst JETZT alte Daten löschen (nur wenn neue Daten vorhanden)
+        # Prognose-Felder aus bestehendem Eintrag bewahren
+        preserved_prognose = {}
+        existing_tz = await db.execute(
+            sa_select(TagesZusammenfassung).where(
+                sa_and(
+                    TagesZusammenfassung.anlage_id == anlage.id,
+                    TagesZusammenfassung.datum == current,
+                )
+            )
+        )
+        existing_tz_row = existing_tz.scalar_one_or_none()
+        if existing_tz_row:
+            for field in ("pv_prognose_kwh", "sfml_prognose_kwh",
+                           "solcast_prognose_kwh", "solcast_p10_kwh", "solcast_p90_kwh"):
+                val = getattr(existing_tz_row, field, None)
+                if val is not None:
+                    preserved_prognose[field] = val
+
+        await db.execute(
+            sa_delete(TagesEnergieProfil).where(
+                sa_and(
+                    TagesEnergieProfil.anlage_id == anlage.id,
+                    TagesEnergieProfil.datum == current,
+                )
+            )
+        )
+        await db.execute(
+            sa_delete(TagesZusammenfassung).where(
+                sa_and(
+                    TagesZusammenfassung.anlage_id == anlage.id,
+                    TagesZusammenfassung.datum == current,
+                )
+            )
+        )
+
+        # Gesammelte Stundendaten schreiben
+        for tep in pending_tep:
+            db.add(tep)
+
         # Batterie-Vollzyklen
         vollzyklen = None
         if len(soc_values) >= 2:
@@ -958,7 +981,7 @@ async def backfill_from_statistics(
             if theoretisch_kwh > 0:
                 performance_ratio = round(pv_ertrag_summe / theoretisch_kwh, 3)
 
-        db.add(TagesZusammenfassung(
+        tz_obj = TagesZusammenfassung(
             anlage_id=anlage.id,
             datum=current,
             ueberschuss_kwh=round(tages_ueberschuss, 2) if tages_ueberschuss > 0 else None,
@@ -977,7 +1000,11 @@ async def backfill_from_statistics(
                 {k: round(v, 2) for k, v in komponenten_summen.items()}
                 if komponenten_summen else None
             ),
-        ))
+        )
+        # Prognose-Felder aus gelöschtem Eintrag wiederherstellen
+        for field, val in preserved_prognose.items():
+            setattr(tz_obj, field, val)
+        db.add(tz_obj)
         await db.flush()
 
         logger.info(
@@ -1218,6 +1245,7 @@ async def resolve_and_backfill_from_statistics(
     *,
     von: Optional[date] = None,
     bis: Optional[date] = None,
+    overwrite: bool = False,
 ) -> BackfillResult:
     """
     Orchestriert den Vollbackfill aus HA Long-Term Statistics:
@@ -1282,7 +1310,7 @@ async def resolve_and_backfill_from_statistics(
         )
 
     verarbeitet = (bis - von).days + 1
-    geschrieben = await backfill_from_statistics(anlage, von, bis, db)
+    geschrieben = await backfill_from_statistics(anlage, von, bis, db, skip_existing=not overwrite)
 
     return BackfillResult(
         status="ok",
