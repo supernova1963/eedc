@@ -34,6 +34,7 @@ const Infothek = lazy(() => import('./pages/Infothek'))
 
 // Einstellungen - Daten
 const Monatsdaten = lazy(() => import('./pages/Monatsdaten'))
+const Energieprofil = lazy(() => import('./pages/Energieprofil'))
 const Import = lazy(() => import('./pages/Import'))
 const Einrichtung = lazy(() => import('./pages/Einrichtung'))
 const MqttInboundSetup = lazy(() => import('./pages/MqttInboundSetup'))
@@ -102,9 +103,10 @@ function App() {
 
             {/* Einstellungen - Daten */}
             <Route path="einstellungen/monatsdaten" element={<Monatsdaten />} />
-            <Route path="einstellungen/monatsabschluss" element={<MonatsabschlussWizard />} />
+            <Route path="einstellungen/monatsabschluss" element={<Navigate to="/einstellungen/monatsdaten" replace />} />
             <Route path="monatsabschluss/:anlageId" element={<MonatsabschlussWizard />} />
             <Route path="monatsabschluss/:anlageId/:jahr/:monat" element={<MonatsabschlussWizard />} />
+            <Route path="einstellungen/energieprofil" element={<Energieprofil />} />
             <Route path="einstellungen/daten-checker" element={<DatenChecker />} />
             <Route path="einstellungen/einrichtung" element={<Einrichtung />} />
             <Route path="einstellungen/import" element={<Import />} />
@@ -128,9 +130,9 @@ function App() {
             <Route path="einstellungen/community" element={<CommunityShare />} />
 
             {/* Redirects für entfernte/umbenannte Seiten */}
-            <Route path="einstellungen/datenerfassung" element={<Navigate to="/einstellungen/monatsabschluss" replace />} />
+            <Route path="einstellungen/datenerfassung" element={<Navigate to="/einstellungen/monatsdaten" replace />} />
             <Route path="einstellungen/demo" element={<Navigate to="/einstellungen/import" replace />} />
-            <Route path="einstellungen/ha-import" element={<Navigate to="/einstellungen/monatsabschluss" replace />} />
+            <Route path="einstellungen/ha-import" element={<Navigate to="/einstellungen/monatsdaten" replace />} />
             <Route path="einstellungen/pvgis" element={<Navigate to="/einstellungen/solarprognose" replace />} />
             <Route path="auswertungen/community" element={<Navigate to="/community" replace />} />
 
