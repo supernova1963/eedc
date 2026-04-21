@@ -196,6 +196,100 @@ def get_preis_fuer_datum(preise: list[tuple[date, float]], ziel_datum: date) -> 
     return None
 
 
+async def get_monatsdurchschnitt(
+    anlage_id: int,
+    jahr: int,
+    monat: int,
+    db,  # AsyncSession
+) -> Optional[float]:
+    """
+    Berechnet den Durchschnitts-Kraftstoffpreis eines Monats
+    aus TagesZusammenfassung-Daten.
+
+    Returns:
+        Durchschnittspreis in €/L oder None wenn keine Daten vorhanden.
+    """
+    from sqlalchemy import select, func, extract
+    from backend.models.tages_energie_profil import TagesZusammenfassung
+
+    result = await db.execute(
+        select(func.avg(TagesZusammenfassung.kraftstoffpreis_euro))
+        .where(
+            TagesZusammenfassung.anlage_id == anlage_id,
+            extract('year', TagesZusammenfassung.datum) == jahr,
+            extract('month', TagesZusammenfassung.datum) == monat,
+            TagesZusammenfassung.kraftstoffpreis_euro.isnot(None),
+        )
+    )
+    avg_preis = result.scalar()
+    if avg_preis is not None:
+        return round(avg_preis, 3)
+    return None
+
+
+async def backfill_monatsdaten_kraftstoffpreise(
+    anlage_id: int,
+    land: str,
+    db,  # AsyncSession
+) -> dict:
+    """
+    Befüllt kraftstoffpreis_euro in Monatsdaten für eine Anlage.
+
+    Für jeden Monat ohne Kraftstoffpreis wird der Durchschnitt aus dem
+    Oil Bulletin berechnet (Mittelwert der Wochenpreise im Monat).
+
+    Returns:
+        {"aktualisiert": int, "land": str}
+    """
+    from calendar import monthrange
+    from sqlalchemy import select
+    from backend.models.monatsdaten import Monatsdaten
+
+    preise = await get_kraftstoffpreise(land)
+    if not preise:
+        return {"aktualisiert": 0, "fehler": "Keine Kraftstoffpreise verfügbar"}
+
+    oil_land = LAND_MAPPING.get(land, land)
+
+    # Alle Monatsdaten ohne Kraftstoffpreis laden
+    result = await db.execute(
+        select(Monatsdaten).where(
+            Monatsdaten.anlage_id == anlage_id,
+            Monatsdaten.kraftstoffpreis_euro.is_(None),
+        )
+    )
+    rows = result.scalars().all()
+
+    if not rows:
+        return {"aktualisiert": 0, "land": oil_land, "hinweis": "Alle Monate haben bereits einen Preis"}
+
+    aktualisiert = 0
+    for md in rows:
+        # Durchschnitt der Wochenpreise im Monat berechnen
+        first_day = date(md.jahr, md.monat, 1)
+        last_day = date(md.jahr, md.monat, monthrange(md.jahr, md.monat)[1])
+        monats_preise = [
+            p for d, p in preise
+            if first_day <= d <= last_day
+        ]
+        # Wenn keine Preise exakt im Monat: nächsten verfügbaren Preis nehmen
+        if not monats_preise:
+            preis = get_preis_fuer_datum(preise, last_day)
+            if preis is not None:
+                monats_preise = [preis]
+
+        if monats_preise:
+            md.kraftstoffpreis_euro = round(sum(monats_preise) / len(monats_preise), 3)
+            aktualisiert += 1
+
+    if aktualisiert > 0:
+        await db.commit()
+        logger.info("Monatsdaten-Kraftstoffpreis-Backfill: %d Monate für Anlage %d (%s)",
+                     aktualisiert, anlage_id, oil_land)
+
+    return {"aktualisiert": aktualisiert, "land": oil_land}
+
+
 async def backfill_kraftstoffpreise(
     anlage_id: int,
     land: str,
