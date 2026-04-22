@@ -13,7 +13,7 @@ from pydantic_settings import BaseSettings
 # =============================================================================
 # Zentrale Versionskonfiguration
 # =============================================================================
-APP_VERSION = "3.18.0"
+APP_VERSION = "3.19.0"
 APP_NAME = "eedc"
 APP_FULL_NAME = "Energie Effizienz Data Center"
 
@@ -103,6 +103,12 @@ class Settings(BaseSettings):
     # Während der Migration (Issue #121) parallel — Default bleibt reportlab,
     # bis Phase 2/3 die Bestands-Endpoints umgestellt haben.
     pdf_engine: str = os.environ.get("PDF_ENGINE", "reportlab")
+
+    # Energieprofil-Datenpfad (Issue #135).
+    # Default "zaehler": aggregate_day/backfill berechnen kWh aus kumulativen
+    # Snapshot-Deltas. Fallback auf "leistung_w" (alte W-Integration) für
+    # schnellen Rollback bei Problemen.
+    energieprofil_quelle: str = os.environ.get("EEDC_ENERGIEPROFIL_QUELLE", "zaehler")
 
     class Config:
         env_file = ".env"
