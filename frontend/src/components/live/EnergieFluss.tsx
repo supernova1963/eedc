@@ -385,6 +385,9 @@ export default function EnergieFluss({
   const { nodeW: NODE_W, nodeH: NODE_H, nodeR: NODE_R, hausR: HAUS_R } = dims
   const CY = dims.cy
   const haushalt = komponenten.find(k => k.key === 'haushalt')
+  // PV-Knoten-Anzahl: bei nur einem PV-String ist "Solarleistung X kW"
+  // über dem Haus redundant (Wert = einzelner Knoten); Issue #137.
+  const pvCount = komponenten.filter(k => k.key.startsWith('pv_')).length
 
   const hausTip = [
     'Haushalt',
@@ -472,7 +475,11 @@ export default function EnergieFluss({
                 strokeOpacity={isActive ? 0.2 : 0.08}
                 strokeLinecap="round"
               />
-              {/* Kern-Linie (leuchtend, schmal) */}
+              {/* Kern-Linie (leuchtend, schmal). Im Lite-Modus zusätzlich
+                  CSS-animierter Dashoffset-Fluss (wie LuminaCard / STATS
+                  Card) — GPU-beschleunigt, kein SMIL-Ruckler auf Mobile-
+                  Safari. Im Effekt-Modus bleibt die Linie solid und die
+                  SMIL-Partikel darunter übernehmen den Fluss-Eindruck. */}
               {isActive && (
                 <path
                   d={d}
@@ -481,6 +488,8 @@ export default function EnergieFluss({
                   strokeWidth={Math.max(thickness * 0.4, 1.5)}
                   strokeOpacity={0.85}
                   strokeLinecap="round"
+                  className={lite ? (isSource ? 'flow-line' : 'flow-line flow-line--reverse') : undefined}
+                  style={lite ? { ['--flow-duration' as string]: `${duration}s` } : undefined}
                 />
               )}
               {/* Animierte Partikel (Elektronen) auf dem Pfad — im Lite-Modus aus.
@@ -562,8 +571,12 @@ export default function EnergieFluss({
           </text>
         </g>
 
-        {/* Solarleistung + PV-Soll — oberhalb des Hauses */}
-        {summePv > 0 && (
+        {/* Solarleistung + PV-Soll — oberhalb des Hauses.
+            "Solarleistung" wird bei Einzel-PV-Konfiguration NICHT gezeigt,
+            weil der Wert dann identisch zum einzigen PV-Knoten-Label ist
+            (Forum #335 detlan, Issue #137). Bei ≥ 2 PVs ist die Summe eine
+            echte Zusatzinformation und bleibt sichtbar. */}
+        {summePv > 0 && pvCount > 1 && (
           <text
             x={CX} y={CY - HAUS_R - 8}
             textAnchor="middle"
@@ -581,7 +594,7 @@ export default function EnergieFluss({
         )}
         {pvSollKw != null && pvSollKw > 0 && (
           <text
-            x={CX} y={CY - HAUS_R - 8 - (summePv > 0 ? dims.socFontSize + 2 : 0)}
+            x={CX} y={CY - HAUS_R - 8 - (summePv > 0 && pvCount > 1 ? dims.socFontSize + 2 : 0)}
             textAnchor="middle"
             style={{ fontSize: `${dims.socFontSize - 1}px` }}
             className={bgVariant === 'sunset'
