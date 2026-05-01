@@ -23,9 +23,13 @@ if [ -f "$CONFIG_PATH" ]; then
 
     # PDF-Engine (Issue #121, opt-in für die neue WeasyPrint-Pipeline)
     export PDF_ENGINE=$(jq -r '.pdf_engine // "reportlab"' $CONFIG_PATH)
+
+    # Live-Snapshot 5-Min (Phase 1 — Counter statt Power-Trapez für Live-Linie)
+    export LIVE_SNAPSHOT_5MIN_ENABLED=$(jq -r '.live_snapshot_5min_enabled // false' $CONFIG_PATH)
 else
     export LOG_LEVEL="info"
     export PDF_ENGINE="reportlab"
+    export LIVE_SNAPSHOT_5MIN_ENABLED="false"
 fi
 
 # Datenbank-Pfad (aiosqlite für async SQLAlchemy)
@@ -36,7 +40,7 @@ export DATABASE_URL="sqlite+aiosqlite:////data/eedc.db"
 
 echo "==================================="
 echo "  EEDC - Energie Daten Center"
-echo "  Version: 3.25.4"
+echo "  Version: 3.25.5"
 echo "==================================="
 echo "Log Level: $LOG_LEVEL"
 echo "Database: /data/eedc.db"
