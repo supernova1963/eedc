@@ -23,6 +23,17 @@ from backend.models.strompreis import Strompreis
 from backend.models.monatsdaten import Monatsdaten
 from backend.api.routes.strompreise import lade_tarife_fuer_anlage, resolve_netzbezug_preis_cent
 from backend.core.calculations import berechne_ust_eigenverbrauch
+from backend.core.wirtschaftlichkeit_defaults import (
+    EINSPEISEVERGUETUNG_DEFAULT_CENT,
+    NETZBEZUG_DEFAULT_CENT,
+    WP_PV_ANTEIL_DEFAULT,
+    WP_WIRKUNGSGRAD_GAS_DEFAULT,
+    WP_WIRKUNGSGRAD_OEL_DEFAULT,
+)
+from backend.services.speicher_wirtschaftlichkeit import (
+    berechne_speicher_ersparnis,
+    berechne_v2h_ersparnis,
+)
 from backend.core.investition_parameter import (
     PARAM_E_AUTO,
     PARAM_E_AUTO_DEFAULTS,
@@ -859,8 +870,8 @@ async def get_finanz_prognose(
     allgemein_tarif = tarife.get("allgemein")
     wp_tarif = tarife.get("waermepumpe")
 
-    einspeiseverguetung = allgemein_tarif.einspeiseverguetung_cent_kwh if allgemein_tarif else 8.2
-    netzbezug_preis = allgemein_tarif.netzbezug_arbeitspreis_cent_kwh if allgemein_tarif else 30.0
+    einspeiseverguetung = allgemein_tarif.einspeiseverguetung_cent_kwh if allgemein_tarif else EINSPEISEVERGUETUNG_DEFAULT_CENT
+    netzbezug_preis = allgemein_tarif.netzbezug_arbeitspreis_cent_kwh if allgemein_tarif else NETZBEZUG_DEFAULT_CENT
     wp_netzbezug_preis = wp_tarif.netzbezug_arbeitspreis_cent_kwh if wp_tarif else netzbezug_preis
 
     # =====================================================================
@@ -1092,7 +1103,7 @@ async def get_finanz_prognose(
     # Bug #7 (v3.25.0): Default vereinheitlicht auf zentrale 12 ct/kWh aus PARAM_WAERMEPUMPE_DEFAULTS
     # (vorher hier 10.0, andernorts 12.0 → User sah unterschiedliche Ersparnis je Tab).
     wp_alter_preis_cent = PARAM_WAERMEPUMPE_DEFAULTS["alter_preis_cent_kwh"]
-    wp_alter_wirkungsgrad = 0.90  # Gasheizung ~90% Wirkungsgrad
+    wp_alter_wirkungsgrad = WP_WIRKUNGSGRAD_GAS_DEFAULT
     wp_alternativ_zusatzkosten_jahr = 0.0  # Schornsteinfeger, Wartung, Grundpreis
     for wp in waermepumpen:
         if wp.parameter:
@@ -1101,7 +1112,7 @@ async def get_finanz_prognose(
                 PARAM_WAERMEPUMPE_DEFAULTS["alter_preis_cent_kwh"],
             )
             if wp.parameter.get(PARAM_WAERMEPUMPE["ALTER_ENERGIETRAEGER"]) == "oel":
-                wp_alter_wirkungsgrad = 0.85  # Öl etwas schlechter
+                wp_alter_wirkungsgrad = WP_WIRKUNGSGRAD_OEL_DEFAULT
             wp_alternativ_zusatzkosten_jahr += wp.parameter.get(PARAM_WAERMEPUMPE["ALTERNATIV_ZUSATZKOSTEN_JAHR"], 0) or 0
 
     # E-Auto: Benzin-Vergleich
@@ -1154,8 +1165,8 @@ async def get_finanz_prognose(
                 # Gas-Alternative: thermisch / Wirkungsgrad * Preis
                 gas_kosten = (thermisch / wp_alter_wirkungsgrad) * monats_gaspreis / 100
                 # WP-Stromkosten (nur Netzanteil, PV-Anteil ist bereits in EV-Ersparnis)
-                # Annahme: ca. 50% aus PV (konservativ)
-                wp_netz_anteil = 0.5
+                # Konservative 50/50-Annahme — TODO: aus tatsächlichen Daten herleiten
+                wp_netz_anteil = 1.0 - WP_PV_ANTEIL_DEFAULT
                 wp_stromkosten_netz = strom * wp_netz_anteil * wp_netzbezug_preis / 100
                 # Netto-Ersparnis (Gas-Alternative minus WP-Netzstrom)
                 bisherige_wp_ersparnis += gas_kosten - wp_stromkosten_netz
@@ -1341,8 +1352,8 @@ async def get_finanz_prognose(
             (wp_thermisch_jahr / wp_alter_wirkungsgrad) * prognose_gaspreis / 100
             + wp_alternativ_zusatzkosten_jahr
         )
-        # WP-Stromkosten pro Jahr (nur Netzanteil, ca. 50%)
-        wp_netz_anteil = 0.5
+        # WP-Stromkosten pro Jahr (nur Netzanteil) — konservative 50/50-Annahme
+        wp_netz_anteil = 1.0 - WP_PV_ANTEIL_DEFAULT
         wp_strom_jahr = jahres_wp_verbrauch
         wp_stromkosten_netz_jahr = wp_strom_jahr * wp_netz_anteil * wp_netzbezug_preis / 100
         # Netto-Ersparnis
@@ -1405,9 +1416,13 @@ async def get_finanz_prognose(
     # =====================================================================
     komponenten_beitraege = []
 
-    # Speicher
+    # Speicher (Drift-Audit D: Spread-Modell statt Voll-Strompreis)
     if speicher:
-        speicher_ersparnis = jahres_speicher_beitrag * netzbezug_preis / 100
+        speicher_ersparnis = berechne_speicher_ersparnis(
+            entladung_kwh=jahres_speicher_beitrag,
+            bezug_preis_cent=netzbezug_preis,
+            einspeise_verg_cent=einspeiseverguetung,
+        ).ersparnis_euro
         for sp in speicher:
             komponenten_beitraege.append(KomponentenBeitragSchema(
                 typ="speicher",
@@ -1417,9 +1432,13 @@ async def get_finanz_prognose(
                 beschreibung="Eigenverbrauchserhöhung durch Zwischenspeicherung",
             ))
 
-    # E-Auto / V2H
+    # E-Auto / V2H (Drift-Audit D: Spread-Modell für V2H analog Speicher)
     if e_autos:
-        v2h_ersparnis = jahres_v2h_beitrag * netzbezug_preis / 100
+        v2h_ersparnis = berechne_v2h_ersparnis(
+            v2h_entladung_kwh=jahres_v2h_beitrag,
+            bezug_preis_cent=netzbezug_preis,
+            einspeise_verg_cent=einspeiseverguetung,
+        ).ersparnis_euro
         eauto_ersparnis = jahres_eauto_pv * netzbezug_preis / 100
         for ea in e_autos:
             # Prüfe ob V2H aktiv (Bug #1 v3.25.0: Form/Wizard schreiben v2h_faehig,
@@ -1502,10 +1521,19 @@ async def get_finanz_prognose(
     else:
         datenquellen.insert(0, "pvgis-tmy")
 
-    speicher_ersparnis_euro = jahres_speicher_beitrag * netzbezug_preis / 100
-    v2h_ersparnis_euro = jahres_v2h_beitrag * netzbezug_preis / 100
+    # Drift-Audit D: Spread-Modell für Speicher + V2H (Bezug − Einspeise)
+    speicher_ersparnis_euro = berechne_speicher_ersparnis(
+        entladung_kwh=jahres_speicher_beitrag,
+        bezug_preis_cent=netzbezug_preis,
+        einspeise_verg_cent=einspeiseverguetung,
+    ).ersparnis_euro
+    v2h_ersparnis_euro = berechne_v2h_ersparnis(
+        v2h_entladung_kwh=jahres_v2h_beitrag,
+        bezug_preis_cent=netzbezug_preis,
+        einspeise_verg_cent=einspeiseverguetung,
+    ).ersparnis_euro
     eauto_ersparnis_euro = jahres_eauto_pv * netzbezug_preis / 100
-    wp_pv_kwh_total = jahres_wp_verbrauch * 0.5
+    wp_pv_kwh_total = jahres_wp_verbrauch * WP_PV_ANTEIL_DEFAULT
     wp_pv_ersparnis_euro = wp_pv_kwh_total * netzbezug_preis / 100
 
     return FinanzPrognoseResponse(

@@ -25,6 +25,11 @@ from backend.models.pvgis_prognose import PVGISPrognose, PVGISMonatsprognose
 from backend.api.routes.strompreise import lade_tarife_fuer_anlage, resolve_netzbezug_preis_cent
 from backend.api.routes.connector import _calc_month_delta
 from backend.services.wp_wirtschaftlichkeit import berechne_wp_ersparnis
+from backend.services.eauto_wirtschaftlichkeit import berechne_eauto_ersparnis
+from backend.core.wirtschaftlichkeit_defaults import (
+    EINSPEISEVERGUETUNG_DEFAULT_CENT,
+    NETZBEZUG_DEFAULT_CENT,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -521,8 +526,8 @@ async def _load_vorjahr(anlage_id: int, investitionen: list[Investition], jahr: 
         tarife_vj = await lade_tarife_fuer_anlage(db, anlage_id, target_date=stichtag_vj)
         tarif_vj = tarife_vj.get("allgemein")
         if tarif_vj:
-            netz_preis = tarif_vj.netzbezug_arbeitspreis_cent_kwh or 30.0
-            einsp_preis = tarif_vj.einspeiseverguetung_cent_kwh or 8.2
+            netz_preis = tarif_vj.netzbezug_arbeitspreis_cent_kwh or NETZBEZUG_DEFAULT_CENT
+            einsp_preis = tarif_vj.einspeiseverguetung_cent_kwh or EINSPEISEVERGUETUNG_DEFAULT_CENT
             grundpreis = tarif_vj.grundpreis_euro_monat or 0
             # Flexibler Tarif überschreibt wenn vorhanden
             if result.get("netzbezug_durchschnittspreis_cent"):
@@ -706,8 +711,8 @@ async def get_aktueller_monat(
     tarife = await lade_tarife_fuer_anlage(db, anlage_id)
     allgemein_tarif = tarife.get("allgemein")
     if allgemein_tarif:
-        netzbezug_preis_cent = allgemein_tarif.netzbezug_arbeitspreis_cent_kwh if allgemein_tarif.netzbezug_arbeitspreis_cent_kwh is not None else 30.0
-        einspeise_cent = allgemein_tarif.einspeiseverguetung_cent_kwh if allgemein_tarif.einspeiseverguetung_cent_kwh is not None else 8.2
+        netzbezug_preis_cent = allgemein_tarif.netzbezug_arbeitspreis_cent_kwh if allgemein_tarif.netzbezug_arbeitspreis_cent_kwh is not None else NETZBEZUG_DEFAULT_CENT
+        einspeise_cent = allgemein_tarif.einspeiseverguetung_cent_kwh if allgemein_tarif.einspeiseverguetung_cent_kwh is not None else EINSPEISEVERGUETUNG_DEFAULT_CENT
         # Flexibler Durchschnittspreis überschreibt Netzbezugspreis für Finanzberechnung
         # (wird nach dem Monatsdaten-Laden gesetzt, hier Platzhalter für spätere Überschreibung)
 
@@ -738,6 +743,7 @@ async def get_aktueller_monat(
     )
     md_for_gas = md_result.scalar_one_or_none()
     monats_gaspreis = md_for_gas.gaspreis_cent_kwh if md_for_gas else None
+    monats_benzinpreis = md_for_gas.kraftstoffpreis_euro if md_for_gas else None
 
     wp_waerme = get_val("wp_waerme_kwh")
     wp_strom = get_val("wp_strom_kwh")
@@ -770,9 +776,18 @@ async def get_aktueller_monat(
             if wallbox_tarif and wallbox_tarif.netzbezug_arbeitspreis_cent_kwh is not None
             else netzbezug_preis_cent
         )
-        benzin_kosten = emob_km * 7 / 100 * 1.80
-        strom_kosten = ((emob_ladung or 0) - emob_pv_ladung) * wallbox_preis_cent / 100
-        emob_ersparnis = round(benzin_kosten - strom_kosten, 2)
+        # Drift-Audit Domäne A2: vorher 7 L/100km + 1,80 €/L hartcodiert.
+        emob_invs_aktiv = [i for i in investitionen if i.typ in ("e-auto", "wallbox")]
+        emob_ref_param = emob_invs_aktiv[0].parameter if emob_invs_aktiv else None
+        emob_result = berechne_eauto_ersparnis(
+            km_gefahren=emob_km,
+            ladung_netz_kwh=(emob_ladung or 0) - emob_pv_ladung,
+            ladung_extern_euro=0.0,
+            wallbox_strompreis_cent=wallbox_preis_cent,
+            eauto_parameter=emob_ref_param,
+            monats_benzinpreis_euro=monats_benzinpreis,
+        )
+        emob_ersparnis = round(emob_result.ersparnis_euro, 2)
 
     # BKW-Ersparnis wird NICHT separat ausgewiesen — BKW-Erzeugung fließt in
     # pv_erzeugung_total und damit in eigenverbrauch ein → bereits in ev_ersparnis enthalten.
@@ -1008,10 +1023,10 @@ async def get_aktueller_monat(
     # ── Per-Investition Finanzdetails (T-Konto) ──
     investitionen_financials: list[InvestitionFinancialDetail] = []
     if investitionen and allgemein_tarif:
-        netz_p = netzbezug_preis_cent or 30.0
+        netz_p = netzbezug_preis_cent or NETZBEZUG_DEFAULT_CENT
         if netzbezug_durchschnittspreis:
             netz_p = netzbezug_durchschnittspreis
-        einsp_p = einspeise_cent or 8.2
+        einsp_p = einspeise_cent or EINSPEISEVERGUETUNG_DEFAULT_CENT
         wp_tarif_obj = tarife.get("waermepumpe")
         wp_p = (wp_tarif_obj.netzbezug_arbeitspreis_cent_kwh
                 if wp_tarif_obj and wp_tarif_obj.netzbezug_arbeitspreis_cent_kwh is not None
@@ -1095,13 +1110,22 @@ async def get_aktueller_monat(
                 ladung_netz = data.get("ladung_netz_kwh")
                 ladung_pv = data.get("ladung_pv_kwh")
                 if km and km > 0:
-                    benzin_kosten = km * 7 / 100 * 1.80
                     netz_kwh = ladung_netz if ladung_netz is not None else ((ladung or 0) - (ladung_pv or 0))
-                    strom_kosten = max(0, netz_kwh) * wb_p / 100
-                    inv_ersparnis = round(benzin_kosten - strom_kosten, 2)
+                    eauto_result = berechne_eauto_ersparnis(
+                        km_gefahren=km,
+                        ladung_netz_kwh=max(0, netz_kwh),
+                        ladung_extern_euro=0.0,
+                        wallbox_strompreis_cent=wb_p,
+                        eauto_parameter=inv.parameter,
+                        monats_benzinpreis_euro=monats_benzinpreis,
+                    )
+                    inv_ersparnis = round(eauto_result.ersparnis_euro, 2)
                     inv_label = "Ersparnis vs. Verbrenner"
-                    inv_formel = "(km × 7 L/100km × 1,80 €/L) − Netzladung × Strompreis"
-                    inv_berechnung = f"{km:.0f} km × 7/100 × 1,80 €"
+                    inv_formel = "(km × Verbrauch × Benzinpreis) − Netzladung × Strompreis"
+                    inv_berechnung = (
+                        f"{km:.0f} km × {eauto_result.verwendeter_verbrauch_l_100km:.1f} L/100km × "
+                        f"{eauto_result.verwendeter_benzinpreis_euro:.2f} €"
+                    )
                 elif inv.typ == "wallbox" and ladung_pv and ladung_pv > 0:
                     inv_ersparnis = round(ladung_pv * wb_p / 100, 2)
                     inv_label = "PV-Ladung-Ersparnis"

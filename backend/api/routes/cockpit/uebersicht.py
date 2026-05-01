@@ -20,7 +20,13 @@ from backend.core.calculations import (
 )
 from backend.utils.sonstige_positionen import berechne_sonstige_summen
 from backend.core.investition_parameter import PARAM_E_AUTO, PARAM_WAERMEPUMPE
+from backend.core.wirtschaftlichkeit_defaults import (
+    EINSPEISEVERGUETUNG_DEFAULT_CENT,
+    NETZBEZUG_DEFAULT_CENT,
+    WP_WIRKUNGSGRAD_GAS_DEFAULT,
+)
 from backend.services.wp_wirtschaftlichkeit import berechne_wp_ersparnis
+from backend.services.eauto_wirtschaftlichkeit import berechne_eauto_ersparnis
 
 router = APIRouter()
 
@@ -134,8 +140,8 @@ async def get_cockpit_uebersicht(
     wp_tarif = tarife.get("waermepumpe")
     wallbox_tarif = tarife.get("wallbox")
 
-    netzbezug_preis_cent = allgemein_tarif.netzbezug_arbeitspreis_cent_kwh if allgemein_tarif else 30.0
-    einspeise_verguetung_cent = allgemein_tarif.einspeiseverguetung_cent_kwh if allgemein_tarif else 8.2
+    netzbezug_preis_cent = allgemein_tarif.netzbezug_arbeitspreis_cent_kwh if allgemein_tarif else NETZBEZUG_DEFAULT_CENT
+    einspeise_verguetung_cent = allgemein_tarif.einspeiseverguetung_cent_kwh if allgemein_tarif else EINSPEISEVERGUETUNG_DEFAULT_CENT
     wp_preis_cent = wp_tarif.netzbezug_arbeitspreis_cent_kwh if wp_tarif else netzbezug_preis_cent
     wallbox_preis_cent = wallbox_tarif.netzbezug_arbeitspreis_cent_kwh if wallbox_tarif else netzbezug_preis_cent
 
@@ -312,10 +318,18 @@ async def get_cockpit_uebersicht(
     ]
     hat_emobilitaet = len(emob_invs) > 0
     emob_pv_anteil = (emob_pv_ladung / emob_ladung * 100) if emob_ladung > 0 else None
-    benzin_verbrauch = emob_km * 7 / 100
-    benzin_kosten = benzin_verbrauch * 1.80
-    strom_kosten = (emob_ladung - emob_pv_ladung) * wallbox_preis_cent / 100
-    emob_ersparnis = benzin_kosten - strom_kosten if emob_km > 0 else 0
+    # Drift-Audit Domäne A2: vorher 7 L/100km + 1,80 €/L hartcodiert.
+    # Multi-E-Auto: erste Investition als Parameter-Referenz.
+    emob_ref_parameter = emob_invs[0].parameter if emob_invs else None
+    emob_result = berechne_eauto_ersparnis(
+        km_gefahren=emob_km,
+        ladung_netz_kwh=emob_ladung - emob_pv_ladung,
+        ladung_extern_euro=0.0,  # Cockpit-Übersicht aggregiert über Heim-Ladung
+        wallbox_strompreis_cent=wallbox_preis_cent,
+        eauto_parameter=emob_ref_parameter,
+    )
+    emob_ersparnis = emob_result.ersparnis_euro
+    benzin_verbrauch = (emob_km / 100) * emob_result.verwendeter_verbrauch_l_100km
 
     bkw_invs = [i for i in investitionen if i.typ == "balkonkraftwerk" and i.ist_aktiv_an(today)]
     hat_balkonkraftwerk = len(bkw_invs) > 0
@@ -337,9 +351,9 @@ async def get_cockpit_uebersicht(
     for m in monatsdaten_list:
         m_tarife = await _tarif_fuer_monat(m)
         m_allgemein = m_tarife.get("allgemein")
-        m_preis_cent = m_allgemein.netzbezug_arbeitspreis_cent_kwh if m_allgemein else 30.0
+        m_preis_cent = m_allgemein.netzbezug_arbeitspreis_cent_kwh if m_allgemein else NETZBEZUG_DEFAULT_CENT
         m_grundpreis = (m_allgemein.grundpreis_euro_monat or 0) if m_allgemein else 0
-        m_einspeis_cent = m_allgemein.einspeiseverguetung_cent_kwh if m_allgemein else 8.2
+        m_einspeis_cent = m_allgemein.einspeiseverguetung_cent_kwh if m_allgemein else EINSPEISEVERGUETUNG_DEFAULT_CENT
         eff_preis = resolve_netzbezug_preis_cent(m, m_preis_cent)
         kwh = m.netzbezug_kwh or 0
         gew_preis_sum += eff_preis * kwh
@@ -407,7 +421,7 @@ async def get_cockpit_uebersicht(
 
     # CO2-Bilanz
     co2_pv = eigenverbrauch * CO2_FAKTOR_STROM_KG_KWH
-    co2_wp = (wp_waerme / 0.9 * CO2_FAKTOR_GAS_KG_KWH) - (wp_strom * CO2_FAKTOR_STROM_KG_KWH) if wp_waerme > 0 else 0
+    co2_wp = (wp_waerme / WP_WIRKUNGSGRAD_GAS_DEFAULT * CO2_FAKTOR_GAS_KG_KWH) - (wp_strom * CO2_FAKTOR_STROM_KG_KWH) if wp_waerme > 0 else 0
     co2_emob = (benzin_verbrauch * CO2_FAKTOR_BENZIN_KG_LITER) - ((emob_ladung - emob_pv_ladung) * CO2_FAKTOR_STROM_KG_KWH) if emob_km > 0 else 0
     co2_gesamt = co2_pv + max(0, co2_wp) + max(0, co2_emob)
 

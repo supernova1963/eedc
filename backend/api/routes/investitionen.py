@@ -19,7 +19,11 @@ from backend.models.anlage import Anlage
 from backend.models.monatsdaten import Monatsdaten
 from backend.models.strompreis import Strompreis
 from backend.models.tages_energie_profil import TagesZusammenfassung
-from backend.api.routes.strompreise import lade_tarife_fuer_anlage, resolve_netzbezug_preis_cent
+from backend.api.routes.strompreise import (
+    lade_tarife_fuer_anlage,
+    resolve_netzbezug_preis_cent,
+    resolve_strompreis_for_komponente,
+)
 from backend.utils.sonstige_positionen import berechne_sonstige_summen
 from backend.core.investition_parameter import (
     PARAM_E_AUTO,
@@ -32,6 +36,21 @@ from backend.core.investition_parameter import (
     PARAM_WALLBOX_DEFAULTS,
 )
 from backend.services.wp_wirtschaftlichkeit import berechne_wp_ersparnis
+from backend.services.eauto_wirtschaftlichkeit import berechne_eauto_ersparnis
+from backend.core.wirtschaftlichkeit_defaults import (
+    EINSPEISEVERGUETUNG_DEFAULT_CENT,
+    EXTERNE_LADUNG_DEFAULT_EURO_KWH,
+    NETZBEZUG_DEFAULT_CENT,
+)
+from backend.services.speicher_wirtschaftlichkeit import (
+    berechne_speicher_ersparnis,
+    berechne_v2h_ersparnis,
+)
+from backend.core.calculations import (
+    CO2_FAKTOR_BENZIN_KG_LITER,
+    CO2_FAKTOR_GAS_KG_KWH,
+    CO2_FAKTOR_STROM_KG_KWH,
+)
 
 
 # =============================================================================
@@ -498,7 +517,6 @@ async def get_roi_dashboard(
         berechne_waermepumpe_einsparung,
         berechne_roi,
         berechne_ust_eigenverbrauch,
-        CO2_FAKTOR_STROM_KG_KWH,
     )
     from sqlalchemy import func
     from backend.models.pvgis_prognose import PVGISPrognose
@@ -512,8 +530,8 @@ async def get_roi_dashboard(
     # Tarife laden (allgemein + Spezialtarife)
     tarife = await lade_tarife_fuer_anlage(db, anlage_id)
     allgemein_tarif = tarife.get("allgemein")
-    strompreis_cent = strompreis_cent or (allgemein_tarif.netzbezug_arbeitspreis_cent_kwh if allgemein_tarif else 30.0)
-    einspeiseverguetung_cent = einspeiseverguetung_cent or (allgemein_tarif.einspeiseverguetung_cent_kwh if allgemein_tarif else 8.2)
+    strompreis_cent = strompreis_cent or resolve_strompreis_for_komponente(tarife, "allgemein")
+    einspeiseverguetung_cent = einspeiseverguetung_cent or (allgemein_tarif.einspeiseverguetung_cent_kwh if allgemein_tarif else EINSPEISEVERGUETUNG_DEFAULT_CENT)
     wp_tarif = tarife.get("waermepumpe")
     wp_strompreis = wp_tarif.netzbezug_arbeitspreis_cent_kwh if wp_tarif else strompreis_cent
     wallbox_tarif = tarife.get("wallbox")
@@ -1267,7 +1285,11 @@ async def get_eauto_dashboard(
     tarife = await lade_tarife_fuer_anlage(db, anlage_id)
     wallbox_tarif = tarife.get("wallbox")
     allgemein_tarif = tarife.get("allgemein")
-    strompreis_cent = strompreis_cent or (wallbox_tarif.netzbezug_arbeitspreis_cent_kwh if wallbox_tarif else (allgemein_tarif.netzbezug_arbeitspreis_cent_kwh if allgemein_tarif else 30.0))
+    strompreis_cent = strompreis_cent or resolve_strompreis_for_komponente(tarife, "wallbox")
+    # Einspeisevergütung für V2H-Spread-Berechnung (Drift-Audit D)
+    einspeise_verg_cent = (allgemein_tarif.einspeiseverguetung_cent_kwh
+                           if allgemein_tarif and allgemein_tarif.einspeiseverguetung_cent_kwh is not None
+                           else EINSPEISEVERGUETUNG_DEFAULT_CENT)
 
     # E-Autos laden — Issue #123: Dashboard ist historische Übersicht,
     # stillgelegte E-Autos bleiben mit ihrer Historie sichtbar.
@@ -1333,34 +1355,52 @@ async def get_eauto_dashboard(
         # PV-Anteil auf Gesamt-Ladung
         pv_anteil_gesamt = (gesamt_pv_ladung / gesamt_ladung * 100) if gesamt_ladung > 0 else 0
 
-        # Kosten-Berechnung
+        # E-Auto-Ersparnis vs. Verbrenner via SoT-Helper (Drift-Audit A2).
+        # `benzinpreis_euro` kommt als Query-Param explizit oder als Default — der
+        # Helper respektiert dies via `monats_benzinpreis_euro`-Override.
         params = eauto.parameter or {}
-        benzin_verbrauch_100km = params.get('vergleich_verbrauch_l_100km', 7.5)
-
-        # Benzin-Kosten (Alternativ-Szenario)
-        benzin_kosten = (gesamt_km / 100) * benzin_verbrauch_100km * benzinpreis_euro
-
-        # E-Auto Kosten: PV = kostenlos, Netz = Strompreis, Extern = tatsächliche Kosten
+        eauto_result = berechne_eauto_ersparnis(
+            km_gefahren=gesamt_km,
+            ladung_netz_kwh=gesamt_netz_ladung,
+            ladung_extern_euro=gesamt_extern_kosten,
+            wallbox_strompreis_cent=strompreis_cent,
+            eauto_parameter=params,
+            monats_benzinpreis_euro=benzinpreis_euro,
+        )
+        benzin_kosten = eauto_result.benzin_kosten_euro
         heim_netz_kosten = gesamt_netz_ladung * strompreis_cent / 100
-        strom_kosten_gesamt = heim_netz_kosten + gesamt_extern_kosten
+        strom_kosten_gesamt = eauto_result.strom_kosten_euro
+        ersparnis_vs_benzin = eauto_result.ersparnis_euro
+        benzin_verbrauch_100km = eauto_result.verwendeter_verbrauch_l_100km
 
-        # Ersparnis vs. Verbrenner
-        ersparnis_vs_benzin = benzin_kosten - strom_kosten_gesamt
-
-        # V2H Ersparnis (Rückspeisung ins Haus)
-        v2h_preis = params.get('v2h_entlade_preis_cent', strompreis_cent)
-        v2h_ersparnis = gesamt_v2h * v2h_preis / 100
+        # V2H Ersparnis (Rückspeisung ins Haus, Drift-Audit D: Spread-Modell).
+        # User kann `v2h_entlade_preis_cent` als expliziten Override pflegen;
+        # ohne Override: Spread (Bezug − Einspeise) — die V2H-Energie hätte
+        # alternativ eingespeist werden können.
+        v2h_preis_override = params.get('v2h_entlade_preis_cent')
+        if v2h_preis_override is not None:
+            v2h_ersparnis = gesamt_v2h * v2h_preis_override / 100
+        else:
+            v2h_ersparnis = berechne_v2h_ersparnis(
+                v2h_entladung_kwh=gesamt_v2h,
+                bezug_preis_cent=strompreis_cent,
+                einspeise_verg_cent=einspeise_verg_cent,
+            ).ersparnis_euro
 
         # Wallbox-Ersparnis: Was hätte externe Ladung gekostet?
-        # Durchschnittlicher externer Preis (wenn vorhanden) oder Annahme 50 ct/kWh
-        extern_preis_kwh = (gesamt_extern_kosten / gesamt_extern_ladung) if gesamt_extern_ladung > 0 else 0.50
+        # Durchschnittlicher externer Preis (wenn vorhanden) oder kanon. Default.
+        extern_preis_kwh = (
+            gesamt_extern_kosten / gesamt_extern_ladung
+            if gesamt_extern_ladung > 0
+            else EXTERNE_LADUNG_DEFAULT_EURO_KWH
+        )
         heim_ladung_als_extern = gesamt_heim_ladung * extern_preis_kwh
         heim_kosten_tatsaechlich = heim_netz_kosten  # PV ist kostenlos
         wallbox_ersparnis = heim_ladung_als_extern - heim_kosten_tatsaechlich
 
-        # CO2 Ersparnis (Benzin: ca. 2.37 kg CO2 pro Liter)
-        benzin_co2 = (gesamt_km / 100) * benzin_verbrauch_100km * 2.37
-        strom_co2 = gesamt_verbrauch * 0.38  # Strommix
+        # CO2 Ersparnis: Benzin vs. Strommix
+        benzin_co2 = (gesamt_km / 100) * benzin_verbrauch_100km * CO2_FAKTOR_BENZIN_KG_LITER
+        strom_co2 = gesamt_verbrauch * CO2_FAKTOR_STROM_KG_KWH
         co2_ersparnis = benzin_co2 - strom_co2
 
         zusammenfassung = {
@@ -1418,7 +1458,7 @@ async def get_waermepumpe_dashboard(
     tarife = await lade_tarife_fuer_anlage(db, anlage_id)
     wp_tarif = tarife.get("waermepumpe")
     allgemein_tarif = tarife.get("allgemein")
-    strompreis_cent = strompreis_cent or (wp_tarif.netzbezug_arbeitspreis_cent_kwh if wp_tarif else (allgemein_tarif.netzbezug_arbeitspreis_cent_kwh if allgemein_tarif else 30.0))
+    strompreis_cent = strompreis_cent or resolve_strompreis_for_komponente(tarife, "waermepumpe")
 
     inv_result = await db.execute(
         select(Investition)
@@ -1513,9 +1553,9 @@ async def get_waermepumpe_dashboard(
         alte_heizung_kosten = wp_result.alte_heizung_kosten_euro
         ersparnis = wp_result.ersparnis_euro
 
-        # CO2 (Gas: ca. 0.2 kg/kWh, Strom: 0.38 kg/kWh)
-        gas_co2 = gesamt_waerme * 0.2
-        strom_co2 = gesamt_strom * 0.38
+        # CO2: Gas vs. Strommix (kanon. 0.201 / 0.38 kg/kWh)
+        gas_co2 = gesamt_waerme * CO2_FAKTOR_GAS_KG_KWH
+        strom_co2 = gesamt_strom * CO2_FAKTOR_STROM_KG_KWH
         co2_ersparnis = gas_co2 - strom_co2
 
         # Kompressor-Starts (#169): Σ + Max-Tag über die gesamte Lebensdauer.
@@ -1573,14 +1613,15 @@ async def get_waermepumpe_dashboard(
 @router.get("/dashboard/speicher/{anlage_id}", response_model=list[SpeicherDashboardResponse])
 async def get_speicher_dashboard(
     anlage_id: int,
-    strompreis_cent: float = Query(30.0),
-    einspeiseverguetung_cent: float = Query(8.0),
+    strompreis_cent: Optional[float] = Query(None),
+    einspeiseverguetung_cent: Optional[float] = Query(None),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Speicher Dashboard für eine Anlage.
 
     Zeigt alle Speicher mit Zyklen, Effizienz, Eigenverbrauchserhöhung.
+    Drift-Audit E: Tarife aus DB statt 30/8-Defaults aus Query-Param.
     """
     inv_result = await db.execute(
         select(Investition)
@@ -1591,6 +1632,18 @@ async def get_speicher_dashboard(
 
     if not speicher_list:
         return []
+
+    # Tarife aus DB laden (falls Query-Params nicht explizit übergeben)
+    tarife = await lade_tarife_fuer_anlage(db, anlage_id)
+    allgemein_tarif = tarife.get("allgemein")
+    if strompreis_cent is None:
+        strompreis_cent = resolve_strompreis_for_komponente(tarife, "allgemein")
+    if einspeiseverguetung_cent is None:
+        einspeiseverguetung_cent = (
+            allgemein_tarif.einspeiseverguetung_cent_kwh
+            if allgemein_tarif and allgemein_tarif.einspeiseverguetung_cent_kwh is not None
+            else EINSPEISEVERGUETUNG_DEFAULT_CENT
+        )
 
     # Monatsdaten für Durchschnittspreis-Fallback laden
     anlage_md_result = await db.execute(
@@ -1758,7 +1811,7 @@ async def get_wallbox_dashboard(
     tarife = await lade_tarife_fuer_anlage(db, anlage_id)
     wallbox_tarif = tarife.get("wallbox")
     allgemein_tarif = tarife.get("allgemein")
-    strompreis_cent = strompreis_cent or (wallbox_tarif.netzbezug_arbeitspreis_cent_kwh if wallbox_tarif else (allgemein_tarif.netzbezug_arbeitspreis_cent_kwh if allgemein_tarif else 30.0))
+    strompreis_cent = strompreis_cent or resolve_strompreis_for_komponente(tarife, "wallbox")
 
     inv_result = await db.execute(
         select(Investition)
@@ -1991,8 +2044,8 @@ async def get_balkonkraftwerk_dashboard(
         erloes_einspeisung = 0  # BKW-Einspeisung ist unvergütet
         gesamt_ersparnis = ersparnis_eigenverbrauch
 
-        # CO2-Einsparung (0.38 kg/kWh für Eigenverbrauch)
-        co2_ersparnis = gesamt_eigenverbrauch * 0.38
+        # CO2-Einsparung für Eigenverbrauch
+        co2_ersparnis = gesamt_eigenverbrauch * CO2_FAKTOR_STROM_KG_KWH
 
         # Spezifischer Ertrag (kWh pro kWp)
         spezifischer_ertrag = (gesamt_erzeugung / (gesamt_leistung_wp / 1000)) if gesamt_leistung_wp > 0 else 0
@@ -2103,7 +2156,7 @@ async def get_sonstiges_dashboard(
             ersparnis_eigenverbrauch = gesamt_eigenverbrauch * strompreis_cent / 100
             erloes_einspeisung = gesamt_einspeisung * einspeiseverguetung_cent / 100
             gesamt_ersparnis = ersparnis_eigenverbrauch + erloes_einspeisung + gesamt_sonstige_netto
-            co2_ersparnis = gesamt_eigenverbrauch * 0.38
+            co2_ersparnis = gesamt_eigenverbrauch * CO2_FAKTOR_STROM_KG_KWH
 
             zusammenfassung = {
                 'kategorie': kategorie,
