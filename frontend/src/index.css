@@ -17,6 +17,14 @@ html.dark .recharts-legend-item-text {
 
 /* Custom base styles */
 @layer base {
+  html, body {
+    /* Document-Root darf nicht scrollen — der Layout-Wrapper (h-dvh) ist
+       der einzige Scroll-Owner. Auf iOS Safari/WKWebView (HA Companion)
+       konnte der Body sonst über den Wrapper hinaus gescrollt werden,
+       bis nur noch die HA-Titelleiste sichtbar blieb (#161 detLAN). */
+    @apply h-full overflow-hidden overscroll-none;
+  }
+
   html {
     @apply antialiased;
   }
