@@ -22,6 +22,9 @@ export interface InvestitionFinancialDetail {
   ersparnis_label: string
   formel: string | null
   berechnung: string | null
+  // Sonstige Positionen (z.B. AG-Vergütung Dienstwagen, THG-Quote)
+  sonstige_ertraege_euro: number
+  sonstige_ausgaben_euro: number
 }
 
 export interface AktuellerMonatResponse {
@@ -94,6 +97,11 @@ export interface AktuellerMonatResponse {
   netto_ertrag_euro: number | null
   wp_ersparnis_euro: number | null
   emob_ersparnis_euro: number | null
+  // Sonstige Positionen aggregiert (z.B. AG-Vergütung Dienstwagen, THG-Quote).
+  // Detail-Zeilen pro Investition stehen in investitionen_financials.
+  sonstige_ertraege_euro: number
+  sonstige_ausgaben_euro: number
+  sonstige_netto_euro: number
   gesamtnettoertrag_euro: number | null
   betriebskosten_anteilig_euro: number | null
 

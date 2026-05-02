@@ -35,6 +35,7 @@ from backend.core.field_definitions import (
     get_pv_erzeugung_kwh,
     get_wp_heizenergie_kwh,
 )
+from backend.utils.sonstige_positionen import berechne_sonstige_summen
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +69,10 @@ class InvestitionFinancialDetail(BaseModel):
     ersparnis_label: str = ""                # "Eigenverbrauch-Ersparnis", "Ersparnis vs. Gas", ...
     formel: Optional[str] = None
     berechnung: Optional[str] = None
+    # Sonstige Positionen (z.B. AG-Vergütung Dienstwagen, THG-Quote, Reparaturen).
+    # Werden je Investition aggregiert; Detail-Zeilen rendert das Frontend.
+    sonstige_ertraege_euro: float = 0.0
+    sonstige_ausgaben_euro: float = 0.0
 
 
 class AktuellerMonatResponse(BaseModel):
@@ -143,6 +148,13 @@ class AktuellerMonatResponse(BaseModel):
     netto_ertrag_euro: Optional[float] = None
     wp_ersparnis_euro: Optional[float] = None
     emob_ersparnis_euro: Optional[float] = None
+    # Sonstige Positionen aggregiert (z.B. AG-Vergütung Dienstwagen, THG-Quote,
+    # Reparaturen). Detail-Zeilen pro Investition stehen in
+    # investitionen_financials. Frontend addiert sonstige_netto auf
+    # nettoNachAllem; gesamtnettoertrag enthält sie bewusst NICHT (Backward-Compat).
+    sonstige_ertraege_euro: float = 0.0
+    sonstige_ausgaben_euro: float = 0.0
+    sonstige_netto_euro: float = 0.0
     gesamtnettoertrag_euro: Optional[float] = None  # Erlöse + Einsparungen − Kosten
 
     # Tarif-Info
@@ -309,9 +321,20 @@ async def _collect_saved_data(
         speicher_entladung_total = 0.0
         wp_strom_total = 0.0
         wp_waerme_total = 0.0
-        emob_ladung_total = 0.0
-        emob_km_total = 0.0
-        emob_pv_ladung_total = 0.0
+        # E-Mobilität: getrennt nach E-Auto (Vehicle-Sicht) und Wallbox
+        # (Loadpoint-Sicht) sammeln. Beide Investitionstypen messen denselben
+        # Stromfluss aus zwei Perspektiven (siehe docs/KONZEPT-WALLBOX-EAUTO.md).
+        # Ein einfaches Summieren über beide Töpfe würde doppeltzählen — bei
+        # 1 EAuto + 1 WB mit ähnlich gepflegten Werten wird `kWh/100km`
+        # doppelt so hoch wie real, und wenn die Quellen ungleich gepflegt
+        # sind, kann der PV-Anteil > 100 % laufen (Joachim/Gernot 2026-05-02).
+        # Quick-Fix: getrennt akkumulieren, dann konsistent eine Quelle wählen.
+        # Saubere Lösung folgt in Phase 2 des Wallbox/E-Auto-Konzepts.
+        eauto_ladung_total = 0.0
+        eauto_pv_ladung_total = 0.0
+        eauto_km_total = 0.0
+        wb_ladung_total = 0.0
+        wb_pv_ladung_total = 0.0
         bkw_erzeugung_total = 0.0
         bkw_eigenverbrauch_total = 0.0
 
@@ -343,14 +366,18 @@ async def _collect_saved_data(
                     get_wp_heizenergie_kwh(data) +
                     (data.get("warmwasser_kwh", 0) or 0)
                 )
-            elif inv.typ in ("e-auto", "wallbox"):
+            elif inv.typ == "e-auto":
                 if not (inv.parameter or {}).get("ist_dienstlich", False):
-                    emob_ladung_total += (
+                    eauto_ladung_total += (
                         data.get("ladung_kwh", 0) or
                         data.get("verbrauch_kwh", 0) or 0
                     )
-                    emob_km_total += data.get("km_gefahren", 0) or 0
-                    emob_pv_ladung_total += data.get("ladung_pv_kwh", 0) or 0
+                    eauto_pv_ladung_total += data.get("ladung_pv_kwh", 0) or 0
+                    eauto_km_total += data.get("km_gefahren", 0) or 0
+            elif inv.typ == "wallbox":
+                if not (inv.parameter or {}).get("ist_dienstlich", False):
+                    wb_ladung_total += data.get("ladung_kwh", 0) or 0
+                    wb_pv_ladung_total += data.get("ladung_pv_kwh", 0) or 0
             elif inv.typ == "balkonkraftwerk":
                 bkw_kwh = (
                     data.get("pv_erzeugung_kwh", 0) or
@@ -360,6 +387,21 @@ async def _collect_saved_data(
                 # BKW ist PV-Erzeugung → fließt in Gesamt-PV ein
                 pv_erzeugung_total += bkw_kwh
                 bkw_eigenverbrauch_total += data.get("eigenverbrauch_kwh", 0) or bkw_kwh
+
+        # E-Mobilitäts-Pool: pro Feld die größere Quelle gewinnt. Wallbox
+        # (Loadpoint, inkl. Verluste und ggf. dienstlicher Mit-Ladung) liefert
+        # üblicherweise den größeren `ladung_kwh`-Wert; das E-Auto (Vehicle)
+        # hat oft den realistischeren `ladung_pv_kwh`, weil viele Nutzer das
+        # PV-Feld an der Wallbox gar nicht pflegen. Pro-Feld-Max nimmt jeweils
+        # die belastbarere Quelle. Konstante Konsistenz Quelle-Wahrheit
+        # gibt's erst mit Phase 2 des Wallbox/E-Auto-Konzepts (Vehicle-Sensor
+        # pro Auto + saubere Aufschlüsselung am Loadpoint).
+        emob_ladung_total = max(eauto_ladung_total, wb_ladung_total)
+        emob_pv_ladung_total = max(eauto_pv_ladung_total, wb_pv_ladung_total)
+        # PV ≤ Gesamt erzwingen: PV-Anteil > 100 % ist mathematisch unmöglich.
+        if emob_pv_ladung_total > emob_ladung_total:
+            emob_pv_ladung_total = emob_ladung_total
+        emob_km_total = eauto_km_total
 
         if pv_erzeugung_total > 0:
             resolved["pv_erzeugung_kwh"] = (pv_erzeugung_total, quelle)
@@ -459,8 +501,11 @@ async def _load_vorjahr(anlage_id: int, investitionen: list[Investition], jahr: 
     pv_inv_ids = [i.id for i in investitionen if i.typ in ("pv-module", "balkonkraftwerk")]
     bat_inv_ids = [i.id for i in investitionen if i.typ == "speicher"]
     wp_inv_ids = [i.id for i in investitionen if i.typ == "waermepumpe"]
-    emob_inv_ids = [i.id for i in investitionen if i.typ in ("e-auto", "wallbox") and not (i.parameter or {}).get("ist_dienstlich", False)]
-    all_inv_ids = pv_inv_ids + bat_inv_ids + wp_inv_ids + emob_inv_ids
+    # E-Auto und Wallbox separat halten — selbe Pool-Doppelzählungs-Falle wie
+    # in `_collect_saved_data` (siehe dort). Max-pro-Feld statt Summe.
+    eauto_inv_ids = [i.id for i in investitionen if i.typ == "e-auto" and not (i.parameter or {}).get("ist_dienstlich", False)]
+    wb_inv_ids = [i.id for i in investitionen if i.typ == "wallbox" and not (i.parameter or {}).get("ist_dienstlich", False)]
+    all_inv_ids = pv_inv_ids + bat_inv_ids + wp_inv_ids + eauto_inv_ids + wb_inv_ids
 
     if all_inv_ids:
         imd_result = await db.execute(
@@ -475,7 +520,8 @@ async def _load_vorjahr(anlage_id: int, investitionen: list[Investition], jahr: 
         bat_entladung_vj = 0.0
         wp_strom_vj = 0.0
         wp_waerme_vj = 0.0
-        emob_ladung_vj = 0.0
+        eauto_ladung_vj = 0.0
+        wb_ladung_vj = 0.0
         emob_km_vj = 0.0
 
         for imd in imd_result.scalars().all():
@@ -493,9 +539,16 @@ async def _load_vorjahr(anlage_id: int, investitionen: list[Investition], jahr: 
                 wp_waerme_vj += (
                     (data.get("heizenergie_kwh", 0) or 0) + (data.get("warmwasser_kwh", 0) or 0)
                 )
-            elif imd.investition_id in emob_inv_ids:
-                emob_ladung_vj += get_eauto_ladung_kwh(data)
+            elif imd.investition_id in eauto_inv_ids:
+                eauto_ladung_vj += get_eauto_ladung_kwh(data)
                 emob_km_vj += data.get("km_gefahren", 0) or 0
+            elif imd.investition_id in wb_inv_ids:
+                wb_ladung_vj += data.get("ladung_kwh", 0) or 0
+
+        # Pool-Auswahl konsistent zu _collect_saved_data: pro Feld die größere
+        # Quelle. WB liefert üblicherweise Loadpoint-Wahrheit, EAuto ist Vehicle-
+        # Sicht; wenn nur eine gepflegt ist, gewinnt sie automatisch.
+        emob_ladung_vj = max(eauto_ladung_vj, wb_ladung_vj)
 
         if pv_vj > 0:
             result["pv_erzeugung_kwh"] = round(pv_vj, 1)
@@ -807,7 +860,33 @@ async def get_aktueller_monat(
     if bk_summe > 0:
         betriebskosten_anteilig = round(bk_summe, 2)
 
+    # ── Sonstige Erträge / Ausgaben über alle Investitionen aggregieren ──
+    # Pro Investition gehen Detail-Zeilen ins T-Konto (siehe
+    # investitionen_financials weiter unten). Aggregate als eigenes Feld
+    # exponiert, damit das Frontend Monatsergebnis-Korrekturen sauber rechnen
+    # kann ohne `gesamtnettoertrag` zu verschieben (verhindert Drift mit
+    # bestehender `sonderkosten`-Logik in MonatsabschlussView).
+    sonstige_inv_imd_result = await db.execute(
+        select(InvestitionMonatsdaten).where(
+            InvestitionMonatsdaten.investition_id.in_([i.id for i in investitionen]),
+            InvestitionMonatsdaten.jahr == jahr,
+            InvestitionMonatsdaten.monat == monat,
+        )
+    ) if investitionen else None
+    sonstige_ertraege_total = 0.0
+    sonstige_ausgaben_total = 0.0
+    if sonstige_inv_imd_result is not None:
+        for imd_row in sonstige_inv_imd_result.scalars().all():
+            s = berechne_sonstige_summen(imd_row.verbrauch_daten or {})
+            sonstige_ertraege_total += s["ertraege_euro"]
+            sonstige_ausgaben_total += s["ausgaben_euro"]
+    sonstige_ertraege_total = round(sonstige_ertraege_total, 2)
+    sonstige_ausgaben_total = round(sonstige_ausgaben_total, 2)
+    sonstige_netto_total = round(sonstige_ertraege_total - sonstige_ausgaben_total, 2)
+
     # ── Gesamtnettoertrag = Erlöse + Einsparungen − Kosten ──
+    # Sonstige Positionen werden NICHT eingerechnet — sie werden separat im
+    # T-Konto gerendert und im Monatsergebnis (nettoNachAllem) addiert.
     gesamtnettoertrag = None
     if einspeise_erloes is not None and ev_ersparnis is not None and netzbezug_kosten is not None:
         gesamtnettoertrag = round(
@@ -1062,6 +1141,12 @@ async def get_aktueller_monat(
                 continue
             data = imd_by_inv.get(inv.id, {})
             bk_monat = round((inv.betriebskosten_jahr or 0) / 12, 2)
+            # Sonstige Erträge/Ausgaben (z.B. AG-Vergütung Dienstwagen, THG-Quote)
+            # für JEDE Investition evaluieren — typ-unabhängig, auch wenn der
+            # Wirtschaftlichkeits-Zweig unten übersprungen wird (z.B. ist_dienstlich).
+            inv_sonstige = berechne_sonstige_summen(data)
+            inv_sonstige_ertraege = round(inv_sonstige["ertraege_euro"], 2)
+            inv_sonstige_ausgaben = round(inv_sonstige["ausgaben_euro"], 2)
             inv_erloes: Optional[float] = None
             inv_ersparnis: Optional[float] = None
             inv_label = ""
@@ -1148,7 +1233,13 @@ async def get_aktueller_monat(
                 if einsp_kwh and einsp_kwh > 0:
                     inv_erloes = round(einsp_kwh * einsp_p / 100, 2)
 
-            if bk_monat > 0 or inv_ersparnis is not None or inv_erloes is not None:
+            if (
+                bk_monat > 0
+                or inv_ersparnis is not None
+                or inv_erloes is not None
+                or inv_sonstige_ertraege > 0
+                or inv_sonstige_ausgaben > 0
+            ):
                 investitionen_financials.append(InvestitionFinancialDetail(
                     investition_id=inv.id,
                     bezeichnung=inv.bezeichnung,
@@ -1159,6 +1250,8 @@ async def get_aktueller_monat(
                     ersparnis_label=inv_label,
                     formel=inv_formel,
                     berechnung=inv_berechnung,
+                    sonstige_ertraege_euro=inv_sonstige_ertraege,
+                    sonstige_ausgaben_euro=inv_sonstige_ausgaben,
                 ))
 
     return AktuellerMonatResponse(
@@ -1220,6 +1313,9 @@ async def get_aktueller_monat(
         netto_ertrag_euro=netto_ertrag,
         wp_ersparnis_euro=wp_ersparnis,
         emob_ersparnis_euro=emob_ersparnis,
+        sonstige_ertraege_euro=sonstige_ertraege_total,
+        sonstige_ausgaben_euro=sonstige_ausgaben_total,
+        sonstige_netto_euro=sonstige_netto_total,
         gesamtnettoertrag_euro=gesamtnettoertrag,
         betriebskosten_anteilig_euro=betriebskosten_anteilig,
         # Tarif-Info

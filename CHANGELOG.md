@@ -7,9 +7,38 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ---
 
+## [3.25.11] - 2026-05-02
+
+> 🩹 **Sammelpatch: Counter-Spike Self-Heal + Monatsbericht-Korrekturen** — Drei neue Selbstheilungs-Wege für Snapshot-Verzerrungen (Folge des in v3.25.10 behobenen Off-by-one-Bugs) und drei Bug-Fixes aus einer Joachim-Tester-PN (sichtbare Sonstige Erträge, Pool-Doppelzählung E-Auto/Wallbox, Daten-Checker-Drift `verbrauch_kwh` ↔ `ladung_kwh`).
+
+### Fixed
+
+- **Sonstige Erträge im T-Konto + Monatsergebnis (Joachim-PN)** — Erfasste Erträge mit `typ='ertrag'` (z. B. AG-Erstattung beim Dienstwagen) waren auf der HABEN-Seite des Monatsbericht-T-Kontos nicht sichtbar und wurden im Monatsergebnis ignoriert; für E-Autos mit Dienstwagen-Flag wurde der ganze Wirtschaftlichkeits-Branch übersprungen. Backend wertet `sonstige_positionen` jetzt typ-unabhängig pro Investition aus, neue Aggregat-Felder `sonstige_ertraege_euro/sonstige_ausgaben_euro/sonstige_netto_euro` auf der Response. Frontend rendert pro Investition eigene HABEN- und SOLL-Zeilen und korrigiert das Monatsergebnis auf `gesamtnettoertrag − betriebskosten + sonstige_netto`. User mit Dienstwagen-AG-Erstattung sehen das Monatsergebnis um den Erstattungsbetrag weniger negativ.
+- **Pool-Doppelzählung E-Auto/Wallbox in der Monatsbericht-Aggregation (Joachim/Gernot-PN)** — `_collect_saved_data` und `_load_vorjahr` summierten `ladung_kwh` und `ladung_pv_kwh` über E-Auto- und Wallbox-Investitionen kommentarlos auf, obwohl beide Typen denselben Stromfluss aus zwei Perspektiven messen (Wallbox = Loadpoint, E-Auto = Vehicle). Folge bei zwei Testern: `kWh/100km` etwa doppelt so hoch wie real (Smart EQ Februar 61,6 statt ~20), PV-Anteil > 100 % möglich (April 189 %). Quick-Fix: getrennte Akkumulatoren pro Investitionstyp, pro Feld die größere Quelle als Wahrheit, `PV ≤ Gesamt` als harte Sicherung. Saubere Per-Fahrzeug-Trennung folgt mit Phase 2 des Wallbox/E-Auto-Konzepts. Folge-Pfade `cockpit/uebersicht.py` und der HA-Stats-/MQTT-Aggregator bleiben bewusst auf der alten Pool-Logik — werden mit Phase 2 mitgezogen.
+- **Daten-Checker akzeptiert `verbrauch_kwh` UND `ladung_kwh` für E-Autos (Joachim-PN)** — Schema-Drift: das E-Auto-Field-Schema definiert das Gesamt-Ladung-Feld als `verbrauch_kwh` (was der Sensor-Mapping-Wizard entsprechend anbietet), der Daten-Checker verlangte aber `ladung_kwh`. User mit korrekt gemapptem Sensor sahen trotzdem die Warnung „Komponenten ohne kWh-Zähler-Abdeckung". `erwartete_felder`-Struktur auf Liste-von-Alternativen umgestellt; für E-Autos zählt jeder der beiden Schlüssel als gemappt. Konsistent mit `get_eauto_ladung_kwh`-Helper, `sensor_snapshot_service` und dem Monatsbericht-Pfad.
+
+### Added
+
+- **Counter-Spike Self-Heal — drei zusammengehörige Reparatur-Pfade (Rainer-PN-Spike 2026-05-01)** — Hintergrund: das v3.25.3-Cluster (Phase 1 5-Min-Snapshots aktivieren) hat den damals noch vorhandenen `get_value_at`-Off-by-one (behoben in v3.25.10) erstmals als sichtbaren Counter-Spike sichtbar gemacht (Slot 10:00 mit 2384 kWh statt 5 kWh). Bestehende Snapshot-Werte mussten manuell repariert werden — bisher nur via F12-Console.
+  - **A: Vollbackfill mit `overwrite=True` zieht Snapshots frisch** — Bei aktiviertem Überschreiben ruft `backfill_from_statistics` jetzt vor der Pro-Tag-Schleife `resnap_anlage_range` für den gesamten Bereich auf. Das schreibt SensorSnapshots (hourly + 5-Min wo HA-Retention reicht) mit dem korrigierten `get_value_at`-Pfad neu, danach läuft der Aggregat-Pfad gegen frische Daten. `skip_existing=True`-Initial-Backfill bleibt unverändert. Frontend-Banner ergänzt um den Reparatur-Aspekt.
+  - **B: „Tag neu aggregieren"-Button mit Resnap-Vorlauf** — Endpoint `/reaggregate-tag` bekommt `mit_resnap`-Parameter (Default `true`). Vor dem Aggregat werden die SensorSnapshots des Tages frisch aus HA-Statistics gezogen, dann läuft `aggregate_day` gegen die korrigierten Werte. Power-User können via `?mit_resnap=false` auf das alte Verhalten zurückfallen.
+  - **C: Daten-Checker-Kategorie `ENERGIEPROFIL_PLAUSIBILITAET`** — Macht Counter-Spikes im Tagesprofil sichtbar statt Tester selbst forschen zu lassen. Schwelle: `pv_kw` oder `einspeisung_kw` > Anlagen-kWp × 1,5 (eindeutig unphysikalisch). Prüfraum: letzte 30 Tage `TagesEnergieProfil`. Detail-Meldung pro Tag mit betroffenen Stunden + Werten. Verweist auf den Reparatur-Workflow B. Doku in `HANDBUCH_DATEN_CHECKER.md` (Kategorie 9, neue §4.7 + §5.6).
+
+### Changed
+
+- **Konzept-Doc `KONZEPT-WALLBOX-EAUTO.md` Phase 2 ergänzt** — Daten-Checker-Warnung bei Pool-Pflege-Mismatch (E-Auto + Wallbox beide gepflegt, Werte erkennbar dieselbe Realität) als zusätzlicher Phase-2-Bestandteil dokumentiert. Hintergrund kommt aus dem Pool-Doppelzählungs-Befund 2026-05-02.
+
+### Internal
+
+- **Resnap-Endpoint v3.25.10 wird produktiv genutzt** — Die in v3.25.10 hinzugefügte Resnap-Funktion (`POST /api/diagnostics/resnap-snapshots`) bleibt als manuelles Diagnostik-Werkzeug; A und B nutzen den darin gekapselten `resnap_anlage_range`-Helper jetzt im regulären Service-Pfad.
+
+---
+
 ## [3.25.10] - 2026-05-01
 
 > 🐛 **Off-by-one-Stunde-Bug in Counter-Snapshots behoben** — `HAStatisticsService.get_value_at` las den `state` einer Zeile bei `start_ts ≈ zeitpunkt`, während HA's Konvention "last value of the period" ist: `state(start_ts=11:00)` ist der Zählerstand AM ENDE der Stunde, also um 12:00 Uhr. Damit waren alle SensorSnapshot-Werte seit v3.19 (Snapshot-Rework, Issue #135) systematisch um eine Stunde nach hinten verschoben. Tagessummen sind unbeeinflusst (zirkular), aber Stundenwerte im `tages_energie_profil` sind betroffen.
+>
+> 📦 **Bündelt v3.25.9 mit ein** — der separat geplante v3.25.9-Release (Drift-Audit-Bündel G) wurde zwischen dem Schreiben des CHANGELOGs und dem eigentlichen Release vom Off-by-one-Fix eingeholt. Statt zwei Releases im Abstand von Minuten zu schießen, sind beide Pakete unter Tag `v3.25.10` zusammengefasst. Die `[3.25.9]`-Sektion unten beschreibt den Bündel-G-Anteil — sie hat kein eigenes Tag, ihr Code (`field_definitions.py`-Reader-Helper, DB-Migration `_migrate_verbrauch_daten_keys_v326`) ist Teil von v3.25.10. Tag-Sprung 3.25.8 → 3.25.10 ist beabsichtigt.
 
 ### Fixed
 
@@ -27,9 +56,11 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ---
 
-## [3.25.9] - 2026-05-01
+## [3.25.9] - 2026-05-01 *(kein eigener Tag — mit v3.25.10 ausgeliefert)*
 
 > 🧹 **Aufräum-Release ohne User-sichtbare Wirkung** — Letzter Bündel der Drift-Audit-Initiative aus v3.25.7/v3.25.8. Schließt 23 verstreute Doppel-Read-Stellen und konsolidiert die Daten in `verbrauch_daten`-JSONs auf kanonische Schlüssel. Werte-Anzeigen ändern sich nicht.
+>
+> ℹ️ **Tag-Hinweis:** Diese Sektion hat kein eigenes Git-Tag. Der Code (Reader-Helper + DB-Migration `_migrate_verbrauch_daten_keys_v326`) ist Teil von Tag `v3.25.10` — siehe [v3.25.10-Sektion](#32510---2026-05-01) oben für die Begründung.
 
 ### Changed
 

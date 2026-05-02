@@ -279,7 +279,10 @@ export default function MonatsabschlussView() {
       .finally(() => setMonatLoading(false))
   }, [selectedAnlageId, selectedJahr, selectedMonat])
 
-  // Sonderkosten
+  // Sonderkosten-Aggregat aus cockpit/komponenten — wird nur noch als Fallback
+  // im T-Konto verwendet, wenn keine Per-Investition-Financials vorhanden sind.
+  // Im Monatsergebnis (nettoNachAllem) wird stattdessen monatData.sonstige_netto_euro
+  // verwendet, das auch Erträge berücksichtigt (Joachim-PN 2026-05-01).
   const [sonderkosten, setSonderkosten] = useState<number | null>(null)
   useEffect(() => {
     if (!selectedAnlageId || selectedJahr === null || selectedMonat === null) return
@@ -291,8 +294,10 @@ export default function MonatsabschlussView() {
 
   const nettoNachAllem = useMemo(() => {
     if (!monatData?.gesamtnettoertrag_euro) return null
-    return monatData.gesamtnettoertrag_euro - (monatData.betriebskosten_anteilig_euro || 0) - (sonderkosten || 0)
-  }, [monatData, sonderkosten])
+    return monatData.gesamtnettoertrag_euro
+      - (monatData.betriebskosten_anteilig_euro || 0)
+      + (monatData.sonstige_netto_euro || 0)
+  }, [monatData])
 
   // Community-Monats-Benchmark
   const [monatsVergleich, setMonatsVergleich] = useState<MonatsVergleich | null>(null)
@@ -719,8 +724,24 @@ export default function MonatsabschlussView() {
                           ergebnis: `= ${fmtCalc(inv.ersparnis_euro, 2)} €`,
                         })
                       }
+                      if ((inv.sonstige_ertraege_euro ?? 0) > 0) {
+                        rows.push({
+                          label: `${inv.bezeichnung} — Sonstige Erträge`,
+                          wert: inv.sonstige_ertraege_euro,
+                          color: 'text-green-600 dark:text-green-400',
+                          formel: 'Erfasst im Monatsabschluss als Position vom Typ "Ertrag"',
+                          ergebnis: `= ${fmtCalc(inv.sonstige_ertraege_euro, 2)} €`,
+                        })
+                      }
                       return rows
                     }),
+                    // Fallback-Aggregat ohne per-Inv-Daten: sonst weichen
+                    // T-Konto-Summe und Monatsergebnis auseinander.
+                    ...(!hasPerInv && (d.sonstige_ertraege_euro ?? 0) > 0 ? [{
+                      label: 'Sonstige Erträge',
+                      wert: d.sonstige_ertraege_euro,
+                      color: 'text-green-600 dark:text-green-400',
+                    } as TKontoPosten] : []),
                     // ── Fallback: WP/eMob-Aggregate wenn kein per-Inv-Daten ──
                     ...(!hasPerInv && d.wp_ersparnis_euro != null ? [{
                       label: 'WP-Ersparnis vs. Gas',
@@ -780,11 +801,24 @@ export default function MonatsabschlussView() {
                           ergebnis: `= ${fmtCalc(d.betriebskosten_anteilig_euro, 2)} €`,
                         } as TKontoPosten] : []
                     ),
-                    ...((sonderkosten ?? 0) > 0 ? [{
-                      label: 'Sonderkosten',
-                      wert: sonderkosten!,
-                      color: 'text-red-500',
-                    } as TKontoPosten] : []),
+                    // ── Per-Investition: Sonstige Ausgaben (Reparaturen, THG-Quote als Ausgabe etc.) ──
+                    ...(hasPerInv
+                      ? fins
+                          .filter(inv => (inv.sonstige_ausgaben_euro ?? 0) > 0)
+                          .map(inv => ({
+                            label: `${inv.bezeichnung} — Sonstige Ausgaben`,
+                            wert: inv.sonstige_ausgaben_euro,
+                            color: 'text-red-500',
+                            formel: 'Erfasst im Monatsabschluss als Position vom Typ "Ausgabe"',
+                            ergebnis: `= ${fmtCalc(inv.sonstige_ausgaben_euro, 2)} €`,
+                          } as TKontoPosten))
+                      // Fallback ohne per-Inv-Daten: Aggregat aus cockpit/komponenten
+                      : (sonderkosten ?? 0) > 0 ? [{
+                          label: 'Sonderkosten',
+                          wert: sonderkosten!,
+                          color: 'text-red-500',
+                        } as TKontoPosten] : []
+                    ),
                   ]
 
                   // Summen aus tatsächlich angezeigten Zeilen berechnen

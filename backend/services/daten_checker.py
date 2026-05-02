@@ -47,6 +47,11 @@ class CheckKategorie(str, Enum):
     # auf solche Sensoren nicht (Vollbackfill, Verlauf nachrechnen,
     # Per-Tag-Reaggregation lesen alle aus HA's LTS).
     SENSOR_MAPPING_LTS = "sensor_mapping_lts"
+    # v3.25.x: Counter-Spikes im Tagesprofil (z. B. nach Update-Restarts mit
+    # Off-by-one-Bug). Erkennt Stundenwerte, die physikalisch unmöglich sind
+    # (> Anlagenleistung × 1.5). Behebung über "Tag neu aggregieren" oder
+    # "Verlauf nachrechnen" — beide rufen seit v3.25.x intern Resnap auf.
+    ENERGIEPROFIL_PLAUSIBILITAET = "energieprofil_plausibilitaet"
 
 
 @dataclass
@@ -141,6 +146,7 @@ class DatenChecker:
             anlage, monatsdaten, pvgis_prognose, pv_erzeugung_map, pvgis_monat_map, pr, pr_count
         ))
         ergebnisse.extend(self._check_energieprofil_abdeckung(anlage))
+        ergebnisse.extend(await self._check_energieprofil_plausibilitaet(anlage))
         ergebnisse.extend(await self._check_mqtt_topic_abdeckung(anlage))
         ergebnisse.extend(await self._check_sensor_mapping_lts(anlage))
 
@@ -914,14 +920,22 @@ class DatenChecker:
                 meldung="Basis-Zähler (Einspeisung + Netzbezug) gemappt",
             ))
 
-        # Pro Investition prüfen
-        erwartete_felder = {
-            "pv-module": ["pv_erzeugung_kwh"],
-            "balkonkraftwerk": ["pv_erzeugung_kwh"],
-            "speicher": ["ladung_kwh", "entladung_kwh"],
-            "waermepumpe": ["stromverbrauch_kwh"],
-            "wallbox": ["ladung_kwh"],
-            "e-auto": ["ladung_kwh"],
+        # Pro Investition prüfen.
+        # Jeder Eintrag ist eine Liste von Alternativen — gemappt sein muss
+        # mindestens EINE davon. Hintergrund: e-auto hat zwei akzeptierte
+        # Schlüssel für den Gesamt-Ladung-Zähler (`verbrauch_kwh` aus dem
+        # Field-Schema, `ladung_kwh` als kanonischer Helper-Name; beide werden
+        # vom Snapshot-Service und get_eauto_ladung_kwh akzeptiert). Vorher
+        # prüfte der Checker hartcodiert nur `ladung_kwh` und meldete trotz
+        # korrekt gemapptem `verbrauch_kwh`-Sensor eine fehlende Abdeckung
+        # (Joachim-PN 2026-05-02).
+        erwartete_felder: dict[str, list[list[str]]] = {
+            "pv-module": [["pv_erzeugung_kwh"]],
+            "balkonkraftwerk": [["pv_erzeugung_kwh"]],
+            "speicher": [["ladung_kwh"], ["entladung_kwh"]],
+            "waermepumpe": [["stromverbrauch_kwh"]],
+            "wallbox": [["ladung_kwh"]],
+            "e-auto": [["verbrauch_kwh", "ladung_kwh"]],
         }
 
         fehlend_pro_komponente: list[tuple[str, str, list[str]]] = []
@@ -936,7 +950,11 @@ class DatenChecker:
 
             inv_data = inv_map.get(str(inv.id), {}) or {}
             felder = inv_data.get("felder", {}) or {}
-            fehlend = [f for f in erwartet if not _has_zaehler(felder.get(f))]
+            fehlend = [
+                " oder ".join(alts)
+                for alts in erwartet
+                if not any(_has_zaehler(felder.get(f)) for f in alts)
+            ]
 
             if fehlend:
                 fehlend_pro_komponente.append((inv.bezeichnung, inv.typ, fehlend))
@@ -965,6 +983,86 @@ class DatenChecker:
             ergebnisse.append(CheckErgebnis(
                 kategorie=kat, schwere=CheckSeverity.OK,
                 meldung=f"Alle {gemappt_count} aktiven Komponenten haben kWh-Zähler gemappt",
+            ))
+
+        return ergebnisse
+
+    # ─── Energieprofil-Plausibilität (Counter-Spikes) ─────────────────────
+
+    async def _check_energieprofil_plausibilitaet(self, anlage: Anlage) -> list[CheckErgebnis]:
+        """
+        Erkennt Stundenwerte im TagesEnergieProfil, die physikalisch unmöglich sind
+        (> Anlagenleistung × 1.5). Tritt typischerweise nach Update-Restarts auf,
+        wenn der Counter-Snapshot-Service einen verzerrten kumulativen Wert speichert
+        (z. B. der get_value_at-Off-by-one-Bug behoben in v3.25.10).
+
+        Behebung: "Tag neu aggregieren" (für einzelne Tage) oder "Verlauf
+        nachrechnen" mit aktiviertem Überschreiben (für längere Bereiche). Beide
+        Pfade ziehen seit v3.25.x intern Resnap voran.
+        """
+        from backend.models.tages_energie_profil import TagesEnergieProfil
+        from datetime import date, timedelta
+
+        ergebnisse: list[CheckErgebnis] = []
+        kat = CheckKategorie.ENERGIEPROFIL_PLAUSIBILITAET
+
+        kwp = anlage.leistung_kwp or 0
+        if kwp <= 0:
+            # Ohne kWp keine sinnvolle Schwelle — Stammdaten-Check meldet das schon
+            return ergebnisse
+
+        schwelle_kw = kwp * 1.5
+
+        # Nur die letzten 30 Tage prüfen (ältere Tage sind oft schon korrigiert
+        # oder nicht mehr relevant für aktuelle Lernfaktor-Basis)
+        bis = date.today()
+        von = bis - timedelta(days=30)
+
+        result = await self.db.execute(
+            select(TagesEnergieProfil).where(
+                TagesEnergieProfil.anlage_id == anlage.id,
+                TagesEnergieProfil.datum >= von,
+                TagesEnergieProfil.datum <= bis,
+            ).order_by(TagesEnergieProfil.datum, TagesEnergieProfil.stunde)
+        )
+        zeilen = result.scalars().all()
+
+        # Spike-Tage sammeln: Tag → list[(stunde, feld, wert)]
+        spike_tage: dict[date, list[tuple[int, str, float]]] = {}
+        for row in zeilen:
+            for feld_name in ("pv_kw", "einspeisung_kw"):
+                wert = getattr(row, feld_name, None)
+                if wert is None:
+                    continue
+                if abs(wert) > schwelle_kw:
+                    spike_tage.setdefault(row.datum, []).append(
+                        (row.stunde, feld_name, wert)
+                    )
+
+        if not spike_tage:
+            ergebnisse.append(CheckErgebnis(
+                kategorie=kat, schwere=CheckSeverity.OK,
+                meldung=f"Keine Counter-Spikes in den letzten 30 Tagen (Schwelle: {schwelle_kw:.1f} kW = {kwp:.1f} kWp × 1.5)",
+            ))
+            return ergebnisse
+
+        # Pro Tag eine Warnung mit Detail-Auflistung der Spike-Stunden
+        for datum_spike in sorted(spike_tage.keys(), reverse=True):
+            spikes = spike_tage[datum_spike]
+            details = "; ".join(
+                f"{stunde:02d}:00 {feld}={wert:.1f} kW"
+                for stunde, feld, wert in spikes
+            )
+            ergebnisse.append(CheckErgebnis(
+                kategorie=kat, schwere=CheckSeverity.WARNING,
+                meldung=f"Counter-Spike am {datum_spike.isoformat()}: {len(spikes)} Stundenwert(e) > {schwelle_kw:.1f} kW",
+                details=(
+                    f"Stunden mit physikalisch unmöglichem Wert: {details}. "
+                    f"Häufige Ursache sind Update-Restarts während des Tages (Counter-Off-by-one). "
+                    f"Behebung: 'Tag neu aggregieren' für genau diesen Tag (Reload-Symbol "
+                    f"in der Tagesliste) — repariert SensorSnapshots + Aggregate in einem Schritt."
+                ),
+                link=f"/aussichten/energieprofil?datum={datum_spike.isoformat()}",
             ))
 
         return ergebnisse

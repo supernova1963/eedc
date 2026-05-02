@@ -1017,11 +1017,22 @@ async def reaggregate_heute():
 async def reaggregate_tag(
     anlage_id: int,
     datum: date = Query(..., description="Tag, der neu aggregiert werden soll"),
+    mit_resnap: bool = Query(
+        True,
+        description="Vor dem Aggregat die SensorSnapshots des Tages frisch aus HA-Statistics ziehen "
+                    "(repariert Counter-Spikes, z. B. nach Update-Restarts). Default an.",
+    ),
     db: AsyncSession = Depends(get_db),
 ):
     """
     Aggregiert einen einzelnen Tag für eine Anlage neu (Self-Service nach
     Snapshot-Spike o. ä.).
+
+    Mit `mit_resnap=true` (Default) werden zuerst die SensorSnapshots für den
+    Tag frisch aus HA Long-Term Statistics geschrieben und danach die Aggregate
+    daraus neu gebaut. Ohne Resnap (`mit_resnap=false`) wird nur das Aggregat
+    aus den vorhandenen Snapshots neu gerechnet — sinnvoll, wenn die Snapshots
+    bekannt-gut sind und nur die Tagesprofil-/Zusammenfassungs-Schicht neu soll.
 
     `aggregate_day` macht intern delete + insert für Tagesprofil und
     Zusammenfassung — der Aufruf ist also idempotent und sicher mehrfach
@@ -1033,6 +1044,25 @@ async def reaggregate_tag(
     anlage = result.scalar_one_or_none()
     if not anlage:
         raise HTTPException(status_code=404, detail=f"Anlage {anlage_id} nicht gefunden")
+
+    if mit_resnap:
+        try:
+            from backend.services.sensor_snapshot_service import resnap_anlage_range
+            from datetime import datetime as _dt, timedelta as _td
+            von_dt = _dt.combine(datum, _dt.min.time())
+            bis_dt = von_dt + _td(days=1)
+            resnap_stats = await resnap_anlage_range(
+                db, anlage, von=von_dt, bis=bis_dt, include_5min=True,
+            )
+            logger.info(
+                f"Reaggregate Anlage {anlage_id} {datum}: Resnap "
+                f"{resnap_stats['hourly']} hourly + {resnap_stats['5min']} 5-Min Slots"
+            )
+        except Exception as e:
+            logger.warning(
+                f"Reaggregate Anlage {anlage_id} {datum}: Resnap fehlgeschlagen "
+                f"(Aggregat läuft trotzdem): {type(e).__name__}: {e}"
+            )
 
     try:
         zusammenfassung = await aggregate_day(anlage, datum, db, datenquelle="manuell")
