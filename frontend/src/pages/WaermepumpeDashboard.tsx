@@ -261,7 +261,7 @@ function WaermepumpeBlock({ dashboard, ...selectorProps }: { dashboard: Waermepu
             value={fmtKpi(z.cop_heizen, 2)}
             icon={Thermometer}
             color="orange"
-            formel="JAZ Heizen = Heizenergie ÷ Strom Heizen"
+            formel="JAZ Heizen = Heizwärme ÷ Strom Heizen"
             berechnung={`${z.gesamt_heizung_getrennt_kwh?.toFixed(0)} kWh ÷ ${z.gesamt_strom_heizen_kwh?.toFixed(0)} kWh`}
             ergebnis={z.cop_heizen ? `= ${z.cop_heizen.toFixed(2)}` : '---'}
           />
@@ -296,7 +296,10 @@ function WaermepumpeBlock({ dashboard, ...selectorProps }: { dashboard: Waermepu
 
       {/* Issue #169: Kompressor-Starts (nur wenn Counter-Sensor zugeordnet ist).
           Issue #173: Hersteller-Baseline (vor Sensor-Aktivierung) wird beim
-          Wizard-Save geeicht und in Σ-Lebensdauer mitgezählt. */}
+          Wizard-Save geeicht und in Σ-Lebensdauer mitgezählt.
+          Issue #173 Folge: abgeschlossene Tage stabil aus TagesZusammenfassung
+          + heutige Live-Hochrechnung aus Hersteller-Counter. Damit bleibt
+          Σ Lebensdauer synchron mit dem WP-Display, ohne Doppelzählung. */}
       {z.kompressor_starts_gesamt != null && z.kompressor_starts_gesamt > 0 && (
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
           <KPICard
@@ -306,11 +309,23 @@ function WaermepumpeBlock({ dashboard, ...selectorProps }: { dashboard: Waermepu
             color="gray"
             subtitle={z.kompressor_starts_max_tag != null ? `Max/Tag: ${z.kompressor_starts_max_tag}` : undefined}
             formel={z.kompressor_starts_baseline
-              ? 'Σ Lebensdauer = Hersteller-Baseline + EEDC-Tagesdifferenzen'
-              : 'Σ Tages-Starts seit Anschaffung'}
-            berechnung={z.kompressor_starts_baseline
-              ? `Hersteller-Baseline (Wizard-Save): ${z.kompressor_starts_baseline.toLocaleString('de-DE')}\n+ EEDC seit Aktivierung: ${(z.kompressor_starts_gesamt - z.kompressor_starts_baseline).toLocaleString('de-DE')}\nHöchste Tagessumme: ${z.kompressor_starts_max_tag ?? '—'}`
-              : `Höchste Tagessumme: ${z.kompressor_starts_max_tag ?? '—'}`}
+              ? 'Σ Lebensdauer = Hersteller-Baseline + EEDC-Tagesdifferenzen + heute live'
+              : 'Σ Tages-Starts seit Anschaffung + heute live'}
+            berechnung={(() => {
+              const baseline = z.kompressor_starts_baseline ?? 0
+              const heuteLive = z.kompressor_starts_heute_live ?? 0
+              const eedcAbgeschlossen = z.kompressor_starts_gesamt! - baseline - heuteLive
+              const lines: string[] = []
+              if (z.kompressor_starts_baseline) {
+                lines.push(`Hersteller-Baseline (Wizard-Save): ${baseline.toLocaleString('de-DE')}`)
+              }
+              lines.push(`${z.kompressor_starts_baseline ? '+ ' : ''}EEDC abgeschlossene Tage: ${eedcAbgeschlossen.toLocaleString('de-DE')}`)
+              if (z.kompressor_starts_heute_live != null) {
+                lines.push(`+ heute live (Hersteller-Counter): ${heuteLive.toLocaleString('de-DE')}`)
+              }
+              lines.push(`Höchste Tagessumme: ${z.kompressor_starts_max_tag ?? '—'}`)
+              return lines.join('\n')
+            })()}
             ergebnis={`= ${z.kompressor_starts_gesamt.toLocaleString('de-DE')} Starts`}
           />
         </div>

@@ -155,6 +155,9 @@ export interface WaermepumpeDashboardResponse {
     kompressor_starts_max_tag?: number | null
     // Issue #173: Hersteller-Baseline (vor Sensor-Aktivierung), aus Wizard-Save
     kompressor_starts_baseline?: number | null
+    // Issue #173 Folge: heutige Live-Hochrechnung (sensor_live − snap heute 00:00),
+    // null wenn Live-Sensor nicht erreichbar
+    kompressor_starts_heute_live?: number | null
   }
 }
 

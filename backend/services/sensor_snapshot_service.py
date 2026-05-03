@@ -836,11 +836,21 @@ async def compute_counter_baseline(
         )
         return None
 
-    # 2. eedc.Σ — bisher kumulierte Tagesdifferenzen aus TagesZusammenfassung
+    # 2. eedc.Σ — bisher kumulierte Tagesdifferenzen aus TagesZusammenfassung.
+    # Issue #173 Folge: heutiger Tag ausgeschlossen. Während des Tages ist
+    # TagesZusammenfassung[heute].komponenten_starts noch instabil (Snapshot-Job
+    # läuft hourly, get_snapshot mit Toleranz-Fenster nimmt jüngsten verfügbaren
+    # Snapshot statt morgen 00:00) — wenn die heutigen Starts hier mitgezählt
+    # würden, würde sich die baseline beim Wizard-Save um den heute-bisher-Wert
+    # absenken. Wenn TagesZusammenfassung[heute] dann später für denselben Tag
+    # höher geschrieben wird (weitere Starts, reaggregate-tag-Trigger), ergibt
+    # baseline + Σ(eedc inkl. heute) > sensor_gesamt → Doppelzählung
+    # (detLAN-Beobachtung 2026-05-03: 136 statt 131 Starts).
     from backend.models.tages_energie_profil import TagesZusammenfassung
     tz_query = select(TagesZusammenfassung.komponenten_starts).where(
         TagesZusammenfassung.anlage_id == anlage.id,
         TagesZusammenfassung.komponenten_starts.is_not(None),
+        TagesZusammenfassung.datum < date.today(),
     )
     if inv.anschaffungsdatum:
         tz_query = tz_query.where(TagesZusammenfassung.datum >= inv.anschaffungsdatum)
@@ -859,6 +869,71 @@ async def compute_counter_baseline(
         "eedc_summe": eedc_summe,
         "baseline": baseline,
     }
+
+
+async def get_counter_today_live(
+    db: AsyncSession,
+    anlage,
+    inv,
+    feld: str,
+) -> Optional[int]:
+    """
+    Heutige Tages-Hochrechnung eines kumulativen Counter-Sensors aus Live-Stand
+    minus Snapshot zum heutigen Tag-Anfang. Issue #173.
+
+    Nutzungs-Kontext: Cockpit-Aggregation Σ Lebensdauer summiert nur abge-
+    schlossene Tage aus TagesZusammenfassung (`datum < today`). Damit der heutige
+    Verlauf trotzdem sichtbar bleibt, liefert dieser Helper einen Live-Read,
+    der zur stabilen Σ_vor_heute addiert werden kann. Fällt der Live-Sensor aus
+    (HA nicht erreichbar, MQTT-only-Setup ohne Live-State), gibt die Funktion
+    None — der Aufrufer fällt dann auf „Σ ohne heute" zurück.
+
+    Returns:
+        Anzahl der heutigen Counter-Increments seit 00:00, oder None wenn nicht
+        ermittelbar (kein Mapping, kein Live-Sensor, kein Tag-Start-Snapshot).
+    """
+    if feld not in KUMULATIVE_COUNTER_FELDER.get(inv.typ, ()):
+        return None
+
+    sensor_mapping = anlage.sensor_mapping or {}
+    inv_data = (sensor_mapping.get("investitionen", {}) or {}).get(str(inv.id))
+    if not isinstance(inv_data, dict):
+        return None
+    config = (inv_data.get("felder", {}) or {}).get(feld)
+    if not isinstance(config, dict) or config.get("strategie") != "sensor":
+        return None
+    entity_id = config.get("sensor_id")
+    if not entity_id:
+        return None
+
+    sensor_live: Optional[float] = None
+    try:
+        from backend.services.ha_state_service import get_ha_state_service
+        ha_state = get_ha_state_service()
+        if ha_state.is_available:
+            sensor_live = await ha_state.get_sensor_state(entity_id)
+    except Exception as e:
+        logger.debug(f"today_live {feld} inv={inv.id}: ha_state Fehler: {type(e).__name__}: {e}")
+
+    if sensor_live is None:
+        ha_svc = get_ha_statistics_service()
+        if ha_svc.is_available:
+            sensor_live = ha_svc.get_value_at(entity_id, datetime.now(), toleranz_minuten=120)
+
+    if sensor_live is None:
+        return None
+
+    sensor_key = f"inv:{inv.id}:{feld}"
+    tag_start = datetime.combine(date.today(), datetime.min.time())
+    snap_today_start = await get_snapshot(db, anlage.id, sensor_key, entity_id, tag_start)
+    if snap_today_start is None:
+        return None
+
+    delta = sensor_live - snap_today_start
+    if delta < 0:
+        # Counter-Reset (Firmware-Update) → Live-Hochrechnung nicht mehr sinnvoll
+        return None
+    return int(round(delta))
 
 
 async def snapshot_anlage(
