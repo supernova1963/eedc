@@ -535,7 +535,7 @@ export default function CustomImportWizard() {
                           <option value="wallbox_ladung_kwh">Wallbox Ladung (kWh)</option>
                           <option value="wallbox_ladung_pv_kwh">Wallbox PV-Ladung (kWh)</option>
                           <option value="wallbox_ladevorgaenge">Wallbox Ladevorgänge</option>
-                          <option value="eauto_km_gefahren">E-Auto km gefahren</option>
+                          <option value="eauto_km_gefahren">E-Auto Gefahrene km</option>
                         </optgroup>
                         {/* Dynamische Investitions-Felder */}
                         {(() => {

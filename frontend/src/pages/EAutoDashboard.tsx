@@ -175,7 +175,7 @@ function EAutoBlock({ dashboard, ...selectorProps }: { dashboard: EAutoDashboard
           unit="km"
           icon={Car}
           color="blue"
-          formel="Σ km gefahren"
+          formel="Σ Gefahrene km"
           berechnung={`${z.anzahl_monate} Monate`}
           ergebnis={`= ${(z.gesamt_km || 0).toLocaleString('de-DE')} km`}
         />

@@ -52,7 +52,7 @@ EEDC_FIELDS = [
     {"id": "wallbox_ladung_kwh", "label": "Wallbox Ladung (kWh)", "required": False, "group": "wallbox"},
     {"id": "wallbox_ladung_pv_kwh", "label": "Wallbox PV-Ladung (kWh)", "required": False, "group": "wallbox"},
     {"id": "wallbox_ladevorgaenge", "label": "Wallbox Ladevorgänge", "required": False, "group": "wallbox"},
-    {"id": "eauto_km_gefahren", "label": "E-Auto km gefahren", "required": False, "group": "eauto"},
+    {"id": "eauto_km_gefahren", "label": "E-Auto Gefahrene km", "required": False, "group": "eauto"},
 ]
 
 SETTINGS_KEY = "custom_import_templates"

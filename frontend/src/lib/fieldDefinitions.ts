@@ -62,7 +62,7 @@ const WAERMEPUMPE_FELDER: FeldDefinition[] = [
 ]
 
 const EAUTO_FELDER: FeldDefinition[] = [
-  { feld: 'km_gefahren',       label: 'km gefahren',  einheit: 'km',  placeholder: 'z.B. 1200' },
+  { feld: 'km_gefahren',       label: 'Gefahrene km', einheit: 'km',  placeholder: 'z.B. 1200' },
   { feld: 'verbrauch_kwh',     label: 'Verbrauch',    einheit: 'kWh', placeholder: 'z.B. 216'  },
   { feld: 'ladung_pv_kwh',     label: 'Heim: PV',     einheit: 'kWh', placeholder: 'z.B. 130'  },
   { feld: 'ladung_netz_kwh',   label: 'Heim: Netz',   einheit: 'kWh', placeholder: 'z.B. 50'   },

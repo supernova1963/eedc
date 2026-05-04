@@ -179,7 +179,7 @@ INVESTITION_FELDER: dict = {
 
     "e-auto": [
         {
-            "feld": "km_gefahren", "label": "km gefahren", "einheit": "km",
+            "feld": "km_gefahren", "label": "Gefahrene km", "einheit": "km",
             "placeholder": "z.B. 1200",
             "csv_suffix": "km",
         },

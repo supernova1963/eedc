@@ -37,7 +37,7 @@ const FIELD_LABEL_OVERRIDES: Record<string, string> = {
   ladung_extern_kwh: 'Ladung extern (kWh)',
   entladung_kwh: 'Entladung (kWh)',
   v2h_entladung_kwh: 'V2H Entladung (kWh)',
-  km_gefahren: 'Kilometer gefahren',
+  km_gefahren: 'Gefahrene km',
   verbrauch_kwh: 'Verbrauch (kWh)',
   stromverbrauch_kwh: 'Stromverbrauch (kWh)',
   strom_heizen_kwh: 'Strom Heizen (kWh)',
