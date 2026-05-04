@@ -948,6 +948,15 @@ class DatenChecker:
             if not erwartet:
                 continue  # sonstiges, wechselrichter etc. skippen
 
+            # Dienstwagen: kein PV-Bezug, kein Verbrauchs-Tracking nötig.
+            # Konsistent mit `_check_investitionen` (Zeile ~443), wo ROI-Checks
+            # für Dienstwagen ebenfalls übersprungen werden. (Joachim-PN
+            # 2026-05-04: ID.4 als Dienstwagen meldete trotzdem kWh-Counter
+            # fehlt.)
+            param = inv.parameter or {}
+            if inv.typ == "e-auto" and param.get("ist_dienstlich"):
+                continue
+
             inv_data = inv_map.get(str(inv.id), {}) or {}
             felder = inv_data.get("felder", {}) or {}
             fehlend = [
@@ -1248,7 +1257,13 @@ class DatenChecker:
         counter_sensors: list[tuple[str, str]] = []
 
         basis = mapping.get("basis") or {}
-        for key in ("einspeisung", "netzbezug", "pv_gesamt", "strompreis"):
+        # Nur kumulative kWh-Counter prüfen. `strompreis` ist ct/kWh bzw. €/kWh
+        # (Live-Preis-Sensor) und braucht kein state_class — wird nur live
+        # gelesen, nicht aus LTS aggregiert. `pv_gesamt` ist heute nur als
+        # `pv_gesamt_w` (Live-W) gemappt, ebenfalls kein LTS-Bedarf.
+        # (Joachim-PN 2026-05-04: grid_price_monitor wurde fälschlich als
+        # fehlender kWh-Sensor gemeldet.)
+        for key in ("einspeisung", "netzbezug"):
             m = basis.get(key)
             if isinstance(m, dict) and m.get("strategie") == "sensor" and m.get("sensor_id"):
                 kwh_sensors.append((m["sensor_id"], f"Basis: {key}"))
