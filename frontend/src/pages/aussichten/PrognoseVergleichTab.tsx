@@ -238,6 +238,24 @@ export default function PrognoseVergleichTab({ anlageId }: Props) {
     }
   })
 
+  // Sonnenstand-Begrenzung: erste/letzte Stunde mit Strahlung > 0.05 kW, ±1h Puffer.
+  // Backward-Slot-Konvention: stunde=h ist Intervall [h-1, h].
+  const HELL_KW = 0.05
+  const helleStunden: number[] = []
+  for (let i = 0; i < chartData.length; i++) {
+    const d = chartData[i]
+    const max = Math.max(
+      (d.openmeteo as number) || 0,
+      (d.solcast as number) || 0,
+      (d.eedc as number | null) ?? 0,
+      (d.ist as number | null) ?? 0,
+    )
+    if (max > HELL_KW) helleStunden.push(i)
+  }
+  const hMin = helleStunden.length > 0 ? Math.max(0, helleStunden[0] - 1) : 0
+  const hMax = helleStunden.length > 0 ? Math.min(23, helleStunden[helleStunden.length - 1] + 1) : 23
+  const visibleChartData = chartData.slice(hMin, hMax + 1)
+
   // ── 7-Tage-Daten ──
   const heute = new Date().toISOString().slice(0, 10)
   const genauigkeitMap = new Map(
@@ -423,9 +441,9 @@ export default function PrognoseVergleichTab({ anlageId }: Props) {
         </h3>
         <div className="h-80">
           <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart data={chartData} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
+            <ComposedChart data={visibleChartData} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#374151" opacity={0.3} />
-              <XAxis dataKey="stunde" tick={{ fontSize: 11 }} tickFormatter={(v) => v.replace(':00', '')} />
+              <XAxis dataKey="stunde" tick={{ fontSize: 11 }} tickFormatter={(v) => v.replace(':00', '')} padding={{ left: 8, right: 8 }} />
               <YAxis tick={{ fontSize: 11 }} label={{ value: 'kW', angle: -90, position: 'insideLeft', style: { fontSize: 11 } }} />
               <Tooltip content={<StundenTooltip hasEedc={hasEedc} />} />
               <Legend wrapperStyle={{ fontSize: 12 }} formatter={(v: string) => ({
@@ -866,9 +884,13 @@ interface StundenTooltipProps {
 
 function StundenTooltip({ active, payload, label, hasEedc }: StundenTooltipProps) {
   if (!active || !payload?.length) return null
+  // Backward-Slot-Konvention: stunde=h ist Intervall [h-1, h]
+  const h = parseInt(String(label ?? '').replace(':00', ''))
+  const prev = (h - 1 + 24) % 24
+  const intervalLabel = `${String(prev).padStart(2, '0')}:00–${String(h).padStart(2, '0')}:00 Uhr`
   return (
     <div className="bg-gray-800 text-white p-2 rounded shadow-lg text-xs">
-      <div className="font-medium mb-1">{label} Uhr</div>
+      <div className="font-medium mb-1">{intervalLabel}</div>
       {payload.map((p: StundenTooltipPayload) => {
         const key = p.dataKey ?? ''
         if (['solcast_p10', 'solcast_p90'].includes(key)) return null

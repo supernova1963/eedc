@@ -498,6 +498,7 @@ export default function WetterWidget({ wetter, tagesverlauf, loading, anlageId }
                 tick={{ fontSize: 10 }}
                 className="fill-gray-400 dark:fill-gray-500"
                 interval={2}
+                padding={{ left: 8, right: 8 }}
               />
               <YAxis
                 width={45}
@@ -507,7 +508,12 @@ export default function WetterWidget({ wetter, tagesverlauf, loading, anlageId }
                 label={{ value: 'kW', angle: -90, position: 'insideLeft', offset: 15, fontSize: 10, className: 'fill-gray-400 dark:fill-gray-500' }}
               />
               <Tooltip content={<ChartTooltip
-                labelFormatter={(label) => `${label}:00 Uhr`}
+                labelFormatter={(label) => {
+                  // Forward-Slot-Konvention: zeit=h ist Intervall [h, h+1]
+                  const h = parseInt(String(label))
+                  const next = (h + 1) % 24
+                  return `${String(h).padStart(2, '0')}:00–${String(next).padStart(2, '0')}:00 Uhr`
+                }}
                 nameFormatter={(name) => tooltipLabels[name] ?? name}
                 formatter={(value, name) => {
                   if (value === null || value === undefined) return null
