@@ -113,6 +113,11 @@ class AktuellerMonatResponse(BaseModel):
     wp_waerme_kwh: Optional[float] = None
     wp_heizung_kwh: Optional[float] = None
     wp_warmwasser_kwh: Optional[float] = None
+    # #191: Strom-Aufteilung Heizung/Warmwasser. Nur gesetzt wenn mindestens
+    # eine WP-Investition `getrennte_strommessung=true` hat. Sonst None →
+    # Frontend zeigt nur den Gesamtstromverbrauch.
+    wp_strom_heizen_kwh: Optional[float] = None
+    wp_strom_warmwasser_kwh: Optional[float] = None
     # Issue #169: Kompressor-Starts. Quelle: TagesZusammenfassung.komponenten_starts
     # über die Tage des Monats, summiert über alle WP-Investitionen.
     wp_starts_max_tag: Optional[int] = None
@@ -945,21 +950,36 @@ async def get_aktueller_monat(
         if sl > 0 and speicher_kapazitaet and speicher_kapazitaet > 0:
             speicher_vollzyklen = round(sl / speicher_kapazitaet, 2)
 
-    # WP: Heizung/Warmwasser-Split
+    # WP: Heizung/Warmwasser-Split (Wärme + bei getrennter Strommessung auch Strom, #191)
     wp_heizung = None
     wp_warmwasser = None
+    wp_strom_heizen = None
+    wp_strom_warmwasser = None
     wp_invs = [i for i in investitionen if i.typ == "waermepumpe"]
     if wp_invs:
         h_total = 0.0
         ww_total = 0.0
+        sh_total = 0.0
+        sww_total = 0.0
+        any_getrennt = False
         for imd in get_imd_for_invs(wp_invs):
             data = imd.verbrauch_daten or {}
+            inv = next((i for i in wp_invs if i.id == imd.investition_id), None)
             h_total += get_wp_heizenergie_kwh(data)
             ww_total += data.get("warmwasser_kwh", 0) or 0
+            if inv and (inv.parameter or {}).get("getrennte_strommessung"):
+                any_getrennt = True
+                sh_total += data.get("strom_heizen_kwh", 0) or 0
+                sww_total += data.get("strom_warmwasser_kwh", 0) or 0
         if h_total > 0:
             wp_heizung = round(h_total, 2)
         if ww_total > 0:
             wp_warmwasser = round(ww_total, 2)
+        if any_getrennt:
+            # Auch 0-Werte zurückgeben, damit Frontend "getrennt erfasst, aktuell 0"
+            # vs. "gar nicht getrennt erfasst" unterscheiden kann.
+            wp_strom_heizen = round(sh_total, 2)
+            wp_strom_warmwasser = round(sww_total, 2)
 
     # E-Mobilität: PV/Netz/Extern-Split + V2H
     emob_pv = get_val("emob_pv_ladung_kwh")
@@ -1283,6 +1303,8 @@ async def get_aktueller_monat(
         wp_waerme_kwh=get_val("wp_waerme_kwh"),
         wp_heizung_kwh=wp_heizung,
         wp_warmwasser_kwh=wp_warmwasser,
+        wp_strom_heizen_kwh=wp_strom_heizen,
+        wp_strom_warmwasser_kwh=wp_strom_warmwasser,
         wp_starts_max_tag=wp_starts_max_tag,
         wp_starts_summe_monat=wp_starts_summe_monat,
         hat_waermepumpe=hat_waermepumpe,

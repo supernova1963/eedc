@@ -190,7 +190,6 @@ export default function MappingSummaryStep({
   const [isBackfilling, setIsBackfilling] = useState(false)
   const [backfillResult, setBackfillResult] = useState<VollbackfillResult | null>(null)
   const [backfillError, setBackfillError] = useState<string | null>(null)
-  const [overwrite, setOverwrite] = useState(false)
 
   const handleVollbackfill = async () => {
     if (!anlageId) return
@@ -198,7 +197,7 @@ export default function MappingSummaryStep({
     setBackfillError(null)
     setBackfillResult(null)
     try {
-      const result = await energieProfilApi.vollbackfill(anlageId, overwrite)
+      const result = await energieProfilApi.vollbackfill(anlageId)
       setBackfillResult(result)
     } catch (e) {
       setBackfillError(e instanceof Error ? e.message : 'Fehler beim Backfill')
@@ -352,24 +351,16 @@ export default function MappingSummaryStep({
       )}
 
       {/* Investitionen */}
-      {/* Energieprofil-Verlauf nachberechnen */}
+      {/* Energieprofil-Lücken nachfüllen (#190: nur additiv) */}
       {anlageId != null && (
         <div className="border border-blue-200 dark:border-blue-800 rounded-lg p-4 bg-blue-50 dark:bg-blue-900/20">
           <div className="flex items-start justify-between gap-4">
             <div>
-              <h3 className="font-medium text-blue-900 dark:text-blue-100">Energieprofil-Verlauf nachberechnen</h3>
+              <h3 className="font-medium text-blue-900 dark:text-blue-100">Energieprofil-Lücken aus HA-Statistik nachfüllen</h3>
               <p className="text-sm text-blue-700 dark:text-blue-300 mt-1">
-                Füllt stündliche Energieprofile aus der HA Long-Term Statistics — unabhängig von der ~10-Tage-Grenze der Sensor-History.
+                Ergänzt fehlende Tage aus der HA Long-Term Statistics — unabhängig von der ~10-Tage-Grenze der Sensor-History.
+                Bestehende Tage bleiben unverändert.
               </p>
-              <label className="flex items-center gap-2 mt-2 text-sm text-blue-700 dark:text-blue-300 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={overwrite}
-                  onChange={(e) => setOverwrite(e.target.checked)}
-                  className="rounded border-blue-300 dark:border-blue-600 text-blue-600 focus:ring-blue-500"
-                />
-                Bestehende Tage überschreiben (z.B. nach Sensor-Änderungen)
-              </label>
               {backfillResult && (
                 <p className="text-sm text-blue-800 dark:text-blue-200 mt-2 font-medium">
                   ✓ {backfillResult.geschrieben} Tage geschrieben ({backfillResult.von} – {backfillResult.bis})
@@ -387,7 +378,7 @@ export default function MappingSummaryStep({
             >
               {isBackfilling
                 ? <><Loader2 className="w-4 h-4 animate-spin" /> Wird berechnet…</>
-                : <><History className="w-4 h-4" /> Verlauf nachberechnen</>
+                : <><History className="w-4 h-4" /> Lücken nachfüllen</>
               }
             </button>
           </div>

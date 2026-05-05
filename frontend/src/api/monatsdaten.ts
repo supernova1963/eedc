@@ -65,6 +65,8 @@ export interface AggregierteMonatsdaten {
   speicher_entladung_kwh: number
   // Aggregiert aus InvestitionMonatsdaten - Wärmepumpe
   wp_strom_kwh: number
+  wp_strom_heizen_kwh: number  // #191: nur > 0 wenn getrennte_strommessung
+  wp_strom_warmwasser_kwh: number  // #191: nur > 0 wenn getrennte_strommessung
   wp_heizung_kwh: number
   wp_warmwasser_kwh: number
   // Aggregiert aus InvestitionMonatsdaten - E-Auto

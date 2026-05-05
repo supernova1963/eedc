@@ -1207,21 +1207,32 @@ async def vollbackfill(
     anlage_id: int,
     von: Optional[date] = Query(None, description="Startdatum (Standard: frühestes Datum in HA Statistics)"),
     bis: Optional[date] = Query(None, description="Enddatum (Standard: gestern)"),
-    overwrite: bool = Query(False, description="Bestehende Tage überschreiben statt überspringen"),
+    overwrite: Optional[bool] = Query(
+        None,
+        description="DEPRECATED (#190): wird ignoriert. Vollbackfill ist immer additiv.",
+        deprecated=True,
+    ),
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Berechnet Energieprofile rückwirkend aus HA Long-Term Statistics.
+    Füllt fehlende Tage im Energieprofil aus HA Long-Term Statistics nach.
 
-    Füllt TagesEnergieProfil + TagesZusammenfassung für den gesamten Zeitraum
-    (unabhängig von der ~10-Tage-Grenze der HA-Sensor-History).
-    Überspringt bereits vorhandene Tage (außer bei overwrite=True).
+    **Immer additiv** (#190): bestehende Tage bleiben unverändert.
+    Für gezielte Reparatur einzelner Tage: /reaggregate-tag mit Vorschau.
 
     Returns:
         verarbeitet: Anzahl Tage im Zeitraum
         geschrieben: Davon neu geschriebene Tage
+        uebersprungen_keine_daten: Tage ohne HA-Statistics-Werte
+        uebersprungen_existiert: Tage mit bereits vorhandenem Profil
     """
     from backend.services.energie_profil_service import resolve_and_backfill_from_statistics
+
+    if overwrite:
+        logger.info(
+            f"Vollbackfill Anlage {anlage_id}: overwrite=true wurde gesendet, wird ignoriert "
+            "(#190: nur additiv, bestehende Tage bleiben)"
+        )
 
     result = await db.execute(select(Anlage).where(Anlage.id == anlage_id))
     anlage = result.scalar_one_or_none()
@@ -1229,7 +1240,7 @@ async def vollbackfill(
         raise HTTPException(status_code=404, detail=f"Anlage {anlage_id} nicht gefunden")
 
     try:
-        backfill = await resolve_and_backfill_from_statistics(anlage, db, von=von, bis=bis, overwrite=overwrite)
+        backfill = await resolve_and_backfill_from_statistics(anlage, db, von=von, bis=bis)
     except Exception as e:
         import traceback
         logger.error(f"Vollbackfill Anlage {anlage_id} FEHLER: {type(e).__name__}: {e}\n{traceback.format_exc()}")
@@ -1252,11 +1263,15 @@ async def vollbackfill(
 
     logger.info(
         f"Vollbackfill Anlage {anlage_id}: {backfill.geschrieben}/{backfill.verarbeitet} Tage "
-        f"von {backfill.von} bis {backfill.bis}"
+        f"von {backfill.von} bis {backfill.bis} "
+        f"(skip ohne_daten={backfill.uebersprungen_keine_daten}, "
+        f"skip existiert={backfill.uebersprungen_existiert})"
     )
     return {
         "verarbeitet": backfill.verarbeitet,
         "geschrieben": backfill.geschrieben,
+        "uebersprungen_keine_daten": backfill.uebersprungen_keine_daten,
+        "uebersprungen_existiert": backfill.uebersprungen_existiert,
         "von": backfill.von.isoformat(),
         "bis": backfill.bis.isoformat(),
     }

@@ -659,23 +659,28 @@ async def backfill_from_statistics(
     von: date,
     bis: date,
     db: AsyncSession,
-    skip_existing: bool = True,
-) -> int:
+) -> dict:
     """
-    Rückwirkende Berechnung des Energieprofils aus HA Long-Term Statistics.
+    Additiver Energieprofil-Aufbau aus HA Long-Term Statistics.
 
-    Ermöglicht Befüllung der gesamten HA-History (Jahre) ohne die ~10-Tage-
-    Grenze der HA-Sensor-History. Nutzt den statistics-Stundenmittelwert (mean)
-    aller konfigurierten Live-Leistungssensoren.
+    Ergänzt fehlende Tage. Bestehende Tage bleiben **immer** unverändert —
+    ein Overwrite-Modus existiert bewusst nicht (#190): „löschen + neu
+    berechnen" ist datenfeindlich, weil HA-LTS für viele Anlagen kürzer
+    zurückreicht als das gepflegte Profil. Wer einen einzelnen Tag reparieren
+    will, nutzt /reaggregate-tag mit Vorschau (chirurgisch, idempotent).
 
     Args:
         anlage: Die Anlage
         von/bis: Datumsbereich (inklusiv)
         db: DB-Session
-        skip_existing: Bereits vorhandene Tage überspringen
 
     Returns:
-        Anzahl erfolgreich geschriebener Tage
+        dict mit:
+          - geschrieben (int): erfolgreich geschriebene Tage
+          - uebersprungen_keine_daten (int): Tage ohne HA-Statistics-Werte
+            (#190 Bug B: vorher stiller Skip — User dachte „79,4 % wurden
+            verloren", tatsächlich hatte HA für diese Tage keine Daten)
+          - uebersprungen_existiert (int): Tage mit bereits vorhandenem Profil
     """
     import asyncio
     from sqlalchemy import select as sa_select, delete as sa_delete, and_ as sa_and
@@ -850,51 +855,26 @@ async def backfill_from_statistics(
         | wp_keys | wallbox_keys | sonstige_keys
     )
 
-    # ── Snapshot-Reparatur bei Overwrite ─────────────────────────────────────
-    # Bei "Verlauf nachrechnen" (skip_existing=False) zuerst die SensorSnapshots
-    # der Range frisch aus HA-Statistics ziehen. Aggregate liest die Snapshots
-    # weiter unten und würde sonst Spike-Defekte (z. B. Off-by-one in
-    # get_value_at vor v3.25.10) reproduzieren. Resnap nutzt den korrigierten
-    # get_value_at-Pfad. Bei initialem Backfill (skip_existing=True) übersprungen
-    # — Snapshots werden ohnehin durch den Scheduler frisch geschrieben.
-    if not skip_existing:
-        try:
-            from backend.services.sensor_snapshot_service import resnap_anlage_range
-            von_dt = datetime.combine(von, datetime.min.time())
-            bis_dt = datetime.combine(bis + timedelta(days=1), datetime.min.time())
-            resnap_stats = await resnap_anlage_range(
-                db, anlage, von=von_dt, bis=bis_dt, include_5min=True,
-            )
-            logger.info(
-                f"Anlage {anlage.id}: Pre-Backfill-Resnap — "
-                f"{resnap_stats['hourly']} hourly + {resnap_stats['5min']} 5-Min Slots "
-                f"({resnap_stats['stunden']} Stunden, {resnap_stats['slots_5min']} 5-Min-Slots)"
-            )
-        except Exception as e:
-            logger.warning(
-                f"Anlage {anlage.id}: Pre-Backfill-Resnap fehlgeschlagen "
-                f"(Aggregat läuft trotzdem auf Bestandsdaten): {type(e).__name__}: {e}"
-            )
-
-    # ── Bestehende Tage ermitteln ────────────────────────────────────────────
-    existing_dates: set[date] = set()
-    if skip_existing:
-        ex_result = await db.execute(
-            sa_select(TagesZusammenfassung.datum).where(
-                sa_and(
-                    TagesZusammenfassung.anlage_id == anlage.id,
-                    TagesZusammenfassung.datum >= von,
-                    TagesZusammenfassung.datum <= bis,
-                )
+    # ── Bestehende Tage ermitteln (immer additiv, #190) ──────────────────────
+    ex_result = await db.execute(
+        sa_select(TagesZusammenfassung.datum).where(
+            sa_and(
+                TagesZusammenfassung.anlage_id == anlage.id,
+                TagesZusammenfassung.datum >= von,
+                TagesZusammenfassung.datum <= bis,
             )
         )
-        existing_dates = {row[0] for row in ex_result}
+    )
+    existing_dates: set[date] = {row[0] for row in ex_result}
 
     # ── Pro-Tag-Schleife ─────────────────────────────────────────────────────
     count = 0
+    skipped_no_data = 0
+    skipped_existing = 0
     current = von
     while current <= bis:
         if current in existing_dates:
+            skipped_existing += 1
             current += timedelta(days=1)
             continue
 
@@ -1084,6 +1064,7 @@ async def backfill_from_statistics(
             stunden_count += 1
 
         if stunden_mit_daten == 0:
+            skipped_no_data += 1
             current += timedelta(days=1)
             continue
 
@@ -1189,7 +1170,18 @@ async def backfill_from_statistics(
         count += 1
         current += timedelta(days=1)
 
-    return count
+    if skipped_no_data > 0:
+        logger.info(
+            f"Backfill Anlage {anlage.id}: {count} geschrieben, "
+            f"{skipped_no_data} ohne HA-Daten übersprungen, "
+            f"{skipped_existing} bereits vorhanden"
+        )
+
+    return {
+        "geschrieben": count,
+        "uebersprungen_keine_daten": skipped_no_data,
+        "uebersprungen_existiert": skipped_existing,
+    }
 
 
 # ── Hilfsfunktionen ──────────────────────────────────────────────────────────
@@ -1496,6 +1488,9 @@ class BackfillResult:
     bis: Optional[date] = None
     verarbeitet: int = 0
     geschrieben: int = 0
+    # #190 Bug B: Skip-Transparenz statt stillem 79,4%-Cap
+    uebersprungen_keine_daten: int = 0
+    uebersprungen_existiert: int = 0
     missing_eids: list[str] = None
     detail: str = ""
 
@@ -1510,10 +1505,9 @@ async def resolve_and_backfill_from_statistics(
     *,
     von: Optional[date] = None,
     bis: Optional[date] = None,
-    overwrite: bool = False,
 ) -> BackfillResult:
     """
-    Orchestriert den Vollbackfill aus HA Long-Term Statistics:
+    Orchestriert den additiven Vollbackfill aus HA Long-Term Statistics:
 
     - resolved Live-Sensoren der Anlage
     - filtert ungültige Sensor-IDs
@@ -1523,7 +1517,8 @@ async def resolve_and_backfill_from_statistics(
 
     Wird vom manuellen Wizard-Endpoint und vom Auto-Vollbackfill im
     Monatsabschluss-Background-Task geteilt — gleiche Logik, unterschiedliche
-    Fehlerbehandlung im Caller (HTTPException vs. Log).
+    Fehlerbehandlung im Caller (HTTPException vs. Log). Bestehende Tage
+    bleiben **immer** unverändert (#190).
     """
     from backend.services.ha_statistics_service import get_ha_statistics_service
     from backend.services.live_sensor_config import extract_live_config
@@ -1575,13 +1570,15 @@ async def resolve_and_backfill_from_statistics(
         )
 
     verarbeitet = (bis - von).days + 1
-    geschrieben = await backfill_from_statistics(anlage, von, bis, db, skip_existing=not overwrite)
+    stats = await backfill_from_statistics(anlage, von, bis, db)
 
     return BackfillResult(
         status="ok",
         von=von,
         bis=bis,
         verarbeitet=verarbeitet,
-        geschrieben=geschrieben,
+        geschrieben=stats["geschrieben"],
+        uebersprungen_keine_daten=stats["uebersprungen_keine_daten"],
+        uebersprungen_existiert=stats["uebersprungen_existiert"],
         missing_eids=missing_eids,
     )

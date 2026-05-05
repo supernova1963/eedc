@@ -7,7 +7,7 @@
  *                Max/Min/Ø-Einordnung, Wasserfall, Komponenten-Detail.
  */
 
-import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react'
+import React, { useState, useMemo, useEffect, useLayoutEffect, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Sun, Battery, Flame, Car, Euro,
@@ -237,7 +237,14 @@ export default function MonatsabschlussView() {
     }
   }, [defaultEntry, selectedJahr])
 
+  // #182 detLAN: Beim Wechsel des Monats die Scroll-Position des Hauptcontainers
+  // halten, damit man dieselbe Sektion (z.B. Wärmepumpe) über mehrere Monate
+  // vergleichen kann. Layout-Reset bei Menüpunkt-Wechsel (Layout.tsx) bleibt
+  // erhalten — das ist Routenwechsel, nicht State-Update wie hier.
+  const restoreScrollTopRef = useRef<number | null>(null)
   const handleSelect = useCallback((j: number, m: number) => {
+    const main = typeof document !== 'undefined' ? document.querySelector('main') : null
+    restoreScrollTopRef.current = main?.scrollTop ?? null
     setSelectedJahr(j); setSelectedMonat(m)
   }, [])
 
@@ -278,6 +285,17 @@ export default function MonatsabschlussView() {
       .catch(e => setMonatError(e.message || 'Fehler'))
       .finally(() => setMonatLoading(false))
   }, [selectedAnlageId, selectedJahr, selectedMonat])
+
+  // #182 detLAN: Scroll-Position erst nach Daten-Reload wiederherstellen,
+  // damit der Layout-Shift (andere Sektionen sichtbar / andere Höhe) nicht
+  // zwischendurch zu sichtbarem Springen führt. useLayoutEffect läuft vor
+  // dem Browser-Paint.
+  useLayoutEffect(() => {
+    if (restoreScrollTopRef.current === null) return
+    const main = document.querySelector('main')
+    if (main) main.scrollTop = restoreScrollTopRef.current
+    restoreScrollTopRef.current = null
+  }, [monatData])
 
   // Sonderkosten-Aggregat aus cockpit/komponenten — wird nur noch als Fallback
   // im T-Konto verwendet, wenn keine Per-Investition-Financials vorhanden sind.
@@ -1336,6 +1354,13 @@ export default function MonatsabschlussView() {
                 )}
                 <div className="mt-3">
                   <VglZeile label="Stromverbrauch" aktuell={d.wp_strom_kwh}   vm={hatVmWp ? vm!.wp_strom_kwh : null}  vj={vj?.wp_strom_kwh}  unit="kWh" inv />
+                  {/* #191: Strom-Split nur bei getrennter Strommessung — sonst null vom Backend */}
+                  {d.wp_strom_heizen_kwh != null && (
+                    <VglZeile label="  davon Heizung"    aktuell={d.wp_strom_heizen_kwh}    unit="kWh" inv />
+                  )}
+                  {d.wp_strom_warmwasser_kwh != null && (
+                    <VglZeile label="  davon Warmwasser" aktuell={d.wp_strom_warmwasser_kwh} unit="kWh" inv />
+                  )}
                   <VglZeile label="Wärmeertrag"    aktuell={d.wp_waerme_kwh}  vm={vmWaerme} vj={vj?.wp_waerme_kwh} unit="kWh" />
                   {d.wp_heizung_kwh != null && (
                     <VglZeile label="  davon Heizung"    aktuell={d.wp_heizung_kwh}    unit="kWh" />

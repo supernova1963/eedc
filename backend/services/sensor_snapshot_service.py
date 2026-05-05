@@ -1265,6 +1265,16 @@ async def resnap_anlage_range(
     stunden = 0
     slots_5min = 0
 
+    # Erwartete Schrittzahl + Start-Log (Klausnn #190: bisher schweigender
+    # Hänger bei großen Ranges, weil _nichts_ geloggt wurde bis das Aggregat
+    # dranknam).
+    stunden_total = max(0, int((bis_h - von_h).total_seconds() // 3600))
+    log_every = max(1, stunden_total // 20)  # ~5 %-Schritte
+    logger.info(
+        f"Resnap Anlage {anlage.id} startet: {stunden_total} Stunden "
+        f"[{von_h.isoformat()} → {bis_h.isoformat()}], 5min={include_5min}"
+    )
+
     # 1) Stündliche Slots (überschreiben via _upsert in snapshot_anlage).
     # force_resnap=True: HA-None löscht den vorhandenen Snapshot (prä-#184-
     # Spike-Recovery, Befund Rainer 2026-05-03). aggregate_day sieht danach
@@ -1279,6 +1289,11 @@ async def resnap_anlage_range(
                 f"Resnap hourly Anlage {anlage.id} {zp}: {type(e).__name__}: {e}"
             )
         stunden += 1
+        if stunden % log_every == 0:
+            logger.info(
+                f"Resnap Anlage {anlage.id}: {stunden}/{stunden_total} Stunden "
+                f"({100 * stunden // stunden_total}%), {hourly_count} Snapshots geschrieben"
+            )
         zp += timedelta(hours=1)
 
     # 2) 5-Min-Slots (force=True, da Off-by-one-Fix sonst nicht überschreibt)

@@ -131,6 +131,8 @@ class AggregierteMonatsdatenResponse(BaseModel):
     speicher_entladung_kwh: float  # Summe alle Speicher
     # Aggregiert aus InvestitionMonatsdaten - Wärmepumpe
     wp_strom_kwh: float
+    wp_strom_heizen_kwh: float  # Nur > 0 wenn getrennte_strommessung=True (#191)
+    wp_strom_warmwasser_kwh: float  # Nur > 0 wenn getrennte_strommessung=True (#191)
     wp_heizung_kwh: float
     wp_warmwasser_kwh: float
     # Aggregiert aus InvestitionMonatsdaten - E-Auto
@@ -218,6 +220,8 @@ async def list_monatsdaten_aggregiert(
         speicher_ladung = 0.0
         speicher_entladung = 0.0
         wp_strom = 0.0
+        wp_strom_heizen = 0.0
+        wp_strom_warmwasser = 0.0
         wp_heizung = 0.0
         wp_warmwasser = 0.0
         eauto_ladung = 0.0
@@ -238,6 +242,9 @@ async def list_monatsdaten_aggregiert(
                 speicher_entladung += data.get("entladung_kwh", 0) or 0
             elif inv.typ == "waermepumpe":
                 wp_strom += get_wp_strom_kwh(data, inv.parameter)
+                if (inv.parameter or {}).get("getrennte_strommessung"):
+                    wp_strom_heizen += data.get("strom_heizen_kwh", 0) or 0
+                    wp_strom_warmwasser += data.get("strom_warmwasser_kwh", 0) or 0
                 wp_heizung += data.get("heizenergie_kwh", 0) or 0
                 wp_warmwasser += data.get("warmwasser_kwh", 0) or 0
             elif inv.typ == "e-auto":
@@ -288,6 +295,8 @@ async def list_monatsdaten_aggregiert(
             speicher_ladung_kwh=round(speicher_ladung, 1),
             speicher_entladung_kwh=round(speicher_entladung, 1),
             wp_strom_kwh=round(wp_strom, 1),
+            wp_strom_heizen_kwh=round(wp_strom_heizen, 1),
+            wp_strom_warmwasser_kwh=round(wp_strom_warmwasser, 1),
             wp_heizung_kwh=round(wp_heizung, 1),
             wp_warmwasser_kwh=round(wp_warmwasser, 1),
             eauto_ladung_kwh=round(eauto_ladung, 1),

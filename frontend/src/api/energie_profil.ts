@@ -145,6 +145,9 @@ export interface MonatsAuswertung {
 export interface VollbackfillResult {
   verarbeitet: number
   geschrieben: number
+  // #190 Bug B: Skip-Transparenz — Tage ohne HA-Daten bzw. bereits vorhanden
+  uebersprungen_keine_daten?: number
+  uebersprungen_existiert?: number
   von: string
   bis: string
 }
@@ -251,8 +254,8 @@ export const energieProfilApi = {
   getMonat: (anlageId: number, jahr: number, monat: number): Promise<MonatsAuswertung> =>
     api.get(`/energie-profil/${anlageId}/monat?jahr=${jahr}&monat=${monat}`),
 
-  vollbackfill: (anlageId: number, overwrite: boolean = false): Promise<VollbackfillResult> =>
-    api.post(`/energie-profil/${anlageId}/vollbackfill${overwrite ? '?overwrite=true' : ''}`),
+  vollbackfill: (anlageId: number): Promise<VollbackfillResult> =>
+    api.post(`/energie-profil/${anlageId}/vollbackfill`),
 
   reaggregateTag: (anlageId: number, datum: string): Promise<{ status: string; datum: string; stunden_verfuegbar: number; stunden_mit_messdaten: number }> =>
     api.post(`/energie-profil/${anlageId}/reaggregate-tag?datum=${datum}`),

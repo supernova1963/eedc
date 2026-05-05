@@ -19,7 +19,6 @@ export default function Energieprofil() {
   const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
 
-  const [overwrite, setOverwrite] = useState(false)
   const [runningBackfill, setRunningBackfill] = useState(false)
   const [runningKraftstoff, setRunningKraftstoff] = useState(false)
   const [runningDelete, setRunningDelete] = useState(false)
@@ -56,14 +55,23 @@ export default function Energieprofil() {
 
   const handleVollbackfill = async () => {
     if (!selectedAnlageId) return
-    const modus = overwrite ? 'überschreiben' : 'Lücken füllen'
-    if (!window.confirm(`Vollbackfill aus HA-Statistik starten (${modus})? Das kann einige Minuten dauern.`)) return
+    if (!window.confirm('Energieprofil-Lücken aus HA-Statistik nachfüllen? Bestehende Tage bleiben unverändert. Das kann einige Minuten dauern.')) return
     try {
       setRunningBackfill(true)
       setMessage(null)
       setError(null)
-      const res = await energieProfilApi.vollbackfill(selectedAnlageId, overwrite)
-      setMessage(`Vollbackfill: ${res.geschrieben} von ${res.verarbeitet} Tagen (${res.von} bis ${res.bis}).`)
+      const res = await energieProfilApi.vollbackfill(selectedAnlageId)
+      // #190 Bug B: Skip-Gründe ausweisen, damit „79,4 %"-Cap erklärbar ist
+      const teile: string[] = [
+        `${res.geschrieben} von ${res.verarbeitet} Tagen geschrieben (${res.von} bis ${res.bis})`,
+      ]
+      if (res.uebersprungen_keine_daten && res.uebersprungen_keine_daten > 0) {
+        teile.push(`${res.uebersprungen_keine_daten} Tage ohne HA-Statistics-Daten übersprungen`)
+      }
+      if (res.uebersprungen_existiert && res.uebersprungen_existiert > 0) {
+        teile.push(`${res.uebersprungen_existiert} Tage bereits vorhanden`)
+      }
+      setMessage(`Vollbackfill: ${teile.join(' · ')}.`)
       await loadStats()
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Vollbackfill fehlgeschlagen')
@@ -237,51 +245,30 @@ export default function Energieprofil() {
             </h2>
           </div>
 
-          {/* Vollbackfill / Verlauf nachberechnen */}
+          {/* Energieprofil-Lücken nachfüllen (#190: nur additiv) */}
           <div className="border border-gray-200 dark:border-gray-700 rounded-lg p-4 mb-4">
             <div className="flex items-start gap-3">
               <History className="h-5 w-5 text-primary-500 flex-shrink-0 mt-0.5" />
               <div className="flex-1">
                 <h3 className="font-medium text-gray-900 dark:text-white">
-                  Verlauf aus HA-Statistik nachberechnen
+                  Energieprofil-Lücken aus HA-Statistik nachfüllen
                 </h3>
                 <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-                  Füllt Tagesprofile und Tageszusammenfassungen aus den HA Long-Term Statistics
-                  für die gesamte verfügbare Historie (unabhängig von der ~10-Tage-Sensor-Grenze).
+                  Ergänzt fehlende Tage aus den HA Long-Term Statistics — unabhängig von der ~10-Tage-Sensor-Grenze.
+                  <strong className="text-gray-700 dark:text-gray-200"> Bestehende Tage bleiben unverändert.</strong>
+                  {' '}Sinnvoll nach Erstinstallation, längerem Add-on-Stopp oder Sensor-Mapping-Änderungen.
                 </p>
-
-                <div className="mt-3 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg">
-                  <p className="text-xs text-amber-800 dark:text-amber-200">
-                    <strong>Empfohlen nach Updates,</strong> die die Energieprofil-Berechnung
-                    betreffen (Zähler-Snapshots, Slot-Konvention, Performance Ratio o.ä.).
-                    Das Energieprofil wird aus kumulativen Zählerständen berechnet (exakt
-                    zum Live Dashboard); ältere Tage können durch Korrekturen abweichen.
-                    Starte dann einmalig mit aktivierter Option <em>„Bestehende Tage
-                    überschreiben"</em>, damit der gesamte Verlauf konsistent bleibt.
-                    Bei aktiviertem Überschreiben werden zusätzlich die zugrunde liegenden
-                    SensorSnapshots frisch aus HA-Statistics gezogen — repariert verzerrte
-                    Stundenwerte (z. B. nach Update-Restarts mit Counter-Off-by-one).
-                    Details im CHANGELOG. Der Daten-Checker zeigt unter
-                    „Energieprofil-Abdeckung", welche Zähler dafür gemappt sein müssen.
-                  </p>
-                </div>
-
-                <label className="flex items-center gap-2 mt-3 text-sm text-gray-700 dark:text-gray-300">
-                  <input
-                    type="checkbox"
-                    checked={overwrite}
-                    onChange={(e) => setOverwrite(e.target.checked)}
-                    className="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
-                  />
-                  Bestehende Tage überschreiben (statt nur Lücken füllen)
-                </label>
+                <p className="text-xs text-gray-500 dark:text-gray-500 mt-2">
+                  Möchtest du einen einzelnen Tag reparieren, der verzerrt aussieht? Nutze den Daten-Checker
+                  (zeigt verdächtige Tage) und den Reload-Knopf in der Tagestabelle (mit Vorschau vor Übernahme).
+                </p>
                 <div className="mt-3">
                   <Button
                     onClick={handleVollbackfill}
                     disabled={!selectedAnlageId || runningBackfill}
                   >
                     {runningBackfill ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <History className="h-4 w-4 mr-2" />}
-                    {overwrite ? 'Verlauf nachberechnen' : 'Vollbackfill starten'}
+                    Lücken nachfüllen
                   </Button>
                 </div>
               </div>
