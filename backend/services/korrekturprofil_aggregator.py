@@ -168,15 +168,18 @@ async def _lade_tagesprognose(
 
 
 async def _lade_tagesist_skalar(
-    db: AsyncSession, anlage_id: int, datum_set: list[date]
+    db: AsyncSession, anlage_id: int, von: date, bis: date
 ) -> dict[date, tuple[float, float]]:
-    """Pro Tag: `(ist_kwh, prognose_kwh)` als Skalar-Tagesdaten.
+    """Pro Tag im Zeitraum: `(ist_kwh, prognose_kwh)` als Skalar-Tagesdaten.
 
     IST = Summe `pv_kw` über die 24 Stunden des Tages (kW × 1h = kWh).
     Prognose = `pv_prognose_kwh` aus TagesZusammenfassung.
+
+    Unabhängig von `pv_prognose_stundenprofil` — die Skalar-Stufe braucht
+    nur die Tages-Prognose, damit der Live-Pfad auch dann einen
+    Korrekturprofil-Faktor hat, wenn Day-Ahead-Stundenprofile noch nicht
+    aufgelaufen sind.
     """
-    if not datum_set:
-        return {}
     result = await db.execute(
         select(
             TagesZusammenfassung.datum,
@@ -184,15 +187,17 @@ async def _lade_tagesist_skalar(
         ).where(
             and_(
                 TagesZusammenfassung.anlage_id == anlage_id,
-                TagesZusammenfassung.datum.in_(datum_set),
+                TagesZusammenfassung.datum >= von,
+                TagesZusammenfassung.datum < bis,
                 TagesZusammenfassung.pv_prognose_kwh.isnot(None),
                 TagesZusammenfassung.pv_prognose_kwh > 0,
             )
         )
     )
     prog_pro_tag: dict[date, float] = {d: p for d, p in result.all()}
+    if not prog_pro_tag:
+        return {}
 
-    # IST aus TagesEnergieProfil aufsummieren
     ist_result = await db.execute(
         select(
             TagesEnergieProfil.datum,
@@ -200,7 +205,7 @@ async def _lade_tagesist_skalar(
         ).where(
             and_(
                 TagesEnergieProfil.anlage_id == anlage_id,
-                TagesEnergieProfil.datum.in_(datum_set),
+                TagesEnergieProfil.datum.in_(list(prog_pro_tag.keys())),
                 TagesEnergieProfil.pv_kw.isnot(None),
             )
         )
@@ -281,36 +286,37 @@ async def aggregiere_korrekturprofil_anlage(
     von = heute - timedelta(days=lookback_tage)
 
     prog_pro_tag = await _lade_tagesprognose(db, anlage.id, von, heute)
-    if not prog_pro_tag:
-        return {
-            "status": "skipped",
-            "grund": "Keine Day-Ahead-Snapshots im Zeitraum",
-            "tage_eingegangen": 0,
-        }
-
-    # Stündliches IST + Wetter laden
-    tep_result = await db.execute(
-        select(
-            TagesEnergieProfil.datum,
-            TagesEnergieProfil.stunde,
-            TagesEnergieProfil.pv_kw,
-            TagesEnergieProfil.bewoelkung_prozent,
-            TagesEnergieProfil.niederschlag_mm,
-            TagesEnergieProfil.wetter_code,
-        ).where(
-            and_(
-                TagesEnergieProfil.anlage_id == anlage.id,
-                TagesEnergieProfil.datum.in_(list(prog_pro_tag.keys())),
-            )
-        )
-    )
 
     # Bin-Akkumulatoren
     sw_acc: dict[str, _BinAccumulator] = {}  # sonnenstand_wetter
     s_acc: dict[str, _BinAccumulator] = {}  # sonnenstand only
     tage_genutzt: set[date] = set()
 
-    for datum, stunde, pv_kw, bw, ns, wc in tep_result.all():
+    if not prog_pro_tag:
+        # Kein Day-Ahead-Snapshot im Zeitraum — die Bin-Stufen bleiben leer,
+        # die Skalar-Stufe (Tages-IST/Tages-Prognose) wird trotzdem unten
+        # berechnet, damit der Live-Pfad einen Korrekturfaktor hat.
+        tep_rows: list = []
+    else:
+        # Stündliches IST + Wetter für die Tage mit Day-Ahead-Snapshot laden
+        tep_result = await db.execute(
+            select(
+                TagesEnergieProfil.datum,
+                TagesEnergieProfil.stunde,
+                TagesEnergieProfil.pv_kw,
+                TagesEnergieProfil.bewoelkung_prozent,
+                TagesEnergieProfil.niederschlag_mm,
+                TagesEnergieProfil.wetter_code,
+            ).where(
+                and_(
+                    TagesEnergieProfil.anlage_id == anlage.id,
+                    TagesEnergieProfil.datum.in_(list(prog_pro_tag.keys())),
+                )
+            )
+        )
+        tep_rows = list(tep_result.all())
+
+    for datum, stunde, pv_kw, bw, ns, wc in tep_rows:
         if pv_kw is None or pv_kw < MIN_LEISTUNG_KW:
             continue
         prog_profil = prog_pro_tag.get(datum)
@@ -384,7 +390,10 @@ async def aggregiere_korrekturprofil_anlage(
     )
 
     # ── skalar (O1+O2 auf Tagesebene als letzter Fallback) ────────────────
-    tages_skalar = await _lade_tagesist_skalar(db, anlage.id, list(prog_pro_tag.keys()))
+    # Skalar wird unabhängig von Day-Ahead-Stundenprofilen berechnet —
+    # so hat der Live-Pfad ab Tag 1 einen Korrekturfaktor, auch wenn die
+    # höheren Stufen erst über Wochen aufgebaut werden.
+    tages_skalar = await _lade_tagesist_skalar(db, anlage.id, von, heute)
     daten = [(d, ist, prog) for d, (ist, prog) in tages_skalar.items()]
     raw_skalar, n_skalar = _aggregate_skalar_o12(daten, heute)
     if raw_skalar is not None:
@@ -405,19 +414,31 @@ async def aggregiere_korrekturprofil_anlage(
     await db.commit()
     invalidate_cache(anlage.id)
 
+    # Falls weder Bins noch Skalar berechenbar waren → Skipped
+    if not sw_faktoren and not s_faktoren and skalar_faktor is None:
+        return {
+            "status": "skipped",
+            "grund": "Keine Tagesdaten (weder pv_prognose_kwh noch IST verfügbar)",
+            "tage_eingegangen": 0,
+        }
+
+    # Aussage-Wert für UI: Bin-Tage falls vorhanden, sonst Skalar-Tagesanzahl
+    tage_aussagekraft = len(tage_genutzt) if tage_genutzt else n_skalar
+
     logger.info(
         "Korrekturprofil Anlage %s: %d Tage, %d sonnenstand_wetter-Bins, "
-        "%d sonnenstand-Bins, Skalar=%s",
+        "%d sonnenstand-Bins, Skalar=%s (n=%d)",
         anlage.id,
-        len(tage_genutzt),
+        tage_aussagekraft,
         len(sw_faktoren),
         len(s_faktoren),
         skalar_faktor,
+        n_skalar,
     )
 
     return {
         "status": "ok",
-        "tage_eingegangen": len(tage_genutzt),
+        "tage_eingegangen": tage_aussagekraft,
         "bins_sonnenstand_wetter": len(sw_faktoren),
         "bins_sonnenstand": len(s_faktoren),
         "skalar": skalar_faktor,

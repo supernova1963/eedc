@@ -166,6 +166,10 @@ export function KorrekturprofilHeatmapCard({ anlageId }: Props) {
   for (let e = ELEVATION_MAX; e >= ELEVATION_MIN; e -= STEP) elevationen.push(e)
 
   const isEmpty = !loading && (!profile || profile.length === 0)
+  const swFaktoren = (sw?.faktoren as Record<string, number>) ?? {}
+  const sFaktoren = (son?.faktoren as Record<string, number>) ?? {}
+  const hatBins = Object.keys(swFaktoren).length > 0 || Object.keys(sFaktoren).length > 0
+  const nurSkalar = !loading && !isEmpty && !hatBins && skalar?.faktor_skalar != null
 
   return (
     <Card>
@@ -203,6 +207,16 @@ export function KorrekturprofilHeatmapCard({ anlageId }: Props) {
           genug Tage gesammelt hat, läuft der Scheduler nightly. Du kannst
           oben „Neu aggregieren" anstoßen, um den ersten Lauf manuell zu
           starten.
+        </div>
+      )}
+
+      {nurSkalar && (
+        <div className="text-xs text-gray-500 mb-3 p-2 rounded bg-blue-50 dark:bg-blue-900/20">
+          Skalar-Faktor (×{skalar?.faktor_skalar?.toFixed(3)}) ist aktiv und
+          wirkt im Live-Pfad. Sonnenstand- und Wetter-Bins brauchen
+          Day-Ahead-Stundenprofile (`pv_prognose_stundenprofil`), die seit
+          v3.26.0 täglich gesammelt werden — die Heatmap-Tabelle füllt sich
+          ab Tag 10 organisch und wird über mehrere Wochen statistisch robust.
         </div>
       )}
 
