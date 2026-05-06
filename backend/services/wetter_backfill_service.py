@@ -39,6 +39,16 @@ ARCHIVE_LAG_TAGE = 5  # letzte N Tage aus Forecast-Pfad, nicht aus Archive
 DEFAULT_MAX_TAGE = 730  # 2 Jahre
 
 
+def archive_cutoff(heute: Optional[date] = None) -> date:
+    """SoT-Cutoff: Tage älter als das gehen über Archive, jüngere über Forecast.
+
+    Wird auch in `energie_profil_service._get_wetter_ist` und im
+    Stratifizierungs-Endpoint genutzt, damit alle Read-/Write-Pfade
+    konsistent denselben Lag-Begriff haben.
+    """
+    return (heute or date.today()) - timedelta(days=ARCHIVE_LAG_TAGE)
+
+
 async def wetter_backfill_anlage(
     anlage: Anlage,
     db: AsyncSession,
@@ -59,16 +69,18 @@ async def wetter_backfill_anlage(
         return {"status": "skipped", "grund": "keine Koordinaten"}
 
     cutoff_alt = date.today() - timedelta(days=max_tage)
-    cutoff_neu = date.today() - timedelta(days=ARCHIVE_LAG_TAGE)
+    cutoff_neu = archive_cutoff()
 
-    # Tage mit fehlenden Wetter-Feldern in Range identifizieren
+    # Tage mit fehlenden Wetter-Feldern bis heute (Archive UND letzte Tage).
+    # Den Lag-Cutoff im SELECT NICHT mehr setzen — die letzten Tage holen wir
+    # über den Forecast-Endpoint (Reanalyse-Approximation).
     result = await db.execute(
         select(TagesEnergieProfil.datum)
         .where(
             and_(
                 TagesEnergieProfil.anlage_id == anlage.id,
                 TagesEnergieProfil.datum >= cutoff_alt,
-                TagesEnergieProfil.datum < cutoff_neu,
+                TagesEnergieProfil.datum < date.today(),
                 TagesEnergieProfil.bewoelkung_prozent.is_(None),
             )
         )
@@ -79,9 +91,66 @@ async def wetter_backfill_anlage(
     if not fehlende_tage:
         return {"status": "ok", "tage_geupdated": 0, "stunden_geupdated": 0}
 
+    archive_tage = [d for d in fehlende_tage if d < cutoff_neu]
+    forecast_tage = [d for d in fehlende_tage if d >= cutoff_neu]
+
+    stunden_total = 0
+    tage_total: set[date] = set()
+    fehler: Optional[str] = None
+
+    if archive_tage:
+        s, t, err = await _fetch_und_update(
+            anlage, db, ARCHIVE_URL, archive_tage[0], archive_tage[-1], set(archive_tage)
+        )
+        stunden_total += s
+        tage_total |= t
+        if err and not fehler:
+            fehler = err
+
+    if forecast_tage:
+        forecast_url = "https://api.open-meteo.com/v1/forecast"
+        s, t, err = await _fetch_und_update(
+            anlage, db, forecast_url, forecast_tage[0], forecast_tage[-1], set(forecast_tage)
+        )
+        stunden_total += s
+        tage_total |= t
+        if err and not fehler:
+            fehler = err
+
+    await db.commit()
+
     von = fehlende_tage[0]
     bis = fehlende_tage[-1]
+    logger.info(
+        f"Wetter-Backfill Anlage {anlage.id}: "
+        f"{stunden_total} Stunden / {len(tage_total)} Tage geupdated "
+        f"({von}–{bis}; archive={len(archive_tage)}, forecast={len(forecast_tage)})"
+    )
 
+    if stunden_total == 0 and fehler:
+        return {"status": "error", "fehler": fehler}
+
+    return {
+        "status": "ok",
+        "tage_geupdated": len(tage_total),
+        "stunden_geupdated": stunden_total,
+        "von": von.isoformat(),
+        "bis": bis.isoformat(),
+    }
+
+
+async def _fetch_und_update(
+    anlage: Anlage,
+    db: AsyncSession,
+    url: str,
+    von: date,
+    bis: date,
+    fehlende_set: set[date],
+) -> tuple[int, set[date], Optional[str]]:
+    """Holt Wetter-Range und schreibt additiv in TagesEnergieProfil.
+
+    Returns: `(stunden_geupdated, tage_geupdated, fehler_msg_or_None)`.
+    """
     params = {
         "latitude": anlage.latitude,
         "longitude": anlage.longitude,
@@ -90,18 +159,16 @@ async def wetter_backfill_anlage(
         "end_date": bis.isoformat(),
         "hourly": "cloud_cover,precipitation,weather_code",
     }
-
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
-            resp = await client.get(ARCHIVE_URL, params=params)
+            resp = await client.get(url, params=params)
             resp.raise_for_status()
             data = resp.json()
     except Exception as e:
         logger.error(
-            f"Wetter-Backfill Anlage {anlage.id} ({von}–{bis}): "
-            f"Open-Meteo Archive fehlgeschlagen: {e}"
+            f"Wetter-Backfill Anlage {anlage.id} ({von}–{bis}): {url} fehlgeschlagen: {e}"
         )
-        return {"status": "error", "fehler": str(e)}
+        return 0, set(), str(e)
 
     hourly = data.get("hourly", {})
     times = hourly.get("time", [])
@@ -109,18 +176,15 @@ async def wetter_backfill_anlage(
     precip = hourly.get("precipitation", [])
     wcode = hourly.get("weather_code", [])
 
-    fehlende_set = set(fehlende_tage)
     stunden_geupdated = 0
     tage_geupdated: set[date] = set()
 
     for i, t in enumerate(times):
-        # t-Format: "2024-04-15T13:00"
         try:
             datum_obj = date.fromisoformat(t[:10])
             stunde = int(t[11:13])
         except Exception:
             continue
-
         if datum_obj not in fehlende_set:
             continue
 
@@ -135,11 +199,9 @@ async def wetter_backfill_anlage(
             update_values["niederschlag_mm"] = round(pr, 2)
         if wc is not None:
             update_values["wetter_code"] = int(wc)
-
         if not update_values:
             continue
 
-        # additiv: nur Zellen ohne Bewölkung updaten (Marker-Spalte)
         await db.execute(
             update(TagesEnergieProfil)
             .where(
@@ -155,18 +217,4 @@ async def wetter_backfill_anlage(
         stunden_geupdated += 1
         tage_geupdated.add(datum_obj)
 
-    await db.commit()
-
-    logger.info(
-        f"Wetter-Backfill Anlage {anlage.id}: "
-        f"{stunden_geupdated} Stunden / {len(tage_geupdated)} Tage geupdated "
-        f"({von}–{bis})"
-    )
-
-    return {
-        "status": "ok",
-        "tage_geupdated": len(tage_geupdated),
-        "stunden_geupdated": stunden_geupdated,
-        "von": von.isoformat(),
-        "bis": bis.isoformat(),
-    }
+    return stunden_geupdated, tage_geupdated, None

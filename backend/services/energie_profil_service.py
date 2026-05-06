@@ -1246,10 +1246,20 @@ async def _get_wetter_ist(
 
         gruppen = _get_pv_orientierungsgruppen(pv_module) if pv_module else []
 
-        # Forecast für heute, Archive für historische Tage
+        # Forecast-Endpoint für heute UND die letzten ARCHIVE_LAG_TAGE
+        # (Open-Meteo Archive hängt 2-5 Tage hinter Echtzeit; Forecast-Endpoint
+        # liefert für vergangene Tage stattdessen die Reanalyse-Approximation).
+        # Archive nur für ältere Tage.
+        from backend.services.wetter_backfill_service import archive_cutoff
         if datum == date.today():
             url = f"{settings.open_meteo_api_url}/forecast"
             base_params: dict = {"forecast_days": 1}
+        elif datum >= archive_cutoff():
+            url = f"{settings.open_meteo_api_url}/forecast"
+            base_params = {
+                "start_date": datum.isoformat(),
+                "end_date": datum.isoformat(),
+            }
         else:
             url = "https://archive-api.open-meteo.com/v1/archive"
             base_params = {
