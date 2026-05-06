@@ -302,9 +302,13 @@ async def aggregate_day(
         peak_einspeisung = max(peak_einspeisung, einspeisung_kw_w)
 
         # Wetter
-        temperatur = wetter_stunden.get(h, {}).get("temperatur_c")
-        strahlung = wetter_stunden.get(h, {}).get("globalstrahlung_wm2")
-        gti = wetter_stunden.get(h, {}).get("gti_wm2")
+        wetter_h = wetter_stunden.get(h, {})
+        temperatur = wetter_h.get("temperatur_c")
+        strahlung = wetter_h.get("globalstrahlung_wm2")
+        gti = wetter_h.get("gti_wm2")
+        bewoelkung = wetter_h.get("bewoelkung_prozent")
+        niederschlag = wetter_h.get("niederschlag_mm")
+        wcode = wetter_h.get("wetter_code")
         if temperatur is not None:
             temp_values.append(temperatur)
         if strahlung is not None:
@@ -346,6 +350,9 @@ async def aggregate_day(
             defizit_kw=round(defizit, 3) if defizit is not None else None,
             temperatur_c=round(temperatur, 1) if temperatur is not None else None,
             globalstrahlung_wm2=round(strahlung, 0) if strahlung is not None else None,
+            bewoelkung_prozent=round(bewoelkung, 0) if bewoelkung is not None else None,
+            niederschlag_mm=round(niederschlag, 2) if niederschlag is not None else None,
+            wetter_code=int(wcode) if wcode is not None else None,
             soc_prozent=round(soc, 1) if soc is not None else None,
             strompreis_cent=round(strompreis, 2) if strompreis is not None else None,
             boersenpreis_cent=round(boersenpreis, 2) if boersenpreis is not None else None,
@@ -1026,9 +1033,13 @@ async def backfill_from_statistics(
             peak_bezug = max(peak_bezug, netzbezug_kw_h)
             peak_einspeisung = max(peak_einspeisung, einspeisung_kw_h)
 
-            temperatur = wetter_stunden.get(h, {}).get("temperatur_c")
-            strahlung = wetter_stunden.get(h, {}).get("globalstrahlung_wm2")
-            gti = wetter_stunden.get(h, {}).get("gti_wm2")
+            wetter_h = wetter_stunden.get(h, {})
+            temperatur = wetter_h.get("temperatur_c")
+            strahlung = wetter_h.get("globalstrahlung_wm2")
+            gti = wetter_h.get("gti_wm2")
+            bewoelkung = wetter_h.get("bewoelkung_prozent")
+            niederschlag = wetter_h.get("niederschlag_mm")
+            wcode = wetter_h.get("wetter_code")
             if temperatur is not None:
                 temp_values.append(temperatur)
             if strahlung is not None:
@@ -1058,6 +1069,9 @@ async def backfill_from_statistics(
                 defizit_kw=round(defizit_h, 3) if defizit_h is not None else None,
                 temperatur_c=round(temperatur, 1) if temperatur is not None else None,
                 globalstrahlung_wm2=round(strahlung, 0) if strahlung is not None else None,
+                bewoelkung_prozent=round(bewoelkung, 0) if bewoelkung is not None else None,
+                niederschlag_mm=round(niederschlag, 2) if niederschlag is not None else None,
+                wetter_code=int(wcode) if wcode is not None else None,
                 soc_prozent=round(soc, 1) if soc is not None else None,
                 komponenten=werte if werte else None,
             ))
@@ -1216,6 +1230,9 @@ async def _get_wetter_ist(
             "temperatur_c": float,
             "globalstrahlung_wm2": float,   # horizontal, GHI
             "gti_wm2": float | None,        # modul-gewichtet, None wenn keine PV-Module
+            "bewoelkung_prozent": float,    # cloud_cover 0-100
+            "niederschlag_mm": float,       # precipitation in mm/h
+            "wetter_code": int,             # WMO weather code
         }}
     """
     if not anlage.latitude or not anlage.longitude:
@@ -1246,9 +1263,13 @@ async def _get_wetter_ist(
             "timezone": "Europe/Berlin",
         })
 
-        # Haupt-Request: Temperatur + GHI, bei genau einer Gruppe auch GTI
+        # Haupt-Request: Temperatur + GHI + Wetter (Bewölkung, Niederschlag, WMO-Code),
+        # bei genau einer Gruppe auch GTI
         haupt_params = dict(base_params)
-        hourly_vars = ["temperature_2m", "shortwave_radiation"]
+        hourly_vars = [
+            "temperature_2m", "shortwave_radiation",
+            "cloud_cover", "precipitation", "weather_code",
+        ]
         if len(gruppen) == 1:
             hourly_vars.append("global_tilted_irradiance")
             haupt_params["tilt"] = gruppen[0]["neigung"]
@@ -1299,6 +1320,9 @@ async def _get_wetter_ist(
         temps = hourly.get("temperature_2m", [])
         ghi = hourly.get("shortwave_radiation", [])
         gti_single = hourly.get("global_tilted_irradiance", [])
+        cloud_cover = hourly.get("cloud_cover", [])
+        precip = hourly.get("precipitation", [])
+        wcode = hourly.get("weather_code", [])
 
         gti_values = multi_gti if multi_gti is not None else gti_single
 
@@ -1309,6 +1333,9 @@ async def _get_wetter_ist(
                 "temperatur_c": temps[i] if i < len(temps) else None,
                 "globalstrahlung_wm2": ghi[i] if i < len(ghi) else None,
                 "gti_wm2": gti_values[i] if i < len(gti_values) else None,
+                "bewoelkung_prozent": cloud_cover[i] if i < len(cloud_cover) else None,
+                "niederschlag_mm": precip[i] if i < len(precip) else None,
+                "wetter_code": wcode[i] if i < len(wcode) else None,
             }
 
         return result

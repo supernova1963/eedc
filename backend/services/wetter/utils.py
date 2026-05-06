@@ -2,11 +2,15 @@
 Wetter-Utilities: Einheiten-Konvertierung und WMO-Symbol-Mapping.
 """
 
-from typing import Optional
+from typing import Iterable, Literal, Optional
 
 # Konvertierungsfaktoren
 MJ_TO_KWH = 1 / 3.6  # 1 MJ = 0.2778 kWh
 SECONDS_TO_HOURS = 1 / 3600
+
+# Wetterklassen für Korrekturprofil-Stratifizierung (siehe KONZEPT-KORREKTURPROFIL.md)
+Wetterklasse = Literal["klar", "diffus", "wechselhaft"]
+WETTERKLASSEN: tuple[Wetterklasse, ...] = ("klar", "diffus", "wechselhaft")
 
 
 def wetter_code_zu_symbol(code: Optional[int]) -> str:
@@ -80,3 +84,113 @@ def wetter_symbol_aus_tag(
     if bewoelkung_prozent < 70:
         return "partly_cloudy"
     return "cloudy"
+
+
+# ── Wetter-Klassifikation für Korrekturprofil ────────────────────────────────
+
+# Niederschlags-Marker (mm/h) ab denen eine Stunde unabhängig von Bewölkung
+# als „wechselhaft" gilt — Regen/Schnee/Schauer unterbrechen den klaren oder
+# diffusen Zustand systematisch.
+_NIEDERSCHLAG_MARKER_MM_H = 0.2
+
+# WMO-Codes mit Niederschlag oder Sicht-beeinträchtigender Bedingung — diese
+# Stunden sind per Definition wechselhaft, unabhängig von cloud_cover.
+_WMO_WECHSELHAFT = frozenset(
+    {45, 48}  # Nebel
+    | {51, 53, 55, 56, 57}  # Sprühregen
+    | {61, 63, 65, 66, 67}  # Regen
+    | {71, 73, 75, 77}  # Schnee
+    | {80, 81, 82}  # Schauer
+    | {85, 86}  # Schneeschauer
+    | {95, 96, 99}  # Gewitter
+)
+
+
+def klassifiziere_stunde(
+    bewoelkung_prozent: Optional[float],
+    niederschlag_mm: Optional[float] = None,
+    wetter_code: Optional[int] = None,
+) -> Optional[Wetterklasse]:
+    """
+    Klassifiziert eine Stunde in `klar` / `diffus` / `wechselhaft`.
+
+    Schwellen wurden gewählt, damit die drei Klassen je grob ein Drittel der
+    Stunden auf einer typischen mitteleuropäischen Anlage abdecken:
+
+    - **klar:** Bewölkung < 30 %, kein nennenswerter Niederschlag, keine
+      WMO-Sicht-Beeinträchtigung.
+    - **diffus:** Bewölkung > 70 %, kein/kaum Niederschlag — gleichmäßig
+      bedeckt, GHI fast komplett aus diffuser Strahlung.
+    - **wechselhaft:** dazwischen ODER Niederschlag/Schauer/Gewitter — der
+      Tagesgang der Bewölkung schwankt stark, GHI-Vorhersage unsicher.
+
+    Returns None nur bei komplett fehlenden Eingaben (alle drei None).
+    """
+    if (
+        bewoelkung_prozent is None
+        and niederschlag_mm is None
+        and wetter_code is None
+    ):
+        return None
+
+    # Niederschlag oder kritischer WMO-Code → wechselhaft
+    if niederschlag_mm is not None and niederschlag_mm >= _NIEDERSCHLAG_MARKER_MM_H:
+        return "wechselhaft"
+    if wetter_code is not None and int(wetter_code) in _WMO_WECHSELHAFT:
+        return "wechselhaft"
+
+    # Ohne Bewölkungs-Wert können wir nur über WMO klassifizieren
+    if bewoelkung_prozent is None:
+        if wetter_code is None:
+            return None
+        # WMO 0-3 = klar bis bewölkt, ohne Bewölkungs-% nicht trennbar
+        return "wechselhaft"
+
+    if bewoelkung_prozent < 30:
+        return "klar"
+    if bewoelkung_prozent > 70:
+        return "diffus"
+    return "wechselhaft"
+
+
+def klassifiziere_tag(
+    stunden: Iterable[tuple[Optional[float], Optional[float], Optional[int]]],
+) -> Optional[Wetterklasse]:
+    """
+    Aggregiert Stunden-Klassifikationen zu einer Tages-Klasse.
+
+    Argument: iterable von Tupeln `(bewoelkung_prozent, niederschlag_mm,
+    wetter_code)` — typischerweise nur die Tageslicht-Stunden eines Tages
+    (z.B. GHI > 50 W/m²). Caller filtert vor.
+
+    Regeln:
+
+    - Mindestens 30 % der Stunden mit `niederschlag/wechselhaftem WMO-Code`
+      → Tag ist `wechselhaft`.
+    - Sonst dominante Klasse (höchster Anteil) — bei Gleichstand zwischen
+      klar und diffus → `wechselhaft` (sicheres Mittelfeld).
+
+    Returns None wenn keine klassifizierbaren Stunden.
+    """
+    counts: dict[Wetterklasse, int] = {"klar": 0, "diffus": 0, "wechselhaft": 0}
+    total = 0
+    for cc, ns, wc in stunden:
+        klasse = klassifiziere_stunde(cc, ns, wc)
+        if klasse is None:
+            continue
+        counts[klasse] += 1
+        total += 1
+
+    if total == 0:
+        return None
+
+    # Schwellenregel: >= 30% wechselhaft → ganzer Tag wechselhaft
+    if counts["wechselhaft"] / total >= 0.3:
+        return "wechselhaft"
+
+    # Sonst dominante Klasse, bei Gleichstand wechselhaft
+    if counts["klar"] > counts["diffus"]:
+        return "klar"
+    if counts["diffus"] > counts["klar"]:
+        return "diffus"
+    return "wechselhaft"

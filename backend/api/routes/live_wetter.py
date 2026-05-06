@@ -500,6 +500,12 @@ class LernfaktorResult:
     label: Optional[str] = None   # z.B. "saisonal April (23 Tage)"
     tage_count: int = 0
     quelle: Optional[str] = None  # "openmeteo", "solcast"
+    # O1 (Recency) + O2 (Trim-Mean) als Doppel-Variante neben Legacy.
+    # Live-Pfad nutzt weiterhin `faktor`; faktor_o12 läuft parallel zu Diagnose-
+    # Zwecken im Prognosen-Tab. Aktivierung als neuer Default erst nach mehrwöchiger
+    # Beobachtung — siehe docs/KONZEPT-KORREKTURPROFIL.md.
+    faktor_o12: Optional[float] = None
+    delta_o12_pct: Optional[float] = None  # 100 * (o12 - legacy) / legacy
 
 
 _MONAT_NAMEN = {
@@ -522,11 +528,15 @@ def _quartal_fuer_monat(monat: int) -> tuple[int, list[int]]:
     return q, monate
 
 
-def _berechne_faktor(tage: list, db_feld: str) -> tuple[float, float, int]:
-    """Produktionsgewichtete IST/Prognose-Summierung. Returns (sum_ist, sum_prognose, count)."""
-    sum_ist = 0.0
-    sum_prognose = 0.0
-    count = 0
+def _filtere_tage(tage: list, db_feld: str) -> list[tuple[date, float, float]]:
+    """
+    Filtert Tage mit gültigem Prognose- und IST-Wert.
+
+    Returns: Liste von (datum, ist_kwh, prognose_kwh).
+    Tage mit Prognose ≤ 0.5 kWh oder IST ≤ 0.5 kWh werden ausgeschlossen
+    (Nacht/Schlechtwetter ohne Aussagekraft, Sensor-Lücken).
+    """
+    out: list[tuple[date, float, float]] = []
     for tag in tage:
         prognose = getattr(tag, db_feld, None)
         if not prognose or prognose <= 0.5:
@@ -538,10 +548,94 @@ def _berechne_faktor(tage: list, db_feld: str) -> tuple[float, float, int]:
                 if v > 0 and k not in _NICHT_PV
             )
         if ist_kwh > 0.5:
-            sum_ist += ist_kwh
-            sum_prognose += prognose
-            count += 1
-    return sum_ist, sum_prognose, count
+            out.append((tag.datum, float(ist_kwh), float(prognose)))
+    return out
+
+
+def _aggregiere_legacy(
+    daten: list[tuple[date, float, float]],
+) -> tuple[Optional[float], int]:
+    """
+    Legacy-Aggregator: Σ(IST) / Σ(Prognose), produktionsgewichtet.
+
+    Returns (raw_faktor, count). raw_faktor ist ungeklemmt; Caller
+    entscheidet über Clamp [0.5; 1.3] und Rundung.
+    """
+    if not daten:
+        return None, 0
+    sum_ist = sum(d[1] for d in daten)
+    sum_prog = sum(d[2] for d in daten)
+    if sum_prog < 1:
+        return None, len(daten)
+    return sum_ist / sum_prog, len(daten)
+
+
+# O1+O2 Parameter — siehe docs/KONZEPT-KORREKTURPROFIL.md
+_O1_RECENCY_DAYS = 30      # Tage jünger als N erhalten Recency-Boost
+_O1_RECENCY_BOOST = 1.30   # +30 % Gewicht für junge Tage
+_O2_TRIM_PCT = 0.10        # 10 % oberste/unterste Tage werden verworfen
+
+
+def _aggregiere_o12(
+    daten: list[tuple[date, float, float]],
+    heute: date,
+) -> tuple[Optional[float], int]:
+    """
+    O1+O2-Aggregator: Trim-Mean (O2) + Recency-Boost (O1) kombiniert.
+
+    1. Pro Tag Quotient q_d = IST/Prognose und Gewicht w_d = Prognose × Recency
+       (Recency = 1.30 wenn Tag jünger als 30 Tage, sonst 1.0)
+    2. Sortiere nach q_d, trimme oberste/unterste 10 %
+    3. Gewichteter Mittelwert über getrimmte Tage
+
+    Trim-Mean entfernt Sensor-Aussetzer / Snapshot-Lücken; Recency lässt
+    schleichende Veränderungen (Verschmutzung, Vegetation) schneller
+    durchschlagen.
+
+    Returns (raw_faktor, anzahl_verbleibender_tage).
+    """
+    if not daten:
+        return None, 0
+
+    quotienten: list[tuple[float, float]] = []
+    for datum_d, ist, prog in daten:
+        if prog <= 0:
+            continue
+        q = ist / prog
+        days_ago = (heute - datum_d).days
+        recency = _O1_RECENCY_BOOST if days_ago < _O1_RECENCY_DAYS else 1.0
+        w = prog * recency
+        quotienten.append((q, w))
+
+    if not quotienten:
+        return None, 0
+
+    quotienten.sort(key=lambda x: x[0])
+    n = len(quotienten)
+    n_trim = int(n * _O2_TRIM_PCT)
+    if n_trim > 0:
+        quotienten = quotienten[n_trim : n - n_trim]
+
+    if not quotienten:
+        return None, 0
+
+    sum_qw = sum(q * w for q, w in quotienten)
+    sum_w = sum(w for _, w in quotienten)
+    if sum_w <= 0:
+        return None, len(quotienten)
+
+    return sum_qw / sum_w, len(quotienten)
+
+
+# Backwards-compat alias — manche Callsites nutzen den Namen evtl. extern,
+# die Funktionssignatur weicht aber ab. Wer (sum_ist, sum_prog, count)
+# braucht, kann es trivial aus _filtere_tage rekonstruieren.
+def _berechne_faktor(tage: list, db_feld: str) -> tuple[float, float, int]:
+    """Legacy-Signatur: Σ(IST), Σ(Prognose), Count."""
+    daten = _filtere_tage(tage, db_feld)
+    sum_ist = sum(d[1] for d in daten)
+    sum_prog = sum(d[2] for d in daten)
+    return sum_ist, sum_prog, len(daten)
 
 
 async def _get_lernfaktor_detail(
@@ -599,40 +693,74 @@ async def _get_lernfaktor_detail(
     pool_gesamt = [t for t in alle_tage if t.datum >= vor_30_tagen]
 
     # Kaskade: saisonal → quartal → gesamt
+    # Stufen-Entscheidung anhand der Datenmenge (≥15 / ≥15 / ≥7),
+    # Legacy-Aggregator bestimmt den Live-Faktor; O1+O2 läuft auf den gleichen
+    # Tagen parallel als Diagnose-Variante.
     stufe = None
     label = None
+    daten_aktiv: list[tuple[date, float, float]] = []
 
-    sum_ist, sum_prognose, tage_count = _berechne_faktor(pool_monat, db_feld)
-    if tage_count >= 15 and sum_prognose >= 1:
+    daten = _filtere_tage(pool_monat, db_feld)
+    if len(daten) >= 15:
         stufe = "saisonal"
-        label = f"saisonal {_MONAT_NAMEN[aktueller_monat]} ({tage_count} Tage)"
+        label = f"saisonal {_MONAT_NAMEN[aktueller_monat]} ({len(daten)} Tage)"
+        daten_aktiv = daten
     else:
-        sum_ist, sum_prognose, tage_count = _berechne_faktor(pool_quartal, db_feld)
-        if tage_count >= 15 and sum_prognose >= 1:
+        daten = _filtere_tage(pool_quartal, db_feld)
+        if len(daten) >= 15:
             stufe = "quartal"
-            label = f"Quartal Q{q_nr} ({tage_count} Tage)"
+            label = f"Quartal Q{q_nr} ({len(daten)} Tage)"
+            daten_aktiv = daten
         else:
-            sum_ist, sum_prognose, tage_count = _berechne_faktor(pool_gesamt, db_feld)
-            if tage_count >= 7 and sum_prognose >= 1:
+            daten = _filtere_tage(pool_gesamt, db_feld)
+            if len(daten) >= 7:
                 stufe = "gesamt"
-                label = f"gesamt ({tage_count} Tage)"
+                label = f"gesamt ({len(daten)} Tage)"
+                daten_aktiv = daten
 
     if stufe is None:
         lf_result = LernfaktorResult(faktor=None, tage_count=0, quelle=quelle)
         _lernfaktor_cache[cache_key] = (heute_str, lf_result)
         return lf_result
 
-    raw_faktor = sum_ist / sum_prognose
-    faktor = round(max(0.5, min(1.3, raw_faktor)), 3)
+    raw_legacy, tage_count = _aggregiere_legacy(daten_aktiv)
+    if raw_legacy is None:
+        lf_result = LernfaktorResult(faktor=None, tage_count=tage_count, quelle=quelle)
+        _lernfaktor_cache[cache_key] = (heute_str, lf_result)
+        return lf_result
 
+    faktor = round(max(0.5, min(1.3, raw_legacy)), 3)
+
+    # O1+O2 als Doppel-Variante auf den GLEICHEN Tagen — methodisch sauber.
+    raw_o12, _ = _aggregiere_o12(daten_aktiv, heute)
+    faktor_o12: Optional[float] = None
+    delta_o12_pct: Optional[float] = None
+    if raw_o12 is not None:
+        faktor_o12 = round(max(0.5, min(1.3, raw_o12)), 3)
+        if faktor > 0:
+            delta_o12_pct = round(100.0 * (faktor_o12 - faktor) / faktor, 2)
+
+    sum_ist = sum(d[1] for d in daten_aktiv)
+    sum_prognose = sum(d[2] for d in daten_aktiv)
     quelle_label = quelle_config["label"]
+    o12_log = (
+        f", O12={faktor_o12:.3f} (Δ {delta_o12_pct:+.1f} %)"
+        if faktor_o12 is not None and delta_o12_pct is not None
+        else ""
+    )
     logger.info(
         f"Lernfaktor Anlage {anlage_id} ({quelle_label}): {faktor:.3f} — {label} "
-        f"(Σ IST={sum_ist:.1f} kWh / Σ Prognose={sum_prognose:.1f} kWh)"
+        f"(Σ IST={sum_ist:.1f} kWh / Σ Prognose={sum_prognose:.1f} kWh){o12_log}"
     )
 
     lf_result = LernfaktorResult(
-        faktor=faktor, stufe=stufe, label=label, tage_count=tage_count, quelle=quelle
+        faktor=faktor,
+        stufe=stufe,
+        label=label,
+        tage_count=tage_count,
+        quelle=quelle,
+        faktor_o12=faktor_o12,
+        delta_o12_pct=delta_o12_pct,
     )
     _lernfaktor_cache[cache_key] = (heute_str, lf_result)
     return lf_result

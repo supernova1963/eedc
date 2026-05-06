@@ -74,6 +74,11 @@ class TagesEnergieProfil(Base):
     # Wetter (IST-Daten, von Open-Meteo oder Sensor)
     temperatur_c: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     globalstrahlung_wm2: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    # Bewölkung (0-100%), Niederschlag (mm), WMO-Code — pro Stunde aus Open-Meteo
+    # Für Wetter-Stratifizierung und Korrekturprofil (siehe KONZEPT-KORREKTURPROFIL.md)
+    bewoelkung_prozent: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    niederschlag_mm: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    wetter_code: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
     # Batterie-SoC (Stundenmittel, %)
     soc_prozent: Mapped[Optional[float]] = mapped_column(Float, nullable=True)

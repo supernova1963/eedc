@@ -20,6 +20,12 @@ import {
 } from '../../api/aussichten'
 import { energieProfilApi } from '../../api/energie_profil'
 import {
+  getStratifizierung,
+  StratifizierungResponse,
+  Wetterklasse,
+  wetterBackfill,
+} from '../../api/korrekturprofil'
+import {
   ResponsiveContainer,
   ComposedChart,
   Area,
@@ -185,10 +191,41 @@ function IstUnvollstaendigPopover({
 export default function PrognoseVergleichTab({ anlageId }: Props) {
   const [data, setData] = useState<PrognosenVergleich | null>(null)
   const [genauigkeit, setGenauigkeit] = useState<GenauigkeitsResponse | null>(null)
+  const [stratifizierung, setStratifizierung] = useState<StratifizierungResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [reloadTick, setReloadTick] = useState(0)
   const [genauigkeitsModus, setGenauigkeitsModus] = useState<'kompakt' | 'diagnostisch'>('kompakt')
+  // Wetter-Backfill für Stratifizierung
+  const [backfillRunning, setBackfillRunning] = useState(false)
+  const [backfillResult, setBackfillResult] = useState<string | null>(null)
+  const [backfillError, setBackfillError] = useState<string | null>(null)
+
+  const handleWetterBackfill = async () => {
+    setBackfillRunning(true)
+    setBackfillResult(null)
+    setBackfillError(null)
+    try {
+      const res = await wetterBackfill(anlageId, 730)
+      if (res.status === 'ok') {
+        setBackfillResult(
+          `${res.stunden_geupdated ?? 0} Stunden / ${res.tage_geupdated ?? 0} Tage geladen` +
+          (res.von && res.bis ? ` (${res.von} – ${res.bis})` : '')
+        )
+        // Stratifizierung neu laden, jetzt mit Wetter-Daten
+        const strat = await getStratifizierung(anlageId, 90).catch(() => null)
+        setStratifizierung(strat)
+      } else if (res.status === 'skipped') {
+        setBackfillError(`Übersprungen: ${res.grund ?? 'unbekannter Grund'}`)
+      } else {
+        setBackfillError(res.fehler ?? 'Backfill fehlgeschlagen')
+      }
+    } catch (err) {
+      setBackfillError(err instanceof Error ? err.message : 'Netzwerk-Fehler')
+    } finally {
+      setBackfillRunning(false)
+    }
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -196,11 +233,12 @@ export default function PrognoseVergleichTab({ anlageId }: Props) {
       setLoading(true)
       setError(null)
       try {
-        const [prognosen, accuracy] = await Promise.all([
+        const [prognosen, accuracy, strat] = await Promise.all([
           aussichtenApi.getPrognosenVergleich(anlageId),
           aussichtenApi.getPrognosenGenauigkeit(anlageId, 30).catch(() => null),
+          getStratifizierung(anlageId, 90).catch(() => null),
         ])
-        if (!cancelled) { setData(prognosen); setGenauigkeit(accuracy) }
+        if (!cancelled) { setData(prognosen); setGenauigkeit(accuracy); setStratifizierung(strat) }
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : 'Fehler beim Laden')
       } finally {
@@ -431,6 +469,147 @@ export default function PrognoseVergleichTab({ anlageId }: Props) {
               </div>
             </div>
           </Alert>
+        )
+      })()}
+
+      {/* ── EEDC-Diagnose: O1+O2 Doppel-Variante + Wetter-Stratifizierung ── */}
+      {(() => {
+        const showO12 = data.eedc_lernfaktor_o12 != null
+        const showStrat = stratifizierung != null
+          && (stratifizierung.stunden_klassifiziert > 0
+              || stratifizierung.tage_ohne_wetter > 0)
+        if (!showO12 && !showStrat) return null
+        const gridClass = showO12 && showStrat
+          ? 'grid grid-cols-1 md:grid-cols-2 gap-4'
+          : 'grid grid-cols-1 gap-4'
+        return (
+        <div className={gridClass}>
+          {data.eedc_lernfaktor_o12 != null && (
+            <Card>
+              <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-2 flex items-center gap-2">
+                <BarChart3 className="h-4 w-4 text-orange-500" />
+                Lernfaktor — Doppel-Variante O1+O2
+              </h3>
+              <div className="text-xs text-gray-500 dark:text-gray-400 mb-3">
+                Trim-Mean (entfernt Ausreißer-Tage durch Sensor-Aussetzer) + Recency-Boost
+                (gewichtet die letzten 30 Tage stärker). Läuft parallel zum Live-Faktor —
+                eine Aktivierung als Default erfolgt erst nach mehrwöchiger Beobachtung.
+              </div>
+              <div className="grid grid-cols-2 gap-3 text-sm">
+                <div>
+                  <div className="text-xs text-gray-500 dark:text-gray-400">Live (Legacy)</div>
+                  <div className="font-mono text-base font-semibold">
+                    {data.eedc_lernfaktor != null ? data.eedc_lernfaktor.toFixed(3) : '—'}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs text-gray-500 dark:text-gray-400">O1+O2</div>
+                  <div className="font-mono text-base font-semibold">
+                    {data.eedc_lernfaktor_o12.toFixed(3)}
+                  </div>
+                </div>
+              </div>
+              {data.eedc_lernfaktor_o12_delta_pct != null && (
+                <div className="mt-2 text-xs">
+                  Δ{' '}
+                  <span className={
+                    Math.abs(data.eedc_lernfaktor_o12_delta_pct) < 0.5
+                      ? 'text-gray-500'
+                      : data.eedc_lernfaktor_o12_delta_pct > 0
+                        ? 'text-green-600'
+                        : 'text-red-600'
+                  }>
+                    {data.eedc_lernfaktor_o12_delta_pct >= 0 ? '+' : ''}
+                    {data.eedc_lernfaktor_o12_delta_pct.toFixed(2)} %
+                  </span>{' '}
+                  <span className="text-gray-400">(O12 vs Legacy)</span>
+                </div>
+              )}
+            </Card>
+          )}
+
+          {stratifizierung && (
+            stratifizierung.stunden_klassifiziert > 0 ? (
+              <Card>
+                <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-2 flex items-center gap-2">
+                  <Cloud className="h-4 w-4 text-gray-500" />
+                  Wetter-Stratifizierung
+                </h3>
+                <div className="text-xs text-gray-500 dark:text-gray-400 mb-3">
+                  Stündliche Day-Ahead-Genauigkeit pro Wetter-Klasse, letzte{' '}
+                  {stratifizierung.tage_zeitraum} Tage,{' '}
+                  {stratifizierung.stunden_klassifiziert} Tageslicht-Stunden.
+                  MAE = Streuung, MBE = systematischer Bias (positiv = IST &gt; Prognose).
+                </div>
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b border-gray-200 dark:border-gray-700">
+                      <th className="text-left py-1 pr-2 font-medium text-gray-500">Klasse</th>
+                      <th className="text-right py-1 px-2 font-medium text-gray-500">n</th>
+                      <th className="text-right py-1 px-2 font-medium text-gray-500">MAE %</th>
+                      <th className="text-right py-1 pl-2 font-medium text-gray-500">MBE %</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(['klar', 'diffus', 'wechselhaft'] as Wetterklasse[]).map(k => {
+                      const e = stratifizierung.pro_klasse[k]
+                      if (!e || e.stunden_count === 0) return null
+                      return (
+                        <tr key={k} className="border-b border-gray-100 dark:border-gray-800">
+                          <td className="py-1 pr-2 capitalize">{k}</td>
+                          <td className="py-1 px-2 text-right font-mono">{e.stunden_count}</td>
+                          <td className="py-1 px-2 text-right font-mono">
+                            {e.mae_pct != null ? e.mae_pct.toFixed(1) : '—'}
+                          </td>
+                          <td className="py-1 pl-2 text-right font-mono">
+                            {e.mbe_pct != null ? e.mbe_pct.toFixed(1) : '—'}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+                {backfillResult && (
+                  <div className="mt-3 text-xs text-green-700 dark:text-green-400">
+                    ✓ Wetter-Historie nachgeladen: {backfillResult}
+                  </div>
+                )}
+              </Card>
+            ) : stratifizierung.tage_ohne_wetter > 0 ? (
+              <Card>
+                <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-2 flex items-center gap-2">
+                  <Cloud className="h-4 w-4 text-gray-500" />
+                  Wetter-Stratifizierung
+                </h3>
+                <div className="text-xs text-gray-500 dark:text-gray-400 mb-3">
+                  Wetter-Historie (Bewölkung, Niederschlag, WMO-Code) für{' '}
+                  {stratifizierung.tage_ohne_wetter} Tage mit Day-Ahead-Prognose noch
+                  nicht geladen. EEDC kann sie kostenlos aus dem Open-Meteo-Archiv
+                  nachholen — danach zeigt diese Card MAE/MBE getrennt nach{' '}
+                  <em>klar</em>, <em>diffus</em> und <em>wechselhaft</em>.
+                </div>
+                <button
+                  type="button"
+                  onClick={handleWetterBackfill}
+                  disabled={backfillRunning}
+                  className="px-3 py-1.5 text-xs font-medium bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-white rounded transition-colors"
+                >
+                  {backfillRunning ? 'Lädt Wetter-Historie…' : 'Wetter-Historie nachladen (2 Jahre)'}
+                </button>
+                {backfillError && (
+                  <div className="mt-3 text-xs text-red-600 dark:text-red-400">
+                    Fehler: {backfillError}
+                  </div>
+                )}
+                {backfillResult && (
+                  <div className="mt-3 text-xs text-green-700 dark:text-green-400">
+                    ✓ {backfillResult} — Stratifizierung wird neu berechnet
+                  </div>
+                )}
+              </Card>
+            ) : null
+          )}
+        </div>
         )
       })()}
 

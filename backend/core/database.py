@@ -417,6 +417,14 @@ async def run_migrations(conn):
             # v3.24.0 (Issue #136): WP-Kompressor-Starts pro Stunde
             if 'wp_starts_anzahl' not in existing_columns:
                 connection.execute(text('ALTER TABLE tages_energie_profil ADD COLUMN wp_starts_anzahl INTEGER'))
+            # v3.26.0: Stündliches Wetter (Bewölkung, Niederschlag, WMO-Code)
+            # für Wetter-Stratifizierung und Korrekturprofil — siehe KONZEPT-KORREKTURPROFIL.md
+            if 'bewoelkung_prozent' not in existing_columns:
+                connection.execute(text('ALTER TABLE tages_energie_profil ADD COLUMN bewoelkung_prozent FLOAT'))
+            if 'niederschlag_mm' not in existing_columns:
+                connection.execute(text('ALTER TABLE tages_energie_profil ADD COLUMN niederschlag_mm FLOAT'))
+            if 'wetter_code' not in existing_columns:
+                connection.execute(text('ALTER TABLE tages_energie_profil ADD COLUMN wetter_code INTEGER'))
 
         # v3.5.0: Infothek — Ansprechpartner-Verknüpfung
         if 'infothek_eintraege' in inspector.get_table_names():

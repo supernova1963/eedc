@@ -267,6 +267,10 @@ export interface PrognosenVergleich {
   eedc_stundenprofil: StundenProfilEintrag[]
   eedc_lernfaktor: number | null
   eedc_lernfaktor_stufe: string | null
+  // Doppel-Variante O1+O2 (Trim-Mean + Recency-Boost) — parallel zum Legacy-
+  // Faktor zu Diagnose-Zwecken. Live-Pfad nutzt nur eedc_lernfaktor.
+  eedc_lernfaktor_o12?: number | null
+  eedc_lernfaktor_o12_delta_pct?: number | null  // 100 * (O12 - Legacy) / Legacy
   eedc_prognose_basis: string  // "openmeteo" | "solcast"
   eedc_tageshaelften: (Tageshaelfte | null)[]
 

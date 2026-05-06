@@ -95,6 +95,10 @@ class PrognosenVergleichResponse(BaseModel):
     eedc_stundenprofil: List[StundenProfilEintrag] = []
     eedc_lernfaktor: Optional[float] = None  # z.B. 0.92 = Anlage liefert 8% weniger
     eedc_lernfaktor_stufe: Optional[str] = None  # z.B. "saisonal April (23 Tage)"
+    # Doppel-Variante O1+O2 (Trim-Mean + Recency-Boost) — läuft parallel zu Diagnose-
+    # Zwecken neben dem Legacy-Faktor. Live-Pfad nutzt nur eedc_lernfaktor.
+    eedc_lernfaktor_o12: Optional[float] = None
+    eedc_lernfaktor_o12_delta_pct: Optional[float] = None  # 100 * (O12 - Legacy) / Legacy
     eedc_prognose_basis: str = "openmeteo"  # "openmeteo" oder "solcast"
     eedc_tageshaelften: List[Optional[TageshaelfteSchema]] = []
 
@@ -579,6 +583,8 @@ async def get_prognosen_vergleich(
         eedc_tageshaelften=eedc_ths,
         eedc_lernfaktor=lernfaktor,
         eedc_lernfaktor_stufe=lf_result.label,
+        eedc_lernfaktor_o12=lf_result.faktor_o12,
+        eedc_lernfaktor_o12_delta_pct=lf_result.delta_o12_pct,
         eedc_prognose_basis=prognose_basis,
         solcast_verfuegbar=solcast is not None,
         solcast_status=sc_status,
