@@ -127,7 +127,6 @@ export default function CommunityVergleich({ embedded = false, anlageId: propsAn
   if (!embedded && anlagen.length === 0) {
     return (
       <div className="space-y-6">
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Community Vergleich</h1>
         <Alert type="warning">Bitte zuerst eine Anlage anlegen.</Alert>
       </div>
     )
@@ -137,19 +136,13 @@ export default function CommunityVergleich({ embedded = false, anlageId: propsAn
   if (notShared) {
     return (
       <div className="space-y-6">
-        {!embedded && (
-          <div className="flex items-center justify-between flex-wrap gap-4">
-            <div className="flex items-center gap-3">
-              <BarChart3 className="h-8 w-8 text-orange-500" />
-              <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Community Vergleich</h1>
-            </div>
-            {anlagen.length > 1 && (
-              <Select
-                value={selectedAnlageId?.toString() || ''}
-                onChange={(e) => setSelectedAnlageId(parseInt(e.target.value))}
-                options={anlagen.map(a => ({ value: a.id.toString(), label: a.anlagenname }))}
-              />
-            )}
+        {!embedded && anlagen.length > 1 && (
+          <div className="flex items-center justify-end flex-wrap gap-4">
+            <Select
+              value={selectedAnlageId?.toString() || ''}
+              onChange={(e) => setSelectedAnlageId(parseInt(e.target.value))}
+              options={anlagen.map(a => ({ value: a.id.toString(), label: a.anlagenname }))}
+            />
           </div>
         )}
 
@@ -179,13 +172,9 @@ export default function CommunityVergleich({ embedded = false, anlageId: propsAn
 
   return (
     <div className="space-y-6">
-      {/* Header mit Anlagen- und Zeitraum-Auswahl (nur im Standalone-Modus) */}
+      {/* Header mit Anlagen- und Zeitraum-Auswahl */}
       {!embedded ? (
-        <div className="flex items-center justify-between flex-wrap gap-4">
-          <div className="flex items-center gap-3">
-            <BarChart3 className="h-8 w-8 text-orange-500" />
-            <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Community Vergleich</h1>
-          </div>
+        <div className="flex items-center justify-end flex-wrap gap-4">
           <div className="flex items-center gap-3">
             {anlagen.length > 1 && (
               <Select

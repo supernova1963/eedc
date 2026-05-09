@@ -47,7 +47,6 @@ export default function BalkonkraftwerkDashboard() {
   if (anlagen.length === 0) {
     return (
       <div className="space-y-6">
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Balkonkraftwerk</h1>
         <Alert type="warning">Bitte zuerst eine Anlage anlegen.</Alert>
       </div>
     )
@@ -110,11 +109,7 @@ function AnlageSelector({ anlagen, selectedAnlageId, setSelectedAnlageId, showSe
 
 function PlaceholderHeader(props: SelectorProps) {
   return (
-    <div className="flex items-center justify-between flex-wrap gap-4">
-      <div className="flex items-center gap-3 min-w-0">
-        <Sun className="h-8 w-8 text-yellow-500 flex-shrink-0" />
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-white truncate">Balkonkraftwerk</h1>
-      </div>
+    <div className="flex items-center justify-end flex-wrap gap-4">
       <AnlageSelector {...props} />
     </div>
   )

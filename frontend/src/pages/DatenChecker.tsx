@@ -9,7 +9,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
-  ClipboardCheck, RefreshCw, XCircle, AlertTriangle, Info,
+  RefreshCw, XCircle, AlertTriangle, Info,
   CheckCircle, ChevronRight, ChevronDown,
 } from 'lucide-react'
 import { LoadingSpinner } from '../components/ui'
@@ -188,10 +188,6 @@ export default function DatenChecker() {
   if (anlagen.length === 0) {
     return (
       <div className="space-y-6">
-        <div className="flex items-center gap-3">
-          <ClipboardCheck className="w-6 h-6 text-gray-500" />
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Daten-Checker</h1>
-        </div>
         <div className="text-center py-12 text-gray-500">
           Keine Anlagen vorhanden. Bitte zuerst eine Anlage anlegen.
         </div>
@@ -202,11 +198,7 @@ export default function DatenChecker() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div className="flex items-center gap-3">
-          <ClipboardCheck className="w-6 h-6 text-gray-500" />
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Daten-Checker</h1>
-        </div>
+      <div className="flex items-center justify-end flex-wrap gap-3">
         <div className="flex items-center gap-3">
           {anlagen.length > 1 && (
             <select

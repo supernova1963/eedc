@@ -25,7 +25,6 @@ export default function Aussichten() {
   if (anlagen.length === 0) {
     return (
       <div className="space-y-6">
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Aussichten</h1>
         <Alert type="warning">
           Bitte lege zuerst eine PV-Anlage an.
         </Alert>
@@ -40,7 +39,6 @@ export default function Aussichten() {
   if (!hatKoordinaten) {
     return (
       <div className="space-y-6">
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Aussichten</h1>
         <Card className="text-center py-12">
           <Sun className="h-12 w-12 mx-auto text-yellow-500 mb-4" />
           <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">
@@ -72,23 +70,19 @@ export default function Aussichten() {
     <div className="space-y-6">
       {/* Sticky Header mit Filter */}
       <div className="sticky -top-3 sm:-top-6 z-30 bg-gray-50 dark:bg-gray-900 pb-4 -mx-3 sm:-mx-6 px-3 sm:px-6 pt-3 sm:pt-6">
-        <div className="flex items-center justify-between gap-2 mb-4 flex-wrap">
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Aussichten</h1>
-          <div className="flex items-center gap-3">
-            {/* Anlagen-Filter */}
-            {anlagen.length > 1 && (
-              <select
-                value={selectedAnlageId ?? ''}
-                onChange={(e) => setSelectedAnlageId(Number(e.target.value))}
-                className="input w-auto"
-              >
-                {anlagen.map((a) => (
-                  <option key={a.id} value={a.id}>{a.anlagenname}</option>
-                ))}
-              </select>
-            )}
+        {anlagen.length > 1 && (
+          <div className="flex items-center justify-end gap-2 mb-4 flex-wrap">
+            <select
+              value={selectedAnlageId ?? ''}
+              onChange={(e) => setSelectedAnlageId(Number(e.target.value))}
+              className="input w-auto"
+            >
+              {anlagen.map((a) => (
+                <option key={a.id} value={a.id}>{a.anlagenname}</option>
+              ))}
+            </select>
           </div>
-        </div>
+        )}
 
         {/* Tabs */}
         <div className="border-b border-gray-200 dark:border-gray-700">

@@ -6,7 +6,7 @@
  */
 
 import { useState, useRef, DragEvent, ChangeEvent } from 'react'
-import { Download, Upload, Check, FileJson, HardDrive, AlertTriangle, Info } from 'lucide-react'
+import { Download, Upload, Check, FileJson, AlertTriangle, Info } from 'lucide-react'
 import { Button, Alert, Card, LoadingSpinner } from '../components/ui'
 import { DataLoadingState } from '../components/common'
 import { useSelectedAnlage } from '../hooks'
@@ -93,13 +93,6 @@ export default function Backup() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center gap-3">
-        <HardDrive className="w-6 h-6 text-gray-500" />
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
-          Backup & Restore
-        </h1>
-      </div>
-
       <p className="text-gray-500 dark:text-gray-400">
         Exportiere die Konfiguration deiner Anlage (Stammdaten, Investitionen, Monatsdaten,
         Strompreise, PVGIS-Prognosen) als JSON oder stelle eine Anlage aus einem Export wieder her.
@@ -156,7 +149,7 @@ export default function Backup() {
           <p className="font-medium">Infothek-Anhänge (PDFs, Fotos) sind nicht im JSON enthalten.</p>
           <p>Diese werden direkt in der Datenbank gespeichert und sind nur über ein vollständiges Datenbank-Backup gesichert:</p>
           <ul className="list-disc list-inside space-y-0.5 mt-1">
-            <li><span className="font-medium">HA Add-on:</span> Regelmäßige HA-Backups (selektiv EEDC) sichern die komplette <code className="font-mono bg-amber-100 dark:bg-amber-900 px-1 rounded">eedc.db</code> inkl. aller Anhänge.</li>
+            <li><span className="font-medium">HA-App:</span> Regelmäßige HA-Backups (selektiv eedc) sichern die komplette <code className="font-mono bg-amber-100 dark:bg-amber-900 px-1 rounded">eedc.db</code> inkl. aller Anhänge.</li>
             <li><span className="font-medium">Standalone:</span> Die Datei <code className="font-mono bg-amber-100 dark:bg-amber-900 px-1 rounded">eedc.db</code> im Datenverzeichnis manuell sichern.</li>
           </ul>
         </div>
@@ -226,7 +219,7 @@ export default function Backup() {
                   JSON-Backup hierher ziehen oder klicken
                 </p>
                 <p className="text-sm text-gray-400 dark:text-gray-500 mt-1">
-                  .json Datei aus einem früheren EEDC-Export
+                  .json Datei aus einem früheren eedc-Export
                 </p>
               </>
             )}

@@ -134,7 +134,6 @@ export default function Infothek() {
   if (anlagen.length === 0) {
     return (
       <div className="space-y-6">
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Infothek</h1>
         <Alert type="warning">
           Bitte lege zuerst eine PV-Anlage an, um die Infothek zu nutzen.
         </Alert>
@@ -145,10 +144,7 @@ export default function Infothek() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
-          Infothek
-        </h1>
+      <div className="flex items-center justify-end">
         <div className="flex items-center gap-3">
           {anlagen.length > 1 && (
             <select

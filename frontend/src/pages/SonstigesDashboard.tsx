@@ -54,7 +54,6 @@ export default function SonstigesDashboard() {
   if (anlagen.length === 0) {
     return (
       <div className="space-y-6">
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Sonstiges</h1>
         <Alert type="warning">Bitte zuerst eine Anlage anlegen.</Alert>
       </div>
     )
@@ -118,11 +117,7 @@ function AnlageSelector({ anlagen, selectedAnlageId, setSelectedAnlageId, showSe
 
 function PlaceholderHeader(props: SelectorProps) {
   return (
-    <div className="flex items-center justify-between flex-wrap gap-4">
-      <div className="flex items-center gap-3 min-w-0">
-        <Wrench className="h-8 w-8 text-gray-500 flex-shrink-0" />
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-white truncate">Sonstiges</h1>
-      </div>
+    <div className="flex items-center justify-end flex-wrap gap-4">
       <AnlageSelector {...props} />
     </div>
   )

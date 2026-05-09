@@ -157,10 +157,6 @@ export default function LiveDashboard() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
         <div className="flex items-center gap-2">
-          <Activity className="h-5 w-5 text-primary-600 dark:text-primary-400" />
-          <h1 className="text-lg font-bold text-gray-900 dark:text-white">
-            Live-Daten
-          </h1>
           {/* Pulsierender Punkt */}
           {data?.verfuegbar && (
             <span className="relative flex h-3 w-3">
@@ -271,7 +267,7 @@ export default function LiveDashboard() {
                     if (stunde?.pv_ml_prognose_kw != null && stunde.pv_ml_prognose_kw > 0) {
                       return stunde.pv_ml_prognose_kw
                     }
-                    // Fallback: EEDC-Prognose der aktuellen Stunde
+                    // Fallback: eedc-Prognose der aktuellen Stunde
                     if (stunde && stunde.pv_ertrag_kw > 0) {
                       return stunde.pv_ertrag_kw
                     }
@@ -314,9 +310,9 @@ export default function LiveDashboard() {
                              title={`Batterie heute\nLadung: ${ladung.toFixed(1)} kWh\nEntladung: ${entladung.toFixed(1)} kWh`}>
                           <div className="text-xs text-gray-500 dark:text-gray-400">Batterie</div>
                           <div className="text-lg font-bold text-teal-600 dark:text-teal-400">
-                            <span title="Ladung">&#9650;{ladung.toFixed(1)}</span>
+                            <span title="Ladung (in den Speicher)">&#9660;{ladung.toFixed(1)}</span>
                             <span className="text-gray-400 mx-0.5">/</span>
-                            <span title="Entladung">&#9660;{entladung.toFixed(1)}</span>
+                            <span title="Entladung (aus dem Speicher)">&#9650;{entladung.toFixed(1)}</span>
                             <span className="text-xs font-normal ml-0.5">kWh</span>
                           </div>
                         </div>

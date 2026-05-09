@@ -91,7 +91,6 @@ export default function Dashboard() {
   if (anlagen.length === 0) {
     return (
       <div className="space-y-6">
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Übersicht</h1>
         <GettingStarted />
       </div>
     )
@@ -100,7 +99,6 @@ export default function Dashboard() {
   if (error || !data) {
     return (
       <div className="space-y-6">
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Übersicht</h1>
         <Card>
           <p className="text-red-500">{error || 'Keine Daten verfügbar'}</p>
           <Button onClick={() => navigate('/einstellungen/monatsdaten')} className="mt-4">
@@ -119,7 +117,6 @@ export default function Dashboard() {
         <div className="flex items-center gap-3">
           <Home className="h-8 w-8 text-primary-500" />
           <div>
-            <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Übersicht</h1>
             <p className="text-sm text-gray-500 dark:text-gray-400">
               {anlage?.anlagenname} • {data.anlagenleistung_kwp.toFixed(1)} kWp
             </p>
