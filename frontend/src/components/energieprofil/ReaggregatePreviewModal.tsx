@@ -1,7 +1,13 @@
-import { Fragment, useState, useEffect, useMemo } from 'react'
+import { Fragment, useState, useEffect, useMemo, useRef } from 'react'
 import { Loader2, AlertTriangle, ArrowRight, Info } from 'lucide-react'
 import { Modal, Button, Alert } from '../ui'
 import { energieProfilApi, type ReaggregatePreviewResponse } from '../../api/energie_profil'
+
+// Nach so vielen Sekunden Apply darf der Modal-X auch im applying-Zustand
+// klicken werden — der Backend-Job läuft dann im Hintergrund weiter, der
+// User wird nicht mehr blockiert (Etappe 3c P4, Konzept Sektion 6.2).
+// Empirischer Resnap-Range: ~25 hourly + ~140 5-Min-Slots × 200 ms ≈ 30 s.
+const FORCE_CLOSE_AFTER_MS = 30_000
 
 interface Props {
   anlageId: number
@@ -59,22 +65,58 @@ function counterDiffClass(alt: number | null, neu: number | null): string {
 export default function ReaggregatePreviewModal({ anlageId, datum, onClose, onApplied }: Props) {
   const [data, setData] = useState<ReaggregatePreviewResponse | null>(null)
   const [loading, setLoading] = useState(false)
-  const [applying, setApplying] = useState(false)
+  // applyMode: null = nicht-applying, 'with_resnap' | 'rebuild_only' = Apply läuft
+  const [applyMode, setApplyMode] = useState<null | 'with_resnap' | 'rebuild_only'>(null)
+  const [applyElapsedMs, setApplyElapsedMs] = useState(0)
+  const [forceCloseAvailable, setForceCloseAvailable] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // AbortController für laufende fetch-Requests — wird beim Schließen gefeuert.
+  const abortRef = useRef<AbortController | null>(null)
 
+  const applying = applyMode !== null
+
+  // Vorschau laden — mit AbortController, damit Schließen während Loading
+  // den fetch sauber abbricht.
   useEffect(() => {
     if (!datum) {
       setData(null)
       setError(null)
       return
     }
+    const controller = new AbortController()
+    abortRef.current = controller
     setLoading(true)
     setError(null)
-    energieProfilApi.reaggregateTagPreview(anlageId, datum)
+    energieProfilApi.reaggregateTagPreview(anlageId, datum, controller.signal)
       .then(setData)
-      .catch((e: Error) => setError(e.message || 'Vorschau konnte nicht geladen werden.'))
+      .catch((e: Error) => {
+        if (e.name === 'AbortError') return  // Modal wurde geschlossen, kein Fehler
+        setError(e.message || 'Vorschau konnte nicht geladen werden.')
+      })
       .finally(() => setLoading(false))
+    return () => {
+      // Cleanup bei Re-Render / Unmount: laufenden Fetch abbrechen
+      controller.abort()
+    }
   }, [anlageId, datum])
+
+  // Restzeit-Anzeige + Force-Close-Aktivierung während applying
+  useEffect(() => {
+    if (!applying) {
+      setApplyElapsedMs(0)
+      setForceCloseAvailable(false)
+      return
+    }
+    const start = Date.now()
+    const interval = setInterval(() => {
+      const elapsed = Date.now() - start
+      setApplyElapsedMs(elapsed)
+      if (elapsed >= FORCE_CLOSE_AFTER_MS && !forceCloseAvailable) {
+        setForceCloseAvailable(true)
+      }
+    }, 500)
+    return () => clearInterval(interval)
+  }, [applying, forceCloseAvailable])
 
   // Kategorien sortiert (PV, Einspeisung, Bezug zuerst)
   const kategorien = useMemo(() => {
@@ -119,20 +161,32 @@ export default function ReaggregatePreviewModal({ anlageId, datum, onClose, onAp
     return true
   }, [data])
 
-  const handleApply = async () => {
+  const handleApply = async (mode: 'with_resnap' | 'rebuild_only') => {
     if (!datum) return
-    setApplying(true)
+    setApplyMode(mode)
     setError(null)
+    const controller = new AbortController()
+    abortRef.current = controller
     try {
-      // Snapshots aktuell → mit_resnap=false (schnell, idempotent).
-      // Sonst → mit_resnap=true (HA-Werte ziehen, Snapshots überschreiben).
-      const res = await energieProfilApi.reaggregateTag(anlageId, datum, !snapshotsAreCurrent)
+      const mitResnap = mode === 'with_resnap'
+      const res = await energieProfilApi.reaggregateTag(anlageId, datum, mitResnap, controller.signal)
       onApplied({ stunden_mit_messdaten: res.stunden_mit_messdaten })
       onClose()
     } catch (e) {
+      // AbortError = User hat Modal geschlossen mit Force-Close — Backend läuft weiter
+      if (e instanceof Error && e.name === 'AbortError') return
       setError(e instanceof Error ? e.message : 'Übernahme fehlgeschlagen.')
-      setApplying(false)
+      setApplyMode(null)
     }
+  }
+
+  // Schließen-Handler: bricht laufende Requests ab. Während Apply nur erlaubt
+  // wenn forceCloseAvailable (nach 30s) — der Backend-Job läuft dann im
+  // Hintergrund weiter, der User kann sich aus dem Spinner befreien.
+  const handleClose = () => {
+    if (applying && !forceCloseAvailable) return
+    abortRef.current?.abort()
+    onClose()
   }
 
   if (!datum) return null
@@ -140,7 +194,7 @@ export default function ReaggregatePreviewModal({ anlageId, datum, onClose, onAp
   return (
     <Modal
       isOpen={!!datum}
-      onClose={applying ? () => {} : onClose}
+      onClose={handleClose}
       title={`Vorschau: ${datum} aus HA neu laden`}
       size="xl"
     >
@@ -307,31 +361,66 @@ export default function ReaggregatePreviewModal({ anlageId, datum, onClose, onAp
           {snapshotsAreCurrent && (
             <Alert type="info" className="mt-3">
               <Info className="inline w-4 h-4 mr-1" />
-              Alle Werte stimmen überein — die Snapshots in der Datenbank sind
-              bereits aktuell. Übernahme rechnet nur den Tag neu, ohne HA-Statistics
-              erneut anzufragen.
+              Alle Werte stimmen überein — die Snapshots sind bereits aktuell.
+              <strong className="ml-1">„Nur neu rechnen"</strong> reicht
+              (schnell, kein HA-Polling).
             </Alert>
           )}
 
-          {/* Aktionen */}
+          {/* Restzeit-Anzeige während applying */}
+          {applying && (
+            <div className="mt-4 p-3 bg-blue-50 dark:bg-blue-900/30 rounded text-sm">
+              <Loader2 className="inline w-4 h-4 mr-2 animate-spin text-blue-600 dark:text-blue-400" />
+              {applyMode === 'with_resnap'
+                ? <>HA-Werte ziehen + Tag neu rechnen … läuft seit <strong>{Math.floor(applyElapsedMs / 1000)} s</strong> (typisch ~30 s).</>
+                : <>Tag neu rechnen … läuft seit <strong>{Math.floor(applyElapsedMs / 1000)} s</strong> (typisch ~2 s).</>
+              }
+              {forceCloseAvailable && (
+                <p className="mt-2 text-xs text-gray-600 dark:text-gray-300">
+                  Backend hängt offenbar — Modal kann jetzt geschlossen werden,
+                  der Job läuft im Hintergrund weiter. Bitte in ein paar Minuten
+                  die Vorschau erneut öffnen, um den Endzustand zu prüfen.
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* Aktionen — zwei Apply-Buttons (Etappe 3c P4):
+              1) "Aus HA neu laden + neu rechnen" (Default, mit_resnap=true)
+              2) "Nur neu rechnen" (mit_resnap=false)
+              Auto-Erkennung snapshotsAreCurrent setzt visuelle Empfehlung,
+              aber beide Wege bleiben immer wählbar. */}
           <div className="flex justify-end gap-2 mt-4 pt-3 border-t border-gray-200 dark:border-gray-700">
-            <Button variant="secondary" onClick={onClose} disabled={applying}>
-              Abbrechen
+            <Button
+              variant="secondary"
+              onClick={handleClose}
+              disabled={applying && !forceCloseAvailable}
+            >
+              {applying && forceCloseAvailable ? 'Im Hintergrund weiterlaufen lassen' : 'Abbrechen'}
             </Button>
             <Button
-              variant="primary"
-              onClick={handleApply}
-              disabled={applying || !data.ha_verfuegbar}
+              variant={snapshotsAreCurrent ? 'primary' : 'secondary'}
+              onClick={() => handleApply('rebuild_only')}
+              disabled={applying}
               title={snapshotsAreCurrent
-                ? 'Snapshots sind bereits aktuell — nur das Aggregat wird neu gerechnet (schnell, kein HA-Polling).'
-                : 'HA-Werte werden frisch gezogen, Snapshots überschrieben, Aggregat neu gerechnet.'}
+                ? 'Empfohlen: Snapshots sind bereits aktuell. Aggregat neu rechnen — schnell, kein HA-Polling.'
+                : 'Aggregat aus den vorhandenen Snapshots neu rechnen, ohne HA-Statistics anzufragen.'}
             >
-              {applying ? (
-                <>
-                  <Loader2 className="inline w-4 h-4 mr-1 animate-spin" />
-                  {snapshotsAreCurrent ? 'Rechne neu …' : 'Übernehme …'}
-                </>
-              ) : (snapshotsAreCurrent ? 'Nur neu rechnen' : 'Übernehmen')}
+              {applyMode === 'rebuild_only' ? (
+                <><Loader2 className="inline w-4 h-4 mr-1 animate-spin" />Rechne neu …</>
+              ) : 'Nur neu rechnen'}
+            </Button>
+            <Button
+              variant={snapshotsAreCurrent ? 'secondary' : 'primary'}
+              onClick={() => handleApply('with_resnap')}
+              disabled={applying || !data.ha_verfuegbar}
+              title={data.ha_verfuegbar
+                ? 'HA-Werte frisch ziehen, Snapshots überschreiben, Aggregat neu rechnen.'
+                : 'HA-Statistics nicht erreichbar.'}
+            >
+              {applyMode === 'with_resnap' ? (
+                <><Loader2 className="inline w-4 h-4 mr-1 animate-spin" />Übernehme …</>
+              ) : 'Aus HA neu laden + neu rechnen'}
             </Button>
           </div>
         </>
