@@ -1,0 +1,319 @@
+"""
+Energie-Profil Routes — gemeinsame Helper, Konstanten, Pydantic-Models.
+
+Wird von views.py (Read-Endpoints) und repair.py (Repair-Endpoints) genutzt.
+"""
+
+import logging
+import re
+from datetime import date
+from typing import Optional
+
+from pydantic import BaseModel
+
+from backend.models.investition import Investition
+
+logger = logging.getLogger(__name__)
+
+
+# seite je Investitionstyp
+_TYP_SEITE: dict[str, str] = {
+    "pv-module":       "quelle",
+    "balkonkraftwerk": "quelle",
+    "wechselrichter":  "quelle",
+    "speicher":        "bidirektional",
+    "e-auto":          "bidirektional",
+    "wallbox":         "senke",
+    "waermepumpe":     "senke",
+}
+
+# Virtuelle Serien (kein Investment dahinter)
+_VIRTUAL_SERIEN: dict[str, dict] = {
+    "haushalt":   {"label": "Haushalt",    "typ": "virtual", "kategorie": "haushalt",  "seite": "senke"},
+    "netz":       {"label": "Stromnetz",   "typ": "virtual", "kategorie": "netz",      "seite": "bidirektional"},
+    "pv_gesamt":  {"label": "PV Gesamt",   "typ": "virtual", "kategorie": "pv",        "seite": "quelle"},
+}
+
+# Optionale Suffixe bei WP-Serien (waermepumpe_{id}_heizen)
+_SUFFIX_LABELS = {"heizen": " Heizen", "warmwasser": " Warmwasser"}
+
+# Kategorien die bereits in dedizierten Spalten landen (kein Extra-Tracking nötig)
+_DEDIZIERTE_KATEGORIEN = {"pv", "batterie", "netz", "haushalt", "waermepumpe", "wallbox", "eauto"}
+
+
+def _key_to_serie_info(
+    key: str, inv_map: dict[int, "Investition"]
+) -> Optional[dict]:
+    """Löst einen Komponenten-Key zu Label + Typ auf."""
+    if key in _VIRTUAL_SERIEN:
+        return {"key": key, **_VIRTUAL_SERIEN[key]}
+
+    m = re.match(r'^([a-z]+)_(\d+)(?:_([a-z]+))?$', key)
+    if not m:
+        return None
+
+    inv_id = int(m.group(2))
+    suffix = m.group(3)
+    inv = inv_map.get(inv_id)
+    if not inv:
+        return None
+
+    label = inv.bezeichnung
+    if suffix and suffix in _SUFFIX_LABELS:
+        label += _SUFFIX_LABELS[suffix]
+
+    # seite bestimmen
+    seite = _TYP_SEITE.get(inv.typ, "senke")
+    if inv.typ == "sonstiges" and isinstance(inv.parameter, dict):
+        kat = inv.parameter.get("kategorie", "verbraucher")
+        if kat == "erzeuger":
+            seite = "quelle"
+        elif kat == "speicher":
+            seite = "bidirektional"
+
+    return {
+        "key": key,
+        "label": label,
+        "typ": inv.typ,
+        "kategorie": m.group(1),
+        "seite": seite,
+    }
+
+
+# ── Response Models ──────────────────────────────────────────────────────────
+
+class SerieInfo(BaseModel):
+    """Metadaten einer Komponenten-Serie (für Label-Auflösung im Frontend)."""
+    key: str
+    label: str
+    typ: str        # z.B. "sonstiges", "pv-module", "virtual"
+    kategorie: str  # z.B. "sonstige", "pv", "netz"
+    seite: str      # "quelle" | "senke" | "bidirektional"
+
+
+class StundenWertResponse(BaseModel):
+    """Stündlicher Energiewert eines Tages."""
+    stunde: int
+    pv_kw: Optional[float] = None
+    verbrauch_kw: Optional[float] = None
+    einspeisung_kw: Optional[float] = None
+    netzbezug_kw: Optional[float] = None
+    batterie_kw: Optional[float] = None
+    waermepumpe_kw: Optional[float] = None
+    wallbox_kw: Optional[float] = None
+    ueberschuss_kw: Optional[float] = None
+    defizit_kw: Optional[float] = None
+    temperatur_c: Optional[float] = None
+    globalstrahlung_wm2: Optional[float] = None
+    soc_prozent: Optional[float] = None
+    komponenten: Optional[dict] = None  # Rohwerte aller Serien (key → kW)
+    # WP-Kompressor-Starts in dieser Stunde, summiert über alle WPs (Issue #136).
+    # Pro-Investitions-Aufschlüsselung lebt auf Tagesebene in TagesZusammenfassung.komponenten_starts.
+    wp_starts_anzahl: Optional[int] = None
+
+
+class StundenAntwort(BaseModel):
+    """Tagesdetail-Antwort: Stundenwerte + aufgelöste Serie-Labels."""
+    stunden: list[StundenWertResponse]
+    serien: list[SerieInfo]  # alle in komponenten vorkommenden Serien mit Label
+
+
+class WochenmusterPunkt(BaseModel):
+    """Durchschnittlicher Stundenwert pro Wochentag."""
+    wochentag: int      # 0=Mo, 1=Di, …, 6=So
+    stunde: int         # 0–23
+    pv_kw: Optional[float] = None
+    verbrauch_kw: Optional[float] = None
+    netzbezug_kw: Optional[float] = None
+    einspeisung_kw: Optional[float] = None
+    batterie_kw: Optional[float] = None
+    anzahl_tage: int = 0
+
+
+class HeatmapZelle(BaseModel):
+    """Eine Zelle der Monats-Heatmap (Tag × Stunde)."""
+    tag: int          # 1..31
+    stunde: int       # 0..23
+    pv_kw: Optional[float] = None
+    verbrauch_kw: Optional[float] = None
+    netzbezug_kw: Optional[float] = None
+    einspeisung_kw: Optional[float] = None
+    ueberschuss_kw: Optional[float] = None  # pv − verbrauch
+
+
+class PeakStunde(BaseModel):
+    """Eine einzelne Peak-Stunde im Monat."""
+    datum: date
+    stunde: int
+    wert_kw: float
+
+
+class TagesprofilStunde(BaseModel):
+    """Ein Stundenpunkt im typischen Tagesprofil (Ø über Monat)."""
+    stunde: int
+    pv_kw: Optional[float] = None
+    verbrauch_kw: Optional[float] = None
+
+
+class KomponentenEintrag(BaseModel):
+    """Ein einzelnes Gerät mit Monatssumme."""
+    key: str
+    label: str
+    kategorie: str       # "pv", "waermepumpe", "wallbox", "eauto", "sonstiges", …
+    typ: str             # z.B. "pv-module", "balkonkraftwerk", "waermepumpe", "sonstiges"
+    seite: str           # "quelle" | "senke" | "bidirektional"
+    kwh: float           # positiv = Erzeugung, negativ = Verbrauch
+    anteil_prozent: Optional[float] = None  # vom Gesamt-PV bzw. Gesamt-Verbrauch
+
+
+class KategorieSumme(BaseModel):
+    """Monatssumme pro Kategorie (für KPI-Strip)."""
+    kategorie: str       # "pv_module", "bkw", "sonstige_erzeuger", "waermepumpe", "wallbox_eauto", "sonstige_verbraucher", "haushalt"
+    kwh: float
+    anteil_prozent: Optional[float] = None
+
+
+class MonatsAuswertungResponse(BaseModel):
+    """Monatsauswertung aus TagesEnergieProfil + TagesZusammenfassung."""
+    jahr: int
+    monat: int
+    tage_im_monat: int
+    tage_mit_daten: int
+
+    # Energie-Summen (kWh)
+    pv_kwh: float
+    verbrauch_kwh: float
+    einspeisung_kwh: float
+    netzbezug_kwh: float
+    ueberschuss_kwh: float
+    defizit_kwh: float
+
+    # Kennzahlen
+    autarkie_prozent: Optional[float] = None
+    eigenverbrauch_prozent: Optional[float] = None
+    performance_ratio_avg: Optional[float] = None
+    batterie_vollzyklen_summe: Optional[float] = None
+
+    # Erweiterte Analyse-KPIs
+    grundbedarf_kw: Optional[float] = None          # Ø Verbrauch Nachtstunden 0–5 Uhr
+    batterie_ladung_kwh: Optional[float] = None      # Σ Energie in die Batterie
+    batterie_entladung_kwh: Optional[float] = None   # Σ Energie aus der Batterie
+    batterie_wirkungsgrad: Optional[float] = None    # Entladung / Ladung
+    direkt_eigenverbrauch_kwh: Optional[float] = None  # Σ min(pv, verbrauch) je Stunde
+    pv_tag_best_kwh: Optional[float] = None
+    pv_tag_schnitt_kwh: Optional[float] = None
+    pv_tag_schlecht_kwh: Optional[float] = None
+
+    # Typisches Tagesprofil (24 Punkte, Ø über Monat)
+    typisches_tagesprofil: list[TagesprofilStunde] = []
+
+    # Per-Komponente Aggregation
+    kategorien: list[KategorieSumme] = []
+    komponenten: list[KomponentenEintrag] = []
+
+    # Peaks (Top-N Stunden)
+    peak_netzbezug: list[PeakStunde] = []
+    peak_einspeisung: list[PeakStunde] = []
+    peak_pv: Optional[PeakStunde] = None
+
+    # Heatmap-Matrix
+    heatmap: list[HeatmapZelle] = []
+
+    # Börsenpreis / Negativpreis (§51 EEG)
+    boersenpreis_avg_cent: Optional[float] = None
+    negative_preis_stunden: Optional[int] = None
+    einspeisung_neg_preis_kwh: Optional[float] = None
+
+    # Datenqualität (Issue #135): Anteil der Stunden ohne gemappten Zähler
+    # Ermöglicht dem Frontend, Warnhinweise zu Datenlücken anzuzeigen.
+    stunden_fehlend_pv: int = 0
+    stunden_fehlend_verbrauch: int = 0
+
+
+class TagesZusammenfassungResponse(BaseModel):
+    """Tageszusammenfassung mit Per-Komponenten-kWh."""
+    datum: date
+    ueberschuss_kwh: Optional[float] = None
+    defizit_kwh: Optional[float] = None
+    peak_pv_kw: Optional[float] = None
+    peak_netzbezug_kw: Optional[float] = None
+    peak_einspeisung_kw: Optional[float] = None
+    batterie_vollzyklen: Optional[float] = None
+    temperatur_min_c: Optional[float] = None
+    temperatur_max_c: Optional[float] = None
+    strahlung_summe_wh_m2: Optional[float] = None
+    performance_ratio: Optional[float] = None
+    stunden_verfuegbar: int = 0
+    datenquelle: Optional[str] = None
+    komponenten_kwh: Optional[dict] = None
+    # Per-Komponenten Counter-Werte pro Tag (z.B. WP-Kompressor-Starts, Issue #136)
+    # Form: {"wp_starts_anzahl": {"<inv_id>": <int>}}
+    komponenten_starts: Optional[dict] = None
+    # Börsenpreis-Aggregation (§51 EEG)
+    boersenpreis_avg_cent: Optional[float] = None
+    boersenpreis_min_cent: Optional[float] = None
+    negative_preis_stunden: Optional[int] = None
+    einspeisung_neg_preis_kwh: Optional[float] = None
+
+
+class ReaggregatePreviewBoundary(BaseModel):
+    sensor_key: str
+    kategorie: Optional[str] = None
+    zeitpunkt: str
+    alt_kwh: Optional[float] = None
+    neu_kwh: Optional[float] = None
+
+
+class ReaggregatePreviewSlot(BaseModel):
+    stunde: int
+    kategorie: str
+    alt_kwh: Optional[float] = None
+    neu_kwh: Optional[float] = None
+
+
+class ReaggregatePreviewCounterTagesdelta(BaseModel):
+    feld: str
+    alt: Optional[int] = None
+    neu: Optional[int] = None
+
+
+class ReaggregatePreviewResponse(BaseModel):
+    datum: str
+    boundaries: list[ReaggregatePreviewBoundary]
+    slot_deltas: list[ReaggregatePreviewSlot]
+    tagesumme_alt: dict[str, Optional[float]]
+    tagesumme_neu: dict[str, Optional[float]]
+    ha_verfuegbar: bool
+    counter_tagesdelta: list[ReaggregatePreviewCounterTagesdelta]
+
+
+class StundenPrognose(BaseModel):
+    """Prognose für eine Stunde: PV, Verbrauch, Netto-Bilanz, Batterie-SoC."""
+    stunde: int
+    pv_kw: float
+    verbrauch_kw: float
+    netto_kw: float           # pv - verbrauch (positiv=Überschuss)
+    netzbezug_kw: float       # max(0, Bedarf nach Batterie-Entladung)
+    einspeisung_kw: float     # max(0, Überschuss nach Batterie-Ladung)
+    soc_prozent: Optional[float] = None  # Simulierter Batterie-SoC
+
+
+class TagesPrognoseResponse(BaseModel):
+    """Kombinierte Verbrauchs- + PV- + Batterie-Prognose für einen Tag."""
+    datum: str
+    stunden: list[StundenPrognose]
+    # Zusammenfassung
+    pv_summe_kwh: float
+    verbrauch_summe_kwh: float
+    netzbezug_summe_kwh: float
+    einspeisung_summe_kwh: float
+    eigenverbrauch_kwh: float
+    autarkie_prozent: float
+    # Speicher (optional)
+    speicher_kapazitaet_kwh: Optional[float] = None
+    speicher_voll_um: Optional[str] = None
+    speicher_leer_um: Optional[str] = None
+    # Meta
+    verbrauch_basis: str        # "gleicher_wochentag", "tagestyp", "alle"
+    pv_quelle: str              # "openmeteo" oder "solcast"
+    daten_tage: int

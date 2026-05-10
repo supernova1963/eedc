@@ -6,15 +6,17 @@ Gemeinsame Hilfsfunktionen für CSV und JSON Import/Export.
 
 import re
 import logging
-from typing import Optional
+from typing import Callable, Optional
 from datetime import date
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm.attributes import flag_modified
 
-from backend.models.investition import Investition, InvestitionMonatsdaten
+from backend.models.investition import Investition
 from backend.core.field_definitions import get_alle_felder_fuer_investition, IMPORT_SUMMEN_KEYS
+from backend.services.import_writer import (
+    UpsertResult,
+    upsert_investition_monatsdaten_with_provenance,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -63,44 +65,41 @@ async def _upsert_investition_monatsdaten(
     jahr: int,
     monat: int,
     verbrauch_daten: dict,
-    ueberschreiben: bool
-):
-    """Erstellt oder aktualisiert InvestitionMonatsdaten.
+    ueberschreiben: bool,
+    *,
+    source: str,
+    writer: str,
+) -> UpsertResult:
+    """Erstellt oder aktualisiert InvestitionMonatsdaten via Provenance-Wrapper
+    (Etappe 3d Päckchen 2).
 
-    Bei existierenden Einträgen werden neue Felder IMMER ergänzt.
-    Bestehende Felder werden nur bei ueberschreiben=True überschrieben.
+    Pure Re-Export auf `upsert_investition_monatsdaten_with_provenance` mit
+    der Status-quo-Signatur. Wir behalten den Helper-Namen, weil 3+ Caller-
+    Module ihn importieren — eine Schritt-für-Schritt-Umstellung darüber
+    hinaus passiert in Folge-Commits.
+
+    Args:
+        source: SOURCE_LABELS-Eintrag — Caller MUSS explizit setzen, weil die
+            Diagnose-Frage „wer hat im Februar mein Investitions-Monatsdatum
+            überschrieben?" sonst nicht beantwortbar ist.
+        writer: Identität des Schreibers (z. B. "csv_wizard",
+            "portal_apply:cloud_import").
+
+    Returns:
+        UpsertResult mit applied_count / rejected_count / rejected_fields —
+        Datenbasis für den Wizard-Hinweis „X von Y Feldern durch manuelle
+        Werte geschützt".
     """
-    existing = await db.execute(
-        select(InvestitionMonatsdaten).where(
-            InvestitionMonatsdaten.investition_id == investition_id,
-            InvestitionMonatsdaten.jahr == jahr,
-            InvestitionMonatsdaten.monat == monat
-        )
+    return await upsert_investition_monatsdaten_with_provenance(
+        db,
+        investition_id=investition_id,
+        jahr=jahr,
+        monat=monat,
+        verbrauch_daten=verbrauch_daten,
+        source=source,
+        writer=writer,
+        ueberschreiben=ueberschreiben,
     )
-    existing_imd = existing.scalar_one_or_none()
-
-    if existing_imd:
-        # Immer mergen: Neue Felder ergänzen
-        if existing_imd.verbrauch_daten:
-            if ueberschreiben:
-                # Überschreiben: Neue Daten haben Priorität
-                existing_imd.verbrauch_daten = {**existing_imd.verbrauch_daten, **verbrauch_daten}
-            else:
-                # Nicht überschreiben: Nur fehlende Felder ergänzen
-                merged = {**verbrauch_daten, **existing_imd.verbrauch_daten}
-                existing_imd.verbrauch_daten = merged
-        else:
-            existing_imd.verbrauch_daten = verbrauch_daten
-        # WICHTIG: SQLAlchemy erkennt JSON-Änderungen nicht automatisch!
-        flag_modified(existing_imd, "verbrauch_daten")
-    else:
-        imd = InvestitionMonatsdaten(
-            investition_id=investition_id,
-            jahr=jahr,
-            monat=monat,
-            verbrauch_daten=verbrauch_daten
-        )
-        db.add(imd)
 
 
 async def _import_investition_monatsdaten_v09(
@@ -110,7 +109,11 @@ async def _import_investition_monatsdaten_v09(
     investitionen: list[Investition],
     jahr: int,
     monat: int,
-    ueberschreiben: bool
+    ueberschreiben: bool,
+    *,
+    source: str,
+    writer: str,
+    on_upsert: Optional[Callable[[UpsertResult], None]] = None,
 ) -> dict:
     """
     Importiert Investitions-Monatsdaten aus personalisierten CSV-Spalten.
@@ -260,7 +263,12 @@ async def _import_investition_monatsdaten_v09(
     # ── Batch-Speicherung ────────────────────────────────────────────────────
     for inv_id, verbrauch_daten in collected_data.items():
         if verbrauch_daten:
-            await _upsert_investition_monatsdaten(db, inv_id, jahr, monat, verbrauch_daten, ueberschreiben)
+            res = await _upsert_investition_monatsdaten(
+                db, inv_id, jahr, monat, verbrauch_daten, ueberschreiben,
+                source=source, writer=writer,
+            )
+            if on_upsert is not None:
+                on_upsert(res)
 
     return summen
 
@@ -271,7 +279,11 @@ async def _distribute_legacy_pv_to_modules(
     pv_module: list[Investition],
     jahr: int,
     monat: int,
-    ueberschreiben: bool
+    ueberschreiben: bool,
+    *,
+    source: str,
+    writer: str,
+    on_upsert: Optional[Callable[[UpsertResult], None]] = None,
 ) -> list[str]:
     """
     Verteilt einen Legacy-PV-Erzeugungswert proportional auf die PV-Module.
@@ -306,7 +318,12 @@ async def _distribute_legacy_pv_to_modules(
         pv_anteil = round(pv_erzeugung * anteil, 1)
 
         verbrauch_daten = {"pv_erzeugung_kwh": pv_anteil}
-        await _upsert_investition_monatsdaten(db, inv.id, jahr, monat, verbrauch_daten, ueberschreiben)
+        res = await _upsert_investition_monatsdaten(
+            db, inv.id, jahr, monat, verbrauch_daten, ueberschreiben,
+            source=source, writer=writer,
+        )
+        if on_upsert is not None:
+            on_upsert(res)
 
     if total_kwp > 0:
         warnungen.append(
@@ -329,7 +346,11 @@ async def _distribute_legacy_battery_to_storages(
     speicher: list[Investition],
     jahr: int,
     monat: int,
-    ueberschreiben: bool
+    ueberschreiben: bool,
+    *,
+    source: str,
+    writer: str,
+    on_upsert: Optional[Callable[[UpsertResult], None]] = None,
 ) -> list[str]:
     """
     Verteilt Legacy-Batteriewerte proportional auf die Speicher.
@@ -371,7 +392,12 @@ async def _distribute_legacy_battery_to_storages(
             verbrauch_daten["entladung_kwh"] = round(batterie_entladung * anteil, 1)
 
         if verbrauch_daten:
-            await _upsert_investition_monatsdaten(db, inv.id, jahr, monat, verbrauch_daten, ueberschreiben)
+            res = await _upsert_investition_monatsdaten(
+                db, inv.id, jahr, monat, verbrauch_daten, ueberschreiben,
+                source=source, writer=writer,
+            )
+            if on_upsert is not None:
+                on_upsert(res)
 
     teile = []
     if batterie_ladung > 0:
@@ -400,7 +426,11 @@ async def _import_investition_monatsdaten_legacy(
     inv_by_type: dict[str, Investition],
     jahr: int,
     monat: int,
-    ueberschreiben: bool
+    ueberschreiben: bool,
+    *,
+    source: str,
+    writer: str,
+    on_upsert: Optional[Callable[[UpsertResult], None]] = None,
 ):
     """
     LEGACY: Importiert Investitions-Monatsdaten aus generischen CSV-Spalten.
@@ -427,7 +457,12 @@ async def _import_investition_monatsdaten_legacy(
             verbrauch_daten["ladung_netz_kwh"] = eauto_netz
 
         if verbrauch_daten:
-            await _upsert_investition_monatsdaten(db, inv.id, jahr, monat, verbrauch_daten, ueberschreiben)
+            res = await _upsert_investition_monatsdaten(
+                db, inv.id, jahr, monat, verbrauch_daten, ueberschreiben,
+                source=source, writer=writer,
+            )
+            if on_upsert is not None:
+                on_upsert(res)
 
     # Wallbox Daten
     wallbox_ladung = parse_float(row.get("Wallbox_Ladung_kWh", ""))
@@ -442,7 +477,12 @@ async def _import_investition_monatsdaten_legacy(
             verbrauch_daten["ladevorgaenge"] = int(wallbox_vorgaenge)
 
         if verbrauch_daten:
-            await _upsert_investition_monatsdaten(db, inv.id, jahr, monat, verbrauch_daten, ueberschreiben)
+            res = await _upsert_investition_monatsdaten(
+                db, inv.id, jahr, monat, verbrauch_daten, ueberschreiben,
+                source=source, writer=writer,
+            )
+            if on_upsert is not None:
+                on_upsert(res)
 
     # Speicher Daten (werden bereits in Monatsdaten gespeichert, hier optional zusätzlich)
     batt_ladung = parse_float(row.get("Batterie_Ladung_kWh", ""))
@@ -457,7 +497,12 @@ async def _import_investition_monatsdaten_legacy(
             verbrauch_daten["entladung_kwh"] = batt_entladung
 
         if verbrauch_daten:
-            await _upsert_investition_monatsdaten(db, inv.id, jahr, monat, verbrauch_daten, ueberschreiben)
+            res = await _upsert_investition_monatsdaten(
+                db, inv.id, jahr, monat, verbrauch_daten, ueberschreiben,
+                source=source, writer=writer,
+            )
+            if on_upsert is not None:
+                on_upsert(res)
 
     # Wärmepumpe Daten
     wp_strom = parse_float(row.get("WP_Strom_kWh", ""))
@@ -475,4 +520,9 @@ async def _import_investition_monatsdaten_legacy(
             verbrauch_daten["warmwasser_kwh"] = wp_warmwasser
 
         if verbrauch_daten:
-            await _upsert_investition_monatsdaten(db, inv.id, jahr, monat, verbrauch_daten, ueberschreiben)
+            res = await _upsert_investition_monatsdaten(
+                db, inv.id, jahr, monat, verbrauch_daten, ueberschreiben,
+                source=source, writer=writer,
+            )
+            if on_upsert is not None:
+                on_upsert(res)

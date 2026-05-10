@@ -29,6 +29,7 @@ from backend.api.routes.import_export.helpers import (
     _distribute_legacy_battery_to_storages,
 )
 from backend.services.activity_service import log_activity
+from backend.services.provenance import write_with_provenance
 
 logger = logging.getLogger(__name__)
 
@@ -111,6 +112,12 @@ class ApplyResponse(BaseModel):
     uebersprungen: int
     fehler: list[str]
     warnungen: list[str]
+    # Etappe 3d Päckchen 2: Anzahl Feld-Werte, die durch Quellen-Hierarchie
+    # geschützt wurden (manuell gepflegte Werte überleben Cloud-/Portal-Apply
+    # auch bei ueberschreiben=True). Datenbasis für den Wizard-Hinweis
+    # „X Felder durch manuelle Werte geschützt".
+    geschuetzt_count: int = 0
+    geschuetzte_felder: list[str] = []  # Top-15 Sample für Diagnose
 
 
 class ZuordnungInvestition(BaseModel):
@@ -285,6 +292,37 @@ async def apply_import(
     uebersprungen = 0
     fehler: list[str] = []
     warnungen: list[str] = []
+    # Etappe 3d Päckchen 2: Hierarchie-Schutz-Tracking (manuell gepflegte
+    # Werte, die der Provenance-Helper gegen Portal-/Cloud-Apply abweist).
+    geschuetzt_count = 0
+    geschuetzte_felder: list[str] = []
+
+    # Etappe 3d Päckchen 2: Source-/Writer-Konstanten für Provenance-Wrapper.
+    # Aktuell werden alle Datenquellen unter external:portal_import geführt
+    # (gleiche Hierarchie-Klasse wie external:cloud_import:*), weil das
+    # Frontend den konkreten Cloud-Provider-Slug nicht durchreicht. writer
+    # differenziert via datenquelle für Diagnose-Queries auf data_provenance_log.
+    _PROVENANCE_SOURCE = "external:portal_import"
+    _PROVENANCE_WRITER = f"portal_apply:{datenquelle}"
+
+    def _record_upsert(upsert_res) -> None:
+        """Sammler für die Wizard-Hinweis-Telemetrie. Wird sowohl vom direkten
+        `_track_upsert`-Wrapper als auch via `on_upsert`-Callback aus den
+        Helpers (`_distribute_*`) gerufen, damit indirekt geschriebene Felder
+        nicht ohne Tracking durchschlüpfen."""
+        nonlocal geschuetzt_count
+        geschuetzt_count += upsert_res.rejected_count
+        for sub_key in upsert_res.rejected_fields:
+            if len(geschuetzte_felder) < 15 and sub_key not in geschuetzte_felder:
+                geschuetzte_felder.append(sub_key)
+
+    async def _track_upsert(*args, **kwargs):
+        """Wrapper über _upsert_investition_monatsdaten der die rejected_*-
+        Counts in den Apply-Response-Sammler legt. Periode steht im Audit-
+        Log, daher hier nur Sub-Key-Sample für den Wizard-Hinweis."""
+        upsert_res = await _upsert_investition_monatsdaten(*args, **kwargs)
+        _record_upsert(upsert_res)
+        return upsert_res
 
     for monat_input in data.monate:
         try:
@@ -329,14 +367,17 @@ async def apply_import(
                             anteil = zuordnung.pv.get(inv.id, 0) / 100.0
                             pv_anteil = round(pv_kwh * anteil, 1)
                             if pv_anteil > 0:
-                                await _upsert_investition_monatsdaten(
+                                await _track_upsert(
                                     db, inv.id, jahr, monat,
-                                    {"pv_erzeugung_kwh": pv_anteil}, ueberschreiben
+                                    {"pv_erzeugung_kwh": pv_anteil}, ueberschreiben,
+                                    source=_PROVENANCE_SOURCE, writer=_PROVENANCE_WRITER,
                                 )
                     else:
                         # Proportional nach kWp (Default)
                         w = await _distribute_legacy_pv_to_modules(
-                            db, pv_kwh, pv_module, jahr, monat, ueberschreiben
+                            db, pv_kwh, pv_module, jahr, monat, ueberschreiben,
+                            source=_PROVENANCE_SOURCE, writer=_PROVENANCE_WRITER,
+                            on_upsert=_record_upsert,
                         )
                         if importiert == 0:
                             warnungen.extend(w)
@@ -359,14 +400,17 @@ async def apply_import(
                             if bat_entladung_raw and bat_entladung_raw > 0:
                                 vd["entladung_kwh"] = round(bat_entladung_raw * anteil, 1)
                             if vd:
-                                await _upsert_investition_monatsdaten(
-                                    db, inv.id, jahr, monat, vd, ueberschreiben
+                                await _track_upsert(
+                                    db, inv.id, jahr, monat, vd, ueberschreiben,
+                                    source=_PROVENANCE_SOURCE, writer=_PROVENANCE_WRITER,
                                 )
                     else:
                         # Proportional nach Kapazität (Default)
                         w = await _distribute_legacy_battery_to_storages(
                             db, bat_ladung_raw or 0, bat_entladung_raw or 0,
-                            speicher, jahr, monat, ueberschreiben
+                            speicher, jahr, monat, ueberschreiben,
+                            source=_PROVENANCE_SOURCE, writer=_PROVENANCE_WRITER,
+                            on_upsert=_record_upsert,
                         )
                         if importiert == 0:
                             warnungen.extend(w)
@@ -374,18 +418,35 @@ async def apply_import(
                 bat_entladung = bat_entladung_raw
 
             # ── Monatsdaten schreiben ─────────────────────────────────────────
-            if monat_input.einspeisung_kwh is not None:
-                md.einspeisung_kwh = monat_input.einspeisung_kwh
-            if monat_input.netzbezug_kwh is not None:
-                md.netzbezug_kwh = monat_input.netzbezug_kwh
-            if monat_input.eigenverbrauch_kwh is not None:
-                md.eigenverbrauch_kwh = monat_input.eigenverbrauch_kwh
-            if pv_erzeugung is not None:
-                md.pv_erzeugung_kwh = pv_erzeugung
-            if bat_ladung is not None:
-                md.batterie_ladung_kwh = bat_ladung
-            if bat_entladung is not None:
-                md.batterie_entladung_kwh = bat_entladung
+            # Top-Level-Felder gehen über write_with_provenance, damit manuell
+            # gepflegte Form-Werte (manual:form, MANUAL) gegen den
+            # external:portal_import-Schreiber (EXTERNAL_AUTHORITATIVE) geschützt
+            # sind. Frische Rows (existing_md None) sind initial_write → applied.
+            if md.id is None:
+                # Frisch via db.add(md) — flush damit md.id existiert + Provenance
+                # später flag_modified greifen kann.
+                await db.flush()
+
+            top_level_writes: list[tuple[str, Optional[float]]] = [
+                ("einspeisung_kwh", monat_input.einspeisung_kwh),
+                ("netzbezug_kwh", monat_input.netzbezug_kwh),
+                ("eigenverbrauch_kwh", monat_input.eigenverbrauch_kwh),
+                ("pv_erzeugung_kwh", pv_erzeugung),
+                ("batterie_ladung_kwh", bat_ladung),
+                ("batterie_entladung_kwh", bat_entladung),
+            ]
+            for field_name, value in top_level_writes:
+                if value is not None:
+                    result = await write_with_provenance(
+                        db, md, field_name, value,
+                        source=_PROVENANCE_SOURCE, writer=_PROVENANCE_WRITER,
+                    )
+                    if result.decision == "rejected_lower_priority":
+                        geschuetzt_count += 1
+                        if len(geschuetzte_felder) < 15 and field_name not in geschuetzte_felder:
+                            geschuetzte_felder.append(field_name)
+            # datenquelle ist Pre-Provenance-Spalte — bleibt direkt gesetzt
+            # (sie ist nicht Teil der Hierarchie-Logik und nutzt source_provenance nicht).
             md.datenquelle = datenquelle
 
             # ── Wallbox ───────────────────────────────────────────────────────
@@ -401,8 +462,9 @@ async def apply_import(
                         verbrauch["ladung_pv_kwh"] = monat_input.wallbox_ladung_pv_kwh
                     if monat_input.wallbox_ladevorgaenge is not None:
                         verbrauch["ladevorgaenge"] = monat_input.wallbox_ladevorgaenge
-                    await _upsert_investition_monatsdaten(
-                        db, wb.id, jahr, monat, verbrauch, ueberschreiben
+                    await _track_upsert(
+                        db, wb.id, jahr, monat, verbrauch, ueberschreiben,
+                        source=_PROVENANCE_SOURCE, writer=_PROVENANCE_WRITER,
                     )
                     if len(wallboxen) > 1 and not (zuordnung and zuordnung.wallbox_id) and importiert == 0:
                         warnungen.append(
@@ -424,10 +486,11 @@ async def apply_import(
                         (e for e in eautos if zuordnung and e.id == zuordnung.eauto_id),
                         eautos[0]
                     )
-                    await _upsert_investition_monatsdaten(
+                    await _track_upsert(
                         db, ea.id, jahr, monat,
                         {"km_gefahren": monat_input.eauto_km_gefahren},
                         ueberschreiben,
+                        source=_PROVENANCE_SOURCE, writer=_PROVENANCE_WRITER,
                     )
 
             importiert += 1
@@ -438,12 +501,25 @@ async def apply_import(
 
     await db.flush()
 
+    # Etappe 3d Päckchen 2: Wizard-Hinweis bei aktivierter Quellen-Hierarchie.
+    if geschuetzt_count > 0:
+        sample = ", ".join(geschuetzte_felder[:5])
+        suffix = f" (z. B. {sample})" if sample else ""
+        warnungen.insert(0, (
+            f"{geschuetzt_count} Felder wurden durch manuell gepflegte Werte "
+            f"geschützt — der Import hat sie nicht überschrieben{suffix}. "
+            "Reset über Reparatur-Werkbank wenn gewollt."
+        ))
+
     await log_activity(
         kategorie="portal_import",
         aktion=f"Portal-Import: {importiert} Monate importiert",
         erfolg=len(fehler) == 0,
-        details=f"Quelle: {datenquelle}, übersprungen: {uebersprungen}",
-        details_json={"importiert": importiert, "uebersprungen": uebersprungen, "fehler": fehler[:5]},
+        details=f"Quelle: {datenquelle}, übersprungen: {uebersprungen}, geschützt: {geschuetzt_count}",
+        details_json={
+            "importiert": importiert, "uebersprungen": uebersprungen,
+            "geschuetzt": geschuetzt_count, "fehler": fehler[:5],
+        },
         anlage_id=anlage_id,
     )
 
@@ -453,4 +529,6 @@ async def apply_import(
         uebersprungen=uebersprungen,
         fehler=fehler[:20],
         warnungen=warnungen[:10],
+        geschuetzt_count=geschuetzt_count,
+        geschuetzte_felder=geschuetzte_felder,
     )

@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from backend.models.anlage import Anlage
+from backend.models.data_provenance_log import DataProvenanceLog
 from backend.models.monatsdaten import Monatsdaten
 from backend.models.investition import Investition, InvestitionMonatsdaten
 from backend.models.strompreis import Strompreis
@@ -52,6 +53,10 @@ class CheckKategorie(str, Enum):
     # (> Anlagenleistung × 1.5). Behebung über "Tag neu aggregieren" oder
     # "Verlauf nachrechnen" — beide rufen seit v3.25.x intern Resnap auf.
     ENERGIEPROFIL_PLAUSIBILITAET = "energieprofil_plausibilitaet"
+    # Etappe 3d P3: Felder mit ≥ 2 distinct sources im Audit-Log der letzten
+    # 30 Tage. Hinweis-Charakter ohne Quittier-Knopf — Diagnose für die
+    # Reparatur-Werkbank (P4). Memory-Linie feedback_daten_checker_kein_akzeptiert.md.
+    PROVENANCE_CONFLICT = "provenance_conflict"
 
 
 @dataclass
@@ -149,6 +154,7 @@ class DatenChecker:
         ergebnisse.extend(await self._check_energieprofil_plausibilitaet(anlage))
         ergebnisse.extend(await self._check_mqtt_topic_abdeckung(anlage))
         ergebnisse.extend(await self._check_sensor_mapping_lts(anlage))
+        ergebnisse.extend(await self._check_provenance_conflicts(anlage))
 
         # Zusammenfassung
         zusammenfassung = {"error": 0, "warning": 0, "info": 0, "ok": 0}
@@ -1603,3 +1609,81 @@ class DatenChecker:
                     pv_map[key] = pv_map.get(key, 0) + erzeugung
 
         return pv_map
+
+    async def _check_provenance_conflicts(
+        self, anlage: Anlage, days: int = 30,
+    ) -> list[CheckErgebnis]:
+        """Prüft das Audit-Log auf Felder mit ≥ 2 distinct sources im Zeitraum.
+
+        Hinweis-Charakter (Memory-Linie feedback_daten_checker_kein_akzeptiert.md):
+        kein Quittier-Knopf, nur Diagnose. Reparatur-Pfad führt in P4 in die
+        Reparatur-Werkbank — bis dahin Hinweis ohne Aktions-Button.
+        """
+        from sqlalchemy import func
+
+        kat = CheckKategorie.PROVENANCE_CONFLICT.value
+        cutoff = datetime.now() - timedelta(days=days)
+
+        # Investition-IDs der Anlage für InvestitionMonatsdaten-Joins
+        inv_ids = [inv.id for inv in anlage.investitionen]
+
+        # row_pk_json als Substring-Filter:
+        #   - monatsdaten / tages_zusammenfassung / tages_energie_profil:
+        #     '{"anlage_id": <id>, ...}'
+        #   - investition_monatsdaten: '{"investition_id": <id>, ...}' für jede
+        #     Investition der Anlage
+        anlage_needle = f'"anlage_id": {anlage.id}'
+        inv_needles = [f'"investition_id": {iid}' for iid in inv_ids]
+
+        from sqlalchemy import or_
+        row_filter = DataProvenanceLog.row_pk_json.contains(anlage_needle)
+        for needle in inv_needles:
+            row_filter = or_(row_filter, DataProvenanceLog.row_pk_json.contains(needle))
+
+        stmt = (
+            select(
+                DataProvenanceLog.table_name,
+                DataProvenanceLog.row_pk_json,
+                DataProvenanceLog.field_name,
+                func.count(func.distinct(DataProvenanceLog.source)).label("n_sources"),
+            )
+            .where(
+                DataProvenanceLog.written_at >= cutoff,
+                row_filter,
+            )
+            .group_by(
+                DataProvenanceLog.table_name,
+                DataProvenanceLog.row_pk_json,
+                DataProvenanceLog.field_name,
+            )
+            .having(func.count(func.distinct(DataProvenanceLog.source)) >= 2)
+        )
+        result = await self.db.execute(stmt)
+        konflikte = result.all()
+
+        if not konflikte:
+            return [CheckErgebnis(
+                kategorie=kat, schwere=CheckSeverity.OK.value,
+                meldung=f"Keine Quellen-Konflikte in den letzten {days} Tagen",
+            )]
+
+        # Konflikte gruppieren nach Tabelle für die Meldung
+        per_table: dict[str, int] = {}
+        for table_name, _, _, _ in konflikte:
+            per_table[table_name] = per_table.get(table_name, 0) + 1
+
+        details_lines = [
+            f"{count}× in {table_name}"
+            for table_name, count in sorted(per_table.items())
+        ]
+        details = "; ".join(details_lines)
+
+        return [CheckErgebnis(
+            kategorie=kat, schwere=CheckSeverity.WARNING.value,
+            meldung=(
+                f"{len(konflikte)} Felder mit mehreren Quellen in den letzten "
+                f"{days} Tagen — der Resolver hat entschieden, die Reparatur-"
+                f"Werkbank kann sie aufdröseln."
+            ),
+            details=details,
+        )]

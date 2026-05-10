@@ -22,6 +22,7 @@ from backend.services.wetter.orchestrator import get_wetterdaten
 from backend.utils.sonstige_positionen import berechne_sonstige_summen, get_sonstige_positionen
 from backend.api.routes.strompreise import lade_tarife_fuer_anlage
 from backend.core.field_definitions import get_felder_fuer_investition, get_felder_fuer_sonstiges
+from backend.services.provenance import seed_provenance, write_with_provenance
 
 from .schemas import ImportResult, CSVTemplateInfo
 from .helpers import (
@@ -244,6 +245,23 @@ async def import_csv(
     fehler = []
     warnungen = []
 
+    # Etappe 3d Päckchen 3: Hierarchie-Schutz-Tracking. Nicht für UPDATE-Pfad
+    # mit gleicher MANUAL-Klasse (Last-Writer-Wins, würde fälschlich als
+    # geschützt gezählt) — wir schauen explizit nach rejected_lower_priority.
+    geschuetzt_count = 0
+    geschuetzte_felder: list[str] = []
+
+    def _record_upsert(upsert_res) -> None:
+        """Sammler für Wizard-Telemetrie. Wird via `on_upsert`-Callback aus
+        den Helpers (`_distribute_*`, `_import_investition_monatsdaten_v09`,
+        `_import_investition_monatsdaten_legacy`) gerufen, damit indirekt
+        geschriebene Felder nicht ohne Tracking durchschlüpfen."""
+        nonlocal geschuetzt_count
+        geschuetzt_count += upsert_res.rejected_count
+        for sub_key in upsert_res.rejected_fields:
+            if len(geschuetzte_felder) < 15 and sub_key not in geschuetzte_felder:
+                geschuetzte_felder.append(sub_key)
+
     pv_module_vorhanden = any(inv.typ == "pv-module" for inv in investitionen)
     speicher_vorhanden = any(inv.typ == "speicher" for inv in investitionen)
 
@@ -323,7 +341,9 @@ async def import_csv(
             summen = {"pv_erzeugung_sum": 0.0, "batterie_ladung_sum": 0.0, "batterie_entladung_sum": 0.0}
             if has_personalized_columns and investitionen:
                 summen = await _import_investition_monatsdaten_v09(
-                    db, row, parse_float, investitionen, jahr, monat, ueberschreiben
+                    db, row, parse_float, investitionen, jahr, monat, ueberschreiben,
+                    source="manual:csv_backup", writer="csv_backup_restore",
+                    on_upsert=_record_upsert,
                 )
 
             # Legacy-Spalten Validierung
@@ -355,7 +375,9 @@ async def import_csv(
                     # -> Auf PV-Module verteilen
                     pv_module_list = [inv for inv in investitionen if inv.typ == "pv-module"]
                     migration_warnungen = await _distribute_legacy_pv_to_modules(
-                        db, pv_erzeugung_explicit, pv_module_list, jahr, monat, ueberschreiben
+                        db, pv_erzeugung_explicit, pv_module_list, jahr, monat, ueberschreiben,
+                        source="manual:csv_backup", writer="csv_backup_restore",
+                        on_upsert=_record_upsert,
                     )
                     warnungen.extend(migration_warnungen)
                     pv_erzeugung = pv_erzeugung_explicit
@@ -408,7 +430,9 @@ async def import_csv(
                         batterie_ladung_explicit or 0,
                         batterie_entladung_explicit or 0,
                         speicher_list,
-                        jahr, monat, ueberschreiben
+                        jahr, monat, ueberschreiben,
+                        source="manual:csv_backup", writer="csv_backup_restore",
+                        on_upsert=_record_upsert,
                     )
                     warnungen.extend(migration_warnungen)
                     # Für Legacy-Feld in Monatsdaten (Fallback)
@@ -435,20 +459,37 @@ async def import_csv(
             elif einspeisung > 0 or netzbezug > 0:
                 gesamtverbrauch = netzbezug + einspeisung
 
+            # Etappe 3d Päckchen 2: Top-Level-Felder über write_with_provenance
+            # bei UPDATE (Hierarchie + Audit-Log greifen), seed_provenance bei
+            # frischer INSERT-Row (kein Audit-Spam — Backup-Restore kann hunderte
+            # Zeilen × Felder umfassen).
+            _CSV_BACKUP_FIELDS_TOP = [
+                ("einspeisung_kwh", einspeisung),
+                ("netzbezug_kwh", netzbezug),
+                ("pv_erzeugung_kwh", pv_erzeugung),
+                ("direktverbrauch_kwh", direktverbrauch),
+                ("eigenverbrauch_kwh", eigenverbrauch),
+                ("gesamtverbrauch_kwh", gesamtverbrauch),
+                ("batterie_ladung_kwh", batterie_ladung),
+                ("batterie_entladung_kwh", batterie_entladung),
+                ("globalstrahlung_kwh_m2", globalstrahlung),
+                ("sonnenstunden", sonnenstunden),
+                ("netzbezug_durchschnittspreis_cent", durchschnittspreis),
+            ]
             if existing_md:
-                # Update
-                existing_md.einspeisung_kwh = einspeisung
-                existing_md.netzbezug_kwh = netzbezug
-                existing_md.pv_erzeugung_kwh = pv_erzeugung
-                existing_md.direktverbrauch_kwh = direktverbrauch
-                existing_md.eigenverbrauch_kwh = eigenverbrauch
-                existing_md.gesamtverbrauch_kwh = gesamtverbrauch
-                existing_md.batterie_ladung_kwh = batterie_ladung
-                existing_md.batterie_entladung_kwh = batterie_entladung
-                existing_md.globalstrahlung_kwh_m2 = globalstrahlung
-                existing_md.sonnenstunden = sonnenstunden
-                if durchschnittspreis is not None:
-                    existing_md.netzbezug_durchschnittspreis_cent = durchschnittspreis
+                # UPDATE: Hierarchie greift — manual:csv_backup ist MANUAL,
+                # blockiert external:cloud_import:*, gleichauf mit manual:form
+                # (Last-Writer-Wins).
+                for field_name, value in _CSV_BACKUP_FIELDS_TOP:
+                    if value is not None or field_name in ("einspeisung_kwh", "netzbezug_kwh"):
+                        result = await write_with_provenance(
+                            db, existing_md, field_name, value,
+                            source="manual:csv_backup", writer="csv_backup_restore",
+                        )
+                        if result.decision == "rejected_lower_priority":
+                            geschuetzt_count += 1
+                            if len(geschuetzte_felder) < 15 and field_name not in geschuetzte_felder:
+                                geschuetzte_felder.append(field_name)
                 existing_md.notizen = notizen
                 existing_md.datenquelle = "csv"
             else:
@@ -470,11 +511,19 @@ async def import_csv(
                     notizen=notizen,
                     datenquelle="csv"
                 )
+                seed_provenance(
+                    md,
+                    source="manual:csv_backup",
+                    writer="csv_backup_restore",
+                    fields=[fn for fn, val in _CSV_BACKUP_FIELDS_TOP if val is not None],
+                )
                 db.add(md)
 
             # Legacy Investitions-Spalten
             await _import_investition_monatsdaten_legacy(
-                db, row, parse_float, inv_by_type, jahr, monat, ueberschreiben
+                db, row, parse_float, inv_by_type, jahr, monat, ueberschreiben,
+                source="manual:csv_backup", writer="csv_backup_restore",
+                on_upsert=_record_upsert,
             )
 
             importiert += 1
@@ -486,12 +535,23 @@ async def import_csv(
 
     await db.flush()
 
+    # Etappe 3d Päckchen 3: Wizard-Hinweis bei aktivierter Quellen-Hierarchie.
+    if geschuetzt_count > 0:
+        sample = ", ".join(geschuetzte_felder[:5])
+        suffix = f" (z. B. {sample})" if sample else ""
+        warnungen.insert(0, (
+            f"{geschuetzt_count} Felder wurden durch manuell gepflegte Werte "
+            f"geschützt{suffix} — Reset über Reparatur-Werkbank wenn gewollt."
+        ))
+
     return ImportResult(
         erfolg=len(fehler) == 0,
         importiert=importiert,
         uebersprungen=uebersprungen,
         fehler=fehler[:20],
-        warnungen=warnungen[:10]
+        warnungen=warnungen[:10],
+        geschuetzt_count=geschuetzt_count,
+        geschuetzte_felder=geschuetzte_felder,
     )
 
 

@@ -1,0 +1,15 @@
+# EEDC Backend Development Dependencies
+#
+# Installation:
+#   eedc/backend/venv/bin/pip install -r eedc/backend/requirements-dev.txt
+#
+# Wird NICHT im HA-Add-on-Dockerfile installiert — `Dockerfile` liest nur
+# `requirements.txt`. Diese Datei ist nur für lokale Entwicklung + die
+# Smoke-Test-Pipeline (`scripts/smoke.sh`).
+
+-r requirements.txt
+
+# Test-Runner — alle 31 Akzeptanz-Tests sind als top-level `async def test_*`
+# geschrieben und werden via `asyncio_mode = "auto"` automatisch geladen.
+pytest>=7.4.0
+pytest-asyncio>=0.23.0

@@ -244,6 +244,7 @@ async def backfill_monatsdaten_kraftstoffpreise(
     from calendar import monthrange
     from sqlalchemy import select
     from backend.models.monatsdaten import Monatsdaten
+    from backend.services.provenance import write_with_provenance
 
     preise = await get_kraftstoffpreise(land)
     if not preise:
@@ -279,7 +280,12 @@ async def backfill_monatsdaten_kraftstoffpreise(
                 monats_preise = [preis]
 
         if monats_preise:
-            md.kraftstoffpreis_euro = round(sum(monats_preise) / len(monats_preise), 3)
+            await write_with_provenance(
+                db, md, "kraftstoffpreis_euro",
+                round(sum(monats_preise) / len(monats_preise), 3),
+                source="external:fuel_price",
+                writer=f"kraftstoffpreis_backfill:{oil_land}",
+            )
             aktualisiert += 1
 
     if aktualisiert > 0:
@@ -306,9 +312,9 @@ async def backfill_kraftstoffpreise(
     Returns:
         {"aktualisiert": int, "land": str, "zeitraum": str}
     """
-    from sqlalchemy import select, and_
-    from sqlalchemy.orm.attributes import flag_modified
+    from sqlalchemy import select
     from backend.models.tages_energie_profil import TagesZusammenfassung
+    from backend.services.provenance import write_with_provenance
 
     preise = await get_kraftstoffpreise(land)
     if not preise:
@@ -336,7 +342,11 @@ async def backfill_kraftstoffpreise(
     for tz in rows:
         preis = get_preis_fuer_datum(preise, tz.datum)
         if preis is not None:
-            tz.kraftstoffpreis_euro = preis
+            await write_with_provenance(
+                db, tz, "kraftstoffpreis_euro", preis,
+                source="external:fuel_price",
+                writer=f"kraftstoffpreis_backfill:{oil_land}",
+            )
             aktualisiert += 1
 
     if aktualisiert > 0:

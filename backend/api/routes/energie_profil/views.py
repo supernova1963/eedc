@@ -1,25 +1,26 @@
 """
-Energie-Profil API - Tägliche und stündliche Energiedaten.
+Energie-Profil API — Read-Endpoints.
 
 GET /api/energie-profil/{anlage_id}/tage      — Tageszusammenfassungen
 GET /api/energie-profil/{anlage_id}/stunden   — Stundenwerte für einen Tag
 GET /api/energie-profil/{anlage_id}/wochenmuster — Ø-Tagesprofil je Wochentag
 GET /api/energie-profil/{anlage_id}/monat     — Monatsauswertung (Heatmap + KPIs + Peaks)
-GET /api/energie-profil/{anlage_id}/tagesprognose — Verbrauch+PV+Batterie-Prognose für einen Tag
 GET /api/energie-profil/{anlage_id}/debug-rohdaten — Rohdaten TagesEnergieProfil (7 Tage)
-DELETE /api/energie-profil/{anlage_id}/rohdaten — Löscht TagesEnergieProfil-Daten
+GET /api/energie-profil/{anlage_id}/verfuegbare-monate — Jahr/Monat-Kombis mit Daten
+GET /api/energie-profil/{anlage_id}/stats     — Datenbestand für Settings
+GET /api/energie-profil/{anlage_id}/reaggregate-tag/preview — Diff-Vorschau Reaggregate
+GET /api/energie-profil/{anlage_id}/kraftstoffpreis-status — Anzahl offener Zeilen
+GET /api/energie-profil/{anlage_id}/tagesprognose — Kombinierte Tagesprognose
 """
 
 import calendar
-import logging
 import re
 from collections import defaultdict
 from datetime import date, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
-from sqlalchemy import select, and_, delete, update
+from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.api.deps import get_db
@@ -27,251 +28,30 @@ from backend.models.anlage import Anlage
 from backend.models.investition import Investition, InvestitionTyp
 from backend.models.tages_energie_profil import TagesEnergieProfil, TagesZusammenfassung
 
-# seite je Investitionstyp
-_TYP_SEITE: dict[str, str] = {
-    "pv-module":       "quelle",
-    "balkonkraftwerk": "quelle",
-    "wechselrichter":  "quelle",
-    "speicher":        "bidirektional",
-    "e-auto":          "bidirektional",
-    "wallbox":         "senke",
-    "waermepumpe":     "senke",
-}
-
-# Virtuelle Serien (kein Investment dahinter)
-_VIRTUAL_SERIEN: dict[str, dict] = {
-    "haushalt":   {"label": "Haushalt",    "typ": "virtual", "kategorie": "haushalt",  "seite": "senke"},
-    "netz":       {"label": "Stromnetz",   "typ": "virtual", "kategorie": "netz",      "seite": "bidirektional"},
-    "pv_gesamt":  {"label": "PV Gesamt",   "typ": "virtual", "kategorie": "pv",        "seite": "quelle"},
-}
-
-# Optionale Suffixe bei WP-Serien (waermepumpe_{id}_heizen)
-_SUFFIX_LABELS = {"heizen": " Heizen", "warmwasser": " Warmwasser"}
-
-# Kategorien die bereits in dedizierten Spalten landen (kein Extra-Tracking nötig)
-_DEDIZIERTE_KATEGORIEN = {"pv", "batterie", "netz", "haushalt", "waermepumpe", "wallbox", "eauto"}
-
-
-def _key_to_serie_info(
-    key: str, inv_map: dict[int, "Investition"]
-) -> Optional[dict]:
-    """Löst einen Komponenten-Key zu Label + Typ auf."""
-    if key in _VIRTUAL_SERIEN:
-        return {"key": key, **_VIRTUAL_SERIEN[key]}
-
-    m = re.match(r'^([a-z]+)_(\d+)(?:_([a-z]+))?$', key)
-    if not m:
-        return None
-
-    inv_id = int(m.group(2))
-    suffix = m.group(3)
-    inv = inv_map.get(inv_id)
-    if not inv:
-        return None
-
-    label = inv.bezeichnung
-    if suffix and suffix in _SUFFIX_LABELS:
-        label += _SUFFIX_LABELS[suffix]
-
-    # seite bestimmen
-    seite = _TYP_SEITE.get(inv.typ, "senke")
-    if inv.typ == "sonstiges" and isinstance(inv.parameter, dict):
-        kat = inv.parameter.get("kategorie", "verbraucher")
-        if kat == "erzeuger":
-            seite = "quelle"
-        elif kat == "speicher":
-            seite = "bidirektional"
-
-    return {
-        "key": key,
-        "label": label,
-        "typ": inv.typ,
-        "kategorie": m.group(1),
-        "seite": seite,
-    }
-
-logger = logging.getLogger(__name__)
+from ._shared import (
+    HeatmapZelle,
+    KategorieSumme,
+    KomponentenEintrag,
+    MonatsAuswertungResponse,
+    PeakStunde,
+    ReaggregatePreviewBoundary,
+    ReaggregatePreviewCounterTagesdelta,
+    ReaggregatePreviewResponse,
+    ReaggregatePreviewSlot,
+    SerieInfo,
+    StundenAntwort,
+    StundenPrognose,
+    StundenWertResponse,
+    TagesPrognoseResponse,
+    TagesZusammenfassungResponse,
+    TagesprofilStunde,
+    WochenmusterPunkt,
+    _key_to_serie_info,
+    logger,
+)
 
 router = APIRouter()
 
-
-# ── Response Models ──────────────────────────────────────────────────────────
-
-class SerieInfo(BaseModel):
-    """Metadaten einer Komponenten-Serie (für Label-Auflösung im Frontend)."""
-    key: str
-    label: str
-    typ: str        # z.B. "sonstiges", "pv-module", "virtual"
-    kategorie: str  # z.B. "sonstige", "pv", "netz"
-    seite: str      # "quelle" | "senke" | "bidirektional"
-
-
-class StundenWertResponse(BaseModel):
-    """Stündlicher Energiewert eines Tages."""
-    stunde: int
-    pv_kw: Optional[float] = None
-    verbrauch_kw: Optional[float] = None
-    einspeisung_kw: Optional[float] = None
-    netzbezug_kw: Optional[float] = None
-    batterie_kw: Optional[float] = None
-    waermepumpe_kw: Optional[float] = None
-    wallbox_kw: Optional[float] = None
-    ueberschuss_kw: Optional[float] = None
-    defizit_kw: Optional[float] = None
-    temperatur_c: Optional[float] = None
-    globalstrahlung_wm2: Optional[float] = None
-    soc_prozent: Optional[float] = None
-    komponenten: Optional[dict] = None  # Rohwerte aller Serien (key → kW)
-    # WP-Kompressor-Starts in dieser Stunde, summiert über alle WPs (Issue #136).
-    # Pro-Investitions-Aufschlüsselung lebt auf Tagesebene in TagesZusammenfassung.komponenten_starts.
-    wp_starts_anzahl: Optional[int] = None
-
-
-class StundenAntwort(BaseModel):
-    """Tagesdetail-Antwort: Stundenwerte + aufgelöste Serie-Labels."""
-    stunden: list[StundenWertResponse]
-    serien: list[SerieInfo]  # alle in komponenten vorkommenden Serien mit Label
-
-
-class WochenmusterPunkt(BaseModel):
-    """Durchschnittlicher Stundenwert pro Wochentag."""
-    wochentag: int      # 0=Mo, 1=Di, …, 6=So
-    stunde: int         # 0–23
-    pv_kw: Optional[float] = None
-    verbrauch_kw: Optional[float] = None
-    netzbezug_kw: Optional[float] = None
-    einspeisung_kw: Optional[float] = None
-    batterie_kw: Optional[float] = None
-    anzahl_tage: int = 0
-
-
-class HeatmapZelle(BaseModel):
-    """Eine Zelle der Monats-Heatmap (Tag × Stunde)."""
-    tag: int          # 1..31
-    stunde: int       # 0..23
-    pv_kw: Optional[float] = None
-    verbrauch_kw: Optional[float] = None
-    netzbezug_kw: Optional[float] = None
-    einspeisung_kw: Optional[float] = None
-    ueberschuss_kw: Optional[float] = None  # pv − verbrauch
-
-
-class PeakStunde(BaseModel):
-    """Eine einzelne Peak-Stunde im Monat."""
-    datum: date
-    stunde: int
-    wert_kw: float
-
-
-class TagesprofilStunde(BaseModel):
-    """Ein Stundenpunkt im typischen Tagesprofil (Ø über Monat)."""
-    stunde: int
-    pv_kw: Optional[float] = None
-    verbrauch_kw: Optional[float] = None
-
-
-class KomponentenEintrag(BaseModel):
-    """Ein einzelnes Gerät mit Monatssumme."""
-    key: str
-    label: str
-    kategorie: str       # "pv", "waermepumpe", "wallbox", "eauto", "sonstiges", …
-    typ: str             # z.B. "pv-module", "balkonkraftwerk", "waermepumpe", "sonstiges"
-    seite: str           # "quelle" | "senke" | "bidirektional"
-    kwh: float           # positiv = Erzeugung, negativ = Verbrauch
-    anteil_prozent: Optional[float] = None  # vom Gesamt-PV bzw. Gesamt-Verbrauch
-
-
-class KategorieSumme(BaseModel):
-    """Monatssumme pro Kategorie (für KPI-Strip)."""
-    kategorie: str       # "pv_module", "bkw", "sonstige_erzeuger", "waermepumpe", "wallbox_eauto", "sonstige_verbraucher", "haushalt"
-    kwh: float
-    anteil_prozent: Optional[float] = None
-
-
-class MonatsAuswertungResponse(BaseModel):
-    """Monatsauswertung aus TagesEnergieProfil + TagesZusammenfassung."""
-    jahr: int
-    monat: int
-    tage_im_monat: int
-    tage_mit_daten: int
-
-    # Energie-Summen (kWh)
-    pv_kwh: float
-    verbrauch_kwh: float
-    einspeisung_kwh: float
-    netzbezug_kwh: float
-    ueberschuss_kwh: float
-    defizit_kwh: float
-
-    # Kennzahlen
-    autarkie_prozent: Optional[float] = None
-    eigenverbrauch_prozent: Optional[float] = None
-    performance_ratio_avg: Optional[float] = None
-    batterie_vollzyklen_summe: Optional[float] = None
-
-    # Erweiterte Analyse-KPIs
-    grundbedarf_kw: Optional[float] = None          # Ø Verbrauch Nachtstunden 0–5 Uhr
-    batterie_ladung_kwh: Optional[float] = None      # Σ Energie in die Batterie
-    batterie_entladung_kwh: Optional[float] = None   # Σ Energie aus der Batterie
-    batterie_wirkungsgrad: Optional[float] = None    # Entladung / Ladung
-    direkt_eigenverbrauch_kwh: Optional[float] = None  # Σ min(pv, verbrauch) je Stunde
-    pv_tag_best_kwh: Optional[float] = None
-    pv_tag_schnitt_kwh: Optional[float] = None
-    pv_tag_schlecht_kwh: Optional[float] = None
-
-    # Typisches Tagesprofil (24 Punkte, Ø über Monat)
-    typisches_tagesprofil: list[TagesprofilStunde] = []
-
-    # Per-Komponente Aggregation
-    kategorien: list[KategorieSumme] = []
-    komponenten: list[KomponentenEintrag] = []
-
-    # Peaks (Top-N Stunden)
-    peak_netzbezug: list[PeakStunde] = []
-    peak_einspeisung: list[PeakStunde] = []
-    peak_pv: Optional[PeakStunde] = None
-
-    # Heatmap-Matrix
-    heatmap: list[HeatmapZelle] = []
-
-    # Börsenpreis / Negativpreis (§51 EEG)
-    boersenpreis_avg_cent: Optional[float] = None
-    negative_preis_stunden: Optional[int] = None
-    einspeisung_neg_preis_kwh: Optional[float] = None
-
-    # Datenqualität (Issue #135): Anteil der Stunden ohne gemappten Zähler
-    # Ermöglicht dem Frontend, Warnhinweise zu Datenlücken anzuzeigen.
-    stunden_fehlend_pv: int = 0
-    stunden_fehlend_verbrauch: int = 0
-
-
-class TagesZusammenfassungResponse(BaseModel):
-    """Tageszusammenfassung mit Per-Komponenten-kWh."""
-    datum: date
-    ueberschuss_kwh: Optional[float] = None
-    defizit_kwh: Optional[float] = None
-    peak_pv_kw: Optional[float] = None
-    peak_netzbezug_kw: Optional[float] = None
-    peak_einspeisung_kw: Optional[float] = None
-    batterie_vollzyklen: Optional[float] = None
-    temperatur_min_c: Optional[float] = None
-    temperatur_max_c: Optional[float] = None
-    strahlung_summe_wh_m2: Optional[float] = None
-    performance_ratio: Optional[float] = None
-    stunden_verfuegbar: int = 0
-    datenquelle: Optional[str] = None
-    komponenten_kwh: Optional[dict] = None
-    # Per-Komponenten Counter-Werte pro Tag (z.B. WP-Kompressor-Starts, Issue #136)
-    # Form: {"wp_starts_anzahl": {"<inv_id>": <int>}}
-    komponenten_starts: Optional[dict] = None
-    # Börsenpreis-Aggregation (§51 EEG)
-    boersenpreis_avg_cent: Optional[float] = None
-    boersenpreis_min_cent: Optional[float] = None
-    negative_preis_stunden: Optional[int] = None
-    einspeisung_neg_preis_kwh: Optional[float] = None
-
-
-# ── Endpoints ────────────────────────────────────────────────────────────────
 
 @router.get("/{anlage_id}/tage", response_model=list[TagesZusammenfassungResponse])
 async def get_tages_zusammenfassungen(
@@ -825,7 +605,7 @@ async def get_monatsauswertung(
     )
 
 
-# ── Debug + Wartungs-Endpoints ───────────────────────────────────────────────
+# ── Debug + Diagnose-Endpoints ───────────────────────────────────────────────
 
 @router.get("/{anlage_id}/debug-rohdaten")
 async def get_debug_rohdaten(
@@ -842,7 +622,6 @@ async def get_debug_rohdaten(
     if not result.scalar_one_or_none():
         raise HTTPException(status_code=404, detail="Anlage nicht gefunden")
 
-    from datetime import timedelta
     start = date.today() - timedelta(days=tage)
 
     rows_result = await db.execute(
@@ -877,40 +656,6 @@ async def get_debug_rohdaten(
             }
             for r in rows
         ],
-    }
-
-
-@router.delete("/{anlage_id}/rohdaten")
-async def delete_rohdaten(
-    anlage_id: int,
-    db: AsyncSession = Depends(get_db),
-):
-    """
-    Löscht alle TagesEnergieProfil- und TagesZusammenfassung-Daten einer Anlage.
-
-    Der Scheduler schreibt ab dem nächsten Lauf (alle 15 Min) neue, korrekte Daten.
-    Monatsdaten bleiben erhalten.
-    """
-    result = await db.execute(select(Anlage).where(Anlage.id == anlage_id))
-    anlage = result.scalar_one_or_none()
-    if not anlage:
-        raise HTTPException(status_code=404, detail="Anlage nicht gefunden")
-
-    del_stunden = await db.execute(
-        delete(TagesEnergieProfil).where(TagesEnergieProfil.anlage_id == anlage_id)
-    )
-    del_tage = await db.execute(
-        delete(TagesZusammenfassung).where(TagesZusammenfassung.anlage_id == anlage_id)
-    )
-    # Flag zurücksetzen, damit der nächste Monatsabschluss den Auto-Vollbackfill
-    # aus HA Statistics erneut anstößt
-    anlage.vollbackfill_durchgefuehrt = False
-    await db.commit()
-
-    return {
-        "geloescht_stundenwerte": del_stunden.rowcount,
-        "geloescht_tagessummen": del_tage.rowcount,
-        "hinweis": "Scheduler schreibt ab dem nächsten Lauf (max. 15 Min) neue Daten. Monatsdaten bleiben erhalten.",
     }
 
 
@@ -1005,45 +750,6 @@ async def get_anlage_stats(
     }
 
 
-@router.post("/reaggregate-heute")
-async def reaggregate_heute():
-    """Triggert sofortige Neu-Aggregation des heutigen Tages für alle Anlagen."""
-    from backend.services.energie_profil_service import aggregate_today_all
-    results = await aggregate_today_all()
-    return {"status": "ok", "anlagen": results}
-
-
-class ReaggregatePreviewBoundary(BaseModel):
-    sensor_key: str
-    kategorie: Optional[str] = None
-    zeitpunkt: str
-    alt_kwh: Optional[float] = None
-    neu_kwh: Optional[float] = None
-
-
-class ReaggregatePreviewSlot(BaseModel):
-    stunde: int
-    kategorie: str
-    alt_kwh: Optional[float] = None
-    neu_kwh: Optional[float] = None
-
-
-class ReaggregatePreviewCounterTagesdelta(BaseModel):
-    feld: str
-    alt: Optional[int] = None
-    neu: Optional[int] = None
-
-
-class ReaggregatePreviewResponse(BaseModel):
-    datum: str
-    boundaries: list[ReaggregatePreviewBoundary]
-    slot_deltas: list[ReaggregatePreviewSlot]
-    tagesumme_alt: dict[str, Optional[float]]
-    tagesumme_neu: dict[str, Optional[float]]
-    ha_verfuegbar: bool
-    counter_tagesdelta: list[ReaggregatePreviewCounterTagesdelta]
-
-
 @router.get("/{anlage_id}/reaggregate-tag/preview", response_model=ReaggregatePreviewResponse)
 async def reaggregate_tag_preview(
     anlage_id: int,
@@ -1118,190 +824,6 @@ async def reaggregate_tag_preview(
     )
 
 
-@router.post("/{anlage_id}/reaggregate-tag")
-async def reaggregate_tag(
-    anlage_id: int,
-    datum: date = Query(..., description="Tag, der neu aggregiert werden soll"),
-    mit_resnap: bool = Query(
-        True,
-        description="Vor dem Aggregat die SensorSnapshots des Tages frisch aus HA-Statistics ziehen "
-                    "(repariert Counter-Spikes, z. B. nach Update-Restarts). Default an.",
-    ),
-    db: AsyncSession = Depends(get_db),
-):
-    """
-    Aggregiert einen einzelnen Tag für eine Anlage neu (Self-Service nach
-    Snapshot-Spike o. ä.).
-
-    Mit `mit_resnap=true` (Default) werden zuerst die SensorSnapshots für den
-    Tag frisch aus HA Long-Term Statistics geschrieben und danach die Aggregate
-    daraus neu gebaut. Ohne Resnap (`mit_resnap=false`) wird nur das Aggregat
-    aus den vorhandenen Snapshots neu gerechnet — sinnvoll, wenn die Snapshots
-    bekannt-gut sind und nur die Tagesprofil-/Zusammenfassungs-Schicht neu soll.
-
-    `aggregate_day` macht intern delete + insert für Tagesprofil und
-    Zusammenfassung — der Aufruf ist also idempotent und sicher mehrfach
-    ausführbar.
-    """
-    from backend.services.energie_profil_service import aggregate_day
-
-    result = await db.execute(select(Anlage).where(Anlage.id == anlage_id))
-    anlage = result.scalar_one_or_none()
-    if not anlage:
-        raise HTTPException(status_code=404, detail=f"Anlage {anlage_id} nicht gefunden")
-
-    if mit_resnap:
-        try:
-            from backend.services.sensor_snapshot_service import resnap_anlage_range
-            from datetime import datetime as _dt, timedelta as _td
-            # Range deckt zwei Boundaries ab, die der Read-Pfad braucht:
-            #   - Vortag 23:00: Backward-Slot 0 = snap(Tag 00:00) − snap(Vortag 23:00)
-            #     für kWh- und (seit Etappe 3c P2) Counter-Pfad. Ohne den Boundary
-            #     bleibt ein korrupter Snapshot persistent und erzeugt dauerhaft
-            #     einen Stunde-0-Spike (Befund Rainer 1.5.2026).
-            #   - Folgetag 00:00: HA-konformes Tagesgesamt der Counter
-            #     = snap(Folgetag 00:00) − snap(Tag 00:00). Ohne den Boundary
-            #     stehen alte Werte aus prä-Sensor-Wechsel-Zeiten dauerhaft drin
-            #     und falten sich beim Recycle als Lifetime-Sprung in die
-            #     Tagessumme (Befund MartyBr 7.5.2026, Counter-Migration
-            #     Vicare→Optisplitter).
-            # Slot-Konvention seit Etappe 3c P2 (KONZEPT-ENERGIEPROFIL-3C.md):
-            # Hourly-Konsumenten gehen einheitlich über
-            # `BoundaryRange.for_hourly_slots(datum)` — Backward (#144).
-            # Tages-Counter nutzen Boundary-Diff über das HA-Tagesfenster.
-            tag_start = _dt.combine(datum, _dt.min.time())
-            von_dt = tag_start - _td(hours=1)               # Vortag 23:00
-            bis_dt = tag_start + _td(days=1, hours=1)       # Folgetag 01:00 → schließt Folgetag 00:00 ein
-            resnap_stats = await resnap_anlage_range(
-                db, anlage, von=von_dt, bis=bis_dt, include_5min=True,
-            )
-            logger.info(
-                f"Reaggregate Anlage {anlage_id} {datum}: Resnap "
-                f"{resnap_stats['hourly']} hourly + {resnap_stats['5min']} 5-Min Slots"
-            )
-        except Exception as e:
-            logger.warning(
-                f"Reaggregate Anlage {anlage_id} {datum}: Resnap fehlgeschlagen "
-                f"(Aggregat läuft trotzdem): {type(e).__name__}: {e}"
-            )
-
-    try:
-        zusammenfassung = await aggregate_day(anlage, datum, db, datenquelle="manuell")
-    except Exception as e:
-        logger.error(f"Reaggregate Anlage {anlage_id} {datum} FEHLER: {type(e).__name__}: {e}")
-        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
-
-    if zusammenfassung is None:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Aggregation für {datum} nicht möglich — keine Live-/MQTT-Daten gefunden.",
-        )
-
-    # Zählt Stunden mit echten Messwerten (nicht nur geschriebene None-Zeilen).
-    # `stunden_verfuegbar` aus der Zusammenfassung zählt alle 24 Slots auch
-    # wenn pv_kw=einspeisung_kw=netzbezug_kw=NULL — das wäre für die
-    # Erfolgsmeldung im Frontend irreführend.
-    from sqlalchemy import or_, func
-    messwerte_result = await db.execute(
-        select(func.count()).select_from(TagesEnergieProfil).where(
-            and_(
-                TagesEnergieProfil.anlage_id == anlage_id,
-                TagesEnergieProfil.datum == datum,
-                or_(
-                    TagesEnergieProfil.pv_kw.isnot(None),
-                    TagesEnergieProfil.einspeisung_kw.isnot(None),
-                    TagesEnergieProfil.netzbezug_kw.isnot(None),
-                    TagesEnergieProfil.verbrauch_kw.isnot(None),
-                ),
-            )
-        )
-    )
-    stunden_mit_messdaten = messwerte_result.scalar_one()
-
-    await db.commit()
-    return {
-        "status": "ok",
-        "datum": datum.isoformat(),
-        "stunden_verfuegbar": zusammenfassung.stunden_verfuegbar,
-        "stunden_mit_messdaten": stunden_mit_messdaten,
-    }
-
-
-@router.post("/{anlage_id}/vollbackfill")
-async def vollbackfill(
-    anlage_id: int,
-    von: Optional[date] = Query(None, description="Startdatum (Standard: frühestes Datum in HA Statistics)"),
-    bis: Optional[date] = Query(None, description="Enddatum (Standard: gestern)"),
-    overwrite: Optional[bool] = Query(
-        None,
-        description="DEPRECATED (#190): wird ignoriert. Vollbackfill ist immer additiv.",
-        deprecated=True,
-    ),
-    db: AsyncSession = Depends(get_db),
-):
-    """
-    Füllt fehlende Tage im Energieprofil aus HA Long-Term Statistics nach.
-
-    **Immer additiv** (#190): bestehende Tage bleiben unverändert.
-    Für gezielte Reparatur einzelner Tage: /reaggregate-tag mit Vorschau.
-
-    Returns:
-        verarbeitet: Anzahl Tage im Zeitraum
-        geschrieben: Davon neu geschriebene Tage
-        uebersprungen_keine_daten: Tage ohne HA-Statistics-Werte
-        uebersprungen_existiert: Tage mit bereits vorhandenem Profil
-    """
-    from backend.services.energie_profil_service import resolve_and_backfill_from_statistics
-
-    if overwrite:
-        logger.info(
-            f"Vollbackfill Anlage {anlage_id}: overwrite=true wurde gesendet, wird ignoriert "
-            "(#190: nur additiv, bestehende Tage bleiben)"
-        )
-
-    result = await db.execute(select(Anlage).where(Anlage.id == anlage_id))
-    anlage = result.scalar_one_or_none()
-    if not anlage:
-        raise HTTPException(status_code=404, detail=f"Anlage {anlage_id} nicht gefunden")
-
-    try:
-        backfill = await resolve_and_backfill_from_statistics(anlage, db, von=von, bis=bis)
-    except Exception as e:
-        import traceback
-        logger.error(f"Vollbackfill Anlage {anlage_id} FEHLER: {type(e).__name__}: {e}\n{traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
-
-    if backfill.missing_eids:
-        logger.warning(
-            f"Anlage {anlage_id}: {len(backfill.missing_eids)} Sensor(en) nicht in HA "
-            f"statistics_meta gefunden, werden ignoriert: {backfill.missing_eids}"
-        )
-
-    if backfill.status == "ha_unavailable":
-        raise HTTPException(status_code=503, detail=backfill.detail)
-    if backfill.status in ("no_sensors", "no_valid_sensors", "earliest_unknown", "empty_range"):
-        raise HTTPException(status_code=400, detail=backfill.detail)
-
-    # Flag setzen, damit der Auto-Vollbackfill im _post_save_hintergrund nicht erneut läuft
-    anlage.vollbackfill_durchgefuehrt = True
-    await db.commit()
-
-    logger.info(
-        f"Vollbackfill Anlage {anlage_id}: {backfill.geschrieben}/{backfill.verarbeitet} Tage "
-        f"von {backfill.von} bis {backfill.bis} "
-        f"(skip ohne_daten={backfill.uebersprungen_keine_daten}, "
-        f"skip existiert={backfill.uebersprungen_existiert})"
-    )
-    return {
-        "verarbeitet": backfill.verarbeitet,
-        "geschrieben": backfill.geschrieben,
-        "uebersprungen_keine_daten": backfill.uebersprungen_keine_daten,
-        "uebersprungen_existiert": backfill.uebersprungen_existiert,
-        "von": backfill.von.isoformat(),
-        "bis": backfill.bis.isoformat(),
-    }
-
-
 @router.get("/{anlage_id}/kraftstoffpreis-status")
 async def kraftstoffpreis_status(
     anlage_id: int,
@@ -1337,141 +859,7 @@ async def kraftstoffpreis_status(
     }
 
 
-@router.post("/{anlage_id}/kraftstoffpreis-backfill/tages")
-async def kraftstoffpreis_backfill_tages(
-    anlage_id: int,
-    db: AsyncSession = Depends(get_db),
-):
-    """
-    Befüllt TagesZusammenfassung.kraftstoffpreis_euro aus EU Oil Bulletin
-    (Euro-Super 95, inkl. Steuern) für alle Tage ohne Preis.
-    """
-    result = await db.execute(select(Anlage).where(Anlage.id == anlage_id))
-    anlage = result.scalar_one_or_none()
-    if not anlage:
-        raise HTTPException(status_code=404, detail=f"Anlage {anlage_id} nicht gefunden")
-
-    from backend.services.kraftstoff_preis_service import backfill_kraftstoffpreise
-    land = anlage.standort_land or "DE"
-    info = await backfill_kraftstoffpreise(anlage_id, land, db)
-    return {
-        "aktualisiert": info.get("aktualisiert", 0),
-        "land": info.get("land", land),
-        "hinweis": info.get("hinweis"),
-        "fehler": info.get("fehler"),
-    }
-
-
-@router.post("/{anlage_id}/kraftstoffpreis-backfill/monats")
-async def kraftstoffpreis_backfill_monats(
-    anlage_id: int,
-    db: AsyncSession = Depends(get_db),
-):
-    """
-    Befüllt Monatsdaten.kraftstoffpreis_euro aus EU Oil Bulletin
-    (Monatsdurchschnitt aus Wochenpreisen) für alle Monate ohne Preis.
-    """
-    result = await db.execute(select(Anlage).where(Anlage.id == anlage_id))
-    anlage = result.scalar_one_or_none()
-    if not anlage:
-        raise HTTPException(status_code=404, detail=f"Anlage {anlage_id} nicht gefunden")
-
-    from backend.services.kraftstoff_preis_service import backfill_monatsdaten_kraftstoffpreise
-    land = anlage.standort_land or "DE"
-    info = await backfill_monatsdaten_kraftstoffpreise(anlage_id, land, db)
-    return {
-        "aktualisiert": info.get("aktualisiert", 0),
-        "land": info.get("land", land),
-        "hinweis": info.get("hinweis"),
-        "fehler": info.get("fehler"),
-    }
-
-
-@router.post("/{anlage_id}/kraftstoffpreis-backfill")
-async def kraftstoffpreis_backfill(
-    anlage_id: int,
-    db: AsyncSession = Depends(get_db),
-):
-    """
-    Alt-Endpoint (Rückwärtskompatibilität): befüllt Tages- und Monats-Kraftstoffpreise
-    in einem Aufruf. Neue UIs sollten die split-Endpoints ``/tages`` und ``/monats`` nutzen.
-    """
-    result = await db.execute(select(Anlage).where(Anlage.id == anlage_id))
-    anlage = result.scalar_one_or_none()
-    if not anlage:
-        raise HTTPException(status_code=404, detail=f"Anlage {anlage_id} nicht gefunden")
-
-    from backend.services.kraftstoff_preis_service import (
-        backfill_kraftstoffpreise, backfill_monatsdaten_kraftstoffpreise
-    )
-    land = anlage.standort_land or "DE"
-    tages_info = await backfill_kraftstoffpreise(anlage_id, land, db)
-    monats_info = await backfill_monatsdaten_kraftstoffpreise(anlage_id, land, db)
-    return {
-        "tages_aktualisiert": tages_info.get("aktualisiert", 0),
-        "monats_aktualisiert": monats_info.get("aktualisiert", 0),
-        "land": tages_info.get("land", land),
-    }
-
-
-@router.delete("/rohdaten")
-async def delete_alle_rohdaten(
-    db: AsyncSession = Depends(get_db),
-):
-    """
-    Löscht alle TagesEnergieProfil- und TagesZusammenfassung-Daten aller Anlagen.
-
-    Wird verwendet wenn Energieprofil-Daten durch falsch gemappte Sensoren
-    korrumpiert wurden. Monatsdaten bleiben erhalten.
-    Der Scheduler berechnet alles neu (max. 15 Min).
-    """
-    del_stunden = await db.execute(delete(TagesEnergieProfil))
-    del_tage = await db.execute(delete(TagesZusammenfassung))
-    # Flag bei ALLEN Anlagen zurücksetzen, damit der nächste Monatsabschluss
-    # den Auto-Vollbackfill aus HA Statistics erneut anstößt
-    await db.execute(update(Anlage).values(vollbackfill_durchgefuehrt=False))
-    await db.commit()
-
-    return {
-        "geloescht_stundenwerte": del_stunden.rowcount,
-        "geloescht_tagessummen": del_tage.rowcount,
-        "hinweis": "Scheduler schreibt ab dem nächsten Lauf (max. 15 Min) neue Daten. Monatsdaten bleiben erhalten.",
-    }
-
-
 # ── Tagesprognose (Etappe 3b) ──────────────────────────────────────────────
-
-
-class StundenPrognose(BaseModel):
-    """Prognose für eine Stunde: PV, Verbrauch, Netto-Bilanz, Batterie-SoC."""
-    stunde: int
-    pv_kw: float
-    verbrauch_kw: float
-    netto_kw: float           # pv - verbrauch (positiv=Überschuss)
-    netzbezug_kw: float       # max(0, Bedarf nach Batterie-Entladung)
-    einspeisung_kw: float     # max(0, Überschuss nach Batterie-Ladung)
-    soc_prozent: Optional[float] = None  # Simulierter Batterie-SoC
-
-
-class TagesPrognoseResponse(BaseModel):
-    """Kombinierte Verbrauchs- + PV- + Batterie-Prognose für einen Tag."""
-    datum: str
-    stunden: list[StundenPrognose]
-    # Zusammenfassung
-    pv_summe_kwh: float
-    verbrauch_summe_kwh: float
-    netzbezug_summe_kwh: float
-    einspeisung_summe_kwh: float
-    eigenverbrauch_kwh: float
-    autarkie_prozent: float
-    # Speicher (optional)
-    speicher_kapazitaet_kwh: Optional[float] = None
-    speicher_voll_um: Optional[str] = None
-    speicher_leer_um: Optional[str] = None
-    # Meta
-    verbrauch_basis: str        # "gleicher_wochentag", "tagestyp", "alle"
-    pv_quelle: str              # "openmeteo" oder "solcast"
-    daten_tage: int
 
 
 @router.get("/{anlage_id}/tagesprognose", response_model=TagesPrognoseResponse)

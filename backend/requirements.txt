@@ -50,8 +50,9 @@ weasyprint>=62.0
 jinja2>=3.1.0
 matplotlib>=3.8.0
 
-# Development (optional)
-# pytest>=7.4.0
-# pytest-asyncio>=0.23.0
+# Development (optional) — siehe requirements-dev.txt
+# Test-Runner (pytest + pytest-asyncio) leben in requirements-dev.txt, damit
+# der HA-Add-on-Container schlank bleibt. `scripts/smoke.sh` installiert sie
+# bei Bedarf in das Dev-venv.
 # black>=24.1.0
 # ruff>=0.1.0

@@ -26,8 +26,10 @@ const kategorieLabels: Record<string, string> = {
   monatsdaten_vollstaendigkeit: 'Monatsdaten – Vollständigkeit',
   monatsdaten_plausibilitaet: 'Monatsdaten – Plausibilität',
   energieprofil_abdeckung: 'Energieprofil – Zähler-Abdeckung',
+  energieprofil_plausibilitaet: 'Energieprofil – Plausibilität',
   mqtt_topic_abdeckung: 'MQTT – Topic-Abdeckung',
   sensor_mapping_lts: 'Sensor-Mapping – HA-Statistics',
+  provenance_conflict: 'Daten-Quellen – Konflikte',
 }
 
 const kategorieReihenfolge = [
@@ -37,8 +39,10 @@ const kategorieReihenfolge = [
   'monatsdaten_vollstaendigkeit',
   'monatsdaten_plausibilitaet',
   'energieprofil_abdeckung',
+  'energieprofil_plausibilitaet',
   'mqtt_topic_abdeckung',
   'sensor_mapping_lts',
+  'provenance_conflict',
 ]
 
 function severityIcon(schwere: string) {

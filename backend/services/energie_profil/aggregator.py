@@ -6,10 +6,9 @@ TagesEnergieProfil + 1 TagesZusammenfassung. Wird vom Scheduler täglich
 für den Vortag, vom Reaggregat-Endpoint manuell und vom Vollbackfill
 historisch aufgerufen.
 
-Helper bleiben in `backend.services.energie_profil_service` (`_tage_zurueck`,
+Helper liegen in `backend.services.energie_profil._helpers` (`_tage_zurueck`,
 `_get_wetter_ist`, `_get_soc_history`, `_get_strompreis_stunden`) und werden
-hier lazy importiert, weil das alte Modul gleichzeitig `aggregate_day`
-re-exportiert (zirkulärer Top-Level-Import vermieden).
+hier lazy importiert.
 """
 
 from __future__ import annotations
@@ -24,6 +23,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.models.anlage import Anlage
 from backend.models.investition import Investition
 from backend.models.tages_energie_profil import TagesEnergieProfil, TagesZusammenfassung
+from backend.services.energie_profil._provenance_helpers import (
+    seed_tep_provenance,
+    seed_tz_provenance,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -52,9 +55,7 @@ async def aggregate_day(
     Returns:
         TagesZusammenfassung oder None bei Fehler
     """
-    # Lazy imports — vermeiden zirkulären Top-Level-Import zu energie_profil_service,
-    # das diesen aggregator gleichzeitig re-exportiert.
-    from backend.services.energie_profil_service import (
+    from backend.services.energie_profil._helpers import (
         _get_soc_history,
         _get_strompreis_stunden,
         _get_wetter_ist,
@@ -63,6 +64,10 @@ async def aggregate_day(
     from backend.services.live_power_service import get_live_power_service
 
     service = get_live_power_service()
+    # Provenance-Writer codiert die Trigger-Quelle (Scheduler / Monatsabschluss /
+    # manuelles Reaggregate). Source bleibt einheitlich `auto:monatsabschluss`
+    # (Stufe 3) — siehe seed_tz_provenance / seed_tep_provenance.
+    auto_writer = f"energieprofil:{datenquelle}"
 
     # Sensor-Mapping prüfen
     sensor_mapping = anlage.sensor_mapping or {}
@@ -362,6 +367,7 @@ async def aggregate_day(
             wp_starts_anzahl=wp_starts_pro_stunde.get(h),
         )
         db.add(profil)
+        seed_tep_provenance(profil, writer=auto_writer)
         stunden_count += 1
 
     # ── Börsenpreis-Tagesaggregation ────────────────────────────────────
@@ -464,6 +470,7 @@ async def aggregate_day(
         setattr(zusammenfassung, field, val)
 
     db.add(zusammenfassung)
+    seed_tz_provenance(zusammenfassung, writer=auto_writer)
     await db.flush()
 
     logger.info(
