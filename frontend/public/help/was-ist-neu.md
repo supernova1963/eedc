@@ -1,6 +1,6 @@
 # Was ist neu
 
-> **Stand:** Mai 2026 (v3.27.1)
+> **Stand:** Mai 2026 (v3.27.2)
 > **Diese Seite** zeigt pro Version, was sich für dich als Anwender geändert hat — kürzer als der technische [CHANGELOG](https://github.com/supernova1963/eedc-homeassistant/blob/main/CHANGELOG.md), ausführlicher als die Schnellübersicht-Tabelle in der [Übersicht](BENUTZERHANDBUCH.md#was-ist-neu-seit-v316).
 >
 > **Kein Banner, kein Pop-up:** eedc zeigt diese Liste nicht ungefragt an. HA-App-Nutzer sehen den Changelog ohnehin schon im Add-on-Store, GitHub-Releases haben einen eigenen. Wer wissen will, was neu ist, schaut hier rein — Pull statt Push.
@@ -10,6 +10,22 @@
 ---
 
 ## v3.27.x — Reparatur-Werkbank und Daten-Schutz (Mai 2026)
+
+### Tester-Bugfix-Päckchen *(v3.27.2)*
+
+> 🪛 **Drei Anwender-gemeldete Bugs hintereinander erledigt.** Patch-Päckchen ohne neue Funktionen — repariert nur, was eine kaputte oder irreführende Anzeige produziert hat.
+
+#### Was sich für dich ändert
+
+- **Der „Daten exportieren"-Button funktioniert wieder.** Wer als Browser-Fehler „Failed to fetch" beim CSV-Export gesehen hat, war von einem stillen Backend-Crash betroffen: Sonderkosten oder sonstige Positionen, die irgendwann mal als Text (z. B. `"150,00"` mit Komma) statt als Zahl gespeichert wurden, haben den Export-Endpoint abrupt abbrechen lassen. Der Export verträgt jetzt sowohl klassische Zahlen als auch Komma-Schreibweise und fällt im Zweifel sicher auf 0 zurück, statt komplett zu kippen. *(Dank an rapahl für die scharfe Bug-Beschreibung mit Screenshot.)*
+- **„Eigene Dateien" — Import-Vorschau mit klarerer Fehlermeldung und ohne Falsch-Alarm.** Wer im Mapping-Wizard E-Auto- oder Wallbox-spezifische Slots manuell zugeordnet hat (die sonst automatisch erkannt werden), bekam bisher die unverständliche Meldung „Keine gültigen Monatsdaten mit diesem Mapping gefunden". Die Vorschau akzeptiert diese Doppel-Zuordnung jetzt und sagt dir transparent: „X Spalte(n) als Investitions-Daten gemappt — werden beim Import automatisch zugeordnet". Falls es doch ein echtes Format-Problem ist (Datums-Format wird nicht erkannt oder Punkt/Komma vertauscht), nennt die Meldung die konkrete Verdachtsursache statt nur „prüfe Jahr/Monat". *(Dank an NongJoWo für das ausführliche Issue.)*
+- **Monatsbericht → Finanzen: PV-Eigenverbrauch-Ersparnis ohne Doppelzählung der Wallbox-PV-Ladung.** Im T-Konto war der Posten „PV-Eigenverbrauch-Ersparnis" bisher zu hoch, weil die Wallbox-PV-Ladung sowohl dort als auch separat im Posten „Wallbox — PV-Ladung-Ersparnis" gerechnet wurde. Σ Haben war damit um diesen Betrag überhöht und das Monatsergebnis entsprechend zu optimistisch. Bei einer 150-kWh-Wallbox-PV-Ladung typische Korrektur ≈ 45 €/Monat nach unten. *(Dank an NongJoWo für den Hinweis mit Tooltip-Vergleich — ohne den wäre der Bug wahrscheinlich noch lange unter dem Radar geblieben.)*
+
+#### Was sich *nicht* ändert
+
+- **Keine Funktionen verändert.** Wer den Export nicht nutzt, kein Custom-Import macht und in den Monatsberichten keine Wallbox-PV-Ladung pflegt, merkt nichts vom Release.
+
+---
 
 ### UX-Sprint und Power-Sensor-Bug *(v3.27.1)*
 

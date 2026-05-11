@@ -673,10 +673,18 @@ export default function MonatsabschlussView() {
                   const fins = d.investitionen_financials ?? []
                   const hasPerInv = fins.length > 0
 
-                  // Welche Komponenten-Ersparnisse stecken in ev_ersparnis (BKW + Speicher)
+                  // Welche Komponenten-Ersparnisse stecken in ev_ersparnis (BKW, Speicher, Wallbox-PV-Ladung).
+                  // Backend rechnet ev_ersparnis = eigenverbrauch_kwh × netzbezug_preis, wobei eigenverbrauch
+                  // den Direktverbrauch (= PV − Einspeisung − Batterie-Ladung) inkl. Wallbox-PV-Ladung umfasst.
+                  // Werden BKW/Speicher/Wallbox-PV-Ladung separat im T-Konto ausgewiesen, muss ihr Anteil
+                  // hier abgezogen werden, sonst Doppelzählung im Σ Haben (Issue #223).
                   const evInErsparnis = hasPerInv
                     ? fins
-                        .filter(inv => inv.typ === 'balkonkraftwerk' || inv.typ === 'speicher')
+                        .filter(inv =>
+                          inv.typ === 'balkonkraftwerk'
+                          || inv.typ === 'speicher'
+                          || (inv.typ === 'wallbox' && inv.ersparnis_label === 'PV-Ladung-Ersparnis')
+                        )
                         .reduce((s, inv) => s + (inv.ersparnis_euro ?? 0), 0)
                     : 0
                   const pvEvResidual = Math.max(0, (d.ev_ersparnis_euro ?? 0) - evInErsparnis)
