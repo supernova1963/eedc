@@ -178,11 +178,21 @@ export default function KomponentenTab({ zeitraum, benchmark, benchmarkLoading, 
         </span>
       </div>
 
+      {/* Deep-Dives folgen INVESTITION_TYP_ORDER:
+          Speicher → BKW → WP → Wallbox → E-Auto
+          (#215 detLAN: BKW gehört nach Speicher, nicht ans Ende). */}
       {/* Speicher Deep-Dive */}
       {verfuegbareKomponenten.includes('speicher') && (
         <SpeicherDeepDive
           benchmark={benchmark}
           communityStats={speicherByClass}
+        />
+      )}
+
+      {/* Balkonkraftwerk Deep-Dive */}
+      {verfuegbareKomponenten.includes('bkw') && (
+        <BKWDeepDive
+          benchmark={benchmark}
         />
       )}
 
@@ -206,13 +216,6 @@ export default function KomponentenTab({ zeitraum, benchmark, benchmarkLoading, 
         <EAutoDeepDive
           benchmark={benchmark}
           communityStats={eautoByUsage}
-        />
-      )}
-
-      {/* Balkonkraftwerk Deep-Dive */}
-      {verfuegbareKomponenten.includes('bkw') && (
-        <BKWDeepDive
-          benchmark={benchmark}
         />
       )}
     </div>

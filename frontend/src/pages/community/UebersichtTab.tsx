@@ -646,7 +646,9 @@ export default function UebersichtTab({ benchmark, benchmarkLoading: loading, be
         </Card>
       )}
 
-      {/* Komponenten-Benchmarks */}
+      {/* Komponenten-Benchmarks — Reihenfolge folgt INVESTITION_TYP_ORDER:
+          Speicher → BKW → WP → Wallbox → E-Auto (#215 detLAN: BKW gehört nach
+          Speicher, Wallbox vor E-Auto). */}
       {benchmark.benchmark_erweitert && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           {/* Speicher */}
@@ -671,6 +673,33 @@ export default function UebersichtTab({ benchmark, benchmarkLoading: loading, be
                 kpi={benchmark.benchmark_erweitert.speicher.netz_anteil}
                 einheit="%"
                 invertColors
+              />
+            </KomponentenCard>
+          )}
+
+          {/* Balkonkraftwerk */}
+          {benchmark.benchmark_erweitert.balkonkraftwerk && benchmark.anlage.hat_balkonkraftwerk && (
+            <KomponentenCard
+              title="Balkonkraftwerk"
+              icon={<Sun className="h-6 w-6 text-amber-500" />}
+              kapazitaet={benchmark.anlage.bkw_wp ? `${benchmark.anlage.bkw_wp} Wp` : undefined}
+            >
+              <KPIRow
+                label="Spez. Ertrag"
+                kpi={benchmark.benchmark_erweitert.balkonkraftwerk.spez_ertrag}
+                einheit="kWh/kWp"
+              />
+              <KPIRow
+                label="Erzeugung"
+                kpi={benchmark.benchmark_erweitert.balkonkraftwerk.erzeugung}
+                einheit="kWh"
+                hideComparison
+              />
+              <KPIRow
+                label="Eigenverbrauchsquote"
+                kpi={benchmark.benchmark_erweitert.balkonkraftwerk.eigenverbrauch}
+                einheit="%"
+                hideComparison
               />
             </KomponentenCard>
           )}
@@ -712,6 +741,33 @@ export default function UebersichtTab({ benchmark, benchmarkLoading: loading, be
             )
           })()}
 
+          {/* Wallbox */}
+          {benchmark.benchmark_erweitert.wallbox && benchmark.anlage.hat_wallbox && (
+            <KomponentenCard
+              title="Wallbox"
+              icon={<Plug className="h-6 w-6 text-cyan-500" />}
+              kapazitaet={benchmark.anlage.wallbox_kw ? `${benchmark.anlage.wallbox_kw} kW` : undefined}
+            >
+              <KPIRow
+                label="PV-Anteil Ladung"
+                kpi={benchmark.benchmark_erweitert.wallbox.pv_anteil}
+                einheit="%"
+              />
+              <KPIRow
+                label="Ladung gesamt"
+                kpi={benchmark.benchmark_erweitert.wallbox.ladung}
+                einheit="kWh"
+                hideComparison
+              />
+              <KPIRow
+                label="Ladevorgänge"
+                kpi={benchmark.benchmark_erweitert.wallbox.ladevorgaenge}
+                einheit=""
+                hideComparison
+              />
+            </KomponentenCard>
+          )}
+
           {/* E-Auto */}
           {benchmark.benchmark_erweitert.eauto && benchmark.anlage.hat_eauto && (
             <KomponentenCard
@@ -743,60 +799,6 @@ export default function UebersichtTab({ benchmark, benchmarkLoading: loading, be
                   hideComparison
                 />
               )}
-            </KomponentenCard>
-          )}
-
-          {/* Wallbox */}
-          {benchmark.benchmark_erweitert.wallbox && benchmark.anlage.hat_wallbox && (
-            <KomponentenCard
-              title="Wallbox"
-              icon={<Plug className="h-6 w-6 text-cyan-500" />}
-              kapazitaet={benchmark.anlage.wallbox_kw ? `${benchmark.anlage.wallbox_kw} kW` : undefined}
-            >
-              <KPIRow
-                label="PV-Anteil Ladung"
-                kpi={benchmark.benchmark_erweitert.wallbox.pv_anteil}
-                einheit="%"
-              />
-              <KPIRow
-                label="Ladung gesamt"
-                kpi={benchmark.benchmark_erweitert.wallbox.ladung}
-                einheit="kWh"
-                hideComparison
-              />
-              <KPIRow
-                label="Ladevorgänge"
-                kpi={benchmark.benchmark_erweitert.wallbox.ladevorgaenge}
-                einheit=""
-                hideComparison
-              />
-            </KomponentenCard>
-          )}
-
-          {/* Balkonkraftwerk */}
-          {benchmark.benchmark_erweitert.balkonkraftwerk && benchmark.anlage.hat_balkonkraftwerk && (
-            <KomponentenCard
-              title="Balkonkraftwerk"
-              icon={<Sun className="h-6 w-6 text-amber-500" />}
-              kapazitaet={benchmark.anlage.bkw_wp ? `${benchmark.anlage.bkw_wp} Wp` : undefined}
-            >
-              <KPIRow
-                label="Spez. Ertrag"
-                kpi={benchmark.benchmark_erweitert.balkonkraftwerk.spez_ertrag}
-                einheit="kWh/kWp"
-              />
-              <KPIRow
-                label="Erzeugung"
-                kpi={benchmark.benchmark_erweitert.balkonkraftwerk.erzeugung}
-                einheit="kWh"
-                hideComparison
-              />
-              <KPIRow
-                label="Eigenverbrauchsquote"
-                kpi={benchmark.benchmark_erweitert.balkonkraftwerk.eigenverbrauch}
-                einheit="%"
-                hideComparison
-              />
             </KomponentenCard>
           )}
         </div>

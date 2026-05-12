@@ -83,10 +83,12 @@ export default function StatistikenTab({ benchmark, benchmarkLoading, benchmarkE
     }
   }, [benchmark])
 
-  // Ausstattungs-Vergleich (was hat deine Anlage vs. was ist möglich)
-  // Reihenfolge folgt INVESTITION_TYP_ORDER: Speicher → WP → Wallbox → E-Auto → BKW
-  // (#214 detLAN: WP vor Wallbox). Farb-Klassen ausgeschrieben, weil Tailwind
-  // dynamische `bg-${color}-50`-Klassen purged (#211 P1: Wallbox-Cyan unsichtbar).
+  // Ausstattungs-Vergleich (was hat deine Anlage vs. was ist möglich).
+  // Reihenfolge folgt der SoT in `lib/constants.ts` (INVESTITION_TYP_ORDER):
+  //   Speicher → BKW → WP → Wallbox → E-Auto
+  // (#215 detLAN: BKW gehört nach Speicher, nicht ans Ende; WP vor Wallbox).
+  // Farb-Klassen ausgeschrieben, weil Tailwind dynamische `bg-${color}-50`-
+  // Klassen purged (#211 P1: Wallbox-Cyan unsichtbar).
   const ausstattung = useMemo(() => {
     if (!benchmark) return []
 
@@ -97,6 +99,13 @@ export default function StatistikenTab({ benchmark, benchmarkLoading, benchmarkE
         vorhanden: !!benchmark.anlage.speicher_kwh,
         details: benchmark.anlage.speicher_kwh ? `${benchmark.anlage.speicher_kwh} kWh` : null,
         cls: { bg: 'bg-green-50 dark:bg-green-900/20',  border: 'border-green-200 dark:border-green-800',  icon: 'text-green-500' },
+      },
+      {
+        name: 'Balkonkraftwerk',
+        icon: <Sun className="h-5 w-5" />,
+        vorhanden: benchmark.anlage.hat_balkonkraftwerk,
+        details: benchmark.anlage.bkw_wp ? `${benchmark.anlage.bkw_wp} Wp` : null,
+        cls: { bg: 'bg-amber-50 dark:bg-amber-900/20',  border: 'border-amber-200 dark:border-amber-800',  icon: 'text-amber-500' },
       },
       {
         name: 'Wärmepumpe',
@@ -118,13 +127,6 @@ export default function StatistikenTab({ benchmark, benchmarkLoading, benchmarkE
         vorhanden: benchmark.anlage.hat_eauto,
         details: null,
         cls: { bg: 'bg-purple-50 dark:bg-purple-900/20', border: 'border-purple-200 dark:border-purple-800', icon: 'text-purple-500' },
-      },
-      {
-        name: 'Balkonkraftwerk',
-        icon: <Sun className="h-5 w-5" />,
-        vorhanden: benchmark.anlage.hat_balkonkraftwerk,
-        details: benchmark.anlage.bkw_wp ? `${benchmark.anlage.bkw_wp} Wp` : null,
-        cls: { bg: 'bg-amber-50 dark:bg-amber-900/20',  border: 'border-amber-200 dark:border-amber-800',  icon: 'text-amber-500' },
       },
     ]
   }, [benchmark])
@@ -340,12 +342,14 @@ export default function StatistikenTab({ benchmark, benchmarkLoading, benchmarkE
             </h3>
           </div>
 
+          {/* #215 detLAN: Reihenfolge folgt INVESTITION_TYP_ORDER —
+              Speicher → BKW → WP → Wallbox → E-Auto. */}
           <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
             <QuoteCard label="Speicher" value={globalStats.ausstattungsquoten.speicher} color="green" />
-            <QuoteCard label="Wärmepumpe" value={globalStats.ausstattungsquoten.waermepumpe} color="blue" />
-            <QuoteCard label="E-Auto" value={globalStats.ausstattungsquoten.eauto} color="purple" />
-            <QuoteCard label="Wallbox" value={globalStats.ausstattungsquoten.wallbox} color="cyan" />
             <QuoteCard label="Balkonkraftwerk" value={globalStats.ausstattungsquoten.balkonkraftwerk} color="amber" />
+            <QuoteCard label="Wärmepumpe" value={globalStats.ausstattungsquoten.waermepumpe} color="blue" />
+            <QuoteCard label="Wallbox" value={globalStats.ausstattungsquoten.wallbox} color="cyan" />
+            <QuoteCard label="E-Auto" value={globalStats.ausstattungsquoten.eauto} color="purple" />
           </div>
 
           {/* Typische Anlage */}

@@ -1,6 +1,6 @@
 # Was ist neu
 
-> **Stand:** Mai 2026 (v3.27.4)
+> **Stand:** Mai 2026 (v3.27.5)
 > **Diese Seite** zeigt pro Version, was sich für dich als Anwender geändert hat — kürzer als der technische [CHANGELOG](https://github.com/supernova1963/eedc-homeassistant/blob/main/CHANGELOG.md), ausführlicher als die Schnellübersicht-Tabelle in der [Übersicht](BENUTZERHANDBUCH.md#was-ist-neu-seit-v316).
 >
 > **Kein Banner, kein Pop-up:** eedc zeigt diese Liste nicht ungefragt an. HA-App-Nutzer sehen den Changelog ohnehin schon im Add-on-Store, GitHub-Releases haben einen eigenen. Wer wissen will, was neu ist, schaut hier rein — Pull statt Push.
@@ -10,6 +10,24 @@
 ---
 
 ## v3.27.x — Reparatur-Werkbank und Daten-Schutz (Mai 2026)
+
+### UX-Konsistenz-Cluster + PV-Ertrag-Spalte *(v3.27.5)*
+
+> 🪛 **Anwender-gemeldete UX-Verbesserungen aus dem detLAN-Cluster** plus eine Spalten-Erweiterung von dietmar1968. Kein neuer Funktionsumfang — fünf koordinierte Detail-Verbesserungen, die in Summe die Konsistenz spürbar anziehen.
+
+#### Was sich für dich ändert
+
+- **„PV-Ertrag" als neue Spalte in „Auswertungen → Energieprofil → Tagesübersicht".** Tages-Summe der PV-Erzeugung über alle Anlagen-Komponenten (PV-Module + Balkonkraftwerk), default eingeblendet wie die anderen Tages-Summen-Spalten (Überschuss/Defizit). Wer den Spalten-Selektor angepasst hatte, bekommt die neue Spalte automatisch dazu — die eigenen Anpassungen bleiben erhalten. *(Dank an dietmar1968.)*
+- **Live-Ansicht: zwei Animationen weg.** Der pulsierende grüne Punkt links und der Refresh-Spinner rechts im Live-Header machten auf schmalen Fenstern unruhige Layout-Sprünge — der Update-Timestamp zeigt eh, wann zuletzt aktualisiert wurde. Statischer Live-Punkt bleibt als Online-Indikator, jetzt neben der Update-Zeile statt auf der anderen Seite. *(Mehrere Tester hatten das in unterschiedlichen Worten gemeldet — Rainer per PN, dietmar1968 im Forum, detLAN als GitHub-Issue.)*
+- **Überflüssige Überschriften in Einstellungen entfernt.** „Anlagen", „Strompreise", „Investitionen", „Sensor-Zuordnung", „HA-Statistik Import" und „HA-Sensor-Export" wiederholten den Sub-Tab-Namen direkt darunter — überall weg, der Sub-Tab benennt den Bereich. Bei MQTT-Export war die alte Überschrift „HA-Sensor-Export" zudem irreführend (Sub-Tab heißt „MQTT-Export"); die Info-Box darunter erklärt das schon. Plus: Sub-Tab Singular „Anlage" heißt jetzt korrekt „Anlagen". *(detLAN.)*
+- **Vier Aktualisieren-Buttons als Schaltfläche statt nackter Icon.** In Solarprognose-Setup, Daten-Checker, MQTT-Export und System-Einstellungen ist der Refresh-Knopf jetzt ein vollwertiger grauer Button mit Icon + „Aktualisieren"-Label — konsistent zu „+ Neue Anlage", „+ Neuer Tarif" etc., nicht mehr fünf verschiedene Stile in einer App. *(detLAN.)*
+- **Komponenten-Reihenfolge in Community vereinheitlicht.** An vier Stellen (Community → Statistiken Ausstattung + Quoten-Cards, Community → Übersicht Komponenten-Benchmarks, Community → Komponenten Deep-Dives) war die Reihenfolge teils Wallbox-vor-E-Auto, teils E-Auto-vor-Wallbox, und Balkonkraftwerk landete oft ans Ende. Jetzt überall einheitlich: Speicher → Balkonkraftwerk → Wärmepumpe → Wallbox → E-Auto (eedc-Standard-Sortierung). *(detLAN.)*
+
+#### Was sich *nicht* ändert
+
+- **Keine funktionalen Änderungen, keine Schema-Updates, keine Konzept-Etappe.** Wer keine der genannten Ansichten regelmäßig nutzt, merkt nichts vom Release.
+
+---
 
 ### Wärmepumpen-Aggregation für getrennte Strommessung *(v3.27.4)*
 

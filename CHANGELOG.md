@@ -7,6 +7,23 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ---
 
+## [3.27.5] - 2026-05-12 — UX-Cluster detLAN + PV-Ertrag-Spalte (#207 #215 #217 #218 #494)
+
+> 🪛 **detLAN-Cluster aus #203–#218 strukturell abgearbeitet** plus eine Spalten-Erweiterung von dietmar1968 (#494). Kein neuer Funktionsumfang — fünf koordinierte Detail-Verbesserungen, die in Summe die UI-Konsistenz spürbar anziehen (Tab-Header vs. Page-Titel, Schaltflächen-Stil, Komponenten-Reihenfolge).
+
+### Added
+
+- **Spalte „PV-Ertrag" in Tages-Energieprofile-Tabelle** (#494 dietmar1968). Tagessumme der PV-Erzeugung als neue default-visible Spalte in Gruppe „Tages-Summen". Wert = Σ über alle `komponenten_kwh`-Keys mit Prefix `pv_` oder `bkw_` (`snapshot/aggregator.py:get_komponenten_tageskwh`). Storage-Migration v1→v2 in localStorage ergänzt die Spalte für existierende User automatisch, ohne deren Spalten-Anpassungen zu überschreiben.
+
+### Changed
+
+- **Live-Header entanimiert** (#207 Rainer per PN + dietmar1968 Forum #345 + detLAN). Pulsierender `animate-ping`-Punkt + `animate-spin`-Refresh-Spinner produzierten auf schmalen Fenstern Layout-Sprünge ohne UX-Mehrwert (der Update-Timestamp zeigt eh den Stand). Statischer grüner Punkt bleibt als Online-Indikator, von links nach rechts neben Update-Zeile verschoben (detLAN-Vorschlag) — konsolidiert zwei Status-Inseln zu einer. Drei unabhängige User-Meldungen haben den Ausschlag für die Kehrtwende gegeben.
+- **Sechs überflüssige Page-Überschriften entfernt** (#218 detLAN). Jeder Sub-Tab benennt seinen Bereich schon — eine darunter wortgleiche h1 frisst nur Platz: Einstellungen → Anlage(n) / Strompreise / Investitionen / Sensor-Zuordnung / Statistik-Import; plus MQTT-Export (#218 P11), wo die Überschrift „HA-Sensor-Export" zudem nicht zum Sub-Tab passte → komplett raus, die Info-Box darunter erklärt schon. Sub-Tab „Anlage" → „Anlagen" umbenannt (Konsistenz zum Plural-Inhalt). Container-Layouts dabei von `justify-between` auf `justify-end` umgestellt, wo nur noch eine Action-Bar übrig bleibt.
+- **Vier Refresh-Icons als Schaltfläche statt flach** (#217 detLAN, Folgepunkt zu #209 P6). Aktualisieren-Knöpfe in Solarprognose-Setup, Daten-Checker, MQTT-Export und System-Einstellungen waren bisher nackte Icons im `text-gray-500`-Stil — andere Action-Bars in der App nutzen `<Button variant="secondary">`. Vier Stellen einheitlich auf Icon + „Aktualisieren"-Label gebracht.
+- **Komponenten-Reihenfolge auf SoT `INVESTITION_TYP_ORDER` gebracht** (#215 detLAN, Folgepunkt zu #211 P4). Vier Stellen im Community-Bereich hatten unterschiedliche Reihenfolgen — Balkonkraftwerk landete oft ans Ende statt zwischen Speicher und WP, E-Auto stand stellenweise vor Wallbox. Statistiken-Tab (Ausstattung + Quoten-Cards), Übersicht-Tab (Komponenten-Benchmarks), Komponenten-Tab (Deep-Dives) auf `Speicher → BKW → WP → Wallbox → E-Auto` ausgerichtet.
+
+---
+
 ## [3.27.4] - 2026-05-12 — Wärmepumpen-Aggregation: Split-Strommessung + Counter-Spike-Cap (#230)
 
 > 🪛 **Zwei strukturelle Lücken im Snapshot-Aggregations-Pfad**, beide aus Martins Forum-Befund (#230). Setups mit getrennter Strom-Messung für Heizen/Warmwasser (seit #191 unterstützt) hatten in der Stundenwerte-Tabelle des Energieprofils eine leere Wärmepumpe-Spalte, und WP-Kompressor-Start-Counter-Spikes aus HA-Statistics-`sum`/`state`-Mix (siehe #184) standen als 49.000+-Werte in einer einzelnen Stunde, während die Tages-Boundary-Diff sauber bei 0 lag.
