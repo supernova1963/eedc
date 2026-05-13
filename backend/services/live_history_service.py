@@ -108,14 +108,18 @@ def _energy_delta(
     # Caller fällt auf Trapez-Integration der W-Werte zurück.
     if not _is_energy_sensor(eid, sensor_units):
         return None
+    # #232: HA-Statistics speichert Werte in der vom Sensor angegebenen
+    # Einheit. Bei Wh-Sensoren liefert `_energy_delta_via_statistics` Wh,
+    # nicht kWh — `_KWH_SCALE` muss auf beide Pfade angewendet werden,
+    # nicht nur auf den state-history-Fallback (NongJoWo-Befund Faktor 1000).
+    scale = _KWH_SCALE.get(sensor_units.get(eid, "kWh"), 1.0)
     if start is not None and end is not None:
         delta = _energy_delta_via_statistics(eid, start, end)
         if delta is not None:
-            return delta
+            return delta * scale
     pts = history.get(eid)
     if not pts:
         return None
-    scale = _KWH_SCALE.get(sensor_units.get(eid, "kWh"), 1.0)
     val_start = min(p[1] for p in pts) * scale
     val_end = pts[-1][1] * scale
     return max(0.0, val_end - val_start)

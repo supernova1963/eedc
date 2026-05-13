@@ -153,8 +153,17 @@ async def get_komponenten_zeitreihe(
             "speicher_arbitrage": 0, "speicher_arbitrage_preis_sum": 0, "speicher_arbitrage_count": 0,
             "wp_waerme": 0, "wp_strom": 0, "wp_heizung": 0, "wp_warmwasser": 0,
             "wp_strom_heizen": 0, "wp_strom_warmwasser": 0,
-            "emob_km": 0, "emob_ladung": 0, "emob_pv_ladung": 0,
-            "emob_netz_ladung": 0, "emob_extern_ladung": 0, "emob_extern_euro": 0, "emob_v2h": 0,
+            # E-Mobilität: getrennte Akkumulatoren pro Quelle für Pool-Max
+            # (analog aktueller_monat._aggregate Commit 7c0a077b + #231 NongJoWo).
+            # Wallbox-IMD und E-Auto-IMD messen oft denselben Stromfluss aus
+            # zwei Perspektiven → Sum würde doppeln. Beim Konsolidieren unten
+            # gewinnt pro Feld die größere Quelle.
+            "eauto_km": 0,
+            "eauto_ladung": 0, "eauto_pv_ladung": 0,
+            "eauto_netz_ladung": 0, "eauto_extern_ladung": 0, "eauto_extern_euro": 0,
+            "eauto_v2h": 0,
+            "wb_ladung": 0, "wb_pv_ladung": 0,
+            "wb_netz_ladung": 0, "wb_extern_ladung": 0, "wb_extern_euro": 0,
             "bkw_erzeugung": 0, "bkw_eigenverbrauch": 0, "bkw_speicher_ladung": 0, "bkw_speicher_entladung": 0,
             "sonstiges_erzeugung": 0, "sonstiges_verbrauch": 0,
             "sonderkosten": 0, "sonstige_ertraege": 0, "sonstige_ausgaben": 0,
@@ -169,15 +178,10 @@ async def get_komponenten_zeitreihe(
         if not inv:
             continue
 
-        # Issue #153: Daten vor Anschaffungsdatum ignorieren — sonst fließen
-        # historische, vor-Inbetriebnahme-Werte (z. B. unvollständige Test-Daten,
-        # Sensor mit anderer Erfassungsmethode) in JAZ/Aggregate ein und
-        # verfälschen die Komponenten-Auswertung.
-        if inv.anschaffungsdatum:
-            anschaffung_jahr = inv.anschaffungsdatum.year
-            anschaffung_monat = inv.anschaffungsdatum.month
-            if (imd.jahr, imd.monat) < (anschaffung_jahr, anschaffung_monat):
-                continue
+        # Issue #153 / #236: SoT-Filter inkl. stilllegungsdatum — vor-Inbetriebnahme-
+        # bzw. nach-Stilllegungs-Werte sollen nicht in JAZ/Aggregate fließen.
+        if not inv.ist_aktiv_im_monat(imd.jahr, imd.monat):
+            continue
 
         key = (imd.jahr, imd.monat)
         if key not in inv_data_by_month:
@@ -219,16 +223,28 @@ async def get_komponenten_zeitreihe(
                 d["wp_strom_warmwasser"] += data.get("strom_warmwasser_kwh", 0) or 0
 
         elif inv.typ in ("e-auto", "wallbox"):
-            d["emob_km"] += data.get("km_gefahren", 0) or 0
-            d["emob_ladung"] += get_eauto_ladung_kwh(data)
-            d["emob_pv_ladung"] += data.get("ladung_pv_kwh", 0) or 0
-            d["emob_netz_ladung"] += data.get("ladung_netz_kwh", 0) or 0
-            d["emob_extern_ladung"] += data.get("ladung_extern_kwh", 0) or 0
-            d["emob_extern_euro"] += data.get("ladung_extern_euro", 0) or 0
-            v2h = data.get("v2h_entladung_kwh", 0) or 0
-            if v2h > 0:
-                hat_v2h = True
-                d["emob_v2h"] += v2h
+            # Dienstwagen rausfiltern (Joachim-Pattern, feedback_dienstwagen_alle_checks.md):
+            # ist_dienstlich-Komponenten gehören in dienstliche Ladekosten,
+            # nicht in den E-Mobilitäts-Pool der eigenen Anlage.
+            if (inv.parameter or {}).get("ist_dienstlich", False):
+                continue
+            if inv.typ == "e-auto":
+                d["eauto_km"] += data.get("km_gefahren", 0) or 0
+                d["eauto_ladung"] += get_eauto_ladung_kwh(data)
+                d["eauto_pv_ladung"] += data.get("ladung_pv_kwh", 0) or 0
+                d["eauto_netz_ladung"] += data.get("ladung_netz_kwh", 0) or 0
+                d["eauto_extern_ladung"] += data.get("ladung_extern_kwh", 0) or 0
+                d["eauto_extern_euro"] += data.get("ladung_extern_euro", 0) or 0
+                v2h = data.get("v2h_entladung_kwh", 0) or 0
+                if v2h > 0:
+                    hat_v2h = True
+                    d["eauto_v2h"] += v2h
+            else:  # wallbox
+                d["wb_ladung"] += get_eauto_ladung_kwh(data)
+                d["wb_pv_ladung"] += data.get("ladung_pv_kwh", 0) or 0
+                d["wb_netz_ladung"] += data.get("ladung_netz_kwh", 0) or 0
+                d["wb_extern_ladung"] += data.get("ladung_extern_kwh", 0) or 0
+                d["wb_extern_euro"] += data.get("ladung_extern_euro", 0) or 0
 
         elif inv.typ == "balkonkraftwerk":
             d["bkw_erzeugung"] += get_pv_erzeugung_kwh(data)
@@ -264,9 +280,18 @@ async def get_komponenten_zeitreihe(
 
         wp_cop = (d["wp_waerme"] / d["wp_strom"]) if d["wp_strom"] > 0 else None
 
-        emob_pv_anteil = (
-            d["emob_pv_ladung"] / d["emob_ladung"] * 100
-        ) if d["emob_ladung"] > 0 else None
+        # E-Mobilitäts-Pool: pro Feld die größere Quelle gewinnt
+        # (analog aktueller_monat._aggregate + #231 NongJoWo).
+        # km kommt nur vom E-Auto — Wallbox kennt keine km. v2h ebenfalls
+        # nur E-Auto (Vehicle-to-Home-Sicht).
+        emob_ladung = max(d["eauto_ladung"], d["wb_ladung"])
+        emob_pv_ladung = max(d["eauto_pv_ladung"], d["wb_pv_ladung"])
+        emob_netz_ladung = max(d["eauto_netz_ladung"], d["wb_netz_ladung"])
+        emob_extern_ladung = max(d["eauto_extern_ladung"], d["wb_extern_ladung"])
+        emob_extern_euro = max(d["eauto_extern_euro"], d["wb_extern_euro"])
+        emob_km = d["eauto_km"]
+        emob_v2h = d["eauto_v2h"]
+        emob_pv_anteil = (emob_pv_ladung / emob_ladung * 100) if emob_ladung > 0 else None
 
         stichtag = date(jahr, monat, 1)
         if stichtag not in _tarif_cache_kz:
@@ -297,10 +322,7 @@ async def get_komponenten_zeitreihe(
         if d["wp_waerme"] > 0:
             wp_invs_in_monat = [
                 i for i in investitionen
-                if i.typ == "waermepumpe" and (
-                    not i.anschaffungsdatum or
-                    (jahr, monat) >= (i.anschaffungsdatum.year, i.anschaffungsdatum.month)
-                )
+                if i.typ == "waermepumpe" and i.ist_aktiv_im_monat(jahr, monat)
             ]
             wp_ref_param = wp_invs_in_monat[0].parameter if wp_invs_in_monat else None
             wp_result = berechne_wp_ersparnis(
@@ -327,14 +349,14 @@ async def get_komponenten_zeitreihe(
             wp_strom_heizen_kwh=round(d["wp_strom_heizen"], 1),
             wp_strom_warmwasser_kwh=round(d["wp_strom_warmwasser"], 1),
             wp_ersparnis_euro=round(m_wp_ersparnis, 2),
-            emob_km=round(d["emob_km"], 0),
-            emob_ladung_kwh=round(d["emob_ladung"], 1),
+            emob_km=round(emob_km, 0),
+            emob_ladung_kwh=round(emob_ladung, 1),
             emob_pv_anteil_prozent=round(emob_pv_anteil, 1) if emob_pv_anteil else None,
-            emob_ladung_pv_kwh=round(d["emob_pv_ladung"], 1),
-            emob_ladung_netz_kwh=round(d["emob_netz_ladung"], 1),
-            emob_ladung_extern_kwh=round(d["emob_extern_ladung"], 1),
-            emob_ladung_extern_euro=round(d["emob_extern_euro"], 2),
-            emob_v2h_kwh=round(d["emob_v2h"], 1),
+            emob_ladung_pv_kwh=round(emob_pv_ladung, 1),
+            emob_ladung_netz_kwh=round(emob_netz_ladung, 1),
+            emob_ladung_extern_kwh=round(emob_extern_ladung, 1),
+            emob_ladung_extern_euro=round(emob_extern_euro, 2),
+            emob_v2h_kwh=round(emob_v2h, 1),
             bkw_erzeugung_kwh=round(d["bkw_erzeugung"], 1),
             bkw_eigenverbrauch_kwh=round(d["bkw_eigenverbrauch"], 1),
             bkw_speicher_ladung_kwh=round(d["bkw_speicher_ladung"], 1),
