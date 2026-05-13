@@ -317,6 +317,131 @@ async def test_list_plans_returns_recent_first():
         assert views[1].result is None
 
 
+async def test_plan_reaggregate_range_rejects_invalid_bounds():
+    """Plan-Validierung: von > bis, bis = heute, > 31 Tage werfen ValueError."""
+    from datetime import date, timedelta
+    async with _session_ctx() as session:
+        anlage = await _make_anlage(session)
+
+        # bis < von
+        try:
+            await plan(RepairOperationRequest(
+                anlage_id=anlage.id,
+                operation=RepairOperationType.REAGGREGATE_RANGE,
+                params={"von": "2026-05-10", "bis": "2026-05-05"},
+            ), session)
+        except ValueError as e:
+            assert "liegt vor" in str(e), str(e)
+        else:
+            raise AssertionError("ValueError für bis<von erwartet")
+
+        # bis = heute
+        heute = date.today()
+        try:
+            await plan(RepairOperationRequest(
+                anlage_id=anlage.id,
+                operation=RepairOperationType.REAGGREGATE_RANGE,
+                params={"von": (heute - timedelta(days=5)).isoformat(),
+                        "bis": heute.isoformat()},
+            ), session)
+        except ValueError as e:
+            assert "vor heute" in str(e), str(e)
+        else:
+            raise AssertionError("ValueError für bis=heute erwartet")
+
+        # > 31 Tage
+        try:
+            await plan(RepairOperationRequest(
+                anlage_id=anlage.id,
+                operation=RepairOperationType.REAGGREGATE_RANGE,
+                params={"von": "2026-01-01", "bis": "2026-03-01"},
+            ), session)
+        except ValueError as e:
+            assert "Maximum" in str(e), str(e)
+        else:
+            raise AssertionError("ValueError für >31 Tage erwartet")
+
+
+async def test_plan_reaggregate_range_valid_returns_warnings():
+    """Plan mit gültigem Bereich liefert Warnungs-Liste + estimated dict."""
+    async with _session_ctx() as session:
+        anlage = await _make_anlage(session)
+
+        plan_obj = await plan(RepairOperationRequest(
+            anlage_id=anlage.id,
+            operation=RepairOperationType.REAGGREGATE_RANGE,
+            params={"von": "2026-04-01", "bis": "2026-04-07"},
+        ), session)
+
+        assert plan_obj.estimated_changes["anzahl_tage"] == 7
+        assert plan_obj.estimated_changes["tage_mit_bestehender_zusammenfassung"] == 0
+        # Pflicht-Warnungen: Per-Feld-Provenance, MQTT, Strompreis, Support
+        joined = " | ".join(plan_obj.warnings)
+        assert "Per-Feld-Provenance" in joined
+        assert "MQTT-Only" in joined
+        assert "Support-Anspruch" in joined
+        assert "Prognose-Felder" in joined
+        assert plan_obj.operation_preview["anzahl_tage"] == 7
+
+
+async def test_execute_reaggregate_range_iterates_and_commits_per_day():
+    """Execute schleift über Tage und macht Per-Tag-Commit.
+
+    aggregate_day + resnap_anlage_range werden gemockt, damit der Test
+    keinen vollen Stunden-Snapshot-Datensatz braucht. Geprüft wird die
+    Schleifen-Logik: N Aufrufe für N Tage, Summary korrekt, ein
+    fehlgeschlagener Tag bricht die Schleife nicht ab.
+    """
+    from datetime import date
+    from unittest.mock import AsyncMock, patch
+
+    async with _session_ctx() as session:
+        anlage = await _make_anlage(session)
+
+        # aggregate_day-Stub: gibt für Tag 3 None zurück (keine_daten), sonst
+        # ein Pseudo-Objekt. Für Tag 5 raised er, um Fehlerpfad zu prüfen.
+        aufruf_daten: list[date] = []
+
+        class _FakeZusammenfassung:
+            stunden_verfuegbar = 24
+
+        async def fake_aggregate_day(anlage_arg, datum_arg, db_arg, **kwargs):
+            aufruf_daten.append(datum_arg)
+            if datum_arg == date(2026, 4, 3):
+                return None
+            if datum_arg == date(2026, 4, 5):
+                raise RuntimeError("simulierter Aggregations-Fehler")
+            return _FakeZusammenfassung()
+
+        async def fake_resnap(*args, **kwargs):
+            return None
+
+        with patch(
+            "backend.services.energie_profil_service.aggregate_day",
+            new=AsyncMock(side_effect=fake_aggregate_day),
+        ), patch(
+            "backend.services.sensor_snapshot_service.resnap_anlage_range",
+            new=AsyncMock(side_effect=fake_resnap),
+        ):
+            plan_obj = await plan(RepairOperationRequest(
+                anlage_id=anlage.id,
+                operation=RepairOperationType.REAGGREGATE_RANGE,
+                params={"von": "2026-04-01", "bis": "2026-04-07", "mit_resnap": True},
+            ), session)
+            result = await execute(plan_obj.plan_id, session)
+
+        summary = result.operation_summary
+        assert summary["verarbeitet"] == 7
+        assert summary["erfolgreich"] == 5  # 7 - 1 keine_daten - 1 fehler
+        assert summary["keine_daten"] == 1
+        assert summary["fehlgeschlagen"] == 1
+        assert len(aufruf_daten) == 7  # auch nach Fehler weiter
+        # Fehler-Details enthalten die zwei betroffenen Tage
+        gruende = {d["datum"]: d["grund"] for d in summary["fehler_details"]}
+        assert gruende["2026-04-03"] == "keine_daten"
+        assert "RuntimeError" in gruende["2026-04-05"]
+
+
 async def test_discard_plan_removes_from_cache():
     """discard_plan() entfernt Plan + verhindert späteres Execute."""
     async with _session_ctx() as session:
@@ -352,6 +477,9 @@ _TESTS = [
     test_double_execute_raises,
     test_provider_filter_narrows_diff,
     test_list_plans_returns_recent_first,
+    test_plan_reaggregate_range_rejects_invalid_bounds,
+    test_plan_reaggregate_range_valid_returns_warnings,
+    test_execute_reaggregate_range_iterates_and_commits_per_day,
     test_discard_plan_removes_from_cache,
 ]
 

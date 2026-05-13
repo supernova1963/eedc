@@ -11,12 +11,16 @@ import { api } from './client'
 
 export type RepairOperationType =
   | 'reaggregate_day'
+  | 'reaggregate_range'
   | 'reaggregate_today'
   | 'vollbackfill'
   | 'kraftstoffpreis_backfill'
   | 'delete_monatsdaten'
   | 'reset_cloud_import'
   | 'solcast_rewrite'
+
+/** Hard-Cap im Backend (REAGGREGATE_RANGE_MAX_DAYS). UI muss vorab gaten. */
+export const REAGGREGATE_RANGE_MAX_DAYS = 31
 
 export interface RepairOperationRequest {
   anlage_id: number | null
@@ -91,6 +95,14 @@ export const OPERATION_META: OperationMeta[] = [
     label: 'Tag neu aggregieren',
     description:
       'Lädt SensorSnapshots eines Tages frisch aus HA-Statistics und baut Stundenwerte + Tageszusammenfassung neu. Idempotent.',
+    inWorkbench: true,
+  },
+  {
+    type: 'reaggregate_range',
+    label: 'Mehrere Tage neu aggregieren',
+    description:
+      `Seriell pro Tag (max. ${REAGGREGATE_RANGE_MAX_DAYS}) — Prognosen + Korrekturprofil-Daten bleiben erhalten, ` +
+      'Per-Feld-Provenance älterer Verfahrensläufe wird überschrieben. Ohne Support-Anspruch.',
     inWorkbench: true,
   },
   {

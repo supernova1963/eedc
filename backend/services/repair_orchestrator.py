@@ -68,12 +68,21 @@ class RepairOperationType(str, Enum):
     Operation bewusst noch nicht anbietet.
     """
     REAGGREGATE_DAY = "reaggregate_day"
+    REAGGREGATE_RANGE = "reaggregate_range"
     REAGGREGATE_TODAY = "reaggregate_today"
     VOLLBACKFILL = "vollbackfill"
     KRAFTSTOFFPREIS_BACKFILL = "kraftstoffpreis_backfill"
     DELETE_MONATSDATEN = "delete_monatsdaten"
     RESET_CLOUD_IMPORT = "reset_cloud_import"
     SOLCAST_REWRITE = "solcast_rewrite"
+
+
+# Maximaler Zeitbereich für REAGGREGATE_RANGE pro Lauf.
+# 31 Tage = ~30-60s je nach mit_resnap, hält uns sicher unter HTTP-Timeouts
+# und beschränkt den Datenverlust-Radius bei Abbruch (Netz, Worker-Restart).
+# Power-User mit längerem Bedarf rufen das in mehreren Schüben auf — jeder
+# Schub gibt sofortiges Feedback statt eines Black-Box-Laufs.
+REAGGREGATE_RANGE_MAX_DAYS = 31
 
 
 # ── Models ──────────────────────────────────────────────────────────────────
@@ -286,6 +295,165 @@ async def _execute_reaggregate_day(
     return {
         "datum": datum.isoformat(),
         "stunden_verfuegbar": zusammenfassung.stunden_verfuegbar,
+    }
+
+
+# ── Operation: REAGGREGATE_RANGE ────────────────────────────────────────────
+
+
+async def _plan_reaggregate_range(
+    req: RepairOperationRequest, db: AsyncSession
+) -> tuple[dict[str, int], list[str], dict[str, Any]]:
+    """params: {von: 'YYYY-MM-DD', bis: 'YYYY-MM-DD', mit_resnap: bool=True}
+
+    Hard-Cap REAGGREGATE_RANGE_MAX_DAYS (31). Vorschau zählt vorhandene
+    Tageszusammenfassungen im Bereich — Per-Tag-Delta-Preview wäre zu
+    teuer und überzeichnet den Knopf-Charakter. Stattdessen liefern wir
+    die Liste der Warnungen, damit der UI-Pflicht-Checkbox-Schritt das
+    sauber kommunizieren kann.
+    """
+    von_str = req.params.get("von")
+    bis_str = req.params.get("bis")
+    if not von_str or not bis_str:
+        raise ValueError("REAGGREGATE_RANGE benötigt params.von und params.bis (YYYY-MM-DD)")
+    von = date.fromisoformat(von_str)
+    bis = date.fromisoformat(bis_str)
+    if bis < von:
+        raise ValueError(f"bis ({bis}) liegt vor von ({von})")
+    if bis >= date.today():
+        raise ValueError(
+            f"bis ({bis}) muss vor heute liegen — laufender Tag ist Snapshot-instabil"
+        )
+    anzahl_tage = (bis - von).days + 1
+    if anzahl_tage > REAGGREGATE_RANGE_MAX_DAYS:
+        raise ValueError(
+            f"Zeitbereich {anzahl_tage} Tage übersteigt Maximum von "
+            f"{REAGGREGATE_RANGE_MAX_DAYS} Tagen pro Lauf. Bitte in mehreren "
+            f"Schüben ausführen."
+        )
+
+    anlage = await _load_anlage(db, req.anlage_id)
+
+    vorhandene = await db.scalar(
+        select(func.count(TagesZusammenfassung.id)).where(
+            TagesZusammenfassung.anlage_id == anlage.id,
+            TagesZusammenfassung.datum >= von,
+            TagesZusammenfassung.datum <= bis,
+        )
+    ) or 0
+
+    estimated = {
+        "anzahl_tage": anzahl_tage,
+        "tage_mit_bestehender_zusammenfassung": int(vorhandene),
+    }
+
+    warnings = [
+        "Mehrere Tage werden seriell neu aggregiert. Pro Tag erfolgt ein "
+        "DB-Commit — bei Abbruch sind die bereits verarbeiteten Tage drin.",
+        "Per-Feld-Provenance älterer Verfahrensläufe wird überschrieben "
+        "(neue Quelle: 'energieprofil:manuell').",
+        "MQTT-Only-Felder ohne HA-LTS-Pendant gehen verloren, falls vorhanden.",
+        "Strompreis-Sensor-Daten (Tibber etc.) ohne HA-LTS-Erfassung gehen "
+        "verloren, falls vorhanden.",
+        "Prognose-Felder (PV/SFML/Solcast) und Day-Ahead-Stundenprofile "
+        "(Korrekturprofil-Datenbasis) bleiben erhalten — der "
+        "preserved_prognose-Mechanismus greift pro Tag.",
+        "Ohne Support-Anspruch auf Rekonstruktion überschriebener Felder.",
+    ]
+    return estimated, warnings, {
+        "von": von_str,
+        "bis": bis_str,
+        "anzahl_tage": anzahl_tage,
+    }
+
+
+async def _execute_reaggregate_range(
+    req: RepairOperationRequest, db: AsyncSession
+) -> dict[str, Any]:
+    """Seriell pro Tag: optional Resnap, dann aggregate_day(manuell), db.commit.
+
+    Per-Tag-Commit bewusst gewählt (statt atomar): bei 31 Tagen und HTTP-
+    Timeout-/Worker-Restart-Risiko ist "bereits aggregierte Tage drin"
+    deutlich nutzerfreundlicher als ein finales Rollback.
+    """
+    from backend.services.energie_profil_service import aggregate_day
+    from backend.services.sensor_snapshot_service import resnap_anlage_range
+
+    von = date.fromisoformat(req.params["von"])
+    bis = date.fromisoformat(req.params["bis"])
+    mit_resnap = bool(req.params.get("mit_resnap", True))
+    anlage = await _load_anlage(db, req.anlage_id)
+
+    erfolgreich = 0
+    keine_daten = 0
+    fehlgeschlagen = 0
+    fehler_details: list[dict[str, str]] = []
+
+    current = von
+    while current <= bis:
+        try:
+            if mit_resnap:
+                try:
+                    tag_start = datetime.combine(current, datetime.min.time())
+                    von_dt = tag_start - timedelta(hours=1)
+                    bis_dt = tag_start + timedelta(days=1, hours=1)
+                    await resnap_anlage_range(
+                        db, anlage, von=von_dt, bis=bis_dt, include_5min=True,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"Range-Reaggregate Anlage {anlage.id} {current}: "
+                        f"Resnap fehlgeschlagen (Aggregat läuft trotzdem): "
+                        f"{type(e).__name__}: {e}"
+                    )
+
+            zusammenfassung = await aggregate_day(
+                anlage, current, db, datenquelle="manuell"
+            )
+            if zusammenfassung is None:
+                keine_daten += 1
+                fehler_details.append({
+                    "datum": current.isoformat(),
+                    "grund": "keine_daten",
+                })
+            else:
+                erfolgreich += 1
+            await db.commit()
+        except Exception as e:
+            await db.rollback()
+            fehlgeschlagen += 1
+            fehler_details.append({
+                "datum": current.isoformat(),
+                "grund": f"{type(e).__name__}: {e}",
+            })
+            logger.error(
+                f"Range-Reaggregate Anlage {anlage.id} {current} fehlgeschlagen: "
+                f"{type(e).__name__}: {e}",
+                exc_info=True,
+            )
+
+        verarbeitet = erfolgreich + keine_daten + fehlgeschlagen
+        gesamt = (bis - von).days + 1
+        if verarbeitet % 5 == 0 or verarbeitet == gesamt:
+            logger.info(
+                f"Range-Reaggregate Anlage {anlage.id}: "
+                f"{verarbeitet}/{gesamt} Tage verarbeitet "
+                f"(erfolgreich={erfolgreich}, keine_daten={keine_daten}, "
+                f"fehlgeschlagen={fehlgeschlagen})"
+            )
+
+        current += timedelta(days=1)
+
+    return {
+        "von": von.isoformat(),
+        "bis": bis.isoformat(),
+        "verarbeitet": erfolgreich + keine_daten + fehlgeschlagen,
+        "erfolgreich": erfolgreich,
+        "keine_daten": keine_daten,
+        "fehlgeschlagen": fehlgeschlagen,
+        # Cap die Detail-Liste, damit der Response-Body bei vielen Fehlern
+        # nicht explodiert. Vollständiges Log steht im Backend-Logger.
+        "fehler_details": fehler_details[:20],
     }
 
 
@@ -759,6 +927,8 @@ async def plan(req: RepairOperationRequest, db: AsyncSession) -> RepairPlan:
 
     if req.operation == RepairOperationType.REAGGREGATE_DAY:
         estimated, warnings, op_preview = await _plan_reaggregate_day(req, db)
+    elif req.operation == RepairOperationType.REAGGREGATE_RANGE:
+        estimated, warnings, op_preview = await _plan_reaggregate_range(req, db)
     elif req.operation == RepairOperationType.REAGGREGATE_TODAY:
         estimated, warnings, op_preview = await _plan_reaggregate_today(req, db)
     elif req.operation == RepairOperationType.VOLLBACKFILL:
@@ -831,6 +1001,8 @@ async def execute(plan_id: UUID, db: AsyncSession) -> RepairResult:
 
     if req.operation == RepairOperationType.REAGGREGATE_DAY:
         summary = await _execute_reaggregate_day(req, db)
+    elif req.operation == RepairOperationType.REAGGREGATE_RANGE:
+        summary = await _execute_reaggregate_range(req, db)
     elif req.operation == RepairOperationType.REAGGREGATE_TODAY:
         summary = await _execute_reaggregate_today(req, db)
     elif req.operation == RepairOperationType.VOLLBACKFILL:

@@ -14,6 +14,7 @@ Endpunkt-Inventar:
   DELETE /api/energie-profil/rohdaten — Löscht Daten aller Anlagen
   POST   /api/energie-profil/reaggregate-heute — Triggert Aggregation heute
   POST   /api/energie-profil/{anlage_id}/reaggregate-tag — Reaggregate eines Tages
+  POST   /api/energie-profil/{anlage_id}/reaggregate-bereich — Reaggregate mehrerer Tage (max 31)
   POST   /api/energie-profil/{anlage_id}/vollbackfill — Lückenfüller HA-LTS (additiv)
   POST   /api/energie-profil/{anlage_id}/kraftstoffpreis-backfill[/tages|/monats]
 
@@ -158,6 +159,41 @@ async def reaggregate_tag(
         "datum": summary.get("datum", datum.isoformat()),
         "stunden_verfuegbar": summary.get("stunden_verfuegbar"),
     }
+
+
+@router.post("/{anlage_id}/reaggregate-bereich")
+async def reaggregate_bereich(
+    anlage_id: int,
+    von: date = Query(..., description="Startdatum des Bereichs (inkl.)"),
+    bis: date = Query(..., description="Enddatum des Bereichs (inkl., muss vor heute liegen)"),
+    mit_resnap: bool = Query(
+        True,
+        description="Vor jeder Tages-Aggregation die SensorSnapshots des Tages frisch aus "
+                    "HA-Statistics ziehen. Default an.",
+    ),
+    db: AsyncSession = Depends(get_db),
+):
+    """Aggregiert mehrere Tage seriell neu (max. REAGGREGATE_RANGE_MAX_DAYS=31).
+
+    Wrapper über RepairOperationType.REAGGREGATE_RANGE. Pro Tag erfolgt
+    ein eigener DB-Commit, damit bei Abbruch (Netz, Worker-Restart) der
+    bereits verarbeitete Teil erhalten bleibt. Prognose-Felder bleiben
+    pro Tag durch preserved_prognose erhalten (gleiches Verhalten wie
+    /reaggregate-tag).
+
+    Für 32+ Tage in mehreren Schüben aufrufen.
+    """
+    summary = await _run_via_orchestrator(
+        db,
+        anlage_id=anlage_id,
+        operation=RepairOperationType.REAGGREGATE_RANGE,
+        params={
+            "von": von.isoformat(),
+            "bis": bis.isoformat(),
+            "mit_resnap": mit_resnap,
+        },
+    )
+    return {"status": "ok", **summary}
 
 
 @router.post("/{anlage_id}/vollbackfill")

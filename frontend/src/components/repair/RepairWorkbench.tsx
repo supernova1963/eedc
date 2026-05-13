@@ -30,6 +30,7 @@ import { Activity, AlertTriangle, ChevronDown, ChevronRight, Clock, FileWarning,
 import { Alert, Button, Card, Select } from '../ui'
 import {
   OPERATION_META,
+  REAGGREGATE_RANGE_MAX_DAYS,
   type FieldDiff,
   type RepairOperationRequest,
   type RepairOperationType,
@@ -49,9 +50,11 @@ interface OperationParamsState {
   // reaggregate_day
   datum: string
   mit_resnap: boolean
-  // vollbackfill
+  // vollbackfill / reaggregate_range
   von: string
   bis: string
+  // reaggregate_range: Pflicht-Bestätigung "ohne Support-Anspruch"
+  range_confirmed: boolean
   // kraftstoffpreis_backfill
   scope: 'tages' | 'monats' | 'beides'
   // reset_cloud_import
@@ -63,6 +66,7 @@ const DEFAULT_PARAMS: OperationParamsState = {
   mit_resnap: true,
   von: '',
   bis: '',
+  range_confirmed: false,
   scope: 'beides',
   providers: '',
 }
@@ -120,6 +124,12 @@ export default function RepairWorkbench({ anlageId, anlagenname }: Props) {
     switch (selectedOp) {
       case 'reaggregate_day':
         return { datum: params.datum, mit_resnap: params.mit_resnap }
+      case 'reaggregate_range':
+        return {
+          von: params.von,
+          bis: params.bis,
+          mit_resnap: params.mit_resnap,
+        }
       case 'vollbackfill':
         return {
           von: params.von || null,
@@ -142,6 +152,28 @@ export default function RepairWorkbench({ anlageId, anlagenname }: Props) {
   const validateParams = (): string | null => {
     if (selectedOp === 'reaggregate_day' && !params.datum) {
       return 'Bitte einen Tag auswählen.'
+    }
+    if (selectedOp === 'reaggregate_range') {
+      if (!params.von || !params.bis) {
+        return 'Bitte Start- und Enddatum auswählen.'
+      }
+      const von = new Date(params.von)
+      const bis = new Date(params.bis)
+      if (bis < von) {
+        return 'Enddatum liegt vor Startdatum.'
+      }
+      const today = new Date()
+      today.setHours(0, 0, 0, 0)
+      if (bis >= today) {
+        return 'Enddatum muss vor heute liegen — der laufende Tag ist Snapshot-instabil.'
+      }
+      const tage = Math.round((bis.getTime() - von.getTime()) / 86_400_000) + 1
+      if (tage > REAGGREGATE_RANGE_MAX_DAYS) {
+        return `Maximal ${REAGGREGATE_RANGE_MAX_DAYS} Tage pro Lauf (du hast ${tage} gewählt). In mehreren Schüben ausführen.`
+      }
+      if (!params.range_confirmed) {
+        return 'Bitte die Bestätigung anhaken — Datenverlust-Hinweise wurden zur Kenntnis genommen.'
+      }
     }
     return null
   }
@@ -368,6 +400,71 @@ function OperationParamsEditor({ operation, params, setParams, disabled }: Param
           />
           Snapshots vorher aus HA-Statistics frisch ziehen (Default an)
         </label>
+      </div>
+    )
+  }
+  if (operation === 'reaggregate_range') {
+    return (
+      <div>
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              Von
+            </label>
+            <input
+              type="date"
+              aria-label="Mehrere-Tage-Reaggregate Startdatum"
+              value={params.von}
+              onChange={(e) => setParams((p) => ({ ...p, von: e.target.value }))}
+              disabled={disabled}
+              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              Bis
+            </label>
+            <input
+              type="date"
+              aria-label="Mehrere-Tage-Reaggregate Enddatum"
+              value={params.bis}
+              onChange={(e) => setParams((p) => ({ ...p, bis: e.target.value }))}
+              disabled={disabled}
+              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm"
+            />
+          </div>
+        </div>
+        <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+          Max. {REAGGREGATE_RANGE_MAX_DAYS} Tage pro Lauf. Enddatum muss vor heute liegen.
+        </p>
+
+        <label className="mt-3 inline-flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
+          <input
+            type="checkbox"
+            checked={params.mit_resnap}
+            onChange={(e) => setParams((p) => ({ ...p, mit_resnap: e.target.checked }))}
+            disabled={disabled}
+          />
+          Snapshots pro Tag aus HA-Statistics frisch ziehen (Default an)
+        </label>
+
+        <div className="mt-3 p-3 border border-amber-300 dark:border-amber-700 rounded-lg bg-amber-50 dark:bg-amber-900/20">
+          <label className="inline-flex items-start gap-2 text-sm text-amber-900 dark:text-amber-200 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={params.range_confirmed}
+              onChange={(e) => setParams((p) => ({ ...p, range_confirmed: e.target.checked }))}
+              disabled={disabled}
+              className="mt-0.5"
+            />
+            <span>
+              <strong>Bestätigung:</strong> Per-Feld-Provenance älterer Verfahrensläufe wird überschrieben.
+              MQTT-Only-Daten und Strompreis-Sensor-Werte ohne HA-LTS-Pendant gehen verloren, falls vorhanden.
+              Prognosen + Korrekturprofil-Daten bleiben erhalten.
+              Reparatur erfolgt <strong>ohne Support-Anspruch</strong> auf Rekonstruktion überschriebener Felder.
+            </span>
+          </label>
+        </div>
       </div>
     )
   }
