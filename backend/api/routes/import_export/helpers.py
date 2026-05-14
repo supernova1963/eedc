@@ -299,14 +299,14 @@ async def _distribute_legacy_pv_to_modules(
     if not pv_module or pv_erzeugung <= 0:
         return warnungen
 
-    # Gesamt-kWp berechnen
-    total_kwp = sum(
-        (inv.parameter or {}).get("leistung_kwp", 0) or 0
-        for inv in pv_module
-    )
+    # Gesamt-kWp berechnen — Spalte hat Vorrang vor parameter-JSON (#229
+    # JanKgh: SolarEdge-Multi-String pflegt leistung_kwp als Spalte, nicht
+    # im parameter — alte Lesung fand 0 vor → Gleichverteilung statt anteilig)
+    from backend.utils.investition_value import get_inv_value
+    total_kwp = sum(get_inv_value(inv, "leistung_kwp") for inv in pv_module)
 
     for inv in pv_module:
-        inv_kwp = (inv.parameter or {}).get("leistung_kwp", 0) or 0
+        inv_kwp = get_inv_value(inv, "leistung_kwp")
 
         if total_kwp > 0:
             # Proportionale Verteilung nach kWp

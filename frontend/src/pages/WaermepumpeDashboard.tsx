@@ -219,7 +219,7 @@ function WaermepumpeBlock({ dashboard, ...selectorProps }: { dashboard: Waermepu
           color="orange"
           formel="JAZ = Wärme ÷ Strom (Gesamtlaufzeit)"
           berechnung={`${z.gesamt_waerme_kwh.toFixed(0)} kWh ÷ ${z.gesamt_stromverbrauch_kwh.toFixed(0)} kWh`}
-          ergebnis={z.durchschnitt_cop ? `= ${z.durchschnitt_cop.toFixed(2)}` : '---'}
+          ergebnis={z.durchschnitt_cop ? `= ${z.durchschnitt_cop.toFixed(2)}` : '—'}
         />
         <KPICard
           title="Wärme erzeugt"
@@ -263,7 +263,7 @@ function WaermepumpeBlock({ dashboard, ...selectorProps }: { dashboard: Waermepu
             color="orange"
             formel="JAZ Heizen = Heizwärme ÷ Strom Heizen"
             berechnung={`${z.gesamt_heizung_getrennt_kwh?.toFixed(0)} kWh ÷ ${z.gesamt_strom_heizen_kwh?.toFixed(0)} kWh`}
-            ergebnis={z.cop_heizen ? `= ${z.cop_heizen.toFixed(2)}` : '---'}
+            ergebnis={z.cop_heizen ? `= ${z.cop_heizen.toFixed(2)}` : '—'}
           />
           <KPICard
             title="JAZ Warmwasser"
@@ -272,7 +272,7 @@ function WaermepumpeBlock({ dashboard, ...selectorProps }: { dashboard: Waermepu
             color="orange"
             formel="JAZ WW = Warmwasser ÷ Strom WW"
             berechnung={`${z.gesamt_warmwasser_getrennt_kwh?.toFixed(0)} kWh ÷ ${z.gesamt_strom_warmwasser_kwh?.toFixed(0)} kWh`}
-            ergebnis={(z.cop_warmwasser && z.cop_warmwasser > 0) ? `= ${z.cop_warmwasser.toFixed(2)}` : '---'}
+            ergebnis={(z.cop_warmwasser && z.cop_warmwasser > 0) ? `= ${z.cop_warmwasser.toFixed(2)}` : '—'}
           />
           <KPICard
             title="Strom Heizen"
@@ -321,7 +321,7 @@ function WaermepumpeBlock({ dashboard, ...selectorProps }: { dashboard: Waermepu
         icon={PieChartIcon}
         color="text-red-500"
         title="Wärme-Verteilung"
-        summary={`Heizung ${z.gesamt_heizenergie_kwh.toFixed(0)} · Warmwasser ${z.gesamt_warmwasser_kwh.toFixed(0)} kWh`}
+        summary={`Heizung ${z.gesamt_heizenergie_kwh.toFixed(0)} kWh · Warmwasser ${z.gesamt_warmwasser_kwh.toFixed(0)} kWh`}
         defaultOpen
       >
         <div className="h-64">
@@ -399,8 +399,8 @@ function WaermepumpeBlock({ dashboard, ...selectorProps }: { dashboard: Waermepu
             <AreaChart data={monthlyData}>
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis dataKey="name" fontSize={10} />
-              <YAxis />
-              <Tooltip content={<ChartTooltip />} />
+              <YAxis label={{ value: 'kWh', angle: -90, position: 'insideLeft', style: { textAnchor: 'middle' } }} />
+              <Tooltip content={<ChartTooltip unit="kWh" />} />
               <Legend />
               <Area type="monotone" dataKey="heizung" stackId="1" fill="#ef4444" stroke="#dc2626" name="Heizung" />
               <Area type="monotone" dataKey="warmwasser" stackId="1" fill="#3b82f6" stroke="#2563eb" name="Warmwasser" />
@@ -491,9 +491,9 @@ function WaermepumpeBlock({ dashboard, ...selectorProps }: { dashboard: Waermepu
             <thead>
               <tr className="border-b border-gray-200 dark:border-gray-700">
                 <th className="text-left py-2 px-2">Monat</th>
-                <th className="text-right py-2 px-2">Strom</th>
-                <th className="text-right py-2 px-2">Heizung</th>
-                <th className="text-right py-2 px-2">Warmwasser</th>
+                <th className="text-right py-2 px-2">Strom (kWh)</th>
+                <th className="text-right py-2 px-2">Heizung (kWh)</th>
+                <th className="text-right py-2 px-2">Warmwasser (kWh)</th>
                 <th className="text-right py-2 px-2">JAZ</th>
               </tr>
             </thead>

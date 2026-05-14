@@ -508,14 +508,14 @@ def _distribute_by_param(
     Returns:
         Liste von (Investition, anteil) Tupeln
     """
-    total_param = sum(
-        (inv.parameter or {}).get(param_key, 0) or 0
-        for inv in investitionen
-    )
+    # Spalte hat Vorrang vor parameter-JSON (#229 JanKgh: leistung_kwp ist
+    # bei vielen Anlagen als Tabellen-Spalte gepflegt, nicht im parameter)
+    from backend.utils.investition_value import get_inv_value
+    total_param = sum(get_inv_value(inv, param_key) for inv in investitionen)
 
     result = []
     for inv in investitionen:
-        inv_param = (inv.parameter or {}).get(param_key, 0) or 0
+        inv_param = get_inv_value(inv, param_key)
         if total_param > 0:
             anteil = round(total * inv_param / total_param, 2)
         else:

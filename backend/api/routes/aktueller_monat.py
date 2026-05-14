@@ -727,7 +727,14 @@ async def get_aktueller_monat(
         else:
             resolved[top_level_feld] = (resolved[top_level_feld][0] + val, quelle_info)
 
+    # #239 detLAN-Folge: HA-Statistics-/MQTT-Sensoren liefern Werte auch in
+    # Monaten vor Anschaffung der EEDC-Investition (Sensor existierte in HA
+    # schon vorher). Vor-Anschaffungs-/Nach-Stilllegungs-Monate hier
+    # rausfiltern, sonst tauchen WP-Werte (z.B. 145 kWh Strom für März bei
+    # Anschaffungsdatum April) im Monatsbericht auf.
     for inv in investitionen:
+        if not inv.ist_aktiv_im_monat(jahr, monat):
+            continue
         agg_map = typ_aggregation.get(inv.typ, {})
         for inv_suffix, top_level_feld in agg_map.items():
             _aggregate(top_level_feld, f"inv_{inv.id}_{inv_suffix}")
@@ -744,6 +751,10 @@ async def get_aktueller_monat(
         emob_quelle: Optional[tuple] = None
         for inv in investitionen:
             if (inv.parameter or {}).get("ist_dienstlich", False):
+                continue
+            # #239 detLAN-Folge: HA-Statistics-Werte aus vor-Anschaffungs-
+            # Monaten nicht in den Monatsbericht-Pool aggregieren.
+            if not inv.ist_aktiv_im_monat(jahr, monat):
                 continue
             if inv.typ == "e-auto":
                 for suffix in ("ladung_kwh", "verbrauch_kwh"):
@@ -1098,8 +1109,18 @@ async def get_aktueller_monat(
         netzbezug_durchschnittspreis = md_flex.netzbezug_durchschnittspreis_cent
 
     # ── Komponenten-Flags ──
-    hat_speicher = any(i.typ == "speicher" for i in investitionen)
-    hat_waermepumpe = any(i.typ == "waermepumpe" for i in investitionen)
+    # #239 detLAN: pro Monat filtern, nicht pro Anlage. Sonst wird die
+    # Sektion (z.B. Wärmepumpe) im Monatsbericht angezeigt, bevor die
+    # Investition angeschafft wurde — alle Werte sind dann "—", was den
+    # User irritiert ("Investition vor Anschaffung darstellen" #236 P2).
+    hat_speicher = any(
+        i.typ == "speicher" and i.ist_aktiv_im_monat(jahr, monat)
+        for i in investitionen
+    )
+    hat_waermepumpe = any(
+        i.typ == "waermepumpe" and i.ist_aktiv_im_monat(jahr, monat)
+        for i in investitionen
+    )
 
     # ── Issue #169: Kompressor-Starts pro Monat aus TagesZusammenfassung ──
     # Quelle: TagesZusammenfassung.komponenten_starts (JSON, Form
@@ -1113,7 +1134,10 @@ async def get_aktueller_monat(
     if hat_waermepumpe:
         from backend.models.tages_energie_profil import TagesZusammenfassung
         from sqlalchemy import extract
-        wp_invs = [i for i in investitionen if i.typ == "waermepumpe"]
+        wp_invs = [
+            i for i in investitionen
+            if i.typ == "waermepumpe" and i.ist_aktiv_im_monat(jahr, monat)
+        ]
         wp_inv_id_strs = {str(i.id) for i in wp_invs}
         tz_result = await db.execute(
             select(TagesZusammenfassung.komponenten_starts)
@@ -1137,11 +1161,19 @@ async def get_aktueller_monat(
 
 
     hat_emobilitaet = any(
-        i.typ in ("e-auto", "wallbox") and not (i.parameter or {}).get("ist_dienstlich", False)
+        i.typ in ("e-auto", "wallbox")
+        and not (i.parameter or {}).get("ist_dienstlich", False)
+        and i.ist_aktiv_im_monat(jahr, monat)
         for i in investitionen
     )
-    hat_balkonkraftwerk = any(i.typ == "balkonkraftwerk" for i in investitionen)
-    hat_sonstiges = any(i.typ == "sonstiges" for i in investitionen)
+    hat_balkonkraftwerk = any(
+        i.typ == "balkonkraftwerk" and i.ist_aktiv_im_monat(jahr, monat)
+        for i in investitionen
+    )
+    hat_sonstiges = any(
+        i.typ == "sonstiges" and i.ist_aktiv_im_monat(jahr, monat)
+        for i in investitionen
+    )
 
     # ── Vergleichsdaten ──
     vorjahr = await _load_vorjahr(anlage_id, investitionen, jahr, monat, db)
