@@ -148,17 +148,20 @@ export default function Energieprofil() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Energieprofil">
-        <Select
-          value={selectedAnlageId?.toString() || ''}
-          onChange={(e) => setSelectedAnlageId(parseInt(e.target.value))}
-          options={anlagen.map(a => ({ value: a.id.toString(), label: a.anlagenname }))}
-        />
+      <div className="flex items-center justify-end gap-2 flex-wrap">
+        {anlagen.length > 1 && (
+          <Select
+            value={selectedAnlageId?.toString() || ''}
+            onChange={(e) => setSelectedAnlageId(parseInt(e.target.value))}
+            options={anlagen.map(a => ({ value: a.id.toString(), label: a.anlagenname }))}
+            aria-label="Anlage wählen"
+          />
+        )}
         <Button variant="secondary" onClick={() => { loadStats(); loadKraftstoffStatus() }} disabled={loading}>
           <RefreshCw className={`h-4 w-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
           Aktualisieren
         </Button>
-      </PageHeader>
+      </div>
 
       {error && <Alert type="error">{error}</Alert>}
       {message && <Alert type="success">{message}</Alert>}
