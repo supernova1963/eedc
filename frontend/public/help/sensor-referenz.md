@@ -218,64 +218,34 @@
 
 ---
 
-## 8. PV-Prognosequellen (v3.30.0)
+## 8. Solcast PV Forecast (optional, ab v3.16.5)
 
-Pro Anlage kann eine von drei PV-Prognosequellen gewählt werden (Anlagenstammdaten → Prognosequelle). eedc erkennt die installierten Integrationen automatisch per Auto-Discovery — kein manuelles Sensor-Mapping nötig.
+Zwei alternative Pfade — Toggle „Solcast PV Forecast" am Ende von Schritt 1 im Sensor-Mapping-Wizard.
 
-### 8.1 eedc-optimiert (Standard)
+### Variante A: HA-Integration (BJReplay)
 
-OpenMeteo-Rohprognose × anlagenspezifischer Lernfaktor (O1+O2: Recency-Boost + Trim-Mean). Funktioniert überall (HA-Add-on + Standalone). Keine zusätzliche Konfiguration nötig.
+Setzt die [BJReplay Solcast HA-Integration](https://github.com/BJReplay/ha-solcast-solar) voraus. eedc liest die 7-Tage-Prognose direkt als Sensor-State — kein API-Key in eedc nötig.
 
-### 8.2 Solcast (pur)
+**Auto-Discovery (v3.16.10):** Sensoren werden über `/api/states` per Suffix-Pattern gematcht:
 
-Satellitenbasierte Prognose direkt von Solcast, ohne eedc-Korrektur.
+| Suffix-Pattern | Bedeutung |
+|---|---|
+| `_heute` / `_today` | Tagesprognose Heute |
+| `_morgen` / `_tomorrow` | Tagesprognose Morgen |
+| `_uebermorgen` / `_ubermorgen` / `_tag_3` / `_day_3` | Übermorgen |
+| `_tag_4` … `_tag_7` / `_day_4` … `_day_7` | Tag 4–7 |
 
-**Im HA-Add-on:** Setzt die [BJReplay Solcast HA-Integration](https://github.com/BJReplay/ha-solcast-solar) voraus. eedc erkennt die Integration automatisch per Auto-Discovery — kein Toggle, kein Mapping.
+Filter (v3.16.11): nur Sensoren mit `unit_of_measurement=kWh` und ohne „verbleibend"/„remaining" im Namen — sonst würde z. B. `prognose_verbleibende_leistung_heute` fälschlich als Tagesprognose gematcht.
 
-**Auto-Discovery (Solcast):** Sensoren werden über `/api/states` per Prefix `solcast_pv_forecast_` und Suffix-Pattern gematcht:
+**Stundenprofil:** Kommt aus dem `DetailedForecast`-Attribut der HA-Sensoren (v3.16.13 — vorher fälschlich `detailedHourly` gesucht, was bei Multi-Dach-Anlagen leer war).
 
-| Suffix-Pattern | Rolle | Einheit |
-|---|---|---|
-| `prognose_heute` | Tagesprognose heute | kWh |
-| `prognose_morgen` | Tagesprognose morgen | kWh |
-| `prognose_tag_3` … `prognose_tag_7` | Tag 3–7 | kWh |
-| `prognose_aktuelle_stunde` | Aktuelle Stunde | Wh |
-| `prognose_nachste_stunde` | Nächste Stunde | Wh |
-| `verbleibende_leistung_heute` | Heute Rest | kWh |
-| `prognose_spitzenleistung_heute/morgen` | Peak | W |
-| `aktuelle_leistung` | Aktuelle Leistung | W |
+### Variante B: Solcast-API (Free/Paid Key)
 
-**Stundenprofil:** Kommt aus dem `DetailedForecast`-Attribut der HA-Sensoren.
+Direkter API-Aufruf für Standalone-Nutzer ohne HA-Integration. Konfiguration in den Anlagenstammdaten. L1-Cache (in-memory) und L2-Cache (DB) überleben Neustarts.
 
-**Im Standalone-Betrieb:** Direkter API-Aufruf mit eigenem Solcast-Token. API-Token + Resource-IDs im Sensor-Mapping-Wizard eintragen (Basis-Schritt → Solcast-Block). L1-Cache (in-memory) und L2-Cache (DB) überleben Neustarts. Free-Tier: 10 Abrufe/Tag, eedc cached aggressiv.
+### Slot-Konvention
 
-**Slot-Konvention:** 30-Min-Buckets aus Solcast werden per `ceil(bucket_ende)` dem **Backward-Slot** zugeordnet (siehe BERECHNUNGEN.md §6b).
-
-### 8.3 Solar Forecast ML / SFML (pur)
-
-ML-basierte Prognose direkt aus der [Solar Forecast ML Integration](https://github.com/Zara-Toorox/solar_forecast_ml) (Zara-Toorox), ohne eedc-Korrektur. Nur im HA-Add-on verfügbar.
-
-**Auto-Discovery (SFML):** Sensoren werden per Prefix `solar_forecast_ml_` und `prognose_` gematcht:
-
-| Suffix-Pattern | Rolle | Einheit |
-|---|---|---|
-| `prognose_heute` | Tagesprognose heute | kWh |
-| `prognose_heute_rest` | Heute verbleibend | kWh |
-| `prognose_morgen` | Tagesprognose morgen | kWh |
-| `prognose_ubermorgen` | Übermorgen | kWh |
-| `prognose_nachste_stunde` | Nächste Stunde | kWh |
-| `genauigkeit_30_tage` | Ø Genauigkeit 30d | % |
-| `planungsprognose_p10_blend` | P10-Blend (konservativ) | kWh |
-
-**Kein Stundenprofil:** SFML liefert keine p10/p90-Konfidenzbänder und standardmäßig kein stündliches Profil. Die Tagesprognose wird auf die OpenMeteo-GTI-Kurvenform verteilt (Proxy-Stundenprofil).
-
-### 8.4 Automatischer Fallback
-
-Wenn die gewählte Quelle keine Daten liefert (Sensor unavailable, Integration nicht installiert, API-Tageslimit), fällt eedc automatisch auf eedc-optimiert zurück — mit unauffälligem Hinweis im Live-Dashboard.
-
-### 8.5 Discovery-Endpoint
-
-`GET /api/anlagen/prognose-quellen/discover` liefert die in HA erkannten Integrationen + Sensoren mit aktuellen Werten. 5-Minuten-Cache.
+30-Min-Buckets aus Solcast werden per `ceil(bucket_ende)` dem **Backward-Slot** zugeordnet (siehe BERECHNUNGEN.md §6b). Ein Bucket am Tagesübergang `[23:00, 23:30)` heute landet damit korrekt in Slot 0 des Folgetags.
 
 ---
 
