@@ -57,6 +57,11 @@ const Protokolle = lazy(() => import('./pages/Protokolle'))
 const DatenChecker = lazy(() => import('./pages/DatenChecker'))
 const Hilfe = lazy(() => import('./pages/Hilfe'))
 
+// Dev-only Showcase für Style-Guide-Iteration. Page rendert in Production
+// nichts, der Code wird vom Bundler aber trotzdem mit ausgeliefert.
+// Lazy-Import minimiert das auf einen kleinen separaten Chunk.
+const DesignPreview = lazy(() => import('./pages/DesignPreview'))
+
 function App() {
   useTouchTitleTooltip()
   // HashRouter für HA Ingress Support (Ingress-Pfad ist dynamisch)
@@ -132,6 +137,10 @@ function App() {
 
             {/* Einstellungen - Community */}
             <Route path="einstellungen/community" element={<CommunityShare />} />
+
+            {/* Dev-only Showcase für Style-Guide-Iteration (Page-Component
+                rendert in Production null, Route bleibt aber bestehen). */}
+            <Route path="dev/design-preview" element={<DesignPreview />} />
 
             {/* Redirects für entfernte/umbenannte Seiten */}
             <Route path="einstellungen/datenerfassung" element={<Navigate to="/einstellungen/monatsdaten" replace />} />

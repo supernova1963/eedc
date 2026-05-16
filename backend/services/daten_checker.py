@@ -1531,6 +1531,10 @@ class DatenChecker:
             return ergebnisse
 
         getrennte_strommessung = param.get("getrennte_strommessung", False)
+        # Split-Klimaanlagen (wp_art="luft_luft") haben üblicherweise keinen
+        # Wärmemengenzähler — die "Heizwärme fehlt"-Warnung wäre ein
+        # Dauer-Falschpositiv. Stromverbrauch ist trotzdem Pflicht.
+        ist_klima = param.get("wp_art") == "luft_luft"
 
         # #183: bei getrennter Strommessung wird der alte stromverbrauch_kwh-
         # Sensor in der Aggregation ignoriert. Wenn er trotzdem im Sensor-
@@ -1552,11 +1556,10 @@ class DatenChecker:
                     ),
                     details=(
                         "Der Sensor wird in der Aggregation ignoriert — Gesamt-"
-                        "Strom kommt aus Strom Heizen + Strom Warmwasser. Du "
-                        "kannst ihn aus der Sensor-Zuordnung entfernen, ohne "
-                        "etwas zu verlieren."
+                        "Strom kommt aus Strom Heizen + Strom Warmwasser. Beim "
+                        "nächsten Speichern des Sensor-Mappings wird der Eintrag "
+                        "automatisch entfernt — kein Klick nötig."
                     ),
-                    link="/einstellungen/sensoren",
                 ))
 
         imd_map = {
@@ -1578,7 +1581,7 @@ class DatenChecker:
                 if daten.get("stromverbrauch_kwh") is None:
                     fehlend_strom.append(label)
 
-            if daten.get("heizenergie_kwh") is None:
+            if not ist_klima and daten.get("heizenergie_kwh") is None:
                 fehlend_heiz.append(label)
 
         if fehlend_strom:
