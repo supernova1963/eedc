@@ -572,6 +572,18 @@ async def _run_data_migrations() -> None:
             migrate_3d_p3_initial_provenance_legacy_unknown,
         )
 
+        # Etappe 4 (v3.31.0): reset vollbackfill_durchgefuehrt für Anlagen
+        # mit HA-Integration, damit der nächste Monatsabschluss einen
+        # Auto-Vollbackfill aus HA-LTS auslöst und alte Mix-Source-Aggregate
+        # durch saubere LTS-Werte ersetzt werden.
+        from backend.services.etappe_4_migrate import (
+            migrate_etappe_4_reset_vollbackfill,
+        )
+        await _apply_once(
+            "etappe_4_v3_31_0_reset_vollbackfill_for_ha_lts_switch",
+            migrate_etappe_4_reset_vollbackfill,
+        )
+
 
 async def init_db():
     """
