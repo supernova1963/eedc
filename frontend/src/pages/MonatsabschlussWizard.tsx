@@ -521,9 +521,9 @@ export default function MonatsabschlussWizard() {
             .join('\n')
           setError(
             `Einige Felder wurden nicht übernommen:\n${meldungen}\n\n` +
-            'Hinweis: Über Wartung → Reparatur-Werkbank → „Daten-Quellen-Konflikte ' +
-            'auflösen" können konfliktierende Cloud-/Import-Quellen zurückgesetzt ' +
-            'werden, danach greift die manuelle Eingabe.',
+            'Hinweis: Über Einstellungen → Daten → Energieprofil → Reparatur-Werkbank → ' +
+            '„Daten-Quellen-Konflikte auflösen" können konfliktierende Cloud-/Import-Quellen ' +
+            'zurückgesetzt werden, danach greift die manuelle Eingabe.',
           )
           // Bei Schreibschutz nicht weiter-navigieren — User soll Werkbank nutzen
         } else {

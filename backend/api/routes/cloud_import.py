@@ -24,6 +24,17 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+# #261 FrodoVDR: kopierte API-Keys/Site-IDs aus Hersteller-Portalen tragen oft
+# unsichtbaren Whitespace mit — SolarEdge etwa antwortet dann mit 403. Frontend
+# trimmt schon, dies ist der zweite Schild für den Fall, dass ein anderer
+# Client den Endpoint anspricht (gespeicherte Credentials, externes Tooling).
+def _trim_credentials(credentials: dict) -> dict:
+    return {
+        k: v.strip() if isinstance(v, str) else v
+        for k, v in (credentials or {}).items()
+    }
+
+
 # ─── Schemas ─────────────────────────────────────────────────────────────────
 
 
@@ -118,7 +129,7 @@ async def test_connection(data: TestConnectionRequest):
     except ValueError:
         raise HTTPException(400, f"Unbekannter Provider: {data.provider_id}")
 
-    result = await provider.test_connection(data.credentials)
+    result = await provider.test_connection(_trim_credentials(data.credentials))
     await log_activity(
         kategorie="cloud_import",
         aktion=f"Cloud-Verbindungstest {data.provider_id}",
@@ -146,7 +157,7 @@ async def fetch_preview(data: FetchPreviewRequest):
 
     try:
         months = await provider.fetch_monthly_data(
-            data.credentials,
+            _trim_credentials(data.credentials),
             data.start_year, data.start_month,
             data.end_year, data.end_month,
         )
@@ -179,7 +190,7 @@ async def save_credentials(
     config = anlage.connector_config or {}
     config["cloud_import"] = {
         "provider_id": data.provider_id,
-        "credentials": data.credentials,
+        "credentials": _trim_credentials(data.credentials),
     }
     anlage.connector_config = config
     flag_modified(anlage, "connector_config")

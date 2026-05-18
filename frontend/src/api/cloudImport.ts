@@ -60,6 +60,16 @@ export interface CloudCredentials {
   has_credentials: boolean
 }
 
+// #261 FrodoVDR: kopierte API-Keys/Site-IDs haben oft Whitespace mit drin,
+// SolarEdge antwortet dann mit 403. Vor jedem Cloud-Call trimmen.
+function trimCredentials(credentials: Record<string, string>): Record<string, string> {
+  const trimmed: Record<string, string> = {}
+  for (const [key, value] of Object.entries(credentials)) {
+    trimmed[key] = typeof value === 'string' ? value.trim() : value
+  }
+  return trimmed
+}
+
 export const cloudImportApi = {
   /**
    * Verfügbare Cloud-Import-Provider abrufen
@@ -80,7 +90,7 @@ export const cloudImportApi = {
     const response = await fetch(`${API_BASE}/cloud-import/test`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ provider_id: providerId, credentials }),
+      body: JSON.stringify({ provider_id: providerId, credentials: trimCredentials(credentials) }),
     })
     if (!response.ok) {
       const error = await response.json()
@@ -105,7 +115,7 @@ export const cloudImportApi = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         provider_id: providerId,
-        credentials,
+        credentials: trimCredentials(credentials),
         start_year: startYear,
         start_month: startMonth,
         end_year: endYear,
@@ -132,7 +142,7 @@ export const cloudImportApi = {
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider_id: providerId, credentials }),
+        body: JSON.stringify({ provider_id: providerId, credentials: trimCredentials(credentials) }),
       }
     )
     if (!response.ok) {

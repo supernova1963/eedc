@@ -366,15 +366,30 @@ async def get_tagesverlauf(
             werte["haushalt"] = round(-haushalt, 2)
 
         # Strompreis (optional, wird NICHT in Haushalt-Berechnung einbezogen).
-        # Sensor-Wert hat Vorrang, EPEX ist per-Slot-Fallback für Lücken im
-        # Sensor-History (Tibber/aWATTar liefern oft erst nach Mitternacht).
+        # Tibber/aWATTar/EPEX-Sensoren sind Step-Funktionen — der Preis steht
+        # für 15- bzw. 60-Min-Intervalle fest und ändert sich nur an den
+        # Block-Grenzen. HA-History speichert nur State-Changes, daher hat
+        # mancher 10-Min-Slot keinen Punkt INNERHALB des Slots, obwohl der
+        # gültige Preis bekannt ist. #267 rilmor-mhrs: vorher fiel jeder
+        # 10-Min-Slot ohne Tibber-Update auf EPEX-Börsenpreis zurück → das
+        # erzeugte Sprünge zwischen Endkunden-Preis (~35 ct) und Spotmarkt-
+        # Preis (~10 ct). Korrekt: letzten Sensor-Wert vor Slot-Ende als
+        # Carry-Forward nehmen (Step-Funktion).
         sensor_hat_wert = False
         if strompreis_eid:
             pts = history.get(strompreis_eid, [])
+            # Innerhalb des Slots: bevorzugt mitteln (deckt seltenen Fall ab,
+            # dass mehrere Step-Wechsel im selben 10-Min-Slot liegen).
             h_pts = [p[1] for p in pts if h_start <= p[0] < h_end]
             if h_pts:
                 werte["strompreis"] = round(sum(h_pts) / len(h_pts), 2)
                 sensor_hat_wert = True
+            else:
+                # Carry-Forward: letzter Punkt vor Slot-Ende, falls vorhanden.
+                vorherige = [p[1] for p in pts if p[0] < h_end]
+                if vorherige:
+                    werte["strompreis"] = round(vorherige[-1], 2)
+                    sensor_hat_wert = True
         if not sensor_hat_wert and _boersenpreis_stunden:
             bp = _boersenpreis_stunden.get(h_start.hour)
             if bp is not None:

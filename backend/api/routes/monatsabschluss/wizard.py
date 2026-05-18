@@ -313,8 +313,9 @@ async def save_monatsabschluss(
                         "feld": feld_wert.feld,
                         "konflikt_quelle": res.conflicting_source,
                         "hinweis": (
-                            "Über Wartung → Reparatur-Werkbank → 'Daten-Quellen-"
-                            "Konflikte auflösen' können konfliktierende Cloud-/"
+                            "Über Einstellungen → Daten → Energieprofil → "
+                            "Reparatur-Werkbank → 'Daten-Quellen-Konflikte "
+                            "auflösen' können konfliktierende Cloud-/"
                             "Import-Quellen zurückgesetzt werden, danach greift "
                             "die manuelle Eingabe."
                         ),
