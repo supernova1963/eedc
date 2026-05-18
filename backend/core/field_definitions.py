@@ -133,12 +133,13 @@ INVESTITION_FELDER: dict = {
             "csv_suffix": "Entladung_kWh",
             "aggregiert_in": "batterie_entladung_sum",
         },
-        # Konditionell — nur wenn arbitrage_faehig=true:
+        # Konditionell — nur wenn laedt_aus_netz=true (arbitrage_faehig impliziert das):
         {
             "feld": "ladung_netz_kwh", "label": "Netzladung", "einheit": "kWh",
-            "bedingung": "arbitrage_faehig",
+            "bedingung": "laedt_aus_netz",
             "csv_suffix": "Netzladung_kWh",
         },
+        # Ladepreis nur bei echter Arbitrage relevant — Backup-/Notladung läuft zum Bezugspreis.
         {
             "feld": "speicher_ladepreis_cent", "label": "Ø Ladepreis", "einheit": "ct/kWh",
             "bedingung": "arbitrage_faehig",
@@ -424,6 +425,9 @@ def get_felder_fuer_investition(
     result = []
     getrennte_strommessung = bool(params.get("getrennte_strommessung"))
     arbitrage_faehig = bool(params.get("arbitrage_faehig"))
+    # Arbitrage impliziert Netzladung — das Flag ist nur ein Erfassungs-Schalter,
+    # die UI für `ladung_netz_kwh` muss auch ohne Arbitrage sichtbar sein können.
+    laedt_aus_netz = bool(params.get("laedt_aus_netz")) or arbitrage_faehig
     v2h_faehig = bool(params.get("v2h_faehig") or params.get("nutzt_v2h"))
     hat_speicher = bool(params.get("hat_speicher"))
 
@@ -446,6 +450,8 @@ def get_felder_fuer_investition(
         elif bedingung == "!getrennte_strommessung" and getrennte_strommessung:
             continue
         elif bedingung == "arbitrage_faehig" and not arbitrage_faehig:
+            continue
+        elif bedingung == "laedt_aus_netz" and not laedt_aus_netz:
             continue
         elif bedingung == "v2h_faehig" and not v2h_faehig:
             continue
@@ -685,6 +691,31 @@ def get_speicher_netzladung_kwh(data: dict) -> float:
     if not data:
         return 0.0
     return float(data.get("ladung_netz_kwh") or data.get("speicher_ladung_netz_kwh") or 0)
+
+
+def get_emob_pv_netz_kwh(data: dict, total_kwh: float | None = None) -> tuple[float, float]:
+    """E-Mobilitäts-PV-/Netz-Anteil aus Wallbox-/E-Auto-Monatsdaten.
+
+    Liest `ladung_pv_kwh` direkt. Für `ladung_netz_kwh`:
+    - wenn als Key vorhanden → verwenden (auch 0 ist ein gültiger gepflegter Wert)
+    - sonst aus Gesamt-Ladung ableiten: `netz = max(0, total - pv)`.
+
+    Hintergrund #262 (junky84): der evcc-Portal-Import liefert pro Session nur
+    `Energie (kWh)` + `Sonne (%)` und schreibt damit `ladung_kwh` + `ladung_pv_kwh`,
+    aber kein `ladung_netz_kwh`. Pool-Max-Aggregationen, die nur diese beiden Keys
+    direkt lasen, sahen Netz = 0 und damit PV-Anteil = 100 %.
+
+    `total_kwh` darf vom Aufrufer übergeben werden, wenn die Gesamt-Ladung bereits
+    via `get_eauto_ladung_kwh()` bestimmt wurde — spart eine zweite Lesung.
+    """
+    if not data:
+        return (0.0, 0.0)
+    pv = float(data.get("ladung_pv_kwh") or 0)
+    if "ladung_netz_kwh" in data and data["ladung_netz_kwh"] is not None:
+        return (pv, float(data["ladung_netz_kwh"]))
+    if total_kwh is None:
+        total_kwh = get_eauto_ladung_kwh(data)
+    return (pv, max(0.0, total_kwh - pv))
 
 
 def get_sonstiges_verbrauch_kwh(data: dict) -> float:

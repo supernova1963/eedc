@@ -44,6 +44,10 @@ Thumbs.db
 # Data (wird als Volume gemountet)
 data/*.db
 data/*.sqlite
+# Anwender-DB grundsätzlich nie tracken (auch nicht als 0-Byte-Stub)
+*.db
+*.sqlite
+*.sqlite3
 
 # Logs
 *.log

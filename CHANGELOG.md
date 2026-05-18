@@ -7,6 +7,46 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ---
 
+## [3.31.4] - 2026-05-18 — Bündel-Release: Security-Hardening + Speicher-Etappe A/B + Tester-Beiträge
+
+> 🔐 **Sicherheits-Härtung als Schwerpunkt.** Drei Schichten gegen typische Angriffsvektoren in selbst-gehosteten Apps: Credential-Maskierung deny-by-default, SSRF-Schutz im Connector-Test gegen Loopback/Link-Local/Multicast-Ziele (inkl. DNS-Rebinding), und das `curl | bash`-Anti-Pattern aus der Setup-Anleitung ersetzt durch `curl → less → bash`. Plus zwei Etappen aus Stefans Speicher-Konzept (`laedt_aus_netz`-Schalter + Speicher-Wirtschaftlichkeit mit PV-/Netz-Anteil), klarere README für den Standalone-Modus, und ein Pool-Drift-Fix für die E-Mob-Auswertung beim evcc-Import.
+
+### Security
+
+- **Credential-Maskierung deny-by-default** (PR #275): Provider-aware Detection für sensible Eingabefelder — alles mit `type="password"` plus Substring-Heuristik für ungewöhnlich benannte Token-Felder. Eingaben in Logs, Debug-Outputs und Connector-Test-Antworten werden vor der Weitergabe maskiert. Neun Akzeptanztests, deny-by-default-Linie statt allow-list (sicher ist sicher; lieber ein nicht-sensibles Feld maskieren als ein sensibles übersehen).
+- **SSRF-Schutz im Connector-Test** (PR #275): `/api/connector/test` und `/api/connector/setup` lösen jetzt vor jedem ausgehenden Request den Ziel-Hostnamen via `getaddrinfo` auf und prüfen jede IP mit `ipaddress.is_loopback / is_link_local / is_multicast / is_unspecified / is_reserved`. Loopback-Ziele (127.0.0.0/8, ::1), Link-Local (169.254.0.0/16), Multicast, IPv4/IPv6-Mapped-Adressen und private Bereiche werden geblockt. DNS-Rebinding-Schutz durch Re-Resolve direkt vor dem Connect. 21 Akzeptanztests.
+- **`curl | bash` aus der Setup-Anleitung entfernt** (PR #275): `docs/SETUP_DEVMACHINE.md` zeigt jetzt explizit das `curl -fsSL -o /tmp/eedc-setup.sh … && less /tmp/eedc-setup.sh && bash /tmp/eedc-setup.sh`-Pattern mit Sicherheitshinweis zur Begründung. Pipe-to-shell wird in keiner offiziellen Anleitung mehr empfohlen.
+- **Setup-Skript ohne automatische Maintainer-Identität**: `docs/setup-devmachine.sh` setzte bei fehlender Git-Identität automatisch Platzhalter-Werte des Maintainers (`git config --global user.name "supernova1963"`). Das ist raus — Skript gibt jetzt nur einen Hinweis mit Platzhalter-Anleitung aus, jeder Nutzer trägt seine eigene Identität ein.
+- **Standalone-README: LAN-Only + kein Auth-Layer-Roadmap-Versprechen** (PR #276 + #277): `README.md` macht für den Standalone-Modus explizit klar, dass die App als LAN-Only-Setup konzipiert ist. Für öffentliche Erreichbarkeit verweist sie auf etabliertes Standard-Tooling (nginx + Basic-Auth, OAuth2-Proxy, Cloudflare Access, Tailscale Funnel). Ein eigener Auth-Layer im Container ist bewusst *nicht* auf der Roadmap — Standard-Werkzeuge lösen das Problem nachweislich besser als eine selbstgebaute In-App-Implementierung. Im HA-Add-on-Modus liegt der Auth-Layer bei Home Assistant. Memory-Linie `feedback_externer_druck_reflex.md`.
+
+### Added
+
+- **Speicher Etappe A: Erfassungs-Schalter `laedt_aus_netz`** (PR #269 stlorenz, Issue #264): Neuer Boolean pro Speicher-Investition, ob der Speicher überhaupt aus dem Netz lädt (z. B. für Arbitrage bei dynamischen Tarifen) oder rein PV-getrieben. Erfassung im Investitions-Formular, Default false. Vorbereitung für die Wirtschaftlichkeits-Berechnung in Etappe B.
+- **Speicher Etappe B: Wirtschaftlichkeit mit PV-/Netz-Anteil** (PR #271 stlorenz, Issue #264): ROI-Berechnung berücksichtigt jetzt den PV- vs. Netz-Anteil der Speicher-Ladung. Bisher wurden alle Ladungen mit Bezugspreis bewertet — bei Speichern mit Netzladung (z. B. Tibber-Optimierung) realistisch, bei rein-PV-Speichern systematisch zu negativ. Drift-Audit-D-Wrapper konsolidiert die Aggregations-Logik mit den anderen Wirtschaftlichkeits-Pfaden. Memory-Linie `feedback_aggregations_drift.md`. Etappe C (TEP-Lookups + SoC-korrigierter η) folgt mit dem nächsten Release zusammen mit dem Frontend-PR.
+
+### Fixed
+
+- **E-Mobilität: `ladung_netz_kwh`-Drift bei evcc-Import** (#262 junky84-Folge nach v3.31.3): junky84 meldete nach v3.31.3 weiter unstimmige Werte — Wallbox-Dashboard zeigte PV-Anteil 100 %, Netzladung 0 kWh trotz Netzbezug-Werten. Ursache: evcc-CSV liefert nur `total` + `pv-%`, das abgeleitete Feld `ladung_netz_kwh` wurde beim Import nie geschrieben. Acht Read-Sites (Investitionen, Cockpit-Übersicht, Cockpit-Komponenten, aktueller Monat, HA-Export, PDF-Jahresbericht u. a.) lasen das fehlende Feld direkt und kamen auf 0. Fix per zwei Schichten: (1) Import-Site in `data_import.py` schreibt jetzt `ladung_netz_kwh = max(0, total - pv)` mit, (2) neuer SoT-Helper `get_emob_pv_netz_kwh()` in `field_definitions.py` mit demselben Fallback für Bestandsdaten, alle acht Read-Sites umgestellt. Mathematisch validiert gegen Gernots HA-Template-Helper (`evcc_helper_pv_charged_kwh` + `evcc_helper_net_charged_kwh` machen exakt dieselbe Rechnung) und gegen reale evcc-CSV (5 Sessions, 80 kWh total, Σ PV 65,97 kWh, abgeleitet Netz 14,05 kWh). Fünf neue Akzeptanztests in `test_dashboards_evcc_pool_fallback.py`. Memory-Linie `feedback_aggregations_drift.md`.
+- **EVCC-Import: DE- und EN-Header-Erkennung + Sprach-Hinweis** (PR #268 stlorenz): EVCC-CSV-Export ist je nach Web-UI-Sprache deutsch oder englisch (`Sitzungen` vs. `Sessions`, `Energie` vs. `Energy`). Der Parser akzeptierte bisher nur die deutsche Variante. Beide Sprachen werden jetzt erkannt; bei dritter Sprache erscheint ein klarer Hinweis im Import-Dialog.
+- **E-Mobilität: `ist_dienstlich`-Feld String-Drift-tolerant lesen** (PR #270 stlorenz): Der Boolean-Schalter „Dienstwagen" wurde teils als String (`"true"`/`"false"`), teils als echtes Bool gelesen. Aufrufer in der Ersparnis-Berechnung interpretierten String-Werte teils unterschiedlich. Helper `_ist_dienstlich(inv)` normalisiert beide Repräsentationen.
+- **Daten-Checker: NameError nach Merge-Konflikt #270 ↔ v3.31.3** (PR #274): Beim Merge des `ist_dienstlich`-Refactors wurde im neu hinzugefügten WP-Block die `param`-Variable referenziert, die im selben PR durch den Refactor weggefallen war (NameError, 500 auf `/api/check`). Drei Akzeptanztests verifizieren, dass der gesamte Check-Pfad durchläuft.
+- **Cockpit: Spezifischer Ertrag bei „alle Jahre" + historischen Größenänderungen** (PR #273 stlorenz): KPI „Spezifischer Ertrag" im „alle Jahre"-Filter mittelte über die aktuelle Anlagenleistung — bei nachträglichen Erweiterungen (Modul hinzu) wurde die Anzeige für historische Jahre verzerrt. Mittlung läuft jetzt periodengenau pro Jahr gewichtet über die zum jeweiligen Zeitpunkt installierte Leistung.
+
+### Changed
+
+- **`eedc/eedc.db` nicht mehr getrackt + DB global gitignoret**: Die SQLite-Stub-Datei (0 Bytes, Release-Skript-Artefakt aus v3.19.0) wurde aus dem Repository entfernt und `*.db` / `*.sqlite` / `*.sqlite3` global in `.gitignore` ergänzt — verhindert versehentliches Einchecken künftiger DB-Stände. Plus: WAL/SHM-Backup-Begleitdateien (`*.db-wal`, `*.db-shm`) ebenfalls ignoriert (PR #272 stlorenz).
+- **SFML-Stats-Plattform-Korrektur im archivierten Konzept** (`docs/archive/KONZEPT-ML-PROGNOSE.md`): In der archivierten Datei stand, SFML Stats laufe nur auf x86_64 und EEDC schließe die Lücke auf ARM/Pi. Beide Aussagen sind falsch — SFML Stats läuft auf beiden Architekturen. Korrektur-Block am Dateianfang mit Datum und Hinweis-Quelle (SFML-Entwickler Tom-HA / Zara-Toorox).
+
+### Tests
+
+220/220 grün — Suite wächst von 151 auf 220 (+ 69 neue Akzeptanztests durch die Security-Hardening-Pakete, Etappe A/B-Tests und die evcc-Drift-Akzeptanz).
+
+### Hinweis für Anwender
+
+Repo-Klone vor diesem Release: durch History-Rewrites im Laufe des Tages (Bereinigung von Artefakten aus älteren Releases) divergieren bestehende lokale Klone. Wer den Repository-Stand neu pullen will, sollte `git fetch && git reset --hard origin/main` ausführen. Für HACS-Add-on-Nutzer ohne lokalen Klon ändert sich nichts — das Update zieht den aktuellen Tag-Inhalt.
+
+---
+
 ## [3.31.3] - 2026-05-18 — Bündel-Release: Aggregations-Drifts + Forum-Bugfixes + Pfad-Hinweise
 
 > 🛠 **Bündel-Release nach drei Etappen-Tagen.** Sieben anwender-relevante Bugfixes aus Forum + Issues, dazu eine konsistente Korrektur veralteter UI-Pfad-Hinweise. Schwerpunkt: drei Aggregations-Drifts in unterschiedlichen Verbrauchsbereichen (E-Mob-Ersparnis, Live-Tagesverlauf-Strompreis, Wallbox+E-Auto-Dashboards), zwei Robustheits-Fixes (Cloud-Import-Whitespace, getrennte WP-Strommessung), zwei stlorenz-Beiträge (Cockpit-Genauigkeit, HA-Backup-Konsistenz).

@@ -1,11 +1,63 @@
 # Was ist neu
 
-> **Stand:** Mai 2026 (v3.31.3)
+> **Stand:** Mai 2026 (v3.31.4)
 > **Diese Seite** zeigt pro Version, was sich für dich als Anwender geändert hat — kürzer als der technische [CHANGELOG](https://github.com/supernova1963/eedc-homeassistant/blob/main/CHANGELOG.md), ausführlicher als die Schnellübersicht-Tabelle in der [Übersicht](BENUTZERHANDBUCH.md#was-ist-neu-seit-v316).
 >
 > **Kein Banner, kein Pop-up:** eedc zeigt diese Liste nicht ungefragt an. HA-App-Nutzer sehen den Changelog ohnehin schon im Add-on-Store, GitHub-Releases haben einen eigenen. Wer wissen will, was neu ist, schaut hier rein — Pull statt Push.
 >
 > **Lesehinweis:** Die jüngsten Versionen stehen oben. Jeder Punkt verlinkt entweder auf die zuständige Hilfe-Sektion oder direkt auf die App-Funktion (sofern erreichbar). Anker-URLs (`?doc=was-ist-neu`) sind teilbar.
+
+---
+
+## v3.31.4 — Bündel-Release: Sicherheits-Härtung + Speicher-Etappe A/B + Tester-Beiträge (Mai 2026)
+
+### Sicherheits-Härtung als Schwerpunkt *(v3.31.4)*
+
+> 🔐 **Drei Schichten gegen typische Angriffsvektoren** — und gleichzeitig zwei Etappen aus Stefans Speicher-Konzept, eine klarere README für den Standalone-Modus, und ein Pool-Drift-Fix für die E-Mobilitäts-Auswertung beim evcc-Import. Beitragend: stlorenz (sieben PRs aus #264 + Folge-Fixes), Forum-Tester (junky84 #262).
+
+#### Was sich für dich ändert — Sicherheit
+
+- **Credential-Maskierung jetzt deny-by-default**: API-Keys, Tokens und Passwörter, die du in den Connector-Test oder das Setup eingibst, werden vor jeder Log-Ausgabe oder Debug-Anzeige maskiert. Bisher war das eine Allow-List für bekannte Feld-Namen — jetzt sind alle Passwort-Felder und sensibel benannte Token-Felder automatisch erfasst, ohne dass jemand eine neue Liste pflegen muss.
+- **SSRF-Schutz im Connector-Test**: Wenn du eine fremde URL in den Cloud-Import-Test eingibst, prüft eedc jetzt vor dem Verbindungsaufbau, ob die Ziel-IP-Adresse zu einem geschützten Bereich gehört (Loopback, Link-Local, Multicast, IPv4/IPv6-Mapped, private Bereiche). DNS-Rebinding-Angriffe werden durch erneutes Auflösen direkt vor dem Connect verhindert. Heißt: ein eingegebener Hostname kann eedc nicht dazu bringen, intern auf 127.0.0.1 oder andere Ressourcen im eigenen Netz zuzugreifen.
+- **Setup-Anleitung ohne `curl | bash`**: Wer eedc lokal als Entwicklungsumgebung aufsetzt, sah bisher das übliche `curl … | bash`-Pattern. Das ist raus — die Anleitung zeigt jetzt explizit `curl → less → bash` mit Sicherheitshinweis: erst das Skript herunterladen, sichten, dann ausführen. Pipe-to-shell wird nirgendwo mehr empfohlen.
+- **Setup-Skript ohne automatische Maintainer-Identität**: Falls du das Setup-Skript ohne gesetzte Git-Identität ausgeführt hast, setzte es bisher Platzhalter-Werte des Maintainers (`supernova1963`) ein. Das ist raus — das Skript gibt jetzt nur einen Hinweis mit Platzhalter-Anleitung aus, jeder trägt seine eigene Identität ein.
+
+#### Was sich für dich ändert — Standalone-Modus (außerhalb HA)
+
+- **README präzisiert: LAN-Only-Setup**: Die Standalone-Variante von eedc (Docker ohne Home Assistant) ist als LAN-Only-Setup konzipiert. Wer die App über das Internet erreichbar machen will, findet jetzt in der README eine kompakte Übersicht zu etabliertem Standard-Tooling für Authentifizierung: nginx + Basic-Auth, OAuth2-Proxy, Cloudflare Access, Tailscale Funnel. Ein eigener Auth-Layer im Container ist bewusst *nicht* geplant — diese Werkzeuge lösen das Problem nachweislich besser. Im HA-Add-on-Modus liegt der Auth-Layer ohnehin bei Home Assistant, da ändert sich nichts.
+
+#### Was sich für dich ändert — Speicher-Wirtschaftlichkeit
+
+- **Neuer Schalter „Speicher lädt aus dem Netz"** (Etappe A, stlorenz #269): Wenn du einen Speicher hast, der gezielt aus dem Netz lädt (z. B. bei Tibber-/aWATTar-Tarif-Optimierung zur Niedrig-Preis-Zeit), kannst du das jetzt pro Speicher-Investition ankreuzen. Vorbereitung für die nächste Etappe — die Wirtschaftlichkeits-Berechnung bekommt damit den ehrlichen Bezugspreis-Anker.
+- **ROI berücksichtigt PV-/Netz-Anteil der Speicher-Ladung** (Etappe B, stlorenz #271): Bisher wurden alle Speicher-Ladungen pauschal mit Bezugspreis bewertet. Bei rein PV-geladenen Speichern war die Rechnung systematisch zu negativ. Jetzt unterscheidet eedc nach PV-Anteil und Netz-Anteil — bei rein-PV-Speichern fällt der Netz-Bezugspreis weg, bei Tibber-Lade-Speichern bleibt er drin. Die Trennung läuft konsistent über alle ROI-Sichten (Cockpit-Übersicht, Investitions-Details, Aussichten).
+- **Etappe C kommt im nächsten Release**: TEP-Stunden-Lookup für den realen Ø-Ladepreis bei dynamischen Tarifen, plus SoC-korrigierter Wirkungsgrad-Helper. Backend + Frontend werden zusammen ausgeliefert, damit du den ganzen Block in der UI siehst.
+
+#### Was sich für dich ändert — E-Mobilität und Dashboards
+
+- **Wallbox-/E-Auto-Dashboards: Netzladung beim evcc-Import korrekt erfasst** (#262 junky84-Folge nach v3.31.3): Wer evcc-Portal-Daten importiert, sah in v3.31.3 in Wallbox-Dashboard PV-Anteil 100 % und Netzladung 0 kWh trotz vorhandenem Netzbezug. evcc-CSV liefert nur Gesamt-Ladung und PV-Prozent — eedc berechnet jetzt die Netzladung als `Gesamt − PV` und schreibt sie ins Feld `ladung_netz_kwh`. Acht Auswertungs-Stellen (Cockpit-Übersicht, Cockpit-Komponenten, Aktueller Monat, Investitionen, HA-Export, PDF-Jahresbericht) lesen denselben Helper und zeigen jetzt konsistente Werte. Mathematik dreifach validiert gegen die offiziellen evcc-HA-Template-Helper und reale CSV-Exports.
+- **EVCC-Import erkennt englische CSV-Header** (PR #268 stlorenz): Wer evcc auf englischer Sprache betreibt, konnte den CSV-Export bisher nicht importieren — der Parser kannte nur die deutschen Spalten-Überschriften. Beide Sprachen werden jetzt erkannt; bei dritter Sprache erscheint ein klarer Hinweis im Import-Dialog statt einer kryptischen Fehlermeldung.
+- **Dienstwagen-Schalter konsistent gelesen** (PR #270 stlorenz): Der „Dienstwagen"-Boolean wurde teils als String, teils als echter Bool gelesen. Bei Mischzuständen konnte die Ersparnis-Berechnung falsche Werte zeigen. Helper normalisiert beide Repräsentationen.
+- **Daten-Checker-NameError beim Aufruf gefixt** (PR #274 Eigentor-Hotfix): Beim Merge des Dienstwagen-Refactors gegen v3.31.3 schlug der Daten-Checker mit NameError fehl (500-Fehler bei jedem `/api/check`-Aufruf, in der App: leere Daten-Checker-Liste). Gefixt + neuer Test, der den gesamten Check-Pfad durchläuft.
+
+#### Was sich für dich ändert — Cockpit
+
+- **Spezifischer Ertrag bei „alle Jahre" + nachträglichen Erweiterungen** (PR #273 stlorenz): Wer die Anlage über die Jahre erweitert hat (Modul hinzu, Speicher hinzu, Wallbox dazu), sah im Cockpit-Filter „alle Jahre" beim spezifischen Ertrag eine verzerrte Anzeige — die Berechnung mittelte über die aktuelle Anlagenleistung, nicht über die zum jeweiligen Zeitpunkt installierte. Jetzt periodengenau pro Jahr gewichtet — historische Jahre bekommen ihre damalige Leistung als Bezug.
+
+#### Aufgeräumt im Repository
+
+- **`eedc/eedc.db` und Backup-Begleitdateien gitignoret**: Die SQLite-Stub-Datei aus älteren Releases wird nicht mehr getrackt; `*.db` / `*.sqlite` / `*.sqlite3` plus WAL/SHM-Backup-Begleitdateien (`*.db-wal`, `*.db-shm`, PR #272 stlorenz) global ignoriert. Für dich als Anwender unsichtbar — relevant nur für Mitwirkende mit lokalem Klon.
+- **Archiviertes Konzept-Dokument korrigiert**: `docs/archive/KONZEPT-ML-PROGNOSE.md` enthielt zwei falsche Aussagen zur Plattform-Unterstützung von SFML Stats. Korrigiert mit Korrektur-Block am Dateianfang (Hinweis-Quelle: SFML-Entwickler Tom-HA / Zara-Toorox).
+
+#### Hinweis für Anwender mit lokalem Klon des GitHub-Repos
+
+Im Laufe des Tages wurden Artefakte aus älteren Releases (alte 0-Byte-DB-Stubs und interne Notiz-Drafts) auch aus der Git-History entfernt — Force-Push auf `main` und alle Tags. Lokale Klone divergieren dadurch und sollten neu gepullt werden:
+
+```bash
+git fetch origin
+git reset --hard origin/main
+```
+
+Für HACS-Add-on-Nutzer ohne lokalen Klon ändert sich nichts — das Update zieht den aktuellen Tag-Inhalt.
 
 ---
 

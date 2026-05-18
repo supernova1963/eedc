@@ -20,8 +20,9 @@ from backend.core.calculations import (
     CO2_FAKTOR_BENZIN_KG_LITER, berechne_ust_eigenverbrauch,
 )
 from backend.utils.sonstige_positionen import berechne_sonstige_summen
-from backend.core.investition_parameter import PARAM_E_AUTO, PARAM_WAERMEPUMPE
+from backend.core.investition_parameter import PARAM_E_AUTO, PARAM_WAERMEPUMPE, ist_dienstlich
 from backend.core.field_definitions import (
+    get_emob_pv_netz_kwh,
     get_pv_erzeugung_kwh,
     get_sonstiges_verbrauch_kwh,
     get_wp_heizenergie_kwh,
@@ -236,9 +237,10 @@ async def get_cockpit_uebersicht(
             wp_strom += get_wp_strom_kwh(data, inv.parameter)
 
         elif inv.typ in ("e-auto", "wallbox"):
-            if (inv.parameter or {}).get("ist_dienstlich", False):
-                netz_kwh = data.get("ladung_netz_kwh", 0) or 0
-                pv_kwh = data.get("ladung_pv_kwh", 0) or 0
+            if ist_dienstlich(inv):
+                # #262: SoT-Helper liefert (pv, netz) inkl. Fallback für
+                # evcc-Imports ohne expliziten `ladung_netz_kwh`-Key.
+                pv_kwh, netz_kwh = get_emob_pv_netz_kwh(data)
                 dienstlich_ladekosten_euro += (
                     netz_kwh * wallbox_preis_cent +
                     pv_kwh * einspeise_verguetung_cent
@@ -339,9 +341,26 @@ async def get_cockpit_uebersicht(
     # des Jahresertrags, nicht 42%. Daher Periodenanteil über die
     # PVGIS-Monatsverteilung gewichten; Fallback auf typische 52°N-Verteilung
     # bzw. Gleichverteilung wenn keine PVGIS-Prognose vorliegt.
-    covered_months: set[tuple[int, int]] = set(zeitraum_monate)
-    for md in monatsdaten_list:
-        covered_months.add((md.jahr, md.monat))
+    #
+    # WICHTIG (Folge-Bug "alle Jahre"): covered_months darf NUR Monate
+    # enthalten, in denen tatsächlich eine PV-/BKW-Investition aktiv war.
+    # Sonst rutschen WP-/Speicher-/Zähler-Monate aus der Zeit vor PV-Inbetrieb-
+    # nahme rein, periode_anteil wird zu groß und spez_ertrag zu klein
+    # (Symptom: ~300 kWh/kWp bei "alle Jahre").
+    covered_months: set[tuple[int, int]] = set()
+    for imd in all_imd:
+        inv = inv_by_id.get(imd.investition_id)
+        if not inv or inv.typ not in ("pv-module", "balkonkraftwerk"):
+            continue
+        if not inv.ist_aktiv_im_monat(imd.jahr, imd.monat):
+            continue
+        covered_months.add((imd.jahr, imd.monat))
+    # Fallback für Setups ohne PV-IMDs (nur Anlagen-Zähler):
+    # Monate mit pv_erzeugung > 0 aus Monatsdaten heranziehen.
+    if not covered_months:
+        for md in monatsdaten_list:
+            if (md.pv_erzeugung_kwh or 0) > 0:
+                covered_months.add((md.jahr, md.monat))
 
     monthly_weight: dict[int, float] = {}
     if covered_months and anlagenleistung_kwp > 0:
@@ -368,19 +387,44 @@ async def get_cockpit_uebersicht(
                 7: 13.5, 8: 12.0, 9: 9.0, 10: 6.5, 11: 3.5, 12: 2.5,
             }
 
-    periode_anteil: Optional[float] = None
-    weight_sum_year = sum(monthly_weight.values())
-    if covered_months and weight_sum_year > 0:
-        months_per_year: dict[int, set[int]] = {}
-        for (j, m) in covered_months:
-            months_per_year.setdefault(j, set()).add(m)
-        anteil = 0.0
-        for monate_set in months_per_year.values():
-            anteil += sum(monthly_weight.get(m, 0.0) for m in monate_set) / weight_sum_year
-        periode_anteil = anteil if anteil > 0 else None
+    # Nenner pro Monat mit der TATSÄCHLICH AKTIVEN PV-Leistung gewichten.
+    # Bug-Symptom "alle Jahre = ~300 kWh/kWp": Anlagen, die über die Jahre
+    # erweitert wurden, hatten den heutigen kWp-Stand × Jahresanzahl als
+    # Nenner. Frühere Jahre mit kleinerer Anlage wurden so künstlich
+    # niedrig gerechnet. Per-Monat-Lookup via ist_aktiv_im_monat liefert
+    # die historisch korrekte Leistung pro Datenpunkt.
+    def _kwp_aktiv_im_monat(jahr: int, monat: int) -> float:
+        kwp = 0.0
+        for inv in investitionen:
+            if inv.typ not in ("pv-module", "balkonkraftwerk"):
+                continue
+            if not inv.ist_aktiv_im_monat(jahr, monat):
+                continue
+            if inv.typ == "pv-module" and inv.leistung_kwp:
+                kwp += inv.leistung_kwp
+            elif inv.typ == "balkonkraftwerk":
+                if inv.leistung_kwp:
+                    kwp += inv.leistung_kwp
+                else:
+                    params = inv.parameter or {}
+                    bkw_anzahl = params.get("anzahl", 1) or 1
+                    kwp += (params.get("leistung_wp", 0) or 0) * bkw_anzahl / 1000
+        return kwp
 
-    if anlagenleistung_kwp > 0 and periode_anteil and pv_erzeugung > 0:
-        spez_ertrag = pv_erzeugung / (anlagenleistung_kwp * periode_anteil)
+    weight_sum_year = sum(monthly_weight.values())
+    denom_kwp_jahre = 0.0  # Summe kWp·Jahres-Äquivalente
+    if covered_months and weight_sum_year > 0:
+        for (j, m) in covered_months:
+            w = monthly_weight.get(m, 0.0) / weight_sum_year
+            kwp_m = _kwp_aktiv_im_monat(j, m)
+            if kwp_m <= 0:
+                # Fallback wenn Investitionen ohne Anschaffungsdatum existieren
+                # oder Setup nur Anlagen-Zähler nutzt.
+                kwp_m = anlagenleistung_kwp
+            denom_kwp_jahre += kwp_m * w
+
+    if denom_kwp_jahre > 0 and pv_erzeugung > 0:
+        spez_ertrag = pv_erzeugung / denom_kwp_jahre
     elif anlagenleistung_kwp > 0:
         spez_ertrag = pv_erzeugung / anlagenleistung_kwp if pv_erzeugung > 0 else None
     else:
@@ -418,7 +462,7 @@ async def get_cockpit_uebersicht(
         i for i in investitionen
         if i.typ in ("e-auto", "wallbox")
         and i.ist_aktiv_an(today)
-        and not (i.parameter or {}).get("ist_dienstlich", False)
+        and not ist_dienstlich(i)
     ]
     hat_emobilitaet = len(emob_invs) > 0
     emob_pv_anteil = (emob_pv_ladung / emob_ladung * 100) if emob_ladung > 0 else None

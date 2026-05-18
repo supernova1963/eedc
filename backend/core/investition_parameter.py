@@ -69,6 +69,7 @@ PARAM_SPEICHER: Final[dict[str, str]] = {
     "MAX_LADELEISTUNG_KW": "max_ladeleistung_kw",
     "MAX_ENTLADELEISTUNG_KW": "max_entladeleistung_kw",
     "WIRKUNGSGRAD_PROZENT": "wirkungsgrad_prozent",
+    "LAEDT_AUS_NETZ": "laedt_aus_netz",
     "ARBITRAGE_FAEHIG": "arbitrage_faehig",
     "LADE_DURCHSCHNITTSPREIS_CENT": "lade_durchschnittspreis_cent",
     "ENTLADE_VERMIEDENER_PREIS_CENT": "entlade_vermiedener_preis_cent",
@@ -76,6 +77,7 @@ PARAM_SPEICHER: Final[dict[str, str]] = {
 
 PARAM_SPEICHER_DEFAULTS: Final[dict[str, object]] = {
     "wirkungsgrad_prozent": 95,
+    "laedt_aus_netz": False,
     "arbitrage_faehig": False,
     "lade_durchschnittspreis_cent": 12,
     "entlade_vermiedener_preis_cent": 35,
@@ -233,3 +235,30 @@ LEGACY_PARAM_KEYS: Final[dict[str, str]] = {
     # Wechselrichter
     "leistung_ac_kw": "max_leistung_kw",  # nur im toten Schema
 }
+
+
+# ============================================================================
+# Robuste Flag-Lesehilfen
+# ============================================================================
+
+def ist_dienstlich(inv_or_parameter) -> bool:
+    """Truthy-Check für `ist_dienstlich` mit String-Drift-Schutz.
+
+    Akzeptiert ein Investition-Objekt oder direkt das parameter-Dict
+    (oder None). Schützt vor dem Klassiker, dass das Flag als String
+    `"true"` / `"false"` in der DB landet — Python wertet `"false"` sonst
+    als truthy aus und filtert das Auto fälschlich als Dienstwagen.
+    """
+    if inv_or_parameter is None:
+        return False
+    params = (
+        getattr(inv_or_parameter, "parameter", None)
+        if hasattr(inv_or_parameter, "parameter")
+        else inv_or_parameter
+    ) or {}
+    val = params.get(PARAM_E_AUTO["IST_DIENSTLICH"], False)
+    if isinstance(val, bool):
+        return val
+    if isinstance(val, str):
+        return val.strip().lower() in ("true", "1", "yes", "ja")
+    return bool(val)

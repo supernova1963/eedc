@@ -23,6 +23,7 @@ from backend.models.investition import Investition, InvestitionMonatsdaten
 from backend.models.strompreis import Strompreis
 from backend.models.pvgis_prognose import PVGISPrognose
 from backend.utils.investition_filter import sort_investitionen_nach_typ
+from backend.core.investition_parameter import ist_dienstlich
 
 
 # ─── Enums & Dataclasses ────────────────────────────────────────────────────
@@ -467,7 +468,7 @@ class DatenChecker:
 
             elif inv.typ == "e-auto":
                 # Dienstwagen: keine PV-Ladungs-/ROI-Checks (kein PV-Bezug, kein Invest)
-                if param.get("ist_dienstlich"):
+                if ist_dienstlich(param):
                     continue
                 if not param.get("km_jahr") and not param.get("verbrauch_kwh_100km"):
                     ergebnisse.append(CheckErgebnis(
@@ -1008,8 +1009,7 @@ class DatenChecker:
             # für Dienstwagen ebenfalls übersprungen werden. (Joachim-PN
             # 2026-05-04: ID.4 als Dienstwagen meldete trotzdem kWh-Counter
             # fehlt.)
-            param = inv.parameter or {}
-            if inv.typ == "e-auto" and param.get("ist_dienstlich"):
+            if inv.typ == "e-auto" and ist_dienstlich(inv):
                 continue
 
             # WP mit getrennter Strommessung (#183): hier zählen
@@ -1019,7 +1019,7 @@ class DatenChecker:
             # diesen Zweig meldete der Checker bei korrekt konfiguriertem
             # Premium-Setup (dietmar1968 Forum-PN 2026-05-17) eine fehlende
             # Abdeckung trotz vollständig gemappten getrennten Sensoren.
-            if inv.typ == "waermepumpe" and param.get("getrennte_strommessung", False):
+            if inv.typ == "waermepumpe" and (inv.parameter or {}).get("getrennte_strommessung", False):
                 erwartet = [["strom_heizen_kwh"], ["strom_warmwasser_kwh"]]
 
             inv_data = inv_map.get(str(inv.id), {}) or {}
