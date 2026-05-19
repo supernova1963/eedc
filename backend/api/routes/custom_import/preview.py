@@ -17,6 +17,7 @@ from backend.core.database import get_db
 from ._shared import (
     MappingConfig,
     _convert_unit,
+    _maybe_convert,
     _parse_csv_rows,
     _parse_date_column,
     _parse_json_rows,
@@ -125,7 +126,7 @@ def _apply_mapping(
             elif eedc_feld.startswith("inv:"):
                 num = _parse_number(raw, config.dezimalzeichen)
                 if num is not None:
-                    val = _convert_unit(num, config.einheit)
+                    val = _maybe_convert(num, config.einheit, eedc_feld)
                     if val is not None and invert_map.get(spalte):
                         val = abs(val)
                     if val is not None:
@@ -133,7 +134,7 @@ def _apply_mapping(
             else:
                 num = _parse_number(raw, config.dezimalzeichen)
                 if num is not None:
-                    val = _convert_unit(num, config.einheit)
+                    val = _maybe_convert(num, config.einheit, eedc_feld)
                     if val is not None and invert_map.get(spalte):
                         val = abs(val)
                     values[eedc_feld] = val

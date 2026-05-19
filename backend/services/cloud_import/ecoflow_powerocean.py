@@ -207,17 +207,44 @@ class EcoFlowPowerOceanProvider(CloudImportProvider):
                     headers=headers,
                 )
 
+            # Diagnose-Logging: dieser Provider ist mit getestet=False markiert,
+            # echte Fehler-Antworten der EcoFlow-API gehören sichtbar in den
+            # Backend-Log + in die UI (via fehler-Feld) — sonst muss der Anwender
+            # raten oder Logs ziehen.
+            logger.info(
+                f"EcoFlow Connection-Test: host={host}, sn={serial_number}, "
+                f"http_status={resp.status_code}, body={resp.text[:500]}"
+            )
+
             if resp.status_code != 200:
                 return CloudConnectionTestResult(
                     erfolg=False,
-                    fehler=f"API-Fehler: HTTP {resp.status_code}",
+                    fehler=(
+                        f"HTTP {resp.status_code} von {host}. "
+                        f"Antwort: {resp.text[:300] or '(leer)'}"
+                    ),
                 )
 
-            data = resp.json()
-            if str(data.get("code")) != "0":
+            try:
+                data = resp.json()
+            except Exception as e:
                 return CloudConnectionTestResult(
                     erfolg=False,
-                    fehler=f"API-Fehler: {data.get('message', 'Unbekannter Fehler')}",
+                    fehler=(
+                        f"Antwort der EcoFlow-API ist kein gültiges JSON "
+                        f"({type(e).__name__}). Body: {resp.text[:300]}"
+                    ),
+                )
+            if str(data.get("code")) != "0":
+                # EcoFlow-Antworten haben typisch: {code, message, data}
+                # message ist die Hersteller-Fehler-Erklärung (z.B. "Invalid sign",
+                # "Access key not found"). Bei get-Endpoints kommt auch HTTP 200
+                # mit code != "0" zurück — das ist die wichtigste Diagnose-Quelle.
+                msg = data.get("message", "Unbekannter Fehler")
+                code = data.get("code", "?")
+                return CloudConnectionTestResult(
+                    erfolg=False,
+                    fehler=f"EcoFlow-API meldet code={code}: {msg}",
                 )
 
             # Gerätedaten aus der Response extrahieren

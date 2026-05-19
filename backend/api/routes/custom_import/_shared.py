@@ -175,6 +175,37 @@ def _convert_unit(value: Optional[float], einheit: str) -> Optional[float]:
     return round(value, 2)
 
 
+def _is_energy_target(eedc_feld: str) -> bool:
+    """True wenn das Mapping-Target eine Energie-Größe (Wh/kWh/MWh) ist und
+    damit `_convert_unit` greifen soll. km, Anzahl, € sollten unkonvertiert
+    durchgereicht werden.
+    """
+    if eedc_feld in {"jahr", "monat", "eauto_km_gefahren", "wallbox_ladevorgaenge"}:
+        return False
+    if eedc_feld.startswith("inv:"):
+        parts = eedc_feld.split(":", 2)
+        if len(parts) < 3:
+            return False
+        feld_name = parts[2]
+        from backend.core.field_definitions import INVESTITION_FELDER
+        for typ_felder in INVESTITION_FELDER.values():
+            for f in typ_felder:
+                if f.get("feld") == feld_name:
+                    einheit = (f.get("einheit") or "").lower()
+                    return einheit in {"kwh", "wh", "mwh"}
+        return False
+    return True
+
+
+def _maybe_convert(value: Optional[float], einheit: str, eedc_feld: str) -> Optional[float]:
+    """Wendet `_convert_unit` nur an, wenn das Target eine Energie-Größe ist."""
+    if value is None:
+        return None
+    if _is_energy_target(eedc_feld):
+        return _convert_unit(value, einheit)
+    return round(value, 2)
+
+
 def _parse_date_column(value: str, fmt: str) -> tuple[Optional[int], Optional[int]]:
     """Extrahiert Jahr und Monat aus einer kombinierten Datumsspalte."""
     value = value.strip()

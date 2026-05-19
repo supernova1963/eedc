@@ -69,6 +69,12 @@ class CheckKategorie(str, Enum):
     # Etappe 4: bestehende Tage bleiben nach Update auf ihren alten
     # Mix-Source-Werten, ohne dieses Werkzeug sieht der Anwender das nicht.
     DATENQUELLE_DRIFT = "datenquelle_drift"
+    # PR-Plausi v3.31.5 (rapahl-PN 2026-05-19): Performance Ratio > 1.05 oder
+    # spez. Tagesertrag > kwp × 7 kWh über mehrere Tage hindurch — beides
+    # physikalisch implausibel und typisches Symptom einer Doppelerfassung
+    # (z. B. BKW-Sensor im WR-Smart-Meter schon enthalten + zusätzlich
+    # gemappt). Diagnose statt stillem Cap — feedback_grenze_externe_daten_diagnose.
+    PV_UEBER_ERFASSUNG = "pv_ueber_erfassung"
 
 
 @dataclass
@@ -113,11 +119,33 @@ PV_MAX_KWH_PRO_KWP = {
     7: 180, 8: 165, 9: 140, 10: 90, 11: 55, 12: 40,
 }
 
+# PV-Tageserzeugungs-Σ — SoT im Berechnungs-Layer (ADR-001).
+# `PV_KOMPONENTEN_PREFIXE` + `_summe_pv_bkw_kwh` waren historisch hier definiert,
+# wurden 2026-05-19 in `core/berechnungen/energie.py` migriert (Rainer-PN
+# BKW-Doppelzählung). Diese Re-Imports halten die internen Aufrufer-Namen
+# stabil — neue Konsumenten sollten direkt aus `backend.core.berechnungen`
+# importieren.
+from backend.core.berechnungen import (
+    PV_KOMPONENTEN_PREFIXE,
+    summe_pv_bkw_kwh as _summe_pv_bkw_kwh,
+)
+
 
 # ─── Service ─────────────────────────────────────────────────────────────────
 
 class DatenChecker:
     """Prüft alle Daten einer Anlage auf Vollständigkeit und Plausibilität."""
+
+    # PR > 1.05 ist physikalisch unmöglich (mehr Energie raus als rein),
+    # spez. Tagesertrag > kwp × 7 kWh entspricht > 7 Vollbenutzungsstunden —
+    # in DE auch im Hochsommer extrem selten. Beides zusammen oder einzeln
+    # über mehrere Tage = typisches Symptom Doppelerfassung (BKW im WR-Wert
+    # enthalten + separates Mapping). Memory: feedback_grenze_externe_daten_diagnose.
+    PR_PLAUSI_SCHWELLE = 1.05
+    PR_PLAUSI_MINDESTTAGE = 3
+    PR_PLAUSI_MINDEST_ANTEIL = 0.20
+    PR_PLAUSI_FENSTER_TAGE = 30
+    SPEZ_TAGES_ERTRAG_OBERGRENZE_KWH_PRO_KWP = 7.0
 
     def __init__(self, db: AsyncSession):
         self.db = db
@@ -176,6 +204,7 @@ class DatenChecker:
         ergebnisse.extend(await self._check_provenance_conflicts(anlage))
         ergebnisse.extend(await self._check_datenquelle_status(anlage))
         ergebnisse.extend(await self._check_datenquelle_drift(anlage))
+        ergebnisse.extend(await self._check_pv_ueber_erfassung(anlage))
 
         # Zusammenfassung
         zusammenfassung = {"error": 0, "warning": 0, "info": 0, "ok": 0}
@@ -248,9 +277,13 @@ class DatenChecker:
                 link="/einstellungen/anlage",
             ))
 
-        # PV-Module vorhanden
-        pv_module = [i for i in anlage.investitionen if i.typ == "pv-module" and i.aktiv]
-        hat_bkw = any(i.typ == "balkonkraftwerk" and i.aktiv for i in anlage.investitionen)
+        # PV-Module vorhanden. Filter respektiert Stilllegungsdatum (#608
+        # MartyBr): String-Verlegung zwischen Wechselrichtern wird über
+        # stilllegungsdatum-Setzen + neue Investition erfasst — der alte
+        # String soll dann nicht mehr zur Σ aktiver kWp beitragen.
+        heute = date.today()
+        pv_module = [i for i in anlage.investitionen if i.typ == "pv-module" and i.ist_aktiv_an(heute)]
+        hat_bkw = any(i.typ == "balkonkraftwerk" and i.ist_aktiv_an(heute) for i in anlage.investitionen)
         if not pv_module:
             if hat_bkw:
                 # BKW-only Setup: kein Fehler, nur Hinweis
@@ -269,7 +302,7 @@ class DatenChecker:
                 ))
         else:
             # kWp-Vergleich (PV-Module + BKW)
-            bkw_inv = [i for i in anlage.investitionen if i.typ == "balkonkraftwerk" and i.aktiv]
+            bkw_inv = [i for i in anlage.investitionen if i.typ == "balkonkraftwerk" and i.ist_aktiv_an(heute)]
             summe_kwp = sum((m.leistung_kwp or 0) for m in pv_module)
             summe_kwp += sum(
                 b.leistung_kwp or ((b.parameter or {}).get("leistung_wp", 0) * ((b.parameter or {}).get("anzahl", 1) or 1) / 1000)
@@ -349,8 +382,9 @@ class DatenChecker:
 
         # Spezialtarife prüfen (WP / E-Auto)
         verwendungen = {s.verwendung for s in anlage.strompreise}
-        hat_wp = any(i.typ == "waermepumpe" and i.aktiv for i in anlage.investitionen)
-        hat_eauto = any(i.typ == "e-auto" and i.aktiv for i in anlage.investitionen)
+        heute = date.today()
+        hat_wp = any(i.typ == "waermepumpe" and i.ist_aktiv_an(heute) for i in anlage.investitionen)
+        hat_eauto = any(i.typ == "e-auto" and i.ist_aktiv_an(heute) for i in anlage.investitionen)
         if hat_wp and "waermepumpe" not in verwendungen:
             ergebnisse.append(CheckErgebnis(
                 kategorie=kat, schwere=CheckSeverity.INFO,
@@ -395,8 +429,12 @@ class DatenChecker:
         ergebnisse: list[CheckErgebnis] = []
         kat = CheckKategorie.INVESTITIONEN
 
-        # Reihenfolge nach Typ (#214 detLAN: WP vor Wallbox), nicht DB-ID
-        aktive = sort_investitionen_nach_typ(i for i in anlage.investitionen if i.aktiv)
+        # Reihenfolge nach Typ (#214 detLAN: WP vor Wallbox), nicht DB-ID.
+        # Stilllegungsdatum-Filter via `ist_aktiv_an` (#608 Sweep): stillgelegte
+        # Investitionen brauchen keine Stamm-Daten-Pflege mehr — Ausrichtung,
+        # kWp, Anschaffungskosten sind dann historisch fixiert oder irrelevant.
+        heute = date.today()
+        aktive = sort_investitionen_nach_typ(i for i in anlage.investitionen if i.ist_aktiv_an(heute))
         if not aktive:
             ergebnisse.append(CheckErgebnis(
                 kategorie=kat, schwere=CheckSeverity.INFO,
@@ -710,8 +748,11 @@ class DatenChecker:
         md_map = {(md.jahr, md.monat): md for md in monatsdaten}
         gesamt_kwp = anlage.leistung_kwp or 0
 
-        # Kontext: aktive Investitionstypen (für feldabhängige Checks)
-        aktive_typen = {i.typ for i in anlage.investitionen if i.aktiv}
+        # Kontext: aktive Investitionstypen (für feldabhängige Checks). Stilllegung
+        # respektieren — wenn der einzige Speicher stillgelegt ist, sollen
+        # Speicher-spezifische Plausibilitäts-Checks nicht mehr feuern.
+        heute_plaus = date.today()
+        aktive_typen = {i.typ for i in anlage.investitionen if i.ist_aktiv_an(heute_plaus)}
         hat_speicher = "speicher" in aktive_typen
 
         # Monate mit Speicher-Daten in InvestitionMonatsdaten (neuer Weg).
@@ -997,8 +1038,11 @@ class DatenChecker:
         gemappt_count = 0
 
         # Reihenfolge nach Typ (#214 detLAN: WP vor Wallbox), nicht DB-ID
+        heute = date.today()
         for inv in sort_investitionen_nach_typ(anlage.investitionen):
-            if not inv.aktiv:
+            # Stilllegungsdatum respektieren (#608 MartyBr): stillgelegte
+            # Komponente braucht keine Sensor-Mapping-Pflege mehr.
+            if not inv.ist_aktiv_an(heute):
                 continue
             erwartet = erwartete_felder.get(inv.typ)
             if not erwartet:
@@ -1138,7 +1182,7 @@ class DatenChecker:
                     f"Behebung: 'Tag neu aggregieren' für genau diesen Tag (Reload-Symbol "
                     f"in der Tagesliste) — repariert SensorSnapshots + Aggregate in einem Schritt."
                 ),
-                link=f"/aussichten/energieprofil?datum={datum_spike.isoformat()}",
+                link=f"/einstellungen/energieprofil?datum={datum_spike.isoformat()}",
             ))
 
         return ergebnisse
@@ -1659,13 +1703,21 @@ class DatenChecker:
         return monat_map
 
     def _get_pv_erzeugung_map(self, anlage: Anlage) -> dict[tuple[int, int], float]:
-        """Aggregiert PV-Erzeugung aus InvestitionMonatsdaten pro Monat."""
+        """Aggregiert PV-Erzeugung aus InvestitionMonatsdaten pro Monat.
+
+        Per-IMD-Lifecycle-Filter (#608-Sweep): historische IMDs aus dem
+        aktiven Zeitfenster der Investition zählen, Werte vor anschaffungs-
+        bzw. nach stilllegungsdatum nicht — Drift-Audit analog zu den anderen
+        Read-Sites (v3.29.0 #236).
+        """
         pv_map: dict[tuple[int, int], float] = {}
 
         for inv in anlage.investitionen:
             if inv.typ != "pv-module" or not inv.aktiv:
                 continue
             for imd in inv.monatsdaten:
+                if not inv.ist_aktiv_im_monat(imd.jahr, imd.monat):
+                    continue
                 data = imd.verbrauch_daten or {}
                 erzeugung = data.get("pv_erzeugung_kwh")
                 if erzeugung is not None:
@@ -1750,6 +1802,7 @@ class DatenChecker:
                 f"Werkbank kann sie aufdröseln."
             ),
             details=details,
+            link="/einstellungen/energieprofil",
         )]
 
     async def _check_datenquelle_status(self, anlage: Anlage) -> list[CheckErgebnis]:
@@ -1895,13 +1948,7 @@ class DatenChecker:
 
         drift_pro_tag: list[tuple[date, float, float]] = []  # (datum, eedc, ha)
         for tz in tz_list:
-            eedc_kwh = 0.0
-            if tz.komponenten_kwh:
-                for k, v in tz.komponenten_kwh.items():
-                    if isinstance(v, (int, float)) and (
-                        k.startswith("pv_") or k.startswith("bkw_")
-                    ):
-                        eedc_kwh += float(v)
+            eedc_kwh = _summe_pv_bkw_kwh(tz.komponenten_kwh)
 
             try:
                 ha_komp = await get_komponenten_tageskwh_lts(
@@ -1914,11 +1961,7 @@ class DatenChecker:
                 )
                 continue
 
-            ha_kwh = sum(
-                float(v) for k, v in ha_komp.items()
-                if isinstance(v, (int, float))
-                and (k.startswith("pv_") or k.startswith("bkw_"))
-            )
+            ha_kwh = _summe_pv_bkw_kwh(ha_komp)
 
             if eedc_kwh <= 0 and ha_kwh <= 0:
                 continue  # Nichts zu vergleichen (z. B. Inbetriebnahme-Monat)
@@ -1963,7 +2006,7 @@ class DatenChecker:
                     f"(Δ {delta_signed:+.1f} kWh, {rel_signed:+.1f}%)"
                 ),
                 details=details,
-                link=f"/aussichten/energieprofil?datum={datum_.isoformat()}",
+                link=f"/einstellungen/energieprofil?datum={datum_.isoformat()}",
                 action_kind="reaggregate_day",
                 action_params={"anlage_id": anlage.id, "datum": datum_.isoformat()},
                 action_label="Tag reparieren",
@@ -1980,5 +2023,102 @@ class DatenChecker:
                     f"(Datumsbereich aktiv wählen, keine automatische Sammel-Aktion)."
                 ),
             ))
+
+        return ergebnisse
+
+    async def _check_pv_ueber_erfassung(self, anlage: Anlage) -> list[CheckErgebnis]:
+        """
+        Doppelerfassungs-Verdacht aus eedc-eigenen Tageswerten.
+
+        Zwei unabhängige Signale aus `TagesZusammenfassung` der letzten 30 Tage:
+        - PR > 1.05 an ≥ 3 Tagen UND ≥ 20 % der Tage mit verfügbarem PR-Wert
+        - Spez. Tagesertrag > 7 kWh/kWp an ≥ 3 Tagen
+
+        Diagnose-Charakter, kein Cap und keine Reparatur-Action — der Anwender
+        muss am Sensor-Mapping entscheiden (Memory: feedback_kein_grosser_heiler_knopf).
+        """
+        from datetime import date, timedelta
+        from backend.models.tages_energie_profil import TagesZusammenfassung
+
+        kat = CheckKategorie.PV_UEBER_ERFASSUNG.value
+        ergebnisse: list[CheckErgebnis] = []
+
+        kwp = anlage.leistung_kwp or 0
+        if kwp <= 0:
+            return ergebnisse  # Stammdaten-Check meldet das schon
+
+        bis = date.today()
+        von = bis - timedelta(days=self.PR_PLAUSI_FENSTER_TAGE)
+
+        result = await self.db.execute(
+            select(TagesZusammenfassung).where(
+                TagesZusammenfassung.anlage_id == anlage.id,
+                TagesZusammenfassung.datum >= von,
+                TagesZusammenfassung.datum <= bis,
+            )
+        )
+        tz_list = result.scalars().all()
+        if not tz_list:
+            return ergebnisse
+
+        pr_ueberschreitungen: list[tuple[date, float]] = []
+        spez_ertrag_ueberschreitungen: list[tuple[date, float]] = []
+        tage_mit_pr = 0
+        for tz in tz_list:
+            if tz.performance_ratio is not None:
+                tage_mit_pr += 1
+                if tz.performance_ratio > self.PR_PLAUSI_SCHWELLE:
+                    pr_ueberschreitungen.append((tz.datum, tz.performance_ratio))
+
+            tages_pv = _summe_pv_bkw_kwh(tz.komponenten_kwh)
+            if tages_pv > 0:
+                spez = tages_pv / kwp
+                if spez > self.SPEZ_TAGES_ERTRAG_OBERGRENZE_KWH_PRO_KWP:
+                    spez_ertrag_ueberschreitungen.append((tz.datum, spez))
+
+        anzahl_pr_drueber = len(pr_ueberschreitungen)
+        anteil_pr = anzahl_pr_drueber / tage_mit_pr if tage_mit_pr > 0 else 0.0
+        pr_signal = (
+            anzahl_pr_drueber >= self.PR_PLAUSI_MINDESTTAGE
+            and anteil_pr >= self.PR_PLAUSI_MINDEST_ANTEIL
+        )
+        spez_signal = len(spez_ertrag_ueberschreitungen) >= self.PR_PLAUSI_MINDESTTAGE
+
+        if not pr_signal and not spez_signal:
+            return ergebnisse
+
+        # Auflistung der jüngsten Treffer (max 5 pro Marker)
+        pr_recent = sorted(pr_ueberschreitungen, reverse=True)[:5]
+        spez_recent = sorted(spez_ertrag_ueberschreitungen, reverse=True)[:5]
+
+        marker_zeilen: list[str] = []
+        if pr_signal:
+            beispiele = ", ".join(f"{d.isoformat()}: PR={pr:.2f}" for d, pr in pr_recent)
+            marker_zeilen.append(
+                f"Performance Ratio > {self.PR_PLAUSI_SCHWELLE} an "
+                f"{anzahl_pr_drueber} von {tage_mit_pr} Tagen ({beispiele})"
+            )
+        if spez_signal:
+            beispiele = ", ".join(f"{d.isoformat()}: {s:.1f} kWh/kWp" for d, s in spez_recent)
+            marker_zeilen.append(
+                f"Spez. Tagesertrag > {self.SPEZ_TAGES_ERTRAG_OBERGRENZE_KWH_PRO_KWP:.0f} kWh/kWp "
+                f"an {len(spez_ertrag_ueberschreitungen)} Tagen ({beispiele})"
+            )
+
+        ergebnisse.append(CheckErgebnis(
+            kategorie=kat,
+            schwere=CheckSeverity.WARNING.value,
+            meldung="Verdacht auf PV-Doppelerfassung (PR > 1 oder spez. Ertrag zu hoch)",
+            details=(
+                f"Diagnose-Marker aus den letzten {self.PR_PLAUSI_FENSTER_TAGE} Tagen: "
+                + "; ".join(marker_zeilen) + ". "
+                "Häufige Ursache: WR-Smart-Meter misst AC-seitig nach dem "
+                "Einspeisepunkt eines Balkonkraftwerks — die BKW-Erzeugung ist "
+                "im WR-Wert enthalten, ein separates BKW-Mapping zählt sie "
+                "nochmal. Prüfen: Sensor-Mapping unter Investitionen → BKW. "
+                "Test-Variante: BKW-Mapping temporär abklemmen und schauen, "
+                "ob PR und Tagesertrag in den physikalischen Bereich zurückkommen."
+            ),
+        ))
 
         return ergebnisse

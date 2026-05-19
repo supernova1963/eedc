@@ -366,6 +366,19 @@ export default function CloudImportWizard() {
                     </div>
                   </div>
                 )}
+
+                {/* Fehler-Details (bei Misserfolg) — Backend-Fehlermeldung sichtbar machen,
+                    statt nur das generische "Verbindung fehlgeschlagen" zu zeigen.
+                    Sonst muss der Anwender Backend-Logs lesen, um die eigentliche
+                    API-Antwort zu sehen. */}
+                {testResult && !testResult.erfolg && testResult.fehler && (
+                  <div className="mt-4 p-3 bg-red-50 dark:bg-red-900/20 rounded-lg text-sm text-red-700 dark:text-red-300">
+                    <div className="font-medium mb-1">Fehler-Details vom Anbieter:</div>
+                    <div className="font-mono text-xs whitespace-pre-wrap break-all">
+                      {testResult.fehler}
+                    </div>
+                  </div>
+                )}
               </div>
             </Card>
           )}

@@ -30,6 +30,7 @@ from backend.services.provenance import write_with_provenance
 from ._shared import (
     MappingConfig,
     _convert_unit,
+    _maybe_convert,
     _parse_csv_rows,
     _parse_date_column,
     _parse_json_rows,
@@ -117,6 +118,12 @@ async def apply_custom_import(
     investitionen = list(inv_result.scalars().all())
     pv_module = [i for i in investitionen if i.typ == "pv-module"]
     speicher = [i for i in investitionen if i.typ == "speicher"]
+    # Legacy-Top-Level-Targets `eauto_km_gefahren` und `wallbox_ladevorgaenge`
+    # haben keinen Investitions-Slot — landen auf der jeweils ersten nicht-
+    # dienstlichen Investition (analog `data_import.py` Re-Import-Pfad).
+    from backend.core.investition_parameter import ist_dienstlich as _ist_dienstlich
+    eautos_priv = [i for i in investitionen if i.typ == "e-auto" and not _ist_dienstlich(i)]
+    wallboxen_priv = [i for i in investitionen if i.typ == "wallbox" and not _ist_dienstlich(i)]
 
     # Mapping aufbauen: spalte → eedc_feld / invertieren
     field_map: dict[str, str] = {m.spalte: m.eedc_feld for m in config.mappings}
@@ -230,7 +237,7 @@ async def apply_custom_import(
                     inv_id_int = int(inv_id_str)
                 except ValueError:
                     continue
-                val = _convert_unit(parse_float_inv(raw, spalte), config.einheit)
+                val = _maybe_convert(parse_float_inv(raw, spalte), config.einheit, eedc_feld)
                 if val is None:
                     continue
                 if field_key == "ladevorgaenge":
@@ -268,11 +275,18 @@ async def apply_custom_import(
             bat_ladung_mapped: Optional[float] = None
             bat_entladung_mapped: Optional[float] = None
 
+            # Legacy-Top-Level-Targets, die nicht auf einer einzelnen Investition
+            # liegen — werden weiter unten anteilig auf die jeweilige Pool-
+            # Investition geschrieben (E-Auto: erstes nicht-dienstliches,
+            # Wallbox: erste nicht-dienstliche).
+            eauto_km_legacy: Optional[float] = None
+            wallbox_lv_legacy: Optional[int] = None
+
             for spalte, eedc_feld in field_map.items():
                 raw = row.get(spalte, "")
                 if not raw or eedc_feld in ("jahr", "monat") or eedc_feld.startswith("inv:"):
                     continue
-                val = _convert_unit(parse_float_inv(raw, spalte), config.einheit)
+                val = _maybe_convert(parse_float_inv(raw, spalte), config.einheit, eedc_feld)
                 if val is None:
                     continue
                 if eedc_feld == "einspeisung_kwh":
@@ -287,6 +301,10 @@ async def apply_custom_import(
                     bat_ladung_mapped = val
                 elif eedc_feld == "batterie_entladung_kwh":
                     bat_entladung_mapped = val
+                elif eedc_feld == "eauto_km_gefahren":
+                    eauto_km_legacy = val
+                elif eedc_feld == "wallbox_ladevorgaenge":
+                    wallbox_lv_legacy = int(val)
 
             # ── PV-Erzeugung: Investitions-Summe hat Vorrang ──────────────────
             pv_erzeugung: Optional[float] = None
@@ -354,6 +372,26 @@ async def apply_custom_import(
                         if len(geschuetzte_felder) < 15 and field_name not in geschuetzte_felder:
                             geschuetzte_felder.append(field_name)
             md.datenquelle = "custom_import"
+
+            # Legacy-Top-Level-Felder ohne Investitions-Slot (#229 JanKgh-Folge):
+            # auf die erste nicht-dienstliche E-Auto-/Wallbox-Investition schreiben,
+            # analog data_import.py-Re-Import-Pfad. Falls der User stattdessen den
+            # per-investitions-Slot gewählt hat (`inv:<id>:km_gefahren`), läuft der
+            # Wert bereits über die inv_collected-Schiene oben.
+            if eauto_km_legacy is not None and eauto_km_legacy > 0 and eautos_priv:
+                ea = eautos_priv[0]
+                await _track_upsert(
+                    db, ea.id, jahr, monat, {"km_gefahren": eauto_km_legacy},
+                    ueberschreiben,
+                    source="manual:csv_import", writer="csv_wizard",
+                )
+            if wallbox_lv_legacy is not None and wallbox_lv_legacy > 0 and wallboxen_priv:
+                wb = wallboxen_priv[0]
+                await _track_upsert(
+                    db, wb.id, jahr, monat, {"ladevorgaenge": wallbox_lv_legacy},
+                    ueberschreiben,
+                    source="manual:csv_import", writer="csv_wizard",
+                )
 
             importiert += 1
 
