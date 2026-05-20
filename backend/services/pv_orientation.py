@@ -92,3 +92,27 @@ def get_pv_azimut(inv: Any, default: int = 0) -> int:
     elif isinstance(param_val, (int, float)):
         return int(param_val)
     return default
+
+
+# PVGIS-Standard-Systemverluste (Kabel, Wechselrichter, Verschmutzung).
+# Fraktion, nicht Prozent — passt direkt in `ertrag * (1 - system_losses)`.
+DEFAULT_SYSTEM_LOSSES = 0.14
+
+
+def resolve_system_losses(pvgis: Any) -> float:
+    """Systemverluste als Fraktion (0..1) aus dem aktiven PVGIS-Eintrag.
+
+    `PVGISPrognose.system_losses` ist in Prozent gepflegt (Setup-Wert) und
+    wird hier durch 100 geteilt. Fehlt der Eintrag oder ist der Wert leer/0,
+    greift der PVGIS-Standard `DEFAULT_SYSTEM_LOSSES` (14 %).
+
+    Hintergrund: diese Zeile stand als
+    `pvgis.system_losses / 100 if pvgis and pvgis.system_losses else 0.14`
+    an sechs Read-Sites parallel (prognose_service, prefetch_service,
+    prognosen, aussichten, solar_prognose, energie_profil/views) plus die
+    `0.14`-Konstante 5× definiert — bei Drift hätte ein Setup-Wert nur in
+    manchen Sichten gewirkt (siehe `feedback_aggregations_drift`).
+    """
+    if pvgis is not None and pvgis.system_losses:
+        return pvgis.system_losses / 100
+    return DEFAULT_SYSTEM_LOSSES

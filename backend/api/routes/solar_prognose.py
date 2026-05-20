@@ -20,8 +20,8 @@ from backend.services.solar_forecast_service import (
     get_solar_prognose,
     get_multi_string_prognose,
     PVStringConfig,
-    DEFAULT_SYSTEM_LOSSES,
 )
+from backend.services.pv_orientation import resolve_system_losses
 
 router = APIRouter()
 
@@ -213,10 +213,7 @@ async def get_solar_prognose_endpoint(
         ).order_by(PVGISPrognose.abgerufen_am.desc()).limit(1)
     )
     pvgis = result.scalar_one_or_none()
-    system_losses = (
-        pvgis.system_losses / 100 if pvgis and pvgis.system_losses
-        else DEFAULT_SYSTEM_LOSSES
-    )
+    system_losses = resolve_system_losses(pvgis)
 
     # String-Konfigurationen erstellen
     strings: List[PVStringConfig] = []

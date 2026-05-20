@@ -809,7 +809,7 @@ export default function AktuellerMonat() {
       {sollIstData.length > 0 && (
         <Card>
           <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
-            SOLL/IST-Vergleich (PVGIS)
+            IST/SOLL-Vergleich (PVGIS)
           </h2>
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <div className="h-48">

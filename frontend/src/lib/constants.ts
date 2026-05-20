@@ -82,6 +82,36 @@ export const REGION_NAMEN: Record<string, string> = {
   XX: 'Unbekannt',
 }
 
+// ─── Komponenten-Aggregation ─────────────────────────────────────────────────
+
+/**
+ * Key-Prefixe in `TagesZusammenfassung.komponenten_kwh`, die zur PV-Tages-
+ * erzeugung beitragen (z. B. für die PV-Ertrag-Spalte der Energieprofil-
+ * Tagestabelle).
+ *
+ * Spiegel im Backend: `backend/core/berechnungen/energie.py:PV_KOMPONENTEN_PREFIXE`
+ * (Berechnungs-Layer, ADR-001). Ein neues PV-Prefix muss in BEIDEN Dateien
+ * ergänzt werden — sonst entsteht Drift wie bei der BKW-Doppelzählung.
+ */
+export const PV_KOMPONENTEN_PREFIXE = ['pv_', 'bkw_'] as const
+
+// ─── Saison-Fenster ──────────────────────────────────────────────────────────
+
+/**
+ * Fokus-Fenster für Saison-Vergleiche (WP-Saisonvergleich im Cockpit, #195).
+ *
+ * `startMonat` ist der erste Monat der Saison; Monate kleiner als `startMonat`
+ * zählen zum Folgejahr (Jahresgrenzen-Überlauf bei Winter/Heizperiode). Die
+ * Fenster überlappen bewusst — es sind alternative Fokus-Fenster, keine
+ * Partition des Jahres. Bekommt #195 Punkt 3 (HDD) ein Backend-Pendant, ist
+ * diese Map die Spiegel-Vorlage.
+ */
+export const SAISON_FENSTER = {
+  winter:      { label: 'Winter',      bereich: 'Nov–Feb', startMonat: 11, monate: [11, 12, 1, 2] },
+  heizperiode: { label: 'Heizperiode', bereich: 'Okt–Apr', startMonat: 10, monate: [10, 11, 12, 1, 2, 3, 4] },
+  sommer:      { label: 'Sommer',      bereich: 'Jun–Aug', startMonat: 6,  monate: [6, 7, 8] },
+} as const
+
 // ─── Sonstige Konstanten ─────────────────────────────────────────────────────
 
 /** CO2-Emissionsfaktor Strommix Deutschland (kg CO2 pro kWh). */

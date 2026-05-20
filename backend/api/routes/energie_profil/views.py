@@ -116,6 +116,56 @@ async def get_tages_zusammenfassungen(
     ]
 
 
+@router.get("/{anlage_id}/komponenten-serien", response_model=list[SerieInfo])
+async def get_komponenten_serien(
+    anlage_id: int,
+    von: date = Query(..., description="Startdatum (inklusiv)"),
+    bis: date = Query(..., description="Enddatum (inklusiv)"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Löst alle im Zeitraum vorkommenden `komponenten_kwh`-Keys zu SerieInfo
+    (Label/Kategorie/Seite) auf.
+
+    Dient der Tagestabelle, die pro Komponente eine eigene Diagnose-Spalte
+    mit echtem Investitions-Label statt Roh-Key anbietet.
+    """
+    result = await db.execute(select(Anlage).where(Anlage.id == anlage_id))
+    if not result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail=f"Anlage {anlage_id} nicht gefunden")
+
+    if (bis - von).days > 366:
+        raise HTTPException(status_code=400, detail="Zeitraum darf maximal 366 Tage umfassen")
+
+    result = await db.execute(
+        select(TagesZusammenfassung.komponenten_kwh)
+        .where(and_(
+            TagesZusammenfassung.anlage_id == anlage_id,
+            TagesZusammenfassung.datum >= von,
+            TagesZusammenfassung.datum <= bis,
+        ))
+    )
+    alle_keys: set[str] = set()
+    for (komponenten_kwh,) in result.all():
+        if komponenten_kwh:
+            alle_keys.update(komponenten_kwh.keys())
+
+    # Investments für Label-Auflösung laden
+    inv_result = await db.execute(
+        select(Investition).where(Investition.anlage_id == anlage_id)
+    )
+    inv_map: dict[int, Investition] = {
+        inv.id: inv for inv in inv_result.scalars().all()
+    }
+
+    serien: list[SerieInfo] = []
+    for key in sorted(alle_keys):
+        info = _key_to_serie_info(key, inv_map)
+        if info:
+            serien.append(SerieInfo(**info))
+    return serien
+
+
 @router.get("/{anlage_id}/stunden", response_model=StundenAntwort)
 async def get_stundenwerte(
     anlage_id: int,
@@ -954,8 +1004,8 @@ async def get_tagesprognose(
                 # liegen statt im parameter-JSON.
                 from backend.services.pv_orientation import (
                     get_pv_kwp, get_pv_neigung, get_pv_azimut,
+                    resolve_system_losses,
                 )
-                from backend.services.solar_forecast_service import DEFAULT_SYSTEM_LOSSES
                 from backend.models.pvgis_prognose import PVGISPrognose
                 total_kwp = sum(get_pv_kwp(inv) for inv in aktive_invs)
 
@@ -971,10 +1021,7 @@ async def get_tagesprognose(
                     ).order_by(PVGISPrognose.abgerufen_am.desc()).limit(1)
                 )
                 pvgis = pvgis_result.scalar_one_or_none()
-                system_losses = (
-                    pvgis.system_losses / 100 if pvgis and pvgis.system_losses
-                    else DEFAULT_SYSTEM_LOSSES
-                )
+                system_losses = resolve_system_losses(pvgis)
 
                 # Tage bis zum Zieldatum berechnen
                 tage_bis_ziel = (datum - date.today()).days

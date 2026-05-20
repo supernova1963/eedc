@@ -9,12 +9,12 @@ import { Card, LoadingSpinner, Alert, Select, KPICard, SortableSection, OrderedS
 import ChartTooltip from '../components/ui/ChartTooltip'
 import { useSelectedAnlage, useSectionOrder } from '../hooks'
 import type { Anlage } from '../types'
-import { MONAT_KURZ, fmtKpi } from '../lib'
+import { MONAT_KURZ, fmtKpi, SAISON_FENSTER } from '../lib'
 import { investitionenApi } from '../api'
 import type { WaermepumpeDashboardResponse } from '../api/investitionen'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
-  PieChart, Pie, Cell, AreaChart, Area
+  PieChart, Pie, Cell, AreaChart, Area, LabelList
 } from 'recharts'
 
 export default function WaermepumpeDashboard() {
@@ -182,6 +182,49 @@ function WaermepumpeBlock({ dashboard, ...selectorProps }: { dashboard: Waermepu
     }
     return entry
   })
+
+  // Saison-Modus: Fokus-Fenster (Winter/Heizperiode/Sommer) über die gesamte
+  // Lebensdauer zu Saison-Instanzen aggregiert. Kein Jahresfilter (#195:
+  // Cockpit-vs-Auswertung-Grenze) — der Achsen-Toggle wechselt nur die Sicht.
+  const [vergleichAchse, setVergleichAchse] = useState<'monate' | 'saison'>('monate')
+  const [saisonFenster, setSaisonFenster] = useState<keyof typeof SAISON_FENSTER>('winter')
+  const saisonCfg = SAISON_FENSTER[saisonFenster]
+  const saisonSpanntJahr = saisonCfg.monate.some(m => m < saisonCfg.startMonat)
+  const saisonData = (() => {
+    if (vergleichJahre.length === 0) return []
+    const minJ = vergleichJahre[0]
+    const maxJ = vergleichJahre[vergleichJahre.length - 1]
+    const rows: { name: string; value: number | null; label: string; vollstaendig: boolean }[] = []
+    for (let startJahr = minJ - 1; startJahr <= maxJ; startJahr++) {
+      let sumStrom = 0
+      let sumWaerme = 0
+      let monateMitDaten = 0
+      for (const m of saisonCfg.monate) {
+        const kalenderJahr = m >= saisonCfg.startMonat ? startJahr : startJahr + 1
+        const md = monatsdaten.find(x => x.monat === m && x.jahr === kalenderJahr)
+        if (md) {
+          monateMitDaten++
+          sumStrom += md.verbrauch_daten.stromverbrauch_kwh || 0
+          sumWaerme += (md.verbrauch_daten.heizenergie_kwh || 0) + (md.verbrauch_daten.warmwasser_kwh || 0)
+        }
+      }
+      if (monateMitDaten === 0) continue
+      const vollstaendig = monateMitDaten === saisonCfg.monate.length
+      const basisName = saisonSpanntJahr
+        ? `${String(startJahr % 100).padStart(2, '0')}/${String((startJahr + 1) % 100).padStart(2, '0')}`
+        : `${startJahr}`
+      const wert = vergleichModus === 'jaz'
+        ? (sumStrom > 0 ? Math.round((sumWaerme / sumStrom) * 100) / 100 : null)
+        : Math.round(sumStrom)
+      rows.push({
+        name: vollstaendig ? basisName : `${basisName} (${monateMitDaten}/${saisonCfg.monate.length})`,
+        value: wert,
+        label: wert == null ? '' : (vergleichModus === 'jaz' ? wert.toFixed(2) : wert.toLocaleString('de-DE')),
+        vollstaendig,
+      })
+    }
+    return rows
+  })()
 
   const waermePieData = [
     { name: 'Heizung', value: z.gesamt_heizenergie_kwh },
@@ -415,11 +458,12 @@ function WaermepumpeBlock({ dashboard, ...selectorProps }: { dashboard: Waermepu
         storageKeyPrefix={wpStoragePrefix}
         icon={Calendar}
         color="text-purple-500"
-        title={`${vergleichModus === 'jaz' ? 'JAZ' : 'Stromverbrauch'} Monatsvergleich`}
+        title={`${vergleichModus === 'jaz' ? 'JAZ' : 'Stromverbrauch'} ${vergleichAchse === 'saison' ? 'Saisonvergleich' : 'Monatsvergleich'}`}
         summary={vergleichJahre.length > 1 ? `${vergleichJahre[0]}–${vergleichJahre[vergleichJahre.length - 1]}` : `${vergleichJahre[0] ?? ''}`}
         defaultOpen
       >
-        <div className="flex items-center justify-end mb-4">
+        <div className="flex items-center justify-end flex-wrap gap-2 mb-4">
+          {/* Metrik: Strom / JAZ */}
           <div className="flex rounded-lg border border-gray-300 dark:border-gray-600 text-sm overflow-hidden">
             <button
               onClick={() => setVergleichModus('strom')}
@@ -434,26 +478,81 @@ function WaermepumpeBlock({ dashboard, ...selectorProps }: { dashboard: Waermepu
               JAZ
             </button>
           </div>
-        </div>
-        <div className="h-72">
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={vergleichData}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="name" fontSize={12} />
-              <YAxis domain={vergleichModus === 'jaz' ? [0, 6] : undefined} />
-              <Tooltip content={<ChartTooltip formatter={(v) => vergleichModus === 'jaz' ? v?.toFixed(2) : `${v} kWh`} />} />
-              <Legend />
-              {vergleichJahre.map((jahr, i) => (
-                <Bar
-                  key={jahr}
-                  dataKey={`val_${jahr}`}
-                  name={`${jahr}`}
-                  fill={vergleichJahreColors[i % vergleichJahreColors.length]}
-                />
+          {/* Achse: Monate / Saison */}
+          <div className="flex rounded-lg border border-gray-300 dark:border-gray-600 text-sm overflow-hidden">
+            <button
+              onClick={() => setVergleichAchse('monate')}
+              className={`px-3 py-1 transition-colors ${vergleichAchse === 'monate' ? 'bg-purple-500 text-white' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'}`}
+            >
+              Monate
+            </button>
+            <button
+              onClick={() => setVergleichAchse('saison')}
+              className={`px-3 py-1 transition-colors ${vergleichAchse === 'saison' ? 'bg-purple-500 text-white' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'}`}
+            >
+              Saison
+            </button>
+          </div>
+          {/* Saison-Fenster — nur im Saison-Modus */}
+          {vergleichAchse === 'saison' && (
+            <div className="flex rounded-lg border border-gray-300 dark:border-gray-600 text-sm overflow-hidden">
+              {(Object.keys(SAISON_FENSTER) as (keyof typeof SAISON_FENSTER)[]).map(key => (
+                <button
+                  key={key}
+                  onClick={() => setSaisonFenster(key)}
+                  title={`${SAISON_FENSTER[key].label} (${SAISON_FENSTER[key].bereich})`}
+                  className={`px-3 py-1 transition-colors ${saisonFenster === key ? 'bg-purple-500 text-white' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'}`}
+                >
+                  {SAISON_FENSTER[key].label}
+                </button>
               ))}
-            </BarChart>
-          </ResponsiveContainer>
+            </div>
+          )}
         </div>
+        {vergleichAchse === 'saison' && saisonData.length === 0 ? (
+          <p className="text-sm text-gray-500 dark:text-gray-400 text-center py-16">
+            Keine Daten im Fenster {saisonCfg.label} ({saisonCfg.bereich}).
+          </p>
+        ) : (
+          <div className="h-72">
+            <ResponsiveContainer width="100%" height="100%">
+              {vergleichAchse === 'monate' ? (
+                <BarChart data={vergleichData}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="name" fontSize={12} />
+                  <YAxis domain={vergleichModus === 'jaz' ? [0, 6] : undefined} />
+                  <Tooltip content={<ChartTooltip formatter={(v) => vergleichModus === 'jaz' ? v?.toFixed(2) : `${v} kWh`} />} />
+                  <Legend />
+                  {vergleichJahre.map((jahr, i) => (
+                    <Bar
+                      key={jahr}
+                      dataKey={`val_${jahr}`}
+                      name={`${jahr}`}
+                      fill={vergleichJahreColors[i % vergleichJahreColors.length]}
+                    />
+                  ))}
+                </BarChart>
+              ) : (
+                <BarChart data={saisonData} margin={{ top: 20, right: 8, left: 0, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="name" fontSize={12} />
+                  <YAxis domain={vergleichModus === 'jaz' ? [0, 6] : undefined} />
+                  <Tooltip content={<ChartTooltip formatter={(v) => vergleichModus === 'jaz' ? v?.toFixed(2) : `${v} kWh`} />} />
+                  <Bar dataKey="value" name={vergleichModus === 'jaz' ? 'JAZ' : 'Strom'}>
+                    {saisonData.map((s, i) => (
+                      <Cell
+                        key={i}
+                        fill={vergleichJahreColors[i % vergleichJahreColors.length]}
+                        fillOpacity={s.vollstaendig ? 1 : 0.4}
+                      />
+                    ))}
+                    <LabelList dataKey="label" position="top" fill="#6b7280" fontSize={11} />
+                  </Bar>
+                </BarChart>
+              )}
+            </ResponsiveContainer>
+          </div>
+        )}
       </SortableSection>
 
       {/* CO2 Info */}

@@ -22,12 +22,15 @@ from backend.services.wetter.open_meteo import fetch_open_meteo_forecast
 from backend.services.wetter.utils import wetter_symbol_aus_tag
 from backend.services.wetter.pvgis import fetch_pvgis_tmy_monat, get_pvgis_tmy_defaults
 from backend.services.wetter.models import WETTER_MODELLE
+from backend.services.pv_orientation import (
+    DEFAULT_SYSTEM_LOSSES,
+    resolve_system_losses,
+)
 
 logger = logging.getLogger(__name__)
 
-# Konstanten für PV-Berechnung
+# Konstanten für PV-Berechnung (DEFAULT_SYSTEM_LOSSES: zentral in pv_orientation.py)
 DEFAULT_SYSTEM_EFFICIENCY = 0.85  # Systemwirkungsgrad (Wechselrichter, Kabel, etc.)
-DEFAULT_SYSTEM_LOSSES = 0.14  # 14% Systemverluste (PVGIS Standard)
 TEMP_COEFFICIENT = 0.004  # Leistungsabnahme pro °C über 25°C
 
 
@@ -153,7 +156,7 @@ async def get_kurzfrist_prognose(
         PVGISPrognose.anlage_id == anlage_id,
         PVGISPrognose.ist_aktiv == True
     ).first()
-    system_losses = pvgis.system_losses / 100 if pvgis and pvgis.system_losses else DEFAULT_SYSTEM_LOSSES
+    system_losses = resolve_system_losses(pvgis)
 
     # Wettervorhersage abrufen (Wettermodell der Anlage berücksichtigen)
     wetter_modell = getattr(anlage, "wetter_modell", "auto") or "auto"

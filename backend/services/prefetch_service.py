@@ -27,8 +27,8 @@ from backend.services.solar_forecast_service import (
     get_solar_prognose,
     get_multi_string_prognose,
     PVStringConfig,
-    DEFAULT_SYSTEM_LOSSES,
 )
+from backend.services.pv_orientation import resolve_system_losses
 from backend.services.wetter.open_meteo import fetch_open_meteo_forecast
 from backend.services.wetter.cache import _cache_get, _cache_set
 from backend.services.wetter.models import WETTER_MODELLE
@@ -118,10 +118,7 @@ async def _prefetch_for_anlage(anlage: Anlage, db) -> dict:
         ).order_by(PVGISPrognose.abgerufen_am.desc()).limit(1)
     )
     pvgis = pvgis_result.scalar_one_or_none()
-    system_losses = (
-        pvgis.system_losses / 100 if pvgis and pvgis.system_losses
-        else DEFAULT_SYSTEM_LOSSES
-    )
+    system_losses = resolve_system_losses(pvgis)
 
     # Alle Prefetch-Calls parallel starten (skip_jitter=True)
     unique_orientations = set((s.neigung, s.ausrichtung) for s in strings)

@@ -36,6 +36,7 @@ from zoneinfo import ZoneInfo
 import httpx
 
 from backend.core.config import settings
+from backend.services.pv_orientation import DEFAULT_SYSTEM_LOSSES
 
 logger = logging.getLogger(__name__)
 
@@ -44,8 +45,7 @@ OPEN_METEO_FORECAST_URL = settings.open_meteo_solar_api_url
 MJ_TO_KWH = 1 / 3.6  # 1 MJ = 0.2778 kWh
 SECONDS_TO_HOURS = 1 / 3600
 
-# Systemverluste und Korrekturfaktoren
-DEFAULT_SYSTEM_LOSSES = 0.14  # 14% (Kabel, Wechselrichter, etc.)
+# Korrekturfaktoren (DEFAULT_SYSTEM_LOSSES: zentral in pv_orientation.py)
 TEMP_COEFFICIENT = 0.004  # -0.4%/°C über 25°C (typisch für Silizium)
 SNOW_LOSS_FACTOR = 0.1  # 10% Verlust bei Schnee
 

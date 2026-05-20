@@ -36,6 +36,7 @@ from backend.services.wetter.cache import (
     ERROR_TTL_RATE_LIMIT, ERROR_TTL_SERVER_ERROR, ERROR_TTL_NETWORK,
 )
 from backend.services.wetter.models import WETTER_MODELLE
+from backend.services.pv_orientation import DEFAULT_SYSTEM_LOSSES
 from backend.services.provenance import (
     seed_provenance,
     write_with_provenance,
@@ -115,7 +116,10 @@ _LASTPROFIL_KW = {
     16: 0.35, 17: 0.50, 18: 0.65, 19: 0.70, 20: 0.55,
 }
 
-DEFAULT_SYSTEM_LOSSES = 0.14  # Kabel, Wechselrichter, Verschmutzung
+# DEFAULT_SYSTEM_LOSSES wird aus services/pv_orientation.py importiert.
+# Der Live-Pfad nutzt bewusst den Default statt des anlagenspezifischen
+# PVGIS-Werts: ein abweichender Setup-Wert wird vom Korrekturprofil-
+# Lernfaktor ohnehin eingefangen — siehe Memory project_pvgis_systemverluste_drift.
 
 
 def _extract_time(values: Optional[list]) -> Optional[str]:

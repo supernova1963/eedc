@@ -32,10 +32,11 @@ from backend.services.prognose_service import berechne_pv_ertrag_tag
 from backend.services.solcast_service import get_solcast_forecast, get_solcast_status
 from backend.services.solar_forecast_service import fetch_gti_forecast, _solar_noon_hour
 from backend.api.routes.live_wetter import _get_lernfaktor, _get_lernfaktor_detail
+from backend.services.pv_orientation import resolve_system_losses
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_SYSTEM_LOSSES = 0.14
+# DEFAULT_SYSTEM_LOSSES: zentral in services/pv_orientation.py
 TEMP_COEFFICIENT = 0.004
 
 router = APIRouter()
@@ -273,7 +274,7 @@ async def get_prognosen_vergleich(
         ).order_by(PVGISPrognose.abgerufen_am.desc()).limit(1)
     )
     pvgis = result.scalar_one_or_none()
-    system_losses = pvgis.system_losses / 100 if pvgis and pvgis.system_losses else DEFAULT_SYSTEM_LOSSES
+    system_losses = resolve_system_losses(pvgis)
 
     # Wettermodell + Orientierung
     wetter_modell = anlage.wetter_modell or "auto"

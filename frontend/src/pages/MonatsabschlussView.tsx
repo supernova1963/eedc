@@ -576,7 +576,7 @@ export default function MonatsabschlussView() {
                     const colorBar  = pct >= 100 ? 'bg-green-500' : pct >= 75 ? 'bg-yellow-400' : 'bg-orange-400'
                     return (
                       <div>
-                        <p className="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-2">SOLL/IST (PVGIS)</p>
+                        <p className="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-2">IST/SOLL (PVGIS)</p>
                         <div className="flex justify-end">
                           <FormelTooltip
                             formel="IST ÷ SOLL × 100"
