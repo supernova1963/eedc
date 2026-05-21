@@ -15,7 +15,7 @@ import {
   Plug, Gauge, ArrowUpDown, RefreshCw, CalendarClock, Users, Share2,
   Thermometer, Activity, Power,
 } from 'lucide-react'
-import { Card, LoadingSpinner, Alert, KPICard, FormelTooltip, fmtCalc, SortableSection, OrderedSections } from '../components/ui'
+import { Card, LoadingSpinner, Alert, KPICard, QuelleBadge, FormelTooltip, fmtCalc, SortableSection, OrderedSections } from '../components/ui'
 import { fmtKpi } from '../lib'
 import { useSelectedAnlage, useAggregierteDaten, useSectionOrder } from '../hooks'
 import { aktuellerMonatApi, AktuellerMonatResponse } from '../api/aktuellerMonat'
@@ -1240,6 +1240,7 @@ export default function MonatsabschlussView() {
                   <KPICard title="Entladung" value={fmt(d.speicher_entladung_kwh, 0)} unit="kWh" icon={Battery} color="green"
                     subtitle={vm?.speicher_entladung_kwh != null ? `VM: ${fmt(vm.speicher_entladung_kwh, 0)} kWh` : undefined} />
                   <KPICard title="Effizienz" value={fmtKpi(d.speicher_wirkungsgrad_prozent, 1)} unit="%" icon={Activity} color="cyan"
+                    subtitle={d.speicher_soc_drift_signifikant ? 'SoC-Drift — Monats-η ausgeblendet' : undefined}
                     formel="Entladung ÷ Ladung × 100"
                     berechnung={d.speicher_ladung_kwh != null && d.speicher_entladung_kwh != null
                       ? `${fmt(d.speicher_entladung_kwh, 0)} ÷ ${fmt(d.speicher_ladung_kwh, 0)} kWh`
@@ -1258,6 +1259,20 @@ export default function MonatsabschlussView() {
                   <VglZeile label="Entladung"          aktuell={d.speicher_entladung_kwh}    vm={vm?.speicher_entladung_kwh} vj={vj?.speicher_entladung_kwh} unit="kWh" />
                   {d.speicher_ladung_netz_kwh != null && (
                     <VglZeile label="Netzladung (Arbitrage)" aktuell={d.speicher_ladung_netz_kwh} unit="kWh" inv />
+                  )}
+                  {/* Etappe C (#264): TEP-basierter effektiver Ladepreis der Netzladung */}
+                  {d.speicher_effektiver_ladepreis_cent != null && (
+                    <div className="flex justify-between items-center py-1.5 text-sm">
+                      <span className="text-gray-500 dark:text-gray-400">Effektiver Ladepreis (Netz)</span>
+                      <span className="flex items-center gap-2">
+                        <span className="font-medium text-gray-700 dark:text-gray-300">
+                          {d.speicher_effektiver_ladepreis_cent.toFixed(1)} ct/kWh
+                        </span>
+                        {d.speicher_effektiver_ladepreis_quelle && (
+                          <QuelleBadge quelle={d.speicher_effektiver_ladepreis_quelle} kind="ladepreis" />
+                        )}
+                      </span>
+                    </div>
                   )}
                   {d.speicher_ladung_kwh != null && d.speicher_entladung_kwh != null && (
                     <div className="flex justify-between py-1.5 text-sm border-t border-gray-100 dark:border-gray-700/50 mt-1 pt-2">

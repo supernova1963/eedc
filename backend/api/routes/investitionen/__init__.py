@@ -1,0 +1,37 @@
+"""
+Investitionen API — Package.
+
+main.py importiert `investitionen.router`; dieses Package stellt denselben
+Router wie das frühere investitionen.py bereit, 2026-05-20 aufgeteilt in:
+- crud.py       — CRUD-Endpoints, Schemas, ROI-Dashboard
+- dashboards.py — Pro-Investitionstyp-Dashboards + Monatsdaten-Abfrage
+"""
+
+from fastapi import APIRouter
+
+from backend.api.routes.investitionen.crud import router as crud_router
+from backend.api.routes.investitionen.dashboards import (
+    router as dashboards_router,
+    get_eauto_dashboard,
+    get_waermepumpe_dashboard,
+    get_speicher_dashboard,
+    get_wallbox_dashboard,
+    get_balkonkraftwerk_dashboard,
+    get_sonstiges_dashboard,
+    get_investition_monatsdaten_by_month,
+)
+
+router = APIRouter()
+router.include_router(crud_router)
+router.include_router(dashboards_router)
+
+__all__ = [
+    "router",
+    "get_eauto_dashboard",
+    "get_waermepumpe_dashboard",
+    "get_speicher_dashboard",
+    "get_wallbox_dashboard",
+    "get_balkonkraftwerk_dashboard",
+    "get_sonstiges_dashboard",
+    "get_investition_monatsdaten_by_month",
+]

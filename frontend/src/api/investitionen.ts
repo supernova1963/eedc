@@ -174,7 +174,29 @@ export interface SpeicherDashboardResponse {
     arbitrage_kwh: number
     arbitrage_avg_preis_cent: number | null
     arbitrage_gewinn_euro: number
+    // Etappe C (#264): TEP-basierte KPIs — optional, Backend liefert sie nur
+    // bei vorhandener Datenbasis (sonst Fallback auf arbitrage_avg_preis_cent
+    // bzw. effizienz_prozent).
+    effektiver_ladepreis_cent?: number | null
+    effektiver_ladepreis_quelle?: string
+    ladepreis_abdeckung_prozent?: number
+    ist_wirkungsgrad_prozent?: number | null
+    wirkungsgrad_quelle?: string
+    param_wirkungsgrad_prozent?: number
+    eta_degradation_alarm?: boolean
   }
+}
+
+/** Speicher-spezifische Felder im ROI-`detail`/`detail_berechnung`-Dict (Etappe C, #264). */
+export interface SpeicherRoiDetail {
+  modus?: string
+  effektiver_ladepreis_cent?: number | null
+  ladepreis_quelle?: string
+  verwendetes_wirkungsgrad_prozent?: number
+  wirkungsgrad_quelle?: string
+  ladepreis_abdeckung_prozent?: number
+  eta_degradation_alarm?: boolean
+  param_wirkungsgrad_prozent?: number
 }
 
 export interface WallboxDashboardResponse {

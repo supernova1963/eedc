@@ -150,6 +150,21 @@ async def share_to_community(
             elif response.status_code == 400:
                 error = response.json().get("detail", "Ungültige Daten")
                 raise HTTPException(status_code=400, detail=error)
+            elif response.status_code == 422:
+                # FastAPI/Pydantic-Validierungsfehler — feldgenaues Detail
+                # lesbar durchreichen statt nur "422" zu zeigen (#282).
+                detail_raw = response.json().get("detail")
+                if isinstance(detail_raw, list) and detail_raw:
+                    teile = []
+                    for f in detail_raw:
+                        loc = [str(p) for p in f.get("loc", []) if p != "body"]
+                        feld = " → ".join(loc)
+                        msg = f.get("msg", "ungültiger Wert")
+                        teile.append(f"{feld}: {msg}" if feld else msg)
+                    error = "Der Community-Server hat die Daten abgelehnt — " + "; ".join(teile)
+                else:
+                    error = "Der Community-Server hat die Daten als ungültig abgewiesen."
+                raise HTTPException(status_code=422, detail=error)
             else:
                 raise HTTPException(
                     status_code=502,

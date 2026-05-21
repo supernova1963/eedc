@@ -5,11 +5,11 @@
 
 import { Fragment, useState, useEffect } from 'react'
 import { Battery, Zap, TrendingUp, Activity, RotateCw, DollarSign } from 'lucide-react'
-import { Card, LoadingSpinner, Alert, Select, KPICard, FormelTooltip, fmtCalc } from '../components/ui'
+import { Card, LoadingSpinner, Alert, Select, KPICard, QuelleBadge, FormelTooltip, fmtCalc } from '../components/ui'
 import ChartTooltip from '../components/ui/ChartTooltip'
 import { useSelectedAnlage } from '../hooks'
 import type { Anlage } from '../types'
-import { MONAT_KURZ, fmtKpi } from '../lib'
+import { MONAT_KURZ, fmtKpi, WIRKUNGSGRAD_QUELLE_LABELS } from '../lib'
 import { investitionenApi } from '../api'
 import type { SpeicherDashboardResponse } from '../api/investitionen'
 import {
@@ -119,6 +119,14 @@ function SpeicherBlock({ dashboard, ...selectorProps }: { dashboard: SpeicherDas
   const { investition, monatsdaten, zusammenfassung } = dashboard
   const z = zusammenfassung
 
+  // Etappe C (#264): TEP-basierte KPIs — fallen auf die bestehenden Werte
+  // zurück, wenn das Backend keine belastbare Datenbasis hat.
+  const istEta = z.ist_wirkungsgrad_prozent ?? null
+  const etaQuelle = z.wirkungsgrad_quelle
+  const etaAlarm = z.eta_degradation_alarm === true
+  const ladepreisCent = z.effektiver_ladepreis_cent ?? z.arbitrage_avg_preis_cent
+  const ladepreisQuelle = z.effektiver_ladepreis_cent != null ? z.effektiver_ladepreis_quelle : undefined
+
   const monthlyData = monatsdaten.map(md => {
     const ladung = md.verbrauch_daten.ladung_kwh || 0
     const entladung = md.verbrauch_daten.entladung_kwh || 0
@@ -163,14 +171,27 @@ function SpeicherBlock({ dashboard, ...selectorProps }: { dashboard: SpeicherDas
           ergebnis={`= ${z.vollzyklen.toFixed(1)} Zyklen`}
         />
         <KPICard
-          title="Effizienz"
-          value={fmtKpi(z.effizienz_prozent, 1)}
+          title="Wirkungsgrad η"
+          value={fmtKpi(istEta != null ? istEta : z.effizienz_prozent, 1)}
           unit="%"
           icon={Activity}
-          color="cyan"
-          formel="Effizienz = Entladung ÷ Ladung × 100"
+          color={etaAlarm ? 'red' : 'cyan'}
+          subtitle={
+            istEta != null && etaQuelle
+              ? `IST · ${WIRKUNGSGRAD_QUELLE_LABELS[etaQuelle] ?? etaQuelle}`
+              : undefined
+          }
+          formel={
+            istEta != null
+              ? 'η (IST), SoC-korrigiert: (Entladung + ΔSoC) ÷ Ladung'
+              : 'Effizienz = Entladung ÷ Ladung × 100'
+          }
           berechnung={`${z.gesamt_entladung_kwh.toFixed(0)} kWh ÷ ${z.gesamt_ladung_kwh.toFixed(0)} kWh × 100`}
-          ergebnis={z.effizienz_prozent ? `= ${z.effizienz_prozent.toFixed(1)} %` : '—'}
+          ergebnis={
+            istEta != null
+              ? `= ${istEta.toFixed(1)} % η`
+              : (z.effizienz_prozent ? `= ${z.effizienz_prozent.toFixed(1)} %` : '—')
+          }
         />
         <KPICard
           title="Durchsatz"
@@ -194,6 +215,15 @@ function SpeicherBlock({ dashboard, ...selectorProps }: { dashboard: SpeicherDas
           ergebnis={`= ${z.ersparnis_euro.toFixed(2)} €`}
         />
       </div>
+
+      {/* Etappe C (#264): Degradations-Alarm — η-IST > 5 pp unter Parameter */}
+      {etaAlarm && istEta != null && z.param_wirkungsgrad_prozent != null && (
+        <Alert type="warning">
+          Gemessener Wirkungsgrad ({istEta.toFixed(1)} %) liegt mehr als 5 Prozentpunkte
+          unter dem Parameter-Wert ({z.param_wirkungsgrad_prozent.toFixed(1)} %) — möglicher
+          Hinweis auf Speicher-Degradation. Wert prüfen, ggf. Parameter anpassen.
+        </Alert>
+      )}
 
       {/* Summary Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
@@ -252,8 +282,11 @@ function SpeicherBlock({ dashboard, ...selectorProps }: { dashboard: SpeicherDas
             <div>
               <p className="text-sm text-amber-600 dark:text-amber-400">Ø Ladepreis</p>
               <p className="text-xl font-bold text-amber-700 dark:text-amber-300">
-                {z.arbitrage_avg_preis_cent?.toFixed(1) || '-'} ct/kWh
+                {ladepreisCent != null ? `${ladepreisCent.toFixed(1)} ct/kWh` : '-'}
               </p>
+              {ladepreisQuelle && (
+                <QuelleBadge quelle={ladepreisQuelle} kind="ladepreis" className="mt-1" />
+              )}
             </div>
             <div>
               <p className="text-sm text-amber-600 dark:text-amber-400">Anteil an Ladung</p>

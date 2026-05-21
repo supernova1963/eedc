@@ -2,7 +2,7 @@
  * ROI-Dashboard - Wirtschaftlichkeitsanalyse aller Investitionen
  */
 
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, Fragment } from 'react'
 import {
   TrendingUp,
   Clock,
@@ -15,6 +15,8 @@ import {
   Settings2,
   Sun,
   LayoutGrid,
+  ChevronDown,
+  ChevronRight,
 } from 'lucide-react'
 import {
   BarChart,
@@ -31,10 +33,10 @@ import {
   LineChart,
   Line,
 } from 'recharts'
-import { Card, Alert, LoadingSpinner, EmptyState, FormelTooltip, fmtCalc } from '../components/ui'
+import { Card, Alert, LoadingSpinner, EmptyState, FormelTooltip, fmtCalc, QuelleBadge } from '../components/ui'
 import ChartTooltip from '../components/ui/ChartTooltip'
 import { useSelectedAnlage, useAktuellerStrompreis } from '../hooks'
-import { investitionenApi, type ROIDashboardResponse } from '../api'
+import { investitionenApi, type ROIDashboardResponse, type ROIBerechnung, type SpeicherRoiDetail } from '../api'
 
 const typIcons: Record<string, React.ElementType> = {
   'e-auto': Car,
@@ -69,11 +71,74 @@ const typLabels: Record<string, string> = {
   'sonstiges': 'Sonstiges',
 }
 
+/**
+ * Etappe C (#264): Speicher-spezifisches C-Detail aus einer ROI-Berechnung
+ * ziehen — egal ob AC-gekoppelt (eigene Berechnung) oder DC-gekoppelt
+ * (Komponente eines PV-Systems). Liefert null, wenn keine belastbaren
+ * C-Felder vorliegen (z. B. Prognose-Modus ohne IST-Daten).
+ */
+function getSpeicherCDetail(b: ROIBerechnung): SpeicherRoiDetail | null {
+  if (b.investition_typ === 'speicher') {
+    const d = b.detail_berechnung as SpeicherRoiDetail
+    return d && d.wirkungsgrad_quelle ? d : null
+  }
+  const sp = b.komponenten?.find((k) => k.typ === 'speicher')
+  if (sp) {
+    const d = sp.detail as SpeicherRoiDetail
+    return d && d.wirkungsgrad_quelle ? d : null
+  }
+  return null
+}
+
+/** Aufklappbares C-Detail einer Speicher-ROI-Zeile (Etappe C, #264). */
+function SpeicherDetailPanel({ detail }: { detail: SpeicherRoiDetail }) {
+  const lp = detail.effektiver_ladepreis_cent
+  const eta = detail.verwendetes_wirkungsgrad_prozent
+  return (
+    <div className="px-4 py-3 bg-gray-50 dark:bg-gray-800/50 space-y-2">
+      <div className="flex flex-wrap items-center gap-x-8 gap-y-2 text-sm">
+        <span className="flex items-center gap-2">
+          <span className="text-gray-500 dark:text-gray-400">Effektiver Ladepreis:</span>
+          <span className="font-medium text-gray-900 dark:text-white">
+            {lp != null ? `${lp.toFixed(2)} ct/kWh` : '—'}
+          </span>
+          {detail.ladepreis_quelle && (
+            <QuelleBadge quelle={detail.ladepreis_quelle} kind="ladepreis" />
+          )}
+          {detail.ladepreis_abdeckung_prozent != null && (
+            <span className="text-xs text-gray-400 dark:text-gray-500">
+              {detail.ladepreis_abdeckung_prozent.toFixed(0)} % Abdeckung
+            </span>
+          )}
+        </span>
+        <span className="flex items-center gap-2">
+          <span className="text-gray-500 dark:text-gray-400">Verwendeter Wirkungsgrad:</span>
+          <span className="font-medium text-gray-900 dark:text-white">
+            {eta != null ? `${eta.toFixed(1)} %` : '—'}
+          </span>
+          {detail.wirkungsgrad_quelle && (
+            <QuelleBadge quelle={detail.wirkungsgrad_quelle} kind="wirkungsgrad" />
+          )}
+        </span>
+      </div>
+      {detail.eta_degradation_alarm && detail.param_wirkungsgrad_prozent != null && (
+        <p className="text-xs text-amber-700 dark:text-amber-300">
+          ⚠ Gemessener Wirkungsgrad liegt mehr als 5 Prozentpunkte unter dem
+          Parameter-Wert ({detail.param_wirkungsgrad_prozent.toFixed(1)} %) —
+          möglicher Hinweis auf Speicher-Degradation.
+        </p>
+      )}
+    </div>
+  )
+}
+
 export default function ROIDashboard() {
   const { anlagen, selectedAnlageId, setSelectedAnlageId, loading: anlagenLoading } = useSelectedAnlage()
   const [roiData, setRoiData] = useState<ROIDashboardResponse | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Etappe C (#264): aufgeklappte Speicher-Detail-Zeilen (per investition_id).
+  const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set())
 
   // Anpassbare Parameter
   const [strompreis, setStrompreis] = useState<number>(30)
@@ -480,12 +545,34 @@ export default function ROIDashboard() {
                 <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
                   {roiData.berechnungen.map((b) => {
                     const Icon = typIcons[b.investition_typ] || Settings2
+                    const cDetail = getSpeicherCDetail(b)
+                    const isExpanded = expandedRows.has(b.investition_id)
                     return (
-                      <tr key={b.investition_id} className="hover:bg-gray-50 dark:hover:bg-gray-800">
+                      <Fragment key={b.investition_id}>
+                      <tr className="hover:bg-gray-50 dark:hover:bg-gray-800">
                         <td className="px-4 py-3 whitespace-nowrap">
                           <div className="flex items-center gap-2">
+                            {cDetail ? (
+                              <button
+                                type="button"
+                                onClick={() => setExpandedRows((prev) => {
+                                  const next = new Set(prev)
+                                  if (next.has(b.investition_id)) next.delete(b.investition_id)
+                                  else next.add(b.investition_id)
+                                  return next
+                                })}
+                                className="text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 flex-shrink-0"
+                                aria-label="Speicher-Details ein-/ausklappen"
+                              >
+                                {isExpanded
+                                  ? <ChevronDown className="h-4 w-4" />
+                                  : <ChevronRight className="h-4 w-4" />}
+                              </button>
+                            ) : (
+                              <span className="w-4 flex-shrink-0" />
+                            )}
                             <Icon
-                              className="h-4 w-4"
+                              className="h-4 w-4 flex-shrink-0"
                               style={{ color: typColors[b.investition_typ] }}
                             />
                             <div>
@@ -547,6 +634,14 @@ export default function ROIDashboard() {
                           {b.co2_einsparung_kg ? `${b.co2_einsparung_kg.toLocaleString('de-DE')} kg` : '-'}
                         </td>
                       </tr>
+                      {cDetail && isExpanded && (
+                        <tr>
+                          <td colSpan={6} className="p-0">
+                            <SpeicherDetailPanel detail={cDetail} />
+                          </td>
+                        </tr>
+                      )}
+                      </Fragment>
                     )
                   })}
                 </tbody>

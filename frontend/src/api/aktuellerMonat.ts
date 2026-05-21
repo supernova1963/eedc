@@ -56,6 +56,10 @@ export interface AktuellerMonatResponse {
   speicher_vollzyklen: number | null
   speicher_kapazitaet_kwh: number | null
   hat_speicher: boolean
+  // Etappe C (#264): SoC-Drift-Flag + TEP-basierter effektiver Ladepreis
+  speicher_soc_drift_signifikant: boolean
+  speicher_effektiver_ladepreis_cent: number | null
+  speicher_effektiver_ladepreis_quelle: string | null
 
   // Komponenten — Wärmepumpe
   wp_strom_kwh: number | null

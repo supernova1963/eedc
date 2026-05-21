@@ -112,6 +112,36 @@ export const SAISON_FENSTER = {
   sommer:      { label: 'Sommer',      bereich: 'Jun–Aug', startMonat: 6,  monate: [6, 7, 8] },
 } as const
 
+// ─── Speicher-Wirtschaftlichkeit: Quellen-Labels (Etappe C, #264) ────────────
+
+/**
+ * Klartext-Labels für die `quelle`-Felder der Speicher-KPIs (effektiver
+ * Ladepreis, η-IST). Roh-Enum-Werte gehören nie in die UI — diese Maps sind
+ * die Spiegel-Vorlage zum Backend (`speicher_wirtschaftlichkeit.py`).
+ */
+export const LADEPREIS_QUELLE_LABELS: Record<string, string> = {
+  'dyn-tarif': 'dyn. Tarif',
+  'boersenpreis': 'Börsenpreis',
+  'datenbasis-zu-duenn': 'Datenbasis dünn',
+  'keine-netzladung': 'keine Netzladung',
+  'keine-tep-daten': 'keine Profildaten',
+  'bezugspreis-fallback': 'Bezugspreis',
+  'param': 'Parameter',
+}
+
+export const WIRKUNGSGRAD_QUELLE_LABELS: Record<string, string> = {
+  'fenster_lang': 'Langzeit-Messung',
+  'soc_korrigiert': 'SoC-korrigiert',
+  'fenster-zu-kurz': 'Fenster zu kurz',
+  'keine-ladung': 'keine Ladung',
+  'param': 'Parameter',
+}
+
+/** Quellen, deren KPI-Wert belastbar ist (Badge neutral statt amber). */
+export const QUELLE_BELASTBAR: ReadonlySet<string> = new Set([
+  'dyn-tarif', 'boersenpreis', 'fenster_lang', 'soc_korrigiert',
+])
+
 // ─── Sonstige Konstanten ─────────────────────────────────────────────────────
 
 /** CO2-Emissionsfaktor Strommix Deutschland (kg CO2 pro kWh). */
