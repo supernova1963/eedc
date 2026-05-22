@@ -7,6 +7,22 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ---
 
+## [3.31.8] - 2026-05-22 — Bündel-Release: Speicher-Cockpit-Fix + EcoFlow-Import + WP-Saison-Politur
+
+> 🔧 **Patch-Release.** Behebt einen Absturz der Cockpit-Rubrik „Speicher" (Regression aus v3.31.7), repariert den EcoFlow-PowerOcean-Cloud-Import und setzt vier Feedback-Punkte zum WP-Saisonvergleich um (rapahl-PN).
+
+### Changed
+
+- **WP-Saisonvergleich heizungsbereinigt** (#195, rapahl-PN): Bei getrennter Strommessung rechnet der Saison-Vergleich (Strom & JAZ) jetzt nur noch die Heizung — Warmwasser läuft ganzjährig ~konstant und verwässerte den Heizperioden-Vergleich. Ohne getrennte Messung unverändert der Gesamtwert. Neue Fußzeile nennt Saison-Fenster, Anzahl der Monate und die verwendete Strom-Basis.
+- **WP-Saisonvergleich — Darstellung**: vertikale Hilfslinien im Monats-/Saison-Vergleich entfernt (störten im Dark Mode); Summen-Labels größer und in hellem wie dunklem Theme gut lesbar.
+
+### Fixed
+
+- **Cockpit-Rubrik „Speicher" — Absturz behoben** (rapahl-PN): die Speicher-Ansicht im Cockpit zeigte „Ein Fehler ist aufgetreten" und ließ sich nicht öffnen. Regression aus der Etappe-C-UI in v3.31.7 — `get_speicher_dashboard` griff auf das nicht existierende Feld `installationsdatum` zu (das `Investition`-Model hat `anschaffungsdatum`). Behoben + Regressionstest, der den Endpoint jetzt direkt mit einer echten Investition prüft.
+- **EcoFlow PowerOcean Cloud-Import: Signaturfehler behoben** (Dirk-PN): signierte Requests scheiterten mit `code=8521 signature is wrong`; Ursache war ein fehlerhaft gesetzter Content-Type-Header. Der Cloud-Import funktioniert damit wieder.
+
+---
+
 ## [3.31.7] - 2026-05-21 — Bündel-Release: Prognose-Korrektur + Community-Fehlermeldungen + Backup-Abfrage
 
 > 🔧 **Patch-Release.** Schwerpunkt: die Prognose-Korrektur (Lernfaktor + wetterabhängiges Korrekturprofil) wurde überprüft und auf den zentralen Berechnungs-Layer (ADR-001) gezogen. Dazu feldgenaue Fehlermeldungen beim Community-Teilen (#282), eine Backup-Abfrage vor dem Löschen (#283) und die Cockpit-Kacheln der Speicher-Wirtschaftlichkeit Etappe C (#264).

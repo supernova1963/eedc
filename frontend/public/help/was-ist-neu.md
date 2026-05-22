@@ -1,11 +1,27 @@
 # Was ist neu
 
-> **Stand:** Mai 2026 (v3.31.7)
+> **Stand:** Mai 2026 (v3.31.8)
 > **Diese Seite** zeigt pro Version, was sich für dich als Anwender geändert hat — kürzer als der technische [CHANGELOG](https://github.com/supernova1963/eedc-homeassistant/blob/main/CHANGELOG.md), ausführlicher als die Schnellübersicht-Tabelle in der [Übersicht](BENUTZERHANDBUCH.md#was-ist-neu-seit-v316).
 >
 > **Kein Banner, kein Pop-up:** eedc zeigt diese Liste nicht ungefragt an. HA-App-Nutzer sehen den Changelog ohnehin schon im Add-on-Store, GitHub-Releases haben einen eigenen. Wer wissen will, was neu ist, schaut hier rein — Pull statt Push.
 >
 > **Lesehinweis:** Die jüngsten Versionen stehen oben. Jeder Punkt verlinkt entweder auf die zuständige Hilfe-Sektion oder direkt auf die App-Funktion (sofern erreichbar). Anker-URLs (`?doc=was-ist-neu`) sind teilbar.
+
+---
+
+## v3.31.8 — Speicher-Rubrik repariert, EcoFlow-Import, WP-Saisonvergleich (Mai 2026)
+
+### Was sich für dich ändert — Cockpit
+
+- **Speicher-Rubrik öffnet wieder**: Die Rubrik „Speicher" im Cockpit zeigte seit v3.31.7 „Ein Fehler ist aufgetreten" und ließ sich nicht mehr öffnen. Der Fehler ist behoben — und ein neuer automatischer Test sorgt dafür, dass er nicht zurückkommt. Mit Dank an Rainer für die Meldung.
+
+### Was sich für dich ändert — Wärmepumpe
+
+- **Saisonvergleich genauer und übersichtlicher**: Bei getrennter Strommessung von Heizung und Warmwasser rechnet der Saisonvergleich jetzt nur noch die Heizung — Warmwasser läuft ganzjährig und gehört nicht in einen Heizperioden-Vergleich. Eine neue Fußzeile nennt das Saisonfenster und die Anzahl der berücksichtigten Monate. Dazu: die störenden vertikalen Hilfslinien sind entfernt, die Summen über den Balken sind größer und in hell wie dunkel gut lesbar. Mit Dank an Rainer für das ausführliche Feedback.
+
+### Was sich für dich ändert — Cloud-Import
+
+- **EcoFlow PowerOcean: Cloud-Import repariert**: Der Datenimport aus dem EcoFlow-Konto scheiterte mit einem Signaturfehler. Die Ursache ist behoben, der Cloud-Import funktioniert wieder. Mit Dank an Dirk für die Meldung.
 
 ---
 

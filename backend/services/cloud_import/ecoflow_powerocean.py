@@ -96,11 +96,28 @@ def _flatten_dict(d: dict, prefix: str = "") -> dict:
 def _build_sign_headers(
     access_key: str, secret_key: str, params: Optional[dict] = None
 ) -> dict:
-    """HTTP-Header mit HMAC-SHA256 Signatur erzeugen."""
+    """HTTP-Header mit HMAC-SHA256 Signatur erzeugen.
+
+    EcoFlow signiert die Request-Parameter alphabetisch sortiert und hängt
+    `accessKey/nonce/timestamp` an: `sn=…&accessKey=…&nonce=…&timestamp=…`.
+    Ein parameterloser Aufruf (device/list) ergibt `accessKey=…&nonce=…&
+    timestamp=…`. Per Live-Konto bestätigt (Dirk-PN 2026-05-21,
+    device/quota/all → code=0).
+
+    KEIN `Content-Type`-Header: Auf dem GET `device/quota/all` lehnt die
+    EcoFlow-API die Signatur mit `code 8521 signature is wrong` ab, sobald
+    `Content-Type: application/json` gesetzt ist. Für POST `device/quota/data`
+    setzt httpx den Header über `json=` selbst korrekt — hier darf er nicht
+    fest gesetzt werden.
+
+    HISTORIE: Fix 2da913ce sortierte irrtümlich ALLE Parameter gemeinsam
+    (`accessKey=…&nonce=…&sn=…&timestamp=…`); Dirks Live-Test ergab 8521 —
+    die Theorie war falsch, die echte Ursache war der Content-Type-Header.
+    """
     nonce = str(random.randint(100000, 999999))
     timestamp = str(int(time.time() * 1000))
 
-    # Parameter sortiert als Query-String
+    # Request-Parameter sortiert als Query-String, dann Auth-Triple anhängen.
     if params:
         flat = _flatten_dict(params)
         sorted_parts = sorted(flat.items(), key=lambda x: x[0])
@@ -116,7 +133,6 @@ def _build_sign_headers(
         "nonce": nonce,
         "timestamp": timestamp,
         "sign": sign,
-        "Content-Type": "application/json;charset=UTF-8",
     }
 
 

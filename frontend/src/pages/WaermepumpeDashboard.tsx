@@ -204,8 +204,16 @@ function WaermepumpeBlock({ dashboard, ...selectorProps }: { dashboard: Waermepu
         const md = monatsdaten.find(x => x.monat === m && x.jahr === kalenderJahr)
         if (md) {
           monateMitDaten++
-          sumStrom += md.verbrauch_daten.stromverbrauch_kwh || 0
-          sumWaerme += (md.verbrauch_daten.heizenergie_kwh || 0) + (md.verbrauch_daten.warmwasser_kwh || 0)
+          // #195 / rapahl-PN: bei getrennter Strommessung saisonbereinigt
+          // rechnen — nur Heizung. Warmwasser läuft ganzjährig ~konstant
+          // und würde den Saison-Vergleich verwässern.
+          if (hatGetrennteStrom) {
+            sumStrom += md.verbrauch_daten.strom_heizen_kwh || 0
+            sumWaerme += md.verbrauch_daten.heizenergie_kwh || 0
+          } else {
+            sumStrom += md.verbrauch_daten.stromverbrauch_kwh || 0
+            sumWaerme += (md.verbrauch_daten.heizenergie_kwh || 0) + (md.verbrauch_daten.warmwasser_kwh || 0)
+          }
         }
       }
       if (monateMitDaten === 0) continue
@@ -514,11 +522,11 @@ function WaermepumpeBlock({ dashboard, ...selectorProps }: { dashboard: Waermepu
             Keine Daten im Fenster {saisonCfg.label} ({saisonCfg.bereich}).
           </p>
         ) : (
-          <div className="h-72">
+          <div className="h-72 text-gray-700 dark:text-gray-200">
             <ResponsiveContainer width="100%" height="100%">
               {vergleichAchse === 'monate' ? (
                 <BarChart data={vergleichData}>
-                  <CartesianGrid strokeDasharray="3 3" />
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
                   <XAxis dataKey="name" fontSize={12} />
                   <YAxis domain={vergleichModus === 'jaz' ? [0, 6] : undefined} />
                   <Tooltip content={<ChartTooltip formatter={(v) => vergleichModus === 'jaz' ? v?.toFixed(2) : `${v} kWh`} />} />
@@ -534,7 +542,7 @@ function WaermepumpeBlock({ dashboard, ...selectorProps }: { dashboard: Waermepu
                 </BarChart>
               ) : (
                 <BarChart data={saisonData} margin={{ top: 20, right: 8, left: 0, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" />
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
                   <XAxis dataKey="name" fontSize={12} />
                   <YAxis domain={vergleichModus === 'jaz' ? [0, 6] : undefined} />
                   <Tooltip content={<ChartTooltip formatter={(v) => vergleichModus === 'jaz' ? v?.toFixed(2) : `${v} kWh`} />} />
@@ -546,12 +554,21 @@ function WaermepumpeBlock({ dashboard, ...selectorProps }: { dashboard: Waermepu
                         fillOpacity={s.vollstaendig ? 1 : 0.4}
                       />
                     ))}
-                    <LabelList dataKey="label" position="top" fill="#6b7280" fontSize={11} />
+                    <LabelList dataKey="label" position="top" fill="currentColor" fontSize={13} fontWeight={600} />
                   </Bar>
                 </BarChart>
               )}
             </ResponsiveContainer>
           </div>
+        )}
+        {vergleichAchse === 'saison' && saisonData.length > 0 && (
+          <p className="mt-3 text-xs text-gray-500 dark:text-gray-400">
+            {saisonCfg.label}: {saisonCfg.bereich} ({saisonCfg.monate.length} Monate).{' '}
+            {hatGetrennteStrom
+              ? 'Saison-Strom = nur Heizung (Warmwasser ausgeklammert, getrennte Strommessung).'
+              : 'Saison-Strom inkl. Warmwasser — keine getrennte Strommessung erfasst.'}{' '}
+            Blasse Balken kennzeichnen eine unvollständige Saison.
+          </p>
         )}
       </SortableSection>
 
