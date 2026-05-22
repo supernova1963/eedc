@@ -27,6 +27,7 @@ from .base import (
 )
 from .ecoflow_powerocean import (
     API_HOSTS,
+    MAX_BLOCK_DAYS,
     _build_sign_headers,
     _get_api_host,
 )
@@ -205,8 +206,9 @@ class EcoFlowPowerStreamProvider(CloudImportProvider):
     ) -> list[ParsedMonthData]:
         """Holt historische Monatsdaten vom EcoFlow PowerStream.
 
-        Die History-API erlaubt max. 7 Tage pro Request.
-        Für jeden Monat werden daher ~5 Requests gemacht und die Werte summiert.
+        Die History-API verlangt ein Fenster von weniger als 1 Woche pro
+        Request. Für jeden Monat werden daher ~6 Requests gemacht und die
+        Werte summiert.
         """
         access_key = credentials.get("access_key", "")
         secret_key = credentials.get("secret_key", "")
@@ -244,7 +246,7 @@ class EcoFlowPowerStreamProvider(CloudImportProvider):
         year: int,
         month: int,
     ) -> Optional[ParsedMonthData]:
-        """Holt Daten für einen einzelnen Monat (in 7-Tage-Blöcken)."""
+        """Holt Daten für einen einzelnen Monat (in Blöcken < 1 Woche)."""
         month_start = datetime(year, month, 1)
         if month == 12:
             month_end = datetime(year + 1, 1, 1)
@@ -259,9 +261,10 @@ class EcoFlowPowerStreamProvider(CloudImportProvider):
 
         aggregated: dict[str, float] = {}
 
+        # In Blöcken < 1 Woche abfragen (API verlangt < 7 Tage pro Request)
         block_start = month_start
         while block_start < month_end:
-            block_end = min(block_start + timedelta(days=7), month_end)
+            block_end = min(block_start + timedelta(days=MAX_BLOCK_DAYS), month_end)
 
             try:
                 block_data = await self._fetch_history_block(
@@ -305,7 +308,7 @@ class EcoFlowPowerStreamProvider(CloudImportProvider):
         begin: datetime,
         end: datetime,
     ) -> list[tuple[str, Optional[float]]]:
-        """Einzelnen 7-Tage-Block von der History-API abrufen."""
+        """Einzelnen History-Block (Fenster < 1 Woche) von der API abrufen."""
         body = {
             "sn": serial_number,
             "params": {

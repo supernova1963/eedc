@@ -5,7 +5,8 @@ Nutzt die EcoFlow Developer API (IoT Open Platform) um historische
 Energiedaten vom PowerOcean Wechselrichter/Speicher abzurufen.
 
 Auth: HMAC-SHA256 Signierung mit AccessKey + SecretKey.
-Endpoint: POST /iot-open/sign/device/quota/data (max. 1 Woche pro Request).
+Endpoint: POST /iot-open/sign/device/quota/data (Fenster STRIKT < 1 Woche
+pro Request — siehe MAX_BLOCK_DAYS).
 
 HINWEIS: Dieser Provider ist NICHT mit echten Geräten getestet (getestet=False).
 Die indexName-Werte aus dem History-Endpoint müssen ggf. angepasst werden.
@@ -39,8 +40,13 @@ API_HOSTS = {
     "us": "https://api-a.ecoflow.com",
 }
 
-# History-Endpoint: max. 7 Tage pro Request
 HISTORY_CODE = "JT303_Dashboard_Overview_Summary_Week"
+
+# History-Fenstergrenze: die EcoFlow-API verlangt ein Abfragefenster von
+# STRIKT weniger als einer Woche. Ein Fenster von exakt 7 Tagen (z. B.
+# 2026-02-22 00:00:00 → 2026-03-01 00:00:00 = 168 h) lehnt sie ab mit
+# "time must be less than one week" (Dirk-PN 2026-05-22). Daher 6-Tage-Blöcke.
+MAX_BLOCK_DAYS = 6
 
 # Mapping: indexName aus EcoFlow API → ParsedMonthData Felder
 # WICHTIG: Diese Werte sind geschätzt und müssen mit echten API-Daten verifiziert werden!
@@ -303,8 +309,9 @@ class EcoFlowPowerOceanProvider(CloudImportProvider):
     ) -> list[ParsedMonthData]:
         """Holt historische Monatsdaten vom EcoFlow PowerOcean.
 
-        Die History-API erlaubt max. 7 Tage pro Request.
-        Für jeden Monat werden daher ~5 Requests gemacht und die Werte summiert.
+        Die History-API verlangt ein Fenster von weniger als 1 Woche pro
+        Request. Für jeden Monat werden daher ~6 Requests gemacht und die
+        Werte summiert.
         """
         access_key = credentials.get("access_key", "")
         secret_key = credentials.get("secret_key", "")
@@ -344,7 +351,7 @@ class EcoFlowPowerOceanProvider(CloudImportProvider):
         year: int,
         month: int,
     ) -> Optional[ParsedMonthData]:
-        """Holt Daten für einen einzelnen Monat (in 7-Tage-Blöcken)."""
+        """Holt Daten für einen einzelnen Monat (in Blöcken < 1 Woche)."""
 
         # Monatsanfang und -ende bestimmen
         month_start = datetime(year, month, 1)
@@ -363,10 +370,10 @@ class EcoFlowPowerOceanProvider(CloudImportProvider):
         # Aggregierte Werte für den Monat
         aggregated: dict[str, float] = {}
 
-        # In 7-Tage-Blöcken abfragen
+        # In Blöcken < 1 Woche abfragen (API verlangt < 7 Tage pro Request)
         block_start = month_start
         while block_start < month_end:
-            block_end = min(block_start + timedelta(days=7), month_end)
+            block_end = min(block_start + timedelta(days=MAX_BLOCK_DAYS), month_end)
 
             try:
                 block_data = await self._fetch_history_block(
@@ -411,7 +418,7 @@ class EcoFlowPowerOceanProvider(CloudImportProvider):
         begin: datetime,
         end: datetime,
     ) -> list[tuple[str, Optional[float]]]:
-        """Einzelnen 7-Tage-Block von der History-API abrufen."""
+        """Einzelnen History-Block (Fenster < 1 Woche) von der API abrufen."""
 
         body = {
             "sn": serial_number,

@@ -491,12 +491,18 @@ export default function MonatsabschlussWizard() {
 
         const positionen = values.sonstigePositionen[inv.id] || []
         const gueltigePositionen = positionen.filter(p => p.betrag > 0 && p.bezeichnung.trim())
+        // Hatte die Investition beim Laden Positionen, sind jetzt aber keine
+        // gültigen mehr da, muss eine leere Liste raus — sonst bleibt die alte
+        // in der DB stehen und das Löschen verpufft (#286). `null` heißt
+        // weiterhin „Positionen nicht anfassen".
+        const hattePositionen = (inv.sonstige_positionen || []).length > 0
+        const positionenRelevant = gueltigePositionen.length > 0 || hattePositionen
 
-        if (felder.length > 0 || gueltigePositionen.length > 0) {
+        if (felder.length > 0 || positionenRelevant) {
           input.investitionen.push({
             investition_id: inv.id,
             felder,
-            sonstige_positionen: gueltigePositionen.length > 0 ? gueltigePositionen : null,
+            sonstige_positionen: positionenRelevant ? gueltigePositionen : null,
           })
         }
       }
