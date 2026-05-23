@@ -81,6 +81,10 @@ export interface ROIDashboardResponse {
   gesamt_amortisation_jahre: number | null
   gesamt_co2_einsparung_kg: number
   berechnungen: ROIBerechnung[]
+  // Vorgeschlagener Slider-Wert: letzter Monatsdaten-Preis (EU Weekly Oil
+  // Bulletin) oder Default. Bei E-Auto-Berechnungen löst das Backend pro
+  // Investition auf (Slider → per-Inv-Param → Monatsdaten → Default).
+  benzinpreis_hinweis_euro: number | null
 }
 
 // Investitions-Dashboard Types
@@ -346,7 +350,7 @@ export const investitionenApi = {
     const params = new URLSearchParams()
     if (strompreisCent) params.append('strompreis_cent', strompreisCent.toString())
     if (einspeiseverguetungCent) params.append('einspeiseverguetung_cent', einspeiseverguetungCent.toString())
-    if (benzinpreisEuro) params.append('benzinpreis_euro', benzinpreisEuro.toString())
+    if (benzinpreisEuro !== undefined) params.append('benzinpreis_euro', benzinpreisEuro.toString())
     if (jahr && jahr !== 'all') params.append('jahr', jahr.toString())
     const query = params.toString()
     return api.get<ROIDashboardResponse>(`/investitionen/roi/${anlageId}${query ? '?' + query : ''}`)

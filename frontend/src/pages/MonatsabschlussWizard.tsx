@@ -220,16 +220,25 @@ export default function MonatsabschlussWizard() {
     }
 
     for (const typ of Object.keys(typGroups)) {
+      // Bei genau einer 'sonstiges'-Investition die Bezeichnung als Stepper-Titel
+      // zeigen — sonst kollidiert das generische 'Sonstiges' optisch mit dem
+      // Stepper-Titel des typ-übergreifenden 'Allgemein'-Steps weiter hinten.
+      const invs = typGroups[typ]
+      const title =
+        typ === 'sonstiges' && invs.length === 1 && invs[0].bezeichnung
+          ? invs[0].bezeichnung
+          : getTypLabel(typ)
       s.push({
         id: typ,
-        title: getTypLabel(typ),
+        title,
         icon: TYP_ICONS[typ] || <Zap className="w-4 h-4" />,
       })
     }
 
-    // Optionale Felder Step (Sonderkosten, Notizen)
+    // Typ-übergreifende Felder (Sonderkosten, Notizen) — eigener Step,
+    // damit er nicht mit dem 'sonstiges'-Investitionstyp kollidiert.
     if (data.optionale_felder && data.optionale_felder.length > 0) {
-      s.push({ id: 'optionale', title: 'Sonstiges', icon: <FileText className="w-4 h-4" /> })
+      s.push({ id: 'optionale', title: 'Allgemein', icon: <FileText className="w-4 h-4" /> })
     }
 
     s.push({ id: 'summary', title: 'Zusammenfassung', icon: <CheckCircle className="w-4 h-4" /> })
@@ -490,7 +499,13 @@ export default function MonatsabschlussWizard() {
         }
 
         const positionen = values.sonstigePositionen[inv.id] || []
-        const gueltigePositionen = positionen.filter(p => p.betrag > 0 && p.bezeichnung.trim())
+        // 0-€-Positionen mit Bezeichnung sind legitim (Platzhalter, „Reparatur
+        // 0 € unter Garantie", noch nicht bewilligte THG-Quote, etc.). Vor
+        // v3.32.1 hat das `> 0` solche Einträge stillschweigend verworfen —
+        // rilmor-mhrs auf #286 v3.32.0 musste deshalb 0,01 € als Workaround
+        // eintragen, weil 0 € einfach „nichts passierte". Dieselbe Regel
+        // gilt im Backend, Helper `ist_gueltige_position`.
+        const gueltigePositionen = positionen.filter(p => p.bezeichnung.trim())
         // Hatte die Investition beim Laden Positionen, sind jetzt aber keine
         // gültigen mehr da, muss eine leere Liste raus — sonst bleibt die alte
         // in der DB stehen und das Löschen verpufft (#286). `null` heißt

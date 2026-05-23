@@ -14,10 +14,10 @@ export default function OptionaleStep({
     <div className="space-y-6">
       <h2 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center gap-2">
         <FileText className="w-5 h-5 text-gray-500" />
-        Sonstiges
+        Allgemein
       </h2>
       <p className="text-sm text-gray-500 dark:text-gray-400">
-        Optionale Eingaben für diesen Monat - können auch leer bleiben.
+        Typ-übergreifende Eingaben für diesen Monat — können auch leer bleiben.
       </p>
 
       <div className="space-y-4">

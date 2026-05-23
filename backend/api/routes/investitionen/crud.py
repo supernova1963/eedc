@@ -38,6 +38,10 @@ from backend.services.speicher_wirtschaftlichkeit import (
     berechne_ist_wirkungsgrad,
     ist_eta_degradation_alarm,
 )
+from backend.services.eauto_wirtschaftlichkeit import (
+    letzter_kraftstoffpreis_aus_lookup,
+    resolve_eauto_benzinpreis,
+)
 from backend.core.calculations import CO2_FAKTOR_STROM_KG_KWH
 
 
@@ -523,6 +527,11 @@ class ROIDashboardResponse(BaseModel):
     gesamt_amortisation_jahre: Optional[float]
     gesamt_co2_einsparung_kg: float
     berechnungen: list[ROIBerechnung]
+    # Vorgeschlagener Default-Wert für den Benzinpreis-Slider (UI): letzter
+    # `Monatsdaten.kraftstoffpreis_euro` aus dem EU Weekly Oil Bulletin, sonst
+    # der Param-Default. Nur ein Hinweis — bei E-Auto-Berechnungen wird pro
+    # Investition aufgelöst (Slider → per-Inv-Param → Monatsdaten → Default).
+    benzinpreis_hinweis_euro: Optional[float] = None
 
 
 @router.get("/roi/{anlage_id}", response_model=ROIDashboardResponse)
@@ -530,7 +539,7 @@ async def get_roi_dashboard(
     anlage_id: int,
     strompreis_cent: Optional[float] = Query(None, description="Override: Strompreis in Cent/kWh (auto aus DB wenn leer)"),
     einspeiseverguetung_cent: Optional[float] = Query(None, description="Override: Einspeisevergütung in Cent/kWh (auto aus DB wenn leer)"),
-    benzinpreis_euro: float = Query(1.85, description="Benzinpreis in Euro/Liter"),
+    benzinpreis_euro: Optional[float] = Query(None, description="Override: Benzinpreis in Euro/Liter (Slider). Bei None: per-Inv-Param → letzter Monatsdaten-Preis → Default 1,65."),
     jahr: Optional[int] = Query(None, description="Jahr für Auswertung (None = alle Jahre)"),
     db: AsyncSession = Depends(get_db)
 ):
@@ -587,6 +596,26 @@ async def get_roi_dashboard(
         inv_stmt = inv_stmt.where(aktiv_im_jahr(jahr))
     inv_result = await db.execute(inv_stmt)
     investitionen = list(inv_result.scalars().all())
+
+    # Benzinpreis-Lookup für E-Auto-ROI: Monatsdaten.kraftstoffpreis_euro
+    # (EU Weekly Oil Bulletin, seit v3.17.0) ist die Realität. Vorher las
+    # `get_roi_dashboard` nur den Query-Default 1,85 € und ignorierte sowohl
+    # diese Daten als auch das per-Investition gespeicherte `benzinpreis_euro`
+    # — gleiche Bug-Klasse wie der v3.25.0-Fix für jahresfahrleistung_km etc.,
+    # damals für benzinpreis_euro vergessen.
+    benzinpreis_md_result = await db.execute(
+        select(Monatsdaten).where(Monatsdaten.anlage_id == anlage_id)
+    )
+    benzinpreis_lookup: dict[tuple[int, int], Optional[float]] = {
+        (md.jahr, md.monat): md.kraftstoffpreis_euro
+        for md in benzinpreis_md_result.scalars().all()
+    }
+    letzter_marktpreis = letzter_kraftstoffpreis_aus_lookup(benzinpreis_lookup)
+    benzinpreis_hinweis_euro = (
+        letzter_marktpreis
+        if letzter_marktpreis is not None
+        else float(PARAM_E_AUTO_DEFAULTS["benzinpreis_euro"])
+    )
 
     # ==========================================================================
     # Phase 1: Gruppiere Investitionen nach PV-Systemen und Standalone
@@ -1214,12 +1243,22 @@ async def get_roi_dashboard(
             v2h_entladung = params.get(PARAM_E_AUTO["V2H_ENTLADUNG_KWH_JAHR"], 0)
             v2h_preis = params.get(PARAM_E_AUTO["V2H_ENTLADE_PREIS_CENT"], strompreis_cent)
 
+            # Benzinpreis-Auflösung: Slider-Override > per-Inv-Param > letzter
+            # Monatsdaten-Preis (EU OB) > Default 1,65. Korrigiert die v3.25.0-
+            # Lücke: 'benzinpreis_euro' wurde damals nicht in die Liste der
+            # aus `params` zu lesenden Felder aufgenommen.
+            preis = resolve_eauto_benzinpreis(
+                query_override=benzinpreis_euro,
+                eauto_parameter=params,
+                letzter_monats_benzinpreis=letzter_marktpreis,
+            )
+
             result = berechne_eauto_einsparung(
                 km_jahr=km_jahr,
                 verbrauch_kwh_100km=verbrauch,
                 pv_anteil_prozent=pv_anteil,
                 strompreis_cent=wallbox_strompreis,
-                benzinpreis_euro_liter=benzinpreis_euro,
+                benzinpreis_euro_liter=preis.preis_euro,
                 benzin_verbrauch_liter_100km=benzin_verbrauch,
                 nutzt_v2h=nutzt_v2h,
                 v2h_entladung_kwh_jahr=v2h_entladung,
@@ -1231,6 +1270,8 @@ async def get_roi_dashboard(
                 'strom_kosten_euro': result.strom_kosten_euro,
                 'benzin_kosten_alternativ_euro': result.benzin_kosten_alternativ_euro,
                 'v2h_einsparung_euro': result.v2h_einsparung_euro,
+                'verwendeter_benzinpreis_euro': round(preis.preis_euro, 3),
+                'benzinpreis_quelle': preis.quelle,
                 'hinweis': f'E-Auto: {km_jahr} km/Jahr',
             }
 
@@ -1400,6 +1441,7 @@ async def get_roi_dashboard(
         gesamt_amortisation_jahre=gesamt_roi['amortisation_jahre'],
         gesamt_co2_einsparung_kg=round(gesamt_co2, 1),
         berechnungen=berechnungen,
+        benzinpreis_hinweis_euro=round(benzinpreis_hinweis_euro, 3),
     )
 
 

@@ -263,19 +263,33 @@ async def calculate_anlage_sensors(
         strompreis.netzbezug_arbeitspreis_cent_kwh if strompreis else 30.0
     )
 
-    # Bug #7 v3.25.0: Default vereinheitlicht aus PARAM_WAERMEPUMPE_DEFAULTS (vorher 10.0)
-    wp_alter_preis_cent = PARAM_WAERMEPUMPE_DEFAULTS["alter_preis_cent_kwh"]
-    wp_alter_wirkungsgrad = WP_WIRKUNGSGRAD_GAS_DEFAULT
-    wp_alternativ_zusatzkosten_jahr = 0.0
+    # Per-WP-Parameter (statt last-write-wins über waermepumpen).
+    # Bug #7 v3.25.0: Default vereinheitlicht aus PARAM_WAERMEPUMPE_DEFAULTS (vorher 10.0).
+    # Multi-WP-Drift: bei zwei WPs mit unterschiedlichen Energieträgern (Gas + Öl)
+    # wurde der Wirkungsgrad der letzten auf beide angewendet — die HA-Sensoren
+    # `jahres_ersparnis_euro`, `roi_prozent`, `amortisation_jahre` waren falsch.
+    wp_aggregate_anl: dict[int, dict] = {}
     for wp in waermepumpen:
-        if wp.parameter:
-            wp_alter_preis_cent = wp.parameter.get(
-                PARAM_WAERMEPUMPE["ALTER_PREIS_CENT_KWH"],
-                PARAM_WAERMEPUMPE_DEFAULTS["alter_preis_cent_kwh"],
-            )
-            if wp.parameter.get(PARAM_WAERMEPUMPE["ALTER_ENERGIETRAEGER"]) == "oel":
-                wp_alter_wirkungsgrad = WP_WIRKUNGSGRAD_OEL_DEFAULT
-            wp_alternativ_zusatzkosten_jahr += wp.parameter.get(PARAM_WAERMEPUMPE["ALTERNATIV_ZUSATZKOSTEN_JAHR"], 0) or 0
+        params = wp.parameter or {}
+        wp_aggregate_anl[wp.id] = {
+            "alter_preis_cent": (
+                params.get(
+                    PARAM_WAERMEPUMPE["ALTER_PREIS_CENT_KWH"],
+                    PARAM_WAERMEPUMPE_DEFAULTS["alter_preis_cent_kwh"],
+                ) or PARAM_WAERMEPUMPE_DEFAULTS["alter_preis_cent_kwh"]
+            ),
+            "alter_wirkungsgrad": (
+                WP_WIRKUNGSGRAD_OEL_DEFAULT
+                if params.get(PARAM_WAERMEPUMPE["ALTER_ENERGIETRAEGER"]) == "oel"
+                else WP_WIRKUNGSGRAD_GAS_DEFAULT
+            ),
+            "zusatzkosten_jahr": params.get(
+                PARAM_WAERMEPUMPE["ALTERNATIV_ZUSATZKOSTEN_JAHR"], 0,
+            ) or 0,
+        }
+    wp_alternativ_zusatzkosten_jahr = sum(
+        a["zusatzkosten_jahr"] for a in wp_aggregate_anl.values()
+    )
 
     # Monatsdaten-Dict für Monats-Gaspreis
     md_by_periode = {(md.jahr, md.monat): md for md in monatsdaten}
@@ -283,6 +297,7 @@ async def calculate_anlage_sensors(
     bisherige_wp_ersparnis = 0.0
     wp_monate_gezaehlt: set[tuple[int, int]] = set()
     for wp in waermepumpen:
+        wp_agg = wp_aggregate_anl[wp.id]
         for (inv_id, jahr, monat), daten in historische_inv_daten.items():
             if inv_id == wp.id:
                 thermisch = (daten.get("heizenergie_kwh", 0) or 0) + (
@@ -293,36 +308,50 @@ async def calculate_anlage_sensors(
                 monats_gaspreis = (
                     md.gaspreis_cent_kwh
                     if md and md.gaspreis_cent_kwh is not None
-                    else wp_alter_preis_cent
+                    else wp_agg["alter_preis_cent"]
                 )
-                gas_kosten = (thermisch / wp_alter_wirkungsgrad) * monats_gaspreis / 100
+                gas_kosten = (thermisch / wp_agg["alter_wirkungsgrad"]) * monats_gaspreis / 100
                 wp_stromkosten_netz = strom * (1.0 - WP_PV_ANTEIL_DEFAULT) * netzbezug_preis_cent / 100
                 bisherige_wp_ersparnis += gas_kosten - wp_stromkosten_netz
                 wp_monate_gezaehlt.add((jahr, monat))
     # Fixe Zusatzkosten (Schornsteinfeger, Wartung, Grundpreis) pro erfassten Monat
     bisherige_wp_ersparnis += wp_alternativ_zusatzkosten_jahr * len(wp_monate_gezaehlt) / 12
 
-    eauto_benzinpreis = PARAM_E_AUTO_DEFAULTS["benzinpreis_euro"]
-    eauto_vergleich_l_100km = PARAM_E_AUTO_DEFAULTS["vergleich_verbrauch_l_100km"]
-    for ea in e_autos:
-        if ea.parameter:
-            eauto_benzinpreis = ea.parameter.get(PARAM_E_AUTO["BENZINPREIS_EURO"], PARAM_E_AUTO_DEFAULTS["benzinpreis_euro"])
-            eauto_vergleich_l_100km = ea.parameter.get(
-                PARAM_E_AUTO["VERGLEICH_VERBRAUCH_L_100KM"],
-                PARAM_E_AUTO_DEFAULTS["vergleich_verbrauch_l_100km"],
-            )
-
+    # Per-E-Auto-Aufschlüsselung der bisherige-Ersparnis. Vorher las eine
+    # `for ea`-Schleife `benzinpreis_default` + `vergleich_l_100km` in zwei
+    # globale Variablen (last-write-wins). Bei zwei E-Autos mit
+    # unterschiedlichen Parametern wurden BEIDE mit den Werten des LETZTEN
+    # gerechnet → `jahres_ersparnis_euro`, `roi_prozent` und
+    # `amortisation_jahre`-HA-Sensoren waren falsch. Zusätzlich fehlte der
+    # `md.kraftstoffpreis_euro`-Monatspreis-Fallback (EU OB) — der Anlage-
+    # Sensor driftete deshalb auch gegen den per-Investition-Sensor
+    # `e_auto_ersparnis_vs_benzin_euro` (Zeile 583+, der hatte den Fallback).
     bisherige_eauto_ersparnis = 0.0
     for ea in e_autos:
-        for (inv_id, _jahr, _monat), daten in historische_inv_daten.items():
-            if inv_id == ea.id:
-                km = daten.get("km_gefahren", 0) or 0
-                # #262: SoT-Helper konsolidiert den Netz-Read mit Fallback.
-                _, netz = get_emob_pv_netz_kwh(daten)
-                benzin_liter = km / 100 * eauto_vergleich_l_100km
-                bisherige_eauto_ersparnis += (
-                    benzin_liter * eauto_benzinpreis - netz * netzbezug_preis_cent / 100
-                )
+        params = ea.parameter or {}
+        ea_benzinpreis_default = params.get(
+            PARAM_E_AUTO["BENZINPREIS_EURO"], PARAM_E_AUTO_DEFAULTS["benzinpreis_euro"],
+        ) or PARAM_E_AUTO_DEFAULTS["benzinpreis_euro"]
+        ea_vergleich_l_100km = params.get(
+            PARAM_E_AUTO["VERGLEICH_VERBRAUCH_L_100KM"],
+            PARAM_E_AUTO_DEFAULTS["vergleich_verbrauch_l_100km"],
+        ) or PARAM_E_AUTO_DEFAULTS["vergleich_verbrauch_l_100km"]
+        for (inv_id, jahr, monat), daten in historische_inv_daten.items():
+            if inv_id != ea.id:
+                continue
+            km = daten.get("km_gefahren", 0) or 0
+            # #262: SoT-Helper konsolidiert den Netz-Read mit Fallback.
+            _, netz = get_emob_pv_netz_kwh(daten)
+            md = md_by_periode.get((jahr, monat))
+            monats_benzinpreis = (
+                md.kraftstoffpreis_euro
+                if md and md.kraftstoffpreis_euro is not None
+                else ea_benzinpreis_default
+            )
+            benzin_liter = km / 100 * ea_vergleich_l_100km
+            bisherige_eauto_ersparnis += (
+                benzin_liter * monats_benzinpreis - netz * netzbezug_preis_cent / 100
+            )
 
     bisherige_bkw_ersparnis = 0.0
     for bkw in balkonkraftwerke:

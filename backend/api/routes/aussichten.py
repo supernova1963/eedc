@@ -991,12 +991,18 @@ async def get_finanz_prognose(
                 gesamt_speicher_entladung += daten.get("entladung_kwh", 0)
                 gesamt_speicher_ladung += daten.get("ladung_kwh", 0)
 
-    # E-Auto-Daten
+    # E-Auto-Daten — `gesamt_eauto_pv` und `gesamt_v2h` bleiben Aggregate
+    # (für Quoten + Saisonprognose). Per-EA-Differenzierung passiert weiter
+    # unten via `eauto_aggregate` (Bug-Klasse: vorher last-write-wins über
+    # `vergleich_l_100km` und `benzinpreis_default`).
+    eauto_pv_pro_inv: dict[int, float] = {}
     for ea in e_autos:
         for (inv_id, jahr, monat), daten in historische_inv_daten.items():
             if inv_id == ea.id and ea.ist_aktiv_im_monat(jahr, monat):
+                pv_ladung = daten.get("ladung_pv_kwh", 0) or 0
                 gesamt_v2h += daten.get("v2h_entladung_kwh", 0)
-                gesamt_eauto_pv += daten.get("ladung_pv_kwh", 0)
+                gesamt_eauto_pv += pv_ladung
+                eauto_pv_pro_inv[ea.id] = eauto_pv_pro_inv.get(ea.id, 0.0) + pv_ladung
 
     # Wärmepumpe-Daten
     for wp in waermepumpen:
@@ -1116,32 +1122,62 @@ async def get_finanz_prognose(
     # ALTERNATIVKOSTEN-PARAMETER LADEN
     # =====================================================================
 
-    # Wärmepumpe: Alter Energieträger (Gas/Öl) Preis + fixe Zusatzkosten
-    # Bug #7 (v3.25.0): Default vereinheitlicht auf zentrale 12 ct/kWh aus PARAM_WAERMEPUMPE_DEFAULTS
-    # (vorher hier 10.0, andernorts 12.0 → User sah unterschiedliche Ersparnis je Tab).
-    wp_alter_preis_cent = PARAM_WAERMEPUMPE_DEFAULTS["alter_preis_cent_kwh"]
-    wp_alter_wirkungsgrad = WP_WIRKUNGSGRAD_GAS_DEFAULT
-    wp_alternativ_zusatzkosten_jahr = 0.0  # Schornsteinfeger, Wartung, Grundpreis
+    # Wärmepumpe: per-WP-Parameter (Alter Energieträger Gas/Öl, Preis,
+    # fixe Zusatzkosten). Vorher: eine `for wp`-Schleife schrieb
+    # `wp_alter_preis_cent` und `wp_alter_wirkungsgrad` last-write-wins in
+    # globale Variablen — bei zwei WPs mit unterschiedlichen Energieträgern
+    # (Gas + Öl) wurde der Wirkungsgrad der letzten auf beide angewendet.
+    # Bug #7 (v3.25.0): Default vereinheitlicht auf zentrale 12 ct/kWh aus
+    # PARAM_WAERMEPUMPE_DEFAULTS (vorher hier 10.0, andernorts 12.0).
+    wp_aggregate: dict[int, dict] = {}
     for wp in waermepumpen:
-        if wp.parameter:
-            wp_alter_preis_cent = wp.parameter.get(
-                PARAM_WAERMEPUMPE["ALTER_PREIS_CENT_KWH"],
-                PARAM_WAERMEPUMPE_DEFAULTS["alter_preis_cent_kwh"],
-            )
-            if wp.parameter.get(PARAM_WAERMEPUMPE["ALTER_ENERGIETRAEGER"]) == "oel":
-                wp_alter_wirkungsgrad = WP_WIRKUNGSGRAD_OEL_DEFAULT
-            wp_alternativ_zusatzkosten_jahr += wp.parameter.get(PARAM_WAERMEPUMPE["ALTERNATIV_ZUSATZKOSTEN_JAHR"], 0) or 0
+        params = wp.parameter or {}
+        wp_aggregate[wp.id] = {
+            "alter_preis_cent": (
+                params.get(
+                    PARAM_WAERMEPUMPE["ALTER_PREIS_CENT_KWH"],
+                    PARAM_WAERMEPUMPE_DEFAULTS["alter_preis_cent_kwh"],
+                ) or PARAM_WAERMEPUMPE_DEFAULTS["alter_preis_cent_kwh"]
+            ),
+            "alter_wirkungsgrad": (
+                WP_WIRKUNGSGRAD_OEL_DEFAULT
+                if params.get(PARAM_WAERMEPUMPE["ALTER_ENERGIETRAEGER"]) == "oel"
+                else WP_WIRKUNGSGRAD_GAS_DEFAULT
+            ),
+            "zusatzkosten_jahr": params.get(
+                PARAM_WAERMEPUMPE["ALTERNATIV_ZUSATZKOSTEN_JAHR"], 0,
+            ) or 0,
+            "thermisch_kwh": 0.0,
+        }
+    wp_alternativ_zusatzkosten_jahr = sum(
+        a["zusatzkosten_jahr"] for a in wp_aggregate.values()
+    )
 
-    # E-Auto: Benzin-Vergleich
-    eauto_benzinpreis = PARAM_E_AUTO_DEFAULTS["benzinpreis_euro"]
-    eauto_vergleich_l_100km = PARAM_E_AUTO_DEFAULTS["vergleich_verbrauch_l_100km"]
+    # E-Auto: Benzin-Vergleich.
+    # Pro E-Auto: `benzinpreis_default` (Fallback wenn `kraftstoffpreis_euro`
+    # in Monatsdaten fehlt) und `vergleich_l_100km` (Verbrauch des
+    # Vergleichs-Verbrenners). Vorher las eine `for ea`-Schleife diese Werte
+    # in zwei globale Variablen — last-write-wins, bei zwei E-Autos mit
+    # unterschiedlichen Parametern wurden die Werte des LETZTEN auf BEIDE
+    # angewendet. Per-E-Auto-Aggregat (`eauto_aggregate[ea.id]`) ersetzt das.
+    eauto_aggregate: dict[int, dict] = {}
     for ea in e_autos:
-        if ea.parameter:
-            eauto_benzinpreis = ea.parameter.get(PARAM_E_AUTO["BENZINPREIS_EURO"], PARAM_E_AUTO_DEFAULTS["benzinpreis_euro"])
-            eauto_vergleich_l_100km = ea.parameter.get(
+        params = ea.parameter or {}
+        eauto_aggregate[ea.id] = {
+            "bezeichnung": ea.bezeichnung,
+            "benzinpreis_default": params.get(
+                PARAM_E_AUTO["BENZINPREIS_EURO"],
+                PARAM_E_AUTO_DEFAULTS["benzinpreis_euro"],
+            ) or PARAM_E_AUTO_DEFAULTS["benzinpreis_euro"],
+            "vergleich_l_100km": params.get(
                 PARAM_E_AUTO["VERGLEICH_VERBRAUCH_L_100KM"],
                 PARAM_E_AUTO_DEFAULTS["vergleich_verbrauch_l_100km"],
-            )
+            ) or PARAM_E_AUTO_DEFAULTS["vergleich_verbrauch_l_100km"],
+            "km": 0.0,
+            "netz_kwh": 0.0,
+            "pv_kwh": eauto_pv_pro_inv.get(ea.id, 0.0),
+            "bisherige_ersparnis": 0.0,
+        }
 
     # =====================================================================
     # BISHERIGE ERTRÄGE BERECHNEN (inkl. Alternativkosten!)
@@ -1165,22 +1201,24 @@ async def get_finanz_prognose(
     gesamt_wp_thermisch = 0.0
     wp_monate_gezaehlt: set[tuple[int, int]] = set()
     for wp in waermepumpen:
+        wp_agg = wp_aggregate[wp.id]
         for (inv_id, jahr, monat), daten in historische_inv_daten.items():
-            if inv_id == wp.id:
+            if inv_id == wp.id and wp.ist_aktiv_im_monat(jahr, monat):
                 heiz = daten.get("heizenergie_kwh", 0)
                 ww = daten.get("warmwasser_kwh", 0)
                 strom = get_wp_strom_kwh(daten, wp.parameter)
                 thermisch = heiz + ww
                 gesamt_wp_thermisch += thermisch
-                # Monatspreis: Monatsdaten.gaspreis_cent_kwh → Fallback statischer Parameter
+                wp_agg["thermisch_kwh"] += thermisch
+                # Monatspreis: Monatsdaten.gaspreis_cent_kwh → Fallback per-WP-Default
                 md = monatsdaten_dict.get((jahr, monat))
                 monats_gaspreis = (
                     md.gaspreis_cent_kwh
                     if md and md.gaspreis_cent_kwh is not None
-                    else wp_alter_preis_cent
+                    else wp_agg["alter_preis_cent"]
                 )
-                # Gas-Alternative: thermisch / Wirkungsgrad * Preis
-                gas_kosten = (thermisch / wp_alter_wirkungsgrad) * monats_gaspreis / 100
+                # Gas-Alternative: thermisch / Wirkungsgrad * Preis — pro WP
+                gas_kosten = (thermisch / wp_agg["alter_wirkungsgrad"]) * monats_gaspreis / 100
                 # WP-Stromkosten (nur Netzanteil, PV-Anteil ist bereits in EV-Ersparnis)
                 # Konservative 50/50-Annahme — TODO: aus tatsächlichen Daten herleiten
                 wp_netz_anteil = 1.0 - WP_PV_ANTEIL_DEFAULT
@@ -1193,34 +1231,41 @@ async def get_finanz_prognose(
 
     # E-Auto Alternativkosten-Ersparnis
     # Ersparnis = Benzin-Kosten - Netzstrom-Kosten
-    # Pro Monat berechnet, um echte Kraftstoffpreise zu nutzen (Fallback: statischer Parameter)
-    gesamt_km = 0.0
-    gesamt_eauto_netz = 0.0
+    # Pro Monat + pro E-Auto, damit unterschiedliche Vergleichsverbräuche
+    # und Benzinpreis-Defaults pro Fahrzeug korrekt einfließen. Vorher las
+    # diese Schleife `eauto_vergleich_l_100km` aus einer last-write-wins-
+    # Variable außerhalb — bei mehreren E-Autos wurden alle mit dem Wert
+    # des letzten gerechnet.
     for ea in e_autos:
+        agg = eauto_aggregate[ea.id]
         for (inv_id, jahr, monat), daten in historische_inv_daten.items():
-            if inv_id == ea.id:
-                km = daten.get("km_gefahren", 0)
-                netz = daten.get("ladung_netz_kwh", 0)
-                gesamt_km += km
-                gesamt_eauto_netz += netz
-                # Monats-Benzinpreis: Monatsdaten → Fallback statischer Parameter
-                md = monatsdaten_dict.get((jahr, monat))
-                monats_benzinpreis = (
-                    md.kraftstoffpreis_euro
-                    if md and md.kraftstoffpreis_euro is not None
-                    else eauto_benzinpreis
-                )
-                benzin_liter = km / 100 * eauto_vergleich_l_100km
-                md_preis = resolve_netzbezug_preis_cent(md, netzbezug_preis) if md else netzbezug_preis
-                bisherige_eauto_ersparnis += (
-                    benzin_liter * monats_benzinpreis - netz * md_preis / 100
-                )
+            if inv_id != ea.id or not ea.ist_aktiv_im_monat(jahr, monat):
+                continue
+            km = daten.get("km_gefahren", 0) or 0
+            netz = daten.get("ladung_netz_kwh", 0) or 0
+            agg["km"] += km
+            agg["netz_kwh"] += netz
+            # Monats-Benzinpreis: Monatsdaten (EU OB) → Fallback per-Inv-Default
+            md = monatsdaten_dict.get((jahr, monat))
+            monats_benzinpreis = (
+                md.kraftstoffpreis_euro
+                if md and md.kraftstoffpreis_euro is not None
+                else agg["benzinpreis_default"]
+            )
+            benzin_liter = km / 100 * agg["vergleich_l_100km"]
+            md_preis = resolve_netzbezug_preis_cent(md, netzbezug_preis) if md else netzbezug_preis
+            agg["bisherige_ersparnis"] += (
+                benzin_liter * monats_benzinpreis - netz * md_preis / 100
+            )
+    bisherige_eauto_ersparnis = sum(a["bisherige_ersparnis"] for a in eauto_aggregate.values())
+    gesamt_km = sum(a["km"] for a in eauto_aggregate.values())
+    gesamt_eauto_netz = sum(a["netz_kwh"] for a in eauto_aggregate.values())
 
     # BKW Ersparnis (Eigenverbrauch spart Netzbezug)
     bisherige_bkw_ersparnis = 0.0
     for bkw in balkonkraftwerke:
         for (inv_id, jahr, monat), daten in historische_inv_daten.items():
-            if inv_id == bkw.id:
+            if inv_id == bkw.id and bkw.ist_aktiv_im_monat(jahr, monat):
                 bkw_ev = daten.get("eigenverbrauch_kwh", 0) or 0
                 bisherige_bkw_ersparnis += bkw_ev * netzbezug_preis / 100
 
@@ -1228,7 +1273,7 @@ async def get_finanz_prognose(
     bisherige_sonstige_netto = 0.0
     for inv in alle_investitionen:
         for (inv_id, jahr, monat), daten in historische_inv_daten.items():
-            if inv_id == inv.id:
+            if inv_id == inv.id and inv.ist_aktiv_im_monat(jahr, monat):
                 bisherige_sonstige_netto += berechne_sonstige_netto(daten)
 
     # Dienstliche E-Auto/Wallbox-Ladekosten abziehen (Netzbezug + entgangene Einspeisung)
@@ -1236,7 +1281,7 @@ async def get_finanz_prognose(
     for inv in alle_investitionen:
         if inv.typ in ("e-auto", "wallbox") and ist_dienstlich(inv):
             for (inv_id, jahr, monat), daten in historische_inv_daten.items():
-                if inv_id == inv.id:
+                if inv_id == inv.id and inv.ist_aktiv_im_monat(jahr, monat):
                     netz_kwh = daten.get("ladung_netz_kwh", 0) or 0
                     pv_kwh = daten.get("ladung_pv_kwh", 0) or 0
                     bisherige_dienstlich_ladekosten += (
@@ -1349,12 +1394,24 @@ async def get_finanz_prognose(
     # =====================================================================
 
     # Wärmepumpe: Ersparnis gegenüber Gas/Öl
-    # Durchschnittswerte aus historischen Daten hochrechnen
+    # Durchschnittswerte aus historischen Daten hochrechnen.
+    # Aggregat-Werte für die Saisonalprognose: thermisch-gewichteter
+    # Durchschnitt über die WPs. Bei genau einer WP = deren Wert (kein
+    # Verhaltens-Unterschied). Bei mehreren WPs mit unterschiedlichen
+    # Energieträgern (z. B. Gas + Öl) mathematisch saubere Mischung statt
+    # last-write-wins.
     jahres_wp_ersparnis = 0.0
     if waermepumpen and gesamt_wp_thermisch > 0 and anzahl_monate_hist > 0:
         # Thermische Energie pro Jahr (hochgerechnet)
         wp_thermisch_jahr = gesamt_wp_thermisch / anzahl_monate_hist * 12
-        # Prognose-Gaspreis: Ø der historischen Monatspreise, Fallback statisch
+        # thermisch-gewichtete Aggregat-Werte
+        wp_alter_preis_cent_agg = sum(
+            a["thermisch_kwh"] * a["alter_preis_cent"] for a in wp_aggregate.values()
+        ) / gesamt_wp_thermisch
+        wp_alter_wirkungsgrad_agg = sum(
+            a["thermisch_kwh"] * a["alter_wirkungsgrad"] for a in wp_aggregate.values()
+        ) / gesamt_wp_thermisch
+        # Prognose-Gaspreis: Ø der historischen Monatspreise, Fallback Aggregat
         hist_gaspreise = [
             md.gaspreis_cent_kwh for md in monatsdaten
             if md.gaspreis_cent_kwh is not None
@@ -1362,11 +1419,11 @@ async def get_finanz_prognose(
         prognose_gaspreis = (
             sum(hist_gaspreise) / len(hist_gaspreise)
             if hist_gaspreise
-            else wp_alter_preis_cent
+            else wp_alter_preis_cent_agg
         )
         # Was es mit Gas kosten würde (Energiepreis + fixe Zusatzkosten)
         gas_kosten_jahr = (
-            (wp_thermisch_jahr / wp_alter_wirkungsgrad) * prognose_gaspreis / 100
+            (wp_thermisch_jahr / wp_alter_wirkungsgrad_agg) * prognose_gaspreis / 100
             + wp_alternativ_zusatzkosten_jahr
         )
         # WP-Stromkosten pro Jahr (nur Netzanteil) — konservative 50/50-Annahme
@@ -1376,12 +1433,24 @@ async def get_finanz_prognose(
         # Netto-Ersparnis
         jahres_wp_ersparnis = gas_kosten_jahr - wp_stromkosten_netz_jahr
 
-    # E-Auto: Ersparnis gegenüber Benzin
+    # E-Auto: Ersparnis gegenüber Benzin.
+    # Aggregat-Werte für die saisonal-skalierte Jahresprognose: km-gewichteter
+    # Durchschnitt von `vergleich_l_100km` und `benzinpreis_default` über die
+    # E-Autos. Bei einem einzigen E-Auto = dessen Wert (kein Verhaltens-
+    # Unterschied). Bei mehreren = mathematisch saubere Mischung statt der
+    # vorherigen last-write-wins-Variable.
     jahres_eauto_km_ersparnis = 0.0
     if e_autos and gesamt_km > 0 and anzahl_monate_hist > 0:
         # km pro Jahr (hochgerechnet)
         km_jahr = gesamt_km / anzahl_monate_hist * 12
-        # Prognose-Benzinpreis: Ø der historischen Monatspreise, Fallback statisch
+        # km-gewichtete Aggregat-Werte über die E-Autos
+        eauto_vergleich_l_100km_agg = sum(
+            a["km"] * a["vergleich_l_100km"] for a in eauto_aggregate.values()
+        ) / gesamt_km
+        eauto_benzinpreis_default_agg = sum(
+            a["km"] * a["benzinpreis_default"] for a in eauto_aggregate.values()
+        ) / gesamt_km
+        # Prognose-Benzinpreis: Ø der historischen Monatspreise, Fallback Aggregat
         hist_kraftstoffpreise = [
             md.kraftstoffpreis_euro for md in monatsdaten
             if md.kraftstoffpreis_euro is not None
@@ -1389,10 +1458,10 @@ async def get_finanz_prognose(
         prognose_benzinpreis = (
             sum(hist_kraftstoffpreise) / len(hist_kraftstoffpreise)
             if hist_kraftstoffpreise
-            else eauto_benzinpreis
+            else eauto_benzinpreis_default_agg
         )
         # Was es mit Benzin kosten würde
-        benzin_liter_jahr = km_jahr / 100 * eauto_vergleich_l_100km
+        benzin_liter_jahr = km_jahr / 100 * eauto_vergleich_l_100km_agg
         benzin_kosten_jahr = benzin_liter_jahr * prognose_benzinpreis
         # E-Auto Netz-Stromkosten pro Jahr (PV-Ladung ist in EV-Ersparnis)
         netz_anteil = gesamt_eauto_netz / (gesamt_eauto_pv + gesamt_eauto_netz) if (gesamt_eauto_pv + gesamt_eauto_netz) > 0 else 0.5
@@ -1400,6 +1469,22 @@ async def get_finanz_prognose(
         eauto_stromkosten_netz_jahr = eauto_netz_kwh_jahr * netzbezug_preis / 100
         # Netto-Ersparnis
         jahres_eauto_km_ersparnis = benzin_kosten_jahr - eauto_stromkosten_netz_jahr
+        # Per-E-Auto-Aufschlüsselung (für Komponenten-Anzeige).
+        # Benzin-Kostenteil: pro E-Auto mit dessen `vergleich_l_100km` exakt.
+        # Strom-Kostenteil: km-anteilig aus dem Aggregat (Vereinfachung — der
+        # eigentliche Netz-Anteil wird auf Aggregat-Ebene aus PV-Quote
+        # abgeleitet, eine saubere Pro-EA-Saisonprognose wäre ein eigener
+        # Refactor). Die Summe der Pro-EA-Ersparnisse stimmt mit dem Aggregat
+        # überein.
+        for ea in e_autos:
+            agg = eauto_aggregate[ea.id]
+            if agg["km"] <= 0:
+                agg["jahres_ersparnis"] = 0.0
+                continue
+            km_jahr_ea = agg["km"] / anzahl_monate_hist * 12
+            benzin_kosten_jahr_ea = km_jahr_ea / 100 * agg["vergleich_l_100km"] * prognose_benzinpreis
+            stromkosten_ea = eauto_stromkosten_netz_jahr * (agg["km"] / gesamt_km)
+            agg["jahres_ersparnis"] = benzin_kosten_jahr_ea - stromkosten_ea
 
     # BKW Jahres-Ersparnis (aus historischem Durchschnitt hochgerechnet)
     jahres_bkw_ersparnis = 0.0
@@ -1557,14 +1642,17 @@ async def get_finanz_prognose(
                     beitrag_euro_jahr=round(v2h_ersparnis, 2),
                     beschreibung="Rückspeisung vom E-Auto ins Haus",
                 ))
-            # Benzin-Ersparnis als Komponenten-Beitrag
-            if jahres_eauto_km_ersparnis > 0:
+            # Benzin-Ersparnis als Komponenten-Beitrag — pro E-Auto getrennt
+            ea_agg = eauto_aggregate.get(ea.id)
+            ea_jahres_ersparnis = ea_agg["jahres_ersparnis"] if ea_agg else 0.0
+            ea_vergleich_l_100km = ea_agg["vergleich_l_100km"] if ea_agg else PARAM_E_AUTO_DEFAULTS["vergleich_verbrauch_l_100km"]
+            if ea_jahres_ersparnis > 0:
                 komponenten_beitraege.append(KomponentenBeitragSchema(
                     typ="e-auto-benzin",
                     bezeichnung=f"{ea.bezeichnung} (vs. Benzin)",
                     beitrag_kwh_jahr=0,  # Nicht in kWh messbar
-                    beitrag_euro_jahr=round(jahres_eauto_km_ersparnis, 2),
-                    beschreibung=f"Ersparnis ggü. {eauto_vergleich_l_100km}L/100km Benziner",
+                    beitrag_euro_jahr=round(ea_jahres_ersparnis, 2),
+                    beschreibung=f"Ersparnis ggü. {ea_vergleich_l_100km}L/100km Benziner",
                 ))
             if jahres_eauto_pv > 0:
                 komponenten_beitraege.append(KomponentenBeitragSchema(

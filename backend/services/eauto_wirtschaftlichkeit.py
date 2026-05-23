@@ -69,6 +69,114 @@ def _benzinpreis_default(eauto_parameter: Optional[dict]) -> float:
     ) or BENZIN_PREIS_DEFAULT_EURO_L
 
 
+@dataclass
+class BenzinpreisAufloesung:
+    """Aufgelöster Benzinpreis für eine Berechnung + Quelle für Diagnostik."""
+    preis_euro: float
+    quelle: str  # "slider" | "parameter" | "monatsdaten" | "default"
+
+
+def km_gewichtete_eauto_params(
+    *,
+    eauto_params_und_km: Iterable[tuple[Optional[dict], float]],
+) -> tuple[float, float]:
+    """km-gewichtetes Mittel von `vergleich_verbrauch_l_100km` und
+    `benzinpreis_euro` über mehrere E-Autos.
+
+    Bei Anlagen mit nur einem E-Auto = dessen Wert (kein Verhaltens-
+    Unterschied). Bei mehreren E-Autos mit unterschiedlichen Parametern
+    gewichtet nach gefahrenen km. Ersetzt das verbreitete `for ea: …` mit
+    last-write-wins-Variable, das bei zwei E-Autos den letzten gewann.
+
+    Args:
+        eauto_params_und_km: Iterable von `(inv.parameter, km_im_zeitraum)`.
+            E-Autos mit `km <= 0` werden ignoriert. Bei leerer Eingabe oder
+            ausschließlich km-0-Einträgen liefert der Helper die kanonischen
+            Defaults zurück.
+
+    Returns:
+        `(vergleich_l_100km, benzinpreis_default_euro)` — beide km-gewichtet.
+    """
+    eintraege = [
+        (km, params or {})
+        for params, km in eauto_params_und_km
+        if km is not None and km > 0
+    ]
+    if not eintraege:
+        return (
+            float(PARAM_E_AUTO_DEFAULTS["vergleich_verbrauch_l_100km"]),
+            float(PARAM_E_AUTO_DEFAULTS["benzinpreis_euro"]),
+        )
+    km_sum = sum(km for km, _ in eintraege)
+    vergleich = sum(
+        km * (
+            p.get(PARAM_E_AUTO["VERGLEICH_VERBRAUCH_L_100KM"])
+            or PARAM_E_AUTO_DEFAULTS["vergleich_verbrauch_l_100km"]
+        )
+        for km, p in eintraege
+    ) / km_sum
+    benzinpreis = sum(
+        km * (
+            p.get(PARAM_E_AUTO["BENZINPREIS_EURO"])
+            or PARAM_E_AUTO_DEFAULTS["benzinpreis_euro"]
+        )
+        for km, p in eintraege
+    ) / km_sum
+    return float(vergleich), float(benzinpreis)
+
+
+def resolve_eauto_benzinpreis(
+    *,
+    query_override: Optional[float],
+    eauto_parameter: Optional[dict],
+    letzter_monats_benzinpreis: Optional[float],
+) -> BenzinpreisAufloesung:
+    """Auflösungs-Kette für annuelle E-Auto-ROI-Berechnung (`get_roi_dashboard`).
+
+    Anders als die periodische Ersparnis (`berechne_eauto_ersparnis_periode`)
+    rechnet ROI mit Jahresfahrleistung × einmaligem Preis. Reihenfolge:
+
+    1. **Query-Override** (ROI-Slider): bewusste User-Eingabe, gilt für alle E-Autos.
+    2. **`inv.parameter['benzinpreis_euro']`**: per-Investition gepflegter Wert.
+    3. **Letzter `Monatsdaten.kraftstoffpreis_euro`** (EU Weekly Oil Bulletin):
+       aktueller Marktpreis aus der Realität.
+    4. `PARAM_E_AUTO_DEFAULTS['benzinpreis_euro']` (1,65 €) als letzter Fallback.
+
+    Vorher las `get_roi_dashboard` nur den Query-Param (Default 1,85 €) und
+    ignorierte die per-Investition gespeicherten Werte — gleiche Bug-Klasse
+    wie der v3.25.0-Fix für `jahresfahrleistung_km` etc., aber für
+    `benzinpreis_euro` damals vergessen.
+    """
+    if query_override is not None:
+        return BenzinpreisAufloesung(float(query_override), "slider")
+    if eauto_parameter is not None:
+        param_preis = eauto_parameter.get(PARAM_E_AUTO["BENZINPREIS_EURO"])
+        if param_preis is not None:
+            return BenzinpreisAufloesung(float(param_preis), "parameter")
+    if letzter_monats_benzinpreis is not None:
+        return BenzinpreisAufloesung(float(letzter_monats_benzinpreis), "monatsdaten")
+    return BenzinpreisAufloesung(
+        float(PARAM_E_AUTO_DEFAULTS["benzinpreis_euro"]), "default",
+    )
+
+
+def letzter_kraftstoffpreis_aus_lookup(
+    lookup: dict[tuple[int, int], Optional[float]],
+) -> Optional[float]:
+    """Letzter nicht-leerer `kraftstoffpreis_euro` aus dem Monatsdaten-Lookup.
+
+    Iteriert in absteigender Reihenfolge (jüngster Monat zuerst) und liefert
+    den ersten nicht-None Preis. Wird als Hinweis-Wert (Slider-Placeholder)
+    und als Stufe 3 der `resolve_eauto_benzinpreis`-Kette genutzt.
+    """
+    if not lookup:
+        return None
+    for (_, _), preis in sorted(lookup.items(), reverse=True):
+        if preis is not None:
+            return float(preis)
+    return None
+
+
 def berechne_eauto_ersparnis(
     *,
     km_gefahren: float,
@@ -120,6 +228,84 @@ def berechne_eauto_ersparnis(
         strom_kosten_euro=strom_kosten,
         verwendeter_verbrauch_l_100km=verbrauch_l_100km,
         verwendeter_benzinpreis_euro=benzinpreis_euro,
+    )
+
+
+def berechne_eauto_ersparnis_periode(
+    *,
+    km_pro_monat: Iterable[tuple[int, int, float]],
+    ladung_netz_kwh_gesamt: float,
+    ladung_extern_euro_gesamt: float,
+    wallbox_strompreis_cent: float,
+    eauto_parameter: Optional[dict] = None,
+    monats_benzinpreis_lookup: Optional[dict[tuple[int, int], Optional[float]]] = None,
+) -> EAutoErsparnisErgebnis:
+    """E-Auto-Ersparnis über eine Periode mit per-Monat-korrektem Benzinpreis.
+
+    Drift-Fix #260 (NongJoWo): das E-Auto-Dashboard summierte zuvor `km`
+    über die ganze Periode und rief `berechne_eauto_ersparnis` einmal mit
+    einem festen Default-Benzinpreis (1,65 €/L) auf. Die Cockpit-Übersicht
+    las hingegen pro Monat den dynamischen Preis aus
+    `Monatsdaten.kraftstoffpreis_euro` (EU Weekly Oil Bulletin, seit v3.17.0).
+    Ergebnis: zwei Sichten, zwei Ersparniszahlen, keine erkennbare Ursache.
+
+    Korrektur: `benzin_kosten = Σ (km_monat × verbrauch × preis_monat)` mit
+    Fallback-Kette pro Monat: Lookup → params.benzinpreis_euro → Default 1,65.
+
+    `ladung_netz_kwh_gesamt` und `ladung_extern_euro_gesamt` bleiben Gesamt-
+    Werte — der Wallbox-Pool-Anteil aus `attribute_emob_pool_by_km` wird
+    ebenfalls auf Gesamtbasis verteilt und nicht pro Monat.
+
+    Args:
+        km_pro_monat: Iterable von `(jahr, monat, km)`-Tupeln für die Periode.
+        ladung_netz_kwh_gesamt: Heim-Netzladung gesamt in kWh.
+        ladung_extern_euro_gesamt: tatsächliche Kosten externer Ladung in € (gesamt).
+        wallbox_strompreis_cent: Strompreis Heim-Netzladung in ct/kWh.
+        eauto_parameter: `Investition.parameter` für Vergleichsverbrauch + Default-Benzinpreis.
+        monats_benzinpreis_lookup: `{(jahr, monat): kraftstoffpreis_euro_oder_None}`
+            aus `Anlage.monatsdaten`. Einträge mit `None` werden wie fehlende
+            Monate behandelt (Fallback greift).
+
+    Returns:
+        EAutoErsparnisErgebnis. `verwendeter_benzinpreis_euro` ist der
+        km-gewichtete Durchschnitt der tatsächlich angewendeten Preise.
+    """
+    verbrauch_l_100km = _vergleich_verbrauch(eauto_parameter)
+    fallback_preis = _benzinpreis_default(eauto_parameter)
+    lookup = monats_benzinpreis_lookup or {}
+
+    gesamt_km = 0.0
+    gesamt_benzin = 0.0
+    summe_gewichteter_preis = 0.0
+
+    for jahr, monat, km in km_pro_monat:
+        if km is None or km <= 0:
+            continue
+        preis = lookup.get((jahr, monat))
+        if preis is None:
+            preis = fallback_preis
+        gesamt_km += km
+        gesamt_benzin += (km / 100) * verbrauch_l_100km * preis
+        summe_gewichteter_preis += km * preis
+
+    if gesamt_km <= 0:
+        return EAutoErsparnisErgebnis(
+            0.0, 0.0, 0.0,
+            verbrauch_l_100km, fallback_preis,
+        )
+
+    strom_kosten = (
+        max(0.0, ladung_netz_kwh_gesamt) * wallbox_strompreis_cent / 100
+        + ladung_extern_euro_gesamt
+    )
+    ersparnis = gesamt_benzin - strom_kosten
+
+    return EAutoErsparnisErgebnis(
+        ersparnis_euro=ersparnis,
+        benzin_kosten_euro=gesamt_benzin,
+        strom_kosten_euro=strom_kosten,
+        verwendeter_verbrauch_l_100km=verbrauch_l_100km,
+        verwendeter_benzinpreis_euro=summe_gewichteter_preis / gesamt_km,
     )
 
 

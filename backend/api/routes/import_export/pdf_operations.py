@@ -28,6 +28,7 @@ from backend.services.pdf_service import (
     FinanzPrognose,
     StringVergleich,
 )
+from backend.services.eauto_wirtschaftlichkeit import km_gewichtete_eauto_params
 from backend.core.investition_parameter import (
     PARAM_E_AUTO,
     PARAM_E_AUTO_DEFAULTS,
@@ -188,7 +189,17 @@ async def export_pdf(
                     InvestitionMonatsdaten.jahr == jahr
                 )
             )
-        all_imd = imd_result.scalars().all()
+        # Pre-Filter analog aussichten.py (Issue #236/#239 v3.29.0): IMD vor
+        # Anschaffungsdatum oder nach Stilllegungsdatum überspringen. Alle
+        # nachfolgenden Aggregations-Schleifen (PV-Erzeugung, Speicher,
+        # Wärmepumpe, E-Mobilität) sehen damit nur Daten aus der tatsächlichen
+        # Lebenszeit der Investition — Pre-Anschaffungs-Phantomdaten aus
+        # Custom-Imports zählen nicht mehr in den Jahresbericht.
+        all_imd = [
+            imd for imd in imd_result.scalars().all()
+            if (inv := inv_by_id.get(imd.investition_id)) is not None
+            and inv.ist_aktiv_im_monat(imd.jahr, imd.monat)
+        ]
 
     # ==========================================================================
     # 6. Monatsdaten laden
@@ -274,6 +285,15 @@ async def export_pdf(
     emob_pv_total = 0.0
     emob_netz_total = 0.0
     emob_v2h_total = 0.0
+    # Per-E-Auto-km für die km-gewichtete Mittelung der Vergleichsparameter
+    # (Vergleichsverbrauch + Benzinpreis-Default) bei Multi-EA-Anlagen. Nur
+    # `e-auto`-Investitionen, weil `vergleich_verbrauch_l_100km` ein Vehicle-
+    # Attribut ist; Wallbox-IMD-Einträge mit km (evcc-Pool) werden für die
+    # Aggregat-Gesamt-km (emob_km_total) weiter mitgezählt.
+    ea_km_pro_inv: dict[int, float] = {}
+    # Per-WP-Wärmesumme für thermisch-gewichtete Mittelung der Vergleichs-
+    # parameter (Energieträger Gas/Öl + alter Preis) bei Multi-WP-Anlagen.
+    wp_waerme_pro_inv: dict[int, float] = {}
 
     # Investition-Monatsdaten fuer Gesamtsummen aggregieren
     for imd in all_imd:
@@ -290,13 +310,19 @@ async def export_pdf(
             ww = data.get("warmwasser_kwh", 0) or 0
             wp_heizung_total += heiz
             wp_warmwasser_total += ww
+            wp_waerme_pro_inv[inv.id] = wp_waerme_pro_inv.get(inv.id, 0.0) + (
+                data.get("waerme_kwh", 0) or (heiz + ww)
+            )
             wp_waerme_total += data.get("waerme_kwh", 0) or (heiz + ww)
             wp_strom_total += data.get("stromverbrauch_kwh", 0) or 0
         elif inv.typ in ("e-auto", "wallbox"):
-            emob_km_total += data.get("km_gefahren", 0) or 0
+            km_this = data.get("km_gefahren", 0) or 0
+            emob_km_total += km_this
             emob_ladung_total += data.get("ladung_kwh", 0) or 0
             emob_pv_total += data.get("ladung_pv_kwh", 0) or 0
             emob_netz_total += data.get("ladung_netz_kwh", 0) or 0
+            if inv.typ == "e-auto":
+                ea_km_pro_inv[inv.id] = ea_km_pro_inv.get(inv.id, 0.0) + km_this
             emob_v2h_total += data.get("v2h_entladung_kwh", 0) or 0
 
     # Monatsdaten-Struktur erstellen
@@ -423,19 +449,47 @@ async def export_pdf(
     wp_cop = (wp_waerme_total / wp_strom_total) if wp_strom_total > 0 and wp_waerme_total > 0 else None
     wp_ersparnis = 0.0
     if hat_waermepumpe and wp_waerme_total > 0:
-        wp_alter_preis_cent = PARAM_WAERMEPUMPE_DEFAULTS["alter_preis_cent_kwh"]
-        wp_alter_wirkungsgrad = WP_WIRKUNGSGRAD_GAS_DEFAULT
-        wp_alternativ_zusatzkosten_jahr = 0.0
+        # thermisch-gewichtete Aggregat-Werte. Vorher las eine
+        # `for inv … break`-Schleife die Parameter aus der ERSTEN passenden
+        # WP-Investition mit `parameter` und nahm auch nur DEREN
+        # `alternativ_zusatzkosten_jahr` (die break-Linie überschrieb die
+        # Summierungslogik). Bei zwei WPs mit unterschiedlichen Energie-
+        # trägern (Gas + Öl) oder Zusatzkosten war der Jahresbericht falsch.
+        wp_param_per_inv: list[tuple[float, float, float, float]] = []
+        # (waerme, alter_preis_cent, alter_wirkungsgrad, zusatzkosten_jahr)
         for inv in investitionen:
-            if inv.typ == "waermepumpe" and inv.parameter:
-                wp_alter_preis_cent = inv.parameter.get(
-                    PARAM_WAERMEPUMPE["ALTER_PREIS_CENT_KWH"],
-                    PARAM_WAERMEPUMPE_DEFAULTS["alter_preis_cent_kwh"],
-                )
-                if inv.parameter.get(PARAM_WAERMEPUMPE["ALTER_ENERGIETRAEGER"]) == "oel":
-                    wp_alter_wirkungsgrad = WP_WIRKUNGSGRAD_OEL_DEFAULT
-                wp_alternativ_zusatzkosten_jahr += inv.parameter.get(PARAM_WAERMEPUMPE["ALTERNATIV_ZUSATZKOSTEN_JAHR"], 0) or 0
-                break
+            if inv.typ != "waermepumpe":
+                continue
+            wp_waerme = wp_waerme_pro_inv.get(inv.id, 0.0)
+            params = inv.parameter or {}
+            zusatzkosten = params.get(
+                PARAM_WAERMEPUMPE["ALTERNATIV_ZUSATZKOSTEN_JAHR"], 0,
+            ) or 0
+            if wp_waerme <= 0 and zusatzkosten <= 0:
+                continue
+            wp_param_per_inv.append((
+                wp_waerme,
+                (
+                    params.get(
+                        PARAM_WAERMEPUMPE["ALTER_PREIS_CENT_KWH"],
+                        PARAM_WAERMEPUMPE_DEFAULTS["alter_preis_cent_kwh"],
+                    ) or PARAM_WAERMEPUMPE_DEFAULTS["alter_preis_cent_kwh"]
+                ),
+                (
+                    WP_WIRKUNGSGRAD_OEL_DEFAULT
+                    if params.get(PARAM_WAERMEPUMPE["ALTER_ENERGIETRAEGER"]) == "oel"
+                    else WP_WIRKUNGSGRAD_GAS_DEFAULT
+                ),
+                zusatzkosten,
+            ))
+        wp_alternativ_zusatzkosten_jahr = sum(z for _, _, _, z in wp_param_per_inv)
+        waerme_gewicht = sum(w for w, _, _, _ in wp_param_per_inv)
+        if waerme_gewicht > 0:
+            wp_alter_preis_cent = sum(w * p for w, p, _, _ in wp_param_per_inv) / waerme_gewicht
+            wp_alter_wirkungsgrad = sum(w * wg for w, _, wg, _ in wp_param_per_inv) / waerme_gewicht
+        else:
+            wp_alter_preis_cent = PARAM_WAERMEPUMPE_DEFAULTS["alter_preis_cent_kwh"]
+            wp_alter_wirkungsgrad = WP_WIRKUNGSGRAD_GAS_DEFAULT
         # Durchschnitt der Monats-Gaspreise, Fallback auf statischen Parameter
         hist_gaspreise = [
             m.gaspreis_cent_kwh for m in monatsdaten_list
@@ -456,16 +510,20 @@ async def export_pdf(
     emob_pv_anteil = (emob_pv_total / emob_ladung_total * 100) if emob_ladung_total > 0 else None
     emob_ersparnis = 0.0
     if hat_emobilitaet and emob_km_total > 0:
-        emob_benzinpreis_fallback = 1.65
-        emob_vergleich_l_100km = 7.5
-        for inv in investitionen:
-            if inv.typ in ("e-auto", "wallbox") and inv.parameter:
-                emob_benzinpreis_fallback = inv.parameter.get(PARAM_E_AUTO["BENZINPREIS_EURO"], PARAM_E_AUTO_DEFAULTS["benzinpreis_euro"])
-                emob_vergleich_l_100km = inv.parameter.get(
-                    PARAM_E_AUTO["VERGLEICH_VERBRAUCH_L_100KM"],
-                    PARAM_E_AUTO_DEFAULTS["vergleich_verbrauch_l_100km"],
-                )
-                break
+        # km-gewichtetes Mittel über die E-Autos via SoT-Helper. Vorher las
+        # eine `for inv … break`-Schleife die Vergleichsparameter aus der
+        # ERSTEN passenden e-auto-ODER-wallbox-Investition — bei zwei E-Autos
+        # mit unterschiedlichen `vergleich_verbrauch_l_100km` wurde der zweite
+        # stillschweigend mit den Werten des ersten gerechnet. Bei einer EA +
+        # Wallbox vor der EA konnte zudem die Wallbox die Param-Quelle werden,
+        # obwohl `vergleich_l_100km` ein Vehicle-Attribut ist.
+        emob_vergleich_l_100km, emob_benzinpreis_fallback = km_gewichtete_eauto_params(
+            eauto_params_und_km=(
+                (inv.parameter, ea_km_pro_inv.get(inv.id, 0.0))
+                for inv in investitionen
+                if inv.typ == "e-auto"
+            ),
+        )
         # Durchschnitt der Monats-Kraftstoffpreise, Fallback auf statischen Parameter
         hist_kraftstoffpreise = [
             m.kraftstoffpreis_euro for m in monatsdaten_list

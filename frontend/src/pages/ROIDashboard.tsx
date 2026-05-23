@@ -143,7 +143,10 @@ export default function ROIDashboard() {
   // Anpassbare Parameter
   const [strompreis, setStrompreis] = useState<number>(30)
   const [einspeiseverguetung, setEinspeiseverguetung] = useState<number>(8.2)
-  const [benzinpreis, setBenzinpreis] = useState<number>(1.85)
+  // Slider als reines Override: leer = Backend löst pro Investition auf
+  // (per-Inv `benzinpreis_euro` → letzter Monatsdaten-Preis → Default).
+  // Hardcoded 1.85 hätte den per-Inv-Wert stillschweigend überschrieben.
+  const [benzinpreis, setBenzinpreis] = useState<number | undefined>(undefined)
 
   const anlageId = selectedAnlageId
   const { strompreis: aktuellerStrompreis } = useAktuellerStrompreis(anlageId ?? null)
@@ -332,10 +335,18 @@ export default function ROIDashboard() {
             <input
               type="number"
               step="0.01"
-              value={benzinpreis}
-              onChange={(e) => setBenzinpreis(Number(e.target.value))}
+              value={benzinpreis ?? ''}
+              placeholder={roiData?.benzinpreis_hinweis_euro?.toFixed(2) ?? '1.65'}
+              onChange={(e) => {
+                const v = e.target.value
+                setBenzinpreis(v === '' ? undefined : Number(v))
+              }}
               className="input"
             />
+            <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              Leer lassen → pro E-Auto wird der gepflegte Wert bzw. der aktuelle
+              Marktpreis aus den Monatsdaten verwendet.
+            </p>
           </div>
         </div>
       </Card>
