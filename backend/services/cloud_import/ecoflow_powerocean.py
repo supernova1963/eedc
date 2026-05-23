@@ -48,30 +48,48 @@ HISTORY_CODE = "JT303_Dashboard_Overview_Summary_Week"
 # "time must be less than one week" (Dirk-PN 2026-05-22). Daher 6-Tage-Blöcke.
 MAX_BLOCK_DAYS = 6
 
-# Mapping: indexName aus EcoFlow API → ParsedMonthData Felder
-# WICHTIG: Diese Werte sind geschätzt und müssen mit echten API-Daten verifiziert werden!
+# Mapping: indexName aus EcoFlow API → ParsedMonthData Felder.
+#
+# Die EcoFlow PowerOcean API liefert eine Energiefluss-Matrix mit „From X" /
+# „To Y"-Namen — Stand 2026-05-23 verifiziert über Dirks Live-Log (#287-Folge,
+# sn HJ31ZD1AZH710329, history-Endpoint Feb/Mär 2026). Die alten technischen
+# Namen („Solar Generation" / „solarGeneration" etc.) bleiben als Fallback
+# für ältere Firmware-Stände bzw. abweichende EcoFlow-Geräte erhalten.
+#
+# Bewusst NICHT gemappt:
+# - `Self-sufficiency` / `pv_to_powerplus_pct`: Prozentwerte, kein kWh-Feld.
+# - `pv_to_heatpump` / `pv_to_powerglow` / `pv_to_powerplus`: Sub-Flüsse aus
+#   dem PV-Bereich; vermutlich bereits in `From Solar` enthalten. Verifikation
+#   beim Tester offen — bei Doppelzählungs-Hinweis aus dem Re-Test gesondert
+#   behandeln.
 INDEX_NAME_MAPPING = {
-    # PV-Erzeugung
+    # PV-Erzeugung — gesamte Solar-Quelle (Haus + Batterie + Grid + Subsysteme)
+    "From Solar": "pv_erzeugung_kwh",
     "Solar Generation": "pv_erzeugung_kwh",
     "solarGeneration": "pv_erzeugung_kwh",
     "Solar generation": "pv_erzeugung_kwh",
     # Einspeisung
+    "To Grid": "einspeisung_kwh",
     "Grid Feed-in": "einspeisung_kwh",
     "gridFeedIn": "einspeisung_kwh",
     "Feed-in to grid": "einspeisung_kwh",
     # Netzbezug
+    "From Grid": "netzbezug_kwh",
     "Grid Consumption": "netzbezug_kwh",
     "gridConsumption": "netzbezug_kwh",
     "Grid consumption": "netzbezug_kwh",
     # Batterie-Ladung
+    "To Battery": "batterie_ladung_kwh",
     "Battery Charge": "batterie_ladung_kwh",
     "batteryCharge": "batterie_ladung_kwh",
     "Battery charge": "batterie_ladung_kwh",
     # Batterie-Entladung
+    "From Battery": "batterie_entladung_kwh",
     "Battery Discharge": "batterie_entladung_kwh",
     "batteryDischarge": "batterie_entladung_kwh",
     "Battery discharge": "batterie_entladung_kwh",
-    # Eigenverbrauch
+    # Eigenverbrauch (Hausverbrauch)
+    "To Home": "eigenverbrauch_kwh",
     "Home Consumption": "eigenverbrauch_kwh",
     "homeConsumption": "eigenverbrauch_kwh",
     "Home consumption": "eigenverbrauch_kwh",

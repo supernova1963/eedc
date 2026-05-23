@@ -60,6 +60,11 @@ export interface CockpitUebersicht {
 
   // Finanzen (Euro)
   einspeise_erloes_euro: number
+  // §51 EEG: durch negative Börsenpreise nicht vergütete Einspeisung.
+  // `null` = keine Strompreis-Mitschrift / kein Börsenpreis-Sensor;
+  // `0`   = Mitschrift vorhanden, aber kein Negativpreis im Zeitraum.
+  einspeise_neg_preis_kwh: number | null
+  nicht_vergueteter_erloes_euro: number | null
   ev_ersparnis_euro: number
   netzbezug_kosten_euro: number           // Netzbezugskosten inkl. Grundpreis
   ust_eigenverbrauch_euro: number | null  // USt auf Eigenverbrauch (nur bei Regelbesteuerung)

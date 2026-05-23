@@ -166,7 +166,12 @@ export default function DestructiveActionDialog({
         )}
 
         {/* Aktionen */}
-        <div className="flex justify-end gap-3 pt-2">
+        <div className="flex justify-end items-center gap-3 pt-2">
+          {!canDelete && !deleting && (
+            <p className="text-xs text-gray-500 dark:text-gray-400 mr-auto">
+              Bitte oben eine Backup-Option wählen.
+            </p>
+          )}
           <Button variant="secondary" onClick={onClose} disabled={deleting}>
             Abbrechen
           </Button>
@@ -175,6 +180,7 @@ export default function DestructiveActionDialog({
             onClick={handleConfirm}
             disabled={!canDelete || deleting}
             loading={deleting}
+            title={!canDelete ? 'Bitte erst Backup erstellen oder bewusst überspringen' : undefined}
           >
             {confirmLabel}
           </Button>

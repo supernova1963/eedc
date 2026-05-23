@@ -16,6 +16,7 @@ Regel (siehe `docs/ADR-001-BERECHNUNGS-LAYER.md`):
 
 Submodule:
 - `energie` — kWh-Aggregate aus komponenten_kwh, TagesEnergieProfil
+- `einspeise_erloes` — §51-bereinigte Einspeise-Erlös-Berechnung
 - `invarianten` — Konsistenz-Asserts (Σ Hourly == Daily, Σ pv == komponenten_pv etc.)
 - `speicher` — Speicher-Effizienz (gleitend, carry-over-immun)
 
@@ -25,6 +26,10 @@ Geplant (step-by-step, wenn Konsumenten angefasst werden):
 - `kennzahlen` — Eigenverbrauch, Autarkie, spez. Tagesertrag (Migration aus calculations.py)
 """
 
+from backend.core.berechnungen.einspeise_erloes import (
+    EinspeiseErloes,
+    einspeise_erloes_euro,
+)
 from backend.core.berechnungen.energie import (
     PV_KOMPONENTEN_PREFIXE,
     summe_pv_bkw_kwh,
@@ -47,6 +52,8 @@ from backend.core.berechnungen.speicher import (
 )
 
 __all__ = [
+    "EinspeiseErloes",
+    "einspeise_erloes_euro",
     "PV_KOMPONENTEN_PREFIXE",
     "summe_pv_bkw_kwh",
     "assert_tep_tz_konsistent",

@@ -17,7 +17,7 @@ import { useNavigate } from 'react-router-dom'
 import {
   Sun, Zap, Battery, TrendingUp, Flame, Car, Home,
   ArrowDownToLine, ArrowUpFromLine, Percent, Gauge, Euro, Leaf,
-  Receipt, Share2, Activity, Thermometer
+  Receipt, Share2, Activity, Thermometer, TrendingDown
 } from 'lucide-react'
 import { Card, Button, LoadingSpinner, Select, fmtCalc } from '../components/ui'
 import { fmtKpi } from '../lib'
@@ -469,6 +469,19 @@ export default function Dashboard() {
             berechnung={`${fmtCalc(data.einspeisung_kwh, 0)} kWh × 8.2 ct/kWh`}
             ergebnis={`= ${fmtCalc(data.einspeise_erloes_euro, 0)} €`}
           />
+          {data.nicht_vergueteter_erloes_euro !== null && data.einspeise_neg_preis_kwh !== null && (
+            <KPICard
+              title="§51-Verlust"
+              value={data.nicht_vergueteter_erloes_euro.toFixed(0)}
+              unit="€"
+              icon={TrendingDown}
+              color="text-amber-600"
+              bgColor="bg-amber-50 dark:bg-amber-900/20"
+              formel="Negativpreis-Einspeisung × Vergütung"
+              berechnung={`${fmtCalc(data.einspeise_neg_preis_kwh, 0)} kWh × 8.2 ct/kWh`}
+              ergebnis={`= ${fmtCalc(data.nicht_vergueteter_erloes_euro, 0)} € entgangen`}
+            />
+          )}
           <KPICard
             title="EV-Ersparnis"
             value={data.ev_ersparnis_euro.toFixed(0)}

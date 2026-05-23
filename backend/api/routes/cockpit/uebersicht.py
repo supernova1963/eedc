@@ -15,6 +15,7 @@ from backend.models.anlage import Anlage
 from backend.models.investition import Investition, InvestitionMonatsdaten
 from backend.models.pvgis_prognose import PVGISPrognose
 from backend.api.routes.strompreise import lade_tarife_fuer_anlage, resolve_netzbezug_preis_cent
+from backend.core.berechnungen import einspeise_erloes_euro
 from backend.core.calculations import (
     CO2_FAKTOR_STROM_KG_KWH, CO2_FAKTOR_GAS_KG_KWH,
     CO2_FAKTOR_BENZIN_KG_LITER, berechne_ust_eigenverbrauch,
@@ -33,6 +34,7 @@ from backend.core.wirtschaftlichkeit_defaults import (
     NETZBEZUG_DEFAULT_CENT,
     WP_WIRKUNGSGRAD_GAS_DEFAULT,
 )
+from backend.services.einspeise_erloes_service import get_neg_preis_einspeisung_monat
 from backend.services.wp_wirtschaftlichkeit import berechne_wp_ersparnis
 from backend.services.eauto_wirtschaftlichkeit import (
     aggregiere_emob_ladung,
@@ -99,6 +101,12 @@ class CockpitUebersichtResponse(BaseModel):
 
     # Finanzen (Euro)
     einspeise_erloes_euro: float
+    # §51 EEG: nicht vergüteter Erlös (Einspeisung in Negativpreis-Stunden).
+    # `None` = keine Tages-Aggregate vorhanden (Anwender ohne Strompreis-
+    # Sensor / Börsenpreis-Mitschrift); `0.0` = vorhanden, aber keine
+    # Negativpreis-Einspeisung im Zeitraum.
+    einspeise_neg_preis_kwh: Optional[float] = None
+    nicht_vergueteter_erloes_euro: Optional[float] = None
     ev_ersparnis_euro: float
     netzbezug_kosten_euro: float = 0
     ust_eigenverbrauch_euro: Optional[float] = None
@@ -488,6 +496,13 @@ async def get_cockpit_uebersicht(
     gew_kwh_sum = 0.0
     netzbezug_kosten = 0.0
     einspeise_erloes_sum = 0.0
+    # §51 EEG: nicht vergüteter Erlös + zugehörige kWh, monatlich aus dem
+    # Tages-Aggregat `TagesZusammenfassung.einspeisung_neg_preis_kwh`
+    # gespeist. Wenn KEIN Monat Tages-Aggregate hat, bleibt es `None` und
+    # signalisiert dem Frontend „keine Strompreis-Mitschrift gepflegt".
+    nicht_vergueteter_erloes_sum = 0.0
+    nicht_verguetete_kwh_sum = 0.0
+    hat_neg_preis_daten = False
 
     for m in monatsdaten_list:
         m_tarife = await _tarif_fuer_monat(m)
@@ -500,7 +515,18 @@ async def get_cockpit_uebersicht(
         gew_preis_sum += eff_preis * kwh
         gew_kwh_sum += kwh
         netzbezug_kosten += kwh * eff_preis / 100 + m_grundpreis
-        einspeise_erloes_sum += (m.einspeisung_kwh or 0) * m_einspeis_cent / 100
+
+        m_neg = await get_neg_preis_einspeisung_monat(db, anlage_id, m.jahr, m.monat)
+        if m_neg is not None:
+            hat_neg_preis_daten = True
+        m_erloes = einspeise_erloes_euro(
+            einspeisung_kwh=m.einspeisung_kwh or 0,
+            neg_preis_kwh=m_neg,
+            verguetung_ct_kwh=m_einspeis_cent,
+        )
+        einspeise_erloes_sum += m_erloes.erloes_euro
+        nicht_vergueteter_erloes_sum += m_erloes.nicht_vergueteter_erloes_euro
+        nicht_verguetete_kwh_sum += m_erloes.nicht_verguetete_kwh
 
     eff_netzbezug_preis = gew_preis_sum / gew_kwh_sum if gew_kwh_sum > 0 else netzbezug_preis_cent
 
@@ -623,6 +649,12 @@ async def get_cockpit_uebersicht(
         sonstiges_verbrauch_kwh=round(sonstiges_verbrauch, 1),
         hat_sonstiges=hat_sonstiges,
         einspeise_erloes_euro=round(einspeise_erloes, 2),
+        einspeise_neg_preis_kwh=(
+            round(nicht_verguetete_kwh_sum, 1) if hat_neg_preis_daten else None
+        ),
+        nicht_vergueteter_erloes_euro=(
+            round(nicht_vergueteter_erloes_sum, 2) if hat_neg_preis_daten else None
+        ),
         ev_ersparnis_euro=round(ev_ersparnis, 2),
         netzbezug_kosten_euro=round(netzbezug_kosten, 2),
         ust_eigenverbrauch_euro=round(ust_eigenverbrauch, 2) if ust_eigenverbrauch > 0 else None,
