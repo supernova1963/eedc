@@ -36,6 +36,7 @@ from backend.services.energie_profil._provenance_helpers import (
     seed_tz_provenance,
 )
 from backend.services.energie_profil.aggregator import aggregate_day
+from backend.services.energie_profil.source import Source
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +46,24 @@ logger = logging.getLogger(__name__)
 # Legacy gewinnt der HA-Stats-Backfill.
 _HA_STATS_SOURCE = "external:ha_statistics"
 _HA_STATS_WRITER = "ha_statistics_backfill"
+
+
+# Prognose-Felder, die der Backfill-Pfad beim Delete-and-Recreate retten muss.
+# Eigenständige Liste (kein Import aus `aggregator.py`) — bewusst getrennt, weil
+# Backfill ein eigenes Subsystem ist (Audit §6.1). Phase B löst die
+# Eigenständigkeit auf, dann verschwindet diese Liste. Bis dahin ist sie über
+# den Konformitäts-Test K1 mit `_PROGNOSE_FELDER_RETTEN` (Aggregator) und der
+# Schreibfelder-Liste in `live_wetter` gekoppelt — Drift in einer der drei
+# Stellen bricht den Test.
+_PROGNOSE_FELDER_RETTEN_BACKFILL: tuple[str, ...] = (
+    "pv_prognose_kwh",
+    "sfml_prognose_kwh",
+    "solcast_prognose_kwh",
+    "solcast_p10_kwh",
+    "solcast_p90_kwh",
+    "pv_prognose_stundenprofil",
+    "solcast_prognose_stundenprofil",
+)
 
 
 async def backfill_range(
@@ -71,7 +90,7 @@ async def backfill_range(
     while current <= bis:
         try:
             result = await aggregate_day(
-                anlage, current, db, datenquelle="monatsabschluss",
+                anlage, current, db, source=Source.MONATSABSCHLUSS_BACKFILL,
             )
             if result:
                 count += 1
@@ -540,8 +559,14 @@ async def backfill_from_statistics(
         )
         existing_tz_row = existing_tz.scalar_one_or_none()
         if existing_tz_row:
-            for field in ("pv_prognose_kwh", "sfml_prognose_kwh",
-                           "solcast_prognose_kwh", "solcast_p10_kwh", "solcast_p90_kwh"):
+            # Liste MUSS synchron sein mit `_PROGNOSE_FELDER_RETTEN` im Aggregator
+            # und mit den Schreibfeldern von `live_wetter._speichere_prognose`.
+            # Konformitäts-Test K1 (test_konformitaet_prognose_felder.py) bricht
+            # bei Drift. v3.31.7 (#190) fügte `_PROGNOSE_FELDER_RETTEN` zwei Stunden-
+            # profil-Felder hinzu, hier blieb die Liste bei 5 Einträgen stehen —
+            # latente Drift-Stelle (heute durch existing_dates-Skip neutralisiert,
+            # Audit §4.1). v3.34.0 angeglichen.
+            for field in _PROGNOSE_FELDER_RETTEN_BACKFILL:
                 val = getattr(existing_tz_row, field, None)
                 if val is not None:
                     preserved_prognose[field] = val

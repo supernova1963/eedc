@@ -92,10 +92,12 @@ async def test_migration_ruft_aggregate_day_pro_existierendem_tz_tag():
 
     # Genau 3 aggregate_day-Aufrufe, alle für anlage_obj=fake_anlage
     assert ag_mock.await_count == 3
-    # datenquelle=monatsabschluss bei allen Aufrufen
+    # source=Source.MONATSABSCHLUSS_BACKFILL bei allen Aufrufen (v3.34.0 Phase A,
+    # vorher `datenquelle="monatsabschluss"` als Magic-String).
+    from backend.services.energie_profil.source import Source
     for call in ag_mock.await_args_list:
         kwargs = call.kwargs
-        assert kwargs.get("datenquelle") == "monatsabschluss"
+        assert kwargs.get("source") is Source.MONATSABSCHLUSS_BACKFILL
     # Per-Tag-Commit
     assert session.commit.await_count == 3
 

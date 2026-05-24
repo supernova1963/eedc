@@ -56,6 +56,25 @@ _SFML_WRITER = "tom_ha_sfml_sensor"
 _SOLCAST_SOURCE = "external:solcast"
 _SOLCAST_WRITER = "solcast_provider"
 
+
+# Liste der ``TagesZusammenfassung``-Felder, die ``_speichere_prognose``
+# (Day-Ahead-Forecast-Schreiber) befüllt. Muss in Sync gehalten werden mit
+# den Inline-Schreibungen in der Funktion unten — sie ist Anker für den
+# Konformitäts-Test K1 (test_konformitaet_prognose_felder.py), der diese
+# Liste unabhängig mit `_PROGNOSE_FELDER_RETTEN` im Aggregator und mit
+# `_PROGNOSE_FELDER_RETTEN_BACKFILL` im Backfill vergleicht. Drift in
+# einer der drei Stellen bricht den Test (Vorfall v3.31.7: `_PROGNOSE_FELDER_RETTEN`
+# fehlte `pv_prognose_stundenprofil`, Korrekturprofil-Heatmap blieb dauerhaft leer).
+_TZ_SCHREIBFELDER_PROGNOSE: tuple[str, ...] = (
+    "pv_prognose_kwh",
+    "sfml_prognose_kwh",
+    "solcast_prognose_kwh",
+    "solcast_p10_kwh",
+    "solcast_p90_kwh",
+    "pv_prognose_stundenprofil",
+    "solcast_prognose_stundenprofil",
+)
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter()

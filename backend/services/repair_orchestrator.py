@@ -265,6 +265,7 @@ async def _execute_reaggregate_day(
     req: RepairOperationRequest, db: AsyncSession
 ) -> dict[str, Any]:
     from backend.services.energie_profil_service import aggregate_day
+    from backend.services.energie_profil.source import Source
     from backend.services.sensor_snapshot_service import resnap_anlage_range
 
     datum = date.fromisoformat(req.params["datum"])
@@ -286,7 +287,7 @@ async def _execute_reaggregate_day(
                 f"{type(e).__name__}: {e}"
             )
 
-    zusammenfassung = await aggregate_day(anlage, datum, db, datenquelle="manuell")
+    zusammenfassung = await aggregate_day(anlage, datum, db, source=Source.MANUAL_REPAIR)
     if zusammenfassung is None:
         raise RuntimeError(
             f"Aggregation für {datum} nicht möglich — keine Live-/MQTT-Daten gefunden."
@@ -377,6 +378,7 @@ async def _execute_reaggregate_range(
     deutlich nutzerfreundlicher als ein finales Rollback.
     """
     from backend.services.energie_profil_service import aggregate_day
+    from backend.services.energie_profil.source import Source
     from backend.services.sensor_snapshot_service import resnap_anlage_range
 
     von = date.fromisoformat(req.params["von"])
@@ -408,7 +410,7 @@ async def _execute_reaggregate_range(
                     )
 
             zusammenfassung = await aggregate_day(
-                anlage, current, db, datenquelle="manuell"
+                anlage, current, db, source=Source.MANUAL_REPAIR,
             )
             if zusammenfassung is None:
                 keine_daten += 1

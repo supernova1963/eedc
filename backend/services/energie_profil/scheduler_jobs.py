@@ -19,6 +19,7 @@ from backend.core.database import get_session
 from backend.models.anlage import Anlage
 from backend.models.tages_energie_profil import TagesEnergieProfil
 from backend.services.energie_profil.aggregator import aggregate_day
+from backend.services.energie_profil.source import Source
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +47,7 @@ async def aggregate_yesterday_all() -> dict:
         for anlage in anlagen:
             try:
                 zusammenfassung = await aggregate_day(
-                    anlage, gestern, db, datenquelle="scheduler",
+                    anlage, gestern, db, source=Source.SCHEDULER,
                 )
                 results[anlage.id] = {
                     "status": "ok" if zusammenfassung else "keine_daten",
@@ -103,7 +104,7 @@ async def aggregate_today_all() -> dict:
         for anlage in anlagen:
             try:
                 zusammenfassung = await aggregate_day(
-                    anlage, heute, db, datenquelle="scheduler",
+                    anlage, heute, db, source=Source.SCHEDULER,
                 )
                 results[anlage.id] = {
                     "status": "ok" if zusammenfassung else "keine_daten",

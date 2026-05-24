@@ -48,6 +48,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.models.anlage import Anlage
 from backend.models.tages_energie_profil import TagesZusammenfassung
 from backend.services.energie_profil.aggregator import aggregate_day
+from backend.services.energie_profil.source import Source
 
 logger = logging.getLogger(__name__)
 
@@ -131,7 +132,7 @@ async def migrate_lts_komponenten_kwh_bug(session: AsyncSession) -> None:
         for tag in tage:
             try:
                 ergebnis = await aggregate_day(
-                    anlage_obj, tag, session, datenquelle="monatsabschluss",
+                    anlage_obj, tag, session, source=Source.MONATSABSCHLUSS_BACKFILL,
                 )
                 # Per-Tag-Commit: gibt Writer-Lock frei (analog #291).
                 await session.commit()

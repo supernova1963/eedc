@@ -13,7 +13,7 @@ von 6,3 auf 52,8 kWh. Ursache:
 
 Diese Tests halten beide Schutzmechanismen fest:
 
-- **Preserve**: `datenquelle == "manuell"` + `stunden_count == 0` →
+- **Preserve**: `source == Source.MANUAL_REPAIR` + `stunden_count == 0` →
   bestehende `komponenten_kwh` / `komponenten_starts` bleiben unverändert.
 - **Today-skip**: `datum == date.today()` → keine Boundary-Diff,
   komponenten_kwh kommen ausschließlich aus der Σ-Hourly-Schleife.
@@ -29,6 +29,7 @@ import pytest
 from backend.models.anlage import Anlage
 from backend.models.mqtt_energy_snapshot import MqttEnergySnapshot
 from backend.models.tages_energie_profil import TagesZusammenfassung
+from backend.services.energie_profil.source import Source
 
 
 async def _mqtt_anchor(db, anlage_id: int, datum: date) -> None:
@@ -55,8 +56,8 @@ def _empty_tagesverlauf(_self, anlage, db, tage_zurueck):
 
 @pytest.mark.asyncio
 async def test_manuell_0h_behaelt_komponenten_kwh(db) -> None:
-    """`aggregate_day(datenquelle='manuell')` mit 0 Stunden Daten muss die
-    bestehenden `komponenten_kwh` aus der alten TZ-Zeile beibehalten."""
+    """`aggregate_day(source=Source.MANUAL_REPAIR)` mit 0 Stunden Daten muss
+    die bestehenden `komponenten_kwh` aus der alten TZ-Zeile beibehalten."""
     from backend.services.energie_profil.aggregator import aggregate_day
 
     # Setup: Anlage minimal + alte TZ-Zeile mit guten Werten
@@ -96,7 +97,7 @@ async def test_manuell_0h_behaelt_komponenten_kwh(db) -> None:
         "backend.services.sensor_snapshot_service.get_daily_counter_deltas_by_inv",
         new=AsyncMock(return_value={}),
     ):
-        result = await aggregate_day(anlage, gestern, db, datenquelle="manuell")
+        result = await aggregate_day(anlage, gestern, db, source=Source.MANUAL_REPAIR)
 
     assert result is not None
     # Komponenten-Aggregate wurden bewahrt, nicht durch leere Werte ersetzt
@@ -144,7 +145,7 @@ async def test_scheduler_0h_setzt_komponenten_kwh_auf_none(db) -> None:
         "backend.services.sensor_snapshot_service.get_daily_counter_deltas_by_inv",
         new=AsyncMock(return_value={}),
     ):
-        result = await aggregate_day(anlage, gestern, db, datenquelle="scheduler")
+        result = await aggregate_day(anlage, gestern, db, source=Source.SCHEDULER)
 
     assert result is not None
     # Scheduler bewahrt NICHT — leer ist hier die ehrliche Antwort
@@ -183,7 +184,7 @@ async def test_heute_ueberspringt_boundary_diff(db) -> None:
         "backend.services.sensor_snapshot_service.get_daily_counter_deltas_by_inv",
         new=AsyncMock(return_value={}),
     ):
-        result = await aggregate_day(anlage, heute, db, datenquelle="scheduler")
+        result = await aggregate_day(anlage, heute, db, source=Source.SCHEDULER)
 
     assert result is not None
     # Boundary-Diff darf für heute NICHT aufgerufen worden sein

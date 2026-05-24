@@ -27,6 +27,7 @@ from backend.services.energie_profil._provenance_helpers import (
     seed_tep_provenance,
     seed_tz_provenance,
 )
+from backend.services.energie_profil.source import Source
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +55,8 @@ async def aggregate_day(
     anlage: Anlage,
     datum: date,
     db: AsyncSession,
-    datenquelle: str = "scheduler",
+    *,
+    source: Source,
 ) -> Optional[TagesZusammenfassung]:
     """
     Aggregiert Energiedaten eines Tages und speichert sie persistent.
@@ -69,7 +71,11 @@ async def aggregate_day(
         anlage: Die Anlage
         datum: Tag für den aggregiert wird
         db: DB-Session
-        datenquelle: "scheduler", "monatsabschluss", "manuell"
+        source: Trigger-Quelle dieses Aufrufs (Source-Enum, v3.34.0 Phase A).
+            Steuert: (a) ``datenquelle``-Spaltenwert, (b) Provenance-Writer-
+            Suffix, (c) Preserve-Logik bei manueller Reaggregation. Pflicht-
+            Keyword-Parameter — kein Default, alle Aufrufer setzen ihn
+            explizit (Audit §8.12, Plan v3.34 §3 Phase A E4).
 
     Returns:
         TagesZusammenfassung oder None bei Fehler
@@ -86,7 +92,7 @@ async def aggregate_day(
     # Provenance-Writer codiert die Trigger-Quelle (Scheduler / Monatsabschluss /
     # manuelles Reaggregate). Source bleibt einheitlich `auto:monatsabschluss`
     # (Stufe 3) — siehe seed_tz_provenance / seed_tep_provenance.
-    auto_writer = f"energieprofil:{datenquelle}"
+    auto_writer = source.to_writer()
 
     # Sensor-Mapping prüfen
     sensor_mapping = anlage.sensor_mapping or {}
@@ -568,17 +574,31 @@ async def aggregate_day(
         strahlung_summe_wh_m2=round(strahlung_summe, 0) if strahlung_summe > 0 else None,
         performance_ratio=performance_ratio,
         stunden_verfuegbar=stunden_count,
-        datenquelle=datenquelle,
+        datenquelle=source.to_db_string(),
         boersenpreis_avg_cent=boersenpreis_avg,
         boersenpreis_min_cent=boersenpreis_min,
         negative_preis_stunden=neg_stunden,
         einspeisung_neg_preis_kwh=einsp_neg_kwh,
+        # Preserve-Logik nur bei manueller Reaggregation — Pattern-Adaption
+        # v3.32.4 (#290, Audit §4.2). Ursprung: Monatsdaten-Kontext, wo
+        # manuell editierte Werte vor Scheduler-Überschreibung geschützt
+        # werden. In TZ gibt es keine manuelle Werteingabe; „manuell"
+        # bedeutet hier „Werkbank-Trigger" (Source.MANUAL_REPAIR). Der Schutz
+        # greift, weil ein versehentlicher Werkbank-Klick bei nicht
+        # erreichbarem HA-LTS + inkonsistenten Snapshots sonst korrekte Werte
+        # mit None überschriebe. Der Scheduler ist absichtlich nicht
+        # geschützt: ein legitim leerer Tag (Sensor-Ausfall, Offline-Phase)
+        # soll nicht ewig die alte Wahrheit weitertragen, Selbst-Heilung
+        # gilt nur dort. Asymmetrie ist bewusst, aber adaptiert — nicht aus
+        # eigenständigem TZ-Vorfall begründet. Phase B / spätere Etappe
+        # könnte prüfen, ob die Adaption im TZ-Kontext weiterhin gerechtfertigt
+        # ist oder ob Snapshot-Self-Healing den Schutz heute überflüssig macht.
         komponenten_kwh=(
             {k: round(v, 2) for k, v in komponenten_summen.items()}
             if komponenten_summen
             else (
                 preserved_komponenten_kwh
-                if datenquelle == "manuell"
+                if source.is_manual_repair()
                 else None
             )
         ),
@@ -586,7 +606,7 @@ async def aggregate_day(
             komponenten_starts
             or (
                 preserved_komponenten_starts
-                if datenquelle == "manuell"
+                if source.is_manual_repair()
                 else None
             )
         ),

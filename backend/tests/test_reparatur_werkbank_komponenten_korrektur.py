@@ -1,13 +1,13 @@
 """
 Regression #290 v3.33.0: Reparatur-Werkbank korrigiert `komponenten_kwh`.
 
-In v3.32.4 wurde `aggregate_day(datenquelle="manuell")` als Symptompatch
-generell vom Boundary-Diff ausgeschlossen — wegen des damals buggy
-LTS-Aggregators. Mit dem strukturellen Fix in v3.33.0
-([komponenten_beitraege.py](../services/snapshot/komponenten_beitraege.py))
+In v3.32.4 wurde `aggregate_day(datenquelle="manuell")` (heute
+`source=Source.MANUAL_REPAIR`) als Symptompatch generell vom Boundary-Diff
+ausgeschlossen — wegen des damals buggy LTS-Aggregators. Mit dem strukturellen
+Fix in v3.33.0 ([komponenten_beitraege.py](../services/snapshot/komponenten_beitraege.py))
 liefert Boundary-Diff jetzt korrekte Per-Typ-Werte. Daher:
 
-- Bei `datenquelle="manuell"` MUSS Boundary-Diff laufen (sonst Reparatur
+- Bei `source=Source.MANUAL_REPAIR` MUSS Boundary-Diff laufen (sonst Reparatur
   unwirksam für die einzigen Werte, die der User reparieren wollte).
 - Bei `datum >= today` BLEIBT der Skip — Self-Healing kann hier den
   AKTUELLEN Counter-Stand statt einen Tagesgrenz-Wert liefern.
@@ -25,6 +25,7 @@ import pytest
 from backend.models.anlage import Anlage
 from backend.models.mqtt_energy_snapshot import MqttEnergySnapshot
 from backend.models.tages_energie_profil import TagesZusammenfassung
+from backend.services.energie_profil.source import Source
 
 
 async def _mqtt_anchor(db, anlage_id: int, datum: date) -> None:
@@ -80,7 +81,7 @@ async def test_manuell_aktualisiert_komponenten_kwh_aus_boundary(db) -> None:
         "backend.services.sensor_snapshot_service.get_daily_counter_deltas_by_inv",
         new=AsyncMock(return_value={}),
     ):
-        result = await aggregate_day(anlage, gestern, db, datenquelle="manuell")
+        result = await aggregate_day(anlage, gestern, db, source=Source.MANUAL_REPAIR)
 
     assert result is not None
     # KORREKTUR: alte Bug-Werte wurden durch korrekte Boundary-Werte ersetzt
@@ -128,7 +129,7 @@ async def test_manuell_0h_und_leerer_boundary_behaelt_alte_werte(db) -> None:
         "backend.services.sensor_snapshot_service.get_daily_counter_deltas_by_inv",
         new=AsyncMock(return_value={}),
     ):
-        result = await aggregate_day(anlage, gestern, db, datenquelle="manuell")
+        result = await aggregate_day(anlage, gestern, db, source=Source.MANUAL_REPAIR)
 
     assert result is not None
     # Preserve: alte Werte bleiben, weil beide Quellen leer waren
@@ -168,7 +169,7 @@ async def test_manuell_heute_ueberspringt_boundary_diff_weiterhin(db) -> None:
         "backend.services.sensor_snapshot_service.get_daily_counter_deltas_by_inv",
         new=AsyncMock(return_value={}),
     ):
-        result = await aggregate_day(anlage, heute, db, datenquelle="manuell")
+        result = await aggregate_day(anlage, heute, db, source=Source.MANUAL_REPAIR)
 
     assert result is not None
     # Boundary-Diff darf für heute NICHT aufgerufen worden sein (Bug B bleibt)

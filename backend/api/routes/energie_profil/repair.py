@@ -147,7 +147,7 @@ async def reaggregate_tag(
     Wrapper über RepairOperationType.REAGGREGATE_DAY. Verhalten identisch
     zur Vor-3d-Direkt-Variante: mit_resnap=True (Default) zieht vorher
     Snapshots aus HA-LTS für Vortag-23:00 + Folgetag-00:00 Boundaries,
-    danach `aggregate_day(datenquelle="manuell")`.
+    danach `aggregate_day(source=Source.MANUAL_REPAIR)`.
 
     Response enthält die PV-Tagessumme vor und nach dem Lauf, damit das
     Frontend dem Anwender konkret zeigen kann, was sich geändert hat
