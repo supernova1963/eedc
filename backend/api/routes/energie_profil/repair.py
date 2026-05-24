@@ -26,7 +26,7 @@ from datetime import date
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.api.deps import get_db
@@ -161,13 +161,50 @@ async def reaggregate_tag(
         params={"datum": datum.isoformat(), "mit_resnap": mit_resnap},
     )
     pv_kwh_neu = await _pv_tagessumme(db, anlage_id, datum)
+    stunden_mit_messdaten = await _stunden_mit_messdaten(db, anlage_id, datum)
     return {
         "status": "ok",
         "datum": summary.get("datum", datum.isoformat()),
         "stunden_verfuegbar": summary.get("stunden_verfuegbar"),
+        "stunden_mit_messdaten": stunden_mit_messdaten,
         "pv_kwh_alt": pv_kwh_alt,
         "pv_kwh_neu": pv_kwh_neu,
     }
+
+
+async def _stunden_mit_messdaten(
+    db: AsyncSession, anlage_id: int, datum: date,
+) -> int:
+    """Zählt TEP-Stunden des Tages mit mindestens einem nicht-NULL-Leistungswert.
+
+    Im Orchestrator-Refactor 2026-05-10 (Commit 17db2350) ging das Feld
+    aus dem alten /reaggregate-tag-Endpoint verloren — das Frontend
+    (`ReaggregatePreviewModal` → `handlePreviewApplied`) wertet `> 0` aus
+    und zeigte dadurch dauerhaft die „0/24 Stunden mit Messdaten —
+    keine Snapshots in der DB und HA-Statistics nicht erreichbar"-Warnung,
+    auch wenn die Reaggregation tatsächlich erfolgreich war (#290 detLAN).
+
+    `stunden_verfuegbar` aus `TagesZusammenfassung` zählt alle 24 Slots
+    auch wenn alle Werte NULL sind (synthetisches MQTT-Energy-Setup) —
+    dieser Wert hier ist der ehrlichere Erfolgsindikator.
+    """
+    from sqlalchemy import or_
+    result = await db.execute(
+        select(func.count(TagesEnergieProfil.id)).where(
+            TagesEnergieProfil.anlage_id == anlage_id,
+            TagesEnergieProfil.datum == datum,
+            or_(
+                TagesEnergieProfil.pv_kw.is_not(None),
+                TagesEnergieProfil.verbrauch_kw.is_not(None),
+                TagesEnergieProfil.einspeisung_kw.is_not(None),
+                TagesEnergieProfil.netzbezug_kw.is_not(None),
+                TagesEnergieProfil.batterie_kw.is_not(None),
+                TagesEnergieProfil.waermepumpe_kw.is_not(None),
+                TagesEnergieProfil.wallbox_kw.is_not(None),
+            ),
+        )
+    )
+    return int(result.scalar_one() or 0)
 
 
 async def _pv_tagessumme(

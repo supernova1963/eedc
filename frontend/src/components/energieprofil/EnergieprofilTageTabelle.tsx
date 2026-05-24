@@ -171,6 +171,23 @@ function formatValue(val: number | null, format: ColumnConfig['format']): string
   }
 }
 
+// Einheits-Label für den Spalten-Header (#290 detLAN). Spalten mit
+// werteigener Einheit (percent/temp/ct/stunden) bekommen keine Header-
+// Einheit; für kw/kwh sowie die nicht-eindeutigen Zähler-/Zyklen-Spalten
+// macht der Header die Einheit explizit.
+function unitForFormat(format: ColumnConfig['format'], key: string): string {
+  switch (format) {
+    case 'kwh':     return 'kWh'
+    case 'kw':      return 'kW'
+    case 'zyklen':  return 'Zyklen'
+    case 'int':
+      if (key === 'wp_starts') return 'Starts'
+      if (key === 'neg_preis_stunden') return 'h'
+      return ''
+    default:        return ''
+  }
+}
+
 function monatsBereich(jahr: number, monat: number): { von: string; bis: string } {
   const erster = new Date(jahr, monat - 1, 1)
   const letzter = new Date(jahr, monat, 0)
@@ -437,9 +454,14 @@ function DataTable({
         <TableHead>
           <TableRow>
             <TableHeader>Datum</TableHeader>
-            {activeColumns.map((col) => (
-              <TableHeader key={col.key} className="text-right">{col.label}</TableHeader>
-            ))}
+            {activeColumns.map((col) => {
+              const unit = unitForFormat(col.format, col.key)
+              return (
+                <TableHeader key={col.key} className="text-right">
+                  {col.label}{unit && <span className="text-gray-400 dark:text-gray-500 font-normal"> ({unit})</span>}
+                </TableHeader>
+              )
+            })}
             {showReaggregate && (
               <TableHeader className="text-right w-10"><span className="sr-only">Aktionen</span></TableHeader>
             )}

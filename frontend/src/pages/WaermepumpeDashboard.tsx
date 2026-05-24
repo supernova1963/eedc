@@ -356,7 +356,7 @@ function WaermepumpeBlock({ dashboard, ...selectorProps }: { dashboard: Waermepu
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
           {z.kompressor_starts_gesamt != null && z.kompressor_starts_gesamt > 0 && (
             <KPICard
-              title="Kompressor-Starts"
+              title="Kompressor-Starts (Lebensdauer)"
               value={z.kompressor_starts_gesamt.toLocaleString('de-DE')}
               icon={Power}
               color="gray"
@@ -368,7 +368,7 @@ function WaermepumpeBlock({ dashboard, ...selectorProps }: { dashboard: Waermepu
           )}
           {z.betriebsstunden_gesamt != null && z.betriebsstunden_gesamt > 0 && (
             <KPICard
-              title="Betriebsstunden"
+              title="Betriebsstunden (Lebensdauer)"
               value={z.betriebsstunden_gesamt.toLocaleString('de-DE', { maximumFractionDigits: 0 })}
               unit="h"
               icon={Timer}

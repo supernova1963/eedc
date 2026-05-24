@@ -258,6 +258,19 @@ async def aggregate_day(
     )
     existing_tz_row = existing_tz.scalar_one_or_none()
     preserved_prognose = {}
+    # #290 detLAN: bei manueller Reaggregation ohne Stunden-Daten retten wir
+    # zusätzlich Komponenten-Aggregate, damit bestehende gute Werte nicht
+    # durch eine evtl. falsche Snapshot-Boundary-Diff überschrieben werden
+    # (Beispiel: HA-LTS nicht erreichbar + alte Snapshots in DB inkonsistent
+    # → Boundary-Diff liefert Müll, Σ-Hourly liefert 0).
+    preserved_komponenten_kwh = (
+        dict(existing_tz_row.komponenten_kwh)
+        if existing_tz_row and existing_tz_row.komponenten_kwh else None
+    )
+    preserved_komponenten_starts = (
+        dict(existing_tz_row.komponenten_starts)
+        if existing_tz_row and existing_tz_row.komponenten_starts else None
+    )
     if existing_tz_row:
         for field in _PROGNOSE_FELDER_RETTEN:
             val = getattr(existing_tz_row, field, None)
@@ -476,8 +489,34 @@ async def aggregate_day(
     # Live-Σ aus der Stunden-Schleife (Riemann) bleibt nur für Keys, die
     # weder LTS noch Snapshot abdecken — z.B. WP-Suffix-Keys aus dem
     # Tagesverlauf-Service ohne separates Counter-Mapping.
+    #
+    # #290 detLAN: zwei Fälle in denen Boundary-Diff schadet:
+    #
+    # 1. **`datum == today`**: `snap[Folgetag 00:00]` existiert noch nicht.
+    #    Self-Healing fällt auf HA-history zurück und liefert den
+    #    AKTUELLEN Counter-Stand statt einen sauberen Tagesgrenz-Wert →
+    #    Drift gegen Σ-Hourly (8,5× in detLAN's Bericht).
+    #
+    # 2. **`datenquelle == "manuell"`**: User klickt "Tag neu aggregieren",
+    #    Snapshots in DB sind aber bereits korrupt + HA-LTS nicht erreichbar
+    #    (detLAN 21.5: 6,3 → 52,8 nach Klick). Σ-Hourly aus dem Live-Pfad
+    #    ist hier der verlässlichere Indikator — wenn der leer bleibt, ist
+    #    es ehrlicher, die alten Werte zu bewahren (siehe preserve-Logik
+    #    unten), statt selbst-geheilte Boundary-Werte zu schreiben.
+    #
+    # Für beide Fälle: Boundary-Diff überspringen, Σ-Hourly behalten.
     boundary_kwh: dict[str, float] = {}
-    if kwh_source_label == "external:ha_statistics:hourly":
+    if datum >= date.today():
+        logger.debug(
+            f"Anlage {anlage.id}, {datum}: Boundary-Diff übersprungen für "
+            f"laufenden Tag — komponenten_kwh aus Σ-Hourly (#290 Bug B)."
+        )
+    elif datenquelle == "manuell":
+        logger.debug(
+            f"Anlage {anlage.id}, {datum}: Boundary-Diff übersprungen für "
+            f"manuelle Reaggregation — Σ-Hourly oder preserve (#290 Bug A)."
+        )
+    elif kwh_source_label == "external:ha_statistics:hourly":
         try:
             from backend.services.snapshot.lts_aggregator import get_komponenten_tageskwh_lts
             boundary_kwh = await get_komponenten_tageskwh_lts(
@@ -488,7 +527,7 @@ async def aggregate_day(
                 f"Anlage {anlage.id}, {datum}: Komponenten-Tagesgesamt HA-LTS "
                 f"fehlgeschlagen, Snapshot-Fallback aktiv: {type(e).__name__}: {e}"
             )
-    if not boundary_kwh:
+    if not boundary_kwh and datum < date.today() and datenquelle != "manuell":
         try:
             from backend.services.snapshot.aggregator import get_komponenten_tageskwh
             boundary_kwh = await get_komponenten_tageskwh(
@@ -541,9 +580,21 @@ async def aggregate_day(
         einspeisung_neg_preis_kwh=einsp_neg_kwh,
         komponenten_kwh=(
             {k: round(v, 2) for k, v in komponenten_summen.items()}
-            if komponenten_summen else None
+            if komponenten_summen
+            else (
+                preserved_komponenten_kwh
+                if datenquelle == "manuell"
+                else None
+            )
         ),
-        komponenten_starts=komponenten_starts or None,
+        komponenten_starts=(
+            komponenten_starts
+            or (
+                preserved_komponenten_starts
+                if datenquelle == "manuell"
+                else None
+            )
+        ),
     )
     # Gerettete Prognose-Felder wiederherstellen
     for field, val in preserved_prognose.items():

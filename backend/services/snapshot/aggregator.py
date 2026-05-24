@@ -367,7 +367,13 @@ async def get_komponenten_tageskwh(
         pv-module        → "pv_<inv_id>"            ← inv:<id>:pv_erzeugung_kwh
         balkonkraftwerk  → "bkw_<inv_id>"           ← inv:<id>:pv_erzeugung_kwh
         speicher         → "batterie_<inv_id>"      ← (ladung − entladung)_kwh
-        waermepumpe      → "waermepumpe_<inv_id>"   ← Σ stromverbrauch+heizenergie+warmwasser
+        waermepumpe      → "waermepumpe_<inv_id>"   ← stromverbrauch_kwh (bzw.
+                                                       strom_heizen + strom_warmwasser
+                                                       bei getrennte_strommessung).
+                                                       Nur elektrisch — heizenergie_kwh
+                                                       und warmwasser_kwh sind thermische
+                                                       Werte und gehören nicht in die
+                                                       Bilanz (~ Strom × COP).
         wallbox          → "wallbox_<inv_id>"       ← inv:<id>:ladung_kwh
         e-auto           → "eauto_<inv_id>"         ← ladung_kwh oder verbrauch_kwh
         sonstiges        → "sonstige_<inv_id>"      ← (erzeugung − verbrauch)_kwh

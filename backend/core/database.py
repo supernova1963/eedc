@@ -24,14 +24,18 @@ engine = create_async_engine(
 
 
 # SQLite PRAGMAs: Foreign Keys (CASCADE DELETE), WAL (concurrent reads + 1 writer)
-# und busy_timeout (zweiter Writer wartet 10s statt sofort "database is locked").
+# und busy_timeout (zweiter Writer wartet statt sofort "database is locked").
+# busy_timeout 30s als Safety-Net: die Backfill-Loops in `energie_profil/backfill.py`
+# committen seit #291 pro Tag, aber bei sehr großen Cloud-Imports oder vielen
+# parallelen Anlagen-Aggregaten bleibt etwas Schutz nötig (Vorher 10s reichten
+# bei kingcap1 nicht).
 @event.listens_for(engine.sync_engine, "connect")
 def set_sqlite_pragma(dbapi_connection, connection_record):
     """Aktiviert SQLite Foreign Keys, WAL-Journal und Busy-Timeout."""
     cursor = dbapi_connection.cursor()
     cursor.execute("PRAGMA foreign_keys=ON")
     cursor.execute("PRAGMA journal_mode=WAL")
-    cursor.execute("PRAGMA busy_timeout=10000")
+    cursor.execute("PRAGMA busy_timeout=30000")
     cursor.execute("PRAGMA synchronous=NORMAL")
     cursor.close()
 

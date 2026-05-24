@@ -75,8 +75,15 @@ async def backfill_range(
             )
             if result:
                 count += 1
+            # Per-Tag-Commit: gibt den SQLite-Writer-Lock kurz frei, damit
+            # parallele Schreiber (Monatsabschluss-Wizard, Activity-Log,
+            # MQTT-Snapshot-Jobs) nicht in busy_timeout laufen (#291).
+            # Aggregation ist idempotent (Delete+Insert pro Tag), commit
+            # ändert nichts an der semantischen Korrektheit.
+            await db.commit()
         except Exception as e:
             logger.warning(f"Backfill {current}: {type(e).__name__}: {e}")
+            await db.rollback()
         current += timedelta(days=1)
 
     if count > 0:
@@ -642,6 +649,12 @@ async def backfill_from_statistics(
             f"{stunden_count}h, PV={pv_ertrag_summe:.1f}kWh, PR={performance_ratio or '-'}"
         )
         count += 1
+        # Per-Tag-Commit: gibt den SQLite-Writer-Lock kurz frei, damit
+        # parallele Schreiber (Monatsabschluss-Wizard, Activity-Log,
+        # MQTT-Snapshot-Jobs) nicht in busy_timeout laufen (#291).
+        # HA-Stats-Backfill ist additiv und idempotent, commit ändert
+        # nichts an der semantischen Korrektheit.
+        await db.commit()
         current += timedelta(days=1)
 
     if skipped_no_data > 0:

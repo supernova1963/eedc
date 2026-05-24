@@ -52,9 +52,13 @@ async def aggregate_yesterday_all() -> dict:
                     "status": "ok" if zusammenfassung else "keine_daten",
                     "datum": gestern.isoformat(),
                 }
+                # Per-Anlage-Commit: SQLite-Writer-Lock kurz freigeben,
+                # damit parallele Schreiber (#291) nicht blockieren.
+                await db.commit()
             except Exception as e:
                 logger.error(f"Anlage {anlage.id}: Aggregation fehlgeschlagen: {type(e).__name__}: {e}")
                 results[anlage.id] = {"status": "fehler", "error": str(e)}
+                await db.rollback()
 
         # Retention-Cleanup: TagesEnergieProfil älter als 2 Jahre löschen
         cutoff = date.today() - timedelta(days=730)
@@ -106,8 +110,11 @@ async def aggregate_today_all() -> dict:
                     "datum": heute.isoformat(),
                     "bis_stunde": letzte_abgeschlossene_stunde,
                 }
+                # Per-Anlage-Commit: SQLite-Writer-Lock kurz freigeben (#291).
+                await db.commit()
             except Exception as e:
                 logger.debug(f"Anlage {anlage.id}: Heute-Aggregation: {type(e).__name__}: {e}")
                 results[anlage.id] = {"status": "fehler", "error": str(e)}
+                await db.rollback()
 
     return results

@@ -47,6 +47,36 @@ router = APIRouter()
 _WIZARD_WRITER = "monatsabschluss_wizard"
 
 
+def _ist_lock_fehler(exc: Exception) -> bool:
+    """Erkennt SQLite `database is locked`-Fehler unabhängig von Wrapping.
+
+    SQLAlchemy wickelt `sqlite3.OperationalError` in `OperationalError`;
+    der Lock-Hinweis liegt als String im `__cause__`/`orig`-Attribut oder
+    direkt im `str(exc)`. Wir matchen tolerant.
+    """
+    msg = (str(exc) + " " + str(getattr(exc, "orig", ""))).lower()
+    return "database is locked" in msg
+
+
+def _wizard_save_fehler(exc: Exception, kontext: str) -> HTTPException:
+    """Übersetzt Save-Fehler in eine User-freundliche HTTPException.
+
+    Bei SQLite-Lock (parallele Aggregator-/Snapshot-Schreiber, siehe #291)
+    gibt es 503 + Retry-Hinweis statt SQL-Dump. Sonst 500 wie bisher.
+    """
+    if _ist_lock_fehler(exc):
+        return HTTPException(
+            status_code=503,
+            detail=(
+                "Datenbank ist gerade durch eine Hintergrund-Aggregation belegt. "
+                "Bitte in 10-20 Sekunden erneut speichern. "
+                "(Tipp: Wenn gerade ein Cloud-Import oder Vollbackfill läuft, "
+                "kurz warten, bis er fertig ist.)"
+            ),
+        )
+    return HTTPException(status_code=500, detail=f"{kontext}: {exc}")
+
+
 # =============================================================================
 # Pydantic-Models — wizard-spezifisch
 # =============================================================================
@@ -230,7 +260,7 @@ async def save_monatsabschluss(
             await db.flush()  # ID benötigt für Provenance-Audit-Log-Eintrag
         except Exception as e:
             logger.error(f"Monatsabschluss flush Monatsdaten fehlgeschlagen: {type(e).__name__}: {e}")
-            raise HTTPException(status_code=500, detail=f"Fehler beim Speichern der Monatsdaten: {e}")
+            raise _wizard_save_fehler(e, "Fehler beim Speichern der Monatsdaten")
 
     # Basis-Felder generisch aus Registry setzen — durch den Provenance-Resolver,
     # damit manuelle Wizard-Eingaben gegen frühere Cloud/HA-Stats/legacy-Werte
@@ -253,7 +283,7 @@ async def save_monatsabschluss(
         await db.flush()
     except Exception as e:
         logger.error(f"Monatsabschluss flush Monatsdaten fehlgeschlagen: {type(e).__name__}: {e}")
-        raise HTTPException(status_code=500, detail=f"Fehler beim Speichern der Monatsdaten: {e}")
+        raise _wizard_save_fehler(e, "Fehler beim Speichern der Monatsdaten")
     monatsdaten_id = monatsdaten.id
 
     # Investition-Monatsdaten speichern
@@ -282,9 +312,8 @@ async def save_monatsabschluss(
                 await db.flush()  # ID für Provenance-Audit-Log-Eintrag
             except Exception as e:
                 logger.error(f"Monatsabschluss flush Investition {inv_werte.investition_id} fehlgeschlagen: {type(e).__name__}: {e}")
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"Fehler beim Speichern der Investition {inv_werte.investition_id}: {e}"
+                raise _wizard_save_fehler(
+                    e, f"Fehler beim Speichern der Investition {inv_werte.investition_id}"
                 )
 
         # Felder in verbrauch_daten via Resolver — pro Sub-Key, damit ein
@@ -356,9 +385,8 @@ async def save_monatsabschluss(
             await db.flush()
         except Exception as e:
             logger.error(f"Monatsabschluss flush Investition {inv_werte.investition_id} fehlgeschlagen: {type(e).__name__}: {e}")
-            raise HTTPException(
-                status_code=500,
-                detail=f"Fehler beim Speichern der Investition {inv_werte.investition_id}: {e}"
+            raise _wizard_save_fehler(
+                e, f"Fehler beim Speichern der Investition {inv_werte.investition_id}"
             )
         inv_ids.append(imd.id)
 
@@ -366,7 +394,7 @@ async def save_monatsabschluss(
         await db.commit()
     except Exception as e:
         logger.error(f"Monatsabschluss commit fehlgeschlagen: {type(e).__name__}: {e}")
-        raise HTTPException(status_code=500, detail=f"Fehler beim Commit: {e}")
+        raise _wizard_save_fehler(e, "Fehler beim Commit")
 
     # MQTT, Energie-Profil Rollup und Community Auto-Share im Hintergrund
     background_tasks.add_task(
