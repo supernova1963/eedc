@@ -634,6 +634,17 @@ async def _run_data_migrations() -> None:
             migrate_etappe_4_reset_vollbackfill,
         )
 
+        # v3.33.0 (Issue #290): Historische LTS-komponenten_kwh-Drift
+        # bereinigen. MUSS nach dem Helper-basierten Aggregator-Fix
+        # (Schritt 1–3) laufen, sonst reaggregiert sie mit dem alten Bug.
+        from backend.services.migrations.migrate_v3_33_0_lts_komponenten_kwh import (
+            migrate_lts_komponenten_kwh_bug,
+        )
+        await _apply_once(
+            "v3_33_0_lts_komponenten_kwh_bereinigung",
+            migrate_lts_komponenten_kwh_bug,
+        )
+
 
 async def init_db():
     """

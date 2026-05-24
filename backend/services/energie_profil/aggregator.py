@@ -490,31 +490,26 @@ async def aggregate_day(
     # weder LTS noch Snapshot abdecken — z.B. WP-Suffix-Keys aus dem
     # Tagesverlauf-Service ohne separates Counter-Mapping.
     #
-    # #290 detLAN: zwei Fälle in denen Boundary-Diff schadet:
+    # #290 Bug B (strukturell): bei `datum >= today` existiert
+    # `snap[Folgetag 00:00]` noch nicht. Self-Healing fällt auf HA-history
+    # zurück und liefert den AKTUELLEN Counter-Stand statt einen sauberen
+    # Tagesgrenz-Wert → Drift gegen Σ-Hourly. Skip bleibt.
     #
-    # 1. **`datum == today`**: `snap[Folgetag 00:00]` existiert noch nicht.
-    #    Self-Healing fällt auf HA-history zurück und liefert den
-    #    AKTUELLEN Counter-Stand statt einen sauberen Tagesgrenz-Wert →
-    #    Drift gegen Σ-Hourly (8,5× in detLAN's Bericht).
-    #
-    # 2. **`datenquelle == "manuell"`**: User klickt "Tag neu aggregieren",
-    #    Snapshots in DB sind aber bereits korrupt + HA-LTS nicht erreichbar
-    #    (detLAN 21.5: 6,3 → 52,8 nach Klick). Σ-Hourly aus dem Live-Pfad
-    #    ist hier der verlässlichere Indikator — wenn der leer bleibt, ist
-    #    es ehrlicher, die alten Werte zu bewahren (siehe preserve-Logik
-    #    unten), statt selbst-geheilte Boundary-Werte zu schreiben.
-    #
-    # Für beide Fälle: Boundary-Diff überspringen, Σ-Hourly behalten.
+    # #290 Bug A (Symptompatch v3.32.4, mit v3.33.0 OBSOLET): der frühere
+    # generische Skip bei `datenquelle == "manuell"` war eine Notbremse
+    # gegen den LTS-Aggregator-Drift — Boundary-Diff lieferte buggy Werte
+    # (alle Sensoren einer Investition aufsummiert). Mit dem strukturellen
+    # Fix in `services.snapshot.komponenten_beitraege` liefert Boundary-Diff
+    # jetzt die korrekten Per-Typ-Werte. Skip entfernt, damit die
+    # Reparatur-Werkbank ihren eigentlichen Zweck erfüllt: User klickt
+    # "Tag neu aggregieren" → komponenten_kwh wird aktualisiert.
+    # Schutz für die seltene Konstellation "HA-LTS weg + Snapshots korrupt"
+    # bleibt über die preserve-Logik unten (greift wenn boundary leer).
     boundary_kwh: dict[str, float] = {}
     if datum >= date.today():
         logger.debug(
             f"Anlage {anlage.id}, {datum}: Boundary-Diff übersprungen für "
             f"laufenden Tag — komponenten_kwh aus Σ-Hourly (#290 Bug B)."
-        )
-    elif datenquelle == "manuell":
-        logger.debug(
-            f"Anlage {anlage.id}, {datum}: Boundary-Diff übersprungen für "
-            f"manuelle Reaggregation — Σ-Hourly oder preserve (#290 Bug A)."
         )
     elif kwh_source_label == "external:ha_statistics:hourly":
         try:
@@ -527,7 +522,7 @@ async def aggregate_day(
                 f"Anlage {anlage.id}, {datum}: Komponenten-Tagesgesamt HA-LTS "
                 f"fehlgeschlagen, Snapshot-Fallback aktiv: {type(e).__name__}: {e}"
             )
-    if not boundary_kwh and datum < date.today() and datenquelle != "manuell":
+    if not boundary_kwh and datum < date.today():
         try:
             from backend.services.snapshot.aggregator import get_komponenten_tageskwh
             boundary_kwh = await get_komponenten_tageskwh(
@@ -614,11 +609,15 @@ async def aggregate_day(
 
     # Pflicht-Invariante (ADR-001 Berechnungs-Layer):
     # Σ pv_kw aus der Stunden-Schleife muss mit Σ PV+BKW aus dem
-    # Tages-JSON übereinstimmen. Verletzung deutet auf einen parallelen
-    # Schreibpfad mit Schema-Mismatch (BKW-Bug-Klasse 2026-05-19).
+    # Tages-JSON übereinstimmen. Seit v3.33.0 (Issue #290) auf alle
+    # Komponenten-Kategorien erweitert (WP, Wallbox+E-Auto, Batterie,
+    # Basis-Einspeisung/-Netzbezug) — Drift bleibt nicht mehr unentdeckt.
     # Wir loggen Warning + speichern trotzdem — Drift soll sichtbar werden,
     # aber kein Tag soll wegen einer Invariante verloren gehen.
-    from backend.core.berechnungen import pruefe_tep_tz_konsistenz
+    from backend.core.berechnungen import (
+        pruefe_tep_tz_komponenten_konsistenz,
+        pruefe_tep_tz_konsistenz,
+    )
 
     # TagesEnergieProfil-Rows aus der aktuellen Session ziehen (db.add wurde
     # in der Stunden-Schleife aufgerufen, db.flush hat sie persistiert).
@@ -639,6 +638,13 @@ async def aggregate_day(
             f"Anlage {anlage.id}, {datum}: Berechnungs-Layer-Invariante "
             f"verletzt — {invariante}"
         )
+    for bericht in pruefe_tep_tz_komponenten_konsistenz(
+        tep_rows, zusammenfassung.komponenten_kwh,
+    ):
+        if not bericht.konsistent:
+            logger.warning(
+                f"Anlage {anlage.id}, {datum}: Komponenten-Drift — {bericht}"
+            )
 
     logger.info(
         f"Anlage {anlage.id}, {datum}: {stunden_count}h aggregiert, "

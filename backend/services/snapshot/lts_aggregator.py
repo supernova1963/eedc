@@ -31,6 +31,10 @@ from backend.services.snapshot.keys import (
     BASIS_ZAEHLER_FELDER,
     _categorize_counter,
 )
+from backend.services.snapshot.komponenten_beitraege import (
+    basis_beitraege,
+    investition_beitraege,
+)
 from backend.services.snapshot.plausibility import (
     cap_pv_einspeisung_stunde,
     schwelle_pv_einspeisung_stunde_kwh,
@@ -221,18 +225,18 @@ async def get_komponenten_tageskwh_lts(
 
     sensor_mapping = anlage.sensor_mapping or {}
 
-    # Per-Sensor-Mapping: (entity_id, komponenten_key, vorzeichen)
-    # vorzeichen +1 = Beitrag positiv (Erzeugung, Verbrauch, Ladung)
-    # vorzeichen -1 = Beitrag negativ (Entladung bei Speicher)
-    eintraege: list[tuple[str, str, int]] = []
+    # Pro Komponenten-Beitrag: (sensor_id, KomponentenBeitrag, mapping_quelle)
+    # mapping_quelle: das Per-Investition-/Per-Basis-Dict, aus dem die
+    # sensor_id für ein Feld gezogen wird.
+    eintraege: list[tuple[str, object, dict]] = []
 
-    basis = sensor_mapping.get("basis", {}) or {}
-    for feld in ("einspeisung", "netzbezug"):
-        cfg = basis.get(feld)
-        if isinstance(cfg, dict) and cfg.get("strategie") == "sensor":
+    basis_map = sensor_mapping.get("basis", {}) or {}
+    for b in basis_beitraege(sensor_mapping):
+        cfg = basis_map.get(b.feld)
+        if isinstance(cfg, dict):
             eid = cfg.get("sensor_id")
             if eid:
-                eintraege.append((eid, feld, +1))
+                eintraege.append((eid, b, basis_map))
 
     investitionen_map = sensor_mapping.get("investitionen", {}) or {}
     for inv_id_str, inv_data in investitionen_map.items():
@@ -241,47 +245,18 @@ async def get_komponenten_tageskwh_lts(
         inv = investitionen_by_id.get(inv_id_str) or investitionen_by_id.get(str(inv_id_str))
         if inv is None:
             continue
-
-        if inv.typ == "pv-module":
-            key = f"pv_{inv_id_str}"
-        elif inv.typ == "balkonkraftwerk":
-            key = f"bkw_{inv_id_str}"
-        elif inv.typ == "speicher":
-            key = f"batterie_{inv_id_str}"
-        elif inv.typ == "waermepumpe":
-            key = f"waermepumpe_{inv_id_str}"
-        elif inv.typ == "wallbox":
-            key = f"wallbox_{inv_id_str}"
-        elif inv.typ == "e-auto":
-            key = f"eauto_{inv_id_str}"
-        elif inv.typ == "sonstiges":
-            key = f"sonstige_{inv_id_str}"
-        else:
-            continue
-
         felder = inv_data.get("felder", {}) or {}
-        for feld, config in felder.items():
-            if not isinstance(config, dict) or config.get("strategie") != "sensor":
-                continue
-            eid = config.get("sensor_id")
-            if not eid:
-                continue
-
-            # Vorzeichen-Logik je Investitionstyp + Feld
-            vorzeichen = +1
-            if inv.typ == "speicher" and feld == "entladung_kwh":
-                vorzeichen = -1
-            elif inv.typ == "sonstiges":
-                kategorie = (inv.parameter or {}).get("kategorie", "verbraucher") if isinstance(inv.parameter, dict) else "verbraucher"
-                if feld == "verbrauch_kwh" and kategorie != "erzeuger":
-                    vorzeichen = -1
-
-            eintraege.append((eid, key, vorzeichen))
+        for b in investition_beitraege(inv, inv_data):
+            cfg = felder.get(b.feld)
+            if isinstance(cfg, dict):
+                eid = cfg.get("sensor_id")
+                if eid:
+                    eintraege.append((eid, b, felder))
 
     if not eintraege:
         return {}
 
-    sensor_ids = list({eid for eid, _key, _vz in eintraege})
+    sensor_ids = list({eid for eid, _b, _src in eintraege})
     deltas = ha_svc.get_hourly_kwh_deltas_for_day(sensor_ids, datum)
 
     if not deltas:
@@ -301,13 +276,20 @@ async def get_komponenten_tageskwh_lts(
         if any_valid:
             sensor_tagessumme[eid] = s
 
-    # Aggregation pro komponenten_key (mit Vorzeichen)
+    # Either-Or-Fallback: pro fallback_gruppe nur den ersten Beitrag mit
+    # verfügbarem Sensor-Wert übernehmen (E-Auto ladung_kwh vs verbrauch_kwh,
+    # Sonstiges primary vs secondary).
     result: dict[str, float] = {}
-    for eid, key, vz in eintraege:
+    gruppe_genommen: set[str] = set()
+    for eid, b, _src in eintraege:
+        if b.fallback_gruppe and b.fallback_gruppe in gruppe_genommen:
+            continue
         s = sensor_tagessumme.get(eid)
         if s is None:
             continue
-        result[key] = result.get(key, 0.0) + vz * s
+        if b.fallback_gruppe:
+            gruppe_genommen.add(b.fallback_gruppe)
+        result[b.target_key] = result.get(b.target_key, 0.0) + b.vorzeichen * s
 
     # Negative Tagessummen (z. B. Speicher netto entladen) bleiben negativ;
     # die Snapshot-Variante macht das gleichermaßen. Konsumenten können den

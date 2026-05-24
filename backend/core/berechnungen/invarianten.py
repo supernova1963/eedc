@@ -19,7 +19,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable, Optional
 
-from backend.core.berechnungen.energie import summe_pv_bkw_kwh
+from backend.core.berechnungen.energie import (
+    summe_batterie_netto_kwh,
+    summe_pv_bkw_kwh,
+    summe_waermepumpe_kwh,
+    summe_wallbox_eauto_kwh,
+    wert_basis_kwh,
+)
 
 
 @dataclass
@@ -100,6 +106,130 @@ def assert_tep_tz_konsistent(
     bericht = pruefe_tep_tz_konsistenz(tep_rows, tz_komponenten_kwh, toleranz_kwh)
     if not bericht.konsistent:
         raise AssertionError(str(bericht))
+
+
+# ─── Erweiterte Per-Kategorie-Invariante (v3.33.0, Issue #290) ─────────────
+
+
+def _summe_tep_field(tep_rows: Iterable, feld: str) -> tuple[float, bool]:
+    """Σ über alle Stunden für ein TEP-Feld. Liefert (summe, any_value).
+
+    `any_value=False` heißt: nicht ein einziger Stundenwert war gesetzt —
+    Drift-Check wird in dem Fall nicht angewandt (Kategorie nicht gemappt).
+    """
+    summe = 0.0
+    any_value = False
+    for row in tep_rows:
+        v = getattr(row, feld, None)
+        if v is not None:
+            summe += v
+            any_value = True
+    return summe, any_value
+
+
+def pruefe_tep_tz_komponenten_konsistenz(
+    tep_rows: Iterable,
+    tz_komponenten_kwh: Optional[dict],
+    toleranz_kwh: float = 0.5,
+) -> list[KonsistenzBericht]:
+    """Per-Kategorie-Drift-Check zwischen Stunden- und Tages-Pfad.
+
+    Erweitert `pruefe_tep_tz_konsistenz` (PV+BKW) auf alle Kategorien, die
+    sowohl als TEP-Spalte als auch als komponenten_kwh-Präfix vorliegen:
+
+    - PV / BKW           — Σ TEP.pv_kw vs Σ komp_kwh[pv_*, bkw_*]
+    - Wärmepumpe         — Σ TEP.waermepumpe_kw vs Σ komp_kwh[waermepumpe_*]
+    - Wallbox + E-Auto   — Σ TEP.wallbox_kw vs Σ komp_kwh[wallbox_*, eauto_*]
+    - Batterie (netto)   — Σ TEP.batterie_kw vs Σ komp_kwh[batterie_*]
+    - Einspeisung        — Σ TEP.einspeisung_kw vs komp_kwh[einspeisung]
+    - Netzbezug          — Σ TEP.netzbezug_kw vs komp_kwh[netzbezug]
+
+    Eine Kategorie wird übersprungen wenn weder TEP-Werte noch TZ-Werte
+    vorliegen — sonst würde jede nicht-gemappte Kategorie als "konsistent
+    bei 0/0" durchlaufen und die Bericht-Liste aufblähen.
+
+    Hintergrund (Issue #290): bis v3.33.0 hat die LTS-Variante des
+    Aggregators alle gemappten Sensoren in einen Komponenten-Key summiert
+    (Faktor 2–10× Drift). Die Snapshot-Variante hatte die Per-Typ-Filter
+    korrekt. Diese Invariante macht künftige Asymmetrien zwischen den
+    Pfaden sofort sichtbar.
+    """
+    tep_rows = list(tep_rows)  # für Mehrfach-Iteration
+    berichte: list[KonsistenzBericht] = []
+
+    kategorien: list[tuple[str, str, callable]] = [
+        ("PV+BKW", "pv_kw", summe_pv_bkw_kwh),
+        ("Wärmepumpe", "waermepumpe_kw", summe_waermepumpe_kwh),
+        ("Wallbox+E-Auto", "wallbox_kw", summe_wallbox_eauto_kwh),
+        ("Batterie (netto)", "batterie_kw", summe_batterie_netto_kwh),
+    ]
+
+    for label, tep_feld, summe_fn in kategorien:
+        summe_tep, any_tep = _summe_tep_field(tep_rows, tep_feld)
+        summe_tz = summe_fn(tz_komponenten_kwh)
+        # Nur prüfen wenn mindestens eine Seite einen Wert liefert
+        if not any_tep and abs(summe_tz) < 1e-9:
+            continue
+        abweichung = abs(summe_tep - summe_tz)
+        konsistent = abweichung <= toleranz_kwh
+        berichte.append(
+            KonsistenzBericht(
+                konsistent=konsistent,
+                name=f"Σ TagesEnergieProfil.{tep_feld} == Σ komponenten_kwh[{label}]",
+                erwartet=summe_tep,
+                tatsaechlich=summe_tz,
+                toleranz_kwh=toleranz_kwh,
+                details=(
+                    ""
+                    if konsistent
+                    else "Drift zwischen Stunden- und Tages-Pfad. Mögliche Ursache: "
+                    "paralleler Schreibpfad mit Schema-Mismatch (siehe Memory "
+                    "feedback_aggregations_drift, #290 LTS-Aggregator-Drift)."
+                ),
+            )
+        )
+
+    # Basis: einspeisung + netzbezug einzeln (TZ-Wert ist Skalar, nicht Σ)
+    for tep_feld, basis_key in (
+        ("einspeisung_kw", "einspeisung"),
+        ("netzbezug_kw", "netzbezug"),
+    ):
+        summe_tep, any_tep = _summe_tep_field(tep_rows, tep_feld)
+        wert_tz = wert_basis_kwh(tz_komponenten_kwh, basis_key)
+        if not any_tep and wert_tz is None:
+            continue
+        wert_tz = wert_tz or 0.0
+        abweichung = abs(summe_tep - wert_tz)
+        konsistent = abweichung <= toleranz_kwh
+        berichte.append(
+            KonsistenzBericht(
+                konsistent=konsistent,
+                name=f"Σ TagesEnergieProfil.{tep_feld} == komponenten_kwh[{basis_key}]",
+                erwartet=summe_tep,
+                tatsaechlich=wert_tz,
+                toleranz_kwh=toleranz_kwh,
+                details=(
+                    "" if konsistent
+                    else "Drift Stunden-/Tages-Pfad — wie oben."
+                ),
+            )
+        )
+
+    return berichte
+
+
+def assert_tep_tz_komponenten_konsistent(
+    tep_rows: Iterable,
+    tz_komponenten_kwh: Optional[dict],
+    toleranz_kwh: float = 0.5,
+) -> None:
+    """Wirft AssertionError sobald eine der Per-Kategorie-Invarianten failt."""
+    berichte = pruefe_tep_tz_komponenten_konsistenz(
+        tep_rows, tz_komponenten_kwh, toleranz_kwh
+    )
+    failed = [b for b in berichte if not b.konsistent]
+    if failed:
+        raise AssertionError("\n".join(str(b) for b in failed))
 
 
 def pruefe_speicher_ladung_konsistenz(

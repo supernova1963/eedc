@@ -258,8 +258,10 @@ async def test_balkonkraftwerk_und_sonstiges_keys():
     assert "bkw_11" in daily, f"bkw_11-Key fehlt: {list(daily.keys())}"
     assert abs(daily["bkw_11"] - 7.2) < 0.01
     assert "sonstige_13" in daily
-    # sonstiges-Verbraucher hat Vorzeichen -1 → -2.4
-    assert abs(daily["sonstige_13"] - (-2.4)) < 0.01
+    # sonstiges-Verbraucher: pro Investition genau ein Komponenten-Wert,
+    # immer positiv (v3.33.0, symmetrisch zur Snapshot-Variante). Die Seite
+    # (Quelle/Senke) leitet das Frontend aus kategorie ab.
+    assert abs(daily["sonstige_13"] - 2.4) < 0.01
 
 
 async def test_kein_ha_lts_liefert_leer():
