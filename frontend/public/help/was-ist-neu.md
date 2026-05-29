@@ -1,6 +1,6 @@
 # Was ist neu
 
-> **Stand:** Mai 2026 (v3.34.2)
+> **Stand:** Mai 2026 (v3.34.3)
 > **Diese Seite** zeigt pro Version, was sich für dich als Anwender geändert hat — kürzer als der technische [CHANGELOG](https://github.com/supernova1963/eedc-homeassistant/blob/main/CHANGELOG.md), ausführlicher als die Schnellübersicht-Tabelle in der [Übersicht](BENUTZERHANDBUCH.md#was-ist-neu-seit-v316).
 >
 > **Kein Banner, kein Pop-up:** eedc zeigt diese Liste nicht ungefragt an. HA-App-Nutzer sehen den Changelog ohnehin schon im Add-on-Store, GitHub-Releases haben einen eigenen. Wer wissen will, was neu ist, schaut hier rein — Pull statt Push.
@@ -8,6 +8,22 @@
 > **Lesehinweis:** Die jüngsten Versionen stehen oben. Jeder Punkt verlinkt entweder auf die zuständige Hilfe-Sektion oder direkt auf die App-Funktion (sofern erreichbar). Anker-URLs (`?doc=was-ist-neu`) sind teilbar.
 
 ---
+
+## v3.34.3 — Sammelrelease: acht Verbesserungen aus dem Backlog (Mai 2026)
+
+### Was sich für dich ändert
+
+- **Lange Bearbeiten-Dialoge** (z. B. „Monatsdaten bearbeiten") lassen sich wieder vollständig bedienen — der Inhalt scrollt jetzt innerhalb des Fensters, die Speichern-Buttons sind immer erreichbar.
+- **Daten-Checker:** Der Hinweis „Daten-Quellen – Konflikte" ist jetzt ehrlich (neutrale Info statt Warnung, kein irreführender „Beheben"-Knopf), und der PV-Doppelerfassungs-Text ist lesbarer.
+- **PV-Tagesprognose bei mehreren Dachausrichtungen** (Multi-String / Balkonkraftwerk) bleibt auch bei kurzen Wetterdienst-Aussetzern verlässlich — kollabierte Werte werden nicht mehr als Tagesprognose eingefroren.
+- **Fronius Gen24:** Die PV-Erzeugung wird wieder gelesen, auch wenn der bisher genutzte Gesamtzähler auf neuerer Firmware leer bleibt. *(Auf echtem Gen24 noch nicht final gegengeprüft.)*
+- **HA-Export:** Die Eigenverbrauchsquote stimmt bei Setups mit Investitions-Monatsdaten wieder (vorher z. B. 2 % statt ~40 %).
+- **„Ersparnis vs. Benziner"** zeigt im Cockpit denselben Wert wie Monatsberichte und E-Auto-Dashboard — der echte monatliche Kraftstoffpreis wird verwendet.
+- **Wärmepumpen-Kacheln** (Kompressor-Starts / Betriebsstunden) zeigen den seit Anschaffung erfassten Wert; der volle Lebensdauer-Zählerstand steht im Tooltip.
+
+### Mit Dank an
+
+- Dirk, Radiocarbonat, Rainer (rapahl), Safi105, NongJoWo und detLAN für die Bug-Reports, Re-Tests und Vorschläge.
 
 ## v3.34.2 — Vollbackfill vervollständigt nachgefüllte Tage (Mai 2026)
 

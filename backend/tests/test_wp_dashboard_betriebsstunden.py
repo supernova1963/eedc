@@ -84,21 +84,37 @@ async def _set_snapshot(
 
 
 async def test_dashboard_zeigt_betriebsstunden_und_kpis(db):
-    """End-to-End: Sensor-Snapshots liefern Σ Starts + Σ Stunden,
-    Dashboard berechnet die abgeleiteten KPIs."""
+    """End-to-End (#238/#290): Hauptwert = seit Anschaffung erfasste Summe der
+    Tagesinkremente; Lebensdauer-Zählerstand bleibt separat (Tooltip). Die
+    abgeleiteten KPIs rechnen mit den seit-Anschaffung erfassten Summen."""
     anlage, wp = await _seed_anlage_mit_wp(db)
 
-    # Hersteller-Counter-Stände: 1000 Starts, 2500 h.
-    # → Ø Laufzeit pro Start = 2.5 h, Starts pro h = 0.4.
+    # Hersteller-Counter-Stände (Lebensdauer / Zählerstand): 1000 Starts, 2500 h
+    # — inkl. Betrieb vor Anschaffung, daher NICHT der Kachel-Hauptwert.
     await _set_snapshot(db, anlage.id, wp.id, "wp_starts_anzahl", 1000.0)
     await _set_snapshot(db, anlage.id, wp.id, "wp_betriebsstunden", 2500.0)
+    # eedc-erfasste Tagesinkremente seit Anschaffung: Σ 20 Starts / 50 h
+    # → Ø Laufzeit pro Start = 2.5 h, Starts pro h = 0.4.
+    for tag in (1, 2):
+        db.add(TagesZusammenfassung(
+            anlage_id=anlage.id, datum=date(2026, 4, tag),
+            komponenten_starts={
+                "wp_starts_anzahl": {str(wp.id): 10},
+                "wp_betriebsstunden": {str(wp.id): 25.0},
+            },
+        ))
     await db.commit()
 
     dashboards = await get_waermepumpe_dashboard(anlage_id=anlage.id, db=db)
     assert len(dashboards) == 1
     z = dashboards[0].zusammenfassung
+    # Lebensdauer-Zählerstand (Tooltip) bleibt der rohe Hersteller-Counter.
     assert z["kompressor_starts_gesamt"] == 1000
     assert z["betriebsstunden_gesamt"] == 2500.0
+    # Hauptwert = seit Anschaffung erfasste Summe.
+    assert z["kompressor_starts_summe_erfasst"] == 20
+    assert z["betriebsstunden_summe_erfasst"] == 50.0
+    # Ratios aus den seit-Anschaffung erfassten Summen (nicht aus Lebensdauer).
     assert z["oe_laufzeit_pro_start_h"] == 2.5
     assert z["starts_pro_betriebsstunde"] == 0.4
 

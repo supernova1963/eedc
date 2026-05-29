@@ -15,7 +15,7 @@ from typing import Optional, Any
 import os
 
 from backend.api.deps import get_db
-from backend.core.berechnungen import einspeise_erloes_euro
+from backend.core.berechnungen import einspeise_erloes_euro, berechne_verbrauchs_kennzahlen
 from backend.services.einspeise_erloes_service import get_neg_preis_einspeisung_monat
 from backend.core.field_definitions import get_emob_pv_netz_kwh, get_wp_strom_kwh
 from backend.models.anlage import Anlage
@@ -182,10 +182,13 @@ async def calculate_anlage_sensors(
         # Schätzung: Erzeugung ≈ Einspeisung + geschätzter Eigenverbrauch
         pv_erzeugung = einspeisung + sum(m.eigenverbrauch_kwh or 0 for m in monatsdaten)
 
-    direktverbrauch = sum(m.direktverbrauch_kwh or 0 for m in monatsdaten)
-    eigenverbrauch = sum(m.eigenverbrauch_kwh or 0 for m in monatsdaten)
+    # #304: netzbezug ist ein Zählerwert aus Monatsdaten (legitim). Eigen-/
+    # Direkt-/Gesamtverbrauch NICHT aus den berechneten Legacy-Monatsdaten-
+    # Feldern lesen — die bleiben bei IMD-basierten Setups leer (moderne
+    # Quellen schreiben in InvestitionMonatsdaten), wodurch die Eigenverbrauchs-
+    # quote zusammenbricht (2,2 % statt ~40 %). Sie werden unten zentral aus
+    # PV(IMD) + Speicher(IMD) + Zählerwerten über den SoT-Helper berechnet.
     netzbezug = sum(m.netzbezug_kwh or 0 for m in monatsdaten)
-    gesamtverbrauch = sum(m.gesamtverbrauch_kwh or 0 for m in monatsdaten)
 
     # Speicher-Summen aus InvestitionMonatsdaten (korrekt) statt Legacy Monatsdaten
     speicher_ids = [inv.id for inv in investitionen if inv.typ == "speicher"]
@@ -209,9 +212,22 @@ async def calculate_anlage_sensors(
         batterie_ladung = sum(m.batterie_ladung_kwh or 0 for m in monatsdaten)
         batterie_entladung = sum(m.batterie_entladung_kwh or 0 for m in monatsdaten)
 
-    # Quoten
-    autarkie = (eigenverbrauch / gesamtverbrauch * 100) if gesamtverbrauch > 0 else 0
-    ev_quote = min(eigenverbrauch / pv_erzeugung * 100, 100) if pv_erzeugung > 0 else 0
+    # #304: Eigenverbrauch/Direktverbrauch/Gesamtverbrauch + Quoten zentral über
+    # den SoT-Helper aus IMD-gesourcten Energiemengen (PV + Speicher) und den
+    # Zählerwerten (Einspeisung/Netzbezug) — kanonische Formel, deckungsgleich
+    # mit cockpit/uebersicht.py.
+    kennzahlen = berechne_verbrauchs_kennzahlen(
+        pv_erzeugung_kwh=pv_erzeugung,
+        einspeisung_kwh=einspeisung,
+        netzbezug_kwh=netzbezug,
+        speicher_ladung_kwh=batterie_ladung,
+        speicher_entladung_kwh=batterie_entladung,
+    )
+    direktverbrauch = kennzahlen.direktverbrauch_kwh
+    eigenverbrauch = kennzahlen.eigenverbrauch_kwh
+    gesamtverbrauch = kennzahlen.gesamtverbrauch_kwh
+    autarkie = kennzahlen.autarkie_prozent
+    ev_quote = kennzahlen.eigenverbrauchsquote_prozent
     spez_ertrag = (pv_erzeugung / anlage.leistung_kwp) if anlage.leistung_kwp else 0
 
     # Finanzen — Einspeise-Erlös §51-bereinigt pro Monat, summiert über alle

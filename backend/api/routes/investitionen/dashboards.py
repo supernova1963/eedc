@@ -494,12 +494,21 @@ async def get_waermepumpe_dashboard(
         # Wahrheit). Drift zwischen Hersteller-Counter und EEDC-Tagesinkrementen
         # wird im Daten-Checker sichtbar gemacht, nicht im Read-Pfad versteckt.
         # Max/Tag bleibt aus EEDC-Tagesinkrementen (echte Höchst-Tagessumme).
+        # #238/#290 (detLAN-Kompromiss): Hauptwert der Kachel ist die seit
+        # Anschaffung von eedc erfasste Summe der Tagesinkremente (Anzeige
+        # konsequent ab Anschaffungsdatum limitiert, auch wenn der Hersteller-
+        # Counter weiter zurückreicht). Der rohe Lebensdauer-Zählerstand
+        # (`get_counter_lifetime`) bleibt erhalten, wandert aber nur noch als
+        # Zählerstand in die Kachel-Info/Tooltip.
         wp_starts_list = starts_by_inv.get(wp.id, [])
         starts_lifetime = await get_counter_lifetime(
             db, anlage, wp, 'wp_starts_anzahl'
         )
         kompressor_starts_gesamt = (
             int(round(starts_lifetime)) if starts_lifetime is not None else None
+        )
+        kompressor_starts_summe_erfasst = (
+            int(round(sum(wp_starts_list))) if wp_starts_list else None
         )
         kompressor_starts_max_tag = max(wp_starts_list) if wp_starts_list else None
 
@@ -513,22 +522,28 @@ async def get_waermepumpe_dashboard(
         betriebsstunden_gesamt = await get_counter_lifetime(
             db, anlage, wp, 'wp_betriebsstunden'
         )
+        betriebsstunden_summe_erfasst = (
+            round(sum(wp_stunden_list), 1) if wp_stunden_list else None
+        )
         betriebsstunden_max_tag = (
             round(max(wp_stunden_list), 1) if wp_stunden_list else None
         )
+        # Ratios aus den seit-Anschaffung erfassten Summen (gleicher Zeitraum
+        # für Starts und Stunden — die zwei Lebensdauer-Counter können zu
+        # unterschiedlichen Zeitpunkten in Betrieb genommen worden sein).
         oe_laufzeit_pro_start_h: Optional[float] = None
         starts_pro_betriebsstunde: Optional[float] = None
         if (
-            betriebsstunden_gesamt is not None
-            and kompressor_starts_gesamt is not None
-            and kompressor_starts_gesamt > 0
-            and betriebsstunden_gesamt > 0
+            betriebsstunden_summe_erfasst is not None
+            and kompressor_starts_summe_erfasst is not None
+            and kompressor_starts_summe_erfasst > 0
+            and betriebsstunden_summe_erfasst > 0
         ):
             oe_laufzeit_pro_start_h = round(
-                betriebsstunden_gesamt / kompressor_starts_gesamt, 2
+                betriebsstunden_summe_erfasst / kompressor_starts_summe_erfasst, 2
             )
             starts_pro_betriebsstunde = round(
-                kompressor_starts_gesamt / betriebsstunden_gesamt, 3
+                kompressor_starts_summe_erfasst / betriebsstunden_summe_erfasst, 3
             )
 
         zusammenfassung = {
@@ -542,8 +557,12 @@ async def get_waermepumpe_dashboard(
             'ersparnis_euro': round(ersparnis, 2),
             'co2_ersparnis_kg': round(co2_ersparnis, 1),
             'anzahl_monate': len(monatsdaten),
+            # _summe_erfasst = seit Anschaffung von eedc erfasst (Kachel-Hauptwert);
+            # _gesamt = roher Lebensdauer-Zählerstand (Kachel-Tooltip/Info, #238/#290).
+            'kompressor_starts_summe_erfasst': kompressor_starts_summe_erfasst,
             'kompressor_starts_gesamt': kompressor_starts_gesamt,
             'kompressor_starts_max_tag': kompressor_starts_max_tag,
+            'betriebsstunden_summe_erfasst': betriebsstunden_summe_erfasst,
             'betriebsstunden_gesamt': (
                 round(betriebsstunden_gesamt, 1)
                 if betriebsstunden_gesamt is not None else None

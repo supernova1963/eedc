@@ -346,37 +346,39 @@ function WaermepumpeBlock({ dashboard, ...selectorProps }: { dashboard: Waermepu
       </p>
 
       {/* Kompressor-Starts + Betriebsstunden (nur wenn Counter-Sensoren
-          zugeordnet sind). Σ Lebensdauer = Hersteller-Counter direkt.
-          Drift gegenüber eedc-erfassten Tagesinkrementen wird im
-          Daten-Checker ausgewiesen. Die zwei abgeleiteten KPIs „Ø Laufzeit
-          pro Start" und „Starts pro Betriebsstunde" werden nur sichtbar,
-          wenn beide Sensoren gepflegt sind (#238 detLAN). */}
+          zugeordnet sind). #238/#290 (detLAN-Kompromiss): Hauptwert = seit
+          Anschaffung von eedc erfasst (Anzeige ab Anschaffungsdatum limitiert);
+          der rohe Lebensdauer-Zählerstand des Hersteller-Counters steht der
+          Vollständigkeit halber im Tooltip. Drift wird im Daten-Checker
+          ausgewiesen. Die zwei abgeleiteten KPIs „Ø Laufzeit pro Start" und
+          „Starts pro Betriebsstunde" sind nur sichtbar, wenn beide Sensoren
+          gepflegt sind und rechnen mit den seit-Anschaffung erfassten Summen. */}
       {((z.kompressor_starts_gesamt != null && z.kompressor_starts_gesamt > 0) ||
         (z.betriebsstunden_gesamt != null && z.betriebsstunden_gesamt > 0)) && (
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
           {z.kompressor_starts_gesamt != null && z.kompressor_starts_gesamt > 0 && (
             <KPICard
-              title="Kompressor-Starts (Lebensdauer)"
-              value={z.kompressor_starts_gesamt.toLocaleString('de-DE')}
+              title="Kompressor-Starts (seit Anschaffung)"
+              value={(z.kompressor_starts_summe_erfasst ?? 0).toLocaleString('de-DE')}
               icon={Power}
               color="gray"
               subtitle={z.kompressor_starts_max_tag != null ? `Max/Tag: ${z.kompressor_starts_max_tag}` : undefined}
-              formel="Aus Hersteller-Sensor (Lebensdauer-Counter)"
-              berechnung={`Höchste Tagessumme (eedc-erfasst): ${z.kompressor_starts_max_tag ?? '—'}`}
-              ergebnis={`= ${z.kompressor_starts_gesamt.toLocaleString('de-DE')} Starts`}
+              formel="Von eedc erfasst seit Anschaffung (Σ Tagesinkremente)"
+              berechnung={`Zählerstand (Lebensdauer): ${z.kompressor_starts_gesamt.toLocaleString('de-DE')} · Max/Tag: ${z.kompressor_starts_max_tag ?? '—'}`}
+              ergebnis={`= ${(z.kompressor_starts_summe_erfasst ?? 0).toLocaleString('de-DE')} Starts seit Anschaffung`}
             />
           )}
           {z.betriebsstunden_gesamt != null && z.betriebsstunden_gesamt > 0 && (
             <KPICard
-              title="Betriebsstunden (Lebensdauer)"
-              value={z.betriebsstunden_gesamt.toLocaleString('de-DE', { maximumFractionDigits: 0 })}
+              title="Betriebsstunden (seit Anschaffung)"
+              value={(z.betriebsstunden_summe_erfasst ?? 0).toLocaleString('de-DE', { maximumFractionDigits: 0 })}
               unit="h"
               icon={Timer}
               color="gray"
               subtitle={z.betriebsstunden_max_tag != null ? `Max/Tag: ${z.betriebsstunden_max_tag} h` : undefined}
-              formel="Aus Hersteller-Sensor (Lebensdauer-Counter)"
-              berechnung={`Höchste Tagessumme (eedc-erfasst): ${z.betriebsstunden_max_tag ?? '—'} h`}
-              ergebnis={`= ${z.betriebsstunden_gesamt.toLocaleString('de-DE', { maximumFractionDigits: 0 })} h`}
+              formel="Von eedc erfasst seit Anschaffung (Σ Tagesinkremente)"
+              berechnung={`Zählerstand (Lebensdauer): ${z.betriebsstunden_gesamt.toLocaleString('de-DE', { maximumFractionDigits: 0 })} h · Max/Tag: ${z.betriebsstunden_max_tag ?? '—'} h`}
+              ergebnis={`= ${(z.betriebsstunden_summe_erfasst ?? 0).toLocaleString('de-DE', { maximumFractionDigits: 0 })} h seit Anschaffung`}
             />
           )}
           {z.oe_laufzeit_pro_start_h != null && (
@@ -386,8 +388,8 @@ function WaermepumpeBlock({ dashboard, ...selectorProps }: { dashboard: Waermepu
               unit="h"
               icon={Timer}
               color="blue"
-              formel="Betriebsstunden ÷ Kompressor-Starts"
-              berechnung={`${z.betriebsstunden_gesamt?.toLocaleString('de-DE', { maximumFractionDigits: 0 })} h ÷ ${z.kompressor_starts_gesamt?.toLocaleString('de-DE')}`}
+              formel="Betriebsstunden ÷ Kompressor-Starts (seit Anschaffung)"
+              berechnung={`${z.betriebsstunden_summe_erfasst?.toLocaleString('de-DE', { maximumFractionDigits: 0 })} h ÷ ${z.kompressor_starts_summe_erfasst?.toLocaleString('de-DE')}`}
               ergebnis={`= ${z.oe_laufzeit_pro_start_h.toLocaleString('de-DE', { maximumFractionDigits: 2 })} h/Start`}
             />
           )}
@@ -397,8 +399,8 @@ function WaermepumpeBlock({ dashboard, ...selectorProps }: { dashboard: Waermepu
               value={z.starts_pro_betriebsstunde.toLocaleString('de-DE', { maximumFractionDigits: 3 })}
               icon={Power}
               color="blue"
-              formel="Kompressor-Starts ÷ Betriebsstunden"
-              berechnung={`${z.kompressor_starts_gesamt?.toLocaleString('de-DE')} ÷ ${z.betriebsstunden_gesamt?.toLocaleString('de-DE', { maximumFractionDigits: 0 })} h`}
+              formel="Kompressor-Starts ÷ Betriebsstunden (seit Anschaffung)"
+              berechnung={`${z.kompressor_starts_summe_erfasst?.toLocaleString('de-DE')} ÷ ${z.betriebsstunden_summe_erfasst?.toLocaleString('de-DE', { maximumFractionDigits: 0 })} h`}
               ergebnis={`= ${z.starts_pro_betriebsstunde.toLocaleString('de-DE', { maximumFractionDigits: 3 })} / h`}
             />
           )}

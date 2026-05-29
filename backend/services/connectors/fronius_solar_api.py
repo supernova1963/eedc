@@ -6,6 +6,8 @@ Verbindet sich über die lokale Fronius Solar API V1 mit Fronius Wechselrichtern
 
 Endpoints:
 - GetPowerFlowRealtimeData → PV-Gesamterzeugung (E_Total)
+- GetInverterRealtimeData → PV-Gesamterzeugung-Fallback (Summe TOTAL_ENERGY je
+  Wechselrichter), wenn E_Total leer ist (Gen24/neuere FW liefert dort null, #300)
 - GetMeterRealtimeData → Grid-Import/Export (Smart Meter)
 - GetInverterInfo → Geräteinfo (Modell, Seriennummer)
 
@@ -111,6 +113,43 @@ def _extract_meter_energy(meter_info: dict) -> tuple[Optional[float], Optional[f
     return import_wh, export_wh
 
 
+async def _fetch_pv_total_wh_from_inverters(
+    session: aiohttp.ClientSession, base_url: str
+) -> Optional[float]:
+    """Fallback für die PV-Gesamterzeugung: Summe ``TOTAL_ENERGY`` (Wh) über
+    alle Wechselrichter via ``GetInverterRealtimeData`` (Scope=System).
+
+    Wird genutzt, wenn ``GetPowerFlowRealtimeData → Site.E_Total`` leer ist:
+    Auf Gen24 / neuerer Firmware ist ``E_Total`` deprecatet und liefert ``null``
+    (#300, Safi105). Scope=System gibt ``Body.Data.TOTAL_ENERGY.Values`` als
+    Dict ``{DeviceId: Wh}`` zurück; wir summieren über alle Geräte.
+
+    HINWEIS: Per Fronius-Solar-API-V1-Doku verdrahtet, aber noch nicht an einem
+    echten Gen24 verifiziert — Gegencheck durch Tester offen (#300).
+    """
+    inv_data = await _fetch_json(
+        session, base_url, INVERTER_DATA_URL, params={"Scope": "System"}
+    )
+    if not inv_data or _get_nested(inv_data, "Head", "Status", "Code") != 0:
+        return None
+
+    values = _get_nested(inv_data, "Body", "Data", "TOTAL_ENERGY", "Values", default=None)
+    if not isinstance(values, dict) or not values:
+        return None
+
+    total_wh = 0.0
+    gefunden = False
+    for wert in values.values():
+        if wert is None:
+            continue
+        try:
+            total_wh += float(wert)
+            gefunden = True
+        except (ValueError, TypeError):
+            continue
+    return total_wh if gefunden else None
+
+
 @register_connector
 class FroniusSolarApiConnector(DeviceConnector):
     """Connector für Fronius Wechselrichter via lokaler Solar API V1."""
@@ -181,8 +220,14 @@ class FroniusSolarApiConnector(DeviceConnector):
                 pf_data = await _fetch_json(session, base_url, POWERFLOW_URL)
                 if pf_data and _get_nested(pf_data, "Head", "Status", "Code") == 0:
                     site = _get_nested(pf_data, "Body", "Data", "Site", default={})
-                    if site.get("E_Total") is not None:
-                        sensoren.append(f"PV Erzeugung (Gesamt: {_wh_to_kwh(site['E_Total']):.1f} kWh)")
+                    pv_total_kwh = _wh_to_kwh(site.get("E_Total"))
+                    if pv_total_kwh is None:
+                        # #300: E_Total null (Gen24) → Inverter-TOTAL_ENERGY-Fallback
+                        pv_total_kwh = _wh_to_kwh(
+                            await _fetch_pv_total_wh_from_inverters(session, base_url)
+                        )
+                    if pv_total_kwh is not None:
+                        sensoren.append(f"PV Erzeugung (Gesamt: {pv_total_kwh:.1f} kWh)")
                     if site.get("P_PV") is not None:
                         sensoren.append(f"PV Leistung (aktuell: {site['P_PV']:.0f} W)")
                     if site.get("P_Grid") is not None:
@@ -254,6 +299,13 @@ class FroniusSolarApiConnector(DeviceConnector):
         if pf_data and _get_nested(pf_data, "Head", "Status", "Code") == 0:
             site = _get_nested(pf_data, "Body", "Data", "Site", default={})
             pv_total_kwh = _wh_to_kwh(site.get("E_Total"))
+
+        # 1b. Fallback (#300): Gen24/neuere FW liefert Site.E_Total = null →
+        # PV-Gesamterzeugung als Summe TOTAL_ENERGY über alle Wechselrichter.
+        if pv_total_kwh is None:
+            pv_total_kwh = _wh_to_kwh(
+                await _fetch_pv_total_wh_from_inverters(session, base_url)
+            )
 
         # 2. Grid-Import/Export aus Smart Meter
         # Felder nach HA/pyfronius: Minus_Absolute=Import, Plus_Absolute=Export

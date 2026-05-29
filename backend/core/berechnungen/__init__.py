@@ -59,6 +59,10 @@ from backend.core.berechnungen.speicher import (
     gleitende_effizienz,
     speicher_effizienz_prozent,
 )
+from backend.core.berechnungen.verbrauch import (
+    VerbrauchsKennzahlen,
+    berechne_verbrauchs_kennzahlen,
+)
 
 __all__ = [
     "EinspeiseErloes",
@@ -86,4 +90,6 @@ __all__ = [
     "MonatsEffizienz",
     "gleitende_effizienz",
     "speicher_effizienz_prozent",
+    "VerbrauchsKennzahlen",
+    "berechne_verbrauchs_kennzahlen",
 ]

@@ -154,13 +154,16 @@ export interface WaermepumpeDashboardResponse {
     gesamt_warmwasser_getrennt_kwh?: number
     cop_heizen?: number
     cop_warmwasser?: number
-    // Kompressor-Starts: Σ Lebensdauer aus Hersteller-Sensor (direkter Read),
-    // Max/Tag aus eedc-Tagesinkrementen.
+    // Kompressor-Starts (#238/#290): _summe_erfasst = seit Anschaffung von eedc
+    // erfasst (Kachel-Hauptwert), _gesamt = roher Lebensdauer-Zählerstand aus
+    // dem Hersteller-Sensor (Kachel-Tooltip/Info), Max/Tag aus Tagesinkrementen.
+    kompressor_starts_summe_erfasst?: number | null
     kompressor_starts_gesamt?: number | null
     kompressor_starts_max_tag?: number | null
-    // Betriebsstunden (#238 detLAN): analog zu Starts, Σ Lebensdauer aus
-    // Hersteller-Sensor + Max/Tag aus Tagesinkrementen. Die zwei abgeleiteten
-    // KPIs setzen voraus, dass Starts UND Stunden gepflegt sind.
+    // Betriebsstunden (#238 detLAN): analog. Die zwei abgeleiteten KPIs setzen
+    // voraus, dass Starts UND Stunden gepflegt sind, und rechnen mit den
+    // seit-Anschaffung erfassten Summen.
+    betriebsstunden_summe_erfasst?: number | null
     betriebsstunden_gesamt?: number | null
     betriebsstunden_max_tag?: number | null
     oe_laufzeit_pro_start_h?: number | null

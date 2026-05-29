@@ -7,6 +7,27 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ---
 
+## [3.34.3] - 2026-05-29 — Sammelrelease: acht Backlog-Fixes (UX, Forecast, Connector, Verbrauchs-/E-Auto-Kennzahlen)
+
+> 🧰 **Gebündeltes Patch-Release** mit acht unabhängigen, single-purpose Fixes aus dem aufgelaufenen Issue-Backlog — parallel zum v3.34-Refactor abgearbeitet. **Kein** Fix berührt den v3.34-Aggregator-Schreibpfad. 584 Tests grün, Frontend-Typecheck grün.
+
+### Added
+
+- **`core/berechnungen/verbrauch.py` → `berechne_verbrauchs_kennzahlen`** als Single Source of Truth für die Eigenverbrauchs-/Autarkie-Formel (ADR-001-Berechnungs-Layer), deckungsgleich mit cockpit/uebersicht.py + daten_checker.py.
+
+### Fixed
+
+- **Modal-Dialoge scrollen intern; Speichern bei langen Formularen wieder erreichbar (#307):** `Modal.tsx` (app-weit) auf `max-h-[90dvh]` + interne Scroll-Spalte umgestellt — lange Dialoge (z. B. „Monatsdaten bearbeiten") bleiben im Viewport, Buttons per Scroll erreichbar; kurze Dialoge unverändert.
+- **Daten-Checker: ehrlicher Quellen-Konflikt-Hinweis + lesbarer PV-Doppelerfassungs-Text (#305):** der „Daten-Quellen-Konflikte"-Hinweis verspricht keine nicht-existente „Beheben"-Aktion mehr (WARNING → INFO, Link entfernt, an drei Stellen entschärft); PV-Doppelerfassungs-Detailtext mit Zeilenumbrüchen lesbar (`whitespace-pre-line`).
+- **Multi-String/BKW-Tagesprognose kollabiert nicht mehr bei OpenMeteo-Aussetzern (#306):** gescheiterte Orientierungsgruppen werden nicht mehr still verschluckt; ein unvollständiger Fan-out wird **nicht** als kollabierter Solo-String-/BKW-Tageswert eingefroren (Prefetch + Live-Endpoint), Solcast bleibt unabhängig. Schützt auch den Lernfaktor.
+- **Fronius-Connector: PV-Erzeugung auf Gen24/neuer Firmware (#300):** wenn `GetPowerFlowRealtimeData → Site.E_Total` leer ist, holt der Connector die PV-Summe als Fallback aus `GetInverterRealtimeData` (Σ `TOTAL_ENERGY` über alle Wechselrichter). *Noch nicht an echtem Gen24 verifiziert — Gegencheck offen.*
+- **HA-Export: Eigenverbrauchsquote bei IMD-Setups korrekt (#304, Teil 1):** Eigen-/Direkt-/Gesamtverbrauch + Quoten über den neuen SoT-Helper aus PV(IMD) + Speicher(IMD) + Zählerwerten statt aus leeren Legacy-Monatsdaten-Feldern (2,2 % → ~40 %). *#304 bleibt offen: Aussichten + PDF als eigene Etappe nach v3.34.*
+- **Cockpit-Übersicht: E-Auto-Ersparnis mit Monats-Benzinpreis (#260):** die E-Mobilitäts-/E-Auto-Ersparnis rechnet jetzt km-gewichtet mit dem per-Monat aus dem EU Weekly Oil Bulletin gepflegten Kraftstoffpreis (`berechne_eauto_ersparnis_periode`) statt mit dem statischen Investitions-Parameter — gleicher Wert wie E-Auto-Dashboard + Monatsberichte. Letzte offene Drift-Quelle aus #260.
+
+### Changed
+
+- **WP-Dashboard: Counter-Kacheln „seit Anschaffung", Lebensdauer-Zählerstand im Tooltip (#238/#290):** Kompressor-Starts, Betriebsstunden + die abgeleiteten KPIs zeigen als Hauptwert das von eedc seit Anschaffung Erfasste (Anzeige ab Anschaffungsdatum limitiert); der rohe Lebensdauer-Zählerstand steht im Tooltip.
+
 ## [3.34.2] - 2026-05-29 — Vollbackfill als dünne Schleife über den Tag-Aggregator (Phase B v3.34-Refactor)
 
 > 🔧 **Patch-Release, struktureller Schnitt + stille Datenverbesserung.** Phase B des Energieprofil-+-Werkbank-Refactors. `backfill_from_statistics` (Vollbackfill aus HA Long-Term Statistics) ist nicht länger eine eigenständige Code-Kopie der Tag-Aggregation, sondern eine **dünne Schleife über `aggregate_day`** — genau ein Top-Level-Schreibpfad auf `tages_energie_profil` + `tages_zusammenfassung` (Audit §6.1, Plan E1/E2). Damit fällt die parallele Pipeline weg, die in der Vergangenheit wiederholt Aggregations-Drift erzeugt hat.

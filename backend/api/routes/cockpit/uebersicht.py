@@ -38,7 +38,7 @@ from backend.services.einspeise_erloes_service import get_neg_preis_einspeisung_
 from backend.services.wp_wirtschaftlichkeit import berechne_wp_ersparnis
 from backend.services.eauto_wirtschaftlichkeit import (
     aggregiere_emob_ladung,
-    berechne_eauto_ersparnis,
+    berechne_eauto_ersparnis_periode,
     pick_emob_ref_parameter,
 )
 
@@ -203,6 +203,9 @@ async def get_cockpit_uebersicht(
     eauto_imd_data: list[dict] = []
     wb_imd_data: list[dict] = []
     eauto_km = 0.0
+    # #260: km pro (jahr, monat) für die per-Monat-korrekte Benzinpreis-
+    # Gewichtung (EU-OB-Monatspreis aus Monatsdaten statt statischem Param).
+    eauto_km_pro_monat: dict[tuple[int, int], float] = {}
     bkw_erzeugung = 0.0
     bkw_eigenverbrauch = 0.0
     sonstiges_erzeugung = 0.0
@@ -254,7 +257,12 @@ async def get_cockpit_uebersicht(
                 ) / 100
             elif inv.typ == "e-auto":
                 eauto_imd_data.append(data)
-                eauto_km += data.get("km_gefahren", 0) or 0
+                km_monat = data.get("km_gefahren", 0) or 0
+                eauto_km += km_monat
+                if km_monat:
+                    eauto_km_pro_monat[(imd.jahr, imd.monat)] = (
+                        eauto_km_pro_monat.get((imd.jahr, imd.monat), 0.0) + km_monat
+                    )
             else:  # wallbox (nicht-dienstlich)
                 wb_imd_data.append(data)
 
@@ -467,12 +475,20 @@ async def get_cockpit_uebersicht(
     ]
     hat_emobilitaet = len(emob_invs) > 0
     emob_pv_anteil = (emob_pv_ladung / emob_ladung * 100) if emob_ladung > 0 else None
-    emob_result = berechne_eauto_ersparnis(
-        km_gefahren=emob_km,
-        ladung_netz_kwh=emob_netz_ladung,
-        ladung_extern_euro=emob_extern_euro_total,
+    # #260: per-Monat-korrekter Benzinpreis (EU-OB-Monatspreis aus Monatsdaten),
+    # km-gewichtet — derselbe Pfad wie E-Auto-Dashboard + Monatsberichte. Vorher
+    # rief die Übersicht den Skalar-Helper mit dem statischen Inv-Parameter-Preis
+    # (1,80 €-Default) auf → Drift gegen die Monatsberichte (NongJoWo).
+    benzinpreis_lookup = {
+        (m.jahr, m.monat): m.kraftstoffpreis_euro for m in monatsdaten_list
+    }
+    emob_result = berechne_eauto_ersparnis_periode(
+        km_pro_monat=[(j, mo, km) for (j, mo), km in eauto_km_pro_monat.items()],
+        ladung_netz_kwh_gesamt=emob_netz_ladung,
+        ladung_extern_euro_gesamt=emob_extern_euro_total,
         wallbox_strompreis_cent=wallbox_preis_cent,
         eauto_parameter=pick_emob_ref_parameter(emob_invs),
+        monats_benzinpreis_lookup=benzinpreis_lookup,
     )
     emob_ersparnis = emob_result.ersparnis_euro
     benzin_verbrauch = (emob_km / 100) * emob_result.verwendeter_verbrauch_l_100km
