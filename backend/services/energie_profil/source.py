@@ -12,10 +12,14 @@ Das Enum hält die drei legitimen Trigger-Quellen typsicher zusammen und
 projiziert auf die heutigen Magic-Strings; die DB-Spalte ``datenquelle``
 bleibt unverändert (VARCHAR(30)), keine Migration nötig.
 
-Phase B fügt ``VOLLBACKFILL_FROM_LTS`` hinzu, wenn die
-``backfill_from_statistics``-Eigenständigkeit aufgelöst wird (heute
-schreibt der Backfill direkt mit ``datenquelle="ha_statistiken"`` und
-läuft NICHT durch ``aggregate_day``).
+Phase B (v3.34.2) löst die ``backfill_from_statistics``-Eigenständigkeit
+auf: der Vollbackfill läuft jetzt als dünne Schleife durch ``aggregate_day``
+mit ``source=VOLLBACKFILL_FROM_LTS``. Der frühere Direkt-Konstruktor
+(``datenquelle="ha_statistiken"``, Writer ``ha_statistics_backfill``)
+entfällt. ``to_db_string()`` liefert byte-identisch ``"ha_statistiken"``
+weiter (UI/DB-Spalte unverändert); der Provenance-Writer migriert auf das
+einheitliche ``"energieprofil:ha_statistiken"`` (Weg 2, STAND-NACH-PHASE-A
+§7 Frage 5: niemand liest den alten Writer-String).
 """
 
 from __future__ import annotations
@@ -37,11 +41,18 @@ class Source(Enum):
     - ``MANUAL_REPAIR`` — Reparatur-Werkbank "Tag(e) neu aggregieren"
       durch den User. Aufrufer: ``repair_orchestrator.py``. Triggert die
       Preserve-Logik (s. ``is_manual_repair``).
+    - ``VOLLBACKFILL_FROM_LTS`` — additiver Vollbackfill aus HA Long-Term
+      Statistics (v3.34.2 Phase B). Aufrufer: ``backfill.py``
+      (``backfill_from_statistics``), das die historischen Stunden-Daten
+      gebündelt vorholt und pro fehlendem Tag durch ``aggregate_day``
+      schleift. Kein Preserve-Trigger (additiv, Tage mit bestehender TZ
+      werden gar nicht erst aggregiert).
     """
 
     SCHEDULER = "scheduler"
     MONATSABSCHLUSS_BACKFILL = "monatsabschluss"
     MANUAL_REPAIR = "manuell"
+    VOLLBACKFILL_FROM_LTS = "ha_statistiken"
 
     def to_db_string(self) -> str:
         """``TagesZusammenfassung.datenquelle``-Spaltenwert.

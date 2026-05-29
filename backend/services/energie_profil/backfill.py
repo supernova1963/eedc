@@ -25,45 +25,26 @@ from datetime import date, timedelta
 from typing import Literal, Optional
 
 from sqlalchemy import and_ as sa_and
-from sqlalchemy import delete as sa_delete
 from sqlalchemy import select as sa_select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.anlage import Anlage
-from backend.models.tages_energie_profil import TagesEnergieProfil, TagesZusammenfassung
-from backend.services.energie_profil._provenance_helpers import (
-    seed_tep_provenance,
-    seed_tz_provenance,
-)
+from backend.models.tages_energie_profil import TagesZusammenfassung
 from backend.services.energie_profil.aggregator import aggregate_day
 from backend.services.energie_profil.source import Source
 
 logger = logging.getLogger(__name__)
 
-# Backfill aus HA Long-Term Statistics ist eine externe autoritative
-# Datenquelle (Source `external:ha_statistics`, Stufe 2). Manuelle Form-
-# Werte (Stufe 1) gewinnen weiterhin; gegen Auto-Aggregation/Fallback/
-# Legacy gewinnt der HA-Stats-Backfill.
-_HA_STATS_SOURCE = "external:ha_statistics"
-_HA_STATS_WRITER = "ha_statistics_backfill"
-
-
-# Prognose-Felder, die der Backfill-Pfad beim Delete-and-Recreate retten muss.
-# Eigenständige Liste (kein Import aus `aggregator.py`) — bewusst getrennt, weil
-# Backfill ein eigenes Subsystem ist (Audit §6.1). Phase B löst die
-# Eigenständigkeit auf, dann verschwindet diese Liste. Bis dahin ist sie über
-# den Konformitäts-Test K1 mit `_PROGNOSE_FELDER_RETTEN` (Aggregator) und der
-# Schreibfelder-Liste in `live_wetter` gekoppelt — Drift in einer der drei
-# Stellen bricht den Test.
-_PROGNOSE_FELDER_RETTEN_BACKFILL: tuple[str, ...] = (
-    "pv_prognose_kwh",
-    "sfml_prognose_kwh",
-    "solcast_prognose_kwh",
-    "solcast_p10_kwh",
-    "solcast_p90_kwh",
-    "pv_prognose_stundenprofil",
-    "solcast_prognose_stundenprofil",
-)
+# Leeres Status-Dict für die frühen Abbruch-Pfade (kein Sensor, keine HA-Daten).
+# Der Caller (`resolve_and_backfill_from_statistics`) liest `stats["geschrieben"]`
+# etc. — vor v3.34.2 gaben diese Pfade ein nacktes `0` (int) zurück, was beim
+# Indexzugriff im Caller eine TypeError-Falle war (latent, weil der Caller die
+# meisten dieser Bedingungen vorher selbst abfängt). Jetzt einheitlich Dict.
+_LEERER_BACKFILL_STATUS = {
+    "geschrieben": 0,
+    "uebersprungen_keine_daten": 0,
+    "uebersprungen_existiert": 0,
+}
 
 
 async def backfill_range(
@@ -120,8 +101,26 @@ async def backfill_from_statistics(
     """
     Additiver Energieprofil-Aufbau aus HA Long-Term Statistics.
 
-    Ergänzt fehlende Tage. Bestehende Tage bleiben **immer** unverändert —
-    ein Overwrite-Modus existiert bewusst nicht (#190): „löschen + neu
+    **v3.34.2 Phase B — dünne Schleife über `aggregate_day`.** Diese Funktion
+    beschafft nur noch die historischen Stunden-Leistungen gebündelt aus HA-LTS
+    (`get_hourly_sensor_data` einmal pro Range — `get_tagesverlauf` reicht nur
+    ~10 Tage zurück) und reicht sie pro fehlendem Tag als
+    `prefetched_tagesverlauf` an `aggregate_day(source=VOLLBACKFILL_FROM_LTS)`
+    durch. Die komplette Aggregations-Logik (kategorisierte Stunden-kWh,
+    Boundary-kWh, Peaks, Strompreise, Börsenpreis-Felder, Counter, Prognose-
+    Rettung, Provenance, Invariante) lebt nur noch in `aggregate_day` — kein
+    paralleler Top-Level-Schreibpfad mehr (Audit §6.1, Plan v3.34 E1/E2). Die
+    frühere Backfill-eigene Boundary-/Komponenten-/Peak-/Rettungslisten-Logik
+    ist damit entfallen.
+
+    **Stille Datenverbesserung (Plan §1.3 Stufe 2):** für neu nachgefüllte Tage
+    werden jetzt auch Peaks (HA-LTS-Min/Max), Strompreis-/Börsenpreis-Felder
+    gesetzt und die Boundary-kWh kommt aus dem HA-LTS-Pfad (statt
+    Snapshot-Variante). Bestehende Tage bleiben unverändert — der Backfill ist
+    weiterhin **additiv** (#190): Tage mit vorhandener TZ werden gar nicht erst
+    aggregiert.
+
+    Ein Overwrite-Modus existiert bewusst nicht (#190): „löschen + neu
     berechnen" ist datenfeindlich, weil HA-LTS für viele Anlagen kürzer
     zurückreicht als das gepflegte Profil. Wer einen einzelnen Tag reparieren
     will, nutzt /reaggregate-tag mit Vorschau (chirurgisch, idempotent).
@@ -147,11 +146,12 @@ async def backfill_from_statistics(
         extract_live_config,
     )
     from backend.services.ha_statistics_service import get_ha_statistics_service
-    from backend.services.energie_profil._helpers import _get_wetter_ist
 
-    # Investitionen laden — alle die im Backfill-Zeitraum aktiv waren,
-    # nicht nur die heute aktiven (sonst fehlen stillgelegte Investitionen
-    # für historische Tage vor dem Stilllegungsdatum)
+    # Investitionen laden — alle die im Backfill-Zeitraum aktiv waren
+    # (`aktiv_im_zeitraum`), für den Serien-Aufbau über die Range. Die Per-Tag-
+    # Verfeinerung (genau die am jeweiligen Tag aktiven Investitionen) macht
+    # die `ist_aktiv_an(current)`-Filterung in der Schleife unten plus der
+    # `aktiv_am_tag`-Inv-Load in `aggregate_day` (Audit §6.4).
     inv_result = await db.execute(
         sa_select(Investition).where(
             Investition.anlage_id == anlage.id,
@@ -166,7 +166,7 @@ async def backfill_from_statistics(
 
     if not basis_live and not inv_live_map:
         logger.info(f"Anlage {anlage.id}: Keine Live-Sensoren konfiguriert, Backfill übersprungen")
-        return 0
+        return dict(_LEERER_BACKFILL_STATUS)
 
     # ── Serien + Entity-Mapping aufbauen (spiegelt live_tagesverlauf_service.py) ──
     serien: list[dict] = []
@@ -245,27 +245,19 @@ async def backfill_from_statistics(
     if netz_einspeisung_eid:
         all_entity_ids.add(netz_einspeisung_eid)
 
-    # SoC-Entities — nur stationäre Speicher, sonst kontaminiert E-Auto-SoC
-    # die Vollzyklen-Berechnung der PV-Anlage.
-    soc_entity: Optional[str] = None
-    for inv_id, live in inv_live_map.items():
-        if not live.get("soc"):
-            continue
-        inv = investitionen.get(inv_id)
-        if inv is None or inv.typ != "speicher":
-            continue
-        soc_entity = live["soc"]
-        all_entity_ids.add(soc_entity)
-        break  # Erstes Speicher-SoC-Entity reicht
+    # SoC wird NICHT mehr hier vorgeholt — `aggregate_day` holt die Speicher-
+    # SoC-History selbst über `_get_soc_history` (Pfad 1: HA-LTS-Hourly-Mean,
+    # dieselbe Quelle, die der Bulk-Read nutzt → für historische Tage verfügbar,
+    # Vollzyklen bleiben erhalten). v3.34.2 Phase B.
 
     if not all_entity_ids:
-        return 0
+        return dict(_LEERER_BACKFILL_STATUS)
 
     # ── HA Statistics abfragen (Executor wegen Sync-SQLAlchemy) ─────────────
     ha_service = get_ha_statistics_service()
     if not ha_service.is_available:
         logger.warning(f"Anlage {anlage.id}: HA Statistics nicht verfügbar, Backfill übersprungen")
-        return 0
+        return dict(_LEERER_BACKFILL_STATUS)
 
     hourly_data = await asyncio.to_thread(
         ha_service.get_hourly_sensor_data, list(all_entity_ids), von, bis
@@ -273,7 +265,7 @@ async def backfill_from_statistics(
 
     if not hourly_data:
         logger.info(f"Anlage {anlage.id}: Keine Statistics-Daten für {von}–{bis}")
-        return 0
+        return dict(_LEERER_BACKFILL_STATUS)
 
     # ── Vorzeichen-Invertierung anwenden (wie apply_invert_to_history) ───────
     invert_eids: set[str] = set()
@@ -292,23 +284,9 @@ async def backfill_from_statistics(
                     h: -v for h, v in hourly_data[eid][datum_iso].items()
                 }
 
-    # ── Kategorie-Schlüssel-Sets (identisch zu aggregate_day) ────────────────
-    pv_keys = {s["key"] for s in serien if s["kategorie"] == "pv"}
-    batterie_keys = {s["key"] for s in serien if s["kategorie"] == "batterie"}
-    v2h_keys = {s["key"] for s in serien if s["key"].startswith("v2h_")}
-    netz_keys = {s["key"] for s in serien if s["kategorie"] == "netz"}
-    wp_keys = {s["key"] for s in serien if s["kategorie"] == "waermepumpe"}
-    wallbox_keys = {
-        s["key"] for s in serien
-        if s["kategorie"] in ("wallbox", "eauto") and not s["key"].startswith("v2h_")
-    }
-    # Bugfix: sonstige_keys fehlten hier (führte dazu, dass "sonstiges"-Erzeuger
-    # doppelt in pv_kw einflossen). Nun analog zu aggregate_day.
-    sonstige_keys = {s["key"] for s in serien if s["kategorie"] == "sonstige"}
-    _sonderschluessel = (
-        batterie_keys | v2h_keys | netz_keys | pv_keys
-        | wp_keys | wallbox_keys | sonstige_keys
-    )
+    # (Die Kategorie-Schlüssel-Sets + die W-basierte Peak-/pv_kw-Berechnung
+    # leben nicht mehr hier — `aggregate_day` leitet sie aus den durchgereichten
+    # `serien` ab. v3.34.2 Phase B.)
 
     # ── Bestehende Tage ermitteln (immer additiv, #190) ──────────────────────
     ex_result = await db.execute(
@@ -322,7 +300,15 @@ async def backfill_from_statistics(
     )
     existing_dates: set[date] = {row[0] for row in ex_result}
 
-    # ── Pro-Tag-Schleife ─────────────────────────────────────────────────────
+    # ── Pro-Tag-Schleife: pro fehlendem Tag ein aggregate_day-Aufruf ─────────
+    # Diese Funktion baut nur noch die vorgeholten Tagesverlauf-Daten (raw-kW
+    # pro Serie aus dem HA-LTS-Bulk-Read, Butterfly-Konvention) und reicht sie
+    # als `prefetched_tagesverlauf` durch. Alles Weitere — kategorisierte
+    # Stunden-kWh, Boundary-kWh, Peaks (HA-LTS-Min/Max), Strompreise,
+    # Börsenpreis-Felder, Counter, SoC/Vollzyklen, Prognose-Rettung, Provenance,
+    # Konsistenz-Invariante — erledigt `aggregate_day` mit
+    # `source=VOLLBACKFILL_FROM_LTS`. Genau EIN Top-Level-Schreibpfad
+    # (Audit §6.1, Plan v3.34 E1).
     count = 0
     skipped_no_data = 0
     skipped_existing = 0
@@ -335,63 +321,9 @@ async def backfill_from_statistics(
 
         datum_iso = current.isoformat()
 
-        # Wetter-IST-Daten für diesen Tag (inkl. GTI für PR — Issue #139).
-        # Nur PV-Module berücksichtigen die an diesem Tag aktiv waren.
-        pv_module_aktiv = [
-            inv for inv in investitionen.values()
-            if inv.typ in ("pv-module", "balkonkraftwerk") and inv.ist_aktiv_an(current)
-        ]
-        wetter_stunden = await _get_wetter_ist(anlage, current, pv_module=pv_module_aktiv)
-
-        # SoC-Werte für diesen Tag
-        soc_stunden: dict[int, float] = {}
-        if soc_entity and soc_entity in hourly_data:
-            soc_stunden = hourly_data[soc_entity].get(datum_iso, {})
-
-        # Zähler-basierte kWh pro Stunde (Issue #135)
-        kwh_pro_stunde_tag: dict[int, dict[str, Optional[float]]] = {}
-        try:
-            from backend.services.sensor_snapshot_service import get_hourly_kwh_by_category
-            kwh_pro_stunde_tag = await get_hourly_kwh_by_category(
-                db, anlage, investitionen, current,
-            )
-        except Exception as e:
-            logger.warning(
-                f"Anlage {anlage.id}, {current}: Zähler-Snapshot fehlgeschlagen: "
-                f"{type(e).__name__}: {e}"
-            )
-            kwh_pro_stunde_tag = {}
-
-        # Stunden-Counter (Issue #136 / Forum #259 detLAN): WP-Kompressor-Starts
-        # pro Stunde. Im Backfill bisher nicht mit-aggregiert → Tagesdetail-
-        # Tabelle zeigte leere wp_starts_anzahl-Spalten für nachgefüllte Tage.
-        wp_starts_pro_stunde: dict[int, Optional[int]] = {}
-        try:
-            from backend.services.sensor_snapshot_service import get_hourly_counter_sum_by_feld
-            wp_starts_pro_stunde = await get_hourly_counter_sum_by_feld(
-                db, anlage, investitionen, current, "wp_starts_anzahl",
-            )
-        except Exception as e:
-            logger.warning(
-                f"Anlage {anlage.id}, {current}: WP-Starts-Aggregation "
-                f"fehlgeschlagen: {type(e).__name__}: {e}"
-            )
-
-        # Stundenschleife: werte-Dict aufbauen (Butterfly-Konvention)
-        tages_ueberschuss = 0.0
-        tages_defizit = 0.0
-        peak_pv = 0.0
-        peak_bezug = 0.0
-        peak_einspeisung = 0.0
-        temp_values: list[float] = []
-        strahlung_summe = 0.0
-        gti_summe = 0.0  # PR-Referenz (#139)
-        pv_ertrag_summe = 0.0
-        soc_values: list[float] = []
-        stunden_count = 0
-        komponenten_summen: dict[str, float] = {}
-
-        # Serien filtern: nur Investitionen die an diesem Tag aktiv waren
+        # Serien filtern: nur Investitionen, die an diesem Tag aktiv waren.
+        # In-Memory-Pendant zum `aktiv_am_tag`-Inv-Load in `aggregate_day`
+        # (Audit §6.4) — punkte + Serien-Metadaten bleiben so tag-konsistent.
         tages_serien = [
             s for s in serien
             if s.get("inv_id") is None  # Basis-Serien (PV Gesamt, Netz)
@@ -399,17 +331,19 @@ async def backfill_from_statistics(
             or investitionen[s["inv_id"]].ist_aktiv_an(current)
         ]
 
-        stunden_mit_daten = 0
-        pending_tep: list[TagesEnergieProfil] = []
+        # punkte (get_tagesverlauf-Form) aus dem HA-LTS-Bulk-Read aufbauen:
+        # je Stunde MIT Daten ein werte-Dict {serie_key: kW}. Stunden ohne
+        # jegliche Werte werden ausgelassen (wie der frühere `if not werte:
+        # continue`-Skip) — damit bleibt `stunden_verfuegbar` identisch zur
+        # Stunden-mit-Daten-Zählung.
+        punkte: list[dict] = []
         for h in range(24):
-            # werte-Dict aus Statistics aufbauen (spiegelt live_tagesverlauf_service.py)
             werte: dict[str, float] = {}
 
             for serie in tages_serien:
                 skey = serie["key"]
                 if serie["kategorie"] == "netz":
                     continue  # Netz separat
-
                 entity_ids = serie_entities.get(skey, [])
                 serie_sum_kw = 0.0
                 has_data = False
@@ -418,7 +352,6 @@ async def backfill_from_statistics(
                     if val is not None:
                         serie_sum_kw += val
                         has_data = True
-
                 if has_data:
                     if serie["bidirektional"]:
                         raw_val = -serie_sum_kw
@@ -428,7 +361,7 @@ async def backfill_from_statistics(
                         raw_val = abs(serie_sum_kw)
                     werte[skey] = round(raw_val, 3)
 
-            # Netz
+            # Netz (Kombi-Sensor oder getrennt Bezug/Einspeisung)
             bezug_kw = 0.0
             einsp_kw = 0.0
             if netz_kombi_eid:
@@ -451,235 +384,41 @@ async def backfill_from_statistics(
             if bezug_kw > 0 or einsp_kw > 0 or abs(netto_kw) > 0.001:
                 werte["netz"] = round(netto_kw, 3)
 
-            if not werte:
-                continue  # Keine Daten für diese Stunde
+            if werte:
+                punkte.append({"zeit": f"{h:02d}:00", "werte": werte})
 
-            stunden_mit_daten += 1
-
-            # Leistungs-Spitzen aus W-Integration (nur für Peaks).
-            netz_val = sum(werte.get(k, 0) for k in netz_keys)
-            einspeisung_kw_h = abs(netz_val) if netz_val < 0 else 0.0
-            netzbezug_kw_h = netz_val if netz_val > 0 else 0.0
-
-            pv_kw_h = sum(v for k in pv_keys if (v := werte.get(k, 0)) > 0)
-            for k, v in werte.items():
-                if v is None or k in _sonderschluessel:
-                    continue
-                if v > 0:
-                    pv_kw_h += v
-
-            # kWh-Werte aus Zähler-Snapshots (Issue #135).
-            # Fehlt der Zähler einer Kategorie, bleibt der Wert None.
-            snap_h = kwh_pro_stunde_tag.get(h, {}) if kwh_pro_stunde_tag else {}
-            pv_kw_final = snap_h.get("pv")
-            einspeisung_kw_final = snap_h.get("einspeisung")
-            netzbezug_kw_final = snap_h.get("netzbezug")
-            verbrauch_kw_final = snap_h.get("verbrauch")
-            waermepumpe_kw_final = snap_h.get("wp")
-            wallbox_kw_final = snap_h.get("wallbox")
-            batterie_kw_final = snap_h.get("batterie_netto")
-
-            if pv_kw_final is not None and verbrauch_kw_final is not None:
-                ueberschuss_h = max(0.0, pv_kw_final - verbrauch_kw_final)
-                defizit_h = max(0.0, verbrauch_kw_final - pv_kw_final)
-                tages_ueberschuss += ueberschuss_h
-                tages_defizit += defizit_h
-            else:
-                ueberschuss_h = None
-                defizit_h = None
-
-            if pv_kw_final is not None:
-                pv_ertrag_summe += pv_kw_final
-
-            # Peaks bleiben W-basiert
-            peak_pv = max(peak_pv, pv_kw_h)
-            peak_bezug = max(peak_bezug, netzbezug_kw_h)
-            peak_einspeisung = max(peak_einspeisung, einspeisung_kw_h)
-
-            wetter_h = wetter_stunden.get(h, {})
-            temperatur = wetter_h.get("temperatur_c")
-            strahlung = wetter_h.get("globalstrahlung_wm2")
-            gti = wetter_h.get("gti_wm2")
-            bewoelkung = wetter_h.get("bewoelkung_prozent")
-            niederschlag = wetter_h.get("niederschlag_mm")
-            wcode = wetter_h.get("wetter_code")
-            if temperatur is not None:
-                temp_values.append(temperatur)
-            if strahlung is not None:
-                strahlung_summe += strahlung
-            if gti is not None:
-                gti_summe += gti
-
-            soc = soc_stunden.get(h)
-            if soc is not None:
-                soc_values.append(soc)
-
-            for komp_key, komp_kw in werte.items():
-                komponenten_summen[komp_key] = komponenten_summen.get(komp_key, 0.0) + komp_kw
-
-            pending_tep.append(TagesEnergieProfil(
-                anlage_id=anlage.id,
-                datum=current,
-                stunde=h,
-                pv_kw=round(pv_kw_final, 3) if pv_kw_final is not None else None,
-                verbrauch_kw=round(verbrauch_kw_final, 3) if verbrauch_kw_final is not None else None,
-                einspeisung_kw=round(einspeisung_kw_final, 3) if einspeisung_kw_final is not None else None,
-                netzbezug_kw=round(netzbezug_kw_final, 3) if netzbezug_kw_final is not None else None,
-                batterie_kw=round(batterie_kw_final, 3) if batterie_kw_final is not None else None,
-                waermepumpe_kw=round(waermepumpe_kw_final, 3) if waermepumpe_kw_final is not None else None,
-                wallbox_kw=round(wallbox_kw_final, 3) if wallbox_kw_final is not None else None,
-                ueberschuss_kw=round(ueberschuss_h, 3) if ueberschuss_h is not None else None,
-                defizit_kw=round(defizit_h, 3) if defizit_h is not None else None,
-                temperatur_c=round(temperatur, 1) if temperatur is not None else None,
-                globalstrahlung_wm2=round(strahlung, 0) if strahlung is not None else None,
-                bewoelkung_prozent=round(bewoelkung, 0) if bewoelkung is not None else None,
-                niederschlag_mm=round(niederschlag, 2) if niederschlag is not None else None,
-                wetter_code=int(wcode) if wcode is not None else None,
-                soc_prozent=round(soc, 1) if soc is not None else None,
-                komponenten=werte if werte else None,
-                wp_starts_anzahl=wp_starts_pro_stunde.get(h),
-            ))
-            stunden_count += 1
-
-        if stunden_mit_daten == 0:
+        if not punkte:
+            # #190 Bug B: kein stiller Skip — der Tag hatte schlicht keine
+            # HA-Statistics-Werte (Skip-Transparenz im Status-Dict).
             skipped_no_data += 1
             current += timedelta(days=1)
             continue
 
-        # Erst JETZT alte Daten löschen (nur wenn neue Daten vorhanden)
-        # Prognose-Felder aus bestehendem Eintrag bewahren
-        preserved_prognose = {}
-        existing_tz = await db.execute(
-            sa_select(TagesZusammenfassung).where(
-                sa_and(
-                    TagesZusammenfassung.anlage_id == anlage.id,
-                    TagesZusammenfassung.datum == current,
-                )
-            )
-        )
-        existing_tz_row = existing_tz.scalar_one_or_none()
-        if existing_tz_row:
-            # Liste MUSS synchron sein mit `_PROGNOSE_FELDER_RETTEN` im Aggregator
-            # und mit den Schreibfeldern von `live_wetter._speichere_prognose`.
-            # Konformitäts-Test K1 (test_konformitaet_prognose_felder.py) bricht
-            # bei Drift. v3.31.7 (#190) fügte `_PROGNOSE_FELDER_RETTEN` zwei Stunden-
-            # profil-Felder hinzu, hier blieb die Liste bei 5 Einträgen stehen —
-            # latente Drift-Stelle (heute durch existing_dates-Skip neutralisiert,
-            # Audit §4.1). v3.34.0 angeglichen.
-            for field in _PROGNOSE_FELDER_RETTEN_BACKFILL:
-                val = getattr(existing_tz_row, field, None)
-                if val is not None:
-                    preserved_prognose[field] = val
-
-        await db.execute(
-            sa_delete(TagesEnergieProfil).where(
-                sa_and(
-                    TagesEnergieProfil.anlage_id == anlage.id,
-                    TagesEnergieProfil.datum == current,
-                )
-            )
-        )
-        await db.execute(
-            sa_delete(TagesZusammenfassung).where(
-                sa_and(
-                    TagesZusammenfassung.anlage_id == anlage.id,
-                    TagesZusammenfassung.datum == current,
-                )
-            )
-        )
-
-        # Gesammelte Stundendaten schreiben + Provenance setzen.
-        # delete+insert oben hat eventuelle bestehende Provenance entfernt;
-        # wir markieren die neuen Rows mit `external:ha_statistics`.
-        for tep in pending_tep:
-            db.add(tep)
-            seed_tep_provenance(tep, source=_HA_STATS_SOURCE, writer=_HA_STATS_WRITER)
-
-        # Batterie-Vollzyklen
-        vollzyklen = None
-        if len(soc_values) >= 2:
-            delta_sum = sum(abs(soc_values[i] - soc_values[i - 1])
-                            for i in range(1, len(soc_values)))
-            vollzyklen = round(delta_sum / 200.0, 2)
-
-        # Performance Ratio — GTI statt horizontaler GHI als Referenz (#139).
-        performance_ratio = None
-        kwp = anlage.leistung_kwp
-        if kwp and kwp > 0 and gti_summe > 0:
-            theoretisch_kwh = gti_summe * kwp / 1000
-            if theoretisch_kwh > 0:
-                performance_ratio = round(pv_ertrag_summe / theoretisch_kwh, 3)
-
-        # Counter-Tagesdifferenzen (Issue #136) — Backfill via HA Statistics
-        komponenten_starts: dict = {}
+        prefetched = {"serien": tages_serien, "punkte": punkte}
         try:
-            from backend.services.sensor_snapshot_service import get_daily_counter_deltas_by_inv
-            komponenten_starts = await get_daily_counter_deltas_by_inv(
-                db, anlage, investitionen, current,
+            zusammenfassung = await aggregate_day(
+                anlage, current, db,
+                source=Source.VOLLBACKFILL_FROM_LTS,
+                prefetched_tagesverlauf=prefetched,
             )
-        except Exception as e:
-            logger.warning(
-                f"Backfill (Statistics) Anlage {anlage.id}, {current}: Counter-Aggregation "
-                f"fehlgeschlagen: {type(e).__name__}: {e}"
-            )
-
-        # Tagesgesamt pro Komponente aus Boundary-Diff (Etappe 3c P3, E2):
-        # HA-konformes [Heute 00:00, Folgetag 00:00) statt Σ-Hourly über Backward-
-        # Slots. Boundary-Werte überschreiben Σ-Hourly-Werte für übereinstimmende
-        # Keys; Live-Σ bleibt nur für Keys ohne Counter-Mapping (z.B. WP-Suffix).
-        try:
-            from backend.services.snapshot.aggregator import get_komponenten_tageskwh
-            boundary_kwh = await get_komponenten_tageskwh(
-                db, anlage, investitionen, current,
-            )
-            for key, val in boundary_kwh.items():
-                komponenten_summen[key] = val
+            if zusammenfassung is not None:
+                count += 1
+            else:
+                # aggregate_day lieferte trotz Stunden-Daten None — als
+                # „keine verwertbaren Daten" zählen (defensiv, praktisch selten).
+                skipped_no_data += 1
+            # Per-Tag-Commit: gibt den SQLite-Writer-Lock kurz frei, damit
+            # parallele Schreiber (Monatsabschluss-Wizard, Activity-Log,
+            # MQTT-Snapshot-Jobs) nicht in busy_timeout laufen (#291).
+            # Backfill ist additiv + idempotent, commit ändert die
+            # semantische Korrektheit nicht.
+            await db.commit()
         except Exception as e:
             logger.warning(
                 f"Backfill (Statistics) Anlage {anlage.id}, {current}: "
-                f"Komponenten-Tagesgesamt aus Snapshots fehlgeschlagen: "
-                f"{type(e).__name__}: {e}"
+                f"aggregate_day fehlgeschlagen: {type(e).__name__}: {e}"
             )
-
-        tz_obj = TagesZusammenfassung(
-            anlage_id=anlage.id,
-            datum=current,
-            ueberschuss_kwh=round(tages_ueberschuss, 2) if tages_ueberschuss > 0 else None,
-            defizit_kwh=round(tages_defizit, 2) if tages_defizit > 0 else None,
-            peak_pv_kw=round(peak_pv, 2) if peak_pv > 0 else None,
-            peak_netzbezug_kw=round(peak_bezug, 2) if peak_bezug > 0 else None,
-            peak_einspeisung_kw=round(peak_einspeisung, 2) if peak_einspeisung > 0 else None,
-            batterie_vollzyklen=vollzyklen,
-            temperatur_min_c=round(min(temp_values), 1) if temp_values else None,
-            temperatur_max_c=round(max(temp_values), 1) if temp_values else None,
-            strahlung_summe_wh_m2=round(strahlung_summe, 0) if strahlung_summe > 0 else None,
-            performance_ratio=performance_ratio,
-            stunden_verfuegbar=stunden_count,
-            datenquelle="ha_statistiken",
-            komponenten_kwh=(
-                {k: round(v, 2) for k, v in komponenten_summen.items()}
-                if komponenten_summen else None
-            ),
-            komponenten_starts=komponenten_starts or None,
-        )
-        # Prognose-Felder aus gelöschtem Eintrag wiederherstellen
-        for field, val in preserved_prognose.items():
-            setattr(tz_obj, field, val)
-        db.add(tz_obj)
-        seed_tz_provenance(tz_obj, source=_HA_STATS_SOURCE, writer=_HA_STATS_WRITER)
-        await db.flush()
-
-        logger.info(
-            f"Backfill (Statistics) Anlage {anlage.id}, {current}: "
-            f"{stunden_count}h, PV={pv_ertrag_summe:.1f}kWh, PR={performance_ratio or '-'}"
-        )
-        count += 1
-        # Per-Tag-Commit: gibt den SQLite-Writer-Lock kurz frei, damit
-        # parallele Schreiber (Monatsabschluss-Wizard, Activity-Log,
-        # MQTT-Snapshot-Jobs) nicht in busy_timeout laufen (#291).
-        # HA-Stats-Backfill ist additiv und idempotent, commit ändert
-        # nichts an der semantischen Korrektheit.
-        await db.commit()
+            await db.rollback()
         current += timedelta(days=1)
 
     if skipped_no_data > 0:

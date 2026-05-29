@@ -28,6 +28,7 @@ from backend.services.energie_profil._provenance_helpers import (
     seed_tz_provenance,
 )
 from backend.services.energie_profil.source import Source
+from backend.utils.investition_filter import aktiv_am_tag
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +58,7 @@ async def aggregate_day(
     db: AsyncSession,
     *,
     source: Source,
+    prefetched_tagesverlauf: Optional[dict] = None,
 ) -> Optional[TagesZusammenfassung]:
     """
     Aggregiert Energiedaten eines Tages und speichert sie persistent.
@@ -76,6 +78,21 @@ async def aggregate_day(
             Suffix, (c) Preserve-Logik bei manueller Reaggregation. Pflicht-
             Keyword-Parameter — kein Default, alle Aufrufer setzen ihn
             explizit (Audit §8.12, Plan v3.34 §3 Phase A E4).
+        prefetched_tagesverlauf: Optionale vorgeholte Tagesverlauf-Daten in
+            der ``get_tagesverlauf``-Form (``{"serien": [...], "punkte":
+            [{"zeit", "werte"}]}``) für GENAU diesen Tag. Gesetzt vom
+            Vollbackfill-Pfad (``backfill_from_statistics``, v3.34.2 Phase B),
+            der die historischen Stunden-Leistungen gebündelt aus HA-LTS holt
+            (`get_hourly_sensor_data` einmal pro Range) — `get_tagesverlauf`
+            reicht nur ~10 Tage zurück, deshalb braucht der Backfill die
+            Durchreichung. Wenn gesetzt, wird `get_tagesverlauf` NICHT
+            aufgerufen; die kategorisierten Stunden-kWh, Boundary-kWh, Peaks,
+            Strompreise usw. kommen weiterhin aus den regulären
+            `aggregate_day`-Quellen (HA-LTS bevorzugt). Plan v3.34 §3 B.1 +
+            B.3 (Pflicht-Mitigation gegen Per-Tag-Bulk-Read-Verlust).
+            (Der Plan-Text nennt `dict[date, dict]`; da `aggregate_day`
+            per-Tag arbeitet, wird die Per-Tag-Form übergeben — der Caller
+            schleift über die Range.)
 
     Returns:
         TagesZusammenfassung oder None bei Fehler
@@ -86,50 +103,59 @@ async def aggregate_day(
         _get_wetter_ist,
         _tage_zurueck,
     )
-    from backend.services.live_power_service import get_live_power_service
 
-    service = get_live_power_service()
     # Provenance-Writer codiert die Trigger-Quelle (Scheduler / Monatsabschluss /
-    # manuelles Reaggregate). Source bleibt einheitlich `auto:monatsabschluss`
-    # (Stufe 3) — siehe seed_tz_provenance / seed_tep_provenance.
+    # manuelles Reaggregate / Vollbackfill). Source bleibt einheitlich
+    # `auto:monatsabschluss` (Stufe 3) — siehe seed_tz_provenance / seed_tep_provenance.
     auto_writer = source.to_writer()
 
-    # Sensor-Mapping prüfen
     sensor_mapping = anlage.sensor_mapping or {}
-    basis_live = sensor_mapping.get("basis", {}).get("live", {})
-    has_inv_live = any(
-        isinstance(v, dict) and v.get("live")
-        for v in sensor_mapping.get("investitionen", {}).values()
-    )
 
-    # Im Standalone-/Docker-Modus sind sensor_mapping.live-Einträge oft leer
-    # (MQTT liefert direkt Topics). Wir erlauben aggregate_day trotzdem zu
-    # laufen, wenn MQTT-Energy-Snapshots vorliegen — der Zähler-Pfad braucht
-    # kein leistung_w. Issue #135 Blocker 2.
-    has_mqtt_energy = False
-    if not basis_live and not has_inv_live:
-        from backend.models.mqtt_energy_snapshot import MqttEnergySnapshot
-        cutoff = datetime.combine(datum, datetime.min.time()) - timedelta(days=1)
-        mqtt_check = await db.execute(
-            select(MqttEnergySnapshot.id).where(
-                MqttEnergySnapshot.anlage_id == anlage.id,
-                MqttEnergySnapshot.timestamp >= cutoff,
-            ).limit(1)
+    if prefetched_tagesverlauf is not None:
+        # Vollbackfill-Pfad: historische Stunden-Daten sind bereits gebündelt
+        # vorgeholt. Sensor-Konfig wurde vom Caller validiert, get_tagesverlauf
+        # (HA-History, ~10 Tage) würde für alte Tage ohnehin leer liefern.
+        tv_data = prefetched_tagesverlauf
+    else:
+        from backend.services.live_power_service import get_live_power_service
+
+        service = get_live_power_service()
+
+        # Sensor-Mapping prüfen
+        basis_live = sensor_mapping.get("basis", {}).get("live", {})
+        has_inv_live = any(
+            isinstance(v, dict) and v.get("live")
+            for v in sensor_mapping.get("investitionen", {}).values()
         )
-        has_mqtt_energy = mqtt_check.scalar_one_or_none() is not None
 
-        if not has_mqtt_energy:
-            logger.debug(f"Anlage {anlage.id}: Keine Live-Sensoren konfiguriert")
-            return None
+        # Im Standalone-/Docker-Modus sind sensor_mapping.live-Einträge oft leer
+        # (MQTT liefert direkt Topics). Wir erlauben aggregate_day trotzdem zu
+        # laufen, wenn MQTT-Energy-Snapshots vorliegen — der Zähler-Pfad braucht
+        # kein leistung_w. Issue #135 Blocker 2.
+        has_mqtt_energy = False
+        if not basis_live and not has_inv_live:
+            from backend.models.mqtt_energy_snapshot import MqttEnergySnapshot
+            cutoff = datetime.combine(datum, datetime.min.time()) - timedelta(days=1)
+            mqtt_check = await db.execute(
+                select(MqttEnergySnapshot.id).where(
+                    MqttEnergySnapshot.anlage_id == anlage.id,
+                    MqttEnergySnapshot.timestamp >= cutoff,
+                ).limit(1)
+            )
+            has_mqtt_energy = mqtt_check.scalar_one_or_none() is not None
 
-    # ── Tagesverlauf-Daten holen ──────────────────────────────────────────
-    try:
-        tv_data = await service.get_tagesverlauf(
-            anlage, db, tage_zurueck=_tage_zurueck(datum),
-        )
-    except Exception as e:
-        logger.warning(f"Anlage {anlage.id}, {datum}: Tagesverlauf-Fehler: {type(e).__name__}: {e}")
-        tv_data = {"serien": [], "punkte": []}
+            if not has_mqtt_energy:
+                logger.debug(f"Anlage {anlage.id}: Keine Live-Sensoren konfiguriert")
+                return None
+
+        # ── Tagesverlauf-Daten holen ──────────────────────────────────────
+        try:
+            tv_data = await service.get_tagesverlauf(
+                anlage, db, tage_zurueck=_tage_zurueck(datum),
+            )
+        except Exception as e:
+            logger.warning(f"Anlage {anlage.id}, {datum}: Tagesverlauf-Fehler: {type(e).__name__}: {e}")
+            tv_data = {"serien": [], "punkte": []}
 
     serien = tv_data.get("serien", [])
     punkte_raw = tv_data.get("punkte", [])
@@ -137,7 +163,10 @@ async def aggregate_day(
     # Wenn keine leistung_w-Daten vorliegen aber MQTT-Energy da ist → synthetisches
     # punkte-Array mit leeren werte-Dicts, damit die Stunden-Schleife 24x läuft
     # und die Zähler-Snapshot-Werte in TagesEnergieProfil landen können.
-    if not punkte_raw and has_mqtt_energy:
+    # (Im Vollbackfill-Pfad mit prefetched_tagesverlauf liefert der Caller die
+    # punkte bereits; `has_mqtt_energy` ist dort nicht definiert — die explizite
+    # `is None`-Prüfung short-circuited davor.)
+    if not punkte_raw and prefetched_tagesverlauf is None and has_mqtt_energy:
         punkte_raw = [{"zeit": f"{h:02d}:00", "werte": {}} for h in range(24)]
     elif not punkte_raw:
         logger.debug(f"Anlage {anlage.id}, {datum}: Keine Tagesverlauf-Daten")
@@ -176,11 +205,16 @@ async def aggregate_day(
     _sonderschluessel = batterie_keys | v2h_keys | netz_keys | pv_keys | wp_keys | wallbox_keys | sonstige_keys | {"strompreis", "haushalt"}
 
     # ── PV-Module für GTI-Gruppierung holen (Issue #139) ──────────────────
+    # Nur am `datum` aktive Module — sonst verzerrt ein erst später
+    # angeschafftes oder schon stillgelegtes Modul die GTI-Referenz und damit
+    # die Performance Ratio (v3.34.2 Phase B: aktiv_am_tag-Schnitt, Audit §6.4;
+    # zuvor lud aggregate_day ALLE Module, der Vollbackfill filterte sie per Tag).
     pv_module_result = await db.execute(
         select(Investition).where(
             and_(
                 Investition.anlage_id == anlage.id,
                 Investition.typ.in_(("pv-module", "balkonkraftwerk")),
+                aktiv_am_tag(datum),
             )
         )
     )
@@ -203,8 +237,21 @@ async def aggregate_day(
     # unten) — `external:ha_statistics:hourly` vs `auto:monatsabschluss`.
     kwh_pro_stunde: dict[int, dict[str, Optional[float]]] = {}
     kwh_source_label: str  # für seed_*_provenance
+    # Nur am `datum` aktive Investitionen — Per-Tag-Aktiv-Filter (v3.34.2
+    # Phase B, Audit §6.4). Vorher lud aggregate_day ALLE Investitionen der
+    # Anlage; für historische Tage mit zwischenzeitlich stillgelegter
+    # Investition wich das vom Vollbackfill-Pfad (`aktiv_im_zeitraum`) ab.
+    # `aktiv_am_tag` ist die per-Tag-Variante und ignoriert das `aktiv`-Flag
+    # genau wie `aktiv_im_zeitraum` (historische Wahrheit ≠ Live-Pausierung).
+    # Für den Scheduler (heute/gestern) praktisch ein No-Op: am laufenden Tag
+    # aktive Investitionen erfüllen den Filter ohnehin.
     inv_result = await db.execute(
-        select(Investition).where(Investition.anlage_id == anlage.id)
+        select(Investition).where(
+            and_(
+                Investition.anlage_id == anlage.id,
+                aktiv_am_tag(datum),
+            )
+        )
     )
     invs = inv_result.scalars().all()
     invs_by_id = {str(inv.id): inv for inv in invs}

@@ -61,10 +61,11 @@ _SOLCAST_WRITER = "solcast_provider"
 # (Day-Ahead-Forecast-Schreiber) befüllt. Muss in Sync gehalten werden mit
 # den Inline-Schreibungen in der Funktion unten — sie ist Anker für den
 # Konformitäts-Test K1 (test_konformitaet_prognose_felder.py), der diese
-# Liste unabhängig mit `_PROGNOSE_FELDER_RETTEN` im Aggregator und mit
-# `_PROGNOSE_FELDER_RETTEN_BACKFILL` im Backfill vergleicht. Drift in
-# einer der drei Stellen bricht den Test (Vorfall v3.31.7: `_PROGNOSE_FELDER_RETTEN`
-# fehlte `pv_prognose_stundenprofil`, Korrekturprofil-Heatmap blieb dauerhaft leer).
+# Liste unabhängig mit `_PROGNOSE_FELDER_RETTEN` im Aggregator vergleicht.
+# Drift in einer der beiden Stellen bricht den Test (Vorfall v3.31.7:
+# `_PROGNOSE_FELDER_RETTEN` fehlte `pv_prognose_stundenprofil`, Korrekturprofil-
+# Heatmap blieb dauerhaft leer). Die frühere dritte Liste im Backfill ist mit
+# v3.34.2 Phase B entfallen (Backfill schreibt nicht mehr eigenständig in TZ).
 _TZ_SCHREIBFELDER_PROGNOSE: tuple[str, ...] = (
     "pv_prognose_kwh",
     "sfml_prognose_kwh",

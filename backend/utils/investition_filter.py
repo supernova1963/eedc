@@ -10,6 +10,9 @@ Unterscheidung:
   `aktiv`-Flag bewusst, weil vergangene Daten auch nach manuellem Pausieren
   erhalten bleiben müssen. Nur `stilllegungsdatum` und `anschaffungsdatum`
   begrenzen den Einsatzzeitraum.
+- `aktiv_am_tag(tag)` — SQL-Filter für die Per-Tag-Aggregation eines einzelnen
+  Tages (`energie_profil.aggregator.aggregate_day`). Per-Tag-Variante von
+  `aktiv_im_zeitraum`; ignoriert `aktiv`-Flag genauso.
 
 Für In-Memory-Checks (wenn Investitionen bereits geladen sind und pro Monat
 gefiltert werden müssen): siehe Model-Methoden `Investition.ist_aktiv_an()`,
@@ -89,6 +92,31 @@ def aktiv_im_zeitraum(start: date, end: date):
             Investition.stilllegungsdatum >= start,
         ),
     )
+
+
+def aktiv_am_tag(tag: date):
+    """SQL-Filter: Investition war an EINEM konkreten Tag aktiv (historisch, per-Tag).
+
+    Dritte Variante neben `aktiv_jetzt()` (Live-Sicht) und `aktiv_im_zeitraum()`
+    (Range-Sicht): der konsolidierte Tag-Aggregator (`aggregate_day`, v3.34.2
+    Phase B) braucht für jeden aggregierten Tag GENAU die Investitionen, die an
+    diesem Tag aktiv waren — sonst weichen Scheduler-Pfad und Vollbackfill-Pfad
+    für historische Tage mit zwischenzeitlich stillgelegten Investitionen ab
+    (Audit §6.4).
+
+    Bewusst exakt die **Null-Breiten-Range** `aktiv_im_zeitraum(tag, tag)`:
+    `anschaffungsdatum <= tag AND (stilllegungsdatum is None OR
+    stilllegungsdatum >= tag)`. Damit ist die Stilllegungs-Grenze inklusiv —
+    am Stilllegungstag selbst gilt die Investition noch als an diesem Tag aktiv,
+    identisch zur In-Memory-Model-Methode `Investition.ist_aktiv_an(tag)`
+    (`stilllegungsdatum < tag` → inaktiv). Diese Übereinstimmung ist wichtig:
+    der Vollbackfill filtert seine Serien per `ist_aktiv_an(current)`, während
+    `aggregate_day` die Inv-Last per `aktiv_am_tag(datum)` zieht — beide müssen
+    am Stilllegungstag dasselbe Ergebnis liefern. Wie `aktiv_im_zeitraum`
+    ignoriert der Filter das `aktiv`-Flag (manuelles Pausieren betrifft die
+    Live-Sicht, nicht die historische Wahrheit eines vergangenen Tages).
+    """
+    return aktiv_im_zeitraum(tag, tag)
 
 
 def aktiv_im_monat(jahr: int, monat: int):

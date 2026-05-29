@@ -25,6 +25,9 @@ def test_to_db_string_byte_identisch():
     assert Source.SCHEDULER.to_db_string() == "scheduler"
     assert Source.MONATSABSCHLUSS_BACKFILL.to_db_string() == "monatsabschluss"
     assert Source.MANUAL_REPAIR.to_db_string() == "manuell"
+    # v3.34.2 Phase B: Vollbackfill projiziert byte-identisch auf den heutigen
+    # `datenquelle="ha_statistiken"`-Spaltenwert (kein UI-/DB-Effekt, Plan E1).
+    assert Source.VOLLBACKFILL_FROM_LTS.to_db_string() == "ha_statistiken"
 
 
 def test_to_writer_byte_identisch():
@@ -34,6 +37,10 @@ def test_to_writer_byte_identisch():
     assert Source.SCHEDULER.to_writer() == "energieprofil:scheduler"
     assert Source.MONATSABSCHLUSS_BACKFILL.to_writer() == "energieprofil:monatsabschluss"
     assert Source.MANUAL_REPAIR.to_writer() == "energieprofil:manuell"
+    # v3.34.2 Phase B (Weg 2, STAND §7 Frage 5): der Vollbackfill-Writer
+    # migriert vom früheren `ha_statistics_backfill` auf das einheitliche
+    # `energieprofil:ha_statistiken` — niemand liest den alten Writer-String.
+    assert Source.VOLLBACKFILL_FROM_LTS.to_writer() == "energieprofil:ha_statistiken"
 
 
 def test_is_manual_repair():
@@ -42,14 +49,18 @@ def test_is_manual_repair():
     assert Source.MANUAL_REPAIR.is_manual_repair() is True
     assert Source.SCHEDULER.is_manual_repair() is False
     assert Source.MONATSABSCHLUSS_BACKFILL.is_manual_repair() is False
+    # Vollbackfill triggert KEINE Preserve-Logik: er ist additiv und läuft nur
+    # auf Tagen ohne bestehende TZ — es gibt nichts zu bewahren (v3.34.2).
+    assert Source.VOLLBACKFILL_FROM_LTS.is_manual_repair() is False
 
 
 def test_enum_vollstaendig():
-    """Alle heute (v3.34.0 Phase A) bekannten ``aggregate_day``-Aufrufer
-    müssen über das Enum darstellbar sein. Wenn ein neuer Aufrufer dazukommt
-    (z.B. ``Source.VOLLBACKFILL_FROM_LTS`` in Phase B), muss er hier ergänzt
-    werden — und der Aggregator + die Aufrufstelle entsprechend gepflegt."""
-    erwartete_werte = {"scheduler", "monatsabschluss", "manuell"}
+    """Alle bekannten ``aggregate_day``-Aufrufer müssen über das Enum
+    darstellbar sein (v3.34.2 Phase B: ``VOLLBACKFILL_FROM_LTS`` ergänzt — der
+    Vollbackfill läuft jetzt als dünne Schleife durch ``aggregate_day``). Wenn
+    ein neuer Aufrufer dazukommt, hier ergänzen UND alle bestehenden Konsumenten
+    (Aggregator, Daten-Checker-UI, Werkbank-Plan) prüfen."""
+    erwartete_werte = {"scheduler", "monatsabschluss", "manuell", "ha_statistiken"}
     tatsaechliche_werte = {s.value for s in Source}
     assert tatsaechliche_werte == erwartete_werte, (
         "Source-Enum hat sich verändert. Wenn neue Aufrufer dazukommen, hier "
