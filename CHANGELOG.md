@@ -7,6 +7,20 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ---
 
+## [3.34.4] - 2026-05-30 — Anschaffungsdatum als Grenze konsequent (WP-Counter, Sonstiges, HA-Export)
+
+> 🩹 **Patch-Release:** drei single-purpose Read-Pfad-Fixes derselben Bug-Klasse — per-Investition-Aggregationen respektieren jetzt durchgängig das Anschaffungs-/Stilllegungsdatum. **Kein** Fix berührt den v3.34-Aggregator-Schreibpfad (Phase-C-Counter unberührt). 587 Tests grün, Frontend-Typecheck grün.
+
+### Fixed
+
+- **WP-Dashboard: Kompressor-Starts/Betriebsstunden „seit Anschaffung" respektieren das Anschaffungsdatum (#308):** die Counter-Tagessummen wurden über die gesamte erfasste Sensor-Historie summiert (inkl. Tage vor Anschaffung) statt nur ab Anschaffungsdatum — dadurch konnte die „seit Anschaffung"-Summe den Lebensdauer-Zählerstand übersteigen (physikalisch unmöglich), und ein geändertes Anschaffungsdatum wurde von den Counter-Kacheln ignoriert. Jetzt mit `ist_aktiv_im_zeitraum`-Filter auf die WP-Laufzeit (symmetrisch zum Monatsdaten-Pfad); der LTS-Abruf selbst war korrekt. Der Zusatz „(seit Anschaffung)" im Kachel-Titel entfällt (steht weiter im Tooltip). Dank an detLAN.
+- **Sonstiges-Dashboard: Laufzeit-Filter (#308-Folge):** `get_sonstiges_dashboard` summierte die Monatsdaten als einziges der sechs Investitions-Dashboards ohne `ist_aktiv_im_monat` — Monate vor Anschaffung / nach Stilllegung flossen in Erzeugung/Verbrauch/Ersparnis/CO₂.
+- **HA-Export: per-Investition-Sensoren respektieren die Laufzeit (#308-Folge):** `calculate_investition_sensors` summierte E-Auto-/Wallbox-/WP-Monatsdaten ohne Anschaffungs-/Stilllegungs-Filter (asymmetrisch zur Schwesterfunktion `calculate_anlage_sensors`).
+
+### Hintergrund
+
+- Befund aus einem Backend-weiten Audit aller per-Investition-Aggregationen nach #308: die Abdeckung aus v3.29 (#236/#239) hielt fast überall; nur diese zwei weiteren Read-Pfad-Lücken blieben. Der Aggregator-Schreibpfad (`aggregate_day`/`backfill`/`rollup`) ist durchgängig laufzeit-gefiltert.
+
 ## [3.34.3] - 2026-05-29 — Sammelrelease: acht Backlog-Fixes (UX, Forecast, Connector, Verbrauchs-/E-Auto-Kennzahlen)
 
 > 🧰 **Gebündeltes Patch-Release** mit acht unabhängigen, single-purpose Fixes aus dem aufgelaufenen Issue-Backlog — parallel zum v3.34-Refactor abgearbeitet. **Kein** Fix berührt den v3.34-Aggregator-Schreibpfad. 584 Tests grün, Frontend-Typecheck grün.

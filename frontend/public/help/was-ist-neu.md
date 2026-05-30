@@ -1,6 +1,6 @@
 # Was ist neu
 
-> **Stand:** Mai 2026 (v3.34.3)
+> **Stand:** Mai 2026 (v3.34.4)
 > **Diese Seite** zeigt pro Version, was sich für dich als Anwender geändert hat — kürzer als der technische [CHANGELOG](https://github.com/supernova1963/eedc-homeassistant/blob/main/CHANGELOG.md), ausführlicher als die Schnellübersicht-Tabelle in der [Übersicht](BENUTZERHANDBUCH.md#was-ist-neu-seit-v316).
 >
 > **Kein Banner, kein Pop-up:** eedc zeigt diese Liste nicht ungefragt an. HA-App-Nutzer sehen den Changelog ohnehin schon im Add-on-Store, GitHub-Releases haben einen eigenen. Wer wissen will, was neu ist, schaut hier rein — Pull statt Push.
@@ -8,6 +8,18 @@
 > **Lesehinweis:** Die jüngsten Versionen stehen oben. Jeder Punkt verlinkt entweder auf die zuständige Hilfe-Sektion oder direkt auf die App-Funktion (sofern erreichbar). Anker-URLs (`?doc=was-ist-neu`) sind teilbar.
 
 ---
+
+## v3.34.4 — Anschaffungsdatum gilt jetzt überall (Mai 2026)
+
+### Was sich für dich ändert
+
+- **Wärmepumpen-Kacheln „Kompressor-Starts" und „Betriebsstunden"** zählen jetzt erst ab dem eingestellten Anschaffungsdatum. Vorher summierten sie die gesamte vom Sensor gelieferte Historie — dadurch konnte der „seit Anschaffung"-Wert sogar über dem Lebensdauer-Zählerstand liegen, und ein geändertes Anschaffungs-/Stilllegungsdatum wurde von diesen Kacheln ignoriert. Jetzt folgen sie dem eingestellten Zeitraum.
+- **Sonstige Investitionen** (Mini-BHKW, Pelletofen …): die Gesamt-Auswertung (Erzeugung, Verbrauch, Ersparnis, CO₂) berücksichtigt jetzt ebenfalls nur die tatsächliche Laufzeit.
+- **HA-Sensor-Export:** die je Investition exportierten Sensoren (E-Auto, Wallbox, Wärmepumpe) rechnen nur noch mit Monaten innerhalb der Laufzeit.
+
+### Mit Dank an
+
+- detLAN für den präzisen Bug-Report und den Gegentest.
 
 ## v3.34.3 — Sammelrelease: acht Verbesserungen aus dem Backlog (Mai 2026)
 
