@@ -299,6 +299,7 @@ async def get_mqtt_topics(
             topics.append({
                 "topic": entry["topic"],
                 "label": entry["label"],
+                "beschreibung": entry.get("beschreibung"),
                 "anlage": aname,
                 "typ": api_typ,
             })

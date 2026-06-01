@@ -271,6 +271,52 @@ async def test_eedc_und_ha_beide_null_kein_eintrag():
     assert result[0].schwere == "ok"
 
 
+async def test_311_lts_ohne_pv_key_kein_phantom_drift():
+    """#311 JanKgh: LTS-Read liefert den PV-Key gar nicht (Sensor mit
+    has_sum=0 / nicht in statistics_meta) → der eedc-Wert ist korrekt, die
+    LTS-Seite aber leer. Früher meldete der Check -100 % Phantom-Drift und
+    bot einen destruktiven „Tag reparieren"-Knopf (würde 90→0 überschreiben).
+    Jetzt: kein Eintrag, da der Key auf der LTS-Seite nicht lesbar war."""
+    today = date.today()
+    tz_list = [_make_tz(today - timedelta(days=i), 90.0) for i in range(1, 11)]
+    ha_func = lambda d: {}  # LTS kann den Sensor nicht lesen → leerer Read
+    checker, patches = _build_checker(tz_list, [_make_inv()], ha_func)
+
+    for p in patches:
+        p.start()
+    try:
+        result = await checker._check_datenquelle_drift(_make_anlage())
+    finally:
+        for p in patches:
+            p.stop()
+
+    assert len(result) == 1, f"Erwartet 1 OK-Eintrag, bekommen {result}"
+    assert result[0].schwere == "ok"
+    assert not any(
+        getattr(r, "action_kind", None) == "reaggregate_day" for r in result
+    ), "Kein destruktiver Reparatur-Knopf bei nicht-lesbarem LTS-Sensor"
+
+
+async def test_311_lts_nur_nicht_pv_keys_kein_drift():
+    """LTS-Read liefert nur Nicht-PV-Keys (z. B. netzbezug), aber keinen
+    pv_*-Key → kein Vergleich möglich → kein Phantom-Drift."""
+    today = date.today()
+    tz_list = [_make_tz(today - timedelta(days=1), 90.0)]
+    ha_func = lambda d: {"netzbezug": 5.0}  # kein pv_*-Key
+    checker, patches = _build_checker(tz_list, [_make_inv()], ha_func)
+
+    for p in patches:
+        p.start()
+    try:
+        result = await checker._check_datenquelle_drift(_make_anlage())
+    finally:
+        for p in patches:
+            p.stop()
+
+    assert len(result) == 1
+    assert result[0].schwere == "ok"
+
+
 _TESTS = [
     test_keine_drift_ok_meldung,
     test_drift_unter_schwelle_kein_eintrag,
@@ -280,6 +326,8 @@ _TESTS = [
     test_ha_lts_nicht_verfuegbar_leer,
     test_keine_tagesdaten_leer,
     test_eedc_und_ha_beide_null_kein_eintrag,
+    test_311_lts_ohne_pv_key_kein_phantom_drift,
+    test_311_lts_nur_nicht_pv_keys_kein_drift,
 ]
 
 

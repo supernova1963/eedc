@@ -67,7 +67,7 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
   const showProgress = wizard.step !== 'welcome' && wizard.step !== 'complete'
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-amber-50 via-white to-orange-50 dark:from-gray-900 dark:via-gray-800 dark:to-gray-900">
+    <div className="h-dvh overflow-y-auto overscroll-contain bg-gradient-to-br from-amber-50 via-white to-orange-50 dark:from-gray-900 dark:via-gray-800 dark:to-gray-900">
       {/* Header */}
       <header className="bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm border-b border-gray-200 dark:border-gray-700">
         <div className="max-w-4xl mx-auto px-3 sm:px-4 py-2 sm:py-4">

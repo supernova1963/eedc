@@ -152,6 +152,7 @@ export interface MqttSaveResult {
 export interface MqttTopic {
   topic: string
   label: string
+  beschreibung?: string | null
   anlage: string
   typ: string
 }

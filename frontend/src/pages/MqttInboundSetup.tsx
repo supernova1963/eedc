@@ -110,10 +110,39 @@ export default function MqttInboundSetup() {
     }
   }
 
-  const copyTopic = (topic: string) => {
-    navigator.clipboard.writeText(topic)
-    setCopied(topic)
-    setTimeout(() => setCopied(null), 2000)
+  const copyTopic = async (topic: string) => {
+    // navigator.clipboard ist nur in „secure contexts" (HTTPS/localhost) verfügbar.
+    // Über http://<lokale-IP>:8099 (HA-Add-on/Standalone im LAN) blockiert der
+    // Browser sie — Fallback auf execCommand, damit der Button dort funktioniert
+    // (Dirk-PN 2026-06-01).
+    let ok = false
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(topic)
+        ok = true
+      }
+    } catch {
+      ok = false
+    }
+    if (!ok) {
+      try {
+        const ta = document.createElement('textarea')
+        ta.value = topic
+        ta.style.position = 'fixed'
+        ta.style.opacity = '0'
+        document.body.appendChild(ta)
+        ta.focus()
+        ta.select()
+        ok = document.execCommand('copy')
+        document.body.removeChild(ta)
+      } catch {
+        ok = false
+      }
+    }
+    if (ok) {
+      setCopied(topic)
+      setTimeout(() => setCopied(null), 2000)
+    }
   }
 
   const loadCacheValues = async () => {
@@ -387,6 +416,7 @@ export default function MqttInboundSetup() {
               <TopicRow
                 key={t.topic}
                 label={t.label}
+                beschreibung={t.beschreibung}
                 topic={t.topic}
                 copied={copied}
                 onCopy={copyTopic}
@@ -425,15 +455,16 @@ export default function MqttInboundSetup() {
   )
 }
 
-function TopicRow({ label, topic, copied, onCopy }: {
+function TopicRow({ label, beschreibung, topic, copied, onCopy }: {
   label: string
+  beschreibung?: string | null
   topic: string
   copied: string | null
   onCopy: (topic: string) => void
 }) {
   return (
     <div className="flex items-center gap-2 text-sm">
-      <span className="text-gray-500 dark:text-gray-400 w-48 shrink-0 truncate" title={label}>{label}</span>
+      <span className="text-gray-500 dark:text-gray-400 w-48 shrink-0 truncate" title={beschreibung || label}>{label}</span>
       <code className="flex-1 text-xs bg-gray-100 dark:bg-gray-900 px-2 py-1 rounded text-gray-800 dark:text-gray-200 font-mono truncate">
         {topic}
       </code>

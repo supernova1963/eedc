@@ -1973,6 +1973,15 @@ class DatenChecker:
         (Σ pv_* + bkw_* Keys), nicht andere Kategorien — fokussierte
         Liste, andere Größen koppeln meistens mit.
 
+        #311: Verglichen wird ausschließlich über PV-/BKW-Keys, die der
+        LTS-Read für den Tag liefern konnte. Keys, die der LTS-Pfad nicht
+        lesen kann (Sensor ohne `has_sum`, nicht in statistics_meta,
+        Stunden-Lücke), werden NICHT als „HA = 0" gewertet — sonst entsteht
+        Phantom-Drift (-100 %) plus ein destruktiver Reparatur-Knopf, der
+        korrekte Snapshot-Werte überschreiben würde. Der Aggregator fällt im
+        selben Fall auf den Snapshot-Pfad zurück; der Check tut es analog,
+        indem er nicht-lesbare Keys aus dem Vergleich ausnimmt.
+
         Memory-Linien:
           - feedback_kein_grosser_heiler_knopf.md (keine Sammel-Reparatur
             in der Liste — Verweis auf Reparatur-Werkbank)
@@ -1980,6 +1989,8 @@ class DatenChecker:
             Aktion — Eintrag verschwindet nur durch tatsächliche Reparatur)
           - feedback_reparatur_statt_loesch_features.md (Reparatur-Pfad
             ist der einzige Pfad)
+          - feedback_grenze_externe_daten_diagnose.md („nicht gelesen"
+            ≠ „= 0" — #311 Phantom-Drift)
         """
         from datetime import date, timedelta as _td
         from backend.services.ha_statistics_service import get_ha_statistics_service
@@ -2014,8 +2025,6 @@ class DatenChecker:
 
         drift_pro_tag: list[tuple[date, float, float]] = []  # (datum, eedc, ha)
         for tz in tz_list:
-            eedc_kwh = _summe_pv_bkw_kwh(tz.komponenten_kwh)
-
             try:
                 ha_komp = await get_komponenten_tageskwh_lts(
                     anlage, invs_by_id, tz.datum,
@@ -2027,7 +2036,34 @@ class DatenChecker:
                 )
                 continue
 
-            ha_kwh = _summe_pv_bkw_kwh(ha_komp)
+            # #311 JanKgh: Nur PV-/BKW-Keys vergleichen, die der LTS-Read
+            # tatsächlich liefern konnte. Fehlt ein Key im LTS-Read (Sensor
+            # mit has_sum=0 / nicht in statistics_meta / Stunden-Lücke), ist
+            # das „nicht gelesen", NICHT „= 0". Sonst meldet der Check Phantom-
+            # Drift (-100 %) und bietet einen destruktiven „Tag reparieren"-Knopf
+            # an, der die korrekten (Snapshot-)Werte mit 0 überschreiben würde.
+            # Der Aggregator selbst fällt in genau diesem Fall auf den Snapshot-
+            # Pfad zurück (energie_profil/aggregator.py) — der Drift-Check darf
+            # die fehlende LTS-Lesbarkeit nicht als Abweichung interpretieren.
+            tz_komp = tz.komponenten_kwh or {}
+            vergleich_keys = {
+                k for k, v in ha_komp.items()
+                if isinstance(v, (int, float))
+                and any(k.startswith(p) for p in PV_KOMPONENTEN_PREFIXE)
+            }
+            if not vergleich_keys:
+                continue  # LTS konnte keinen PV-Sensor lesen → kein Vergleich
+
+            # Tagessumme NUR über die LTS-lesbaren Keys — auf beiden Seiten
+            # identische Key-Basis (analog _summe_pv_bkw_kwh: nur positiv).
+            eedc_kwh = sum(
+                v for k in vergleich_keys
+                if isinstance((v := tz_komp.get(k)), (int, float)) and v > 0
+            )
+            ha_kwh = sum(
+                v for k in vergleich_keys
+                if isinstance((v := ha_komp.get(k)), (int, float)) and v > 0
+            )
 
             if eedc_kwh <= 0 and ha_kwh <= 0:
                 continue  # Nichts zu vergleichen (z. B. Inbetriebnahme-Monat)

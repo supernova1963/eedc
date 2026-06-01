@@ -31,10 +31,18 @@ from backend.core.field_definitions import (
 SKIP_TYPEN = {"wechselrichter"}
 
 # Drei hartkodierte Basis-Energy-Topics (anlagenweite Aggregate).
+# (key, label, beschreibung). Das frühere Label „… Monat (kWh)" war
+# irreführend — es sind kumulierte Zählerstände, aus denen EEDC das
+# Tagesdelta für die „Heute"-Kacheln bildet (Dirk-PN 2026-06-01).
+_HEUTE_HINWEIS = (
+    "Kumulierter kWh-Zählerstand. Speist die „Heute\"-Kachel — EEDC bildet "
+    "das Tagesdelta gegen den Mitternachtswert (täglich resettende oder "
+    "fortlaufende Zähler funktionieren beide)."
+)
 BASIS_ENERGY_TOPICS = [
-    ("pv_gesamt_kwh", "PV-Erzeugung Monat (kWh)"),
-    ("einspeisung_kwh", "Einspeisung Monat (kWh)"),
-    ("netzbezug_kwh", "Netzbezug Monat (kWh)"),
+    ("pv_gesamt_kwh", "PV-Erzeugung Zählerstand (kWh)", _HEUTE_HINWEIS),
+    ("einspeisung_kwh", "Einspeisung Zählerstand (kWh)", _HEUTE_HINWEIS),
+    ("netzbezug_kwh", "Netzbezug Zählerstand (kWh)", _HEUTE_HINWEIS),
 ]
 
 
@@ -95,10 +103,11 @@ async def build_expected_topics(
         })
 
     # Basis-Energy
-    for key, label in BASIS_ENERGY_TOPICS:
+    for key, label, beschreibung in BASIS_ENERGY_TOPICS:
         topics.append({
             "topic": f"{energy_prefix}/{key}",
             "label": label,
+            "beschreibung": beschreibung,
             "kategorie": "energy",
             "typ": "basis",
             "match_key": ("basis_energy", key),
