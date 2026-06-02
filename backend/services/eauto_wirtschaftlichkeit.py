@@ -405,6 +405,60 @@ def attribute_emob_pool_by_km(
     )
 
 
+def build_wb_pool_by_month(
+    wallbox_imd: Iterable[tuple[int, int, dict]],
+) -> dict[tuple[int, int], EmobPoolShare]:
+    """Summiert Wallbox-IMD pro `(jahr, monat)` zu einem PV/Netz/Extern-Topf.
+
+    Gegenstück zu `compute_emob_pool_attribution`, aber monatsweise — für die
+    Pro-Monat-Attribution in der E-Auto-Detailtabelle (#262). `netz` über den
+    SoT-Helper `get_emob_pv_netz_kwh` (liest `ladung_netz_kwh` oder leitet
+    `Total − PV` ab). Aufrufer übergibt bereits aktiv-gefilterte Tripel.
+    """
+    acc: dict[tuple[int, int], list[float]] = {}
+    for jahr, monat, d in wallbox_imd:
+        d = d or {}
+        pv, netz = get_emob_pv_netz_kwh(d, total_kwh=get_eauto_ladung_kwh(d))
+        a = acc.setdefault((jahr, monat), [0.0, 0.0, 0.0, 0.0])
+        a[0] += pv
+        a[1] += netz
+        a[2] += d.get("ladung_extern_kwh", 0) or 0
+        a[3] += d.get("ladung_extern_euro", 0) or 0
+    return {k: EmobPoolShare(v[0], v[1], v[2], v[3]) for k, v in acc.items()}
+
+
+def build_eauto_km_by_month(
+    eauto_imd: Iterable[tuple[int, int, dict]],
+) -> dict[tuple[int, int], float]:
+    """Σ gefahrene km ALLER E-Autos pro `(jahr, monat)` — der Nenner für die
+    km-anteilige Pool-Verteilung. Aufrufer übergibt aktiv-gefilterte Tripel."""
+    acc: dict[tuple[int, int], float] = {}
+    for jahr, monat, d in eauto_imd:
+        acc[(jahr, monat)] = acc.get((jahr, monat), 0.0) + ((d or {}).get("km_gefahren", 0) or 0)
+    return acc
+
+
+def attribute_month_share(
+    wb_pool_month: Optional[EmobPoolShare],
+    eauto_km_month: float,
+    eauto_km_total_month: float,
+) -> EmobPoolShare:
+    """km-anteiliger Wallbox-Pool-Anteil eines E-Autos für EINEN Monat.
+
+    Liefert den geteilten Null-Share, wenn kein Wallbox-Topf existiert oder km
+    fehlen — der Aufrufer darf bedenkenlos abrufen.
+    """
+    if not wb_pool_month or eauto_km_total_month <= 0 or eauto_km_month <= 0:
+        return _ZERO_SHARE
+    f = eauto_km_month / eauto_km_total_month
+    return EmobPoolShare(
+        pv_kwh=wb_pool_month.pv_kwh * f,
+        netz_kwh=wb_pool_month.netz_kwh * f,
+        extern_kwh=wb_pool_month.extern_kwh * f,
+        extern_euro=wb_pool_month.extern_euro * f,
+    )
+
+
 def pick_emob_ref_parameter(investitionen: Iterable) -> Optional[dict]:
     """Wählt das `parameter`-Dict für emob-Hauptberechnungen (Vergleichsverbrauch,
     Benzinpreis).

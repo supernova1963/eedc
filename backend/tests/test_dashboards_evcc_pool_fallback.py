@@ -159,6 +159,101 @@ async def test_eauto_dashboard_multi_eauto_km_anteilig(db):
     assert abs(by_name["Auto B"]["ladung_netz_kwh"] - 80.0) < 0.1
 
 
+# ── #262: Detailtabellen-ZEILEN gepoolt (nicht nur die KPI-Kacheln) ─────────
+#
+# junky84 (2026-06): "Cockpit → E-Auto → Monatsdaten anzeigen" zeigte nur die
+# km-Spalte, alle kWh-Spalten leer — obwohl die KPI-Kacheln korrekt waren.
+# Ursache: das Dashboard gab die ROHEN E-Auto-Monatszeilen zurück (nur km),
+# während die Ladung in der Wallbox-Investition lag. Fix: pro-Monat km-anteilige
+# Pool-Attribution in die Zeilen, dieselbe use_wb_pool-Entscheidung wie die KPIs.
+# Verifiziert gegen junky84s echte Werte (Apr/Mär 2026, IMD-Screenshot):
+#   Apr: WB Ladung 237,2 / PV 232,6 → Zeile PV 232,6 / Netz 4,6
+#   Mär: WB Ladung 308,8 / PV 226,2 → Zeile PV 226,2 / Netz 82,6
+
+
+async def test_eauto_monatszeilen_gepoolt_junky84(db):
+    """junky84-Zahlen: Ladung auf Wallbox, 1 E-Auto. Die Detailzeilen müssen
+    pro Monat den (vollen, da 1 Auto) Wallbox-Pool als PV/Netz zeigen — nicht
+    nur die km-Spalte."""
+    from backend.api.routes.investitionen import get_eauto_dashboard
+
+    anlage_id = await _seed_anlage(db)
+    wb = await _add_inv(db, anlage_id, "wallbox", "SMA eCharger 22")
+    ea = await _add_inv(db, anlage_id, "e-auto", "CUPRA Born")
+
+    # Wallbox-IMD (evcc-Form: Total + PV, kein netz-Key)
+    await _add_imd(db, wb.id, 2026, 4, {"ladung_kwh": 237.2, "ladung_pv_kwh": 232.6})
+    await _add_imd(db, wb.id, 2026, 3, {"ladung_kwh": 308.8, "ladung_pv_kwh": 226.2})
+    # E-Auto-IMD: nur km (ladung 0)
+    await _add_imd(db, ea.id, 2026, 4, {"km_gefahren": 1244})
+    await _add_imd(db, ea.id, 2026, 3, {"km_gefahren": 1555})
+    await db.commit()
+
+    result = await get_eauto_dashboard(anlage_id=anlage_id, strompreis_cent=30.0, db=db)
+    assert len(result) == 1
+    rows = {md.monat: md.verbrauch_daten for md in result[0].monatsdaten}
+
+    # April: PV 232,6 / Netz = 237,2 − 232,6 = 4,6
+    assert abs(rows[4]["ladung_pv_kwh"] - 232.6) < 0.05
+    assert abs(rows[4]["ladung_netz_kwh"] - 4.6) < 0.05
+    assert abs(rows[4]["ladung_kwh"] - 237.2) < 0.05
+    assert rows[4]["km_gefahren"] == 1244  # km bleibt roh
+    # März: PV 226,2 / Netz = 308,8 − 226,2 = 82,6
+    assert abs(rows[3]["ladung_pv_kwh"] - 226.2) < 0.05
+    assert abs(rows[3]["ladung_netz_kwh"] - 82.6) < 0.05
+
+
+async def test_eauto_monatszeilen_premium_unveraendert(db):
+    """Premium-Setup: E-Auto pflegt eigene Ladung (> Wallbox) → use_wb_pool
+    False → die Zeilen behalten die E-Auto-eigenen Werte, kein Pool-Override."""
+    from backend.api.routes.investitionen import get_eauto_dashboard
+
+    anlage_id = await _seed_anlage(db)
+    wb = await _add_inv(db, anlage_id, "wallbox", "Warp3")
+    ea = await _add_inv(db, anlage_id, "e-auto", "Cupra Born")
+
+    await _add_imd(db, wb.id, 2026, 4, {"ladung_kwh": 200, "ladung_pv_kwh": 100})
+    await _add_imd(db, ea.id, 2026, 4, {
+        "ladung_kwh": 250, "ladung_pv_kwh": 150, "ladung_netz_kwh": 100,
+        "km_gefahren": 1244,
+    })
+    await db.commit()
+
+    result = await get_eauto_dashboard(anlage_id=anlage_id, strompreis_cent=30.0, db=db)
+    row = {md.monat: md.verbrauch_daten for md in result[0].monatsdaten}[4]
+    # E-Auto-eigene Werte bleiben (nicht mit Wallbox-Pool 100/100 überschrieben)
+    assert row["ladung_pv_kwh"] == 150
+    assert row["ladung_netz_kwh"] == 100
+
+
+async def test_eauto_monatszeilen_multi_eauto_anteilig(db):
+    """2 E-Autos, Wallbox-Pool: die Zeilen jedes Autos zeigen den km-anteiligen
+    Monatsanteil (60/40)."""
+    from backend.api.routes.investitionen import get_eauto_dashboard
+
+    anlage_id = await _seed_anlage(db)
+    wb = await _add_inv(db, anlage_id, "wallbox", "Warp3")
+    ea1 = await _add_inv(db, anlage_id, "e-auto", "Auto A")
+    ea2 = await _add_inv(db, anlage_id, "e-auto", "Auto B")
+
+    await _add_imd(db, wb.id, 2026, 4, {
+        "ladung_kwh": 500, "ladung_pv_kwh": 300, "ladung_netz_kwh": 200,
+    })
+    await _add_imd(db, ea1.id, 2026, 4, {"km_gefahren": 600})
+    await _add_imd(db, ea2.id, 2026, 4, {"km_gefahren": 400})
+    await db.commit()
+
+    result = await get_eauto_dashboard(anlage_id=anlage_id, strompreis_cent=30.0, db=db)
+    by_name = {r.investition.bezeichnung: r.monatsdaten[0].verbrauch_daten for r in result}
+
+    # Auto A (60 %): PV 180 / Netz 120
+    assert abs(by_name["Auto A"]["ladung_pv_kwh"] - 180.0) < 0.1
+    assert abs(by_name["Auto A"]["ladung_netz_kwh"] - 120.0) < 0.1
+    # Auto B (40 %): PV 120 / Netz 80
+    assert abs(by_name["Auto B"]["ladung_pv_kwh"] - 120.0) < 0.1
+    assert abs(by_name["Auto B"]["ladung_netz_kwh"] - 80.0) < 0.1
+
+
 # ── #262 Folge-Bündel: evcc-Datenform ohne expliziten ladung_netz_kwh-Key ───
 #
 # junky84 hat nach v3.31.3 gemeldet: PV-Anteil 100 %, Netzladung 0 kWh in

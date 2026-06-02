@@ -38,8 +38,11 @@ from backend.services.wp_wirtschaftlichkeit import berechne_wp_ersparnis
 from backend.services.eauto_wirtschaftlichkeit import (
     aggregiere_emob_ladung,
     attribute_emob_pool_by_km,
+    attribute_month_share,
     berechne_eauto_ersparnis,
     berechne_eauto_ersparnis_periode,
+    build_eauto_km_by_month,
+    build_wb_pool_by_month,
     compute_emob_pool_attribution,
 )
 from backend.core.wirtschaftlichkeit_defaults import (
@@ -200,6 +203,22 @@ async def get_eauto_dashboard(
         ],
     )
 
+    # #262 (junky84): Pro-Monat-Töpfe für die Detailtabelle. Die KPI-Kacheln
+    # poolten die Wallbox-Ladung bereits km-anteilig (unten), die rohen
+    # Monatszeilen aber nicht — daher zeigte die Tabelle nur die km-Spalte.
+    # Hier dieselbe use_wb_pool-Entscheidung, nur monatsweise aufgelöst, damit
+    # Zeilen und Kacheln konsistent bleiben.
+    wb_pool_by_month = build_wb_pool_by_month(
+        (md.jahr, md.monat, md.verbrauch_daten or {})
+        for w in wallboxen for md in md_by_inv.get(w.id, [])
+        if w.ist_aktiv_im_monat(md.jahr, md.monat)
+    )
+    eauto_km_by_month = build_eauto_km_by_month(
+        (md.jahr, md.monat, md.verbrauch_daten or {})
+        for e in eautos for md in md_by_inv.get(e.id, [])
+        if e.ist_aktiv_im_monat(md.jahr, md.monat)
+    )
+
     # #260 (NongJoWo): Benzinpreis pro Monat aus Anlage.monatsdaten (EU
     # Weekly Oil Bulletin, seit v3.17.0) — vorher zog dieses Dashboard nur
     # einen statischen Default 1.65 €/L und driftete damit gegen die
@@ -346,9 +365,37 @@ async def get_eauto_dashboard(
             'anzahl_monate': len(monatsdaten),
         }
 
+        # #262: Detailzeilen mit dem km-anteiligen Wallbox-Pool anreichern, wenn
+        # die Ladung in der Wallbox-Investition liegt (use_wb_pool). PV/Netz sind
+        # die in der Tabelle gezeigten Spalten; verbrauch_kwh, V2H und km bleiben
+        # roh (E-Auto-spezifisch). Override nur, wenn der Monat tatsächlich einen
+        # Pool-Anteil hat — sonst Rohzeile unverändert.
+        monatsdaten_response = []
+        for md in monatsdaten:
+            d = dict(md.verbrauch_daten or {})
+            if pool_attr.use_wb_pool:
+                ms = attribute_month_share(
+                    wb_pool_by_month.get((md.jahr, md.monat)),
+                    (md.verbrauch_daten or {}).get('km_gefahren', 0) or 0,
+                    eauto_km_by_month.get((md.jahr, md.monat), 0),
+                )
+                if ms.pv_kwh + ms.netz_kwh > 0:
+                    d['ladung_pv_kwh'] = round(ms.pv_kwh, 2)
+                    d['ladung_netz_kwh'] = round(ms.netz_kwh, 2)
+                    d['ladung_kwh'] = round(ms.pv_kwh + ms.netz_kwh, 2)
+            monatsdaten_response.append(InvestitionMonatsdatenResponse(
+                id=md.id,
+                investition_id=md.investition_id,
+                jahr=md.jahr,
+                monat=md.monat,
+                verbrauch_daten=d,
+                einsparung_monat_euro=md.einsparung_monat_euro,
+                co2_einsparung_kg=md.co2_einsparung_kg,
+            ))
+
         dashboards.append(EAutoDashboardResponse(
             investition=eauto,
-            monatsdaten=monatsdaten,
+            monatsdaten=monatsdaten_response,
             zusammenfassung=zusammenfassung,
         ))
 
