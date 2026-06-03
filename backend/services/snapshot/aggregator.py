@@ -27,7 +27,6 @@ from backend.models.mqtt_energy_snapshot import MqttEnergySnapshot
 from backend.services.snapshot.boundary_range import BoundaryRange
 from backend.services.snapshot.keys import (
     KUMULATIVE_COUNTER_FELDER,
-    _categorize_counter,
     _mqtt_key_to_sensor_key,
 )
 from backend.services.snapshot.komponenten_beitraege import (
@@ -35,6 +34,7 @@ from backend.services.snapshot.komponenten_beitraege import (
     basis_hourly_eintraege,
     investition_beitraege,
     investition_hourly_eintraege,
+    mqtt_hourly_eintraege,
     resolve_either_or_eintraege,
 )
 from backend.services.snapshot.plausibility import (
@@ -156,30 +156,25 @@ async def get_hourly_kwh_by_category(
         )
         .distinct()
     )
+    # MQTT-Keys einsammeln (seen-gefiltert) und über DIESELBE Normalisierung wie
+    # der HA-Pfad oben auflösen (#317): inv-Keys laufen durch
+    # `investition_hourly_eintraege` mit „MQTT-Key vorhanden" als Verfügbarkeit,
+    # damit Whitelist + Either-Or + parent-Skip auch hier greifen. Ein E-Auto mit
+    # ladung_kwh UND verbrauch_kwh per MQTT (evcc-Bridge) wird so in der Either-Or-
+    # Gruppe aufgelöst statt doppelt gezählt — gleiche #298-Klasse, MQTT-Pfad.
+    mqtt_sks: list[str] = []
     for (mqtt_key,) in mqtt_keys_result.all():
         sk = _mqtt_key_to_sensor_key(mqtt_key)
         if not sk or sk in seen_keys:
             continue
-        # Kategorie herleiten: für basis-Keys direkt, für inv-Keys via typ-Lookup.
-        # MQTT-Standalone hat keinen Daily-Symmetrie-Partner (get_komponenten_
-        # tageskwh deckt nur sensor-Strategie ab) → bewusst KEINE Either-Or-
-        # Normalisierung hier (Anti-Bündelung [[feedback_release_bundling]]);
-        # die #298-Doppelmapping-Auflösung greift im HA-gemappten Pfad oben.
-        # MQTT-Doppelmapping als latente Restklasse separat getrackt.
-        if sk.startswith("basis:"):
-            feld = sk.split(":", 1)[1]
-            kat = _categorize_counter(feld, None, None)
-        elif sk.startswith("inv:"):
-            _, inv_id, feld = sk.split(":", 2)
-            inv = investitionen_by_id.get(inv_id) or investitionen_by_id.get(str(inv_id))
-            if inv is None:
-                continue
-            kat = _categorize_counter(feld, inv.typ, inv.parameter)
-        else:
+        mqtt_sks.append(sk)
+    for sk, kat, grp in mqtt_hourly_eintraege(
+        mqtt_sks, investitionen_by_id, investitionen_map
+    ):
+        if sk in seen_keys:
             continue
-        if kat:
-            eintraege.append((sk, None, kat, None))  # entity_id=None → MQTT-Fallback
-            seen_keys.add(sk)
+        eintraege.append((sk, None, kat, grp))  # entity_id=None → MQTT-Fallback
+        seen_keys.add(sk)
 
     if not eintraege:
         return {}

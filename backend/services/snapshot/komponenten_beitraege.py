@@ -19,7 +19,7 @@ Wahrheit.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import Callable, Iterable, Optional
 
 from backend.services.snapshot.keys import _categorize_counter
 
@@ -84,6 +84,8 @@ def basis_beitraege(sensor_mapping: dict) -> list[KomponentenBeitrag]:
 def investition_beitraege(
     inv,
     sensor_mapping_for_inv: dict,
+    *,
+    ist_verfuegbar: Optional[Callable[[str], bool]] = None,
 ) -> list[KomponentenBeitrag]:
     """Per-Typ-Beiträge einer Investition zur `komponenten_kwh`.
 
@@ -96,10 +98,15 @@ def investition_beitraege(
             `parent_investition_id` (für E-Auto: Skip wenn parent vorhanden).
         sensor_mapping_for_inv: `{"felder": {feld: {strategie, sensor_id, ...}}}`
             Dict aus `sensor_mapping["investitionen"][str(inv.id)]`.
+        ist_verfuegbar: optionales Verfügbarkeits-Prädikat `feld -> bool`. Default
+            (None) = HA-Sensor-Mapping (`_is_sensor_mapping`). Der MQTT-/Standalone-
+            Pfad (#317) reicht „MQTT-Key vorhanden" durch, damit Whitelist +
+            Either-Or + parent-Skip quellen-agnostisch über DIESELBE Funktion
+            laufen statt über rohe `_categorize_counter`-Aufrufe.
 
     Returns:
         Liste der Beiträge. Leer wenn keinem der zulässigen Felder ein
-        Sensor zugeordnet ist (oder wenn E-Auto-Skip greift).
+        Sensor/MQTT-Key zugeordnet ist (oder wenn E-Auto-Skip greift).
     """
     typ = getattr(inv, "typ", None)
     prefix = _TYP_KEY_PREFIX.get(typ)
@@ -107,11 +114,14 @@ def investition_beitraege(
         return []
 
     felder = (sensor_mapping_for_inv or {}).get("felder", {}) or {}
+    if ist_verfuegbar is None:
+        def ist_verfuegbar(feld: str) -> bool:
+            return _is_sensor_mapping(felder.get(feld))
     inv_id_str = str(getattr(inv, "id", ""))
     target_key = f"{prefix}{inv_id_str}"
 
     def _add(feld: str, vorzeichen: int = +1, fallback_gruppe: Optional[str] = None):
-        if _is_sensor_mapping(felder.get(feld)):
+        if ist_verfuegbar(feld):
             beitraege.append(
                 KomponentenBeitrag(
                     feld=feld,
@@ -241,7 +251,12 @@ def basis_hourly_eintraege(sensor_mapping: dict) -> list[HourlyEintrag]:
     return out
 
 
-def investition_hourly_eintraege(inv, sensor_mapping_for_inv: dict) -> list[HourlyEintrag]:
+def investition_hourly_eintraege(
+    inv,
+    sensor_mapping_for_inv: dict,
+    *,
+    ist_verfuegbar: Optional[Callable[[str], bool]] = None,
+) -> list[HourlyEintrag]:
     """Hourly-Einträge einer Investition — Whitelist + Either-Or + parent-Skip
     aus `investition_beitraege` (Daily-SoT), gemappt auf die Energiefluss-
     Kategorie via `_categorize_counter`.
@@ -250,15 +265,79 @@ def investition_hourly_eintraege(inv, sensor_mapping_for_inv: dict) -> list[Hour
     Quelle (Issue #298 / Audit-§6.2). Felder, deren Kategorie `None` ist,
     werden weggelassen (defensiv; `investition_beitraege` emittiert ohnehin nur
     Felder mit gültiger Kategorie).
+
+    `ist_verfuegbar` wird an `investition_beitraege` durchgereicht — der MQTT-/
+    Standalone-Pfad (#317) nutzt das, um dieselbe Normalisierung quellen-agnostisch
+    zu fahren.
     """
     typ = getattr(inv, "typ", None)
     parameter = getattr(inv, "parameter", None)
     out: list[HourlyEintrag] = []
-    for b in investition_beitraege(inv, sensor_mapping_for_inv):
+    for b in investition_beitraege(inv, sensor_mapping_for_inv, ist_verfuegbar=ist_verfuegbar):
         kat = _categorize_counter(b.feld, typ, parameter)
         if kat:
             out.append(HourlyEintrag(feld=b.feld, kategorie=kat,
                                      fallback_gruppe=b.fallback_gruppe))
+    return out
+
+
+def mqtt_hourly_eintraege(
+    mqtt_sensor_keys: Iterable[str],
+    investitionen_by_id: dict,
+    investitionen_map: dict,
+) -> list[tuple[str, str, Optional[str]]]:
+    """MQTT-/Standalone-Counter normalisiert wie der HA-gemappte Pfad (#317).
+
+    Geteilte Quelle für die beiden Snapshot-Hourly-Konsumenten
+    (`snapshot.aggregator.get_hourly_kwh_by_category` +
+    `snapshot.reaggregator.get_reaggregate_preview`). Vor #317 hängten beide
+    MQTT-Zweige ihre Einträge mit `fallback_gruppe=None` an — ein E-Auto, das
+    via MQTT BEIDE Gesamt-Zähler publiziert (`ladung_kwh` UND `verbrauch_kwh`,
+    evcc-Bridge), wurde so in der Stunden-Bilanz doppelt gezählt (gleiche
+    #298-Klasse, nur auf dem MQTT-Pfad). Inv-Keys laufen jetzt durch
+    `investition_hourly_eintraege` mit „MQTT-Key vorhanden" als Verfügbarkeits-
+    Quelle → Whitelist + Either-Or + parent-Skip greifen identisch zum HA-Pfad.
+
+    Basis-Keys (Einspeisung/Netzbezug) haben keinen Either-Or-Partner und werden
+    direkt kategorisiert (`fallback_gruppe=None`).
+
+    Args:
+        mqtt_sensor_keys: bereits via `_mqtt_key_to_sensor_key` aufgelöste,
+            seen-gefilterte Sensor-Keys (`basis:<feld>` / `inv:<id>:<feld>`).
+        investitionen_by_id: `{str(inv_id): Investition}` (für typ/parameter/parent).
+        investitionen_map: `sensor_mapping["investitionen"]` (inv_data für typ-
+            unabhängige Felder; Verfügbarkeit kommt aus den MQTT-Keys).
+
+    Returns:
+        `[(sensor_key, kategorie, fallback_gruppe)]` — entity_id ist beim Aufrufer
+        immer None (MQTT-Fallback im Snapshot-Reader).
+    """
+    basis_felder: set[str] = set()
+    inv_felder: dict[str, set[str]] = {}
+    for sk in mqtt_sensor_keys:
+        if sk.startswith("basis:"):
+            basis_felder.add(sk.split(":", 1)[1])
+        elif sk.startswith("inv:"):
+            _, inv_id, feld = sk.split(":", 2)
+            inv_felder.setdefault(inv_id, set()).add(feld)
+
+    out: list[tuple[str, str, Optional[str]]] = []
+    for feld in basis_felder:
+        kat = _categorize_counter(feld, None, None)
+        if kat:
+            out.append((f"basis:{feld}", kat, None))
+
+    for inv_id, felder_vorhanden in inv_felder.items():
+        inv = investitionen_by_id.get(inv_id) or investitionen_by_id.get(str(inv_id))
+        if inv is None:
+            continue
+        inv_data = (investitionen_map or {}).get(inv_id) \
+            or (investitionen_map or {}).get(str(inv_id)) or {}
+        for he in investition_hourly_eintraege(
+            inv, inv_data,
+            ist_verfuegbar=lambda feld, _s=felder_vorhanden: feld in _s,
+        ):
+            out.append((f"inv:{inv_id}:{he.feld}", he.kategorie, he.fallback_gruppe))
     return out
 
 

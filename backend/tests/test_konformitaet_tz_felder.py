@@ -4,7 +4,9 @@ Erzwingt, dass jede ``TagesZusammenfassung``-Spalte eines der drei Schicksale
 hat:
 
 (a) wird von ``aggregate_day`` gesetzt (``_AGGREGATOR_SETTER_FELDER``),
-(b) steht auf der Prognose-Rettungs-Liste (extern via Wetter-Endpoint befüllt),
+(b) steht auf der Prognose-Rettungs-Liste (extern via Wetter-Endpoint befüllt,
+    ``_PROGNOSE_FELDER_RETTEN``) oder auf der Schwester-Liste für andere
+    extern-additiv befüllte Felder (``_EXTERN_BEFUELLT_FELDER_RETTEN``, #319),
 (c) wird automatisch vom ORM / Identifier-Schicht gesetzt
     (``_AUTO_BEFUELLT_FELDER``, ``_IDENTIFIER_FELDER``),
 (d) steht auf der expliziten "bleibt NULL"-Allowlist (mit Begründung).
@@ -77,34 +79,30 @@ _AUTO_BEFUELLT_FELDER: frozenset[str] = frozenset({
 # wiederhergestellt werden. Das ist heute strukturell so akzeptiert; bei
 # einem strukturellen Refactor (z.B. UPDATE-statt-DELETE+INSERT, Audit §10.4)
 # fällt diese Risiko-Klasse weg.
-_ALLOWLIST_BLEIBT_NULL: dict[str, str] = {
-    # Wird per `kraftstoff_preis_service.fill_tagesdaten` aus EU Oil Bulletin
-    # befüllt (Werkbank-Operation KRAFTSTOFFPREIS_BACKFILL + Scheduler),
-    # `is None`-Filter — additiv. Aggregator-Delete-and-Recreate verwirft den
-    # Wert, der nächste Kraftstoffpreis-Backfill-Lauf füllt ihn wieder.
-    # Latentes Risiko, das v3.34.0 Phase A bewusst NICHT fixt (kein
-    # Anwenderbericht, Symptom selten). Folge-Diskussion: ob das Feld in
-    # ein `_BEFUELLEN_NACH_RECREATE` analog zu `_PROGNOSE_FELDER_RETTEN`
-    # gehört, oder ob `_speichere_prognose`-Pattern auf alle externen TZ-
-    # Schreiber verallgemeinert wird (Audit §10.4 Tabellen-Auslagerung).
-    "kraftstoffpreis_euro":
-        "extern via kraftstoff_preis_service.fill_tagesdaten — additiv, "
-        "kein Aggregator-Setter. Risiko: Wert verschwindet beim "
-        "Delete-and-Recreate bis zum nächsten Kraftstoffpreis-Lauf. "
-        "Phase-A-Befund, Folge-Diskussion offen.",
-}
+# Aktuell leer: `kraftstoffpreis_euro` war hier der einzige Eintrag (Phase-A-
+# Befund) und ist mit #319 (v3.35.x) in die Rettungs-Schwester-Liste
+# `_EXTERN_BEFUELLT_FELDER_RETTEN` gewandert — der Aggregator-Recreate verwarf
+# den Wert sonst bis zum nächsten Kraftstoffpreis-Lauf (#190-Verlustklasse).
+# Die Liste bleibt als Struktur erhalten: ein künftiges Feld, das bewusst NULL
+# bleiben soll, gehört mit Begründung + Risiko-Hinweis (Delete-and-Recreate-
+# Verlust) hierher statt unklassifiziert zu sein.
+_ALLOWLIST_BLEIBT_NULL: dict[str, str] = {}
 
 
 def test_k2_alle_tz_felder_klassifiziert():
     """Jede TZ-Spalte muss in genau einer der vier Kategorien stehen."""
     from backend.models.tages_energie_profil import TagesZusammenfassung
-    from backend.services.energie_profil.aggregator import _PROGNOSE_FELDER_RETTEN
+    from backend.services.energie_profil.aggregator import (
+        _EXTERN_BEFUELLT_FELDER_RETTEN,
+        _PROGNOSE_FELDER_RETTEN,
+    )
 
     tz_spalten = {col.name for col in TagesZusammenfassung.__table__.columns}
 
     klassifiziert = (
         _AGGREGATOR_SETTER_FELDER
         | set(_PROGNOSE_FELDER_RETTEN)
+        | set(_EXTERN_BEFUELLT_FELDER_RETTEN)
         | _IDENTIFIER_FELDER
         | _AUTO_BEFUELLT_FELDER
         | set(_ALLOWLIST_BLEIBT_NULL.keys())
@@ -119,6 +117,8 @@ def test_k2_alle_tz_felder_klassifiziert():
         "und im Aggregator-Konstruktor setzen.\n"
         "  (b) Wetter-Endpoint befüllt sie → in `_PROGNOSE_FELDER_RETTEN` (Aggregator) "
         "+ `_TZ_SCHREIBFELDER_PROGNOSE` (live_wetter) aufnehmen — siehe K1.\n"
+        "  (b') anderer extern-additiver Schreiber befüllt sie → in "
+        "`_EXTERN_BEFUELLT_FELDER_RETTEN` (Aggregator) aufnehmen (#319-Klasse).\n"
         "  (c) ORM/Auto-Feld → in `_AUTO_BEFUELLT_FELDER` mit Begründung.\n"
         "  (d) Bleibt bewusst NULL → in `_ALLOWLIST_BLEIBT_NULL` mit Begründung "
         "+ Risiko-Hinweis (Delete-and-Recreate-Verlust)."
@@ -135,26 +135,40 @@ def test_k2_alle_tz_felder_klassifiziert():
 def test_k2_klassifikationen_disjunkt():
     """Jede Spalte darf nur in einer Kategorie stehen — sonst wird die "
     "Klassifikation mehrdeutig und der Schutz verliert seine Aussage."""
-    from backend.services.energie_profil.aggregator import _PROGNOSE_FELDER_RETTEN
+    from backend.services.energie_profil.aggregator import (
+        _EXTERN_BEFUELLT_FELDER_RETTEN,
+        _PROGNOSE_FELDER_RETTEN,
+    )
 
     prognose = frozenset(_PROGNOSE_FELDER_RETTEN)
+    extern = frozenset(_EXTERN_BEFUELLT_FELDER_RETTEN)
     allowlist = frozenset(_ALLOWLIST_BLEIBT_NULL.keys())
 
     paare = [
         ("_AGGREGATOR_SETTER_FELDER", "_PROGNOSE_FELDER_RETTEN",
          _AGGREGATOR_SETTER_FELDER & prognose),
+        ("_AGGREGATOR_SETTER_FELDER", "_EXTERN_BEFUELLT_FELDER_RETTEN",
+         _AGGREGATOR_SETTER_FELDER & extern),
         ("_AGGREGATOR_SETTER_FELDER", "_IDENTIFIER_FELDER",
          _AGGREGATOR_SETTER_FELDER & _IDENTIFIER_FELDER),
         ("_AGGREGATOR_SETTER_FELDER", "_AUTO_BEFUELLT_FELDER",
          _AGGREGATOR_SETTER_FELDER & _AUTO_BEFUELLT_FELDER),
         ("_AGGREGATOR_SETTER_FELDER", "_ALLOWLIST_BLEIBT_NULL",
          _AGGREGATOR_SETTER_FELDER & allowlist),
+        ("_PROGNOSE_FELDER_RETTEN", "_EXTERN_BEFUELLT_FELDER_RETTEN",
+         prognose & extern),
         ("_PROGNOSE_FELDER_RETTEN", "_IDENTIFIER_FELDER",
          prognose & _IDENTIFIER_FELDER),
         ("_PROGNOSE_FELDER_RETTEN", "_AUTO_BEFUELLT_FELDER",
          prognose & _AUTO_BEFUELLT_FELDER),
         ("_PROGNOSE_FELDER_RETTEN", "_ALLOWLIST_BLEIBT_NULL",
          prognose & allowlist),
+        ("_EXTERN_BEFUELLT_FELDER_RETTEN", "_IDENTIFIER_FELDER",
+         extern & _IDENTIFIER_FELDER),
+        ("_EXTERN_BEFUELLT_FELDER_RETTEN", "_AUTO_BEFUELLT_FELDER",
+         extern & _AUTO_BEFUELLT_FELDER),
+        ("_EXTERN_BEFUELLT_FELDER_RETTEN", "_ALLOWLIST_BLEIBT_NULL",
+         extern & allowlist),
         ("_IDENTIFIER_FELDER", "_AUTO_BEFUELLT_FELDER",
          _IDENTIFIER_FELDER & _AUTO_BEFUELLT_FELDER),
         ("_IDENTIFIER_FELDER", "_ALLOWLIST_BLEIBT_NULL",

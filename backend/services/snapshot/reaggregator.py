@@ -25,12 +25,12 @@ from backend.services.ha_statistics_service import get_ha_statistics_service
 
 from backend.services.snapshot.keys import (
     KUMULATIVE_COUNTER_FELDER,
-    _categorize_counter,
     _mqtt_key_to_sensor_key,
 )
 from backend.services.snapshot.komponenten_beitraege import (
     basis_hourly_eintraege,
     investition_hourly_eintraege,
+    mqtt_hourly_eintraege,
     resolve_either_or_eintraege,
 )
 from backend.services.snapshot.writer import snapshot_anlage, snapshot_anlage_5min
@@ -130,26 +130,23 @@ async def get_reaggregate_preview(
         )
         .distinct()
     )
+    # MQTT-Keys über DIESELBE Normalisierung wie der HA-Pfad auflösen (#317),
+    # damit die Vorschau-Tabelle ein doppelt per MQTT gemapptes E-Auto (ladung_kwh
+    # + verbrauch_kwh) in der Either-Or-Gruppe auflöst statt doppelt summiert —
+    # deckungsgleich mit dem Snapshot-Hourly-Schreibwert.
+    mqtt_sks: list[str] = []
     for (mqtt_key,) in mqtt_keys_result.all():
         sk = _mqtt_key_to_sensor_key(mqtt_key)
         if not sk or sk in seen_keys:
             continue
-        if sk.startswith("basis:"):
-            feld = sk.split(":", 1)[1]
-            kat = _categorize_counter(feld, None, None)
-        elif sk.startswith("inv:"):
-            _, inv_id, feld = sk.split(":", 2)
-            inv = investitionen_by_id.get(inv_id) or investitionen_by_id.get(str(inv_id))
-            if inv is None:
-                continue
-            kat = _categorize_counter(feld, inv.typ, inv.parameter)
-        else:
+        mqtt_sks.append(sk)
+    for sk, kat, grp in mqtt_hourly_eintraege(
+        mqtt_sks, investitionen_by_id, investitionen_map
+    ):
+        if sk in seen_keys:
             continue
-        if kat:
-            # MQTT-Standalone hat keinen Either-Or-Partner (gruppe=None) — gleiche
-            # bewusste Restklasse wie im Snapshot-Hourly-Pfad (Anti-Bündelung).
-            eintraege.append((sk, None, kat, None))
-            seen_keys.add(sk)
+        eintraege.append((sk, None, kat, grp))
+        seen_keys.add(sk)
 
     ha_svc = get_ha_statistics_service()
     ha_verfuegbar = ha_svc.is_available

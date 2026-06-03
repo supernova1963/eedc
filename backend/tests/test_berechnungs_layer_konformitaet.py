@@ -65,6 +65,22 @@ _INLINE_STARTSWITH = re.compile(
     r'''\.startswith\(\s*["']pv_["']\s*\)\s*or\s*\w+\.startswith\(\s*["']bkw_["']\s*\)'''
 )
 
+# Pattern: Inline-Einspeise-Erlös `einspeisung… * …verguetung… / 100` statt SoT
+# `einspeise_erloes_euro()` (ADR-001, M3). Fängt die ungekürzte Erlös-Formel,
+# die den §51-Abzug umgeht. Arbitrage-Spread (`strompreis - verguetung`),
+# BKW-unvergütet (`= 0`) und kombinierte Netto-Formeln (`einspeisung *
+# einspeise_cent`) matchen bewusst NICHT.
+_INLINE_EINSPEISE_ERLOES = re.compile(
+    r'''einspeis\w*\s*\*\s*\w*verguetung\w*\s*/\s*100'''
+)
+
+# Erlaubte Stellen für die Einspeise-Erlös-SoT (Definition + Re-Export + der
+# DB-Lookup-Service, der den Layer-Helper bündelt).
+ALLOWED_EINSPEISE_ERLOES_FILES = {
+    "core/berechnungen/einspeise_erloes.py",
+    "core/berechnungen/__init__.py",
+}
+
 
 def test_pv_bkw_whitelist_tuple_nur_im_layer():
     """Die `("pv_", "bkw_")`-Tuple darf nur in `core/berechnungen/` stehen."""
@@ -108,6 +124,34 @@ def test_inline_startswith_nur_im_layer_oder_grandfathered():
     assert not verstoesse, _format_verstoesse_meldung(
         verstoesse,
         regel='Inline `startswith("pv_") or startswith("bkw_")` außerhalb von core/berechnungen/',
+    )
+
+
+def test_inline_einspeise_erloes_nur_im_layer():
+    """Die ungekürzte Inline-Erlös-Formel `einspeisung… * …verguetung… / 100`
+    darf nur in der Einspeise-Erlös-SoT stehen — sonst umgeht sie den
+    §51-Abzug (ADR-001, M3)."""
+    verstoesse: list[tuple[str, int, str]] = []
+    for path, rel in _iter_py_files():
+        if rel in ALLOWED_EINSPEISE_ERLOES_FILES:
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue
+        for line_no, line in enumerate(text.splitlines(), start=1):
+            if _INLINE_EINSPEISE_ERLOES.search(line):
+                verstoesse.append((rel, line_no, line.strip()))
+
+    assert not verstoesse, _format_verstoesse_meldung(
+        verstoesse,
+        regel='Inline `einspeisung × verguetung / 100` außerhalb der Einspeise-Erlös-SoT',
+    ) + (
+        "\n\nSoT-Migration:\n"
+        "  from backend.core.berechnungen import einspeise_erloes_euro\n"
+        "  erloes = einspeise_erloes_euro(einspeisung_kwh, neg_preis_kwh, verguetung_ct).erloes_euro\n"
+        "  # neg_preis_kwh=None wenn keine §51-Negativpreis-Spalte vorliegt "
+        "(Projektion/Aggregat)."
     )
 
 

@@ -47,6 +47,7 @@ from ._shared import (
     TagesprofilStunde,
     WochenmusterPunkt,
     _key_to_serie_info,
+    detail_kategorie,
     logger,
 )
 
@@ -530,38 +531,9 @@ async def get_monatsauswertung(
             if v is not None:
                 komponenten_sum[k] += v
 
-    # Einträge auflösen + Anteile berechnen
+    # Einträge auflösen + Anteile berechnen. Detail-Kategorie-Mapping liegt im
+    # Shared-Helper `detail_kategorie` (ADR-001 testbar, #316).
     komponenten_liste: list[KomponentenEintrag] = []
-    # Kategorie-Mapping: detaillierte Kategorie aus Invest-Typ
-    def detail_kategorie(info: dict, inv: Optional[Investition]) -> str:
-        kat = info.get("kategorie", "sonstige")
-        typ = info.get("typ", "")
-        key = info.get("key", "")
-        if key == "netz":
-            return "netz"
-        if typ == "pv-module":
-            return "pv_module"
-        if typ == "balkonkraftwerk":
-            return "bkw"
-        if typ == "speicher":
-            return "speicher"
-        if typ == "waermepumpe":
-            return "waermepumpe"
-        if typ in ("wallbox", "e-auto"):
-            return "wallbox_eauto"
-        if kat == "haushalt":
-            return "haushalt"
-        if typ == "sonstiges" and inv and isinstance(inv.parameter, dict):
-            unterkat = inv.parameter.get("kategorie", "verbraucher")
-            if unterkat == "erzeuger":
-                return "sonstige_erzeuger"
-            if unterkat == "speicher":
-                return "speicher"
-            return "sonstige_verbraucher"
-        if kat == "pv":
-            return "pv_module"
-        return "sonstige_verbraucher"
-
     kategorie_sum: dict[str, float] = defaultdict(float)
 
     for key, kwh in komponenten_sum.items():

@@ -52,6 +52,20 @@ _PROGNOSE_FELDER_RETTEN: tuple[str, ...] = (
 )
 
 
+# Extern-additiv befüllte TZ-Felder, die NICHT vom Wetter-Endpoint, sondern von
+# einem anderen additiven Schreiber stammen und beim Delete-and-Recreate genau
+# so verloren gehen wie die Prognose-Felder (#190-Verlustklasse). Sie gehören
+# bewusst NICHT in `_PROGNOSE_FELDER_RETTEN`: Konformitäts-Test K1 koppelt jene
+# Liste exklusiv an die Wetter-Endpoint-Schreibfelder (`_TZ_SCHREIBFELDER_PROGNOSE`),
+# `kraftstoffpreis_euro` würde sie out-of-sync brechen. Eigene Liste = gleiche
+# Mechanik, ehrliche Semantik. Befüllt via `kraftstoff_preis_service.fill_tagesdaten`
+# (additiv, `is None`-Filter). Issue #319, PLAN §8.1, Audit §10.4
+# (K2-Allowlist-Folge-Diskussion).
+_EXTERN_BEFUELLT_FELDER_RETTEN: tuple[str, ...] = (
+    "kraftstoffpreis_euro",
+)
+
+
 async def aggregate_day(
     anlage: Anlage,
     datum: date,
@@ -299,8 +313,11 @@ async def aggregate_day(
         )
 
     # ── Alte Daten für diesen Tag löschen (Upsert) ────────────────────────
-    # Prognose-Felder vor dem Delete-and-Recreate retten — sie werden
-    # asynchron vom Wetter-Endpoint geschrieben. Siehe _PROGNOSE_FELDER_RETTEN.
+    # Extern befüllte Felder vor dem Delete-and-Recreate retten — sie werden
+    # nicht vom Aggregator gesetzt, sondern asynchron/additiv von anderen
+    # Schreibern: Prognose-Felder vom Wetter-Endpoint (_PROGNOSE_FELDER_RETTEN),
+    # Kraftstoffpreis vom kraftstoff_preis_service (_EXTERN_BEFUELLT_FELDER_RETTEN,
+    # #319). Ohne Rettung gingen sie bei jedem Recreate verloren (#190-Klasse).
     existing_tz = await db.execute(
         select(TagesZusammenfassung).where(
             and_(
@@ -310,7 +327,7 @@ async def aggregate_day(
         )
     )
     existing_tz_row = existing_tz.scalar_one_or_none()
-    preserved_prognose = {}
+    preserved_felder = {}
     # #290 detLAN: bei manueller Reaggregation ohne Stunden-Daten retten wir
     # zusätzlich Komponenten-Aggregate, damit bestehende gute Werte nicht
     # durch eine evtl. falsche Snapshot-Boundary-Diff überschrieben werden
@@ -325,10 +342,10 @@ async def aggregate_day(
         if existing_tz_row and existing_tz_row.komponenten_starts else None
     )
     if existing_tz_row:
-        for field in _PROGNOSE_FELDER_RETTEN:
+        for field in (*_PROGNOSE_FELDER_RETTEN, *_EXTERN_BEFUELLT_FELDER_RETTEN):
             val = getattr(existing_tz_row, field, None)
             if val is not None:
-                preserved_prognose[field] = val
+                preserved_felder[field] = val
 
     await db.execute(
         delete(TagesEnergieProfil).where(
@@ -656,15 +673,28 @@ async def aggregate_day(
         # manuell editierte Werte vor Scheduler-Überschreibung geschützt
         # werden. In TZ gibt es keine manuelle Werteingabe; „manuell"
         # bedeutet hier „Werkbank-Trigger" (Source.MANUAL_REPAIR). Der Schutz
-        # greift, weil ein versehentlicher Werkbank-Klick bei nicht
-        # erreichbarem HA-LTS + inkonsistenten Snapshots sonst korrekte Werte
-        # mit None überschriebe. Der Scheduler ist absichtlich nicht
-        # geschützt: ein legitim leerer Tag (Sensor-Ausfall, Offline-Phase)
-        # soll nicht ewig die alte Wahrheit weitertragen, Selbst-Heilung
-        # gilt nur dort. Asymmetrie ist bewusst, aber adaptiert — nicht aus
-        # eigenständigem TZ-Vorfall begründet. Phase B / spätere Etappe
-        # könnte prüfen, ob die Adaption im TZ-Kontext weiterhin gerechtfertigt
-        # ist oder ob Snapshot-Self-Healing den Schutz heute überflüssig macht.
+        # greift GENAU im else-Zweig unten, d. h. wenn `komponenten_summen`
+        # LEER ist (Σ-Hourly = 0, boundary leer) — ein versehentlicher
+        # Werkbank-Klick bei nicht erreichbarem HA-LTS + fehlenden/korrupten
+        # Snapshots würde sonst die alten korrekten Werte mit None
+        # überschreiben. (NICHT geschützt: „Boundary-Diff liefert Müll" — Müll
+        # ist nicht-leer, landet also im if-Zweig; dieses Szenario ist seit
+        # v3.33.0 ohnehin strukturell entschärft, Per-Typ statt Alle-Sensoren-
+        # Summe.) Der Scheduler ist absichtlich NICHT geschützt: ein legitim
+        # leerer Tag (Sensor-Ausfall, Offline-Phase) soll nicht ewig die alte
+        # Wahrheit weitertragen.
+        #
+        # Preserve-Asymmetrie-Prüfung (#318-Begleitung, 2026-06-03): geprüft, ob
+        # das v3.33.0-Snapshot-Self-Healing den Schutz überflüssig macht —
+        # ERGEBNIS: nein. Die Self-Healing-Kaskade in `reader.get_snapshot`
+        # (DB → HA-Statistics → MQTT) heilt Stufe 2 NUR bei `ha_svc.is_available`;
+        # in genau der geschützten Konstellation (HA unerreichbar) fällt sie aus,
+        # und für historische Tage läuft der Scheduler nie nach → ohne Preserve
+        # permanenter komponenten_kwh-Verlust eines Alttags. Bekannte Grenze:
+        # der Schutz ist partiell (nur komponenten_kwh/_starts, nicht
+        # ueberschuss/defizit/Peaks). Sauberere Lösung wäre, dass die Werkbank
+        # quellenlose Tage überspringt statt zu überschreiben — eigener Schnitt,
+        # bewusst nicht hier.
         komponenten_kwh=(
             {k: round(v, 2) for k, v in komponenten_summen.items()}
             if komponenten_summen
@@ -683,8 +713,8 @@ async def aggregate_day(
             )
         ),
     )
-    # Gerettete Prognose-Felder wiederherstellen
-    for field, val in preserved_prognose.items():
+    # Gerettete extern-befüllte Felder wiederherstellen (Prognose + Kraftstoffpreis)
+    for field, val in preserved_felder.items():
         setattr(zusammenfassung, field, val)
 
     # Etappe 4: TagesZusammenfassung-Source spiegelt die Hauptquelle der
@@ -707,6 +737,7 @@ async def aggregate_day(
     # Wir loggen Warning + speichern trotzdem — Drift soll sichtbar werden,
     # aber kein Tag soll wegen einer Invariante verloren gehen.
     from backend.core.berechnungen import (
+        pruefe_tep_komponenten_intern_konsistenz,
         pruefe_tep_tz_komponenten_konsistenz,
         pruefe_tep_tz_konsistenz,
     )
@@ -736,6 +767,15 @@ async def aggregate_day(
         if not bericht.konsistent:
             logger.warning(
                 f"Anlage {anlage.id}, {datum}: Komponenten-Drift — {bericht}"
+            )
+    # Achse 2 (#315): Leistungspfad (TEP.komponenten-JSON) vs Zählerpfad
+    # (TEP.*_kw-Spalten) derselben Stunden. Im HA-LTS-Modus ist das die einzige
+    # Prüfung des Leistungs-JSON; im Standalone redundant zur TZ-Prüfung oben.
+    # Warning-level — Step-Integrations-Drift sichtbar machen, kein Tag-Verlust.
+    for bericht in pruefe_tep_komponenten_intern_konsistenz(tep_rows):
+        if not bericht.konsistent:
+            logger.warning(
+                f"Anlage {anlage.id}, {datum}: Achse-2-Komponenten-Drift — {bericht}"
             )
 
     logger.info(

@@ -141,8 +141,7 @@ async def backfill_from_statistics(
     from backend.models.investition import Investition
     from backend.utils.investition_filter import aktiv_im_zeitraum
     from backend.services.live_sensor_config import (
-        SKIP_TYPEN,
-        TV_SERIE_CONFIG,
+        baue_investitions_serien,
         extract_live_config,
     )
     from backend.services.ha_statistics_service import get_ha_statistics_service
@@ -168,57 +167,17 @@ async def backfill_from_statistics(
         logger.info(f"Anlage {anlage.id}: Keine Live-Sensoren konfiguriert, Backfill übersprungen")
         return dict(_LEERER_BACKFILL_STATUS)
 
-    # ── Serien + Entity-Mapping aufbauen (spiegelt live_tagesverlauf_service.py) ──
-    serien: list[dict] = []
-    serie_entities: dict[str, list[str]] = {}  # serie_key → [entity_id]
-
-    for inv_id, live in inv_live_map.items():
-        inv = investitionen.get(inv_id)
-        if not inv:
-            continue
-        typ = inv.typ
-        if typ in SKIP_TYPEN:
-            continue
-
-        has_leistung = live.get("leistung_w")
-
-        # WP mit getrennter Strommessung
-        if not has_leistung and typ == "waermepumpe":
-            config = TV_SERIE_CONFIG.get("waermepumpe")
-            if config:
-                for suffix, field in (("heizen", "leistung_heizen_w"), ("warmwasser", "leistung_warmwasser_w")):
-                    eid = live.get(field)
-                    if eid:
-                        key = f"waermepumpe_{inv_id}_{suffix}"
-                        serien.append({"key": key, "inv_id": inv_id, "kategorie": config["kategorie"],
-                                       "seite": config["seite"], "bidirektional": config["bidirektional"]})
-                        serie_entities[key] = [eid]
-            continue
-
-        if not has_leistung:
-            continue
-
-        # E-Auto mit Parent (Wallbox) überspringen
-        if typ == "e-auto" and inv.parent_investition_id is not None:
-            continue
-
-        config = TV_SERIE_CONFIG.get(typ)
-        if not config:
-            continue
-
-        seite = config["seite"]
-        bidirektional = config["bidirektional"]
-        if typ == "sonstiges" and isinstance(inv.parameter, dict):
-            kat = inv.parameter.get("kategorie", "verbraucher")
-            if kat == "erzeuger":
-                seite = "quelle"
-            elif kat == "speicher":
-                bidirektional = True
-
-        serie_key = f"{config['kategorie']}_{inv_id}"
-        serien.append({"key": serie_key, "inv_id": inv_id, "kategorie": config["kategorie"],
-                       "seite": seite, "bidirektional": bidirektional})
-        serie_entities[serie_key] = [live["leistung_w"]]
+    # ── Serien + Entity-Mapping über die geteilte Quelle (Issue #318, M1) ──────
+    # Identische Selektion (inkl. Pool-Dedup #227) wie der Live-Pfad
+    # (`live_tagesverlauf_service`), damit Scheduler- und Backfill-Aggregation
+    # desselben Tages deckungsgleiche TEP.komponenten/Peaks liefern. Backfill
+    # nutzt nur die Kern-Felder; Chart-Metadaten sind Live-spezifisch.
+    serien_core, serie_entities = baue_investitions_serien(inv_live_map, investitionen)
+    serien: list[dict] = [
+        {"key": s.key, "inv_id": s.inv_id, "kategorie": s.kategorie,
+         "seite": s.seite, "bidirektional": s.bidirektional}
+        for s in serien_core
+    ]
 
     # PV Gesamt als Fallback
     has_individual_pv = any(s["kategorie"] == "pv" for s in serien)

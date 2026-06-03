@@ -43,6 +43,7 @@ from backend.services.eauto_wirtschaftlichkeit import (
     resolve_eauto_benzinpreis,
 )
 from backend.core.calculations import CO2_FAKTOR_STROM_KG_KWH
+from backend.core.berechnungen import einspeise_erloes_euro
 
 
 # ============================================================================
@@ -846,8 +847,12 @@ async def get_roi_dashboard(
         if eigenverbrauch_jahr == 0 and erzeugung_jahr > 0:
             eigenverbrauch_jahr = erzeugung_jahr - einspeisung_jahr
 
-        # Einsparung berechnen
-        einspeise_erloes = einspeisung_jahr * einspeiseverguetung_cent / 100
+        # Einsparung berechnen. §51-Erlös über SoT (ADR-001, M3); neg_preis_kwh
+        # = None, weil auf Monatsdaten-Aggregat-Ebene keine Negativpreis-Spalte
+        # vorliegt → volle Einspeisung wie zuvor (verhaltensneutral).
+        einspeise_erloes = einspeise_erloes_euro(
+            einspeisung_jahr, None, einspeiseverguetung_cent
+        ).erloes_euro
         ev_ersparnis = eigenverbrauch_jahr * strompreis_cent / 100
         jahres_einsparung = einspeise_erloes + ev_ersparnis
         co2 = erzeugung_jahr * CO2_FAKTOR_STROM_KG_KWH
@@ -1408,7 +1413,11 @@ async def get_roi_dashboard(
             eigenverbrauch = jahres_ertrag * 0.8
             einspeisung = jahres_ertrag * 0.2
 
-            einspeise_erloes = einspeisung * einspeiseverguetung_cent / 100
+            # §51-Erlös über SoT (ADR-001, M3); neg_preis_kwh = None bei dieser
+            # synthetischen BKW-Schätzung → volle Einspeisung (verhaltensneutral).
+            einspeise_erloes = einspeise_erloes_euro(
+                einspeisung, None, einspeiseverguetung_cent
+            ).erloes_euro
             ev_ersparnis = eigenverbrauch * strompreis_cent / 100
             jahres_einsparung = einspeise_erloes + ev_ersparnis
             co2_einsparung = jahres_ertrag * CO2_FAKTOR_STROM_KG_KWH

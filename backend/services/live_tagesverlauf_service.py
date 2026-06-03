@@ -18,6 +18,7 @@ from backend.utils.investition_filter import aktiv_jetzt
 from backend.services.live_sensor_config import (
     SKIP_TYPEN,
     TV_SERIE_CONFIG,
+    baue_investitions_serien,
     extract_live_config,
 )
 from backend.services.live_history_service import (
@@ -68,11 +69,6 @@ async def get_tagesverlauf(
         start = now.replace(hour=0, minute=0, second=0, microsecond=0)
         end = now
 
-    # Serien aufbauen + Entity-IDs sammeln
-    serien: list[dict] = []
-    # Mapping: serie_key → list[entity_id] (für Multi-Sensor-Aggregation)
-    serie_entities: dict[str, list[str]] = {}
-
     # Investments ohne leistung_w-Konfiguration sammeln (für Hinweis im Frontend)
     uebersprungen: list[str] = []
     for inv in investitionen.values():
@@ -83,101 +79,35 @@ async def get_tagesverlauf(
         if not live_cfg.get("leistung_w"):
             uebersprungen.append(inv.bezeichnung or inv.typ)
 
-    # Investitionen → Serien
-    for inv_id, live in inv_live_map.items():
-        inv = investitionen.get(inv_id)
-        if not inv:
-            continue
-        typ = inv.typ
-        if typ in SKIP_TYPEN:
-            continue
-
-        has_leistung = live.get("leistung_w")
-
-        # WP mit getrennter Strommessung → zwei Serien statt einer
-        if not has_leistung and typ == "waermepumpe":
-            heiz_eid = live.get("leistung_heizen_w")
-            ww_eid = live.get("leistung_warmwasser_w")
-            config = TV_SERIE_CONFIG.get("waermepumpe")
-            if config and (heiz_eid or ww_eid):
-                if heiz_eid:
-                    key_h = f"waermepumpe_{inv_id}_heizen"
-                    serien.append({
-                        "key": key_h,
-                        "label": f"{inv.bezeichnung} Heizen",
-                        "kategorie": config["kategorie"],
-                        "farbe": config["farbe"],
-                        "seite": config["seite"],
-                        "bidirektional": config["bidirektional"],
-                    })
-                    serie_entities[key_h] = [heiz_eid]
-                if ww_eid:
-                    key_w = f"waermepumpe_{inv_id}_warmwasser"
-                    serien.append({
-                        "key": key_w,
-                        "label": f"{inv.bezeichnung} Warmwasser",
-                        "kategorie": config["kategorie"],
-                        "farbe": "#f59e0b",  # Amber für Warmwasser
-                        "seite": config["seite"],
-                        "bidirektional": config["bidirektional"],
-                    })
-                    serie_entities[key_w] = [ww_eid]
-            continue
-
-        if not has_leistung:
-            continue
-
-        # E-Auto mit Parent (Wallbox) überspringen — Wallbox misst bereits
-        if typ == "e-auto" and inv.parent_investition_id is not None:
-            continue
-
-        config = TV_SERIE_CONFIG.get(typ)
-        if not config:
-            continue
-
-        # Sonstiges: Seite aus parameter.kategorie ableiten
-        seite = config["seite"]
-        bidirektional = config["bidirektional"]
-        if typ == "sonstiges" and isinstance(inv.parameter, dict):
-            kat = inv.parameter.get("kategorie", "verbraucher")
-            if kat == "erzeuger":
-                seite = "quelle"
-            elif kat == "speicher":
-                bidirektional = True
-
-        serie_key = f"{config['kategorie']}_{inv_id}"
-        serien.append({
-            "key": serie_key,
-            "label": inv.bezeichnung,
-            "kategorie": config["kategorie"],
-            "farbe": config["farbe"],
-            "seite": seite,
-            "bidirektional": bidirektional,
-            "max_w": config.get("max_w"),
-        })
-        serie_entities[serie_key] = [live["leistung_w"]]
-
-    # Pool-Doppelzählungs-Schutz: Wenn zwei Investitionen die gleiche leistung_w-
-    # Entity teilen (typischer Fall: Wallbox + E-Auto, wo der User die Verknüpfung
-    # via parent_investition_id noch nicht gesetzt hat — beide messen denselben
-    # Stromfluss), entfernen wir Duplikate. Wallbox > E-Auto in der Priorität,
-    # weil die Wallbox den Stromfluss primär darstellt (Infrastruktur vor Fahrzeug).
-    # Vermeidet Σ Verbrauch = 2× wahres E-Auto-Laden in der Tagesverlaufsgrafik (#227).
-    _serie_priority = {"wallbox": 0, "e-auto": 1}  # niedriger = wichtiger
-    serien.sort(key=lambda s: _serie_priority.get(s["kategorie"], 2))
-    _seen_entity: set[str] = set()
-    _deduped: list[dict] = []
-    for serie in serien:
-        eids = serie_entities.get(serie["key"], [])
-        primary = eids[0] if eids else None
-        if primary and primary in _seen_entity:
-            # Diese Entity ist schon durch eine vorherige Serie abgedeckt → skippen
-            serie_entities.pop(serie["key"], None)
-            continue
-        if primary:
-            _seen_entity.add(primary)
-        _deduped.append(serie)
-    serien = _deduped
+    # Serien-Selektion (inkl. Pool-Dedup) über die geteilte Quelle — identisch
+    # zum Backfill-Pfad (Issue #318, M1). Chart-Metadaten (label/farbe/max_w)
+    # rekonstruieren wir hier aus den Kern-Specs; sie sind Live-spezifisch.
+    serien_core, serie_entities = baue_investitions_serien(inv_live_map, investitionen)
+    serien: list[dict] = []
+    _SUFFIX_LABEL = {"heizen": " Heizen", "warmwasser": " Warmwasser"}
+    for spec in serien_core:
+        inv = investitionen[spec.inv_id]
+        config = TV_SERIE_CONFIG.get(inv.typ, {})
+        if spec.suffix:  # WP-Split: eigene Farbe für Warmwasser, kein max_w
+            farbe = "#f59e0b" if spec.suffix == "warmwasser" else config.get("farbe")
+            serien.append({
+                "key": spec.key,
+                "label": f"{inv.bezeichnung}{_SUFFIX_LABEL.get(spec.suffix, '')}",
+                "kategorie": spec.kategorie,
+                "farbe": farbe,
+                "seite": spec.seite,
+                "bidirektional": spec.bidirektional,
+            })
+        else:
+            serien.append({
+                "key": spec.key,
+                "label": inv.bezeichnung,
+                "kategorie": spec.kategorie,
+                "farbe": config.get("farbe"),
+                "seite": spec.seite,
+                "bidirektional": spec.bidirektional,
+                "max_w": config.get("max_w"),
+            })
 
     # PV Gesamt aus Basis als Fallback (wenn kein individueller PV-Sensor)
     has_individual_pv = any(s["kategorie"] == "pv" for s in serien)

@@ -7,6 +7,8 @@ Alle Formeln für Kennzahlen, Einsparungen und Auswertungen.
 from dataclasses import dataclass
 from typing import Optional
 
+from backend.core.berechnungen import einspeise_erloes_euro
+
 
 # =============================================================================
 # Konstanten
@@ -139,8 +141,12 @@ def berechne_monatskennzahlen(
     # Spezifischer Ertrag (kWh pro kWp)
     spez_ertrag = (pv_erzeugung_kwh / leistung_kwp) if leistung_kwp and leistung_kwp > 0 else None
 
-    # Finanzielle Berechnungen (Cent -> Euro)
-    einspeise_erloes = einspeisung_kwh * einspeiseverguetung_cent / 100
+    # Finanzielle Berechnungen (Cent -> Euro). §51-Erlös über SoT (ADR-001, M3);
+    # neg_preis_kwh = None — diese Funktion kennt keine Negativpreis-Spalte →
+    # volle Einspeisung wie zuvor (verhaltensneutral).
+    einspeise_erloes = einspeise_erloes_euro(
+        einspeisung_kwh, None, einspeiseverguetung_cent
+    ).erloes_euro
     netzbezug_kosten = netzbezug_kwh * netzbezug_preis_cent / 100 + grundpreis_euro_monat
     ev_ersparnis = eigenverbrauch * netzbezug_preis_cent / 100
 

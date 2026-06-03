@@ -1369,7 +1369,12 @@ async def get_finanz_prognose(
         wp_saison = WP_SAISON_FAKTOREN.get(monat, 1.0)
         wp_verbrauch = wp_strom_monat_avg * wp_saison if waermepumpen else 0
 
-        einspeise_erloes = einspeisung_kwh * einspeiseverguetung / 100
+        # §51-Erlös über SoT (ADR-001, M3); neg_preis_kwh = None — Prognose-
+        # Monate haben keine Negativpreis-Historie (der historische Pfad oben
+        # bei den Monatsdaten nutzt get_neg_preis_einspeisung_monat).
+        einspeise_erloes = einspeise_erloes_euro(
+            einspeisung_kwh, None, einspeiseverguetung
+        ).erloes_euro
         ev_ersparnis = eigenverbrauch_kwh * netzbezug_preis / 100
         netto_ertrag = einspeise_erloes + ev_ersparnis
 

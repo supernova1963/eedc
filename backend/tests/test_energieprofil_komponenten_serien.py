@@ -106,3 +106,32 @@ async def test_unbekannte_anlage_404(db):
     with pytest.raises(HTTPException) as exc:
         await _call(99999, date(2026, 5, 1), date(2026, 5, 31), db)
     assert exc.value.status_code == 404
+
+
+async def test_netz_split_konvention_wird_aufgeloest(db):
+    """Achse 3 (#316): Neu-Konvention `netzbezug`/`einspeisung` darf nicht
+    still durchfallen — vor dem Fix lieferte `_key_to_serie_info` für diese
+    Keys None und sie fehlten in der Serien-/Geräteliste."""
+    anlage = Anlage(anlagenname="Netz-Split", leistung_kwp=8.0)
+    db.add(anlage)
+    await db.flush()
+    # Alt-Tag (kombinierter netz) + Neu-Tag (Split) im selben Abfragezeitraum.
+    db.add(TagesZusammenfassung(
+        anlage_id=anlage.id, datum=date(2026, 5, 5),
+        komponenten_kwh={"netz": 4.0},
+    ))
+    db.add(TagesZusammenfassung(
+        anlage_id=anlage.id, datum=date(2026, 5, 20),
+        komponenten_kwh={"netzbezug": 6.0, "einspeisung": 9.0},
+    ))
+    await db.commit()
+
+    serien = await _call(anlage.id, date(2026, 5, 1), date(2026, 5, 31), db)
+    by_key = {s.key: s for s in serien}
+
+    for key, label in (("netz", "Stromnetz"), ("netzbezug", "Netzbezug"),
+                       ("einspeisung", "Einspeisung")):
+        assert key in by_key, f"{key} fehlt in Serienliste"
+        assert by_key[key].kategorie == "netz"
+        assert by_key[key].label == label
+        assert by_key[key].typ == "virtual"

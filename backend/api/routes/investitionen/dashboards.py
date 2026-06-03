@@ -63,6 +63,7 @@ from backend.core.calculations import (
 )
 from backend.core.field_definitions import get_emob_pv_netz_kwh
 from backend.core.berechnungen import (
+    einspeise_erloes_euro,
     gleitende_effizienz,
     pruefe_speicher_durchsatz_konsistenz,
     speicher_effizienz_prozent,
@@ -1295,7 +1296,11 @@ async def get_sonstiges_dashboard(
         if kategorie == 'erzeuger':
             eigenverbrauch_quote = min(gesamt_eigenverbrauch / gesamt_erzeugung * 100, 100) if gesamt_erzeugung > 0 else 0
             ersparnis_eigenverbrauch = gesamt_eigenverbrauch * strompreis_cent / 100
-            erloes_einspeisung = gesamt_einspeisung * einspeiseverguetung_cent / 100
+            # §51-Erlös über SoT (ADR-001, M3); neg_preis_kwh = None auf
+            # Monatsdaten-Aggregat-Ebene → volle Einspeisung (verhaltensneutral).
+            erloes_einspeisung = einspeise_erloes_euro(
+                gesamt_einspeisung, None, einspeiseverguetung_cent
+            ).erloes_euro
             gesamt_ersparnis = ersparnis_eigenverbrauch + erloes_einspeisung + gesamt_sonstige_netto
             co2_ersparnis = gesamt_eigenverbrauch * CO2_FAKTOR_STROM_KG_KWH
 

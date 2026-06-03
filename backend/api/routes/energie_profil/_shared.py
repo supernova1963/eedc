@@ -28,10 +28,18 @@ _TYP_SEITE: dict[str, str] = {
 }
 
 # Virtuelle Serien (kein Investment dahinter)
+# `netz` = Alt-Konvention (kombinierter, vorzeichenbehafteter Live-Σ-Key).
+# `netzbezug`/`einspeisung` = Neu-Konvention seit Phase B / v3.34.2 (positiver
+# Split aus dem Boundary-Pfad, komponenten_beitraege). Alle drei Kategorie
+# "netz" → werden in der Energieprofil-Auswertung gleich (BIDI) behandelt; ohne
+# die beiden Split-Keys fielen Neu-Tage in Geräteliste/Diagnose-Serien still
+# durch `_key_to_serie_info → None` (Achse-3-Konsument-Robustheit, #316).
 _VIRTUAL_SERIEN: dict[str, dict] = {
-    "haushalt":   {"label": "Haushalt",    "typ": "virtual", "kategorie": "haushalt",  "seite": "senke"},
-    "netz":       {"label": "Stromnetz",   "typ": "virtual", "kategorie": "netz",      "seite": "bidirektional"},
-    "pv_gesamt":  {"label": "PV Gesamt",   "typ": "virtual", "kategorie": "pv",        "seite": "quelle"},
+    "haushalt":    {"label": "Haushalt",    "typ": "virtual", "kategorie": "haushalt", "seite": "senke"},
+    "netz":        {"label": "Stromnetz",   "typ": "virtual", "kategorie": "netz",     "seite": "bidirektional"},
+    "netzbezug":   {"label": "Netzbezug",   "typ": "virtual", "kategorie": "netz",     "seite": "bidirektional"},
+    "einspeisung": {"label": "Einspeisung", "typ": "virtual", "kategorie": "netz",     "seite": "bidirektional"},
+    "pv_gesamt":   {"label": "PV Gesamt",   "typ": "virtual", "kategorie": "pv",       "seite": "quelle"},
 }
 
 # Optionale Suffixe bei WP-Serien (waermepumpe_{id}_heizen)
@@ -78,6 +86,44 @@ def _key_to_serie_info(
         "kategorie": m.group(1),
         "seite": seite,
     }
+
+
+def detail_kategorie(info: dict, inv: Optional["Investition"]) -> str:
+    """Feinere Anzeige-Kategorie eines Komponenten-Keys (Monats-Auswertung).
+
+    Aus views.py extrahiert (ADR-001 testbar). Netz-Erkennung läuft über die
+    `kategorie` (nicht den Roh-Key), damit BEIDE Netz-Konventionen — Alt-`netz`
+    und Neu-Split `netzbezug`/`einspeisung` — auf dieselbe Detail-Kategorie
+    `netz` fallen (Achse-3-Konsument-Robustheit, #316). Sonst landete ein
+    Neu-Split-Key über die Fallthrough-Logik fälschlich in
+    `sonstige_verbraucher`.
+    """
+    kat = info.get("kategorie", "sonstige")
+    typ = info.get("typ", "")
+    if kat == "netz":
+        return "netz"
+    if typ == "pv-module":
+        return "pv_module"
+    if typ == "balkonkraftwerk":
+        return "bkw"
+    if typ == "speicher":
+        return "speicher"
+    if typ == "waermepumpe":
+        return "waermepumpe"
+    if typ in ("wallbox", "e-auto"):
+        return "wallbox_eauto"
+    if kat == "haushalt":
+        return "haushalt"
+    if typ == "sonstiges" and inv and isinstance(inv.parameter, dict):
+        unterkat = inv.parameter.get("kategorie", "verbraucher")
+        if unterkat == "erzeuger":
+            return "sonstige_erzeuger"
+        if unterkat == "speicher":
+            return "speicher"
+        return "sonstige_verbraucher"
+    if kat == "pv":
+        return "pv_module"
+    return "sonstige_verbraucher"
 
 
 # ── Response Models ──────────────────────────────────────────────────────────
