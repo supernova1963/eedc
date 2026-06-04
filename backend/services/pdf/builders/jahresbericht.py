@@ -17,7 +17,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.berechnungen import einspeise_erloes_euro
 from backend.services.einspeise_erloes_service import get_neg_preis_einspeisung_monat
-from backend.core.field_definitions import get_emob_pv_netz_kwh, get_wp_strom_kwh
+from backend.core.field_definitions import get_wp_strom_kwh
+from backend.services.eauto_wirtschaftlichkeit import get_emob_heimladung_canonical
 from backend.core.calculations import (
     CO2_FAKTOR_GAS_KG_KWH,
     CO2_FAKTOR_STROM_KG_KWH,
@@ -181,7 +182,14 @@ async def build_jahresbericht_context(
     speicher_ladung = 0.0
     speicher_entladung = 0.0
     wp_waerme = wp_heizung = wp_warmwasser = wp_strom = 0.0
-    emob_km = emob_ladung = emob_pv = emob_netz = emob_v2h = 0.0
+    emob_km = emob_v2h = 0.0
+    # E-Mob-Heimladung: rohe IMD je Quelle sammeln, danach EINE kanonische
+    # Quelle wählen (Phase 2a). Früher summierte diese Schleife `ladung_kwh`
+    # roh über E-Auto UND Wallbox — bei evcc-Setups, die denselben Stromfluss
+    # auf beide Investitionen schreiben, ergab das Doppelzählung. km + V2H
+    # bleiben E-Auto-spezifisch (Vehicle-Sicht).
+    eauto_imd_data: list[dict] = []
+    wb_imd_data: list[dict] = []
 
     for imd in all_imd:
         inv = inv_by_id.get(imd.investition_id)
@@ -198,16 +206,20 @@ async def build_jahresbericht_context(
             wp_warmwasser += ww
             wp_waerme += d.get("waerme_kwh", 0) or (heiz + ww)
             wp_strom += get_wp_strom_kwh(d, inv.parameter)
-        elif inv.typ in ("e-auto", "wallbox"):
+        elif inv.typ == "e-auto":
+            eauto_imd_data.append(d)
             emob_km += d.get("km_gefahren", 0) or 0
-            total = d.get("ladung_kwh", 0) or 0
-            emob_ladung += total
-            # #262: PV/Netz via SoT-Helper — evcc-Import liefert nur Total + PV,
-            # Netz wird aus `Total − PV` abgeleitet wenn der Key fehlt.
-            pv, netz = get_emob_pv_netz_kwh(d, total_kwh=total)
-            emob_pv += pv
-            emob_netz += netz
             emob_v2h += d.get("v2h_entladung_kwh", 0) or 0
+        elif inv.typ == "wallbox":
+            wb_imd_data.append(d)
+
+    emob_pool = get_emob_heimladung_canonical(
+        eauto_imd_data=eauto_imd_data,
+        wallbox_imd_data=wb_imd_data,
+    )
+    emob_ladung = emob_pool.ladung_kwh
+    emob_pv = emob_pool.pv_kwh
+    emob_netz = emob_pool.netz_kwh
 
     # ── 8. Monats-Tabelle aufbauen ──────────────────────────────────────
     monats_zeilen: list[dict] = []

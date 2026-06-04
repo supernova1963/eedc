@@ -103,29 +103,25 @@ async def test_eauto_dashboard_evcc_setup_zeigt_ladedaten_anteilig(db):
     assert z["gesamt_km"] == 1244
 
 
-async def test_eauto_dashboard_premium_setup_unveraendert(db):
-    """Premium-Setup: E-Auto hat eigene Ladedaten, mehr als Wallbox.
-    Pool-Fallback greift NICHT, E-Auto-eigene Werte bleiben."""
+async def test_eauto_dashboard_post_migration_wallbox_quelle(db):
+    """Phase-2a-Steady-State: Heimladung kanonisch auf der Wallbox (wie nach der
+    Etappe-4-Migration), E-Auto nur km → die Zusammenfassung zieht die Wallbox-
+    Werte km-anteilig (1 Auto → voll)."""
     from backend.api.routes.investitionen import get_eauto_dashboard
 
     anlage_id = await _seed_anlage(db)
     wb = await _add_inv(db, anlage_id, "wallbox", "Warp3")
     ea = await _add_inv(db, anlage_id, "e-auto", "Cupra Born")
 
-    # Wallbox-Sicht: 200 kWh
+    # Kanonische Quelle = Wallbox (konsolidierter Wert), E-Auto nur km.
     await _add_imd(db, wb.id, 2026, 4, {
-        "ladung_kwh": 200, "ladung_pv_kwh": 100, "ladung_netz_kwh": 100,
-    })
-    # E-Auto-Sicht: 250 kWh (mehr) — Premium-Setup, getrennt gepflegt
-    await _add_imd(db, ea.id, 2026, 4, {
         "ladung_kwh": 250, "ladung_pv_kwh": 150, "ladung_netz_kwh": 100,
-        "km_gefahren": 1244,
     })
+    await _add_imd(db, ea.id, 2026, 4, {"km_gefahren": 1244})
     await db.commit()
 
     result = await get_eauto_dashboard(anlage_id=anlage_id, strompreis_cent=30.0, db=db)
     z = result[0].zusammenfassung
-    # E-Auto-Werte bleiben (eauto_pool_summe > wb_pool_summe → use_wb_pool=False)
     assert z["ladung_pv_kwh"] == 150.0
     assert z["ladung_netz_kwh"] == 100.0
 
@@ -203,25 +199,24 @@ async def test_eauto_monatszeilen_gepoolt_junky84(db):
     assert abs(rows[3]["ladung_netz_kwh"] - 82.6) < 0.05
 
 
-async def test_eauto_monatszeilen_premium_unveraendert(db):
-    """Premium-Setup: E-Auto pflegt eigene Ladung (> Wallbox) → use_wb_pool
-    False → die Zeilen behalten die E-Auto-eigenen Werte, kein Pool-Override."""
+async def test_eauto_monatszeilen_post_migration_wallbox_quelle(db):
+    """Phase-2a-Steady-State: Heimladung kanonisch auf der Wallbox (wie nach der
+    Etappe-4-Migration), E-Auto nur km → die Detailzeilen zeigen den km-anteilig
+    attribuierten Wallbox-Pool (1 Auto → voll), nicht eine leere E-Auto-Zeile."""
     from backend.api.routes.investitionen import get_eauto_dashboard
 
     anlage_id = await _seed_anlage(db)
     wb = await _add_inv(db, anlage_id, "wallbox", "Warp3")
     ea = await _add_inv(db, anlage_id, "e-auto", "Cupra Born")
 
-    await _add_imd(db, wb.id, 2026, 4, {"ladung_kwh": 200, "ladung_pv_kwh": 100})
-    await _add_imd(db, ea.id, 2026, 4, {
+    await _add_imd(db, wb.id, 2026, 4, {
         "ladung_kwh": 250, "ladung_pv_kwh": 150, "ladung_netz_kwh": 100,
-        "km_gefahren": 1244,
     })
+    await _add_imd(db, ea.id, 2026, 4, {"km_gefahren": 1244})
     await db.commit()
 
     result = await get_eauto_dashboard(anlage_id=anlage_id, strompreis_cent=30.0, db=db)
     row = {md.monat: md.verbrauch_daten for md in result[0].monatsdaten}[4]
-    # E-Auto-eigene Werte bleiben (nicht mit Wallbox-Pool 100/100 überschrieben)
     assert row["ladung_pv_kwh"] == 150
     assert row["ladung_netz_kwh"] == 100
 

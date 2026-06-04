@@ -12,12 +12,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from pydantic import BaseModel
 from typing import Optional, Any
+from dataclasses import dataclass
 import os
 
 from backend.api.deps import get_db
 from backend.core.berechnungen import einspeise_erloes_euro, berechne_verbrauchs_kennzahlen
 from backend.services.einspeise_erloes_service import get_neg_preis_einspeisung_monat
 from backend.core.field_definitions import get_emob_pv_netz_kwh, get_wp_strom_kwh
+from backend.services.eauto_wirtschaftlichkeit import (
+    attribute_month_share,
+    build_eauto_km_by_month,
+    build_wb_pool_by_month,
+)
 from backend.models.anlage import Anlage
 from backend.services.activity_service import log_activity
 from backend.models.monatsdaten import Monatsdaten
@@ -119,6 +125,83 @@ class MQTTConfigResponse(BaseModel):
 # =============================================================================
 # Hilfsfunktionen für Berechnungen
 # =============================================================================
+
+@dataclass
+class _EmobPoolCtx:
+    """Phase-2a-Pool-Kontext einer Anlage für die HA-Sensor-Berechnung.
+
+    Liegt die E-Mob-Heimladung kanonisch auf der Wallbox (evcc-Setup), sehen die
+    per-E-Auto-Sensoren sonst leere IMD → PV-Anteil fehlt, Ersparnis überhöht
+    (kein Netz-Strom abgezogen). Mit diesem Kontext zieht jede E-Auto-Sicht den
+    km-anteiligen Wallbox-Pool — dieselbe Logik wie Cockpit/Dashboards.
+    """
+    use_wb_pool: bool
+    wb_pool_by_month: dict
+    eauto_km_by_month: dict
+
+
+def _build_emob_pool_ctx(inv_daten: dict, eauto_ids: set, wallbox_ids: set) -> _EmobPoolCtx:
+    """Baut den Pool-Kontext aus bereits aktiv-gefilterten IMD
+    (`{(inv_id, jahr, monat): verbrauch_daten}`). `use_wb_pool` strukturell:
+    True, sobald eine Wallbox Heimladung trägt (Entscheidung 1)."""
+    wb_pool_by_month = build_wb_pool_by_month(
+        (jahr, monat, daten)
+        for (inv_id, jahr, monat), daten in inv_daten.items()
+        if inv_id in wallbox_ids
+    )
+    eauto_km_by_month = build_eauto_km_by_month(
+        (jahr, monat, daten)
+        for (inv_id, jahr, monat), daten in inv_daten.items()
+        if inv_id in eauto_ids
+    )
+    use_wb_pool = any(
+        (s.pv_kwh + s.netz_kwh) > 0 for s in wb_pool_by_month.values()
+    )
+    return _EmobPoolCtx(use_wb_pool, wb_pool_by_month, eauto_km_by_month)
+
+
+async def _load_emob_pool_ctx(db: AsyncSession, investitionen) -> Optional[_EmobPoolCtx]:
+    """Lädt + filtert die Emob-IMD einer Anlage und baut den Pool-Kontext —
+    für Aufrufer, die nur die Investitionsliste, aber keine IMD geladen haben
+    (z. B. die per-Investition-Sensor-Schleife)."""
+    emob = [
+        i for i in investitionen
+        if i.typ in ("e-auto", "wallbox") and not ist_dienstlich(i)
+    ]
+    if not emob:
+        return None
+    by_id = {i.id: i for i in emob}
+    res = await db.execute(
+        select(InvestitionMonatsdaten).where(
+            InvestitionMonatsdaten.investition_id.in_([i.id for i in emob])
+        )
+    )
+    inv_daten: dict = {}
+    for md in res.scalars().all():
+        inv = by_id.get(md.investition_id)
+        if inv and inv.ist_aktiv_im_monat(md.jahr, md.monat):
+            inv_daten[(md.investition_id, md.jahr, md.monat)] = md.verbrauch_daten or {}
+    return _build_emob_pool_ctx(
+        inv_daten,
+        {i.id for i in emob if i.typ == "e-auto"},
+        {i.id for i in emob if i.typ == "wallbox"},
+    )
+
+
+def _emob_month_share(ctx: Optional[_EmobPoolCtx], typ: str, km: float, jahr: int, monat: int):
+    """km-anteiliger Wallbox-Pool-Anteil eines E-Autos für (jahr, monat) — oder
+    None, wenn keine Pool-Attribution greift (kein Kontext, keine Wallbox-
+    Heimladung, oder typ != e-auto). Dann verwendet der Aufrufer die eigenen
+    IMD-Werte. Die Wallbox-Sicht behält immer ihre eigenen Daten (= Quelle)."""
+    if ctx is None or not ctx.use_wb_pool or typ != "e-auto":
+        return None
+    ms = attribute_month_share(
+        ctx.wb_pool_by_month.get((jahr, monat)),
+        km,
+        ctx.eauto_km_by_month.get((jahr, monat), 0),
+    )
+    return ms if (ms.pv_kwh + ms.netz_kwh) > 0 else None
+
 
 async def calculate_anlage_sensors(
     db: AsyncSession,
@@ -269,6 +352,10 @@ async def calculate_anlage_sensors(
         i for i in investitionen
         if i.typ == "e-auto" and not ist_dienstlich(i)
     ]
+    wallboxen = [
+        i for i in investitionen
+        if i.typ == "wallbox" and not ist_dienstlich(i)
+    ]
     balkonkraftwerke = [i for i in investitionen if i.typ == "balkonkraftwerk"]
 
     # IMD vor anschaffungsdatum / nach stilllegungsdatum überspringen (#236):
@@ -289,6 +376,17 @@ async def calculate_anlage_sensors(
             historische_inv_daten[(imd.investition_id, imd.jahr, imd.monat)] = (
                 imd.verbrauch_daten or {}
             )
+
+    # Phase 2a: Emob-Pool-Kontext aus den bereits aktiv-gefilterten IMD bauen.
+    # Liegt die Heimladung kanonisch auf der Wallbox (evcc), zieht die
+    # E-Auto-Ersparnis unten den km-anteiligen Wallbox-Netz-Anteil statt des
+    # (leeren) E-Auto-Netz — sonst würde `bisherige_eauto_ersparnis` keinen
+    # Netzstrom abziehen und die Ersparnis überhöhen.
+    emob_ctx = _build_emob_pool_ctx(
+        historische_inv_daten,
+        {e.id for e in e_autos},
+        {w.id for w in wallboxen},
+    )
 
     netzbezug_preis_cent = (
         strompreis.netzbezug_arbeitspreis_cent_kwh if strompreis else 30.0
@@ -373,6 +471,10 @@ async def calculate_anlage_sensors(
             km = daten.get("km_gefahren", 0) or 0
             # #262: SoT-Helper konsolidiert den Netz-Read mit Fallback.
             _, netz = get_emob_pv_netz_kwh(daten)
+            # Phase 2a: evcc-Setup → Netz km-anteilig aus dem Wallbox-Pool.
+            share = _emob_month_share(emob_ctx, "e-auto", km, jahr, monat)
+            if share is not None:
+                netz = share.netz_kwh
             md = md_by_periode.get((jahr, monat))
             monats_benzinpreis = (
                 md.kraftstoffpreis_euro
@@ -580,9 +682,15 @@ async def calculate_anlage_sensors(
 async def calculate_investition_sensors(
     db: AsyncSession,
     investition: Investition,
-    strompreis: Optional[Strompreis]
+    strompreis: Optional[Strompreis],
+    emob_ctx: Optional[_EmobPoolCtx] = None,
 ) -> list[SensorValue]:
-    """Berechnet Sensor-Werte für eine Investition basierend auf Typ."""
+    """Berechnet Sensor-Werte für eine Investition basierend auf Typ.
+
+    `emob_ctx` (Phase 2a): liegt die Heimladung kanonisch auf der Wallbox
+    (evcc), ziehen die E-Auto-Sensoren PV-Anteil + Ersparnis km-anteilig aus dem
+    Wallbox-Pool statt aus der leeren E-Auto-IMD. Ohne Kontext (Default) bleibt
+    das Verhalten unverändert (eigene IMD-Werte)."""
     sensor_values = []
 
     # InvestitionMonatsdaten laden
@@ -621,13 +729,20 @@ async def calculate_investition_sensors(
 
         for md in monatsdaten:
             d = md.verbrauch_daten or {}
-            gesamt_km += d.get("km_gefahren", 0) or 0
+            km_m = d.get("km_gefahren", 0) or 0
+            gesamt_km += km_m
             gesamt_verbrauch += d.get("verbrauch_kwh", 0) or 0
-            # #262: PV/Netz via SoT-Helper — bei Imports ohne expliziten
-            # `ladung_netz_kwh`-Key wird aus `Total − PV` abgeleitet.
-            pv, netz = get_emob_pv_netz_kwh(d)
-            gesamt_pv_ladung += pv
-            gesamt_netz_ladung += netz
+            # Phase 2a: evcc-Setup → PV/Netz km-anteilig aus dem Wallbox-Pool.
+            share = _emob_month_share(emob_ctx, investition.typ, km_m, md.jahr, md.monat)
+            if share is not None:
+                gesamt_pv_ladung += share.pv_kwh
+                gesamt_netz_ladung += share.netz_kwh
+            else:
+                # #262: PV/Netz via SoT-Helper — bei Imports ohne expliziten
+                # `ladung_netz_kwh`-Key wird aus `Total − PV` abgeleitet.
+                pv, netz = get_emob_pv_netz_kwh(d)
+                gesamt_pv_ladung += pv
+                gesamt_netz_ladung += netz
 
         gesamt_ladung = gesamt_pv_ladung + gesamt_netz_ladung
 
@@ -668,6 +783,10 @@ async def calculate_investition_sensors(
                         km = d.get("km_gefahren", 0) or 0
                         # #262: SoT-Helper liefert (pv, netz) mit Fallback.
                         _, netz = get_emob_pv_netz_kwh(d)
+                        # Phase 2a: evcc → Netz km-anteilig aus dem Wallbox-Pool.
+                        share = _emob_month_share(emob_ctx, investition.typ, km, md.jahr, md.monat)
+                        if share is not None:
+                            netz = share.netz_kwh
                         amd = anlage_md_dict.get((md.jahr, md.monat))
                         bp = (amd.kraftstoffpreis_euro
                               if amd and amd.kraftstoffpreis_euro is not None
@@ -830,8 +949,13 @@ async def get_all_sensors(db: AsyncSession = Depends(get_db)):
         )
         strompreis = result.scalar_one_or_none()
 
+        # Phase 2a: Emob-Pool-Kontext der Anlage einmalig bauen, damit die
+        # per-Device-E-Auto-Sensoren bei evcc-Setups den km-anteiligen
+        # Wallbox-Pool sehen (statt leerer E-Auto-IMD).
+        emob_ctx = await _load_emob_pool_ctx(db, investitionen)
+
         for inv in investitionen:
-            inv_sensors = await calculate_investition_sensors(db, inv, strompreis)
+            inv_sensors = await calculate_investition_sensors(db, inv, strompreis, emob_ctx)
             inv_sensor_items = [
                 SensorExportItem(
                     key=sv.definition.key,

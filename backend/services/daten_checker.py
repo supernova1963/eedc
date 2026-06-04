@@ -80,13 +80,13 @@ class CheckKategorie(str, Enum):
     PV_UEBER_ERFASSUNG = "pv_ueber_erfassung"
     # Wallbox/E-Auto Phase 2a aus KONZEPT-WALLBOX-EAUTO.md: wenn EAuto-
     # Investition UND Wallbox-Investition beide Heimladungs-Werte tragen,
-    # messen sie häufig denselben Stromfluss aus zwei Perspektiven. Der
-    # Pool-Helper `aggregiere_emob_ladung` (v3.31.6) ist eine Heuristik
-    # (Quelle mit der größeren Heimladung gewinnt komplett); bei verirrten
-    # Streudaten auf der falschen Quelle (junky84 #262: ~3.300 kWh auf der
-    # E-Auto-Investition) kann sie still falsch wählen. Diagnose-Eintrag
-    # lenkt den Anwender auf eine bewusste Entscheidung: nur eine Quelle
-    # pflegen.
+    # messen sie häufig denselben Stromfluss aus zwei Perspektiven. Die
+    # Read-Sites wählen die Quelle strukturell (Wallbox vorhanden → Wallbox),
+    # die einmalige Migration konsolidiert Bestände in den Wallbox-Slot. Was
+    # die Migration NICHT verlustfrei auflösen kann (Total auf der einen,
+    # PV-Split nur auf der anderen Seite) bleibt stehen — dieser Diagnose-
+    # Eintrag lenkt den Anwender dann auf eine bewusste Entscheidung: nur eine
+    # Quelle pflegen.
     EMOB_POOL_PFLEGE = "emob_pool_pflege"
 
 
@@ -2293,13 +2293,14 @@ class DatenChecker:
         return ergebnisse
 
     def _check_emob_pool_pflege(self, anlage: Anlage) -> list[CheckErgebnis]:
-        """E-Auto- + Wallbox-Investition parallel gepflegt → Pool-Heuristik wirkt.
+        """E-Auto- + Wallbox-Investition parallel gepflegt → Pflege-Konflikt.
 
         Wallbox (Loadpoint-Sicht) und E-Auto (Vehicle-Sicht) messen häufig
-        denselben Stromfluss aus zwei Perspektiven. Heute löst der Pool-
-        Helper `aggregiere_emob_ladung` (v3.31.6) den Konflikt heuristisch
-        (Quelle mit der größeren Heimladung gewinnt komplett). Bei verirrten
-        Streudaten auf der falschen Quelle wählt die Heuristik still falsch.
+        denselben Stromfluss aus zwei Perspektiven. Seit Phase 2a wählen die
+        Read-Sites die Quelle strukturell (Wallbox vorhanden → Wallbox) und die
+        Migration konsolidiert Bestände in den Wallbox-Slot. Was die Migration
+        nicht verlustfrei auflösen kann (z. B. Total auf der einen, PV-Split nur
+        auf der anderen Seite) bleibt als Doppel-Pflege stehen.
 
         Diese Diagnose erkennt das Pflege-Muster („beide Quellen über mehrere
         Monate hinweg nennenswert befüllt") und lenkt den Anwender auf eine
@@ -2416,11 +2417,12 @@ class DatenChecker:
                     f"PV-Anteil bei EA={ea_pv:.0f} kWh, WB={wb_pv:.0f} kWh "
                     f"— Abweichung > {int(self.EMOB_POOL_PV_INKONSISTENZ*100)} %, "
                     "obwohl beide Sichten denselben Stromfluss messen "
-                    "sollten. eedc poolt aktuell heuristisch (Quelle mit "
-                    "der größeren Heimladung gewinnt) — bei Streudaten auf "
-                    "der falschen Quelle wählt die Heuristik still falsch. "
-                    "Empfehlung: entscheide bewusst, welche Quelle die "
-                    "Wahrheit liefert, und lasse die andere leer."
+                    "sollten. eedc führt die Heimladung kanonisch an der "
+                    "Wallbox (sie misst den Ladepunkt); der parallel am "
+                    "E-Auto gepflegte Wert wird in den Auswertungen ignoriert. "
+                    "Damit dein PV-Anteil stimmt: pflege die Heimladung nur an "
+                    "der Wallbox und lasse die E-Auto-Heimladung leer "
+                    "(km, Verbrauch, Extern und V2H bleiben am E-Auto)."
                 ),
             ))
         else:
@@ -2428,8 +2430,8 @@ class DatenChecker:
                 kategorie=kat,
                 schwere=CheckSeverity.INFO.value,
                 meldung=(
-                    "E-Auto- und Wallbox-Investition werden parallel "
-                    "gepflegt — Pool-Heuristik aktiv"
+                    "E-Auto- und Wallbox-Investition tragen beide Heimladung "
+                    "— die Wallbox ist die Quelle"
                 ),
                 details=(
                     f"In {len(doppel_monate)} Monaten der letzten "
@@ -2437,9 +2439,11 @@ class DatenChecker:
                     "mit Heimladung gepflegt (Beispiele: "
                     f"{beispiel_monate}). Wallbox- und E-Auto-Investition "
                     "messen oft denselben Stromfluss aus zwei Perspektiven; "
-                    "eedc nutzt für die Aggregation die Quelle mit der "
-                    "größeren Heimladung (Pool-Helper). Sauberer ist nur "
-                    "eine Quelle zu pflegen — die andere bleibt leer."
+                    "eedc führt die Heimladung kanonisch an der Wallbox, die "
+                    "parallel am E-Auto gepflegte Heimladung wird in den "
+                    "Auswertungen nicht verwendet. Sauberer ist, nur die "
+                    "Wallbox zu pflegen und die E-Auto-Heimladung leer zu "
+                    "lassen (km/Verbrauch/Extern/V2H bleiben am E-Auto)."
                 ),
             ))
 

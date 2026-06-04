@@ -1,10 +1,10 @@
 """Daten-Checker: evcc-Pool-Pflege-Mismatch-Warnung (Wallbox/EAuto-Konzept Phase 2a).
 
 Trigger: junky84 #262 hatte ~3.300 kWh Streudaten auf der E-Auto-Investition
-zusätzlich zur korrekten Wallbox-Pflege. Der Pool-Helper
-`aggregiere_emob_ladung` wählt heuristisch die Quelle mit der größeren
-Heimladung als Gewinner — bei Streudaten auf der falschen Seite kann das
-still falsch sein. Diese Diagnose erkennt das Pflege-Muster und lenkt
+zusätzlich zur korrekten Wallbox-Pflege. Seit Phase 2a wählen die Read-Sites
+die Quelle strukturell (`get_emob_heimladung_canonical`) und die Migration
+konsolidiert in den Wallbox-Slot; was nicht verlustfrei auflösbar ist, bleibt
+als Doppel-Pflege stehen. Diese Diagnose erkennt das Pflege-Muster und lenkt
 den Anwender auf eine bewusste Entscheidung.
 
 Tests sichern:
@@ -129,7 +129,7 @@ async def test_kruemel_pflege_kein_eintrag(db):
     """WB dominant, EA mit Krümeln (< 10 kWh/Monat) → kein Konflikt.
 
     Das passiert typisch wenn evcc-Vehicle-Topics nur sporadisch gepflegt
-    werden — die Pool-Heuristik wählt klar Wallbox, kein Fehlalarm.
+    werden — die Wallbox ist klar die Quelle, kein Fehlalarm.
     """
     anlage = await _seed_anlage(db)
     wb = await _add_inv(db, anlage.id, "wallbox")
@@ -181,7 +181,7 @@ async def test_drei_doppelmonate_konsistent_info(db):
     e = ergebnisse[0]
     assert e.kategorie == CheckKategorie.EMOB_POOL_PFLEGE.value
     assert e.schwere == CheckSeverity.INFO.value
-    assert "parallel" in e.meldung.lower()
+    assert "wallbox ist die quelle" in e.meldung.lower()
 
 
 async def test_pv_inkonsistenz_warning(db):

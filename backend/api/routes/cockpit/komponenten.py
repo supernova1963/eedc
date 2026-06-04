@@ -18,7 +18,7 @@ from backend.services.einspeise_erloes_service import get_neg_preis_einspeisung_
 from backend.utils.sonstige_positionen import berechne_sonstige_summen
 from backend.api.routes.cockpit._shared import MONATSNAMEN
 from backend.services.wp_wirtschaftlichkeit import berechne_wp_ersparnis
-from backend.services.eauto_wirtschaftlichkeit import aggregiere_emob_ladung
+from backend.services.eauto_wirtschaftlichkeit import get_emob_heimladung_canonical
 from backend.core.investition_parameter import ist_dienstlich
 from backend.core.wirtschaftlichkeit_defaults import (
     EINSPEISEVERGUETUNG_DEFAULT_CENT,
@@ -157,7 +157,7 @@ async def get_komponenten_zeitreihe(
             "wp_waerme": 0, "wp_strom": 0, "wp_heizung": 0, "wp_warmwasser": 0,
             "wp_strom_heizen": 0, "wp_strom_warmwasser": 0,
             # E-Mobilität: rohe IMD-`verbrauch_daten` je Quelle sammeln, erst
-            # beim Konsolidieren unten via `aggregiere_emob_ladung` zu EINER
+            # beim Konsolidieren unten via `get_emob_heimladung_canonical` zu EINER
             # konsistenten Trias poolen. Wallbox-IMD und E-Auto-IMD messen oft
             # denselben Stromfluss aus zwei Perspektiven → feldweises max()
             # über pv/netz konnte sie mischen (#262 junky84: PV-Anteil > 100 %).
@@ -229,7 +229,7 @@ async def get_komponenten_zeitreihe(
             if ist_dienstlich(inv):
                 continue
             # Rohe IMD je Quelle sammeln — Pooling zentral via
-            # `aggregiere_emob_ladung` weiter unten. km + v2h nur vom E-Auto.
+            # `get_emob_heimladung_canonical` weiter unten. km + v2h nur vom E-Auto.
             if inv.typ == "e-auto":
                 d["eauto_imds"].append(data)
                 d["eauto_km"] += data.get("km_gefahren", 0) or 0
@@ -279,7 +279,7 @@ async def get_komponenten_zeitreihe(
         # E-Mobilitäts-Pool: EINE Quelle gewinnt die konsistente Trias
         # (#262 — feldweises max() über pv/netz ergab PV-Anteil > 100 %).
         # km + v2h kommen nur vom E-Auto (Vehicle-to-Home-Sicht).
-        emob_pool = aggregiere_emob_ladung(
+        emob_pool = get_emob_heimladung_canonical(
             eauto_imd_data=d["eauto_imds"],
             wallbox_imd_data=d["wb_imds"],
         )

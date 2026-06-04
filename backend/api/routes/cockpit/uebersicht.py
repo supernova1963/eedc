@@ -37,8 +37,8 @@ from backend.core.wirtschaftlichkeit_defaults import (
 from backend.services.einspeise_erloes_service import get_neg_preis_einspeisung_monat
 from backend.services.wp_wirtschaftlichkeit import berechne_wp_ersparnis
 from backend.services.eauto_wirtschaftlichkeit import (
-    aggregiere_emob_ladung,
     berechne_eauto_ersparnis_periode,
+    get_emob_heimladung_canonical,
     pick_emob_ref_parameter,
 )
 
@@ -195,7 +195,7 @@ async def get_cockpit_uebersicht(
     wp_heizung = 0.0
     wp_warmwasser = 0.0
     # E-Mobilität: rohe IMD je Quelle (E-Auto / Wallbox) sammeln, danach
-    # zentral via `aggregiere_emob_ladung` zu EINER konsistenten Heimladungs-
+    # zentral via `get_emob_heimladung_canonical` zu EINER konsistenten Heimladungs-
     # Trias poolen. E-Auto- und Wallbox-IMD messen oft denselben Stromfluss
     # aus zwei Perspektiven — der Helper wählt die Quelle mit der größeren
     # Heimladung komplett (gleiche Logik wie Wallbox-Dashboard, Komponenten,
@@ -291,7 +291,7 @@ async def get_cockpit_uebersicht(
     # das konnte pv aus der einen, netz aus der anderen Quelle nehmen und
     # PV-Anteil > 100 % erzeugen (#262 junky84). Externe Lade-Kosten (#260)
     # kommen paarweise aus der Quelle mit den höheren Extern-Kosten.
-    emob_pool = aggregiere_emob_ladung(
+    emob_pool = get_emob_heimladung_canonical(
         eauto_imd_data=eauto_imd_data,
         wallbox_imd_data=wb_imd_data,
     )

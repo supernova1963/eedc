@@ -36,7 +36,6 @@ from backend.core.investition_parameter import (
 )
 from backend.services.wp_wirtschaftlichkeit import berechne_wp_ersparnis
 from backend.services.eauto_wirtschaftlichkeit import (
-    aggregiere_emob_ladung,
     attribute_emob_pool_by_km,
     attribute_month_share,
     berechne_eauto_ersparnis,
@@ -44,6 +43,7 @@ from backend.services.eauto_wirtschaftlichkeit import (
     build_eauto_km_by_month,
     build_wb_pool_by_month,
     compute_emob_pool_attribution,
+    get_emob_heimladung_canonical,
 )
 from backend.core.wirtschaftlichkeit_defaults import (
     EINSPEISEVERGUETUNG_DEFAULT_CENT,
@@ -1029,7 +1029,7 @@ async def get_wallbox_dashboard(
                 wb_imd_data.append(d)
             monate_set.add((md.jahr, md.monat))
 
-    emob_pool = aggregiere_emob_ladung(
+    emob_pool = get_emob_heimladung_canonical(
         eauto_imd_data=eauto_imd_data,
         wallbox_imd_data=wb_imd_data,
     )

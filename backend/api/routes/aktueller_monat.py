@@ -28,10 +28,10 @@ from backend.core.berechnungen import einspeise_erloes_euro
 from backend.services.einspeise_erloes_service import get_neg_preis_einspeisung_monat
 from backend.services.wp_wirtschaftlichkeit import berechne_wp_ersparnis
 from backend.services.eauto_wirtschaftlichkeit import (
-    aggregiere_emob_ladung,
     attribute_emob_pool_by_km,
     berechne_eauto_ersparnis,
     compute_emob_pool_attribution,
+    get_emob_heimladung_canonical,
     pick_emob_ref_parameter,
 )
 from backend.core.wirtschaftlichkeit_defaults import (
@@ -345,7 +345,7 @@ async def _collect_saved_data(
         wp_strom_total = 0.0
         wp_waerme_total = 0.0
         # E-Mobilität: rohe IMD je Quelle (E-Auto / Wallbox) sammeln, danach
-        # zentral via `aggregiere_emob_ladung` zu EINER konsistenten Heim-
+        # zentral via `get_emob_heimladung_canonical` zu EINER konsistenten Heim-
         # ladungs-Trias poolen. Beide Investitionstypen messen denselben
         # Stromfluss aus zwei Perspektiven (siehe docs/KONZEPT-WALLBOX-EAUTO.md)
         # — der Helper wählt die Quelle mit der größeren Heimladung komplett,
@@ -403,7 +403,7 @@ async def _collect_saved_data(
         # aus der einen, netz aus der anderen Quelle und konnte PV-Anteil
         # > 100 % erzeugen (#262 junky84). Externe Lade-Kosten (#260) kommen
         # paarweise aus der Quelle mit den höheren Extern-Kosten.
-        emob_pool = aggregiere_emob_ladung(
+        emob_pool = get_emob_heimladung_canonical(
             eauto_imd_data=eauto_imd_data,
             wallbox_imd_data=wb_imd_data,
         )
@@ -690,7 +690,19 @@ async def get_aktueller_monat(
     resolved.update(saved)
 
     connector = await _collect_connector_data(anlage, jahr, monat)
-    resolved.update(connector)
+    if ist_aktueller_monat:
+        # Laufender Monat: Connector (Konfidenz 90 %) ist frischer als die
+        # gespeicherten Werte und darf sie überschreiben (Vorschau).
+        resolved.update(connector)
+    else:
+        # Abgeschlossener Monat: gespeicherte Monatsdaten sind authoritativ
+        # (analog HA-Stats unten, #118). Der Connector darf gespeicherte/manuell
+        # gepflegte Werte NICHT rückwirkend überschreiben — sonst überschreibt
+        # z. B. ein Sungrow-Connector ohne separate Einspeisungs-Messung den
+        # gespeicherten Einspeisungs-Wert mit 0 (#325, detlefh68). Nur Felder
+        # füllen, die noch fehlen.
+        for k, v in connector.items():
+            resolved.setdefault(k, v)
 
     mqtt_energy = await _collect_mqtt_inbound_data(anlage, investitionen) if ist_aktueller_monat else {}
     resolved.update(mqtt_energy)

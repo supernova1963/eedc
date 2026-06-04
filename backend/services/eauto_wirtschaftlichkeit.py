@@ -315,9 +315,9 @@ class EmobPoolAttribution:
 
     Wallbox = Loadpoint-Wahrheit (evcc/Portal-Import schreibt hier),
     E-Auto = Vehicle-Wahrheit (km + ggf. eigene Ladedaten).
-    `use_wb_pool` ist True, wenn die Wallbox-Heimladung größer ist als die
-    aller E-Autos zusammen — dann fließen die Ladedaten anteilig nach km
-    in die E-Auto-Sichten zurück.
+    `use_wb_pool` ist True, sobald eine Wallbox überhaupt Heimladung trägt
+    (Phase-2a-Regel, strukturell statt magnitudenabhängig) — dann fließen die
+    Wallbox-Ladedaten anteilig nach km in die E-Auto-Sichten zurück.
     """
     wb_pool_pv: float
     wb_pool_netz: float
@@ -341,8 +341,15 @@ def compute_emob_pool_attribution(
     eauto_imd_data: Iterable[dict],
     wallbox_imd_data: Iterable[dict],
 ) -> EmobPoolAttribution:
-    """Aggregiert WB- + E-Auto-IMD-`verbrauch_daten` und entscheidet, ob das
-    Wallbox-Aggregat als Pool-Quelle für die E-Auto-Sichten dient.
+    """Aggregiert das Wallbox-IMD-`verbrauch_daten` zum km-verteilbaren Pool und
+    entscheidet **strukturell**, ob dieser Pool die E-Auto-Sichten speist.
+
+    Phase-2a-Regel (`docs/KONZEPT-WALLBOX-EAUTO.md`, Entscheidung 1): sobald eine
+    Wallbox-Investition Heimladung trägt, ist sie die kanonische Quelle
+    (`use_wb_pool=True`) — unabhängig davon, wie viel (ggf. verirrte) Heimladung
+    auf den E-Auto-IMD steht. Das löst den früheren Magnituden-Vergleich ab, der
+    bei Streudaten die falsche Quelle wählte (#262). Gleiche Quellen-Entscheidung
+    wie `get_emob_heimladung_canonical`, damit alle Sichten dieselbe Zahl zeigen.
 
     Aufrufer übergibt bereits gefilterte Iterables (nach `ist_aktiv_im_monat`
     und ggf. `ist_dienstlich`).
@@ -358,16 +365,12 @@ def compute_emob_pool_attribution(
         wb_pool_extern_kwh += d.get("ladung_extern_kwh", 0) or 0
         wb_pool_extern_euro += d.get("ladung_extern_euro", 0) or 0
 
-    eauto_pool_pv = 0.0
-    eauto_pool_netz = 0.0
     eauto_total_km = 0.0
     for d in eauto_imd_data:
-        pv, netz = get_emob_pv_netz_kwh(d)
-        eauto_pool_pv += pv
-        eauto_pool_netz += netz
         eauto_total_km += d.get("km_gefahren", 0) or 0
 
-    use_wb_pool = (wb_pool_pv + wb_pool_netz) > (eauto_pool_pv + eauto_pool_netz)
+    # Strukturell: Wallbox vorhanden + hat Heimladung → Pool-Quelle (Entsch. 1).
+    use_wb_pool = (wb_pool_pv + wb_pool_netz) > 0
 
     return EmobPoolAttribution(
         wb_pool_pv=wb_pool_pv,
@@ -513,34 +516,47 @@ def _summiere_emob_quelle(imd_data: Iterable[dict]) -> EmobLadungPool:
                           ladevorgaenge, "")
 
 
-def aggregiere_emob_ladung(
+def get_emob_heimladung_canonical(
     *,
     eauto_imd_data: Iterable[dict],
     wallbox_imd_data: Iterable[dict],
 ) -> EmobLadungPool:
-    """Poolt E-Auto- + Wallbox-Ladung zu EINER konsistenten Heimladungs-Trias.
+    """Kanonische E-Mob-Heimladung über eine **strukturelle** Quellen-Regel.
 
-    Wallbox (Loadpoint-Sicht) und E-Auto (Vehicle-Sicht) messen oft denselben
-    Stromfluss aus zwei Perspektiven. Die Quelle mit der größeren Heimladung
-    (`pv + netz`) liefert die komplette Trias — nie feldweise gemischt. Selbe
-    use-wb-pool-Entscheidung wie `compute_emob_pool_attribution` /
-    EAutoDashboard, damit alle Sichten dieselbe Zahl zeigen.
+    Phase-2a-Helfer (`docs/KONZEPT-WALLBOX-EAUTO.md`, Entscheidung 1). Wählt die
+    Quelle deterministisch — nicht magnitudenabhängig (die frühere Magnituden-
+    Heuristik `wb.ladung_kwh >= ea.ladung_kwh` kippte bei verirrten Streudaten):
 
-    Externe Ladung (öffentliche Ladesäulen) wird getrennt entschieden: das
-    Paar `(kWh, €)` kommt aus der Quelle mit den höheren externen Kosten —
-    extern wird oft nur an einer Investition gepflegt, unabhängig davon, wo
-    die Heimladung steht.
+        Existiert eine Wallbox-Investition mit Heimladung → Wallbox ist Quelle.
+        Sonst (keine Wallbox, oder Wallbox ohne Heimladung — z. B. Steckerlader/
+        Schuko) → E-Auto ist Quelle.
+
+    Die Wallbox misst den Stromfluss am Ladepunkt (evcc/Portal-Import schreibt
+    hierher); ist sie vorhanden und hat sie Heimladung, ist sie die Wahrheit —
+    unabhängig davon, wie viel verirrte Heimladung auf der E-Auto-IMD steht
+    (#262 junky84: ~3.300 kWh Streudaten auf dem E-Auto — ein Magnituden-Pool
+    hätte die falsche Quelle gewählt, sobald die Streudaten die echte übertreffen).
+
+    Multi-Wallbox (Entscheidung 4): jede Wallbox = eigener Ladepunkt, alle
+    WB-IMD werden summiert (Heimladung gesamt über alle Loadpoints). Für den
+    0/1-Wallbox-Fall ist das mit der einfachen Summe identisch.
+
+    Externe Ladung bleibt orthogonal: das Paar `(kWh, €)` kommt aus der Quelle
+    mit den höheren externen Kosten.
 
     Aufrufer übergibt bereits gefilterte Iterables (nach `ist_aktiv_im_monat`
-    und `ist_dienstlich`).
+    und `ist_dienstlich`). Die `pv + netz == ladung_kwh`-Garantie von
+    `EmobLadungPool` bleibt erhalten (Trias kommt geschlossen aus einer Quelle).
     """
     wb = _summiere_emob_quelle(wallbox_imd_data)
     ea = _summiere_emob_quelle(eauto_imd_data)
 
-    if wb.ladung_kwh >= ea.ladung_kwh:
-        heim, name = wb, ("wallbox" if wb.ladung_kwh > 0 else "leer")
-    else:
+    if wb.ladung_kwh > 0:
+        heim, name = wb, "wallbox"
+    elif ea.ladung_kwh > 0:
         heim, name = ea, "e-auto"
+    else:
+        heim, name = wb, "leer"
 
     extern = wb if wb.extern_euro >= ea.extern_euro else ea
 

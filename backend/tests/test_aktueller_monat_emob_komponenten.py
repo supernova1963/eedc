@@ -48,8 +48,15 @@ def test_helper_evcc_setup_use_wb_pool_true():
     assert attr.eauto_total_km == 1000
 
 
-def test_helper_premium_setup_use_wb_pool_false():
-    """E-Auto hat eigene Ladedaten > WB → use_wb_pool=False."""
+def test_helper_dual_daten_wallbox_strukturell():
+    """Phase 2a: liegen Heimladungs-Daten ROH auf BEIDEN Seiten (un-migrierter
+    Konflikt), wählt die strukturelle Regel die Wallbox als Quelle
+    (use_wb_pool=True) — unabhängig davon, dass das E-Auto hier mehr trägt.
+    Früher (Magnitude) gewann das E-Auto. In Produktion konsolidiert die
+    Etappe-4-Migration vorher den höheren Wert in den Wallbox-Slot ("höherer
+    Wert gewinnt"), und `_check_emob_pool_pflege` warnt bei solchen Konflikten —
+    so kommt die Read-Regel im Steady-State nie an unterzählte Wallbox-Werte.
+    """
     from backend.services.eauto_wirtschaftlichkeit import compute_emob_pool_attribution
 
     attr = compute_emob_pool_attribution(
@@ -61,7 +68,7 @@ def test_helper_premium_setup_use_wb_pool_false():
             "ladung_kwh": 100, "ladung_pv_kwh": 50, "ladung_netz_kwh": 50,
         }],
     )
-    assert attr.use_wb_pool is False
+    assert attr.use_wb_pool is True
 
 
 def test_helper_attribute_by_km_share_single_car():
@@ -203,9 +210,12 @@ async def test_aktueller_monat_eauto_komponente_nutzt_wb_pool_bei_evcc(db):
     )
 
 
-async def test_aktueller_monat_premium_setup_unveraendert(db):
-    """Premium-Setup (Daten auf E-Auto-IMD): kein Pool-Override, E-Auto
-    eigene Werte bleiben gültig."""
+async def test_aktueller_monat_post_migration_wallbox_quelle(db):
+    """Phase-2a-Steady-State: die Heimladung steht kanonisch auf der Wallbox
+    (so wie es die Etappe-4-Migration herstellt), das E-Auto trägt nur km. Die
+    E-Auto-Komponente zieht ihre Lade-/Kostenwerte km-anteilig aus dem
+    Wallbox-Pool — gleiche Ersparnis wie wenn das E-Auto die Daten selbst trüge.
+    """
     from backend.api.routes.aktueller_monat import get_aktueller_monat
 
     anlage_id = await _seed_anlage(db)
@@ -224,18 +234,17 @@ async def test_aktueller_monat_premium_setup_unveraendert(db):
     db.add_all([wb, ea])
     await db.flush()
 
-    # E-Auto hat eigene Ladedaten (mehr als WB) → use_wb_pool=False
+    # Kanonische Quelle = Wallbox (Heimladung + Extern), E-Auto nur km.
     db.add(InvestitionMonatsdaten(
         investition_id=wb.id, jahr=2026, monat=4,
-        verbrauch_daten={"ladung_kwh": 100, "ladung_pv_kwh": 50, "ladung_netz_kwh": 50},
-    ))
-    db.add(InvestitionMonatsdaten(
-        investition_id=ea.id, jahr=2026, monat=4,
         verbrauch_daten={
             "ladung_kwh": 500, "ladung_pv_kwh": 200, "ladung_netz_kwh": 300,
             "ladung_extern_euro": 25.0,
-            "km_gefahren": 1244,
         },
+    ))
+    db.add(InvestitionMonatsdaten(
+        investition_id=ea.id, jahr=2026, monat=4,
+        verbrauch_daten={"km_gefahren": 1244},
     ))
     await db.commit()
 
@@ -245,10 +254,8 @@ async def test_aktueller_monat_premium_setup_unveraendert(db):
     ea_komp = _eauto_komponente(result.investitionen_financials, "Premium")
     assert ea_komp is not None
 
-    # Erwartete Ersparnis (netz=300 + extern=25, wie evcc-Test):
+    # km-anteilig (1 Auto → 100 %) zieht die Komponente netz=300 + extern=25:
     #   benzin 148.04 − strom 90 − extern 25 = 33.04 €
-    # Premium-Werte stimmen mit evcc-Werten überein in diesem Setup — der
-    # Punkt ist, dass kein Pool-Override stattfindet.
     assert 32 <= ea_komp.ersparnis_euro <= 34
 
 

@@ -17,8 +17,10 @@ intern inkonsistent (`pv + netz != total`). Nur das E-Auto-Dashboard war
 korrekt, weil es als einzige Sicht über `compute_emob_pool_attribution`
 EINE ganze Quelle poolt.
 
-Fix: SoT-Helper `aggregiere_emob_ladung` — die Quelle mit der größeren
-Heimladung gewinnt die komplette Trias. Alle Sichten rufen ihn auf.
+Fix: SoT-Helper `get_emob_heimladung_canonical` (Phase 2a) — EINE Quelle
+liefert die komplette, konsistente Trias (`pv+netz==ladung`), nie feldweise
+gemischt. Alle Sichten rufen ihn (bzw. die km-Attribution mit derselben
+strukturellen Quellen-Entscheidung) auf.
 
 Geprüft:
   - Helper-Unit: Gewinner-Quelle liefert konsistente Trias, `pv+netz==ladung`
@@ -37,92 +39,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.models import (  # noqa: F401
     Anlage, Investition, InvestitionMonatsdaten,
 )
-from backend.services.eauto_wirtschaftlichkeit import aggregiere_emob_ladung
-
-
-# ── Unit-Tests: aggregiere_emob_ladung ──────────────────────────────────────
-
-
-def test_helper_konsistente_trias_pv_plus_netz_gleich_ladung():
-    """Garantie: pv_kwh + netz_kwh == ladung_kwh, egal welche Quelle gewinnt."""
-    pool = aggregiere_emob_ladung(
-        eauto_imd_data=[],
-        wallbox_imd_data=[{"ladung_kwh": 250, "ladung_pv_kwh": 120,
-                           "ladung_netz_kwh": 130}],
-    )
-    assert pool.quelle == "wallbox"
-    assert pool.pv_kwh == 120.0
-    assert pool.netz_kwh == 130.0
-    assert pool.ladung_kwh == pool.pv_kwh + pool.netz_kwh == 250.0
-
-
-def test_helper_groessere_heimladung_gewinnt_komplett():
-    """Die Quelle mit der größeren Heimladung liefert die ganze Trias —
-    nie feldweise gemischt."""
-    # Wallbox: 250 kWh (pv-lastig), E-Auto: 180 kWh (netz-lastig)
-    pool = aggregiere_emob_ladung(
-        eauto_imd_data=[{"ladung_kwh": 180, "ladung_pv_kwh": 30,
-                         "ladung_netz_kwh": 150}],
-        wallbox_imd_data=[{"ladung_kwh": 250, "ladung_pv_kwh": 200,
-                           "ladung_netz_kwh": 50}],
-    )
-    # Wallbox gewinnt (250 > 180) → komplette Wallbox-Trias, kein Mix
-    assert pool.quelle == "wallbox"
-    assert (pool.pv_kwh, pool.netz_kwh, pool.ladung_kwh) == (200.0, 50.0, 250.0)
-    # feldweises max() hätte netz=150 (aus E-Auto) genommen → verworfen
-
-
-def test_helper_eauto_gewinnt_wenn_groesser():
-    """E-Auto-Quelle gewinnt, wenn sie die größere Heimladung hat (Premium-
-    Setup mit eigenen Vehicle-Sensoren)."""
-    pool = aggregiere_emob_ladung(
-        eauto_imd_data=[{"ladung_kwh": 300, "ladung_pv_kwh": 180,
-                         "ladung_netz_kwh": 120}],
-        wallbox_imd_data=[{"ladung_kwh": 200, "ladung_pv_kwh": 100,
-                           "ladung_netz_kwh": 100}],
-    )
-    assert pool.quelle == "e-auto"
-    assert (pool.pv_kwh, pool.netz_kwh, pool.ladung_kwh) == (180.0, 120.0, 300.0)
-
-
-def test_helper_junky84_form_wallbox_real_eauto_streudaten():
-    """junky84-Form: Wallbox trägt die echte evcc-Ladung, das E-Auto hat
-    verirrte Streudaten (ladung_kwh ohne PV-Split → Helper liest alles als
-    Netz). Solange die Wallbox-Heimladung größer ist, gewinnt sie — feldweises
-    max() hätte den hohen E-Auto-Netz-Wert durchgereicht."""
-    pool = aggregiere_emob_ladung(
-        # E-Auto: ladung_kwh ohne pv-Key → netz = 180, pv = 0
-        eauto_imd_data=[{"ladung_kwh": 180}],
-        # Wallbox: evcc-Form ohne netz-Key → netz = 250 - 200 = 50
-        wallbox_imd_data=[{"ladung_kwh": 250, "ladung_pv_kwh": 200}],
-    )
-    assert pool.quelle == "wallbox"
-    assert pool.pv_kwh == 200.0
-    assert pool.netz_kwh == 50.0          # NICHT 180 (E-Auto-Streudaten)
-    assert pool.ladung_kwh == 250.0       # NICHT 430 (Mix)
-
-
-def test_helper_extern_paarweise_aus_quelle_mit_hoeheren_kosten():
-    """Externe Ladung kommt als Paar (kWh, €) aus der Quelle mit den höheren
-    externen Kosten — unabhängig davon, wer die Heimladung gewinnt."""
-    pool = aggregiere_emob_ladung(
-        eauto_imd_data=[{"ladung_kwh": 50, "ladung_pv_kwh": 50,
-                         "ladung_extern_kwh": 40, "ladung_extern_euro": 22}],
-        wallbox_imd_data=[{"ladung_kwh": 300, "ladung_pv_kwh": 300,
-                           "ladung_extern_kwh": 5, "ladung_extern_euro": 3}],
-    )
-    # Heimladung: Wallbox gewinnt (300 > 50)
-    assert pool.quelle == "wallbox"
-    # Extern: E-Auto-Paar gewinnt (22 € > 3 €) — kWh + € bleiben gepaart
-    assert pool.extern_kwh == 40.0
-    assert pool.extern_euro == 22.0
-
-
-def test_helper_leere_quellen():
-    """Keine Daten → Null-Trias, quelle == 'leer'."""
-    pool = aggregiere_emob_ladung(eauto_imd_data=[], wallbox_imd_data=[])
-    assert pool.quelle == "leer"
-    assert pool.ladung_kwh == pool.pv_kwh == pool.netz_kwh == 0.0
+# Hinweis: Die Helfer-Unit-Tests der Quellen-Wahl leben in
+# `test_emob_heimladung_canonical.py` (strukturelle Regel) bzw.
+# `test_emob_readsite_symmetrie.py` (Helfer-Kontrakt). Hier bleibt die
+# #262-Cross-View-Regression über die echten Read-Endpunkte.
 
 
 # ── Integration: Seed-Helfer ────────────────────────────────────────────────

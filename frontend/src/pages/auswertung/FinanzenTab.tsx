@@ -76,10 +76,18 @@ export function FinanzenTab({ data, stats, strompreis, alleTarife, anlageId, zei
     const netzbezugKosten = chartDataWithKumuliert.reduce((s, z) => s + z.netzbezug_kosten, 0)
     const eigenverbrauchErsparnis = chartDataWithKumuliert.reduce((s, z) => s + z.ev_ersparnis, 0)
     const sonderkosten = chartDataWithKumuliert.reduce((sum, z) => sum + (z.sonderkosten || 0), 0)
+    // #310 (rilmor-mhrs): die manuell pro Monat gepflegten „Sonstige Erträge"
+    // müssen genauso in den Netto-Ertrag einfließen, wie die „Sonstige Ausgaben"
+    // (sonderkosten) abgezogen werden — der Monats-Chart tat das über
+    // `netto_nach_sonderkosten` bereits, die KPI-Summe hier aber nicht.
+    const sonstigeErtraege = chartDataWithKumuliert.reduce((sum, z) => {
+      const s = sonstigeByMonth.get(`${z.jahr}-${z.monat}`)
+      return sum + (s?.ertraege || 0)
+    }, 0)
     const nettoErtrag = einspeiseErloes + eigenverbrauchErsparnis
-    const nettoNachSonderkosten = nettoErtrag - sonderkosten
-    return { einspeiseErloes, netzbezugKosten, eigenverbrauchErsparnis, nettoErtrag, sonderkosten, nettoNachSonderkosten }
-  }, [chartDataWithKumuliert])
+    const nettoNachSonderkosten = nettoErtrag + sonstigeErtraege - sonderkosten
+    return { einspeiseErloes, netzbezugKosten, eigenverbrauchErsparnis, nettoErtrag, sonderkosten, sonstigeErtraege, nettoNachSonderkosten }
+  }, [chartDataWithKumuliert, sonstigeByMonth])
 
   if (!strompreis) {
     return (
@@ -169,14 +177,29 @@ export function FinanzenTab({ data, stats, strompreis, alleTarife, anlageId, zei
           title="Netto-Ertrag"
           value={gesamt.nettoNachSonderkosten.toFixed(0)}
           unit="€"
-          subtitle={gesamt.sonderkosten > 0 ? `nach ${gesamt.sonderkosten.toFixed(0)} € Sonderkosten` : 'Gesamt'}
+          subtitle={
+            gesamt.sonstigeErtraege > 0 && gesamt.sonderkosten > 0
+              ? `inkl. +${gesamt.sonstigeErtraege.toFixed(0)} € / −${gesamt.sonderkosten.toFixed(0)} € Sonstige`
+              : gesamt.sonstigeErtraege > 0
+                ? `inkl. +${gesamt.sonstigeErtraege.toFixed(0)} € Sonstige Erträge`
+                : gesamt.sonderkosten > 0
+                  ? `nach ${gesamt.sonderkosten.toFixed(0)} € Sonderkosten`
+                  : 'Gesamt'
+          }
           icon={Euro}
           color="text-blue-500"
           bgColor="bg-blue-50 dark:bg-blue-900/20"
-          formel={gesamt.sonderkosten > 0 ? "Einspeiseerlös + EV-Ersparnis − Sonderkosten" : "Einspeiseerlös + EV-Ersparnis"}
-          berechnung={gesamt.sonderkosten > 0
-            ? `${fmtCalc(gesamt.einspeiseErloes, 2)} € + ${fmtCalc(gesamt.eigenverbrauchErsparnis, 2)} € − ${fmtCalc(gesamt.sonderkosten, 2)} €`
-            : `${fmtCalc(gesamt.einspeiseErloes, 2)} € + ${fmtCalc(gesamt.eigenverbrauchErsparnis, 2)} €`}
+          formel={
+            gesamt.sonstigeErtraege > 0 || gesamt.sonderkosten > 0
+              ? "Einspeiseerlös + EV-Ersparnis + Sonstige Erträge − Sonderkosten"
+              : "Einspeiseerlös + EV-Ersparnis"
+          }
+          berechnung={
+            gesamt.sonstigeErtraege > 0 || gesamt.sonderkosten > 0
+              ? `${fmtCalc(gesamt.einspeiseErloes, 2)} € + ${fmtCalc(gesamt.eigenverbrauchErsparnis, 2)} €`
+                + (gesamt.sonstigeErtraege > 0 ? ` + ${fmtCalc(gesamt.sonstigeErtraege, 2)} €` : '')
+                + (gesamt.sonderkosten > 0 ? ` − ${fmtCalc(gesamt.sonderkosten, 2)} €` : '')
+              : `${fmtCalc(gesamt.einspeiseErloes, 2)} € + ${fmtCalc(gesamt.eigenverbrauchErsparnis, 2)} €`}
           ergebnis={`= ${fmtCalc(gesamt.nettoNachSonderkosten, 2)} €`}
         />
       </div>

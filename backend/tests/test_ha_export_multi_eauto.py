@@ -18,7 +18,10 @@ from __future__ import annotations
 
 from datetime import date
 
+from sqlalchemy import select
+
 from backend.api.routes.ha_export import (
+    _load_emob_pool_ctx,
     calculate_anlage_sensors,
     calculate_investition_sensors,
 )
@@ -169,3 +172,112 @@ async def test_investition_sensoren_respektieren_laufzeit(db):
     assert km_sensor is not None
     # Nur die 12 In-Fenster-Monate: 1.200 km — nicht 11.200 km.
     assert km_sensor.value == 1200
+
+
+async def _seed_emob_anlage(db, *, on_wallbox: bool):
+    """Anlage mit identischer E-Mob-Realität (200 kWh/Monat: PV 100 / Netz 100,
+    E-Auto 1000 km + 150 kWh Verbrauch), aber unterschiedlicher Datenablage:
+    `on_wallbox=True` = evcc (Heimladung auf der Wallbox, E-Auto nur km);
+    `on_wallbox=False` = E-Auto trägt die Trias selbst (keine Wallbox)."""
+    anlage = Anlage(anlagenname="evcc" if on_wallbox else "direkt", leistung_kwp=10.0)
+    db.add(anlage)
+    await db.flush()
+    db.add(Strompreis(
+        anlage_id=anlage.id, gueltig_ab=date(2024, 1, 1),
+        netzbezug_arbeitspreis_cent_kwh=30.0, einspeiseverguetung_cent_kwh=8.2,
+    ))
+    for monat in range(1, 13):
+        db.add(Monatsdaten(
+            anlage_id=anlage.id, jahr=2025, monat=monat,
+            netzbezug_kwh=100.0, einspeisung_kwh=200.0, eigenverbrauch_kwh=50.0,
+        ))
+
+    wb = None
+    if on_wallbox:
+        wb = Investition(
+            anlage_id=anlage.id, typ="wallbox", bezeichnung="SMA eCharger",
+            anschaffungsdatum=date(2024, 1, 1), anschaffungskosten_gesamt=1500.0,
+        )
+        db.add(wb)
+    ea = Investition(
+        anlage_id=anlage.id, typ="e-auto", bezeichnung="CUPRA Born",
+        anschaffungsdatum=date(2024, 1, 1), anschaffungskosten_gesamt=40000.0,
+        parameter={"vergleich_verbrauch_l_100km": 7.0, "benzinpreis_euro": 1.70},
+    )
+    db.add(ea)
+    await db.flush()
+
+    # Hinweis: KEIN `verbrauch_kwh` auf der E-Auto-IMD — `get_eauto_ladung_kwh`
+    # liest es als Legacy-Fallback für die Heimladung, was die "ohne Pool"-
+    # Baseline (leere E-Auto-Ladung) verfälschen würde. Fahrverbrauch ist für
+    # diesen Test irrelevant.
+    for monat in range(1, 13):
+        if on_wallbox:
+            db.add(InvestitionMonatsdaten(
+                investition_id=wb.id, jahr=2025, monat=monat,
+                verbrauch_daten={"ladung_kwh": 200.0, "ladung_pv_kwh": 100.0,
+                                 "ladung_netz_kwh": 100.0},
+            ))
+            db.add(InvestitionMonatsdaten(
+                investition_id=ea.id, jahr=2025, monat=monat,
+                verbrauch_daten={"km_gefahren": 1000.0},
+            ))
+        else:
+            db.add(InvestitionMonatsdaten(
+                investition_id=ea.id, jahr=2025, monat=monat,
+                verbrauch_daten={"km_gefahren": 1000.0,
+                                 "ladung_kwh": 200.0, "ladung_pv_kwh": 100.0,
+                                 "ladung_netz_kwh": 100.0},
+            ))
+    await db.commit()
+    return anlage, wb, ea
+
+
+def _sensor(sensors, key):
+    return next((s for s in sensors if s.definition.key == key), None)
+
+
+async def test_evcc_per_device_eauto_zieht_wallbox_pool(db):
+    """evcc: das E-Auto trägt nur km, die Ladung liegt auf der Wallbox. Mit dem
+    Pool-Kontext zeigt der per-Device-E-Auto-Sensor PV-Anteil (50 %) und zieht
+    Netzstrom in der Ersparnis ab; OHNE Kontext bliebe der PV-Anteil leer und
+    die Ersparnis überhöht (kein Netz abgezogen)."""
+    anlage, wb, ea = await _seed_emob_anlage(db, on_wallbox=True)
+    sp = (await db.execute(select(Strompreis).where(Strompreis.anlage_id == anlage.id))).scalar_one()
+    ctx = await _load_emob_pool_ctx(db, [wb, ea])
+    assert ctx is not None and ctx.use_wb_pool is True
+
+    mit_pool = await calculate_investition_sensors(db, ea, sp, ctx)
+    ohne_pool = await calculate_investition_sensors(db, ea, sp, None)
+
+    # PV-Anteil: 1 E-Auto → voller Wallbox-Pool (PV 1200 / Gesamt 2400) = 50 %.
+    pv_mit = _sensor(mit_pool, "e_auto_pv_anteil_prozent")
+    assert pv_mit is not None and abs(pv_mit.value - 50.0) < 0.1
+    assert _sensor(ohne_pool, "e_auto_pv_anteil_prozent") is None  # leere E-Auto-IMD
+
+    # Ersparnis: benzin 12000/100×7×1,70 = 1428 €; mit Pool Netz 1200 kWh ×
+    # 30 ct = 360 € abgezogen → 1068 €. Ohne Pool kein Netz → 1428 €.
+    ers_mit = _sensor(mit_pool, "e_auto_ersparnis_vs_benzin_euro")
+    ers_ohne = _sensor(ohne_pool, "e_auto_ersparnis_vs_benzin_euro")
+    assert ers_mit is not None and abs(ers_mit.value - 1068.0) < 1.0
+    assert ers_ohne is not None and abs(ers_ohne.value - 1428.0) < 1.0
+
+
+async def test_anlage_ersparnis_symmetrisch_evcc_vs_direkt(db):
+    """Aggregat-Symmetrie: dieselbe E-Mob-Realität ergibt dieselbe
+    `jahres_ersparnis_euro`, egal ob die Heimladung evcc-typisch auf der Wallbox
+    oder direkt auf dem E-Auto liegt. Beweist, dass `bisherige_eauto_ersparnis`
+    den Wallbox-Netzstrom km-anteilig abzieht (sonst läge evcc ~360 € höher)."""
+    evcc_anlage, _wb, _ea = await _seed_emob_anlage(db, on_wallbox=True)
+    direkt_anlage, _, _ = await _seed_emob_anlage(db, on_wallbox=False)
+
+    evcc_sensors = await calculate_anlage_sensors(db, evcc_anlage)
+    direkt_sensors = await calculate_anlage_sensors(db, direkt_anlage)
+
+    evcc_jahres = _sensor(evcc_sensors, "jahres_ersparnis_euro")
+    direkt_jahres = _sensor(direkt_sensors, "jahres_ersparnis_euro")
+    assert evcc_jahres is not None and direkt_jahres is not None
+    assert abs(evcc_jahres.value - direkt_jahres.value) < 1.0, (
+        f"Aggregat-Drift evcc {evcc_jahres.value} ≠ direkt {direkt_jahres.value} — "
+        f"Wallbox-Netz wird nicht in die E-Auto-Ersparnis attribuiert."
+    )
