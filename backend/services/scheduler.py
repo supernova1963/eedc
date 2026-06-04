@@ -29,9 +29,9 @@ class EEDCScheduler:
 
     Jobs:
     - Monatswechsel-Snapshot: Am 1. jeden Monats um 00:01
-    - MQTT Energy Snapshot: Alle 5 Minuten
-    - MQTT Energy Cleanup: Täglich um 03:00
     - Energie-Profil Aggregation: Täglich um 00:15 (Vortag)
+    - MQTT Energy/Live Snapshot + Cleanup: nur wenn MQTT-Inbound aktiv ist
+      (add_mqtt_snapshot_jobs(), aus main.py nach erfolgreichem Inbound-Start)
     """
 
     def __init__(self):
@@ -78,41 +78,14 @@ class EEDCScheduler:
                 replace_existing=True,
             )
 
-            # MQTT Energy Snapshot: Alle 5 Minuten
-            self._scheduler.add_job(
-                mqtt_energy_snapshot_job,
-                IntervalTrigger(minutes=5),
-                id="mqtt_energy_snapshot",
-                name="MQTT Energy Snapshot",
-                replace_existing=True,
-            )
-
-            # MQTT Energy Cleanup: Täglich um 03:00
-            self._scheduler.add_job(
-                mqtt_energy_cleanup_job,
-                CronTrigger(hour=3, minute=0),
-                id="mqtt_energy_cleanup",
-                name="MQTT Energy Cleanup",
-                replace_existing=True,
-            )
-
-            # MQTT Live Snapshot: Alle 5 Minuten (W-Werte für Tagesverlauf-Chart)
-            self._scheduler.add_job(
-                mqtt_live_snapshot_job,
-                IntervalTrigger(minutes=5),
-                id="mqtt_live_snapshot",
-                name="MQTT Live Snapshot",
-                replace_existing=True,
-            )
-
-            # MQTT Live Cleanup: Täglich um 03:05 (15 Tage Retention)
-            self._scheduler.add_job(
-                mqtt_live_cleanup_job,
-                CronTrigger(hour=3, minute=5),
-                id="mqtt_live_cleanup",
-                name="MQTT Live Cleanup",
-                replace_existing=True,
-            )
+            # MQTT Energy/Live Snapshot + Cleanup werden NICHT hier registriert,
+            # sondern erst wenn MQTT-Inbound tatsächlich aktiv ist
+            # (add_mqtt_snapshot_jobs(), aufgerufen aus main.py). Ohne MQTT liefen
+            # die 5-Min-Jobs sonst dauerhaft leer und füllten die System-Logs mit
+            # „executed successfully" — irreführend für Anwender ohne MQTT-Setup
+            # (#322 detLAN). MQTT-Inbound ist Vorbedingung für Gateway UND
+            # Connector-Bridge (beide in main.py darin verschachtelt), daher
+            # erfasst dieser Schalter alle MQTT-Pfade inkl. Standalone/Connectoren.
 
             # MQTT Auto-Publish: Intervall aus settings (nur wenn MQTT_AUTO_PUBLISH=true)
             from backend.core.config import settings as app_settings
@@ -253,6 +226,52 @@ class EEDCScheduler:
         except Exception as e:
             logger.error(f"Fehler beim Starten des Schedulers: {type(e).__name__}: {e}")
             return False
+
+    def add_mqtt_snapshot_jobs(self) -> bool:
+        """Registriert die MQTT-Snapshot/Cleanup-Jobs (alle 5 Min + täglich).
+
+        Erst aufgerufen, wenn MQTT-Inbound aktiv ist (main.py). Ohne MQTT laufen
+        diese Jobs sonst dauerhaft leer und protokollieren irreführend (#322).
+        Idempotent via replace_existing — ein Reconnect registriert nicht doppelt.
+        """
+        if not self.is_running:
+            logger.warning("add_mqtt_snapshot_jobs: Scheduler läuft nicht")
+            return False
+
+        # MQTT Energy Snapshot: Alle 5 Minuten
+        self._scheduler.add_job(
+            mqtt_energy_snapshot_job,
+            IntervalTrigger(minutes=5),
+            id="mqtt_energy_snapshot",
+            name="MQTT Energy Snapshot",
+            replace_existing=True,
+        )
+        # MQTT Energy Cleanup: Täglich um 03:00
+        self._scheduler.add_job(
+            mqtt_energy_cleanup_job,
+            CronTrigger(hour=3, minute=0),
+            id="mqtt_energy_cleanup",
+            name="MQTT Energy Cleanup",
+            replace_existing=True,
+        )
+        # MQTT Live Snapshot: Alle 5 Minuten (W-Werte für Tagesverlauf-Chart)
+        self._scheduler.add_job(
+            mqtt_live_snapshot_job,
+            IntervalTrigger(minutes=5),
+            id="mqtt_live_snapshot",
+            name="MQTT Live Snapshot",
+            replace_existing=True,
+        )
+        # MQTT Live Cleanup: Täglich um 03:05 (15 Tage Retention)
+        self._scheduler.add_job(
+            mqtt_live_cleanup_job,
+            CronTrigger(hour=3, minute=5),
+            id="mqtt_live_cleanup",
+            name="MQTT Live Cleanup",
+            replace_existing=True,
+        )
+        logger.info("MQTT-Snapshot-Jobs registriert (Inbound aktiv)")
+        return True
 
     def stop(self) -> None:
         """Stoppt den Scheduler."""
@@ -948,3 +967,8 @@ def start_scheduler() -> bool:
 def stop_scheduler() -> None:
     """Stoppt den globalen Scheduler."""
     get_scheduler().stop()
+
+
+def enable_mqtt_snapshot_jobs() -> bool:
+    """Aktiviert die MQTT-Snapshot/Cleanup-Jobs (nur wenn MQTT-Inbound läuft)."""
+    return get_scheduler().add_mqtt_snapshot_jobs()

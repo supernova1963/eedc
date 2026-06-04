@@ -367,9 +367,23 @@ export default function EnergieFluss({
     const layout = layoutNodes(komponenten, W)
     const _nodeMap = new Map(layout.nodes.map(n => [n.komp.key, n]))
 
-    const _nettoHausverbrauch = komponenten
-      .filter(k => !k.key.startsWith('pv_') && k.key !== 'netz' && !k.key.startsWith('batterie_') && !k.parent_key)
-      .reduce((sum, k) => sum + (k.verbrauch_kw ?? 0), 0)
+    // Mitte = Residual-Verbrauch, der keinem separat dargestellten Verbraucher
+    // zugeordnet ist. Das Backend liefert ihn als 'haushalt'-Komponente
+    // (live_komponenten_builder: max(0, Quellen − bekannte Senken)), die NICHT
+    // als eigener Orbit-Knoten gerendert wird — die Mitte ist ihre Darstellung.
+    // Vorher summierte die Mitte alle Top-Level-Verbraucher inkl. Wallbox und
+    // wirkte dadurch wie eine Doppelzählung (#314 NongJoWo).
+    // WICHTIG: Das ist NICHT zwingend die Grundlast — nur wenn alle Verbraucher
+    // einzeln erfasst sind, entspricht das Residual der reinen Haushalts-
+    // Grundlast. Nicht gemappte Verbraucher fallen ebenfalls hier hinein.
+    // Fallback auf die Summe, falls kein 'haushalt'-Knoten existiert (z. B. ohne
+    // PV-/Netz-Sensoren) — dann ist das Residual nicht bestimmbar.
+    const _haushaltNode = komponenten.find(k => k.key === 'haushalt')
+    const _nettoHausverbrauch = _haushaltNode
+      ? (_haushaltNode.verbrauch_kw ?? 0)
+      : komponenten
+          .filter(k => !k.key.startsWith('pv_') && k.key !== 'netz' && !k.key.startsWith('batterie_') && !k.parent_key)
+          .reduce((sum, k) => sum + (k.verbrauch_kw ?? 0), 0)
 
     const _maxY = Math.max(...layout.nodes.map(n => n.y), layout.dims.verbraucherY)
     const _svgH = Math.max(380, _maxY + layout.dims.nodeH / 2 + 10)
@@ -392,8 +406,10 @@ export default function EnergieFluss({
   const hausTip = [
     'Haushalt',
     `Aktuell: ${haushalt ? (haushalt.verbrauch_kw ?? 0).toFixed(2) : '—'} kW`,
+    'Verbrauch ohne separat erfasste Geräte (z. B. Wallbox);',
+    'enthält auch nicht einzeln gemessene Verbraucher',
+    `Verbrauchsseite (Bilanz): ${summeVerbrauch.toFixed(2)} kW`,
     `Quellen: ${summeErzeugung.toFixed(2)} kW`,
-    `Verbrauch: ${summeVerbrauch.toFixed(2)} kW`,
     ...(tagesWerte?.haushalt != null ? [`Heute: ${tagesWerte.haushalt.toFixed(1)} kWh`] : []),
   ].join('\n')
 
@@ -560,7 +576,7 @@ export default function EnergieFluss({
           <foreignObject x={CX - dims.hausIconSize / 2} y={CY - dims.hausIconSize * 0.75} width={dims.hausIconSize} height={dims.hausIconSize}>
             <IconElement name="home" size={dims.hausIconSize} className="text-emerald-500" />
           </foreignObject>
-          {/* Netto-Hausverbrauch im Kreis */}
+          {/* Haushalt-Residual im Kreis (ohne separat erfasste Verbraucher, #314) */}
           <text
             x={CX} y={CY + dims.hausIconSize * 0.7}
             textAnchor="middle"

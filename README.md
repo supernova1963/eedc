@@ -1,4 +1,4 @@
-# EEDC - Energie Effizienz Data Center
+# eedc - Energie Effizienz Data Center
 
 Standalone PV-Analyse-Software mit optionalem Live-Monitoring.
 
@@ -28,11 +28,11 @@ Datendichte Analyse-App, optimal auf **Desktop**. Smartphone in Standard-Anzeige
 docker-compose up -d
 ```
 
-EEDC ist erreichbar unter: http://localhost:8099
+eedc ist erreichbar unter: http://localhost:8099
 
 ## ⚠️ Sicherheit: Standalone-Modus ist für LAN-Betrieb gedacht
 
-Die Standalone-Distribution (dieser Container, `docker-compose up`) bietet **keine eigene Authentifizierung** auf der HTTP-API. Anders als die Home-Assistant-Add-on-Variante (die hinter dem HA-Ingress-Auth-Proxy läuft) wird der Port `8099` direkt vom Container an das Host-LAN exponiert.
+Die Standalone-Distribution (dieser Container, `docker-compose up`) bietet **keine eigene Authentifizierung** auf der HTTP-API. Anders als die Home-Assistant-App-Variante (die hinter dem HA-Ingress-Auth-Proxy läuft) wird der Port `8099` direkt vom Container an das Host-LAN exponiert.
 
 **Daraus folgt:**
 
@@ -44,7 +44,7 @@ Die Standalone-Distribution (dieser Container, `docker-compose up`) bietet **kei
 
 - VPN ins Heimnetz (WireGuard, Tailscale) ist der einfachste und sicherste Weg.
 - Reverse-Proxy mit Basic-Auth / OAuth2-Proxy / Cloudflare Access / Tailscale Funnel davor. Das ist gelöstes Problem mit Standard-Tooling — wir bauen keinen eigenen Auth-Layer im Container nach.
-- Oder: die Home-Assistant-Add-on-Variante installieren — dann übernimmt der HA-Ingress die Auth.
+- Oder: die Home-Assistant-App-Variante installieren — dann übernimmt der HA-Ingress die Auth.
 
 **LAN-Only, niemals ungeschützt ins Internet** — auch wenn die HTTPS-Verbindung TLS-verschlüsselt wäre, fehlt ohne Auth davor die Zugriffskontrolle.
 
@@ -77,7 +77,7 @@ npm install && npm run dev
 
 | Repository | Beschreibung |
 |---|---|
-| [eedc-homeassistant](https://github.com/supernova1963/eedc-homeassistant) | EEDC als Home Assistant Add-on (mit MQTT, HA-Statistik-Import) |
+| [eedc-homeassistant](https://github.com/supernova1963/eedc-homeassistant) | eedc als Home Assistant App (mit MQTT, HA-Statistik-Import) |
 | [eedc-community](https://github.com/supernova1963/eedc-community) | Anonymer Community-Benchmark-Server |
 
 ## Lizenz

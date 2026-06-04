@@ -208,6 +208,16 @@ async def lifespan(app: FastAPI):
         if await mqtt_inbound.start():
             print(f"  MQTT-Inbound: aktiv ({host}:{port})")
 
+            # Snapshot-Jobs erst jetzt registrieren — ohne MQTT würden sie alle
+            # 5 Min leer laufen und die System-Logs zumüllen (#322). Erfasst auch
+            # Gateway/Connector-Bridge, die unten in diesem Block hängen.
+            try:
+                from backend.services.scheduler import enable_mqtt_snapshot_jobs
+
+                enable_mqtt_snapshot_jobs()
+            except Exception as e:
+                logger.debug(f"MQTT-Snapshot-Jobs konnten nicht aktiviert werden: {e}")
+
             # Initialer Energy-Snapshot nach kurzem Delay (Cache braucht erste Nachrichten)
             async def _initial_snapshot():
                 import asyncio
