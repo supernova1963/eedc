@@ -1012,6 +1012,26 @@ async def get_live_wetter(
     try:
         cached_wetter = _cache_get(cache_key)
 
+        # Defensiv gegen Cache-Arität-Skew über Versions-Upgrades hinweg:
+        # Der persistente L2-Cache (api_cache, SQLite) kann ein Tupel falscher
+        # Länge aus einer Vorversion enthalten — bis v3.36.0 legte der Prefetch
+        # ein 2er-Tupel (data, None) ab. warmup_l1_from_l2 lädt es nach dem
+        # Neustart in L1 zurück, und der Prefetch-Skip-Guard ("nicht über-
+        # schreiben wenn vorhanden") ersetzt es nicht → das 3er-Unpack crashte
+        # mit `ValueError: expected 3, got 2` → Negativ-Cache → "Keine Wetter-
+        # daten verfügbar", bis der Eintrag (max. 60 Min TTL) ablief. Der reine
+        # Schreiber-Fix (v3.36.1) heilt einen schon persistierten Eintrag nicht.
+        # Darum: ein Nicht-3er-Tupel wie einen Cache-Miss behandeln — Neu-Abruf
+        # plus _cache_set überschreibt den Alt-Eintrag (selbstheilend).
+        if cached_wetter is not None and not (
+            isinstance(cached_wetter, tuple) and len(cached_wetter) == 3
+        ):
+            logger.info(
+                "Live-Wetter: Cache-Eintrag falscher Arität verworfen "
+                f"(Anlage {anlage_id}, Versions-Skew im L2-Cache) — Neu-Abruf"
+            )
+            cached_wetter = None
+
         if cached_wetter is not None:
             data, multi_gti, multi_vollstaendig = cached_wetter
         elif _error_cache_check(cache_key):
