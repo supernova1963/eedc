@@ -20,6 +20,8 @@ import pytest
 from sqlalchemy import select
 
 from backend.api.routes import live_wetter
+from backend.services import prefetch_service
+from backend.services.wetter.cache import _cache_get
 from backend.models.tages_energie_profil import TagesZusammenfassung
 from backend.services import solar_forecast_service as sfs
 from backend.services.solar_forecast_service import (
@@ -151,3 +153,62 @@ async def test_speichere_prognose_none_laesst_bestandswert_stehen(db, monkeypatc
 
     assert row.pv_prognose_kwh == 42.0      # Bestandswert unangetastet
     assert row.solcast_prognose_kwh == 50.0  # Solcast trotzdem geschrieben
+
+
+# ── Prefetch ↔ Endpoint: Cache-Tupel-Arität (3er-Vertrag) ───────────────────
+# Regression: Prefetch schrieb ein 2er-Tupel (data, None) in denselben
+# live_wetter:-Cache-Key, den der Endpoint mit `data, multi_gti,
+# multi_vollstaendig = cached` (3er) entpackt → ValueError „expected 3, got 2",
+# Live-Seite zeigt „Keine Wetterdaten verfügbar". Beide müssen 3 Werte führen.
+
+
+class _FakeResp:
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return {"hourly": {"time": []}}
+
+
+class _FakeClient:
+    def __init__(self, *a, **k):
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):
+        return False
+
+    async def get(self, *a, **k):
+        return _FakeResp()
+
+
+async def test_prefetch_cache_ist_3er_tupel_single_vollstaendig(monkeypatch):
+    monkeypatch.setattr(prefetch_service.httpx, "AsyncClient", _FakeClient)
+
+    await prefetch_service._prefetch_live_wetter(
+        50.0, 8.0, 30, 0, hat_multi=False, wetter_modell="auto",
+    )
+
+    cached = _cache_get("live_wetter:50.00:8.00:30:0:multi=False:m=auto")
+    assert cached is not None
+    # 3er-Unpack wie im Endpoint (live_wetter.py:1011) darf NICHT mehr crashen
+    data, multi_gti, multi_vollstaendig = cached
+    assert multi_gti is None
+    assert multi_vollstaendig is True   # Single-String: kein Fan-out, vollständig
+
+
+async def test_prefetch_cache_3er_tupel_multi_markiert_unvollstaendig(monkeypatch):
+    monkeypatch.setattr(prefetch_service.httpx, "AsyncClient", _FakeClient)
+
+    await prefetch_service._prefetch_live_wetter(
+        51.0, 9.0, 30, 0, hat_multi=True, wetter_modell="auto",
+    )
+
+    cached = _cache_get("live_wetter:51.00:9.00:30:0:multi=True:m=auto")
+    assert cached is not None
+    data, multi_gti, multi_vollstaendig = cached
+    # Prefetch macht keinen Multi-String-Fan-out → als unvollständig markiert,
+    # damit kein kollabierter Tageswert in den Lernfaktor einfriert (#306)
+    assert multi_vollstaendig is False

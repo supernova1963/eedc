@@ -46,6 +46,9 @@ export interface CockpitUebersicht {
   emob_ladung_kwh: number
   emob_pv_anteil_prozent: number | null
   emob_ersparnis_euro: number
+  // Ø Verbrauch (kWh/100 km) — null wenn keine Basis; quelle für ehrliches Label
+  emob_verbrauch_100km: number | null
+  emob_verbrauch_quelle: 'gemessen' | 'ladung' | 'keine'
   hat_emobilitaet: boolean
 
   // Balkonkraftwerk aggregiert
@@ -181,6 +184,10 @@ export interface KomponentenMonat {
   emob_ladung_extern_kwh: number
   emob_ladung_extern_euro: number
   emob_v2h_kwh: number
+  // Ø Verbrauch (kWh/100 km) pro Monat — zentral berechnet, null wenn keine Basis
+  emob_verbrauch_kwh: number
+  emob_verbrauch_100km: number | null
+  emob_verbrauch_quelle: 'gemessen' | 'ladung' | 'keine'
 
   // Balkonkraftwerk
   bkw_erzeugung_kwh: number
@@ -214,6 +221,9 @@ export interface KomponentenZeitreihe {
   hat_v2h: boolean
   monatswerte: KomponentenMonat[]
   anzahl_monate: number
+  // Aggregat-Ø-Verbrauch (kWh/100 km) über alle Monate — Backend rechnet via Helper
+  emob_verbrauch_100km_gesamt: number | null
+  emob_verbrauch_quelle_gesamt: 'gemessen' | 'ladung' | 'keine'
 }
 
 // =============================================================================
@@ -255,6 +265,8 @@ export interface PVStringsResponse {
   anlage_id: number
   jahr: number
   hat_prognose: boolean
+  /** Diagnose-Hinweis bei stale/oversize PVGIS-Prognose (null = plausibel) */
+  prognose_warnung: string | null
   anlagen_leistung_kwp: number
 
   // Gesamt-Summen
@@ -317,6 +329,8 @@ export interface PVStringGesamtlaufzeit {
 export interface PVStringsGesamtlaufzeitResponse {
   anlage_id: number
   hat_prognose: boolean
+  /** Diagnose-Hinweis bei stale/oversize PVGIS-Prognose (null = plausibel) */
+  prognose_warnung: string | null
   anlagen_leistung_kwp: number
 
   // Zeitraum

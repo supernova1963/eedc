@@ -302,7 +302,13 @@ async def _prefetch_live_wetter(
             resp.raise_for_status()
             data = resp.json()
 
-        _cache_set(cache_key, (data, None), LIVE_WETTER_CACHE_TTL)
+        # 3er-Tupel-Vertrag wie im Endpoint (live_wetter.py:1063): (data, multi_gti,
+        # multi_vollstaendig). Sonst crasht das 3er-Unpack dort an einem 2er-Tupel
+        # aus dem Prefetch (ValueError, expected 3 got 2). Prefetch macht keinen
+        # Multi-String-Fan-out → multi_gti=None, multi_vollstaendig=not hat_multi
+        # (Single = vollständig; Multi = unvollständig, damit kein kollabierter
+        # Tageswert in den Lernfaktor einfriert, vgl. #306).
+        _cache_set(cache_key, (data, None, not hat_multi), LIVE_WETTER_CACHE_TTL)
         logger.debug(f"Live-Wetter Prefetch: {latitude:.2f}/{longitude:.2f}")
     except Exception as e:
         logger.debug(f"Live-Wetter Prefetch fehlgeschlagen: {e}")

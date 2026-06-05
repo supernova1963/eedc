@@ -63,6 +63,7 @@ from backend.core.calculations import (
 )
 from backend.core.field_definitions import get_emob_pv_netz_kwh
 from backend.core.berechnungen import (
+    eauto_effizienz_100km,
     einspeise_erloes_euro,
     gleitende_effizienz,
     pruefe_speicher_durchsatz_konsistenz,
@@ -335,10 +336,17 @@ async def get_eauto_dashboard(
         strom_co2 = gesamt_verbrauch * CO2_FAKTOR_STROM_KG_KWH
         co2_ersparnis = benzin_co2 - strom_co2
 
+        # Ø Verbrauch (kWh/100 km) via zentralem Helper: gemessener verbrauch_kwh
+        # hat Vorrang, sonst Näherung aus der Ladung (sonst zeigte die Karte 0,0,
+        # wenn der User — korrekt — verbrauch_kwh nicht doppelt mappt). Quelle für
+        # ehrliches UI-Label. Single Source: core/berechnungen/emob.py.
+        eff = eauto_effizienz_100km(gesamt_verbrauch, gesamt_ladung, gesamt_km)
+
         zusammenfassung = {
             'gesamt_km': round(gesamt_km, 0),
             'gesamt_verbrauch_kwh': round(gesamt_verbrauch, 1),
-            'durchschnitt_verbrauch_kwh_100km': round(gesamt_verbrauch / gesamt_km * 100, 1) if gesamt_km > 0 else 0,
+            'durchschnitt_verbrauch_kwh_100km': round(eff.wert, 1) if eff.wert is not None else None,
+            'verbrauch_quelle': eff.quelle,
             # Ladung aufgeschlüsselt
             'gesamt_ladung_kwh': round(gesamt_ladung, 1),
             'ladung_heim_kwh': round(gesamt_heim_ladung, 1),
@@ -472,9 +480,9 @@ async def get_waermepumpe_dashboard(
     # Lebensdauer-Zählerstand — physikalisch unmöglich (Σ seit Anschaffung
     # > Lebensdauer). Der LTS-Abruf selbst ist korrekt; gefehlt hat der
     # Anschaffungsdatum-Scope im Read-Pfad ([[feedback_anschaffungsdatum_grenze]]).
-    # `ist_aktiv_im_zeitraum(tag, tag)` statt `ist_aktiv_an`, damit das
-    # `aktiv`-Override-Flag ignoriert wird (gleiche historische Sicht wie
-    # der Monatsdaten-Filter — temporär pausierte WP behält ihre Historie).
+    # `ist_aktiv_im_zeitraum(tag, tag)` prüft Laufzeit-Fenster UND `aktiv`-Flag
+    # (aktiv=False = wie gelöscht → nirgends, bis reaktiviert; Gernot 2026-06-05).
+    # Symmetrisch zum Monatsdaten-Filter, der dieselbe Sichtbarkeitsregel nutzt.
     wp_by_id = {w.id: w for w in waermepumpen}
     tz_result = await db.execute(
         select(TagesZusammenfassung.datum, TagesZusammenfassung.komponenten_starts)

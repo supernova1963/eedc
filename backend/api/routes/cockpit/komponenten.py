@@ -13,9 +13,9 @@ from backend.api.deps import get_db
 from backend.models.monatsdaten import Monatsdaten
 from backend.models.investition import Investition, InvestitionMonatsdaten
 from backend.api.routes.strompreise import lade_tarife_fuer_anlage, resolve_netzbezug_preis_cent
-from backend.core.berechnungen import einspeise_erloes_euro
+from backend.core.berechnungen import eauto_effizienz_100km, einspeise_erloes_euro
 from backend.services.einspeise_erloes_service import get_neg_preis_einspeisung_monat
-from backend.utils.sonstige_positionen import berechne_sonstige_summen
+from backend.utils.sonstige_positionen import aggregiere_sonstige_je_monat
 from backend.api.routes.cockpit._shared import MONATSNAMEN
 from backend.services.wp_wirtschaftlichkeit import berechne_wp_ersparnis
 from backend.services.eauto_wirtschaftlichkeit import get_emob_heimladung_canonical
@@ -64,6 +64,12 @@ class KomponentenMonat(BaseModel):
     emob_ladung_extern_kwh: float
     emob_ladung_extern_euro: float
     emob_v2h_kwh: float
+    # Ø Verbrauch (kWh/100 km) zentral via core/berechnungen/emob.py — gemessener
+    # verbrauch_kwh hat Vorrang, sonst Ladungs-Näherung. `quelle` ∈ gemessen|ladung|keine
+    # für ehrliches UI-Label; Frontend rechnet NICHT mehr selbst (Drift-Schutz).
+    emob_verbrauch_kwh: float = 0
+    emob_verbrauch_100km: Optional[float] = None
+    emob_verbrauch_quelle: str = "keine"
     bkw_erzeugung_kwh: float
     bkw_eigenverbrauch_kwh: float
     bkw_speicher_ladung_kwh: float
@@ -90,6 +96,10 @@ class KomponentenZeitreiheResponse(BaseModel):
     hat_v2h: bool
     monatswerte: list[KomponentenMonat]
     anzahl_monate: int
+    # Aggregat über alle Monate via Helper (Σverbrauch/Σladung/Σkm) — Bild „Auswertungen
+    # → Komponenten" zeigt diesen Wert, statt im Frontend zu summieren+teilen.
+    emob_verbrauch_100km_gesamt: Optional[float] = None
+    emob_verbrauch_quelle_gesamt: str = "keine"
 
 
 @router.get("/komponenten-zeitreihe/{anlage_id}", response_model=KomponentenZeitreiheResponse)
@@ -122,7 +132,11 @@ async def get_komponenten_zeitreihe(
     hat_balkonkraftwerk = len(bkw_ids) > 0
     hat_sonstiges = len(sonstiges_ids) > 0
 
-    if not all_inv_ids:
+    # Early-Return nur bei GAR keiner Investition. Bei reinen PV-/WR-Anlagen
+    # (all_inv_ids leer, aber investitionen vorhanden) NICHT abbrechen — sonst
+    # gingen am PV-Modul/Wechselrichter gepflegte Sonstige-Positionen verloren
+    # (#310). Der Energie-Loop bleibt dann leer, die Sonstige-Aggregation läuft.
+    if not investitionen:
         return KomponentenZeitreiheResponse(
             anlage_id=anlage_id,
             hat_speicher=False, hat_waermepumpe=False, hat_emobilitaet=False,
@@ -163,7 +177,7 @@ async def get_komponenten_zeitreihe(
             # über pv/netz konnte sie mischen (#262 junky84: PV-Anteil > 100 %).
             # km + v2h kommen nur vom E-Auto.
             "eauto_imds": [], "wb_imds": [],
-            "eauto_km": 0, "eauto_v2h": 0,
+            "eauto_km": 0, "eauto_v2h": 0, "eauto_verbrauch": 0,
             "bkw_erzeugung": 0, "bkw_eigenverbrauch": 0, "bkw_speicher_ladung": 0, "bkw_speicher_entladung": 0,
             "sonstiges_erzeugung": 0, "sonstiges_verbrauch": 0,
             "sonderkosten": 0, "sonstige_ertraege": 0, "sonstige_ausgaben": 0,
@@ -190,11 +204,10 @@ async def get_komponenten_zeitreihe(
         data = imd.verbrauch_daten or {}
         d = inv_data_by_month[key]
 
-        summen = berechne_sonstige_summen(data)
-        d["sonderkosten"] += summen["ausgaben_euro"]
-        d["sonstige_ertraege"] += summen["ertraege_euro"]
-        d["sonstige_ausgaben"] += summen["ausgaben_euro"]
-
+        # Sonstige Erträge/Ausgaben NICHT hier — dieser Loop ist typ-gefiltert
+        # (all_inv_ids ohne PV/WR) und laufzeit-gefiltert (ist_aktiv_im_monat).
+        # Finanzpositionen werden unten entkoppelt über ALLE Investitionen
+        # aggregiert (#310). Siehe `aggregiere_sonstige_je_monat`.
         if inv.typ == "speicher":
             d["speicher_ladung"] += data.get("ladung_kwh", 0) or 0
             d["speicher_entladung"] += data.get("entladung_kwh", 0) or 0
@@ -233,6 +246,9 @@ async def get_komponenten_zeitreihe(
             if inv.typ == "e-auto":
                 d["eauto_imds"].append(data)
                 d["eauto_km"] += data.get("km_gefahren", 0) or 0
+                # Gemessener Fahrverbrauch (für Ø Verbrauch kWh/100 km mit Vorrang
+                # vor der Ladungs-Näherung — selbe Quelle wie E-Auto-Dashboard).
+                d["eauto_verbrauch"] += data.get("verbrauch_kwh", 0) or 0
                 v2h = data.get("v2h_entladung_kwh", 0) or 0
                 if v2h > 0:
                     hat_v2h = True
@@ -258,7 +274,39 @@ async def get_komponenten_zeitreihe(
                 d["sonstiges_verbrauch"] += get_sonstiges_verbrauch_kwh(data)
 
     monatswerte = []
+    # E-Mobilität: Σ über alle Monate für das Komponenten-Aggregat (Ø Verbrauch
+    # via Helper über die Summen — nicht das Mittel der Monats-Prozente).
+    agg_emob_verbrauch = 0.0
+    agg_emob_ladung = 0.0
+    agg_emob_km = 0.0
     _tarif_cache_kz: dict[date, dict] = {}
+
+    # Sonstige Erträge/Ausgaben (#310 rilmor-mhrs) — entkoppelt vom TYP-gefilterten
+    # Energie-Loop (der `all_inv_ids` ohne PV-Modul/Wechselrichter kennt): über
+    # ALLE Investitionstypen, sonst zählt diese Sicht einen am Wechselrichter
+    # gepflegten Ertrag NICHT mit, obwohl der Monatsbericht ihn zeigt.
+    # ABER: dieselbe Sichtbarkeitsregel wie überall (detLAN [[feedback_anschaffungsdatum_grenze]],
+    # #236/#308) — nur `aktiv` (aktiv=False = wie gelöscht) und nur innerhalb der
+    # Laufzeit Anschaffung→Stilllegung. Finanzpositionen sind KEINE Ausnahme.
+    # Symmetrie zum Monatsbericht: test_sonstige_readsite_symmetrie.
+    aktive_inv_ids = [i.id for i in investitionen if i.aktiv]
+    if aktive_inv_ids:
+        sonstige_query = select(InvestitionMonatsdaten).where(
+            InvestitionMonatsdaten.investition_id.in_(aktive_inv_ids)
+        )
+        if jahr is not None:
+            sonstige_query = sonstige_query.where(InvestitionMonatsdaten.jahr == jahr)
+        sonstige_rows = [
+            imd for imd in (await db.execute(sonstige_query)).scalars().all()
+            if inv_by_id[imd.investition_id].ist_aktiv_im_monat(imd.jahr, imd.monat)
+        ]
+        for (s_jahr, s_monat), summen in aggregiere_sonstige_je_monat(sonstige_rows).items():
+            # Monat muss in der Response existieren, auch wenn er KEINE
+            # Komponenten-Energiedaten hat (reiner Sonstige-Monat).
+            d = inv_data_by_month.setdefault((s_jahr, s_monat), empty_month_data())
+            d["sonstige_ertraege"] = summen["ertraege_euro"]
+            d["sonstige_ausgaben"] = summen["ausgaben_euro"]
+            d["sonderkosten"] = summen["ausgaben_euro"]
 
     for key in sorted(inv_data_by_month.keys()):
         jahr, monat = key
@@ -290,7 +338,13 @@ async def get_komponenten_zeitreihe(
         emob_extern_euro = emob_pool.extern_euro
         emob_km = d["eauto_km"]
         emob_v2h = d["eauto_v2h"]
+        emob_verbrauch = d["eauto_verbrauch"]
         emob_pv_anteil = (emob_pv_ladung / emob_ladung * 100) if emob_ladung > 0 else None
+        # Ø Verbrauch pro Monat via zentralem Helper (gemessen > Ladungs-Näherung).
+        eff_m = eauto_effizienz_100km(emob_verbrauch, emob_ladung, emob_km)
+        agg_emob_verbrauch += emob_verbrauch
+        agg_emob_ladung += emob_ladung
+        agg_emob_km += emob_km
 
         stichtag = date(jahr, monat, 1)
         if stichtag not in _tarif_cache_kz:
@@ -364,6 +418,9 @@ async def get_komponenten_zeitreihe(
             emob_ladung_extern_kwh=round(emob_extern_ladung, 1),
             emob_ladung_extern_euro=round(emob_extern_euro, 2),
             emob_v2h_kwh=round(emob_v2h, 1),
+            emob_verbrauch_kwh=round(emob_verbrauch, 1),
+            emob_verbrauch_100km=round(eff_m.wert, 1) if eff_m.wert is not None else None,
+            emob_verbrauch_quelle=eff_m.quelle,
             bkw_erzeugung_kwh=round(d["bkw_erzeugung"], 1),
             bkw_eigenverbrauch_kwh=round(d["bkw_eigenverbrauch"], 1),
             bkw_speicher_ladung_kwh=round(d["bkw_speicher_ladung"], 1),
@@ -378,10 +435,15 @@ async def get_komponenten_zeitreihe(
             einspeise_erloes_euro=round(m_einspeise_erloes, 2),
         ))
 
+    # Aggregat-Effizienz via Helper über die Summen (gemessen > Ladungs-Näherung).
+    eff_gesamt = eauto_effizienz_100km(agg_emob_verbrauch, agg_emob_ladung, agg_emob_km)
+
     return KomponentenZeitreiheResponse(
         anlage_id=anlage_id,
         hat_speicher=hat_speicher, hat_waermepumpe=hat_waermepumpe,
         hat_emobilitaet=hat_emobilitaet, hat_balkonkraftwerk=hat_balkonkraftwerk,
         hat_sonstiges=hat_sonstiges, hat_arbitrage=hat_arbitrage, hat_v2h=hat_v2h,
         monatswerte=monatswerte, anzahl_monate=len(monatswerte),
+        emob_verbrauch_100km_gesamt=round(eff_gesamt.wert, 1) if eff_gesamt.wert is not None else None,
+        emob_verbrauch_quelle_gesamt=eff_gesamt.quelle,
     )
