@@ -64,6 +64,9 @@ class TagesEnergieProfil(Base):
     # summiert über alle WP-Investitionen mit gemapptem Starts-Zähler.
     # Pro-Investitions-Aufschlüsselung lebt auf Tagesebene in TagesZusammenfassung.komponenten_starts.
     wp_starts_anzahl: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    # Counter pro Stunde (Issue #238): WP-Betriebsstunden in dieser Stunde (0..1 h pro
+    # WP), summiert über alle WP-Investitionen mit gemapptem Betriebsstunden-Zähler.
+    wp_betriebsstunden: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
     # Bilanz
     ueberschuss_kw: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
@@ -167,6 +170,9 @@ class TagesZusammenfassung(Base):
     # Stundenprofil-Diagnostik (siehe docs/KONZEPT-KORREKTURPROFIL.md).
     pv_prognose_stundenprofil: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     solcast_prognose_stundenprofil: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    # SFML/Tom-HA echtes Stundenprofil (24 kWh-Slots, Backward) — bei gewählter
+    # SFML-Quelle SFMLs eigene Kurvenform statt GTI-Schmier (Tracking #110 „A").
+    sfml_prognose_stundenprofil: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
 
     # Anzahl verfügbarer Stundenwerte (Qualitätsindikator)
     stunden_verfuegbar: Mapped[int] = mapped_column(Integer, default=0)

@@ -9,10 +9,11 @@
  * damit der HA-Ingress-Auth-Token nicht verloren geht (Mobile 401-Fix).
  */
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { FileText, Award, Euro, BookOpen, Download, Loader2 } from 'lucide-react'
 import { Modal, Alert } from './ui'
 import { importApi } from '../api/import'
+import { monatsdatenApi } from '../api/monatsdaten'
 import { downloadFile } from '../lib'
 import type { Anlage } from '../types'
 
@@ -35,6 +36,22 @@ interface DocCard {
 export default function DokumentationsDialog({ anlage, onClose }: DokumentationsDialogProps) {
   const [loading, setLoading] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  // null = Gesamtzeitraum (alle Jahre). Backend/Builder unterscheiden ueber den jahr-Query-Param.
+  const [jahresberichtJahr, setJahresberichtJahr] = useState<number | null>(null)
+  const [verfuegbareJahre, setVerfuegbareJahre] = useState<number[]>([])
+
+  useEffect(() => {
+    if (!anlage) return
+    let abgebrochen = false
+    monatsdatenApi.list(anlage.id)
+      .then(monate => {
+        if (abgebrochen) return
+        const jahre = Array.from(new Set(monate.map(m => m.jahr))).sort((a, b) => b - a)
+        setVerfuegbareJahre(jahre)
+      })
+      .catch(() => { /* Jahresauswahl bleibt leer -> nur Gesamtzeitraum */ })
+    return () => { abgebrochen = true }
+  }, [anlage?.id])
 
   if (!anlage) return null
 
@@ -44,9 +61,13 @@ export default function DokumentationsDialog({ anlage, onClose }: Dokumentations
     {
       icon: <FileText className="h-8 w-8" />,
       titel: 'Jahresbericht',
-      beschreibung: 'Jahresauswertung mit Charts, Ertrag, Autarkie, CO₂-Bilanz — Klassiker für Jahresabschluss und Archiv.',
-      url: importApi.getPdfExportUrl(anlage.id),
-      filename: `jahresbericht_${safeName}.pdf`,
+      beschreibung: jahresberichtJahr
+        ? `Jahresauswertung ${jahresberichtJahr} mit Charts, Ertrag, Autarkie, CO₂-Bilanz — Klassiker für Jahresabschluss und Archiv.`
+        : 'Gesamtauswertung über alle Jahre mit Charts, Ertrag, Autarkie, CO₂-Bilanz. Oben ein einzelnes Jahr wählbar.',
+      url: importApi.getPdfExportUrl(anlage.id, jahresberichtJahr),
+      filename: jahresberichtJahr
+        ? `jahresbericht_${safeName}_${jahresberichtJahr}.pdf`
+        : `jahresbericht_${safeName}.pdf`,
       accent: 'text-orange-500 border-orange-200 dark:border-orange-900/40',
     },
     {
@@ -97,6 +118,25 @@ export default function DokumentationsDialog({ anlage, onClose }: Dokumentations
         <p className="text-sm text-gray-600 dark:text-gray-400">
           Download-Hub für alle generierten PDF-Dokumente zu dieser Anlage.
         </p>
+
+        {verfuegbareJahre.length > 0 && (
+          <div className="flex flex-col sm:flex-row sm:items-center gap-2 rounded-lg border border-orange-200 dark:border-orange-900/40 bg-orange-50/50 dark:bg-orange-900/10 px-3 py-2">
+            <label htmlFor="jahresbericht-jahr" className="text-sm font-medium text-gray-700 dark:text-gray-300">
+              Jahresbericht-Zeitraum:
+            </label>
+            <select
+              id="jahresbericht-jahr"
+              value={jahresberichtJahr ?? ''}
+              onChange={(e) => setJahresberichtJahr(e.target.value ? parseInt(e.target.value, 10) : null)}
+              className="px-3 py-1.5 text-sm rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
+            >
+              <option value="">Gesamtzeitraum (alle Jahre)</option>
+              {verfuegbareJahre.map(jahr => (
+                <option key={jahr} value={jahr}>{jahr}</option>
+              ))}
+            </select>
+          </div>
+        )}
 
         {error && (
           <Alert type="error" onClose={() => setError(null)}>

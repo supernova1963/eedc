@@ -526,7 +526,7 @@ export default function AnlageForm({ anlage, onSubmit, onCancel }: AnlageFormPro
                 ? haAvailable
                   ? 'Solcast-Prognose direkt über die HA-Integration, ohne eedc-Korrektur.'
                   : 'Solcast-Prognose direkt via API-Token, ohne eedc-Korrektur. API-Token muss konfiguriert sein.'
-                : 'Solar Forecast ML direkt aus der HA-Integration, ohne eedc-Korrektur. Nur im HA-Add-on verfügbar.'}
+                : 'Solar Forecast ML direkt aus der HA-Integration, ohne eedc-Korrektur. eedc nutzt dabei SFMLs echtes Stundenprofil (bis zu 3 Tage, aus dem evcc-Prognose-Sensor). Nur im HA-Add-on verfügbar.'}
           </p>
         </div>
       </div>

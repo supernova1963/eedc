@@ -73,6 +73,9 @@ export interface AktuellerMonatResponse {
   // Issue #169: Kompressor-Starts (aus TagesZusammenfassung über die Tage des Monats)
   wp_starts_max_tag: number | null
   wp_starts_summe_monat: number | null
+  // Issue #238: Betriebsstunden analog zu den Starts (gleiche Counter-Quelle)
+  wp_betriebsstunden_max_tag: number | null
+  wp_betriebsstunden_summe_monat: number | null
   hat_waermepumpe: boolean
 
   // Komponenten — E-Mobilität

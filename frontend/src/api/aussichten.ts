@@ -290,6 +290,15 @@ export interface PrognosenVergleich {
   solcast_tage: SolcastTag[]
   solcast_tageshaelften: (Tageshaelfte | null)[]
 
+  // SFML / Tom-HA (nur HA-Add-on, wenn als Quelle gewählt) — echtes
+  // mehrtägiges Stundenprofil, KEIN Cross-Quellen-Ranking (#110 „A")
+  sfml_verfuegbar?: boolean
+  sfml_heute_kwh?: number | null
+  sfml_morgen_kwh?: number | null
+  sfml_uebermorgen_kwh?: number | null
+  sfml_stundenprofil?: StundenProfilEintrag[]
+  sfml_tageshaelften?: (Tageshaelfte | null)[]
+
   // IST-Ertrag heute
   ist_heute_kwh: number | null
   ist_stundenprofil: StundenProfilEintrag[]
@@ -319,6 +328,11 @@ export interface GenauigkeitsEintrag {
   eedc_kwh: number | null
   solcast_kwh: number | null
   ist_kwh: number | null
+  // Repräsentatives Tages-Wettersymbol (aus Stundenprofil aggregiert, #296 #2)
+  wetter_symbol?: string | null
+  temperatur_max_c?: number | null
+  // Tag mit großer Abweichung — markiert, nie still weggerechnet (#296 #9)
+  ist_ausreisser?: boolean
 }
 
 export interface AsymmetrieEintrag {
@@ -340,6 +354,8 @@ export interface GenauigkeitsResponse {
   solcast_mbe_prozent: number | null
   solcast_asymmetrie: AsymmetrieEintrag | null
   anzahl_tage: number
+  anzahl_ausreisser?: number
+  ausreisser_schwelle_prozent?: number
 }
 
 // =============================================================================
@@ -392,7 +408,7 @@ export const aussichtenApi = {
   /**
    * Holt das Genauigkeits-Tracking (Prognose vs. IST).
    */
-  async getPrognosenGenauigkeit(anlageId: number, tage: number = 30): Promise<GenauigkeitsResponse> {
-    return api.get<GenauigkeitsResponse>(`/aussichten/prognosen/${anlageId}/genauigkeit?tage=${tage}`)
+  async getPrognosenGenauigkeit(anlageId: number, tage: number = 30, ausreisserAusblenden: boolean = false): Promise<GenauigkeitsResponse> {
+    return api.get<GenauigkeitsResponse>(`/aussichten/prognosen/${anlageId}/genauigkeit?tage=${tage}&ausreisser_ausblenden=${ausreisserAusblenden}`)
   },
 }

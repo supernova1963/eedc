@@ -832,6 +832,31 @@ async def calculate_investition_sensors(
 
         gesamt_waerme = gesamt_heizung + gesamt_warmwasser
 
+        # Issue #238: Counter-Summen (Starts/Betriebsstunden) dieser WP aus
+        # TagesZusammenfassung.komponenten_starts über die Laufzeit. Nur gesetzt,
+        # wenn der jeweilige Zähler überhaupt Werte geliefert hat.
+        from backend.models.tages_energie_profil import TagesZusammenfassung
+        inv_id_str = str(investition.id)
+        tz_res = await db.execute(
+            select(TagesZusammenfassung.datum, TagesZusammenfassung.komponenten_starts)
+            .where(TagesZusammenfassung.anlage_id == investition.anlage_id)
+            .where(TagesZusammenfassung.komponenten_starts.is_not(None))
+        )
+        wp_starts_total = 0
+        wp_stunden_total = 0.0
+        hat_starts = hat_stunden = False
+        for datum_, komp in tz_res.all():
+            if not investition.ist_aktiv_im_monat(datum_.year, datum_.month):
+                continue
+            c = ((komp or {}).get("wp_starts_anzahl") or {}).get(inv_id_str)
+            if isinstance(c, (int, float)) and c > 0:
+                wp_starts_total += int(c)
+                hat_starts = True
+            h = ((komp or {}).get("wp_betriebsstunden") or {}).get(inv_id_str)
+            if isinstance(h, (int, float)) and h > 0:
+                wp_stunden_total += float(h)
+                hat_stunden = True
+
         for sensor in WAERMEPUMPE_SENSOREN:
             value = None
             berechnung = None
@@ -866,6 +891,14 @@ async def calculate_investition_sensors(
                     wp_kosten = gesamt_strom * netzbezug_preis / 100
                     value = round(alte_kosten - wp_kosten, 2)
                     berechnung = f"{alte_kosten:.2f} (alt) - {wp_kosten:.2f} (WP)"
+            elif sensor.key == "wp_kompressor_starts":
+                if hat_starts:
+                    value = wp_starts_total
+                    berechnung = "Σ erfasste Kompressor-Starts"
+            elif sensor.key == "wp_betriebsstunden":
+                if hat_stunden:
+                    value = round(wp_stunden_total, 1)
+                    berechnung = "Σ erfasste Betriebsstunden"
 
             if value is not None:
                 sensor_values.append(SensorValue(

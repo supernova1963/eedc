@@ -38,8 +38,12 @@ from backend.services.prognose_adapter import (
     StundenProfil,
     ist_profil,
     openmeteo_gti_profil,
+    sfml_profil,
+    sfml_stundenprofil_aus_hours,
+    sfml_stundenprofile_aus_forecast,
     solcast_profil,
 )
+from backend.services.prognose_router import resolve_prognose_quelle
 
 logger = logging.getLogger(__name__)
 
@@ -126,6 +130,15 @@ class PrognosenVergleichResponse(BaseModel):
     solcast_tage: List[SolcastTagSchema] = []
     solcast_tageshaelften: List[Optional[TageshaelfteSchema]] = []
 
+    # SFML / Tom-HA (nur HA-Add-on, wenn als Quelle gewählt) — echtes
+    # mehrtägiges Stundenprofil, KEIN Cross-Quellen-Ranking (#110 „A").
+    sfml_verfuegbar: bool = False
+    sfml_heute_kwh: Optional[float] = None
+    sfml_morgen_kwh: Optional[float] = None
+    sfml_uebermorgen_kwh: Optional[float] = None
+    sfml_stundenprofil: List[StundenProfilEintrag] = []
+    sfml_tageshaelften: List[Optional[TageshaelfteSchema]] = []
+
     # IST-Ertrag heute (aus TagesEnergieProfil)
     ist_heute_kwh: Optional[float] = None
     ist_stundenprofil: List[StundenProfilEintrag] = []
@@ -155,6 +168,13 @@ class GenauigkeitsEintrag(BaseModel):
     eedc_kwh: Optional[float] = None
     solcast_kwh: Optional[float] = None
     ist_kwh: Optional[float] = None
+    # Repräsentatives Tages-Wettersymbol (aus Stundenprofil aggregiert, #296 #2)
+    wetter_symbol: Optional[str] = None
+    temperatur_max_c: Optional[float] = None
+    # Tag mit großer Abweichung (max |Prognose−IST| über alle Quellen > Schwelle).
+    # Wird NIE still weggerechnet (#296 #9) — nur markiert; Ausschluss aus MAE/MBE
+    # nur auf ausdrücklichen Wunsch (ausreisser_ausblenden=True).
+    ist_ausreisser: bool = False
 
 
 class AsymmetrieEintrag(BaseModel):
@@ -188,6 +208,10 @@ class GenauigkeitsResponse(BaseModel):
     solcast_mbe_prozent: Optional[float] = None
     solcast_asymmetrie: Optional[AsymmetrieEintrag] = None
     anzahl_tage: int = 0
+    # Anzahl als Ausreißer markierter Tage (>Schwelle Abweichung), #296 #9
+    anzahl_ausreisser: int = 0
+    # Schwelle in % (für UI-Text)
+    ausreisser_schwelle_prozent: float = 50.0
 
 
 # =============================================================================
@@ -256,6 +280,39 @@ async def _lade_anlage_mit_pv(db: AsyncSession, anlage_id: int):
 # =============================================================================
 # Endpoints
 # =============================================================================
+
+def _eintraege_zu_array(eintraege: list[StundenProfilEintrag]) -> list[float]:
+    """Variabel langes Stundenprofil → 24-Slot-kW-Array (fehlende Slots = 0).
+
+    NULL-Slots (IST-Lücken ohne Zähler, Issue #135) zählen als 0.
+    """
+    arr = [0.0] * 24
+    for s in eintraege:
+        if s.kw is not None and 0 <= s.stunde < 24:
+            arr[s.stunde] = s.kw
+    return arr
+
+
+def _tagesprojektion(
+    ist_kwh: float,
+    stunden_kw: Optional[list[float]],
+    aktuelle_stunde: int,
+) -> Optional[float]:
+    """Tagesprojektion = IST bisher + Σ Prognose-Slots der Stunden > aktuelle_stunde.
+
+    Einheitliches „Verbleibend"-Verfahren für alle Quellen-Spalten (#296):
+    funktioniert auch bei ``ist_kwh == 0`` (liefert dann die volle Restprognose).
+    Gibt ``None`` zurück, wenn die Quelle kein Stundenprofil hat.
+    """
+    if not stunden_kw:
+        return None
+    rest = sum(
+        stunden_kw[h]
+        for h in range(aktuelle_stunde + 1, 24)
+        if h < len(stunden_kw) and stunden_kw[h] is not None
+    )
+    return round(ist_kwh + rest, 1)
+
 
 def _profil_zu_eintraegen(p: StundenProfil) -> list[StundenProfilEintrag]:
     """Kanonisches ``StundenProfil`` (Adapter-Layer) → API-Schema-Liste.
@@ -459,6 +516,47 @@ async def get_prognosen_vergleich(
         eedc_morgen_kwh = round(openmeteo_morgen_kwh * lernfaktor, 1) if openmeteo_morgen_kwh is not None else None
         eedc_uebermorgen_kwh = round(openmeteo_uebermorgen_kwh * lernfaktor, 1) if openmeteo_uebermorgen_kwh is not None else None
 
+    # ── SFML / Tom-HA: echtes mehrtägiges Stundenprofil (wenn als Quelle gewählt) ──
+    # Einzelquellen-Treue (#110 „A"): bei gewählter SFML-Quelle SFMLs eigene
+    # Kurvenform (evcc `forecast`, 3 Tage stündlich) statt GTI-Schmier. Nur
+    # HA-Add-on; KEIN Cross-Quellen-Genauigkeits-Ranking.
+    pq = resolve_prognose_quelle(anlage)
+    sfml_tagesprofile: list[list[float]] = [[], [], []]  # kWh-Slots je Tag (Backward)
+    sfml_heute_kwh = None
+    sfml_morgen_kwh = None
+    sfml_uebermorgen_kwh = None
+    if pq.ist_sfml:
+        try:
+            from backend.services.prognose_discovery import discover_prognose_sensoren
+            sfml_disc = await discover_prognose_sensoren("sfml")
+            if sfml_disc.gefunden:
+                sfml_heute_kwh = sfml_disc.wert("heute_kwh")
+                sfml_morgen_kwh = sfml_disc.wert("morgen_kwh")
+                sfml_uebermorgen_kwh = sfml_disc.wert("uebermorgen_kwh")
+                forecast_attr = sfml_disc.attribut("stundenprofil")
+                if forecast_attr:
+                    sfml_tagesprofile = sfml_stundenprofile_aus_forecast(forecast_attr, heute)
+                else:
+                    hours_attr = sfml_disc.attribut("heute_kwh")
+                    if hours_attr:
+                        sfml_tagesprofile = [sfml_stundenprofil_aus_hours(hours_attr), [], []]
+        except Exception as e:
+            logger.debug(f"SFML-Discovery (Prognosen-Tab) fehlgeschlagen: {e}")
+    sfml_verfuegbar = bool(sfml_tagesprofile and sfml_tagesprofile[0] and any(sfml_tagesprofile[0]))
+    # Tagessummen aus dem Profil ableiten, wenn die State-Skalare fehlen.
+    if sfml_verfuegbar and sfml_heute_kwh is None:
+        sfml_heute_kwh = round(sum(sfml_tagesprofile[0]), 1)
+    if sfml_morgen_kwh is None and len(sfml_tagesprofile) > 1 and any(sfml_tagesprofile[1] or []):
+        sfml_morgen_kwh = round(sum(sfml_tagesprofile[1]), 1)
+    if sfml_uebermorgen_kwh is None and len(sfml_tagesprofile) > 2 and any(sfml_tagesprofile[2] or []):
+        sfml_uebermorgen_kwh = round(sum(sfml_tagesprofile[2]), 1)
+    sfml_tagesprofile_eintraege = [
+        _profil_zu_eintraegen(sfml_profil(tag, datum=heute + timedelta(days=i)))
+        if (tag and any(tag)) else []
+        for i, tag in enumerate(sfml_tagesprofile)
+    ]
+    sfml_stundenprofil = sfml_tagesprofile_eintraege[0] if sfml_tagesprofile_eintraege else []
+
     # ── IST-Ertrag heute (zentraler Adapter) ──
     # Issue #135: pv_kw kann None sein (kein Zähler gemappt / Datenlücke). None-
     # Stunden fließen NICHT in die Summe ein und bleiben im Profil als Lücke
@@ -470,27 +568,45 @@ async def get_prognosen_vergleich(
     ist_heute_kwh = ist_p.tageswert_kwh  # roh/ungerundet — für verbleibend-Rechnung
     ist_unvollstaendig = ist_p.unvollstaendig
 
-    # ── Verbleibend ──
+    # ── Verbleibend = Tagesprojektion (IST bisher + Reststunden der Quelle) ──
+    # Einheitliches Verfahren für ALLE Spalten (#296 #3/#5/#6):
+    #   • #6: nicht mehr „Tagesprognose − IST" je Quelle vs. „IST + Reststunden"
+    #     gesamt, sondern durchgängig IST + Σ Reststunden-Slots der Quelle.
+    #   • #3: die Gesamtspalte konsumiert die in den Einstellungen aktive Quelle
+    #     (pq.quelle), nicht mehr hardcodiert Solcast→OpenMeteo.
+    #   • #5: IST + Rest funktioniert auch bei ist_heute_kwh==0 (frühmorgens) —
+    #     keine „—"-Lücke mehr in den Pro-Quellen-Spalten.
     aktuelle_stunde = now.hour
-    verbleibend_kwh = None
-    verbleibend_om_kwh = None
-    verbleibend_eedc_kwh = None
-    verbleibend_solcast_kwh = None
-    if ist_heute_kwh > 0 or openmeteo_stundenprofil:
-        rest_prognose = 0.0
-        for h in range(aktuelle_stunde + 1, 24):
-            if solcast and h < len(solcast.hourly_kw):
-                rest_prognose += solcast.hourly_kw[h]
-            elif h < len(openmeteo_stundenprofil):
-                rest_prognose += openmeteo_stundenprofil[h].kw
-        verbleibend_kwh = round(ist_heute_kwh + rest_prognose, 1)
-    # Pro Quelle: Tagesprognose - bisheriger IST
-    if openmeteo_heute_kwh is not None and ist_heute_kwh > 0:
-        verbleibend_om_kwh = round(max(0, openmeteo_heute_kwh - ist_heute_kwh), 1)
-    if eedc_heute_kwh is not None and ist_heute_kwh > 0:
-        verbleibend_eedc_kwh = round(max(0, eedc_heute_kwh - ist_heute_kwh), 1)
-    if solcast and solcast.daily_kwh is not None and ist_heute_kwh > 0:
-        verbleibend_solcast_kwh = round(max(0, solcast.daily_kwh - ist_heute_kwh), 1)
+
+    def _projektion(arr: Optional[list[float]]) -> Optional[float]:
+        return _tagesprojektion(ist_heute_kwh, arr, aktuelle_stunde)
+
+    om_arr = _eintraege_zu_array(openmeteo_stundenprofil)
+    eedc_arr = _eintraege_zu_array(eedc_stundenprofil)
+    sc_arr = list(solcast.hourly_kw) if solcast else None
+    sfml_arr = list(sfml_tagesprofile[0]) if sfml_verfuegbar else None
+
+    verbleibend_om_kwh = _projektion(om_arr) if openmeteo_stundenprofil else None
+    verbleibend_eedc_kwh = _projektion(eedc_arr) if eedc_stundenprofil else None
+    verbleibend_solcast_kwh = _projektion(sc_arr)
+
+    # Gesamtspalte: gewählte Quelle (#3) mit Fallback-Kaskade.
+    if pq.ist_sfml and sfml_arr:
+        verbleibend_kwh = _projektion(sfml_arr)
+    elif pq.ist_solcast and verbleibend_solcast_kwh is not None:
+        verbleibend_kwh = verbleibend_solcast_kwh
+    elif pq.ist_eedc and verbleibend_eedc_kwh is not None:
+        verbleibend_kwh = verbleibend_eedc_kwh
+    else:
+        # Fallback wenn die gewählte Quelle keine Daten hat: Solcast (feinste
+        # Auflösung) → eedc → OpenMeteo.
+        verbleibend_kwh = (
+            verbleibend_solcast_kwh
+            if verbleibend_solcast_kwh is not None
+            else verbleibend_eedc_kwh
+            if verbleibend_eedc_kwh is not None
+            else verbleibend_om_kwh
+        )
 
     # ── Solcast aufbereiten ──
     solcast_stundenprofil = []
@@ -527,6 +643,13 @@ async def get_prognosen_vergleich(
         _berechne_tageshaelfte(p, solar_noons[i]) if p else None
         for i, p in enumerate(eedc_tagesprofile)
     ]
+    # SFML VM/NM pro Tag direkt aus dem echten Stundenprofil (kein Schätzen nötig)
+    sfml_ths: list[Optional[TageshaelfteSchema]] = [
+        _berechne_tageshaelfte(p, solar_noons[i]) if p else None
+        for i, p in enumerate(sfml_tagesprofile_eintraege[:3])
+    ]
+    while len(sfml_ths) < 3:
+        sfml_ths.append(None)
 
     # Solcast VM/NM pro Tag aus tage_voraus berechnen (Stundenwerte nur für heute vorhanden,
     # für Morgen/Übermorgen approximieren wir aus den 30-Min-Daten im SolcastForecast)
@@ -585,6 +708,12 @@ async def get_prognosen_vergleich(
         solcast_stundenprofil=solcast_stundenprofil,
         solcast_tage=solcast_tage,
         solcast_tageshaelften=sc_ths,
+        sfml_verfuegbar=sfml_verfuegbar,
+        sfml_heute_kwh=sfml_heute_kwh,
+        sfml_morgen_kwh=sfml_morgen_kwh,
+        sfml_uebermorgen_kwh=sfml_uebermorgen_kwh,
+        sfml_stundenprofil=sfml_stundenprofil,
+        sfml_tageshaelften=sfml_ths,
         ist_heute_kwh=round(ist_heute_kwh, 1) if ist_heute_kwh > 0 else None,
         ist_stundenprofil=ist_stundenprofil,
         ist_tageshaelfte=ist_th,
@@ -604,6 +733,10 @@ async def get_prognosen_vergleich(
 async def get_prognosen_genauigkeit(
     anlage_id: int,
     tage: int = Query(default=30, ge=7, le=90, description="Anzahl Tage für Genauigkeit"),
+    ausreisser_ausblenden: bool = Query(
+        default=False,
+        description="Ausreißer-Tage (große Abweichung) aus MAE/MBE ausschließen (#296 #9, Default aus)",
+    ),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -628,6 +761,37 @@ async def get_prognosen_genauigkeit(
     )
     tage_daten = result.scalars().all()
 
+    # ── Repräsentatives Tages-Wettersymbol je Tag (#296 #2) ──
+    # TagesZusammenfassung trägt keinen WMO-Code; er liegt nur stündlich im
+    # TagesEnergieProfil. Pro Tag: mittlere Bewölkung + Tagessumme Niederschlag +
+    # Code der Mittagsstunde → SoT-Helper wetter_symbol_aus_tag (gleiche Symbole
+    # wie der Forecast-Pfad, damit Rück- und Vorausschau konsistent aussehen).
+    tep_result = await db.execute(
+        select(TagesEnergieProfil).where(
+            TagesEnergieProfil.anlage_id == anlage_id,
+            TagesEnergieProfil.datum >= von,
+            TagesEnergieProfil.datum < date.today(),
+        )
+    )
+    _bew: dict = {}
+    _nieder: dict = {}
+    _codes: dict = {}
+    for row in tep_result.scalars().all():
+        if row.bewoelkung_prozent is not None:
+            _bew.setdefault(row.datum, []).append(row.bewoelkung_prozent)
+        if row.niederschlag_mm is not None:
+            _nieder[row.datum] = _nieder.get(row.datum, 0.0) + row.niederschlag_mm
+        if row.wetter_code is not None:
+            _codes.setdefault(row.datum, []).append((row.stunde, row.wetter_code))
+    wetter_pro_tag: dict = {}
+    for d in set(_bew) | set(_nieder) | set(_codes):
+        codes = _codes.get(d)
+        # Code der Stunde, die am nächsten an der Mittagsstunde (13 Uhr) liegt.
+        mittag_code = min(codes, key=lambda c: abs(c[0] - 13))[1] if codes else None
+        bews = _bew.get(d)
+        bew = sum(bews) / len(bews) if bews else None
+        wetter_pro_tag[d] = wetter_symbol_aus_tag(mittag_code, bew, _nieder.get(d))
+
     # Lernfaktor für EEDC-Genauigkeit (immer OpenMeteo-basiert)
     lernfaktor = await _get_lernfaktor(anlage_id, db, quelle="openmeteo")
 
@@ -635,6 +799,12 @@ async def get_prognosen_genauigkeit(
     om_signed = []  # vorzeichenbehaftete relative Fehler (Prognose - IST) / IST * 100
     eedc_signed = []
     sc_signed = []
+    # Ausreißer-Schwelle: ein Tag, an dem irgendeine Quelle > 50 % daneben lag,
+    # gilt als Ausreißer (Sensor-Aussetzer, Datenlücke …). Bewusst KEIN stiller
+    # Cap (#296 #9) — die Tage bleiben sichtbar, MAE/MBE schließt sie nur auf
+    # Wunsch aus.
+    AUSREISSER_SCHWELLE = 50.0
+    anzahl_ausreisser = 0
 
     # PV-IST über den SoT-Helper `summe_pv_bkw_kwh` — Whitelist und v>0-Filter
     # gehören zentral nach `core/berechnungen/energie.py` (ADR-001, BKW-Drift-
@@ -650,21 +820,41 @@ async def get_prognosen_genauigkeit(
         if lernfaktor is not None and tz.pv_prognose_kwh and tz.pv_prognose_kwh > 0:
             eedc_kwh = tz.pv_prognose_kwh * lernfaktor
 
+        # Vorzeichenbehaftete relative Tagesfehler je Quelle (nur bei brauchbarem IST)
+        om_err = eedc_err = sc_err = None
+        if ist_kwh is not None and ist_kwh > 0.5:
+            if tz.pv_prognose_kwh and tz.pv_prognose_kwh > 0:
+                om_err = (tz.pv_prognose_kwh - ist_kwh) / ist_kwh * 100
+            if eedc_kwh is not None and eedc_kwh > 0:
+                eedc_err = (eedc_kwh - ist_kwh) / ist_kwh * 100
+            if tz.solcast_prognose_kwh and tz.solcast_prognose_kwh > 0:
+                sc_err = (tz.solcast_prognose_kwh - ist_kwh) / ist_kwh * 100
+
+        abweichungen = [abs(e) for e in (om_err, eedc_err, sc_err) if e is not None]
+        ist_ausreisser = bool(abweichungen) and max(abweichungen) > AUSREISSER_SCHWELLE
+        if ist_ausreisser:
+            anzahl_ausreisser += 1
+
         eintraege.append(GenauigkeitsEintrag(
             datum=tz.datum.isoformat(),
             openmeteo_kwh=round(tz.pv_prognose_kwh, 1) if tz.pv_prognose_kwh is not None else None,
             eedc_kwh=round(eedc_kwh, 1) if eedc_kwh is not None else None,
             solcast_kwh=round(tz.solcast_prognose_kwh, 1) if tz.solcast_prognose_kwh is not None else None,
             ist_kwh=round(ist_kwh, 1) if ist_kwh is not None else None,
+            wetter_symbol=wetter_pro_tag.get(tz.datum),
+            temperatur_max_c=round(tz.temperatur_max_c) if tz.temperatur_max_c is not None else None,
+            ist_ausreisser=ist_ausreisser,
         ))
 
-        if ist_kwh is not None and ist_kwh > 0.5:
-            if tz.pv_prognose_kwh and tz.pv_prognose_kwh > 0:
-                om_signed.append((tz.pv_prognose_kwh - ist_kwh) / ist_kwh * 100)
-            if eedc_kwh is not None and eedc_kwh > 0:
-                eedc_signed.append((eedc_kwh - ist_kwh) / ist_kwh * 100)
-            if tz.solcast_prognose_kwh and tz.solcast_prognose_kwh > 0:
-                sc_signed.append((tz.solcast_prognose_kwh - ist_kwh) / ist_kwh * 100)
+        # Auf Wunsch Ausreißer-Tage aus der MAE/MBE-Aggregation ausschließen (#296 #9).
+        if ausreisser_ausblenden and ist_ausreisser:
+            continue
+        if om_err is not None:
+            om_signed.append(om_err)
+        if eedc_err is not None:
+            eedc_signed.append(eedc_err)
+        if sc_err is not None:
+            sc_signed.append(sc_err)
 
     def _mae(xs):
         return round(sum(abs(x) for x in xs) / len(xs), 1) if xs else None
@@ -695,4 +885,6 @@ async def get_prognosen_genauigkeit(
         solcast_mbe_prozent=_mbe(sc_signed),
         solcast_asymmetrie=_asymmetrie(sc_signed),
         anzahl_tage=len(eintraege),
+        anzahl_ausreisser=anzahl_ausreisser,
+        ausreisser_schwelle_prozent=AUSREISSER_SCHWELLE,
     )

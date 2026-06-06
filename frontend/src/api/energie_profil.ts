@@ -25,6 +25,8 @@ export interface StundenWert {
   komponenten: Record<string, number> | null
   // WP-Kompressor-Starts in dieser Stunde (Summe über alle WPs der Anlage, Issue #136)
   wp_starts_anzahl: number | null
+  // WP-Betriebsstunden in dieser Stunde (Summe über alle WPs der Anlage, Issue #238)
+  wp_betriebsstunden: number | null
 }
 
 export interface StundenAntwort {

@@ -74,6 +74,7 @@ _TZ_SCHREIBFELDER_PROGNOSE: tuple[str, ...] = (
     "solcast_p90_kwh",
     "pv_prognose_stundenprofil",
     "solcast_prognose_stundenprofil",
+    "sfml_prognose_stundenprofil",
 )
 
 logger = logging.getLogger(__name__)
@@ -854,6 +855,7 @@ async def _speichere_prognose(
     solcast_p90_kwh: float | None = None,
     pv_stundenprofil: list[float] | None = None,
     solcast_stundenprofil: list[float] | None = None,
+    sfml_stundenprofil: list[float] | None = None,
 ):
     """
     Speichert die PV-Tagesprognose in TagesZusammenfassung (Upsert).
@@ -916,6 +918,8 @@ async def _speichere_prognose(
                     tz.pv_prognose_stundenprofil = pv_stundenprofil
                 if solcast_stundenprofil is not None and tz.solcast_prognose_stundenprofil is None:
                     tz.solcast_prognose_stundenprofil = solcast_stundenprofil
+                if sfml_stundenprofil is not None and tz.sfml_prognose_stundenprofil is None:
+                    tz.sfml_prognose_stundenprofil = sfml_stundenprofil
             else:
                 tz = TagesZusammenfassung(
                     anlage_id=anlage_id,
@@ -927,6 +931,7 @@ async def _speichere_prognose(
                     solcast_p90_kwh=solcast_p90_kwh,
                     pv_prognose_stundenprofil=pv_stundenprofil,
                     solcast_prognose_stundenprofil=solcast_stundenprofil,
+                    sfml_prognose_stundenprofil=sfml_stundenprofil,
                     stunden_verfuegbar=0,
                     datenquelle="wetter_prognose",
                 )
@@ -1241,18 +1246,52 @@ async def get_live_wetter(
         sfml_kwh = None
         sfml_tomorrow = None
         sfml_accuracy = None
+        sfml_stundenprofil_heute = None  # 24 Backward-Slots (kWh), für Persistenz
 
         if pq.ist_sfml:
             try:
                 from backend.services.prognose_discovery import discover_prognose_sensoren
+                from backend.services.prognose_adapter import (
+                    sfml_stundenprofil_aus_hours,
+                    sfml_stundenprofile_aus_forecast,
+                )
                 sfml_disc = await discover_prognose_sensoren("sfml")
                 if sfml_disc.gefunden:
                     sfml_kwh = sfml_disc.wert("heute_kwh")
                     sfml_tomorrow = sfml_disc.wert("morgen_kwh")
                     sfml_accuracy = sfml_disc.wert("genauigkeit_30d")
 
-                    # Tages-kWh auf GTI-Kurvenform verteilen
-                    if sfml_kwh is not None and sfml_kwh > 0 and profil:
+                    # Echtes SFML-Stundenprofil bevorzugen (evcc `forecast`,
+                    # 3 Tage stündlich, Wh). Fallback: `prognose_heute.hours`
+                    # (24 h, kWh). KEINE GTI-Schmier mehr, solange ein echtes
+                    # Stundenprofil vorliegt — Einzelquellen-Treue (#110 „A").
+                    heute_d = date.today()
+                    forecast_attr = sfml_disc.attribut("stundenprofil")
+                    if forecast_attr:
+                        tage = sfml_stundenprofile_aus_forecast(forecast_attr, heute_d)
+                        if tage and any(v for v in tage[0]):
+                            sfml_stundenprofil_heute = tage[0]
+                    if sfml_stundenprofil_heute is None:
+                        hours_attr = sfml_disc.attribut("heute_kwh")
+                        if hours_attr:
+                            kandidat = sfml_stundenprofil_aus_hours(hours_attr)
+                            if any(v for v in kandidat):
+                                sfml_stundenprofil_heute = kandidat
+
+                    if sfml_stundenprofil_heute is not None and profil:
+                        # profil-Eintrag der Uhr-Stunde h trägt Backward-Slot h
+                        # (wie pv_ertrag_kw, slot_konvention #297) → 1:1-Mapping.
+                        for p in profil:
+                            h = int(p["zeit"].split(":")[0])
+                            if 0 <= h < 24:
+                                p["pv_ml_prognose_kw"] = round(sfml_stundenprofil_heute[h], 2)
+                    elif sfml_kwh is not None and sfml_kwh > 0 and profil:
+                        # Fallback (kein Stundenattribut): Tages-kWh über
+                        # GTI-Kurvenform schmieren — alter Pfad, jetzt geloggt.
+                        logger.debug(
+                            "SFML ohne Stundenprofil-Attribut — Fallback auf "
+                            "GTI-Schmier (Tages-kWh=%s)", sfml_kwh,
+                        )
                         gti_summe = sum(p["pv_ertrag_kw"] for p in profil)
                         if gti_summe > 0:
                             sfml_factor = sfml_kwh / gti_summe
@@ -1323,7 +1362,8 @@ async def get_live_wetter(
         # Das OpenMeteo-Stundenprofil stammt aus demselben (kollabierten) Profil —
         # bei Unvollständigkeit ebenfalls nicht einfrieren (first-write-wins).
         om_stundenprofil = None if om_unvollstaendig else pv_stundenprofil
-        if om_prognose is not None or solcast_kwh is not None:
+        if (om_prognose is not None or solcast_kwh is not None
+                or sfml_kwh is not None or sfml_stundenprofil_heute is not None):
             asyncio.create_task(
                 _speichere_prognose(
                     anlage.id, date.today(), om_prognose, sfml_kwh,
@@ -1332,6 +1372,7 @@ async def get_live_wetter(
                     solcast_p90_kwh=solcast_p90,
                     pv_stundenprofil=om_stundenprofil,
                     solcast_stundenprofil=solcast_stundenprofil,
+                    sfml_stundenprofil=sfml_stundenprofil_heute,
                 )
             )
 

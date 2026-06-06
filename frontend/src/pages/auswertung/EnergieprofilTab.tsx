@@ -513,6 +513,7 @@ const TD_COLUMNS: TdColDef[] = [
   { key: 'hausverbrauch',  label: 'Hausverbrauch',   unit: 'kW', group: 'verbrauch', decimals: 2, isSum: true,  defaultVisible: true,  calc: true   },
   { key: 'waermepumpe_kw', label: 'Wärmepumpe',      unit: 'kW', group: 'verbrauch', decimals: 2, isSum: true,  defaultVisible: true                },
   { key: 'wp_starts_anzahl', label: 'WP-Starts',     unit: '',   group: 'verbrauch', decimals: 0, isSum: true,  defaultVisible: false               },
+  { key: 'wp_betriebsstunden', label: 'WP-Betriebsstd.', unit: 'h', group: 'verbrauch', decimals: 2, isSum: true, defaultVisible: false             },
   { key: 'wallbox_kw',     label: 'Wallbox',         unit: 'kW', group: 'verbrauch', decimals: 2, isSum: true,  defaultVisible: true                },
   // Bilanz
   { key: 'ueberschuss_kw', label: 'Überschuss',      unit: 'kW', group: 'bilanz',    decimals: 2, isSum: true,  defaultVisible: false               },

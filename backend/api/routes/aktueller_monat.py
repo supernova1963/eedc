@@ -139,6 +139,10 @@ class AktuellerMonatResponse(BaseModel):
     # über die Tage des Monats, summiert über alle WP-Investitionen.
     wp_starts_max_tag: Optional[int] = None
     wp_starts_summe_monat: Optional[int] = None
+    # Issue #238: Betriebsstunden analog zu den Starts (gleiche Counter-Architektur,
+    # Feld `wp_betriebsstunden` in komponenten_starts). Stunden → float.
+    wp_betriebsstunden_max_tag: Optional[float] = None
+    wp_betriebsstunden_summe_monat: Optional[float] = None
     hat_waermepumpe: bool = False
 
     # Komponenten — E-Mobilität
@@ -1254,15 +1258,17 @@ async def get_aktueller_monat(
         for i in investitionen
     )
 
-    # ── Issue #169: Kompressor-Starts pro Monat aus TagesZusammenfassung ──
+    # ── Issue #169/#238: WP-Counter pro Monat aus TagesZusammenfassung ──
     # Quelle: TagesZusammenfassung.komponenten_starts (JSON, Form
-    # {"wp_starts_anzahl": {"<inv_id>": <int>}}). Pro Tag des Monats werden die
-    # Counts aller WP-Investitionen summiert (= Tagessumme der Anlage), daraus
-    # max(Tagessumme) und Σ(Tagessumme im Monat). Zeigt was EEDC erfasst hat —
-    # Drift gegenüber dem Hersteller-Counter (Cockpit) wird im Daten-Checker
-    # ausgewiesen, nicht hier verrechnet.
+    # {"wp_starts_anzahl": {"<inv_id>": <int>}, "wp_betriebsstunden": {...}}). Pro
+    # Tag des Monats werden die Werte aller WP-Investitionen summiert (= Tagessumme
+    # der Anlage), daraus max(Tagessumme) und Σ(Tagessumme im Monat). Zeigt was EEDC
+    # erfasst hat — Drift gegenüber dem Hersteller-Counter (Cockpit) wird im
+    # Daten-Checker ausgewiesen, nicht hier verrechnet. Starts = int, Stunden = float.
     wp_starts_max_tag: Optional[int] = None
     wp_starts_summe_monat: Optional[int] = None
+    wp_betriebsstunden_max_tag: Optional[float] = None
+    wp_betriebsstunden_summe_monat: Optional[float] = None
     if hat_waermepumpe:
         from backend.models.tages_energie_profil import TagesZusammenfassung
         from sqlalchemy import extract
@@ -1278,18 +1284,31 @@ async def get_aktueller_monat(
             .where(extract("month", TagesZusammenfassung.datum) == monat)
             .where(TagesZusammenfassung.komponenten_starts.is_not(None))
         )
-        tagessummen: list[int] = []
+
+        def _tagessumme(komp: dict | None, feld: str) -> float:
+            """Summe eines Counter-Felds über alle aktiven WP-Investitionen an einem Tag."""
+            feld_map = (komp or {}).get(feld) or {}
+            tag_sum = 0.0
+            for inv_id_str, wert in feld_map.items():
+                if inv_id_str in wp_inv_id_strs and isinstance(wert, (int, float)) and wert > 0:
+                    tag_sum += float(wert)
+            return tag_sum
+
+        starts_tagessummen: list[int] = []
+        stunden_tagessummen: list[float] = []
         for (komp_starts,) in tz_result.all():
-            wp_map = (komp_starts or {}).get("wp_starts_anzahl") or {}
-            tag_sum = 0
-            for inv_id_str, count in wp_map.items():
-                if inv_id_str in wp_inv_id_strs and isinstance(count, (int, float)) and count > 0:
-                    tag_sum += int(count)
-            if tag_sum > 0:
-                tagessummen.append(tag_sum)
-        if tagessummen:
-            wp_starts_max_tag = max(tagessummen)
-            wp_starts_summe_monat = sum(tagessummen)
+            s = _tagessumme(komp_starts, "wp_starts_anzahl")
+            if s > 0:
+                starts_tagessummen.append(int(s))
+            h = _tagessumme(komp_starts, "wp_betriebsstunden")
+            if h > 0:
+                stunden_tagessummen.append(h)
+        if starts_tagessummen:
+            wp_starts_max_tag = max(starts_tagessummen)
+            wp_starts_summe_monat = sum(starts_tagessummen)
+        if stunden_tagessummen:
+            wp_betriebsstunden_max_tag = round(max(stunden_tagessummen), 1)
+            wp_betriebsstunden_summe_monat = round(sum(stunden_tagessummen), 1)
 
 
     hat_emobilitaet = any(
@@ -1553,6 +1572,8 @@ async def get_aktueller_monat(
         wp_strom_warmwasser_kwh=wp_strom_warmwasser,
         wp_starts_max_tag=wp_starts_max_tag,
         wp_starts_summe_monat=wp_starts_summe_monat,
+        wp_betriebsstunden_max_tag=wp_betriebsstunden_max_tag,
+        wp_betriebsstunden_summe_monat=wp_betriebsstunden_summe_monat,
         hat_waermepumpe=hat_waermepumpe,
         # Komponenten — E-Mobilität
         emob_ladung_kwh=get_val("emob_ladung_kwh"),

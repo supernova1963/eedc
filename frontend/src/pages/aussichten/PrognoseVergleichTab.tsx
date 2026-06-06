@@ -197,6 +197,10 @@ export default function PrognoseVergleichTab({ anlageId }: Props) {
   const [error, setError] = useState<string | null>(null)
   const [reloadTick, setReloadTick] = useState(0)
   const [genauigkeitsModus, setGenauigkeitsModus] = useState<'kompakt' | 'diagnostisch'>('kompakt')
+  // Zeitfenster fürs Genauigkeits-Tracking (Backend: 7–90). Default 10 (#296 #8/#9).
+  const [genauigkeitsTage, setGenauigkeitsTage] = useState(10)
+  // Ausreißer-Tage aus MAE/MBE ausschließen — Default AUS (#296 #9, kein stiller Cap).
+  const [ausreisserAusblenden, setAusreisserAusblenden] = useState(false)
   // Wetter-Backfill für Stratifizierung
   const [backfillRunning, setBackfillRunning] = useState(false)
   const [backfillResult, setBackfillResult] = useState<string | null>(null)
@@ -234,12 +238,11 @@ export default function PrognoseVergleichTab({ anlageId }: Props) {
       setLoading(true)
       setError(null)
       try {
-        const [prognosen, accuracy, strat] = await Promise.all([
+        const [prognosen, strat] = await Promise.all([
           aussichtenApi.getPrognosenVergleich(anlageId),
-          aussichtenApi.getPrognosenGenauigkeit(anlageId, 30).catch(() => null),
           getStratifizierung(anlageId, 90).catch(() => null),
         ])
-        if (!cancelled) { setData(prognosen); setGenauigkeit(accuracy); setStratifizierung(strat) }
+        if (!cancelled) { setData(prognosen); setStratifizierung(strat) }
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : 'Fehler beim Laden')
       } finally {
@@ -249,6 +252,16 @@ export default function PrognoseVergleichTab({ anlageId }: Props) {
     load()
     return () => { cancelled = true }
   }, [anlageId, reloadTick])
+
+  // Genauigkeits-Tracking eigenständig — reagiert auf den Tage-Selector (#296 #8),
+  // ohne die teuren Prognose-/Wetter-Abrufe neu auszulösen.
+  useEffect(() => {
+    let cancelled = false
+    aussichtenApi.getPrognosenGenauigkeit(anlageId, genauigkeitsTage, ausreisserAusblenden)
+      .then(acc => { if (!cancelled) setGenauigkeit(acc) })
+      .catch(() => { if (!cancelled) setGenauigkeit(null) })
+    return () => { cancelled = true }
+  }, [anlageId, genauigkeitsTage, ausreisserAusblenden, reloadTick])
 
   if (loading) return <div className="flex justify-center py-12"><LoadingSpinner /></div>
   if (error) return <Alert type="error">{error}</Alert>
@@ -294,10 +307,9 @@ export default function PrognoseVergleichTab({ anlageId }: Props) {
   const hMax = helleStunden.length > 0 ? Math.min(23, helleStunden[helleStunden.length - 1] + 1) : 23
   const visibleChartData = chartData.slice(hMin, hMax + 1)
 
-  // ── 7-Tage-Daten (rapahl-PN 2026-05-19): 4 Tage Vergangenheit + 3 Tage Zukunft. ──
-  // Heute steht oben in der KPI-Matrix und wird hier ausgelassen. Historische
-  // Tage ohne Wetter-Icon/Temp/Solcast-Band — diese Forecast-Felder ergeben
-  // im Rückblick keinen Sinn, IST und Tages-Vorhersagewerte reichen.
+  // ── 7-Tage-Daten (rapahl-PN 2026-05-19): 4 Tage Vergangenheit + Heute + 3 Tage Zukunft. ──
+  // Wettersymbol/Temp jetzt auch für Vergangenheitstage (#296 #2, aus dem
+  // Stundenprofil aggregiert) und Heute-Zeile aus IST-bisher + Restprognose (#1).
   const heute = new Date().toISOString().slice(0, 10)
   const historisch = (genauigkeit?.tage ?? [])
     .filter(t => t.datum < heute)
@@ -309,10 +321,27 @@ export default function PrognoseVergleichTab({ anlageId }: Props) {
       sc_kwh: t.solcast_kwh,
       sc_p10: null as number | null,
       sc_p90: null as number | null,
-      wetter_symbol: null as string | null,
-      temp_max: null as number | null,
+      wetter_symbol: t.wetter_symbol ?? null,
+      temp_max: t.temperatur_max_c ?? null,
       ist_kwh: t.ist_kwh,
+      ist_partiell: false,
     }))
+  // #1: Heute-Zeile — Tages-Forecasts je Quelle, IST = bisher aufgelaufener Ertrag
+  // (als partiell markiert, weil der Tag noch läuft). Wetter aus dem heutigen
+  // OpenMeteo-Tag.
+  const omHeute = data.openmeteo_tage.find(om => om.datum === heute)
+  const heuteZeile = {
+    datum: heute,
+    om_kwh: data.openmeteo_heute_kwh,
+    eedc_kwh: hasEedc ? data.eedc_heute_kwh : null,
+    sc_kwh: data.solcast_heute_kwh,
+    sc_p10: data.solcast_p10_kwh ?? null,
+    sc_p90: data.solcast_p90_kwh ?? null,
+    wetter_symbol: (omHeute?.wetter_symbol ?? null) as string | null,
+    temp_max: (omHeute?.temperatur_max_c ?? null) as number | null,
+    ist_kwh: data.ist_heute_kwh,
+    ist_partiell: true,
+  }
   const zukunft = data.openmeteo_tage
     .filter(om => om.datum > heute)
     .slice(0, 3)
@@ -328,9 +357,10 @@ export default function PrognoseVergleichTab({ anlageId }: Props) {
         wetter_symbol: om.wetter_symbol as string | null,
         temp_max: om.temperatur_max_c as number | null,
         ist_kwh: null as number | null,
+        ist_partiell: false,
       }
     })
-  const vergleichsTage = [...historisch, ...zukunft]
+  const vergleichsTage = [...historisch, heuteZeile, ...zukunft]
 
   return (
     <div className="space-y-6">
@@ -399,7 +429,7 @@ export default function PrognoseVergleichTab({ anlageId }: Props) {
               {/* Verbleibend */}
               <tr className="border-b border-gray-100 dark:border-gray-800">
                 <td className="py-2 px-3 text-gray-500 dark:text-gray-400 text-xs">
-                  <SimpleTooltip text="IST bisherig + beste Prognose für verbleibende Stunden (Solcast bevorzugt, sonst eedc/OpenMeteo)">
+                  <SimpleTooltip text="Tagesprojektion: IST bisher + Prognose für die restlichen Stunden. Pro Spalte mit der jeweiligen Quelle; Gesamtspalte mit der in den Einstellungen gewählten Prognosequelle.">
                     <span>↳ Verbleibend</span>
                   </SimpleTooltip>
                 </td>
@@ -782,8 +812,11 @@ export default function PrognoseVergleichTab({ anlageId }: Props) {
                 const ref = tag.ist_kwh
                 const prognosen = [tag.om_kwh, tag.eedc_kwh, tag.sc_kwh].filter((v): v is number => v !== null)
                 const mean = prognosen.length > 1 ? prognosen.reduce((a, b) => a + b, 0) / prognosen.length : null
-                const devRef = ref ?? mean
-                // Trennlinie zwischen letzter Vergangenheits- und erster Zukunfts-Zeile.
+                // Heute: IST ist nur bisher aufgelaufen (Tag läuft) — nicht als
+                // Abweichungs-Referenz für Tages-Forecasts nutzen (#296 #1), sonst
+                // mean. Vergangenheit: IST; Zukunft: mean.
+                const devRef = tag.ist_partiell ? mean : (ref ?? mean)
+                // Trennlinie zwischen Heute/Vergangenheit und erster Zukunfts-Zeile.
                 const isFirstFuture = idx > 0 && vergleichsTage[idx - 1].ist_kwh !== null && tag.ist_kwh === null
                 return (
                   <tr
@@ -819,13 +852,20 @@ export default function PrognoseVergleichTab({ anlageId }: Props) {
                           <>
                             <span className="font-semibold">{tag.sc_kwh.toFixed(1)}</span>
                             {devRef !== null && <DevBadge prognose={tag.sc_kwh} ist={devRef} />}
-                            <span className="text-gray-400 text-xs ml-1">({tag.sc_p10?.toFixed(0)}–{tag.sc_p90?.toFixed(0)})</span>
+                            {tag.sc_p10 !== null && tag.sc_p90 !== null && (
+                              <span className="text-gray-400 text-xs ml-1">({tag.sc_p10.toFixed(0)}–{tag.sc_p90.toFixed(0)})</span>
+                            )}
                           </>
                         ) : '—'}
                       </td>
                     )}
                     <td className="py-2 pl-2 pr-3 text-right font-mono font-semibold text-green-600 dark:text-green-400">
-                      {tag.ist_kwh !== null ? tag.ist_kwh.toFixed(1) : <span className="text-gray-400 text-xs">⌀{mean?.toFixed(0)}</span>}
+                      {tag.ist_kwh !== null ? (
+                        <>
+                          {tag.ist_kwh.toFixed(1)}
+                          {tag.ist_partiell && <span className="text-gray-400 text-[10px] font-normal ml-1">bisher</span>}
+                        </>
+                      ) : <span className="text-gray-400 text-xs">⌀{mean?.toFixed(0)}</span>}
                     </td>
                   </tr>
                 )
@@ -843,6 +883,19 @@ export default function PrognoseVergleichTab({ anlageId }: Props) {
             <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
               Genauigkeits-Tracking <span className="text-sm font-normal text-gray-500 ml-2">(letzte {genauigkeit.anzahl_tage} Tage)</span>
             </h3>
+            <div className="flex items-center gap-3">
+            <div className="flex rounded-lg border border-gray-300 dark:border-gray-600 text-xs overflow-hidden">
+              {([7, 10, 30] as const).map(t => (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => setGenauigkeitsTage(t)}
+                  className={`px-3 py-1 transition-colors ${genauigkeitsTage === t ? 'bg-primary-600 text-white' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'}`}
+                >
+                  {t} T
+                </button>
+              ))}
+            </div>
             <div className="flex rounded-lg border border-gray-300 dark:border-gray-600 text-xs overflow-hidden">
               <button
                 type="button"
@@ -858,6 +911,20 @@ export default function PrognoseVergleichTab({ anlageId }: Props) {
               >
                 Diagnostisch
               </button>
+            </div>
+            <SimpleTooltip text={`Ausreißer = Tage, an denen eine Quelle > ${(genauigkeit.ausreisser_schwelle_prozent ?? 50).toFixed(0)} % daneben lag (z. B. Sensor-Aussetzer). Standardmäßig bleiben sie in der Statistik — gerade Schlechtprognose-Tage haben Erkenntniswert. Hier optional ausblenden.`}>
+              <label className={`flex items-center gap-1.5 text-xs cursor-pointer select-none ${(genauigkeit.anzahl_ausreisser ?? 0) === 0 ? 'opacity-50' : ''}`}>
+                <input
+                  type="checkbox"
+                  checked={ausreisserAusblenden}
+                  onChange={e => setAusreisserAusblenden(e.target.checked)}
+                  className="h-3.5 w-3.5 rounded border-gray-300 dark:border-gray-600 text-primary-600 focus:ring-primary-500"
+                />
+                <span className="text-gray-600 dark:text-gray-400">
+                  Ausreißer ausblenden{(genauigkeit.anzahl_ausreisser ?? 0) > 0 ? ` (${genauigkeit.anzahl_ausreisser})` : ''}
+                </span>
+              </label>
+            </SimpleTooltip>
             </div>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
@@ -880,6 +947,13 @@ export default function PrognoseVergleichTab({ anlageId }: Props) {
                 <AsymmetrieCard label="Solcast" asym={genauigkeit.solcast_asymmetrie} color="text-blue-500" />
               </>
             )}
+          </div>
+          <div className="text-xs text-gray-500 dark:text-gray-400 mb-2">
+            MAE/Bias oben über {genauigkeit.anzahl_tage} Tage
+            {ausreisserAusblenden && (genauigkeit.anzahl_ausreisser ?? 0) > 0
+              ? ` (ohne ${genauigkeit.anzahl_ausreisser} Ausreißer)`
+              : ''}
+            {' '}· Tabelle unten: letzte 7 Tage
           </div>
           <DatendichtFallback>
           <div className="overflow-x-auto">
@@ -905,15 +979,32 @@ export default function PrognoseVergleichTab({ anlageId }: Props) {
                 </tr>
               </thead>
               <tbody>
-                {genauigkeit.tage.slice(-7).reverse().map((tag) => (
-                  <tr key={tag.datum} className="border-b border-gray-100 dark:border-gray-800">
-                    <td className="py-2 px-3 text-gray-900 dark:text-white">{formatDatum(tag.datum)}</td>
+                {genauigkeit.tage.slice(-7).reverse().map((tag) => {
+                  const ausgeschlossen = ausreisserAusblenden && tag.ist_ausreisser
+                  return (
+                  <tr
+                    key={tag.datum}
+                    className={`border-b border-gray-100 dark:border-gray-800 ${
+                      tag.ist_ausreisser ? 'border-l-2 border-l-amber-400 dark:border-l-amber-500' : ''
+                    } ${ausgeschlossen ? 'opacity-40' : ''}`}
+                  >
+                    <td className="py-2 px-3 text-gray-900 dark:text-white">
+                      {formatDatum(tag.datum)}
+                      {tag.ist_ausreisser && (
+                        <SimpleTooltip text={ausgeschlossen
+                          ? 'Ausreißer — aus MAE/MBE ausgeschlossen'
+                          : 'Ausreißer — große Abweichung, bleibt in der Statistik'}>
+                          <span className="ml-1 text-amber-500 text-[10px]">⚠</span>
+                        </SimpleTooltip>
+                      )}
+                    </td>
                     <td className="py-2 px-3 text-right font-mono">{tag.openmeteo_kwh !== null ? <AbweichungCell prognose={tag.openmeteo_kwh} ist={tag.ist_kwh} /> : '—'}</td>
                     <td className="py-2 px-3 text-right font-mono">{tag.eedc_kwh !== null ? <AbweichungCell prognose={tag.eedc_kwh} ist={tag.ist_kwh} /> : <span className="text-gray-400">—</span>}</td>
                     <td className="py-2 px-3 text-right font-mono">{tag.solcast_kwh !== null ? <AbweichungCell prognose={tag.solcast_kwh} ist={tag.ist_kwh} /> : <span className="text-gray-400">—</span>}</td>
                     <td className="py-2 px-3 text-right font-mono font-semibold text-green-600 dark:text-green-400">{tag.ist_kwh !== null ? tag.ist_kwh.toFixed(1) : '—'}</td>
                   </tr>
-                ))}
+                  )
+                })}
               </tbody>
             </table>
           </div>

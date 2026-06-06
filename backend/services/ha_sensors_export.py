@@ -292,6 +292,26 @@ WAERMEPUMPE_SENSOREN = [
         device_class="monetary",
         state_class="total",
     ),
+    # Issue #238: Counter-KPIs (nur wenn der jeweilige Zähler gemappt ist).
+    SensorDefinition(
+        key="wp_kompressor_starts",
+        name="Kompressor-Starts",
+        unit="",
+        icon="mdi:restart",
+        category=SensorCategory.WAERMEPUMPE,
+        formel="Σ erfasste Kompressor-Starts (Laufzeit der WP)",
+        state_class="total",
+    ),
+    SensorDefinition(
+        key="wp_betriebsstunden",
+        name="Betriebsstunden",
+        unit="h",
+        icon="mdi:clock-outline",
+        category=SensorCategory.WAERMEPUMPE,
+        formel="Σ erfasste Betriebsstunden (Laufzeit der WP)",
+        device_class="duration",
+        state_class="total",
+    ),
 ]
 
 # =============================================================================

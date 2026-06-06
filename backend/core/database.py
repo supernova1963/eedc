@@ -462,6 +462,9 @@ async def run_migrations(conn):
                 connection.execute(text('ALTER TABLE tages_zusammenfassung ADD COLUMN pv_prognose_stundenprofil JSON'))
             if 'solcast_prognose_stundenprofil' not in existing_columns:
                 connection.execute(text('ALTER TABLE tages_zusammenfassung ADD COLUMN solcast_prognose_stundenprofil JSON'))
+            # Tracking #110 „A": SFML/Tom-HA echtes Stundenprofil (Backward-Slots)
+            if 'sfml_prognose_stundenprofil' not in existing_columns:
+                connection.execute(text('ALTER TABLE tages_zusammenfassung ADD COLUMN sfml_prognose_stundenprofil JSON'))
             # v3.24.0 (Issue #136): WP-Starts und andere Counter pro Komponente
             if 'komponenten_starts' not in existing_columns:
                 connection.execute(text('ALTER TABLE tages_zusammenfassung ADD COLUMN komponenten_starts JSON'))
@@ -488,6 +491,9 @@ async def run_migrations(conn):
             # v3.24.0 (Issue #136): WP-Kompressor-Starts pro Stunde
             if 'wp_starts_anzahl' not in existing_columns:
                 connection.execute(text('ALTER TABLE tages_energie_profil ADD COLUMN wp_starts_anzahl INTEGER'))
+            # Issue #238: WP-Betriebsstunden pro Stunde (analog Kompressor-Starts)
+            if 'wp_betriebsstunden' not in existing_columns:
+                connection.execute(text('ALTER TABLE tages_energie_profil ADD COLUMN wp_betriebsstunden FLOAT'))
             # v3.26.0: Stündliches Wetter (Bewölkung, Niederschlag, WMO-Code)
             # für Wetter-Stratifizierung und Korrekturprofil — siehe KONZEPT-KORREKTURPROFIL.md
             if 'bewoelkung_prozent' not in existing_columns:

@@ -43,8 +43,9 @@ Pillow>=10.0.0
 pillow-heif>=0.16.0  # HEIC/HEIF Support (iPhone-Fotos)
 
 # PDF Generation
-# WeasyPrint ist die Default-Engine (HTML/CSS + inline-SVG-Charts, #303).
-# reportlab bleibt als Fallback (PDF_ENGINE=reportlab) bis Phase-5-Aufräumen.
+# WeasyPrint ist überall Default-Engine (HTML/CSS + inline-SVG-Charts, #303),
+# auch im HA-Add-on (config.yaml/run.sh). reportlab bleibt nur noch eine
+# Version als Notausgang (PDF_ENGINE=reportlab); Entfernung = Phase 5.
 # KEIN matplotlib/numpy mehr: deren X86_V2-numpy-Baseline crasht auf
 # Proxmox-kvm64-VMs — Charts werden in services/pdf/charts.py als SVG erzeugt.
 reportlab>=4.0.0

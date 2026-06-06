@@ -28,10 +28,18 @@ nur für IST (dort ist der Tageswert konstruktiv die Slot-Summe).
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
 
-from backend.core.berechnungen.slot_konvention import openmeteo_preceding_hour_slot
+from backend.core.berechnungen.slot_konvention import (
+    backward_slot_aus_period_end,
+    backward_slot_aus_period_start,
+    openmeteo_preceding_hour_slot,
+)
+
+logger = logging.getLogger(__name__)
 
 # Leistungsabnahme pro °C über 25 °C (typisch Silizium). Bislang in mehreren
 # Modulen dupliziert (prognosen.py, live_wetter.py, solar_forecast_service.py);
@@ -127,6 +135,120 @@ def solcast_profil(solcast, datum: date | None = None) -> StundenProfil:
         tageswert_kwh=solcast.daily_kwh,
         p10_kw=p10,
         p90_kw=p90,
+    )
+
+
+# ── SFML (Tom-HA / Solar Forecast ML) Stundenprofil ──────────────────────────
+# Anders als OpenMeteo/Solcast liefert SFML ein *echtes* mehrtägiges Stundenprofil
+# (evcc-Sensor `…_evcc_solar_prognose`, Attribut `forecast`). Diese Normalizer
+# bilden die Roh-Buckets auf das kanonische Backward-Slot-Raster ab, damit das
+# Live-Dashboard bei gewählter SFML-Quelle SFMLs eigene Kurvenform zeigt statt
+# SFMLs Tagessumme über die OpenMeteo-GTI-Form zu „schmieren" (Einzelquellen-
+# Treue, Tracking #110 „A"). KEIN Cross-Quellen-Vergleich.
+
+def _parse_lokale_zeit(wert) -> datetime | None:
+    """SFML-Zeitstring → naive Lokalzeit (Europe/Berlin).
+
+    evcc liefert lokale ISO-Strings ohne tz (``2026-06-06T13:00:00``); die
+    Slot-Helper rechnen rein wall-clock. tz-aware Eingaben werden defensiv auf
+    Berliner Lokalzeit reduziert.
+    """
+    if not wert:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(wert).replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(ZoneInfo("Europe/Berlin")).replace(tzinfo=None)
+    return dt
+
+
+def sfml_stundenprofile_aus_forecast(
+    forecast, heute: date, max_tage: int = 3,
+) -> list[list[float]]:
+    """SFML/evcc ``forecast`` (``[{start, end, value}]``, **Wh**) → Tages-Stundenprofile.
+
+    Rückgabe: ``max_tage`` Listen à 24 kWh-Slots (Backward-Konvention #144,
+    Slot ``h`` = Energie ``[h-1, h)``). Index 0 = heute, 1 = morgen, …
+
+    - **Einheit:** evcc liefert Wh → ÷1000 = kWh (KRITISCH: nicht doppelt skalieren).
+    - **Slot:** über das Perioden-Ende (``end``) auf den Backward-Slot abgebildet
+      (``backward_slot_aus_period_end``); fehlt ``end``, dient ``start`` als
+      Fallback (``backward_slot_aus_period_start``). NICHT naiv per Stunde indexiert
+      — die zentrale Slot-Konvention (#144/#297) gilt auch hier, damit SFML im
+      Vergleich deckungsgleich zu OpenMeteo/Solcast/IST liegt.
+    - **Mehrtägig:** Buckets werden über ihr ``slot_date`` den Tages-Offsets ab
+      ``heute`` zugeordnet; alles außerhalb ``[heute, heute+max_tage)`` verworfen.
+    """
+    profile = [[0.0] * 24 for _ in range(max_tage)]
+    if not forecast:
+        return profile
+    for eintrag in forecast:
+        if not isinstance(eintrag, dict):
+            continue
+        wh = eintrag.get("value")
+        if wh is None:
+            continue
+        try:
+            kwh = float(wh) / 1000.0
+        except (ValueError, TypeError):
+            continue
+        ende = _parse_lokale_zeit(eintrag.get("end"))
+        if ende is not None:
+            slot_date, slot = backward_slot_aus_period_end(ende)
+        else:
+            start = _parse_lokale_zeit(eintrag.get("start"))
+            if start is None:
+                continue
+            slot_date, slot = backward_slot_aus_period_start(start)
+        tag_offset = (slot_date - heute).days
+        if 0 <= tag_offset < max_tage and 0 <= slot < 24:
+            profile[tag_offset][slot] += kwh
+    return [[round(v, 3) for v in tag] for tag in profile]
+
+
+def sfml_stundenprofil_aus_hours(hours) -> list[float]:
+    """SFML ``prognose_heute.hours`` (``{"HH:00": kWh}``, 24 h heute) → 24 kWh-Slots
+    (Backward). **Fallback**, wenn die reichere evcc-``forecast`` fehlt — nur heute.
+
+    Schlüssel ``"HH:00"`` = Produktion der Uhr-Stunde ``[HH, HH+1)`` →
+    Backward-Slot ``HH+1`` (vgl. ``backward_slot_aus_period_start`` auf ``HH:00``).
+    Die letzte Stunde (``23:00``) fiele auf Slot 0 des Folgetags und wird verworfen
+    (nachts ~0).
+    """
+    slots = [0.0] * 24
+    if not isinstance(hours, dict):
+        return slots
+    for key, val in hours.items():
+        if val is None:
+            continue
+        try:
+            stunde = int(str(key).split(":")[0])
+            kwh = float(val)
+        except (ValueError, TypeError):
+            continue
+        # period_start-Semantik (HH:00 → Slot HH+1); 23:00 → Folgetag, verworfen.
+        if 0 <= stunde <= 22:
+            slots[stunde + 1] += kwh
+    return [round(v, 3) for v in slots]
+
+
+def sfml_profil(slots_kw, datum: date | None = None) -> StundenProfil:
+    """Verpackt ein bereits Backward-Slot-aligntes SFML-Tagesprofil (24 kWh-Werte)
+    in das kanonische ``StundenProfil`` (für den Vergleich-Tab, analog
+    ``solcast_profil``). Fehlende/None-Slots werden zu 0 — SFML liefert ein
+    durchgehendes Raster."""
+    slots = tuple(
+        round(float(slots_kw[h]), 2) if h < len(slots_kw) and slots_kw[h] is not None else 0.0
+        for h in range(24)
+    )
+    return StundenProfil(
+        datum=datum,
+        quelle="sfml",
+        slots_kw=slots,
+        present_stunden=tuple(range(24)),
+        tageswert_kwh=round(sum(slots), 2),
     )
 
 

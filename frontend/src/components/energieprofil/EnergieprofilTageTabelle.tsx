@@ -17,7 +17,7 @@ interface ColumnConfig {
   label: string
   group: ColumnGroupKey
   getValue: (t: TagesZusammenfassung) => number | null
-  format: 'kwh' | 'kw' | 'percent' | 'temp' | 'zyklen' | 'stunden' | 'ct' | 'int'
+  format: 'kwh' | 'kw' | 'percent' | 'temp' | 'zyklen' | 'stunden' | 'betriebsstunden' | 'ct' | 'int'
   className?: string
   defaultVisible: boolean
   /** Aggregation für Summen-Footer ("none" zeigt keine Aggregat-Zelle). */
@@ -108,6 +108,7 @@ const STATIC_COLUMNS: ColumnConfig[] = [
   { key: 'einsp_neg_preis',   label: 'Einsp. bei neg.', group: 'preise',      getValue: (t) => t.einspeisung_neg_preis_kwh, format: 'kwh', defaultVisible: false, agg: 'sum', tone: 'amber' },
   // Komponenten-Counter (Issue #136). Summe über alle WPs einer Anlage; Footer zeigt Monatssumme.
   { key: 'wp_starts',         label: 'WP-Starts',       group: 'komponenten', getValue: (t) => sumKomponentenStarts(t, 'wp_starts_anzahl'), format: 'int', defaultVisible: false, agg: 'sum', tone: 'amber' },
+  { key: 'wp_betriebsstunden',label: 'WP-Betriebsstd.', group: 'komponenten', getValue: (t) => sumKomponentenStarts(t, 'wp_betriebsstunden'), format: 'betriebsstunden', defaultVisible: false, agg: 'sum', tone: 'amber' },
 ]
 
 // Tonfarbe pro Komponenten-Seite für die dynamischen Diagnose-Spalten.
@@ -165,6 +166,7 @@ function formatValue(val: number | null, format: ColumnConfig['format']): string
       const m = Math.round((val - h) * 60)
       return `${h}h ${m}min`
     }
+    case 'betriebsstunden': return `${val.toLocaleString('de-DE', { maximumFractionDigits: 1 })} h`
     case 'ct':      return `${val.toFixed(1)} ct`
     case 'int':     return val.toLocaleString('de-DE')
     default:        return String(val)

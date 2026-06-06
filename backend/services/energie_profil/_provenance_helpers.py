@@ -31,6 +31,7 @@ _TZ_SKIP_COLUMNS = frozenset({
     "source_provenance", "source_hash",
     # Stunden-Profile sind interne Caches, keine Aggregat-Werte
     "pv_prognose_stundenprofil", "solcast_prognose_stundenprofil",
+    "sfml_prognose_stundenprofil",
 })
 
 # TagesEnergieProfil:

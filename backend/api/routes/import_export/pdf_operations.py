@@ -89,7 +89,7 @@ async def export_pdf(
     - PV-String Vergleich (SOLL vs. IST)
     """
     # ==========================================================================
-    # 0. Engine-Switch (Issue #121, Phase 2 — Default bleibt reportlab)
+    # 0. Engine-Switch (Issue #121/#303): WeasyPrint ist Default, reportlab = Notausgang
     # ==========================================================================
     from backend.core.config import settings as _settings
     if (_settings.pdf_engine or "").lower() == "weasyprint":

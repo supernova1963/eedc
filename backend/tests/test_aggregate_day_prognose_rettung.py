@@ -25,6 +25,9 @@ def test_stundenprofile_in_rettungsliste():
     ihr Fehlen war der Bug."""
     assert "pv_prognose_stundenprofil" in _PROGNOSE_FELDER_RETTEN
     assert "solcast_prognose_stundenprofil" in _PROGNOSE_FELDER_RETTEN
+    # SFML-Stundenprofil (#110 „A") gehört ebenso gerettet, sonst wird der
+    # Day-Ahead-Snapshot der gewählten SFML-Quelle nachts gelöscht.
+    assert "sfml_prognose_stundenprofil" in _PROGNOSE_FELDER_RETTEN
 
 
 def test_rettungsliste_deckt_alle_prognose_felder():
@@ -39,6 +42,7 @@ def test_rettungsliste_deckt_alle_prognose_felder():
         "solcast_p90_kwh",
         "pv_prognose_stundenprofil",
         "solcast_prognose_stundenprofil",
+        "sfml_prognose_stundenprofil",
     }
     fehlend = vom_wetter_endpoint_geschrieben - set(_PROGNOSE_FELDER_RETTEN)
     assert not fehlend, (

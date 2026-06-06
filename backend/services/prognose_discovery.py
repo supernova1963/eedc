@@ -26,11 +26,18 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class DiscoveredSensor:
-    """Ein erkannter Sensor mit aktuellem Wert."""
+    """Ein erkannter Sensor mit aktuellem Wert.
+
+    ``attribut`` trägt — nur für Rollen mit Stundenprofil-Bedarf — die rohe
+    Attribut-Payload (z.B. evcc ``forecast``-Liste oder ``hours``-Dict), damit
+    nachgelagerte Parser SFMLs echtes Stundenprofil nutzen können statt nur den
+    State-Skalar (Tracking #110 „A").
+    """
     entity_id: str
     rolle: str  # z.B. "heute_kwh", "morgen_kwh", "naechste_stunde_kwh"
     wert: Optional[float] = None
     einheit: str = ""
+    attribut: object = None
 
 
 @dataclass
@@ -47,12 +54,21 @@ class PrognoseDiscoveryResult:
         s = self.sensoren.get(rolle)
         return s.wert if s else None
 
+    def attribut(self, rolle: str):
+        """Kurzform: rohe Attribut-Payload einer Rolle (z.B. evcc ``forecast``)
+        oder None."""
+        s = self.sensoren.get(rolle)
+        return s.attribut if s else None
+
 
 # ── Sensor-Pattern-Maps ──────────────────────────────────────────────────────
 # Jeder Eintrag: (Suffix im entity_id, Rolle, Einheit-Erwartung)
 # Suffixe werden case-insensitive gegen das Ende der entity_id gematcht.
 
 SFML_PATTERNS: list[tuple[str, str]] = [
+    # evcc-Sensor mit echtem Mehrtages-Stundenprofil im `forecast`-Attribut —
+    # vor `prognose_heute`/`_morgen` matchen ist unkritisch (eigener Suffix).
+    ("evcc_solar_prognose", "stundenprofil"),
     ("prognose_heute_rest", "heute_rest_kwh"),
     ("prognose_heute", "heute_kwh"),  # NACH _rest, damit _rest nicht fälschlich matcht
     ("prognose_morgen", "morgen_kwh"),
@@ -61,6 +77,15 @@ SFML_PATTERNS: list[tuple[str, str]] = [
     ("genauigkeit_30_tage", "genauigkeit_30d"),
     ("planungsprognose_p10_blend", "p10_blend_kwh"),
 ]
+
+# Rollen, deren HA-**Attribut** (nicht nur State) für das Stundenprofil
+# gebraucht wird. rolle → Attribut-Namen in Prioritätsreihenfolge.
+#   stundenprofil (evcc): `forecast` = [{start, end, value(Wh)}], 3 Tage stündlich
+#   heute_kwh   (prognose_heute):  `hours` = {"HH:00": kWh}, 24 h — Fallback
+SFML_ATTRIBUT_ROLLEN: dict[str, tuple[str, ...]] = {
+    "stundenprofil": ("forecast",),
+    "heute_kwh": ("hours",),
+}
 
 SOLCAST_PATTERNS: list[tuple[str, str]] = [
     ("prognose_heute", "heute_kwh"),
@@ -186,12 +211,22 @@ async def discover_prognose_sensoren(integration: str) -> PrognoseDiscoveryResul
                         except (ValueError, TypeError):
                             pass
 
-                    einheit = (item.get("attributes") or {}).get("unit_of_measurement", "")
+                    attrs = item.get("attributes") or {}
+                    einheit = attrs.get("unit_of_measurement", "")
+
+                    # Stundenprofil-tragendes Attribut mitnehmen (nur SFML-Rollen).
+                    attribut = None
+                    for attr_name in SFML_ATTRIBUT_ROLLEN.get(rolle, ()):
+                        if attrs.get(attr_name) is not None:
+                            attribut = attrs[attr_name]
+                            break
+
                     sensoren[rolle] = DiscoveredSensor(
                         entity_id=eid,
                         rolle=rolle,
                         wert=wert,
                         einheit=einheit,
+                        attribut=attribut,
                     )
                     break  # Nur erstes Pattern matchen
 

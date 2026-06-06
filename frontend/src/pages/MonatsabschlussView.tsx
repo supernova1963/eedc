@@ -13,7 +13,7 @@ import {
   Sun, Battery, Flame, Car, Euro,
   BarChart3, Wrench, Home, Zap, TrendingUp,
   Plug, Gauge, ArrowUpDown, RefreshCw, CalendarClock, Users, Share2,
-  Thermometer, Activity, Power,
+  Thermometer, Activity, Power, Clock,
 } from 'lucide-react'
 import { Card, LoadingSpinner, Alert, KPICard, QuelleBadge, FormelTooltip, fmtCalc, SortableSection, OrderedSections } from '../components/ui'
 import { fmtKpi } from '../lib'
@@ -1359,20 +1359,36 @@ export default function MonatsabschlussView() {
                     formel="(Wärme ÷ 0,9 × Gaspreis − Strom × Strompreis)"
                     subtitle={vj?.wp_strom_kwh != null ? `VJ Strom: ${fmt(vj.wp_strom_kwh, 0)} kWh` : undefined} />
                 </div>
-                {/* Issue #169 + detLAN #185: Kompressor-Starts — Σ Monat
-                    prominent (konsistent zu anderen Σ-Werten), Max/Tag im
-                    Subtitle als Verschleiß-Indikator. */}
-                {d.wp_starts_max_tag != null && d.wp_starts_max_tag > 0 && (
+                {/* Issue #169/#238 + detLAN #185: WP-Counter — Σ Monat prominent
+                    (konsistent zu anderen Σ-Werten), Max/Tag im Subtitle als
+                    Verschleiß- bzw. Auslegungs-Indikator. Starts und Betriebsstunden
+                    teilen sich dieselbe Counter-Quelle, werden aber je einzeln nur
+                    bei vorhandenen Daten gezeigt. */}
+                {((d.wp_starts_max_tag != null && d.wp_starts_max_tag > 0) ||
+                  (d.wp_betriebsstunden_max_tag != null && d.wp_betriebsstunden_max_tag > 0)) && (
                   <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
-                    <KPICard
-                      title="Kompressor-Starts"
-                      value={d.wp_starts_summe_monat != null ? d.wp_starts_summe_monat.toLocaleString('de-DE') : d.wp_starts_max_tag.toString()}
-                      unit=""
-                      icon={Power}
-                      color="gray"
-                      formel="Σ aller Tagessummen im Monat"
-                      subtitle={`Max/Tag: ${d.wp_starts_max_tag}`}
-                    />
+                    {d.wp_starts_max_tag != null && d.wp_starts_max_tag > 0 && (
+                      <KPICard
+                        title="Kompressor-Starts"
+                        value={d.wp_starts_summe_monat != null ? d.wp_starts_summe_monat.toLocaleString('de-DE') : d.wp_starts_max_tag.toString()}
+                        unit=""
+                        icon={Power}
+                        color="gray"
+                        formel="Σ aller Tagessummen im Monat"
+                        subtitle={`Max/Tag: ${d.wp_starts_max_tag}`}
+                      />
+                    )}
+                    {d.wp_betriebsstunden_max_tag != null && d.wp_betriebsstunden_max_tag > 0 && (
+                      <KPICard
+                        title="Betriebsstunden"
+                        value={d.wp_betriebsstunden_summe_monat != null ? fmt(d.wp_betriebsstunden_summe_monat, 1) : fmt(d.wp_betriebsstunden_max_tag, 1)}
+                        unit="h"
+                        icon={Clock}
+                        color="gray"
+                        formel="Σ aller Tages-Betriebsstunden im Monat"
+                        subtitle={`Max/Tag: ${fmt(d.wp_betriebsstunden_max_tag, 1)} h`}
+                      />
+                    )}
                   </div>
                 )}
                 <div className="mt-3">

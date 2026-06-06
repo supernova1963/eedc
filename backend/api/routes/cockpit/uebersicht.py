@@ -625,6 +625,14 @@ async def get_cockpit_uebersicht(
 
     bkw_ersparnis = bkw_eigenverbrauch * eff_netzbezug_preis / 100
     sonstige_netto = sonstige_ertraege_gesamt - sonstige_ausgaben_gesamt
+    # #326 (rilmor-mhrs): Die manuell gepflegten „Sonstige Erträge & Ausgaben"
+    # gehören in den ANGEZEIGTEN Netto-Ertrag — exakt wie Auswertungen→Finanzen
+    # (Einspeiseerlös + EV-Ersparnis + Sonstige-Erträge − Sonstige-Ausgaben).
+    # Bisher floss sonstige_netto nur in kumulative_ersparnis/ROI ein, nicht in
+    # die Netto-Ertrag-Kachel → das Cockpit zeigte eine andere Summe als die
+    # Auswertungen. Aufschlagen NACH dem USt-Abzug (USt betrifft nur den
+    # Eigenverbrauch, nicht die Finanzpositionen).
+    netto_ertrag += sonstige_netto
 
     # CO2-Bilanz
     co2_pv = eigenverbrauch * CO2_FAKTOR_STROM_KG_KWH
@@ -649,7 +657,9 @@ async def get_cockpit_uebersicht(
         anzahl_monate = len(alle_monate)
 
     betriebskosten_zeitraum = betriebskosten_ges * anzahl_monate / 12 if anzahl_monate > 0 else 0
-    kumulative_ersparnis = netto_ertrag + wp_ersparnis + emob_ersparnis + bkw_ersparnis + sonstige_netto - betriebskosten_zeitraum
+    # sonstige_netto steckt bereits in netto_ertrag (#326) — hier NICHT erneut
+    # addieren, sonst Doppelzählung im ROI.
+    kumulative_ersparnis = netto_ertrag + wp_ersparnis + emob_ersparnis + bkw_ersparnis - betriebskosten_zeitraum
     roi_fortschritt = (kumulative_ersparnis / investition_gesamt * 100) if investition_gesamt > 0 else None
 
     return CockpitUebersichtResponse(

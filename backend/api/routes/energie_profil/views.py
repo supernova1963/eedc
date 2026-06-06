@@ -236,6 +236,7 @@ async def get_stundenwerte(
             soc_prozent=r.soc_prozent,
             komponenten=r.komponenten,
             wp_starts_anzahl=r.wp_starts_anzahl,
+            wp_betriebsstunden=r.wp_betriebsstunden,
         )
         for r in rows
     ]

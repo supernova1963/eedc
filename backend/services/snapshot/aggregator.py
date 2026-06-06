@@ -27,6 +27,7 @@ from backend.models.mqtt_energy_snapshot import MqttEnergySnapshot
 from backend.services.snapshot.boundary_range import BoundaryRange
 from backend.services.snapshot.keys import (
     KUMULATIVE_COUNTER_FELDER,
+    FLOAT_COUNTER_FELDER,
     _mqtt_key_to_sensor_key,
 )
 from backend.services.snapshot.komponenten_beitraege import (
@@ -320,7 +321,7 @@ async def get_daily_counter_deltas_by_inv(
     anlage,
     investitionen_by_id: dict,
     datum: date,
-) -> dict[str, dict[str, int]]:
+) -> dict[str, dict[str, float]]:
     """
     Berechnet Tages-Differenzen reiner Counter (KUMULATIVE_COUNTER_FELDER)
     pro Investition aus Snapshot-Differenzen.
@@ -331,8 +332,10 @@ async def get_daily_counter_deltas_by_inv(
     der Tages-Wert: snapshot(Folgetag 00:00) − snapshot(Tag 00:00).
 
     Returns:
-        {feld: {inv_id_str: int}} z.B. {"wp_starts_anzahl": {"5": 12}}
-        Investitionen ohne gemappten Counter werden weggelassen.
+        {feld: {inv_id_str: wert}} z.B. {"wp_starts_anzahl": {"5": 12}}.
+        Zähl-Counter (Starts) sind int, Float-Counter (Betriebsstunden,
+        FLOAT_COUNTER_FELDER) bleiben gebrochen. Investitionen ohne gemappten
+        Counter werden weggelassen.
     """
     sensor_mapping = anlage.sensor_mapping or {}
     investitionen_map = sensor_mapping.get("investitionen", {}) or {}
@@ -340,7 +343,7 @@ async def get_daily_counter_deltas_by_inv(
     tag_start = datetime.combine(datum, datetime.min.time())
     tag_ende = tag_start + timedelta(days=1)
 
-    result: dict[str, dict[str, int]] = {}
+    result: dict[str, dict[str, float]] = {}
 
     for inv_id_str, inv_data in investitionen_map.items():
         if not isinstance(inv_data, dict):
@@ -370,7 +373,12 @@ async def get_daily_counter_deltas_by_inv(
                     f"inv={inv_id_str} ({datum}): {delta_count:.1f} → 0"
                 )
                 delta_count = 0
-            result.setdefault(feld, {})[inv_id_str] = int(round(delta_count))
+            # Stunden-Counter (#238) gebrochen lassen, Zähl-Counter int runden —
+            # konsistent mit dem Stunden-Aggregator (Drift-Vermeidung).
+            result.setdefault(feld, {})[inv_id_str] = (
+                round(delta_count, 3) if feld in FLOAT_COUNTER_FELDER
+                else int(round(delta_count))
+            )
 
     return result
 
@@ -495,10 +503,16 @@ async def get_hourly_counter_sum_by_feld(
     investitionen_by_id: dict,
     datum: date,
     feld: str,
-) -> dict[int, Optional[int]]:
+) -> dict[int, Optional[float]]:
     """
     Berechnet Stunden-Counter-Summen für ein bestimmtes Feld (z.B. 'wp_starts_anzahl'),
     summiert über alle Investitionen mit gemapptem Counter.
+
+    Zähl-Counter (Starts) werden ganzzahlig summiert; Float-Counter aus
+    FLOAT_COUNTER_FELDER (z.B. Betriebsstunden, #238 — 0..1 h pro WP und Stunde)
+    behalten ihre Nachkommastellen (3 Stellen). Diese Entscheidung teilt sich der
+    Stunden-Aggregator mit dem Tages-Aggregator, damit Tages- und Stundensicht
+    nicht auseinanderdriften.
 
     Backward-Konvention nach Issue #144 (an kWh-Pfad angeglichen, Etappe 3c P2):
     Slot h = `snap[h] − snap[h-1]` = Inkremente [Vortag-23 + h, ..., Heute-h)
@@ -553,10 +567,11 @@ async def get_hourly_counter_sum_by_feld(
     # und Stundentab, Forum-Befund Martin 2026-05-11).
     MAX_PLAUSIBLE_COUNTER_PER_HOUR = 200
 
-    result: dict[int, Optional[int]] = {}
+    as_float = feld in FLOAT_COUNTER_FELDER
+    result: dict[int, Optional[float]] = {}
     for slot_idx, prev_off, curr_off in rng.slot_pairs:
         any_value = False
-        total = 0
+        total = 0.0
         for sensor_key, _ in relevant_invs:
             s0 = snaps_per_inv[sensor_key][prev_off]
             s1 = snaps_per_inv[sensor_key][curr_off]
@@ -572,7 +587,10 @@ async def get_hourly_counter_sum_by_feld(
                     f"{MAX_PLAUSIBLE_COUNTER_PER_HOUR} → 0"
                 )
                 d = 0
-            total += int(round(d))
+            total += d if as_float else int(round(d))
             any_value = True
-        result[slot_idx] = total if any_value else None
+        if not any_value:
+            result[slot_idx] = None
+        else:
+            result[slot_idx] = round(total, 3) if as_float else int(total)
     return result

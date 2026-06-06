@@ -18,6 +18,9 @@ from datetime import date
 from backend.services.prognose_adapter import (
     ist_profil,
     openmeteo_gti_profil,
+    sfml_profil,
+    sfml_stundenprofil_aus_hours,
+    sfml_stundenprofile_aus_forecast,
     solcast_profil,
 )
 from backend.services.solcast_service import SolcastForecast
@@ -141,6 +144,100 @@ def test_ist_tageswert_roh_ungerundet():
     rows = [_IstRow(7, 1.234), _IstRow(8, 2.345)]
     p = ist_profil(rows, jetzt_stunde=12, datum=DATUM)
     assert p.tageswert_kwh == 1.234 + 2.345  # roh, nicht gerundet
+
+
+# ─── SFML-Normalizer (echtes Stundenprofil, #110 „A") ───────────────────────
+
+
+def _evcc_bucket(tag: str, stunde: int, value_wh: float) -> dict:
+    """Ein evcc-`forecast`-Eintrag: stündliches Bucket [HH:00, HH+1:00), Wh."""
+    return {
+        "start": f"{tag}T{stunde:02d}:00:00",
+        "end": f"{tag}T{stunde + 1:02d}:00:00",
+        "value": value_wh,
+    }
+
+
+def test_sfml_forecast_wh_zu_kwh_und_slot_alignment():
+    # Bucket [05:00, 06:00) → Backward-Slot 6 (period_end 06:00), 5000 Wh = 5 kWh.
+    fc = [_evcc_bucket("2026-06-04", 5, 5000)]
+    profile = sfml_stundenprofile_aus_forecast(fc, DATUM)
+    assert profile[0][6] == 5.0, "Wh→kWh oder Slot falsch ([05,06) gehört in Slot 6)"
+    assert all(v == 0 for i, v in enumerate(profile[0]) if i != 6)
+
+
+def test_sfml_forecast_mehrtages_trennung():
+    fc = [
+        _evcc_bucket("2026-06-04", 12, 8000),  # heute → Slot 13
+        _evcc_bucket("2026-06-05", 12, 3000),  # morgen → Slot 13
+        _evcc_bucket("2026-06-06", 11, 2000),  # übermorgen → Slot 12
+    ]
+    profile = sfml_stundenprofile_aus_forecast(fc, DATUM)
+    assert profile[0][13] == 8.0
+    assert profile[1][13] == 3.0
+    assert profile[2][12] == 2.0
+    # Tage sauber getrennt — kein Übersprechen
+    assert profile[1][12] == 0 and profile[0][12] == 0
+
+
+def test_sfml_forecast_ausserhalb_fensters_verworfen():
+    fc = [_evcc_bucket("2026-06-10", 12, 9999)]  # > heute+3 → verworfen
+    profile = sfml_stundenprofile_aus_forecast(fc, DATUM)
+    assert all(v == 0 for tag in profile for v in tag)
+
+
+def test_sfml_forecast_robust_gegen_muell():
+    fc = [
+        {"value": None, "end": "2026-06-04T06:00:00"},      # value None
+        {"end": "2026-06-04T07:00:00"},                      # value fehlt
+        "kein dict",                                          # Typmüll
+        {"value": "x", "end": "2026-06-04T08:00:00"},       # value nicht numerisch
+        {"value": 1000},                                      # weder start noch end
+        _evcc_bucket("2026-06-04", 8, 4000),                # valide → Slot 9
+    ]
+    profile = sfml_stundenprofile_aus_forecast(fc, DATUM)
+    assert profile[0][9] == 4.0
+    assert sum(profile[0]) == 4.0
+
+
+def test_sfml_forecast_start_fallback_ohne_end():
+    # Kein `end` → `start` als Fallback (period_start 05:00 → Slot 6).
+    fc = [{"start": "2026-06-04T05:00:00", "value": 5000}]
+    profile = sfml_stundenprofile_aus_forecast(fc, DATUM)
+    assert profile[0][6] == 5.0
+
+
+def test_sfml_hours_fallback():
+    # prognose_heute.hours {"HH:00": kWh} → Slot HH+1; 23:00 verworfen.
+    slots = sfml_stundenprofil_aus_hours({"05:00": 2.0, "12:00": 8.0, "23:00": 0.5})
+    assert slots[6] == 2.0
+    assert slots[13] == 8.0
+    assert sum(slots) == 10.0, "23:00 muss verworfen sein (Folgetag-Überlauf)"
+
+
+def test_sfml_hours_fallback_robust():
+    assert sfml_stundenprofil_aus_hours(None) == [0.0] * 24
+    assert sfml_stundenprofil_aus_hours([]) == [0.0] * 24  # falscher Typ
+    assert sum(sfml_stundenprofil_aus_hours({"x": "y", "06:00": None})) == 0.0
+
+
+def test_sfml_profil_wrapper():
+    slots = [0.0] * 24
+    slots[6] = 5.0
+    slots[13] = 8.0
+    p = sfml_profil(slots, datum=DATUM)
+    assert p.quelle == "sfml"
+    assert p.slots_kw[6] == 5.0
+    assert p.tageswert_kwh == 13.0
+    assert p.present_stunden == tuple(range(24))
+
+
+def test_sfml_intervall_05_06_in_slot_6_wie_andere_quellen():
+    """SFMLs [05:00, 06:00) landet im selben Slot 6 wie OpenMeteo/Solcast/IST."""
+    fc = [_evcc_bucket("2026-06-04", 5, 5000)]
+    sfml = sfml_profil(sfml_stundenprofile_aus_forecast(fc, DATUM)[0], datum=DATUM)
+    assert sfml.slots_kw[6] > 0
+    assert all(v == 0 for i, v in enumerate(sfml.slots_kw) if i != 6)
 
 
 # ─── Symmetrie über alle drei Quellen ───────────────────────────────────────

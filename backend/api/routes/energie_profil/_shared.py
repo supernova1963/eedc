@@ -156,6 +156,8 @@ class StundenWertResponse(BaseModel):
     # WP-Kompressor-Starts in dieser Stunde, summiert über alle WPs (Issue #136).
     # Pro-Investitions-Aufschlüsselung lebt auf Tagesebene in TagesZusammenfassung.komponenten_starts.
     wp_starts_anzahl: Optional[int] = None
+    # WP-Betriebsstunden in dieser Stunde, summiert über alle WPs (Issue #238).
+    wp_betriebsstunden: Optional[float] = None
 
 
 class StundenAntwort(BaseModel):

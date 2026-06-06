@@ -717,7 +717,7 @@ async def export_pdf(
     db: AsyncSession = Depends(get_db),
 ):
     """Exportiert Infothek-Einträge als PDF."""
-    # Engine-Switch (Issue #121, Phase 3) — Default bleibt reportlab.
+    # Engine-Switch (Issue #121/#303): WeasyPrint ist Default, reportlab = Notausgang.
     from backend.core.config import settings as _settings
     if (_settings.pdf_engine or "").lower() == "weasyprint":
         from backend.services.pdf import render_document
