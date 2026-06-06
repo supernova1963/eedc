@@ -23,7 +23,7 @@ from backend.models.pvgis_prognose import PVGISPrognose
 from backend.models.strompreis import Strompreis
 from backend.models.monatsdaten import Monatsdaten
 from backend.api.routes.strompreise import lade_tarife_fuer_anlage, resolve_netzbezug_preis_cent
-from backend.core.berechnungen import einspeise_erloes_euro
+from backend.core.berechnungen import einspeise_erloes_euro, berechne_verbrauchs_kennzahlen
 from backend.services.einspeise_erloes_service import get_neg_preis_einspeisung_monat
 from backend.core.calculations import berechne_ust_eigenverbrauch
 from backend.core.field_definitions import get_wp_strom_kwh
@@ -964,9 +964,11 @@ async def get_finanz_prognose(
     gesamt_eauto_pv = 0.0
     gesamt_wp_strom = 0.0
 
-    for md in monatsdaten:
-        if md.eigenverbrauch_kwh and md.eigenverbrauch_kwh > 0:
-            gesamt_ev += md.eigenverbrauch_kwh
+    # #304 Teil 2: gesamt_ev + EV pro Monat werden unten aus dem SoT-Helper
+    # `berechne_verbrauchs_kennzahlen` gebildet (PV+Speicher aus IMD +
+    # Zählerwerte), NICHT mehr aus dem Legacy-Feld md.eigenverbrauch_kwh — das
+    # bleibt bei IMD-basierten Setups leer und ließ die EV-Quote/-Ersparnis
+    # kollabieren (deckungsgleich mit Cockpit/HA-Export, ADR-001).
 
     # PV-Erzeugung aus InvestitionMonatsdaten (gesamt + pro Monat)
     pv_pro_monat = {}  # {(jahr, monat): kwh} für EV-Quoten-Berechnung
@@ -986,31 +988,64 @@ async def get_finanz_prognose(
                 pv_pro_monat[(jahr, monat)] = pv_pro_monat.get((jahr, monat), 0) + kwh
 
     # Issue #153 / #155 / #236: SoT-Filter inkl. stilllegungsdatum
-    # Speicher-Daten
+    # Speicher-Daten (gesamt + pro Monat für die SoT-EV-Berechnung)
+    speicher_ladung_pro_monat: dict[tuple[int, int], float] = {}
+    speicher_entladung_pro_monat: dict[tuple[int, int], float] = {}
     for sp in speicher:
         for (inv_id, jahr, monat), daten in historische_inv_daten.items():
             if inv_id == sp.id and sp.ist_aktiv_im_monat(jahr, monat):
-                gesamt_speicher_entladung += daten.get("entladung_kwh", 0)
-                gesamt_speicher_ladung += daten.get("ladung_kwh", 0)
+                entl = daten.get("entladung_kwh", 0) or 0
+                lad = daten.get("ladung_kwh", 0) or 0
+                gesamt_speicher_entladung += entl
+                gesamt_speicher_ladung += lad
+                speicher_entladung_pro_monat[(jahr, monat)] = (
+                    speicher_entladung_pro_monat.get((jahr, monat), 0) + entl
+                )
+                speicher_ladung_pro_monat[(jahr, monat)] = (
+                    speicher_ladung_pro_monat.get((jahr, monat), 0) + lad
+                )
 
     # E-Auto-Daten — `gesamt_eauto_pv` und `gesamt_v2h` bleiben Aggregate
     # (für Quoten + Saisonprognose). Per-EA-Differenzierung passiert weiter
     # unten via `eauto_aggregate` (Bug-Klasse: vorher last-write-wins über
     # `vergleich_l_100km` und `benzinpreis_default`).
     eauto_pv_pro_inv: dict[int, float] = {}
+    v2h_pro_monat: dict[tuple[int, int], float] = {}
     for ea in e_autos:
         for (inv_id, jahr, monat), daten in historische_inv_daten.items():
             if inv_id == ea.id and ea.ist_aktiv_im_monat(jahr, monat):
                 pv_ladung = daten.get("ladung_pv_kwh", 0) or 0
-                gesamt_v2h += daten.get("v2h_entladung_kwh", 0)
+                v2h = daten.get("v2h_entladung_kwh", 0) or 0
+                gesamt_v2h += v2h
                 gesamt_eauto_pv += pv_ladung
                 eauto_pv_pro_inv[ea.id] = eauto_pv_pro_inv.get(ea.id, 0.0) + pv_ladung
+                v2h_pro_monat[(jahr, monat)] = v2h_pro_monat.get((jahr, monat), 0) + v2h
 
     # Wärmepumpe-Daten
     for wp in waermepumpen:
         for (inv_id, jahr, monat), daten in historische_inv_daten.items():
             if inv_id == wp.id and wp.ist_aktiv_im_monat(jahr, monat):
                 gesamt_wp_strom += get_wp_strom_kwh(daten, wp.parameter)
+
+    # #304 Teil 2: Eigenverbrauch pro Monat über den kanonischen SoT-Helper aus
+    # PV(IMD) + Speicher(IMD) + Zählerwerten — plus V2H (Aussichten hat diesen
+    # Term schon immer mitgezählt; der Helper kennt nur PV+Speicher). Single
+    # Source: dieselbe Map speist gesamt_ev, die EV-Quoten-Historie und die
+    # bisherige EV-Ersparnis — kein Punkt-Patch je Lesestelle (#304-Fix-Vorgabe).
+    eigenverbrauch_pro_monat: dict[tuple[int, int], float] = {}
+    for md in monatsdaten:
+        key = (md.jahr, md.monat)
+        kennzahlen = berechne_verbrauchs_kennzahlen(
+            pv_erzeugung_kwh=pv_pro_monat.get(key, 0),
+            einspeisung_kwh=md.einspeisung_kwh or 0,
+            netzbezug_kwh=md.netzbezug_kwh or 0,
+            speicher_ladung_kwh=speicher_ladung_pro_monat.get(key, 0),
+            speicher_entladung_kwh=speicher_entladung_pro_monat.get(key, 0),
+            v2h_entladung_kwh=v2h_pro_monat.get(key, 0),
+        )
+        eigenverbrauch_pro_monat[key] = kennzahlen.eigenverbrauch_kwh
+
+    gesamt_ev = sum(eigenverbrauch_pro_monat.values())
 
     # =====================================================================
     # QUOTEN BERECHNEN (aus historischen Daten oder Defaults)
@@ -1023,8 +1058,9 @@ async def get_finanz_prognose(
     hist_ev_quoten_lists = {}  # {kalendermonat: [quote1, quote2, ...]}
     for md in monatsdaten:
         pv_monat = pv_pro_monat.get((md.jahr, md.monat), 0)
-        if pv_monat > 0 and md.eigenverbrauch_kwh is not None and md.eigenverbrauch_kwh > 0:
-            quote = min(1.0, md.eigenverbrauch_kwh / pv_monat)
+        ev_monat = eigenverbrauch_pro_monat.get((md.jahr, md.monat), 0)
+        if pv_monat > 0 and ev_monat > 0:
+            quote = min(1.0, ev_monat / pv_monat)
             hist_ev_quoten_lists.setdefault(md.monat, []).append(quote)
 
     # Durchschnitt pro Kalendermonat (falls mehrere Jahre vorhanden)
@@ -1201,9 +1237,11 @@ async def get_finanz_prognose(
                 verguetung_ct_kwh=einspeiseverguetung,
             )
             bisherige_ertraege += m_erloes.erloes_euro
-        # EV-Ersparnis (beinhaltet bereits Speicher + V2H)
-        if md.eigenverbrauch_kwh:
-            bisherige_ertraege += md.eigenverbrauch_kwh * md_preis / 100
+        # EV-Ersparnis (beinhaltet bereits Speicher + V2H) — #304 Teil 2: aus dem
+        # SoT-abgeleiteten Eigenverbrauch statt dem Legacy-Feld md.eigenverbrauch_kwh
+        ev_monat = eigenverbrauch_pro_monat.get((md.jahr, md.monat), 0)
+        if ev_monat:
+            bisherige_ertraege += ev_monat * md_preis / 100
 
     # Wärmepumpe Alternativkosten-Ersparnis
     # Ersparnis = Gas-Kosten (was es kosten würde) + fixe Zusatzkosten - WP-Stromkosten
