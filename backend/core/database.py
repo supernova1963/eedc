@@ -178,6 +178,60 @@ def _migrate_speicher_laedt_aus_netz_backfill(connection) -> None:
         )
 
 
+def _migrate_pv_erzeugung_aggregat_clear(connection) -> None:
+    """kWp-Verteilung-Etappe: `monatsdaten.pv_erzeugung_kwh` als rein manuelles
+    Aggregat etablieren (Invariante, [[project_kwp_verteilung_aggregator]]).
+
+    Bestandszeilen, bei denen für denselben Monat Pro-Modul-IMD-Werte
+    (pv-module/balkonkraftwerk mit `pv_erzeugung_kwh`) existieren, hatten das
+    Feld bislang als Auto-Summe der Module befüllt (alter Form-Pfad
+    MonatsdatenForm). Diese Auto-Summen werden geleert — die Pro-Modul-Werte
+    sind die Wahrheit und werden zur Lesezeit aggregiert/verteilt. Feldwerte
+    OHNE Pro-Modul-Werte bleiben erhalten (echtes Aggregat, z. B. JayJayX #651).
+    Kriterium ist „Pro-Modul vorhanden ja/nein", NICHT die Herkunft.
+
+    Idempotent (No-Op nach erstem Lauf — danach gibt es keine Zeile mehr mit
+    Feldwert UND Pro-Modul-Werten). Verifiziert 2026-06-06: kein Code-Pfad
+    schrieb je verteilte Werte in die Modul-IMD, Bestands-Pro-Modul-Werte sind
+    gemessen/importiert → Migration sicher.
+    """
+    import json
+    from sqlalchemy import text as _text
+
+    md_rows = connection.execute(_text(
+        "SELECT id, anlage_id, jahr, monat FROM monatsdaten "
+        "WHERE pv_erzeugung_kwh IS NOT NULL"
+    )).fetchall()
+    if not md_rows:
+        return
+
+    for md_id, anlage_id, jahr, monat in md_rows:
+        imd_rows = connection.execute(_text(
+            "SELECT imd.verbrauch_daten FROM investition_monatsdaten imd "
+            "JOIN investitionen i ON i.id = imd.investition_id "
+            "WHERE i.anlage_id = :aid AND i.typ IN ('pv-module', 'balkonkraftwerk') "
+            "AND imd.jahr = :j AND imd.monat = :m"
+        ), {"aid": anlage_id, "j": jahr, "m": monat}).fetchall()
+
+        hat_pro_modul = False
+        for (vd_raw,) in imd_rows:
+            if not vd_raw:
+                continue
+            try:
+                vd = json.loads(vd_raw) if isinstance(vd_raw, str) else dict(vd_raw)
+            except (TypeError, ValueError):
+                continue
+            if isinstance(vd, dict) and vd.get("pv_erzeugung_kwh") is not None:
+                hat_pro_modul = True
+                break
+
+        if hat_pro_modul:
+            connection.execute(
+                _text("UPDATE monatsdaten SET pv_erzeugung_kwh = NULL WHERE id = :id"),
+                {"id": md_id},
+            )
+
+
 def _migrate_verbrauch_daten_keys_v326(connection) -> None:
     """
     v3.25.8 Migration: Drift-Pairs in verbrauch_daten-JSON konsolidieren.
@@ -392,6 +446,9 @@ async def run_migrations(conn):
                 # v3.14.0: Stilllegungsdatum (Issue #123) — historische Aggregate
                 # blenden Investitionen nicht mehr rückwirkend aus
                 ('stilllegungsdatum', 'DATE'),
+                # #284: Graue Herstellungs-Last (CO2) — optionales Override für die
+                # CO2-Amortisation; leer = Default-Richtwert nach Typ/Größe.
+                ('graue_last_kg', 'FLOAT'),
             ]
             for col_name, col_type in new_columns:
                 if col_name not in existing_columns:
@@ -414,6 +471,11 @@ async def run_migrations(conn):
             # Etappe A (Issue #264): `laedt_aus_netz` als eigener Erfassungs-
             # Schalter. Backfill: arbitrage_faehig=true ⇒ laedt_aus_netz=true.
             _migrate_speicher_laedt_aus_netz_backfill(connection)
+
+            # kWp-Verteilung-Etappe (#289/#651): pv_erzeugung_kwh ist ein rein
+            # manuelles Aggregat — Auto-Summen mit Pro-Modul-Werten im Monat
+            # leeren, Read-time-Verteilung übernimmt. Idempotent.
+            _migrate_pv_erzeugung_aggregat_clear(connection)
 
         # Spezialtarife: verwendung-Feld für Strompreise
         if 'strompreise' in inspector.get_table_names():

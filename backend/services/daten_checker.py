@@ -146,6 +146,23 @@ def _quelle_label(source: str) -> str:
     return s
 
 
+# Datenquelle-Werte, die für eine manuell/importiert befüllte Monatsdaten-
+# Historie stehen (Daten-Checker Achse B, project_datenchecker_konsistenz).
+# Wenn eine Anlage so gepflegt wird, braucht eine Komponente KEINEN gemappten
+# kumulativen kWh-Sensor — die Energieprofil-Abdeckung gilt dann als erfüllt
+# (OK mit Quellen-Hinweis statt WARNING). Werte stammen aus den Import-/
+# Wizard-Pfaden: custom_import (custom_import/apply.py), csv
+# (csv_operations.py), json_import (json_operations.py), manuell/manual
+# (monatsabschluss-Wizard).
+MANUELLE_DATENQUELLEN: dict[str, str] = {
+    "custom_import": "Custom-Import",
+    "csv": "CSV-Import",
+    "json_import": "JSON-Import",
+    "manuell": "manuell",
+    "manual": "manuell",
+}
+
+
 # Theoretisches PV-Maximum pro kWp und Monat (kWh) für Mitteleuropa
 # Großzügig bemessen um False Positives zu vermeiden – obere Grenze
 # für optimale Ausrichtung und überdurchschnittliche Einstrahlung
@@ -163,6 +180,11 @@ PV_MAX_KWH_PRO_KWP = {
 from backend.core.berechnungen import (
     PV_KOMPONENTEN_PREFIXE,
     summe_pv_bkw_kwh as _summe_pv_bkw_kwh,
+    klassifiziere_pv_monat,
+    PV_STATUS_OK,
+    PV_STATUS_VERTEILT,
+    PV_STATUS_TEIL_LUECKE,
+    PV_STATUS_FEHLT,
 )
 
 
@@ -242,7 +264,7 @@ class DatenChecker:
         ergebnisse.extend(self._check_monatsdaten_plausibilitaet(
             anlage, monatsdaten, pvgis_prognose, pv_erzeugung_map, pvgis_monat_map, pr, pr_count
         ))
-        ergebnisse.extend(self._check_energieprofil_abdeckung(anlage))
+        ergebnisse.extend(self._check_energieprofil_abdeckung(anlage, monatsdaten))
         ergebnisse.extend(await self._check_energieprofil_plausibilitaet(anlage))
         ergebnisse.extend(await self._check_mqtt_topic_abdeckung(anlage))
         ergebnisse.extend(await self._check_sensor_mapping_lts(anlage))
@@ -490,6 +512,12 @@ class DatenChecker:
             ))
             return ergebnisse
 
+        # PV-Erzeugung anlagenweit prüfen (kWp-Verteilung-Etappe): gemessen=OK,
+        # über Aggregat verteilt=INFO, Teil-Lücke=WARNING, gar keine PV-Quelle=
+        # ERROR. Ersetzt die frühere Pro-Modul-„fehlt"-WARNING — ein einzelner
+        # Gesamtwert (Monatsdaten.pv_erzeugung_kwh) deckt jetzt alle Strings ab.
+        ergebnisse.extend(self._check_pv_erzeugung(anlage, monatsdaten))
+
         for inv in aktive:
             name = f"{inv.bezeichnung} ({inv.typ})"
             param = inv.parameter or {}
@@ -509,9 +537,10 @@ class DatenChecker:
                         details="Wird für PVGIS-Solarprognose benötigt",
                         link="/einstellungen/investitionen",
                     ))
-                ergebnisse.extend(self._check_investition_monatsdaten(
-                    inv, name, "pv_erzeugung_kwh", "PV-Erzeugung", CheckSeverity.WARNING, monatsdaten,
-                ))
+                # PV-Erzeugungs-Vollständigkeit: anlagenweit in
+                # _check_pv_erzeugung (kWp-Verteilung) — hier NICHT pro Modul
+                # prüfen, sonst meldet jeder String „fehlt", obwohl ein
+                # Gesamt-Aggregat alle deckt.
 
             elif inv.typ == "balkonkraftwerk":
                 if not param.get("leistung_wp"):
@@ -1041,7 +1070,9 @@ class DatenChecker:
 
     # ─── Energieprofil-Abdeckung (Issue #135) ────────────────────────────
 
-    def _check_energieprofil_abdeckung(self, anlage: Anlage) -> list[CheckErgebnis]:
+    def _check_energieprofil_abdeckung(
+        self, anlage: Anlage, monatsdaten: Optional[list[Monatsdaten]] = None
+    ) -> list[CheckErgebnis]:
         """
         Prüft welche kumulativen kWh-Zähler im sensor_mapping gesetzt sind.
 
@@ -1049,6 +1080,13 @@ class DatenChecker:
         für die betroffenen Kategorien leer (strikte NULL-Semantik). Der Check
         zeigt, welche Zähler fehlen und welche Energieprofil-Bereiche dadurch
         nicht funktionieren (Prognosen-IST, Heatmap, Lernfaktor, Monatsberichte).
+
+        Achse B (project_datenchecker_konsistenz): Wer seine Monatsdaten per
+        Custom-/CSV-/JSON-Import oder manuell pflegt, braucht keinen Sensor-
+        Zähler. Liegt eine solche `datenquelle` in den Monatsdaten vor, gilt die
+        Abdeckung als erfüllt — OK mit Quellen-Hinweis statt WARNING. Logik pro
+        Komponente: (1) Sensor-Mapping → OK(Sensor), (2) sonst manuelle
+        Datenquelle → OK(Quelle), (3) sonst → WARNING.
         """
         ergebnisse: list[CheckErgebnis] = []
         kat = CheckKategorie.ENERGIEPROFIL_ABDECKUNG
@@ -1056,6 +1094,15 @@ class DatenChecker:
         sensor_mapping = anlage.sensor_mapping or {}
         basis = sensor_mapping.get("basis", {}) or {}
         inv_map = sensor_mapping.get("investitionen", {}) or {}
+
+        # Achse B: Wird die Anlage manuell/importiert gepflegt? Erste passende
+        # datenquelle liefert das Anwender-Label für den Quellen-Hinweis.
+        manuelle_quelle: Optional[str] = None
+        for md in (monatsdaten or []):
+            label = MANUELLE_DATENQUELLEN.get((md.datenquelle or "").strip())
+            if label:
+                manuelle_quelle = label
+                break
 
         def _has_zaehler(config: Optional[dict]) -> bool:
             if not isinstance(config, dict):
@@ -1069,7 +1116,17 @@ class DatenChecker:
         if not _has_zaehler(basis.get("netzbezug")):
             fehlende_basis.append("Netzbezug")
 
-        if fehlende_basis:
+        if fehlende_basis and manuelle_quelle:
+            ergebnisse.append(CheckErgebnis(
+                kategorie=kat, schwere=CheckSeverity.OK,
+                meldung=f"Basis-Zähler über {manuelle_quelle} befüllt",
+                details=(
+                    f"Einspeisung/Netzbezug ohne Sensor-Mapping, aber die "
+                    f"Monatsdaten werden über {manuelle_quelle} gepflegt — "
+                    f"Energieprofil-Abdeckung ist damit erfüllt."
+                ),
+            ))
+        elif fehlende_basis:
             ergebnisse.append(CheckErgebnis(
                 kategorie=kat, schwere=CheckSeverity.WARNING,
                 meldung=f"Kein Basis-Zähler für: {', '.join(fehlende_basis)}",
@@ -1105,10 +1162,26 @@ class DatenChecker:
         }
 
         fehlend_pro_komponente: list[tuple[str, str, list[str]]] = []
-        gemappt_count = 0
+        gemappt_count = 0   # über Sensor-Mapping abgedeckt
+        quelle_count = 0    # über manuelle/importierte Datenquelle abgedeckt
 
         # Reihenfolge nach Typ (#214 detLAN: WP vor Wallbox), nicht DB-ID
         heute = date.today()
+
+        # Wallbox-Schwäche B (KONZEPT-WALLBOX-EAUTO.md »Bekannte Schwächen«):
+        # Deckt eine aktive Wallbox mit gemapptem kWh-Zähler die Ladeenergie ab,
+        # ist ein eigener E-Auto-kWh-Zähler redundant — Phase 2a führt die
+        # Ladeenergie kanonisch an der Wallbox. Strukturelle Regel (Wallbox mit
+        # Zähler vorhanden?), nicht magnitudenabhängig.
+        wallbox_deckt_eauto_ladung = any(
+            w.typ == "wallbox"
+            and w.ist_aktiv_an(heute)
+            and _has_zaehler(
+                ((inv_map.get(str(w.id), {}) or {}).get("felder", {}) or {}).get("ladung_kwh")
+            )
+            for w in anlage.investitionen
+        )
+
         for inv in sort_investitionen_nach_typ(anlage.investitionen):
             # Stilllegungsdatum respektieren (#608 MartyBr): stillgelegte
             # Komponente braucht keine Sensor-Mapping-Pflege mehr.
@@ -1124,6 +1197,11 @@ class DatenChecker:
             # 2026-05-04: ID.4 als Dienstwagen meldete trotzdem kWh-Counter
             # fehlt.)
             if inv.typ == "e-auto" and ist_dienstlich(inv):
+                continue
+
+            # Wallbox-Schwäche B: E-Auto-Ladeenergie ist bereits über den
+            # Wallbox-kWh-Zähler gedeckt → kein eigener E-Auto-Zähler nötig.
+            if inv.typ == "e-auto" and wallbox_deckt_eauto_ladung:
                 continue
 
             # WP mit getrennter Strommessung (#183): hier zählen
@@ -1144,12 +1222,17 @@ class DatenChecker:
                 if not any(_has_zaehler(felder.get(f)) for f in alts)
             ]
 
-            if fehlend:
-                fehlend_pro_komponente.append((inv.bezeichnung, inv.typ, fehlend))
-            else:
+            if not fehlend:
                 gemappt_count += 1
+            elif manuelle_quelle:
+                # Achse B: kein Sensor, aber Monatsdaten werden manuell/importiert
+                # gepflegt → Abdeckung erfüllt (kein WARNING).
+                quelle_count += 1
+            else:
+                fehlend_pro_komponente.append((inv.bezeichnung, inv.typ, fehlend))
 
         if fehlend_pro_komponente:
+            gesamt = len(fehlend_pro_komponente) + gemappt_count + quelle_count
             details_parts = [
                 f"{name} ({typ}): {', '.join(fehlend)}"
                 for name, typ, fehlend in fehlend_pro_komponente
@@ -1157,7 +1240,7 @@ class DatenChecker:
             ergebnisse.append(CheckErgebnis(
                 kategorie=kat, schwere=CheckSeverity.WARNING,
                 meldung=(
-                    f"{len(fehlend_pro_komponente)} von {len(fehlend_pro_komponente) + gemappt_count} "
+                    f"{len(fehlend_pro_komponente)} von {gesamt} "
                     "Komponenten ohne vollständige kWh-Zähler-Abdeckung"
                 ),
                 details=(
@@ -1167,10 +1250,21 @@ class DatenChecker:
                 ),
                 link="/einstellungen/sensor-mapping",
             ))
-        elif gemappt_count > 0:
+        if gemappt_count > 0:
+            # "Alle" nur wenn keine andere Quelle / kein Fehlend daneben steht
+            prefix = "Alle " if (quelle_count == 0 and not fehlend_pro_komponente) else ""
             ergebnisse.append(CheckErgebnis(
                 kategorie=kat, schwere=CheckSeverity.OK,
-                meldung=f"Alle {gemappt_count} aktiven Komponenten haben kWh-Zähler gemappt",
+                meldung=f"{prefix}{gemappt_count} aktiven Komponenten haben kWh-Zähler gemappt",
+            ))
+        if quelle_count > 0:
+            ergebnisse.append(CheckErgebnis(
+                kategorie=kat, schwere=CheckSeverity.OK,
+                meldung=f"{quelle_count} Komponente(n) über {manuelle_quelle} befüllt",
+                details=(
+                    f"Kein Sensor-Mapping nötig — die Monatsdaten dieser "
+                    f"Komponenten werden über {manuelle_quelle} gepflegt."
+                ),
             ))
 
         return ergebnisse
@@ -1618,6 +1712,118 @@ class DatenChecker:
             (md.jahr, md.monat) for md in monatsdaten
             if start is None or (md.jahr, md.monat) >= start
         )
+
+    def _check_pv_erzeugung(
+        self, anlage: Anlage, monatsdaten: list[Monatsdaten]
+    ) -> list[CheckErgebnis]:
+        """Anlagenweite PV-Erzeugungs-Prüfung (kWp-Verteilung-Etappe).
+
+        Pro erwartetem Monat wird die Quellenlage klassifiziert (SoT
+        ``klassifiziere_pv_monat``): alle aktiven Module messen → OK; ein
+        Gesamt-Aggregat (``Monatsdaten.pv_erzeugung_kwh``) deckt fehlende
+        Strings über kWp-Verteilung ab → INFO; Teil-Lücke ohne Aggregat →
+        WARNING; gar keine PV-Quelle → ERROR (Konvention Gernot 2026-06-06:
+        nichts berechenbar = ERROR, konsistent mit „Kein Strompreis").
+
+        Scope: PV-Module (Strings). Balkonkraftwerk behält die eigene Pro-
+        Modul-Prüfung (eigener Einzel-Sensor, keine String-Verteilung).
+        """
+        ergebnisse: list[CheckErgebnis] = []
+        kat = CheckKategorie.INVESTITIONEN
+        heute = date.today()
+
+        pv_module = [
+            i for i in anlage.investitionen
+            if i.typ == "pv-module" and i.ist_aktiv_an(heute)
+        ]
+        if not pv_module:
+            return ergebnisse  # „keine PV-Module" meldet bereits _check_stammdaten
+
+        # Erwartete Monate = Vereinigung der Pro-Modul-Erwartungen (jeweils ab
+        # anschaffungsdatum, nur Monate mit Monatsdaten-Zeile).
+        erwartete = sorted({
+            m for inv in pv_module for m in self._erwartete_monate(inv, monatsdaten)
+        })
+        if not erwartete:
+            return ergebnisse
+
+        agg_map = {(md.jahr, md.monat): md.pv_erzeugung_kwh for md in monatsdaten}
+        imd_map = {
+            (inv.id, imd.jahr, imd.monat): (imd.verbrauch_daten or {})
+            for inv in pv_module for imd in inv.monatsdaten
+        }
+
+        fehlt: list[str] = []
+        teil_luecke: list[str] = []
+        verteilt: list[str] = []
+        ok_count = 0
+
+        for (jahr, monat) in erwartete:
+            aktive = [inv for inv in pv_module if inv.ist_aktiv_im_monat(jahr, monat)]
+            if not aktive:
+                continue
+            n_gemessen = sum(
+                1 for inv in aktive
+                if imd_map.get((inv.id, jahr, monat), {}).get("pv_erzeugung_kwh") is not None
+            )
+            status = klassifiziere_pv_monat(
+                n_aktive_module=len(aktive),
+                n_gemessen=n_gemessen,
+                aggregat_kwh=agg_map.get((jahr, monat)),
+            )
+            label = f"{monat:02d}/{jahr}"
+            if status == PV_STATUS_OK:
+                ok_count += 1
+            elif status == PV_STATUS_VERTEILT:
+                verteilt.append(label)
+            elif status == PV_STATUS_TEIL_LUECKE:
+                teil_luecke.append(label)
+            else:  # PV_STATUS_FEHLT
+                fehlt.append(label)
+
+        def _monate(liste: list[str]) -> str:
+            txt = ", ".join(liste[:6])
+            if len(liste) > 6:
+                txt += f" (+{len(liste) - 6} weitere)"
+            return txt
+
+        if fehlt:
+            ergebnisse.append(CheckErgebnis(
+                kategorie=kat, schwere=CheckSeverity.ERROR,
+                meldung=f"PV-Erzeugung fehlt in {len(fehlt)} Monat(en)",
+                details=(
+                    "Keine PV-Quelle (weder Pro-Modul-Werte noch ein "
+                    f"Gesamtwert): {_monate(fehlt)}"
+                ),
+                link="/einstellungen/monatsdaten",
+            ))
+        if teil_luecke:
+            ergebnisse.append(CheckErgebnis(
+                kategorie=kat, schwere=CheckSeverity.WARNING,
+                meldung=f"PV-Erzeugung unvollständig in {len(teil_luecke)} Monat(en)",
+                details=(
+                    "Nur ein Teil der Strings erfasst und kein Gesamtwert zum "
+                    f"Verteilen hinterlegt: {_monate(teil_luecke)}"
+                ),
+                link="/einstellungen/monatsdaten",
+            ))
+        if verteilt:
+            ergebnisse.append(CheckErgebnis(
+                kategorie=kat, schwere=CheckSeverity.INFO,
+                meldung=f"PV-Erzeugung über kWp-Anteil geschätzt in {len(verteilt)} Monat(en)",
+                details=(
+                    "Gesamtwert wird anteilig nach kWp auf die Strings verteilt — "
+                    f"Pro-String-Genauigkeit eingeschränkt: {_monate(verteilt)}"
+                ),
+                link="/einstellungen/monatsdaten",
+            ))
+        if not fehlt and not teil_luecke and not verteilt and ok_count:
+            ergebnisse.append(CheckErgebnis(
+                kategorie=kat, schwere=CheckSeverity.OK,
+                meldung=f"PV-Erzeugung: Monatsdaten vollständig ({ok_count} Monate)",
+            ))
+
+        return ergebnisse
 
     def _check_investition_monatsdaten(
         self,
@@ -2332,6 +2538,16 @@ class DatenChecker:
         if not eautos or not wallboxen:
             return ergebnisse  # Pflege-Konflikt unmöglich ohne beide Seiten.
 
+        # Wallbox-Schwäche A (KONZEPT-WALLBOX-EAUTO.md »Bekannte Schwächen«):
+        # Für die E-Auto-Seite NICHT der `verbrauch_kwh`-Fallback aus
+        # get_eauto_ladung_kwh — bei einem E-Auto ist `verbrauch_kwh` der
+        # Fahrverbrauch, nicht die Heimladung. Sonst wertet der Pflege-Check ein
+        # E-Auto mit gepflegtem Fahrverbrauch fälschlich als „Heimladung tragend"
+        # und feuert einen Konflikt, obwohl die Wallbox die einzige Heimladungs-
+        # Quelle ist. Nur das explizite `ladung_kwh` zählt hier als Heimladung.
+        def _ea_heimladung_kwh(data: dict) -> float:
+            return float((data or {}).get("ladung_kwh") or 0)
+
         # Beobachtungsfenster: die letzten N Monate, in denen mindestens eine
         # Investition aktiv war.
         from datetime import date
@@ -2356,7 +2572,7 @@ class DatenChecker:
                     if imd.jahr != jahr or imd.monat != monat:
                         continue
                     data = imd.verbrauch_daten or {}
-                    total = get_eauto_ladung_kwh(data)
+                    total = _ea_heimladung_kwh(data)
                     pv, _netz = get_emob_pv_netz_kwh(data, total_kwh=total)
                     ea_ladung += total
                     ea_pv += pv

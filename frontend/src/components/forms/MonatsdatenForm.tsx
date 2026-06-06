@@ -480,9 +480,13 @@ export default function MonatsdatenForm({ monatsdaten, anlageId, onSubmit, onCan
       const battEntladung = formData.batterie_entladung_kwh
         ? parseFloat(formData.batterie_entladung_kwh)
         : berechneteWerte.batterieEntladung || undefined
+      // pv_erzeugung_kwh ist ein rein manuelles/importiertes Aggregat und wird
+      // NIE programmatisch aus der Modul-Summe gefüllt (kWp-Verteilung-Design,
+      // [[project_kwp_verteilung_aggregator]]). Die Pro-Modul-Werte gehen über
+      // investitionen_daten; die Aggregat-Verteilung passiert beim Lesen.
       const pvErz = formData.pv_erzeugung_kwh
         ? parseFloat(formData.pv_erzeugung_kwh)
-        : berechneteWerte.pvErzeugung || undefined
+        : undefined
 
       await onSubmit({
         anlage_id: anlageId,

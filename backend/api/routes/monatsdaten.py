@@ -16,7 +16,13 @@ from backend.models.anlage import Anlage
 from backend.models.strompreis import Strompreis
 from backend.models.investition import Investition, InvestitionMonatsdaten
 from backend.core.calculations import berechne_monatskennzahlen, MonatsKennzahlen
-from backend.core.berechnungen import berechne_verbrauchs_kennzahlen
+from backend.core.berechnungen import (
+    berechne_verbrauchs_kennzahlen,
+    resolve_pv_je_modul,
+    PvModul,
+    PV_QUELLE_FEHLT,
+)
+from backend.utils.investition_value import get_inv_value
 from backend.core.field_definitions import get_pv_erzeugung_kwh, get_wp_strom_kwh, get_feld_hinweise
 from backend.api.routes.strompreise import resolve_netzbezug_preis_cent
 from backend.services.provenance import (
@@ -149,6 +155,10 @@ class AggregierteMonatsdatenResponse(BaseModel):
     netzbezug_kwh: float
     globalstrahlung_kwh_m2: Optional[float]
     sonnenstunden: Optional[float]
+    # Dynamischer Monats-Ø-Netzbezugspreis (Flex-Tarif, Tibber/aWATTar/EPEX).
+    # None = kein Flex-Wert gepflegt → Frontend fällt auf den statischen Tarif
+    # zurück (gleiche Quelle wie Cockpit via resolve_netzbezug_preis_cent, #326).
+    netzbezug_durchschnittspreis_cent: Optional[float]
     # Aggregiert aus InvestitionMonatsdaten - PV
     pv_erzeugung_kwh: Optional[float]  # Summe PV-Module + BKW
     # Aggregiert aus InvestitionMonatsdaten - Speicher
@@ -263,6 +273,13 @@ async def list_monatsdaten_aggregiert(
         wallbox_ladung = 0.0
         wallbox_ladung_pv = 0.0
 
+        # PV-Module werden NICHT direkt in der Schleife summiert — der
+        # kWp-Verteilungs-Read-time-Helper (resolve_pv_je_modul) entscheidet
+        # nach der Schleife zwischen gemessenen Pro-Modul-Werten und der
+        # Verteilung des manuellen Aggregats `md.pv_erzeugung_kwh`. Hier nur
+        # die gemessenen Pro-Modul-Werte sammeln (None = Feld fehlt).
+        pv_modul_measured: dict[int, Optional[float]] = {}
+
         hat_pv_imd = False
         hat_speicher_imd = False
         hat_wp_imd = False
@@ -272,8 +289,9 @@ async def list_monatsdaten_aggregiert(
 
         for inv, data in inv_data:
             if inv.typ == "pv-module":
-                hat_pv_imd = True
-                pv_erzeugung += data.get("pv_erzeugung_kwh", 0) or 0
+                # gemessenen Pro-Modul-Wert sammeln (None = Feld fehlt) —
+                # Aggregation/Verteilung erfolgt nach der Schleife.
+                pv_modul_measured[inv.id] = data.get("pv_erzeugung_kwh")
             elif inv.typ == "balkonkraftwerk":
                 hat_pv_imd = True
                 pv_erzeugung += get_pv_erzeugung_kwh(data)
@@ -303,6 +321,34 @@ async def list_monatsdaten_aggregiert(
                 hat_wallbox_imd = True
                 wallbox_ladung += data.get("ladung_kwh", 0) or 0
                 wallbox_ladung_pv += data.get("ladung_pv_kwh", 0) or 0
+
+        # PV-Module: kWp-Verteilung (Read-time, [[project_kwp_verteilung_aggregator]]).
+        # Aktive Module des Monats aus der vollständigen Investitions-Liste —
+        # auch Module ohne IMD-Zeile zählen (eigen_kwh=None), damit der Helper
+        # erkennt, ob NICHT alle Module messen und das Aggregat verteilt werden
+        # muss. Filter anschaffungs-/stilllegungs- + aktiv-bewusst via
+        # ist_aktiv_im_monat ([[feedback_anschaffungsdatum_grenze]]).
+        aktive_pv_module = [
+            inv for inv in investitionen
+            if inv.typ == "pv-module" and inv.ist_aktiv_im_monat(md.jahr, md.monat)
+        ]
+        if aktive_pv_module:
+            pv_resolved = resolve_pv_je_modul(
+                aggregat_kwh=md.pv_erzeugung_kwh,
+                module=[
+                    PvModul(
+                        inv_id=inv.id,
+                        leistung_kwp=get_inv_value(inv, "leistung_kwp"),
+                        eigen_kwh=pv_modul_measured.get(inv.id),
+                    )
+                    for inv in aktive_pv_module
+                ],
+            )
+            if any(w.quelle != PV_QUELLE_FEHLT for w in pv_resolved.values()):
+                # PV vorhanden (gemessen oder über Aggregat verteilt) — auf das
+                # bereits gesammelte BKW-PV oben aufaddieren. Σ == Gesamterzeugung.
+                hat_pv_imd = True
+                pv_erzeugung += sum(w.pv_erzeugung_kwh for w in pv_resolved.values())
 
         # Berechnungen
         einspeisung = md.einspeisung_kwh or 0
@@ -352,6 +398,7 @@ async def list_monatsdaten_aggregiert(
             netzbezug_kwh=round(netzbezug, 1),
             globalstrahlung_kwh_m2=md.globalstrahlung_kwh_m2,
             sonnenstunden=md.sonnenstunden,
+            netzbezug_durchschnittspreis_cent=md.netzbezug_durchschnittspreis_cent,
             # Komponenten-Aggregate: None wenn keine aktive IMD beigetragen
             # hat, sonst tatsächlicher Wert (auch 0 ist legitim, z.B. WP im
             # Sommer 0 kWh Heizung).

@@ -17,15 +17,32 @@ Regel (siehe `docs/ADR-001-BERECHNUNGS-LAYER.md`):
 Submodule:
 - `energie` — kWh-Aggregate aus komponenten_kwh, TagesEnergieProfil
 - `einspeise_erloes` — §51-bereinigte Einspeise-Erlös-Berechnung
+- `counter` — Counter-Aggregate (WP-Starts/Betriebsstunden): Stunden-Σ aus
+  Tages-Boundary-Diff ableiten + Pflicht-Invariante (Variante 2-light)
 - `invarianten` — Konsistenz-Asserts (Σ Hourly == Daily, Σ pv == komponenten_pv etc.)
 - `speicher` — Speicher-Effizienz (gleitend, carry-over-immun)
 
 Geplant (step-by-step, wenn Konsumenten angefasst werden):
-- `counter` — Counter-Aggregate (WP-Starts, Vollzyklen)
 - `peaks` — Peak-Werte (peak_pv/bezug/einspeisung)
 - `kennzahlen` — Eigenverbrauch, Autarkie, spez. Tagesertrag (Migration aus calculations.py)
 """
 
+from backend.core.berechnungen.co2_amortisation import (
+    QUELLE_DEFAULT,
+    QUELLE_FEHLT,
+    QUELLE_KEIN_DEFAULT,
+    QUELLE_OVERRIDE,
+    GraueLastBericht,
+    GraueLastPosten,
+    graue_last_einzeln,
+    summe_graue_last,
+)
+from backend.core.berechnungen.counter import (
+    CounterKonsistenzBericht,
+    assert_counter_konsistent,
+    pruefe_counter_konsistent,
+    verteile_counter_auf_stunden,
+)
 from backend.core.berechnungen.einspeise_erloes import (
     EinspeiseErloes,
     einspeise_erloes_euro,
@@ -62,6 +79,21 @@ from backend.core.berechnungen.invarianten import (
     pruefe_tep_tz_komponenten_konsistenz,
     pruefe_tep_tz_konsistenz,
 )
+from backend.core.berechnungen.pv_verteilung import (
+    QUELLE_FEHLT as PV_QUELLE_FEHLT,
+    QUELLE_GEMESSEN as PV_QUELLE_GEMESSEN,
+    QUELLE_VERTEILT as PV_QUELLE_VERTEILT,
+    STATUS_FEHLT as PV_STATUS_FEHLT,
+    STATUS_OK as PV_STATUS_OK,
+    STATUS_TEIL_LUECKE as PV_STATUS_TEIL_LUECKE,
+    STATUS_VERTEILT as PV_STATUS_VERTEILT,
+    PvModul,
+    PvModulWert,
+    gesamt_pv_kwh,
+    klassifiziere_pv_monat,
+    resolve_pv_je_modul,
+    verteile_basis_kwh_nach_kwp,
+)
 from backend.core.berechnungen.speicher import (
     EFFIZIENZ_FENSTER_MONATE,
     MonatsEffizienz,
@@ -74,6 +106,18 @@ from backend.core.berechnungen.verbrauch import (
 )
 
 __all__ = [
+    "QUELLE_OVERRIDE",
+    "QUELLE_DEFAULT",
+    "QUELLE_FEHLT",
+    "QUELLE_KEIN_DEFAULT",
+    "GraueLastBericht",
+    "GraueLastPosten",
+    "graue_last_einzeln",
+    "summe_graue_last",
+    "CounterKonsistenzBericht",
+    "assert_counter_konsistent",
+    "pruefe_counter_konsistent",
+    "verteile_counter_auf_stunden",
     "EinspeiseErloes",
     "einspeise_erloes_euro",
     "QUELLE_GEMESSEN",
@@ -108,4 +152,17 @@ __all__ = [
     "speicher_effizienz_prozent",
     "VerbrauchsKennzahlen",
     "berechne_verbrauchs_kennzahlen",
+    "PV_QUELLE_GEMESSEN",
+    "PV_QUELLE_VERTEILT",
+    "PV_QUELLE_FEHLT",
+    "PV_STATUS_OK",
+    "PV_STATUS_VERTEILT",
+    "PV_STATUS_TEIL_LUECKE",
+    "PV_STATUS_FEHLT",
+    "PvModul",
+    "PvModulWert",
+    "verteile_basis_kwh_nach_kwp",
+    "resolve_pv_je_modul",
+    "gesamt_pv_kwh",
+    "klassifiziere_pv_monat",
 ]
