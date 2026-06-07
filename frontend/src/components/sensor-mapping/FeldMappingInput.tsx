@@ -1,13 +1,9 @@
 /**
  * FeldMappingInput - Wiederverwendbare Komponente für Feld-Zuordnung
  *
- * Unterstützt verschiedene Strategien:
+ * Strategien (Achse A1, v3.39.0 — auf zwei reduziert):
  * - sensor: Direkter HA-Sensor
- * - kwp_verteilung: Anteilig nach kWp
- * - cop_berechnung: COP × Stromverbrauch
- * - ev_quote: Nach Eigenverbrauchsquote
- * - manuell: Manuelle Eingabe
- * - keine: Nicht erfassen
+ * - keine: Kein Sensor (manuell im Wizard erfassen / bewusst leer)
  */
 
 import { useState, useCallback, useRef, useEffect, useId } from 'react'
@@ -38,9 +34,6 @@ interface FeldMappingInputProps {
   availableSensors: HASensorInfo[]
   strategieOptionen: StrategieOption[]
   defaultStrategie?: StrategieTyp
-  // Für spezielle Strategien
-  kwpAnteil?: number       // Für kwp_verteilung
-  copDefault?: number      // Für cop_berechnung
 }
 
 // =============================================================================
@@ -249,8 +242,6 @@ export default function FeldMappingInput({
   availableSensors,
   strategieOptionen,
   defaultStrategie = 'sensor',
-  kwpAnteil,
-  copDefault,
 }: FeldMappingInputProps) {
   const groupId = useId()
   const currentStrategie = value?.strategie || defaultStrategie
@@ -258,25 +249,8 @@ export default function FeldMappingInput({
   const handleStrategieChange = (strategie: StrategieTyp) => {
     if (strategie === 'keine') {
       onChange({ strategie: 'keine' })
-    } else if (strategie === 'manuell') {
-      onChange({ strategie: 'manuell' })
-    } else if (strategie === 'sensor') {
+    } else {
       onChange({ strategie: 'sensor', sensor_id: value?.sensor_id || null })
-    } else if (strategie === 'kwp_verteilung') {
-      onChange({
-        strategie: 'kwp_verteilung',
-        parameter: { anteil: kwpAnteil || 0, basis_sensor: 'pv_gesamt' },
-      })
-    } else if (strategie === 'cop_berechnung') {
-      onChange({
-        strategie: 'cop_berechnung',
-        parameter: { cop: copDefault || 3.5, basis_feld: 'stromverbrauch_kwh' },
-      })
-    } else if (strategie === 'ev_quote') {
-      onChange({
-        strategie: 'ev_quote',
-        parameter: {},
-      })
     }
   }
 
@@ -284,13 +258,6 @@ export default function FeldMappingInput({
     onChange({
       strategie: 'sensor',
       sensor_id: sensorId,
-    })
-  }
-
-  const handleCopChange = (cop: number) => {
-    onChange({
-      strategie: 'cop_berechnung',
-      parameter: { ...value?.parameter, cop },
     })
   }
 
@@ -351,29 +318,6 @@ export default function FeldMappingInput({
                 </div>
               )}
 
-              {/* kWp-Verteilung Info */}
-              {currentStrategie === 'kwp_verteilung' && option.value === 'kwp_verteilung' && kwpAnteil !== undefined && (
-                <div className="mt-2 text-xs text-amber-600 dark:text-amber-400">
-                  {(kwpAnteil * 100).toFixed(1)}% von PV Gesamt
-                </div>
-              )}
-
-              {/* COP Input */}
-              {currentStrategie === 'cop_berechnung' && option.value === 'cop_berechnung' && (
-                <div className="mt-3 flex items-center gap-2">
-                  <span className="text-sm text-gray-500">COP:</span>
-                  <input
-                    type="number"
-                    step="0.1"
-                    min="1"
-                    max="10"
-                    value={value?.parameter?.cop || copDefault || 3.5}
-                    onChange={e => handleCopChange(parseFloat(e.target.value) || 3.5)}
-                    aria-label="COP-Wert"
-                    className="w-20 px-2 py-1 text-sm bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded focus:outline-none focus:ring-1 focus:ring-amber-500"
-                  />
-                </div>
-              )}
             </div>
           </label>
         ))}

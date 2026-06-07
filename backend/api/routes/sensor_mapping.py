@@ -37,13 +37,19 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 class StrategieTyp(str, Enum):
-    """Verfügbare Schätzungsstrategien für Feldwerte."""
+    """Verfügbare Schätzungsstrategien für Feldwerte.
+
+    Datenchecker-Achse A1 (v3.39.0): auf `sensor` + `keine` reduziert. Die
+    früheren Werte `kwp_verteilung`/`ev_quote`/`cop_berechnung`/`manuell` waren
+    Dead Code — nur `sensor` wird in den Aggregatoren ausgewertet (Vergleich
+    `== "sensor"` als String), der Rest lieferte nie Daten und war eine
+    Anwender-Falle. Bestandswerte werden beim Startup auf `keine` migriert
+    (`_migrate_sensor_mapping_strategien_clear`, Hard-Precondition vor der
+    Enum-Reduktion, sonst scheitert das Pydantic-Parsen jeder gespeicherten
+    `FeldMapping`-JSON mit altem Strategie-Wert).
+    """
     SENSOR = "sensor"               # Direkter HA-Sensor
-    KWP_VERTEILUNG = "kwp_verteilung"  # Anteilig nach kWp
-    EV_QUOTE = "ev_quote"           # Nach Eigenverbrauchsquote
-    COP_BERECHNUNG = "cop_berechnung"  # COP × Stromverbrauch
-    MANUELL = "manuell"             # Manuelle Eingabe im Wizard
-    KEINE = "keine"                 # Nicht erfassen
+    KEINE = "keine"                 # Kein Sensor (manuell im Wizard / bewusst leer)
 
 
 class FeldMapping(BaseModel):
@@ -537,23 +543,17 @@ async def get_mapping_status(anlage_id: int):
 
         mapping = anlage.sensor_mapping or {}
 
-        # Zähle konfigurierte Strategien
+        # Zähle konfigurierte Strategien (Achse A1: nur noch sensor/keine).
         sensor_count = 0
-        kwp_count = 0
-        cop_count = 0
-        manuell_count = 0
+        keine_count = 0
 
         def count_strategies(data: dict):
-            nonlocal sensor_count, kwp_count, cop_count, manuell_count
+            nonlocal sensor_count, keine_count
             strategie = data.get("strategie")
             if strategie == "sensor":
                 sensor_count += 1
-            elif strategie == "kwp_verteilung":
-                kwp_count += 1
-            elif strategie == "cop_berechnung":
-                cop_count += 1
-            elif strategie == "manuell":
-                manuell_count += 1
+            elif strategie == "keine":
+                keine_count += 1
 
         # Basis-Felder
         for feld in mapping.get("basis", {}).values():
@@ -572,9 +572,7 @@ async def get_mapping_status(anlage_id: int):
             "updated_at": mapping.get("updated_at"),
             "counts": {
                 "sensor": sensor_count,
-                "kwp_verteilung": kwp_count,
-                "cop_berechnung": cop_count,
-                "manuell": manuell_count,
+                "keine": keine_count,
             }
         }
 

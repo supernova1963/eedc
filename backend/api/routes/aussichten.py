@@ -1225,7 +1225,27 @@ async def get_finanz_prognose(
     bisherige_wp_ersparnis = 0.0
     bisherige_eauto_ersparnis = 0.0
 
+    # Anschaffungsdatum-Grenze für den anlagenweiten PV-Ertrag (Einspeise-Erlös +
+    # EV-Ersparnis). WP/E-Auto/BKW/Sonstige begrenzen ihre Monate bereits über
+    # `ist_aktiv_im_monat` (#236); nur dieser Pfad summierte bisher ALLE
+    # Monatsdaten — auch Monate vor PV-Inbetriebnahme bzw. nach Stilllegung. Das
+    # ist genau die asymmetrische Verzerrung, vor der [[feedback_aggregations_drift]]
+    # warnt, und verletzt das Prinzip „Anschaffungsdatum ist die Grenze für ALLE
+    # Auswertungen" ([[feedback_anschaffungsdatum_grenze]]). Grenze = aktives
+    # Fenster der PV-Erzeuger (PV-Module ∪ Balkonkraftwerke), analog zur
+    # `covered_months`-Logik in cockpit/uebersicht.py. Ohne registrierte PV-Quelle
+    # oder ohne gesetztes Anschaffungsdatum bleibt das Verhalten unverändert
+    # (`ist_aktiv_im_monat` ist dann für alle Monate True → kein Filter).
+    pv_erzeuger = pv_module + balkonkraftwerke
+
+    def _pv_aktiv_im_monat(jahr: int, monat: int) -> bool:
+        if not pv_erzeuger:
+            return True
+        return any(p.ist_aktiv_im_monat(jahr, monat) for p in pv_erzeuger)
+
     for md in monatsdaten:
+        if not _pv_aktiv_im_monat(md.jahr, md.monat):
+            continue
         md_preis = resolve_netzbezug_preis_cent(md, netzbezug_preis)
         # Einspeise-Erlös §51-bereinigt — Anwender ohne Strompreis-Sensor
         # (m_neg=None) sehen die alte ungekürzte Berechnung.

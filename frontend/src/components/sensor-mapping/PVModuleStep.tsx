@@ -57,27 +57,25 @@ export default function PVModuleStep({
       {investitionen.map(inv => {
         const kwpAnteil = gesamtKwp > 0 && inv.kwp ? inv.kwp / gesamtKwp : 0
 
+        // Achse A1: kWp-Verteilung ist kein Sensor-Mapping-Strategiewert mehr,
+        // sondern ein read-time-Helper ([[project_kwp_verteilung_aggregator]]).
+        // Bei mehreren PV-Strings ohne eigenen Sensor liest die Aggregation den
+        // PV-Gesamtsensor und verteilt ihn anteilig nach kWp — ohne dass hier
+        // eine Strategie gewählt werden muss. Auswahl daher nur sensor/keine.
         const strategieOptionen: StrategieOption[] = [
           {
             value: 'sensor',
             label: 'Eigener Sensor',
             description: 'Separater Sensor für diesen PV-String',
           },
+          {
+            value: 'keine',
+            label: 'Kein Sensor',
+            description: hasPvGesamtSensor && kwpAnteil > 0
+              ? `Anteilig (${(kwpAnteil * 100).toFixed(1)}%) aus PV-Gesamt verteilt oder manuell erfassen`
+              : 'Manuell im Monatsabschluss erfassen',
+          },
         ]
-
-        if (hasPvGesamtSensor && kwpAnteil > 0) {
-          strategieOptionen.push({
-            value: 'kwp_verteilung',
-            label: `kWp-Verteilung (${(kwpAnteil * 100).toFixed(1)}%)`,
-            description: `${inv.kwp?.toFixed(1)} kWp von ${gesamtKwp.toFixed(1)} kWp gesamt`,
-          })
-        }
-
-        strategieOptionen.push({
-          value: 'manuell',
-          label: 'Manuell eingeben',
-          description: 'Im Monatsabschluss-Wizard erfassen',
-        })
 
         return (
           <div key={inv.id} className="border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden">
@@ -109,8 +107,7 @@ export default function PVModuleStep({
                 onChange={mapping => onChange(inv.id, 'pv_erzeugung_kwh', mapping)}
                 availableSensors={availableSensors}
                 strategieOptionen={strategieOptionen}
-                kwpAnteil={kwpAnteil}
-                defaultStrategie={hasPvGesamtSensor && kwpAnteil > 0 ? 'kwp_verteilung' : 'sensor'}
+                defaultStrategie={hasPvGesamtSensor && kwpAnteil > 0 ? 'keine' : 'sensor'}
               />
 
               {/* Live-Sensor */}

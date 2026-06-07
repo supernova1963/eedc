@@ -54,8 +54,8 @@ export default function EAutoStep({
       description: 'Direkte Messung',
     },
     {
-      value: 'manuell',
-      label: 'Manuell eingeben',
+      value: 'keine',
+      label: 'Kein Sensor',
       description: 'Im Monatsabschluss-Wizard erfassen',
     },
   ]
@@ -67,13 +67,8 @@ export default function EAutoStep({
       description: 'Separater Sensor für Netzladung',
     },
     {
-      value: 'ev_quote',
-      label: 'EV-Quote berechnen',
-      description: 'Basierend auf Anlagen-Eigenverbrauchsquote',
-    },
-    {
-      value: 'manuell',
-      label: 'Manuell eingeben',
+      value: 'keine',
+      label: 'Kein Sensor',
       description: 'Im Monatsabschluss-Wizard erfassen',
     },
   ]
@@ -85,8 +80,8 @@ export default function EAutoStep({
       description: 'Z.B. aus Auto-Integration',
     },
     {
-      value: 'manuell',
-      label: 'Manuell eingeben',
+      value: 'keine',
+      label: 'Kein Sensor',
       description: 'Kilometerstand monatlich erfassen',
     },
   ]
@@ -111,14 +106,9 @@ export default function EAutoStep({
       description: 'Z.B. aus Auto-Integration',
     },
     {
-      value: 'manuell',
-      label: 'Manuell eingeben',
-      description: 'Im Monatsabschluss erfassen',
-    },
-    {
       value: 'keine',
-      label: 'Nicht erfassen',
-      description: 'Keine externe Ladung',
+      label: 'Kein Sensor',
+      description: 'Manuell erfassen oder keine externe Ladung',
     },
   ]
 
@@ -129,14 +119,9 @@ export default function EAutoStep({
       description: 'Z.B. aus Auto-Integration',
     },
     {
-      value: 'manuell',
-      label: 'Manuell eingeben',
-      description: 'Im Monatsabschluss erfassen',
-    },
-    {
       value: 'keine',
-      label: 'Nicht erfassen',
-      description: 'Wird aus Ladung berechnet',
+      label: 'Kein Sensor',
+      description: 'Manuell erfassen oder aus Ladung berechnen',
     },
   ]
 
@@ -147,14 +132,9 @@ export default function EAutoStep({
       description: 'Z.B. aus Wallbox-Integration',
     },
     {
-      value: 'manuell',
-      label: 'Manuell eingeben',
-      description: 'Im Monatsabschluss erfassen',
-    },
-    {
       value: 'keine',
-      label: 'Nicht erfassen',
-      description: 'Optional',
+      label: 'Kein Sensor',
+      description: 'Optional, manuell im Monatsabschluss erfassen',
     },
   ]
 
@@ -206,7 +186,7 @@ export default function EAutoStep({
                   value={mappings[inv.id.toString()]?.ladung_pv_kwh || null}
                   onChange={mapping => onChange(inv.id, 'ladung_pv_kwh', mapping)}
                   availableSensors={availableSensors}
-                  strategieOptionen={[...ladungOptionen, { value: 'keine', label: 'Nicht erfassen', description: 'Manuell im Wizard eingeben' }]}
+                  strategieOptionen={ladungOptionen}
                   defaultStrategie="keine"
                 />
 
@@ -291,7 +271,7 @@ export default function EAutoStep({
                   onChange={mapping => onChange(inv.id, 'km_gefahren', mapping)}
                   availableSensors={availableSensors}
                   strategieOptionen={kmOptionen}
-                  defaultStrategie="manuell"
+                  defaultStrategie="keine"
                 />
 
                 <FeldMappingInput

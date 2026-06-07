@@ -324,10 +324,30 @@ async def get_cockpit_uebersicht(
     md_result = await db.execute(md_query)
     monatsdaten_list = md_result.scalars().all()
 
-    einspeisung = sum(m.einspeisung_kwh or 0 for m in monatsdaten_list)
-    netzbezug = sum(m.netzbezug_kwh or 0 for m in monatsdaten_list)
+    # Anschaffungsdatum-Grenze: Energiebilanz + Erträge nur über Monate, in denen
+    # mindestens ein PV-Erzeuger (PV-Module ∪ Balkonkraftwerke) aktiv war.
+    # Konsequente Anwendung des einzigen Manipulationshebels „Anschaffungsdatum"
+    # (Gernot 2026-06-07, [[feedback_anschaffungsdatum_grenze]]) — symmetrisch zum
+    # kumulierten Amortisations-Pfad in aussichten.get_finanz_prognose und zur
+    # bestehenden covered_months-Logik unten ([[feedback_aggregator_symmetrie]]).
+    # WP/E-Auto/BKW/Sonstige filtern ihre Monate bereits über ist_aktiv_im_monat
+    # (#236). ist_aktiv_im_monat deckt alle drei Zustände ab: stillgelegt → bis
+    # Stilllegungsdatum aktiv (Daten fließen ein), aktiv=False → komplett
+    # ausgeblendet. Ohne registrierte PV-Quelle oder ohne gesetztes
+    # Anschaffungsdatum bleibt das Verhalten unverändert (Filter greift nicht).
+    _pv_erzeuger = [i for i in investitionen if i.typ in ("pv-module", "balkonkraftwerk")]
 
-    pv_erzeugung_md = sum(m.pv_erzeugung_kwh or 0 for m in monatsdaten_list)
+    def _pv_aktiv_im_monat(jahr: int, monat: int) -> bool:
+        if not _pv_erzeuger:
+            return True
+        return any(p.ist_aktiv_im_monat(jahr, monat) for p in _pv_erzeuger)
+
+    md_pv = [m for m in monatsdaten_list if _pv_aktiv_im_monat(m.jahr, m.monat)]
+
+    einspeisung = sum(m.einspeisung_kwh or 0 for m in md_pv)
+    netzbezug = sum(m.netzbezug_kwh or 0 for m in md_pv)
+
+    pv_erzeugung_md = sum(m.pv_erzeugung_kwh or 0 for m in md_pv)
     pv_erzeugung = pv_erzeugung_inv if pv_erzeugung_inv > 0 else pv_erzeugung_md
 
     # Kanonische Verbrauchs-Kennzahlen über den SoT-Helper (ADR-001) statt der
@@ -391,7 +411,7 @@ async def get_cockpit_uebersicht(
     # Fallback für Setups ohne PV-IMDs (nur Anlagen-Zähler):
     # Monate mit pv_erzeugung > 0 aus Monatsdaten heranziehen.
     if not covered_months:
-        for md in monatsdaten_list:
+        for md in md_pv:
             if (md.pv_erzeugung_kwh or 0) > 0:
                 covered_months.add((md.jahr, md.monat))
 
@@ -544,7 +564,10 @@ async def get_cockpit_uebersicht(
     nicht_verguetete_kwh_sum = 0.0
     hat_neg_preis_daten = False
 
-    for m in monatsdaten_list:
+    # PV-Window-gefiltert (md_pv): Einspeise-Erlös, Netzbezugskosten und der
+    # gewichtete Effektivpreis zählen nur Monate mit aktiver PV — wie die
+    # Energiebilanz oben und der Amortisations-Pfad in aussichten.
+    for m in md_pv:
         m_tarife = await _tarif_fuer_monat(m)
         m_allgemein = m_tarife.get("allgemein")
         m_preis_cent = m_allgemein.netzbezug_arbeitspreis_cent_kwh if m_allgemein else NETZBEZUG_DEFAULT_CENT

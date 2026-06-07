@@ -6,9 +6,6 @@ import { useState } from 'react'
 import {
   CheckCircle,
   Wifi,
-  Calculator,
-  Percent,
-  Edit3,
   MinusCircle,
   Zap,
   Sun,
@@ -80,20 +77,12 @@ interface MappingSummaryStepProps {
 
 const STRATEGIE_ICONS: Record<StrategieTyp, React.ReactNode> = {
   sensor: <Wifi className="w-4 h-4 text-green-500" />,
-  kwp_verteilung: <Percent className="w-4 h-4 text-blue-500" />,
-  cop_berechnung: <Calculator className="w-4 h-4 text-purple-500" />,
-  ev_quote: <Percent className="w-4 h-4 text-amber-500" />,
-  manuell: <Edit3 className="w-4 h-4 text-gray-500" />,
   keine: <MinusCircle className="w-4 h-4 text-gray-400" />,
 }
 
 const STRATEGIE_LABELS: Record<StrategieTyp, string> = {
   sensor: 'HA-Sensor',
-  kwp_verteilung: 'kWp-Verteilung',
-  cop_berechnung: 'COP-Berechnung',
-  ev_quote: 'EV-Quote',
-  manuell: 'Manuell',
-  keine: 'Nicht erfassen',
+  keine: 'Kein Sensor',
 }
 
 const TYP_ICONS: Record<string, React.ReactNode> = {
@@ -146,16 +135,6 @@ function MappingRow({ label, mapping, obsolet }: { label: string; mapping: FeldM
             ({mapping.sensor_id})
           </span>
         )}
-        {mapping.strategie === 'cop_berechnung' && mapping.parameter?.cop && (
-          <span className="text-xs text-gray-500">
-            (COP: {mapping.parameter.cop})
-          </span>
-        )}
-        {mapping.strategie === 'kwp_verteilung' && mapping.parameter?.anteil && (
-          <span className="text-xs text-gray-500">
-            ({((mapping.parameter.anteil as number) * 100).toFixed(1)}%)
-          </span>
-        )}
       </div>
     </div>
   )
@@ -205,13 +184,9 @@ export default function MappingSummaryStep({
       setIsBackfilling(false)
     }
   }
-  // Statistiken berechnen
+  // Statistiken berechnen (Achse A1: nur noch sensor/keine)
   const stats = {
     sensor: 0,
-    kwp_verteilung: 0,
-    cop_berechnung: 0,
-    ev_quote: 0,
-    manuell: 0,
     keine: 0,
   }
 
@@ -233,7 +208,7 @@ export default function MappingSummaryStep({
     })
   })
 
-  const totalConfigured = stats.sensor + stats.kwp_verteilung + stats.cop_berechnung + stats.ev_quote + stats.manuell
+  const totalConfigured = stats.sensor
 
   // Live-Sensoren zählen
   const basisLive = state.basisLive || {}
@@ -246,32 +221,17 @@ export default function MappingSummaryStep({
 
   return (
     <div className="space-y-6">
-      {/* Statistik-Übersicht */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
+      {/* Statistik-Übersicht (Achse A1: HA-Sensor / Kein Sensor / Live) */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
         <StatCard
           icon={<Wifi className="w-5 h-5 text-green-500" />}
           label="HA-Sensor"
           count={stats.sensor}
         />
         <StatCard
-          icon={<Percent className="w-5 h-5 text-blue-500" />}
-          label="kWp-Verteilung"
-          count={stats.kwp_verteilung}
-        />
-        <StatCard
-          icon={<Calculator className="w-5 h-5 text-purple-500" />}
-          label="COP-Berechnung"
-          count={stats.cop_berechnung}
-        />
-        <StatCard
-          icon={<Percent className="w-5 h-5 text-amber-500" />}
-          label="EV-Quote"
-          count={stats.ev_quote}
-        />
-        <StatCard
-          icon={<Edit3 className="w-5 h-5 text-gray-500" />}
-          label="Manuell"
-          count={stats.manuell}
+          icon={<MinusCircle className="w-5 h-5 text-gray-400" />}
+          label="Kein Sensor"
+          count={stats.keine}
         />
         <StatCard
           icon={<Activity className="w-5 h-5 text-primary-500" />}

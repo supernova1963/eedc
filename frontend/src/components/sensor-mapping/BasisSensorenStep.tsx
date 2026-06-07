@@ -61,8 +61,8 @@ export default function BasisSensorenStep({
       description: 'Wert direkt aus Home Assistant Sensor lesen',
     },
     {
-      value: 'manuell' as const,
-      label: 'Manuell eingeben',
+      value: 'keine' as const,
+      label: 'Kein Sensor',
       description: 'Im Monatsabschluss-Wizard manuell erfassen',
     },
   ]

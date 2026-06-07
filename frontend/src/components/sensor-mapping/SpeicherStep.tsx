@@ -42,8 +42,8 @@ export default function SpeicherStep({
       description: 'Wert direkt aus Home Assistant lesen',
     },
     {
-      value: 'manuell',
-      label: 'Manuell eingeben',
+      value: 'keine',
+      label: 'Kein Sensor',
       description: 'Im Monatsabschluss-Wizard erfassen',
     },
   ]
@@ -56,13 +56,8 @@ export default function SpeicherStep({
     },
     {
       value: 'keine',
-      label: 'Nicht erfassen',
-      description: 'Speicher wird nicht aus dem Netz geladen',
-    },
-    {
-      value: 'manuell',
-      label: 'Manuell eingeben',
-      description: 'Im Monatsabschluss-Wizard erfassen',
+      label: 'Kein Sensor',
+      description: 'Manuell erfassen oder Speicher lädt nicht aus dem Netz',
     },
   ]
 

@@ -232,6 +232,70 @@ def _migrate_pv_erzeugung_aggregat_clear(connection) -> None:
             )
 
 
+_DEAD_STRATEGIEN = {"kwp_verteilung", "ev_quote", "cop_berechnung", "manuell"}
+
+
+def _migrate_sensor_mapping_strategien_clear(connection) -> None:
+    """Datenchecker-Achse A1 (v3.39.0): Dead-Strategie-Werte im
+    `anlagen.sensor_mapping`-JSON auf `keine` umschreiben.
+
+    Das `StrategieTyp`-Enum wurde auf `sensor` + `keine` reduziert
+    (`api/routes/sensor_mapping.py`). Die früheren Werte
+    `kwp_verteilung`/`ev_quote`/`cop_berechnung`/`manuell` waren Dead Code —
+    nur `sensor` wird in den Aggregatoren ausgewertet, der Rest lieferte nie
+    Daten. **HARD-PRECONDITION:** `FeldMapping.strategie` ist Pydantic-
+    validiert; gespeicherte Mappings mit einem Dead-Wert scheitern beim
+    nächsten Save-Parse, sobald das reduzierte Enum live ist. Diese Migration
+    muss vorher laufen.
+
+    Idempotent: nach dem ersten Lauf existiert kein Dead-Wert mehr → No-Op.
+    Verschachtelung: `basis.<feld>` und `investitionen.<id>.felder.<feld>`
+    tragen `{strategie, ...}`-Dicts; `live`/`live_invert` sind String-/Bool-
+    Maps und werden übersprungen.
+    """
+    import json
+    from sqlalchemy import text as _text
+
+    rows = connection.execute(_text(
+        "SELECT id, sensor_mapping FROM anlagen WHERE sensor_mapping IS NOT NULL"
+    )).fetchall()
+    if not rows:
+        return
+
+    def _rewrite_feld(feld) -> bool:
+        """True wenn ein Dead-Wert auf `keine` umgeschrieben wurde."""
+        if isinstance(feld, dict) and feld.get("strategie") in _DEAD_STRATEGIEN:
+            feld["strategie"] = "keine"
+            return True
+        return False
+
+    for anlage_id, mapping_raw in rows:
+        if not mapping_raw:
+            continue
+        try:
+            mapping = json.loads(mapping_raw) if isinstance(mapping_raw, str) else dict(mapping_raw)
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(mapping, dict):
+            continue
+
+        changed = False
+
+        for feld in (mapping.get("basis") or {}).values():
+            changed |= _rewrite_feld(feld)
+
+        for inv_data in (mapping.get("investitionen") or {}).values():
+            if isinstance(inv_data, dict):
+                for feld in (inv_data.get("felder") or {}).values():
+                    changed |= _rewrite_feld(feld)
+
+        if changed:
+            connection.execute(
+                _text("UPDATE anlagen SET sensor_mapping = :m WHERE id = :id"),
+                {"m": json.dumps(mapping), "id": anlage_id},
+            )
+
+
 def _migrate_verbrauch_daten_keys_v326(connection) -> None:
     """
     v3.25.8 Migration: Drift-Pairs in verbrauch_daten-JSON konsolidieren.
@@ -398,6 +462,12 @@ async def run_migrations(conn):
                     END
                     WHERE prognose_quelle IS NULL OR prognose_quelle = 'eedc'
                 """))
+
+            # Datenchecker-Achse A1 (v3.39.0): Dead-Strategie-Werte im
+            # sensor_mapping-JSON auf `keine` umschreiben — Hard-Precondition
+            # vor der StrategieTyp-Enum-Reduktion (Pydantic-validiert).
+            # Idempotent. [[project_datenchecker_konsistenz]]
+            _migrate_sensor_mapping_strategien_clear(connection)
 
         # v1.1.0: Neue Spalten zur monatsdaten Tabelle
         if 'monatsdaten' in inspector.get_table_names():

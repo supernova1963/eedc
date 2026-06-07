@@ -10,13 +10,12 @@ import { api } from './client'
 // Types
 // =============================================================================
 
+// Achse A1 (v3.39.0): auf sensor/keine reduziert. Die früheren Werte
+// kwp_verteilung/ev_quote/cop_berechnung/manuell waren Dead Code — nur
+// `sensor` wird in den Aggregatoren ausgewertet, der Rest lieferte nie Daten.
 export type StrategieTyp =
   | 'sensor'           // Direkter HA-Sensor
-  | 'kwp_verteilung'   // Anteilig nach kWp
-  | 'ev_quote'         // Nach Eigenverbrauchsquote
-  | 'cop_berechnung'   // COP × Stromverbrauch
-  | 'manuell'          // Manuelle Eingabe im Wizard
-  | 'keine'            // Nicht erfassen
+  | 'keine'            // Kein Sensor (manuell im Wizard / bewusst leer)
 
 export interface FeldMapping {
   strategie: StrategieTyp
@@ -84,9 +83,7 @@ export interface MappingStatus {
   updated_at?: string | null
   counts: {
     sensor: number
-    kwp_verteilung: number
-    cop_berechnung: number
-    manuell: number
+    keine: number
   }
 }
 

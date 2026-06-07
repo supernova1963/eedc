@@ -44,14 +44,9 @@ export default function WaermepumpeStep({
       description: 'Stromverbrauch aus Energiemessung',
     },
     {
-      value: 'manuell',
-      label: 'Manuell eingeben',
-      description: 'Im Monatsabschluss-Wizard erfassen',
-    },
-    {
       value: 'keine',
-      label: 'Nicht erfassen',
-      description: 'Wird so übernommen / kein Sensor vorhanden',
+      label: 'Kein Sensor',
+      description: 'Manuell im Monatsabschluss erfassen / kein Sensor vorhanden',
     },
   ]
 
@@ -62,14 +57,9 @@ export default function WaermepumpeStep({
       description: 'Direkte Messung der abgegebenen Heizwärme (thermisch)',
     },
     {
-      value: 'cop_berechnung',
-      label: 'JAZ-Berechnung',
-      description: 'Stromverbrauch × JAZ',
-    },
-    {
       value: 'keine',
-      label: 'Nicht erfassen',
-      description: 'Wird so übernommen / kein Wärmemengenzähler vorhanden',
+      label: 'Kein Sensor',
+      description: 'Wird aus Stromverbrauch × JAZ berechnet / manuell erfassen',
     },
   ]
 
@@ -80,14 +70,9 @@ export default function WaermepumpeStep({
       description: 'Separater Sensor für Warmwasser-Wärme (thermisch)',
     },
     {
-      value: 'cop_berechnung',
-      label: 'JAZ-Berechnung',
-      description: 'Anteil Strom × JAZ',
-    },
-    {
       value: 'keine',
-      label: 'Nicht separat erfassen',
-      description: 'Warmwasser ist in Heizwärme enthalten',
+      label: 'Kein Sensor',
+      description: 'In Heizwärme enthalten / wird aus Strom × JAZ berechnet',
     },
   ]
 
@@ -191,7 +176,6 @@ export default function WaermepumpeStep({
               onChange={mapping => onChange(inv.id, 'heizenergie_kwh', mapping)}
               availableSensors={availableSensors}
               strategieOptionen={heizOptionen}
-              copDefault={inv.cop || 3.5}
             />
 
             {/* Warmwasser */}
@@ -203,7 +187,6 @@ export default function WaermepumpeStep({
               onChange={mapping => onChange(inv.id, 'warmwasser_kwh', mapping)}
               availableSensors={availableSensors}
               strategieOptionen={warmwasserOptionen}
-              copDefault={inv.cop ? inv.cop - 0.5 : 3.0}
               defaultStrategie="keine"
             />
 

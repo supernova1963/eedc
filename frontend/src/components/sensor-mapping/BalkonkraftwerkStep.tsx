@@ -44,8 +44,8 @@ export default function BalkonkraftwerkStep({
       description: 'Direkte Messung vom Wechselrichter',
     },
     {
-      value: 'manuell',
-      label: 'Manuell eingeben',
+      value: 'keine',
+      label: 'Kein Sensor',
       description: 'Im Monatsabschluss erfassen',
     },
   ]
@@ -57,14 +57,9 @@ export default function BalkonkraftwerkStep({
       description: 'Falls separater Sensor vorhanden',
     },
     {
-      value: 'manuell',
-      label: 'Manuell eingeben',
-      description: 'Im Monatsabschluss erfassen',
-    },
-    {
       value: 'keine',
-      label: 'Nicht erfassen',
-      description: 'Wird aus Erzeugung - Einspeisung berechnet',
+      label: 'Kein Sensor',
+      description: 'Manuell erfassen oder aus Erzeugung - Einspeisung berechnen',
     },
   ]
 
@@ -75,14 +70,9 @@ export default function BalkonkraftwerkStep({
       description: 'Z.B. von Speicher-Integration',
     },
     {
-      value: 'manuell',
-      label: 'Manuell eingeben',
-      description: 'Im Monatsabschluss erfassen',
-    },
-    {
       value: 'keine',
-      label: 'Kein Speicher',
-      description: 'BKW ohne Speicher',
+      label: 'Kein Sensor',
+      description: 'Manuell erfassen oder BKW ohne Speicher',
     },
   ]
 

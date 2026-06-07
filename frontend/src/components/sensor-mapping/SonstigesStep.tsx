@@ -26,8 +26,7 @@ interface SonstigesStepProps {
 
 const strategieOptionen: StrategieOption[] = [
   { value: 'sensor', label: 'HA-Sensor', description: 'Direkte Messung' },
-  { value: 'manuell', label: 'Manuell eingeben', description: 'Im Monatsabschluss-Wizard erfassen' },
-  { value: 'keine', label: 'Nicht erfassen', description: 'Optional' },
+  { value: 'keine', label: 'Kein Sensor', description: 'Im Monatsabschluss-Wizard erfassen' },
 ]
 
 export default function SonstigesStep({
@@ -71,7 +70,7 @@ export default function SonstigesStep({
                   value={invMappings.verbrauch_sonstig_kwh || null}
                   onChange={mapping => onChange(inv.id, 'verbrauch_sonstig_kwh', mapping)}
                   availableSensors={availableSensors}
-                  strategieOptionen={strategieOptionen.filter(o => o.value !== 'keine')}
+                  strategieOptionen={strategieOptionen}
                 />
               )}
 
@@ -83,7 +82,7 @@ export default function SonstigesStep({
                   value={invMappings.erzeugung_kwh || null}
                   onChange={mapping => onChange(inv.id, 'erzeugung_kwh', mapping)}
                   availableSensors={availableSensors}
-                  strategieOptionen={strategieOptionen.filter(o => o.value !== 'keine')}
+                  strategieOptionen={strategieOptionen}
                 />
               )}
 
