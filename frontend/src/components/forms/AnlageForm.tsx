@@ -33,6 +33,7 @@ export default function AnlageForm({ anlage, onSubmit, onCancel }: AnlageFormPro
     wetter_modell: anlage?.wetter_modell || 'auto',
     steuerliche_behandlung: anlage?.steuerliche_behandlung || 'keine_ust',
     ust_satz_prozent: anlage?.ust_satz_prozent?.toString() || '',
+    unterliegt_eeg_51: anlage?.unterliegt_eeg_51 ?? false,
     community_auto_share: anlage?.community_auto_share ?? false,
     netz_puffer_w: anlage?.netz_puffer_w?.toString() || '100',
     prognose_quelle: anlage?.prognose_quelle || 'eedc',
@@ -108,6 +109,7 @@ export default function AnlageForm({ anlage, onSubmit, onCancel }: AnlageFormPro
         wetter_modell: formData.wetter_modell,
         steuerliche_behandlung: formData.steuerliche_behandlung || 'keine_ust',
         ust_satz_prozent: formData.ust_satz_prozent ? parseFloat(formData.ust_satz_prozent) : undefined,
+        unterliegt_eeg_51: formData.unterliegt_eeg_51,
         community_auto_share: formData.community_auto_share,
         netz_puffer_w: formData.netz_puffer_w ? parseInt(formData.netz_puffer_w) : 100,
         prognose_quelle: formData.prognose_quelle || 'eedc',
@@ -338,6 +340,24 @@ export default function AnlageForm({ anlage, onSubmit, onCancel }: AnlageFormPro
             )}
           </div>
         </div>
+        <label className="flex items-start gap-3 cursor-pointer p-3 bg-gray-50 dark:bg-gray-800/50 rounded-lg">
+          <input
+            type="checkbox"
+            checked={formData.unterliegt_eeg_51}
+            onChange={(e) => setFormData(prev => ({ ...prev, unterliegt_eeg_51: e.target.checked }))}
+            className="mt-1 h-4 w-4 text-amber-500 border-gray-300 dark:border-gray-600 rounded focus:ring-amber-500"
+          />
+          <div>
+            <span className="text-sm font-medium text-gray-900 dark:text-gray-100">
+              Anlage unterliegt &sect;51 EEG (Negativpreis-Regelung)
+            </span>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+              Bei Neuanlagen ab Solarpaket&nbsp;I (Inbetriebnahme i.&nbsp;d.&nbsp;R. ab 25.02.2025) entf&auml;llt die
+              Einspeiseverg&uuml;tung in Stunden mit negativem B&ouml;rsenpreis. Nur aktivieren, wenn Ihre Anlage
+              betroffen ist &mdash; der entgangene Erl&ouml;s wird dann im Cockpit als &bdquo;&sect;51-Verlust&ldquo; ausgewiesen.
+            </p>
+          </div>
+        </label>
       </div>
 
       {/* Wetterdaten-Quelle */}

@@ -75,6 +75,8 @@ export interface Anlage {
   // Steuerliche Behandlung
   steuerliche_behandlung?: SteuerlicheBehandlung
   ust_satz_prozent?: number
+  // §51 EEG: Wegfall der Einspeisevergütung in Negativpreis-Stunden (manueller Schalter)
+  unterliegt_eeg_51?: boolean
   // Community-Sharing
   community_hash?: string | null
   community_auto_share?: boolean

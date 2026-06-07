@@ -58,6 +58,8 @@ class AnlageBase(BaseModel):
     netz_puffer_w: Optional[int] = Field(100, ge=0, le=1000, description="Netz-Puffer in Watt: unterhalb wird Balance (grün) angezeigt")
     # Prognosequelle pro Anlage
     prognose_quelle: Optional[str] = Field("eedc", max_length=30, description="Prognosequelle: eedc (Default, mit Lernfaktor), solcast (pur), sfml (pur, nur HA)")
+    # §51 EEG: Wegfall der Einspeisevergütung in Negativpreis-Stunden (manueller Schalter)
+    unterliegt_eeg_51: Optional[bool] = Field(False, description="§51 EEG: Einspeisevergütung entfällt in Stunden mit negativem Börsenpreis (nur Neuanlagen ab Solarpaket I). Default aus.")
 
 
 class AnlageCreate(AnlageBase):
@@ -94,6 +96,7 @@ class AnlageUpdate(BaseModel):
     community_auto_share: Optional[bool] = None
     netz_puffer_w: Optional[int] = Field(None, ge=0, le=1000)
     prognose_quelle: Optional[str] = Field(None, max_length=30)
+    unterliegt_eeg_51: Optional[bool] = None
 
 
 class SensorConfigUpdate(BaseModel):

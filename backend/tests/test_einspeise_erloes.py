@@ -85,11 +85,28 @@ def test_negative_einspeisung_robust():
 
 # --- DB-Service: get_neg_preis_einspeisung_monat ----------------------------
 
-async def _seed_anlage(db) -> int:
-    anlage = Anlage(anlagenname="Test", leistung_kwp=10.0, standort_land="DE")
+async def _seed_anlage(db, *, unterliegt_eeg_51: bool = True) -> int:
+    # Default True in diesen Service-Tests: sie prüfen die Summier-/Isolations-
+    # Logik. Der §51-Gate (Flag False → None) hat einen eigenen Test unten.
+    anlage = Anlage(
+        anlagenname="Test", leistung_kwp=10.0, standort_land="DE",
+        unterliegt_eeg_51=unterliegt_eeg_51,
+    )
     db.add(anlage)
     await db.flush()
     return anlage.id
+
+
+async def test_monat_ohne_eeg51_flag_liefert_none_trotz_aggregaten(db):
+    """§51-Gate: Anlage ohne Flag (Default) → None, auch wenn Tages-Aggregate da sind."""
+    anlage_id = await _seed_anlage(db, unterliegt_eeg_51=False)
+    db.add(TagesZusammenfassung(
+        anlage_id=anlage_id, datum=date(2026, 3, 15),
+        einspeisung_neg_preis_kwh=10.0,
+    ))
+    await db.flush()
+    assert await get_neg_preis_einspeisung_monat(db, anlage_id, 2026, 3) is None
+    assert await get_neg_preis_einspeisung_jahr(db, anlage_id, 2026) is None
 
 
 async def test_monat_ohne_tages_aggregate_liefert_none(db):

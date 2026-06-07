@@ -10,12 +10,18 @@ Berechnungs-Schritt (Erlös-Reduzierung × Vergütung) lebt im
 Berechnungs-Layer: `core.berechnungen.einspeise_erloes_euro`.
 
 Konvention:
+- Rückgabe `None` wenn die Anlage **nicht** dem §51 EEG unterliegt
+  (`Anlage.unterliegt_eeg_51` = False, Default) — der Abzug gilt rechtlich nur
+  für Neuanlagen ab Solarpaket I und ist ein bewusst manueller Schalter. Dies
+  ist der **einzige Gate** für den §51-Abzug; alle Read-Sites gehen über diesen
+  Service, daher genügt die Prüfung an dieser Stelle (kein Per-Site-Patch).
 - Rückgabe `None` wenn keine `TagesZusammenfassung`-Zeilen mit
   `einspeisung_neg_preis_kwh IS NOT NULL` existieren — das signalisiert
   Read-Sites: „Anwender hat keine Strompreis-Mitschrift / keinen
   Börsenpreis-Sensor"; alte Berechnung greift unverändert.
-- Rückgabe `0.0` wenn Tages-Aggregate vorhanden sind, aber im Zeitraum keine
-  Negativpreis-Einspeisung stattfand — eine echte 0, kein Daten-Fehlen.
+- Rückgabe `0.0` wenn die Anlage §51 unterliegt und Tages-Aggregate vorhanden
+  sind, aber im Zeitraum keine Negativpreis-Einspeisung stattfand — eine echte
+  0, kein Daten-Fehlen.
 """
 
 from __future__ import annotations
@@ -25,7 +31,18 @@ from typing import Optional
 from sqlalchemy import extract, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.models.anlage import Anlage
 from backend.models.tages_energie_profil import TagesZusammenfassung
+
+
+async def _unterliegt_eeg_51(db: AsyncSession, anlage_id: int) -> bool:
+    """True wenn die Anlage dem §51-EEG-Negativpreis-Abzug unterliegt.
+
+    Manueller Schalter pro Anlage (Default False). Gate für den gesamten
+    §51-Abzug — siehe Modul-Docstring.
+    """
+    stmt = select(Anlage.unterliegt_eeg_51).where(Anlage.id == anlage_id)
+    return bool(await db.scalar(stmt))
 
 
 async def get_neg_preis_einspeisung_monat(
@@ -37,9 +54,12 @@ async def get_neg_preis_einspeisung_monat(
     """Σ `einspeisung_neg_preis_kwh` über die Tage eines Monats.
 
     Returns:
-        Summe in kWh wenn mindestens ein Tag im Monat einen nicht-NULL-Wert
-        hat; sonst `None` (Anwender ohne Tages-Aggregate / Strompreis-Sensor).
+        Summe in kWh wenn die Anlage §51 unterliegt und mindestens ein Tag im
+        Monat einen nicht-NULL-Wert hat; sonst `None` (Anlage ohne §51-Flag oder
+        Anwender ohne Tages-Aggregate / Strompreis-Sensor).
     """
+    if not await _unterliegt_eeg_51(db, anlage_id):
+        return None
     stmt = (
         select(
             func.sum(TagesZusammenfassung.einspeisung_neg_preis_kwh),
@@ -65,8 +85,11 @@ async def get_neg_preis_einspeisung_jahr(
 
     Returns:
         Wie `get_neg_preis_einspeisung_monat`, aber Jahres-Aggregat. `None`
-        wenn das Jahr keine Tages-Aggregate mit Strompreis-Mitschrift hat.
+        wenn die Anlage §51 nicht unterliegt oder das Jahr keine Tages-Aggregate
+        mit Strompreis-Mitschrift hat.
     """
+    if not await _unterliegt_eeg_51(db, anlage_id):
+        return None
     stmt = (
         select(
             func.sum(TagesZusammenfassung.einspeisung_neg_preis_kwh),

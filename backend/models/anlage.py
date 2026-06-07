@@ -128,6 +128,14 @@ class Anlage(Base):
     steuerliche_behandlung: Mapped[Optional[str]] = mapped_column(String(30), nullable=True, default="keine_ust")
     ust_satz_prozent: Mapped[Optional[float]] = mapped_column(Float, nullable=True, default=19.0)  # DE: 19, AT: 20, CH: 8.1, IT: 22
 
+    # §51 EEG: Wegfall der Einspeisevergütung in Stunden mit negativem Börsenpreis.
+    # Gilt rechtlich nur für Neuanlagen (Solarpaket I, Inbetriebnahme ~ab 25.02.2025),
+    # gestaffelt nach Datum/Größe. Bewusst MANUELLER Schalter statt Auto-Herleitung —
+    # gesetzlicher Stichtag/Staffelung ist zu komplex für eine robuste Automatik.
+    # Default False: Bestandsanlagen bekommen den §51-Abzug erst, wenn der Nutzer ihn
+    # aktiv setzt. Einziger Gate für den Abzug (siehe services/einspeise_erloes_service).
+    unterliegt_eeg_51: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
+
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, onupdate=datetime.now)
