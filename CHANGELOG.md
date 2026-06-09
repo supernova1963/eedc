@@ -11,6 +11,29 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ---
 
+## [3.40.0] - 2026-06-09 — eedc-Werte nach HA: PV-Prognose & Börsenpreis-Trigger als Sensoren
+
+> ✨ **Minor / Feature.** eedc exportiert jetzt seine **eigene Rechenleistung** nach Home Assistant — PV-Prognose und einen Börsenpreis-Rang-Trigger, je als HA-Sensor **und** MQTT-Topic. Erster Slice der HA-Export-Architektur (Leitsatz: exportiere, was HA nicht selbst hat). eedc liefert Werte und Trigger — die Lade-/Entlade-Strategie baust du in HA. 926 Backend-Tests grün.
+
+### Added
+
+- **PV-Prognose als HA-Sensoren (#150 A).** Neue anlage-weite Sensoren aus der **eedc-eigenen** Prognose (OpenMeteo × Lernfaktor — nie Solcast/SFML, die liegen via eigene HA-Integration schon vor):
+  - `eedc_prognose_rest_today_kwh` (IST bisher + Σ Reststunden, Stundenprofil als Attribut),
+  - `eedc_prognose_day_plus_1/2/3_kwh` (heute+1/2/3),
+  - `eedc_speicher_voll_um` — SoC-Simulation **ab aktuellem Speicherstand** (letzter persistierter `soc_prozent`), damit automatisierungstauglich.
+- **Börsenpreis-Trigger als HA-Sensoren (#150 B).** Für dynamische Tarife: `eedc_preis_rang` (1–5 = fünf günstigste Stunden je Fenster, 99 = Rest; Tag- und Nacht-Fenster **solar-basiert** getrennt, Rang-Profil als Attribut) und `eedc_preis_guenstige_stunden_anzahl`. eedc liefert nur den Trigger, keine Strategie.
+- Beide Sätze laufen durch den einen Chokepoint `calculate_anlage_sensors()` → automatisch über MQTT-Discovery (gruppiert unter dem Anlage-Device) **und** REST/YAML.
+
+### Fixed
+
+- **Geräte-Connector: PV/Speicher/Wallbox-kWh auch bei vor-v3.39.0 angelegten Configs (#300).** Boot-Migration `_migrate_connector_field_inv_map_backfill` leitet die fehlende `field_inv_map` eindeutig aus den aktiven Investitionen ab, sodass der automatische Energy-Poll auch ältere Connectoren per-Investition publisht (Fall B aus #300).
+
+### Intern (nicht anwender-sichtbar)
+
+- Neue reine Helper im Berechnungs-Layer (ADR-001): `core/berechnungen/speicher_simulation.py` (SoC-Tagessimulation) und `core/berechnungen/preis_rang.py` (Rang je Fenster). Solar-Helfer `sonnenauf_unter_stunde()` in `solar_forecast_service.py` (Stundenwinkel, kein externer Abruf). Export koordinaten-/PV-/netzwerk-tolerant: bei fehlenden Daten entfallen einzelne Sensoren lautlos, der übrige Export bleibt grün. Neue Tests `test_ha_export_prognose_150.py` + `test_ha_export_preis_150.py`.
+
+---
+
 ## [3.39.2] - 2026-06-08 — Interne Aufräum-Runde: Exception-Factory, Provenance-Fix & CI
 
 > 🔧 **Patch / Aufräumen.** Überwiegend interne Hygiene vor dem nächsten größeren Umbau: einheitliche Fehler-Antworten (Exception-Factory), eine korrigierte Daten-Herkunfts-Spur (#299) und aktualisierte CI-Actions. Einzige anwender-sichtbare Änderung: leicht vereinheitlichte Wortlaute einiger Fehlermeldungen. 906 Backend-Tests grün.

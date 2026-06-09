@@ -1,0 +1,123 @@
+"""Tests #150 Slice A — eedc-PV-Prognose-Export nach HA.
+
+Rest-Ertrag heute + Tagesprognose Tag+1/2/3 + „Speicher voll um" (SoC-Sim ab
+aktuellem Speicherstand). Reine Sim-Logik isoliert, Verdrahtung mit gemockten
+Wetter-Quellen.
+"""
+
+from __future__ import annotations
+
+from datetime import date, timedelta
+from types import SimpleNamespace
+
+import pytest
+
+from backend.core.berechnungen.speicher_simulation import simuliere_speicher_tag
+from backend.models import Anlage, Investition, Monatsdaten
+
+
+# ── Speicher-Simulation (rein) ──────────────────────────────────────────────
+
+def test_speicher_voll_um_aus_aktuellem_soc():
+    # 10 kWh Speicher, Start 50 % (=5 kWh), 1 kWh Überschuss/h ab 10 Uhr.
+    pv = [0.0] * 24
+    for h in range(10, 16):
+        pv[h] = 1.0
+    sim = simuliere_speicher_tag(pv, [0.0] * 24, speicher_kap_kwh=10.0,
+                                 start_soc_prozent=50.0, start_stunde=10)
+    # 5 kWh fehlen bis voll → nach 5 h (Stunden 10..14) bei 100 % → "14:00".
+    assert sim.speicher_voll_um == "14:00"
+    assert sim.end_soc_prozent == pytest.approx(100.0)
+
+
+def test_speicher_ohne_kapazitaet_keine_sim():
+    sim = simuliere_speicher_tag([1.0] * 24, [0.0] * 24, speicher_kap_kwh=0.0,
+                                 start_soc_prozent=50.0)
+    assert sim.speicher_voll_um is None
+    assert sim.soc_pro_stunde == {}
+
+
+def test_speicher_start_stunde_ueberspringt_vergangenheit():
+    # Überschuss am Vormittag wird ignoriert, wenn erst ab 14 Uhr simuliert wird.
+    pv = [5.0] * 12 + [0.0] * 12
+    sim = simuliere_speicher_tag(pv, [0.0] * 24, speicher_kap_kwh=10.0,
+                                 start_soc_prozent=50.0, start_stunde=14)
+    assert sim.speicher_voll_um is None
+    assert min(sim.soc_pro_stunde) == 14
+
+
+# ── Verdrahtung: calculate_anlage_sensors mit gemockten Quellen ─────────────
+
+def _fake_solar_prognose(tageswerte):
+    heute = date.today()
+    tage = [
+        SimpleNamespace(
+            datum=(heute + timedelta(days=i)).isoformat(),
+            pv_ertrag_kwh=val,
+            stunden_kw=[1.0 if 8 <= h < 18 else 0.0 for h in range(24)],
+        )
+        for i, val in enumerate(tageswerte)
+    ]
+    return SimpleNamespace(tageswerte=tage)
+
+
+@pytest.fixture
+def _patch_prognose(monkeypatch):
+    import backend.services.solar_forecast_service as sfs
+    import backend.api.routes.live_wetter as lw
+
+    async def fake_get_solar_prognose(**kwargs):
+        return _fake_solar_prognose([20.0, 18.0, 15.0, 12.0])  # heute, +1, +2, +3
+
+    async def fake_lernfaktor(anlage_id, db, quelle="openmeteo"):
+        return 0.9
+
+    monkeypatch.setattr(sfs, "get_solar_prognose", fake_get_solar_prognose)
+    monkeypatch.setattr(lw, "_get_lernfaktor", fake_lernfaktor)
+
+
+async def _seed_pv_anlage(db, prognose_quelle="eedc") -> Anlage:
+    anlage = Anlage(
+        anlagenname="Prognose-Test",
+        leistung_kwp=10.0,
+        latitude=48.8,
+        longitude=9.2,
+        standort_land="DE",
+        prognose_quelle=prognose_quelle,
+    )
+    db.add(anlage)
+    await db.flush()
+    db.add(Monatsdaten(anlage_id=anlage.id, jahr=2025, monat=1,
+                       netzbezug_kwh=100.0, einspeisung_kwh=200.0))
+    db.add(Investition(anlage_id=anlage.id, typ="pv-module", bezeichnung="Dach",
+                       leistung_kwp=10.0, anschaffungsdatum=date(2024, 1, 1)))
+    await db.flush()
+    return anlage
+
+
+async def test_prognose_sensoren_erscheinen(db, _patch_prognose):
+    from backend.api.routes.ha_export import calculate_anlage_sensors
+
+    anlage = await _seed_pv_anlage(db)
+    sensors = await calculate_anlage_sensors(db, anlage)
+    by_key = {sv.definition.key: sv for sv in sensors}
+
+    # Tagesprognosen = pv_ertrag × Lernfaktor (0.9).
+    assert by_key["eedc_prognose_day_plus_1_kwh"].value == pytest.approx(18.0 * 0.9, abs=0.05)
+    assert by_key["eedc_prognose_day_plus_2_kwh"].value == pytest.approx(15.0 * 0.9, abs=0.05)
+    assert by_key["eedc_prognose_day_plus_3_kwh"].value == pytest.approx(12.0 * 0.9, abs=0.05)
+    assert "eedc_prognose_rest_today_kwh" in by_key
+    # Stundenprofil reist als Attribut mit (kein eigenes Topic).
+    assert len(by_key["eedc_prognose_rest_today_kwh"].zusatz_attribute["stundenprofil_kwh"]) == 24
+
+
+async def test_quellen_regel_nur_eedc_kein_solcast_sfml(db, _patch_prognose):
+    """Auch bei gewählter Solcast-Quelle exportiert eedc NUR eigene Prognose-Werte."""
+    from backend.api.routes.ha_export import calculate_anlage_sensors
+
+    anlage = await _seed_pv_anlage(db, prognose_quelle="solcast")
+    sensors = await calculate_anlage_sensors(db, anlage)
+    keys = {sv.definition.key for sv in sensors}
+
+    assert any(k.startswith("eedc_prognose_") for k in keys)
+    assert not any("solcast" in k or "sfml" in k for k in keys)

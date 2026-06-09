@@ -1,11 +1,25 @@
 # Was ist neu
 
-> **Stand:** Juni 2026 (v3.39.2)
+> **Stand:** Juni 2026 (v3.40.0)
 > **Diese Seite** zeigt pro Version, was sich für dich als Anwender geändert hat — kürzer als der technische [CHANGELOG](https://github.com/supernova1963/eedc-homeassistant/blob/main/CHANGELOG.md), ausführlicher als die Schnellübersicht-Tabelle in der [Übersicht](BENUTZERHANDBUCH.md#was-ist-neu-seit-v316).
 >
 > **Kein Banner, kein Pop-up:** eedc zeigt diese Liste nicht ungefragt an. HA-App-Nutzer sehen den Changelog ohnehin schon im Add-on-Store, GitHub-Releases haben einen eigenen. Wer wissen will, was neu ist, schaut hier rein — Pull statt Push.
 >
 > **Lesehinweis:** Die jüngsten Versionen stehen oben. Jeder Punkt verlinkt entweder auf die zuständige Hilfe-Sektion oder direkt auf die App-Funktion (sofern erreichbar). Anker-URLs (`?doc=was-ist-neu`) sind teilbar.
+
+---
+
+## v3.40.0 — eedc-Prognose & günstige Stunden als HA-Sensoren (Juni 2026)
+
+### Was sich für dich ändert
+
+- **eedc schickt jetzt seine eigene PV-Prognose nach Home Assistant.** Bisher exportierte eedc vor allem Monatswerte; jetzt gibt es Sensoren für die **eigene** Vorhersage: Rest-Ertrag heute, die Erträge für morgen/übermorgen/in drei Tagen und einen „Speicher voll um"-Zeitpunkt (gerechnet ab deinem **aktuellen** Speicherstand, also automatisierungstauglich). Bewusst nur die eedc-eigene Prognose (OpenMeteo + Lernfaktor) — Solcast/SFML liegen, falls du sie nutzt, über ihre eigene HA-Integration ohnehin schon vor.
+- **Börsenpreis-Trigger für dynamische Tarife.** Ein neuer Sensor sagt dir, wie günstig die **aktuelle Stunde** im Tagesverlauf ist (Rang 1–5 = eine der fünf günstigsten Stunden, sonst „teuer"), und das **getrennt für Tag und Nacht** (die Fenster wandern saisonal mit Sonnenauf-/-untergang). Damit kannst du in HA eigene Automatisierungen bauen — Wallbox laden, Speicher takten, Verbraucher schalten. **eedc liefert nur das Signal, die Strategie baust du selbst** — bewusst kein fertiger Auto-Pilot.
+- Alle Werte kommen wie gewohnt **doppelt**: als HA-Sensor (Add-on) und als MQTT-Topic, gruppiert unter dem eedc-Gerät deiner Anlage. Stunden-Profile (Prognose- und Preis-Verlauf) hängen als Sensor-Attribut dran, statt den HA-Verlauf mit 24 Einzel-Sensoren zu fluten.
+
+### Gut zu wissen
+
+- **Geräte-Connector liefert kWh jetzt auch bei älteren Einrichtungen.** Wenn du den Connector vor v3.39.0 eingerichtet hattest, blieben PV-/Speicher-/Wallbox-Energiewerte trotz Update leer — eine automatische Reparatur beim Start ordnet die Messungen jetzt nachträglich den richtigen Komponenten zu (#300).
 
 ---
 
