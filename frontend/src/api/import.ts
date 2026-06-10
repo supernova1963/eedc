@@ -156,4 +156,17 @@ export const importApi = {
     // Ohne Jahr-Parameter: Gesamtzeitraum
     return `${API_BASE}/import/pdf/${anlageId}`
   },
+
+  /**
+   * ZIP-URL fuer mehrere Berichte (#121-Rest).
+   *
+   * @param berichte - Bericht-Keys (jahresbericht, infothek, anlagendokumentation, finanzbericht)
+   * @param jahr - Jahr fuer den Jahresbericht, oder undefined/null fuer Gesamtzeitraum
+   */
+  getPdfZipExportUrl(anlageId: number, berichte: string[], jahr?: number | null): string {
+    const params = new URLSearchParams()
+    berichte.forEach(b => params.append('berichte', b))
+    if (jahr) params.append('jahr', String(jahr))
+    return `${API_BASE}/import/pdf-zip/${anlageId}?${params.toString()}`
+  },
 }

@@ -31,6 +31,11 @@ apscheduler>=3.10.0
 # SMA Device Connector (ennexOS, WebConnect, Speedwire)
 pysma-plus>=0.4
 
+# Krypto für Anker SOLIX Cloud-Login (ECDH P-256 + AES-256-CBC, #328).
+# Nicht transitiv garantiert — muss explizit dabei sein. Reines
+# Python-Binding + vorgebaute Wheels, Image-Impact gering (~7 MB).
+cryptography>=42.0.0
+
 # MariaDB/MySQL Support (optional, für HA Recorder DB)
 pymysql>=1.1.0
 

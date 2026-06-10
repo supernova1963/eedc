@@ -1,11 +1,28 @@
 # Was ist neu
 
-> **Stand:** Juni 2026 (v3.41.0)
+> **Stand:** Juni 2026 (v3.42.0)
 > **Diese Seite** zeigt pro Version, was sich für dich als Anwender geändert hat — kürzer als der technische [CHANGELOG](https://github.com/supernova1963/eedc-homeassistant/blob/main/CHANGELOG.md), ausführlicher als die Schnellübersicht-Tabelle in der [Übersicht](BENUTZERHANDBUCH.md#was-ist-neu-seit-v316).
 >
 > **Kein Banner, kein Pop-up:** eedc zeigt diese Liste nicht ungefragt an. HA-App-Nutzer sehen den Changelog ohnehin schon im Add-on-Store, GitHub-Releases haben einen eigenen. Wer wissen will, was neu ist, schaut hier rein — Pull statt Push.
 >
 > **Lesehinweis:** Die jüngsten Versionen stehen oben. Jeder Punkt verlinkt entweder auf die zuständige Hilfe-Sektion oder direkt auf die App-Funktion (sofern erreichbar). Anker-URLs (`?doc=was-ist-neu`) sind teilbar.
+
+---
+
+## v3.42.0 — Prognose lernt saisonale Verschattung, Anker-SOLIX repariert & Berichte als ZIP (Juni 2026)
+
+### Was sich für dich ändert
+
+- **Die PV-Prognose lernt jetzt saisonale Verschattung.** Wenn Bäume oder Gebäude deine Anlage je nach Jahreszeit unterschiedlich beschatten (belaubt vs. kahl), konnte die bisherige Korrektur das nicht auseinanderhalten — gleicher Sonnenstand wurde über die Jahreszeiten gemittelt. Jetzt lernt eedc einen eigenen Korrekturfaktor **pro Monat und Stunde** aus deinen vorhandenen Daten. Aktiv wird ein Monat, sobald genug Messpunkte da sind (~50 Stunden); bis dahin gilt die bisherige Korrektur weiter. Was eedc gelernt hat, siehst du im neuen Heatmap-Tab **„Saison (Monat × Std.)"** beim Korrekturprofil. Gilt für die eedc-Prognose — Solcast/SFML bleiben unverändert.
+- **Anker-SOLIX-Cloud-Import repariert.** Anker hat das Anmelde-Verfahren seiner Cloud umgestellt; eedc spricht jetzt das aktuelle Schema, und auch der Datenabruf läuft über den aktuellen Endpunkt. Falls beim Login etwas hakt, nennt die Fehlermeldung jetzt den konkreten Grund (falsches Passwort, Verifizierung nötig, zu viele Anfragen).
+- **Mehrere PDF-Berichte als ein ZIP.** In Einstellungen → Stammdaten → Anlage → Dokumente kannst du Berichte ankreuzen und ab zwei Stück gesammelt als ZIP herunterladen.
+
+- **HA-Export ohne Stolpersteine.** Das YAML-Snippet für den REST-Export enthält jetzt automatisch die richtige Adresse deines eedc (vorher stand dort ein Platzhalter, der unbemerkt dazu führte, dass in HA gar keine Entitäten entstanden) — inklusive Hinweis, dass im Add-on Port 8099 freigegeben sein muss. Und der MQTT-Auto-Publish schickt die Sensoren jetzt schon ~2 Minuten nach dem Start, statt erst nach einer Stunde — neue Sensoren erscheinen nach einem Update sofort in HA.
+
+### Gut zu wissen
+
+- **Aussichten und Cockpit rechnen jetzt auch im Detail identisch** — die Aussichten nutzen dieselbe gemeinsame Finanzberechnung wie Cockpit und Berichte (Monat für Monat mit dem jeweiligen Monatspreis, auch beim Dienstwagen-Abzug). Bei dynamischen Tarifen können sich einzelne Aussichten-Werte dadurch leicht ändern — sie sind jetzt die korrekten.
+- **MQTT-Auto-Publish läuft jetzt automatisch mit, sobald der MQTT-Export aktiviert ist** (`mqtt.enabled: true` in der Add-on-Konfiguration). Bisher brauchte es zusätzlich die separate Option `mqtt.auto_publish` (Standard: aus) — wer die nicht kannte, bekam Sensor-Updates nur beim manuellen Klick „Sensoren publizieren". Die Option bleibt gültig, ist aber nicht mehr nötig.
 
 ---
 

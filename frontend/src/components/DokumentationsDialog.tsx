@@ -10,7 +10,7 @@
  */
 
 import { useState, useEffect } from 'react'
-import { FileText, Award, Euro, BookOpen, Download, Loader2 } from 'lucide-react'
+import { FileText, Award, Euro, BookOpen, Download, FolderArchive, Loader2 } from 'lucide-react'
 import { Modal, Alert } from './ui'
 import { importApi } from '../api/import'
 import { monatsdatenApi } from '../api/monatsdaten'
@@ -22,12 +22,15 @@ interface DokumentationsDialogProps {
   onClose: () => void
 }
 
+type BerichtKey = 'jahresbericht' | 'infothek' | 'anlagendokumentation' | 'finanzbericht'
+
 interface DocCard {
   icon: React.ReactNode
   titel: string
   beschreibung: string
   url: string
   filename: string
+  zipKey: BerichtKey
   beta?: boolean
   feedbackUrl?: string
   accent: string
@@ -36,6 +39,8 @@ interface DocCard {
 export default function DokumentationsDialog({ anlage, onClose }: DokumentationsDialogProps) {
   const [loading, setLoading] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  // ZIP-Mehrfachauswahl (#121-Rest): angekreuzte Berichte
+  const [zipAuswahl, setZipAuswahl] = useState<Set<BerichtKey>>(new Set())
   // null = Gesamtzeitraum (alle Jahre). Backend/Builder unterscheiden ueber den jahr-Query-Param.
   const [jahresberichtJahr, setJahresberichtJahr] = useState<number | null>(null)
   const [verfuegbareJahre, setVerfuegbareJahre] = useState<number[]>([])
@@ -68,6 +73,7 @@ export default function DokumentationsDialog({ anlage, onClose }: Dokumentations
       filename: jahresberichtJahr
         ? `jahresbericht_${safeName}_${jahresberichtJahr}.pdf`
         : `jahresbericht_${safeName}.pdf`,
+      zipKey: 'jahresbericht',
       accent: 'text-orange-500 border-orange-200 dark:border-orange-900/40',
     },
     {
@@ -76,6 +82,7 @@ export default function DokumentationsDialog({ anlage, onClose }: Dokumentations
       beschreibung: 'Alle Einträge der Infothek (Verträge, Zähler, Kontakte, Förderungen …) in einem Nachschlagewerk.',
       url: `./api/infothek/export/pdf?anlage_id=${anlage.id}`,
       filename: `infothek_${safeName}.pdf`,
+      zipKey: 'infothek',
       accent: 'text-blue-500 border-blue-200 dark:border-blue-900/40',
     },
     {
@@ -84,6 +91,7 @@ export default function DokumentationsDialog({ anlage, onClose }: Dokumentations
       beschreibung: 'Urkunden-Stil: Titelseite mit Anlagenfoto + Komponenten-Folgeseiten mit verknüpfter Komponenten-Akte. Ohne Geldbeträge — für Versicherung, Nachlass, Archiv.',
       url: `./api/dokumentation/anlagendokumentation/${anlage.id}`,
       filename: `anlagendokumentation_${safeName}.pdf`,
+      zipKey: 'anlagendokumentation',
       beta: true,
       feedbackUrl: 'https://github.com/supernova1963/eedc-homeassistant/issues/121',
       accent: 'text-emerald-600 border-emerald-200 dark:border-emerald-900/40',
@@ -94,6 +102,7 @@ export default function DokumentationsDialog({ anlage, onClose }: Dokumentations
       beschreibung: 'Investitionen, Amortisation, Förderungen, Versicherung, Steuerdaten — alle Kennzahlen zum Geld-Aspekt der Anlage.',
       url: `./api/dokumentation/finanzbericht/${anlage.id}`,
       filename: `finanzbericht_${safeName}.pdf`,
+      zipKey: 'finanzbericht',
       beta: true,
       feedbackUrl: 'https://github.com/supernova1963/eedc-homeassistant/issues/121',
       accent: 'text-amber-600 border-amber-200 dark:border-amber-900/40',
@@ -107,6 +116,33 @@ export default function DokumentationsDialog({ anlage, onClose }: Dokumentations
       await downloadFile(card.url, card.filename)
     } catch (err) {
       setError(`${card.titel}: ${err instanceof Error ? err.message : 'Download fehlgeschlagen'}`)
+    } finally {
+      setLoading(null)
+    }
+  }
+
+  const toggleZipAuswahl = (key: BerichtKey) => {
+    setZipAuswahl(prev => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
+
+  // Karten-Reihenfolge beibehalten, damit das ZIP stabil sortiert ist
+  const zipBerichte = cards.filter(c => zipAuswahl.has(c.zipKey)).map(c => c.zipKey)
+
+  const handleZipDownload = async () => {
+    setError(null)
+    setLoading('ZIP')
+    try {
+      await downloadFile(
+        importApi.getPdfZipExportUrl(anlage.id, zipBerichte, jahresberichtJahr),
+        `eedc_dokumente_${safeName}.zip`,
+      )
+    } catch (err) {
+      setError(`ZIP-Download: ${err instanceof Error ? err.message : 'Download fehlgeschlagen'}`)
     } finally {
       setLoading(null)
     }
@@ -148,7 +184,19 @@ export default function DokumentationsDialog({ anlage, onClose }: Dokumentations
           {cards.map(card => {
             const isLoading = loading === card.titel
             return (
-              <div key={card.titel} className="flex flex-col">
+              <div key={card.titel} className="relative flex flex-col">
+                <label
+                  className="absolute -top-2 -right-2 z-10 flex items-center justify-center h-7 w-7 rounded-full border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 shadow-sm cursor-pointer"
+                  title="Für ZIP-Download auswählen"
+                >
+                  <input
+                    type="checkbox"
+                    checked={zipAuswahl.has(card.zipKey)}
+                    onChange={() => toggleZipAuswahl(card.zipKey)}
+                    className="h-4 w-4 accent-orange-500 cursor-pointer"
+                    aria-label={`${card.titel} für ZIP-Download auswählen`}
+                  />
+                </label>
                 <button
                   type="button"
                   onClick={() => handleDownload(card)}
@@ -197,8 +245,27 @@ export default function DokumentationsDialog({ anlage, onClose }: Dokumentations
           })}
         </div>
 
+        {zipBerichte.length >= 2 && (
+          <button
+            type="button"
+            onClick={handleZipDownload}
+            disabled={!!loading}
+            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg
+              bg-orange-500 hover:bg-orange-600 text-white font-medium text-sm
+              transition-colors disabled:opacity-60 disabled:cursor-wait"
+          >
+            {loading === 'ZIP'
+              ? <Loader2 className="h-4 w-4 animate-spin" />
+              : <FolderArchive className="h-4 w-4" />
+            }
+            Als ZIP herunterladen ({zipBerichte.length} Berichte)
+          </button>
+        )}
+
         <p className="text-xs text-gray-500 dark:text-gray-500 mt-2">
-          <strong>Beta-Hinweis:</strong> Anlagendokumentation und Finanzbericht sind als Beta gekennzeichnet —
+          <strong>Tipp:</strong> Über die Kästchen an den Karten lassen sich mehrere Berichte
+          auswählen und gesammelt als ZIP herunterladen (ab 2 Berichten).
+          {' '}<strong>Beta-Hinweis:</strong> Anlagendokumentation und Finanzbericht sind als Beta gekennzeichnet —
           Rückmeldungen gerne über den Feedback-Link.
         </p>
       </div>

@@ -7,22 +7,38 @@ von Anker SOLIX Solarbank (und MI80 Mikrowechselrichter) abzurufen.
 Auth: E-Mail + Passwort (identisch zur Anker App).
 API-Basis: https://ankerpower-api-eu.anker.com (EU)
 
-Basiert auf der Community-Dokumentation von:
-https://github.com/thomluther/anker-solix-api
+Login-Schema (Stand 2026, #328):
+- ECDH-Schlüsselaustausch (NIST P-256) mit dem statischen Anker-Server-Public-Key,
+  das Passwort wird mit dem Shared Secret AES-256-CBC-verschlüsselt übertragen
+  (IV = erste 16 Bytes des Shared Secret, PKCS7-Padding, Base64).
+- Nach dem Login: Header `x-auth-token` = auth_token, `gtoken` = MD5(user_id).
+- Pflicht-Header `app-name: anker_power`.
+
+Daten-Endpunkt ist `energy_analysis` — das früher verwendete `energy_daily`
+existiert in der aktuellen API nicht (mehr). Das Abfrage-Fenster
+(start_time/end_time) ist TAG-INKLUSIV auf beiden Seiten: Für einen Monat
+muss end_time der letzte Monatstag sein, NICHT der 1. des Folgemonats.
+
+Schema nachvollzogen anhand der Community-Dokumentation von
+https://github.com/thomluther/anker-solix-api (eigene Implementierung).
 
 HINWEIS: Reverse-engineered API, kann bei App-Updates brechen.
 Dieser Provider ist NICHT mit echten Geräten getestet (getestet=False).
 """
 
+import asyncio
+import base64
+import calendar
 import hashlib
-import json
 import logging
 import time
-import uuid
 from datetime import datetime
 from typing import Optional
 
 import httpx
+from cryptography.hazmat.primitives import padding, serialization
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 from backend.services.import_parsers.base import ParsedMonthData
 
@@ -43,12 +59,36 @@ API_BASE_COM = "https://ankerpower-api.anker.com"
 # API-Pfade
 LOGIN_PATH = "/passport/login"
 SITE_LIST_PATH = "/power_service/v1/site/get_site_list"
-ENERGY_DAILY_PATH = "/power_service/v1/site/energy_daily"
+ENERGY_ANALYSIS_PATH = "/power_service/v1/site/energy_analysis"
 
-# Standard-Header für Anker API
-APP_VERSION = "2.9.2"
-MODEL_TYPE = "PHONE"
-OS_TYPE = "android"
+# Statischer Public Key der Anker-API-Server (EU und COM identisch),
+# unkomprimiertes X9.62-Format: 0x04 + 32 Byte X + 32 Byte Y, hex-kodiert.
+ANKER_SERVER_PUBLIC_KEY_HEX = (
+    "04c5c00c4f8d1197cc7c3167c52bf7acb054d722f0ef08dcd7e0883236e0d72a"
+    "3868d9750cb47fa4619248f3d83f0f662671dadc6e2d31c2f41db0161651c7c076"
+)
+
+# Die Anker-Server drosseln wiederholte Aufrufe desselben Endpunkts
+# (Community-Erfahrung: ~10 Requests/Minute pro Endpunkt). Pro Monat machen
+# wir genau 1 energy_analysis-Request und halten dazwischen Abstand.
+REQUEST_DELAY_S = 6.0
+
+# Bekannte Anker-API-Fehlercodes → verständliche UI-Meldung.
+# (Cloud-Import-Fehler sind seit v3.31.5 in der UI sichtbar.)
+API_ERROR_HINTS = {
+    26108: "E-Mail oder Passwort ist falsch.",
+    26156: "E-Mail oder Passwort ist falsch.",
+    26052: (
+        "Anker verlangt eine zusätzliche Verifizierung. Bitte einmalig in der "
+        "Anker-App an- und abmelden und den Import danach erneut versuchen."
+    ),
+    26070: (
+        "Der Server hat den Verschlüsselungs-Schlüssel abgelehnt — vermutlich "
+        "hat Anker das Login-Schema geändert. Bitte als Bug melden."
+    ),
+    26084: "Die Sitzung wurde von einem anderen Login beendet. Bitte erneut versuchen.",
+    100053: "Zu viele Login-Versuche. Bitte später erneut versuchen.",
+}
 
 
 def _get_api_base(server: str) -> str:
@@ -58,23 +98,146 @@ def _get_api_base(server: str) -> str:
     return API_BASE_EU
 
 
+def _trimmed_credentials(credentials: dict) -> tuple[str, str, str]:
+    """E-Mail/Passwort/Server aus den Credentials lesen und Whitespace trimmen.
+
+    Copy-Paste aus Hersteller-Portalen bringt gern führende/folgende
+    Leerzeichen mit — die API lehnt das als falsche Zugangsdaten ab.
+    """
+    email = (credentials.get("email") or "").strip()
+    password = (credentials.get("password") or "").strip()
+    server = (credentials.get("server") or "eu").strip()
+    return email, password, server
+
+
+def _timezone_gmt_string() -> str:
+    """Lokale Zeitzone im Anker-Header-Format, z. B. 'GMT+01:00'."""
+    tzo = datetime.now().astimezone().strftime("%z")
+    return f"GMT{tzo[:3]}:{tzo[3:5]}"
+
+
+def _timezone_offset_ms() -> int:
+    """Lokaler UTC-Offset in Millisekunden (Login-Feld `time_zone`)."""
+    offset = datetime.now().astimezone().utcoffset()
+    return round(offset.total_seconds() * 1000) if offset else 0
+
+
 def _default_headers() -> dict:
     """Standard-Header die bei jedem Request mitgeschickt werden."""
     return {
         "Content-Type": "application/json",
-        "App-Version": APP_VERSION,
-        "Model-Type": MODEL_TYPE,
-        "Os-Type": OS_TYPE,
+        "Model-Type": "DESKTOP",
+        "App-Name": "anker_power",
+        "Os-Type": "android",
         "Country": "DE",
-        "Timezone": "Europe/Berlin",
-        "gtoken": "",
+        "Timezone": _timezone_gmt_string(),
     }
 
 
-def _hash_password(password: str) -> str:
-    """Passwort-Hash für die Anker API (MD5 des MD5)."""
-    first = hashlib.md5(password.encode("utf-8")).hexdigest()
-    return hashlib.md5(first.encode("utf-8")).hexdigest()
+def _auth_headers(auth_token: str, user_id: str) -> dict:
+    """Header für authentifizierte Requests: x-auth-token + gtoken."""
+    headers = _default_headers()
+    headers["x-auth-token"] = auth_token
+    headers["gtoken"] = _gtoken(user_id)
+    return headers
+
+
+def _gtoken(user_id: str) -> str:
+    """gtoken = MD5-Hex des user_id aus der Login-Response."""
+    return hashlib.md5(user_id.encode("utf-8")).hexdigest()
+
+
+def _generate_ecdh_keypair() -> ec.EllipticCurvePrivateKey:
+    """Frisches ephemeres ECDH-Schlüsselpaar (NIST P-256) pro Login."""
+    return ec.generate_private_key(ec.SECP256R1())
+
+
+def _public_key_hex(private_key: ec.EllipticCurvePrivateKey) -> str:
+    """Client-Public-Key unkomprimiert (0x04 + X + Y) als Hex-String."""
+    return private_key.public_key().public_bytes(
+        encoding=serialization.Encoding.X962,
+        format=serialization.PublicFormat.UncompressedPoint,
+    ).hex()
+
+
+def _compute_shared_secret(
+    private_key: ec.EllipticCurvePrivateKey,
+    server_public_key_hex: str = ANKER_SERVER_PUBLIC_KEY_HEX,
+) -> bytes:
+    """ECDH-Shared-Secret (32 Byte) mit dem Anker-Server-Public-Key."""
+    server_public_key = ec.EllipticCurvePublicKey.from_encoded_point(
+        ec.SECP256R1(), bytes.fromhex(server_public_key_hex)
+    )
+    return private_key.exchange(ec.ECDH(), server_public_key)
+
+
+def _encrypt_password(password: str, shared_secret: bytes) -> str:
+    """Passwort AES-256-CBC-verschlüsseln, Base64-kodiert.
+
+    Schlüssel = Shared Secret (32 Byte), IV = erste 16 Byte des Shared
+    Secret, PKCS7-Padding — exakt das Format, das der Anker-Login erwartet.
+    """
+    cipher = Cipher(
+        algorithms.AES(shared_secret),
+        modes.CBC(shared_secret[:16]),
+    )
+    encryptor = cipher.encryptor()
+    padder = padding.PKCS7(128).padder()
+    padded = padder.update(password.encode("utf-8")) + padder.finalize()
+    encrypted = encryptor.update(padded) + encryptor.finalize()
+    return base64.b64encode(encrypted).decode("ascii")
+
+
+def _build_login_payload(
+    email: str,
+    password: str,
+    private_key: ec.EllipticCurvePrivateKey,
+) -> dict:
+    """Login-Payload mit ECDH-Public-Key und verschlüsseltem Passwort."""
+    shared_secret = _compute_shared_secret(private_key)
+    return {
+        "ab": "DE",
+        "client_secret_info": {
+            "public_key": _public_key_hex(private_key),
+        },
+        "enc": 0,
+        "email": email,
+        "password": _encrypt_password(password, shared_secret),
+        # UTC-Offset in Millisekunden (z. B. GMT+01:00 → 3600000)
+        "time_zone": _timezone_offset_ms(),
+        # Unix-Timestamp in Millisekunden als String
+        "transaction": str(int(time.time() * 1000)),
+    }
+
+
+def _check_response(status_code: int, data: dict, kontext: str) -> dict:
+    """HTTP-Status + Anker-Fehlercode prüfen; bei Fehler klare Meldung werfen.
+
+    Returns:
+        Das `data`-Objekt der Response bei Erfolg.
+    """
+    if status_code in (401, 403):
+        raise Exception(
+            f"{kontext}: Anmeldung von der Anker-API abgelehnt "
+            f"(HTTP {status_code}). Bitte Zugangsdaten prüfen."
+        )
+    if status_code == 429:
+        raise Exception(
+            f"{kontext}: Zu viele Anfragen an die Anker-API (HTTP 429). "
+            "Bitte einige Minuten warten und erneut versuchen."
+        )
+    if status_code != 200:
+        raise Exception(f"{kontext}: HTTP {status_code} von der Anker-API.")
+
+    code = data.get("code", -1)
+    if code != 0:
+        hint = API_ERROR_HINTS.get(code)
+        msg = data.get("msg", "Unbekannter Fehler")
+        if hint:
+            raise Exception(f"{kontext}: {hint} (Code {code}, '{msg}')")
+        raise Exception(f"{kontext}: {msg} (Code {code})")
+
+    return data.get("data") or {}
 
 
 async def _login(
@@ -88,39 +251,18 @@ async def _login(
     Returns:
         Tuple von (auth_token, user_id)
     """
-    payload = {
-        "ab": "DE",
-        "client_secret_info": {
-            "public_key": "",
-        },
-        "enc": 0,
-        "email": email,
-        "password": _hash_password(password),
-        "time_zone": 2,
-        "transaction": str(uuid.uuid4()),
-    }
+    payload = _build_login_payload(email, password, _generate_ecdh_keypair())
 
-    resp = await client.post(
-        f"{api_base}{LOGIN_PATH}",
-        json=payload,
-    )
+    resp = await client.post(f"{api_base}{LOGIN_PATH}", json=payload)
+    result = _check_response(resp.status_code, resp.json(), "Anker-Login fehlgeschlagen")
 
-    if resp.status_code != 200:
-        raise Exception(f"Login fehlgeschlagen: HTTP {resp.status_code}")
-
-    data = resp.json()
-    code = data.get("code", -1)
-
-    if code != 0:
-        msg = data.get("msg", "Unbekannter Fehler")
-        raise Exception(f"Login fehlgeschlagen: {msg} (Code: {code})")
-
-    result = data.get("data", {})
     token = result.get("auth_token", "")
     user_id = result.get("user_id", "")
 
-    if not token:
-        raise Exception("Kein Auth-Token in der Login-Response erhalten.")
+    if not token or not user_id:
+        raise Exception(
+            "Anker-Login: Kein Auth-Token/User-ID in der Login-Response erhalten."
+        )
 
     return token, user_id
 
@@ -129,65 +271,63 @@ async def _get_site_list(
     client: httpx.AsyncClient,
     api_base: str,
     auth_token: str,
+    user_id: str,
 ) -> list[dict]:
     """Liste der Anlagen (Sites) abrufen."""
-    headers = _default_headers()
-    headers["gtoken"] = auth_token
-
     resp = await client.post(
         f"{api_base}{SITE_LIST_PATH}",
         json={},
-        headers=headers,
+        headers=_auth_headers(auth_token, user_id),
     )
-
-    if resp.status_code != 200:
-        raise Exception(f"Site-Liste abrufen fehlgeschlagen: HTTP {resp.status_code}")
-
-    data = resp.json()
-    if data.get("code", -1) != 0:
-        raise Exception(f"Site-Liste Fehler: {data.get('msg', 'Unbekannt')}")
-
-    return data.get("data", {}).get("site_list", [])
+    result = _check_response(
+        resp.status_code, resp.json(), "Site-Liste abrufen fehlgeschlagen"
+    )
+    return result.get("site_list", [])
 
 
-async def _get_energy_daily(
+def _month_window(year: int, month: int) -> tuple[str, str]:
+    """Abfrage-Fenster für einen Monat — beidseitig TAG-INKLUSIV.
+
+    Die Anker-API liefert für start_time/end_time beide Randtage mit
+    (EcoFlow-Lehre: halboffen angenommen → Import zu hoch). end_time muss
+    daher der LETZTE Monatstag sein, nicht der 1. des Folgemonats.
+    """
+    last_day = calendar.monthrange(year, month)[1]
+    return f"{year}-{month:02d}-01", f"{year}-{month:02d}-{last_day:02d}"
+
+
+async def _get_energy_analysis(
     client: httpx.AsyncClient,
     api_base: str,
     auth_token: str,
+    user_id: str,
     site_id: str,
     start_date: str,
     end_date: str,
-) -> list[dict]:
-    """Tagesweise Energiedaten für eine Site abrufen.
+    dev_type: str = "solar_production",
+) -> dict:
+    """Energiedaten (Tageswerte + Intervall-Summen) für eine Site abrufen.
 
-    Args:
-        start_date: Format "YYYY-MM-DD"
-        end_date: Format "YYYY-MM-DD"
+    rangeType 'week' akzeptiert beliebige Zeiträume (bis 1 Jahr) und liefert
+    eine Tages-Aufschlüsselung in `power` plus *_total-Felder über das
+    gesamte (inklusive) Intervall.
     """
-    headers = _default_headers()
-    headers["gtoken"] = auth_token
-
     payload = {
         "site_id": site_id,
-        "start_day": start_date,
-        "end_day": end_date,
-        "device_sn": "",
+        "device_sn": "",  # Pflichtfeld, Daten kommen trotzdem auf Site-Ebene
+        "device_type": dev_type,
+        "type": "week",
+        "start_time": start_date,
+        "end_time": end_date,
     }
-
     resp = await client.post(
-        f"{api_base}{ENERGY_DAILY_PATH}",
+        f"{api_base}{ENERGY_ANALYSIS_PATH}",
         json=payload,
-        headers=headers,
+        headers=_auth_headers(auth_token, user_id),
     )
-
-    if resp.status_code != 200:
-        raise Exception(f"Energiedaten abrufen fehlgeschlagen: HTTP {resp.status_code}")
-
-    data = resp.json()
-    if data.get("code", -1) != 0:
-        raise Exception(f"Energiedaten Fehler: {data.get('msg', 'Unbekannt')}")
-
-    return data.get("data", {}).get("statistics", [])
+    return _check_response(
+        resp.status_code, resp.json(), "Energiedaten abrufen fehlgeschlagen"
+    )
 
 
 def _safe_float(value) -> Optional[float]:
@@ -199,6 +339,61 @@ def _safe_float(value) -> Optional[float]:
         return f if f >= 0 else None
     except (ValueError, TypeError):
         return None
+
+
+def _parse_month_response(
+    data: dict, year: int, month: int
+) -> Optional[ParsedMonthData]:
+    """energy_analysis-Response (devType solar_production) → ParsedMonthData.
+
+    `power` enthält Tageswerte der PV-Erzeugung; die *_total-Felder sind
+    Summen über das abgefragte Intervall. Achtung: `power_unit` behauptet
+    'wh', die Werte sind aber kWh (bekannte API-Eigenheit).
+    """
+    if not data:
+        return None
+
+    # PV-Erzeugung: Summe der Tageswerte, Fallback auf solar_total
+    daily = [
+        _safe_float(item.get("value"))
+        for item in (data.get("power") or [])
+    ]
+    daily_values = [v for v in daily if v is not None]
+    pv = round(sum(daily_values), 2) if daily_values else _safe_float(
+        data.get("solar_total")
+    )
+
+    einspeisung = _safe_float(data.get("solar_to_grid_total"))
+    batterie_ladung = _safe_float(data.get("charge_total"))
+    batterie_entladung = _safe_float(data.get("discharge_total"))
+
+    # Eigenverbrauch = PV direkt ins Haus + PV in die Batterie.
+    # Fallback: Erzeugung − Einspeisung (gleiche Größe, andere Quelle).
+    solar_to_home = _safe_float(data.get("solar_to_home_total"))
+    solar_to_battery = _safe_float(data.get("solar_to_battery_total"))
+    if solar_to_home is not None or solar_to_battery is not None:
+        eigenverbrauch = (solar_to_home or 0.0) + (solar_to_battery or 0.0)
+    elif pv is not None and einspeisung is not None:
+        eigenverbrauch = max(pv - einspeisung, 0.0)
+    else:
+        eigenverbrauch = None
+
+    month_data = ParsedMonthData(
+        jahr=year,
+        monat=month,
+        pv_erzeugung_kwh=round(pv, 2) if pv is not None else None,
+        einspeisung_kwh=round(einspeisung, 2) if einspeisung is not None else None,
+        eigenverbrauch_kwh=(
+            round(eigenverbrauch, 2) if eigenverbrauch is not None else None
+        ),
+        batterie_ladung_kwh=(
+            round(batterie_ladung, 2) if batterie_ladung is not None else None
+        ),
+        batterie_entladung_kwh=(
+            round(batterie_entladung, 2) if batterie_entladung is not None else None
+        ),
+    )
+    return month_data if month_data.has_data() else None
 
 
 @register_provider
@@ -255,9 +450,7 @@ class AnkerSolixProvider(CloudImportProvider):
 
     async def test_connection(self, credentials: dict) -> CloudConnectionTestResult:
         """Testet die Verbindung zur Anker Cloud-API."""
-        email = credentials.get("email", "")
-        password = credentials.get("password", "")
-        server = credentials.get("server", "eu")
+        email, password, server = _trimmed_credentials(credentials)
 
         if not email or not password:
             return CloudConnectionTestResult(
@@ -272,7 +465,7 @@ class AnkerSolixProvider(CloudImportProvider):
                 timeout=20, headers=_default_headers()
             ) as client:
                 auth_token, user_id = await _login(client, api_base, email, password)
-                sites = await _get_site_list(client, api_base, auth_token)
+                sites = await _get_site_list(client, api_base, auth_token, user_id)
 
             if not sites:
                 return CloudConnectionTestResult(
@@ -323,12 +516,11 @@ class AnkerSolixProvider(CloudImportProvider):
     ) -> list[ParsedMonthData]:
         """Holt historische Monatsdaten von der Anker SOLIX Cloud.
 
-        Die API liefert Tagesdaten. Diese werden pro Monat aggregiert.
-        Rate-Limit beachten: max. ~10 Requests/Minute.
+        Pro Monat ein energy_analysis-Request (devType solar_production):
+        Tageswerte werden zur Monats-PV summiert, Einspeisung/Eigenverbrauch/
+        Batterie kommen aus den Intervall-Summen der Response.
         """
-        email = credentials.get("email", "")
-        password = credentials.get("password", "")
-        server = credentials.get("server", "eu")
+        email, password, server = _trimmed_credentials(credentials)
 
         api_base = _get_api_base(server)
         results: list[ParsedMonthData] = []
@@ -340,7 +532,7 @@ class AnkerSolixProvider(CloudImportProvider):
             auth_token, user_id = await _login(client, api_base, email, password)
 
             # Erste Site ermitteln
-            sites = await _get_site_list(client, api_base, auth_token)
+            sites = await _get_site_list(client, api_base, auth_token, user_id)
             if not sites:
                 logger.warning("Anker SOLIX: Keine Anlage gefunden")
                 return []
@@ -350,20 +542,34 @@ class AnkerSolixProvider(CloudImportProvider):
             # Monate iterieren
             current_year = start_year
             current_month = start_month
+            first_request = True
 
             while (current_year, current_month) <= (end_year, end_month):
-                try:
-                    month_data = await self._fetch_single_month(
-                        client, api_base, auth_token, site_id,
-                        current_year, current_month,
-                    )
-                    if month_data and month_data.has_data():
-                        results.append(month_data)
-                except Exception as e:
-                    logger.warning(
-                        f"Anker SOLIX Monat {current_year}-{current_month:02d} "
-                        f"fehlgeschlagen: {e}"
-                    )
+                # Monate in der Zukunft überspringen
+                now = datetime.now()
+                if datetime(current_year, current_month, 1) <= now:
+                    if not first_request:
+                        # Endpunkt-Drosselung der Anker-Server respektieren
+                        await asyncio.sleep(REQUEST_DELAY_S)
+                    first_request = False
+                    try:
+                        start_date, end_date = _month_window(
+                            current_year, current_month
+                        )
+                        data = await _get_energy_analysis(
+                            client, api_base, auth_token, user_id,
+                            site_id, start_date, end_date,
+                        )
+                        month_data = _parse_month_response(
+                            data, current_year, current_month
+                        )
+                        if month_data:
+                            results.append(month_data)
+                    except Exception as e:
+                        logger.warning(
+                            f"Anker SOLIX Monat {current_year}-{current_month:02d} "
+                            f"fehlgeschlagen: {e}"
+                        )
 
                 if current_month == 12:
                     current_year += 1
@@ -372,84 +578,3 @@ class AnkerSolixProvider(CloudImportProvider):
                     current_month += 1
 
         return results
-
-    async def _fetch_single_month(
-        self,
-        client: httpx.AsyncClient,
-        api_base: str,
-        auth_token: str,
-        site_id: str,
-        year: int,
-        month: int,
-    ) -> Optional[ParsedMonthData]:
-        """Tagesdaten für einen Monat abrufen und aggregieren."""
-        # Monatsanfang/-ende berechnen
-        start_date = f"{year}-{month:02d}-01"
-        if month == 12:
-            end_date = f"{year + 1}-01-01"
-        else:
-            end_date = f"{year}-{month + 1:02d}-01"
-
-        # Nicht in der Zukunft abfragen
-        now = datetime.now()
-        if datetime(year, month, 1) > now:
-            return None
-
-        daily_data = await _get_energy_daily(
-            client, api_base, auth_token, site_id,
-            start_date, end_date,
-        )
-
-        if not daily_data:
-            return None
-
-        # Tageswerte aggregieren
-        pv_total = 0.0
-        einspeisung_total = 0.0
-        eigenverbrauch_total = 0.0
-        batterie_ladung_total = 0.0
-        batterie_entladung_total = 0.0
-        has_any = False
-
-        for day in daily_data:
-            # Die Anker API liefert verschiedene Feld-Varianten
-            pv = _safe_float(day.get("solar_production") or day.get("solar_total"))
-            feed_in = _safe_float(day.get("grid_to") or day.get("to_grid"))
-            self_use = _safe_float(
-                day.get("home_usage") or day.get("self_consumption")
-            )
-            bat_charge = _safe_float(
-                day.get("battery_charge") or day.get("charge_battery")
-            )
-            bat_discharge = _safe_float(
-                day.get("battery_discharge") or day.get("discharge_battery")
-            )
-
-            if pv is not None:
-                pv_total += pv
-                has_any = True
-            if feed_in is not None:
-                einspeisung_total += feed_in
-                has_any = True
-            if self_use is not None:
-                eigenverbrauch_total += self_use
-                has_any = True
-            if bat_charge is not None:
-                batterie_ladung_total += bat_charge
-                has_any = True
-            if bat_discharge is not None:
-                batterie_entladung_total += bat_discharge
-                has_any = True
-
-        if not has_any:
-            return None
-
-        return ParsedMonthData(
-            jahr=year,
-            monat=month,
-            pv_erzeugung_kwh=round(pv_total, 2) or None,
-            einspeisung_kwh=round(einspeisung_total, 2) or None,
-            eigenverbrauch_kwh=round(eigenverbrauch_total, 2) or None,
-            batterie_ladung_kwh=round(batterie_ladung_total, 2) or None,
-            batterie_entladung_kwh=round(batterie_entladung_total, 2) or None,
-        )
