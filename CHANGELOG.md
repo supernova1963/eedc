@@ -7,7 +7,28 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ---
 
-## [Unreleased]
+## [3.41.0] - 2026-06-10 — Konsistente Finanzwerte, täglicher Connector-Abruf & Jahresbericht-Abschluss
+
+> ✨ **Minor / Feature + Fixes.** Drei Tester-Anliegen in einem Release: durchgängig identische Finanzwerte über Cockpit/PDF/HA-Export bei dynamischen Stromtarifen (#326, rilmor-mhrs), täglicher automatischer Connector-Abruf ohne MQTT-Inbound (#300, Safi105) und der abgeschlossene Jahresbericht mit Speicher-Sektion auf einer einzigen PDF-Engine (#303, kingcap1). 939 Backend-Tests grün.
+
+### Added
+
+- **Geräte-Connector: täglicher automatischer Zählerstand-Abruf (#300).** Neuer Scheduler-Job `connector_daily_poll` (täglich 03:30) liest die kWh-Zählerstände aller Anlagen mit konfiguriertem Connector und speichert sie als Snapshot — **unabhängig vom MQTT-Inbound**. Bisher pollte nur die Connector-MQTT-Bridge automatisch, und die startet nur mit aktivem MQTT-Inbound; ohne MQTT füllte sich der Monatsabschluss-Vorschlag nur über manuelles „Aktuelle Daten anfordern" (Safi105, Fronius Gen24). Ein Snapshot pro Tag genügt, weil Monatsabschluss und `/connectors/monatswerte` die Monats-Differenz read-seitig aus den Snapshot-Randwerten berechnen.
+- **Jahresbericht: eigene Batteriespeicher-Sektion (#303).** Der Jahres-/Anlagenbericht weist den Speicher jetzt vollständig aus — Kapazität, Ladung/Entladung, Vollzyklen und Wirkungsgrad. Bisher fehlte der Speicher im WeasyPrint-Bericht (kingcap1).
+
+### Changed
+
+- **PDF-Erzeugung: reportlab vollständig entfernt (Phase 5, #303).** WeasyPrint ist die einzige PDF-Engine. Der seit v3.37.0 standardmäßig nie mehr erreichte reportlab-Notausgang (Jahresbericht + Infothek-Dossier) ist abgebaut, ebenso die Add-on-Option `pdf_engine` (bestehende Konfigurationen mit gesetzter Option bleiben gültig, der Wert wird ignoriert). Der alte Notausgang trug noch die #326-Altlast (EV-Ersparnis × statischer Tarifpreis, Eigenverbrauch ohne Speicher/V2H) — die WeasyPrint-Berichte rechnen durchgängig über die SoT-Helper.
+
+### Fixed
+
+- **Durchgängig konsistente Finanzwerte bei dynamischen Stromtarifen (#326).** Cockpit, Jahresbericht-PDF und HA-Export rechneten Eigenverbrauchs-Ersparnis, Netto-Ertrag und ROI jeweils selbst — teils Gesamt-Eigenverbrauch × Durchschnittspreis statt Monat für Monat × Monatspreis, teils ohne Speicher-/V2H-Anteil oder ohne „Sonstige Erträge & Ausgaben". Bei Flex-Tarifen (Tibber/aWATTar/EPEX) liefen die Sichten dadurch auseinander (rilmor-mhrs, #326). Jetzt rechnen alle aggregierenden Read-Sites über den gemeinsamen SoT-Helper `core/berechnungen/finanz_aggregat.py` (per-Monat-Flexpreis, §51-Einspeise-Erlös, Sonstige Positionen) — identische Werte in allen Sichten; ein Symmetrie-Test sichert Cockpit == PDF == HA-Export ab. Letzter Restposten mitbehoben: die **BKW-Ersparnis in den Aussichten** rechnete noch `Σ(EV) × statischer Tarifpreis` statt per-Monat — jetzt dasselbe Muster wie die E-Auto-Zeile (`resolve_netzbezug_preis_cent`).
+
+### Intern (nicht anwender-sichtbar)
+
+- Die `/connectors/fetch`-Logik (Zählerstand lesen → Snapshot + `last_fetch` speichern → Activity-Log) ist in den gemeinsamen Service `services/connectors/fetch_service.py` extrahiert; manueller Endpoint und Tages-Job nutzen denselben Pfad (kein Drift zwischen manuell und automatisch). Neue Tests `test_connector_daily_poll_300.py`.
+- **Jahresbericht-Konsistenz-Regressionstest (kingcap1-Gegencheck #303):** Summary-KPIs (Einspeise-Erlös, EV-Ersparnis, Netto-Ertrag) sind exakt die Summe der gedruckten Monats-Zeilen — gesichert am Fixture mit Speicher + Flex-Tarif + Sonstigen Positionen. PDF-Fehlermeldungen nennen jetzt durchgängig den echten Fehlertyp (`KlassenName: Detail`) statt eines generischen Render-Fehlers.
+- **MQTT-Discovery: `sw_version` zeigt die echte eedc-Version.** Das Device-Info-Payload trug eine hartcodierte, gedriftete Versionsnummer („0.9.2"); jetzt `APP_VERSION`. Toter Helper `_build_device_info` (zweite Hartcodierung „1.0.0", nie aufgerufen) entfernt.
 
 ---
 

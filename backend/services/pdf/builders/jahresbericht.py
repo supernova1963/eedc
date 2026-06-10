@@ -15,8 +15,14 @@ from typing import Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.core.berechnungen import einspeise_erloes_euro, berechne_verbrauchs_kennzahlen
+from backend.core.berechnungen import (
+    FinanzMonatsZeile,
+    berechne_finanz_aggregat,
+    berechne_verbrauchs_kennzahlen,
+    einspeise_erloes_euro,
+)
 from backend.services.einspeise_erloes_service import get_neg_preis_einspeisung_monat
+from backend.utils.sonstige_positionen import berechne_sonstige_netto
 from backend.core.field_definitions import get_wp_strom_kwh
 from backend.services.eauto_wirtschaftlichkeit import get_emob_heimladung_canonical
 from backend.core.calculations import (
@@ -235,13 +241,18 @@ async def build_jahresbericht_context(
     emob_netz = emob_pool.netz_kwh
 
     # ── 8. Monats-Tabelle aufbauen ──────────────────────────────────────
+    from backend.api.routes.strompreise import resolve_netzbezug_preis_cent
+
     monats_zeilen: list[dict] = []
-    # §51 EEG: Σ pro-Monat §51-bereinigte Erlöse, ersetzt am Jahresende
-    # `einsp_gesamt × verg_cent / 100`.
-    einsp_erloes_gesamt = 0.0
+    # #326: Finanz-Aggregation über den SoT-Helper `berechne_finanz_aggregat`.
+    # Die EV-Ersparnis pro Monat wird mit dem aufgelösten Monats-Flexpreis
+    # (`resolve_netzbezug_preis_cent`) gerechnet — deckungsgleich mit Cockpit/
+    # HA-Export/Auswertungen. Der Jahres-Summary ist Σ dieser per-Monat-Zeilen,
+    # nicht `ev_gesamt × Ø-Preis` (rilmor-mhrs #326: Flex-Tarif-Drift).
+    finanz_zeilen: list[FinanzMonatsZeile] = []
 
     async def _zeile_fuer(j: int, m: int) -> dict:
-        nonlocal pv_gesamt, einsp_gesamt, netz_gesamt, ev_gesamt, einsp_erloes_gesamt
+        nonlocal pv_gesamt, einsp_gesamt, netz_gesamt, ev_gesamt
         md = md_by_year_month.get((j, m))
         pv = pv_by_year_month.get((j, m), 0)
         einsp = (md.einspeisung_kwh or 0) if md else 0
@@ -268,13 +279,25 @@ async def build_jahresbericht_context(
             neg_preis_kwh=m_neg,
             verguetung_ct_kwh=einspeise_cent,
         )
+        # #326: Monats-Flexpreis (dynamischer Tarif-Ø → Fallback fixer Tarif).
+        m_preis = resolve_netzbezug_preis_cent(md, netzbezug_cent)
         einsp_eur = m_erloes.erloes_euro
-        ev_eur = ev * netzbezug_cent / 100
+        ev_eur = ev * m_preis / 100
+        finanz_zeilen.append(FinanzMonatsZeile(
+            einspeisung_kwh=einsp,
+            netzbezug_kwh=netz,
+            pv_erzeugung_kwh=pv,
+            speicher_ladung_kwh=speicher_ladung_by_ym.get(key, 0),
+            speicher_entladung_kwh=speicher_entladung_by_ym.get(key, 0),
+            v2h_entladung_kwh=v2h_by_ym.get(key, 0),
+            netzbezug_preis_cent=m_preis,
+            einspeiseverguetung_cent=einspeise_cent,
+            neg_preis_kwh=m_neg,
+        ))
         pv_gesamt += pv
         einsp_gesamt += einsp
         netz_gesamt += netz
         ev_gesamt += ev
-        einsp_erloes_gesamt += einsp_eur
         return {
             "jahr": j,
             "monat": m,
@@ -306,9 +329,20 @@ async def build_jahresbericht_context(
     ev_quote = _safe_div(ev_gesamt, pv_gesamt) * 100
     spez_ertrag_jahr = _safe_div(pv_gesamt, anlage.leistung_kwp or 0)
 
-    einspeise_erloes = einsp_erloes_gesamt
-    ev_ersparnis = ev_gesamt * netzbezug_cent / 100
-    netto_ertrag = einspeise_erloes + ev_ersparnis
+    # #326: Sonstige Erträge/Ausgaben (manuell gepflegt) gehören in den
+    # Netto-Ertrag — exakt wie Cockpit/Auswertungen. `all_imd` ist bereits auf
+    # den Einsatzzeitraum (ist_aktiv_im_monat, #236) gefiltert.
+    sonstige_netto_gesamt = sum(
+        berechne_sonstige_netto(imd.verbrauch_daten) for imd in all_imd
+    )
+    # #326: Finanz-Summary über den SoT-Helper = Σ der per-Monat-Zeilen (EV mit
+    # Monats-Flexpreis + §51-bereinigter Einspeise-Erlös) + Sonstige.
+    _finanz = berechne_finanz_aggregat(
+        finanz_zeilen, sonstige_netto_euro=sonstige_netto_gesamt
+    )
+    einspeise_erloes = _finanz.einspeise_erloes_euro
+    ev_ersparnis = _finanz.ev_ersparnis_euro
+    netto_ertrag = _finanz.netto_ertrag_euro
 
     investition_gesamt = sum(i.anschaffungskosten_gesamt or 0 for i in investitionen)
     investition_alternativ = sum(
@@ -479,6 +513,7 @@ async def build_jahresbericht_context(
             "spezifischer_ertrag": spez_ertrag_jahr,
             "einspeise_erloes_euro": einspeise_erloes,
             "ev_ersparnis_euro": ev_ersparnis,
+            "sonstige_netto_euro": sonstige_netto_gesamt,
             "netto_ertrag_euro": netto_ertrag,
             "betriebskosten_zeitraum_euro": betriebskosten_zeitraum,
             "netto_nach_bk_euro": netto_nach_bk,

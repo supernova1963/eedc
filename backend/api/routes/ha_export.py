@@ -17,8 +17,14 @@ import os
 
 from backend.core.exceptions import not_found
 from backend.api.deps import get_db
-from backend.core.berechnungen import einspeise_erloes_euro, berechne_verbrauchs_kennzahlen
+from backend.core.berechnungen import (
+    FinanzMonatsZeile,
+    berechne_finanz_aggregat,
+    berechne_verbrauchs_kennzahlen,
+)
+from backend.api.routes.strompreise import resolve_netzbezug_preis_cent
 from backend.services.einspeise_erloes_service import get_neg_preis_einspeisung_monat
+from backend.utils.sonstige_positionen import berechne_sonstige_netto
 from backend.core.field_definitions import get_emob_pv_netz_kwh, get_wp_strom_kwh
 from backend.services.eauto_wirtschaftlichkeit import (
     attribute_month_share,
@@ -256,7 +262,9 @@ async def calculate_anlage_sensors(
 
     # PV-Erzeugung aus InvestitionMonatsdaten aggregieren
     # Drift-Audit F: nur Monate ab Anschaffungsdatum berücksichtigen.
+    # #326: zusätzlich pro (jahr, monat) für die per-Monat-korrekte EV-Ersparnis.
     pv_erzeugung = 0.0
+    pv_by_ym: dict[tuple[int, int], float] = {}
     if pv_module_ids:
         imd_result = await db.execute(
             select(InvestitionMonatsdaten)
@@ -267,7 +275,9 @@ async def calculate_anlage_sensors(
             if inv and not inv.ist_aktiv_im_monat(imd.jahr, imd.monat):
                 continue
             data = imd.verbrauch_daten or {}
-            pv_erzeugung += data.get("pv_erzeugung_kwh", 0) or 0
+            pv_kwh = data.get("pv_erzeugung_kwh", 0) or 0
+            pv_erzeugung += pv_kwh
+            pv_by_ym[(imd.jahr, imd.monat)] = pv_by_ym.get((imd.jahr, imd.monat), 0.0) + pv_kwh
 
     # Fallback: Falls keine InvestitionMonatsdaten vorhanden, berechne aus Einspeisung
     einspeisung = sum(m.einspeisung_kwh or 0 for m in monatsdaten)
@@ -287,6 +297,8 @@ async def calculate_anlage_sensors(
     speicher_ids = [inv.id for inv in investitionen if inv.typ == "speicher"]
     batterie_ladung = 0.0
     batterie_entladung = 0.0
+    sp_lad_by_ym: dict[tuple[int, int], float] = {}
+    sp_entl_by_ym: dict[tuple[int, int], float] = {}
     if speicher_ids:
         sp_result = await db.execute(
             select(InvestitionMonatsdaten)
@@ -297,8 +309,12 @@ async def calculate_anlage_sensors(
             if inv and not inv.ist_aktiv_im_monat(imd.jahr, imd.monat):
                 continue
             data = imd.verbrauch_daten or {}
-            batterie_ladung += data.get("ladung_kwh", 0) or 0
-            batterie_entladung += data.get("entladung_kwh", 0) or 0
+            lad = data.get("ladung_kwh", 0) or 0
+            entl = data.get("entladung_kwh", 0) or 0
+            batterie_ladung += lad
+            batterie_entladung += entl
+            sp_lad_by_ym[(imd.jahr, imd.monat)] = sp_lad_by_ym.get((imd.jahr, imd.monat), 0.0) + lad
+            sp_entl_by_ym[(imd.jahr, imd.monat)] = sp_entl_by_ym.get((imd.jahr, imd.monat), 0.0) + entl
 
     # Fallback auf Legacy wenn keine InvestitionMonatsdaten
     if batterie_ladung == 0 and batterie_entladung == 0:
@@ -308,6 +324,7 @@ async def calculate_anlage_sensors(
     # V2H (E-Auto → Haus) wird wie Speicher-Entladung als Eigenverbrauch gezählt
     eauto_ids = [inv.id for inv in investitionen if inv.typ == "e-auto"]
     v2h_entladung = 0.0
+    v2h_by_ym: dict[tuple[int, int], float] = {}
     if eauto_ids:
         ea_result = await db.execute(
             select(InvestitionMonatsdaten)
@@ -317,7 +334,9 @@ async def calculate_anlage_sensors(
             inv = inv_by_id.get(imd.investition_id)
             if inv and not inv.ist_aktiv_im_monat(imd.jahr, imd.monat):
                 continue
-            v2h_entladung += (imd.verbrauch_daten or {}).get("v2h_entladung_kwh", 0) or 0
+            v2h = (imd.verbrauch_daten or {}).get("v2h_entladung_kwh", 0) or 0
+            v2h_entladung += v2h
+            v2h_by_ym[(imd.jahr, imd.monat)] = v2h_by_ym.get((imd.jahr, imd.monat), 0.0) + v2h
 
     # #304: Eigenverbrauch/Direktverbrauch/Gesamtverbrauch + Quoten zentral über
     # den SoT-Helper aus IMD-gesourcten Energiemengen (PV + Speicher + V2H) und
@@ -338,26 +357,61 @@ async def calculate_anlage_sensors(
     ev_quote = kennzahlen.eigenverbrauchsquote_prozent
     spez_ertrag = (pv_erzeugung / anlage.leistung_kwp) if anlage.leistung_kwp else 0
 
-    # Finanzen — Einspeise-Erlös §51-bereinigt pro Monat, summiert über alle
-    # Monatsdaten der Anlage. Anwender ohne Strompreis-Sensor (m_neg=None)
-    # sehen die alte ungekürzte Berechnung; bei vorhandenem Tages-Aggregat
-    # wird die in Negativpreis-Stunden eingespeiste kWh-Menge unvergütet.
+    # Finanzen (#326) — über den SoT-Helper `berechne_finanz_aggregat`, damit
+    # HA-Export dieselbe Netto-Ertrag-Zahl liefert wie Cockpit/Jahresbericht.
+    # Einspeise-Erlös §51-bereinigt + EV-Ersparnis pro Monat mit dem Monats-
+    # Flexpreis (`resolve_netzbezug_preis_cent` → Fallback fixer Tarif). Anwender
+    # ohne Strompreis-Sensor (m_neg=None) sehen die alte ungekürzte Berechnung;
+    # bei vorhandenem Tages-Aggregat wird die in Negativpreis-Stunden
+    # eingespeiste kWh-Menge unvergütet. Sonstige (manuell gepflegt) wie im
+    # Cockpit im Netto-Ertrag.
+    sonstige_netto_gesamt = 0.0
+    alle_inv_ids = [i.id for i in investitionen]
+    if alle_inv_ids:
+        son_result = await db.execute(
+            select(InvestitionMonatsdaten)
+            .where(InvestitionMonatsdaten.investition_id.in_(alle_inv_ids))
+        )
+        for imd in son_result.scalars().all():
+            inv = inv_by_id.get(imd.investition_id)
+            if inv and not inv.ist_aktiv_im_monat(imd.jahr, imd.monat):
+                continue
+            sonstige_netto_gesamt += berechne_sonstige_netto(imd.verbrauch_daten)
+
     einspeise_erloes = 0
     ev_ersparnis = 0
+    netto_ertrag = sonstige_netto_gesamt
     if strompreis:
         verg_cent = strompreis.einspeiseverguetung_cent_kwh
+        netz_static_cent = strompreis.netzbezug_arbeitspreis_cent_kwh
+        # PV-Quelle pro Monat wie das Aggregat: IMD bevorzugt, sonst Zähler-
+        # Legacy-Feld (deckungsgleich mit cockpit/uebersicht.py `use_inv_pv`).
+        use_inv_pv = bool(pv_by_ym)
+        finanz_zeilen: list[FinanzMonatsZeile] = []
         for m in monatsdaten:
-            if not m.einspeisung_kwh:
-                continue
-            m_neg = await get_neg_preis_einspeisung_monat(db, anlage.id, m.jahr, m.monat)
-            m_erloes = einspeise_erloes_euro(
-                einspeisung_kwh=m.einspeisung_kwh,
-                neg_preis_kwh=m_neg,
-                verguetung_ct_kwh=verg_cent,
+            key = (m.jahr, m.monat)
+            m_neg = (
+                await get_neg_preis_einspeisung_monat(db, anlage.id, m.jahr, m.monat)
+                if m.einspeisung_kwh else None
             )
-            einspeise_erloes += m_erloes.erloes_euro
-        ev_ersparnis = eigenverbrauch * strompreis.netzbezug_arbeitspreis_cent_kwh / 100
-    netto_ertrag = einspeise_erloes + ev_ersparnis
+            m_pv = pv_by_ym.get(key, 0.0) if use_inv_pv else (m.pv_erzeugung_kwh or 0)
+            finanz_zeilen.append(FinanzMonatsZeile(
+                einspeisung_kwh=m.einspeisung_kwh or 0,
+                netzbezug_kwh=m.netzbezug_kwh or 0,
+                pv_erzeugung_kwh=m_pv,
+                speicher_ladung_kwh=sp_lad_by_ym.get(key, 0.0),
+                speicher_entladung_kwh=sp_entl_by_ym.get(key, 0.0),
+                v2h_entladung_kwh=v2h_by_ym.get(key, 0.0),
+                netzbezug_preis_cent=resolve_netzbezug_preis_cent(m, netz_static_cent),
+                einspeiseverguetung_cent=verg_cent,
+                neg_preis_kwh=m_neg,
+            ))
+        _finanz = berechne_finanz_aggregat(
+            finanz_zeilen, sonstige_netto_euro=sonstige_netto_gesamt
+        )
+        einspeise_erloes = _finanz.einspeise_erloes_euro
+        ev_ersparnis = _finanz.ev_ersparnis_euro
+        netto_ertrag = _finanz.netto_ertrag_euro
 
     # CO2
     co2_ersparnis = pv_erzeugung * CO2_FAKTOR_STROM_KG_KWH
@@ -593,7 +647,7 @@ async def calculate_anlage_sensors(
                 berechnung = f"{pv_erzeugung:.0f} ÷ {anlage.leistung_kwp:.1f}"
         elif sensor.key == "netto_ertrag_euro":
             value = round(netto_ertrag, 2)
-            berechnung = f"{einspeise_erloes:.2f} + {ev_ersparnis:.2f}"
+            berechnung = f"{einspeise_erloes:.2f} + {ev_ersparnis:.2f} + {sonstige_netto_gesamt:.2f} (sonstige)"
         elif sensor.key == "einspeise_erloes_euro":
             value = round(einspeise_erloes, 2)
             if strompreis:

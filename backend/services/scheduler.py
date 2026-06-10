@@ -191,6 +191,19 @@ class EEDCScheduler:
                 replace_existing=True,
             )
 
+            # Connector-Tagesabruf: Täglich um 03:30 (#300). Bewusst hier und
+            # NICHT in add_mqtt_snapshot_jobs(): die Connector-Bridge pollt nur
+            # bei aktivem MQTT-Inbound — ohne MQTT blieben Connector-Anlagen
+            # sonst komplett ohne automatische Zählerstände (Safi105).
+            # Loggt nur, wenn mindestens ein Connector konfiguriert ist (#322).
+            self._scheduler.add_job(
+                connector_daily_poll_job,
+                CronTrigger(hour=3, minute=30),
+                id="connector_daily_poll",
+                name="Connector-Tagesabruf (Zählerstände)",
+                replace_existing=True,
+            )
+
             # Prognose-Prefetch: Alle 45 Min (innerhalb des 60-Min Cache-TTL)
             self._scheduler.add_job(
                 prognose_prefetch_job,
@@ -808,6 +821,71 @@ async def korrekturprofil_aggregation_job() -> None:
         await log_activity(
             kategorie="scheduler",
             aktion="Korrekturprofil-Aggregation fehlgeschlagen",
+            erfolg=False,
+            details=f"{type(e).__name__}: {e}",
+        )
+
+
+async def connector_daily_poll_job() -> None:
+    """Täglicher Connector-Poll (#300): Zählerstände aller Connector-Anlagen.
+
+    Liest einmal täglich (03:30) die kumulativen kWh-Zählerstände über den
+    gemeinsamen Fetch-Pfad (`fetch_and_store_snapshot` — gleiche Logik wie
+    der manuelle „Aktuelle Daten anfordern"-Endpoint) und speichert sie als
+    Snapshot. Läuft unabhängig vom MQTT-Inbound.
+
+    Damit füllen sich Monatsabschluss-Vorschlag und /connectors/monatswerte
+    (beide rechnen die Monats-Differenz read-seitig aus den Snapshots) auch
+    ohne MQTT-Setup. Koexistenz mit der Connector-MQTT-Bridge ist harmlos:
+    die Bridge publisht nur auf MQTT-Topics und schreibt keine
+    meter_snapshots; zusätzliche Snapshots ändern die Monats-Differenz nicht
+    (sie nutzt die Randwerte des Monats).
+    """
+    try:
+        from sqlalchemy import select
+        from backend.core.database import get_session
+        from backend.models.anlage import Anlage
+        from backend.services.connectors.fetch_service import fetch_and_store_snapshot
+
+        ok = 0
+        fehler = 0
+        fehler_beispiele: list[str] = []
+
+        async with get_session() as db:
+            result = await db.execute(select(Anlage))
+            anlagen = result.scalars().all()
+
+            for anlage in anlagen:
+                cfg = anlage.connector_config
+                if not cfg or not cfg.get("connector_id") or not cfg.get("host"):
+                    continue
+                try:
+                    await fetch_and_store_snapshot(anlage)
+                    ok += 1
+                except Exception as e:
+                    # Lesefehler ist im Service bereits als Activity geloggt —
+                    # hier nur zählen, damit eine Anlage die Schleife nicht abbricht.
+                    fehler += 1
+                    if len(fehler_beispiele) < 3:
+                        fehler_beispiele.append(
+                            f"Anlage {anlage.id}: {type(e).__name__}: {e}"
+                        )
+
+        if ok or fehler:
+            fehl = f", {fehler} fehlgeschlagen" if fehler else ""
+            grund = f" — z. B. {'; '.join(fehler_beispiele)}" if fehler_beispiele else ""
+            logger.info(f"Connector-Tagesabruf: {ok} Anlagen ok{fehl}{grund}")
+            await log_activity(
+                kategorie="scheduler",
+                aktion="Connector-Tagesabruf",
+                erfolg=fehler == 0,
+                details=f"{ok} Anlagen ok{fehl}{grund}",
+            )
+    except Exception as e:
+        logger.warning(f"Connector-Tagesabruf fehlgeschlagen: {type(e).__name__}: {e}")
+        await log_activity(
+            kategorie="scheduler",
+            aktion="Connector-Tagesabruf fehlgeschlagen",
             erfolg=False,
             details=f"{type(e).__name__}: {e}",
         )

@@ -7,7 +7,7 @@ CRUD-Endpunkte für Infothek-Einträge (Verträge, Zähler, Kontakte, Dokumentat
 from datetime import datetime
 from typing import Optional
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, UploadFile, File, status
-from fastapi.responses import Response, StreamingResponse
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select, func, delete
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,7 +18,6 @@ from backend.models.infothek import InfothekEintrag, InfothekDatei, InfothekInve
 from backend.models.anlage import Anlage
 from backend.models.strompreis import Strompreis
 from backend.models.investition import Investition
-from backend.services.infothek_pdf_service import generate_infothek_pdf
 from backend.services.infothek_datei_service import (
     validiere_dateityp, verarbeite_bild, validiere_pdf,
     ERLAUBTE_TYPES, MAX_DATEIEN_PRO_EINTRAG,
@@ -717,92 +716,29 @@ async def export_pdf(
     kategorie: Optional[str] = Query(None, description="Nur diese Kategorie exportieren"),
     db: AsyncSession = Depends(get_db),
 ):
-    """Exportiert Infothek-Einträge als PDF."""
-    # Engine-Switch (Issue #121/#303): WeasyPrint ist Default, reportlab = Notausgang.
-    from backend.core.config import settings as _settings
-    if (_settings.pdf_engine or "").lower() == "weasyprint":
-        from backend.services.pdf import render_document
-        from backend.services.pdf.builders.infothek import build_infothek_context
-        try:
-            ctx = await build_infothek_context(db, anlage_id, kategorie)
-        except LookupError:
-            raise not_found("Anlage")
-        except ValueError as exc:
-            raise HTTPException(status_code=404, detail=str(exc))
-        try:
-            pdf_bytes = render_document("infothek.html", ctx)
-        except Exception as exc:
-            raise HTTPException(status_code=500, detail=f"PDF-Render-Fehler: {exc}")
-        anlagen_name = ctx["anlage"]["name"]
-        filename = f"infothek_{anlagen_name.replace(' ', '_')}"
-        if kategorie:
-            filename += f"_{kategorie}"
-        filename += f"_{datetime.now().strftime('%Y%m%d')}.pdf"
-        from fastapi.responses import Response
-        return Response(
-            content=pdf_bytes,
-            media_type="application/pdf",
-            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-        )
-
-    # Anlage laden
-    anlage_result = await db.execute(select(Anlage).where(Anlage.id == anlage_id))
-    anlage = anlage_result.scalar_one_or_none()
-    if not anlage:
+    """Exportiert Infothek-Einträge als PDF (WeasyPrint, Phase 5: reportlab entfernt)."""
+    from backend.services.pdf import render_document
+    from backend.services.pdf.builders.infothek import build_infothek_context
+    try:
+        ctx = await build_infothek_context(db, anlage_id, kategorie)
+    except LookupError:
         raise not_found("Anlage")
-
-    # Einträge laden (nur aktive)
-    query = (
-        select(InfothekEintrag)
-        .where(InfothekEintrag.anlage_id == anlage_id, InfothekEintrag.aktiv == True)
-        .order_by(InfothekEintrag.sortierung, InfothekEintrag.created_at.desc())
-    )
-    if kategorie:
-        query = query.where(InfothekEintrag.kategorie == kategorie)
-    result = await db.execute(query)
-    eintraege_obj = result.scalars().all()
-
-    if not eintraege_obj:
-        raise HTTPException(status_code=404, detail="Keine Einträge zum Exportieren")
-
-    # Vertragspartner-Map aufbauen
-    vp_result = await db.execute(
-        select(InfothekEintrag)
-        .where(InfothekEintrag.anlage_id == anlage_id, InfothekEintrag.kategorie == "ansprechpartner")
-    )
-    vp_map = {e.id: e.bezeichnung for e in vp_result.scalars().all()}
-
-    # Einträge als Dicts
-    eintraege = [
-        {
-            "bezeichnung": e.bezeichnung,
-            "kategorie": e.kategorie,
-            "parameter": e.parameter or {},
-            "notizen": e.notizen,
-            "ansprechpartner_id": e.ansprechpartner_id,
-        }
-        for e in eintraege_obj
-    ]
-
-    effektive_schemas = {
-        kat_key: {**kat, "felder": effektive_felder(kat_key)}
-        for kat_key, kat in INFOTHEK_KATEGORIEN.items()
-    }
-    pdf_bytes = generate_infothek_pdf(
-        anlagen_name=anlage.anlagenname,
-        eintraege=eintraege,
-        vertragspartner_map=vp_map,
-        kategorie_schemas=effektive_schemas,
-        filter_kategorie=kategorie,
-    )
-
-    filename = f"infothek_{anlage.anlagenname.replace(' ', '_')}"
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    try:
+        pdf_bytes = render_document("infothek.html", ctx)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"PDF-Render-Fehler: {exc.__class__.__name__}: {exc}",
+        )
+    anlagen_name = ctx["anlage"]["name"]
+    filename = f"infothek_{anlagen_name.replace(' ', '_')}"
     if kategorie:
         filename += f"_{kategorie}"
     filename += f"_{datetime.now().strftime('%Y%m%d')}.pdf"
-
-    return StreamingResponse(
-        iter([pdf_bytes]),
+    return Response(
+        content=pdf_bytes,
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )

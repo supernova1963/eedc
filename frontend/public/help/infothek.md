@@ -472,8 +472,6 @@ Technische Dokumentation der Anlage — für Versicherung, Nachlass, Archiv. **E
 - Unter jeder Investition: Daten aus verknüpften **Komponenten-Akten** (Hersteller, Seriennummer, Garantie, Prüftermine, technische Daten)
 - Infrastruktur-Sektion: Komponenten-Akten ohne Investment-Verknüpfung (z.B. Zähler, Verkabelung)
 
-**Voraussetzung:** PDF-Engine muss auf **WeasyPrint** stehen (HA: Add-on-Konfiguration, Docker: Umgebungsvariable `PDF_ENGINE=weasyprint`).
-
 **Steuerung:** Das Häkchen **"In Anlagendokumentation anzeigen"** am Infothek-Eintrag steuert, ob er ins PDF kommt (Standard: an).
 
 ### Finanzbericht (Beta)

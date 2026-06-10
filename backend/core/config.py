@@ -13,7 +13,7 @@ from pydantic_settings import BaseSettings
 # =============================================================================
 # Zentrale Versionskonfiguration
 # =============================================================================
-APP_VERSION = "3.40.0"
+APP_VERSION = "3.41.0"
 APP_NAME = "eedc"
 APP_FULL_NAME = "Energie Effizienz Data Center"
 
@@ -99,11 +99,8 @@ class Settings(BaseSettings):
     # Solcast PV Forecast API
     solcast_api_url: str = "https://api.solcast.com.au"
 
-    # PDF-Engine: "weasyprint" (Default, HTML/CSS + SVG-Charts) oder "reportlab"
-    # (Fallback). Seit #303 ist auch der Jahresbericht matplotlib-frei unter
-    # WeasyPrint — damit ist der Default-Switch (#121-Abschluss) eingelöst.
-    # reportlab bleibt per PDF_ENGINE=reportlab erreichbar bis Phase-5-Aufräumen.
-    pdf_engine: str = os.environ.get("PDF_ENGINE", "weasyprint")
+    # PDF-Engine: seit Phase 5 (#303) gibt es nur noch WeasyPrint — der
+    # reportlab-Notausgang ist entfernt, PDF_ENGINE/pdf_engine wird ignoriert.
 
     # Live-Snapshot 5-Min (Phase 1, KONZEPT-LIVE-SNAPSHOT-5MIN.md).
     # Wenn an: zusätzlicher Cron-Job alle 5 Min schreibt Counter-Snapshots

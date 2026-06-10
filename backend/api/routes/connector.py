@@ -25,6 +25,12 @@ from backend.api.deps import get_db
 from backend.models.anlage import Anlage
 from backend.models.investition import Investition
 from backend.services.connectors import list_connectors, get_connector
+from backend.services.connectors.fetch_service import (
+    ConnectorNotConfigured,
+    calc_difference as _calc_difference,
+    fetch_and_store_snapshot,
+    get_latest_snapshot as _get_latest_snapshot,
+)
 from backend.services.activity_service import log_activity
 
 logger = logging.getLogger(__name__)
@@ -77,11 +83,6 @@ _KATEGORIE_TYPEN = {
 def _encode_password(password: str) -> str:
     """Base64-Encoding für Passwort-Speicherung."""
     return base64.b64encode(password.encode()).decode()
-
-
-def _decode_password(encoded: str) -> str:
-    """Base64-Decoding für Passwort."""
-    return base64.b64decode(encoded.encode()).decode()
 
 
 def _extract_hostname(host: str) -> Optional[str]:
@@ -398,70 +399,21 @@ async def fetch_meters(
     Zählerstand manuell vom Gerät ablesen.
 
     Speichert neuen Snapshot und berechnet Differenz zum vorherigen Snapshot.
+    Gleiche Logik wie der tägliche Scheduler-Job (#300) — gemeinsamer Pfad
+    in `services/connectors/fetch_service.py`.
     """
     anlage = await _get_anlage(anlage_id, db)
 
-    config = anlage.connector_config
-    if not config:
-        raise HTTPException(status_code=400, detail="Kein Connector konfiguriert")
-
-    connector_id = config.get("connector_id")
     try:
-        connector = get_connector(connector_id)
-    except ValueError:
-        raise HTTPException(status_code=400, detail=f"Unbekannter Connector: {connector_id}")
-
-    host = config.get("host")
-    username = config.get("username", "User")
-    password = _decode_password(config.get("password", ""))
-
-    # Zählerstand lesen
-    try:
-        snapshot = await connector.read_meters(host, username, password)
+        return await fetch_and_store_snapshot(anlage)
+    except ConnectorNotConfigured as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        logger.exception(f"Fehler beim Auslesen: {e}")
-        await log_activity(
-            kategorie="connector_fetch",
-            aktion="Zählerstand-Abruf fehlgeschlagen",
-            erfolg=False,
-            details=f"{type(e).__name__}: {str(e)}",
-            anlage_id=anlage_id,
-        )
+        # Lesefehler ist im Service bereits als Activity geloggt
         raise HTTPException(
             status_code=502,
             detail=f"Fehler beim Auslesen: {type(e).__name__}: {str(e)}",
         )
-
-    # Snapshot speichern
-    now = datetime.now(timezone.utc).isoformat()
-    snapshots = config.get("meter_snapshots", {})
-
-    # Differenz zum letzten Snapshot berechnen
-    prev_snapshot = _get_latest_snapshot(snapshots)
-    differenz = None
-    if prev_snapshot:
-        differenz = _calc_difference(prev_snapshot, snapshot.to_dict())
-
-    snapshots[now] = snapshot.to_dict()
-    config["meter_snapshots"] = snapshots
-    config["last_fetch"] = now
-
-    anlage.connector_config = config
-    flag_modified(anlage, "connector_config")
-
-    await log_activity(
-        kategorie="connector_fetch",
-        aktion="Zählerstand abgelesen",
-        erfolg=True,
-        details_json=snapshot.to_dict(),
-        anlage_id=anlage_id,
-    )
-
-    return {
-        "snapshot": snapshot.to_dict(),
-        "differenz": differenz,
-        "timestamp": now,
-    }
 
 
 @router.delete("/{anlage_id}")
@@ -607,31 +559,8 @@ async def get_connector_monatswerte(
 # Helper Functions
 # =============================================================================
 
-def _get_latest_snapshot(snapshots: dict) -> Optional[dict]:
-    """Gibt den neuesten Snapshot zurück (nach Timestamp sortiert)."""
-    if not snapshots:
-        return None
-    latest_key = max(snapshots.keys())
-    return snapshots[latest_key]
-
-
-def _calc_difference(prev: dict, current: dict) -> dict:
-    """Berechnet die Differenz zwischen zwei kumulativen Snapshots (in kWh)."""
-    fields = [
-        "pv_erzeugung_kwh",
-        "einspeisung_kwh",
-        "netzbezug_kwh",
-        "batterie_ladung_kwh",
-        "batterie_entladung_kwh",
-        "wallbox_ladung_kwh",
-    ]
-    diff: dict = {}
-    for field in fields:
-        curr_val = current.get(field)
-        prev_val = prev.get(field)
-        if curr_val is not None and prev_val is not None:
-            diff[field] = round(curr_val - prev_val, 2)
-    return diff
+# _get_latest_snapshot / _calc_difference kommen aus fetch_service (gemeinsamer
+# Pfad mit dem täglichen Scheduler-Job, #300) — Aliase siehe Import-Block oben.
 
 
 def _calc_month_delta(snapshots: dict, jahr: int, monat: int) -> Optional[dict]:

@@ -50,7 +50,7 @@ def test_charts_robust_bei_leeren_daten():
 
 # ── Fixture: Anlage mit PV + Speicher (+ optional E-Auto/V2H) ────────────────
 
-async def _seed(db, *, mit_v2h: bool = False) -> int:
+async def _seed(db, *, mit_v2h: bool = False, mit_flex_und_sonstige: bool = False) -> int:
     anlage = Anlage(anlagenname="PDF-Test", leistung_kwp=10.0,
                     standort_plz="10115", latitude=48.0, longitude=11.0)
     db.add(anlage)
@@ -59,6 +59,9 @@ async def _seed(db, *, mit_v2h: bool = False) -> int:
         db.add(Monatsdaten(
             anlage_id=anlage.id, jahr=2025, monat=m,
             einspeisung_kwh=400.0, netzbezug_kwh=300.0,
+            # Flex-Tarif: pro Monat anderer Ø-Preis (21–32 ct), damit
+            # Summary ≠ Σ(EV)×statischer Preis unterscheidbar wird.
+            netzbezug_durchschnittspreis_cent=(20.0 + m) if mit_flex_und_sonstige else None,
         ))
     pv = Investition(
         anlage_id=anlage.id, typ="pv-module", bezeichnung="Dach",
@@ -80,9 +83,16 @@ async def _seed(db, *, mit_v2h: bool = False) -> int:
         invs.append(ea)
     await db.flush()
     for m in range(1, 13):
+        pv_daten: dict = {"pv_erzeugung_kwh": 1000.0}
+        if mit_flex_und_sonstige and m == 5:
+            # Sonstige Positionen: +200 € THG, −150 € Reparatur → netto +50 €
+            pv_daten["sonstige_positionen"] = [
+                {"bezeichnung": "THG-Quote", "betrag": 200.0, "typ": "ertrag"},
+                {"bezeichnung": "Reparatur", "betrag": 150.0, "typ": "ausgabe"},
+            ]
         db.add(InvestitionMonatsdaten(
             investition_id=pv.id, jahr=2025, monat=m,
-            verbrauch_daten={"pv_erzeugung_kwh": 1000.0},
+            verbrauch_daten=pv_daten,
         ))
         db.add(InvestitionMonatsdaten(
             investition_id=sp.id, jahr=2025, monat=m,
@@ -170,3 +180,42 @@ async def test_jahresbericht_html_listet_speicher_als_komponente(db):
     assert html.count("Batteriespeicher") >= 1
     # Kosten der Komponente werden ausgewiesen (8.000,00 €).
     assert "8.000,00" in html
+
+
+# ── #303 Gegencheck kingcap1: interne Konsistenz Summary ⟺ Monats-Zeilen ─────
+# kingcap1 (06-06) sah „Daten passen nicht übereinander". Die zwei Ursachen
+# (fehlender Speicher + Summary `Σ(EV) × statischer Preis` statt per-Monat-
+# Flexpreis, #326) sind gefixt. Dieser Test sichert, dass die Summary-KPIs
+# im selben PDF exakt die Summe der gedruckten Monats-Zeilen sind — bei
+# Speicher + Flex-Tarif + Sonstigen Positionen.
+
+async def test_jahresbericht_summary_ist_summe_der_monats_zeilen(db):
+    """Σ Monats-Zeilen == Summary-KPIs (Einspeise-Erlös, EV-Ersparnis, Netto).
+
+    Pro Monat: EV = max(0, 1000−400−300) + 250 = 550 kWh, Flexpreis 20+m ct.
+    EV-Ersparnis = Σ 550 × (20+m)/100 = 5,5 × 318 = 1.749,00 €
+    Einspeise    = 12 × 400 × 0,082 (Fallback-Vergütung) = 393,60 €
+    Sonstige     = +200 − 150 = +50 € (nur Summary, nicht in den Monats-Zeilen)
+    Netto        = 393,60 + 1.749,00 + 50 = 2.192,60 €
+    """
+    anlage_id = await _seed(db, mit_flex_und_sonstige=True)
+    ctx = await build_jahresbericht_context(db, anlage_id, jahr=2025)
+    kpis = ctx["kpis"]
+    zeilen = ctx["monats_zeilen"]
+
+    # Summary == Σ der gedruckten Zeilen (das liest der Bericht-Empfänger nach)
+    assert kpis["einspeise_erloes_euro"] == pytest.approx(
+        sum(z["einsp_erloes_euro"] for z in zeilen), abs=0.01)
+    assert kpis["ev_ersparnis_euro"] == pytest.approx(
+        sum(z["ev_ersparnis_euro"] for z in zeilen), abs=0.01)
+    assert kpis["netto_ertrag_euro"] == pytest.approx(
+        sum(z["netto_ertrag_euro"] for z in zeilen) + kpis["sonstige_netto_euro"],
+        abs=0.01)
+
+    # Absolutwerte (fangen symmetrische Fehler auf beiden Seiten)
+    assert kpis["ev_ersparnis_euro"] == pytest.approx(1749.0, abs=0.05)
+    assert kpis["einspeise_erloes_euro"] == pytest.approx(393.6, abs=0.05)
+    assert kpis["sonstige_netto_euro"] == pytest.approx(50.0)
+    assert kpis["netto_ertrag_euro"] == pytest.approx(2192.6, abs=0.05)
+    # Gegenprobe alter Summary-Bug: Σ(EV) × statischer Preis = 6600×0,30 = 1.980 €
+    assert kpis["ev_ersparnis_euro"] != pytest.approx(1980.0, abs=1.0)

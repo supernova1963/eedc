@@ -12,23 +12,8 @@ from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.api.deps import get_db
-from backend.core.config import settings
 
 router = APIRouter()
-
-
-def _require_weasyprint():
-    """Phase-4-PDFs sind WeasyPrint-only — reportlab kann das Layout nicht."""
-    engine = getattr(settings, "pdf_engine", "reportlab")
-    if engine != "weasyprint":
-        raise HTTPException(
-            status_code=503,
-            detail=(
-                "Phase 4-PDFs (Anlagendokumentation, Finanzbericht) benötigen "
-                "PDF_ENGINE=weasyprint. Im HA-Add-on in der Konfiguration umschaltbar, "
-                "im Standalone-Docker via Umgebungsvariable."
-            ),
-        )
 
 
 @router.get("/_selftest", tags=["Dokumentation"])
@@ -72,7 +57,6 @@ async def anlagendokumentation_pdf(
     Komponenten-Akte. Keine Geldbeträge — die wandern in den Finanzbericht.
     Hybrid-Gruppierung: PV-Module gesammelt auf einer Seite, alles andere einzeln.
     """
-    _require_weasyprint()
     from backend.services.pdf import render_document
     from backend.services.pdf.builders.anlagendokumentation import (
         build_anlagendokumentation_context,
@@ -110,7 +94,6 @@ async def finanzbericht_pdf(
     Investitionen, ROI, Förderungen, Versicherung, Steuerdaten.
     Enthält im Gegensatz zur Anlagendokumentation alle Geldbeträge.
     """
-    _require_weasyprint()
     from backend.services.pdf import render_document
     from backend.services.pdf.builders.finanzbericht import (
         build_finanzbericht_context,

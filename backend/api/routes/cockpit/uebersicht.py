@@ -17,9 +17,10 @@ from backend.models.investition import Investition, InvestitionMonatsdaten
 from backend.models.pvgis_prognose import PVGISPrognose
 from backend.api.routes.strompreise import lade_tarife_fuer_anlage, resolve_netzbezug_preis_cent
 from backend.core.berechnungen import (
+    FinanzMonatsZeile,
+    berechne_finanz_aggregat,
     berechne_verbrauchs_kennzahlen,
     eauto_effizienz_100km,
-    einspeise_erloes_euro,
 )
 from backend.core.calculations import (
     CO2_FAKTOR_STROM_KG_KWH, CO2_FAKTOR_GAS_KG_KWH,
@@ -216,6 +217,15 @@ async def get_cockpit_uebersicht(
     # #260: km pro (jahr, monat) für die per-Monat-korrekte Benzinpreis-
     # Gewichtung (EU-OB-Monatspreis aus Monatsdaten statt statischem Param).
     eauto_km_pro_monat: dict[tuple[int, int], float] = {}
+    # #326: per-Monat-Aggregate für die korrekte EV-/BKW-Ersparnis. Die Ersparnis
+    # muss `Σ(eigenverbrauch_m × flexpreis_m)` sein — NICHT `Σ(EV) × netzbezug-
+    # gewichteter Ø-Preis`, sonst driftet das Cockpit bei Flex-Tarifen gegen die
+    # Auswertungen (rilmor-mhrs: Sommer-EV fällt aus der netzbezug-Gewichtung).
+    pv_erzeugung_inv_by_ym: dict[tuple[int, int], float] = {}
+    speicher_ladung_by_ym: dict[tuple[int, int], float] = {}
+    speicher_entladung_by_ym: dict[tuple[int, int], float] = {}
+    v2h_by_ym: dict[tuple[int, int], float] = {}
+    bkw_eigenverbrauch_by_ym: dict[tuple[int, int], float] = {}
     bkw_erzeugung = 0.0
     bkw_eigenverbrauch = 0.0
     sonstiges_erzeugung = 0.0
@@ -239,14 +249,21 @@ async def get_cockpit_uebersicht(
             continue
 
         data = imd.verbrauch_daten or {}
-        zeitraum_monate.add((imd.jahr, imd.monat))
+        key = (imd.jahr, imd.monat)
+        zeitraum_monate.add(key)
 
         if inv.typ == "pv-module":
-            pv_erzeugung_inv += data.get("pv_erzeugung_kwh", 0) or 0
+            pv_kwh = data.get("pv_erzeugung_kwh", 0) or 0
+            pv_erzeugung_inv += pv_kwh
+            pv_erzeugung_inv_by_ym[key] = pv_erzeugung_inv_by_ym.get(key, 0) + pv_kwh
 
         if inv.typ == "speicher":
-            speicher_ladung += data.get("ladung_kwh", 0) or 0
-            speicher_entladung += data.get("entladung_kwh", 0) or 0
+            lad = data.get("ladung_kwh", 0) or 0
+            entl = data.get("entladung_kwh", 0) or 0
+            speicher_ladung += lad
+            speicher_entladung += entl
+            speicher_ladung_by_ym[key] = speicher_ladung_by_ym.get(key, 0) + lad
+            speicher_entladung_by_ym[key] = speicher_entladung_by_ym.get(key, 0) + entl
 
         elif inv.typ == "waermepumpe":
             heizung = get_wp_heizenergie_kwh(data)
@@ -270,7 +287,9 @@ async def get_cockpit_uebersicht(
                 km_monat = data.get("km_gefahren", 0) or 0
                 eauto_km += km_monat
                 eauto_verbrauch += data.get("verbrauch_kwh", 0) or 0
-                v2h_entladung += data.get("v2h_entladung_kwh", 0) or 0
+                v2h_kwh = data.get("v2h_entladung_kwh", 0) or 0
+                v2h_entladung += v2h_kwh
+                v2h_by_ym[key] = v2h_by_ym.get(key, 0) + v2h_kwh
                 if km_monat:
                     eauto_km_pro_monat[(imd.jahr, imd.monat)] = (
                         eauto_km_pro_monat.get((imd.jahr, imd.monat), 0.0) + km_monat
@@ -280,9 +299,12 @@ async def get_cockpit_uebersicht(
 
         elif inv.typ == "balkonkraftwerk":
             bkw_kwh = get_pv_erzeugung_kwh(data)
+            bkw_ev = data.get("eigenverbrauch_kwh", 0) or 0
             bkw_erzeugung += bkw_kwh
-            bkw_eigenverbrauch += data.get("eigenverbrauch_kwh", 0) or 0
+            bkw_eigenverbrauch += bkw_ev
             pv_erzeugung_inv += bkw_kwh
+            pv_erzeugung_inv_by_ym[key] = pv_erzeugung_inv_by_ym.get(key, 0) + bkw_kwh
+            bkw_eigenverbrauch_by_ym[key] = bkw_eigenverbrauch_by_ym.get(key, 0) + bkw_ev
 
         elif inv.typ == "sonstiges":
             # Pro Investition entweder Erzeuger- oder Verbraucher-Seite
@@ -553,20 +575,17 @@ async def get_cockpit_uebersicht(
             _tarif_cache[stichtag] = await lade_tarife_fuer_anlage(db, anlage_id, target_date=stichtag)
         return _tarif_cache[stichtag]
 
-    gew_preis_sum = 0.0
-    gew_kwh_sum = 0.0
     netzbezug_kosten = 0.0
-    einspeise_erloes_sum = 0.0
-    # §51 EEG: nicht vergüteter Erlös + zugehörige kWh, monatlich aus dem
-    # Tages-Aggregat `TagesZusammenfassung.einspeisung_neg_preis_kwh`
-    # gespeist. Wenn KEIN Monat Tages-Aggregate hat, bleibt es `None` und
-    # signalisiert dem Frontend „keine Strompreis-Mitschrift gepflegt".
-    nicht_vergueteter_erloes_sum = 0.0
-    nicht_verguetete_kwh_sum = 0.0
-    hat_neg_preis_daten = False
+    # PV-Quelle pro Monat wie beim Aggregat wählen (IMD bevorzugt, sonst Zähler).
+    use_inv_pv = pv_erzeugung_inv > 0
+    # #326: Finanz-Aggregation (Einspeise-Erlös §51 + EV-/BKW-Ersparnis) über den
+    # SoT-Helper `berechne_finanz_aggregat` — per-Monat mit dem Monats-Flexpreis
+    # (Σ EV_m × p_m), deckungsgleich mit Jahresbericht-PDF, HA-Export und
+    # Auswertungen→Finanzen. Kein netzbezug-gewichteter Ø-Preis mehr.
+    finanz_zeilen: list[FinanzMonatsZeile] = []
 
-    # PV-Window-gefiltert (md_pv): Einspeise-Erlös, Netzbezugskosten und der
-    # gewichtete Effektivpreis zählen nur Monate mit aktiver PV — wie die
+    # PV-Window-gefiltert (md_pv): Einspeise-Erlös, Netzbezugskosten und die
+    # per-Monat-EV-/BKW-Ersparnis zählen nur Monate mit aktiver PV — wie die
     # Energiebilanz oben und der Amortisations-Pfad in aussichten.
     for m in md_pv:
         m_tarife = await _tarif_fuer_monat(m)
@@ -576,26 +595,35 @@ async def get_cockpit_uebersicht(
         m_einspeis_cent = m_allgemein.einspeiseverguetung_cent_kwh if m_allgemein else EINSPEISEVERGUETUNG_DEFAULT_CENT
         eff_preis = resolve_netzbezug_preis_cent(m, m_preis_cent)
         kwh = m.netzbezug_kwh or 0
-        gew_preis_sum += eff_preis * kwh
-        gew_kwh_sum += kwh
         netzbezug_kosten += kwh * eff_preis / 100 + m_grundpreis
 
+        m_key = (m.jahr, m.monat)
+        m_pv = pv_erzeugung_inv_by_ym.get(m_key, 0.0) if use_inv_pv else (m.pv_erzeugung_kwh or 0)
         m_neg = await get_neg_preis_einspeisung_monat(db, anlage_id, m.jahr, m.monat)
-        if m_neg is not None:
-            hat_neg_preis_daten = True
-        m_erloes = einspeise_erloes_euro(
+        finanz_zeilen.append(FinanzMonatsZeile(
             einspeisung_kwh=m.einspeisung_kwh or 0,
+            netzbezug_kwh=kwh,
+            pv_erzeugung_kwh=m_pv,
+            speicher_ladung_kwh=speicher_ladung_by_ym.get(m_key, 0.0),
+            speicher_entladung_kwh=speicher_entladung_by_ym.get(m_key, 0.0),
+            v2h_entladung_kwh=v2h_by_ym.get(m_key, 0.0),
+            bkw_eigenverbrauch_kwh=bkw_eigenverbrauch_by_ym.get(m_key, 0.0),
+            netzbezug_preis_cent=eff_preis,
+            einspeiseverguetung_cent=m_einspeis_cent,
             neg_preis_kwh=m_neg,
-            verguetung_ct_kwh=m_einspeis_cent,
-        )
-        einspeise_erloes_sum += m_erloes.erloes_euro
-        nicht_vergueteter_erloes_sum += m_erloes.nicht_vergueteter_erloes_euro
-        nicht_verguetete_kwh_sum += m_erloes.nicht_verguetete_kwh
+        ))
 
-    eff_netzbezug_preis = gew_preis_sum / gew_kwh_sum if gew_kwh_sum > 0 else netzbezug_preis_cent
-
-    einspeise_erloes = einspeise_erloes_sum
-    ev_ersparnis = eigenverbrauch * eff_netzbezug_preis / 100
+    # §51 EEG: nicht vergüteter Erlös + zugehörige kWh kommen aus dem Aggregat;
+    # `hat_neg_preis_daten` bleibt False, wenn KEIN Monat Tages-Aggregate hat,
+    # und signalisiert dem Frontend „keine Strompreis-Mitschrift gepflegt".
+    _finanz = berechne_finanz_aggregat(finanz_zeilen)
+    einspeise_erloes = _finanz.einspeise_erloes_euro
+    # #326: per-Monat summiert (Σ EV_m × flexpreis_m) statt Gesamt-EV × Ø-Preis —
+    # deckungsgleich mit Auswertungen→Finanzen.
+    ev_ersparnis = _finanz.ev_ersparnis_euro
+    nicht_vergueteter_erloes_sum = _finanz.nicht_vergueteter_erloes_euro
+    nicht_verguetete_kwh_sum = _finanz.nicht_verguetete_kwh
+    hat_neg_preis_daten = _finanz.hat_neg_preis_daten
     netto_ertrag = einspeise_erloes + ev_ersparnis
 
     PV_RELEVANTE_TYPEN = ["pv-module", "wechselrichter", "speicher", "wallbox", "balkonkraftwerk"]
@@ -647,7 +675,8 @@ async def get_cockpit_uebersicht(
         )
         netto_ertrag -= ust_eigenverbrauch
 
-    bkw_ersparnis = bkw_eigenverbrauch * eff_netzbezug_preis / 100
+    # #326: BKW-Ersparnis ebenfalls per-Monat (Σ BKW-EV_m × flexpreis_m).
+    bkw_ersparnis = _finanz.bkw_ersparnis_euro
     sonstige_netto = sonstige_ertraege_gesamt - sonstige_ausgaben_gesamt
     # #326 (rilmor-mhrs): Die manuell gepflegten „Sonstige Erträge & Ausgaben"
     # gehören in den ANGEZEIGTEN Netto-Ertrag — exakt wie Auswertungen→Finanzen

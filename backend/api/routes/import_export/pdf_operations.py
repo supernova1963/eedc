@@ -1,71 +1,28 @@
 """
 PDF Export Operations
 
-Generiert vollstaendige PDF-Jahresberichte fuer PV-Anlagen.
+Generiert vollstaendige PDF-Jahres-/Anlagenberichte fuer PV-Anlagen
+ueber die WeasyPrint-Pipeline (`services/pdf/`).
+
+Phase 5 (#303): Der reportlab-Notausgang (alte Inline-Aggregation + PDFService)
+ist entfernt — die Daten-Aggregation lebt vollstaendig in
+`services/pdf/builders/jahresbericht.py`.
 """
 
 import logging
-from typing import Optional, List
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.exceptions import not_found
 from backend.api.deps import get_db
-from backend.core.berechnungen import einspeise_erloes_euro
-from backend.services.einspeise_erloes_service import get_neg_preis_einspeisung_monat
 from backend.models.anlage import Anlage
-from backend.models.strompreis import Strompreis
-from backend.models.investition import Investition, InvestitionMonatsdaten
-from backend.models.monatsdaten import Monatsdaten
-from backend.models.pvgis_prognose import PVGISPrognose
-from backend.services.pdf_service import (
-    PDFService,
-    AnlagenDokumentation,
-    StromtarifDaten,
-    InvestitionDokumentation,
-    JahresKPIs,
-    MonatsZeile,
-    FinanzPrognose,
-    StringVergleich,
-)
-from backend.services.eauto_wirtschaftlichkeit import km_gewichtete_eauto_params
-from backend.core.investition_parameter import (
-    PARAM_E_AUTO,
-    PARAM_E_AUTO_DEFAULTS,
-    PARAM_SPEICHER,
-    PARAM_WAERMEPUMPE,
-    PARAM_WAERMEPUMPE_DEFAULTS,
-)
-from backend.core.calculations import (
-    CO2_FAKTOR_STROM_KG_KWH,
-    CO2_FAKTOR_GAS_KG_KWH,
-    CO2_FAKTOR_BENZIN_KG_LITER,
-)
-from backend.core.wirtschaftlichkeit_defaults import (
-    WP_WIRKUNGSGRAD_GAS_DEFAULT,
-    WP_WIRKUNGSGRAD_OEL_DEFAULT,
-)
-from backend.core.field_definitions import get_wp_heizenergie_kwh
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
-
-MONATSNAMEN = [
-    "", "Januar", "Februar", "Maerz", "April", "Mai", "Juni",
-    "Juli", "August", "September", "Oktober", "November", "Dezember"
-]
-
-
-async def _render_jahresbericht_weasyprint(db: AsyncSession, anlage_id: int, jahr: Optional[int]) -> bytes:
-    """Neue WeasyPrint-Pipeline (Phase 2). Liefert PDF-Bytes."""
-    from backend.services.pdf import render_document
-    from backend.services.pdf.builders.jahresbericht import build_jahresbericht_context
-
-    ctx = await build_jahresbericht_context(db, anlage_id, jahr)
-    return render_document("jahresbericht.html", ctx)
 
 
 @router.get("/pdf/{anlage_id}")
@@ -78,690 +35,53 @@ async def export_pdf(
     Generiert einen vollstaendigen PDF-Bericht fuer eine Anlage.
 
     Parameter:
-    - jahr: Optional. Wenn nicht angegeben, wird der Gesamtzeitraum seit Installation verwendet.
+    - jahr: Optional. Wenn nicht angegeben, wird der Gesamtzeitraum seit Installation verwendet
+      (Anlagenbericht statt Jahresbericht).
 
     Enthaelt:
-    - Anlagen-Dokumentation (Stammdaten, Versorger, Tarif, HA-Sensoren)
-    - Investitionen (alle Komponenten mit Details)
-    - Jahresuebersicht (alle KPIs) - bei Gesamtzeitraum: alle Jahre + Summen
-    - Diagramme (PV-Erzeugung, Energie-Fluss, Autarkie)
-    - Monatsuebersicht (bei Gesamtzeitraum: letzte 24 Monate oder alle)
-    - Finanz-Prognose & Amortisation (kumuliert)
+    - Anlagen-Stammdaten + Stromtarif
+    - Investitionen & Komponenten (inkl. Speicher)
+    - Jahres-KPIs (Energie, Finanzen ueber `berechne_finanz_aggregat`, CO2)
+    - Diagramme (PV-Erzeugung, Energie-Fluss, Autarkie) als SVG
+    - Monatsuebersicht
     - PV-String Vergleich (SOLL vs. IST)
     """
-    # ==========================================================================
-    # 0. Engine-Switch (Issue #121/#303): WeasyPrint ist Default, reportlab = Notausgang
-    # ==========================================================================
-    from backend.core.config import settings as _settings
-    if (_settings.pdf_engine or "").lower() == "weasyprint":
-        try:
-            pdf_bytes = await _render_jahresbericht_weasyprint(db, anlage_id, jahr)
-        except LookupError:
-            raise not_found("Anlage")
-        except Exception as exc:
-            logger.exception("WeasyPrint-Render fehlgeschlagen: %s", exc)
-            raise HTTPException(status_code=500, detail=f"PDF-Render-Fehler: {exc}")
-        # Anlage nur für Dateinamen nachladen
-        result = await db.execute(select(Anlage).where(Anlage.id == anlage_id))
-        anlage = result.scalar_one()
-        safe_name = anlage.anlagenname.replace(" ", "_").replace("/", "-")
-        for umlaut, ersatz in [("ä", "ae"), ("ö", "oe"), ("ü", "ue"), ("ß", "ss"),
-                               ("Ä", "Ae"), ("Ö", "Oe"), ("Ü", "Ue")]:
-            safe_name = safe_name.replace(umlaut, ersatz)
-        if jahr is None:
-            filename = f"eedc_anlagenbericht_{safe_name}.pdf"
-        else:
-            filename = f"eedc_jahresbericht_{safe_name}_{jahr}.pdf"
-        from fastapi.responses import Response
-        return Response(
-            content=pdf_bytes,
-            media_type="application/pdf",
-            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-        )
+    from backend.services.pdf import render_document
+    from backend.services.pdf.builders.jahresbericht import build_jahresbericht_context
 
-    # ==========================================================================
-    # 1. Anlage laden
-    # ==========================================================================
-    result = await db.execute(select(Anlage).where(Anlage.id == anlage_id))
-    anlage = result.scalar_one_or_none()
-
-    if not anlage:
+    try:
+        ctx = await build_jahresbericht_context(db, anlage_id, jahr)
+    except LookupError:
         raise not_found("Anlage")
-
-    # Wenn kein Jahr angegeben, ermittle Zeitraum aus vorhandenen Daten
-    ist_gesamtzeitraum = jahr is None
-
-    # ==========================================================================
-    # 2. Strompreis laden
-    # ==========================================================================
-    preis_query = select(Strompreis).where(
-        Strompreis.anlage_id == anlage_id
-    ).order_by(Strompreis.gueltig_ab.desc()).limit(1)
-    preis_result = await db.execute(preis_query)
-    strompreis = preis_result.scalar_one_or_none()
-
-    netzbezug_preis_cent = strompreis.netzbezug_arbeitspreis_cent_kwh if strompreis else 30.0
-    einspeise_verguetung_cent = strompreis.einspeiseverguetung_cent_kwh if strompreis else 8.2
-
-    # ==========================================================================
-    # 3. Investitionen laden
-    # ==========================================================================
-    # KEIN aktiv-Filter (Issue #123): PDF-Export historischer Daten
-    # darf spätere Stilllegungen nicht rückwirkend berücksichtigen.
-    inv_result = await db.execute(
-        select(Investition)
-        .where(Investition.anlage_id == anlage_id)
-    )
-    investitionen = inv_result.scalars().all()
-    inv_by_id = {i.id: i for i in investitionen}
-
-    # ==========================================================================
-    # 4. PVGIS-Prognosen laden
-    # ==========================================================================
-    pvgis_result = await db.execute(
-        select(PVGISPrognose).where(PVGISPrognose.anlage_id == anlage_id)
-    )
-    pvgis_prognosen = pvgis_result.scalars().all()
-
-    # Monatliche Prognose-Summen berechnen
-    pvgis_by_month = {}
-    for p in pvgis_prognosen:
-        if p.monatswerte:
-            for mw in p.monatswerte:
-                monat = mw.get("monat", 0)
-                kwh = mw.get("e_month_kwh", 0) or 0
-                pvgis_by_month[monat] = pvgis_by_month.get(monat, 0) + kwh
-
-    # ==========================================================================
-    # 5. InvestitionMonatsdaten laden
-    # ==========================================================================
-    all_inv_ids = [i.id for i in investitionen]
-    all_imd = []
-    if all_inv_ids:
-        if ist_gesamtzeitraum:
-            # Alle Daten laden
-            imd_result = await db.execute(
-                select(InvestitionMonatsdaten).where(
-                    InvestitionMonatsdaten.investition_id.in_(all_inv_ids)
-                )
-            )
-        else:
-            imd_result = await db.execute(
-                select(InvestitionMonatsdaten).where(
-                    InvestitionMonatsdaten.investition_id.in_(all_inv_ids),
-                    InvestitionMonatsdaten.jahr == jahr
-                )
-            )
-        # Pre-Filter analog aussichten.py (Issue #236/#239 v3.29.0): IMD vor
-        # Anschaffungsdatum oder nach Stilllegungsdatum überspringen. Alle
-        # nachfolgenden Aggregations-Schleifen (PV-Erzeugung, Speicher,
-        # Wärmepumpe, E-Mobilität) sehen damit nur Daten aus der tatsächlichen
-        # Lebenszeit der Investition — Pre-Anschaffungs-Phantomdaten aus
-        # Custom-Imports zählen nicht mehr in den Jahresbericht.
-        all_imd = [
-            imd for imd in imd_result.scalars().all()
-            if (inv := inv_by_id.get(imd.investition_id)) is not None
-            and inv.ist_aktiv_im_monat(imd.jahr, imd.monat)
-        ]
-
-    # ==========================================================================
-    # 6. Monatsdaten laden
-    # ==========================================================================
-    if ist_gesamtzeitraum:
-        md_result = await db.execute(
-            select(Monatsdaten)
-            .where(Monatsdaten.anlage_id == anlage_id)
-            .order_by(Monatsdaten.jahr, Monatsdaten.monat)
-        )
-    else:
-        md_result = await db.execute(
-            select(Monatsdaten)
-            .where(Monatsdaten.anlage_id == anlage_id)
-            .where(Monatsdaten.jahr == jahr)
-            .order_by(Monatsdaten.monat)
-        )
-    monatsdaten_list = md_result.scalars().all()
-
-    # Bei Gesamtzeitraum: Jahre ermitteln
-    if ist_gesamtzeitraum and monatsdaten_list:
-        alle_jahre = sorted(set(m.jahr for m in monatsdaten_list))
-        start_jahr = alle_jahre[0] if alle_jahre else 2023
-        end_jahr = alle_jahre[-1] if alle_jahre else 2025
-    elif ist_gesamtzeitraum:
-        # Keine Daten - nutze Installationsdatum
-        start_jahr = anlage.installationsdatum.year if anlage.installationsdatum else 2023
-        end_jahr = 2025
-        alle_jahre = list(range(start_jahr, end_jahr + 1))
-    else:
-        alle_jahre = [jahr]
-        start_jahr = end_jahr = jahr
-
-    # Monatsdaten indexieren
-    md_by_year_month = {}
-    for m in monatsdaten_list:
-        md_by_year_month[(m.jahr, m.monat)] = m
-
-    # Fuer Einzel-Jahr-Kompatibilitaet
-    if not ist_gesamtzeitraum:
-        md_by_month = {m.monat: m for m in monatsdaten_list}
-    else:
-        md_by_month = {}
-
-    # ==========================================================================
-    # 7. Daten aggregieren
-    # ==========================================================================
-
-    hat_speicher = any(i.typ == "speicher" for i in investitionen)
-    hat_waermepumpe = any(i.typ == "waermepumpe" for i in investitionen)
-    hat_emobilitaet = any(i.typ in ("e-auto", "wallbox") for i in investitionen)
-
-    # Speicher-Kapazitaet ermitteln
-    speicher_kapazitaet = 0.0
-    for inv in investitionen:
-        if inv.typ == "speicher":
-            params = inv.parameter or {}
-            speicher_kapazitaet += params.get(PARAM_SPEICHER["KAPAZITAET_KWH"], 0) or 0
-
-    # PV-Erzeugung nach Jahr/Monat indexieren
-    pv_erzeugung_by_year_month = {}
-    for imd in all_imd:
-        inv = inv_by_id.get(imd.investition_id)
-        if inv and inv.typ in ("pv-module", "balkonkraftwerk"):
-            data = imd.verbrauch_daten or {}
-            pv_kwh = data.get("pv_erzeugung_kwh", 0) or 0
-            key = (imd.jahr, imd.monat)
-            pv_erzeugung_by_year_month[key] = pv_erzeugung_by_year_month.get(key, 0) + pv_kwh
-
-    # Gesamtsummen initialisieren
-    pv_gesamt = 0.0
-    einsp_gesamt = 0.0
-    netz_gesamt = 0.0
-    ev_gesamt = 0.0
-    speicher_ladung_total = 0.0
-    speicher_entladung_total = 0.0
-    wp_waerme_total = 0.0
-    wp_heizung_total = 0.0
-    wp_warmwasser_total = 0.0
-    wp_strom_total = 0.0
-    emob_km_total = 0.0
-    emob_ladung_total = 0.0
-    emob_pv_total = 0.0
-    emob_netz_total = 0.0
-    emob_v2h_total = 0.0
-    # Per-E-Auto-km für die km-gewichtete Mittelung der Vergleichsparameter
-    # (Vergleichsverbrauch + Benzinpreis-Default) bei Multi-EA-Anlagen. Nur
-    # `e-auto`-Investitionen, weil `vergleich_verbrauch_l_100km` ein Vehicle-
-    # Attribut ist; Wallbox-IMD-Einträge mit km (evcc-Pool) werden für die
-    # Aggregat-Gesamt-km (emob_km_total) weiter mitgezählt.
-    ea_km_pro_inv: dict[int, float] = {}
-    # Per-WP-Wärmesumme für thermisch-gewichtete Mittelung der Vergleichs-
-    # parameter (Energieträger Gas/Öl + alter Preis) bei Multi-WP-Anlagen.
-    wp_waerme_pro_inv: dict[int, float] = {}
-
-    # Investition-Monatsdaten fuer Gesamtsummen aggregieren
-    for imd in all_imd:
-        inv = inv_by_id.get(imd.investition_id)
-        if not inv:
-            continue
-        data = imd.verbrauch_daten or {}
-
-        if inv.typ == "speicher":
-            speicher_ladung_total += data.get("ladung_kwh", 0) or 0
-            speicher_entladung_total += data.get("entladung_kwh", 0) or 0
-        elif inv.typ == "waermepumpe":
-            heiz = get_wp_heizenergie_kwh(data)
-            ww = data.get("warmwasser_kwh", 0) or 0
-            wp_heizung_total += heiz
-            wp_warmwasser_total += ww
-            wp_waerme_pro_inv[inv.id] = wp_waerme_pro_inv.get(inv.id, 0.0) + (
-                data.get("waerme_kwh", 0) or (heiz + ww)
-            )
-            wp_waerme_total += data.get("waerme_kwh", 0) or (heiz + ww)
-            wp_strom_total += data.get("stromverbrauch_kwh", 0) or 0
-        elif inv.typ in ("e-auto", "wallbox"):
-            km_this = data.get("km_gefahren", 0) or 0
-            emob_km_total += km_this
-            emob_ladung_total += data.get("ladung_kwh", 0) or 0
-            emob_pv_total += data.get("ladung_pv_kwh", 0) or 0
-            emob_netz_total += data.get("ladung_netz_kwh", 0) or 0
-            if inv.typ == "e-auto":
-                ea_km_pro_inv[inv.id] = ea_km_pro_inv.get(inv.id, 0.0) + km_this
-            emob_v2h_total += data.get("v2h_entladung_kwh", 0) or 0
-
-    # Monatsdaten-Struktur erstellen
-    # Bei Gesamtzeitraum: Zeile pro Jahr/Monat
-    # Bei Einzeljahr: Zeile pro Monat
-    monats_daten: List[MonatsZeile] = []
-
-    # Einspeise-Erlös §51-bereinigt aggregieren — wird in Schleife pro Monat
-    # gepflegt, Jahres-Aggregat liest am Ende `einsp_erloes_gesamt` statt
-    # `einsp_gesamt * verg_cent / 100`.
-    einsp_erloes_gesamt = 0.0
-
-    if ist_gesamtzeitraum:
-        # Alle Monate chronologisch
-        for j in alle_jahre:
-            for m in range(1, 13):
-                if (j, m) in md_by_year_month or (j, m) in pv_erzeugung_by_year_month:
-                    md = md_by_year_month.get((j, m))
-                    pv_kwh = pv_erzeugung_by_year_month.get((j, m), 0)
-                    einspeisung = md.einspeisung_kwh or 0 if md else 0
-                    netzbezug = md.netzbezug_kwh or 0 if md else 0
-                    eigenverbrauch = max(0, pv_kwh - einspeisung) if pv_kwh > 0 else 0
-                    gesamtverbrauch = eigenverbrauch + netzbezug
-                    autarkie = (eigenverbrauch / gesamtverbrauch * 100) if gesamtverbrauch > 0 else 0
-                    spez_ertrag = (pv_kwh / anlage.leistung_kwp) if anlage.leistung_kwp > 0 else 0
-                    m_neg = await get_neg_preis_einspeisung_monat(db, anlage_id, j, m)
-                    m_erloes = einspeise_erloes_euro(
-                        einspeisung_kwh=einspeisung,
-                        neg_preis_kwh=m_neg,
-                        verguetung_ct_kwh=einspeise_verguetung_cent,
-                    )
-                    einsp_erloes = m_erloes.erloes_euro
-                    einsp_erloes_gesamt += einsp_erloes
-                    ev_ersparnis = eigenverbrauch * netzbezug_preis_cent / 100
-
-                    zeile = MonatsZeile(
-                        monat=m,
-                        monat_name=f"{MONATSNAMEN[m]} {j}",
-                        jahr=j,
-                        pv_erzeugung_kwh=pv_kwh,
-                        pvgis_prognose_kwh=pvgis_by_month.get(m, 0),
-                        eigenverbrauch_kwh=eigenverbrauch,
-                        einspeisung_kwh=einspeisung,
-                        netzbezug_kwh=netzbezug,
-                        autarkie_prozent=autarkie,
-                        spezifischer_ertrag=spez_ertrag,
-                        einsp_erloes_euro=einsp_erloes,
-                        ev_ersparnis_euro=ev_ersparnis,
-                        netto_ertrag_euro=einsp_erloes + ev_ersparnis,
-                    )
-                    monats_daten.append(zeile)
-
-                    pv_gesamt += pv_kwh
-                    einsp_gesamt += einspeisung
-                    netz_gesamt += netzbezug
-                    ev_gesamt += eigenverbrauch
-    else:
-        # Einzeljahr: 12 Monate
-        pv_erzeugung_by_month = {m: pv_erzeugung_by_year_month.get((jahr, m), 0) for m in range(1, 13)}
-
-        for monat in range(1, 13):
-            pv_kwh = pv_erzeugung_by_month[monat]
-            md = md_by_year_month.get((jahr, monat))
-            einspeisung = md.einspeisung_kwh or 0 if md else 0
-            netzbezug = md.netzbezug_kwh or 0 if md else 0
-            eigenverbrauch = max(0, pv_kwh - einspeisung) if pv_kwh > 0 else 0
-            gesamtverbrauch = eigenverbrauch + netzbezug
-            autarkie = (eigenverbrauch / gesamtverbrauch * 100) if gesamtverbrauch > 0 else 0
-            spez_ertrag = (pv_kwh / anlage.leistung_kwp) if anlage.leistung_kwp > 0 else 0
-            m_neg = await get_neg_preis_einspeisung_monat(db, anlage_id, jahr, monat)
-            m_erloes = einspeise_erloes_euro(
-                einspeisung_kwh=einspeisung,
-                neg_preis_kwh=m_neg,
-                verguetung_ct_kwh=einspeise_verguetung_cent,
-            )
-            einsp_erloes = m_erloes.erloes_euro
-            einsp_erloes_gesamt += einsp_erloes
-            ev_ersparnis = eigenverbrauch * netzbezug_preis_cent / 100
-
-            zeile = MonatsZeile(
-                monat=monat,
-                monat_name=MONATSNAMEN[monat],
-                jahr=jahr,
-                pv_erzeugung_kwh=pv_kwh,
-                pvgis_prognose_kwh=pvgis_by_month.get(monat, 0),
-                eigenverbrauch_kwh=eigenverbrauch,
-                einspeisung_kwh=einspeisung,
-                netzbezug_kwh=netzbezug,
-                autarkie_prozent=autarkie,
-                spezifischer_ertrag=spez_ertrag,
-                einsp_erloes_euro=einsp_erloes,
-                ev_ersparnis_euro=ev_ersparnis,
-                netto_ertrag_euro=einsp_erloes + ev_ersparnis,
-            )
-            monats_daten.append(zeile)
-
-            pv_gesamt += pv_kwh
-            einsp_gesamt += einspeisung
-            netz_gesamt += netzbezug
-            ev_gesamt += eigenverbrauch
-
-    # Speicher/WP/E-Mob Monatsdaten aggregieren (nur Gesamtsummen, keine Einzelmonate)
-    # Bei Bedarf koennte hier eine detaillierte Aufschuesselung erfolgen
-
-    # ==========================================================================
-    # 8. Jahres-KPIs berechnen
-    # ==========================================================================
-    gesamtverbrauch = ev_gesamt + netz_gesamt
-    autarkie_jahr = (ev_gesamt / gesamtverbrauch * 100) if gesamtverbrauch > 0 else 0
-    ev_quote = (ev_gesamt / pv_gesamt * 100) if pv_gesamt > 0 else 0
-    spez_ertrag_jahr = (pv_gesamt / anlage.leistung_kwp) if anlage.leistung_kwp > 0 else 0
-
-    # §51 EEG: Jahres-Aggregat ist Σ der pro-Monat §51-bereinigten Erlöse.
-    einspeise_erloes = einsp_erloes_gesamt
-    ev_ersparnis_euro = ev_gesamt * netzbezug_preis_cent / 100
-    netto_ertrag = einspeise_erloes + ev_ersparnis_euro
-
-    # Investitionen
-    investition_gesamt = sum(i.anschaffungskosten_gesamt or 0 for i in investitionen)
-    investition_alternativ = sum(i.anschaffungskosten_alternativ or 0 for i in investitionen if i.anschaffungskosten_alternativ)
-    investition_mehrkosten = investition_gesamt - investition_alternativ
-    betriebskosten_ges = sum(i.betriebskosten_jahr or 0 for i in investitionen)
-
-    # Anteilige Betriebskosten für den Berichtszeitraum
-    anzahl_monate_pdf = len(monatsdaten_list)
-    betriebskosten_zeitraum = betriebskosten_ges * anzahl_monate_pdf / 12 if anzahl_monate_pdf > 0 else 0
-    netto_ertrag_nach_bk = netto_ertrag - betriebskosten_zeitraum
-
-    rendite = (netto_ertrag_nach_bk / investition_mehrkosten * 100) if investition_mehrkosten > 0 else None
-
-    # CO2
-    co2_pv = ev_gesamt * CO2_FAKTOR_STROM_KG_KWH
-    co2_wp = wp_waerme_total * CO2_FAKTOR_GAS_KG_KWH if hat_waermepumpe else 0  # Ersparnis vs. Gas
-    co2_emob = emob_km_total * 0.12 if hat_emobilitaet else 0  # ~120g/km Benziner
-    co2_gesamt = co2_pv + co2_wp + co2_emob
-
-    # Speicher-Metriken
-    speicher_vollzyklen = (speicher_ladung_total / speicher_kapazitaet) if speicher_kapazitaet > 0 else None
-    speicher_effizienz = (speicher_entladung_total / speicher_ladung_total * 100) if speicher_ladung_total > 0 else None
-
-    # WP-Metriken
-    # JAZ/COP nur wenn beide Seiten gemessen sind (Klima-Sicht: Luft-Luft-WP
-    # ohne Wärmemengenzähler liefert wp_waerme=0 → JAZ wäre irreführend 0).
-    wp_cop = (wp_waerme_total / wp_strom_total) if wp_strom_total > 0 and wp_waerme_total > 0 else None
-    wp_ersparnis = 0.0
-    if hat_waermepumpe and wp_waerme_total > 0:
-        # thermisch-gewichtete Aggregat-Werte. Vorher las eine
-        # `for inv … break`-Schleife die Parameter aus der ERSTEN passenden
-        # WP-Investition mit `parameter` und nahm auch nur DEREN
-        # `alternativ_zusatzkosten_jahr` (die break-Linie überschrieb die
-        # Summierungslogik). Bei zwei WPs mit unterschiedlichen Energie-
-        # trägern (Gas + Öl) oder Zusatzkosten war der Jahresbericht falsch.
-        wp_param_per_inv: list[tuple[float, float, float, float]] = []
-        # (waerme, alter_preis_cent, alter_wirkungsgrad, zusatzkosten_jahr)
-        for inv in investitionen:
-            if inv.typ != "waermepumpe":
-                continue
-            wp_waerme = wp_waerme_pro_inv.get(inv.id, 0.0)
-            params = inv.parameter or {}
-            zusatzkosten = params.get(
-                PARAM_WAERMEPUMPE["ALTERNATIV_ZUSATZKOSTEN_JAHR"], 0,
-            ) or 0
-            if wp_waerme <= 0 and zusatzkosten <= 0:
-                continue
-            wp_param_per_inv.append((
-                wp_waerme,
-                (
-                    params.get(
-                        PARAM_WAERMEPUMPE["ALTER_PREIS_CENT_KWH"],
-                        PARAM_WAERMEPUMPE_DEFAULTS["alter_preis_cent_kwh"],
-                    ) or PARAM_WAERMEPUMPE_DEFAULTS["alter_preis_cent_kwh"]
-                ),
-                (
-                    WP_WIRKUNGSGRAD_OEL_DEFAULT
-                    if params.get(PARAM_WAERMEPUMPE["ALTER_ENERGIETRAEGER"]) == "oel"
-                    else WP_WIRKUNGSGRAD_GAS_DEFAULT
-                ),
-                zusatzkosten,
-            ))
-        wp_alternativ_zusatzkosten_jahr = sum(z for _, _, _, z in wp_param_per_inv)
-        waerme_gewicht = sum(w for w, _, _, _ in wp_param_per_inv)
-        if waerme_gewicht > 0:
-            wp_alter_preis_cent = sum(w * p for w, p, _, _ in wp_param_per_inv) / waerme_gewicht
-            wp_alter_wirkungsgrad = sum(w * wg for w, _, wg, _ in wp_param_per_inv) / waerme_gewicht
-        else:
-            wp_alter_preis_cent = PARAM_WAERMEPUMPE_DEFAULTS["alter_preis_cent_kwh"]
-            wp_alter_wirkungsgrad = WP_WIRKUNGSGRAD_GAS_DEFAULT
-        # Durchschnitt der Monats-Gaspreise, Fallback auf statischen Parameter
-        hist_gaspreise = [
-            m.gaspreis_cent_kwh for m in monatsdaten_list
-            if m.gaspreis_cent_kwh is not None
-        ]
-        wp_gaspreis = (
-            sum(hist_gaspreise) / len(hist_gaspreise)
-            if hist_gaspreise
-            else wp_alter_preis_cent
-        )
-        alte_heizung_kosten = (wp_waerme_total / wp_alter_wirkungsgrad) * wp_gaspreis / 100
-        # Fixe Zusatzkosten anteilig für den PDF-Zeitraum
-        alte_heizung_kosten += wp_alternativ_zusatzkosten_jahr * anzahl_monate_pdf / 12
-        wp_stromkosten = wp_strom_total * netzbezug_preis_cent / 100
-        wp_ersparnis = alte_heizung_kosten - wp_stromkosten
-
-    # E-Mob-Metriken
-    emob_pv_anteil = (emob_pv_total / emob_ladung_total * 100) if emob_ladung_total > 0 else None
-    emob_ersparnis = 0.0
-    if hat_emobilitaet and emob_km_total > 0:
-        # km-gewichtetes Mittel über die E-Autos via SoT-Helper. Vorher las
-        # eine `for inv … break`-Schleife die Vergleichsparameter aus der
-        # ERSTEN passenden e-auto-ODER-wallbox-Investition — bei zwei E-Autos
-        # mit unterschiedlichen `vergleich_verbrauch_l_100km` wurde der zweite
-        # stillschweigend mit den Werten des ersten gerechnet. Bei einer EA +
-        # Wallbox vor der EA konnte zudem die Wallbox die Param-Quelle werden,
-        # obwohl `vergleich_l_100km` ein Vehicle-Attribut ist.
-        emob_vergleich_l_100km, emob_benzinpreis_fallback = km_gewichtete_eauto_params(
-            eauto_params_und_km=(
-                (inv.parameter, ea_km_pro_inv.get(inv.id, 0.0))
-                for inv in investitionen
-                if inv.typ == "e-auto"
-            ),
-        )
-        # Durchschnitt der Monats-Kraftstoffpreise, Fallback auf statischen Parameter
-        hist_kraftstoffpreise = [
-            m.kraftstoffpreis_euro for m in monatsdaten_list
-            if m.kraftstoffpreis_euro is not None
-        ]
-        emob_benzinpreis = (
-            sum(hist_kraftstoffpreise) / len(hist_kraftstoffpreise)
-            if hist_kraftstoffpreise
-            else emob_benzinpreis_fallback
-        )
-        benzin_kosten = (emob_km_total / 100) * emob_vergleich_l_100km * emob_benzinpreis
-        strom_kosten = emob_netz_total * netzbezug_preis_cent / 100
-        emob_ersparnis = benzin_kosten - strom_kosten
-
-    jahres_kpis = JahresKPIs(
-        pv_erzeugung_kwh=pv_gesamt,
-        eigenverbrauch_kwh=ev_gesamt,
-        einspeisung_kwh=einsp_gesamt,
-        netzbezug_kwh=netz_gesamt,
-        gesamtverbrauch_kwh=gesamtverbrauch,
-        autarkie_prozent=autarkie_jahr,
-        eigenverbrauch_quote_prozent=ev_quote,
-        spezifischer_ertrag_kwh_kwp=spez_ertrag_jahr,
-        hat_speicher=hat_speicher,
-        speicher_kapazitaet_kwh=speicher_kapazitaet,
-        speicher_ladung_kwh=speicher_ladung_total,
-        speicher_entladung_kwh=speicher_entladung_total,
-        speicher_vollzyklen=speicher_vollzyklen,
-        speicher_effizienz_prozent=speicher_effizienz,
-        hat_waermepumpe=hat_waermepumpe,
-        wp_waerme_kwh=wp_waerme_total,
-        wp_heizung_kwh=wp_heizung_total,
-        wp_warmwasser_kwh=wp_warmwasser_total,
-        wp_strom_kwh=wp_strom_total,
-        wp_cop=wp_cop,
-        wp_ersparnis_euro=wp_ersparnis,
-        hat_emobilitaet=hat_emobilitaet,
-        emob_km=emob_km_total,
-        emob_ladung_kwh=emob_ladung_total,
-        emob_pv_kwh=emob_pv_total,
-        emob_netz_kwh=emob_netz_total,
-        emob_v2h_kwh=emob_v2h_total,
-        emob_pv_anteil_prozent=emob_pv_anteil,
-        emob_ersparnis_euro=emob_ersparnis,
-        einspeise_erloes_euro=einspeise_erloes,
-        ev_ersparnis_euro=ev_ersparnis_euro,
-        netto_ertrag_euro=netto_ertrag,
-        jahres_rendite_prozent=rendite,
-        investition_gesamt_euro=investition_gesamt,
-        investition_mehrkosten_euro=investition_mehrkosten,
-        co2_pv_kg=co2_pv,
-        co2_wp_kg=co2_wp,
-        co2_emob_kg=co2_emob,
-        co2_gesamt_kg=co2_gesamt,
-    )
-
-    # ==========================================================================
-    # 9. Datenklassen befuellen
-    # ==========================================================================
-
-    # Anlagen-Dokumentation
-    anlage_dok = AnlagenDokumentation(
-        name=anlage.anlagenname,
-        leistung_kwp=anlage.leistung_kwp,
-        installationsdatum=anlage.installationsdatum,
-        mastr_id=anlage.mastr_id,
-        wetter_provider=anlage.wetter_provider,
-        standort_plz=anlage.standort_plz,
-        standort_ort=anlage.standort_ort,
-        standort_strasse=anlage.standort_strasse,
-        latitude=anlage.latitude,
-        longitude=anlage.longitude,
-        versorger_daten=anlage.versorger_daten,
-        ha_sensor_pv_erzeugung=anlage.ha_sensor_pv_erzeugung,
-        ha_sensor_einspeisung=anlage.ha_sensor_einspeisung,
-        ha_sensor_netzbezug=anlage.ha_sensor_netzbezug,
-        ha_sensor_batterie_ladung=anlage.ha_sensor_batterie_ladung,
-        ha_sensor_batterie_entladung=anlage.ha_sensor_batterie_entladung,
-    )
-
-    # Stromtarif
-    tarif_dok = StromtarifDaten(
-        tarifname=strompreis.tarifname if strompreis else None,
-        anbieter=strompreis.anbieter if strompreis else None,
-        netzbezug_cent_kwh=netzbezug_preis_cent,
-        einspeiseverguetung_cent_kwh=einspeise_verguetung_cent,
-        grundpreis_euro_monat=strompreis.grundpreis_euro_monat if strompreis else None,
-        gueltig_ab=strompreis.gueltig_ab if strompreis else None,
-    )
-
-    # Investitionen
-    inv_dok_list: List[InvestitionDokumentation] = []
-    for inv in investitionen:
-        params = inv.parameter or {}
-        parent_name = None
-        if inv.parent_investition_id:
-            parent = inv_by_id.get(inv.parent_investition_id)
-            parent_name = parent.bezeichnung if parent else None
-
-        inv_dok = InvestitionDokumentation(
-            typ=inv.typ,
-            bezeichnung=inv.bezeichnung,
-            anschaffungsdatum=inv.anschaffungsdatum,
-            anschaffungskosten=inv.anschaffungskosten_gesamt,
-            alternativkosten=inv.anschaffungskosten_alternativ,
-            betriebskosten_jahr=inv.betriebskosten_jahr,
-            leistung_kwp=inv.leistung_kwp if inv.typ != "speicher" else params.get(PARAM_SPEICHER["KAPAZITAET_KWH"]),
-            ausrichtung=inv.ausrichtung,
-            neigung_grad=inv.neigung_grad,
-            parent_bezeichnung=parent_name,
-            parameter=params,
-        )
-        inv_dok_list.append(inv_dok)
-
-    # Finanz-Prognose (vereinfacht, nach Betriebskosten)
-    finanz_prognose = FinanzPrognose(
-        investition_mehrkosten_euro=investition_mehrkosten,
-        bisherige_ertraege_euro=netto_ertrag_nach_bk,
-        amortisations_fortschritt_prozent=(netto_ertrag_nach_bk / investition_mehrkosten * 100) if investition_mehrkosten > 0 else 0,
-        amortisation_erreicht=netto_ertrag_nach_bk >= investition_mehrkosten,
-        jahres_ertrag_prognose_euro=netto_ertrag_nach_bk,
-        jahres_rendite_prognose_prozent=rendite,
-    )
-
-    # String-Vergleiche
-    # PVGIS-Prognose ist pro Anlage, wird anteilig nach kWp auf Strings verteilt
-    string_vergleiche: List[StringVergleich] = []
-
-    # Neueste PVGIS-Prognose finden
-    pvgis_prognose = None
-    if pvgis_prognosen:
-        pvgis_prognose = max(pvgis_prognosen, key=lambda p: p.abgerufen_am)
-
-    # Gesamt-kWp aller PV-Module
-    pv_module = [inv for inv in investitionen if inv.typ == "pv-module"]
-    gesamt_kwp = sum(inv.leistung_kwp or 0 for inv in pv_module)
-    if gesamt_kwp == 0:
-        gesamt_kwp = anlage.leistung_kwp or 1
-
-    # Prognose-Monatswerte laden
-    prognose_monate = {}
-    if pvgis_prognose and pvgis_prognose.monatswerte:
-        for mw in pvgis_prognose.monatswerte:
-            prognose_monate[mw.get("monat", 0)] = mw.get("e_m", 0) or 0
-
-    # Anzahl vollstaendiger Jahre fuer Prognose-Skalierung
-    anzahl_jahre = len(alle_jahre) if ist_gesamtzeitraum else 1
-
-    for inv in pv_module:
-        modul_kwp = inv.leistung_kwp or 0
-        kwp_anteil = modul_kwp / gesamt_kwp if gesamt_kwp > 0 else 0
-
-        # IST-Erzeugung fuer diesen String (alle Jahre oder nur das angefragte)
-        ist_kwh = sum(
-            (imd.verbrauch_daten or {}).get("pv_erzeugung_kwh", 0) or 0
-            for imd in all_imd
-            if imd.investition_id == inv.id
+    except Exception as exc:
+        logger.exception("Jahresbericht-Aggregation fehlgeschlagen: %s", exc)
+        raise HTTPException(
+            status_code=500,
+            detail=f"PDF-Daten-Fehler: {exc.__class__.__name__}: {exc}",
         )
 
-        # PVGIS-Prognose anteilig nach kWp, skaliert nach Anzahl Jahre
-        prognose_kwh_pro_jahr = sum(prognose_monate.values()) * kwp_anteil
-        prognose_kwh = prognose_kwh_pro_jahr * anzahl_jahre
+    try:
+        pdf_bytes = render_document("jahresbericht.html", ctx)
+    except Exception as exc:
+        logger.exception("WeasyPrint-Render fehlgeschlagen: %s", exc)
+        raise HTTPException(
+            status_code=500,
+            detail=f"PDF-Render-Fehler: {exc.__class__.__name__}: {exc}",
+        )
 
-        if prognose_kwh > 0 or ist_kwh > 0:
-            abw_kwh = ist_kwh - prognose_kwh
-            abw_pct = (abw_kwh / prognose_kwh * 100) if prognose_kwh > 0 else 0
-            spez = (ist_kwh / modul_kwp / anzahl_jahre) if modul_kwp > 0 else 0  # Spez. Ertrag pro Jahr
-
-            string_vergleiche.append(StringVergleich(
-                bezeichnung=inv.bezeichnung,
-                leistung_kwp=modul_kwp,
-                ausrichtung=inv.ausrichtung,
-                neigung_grad=inv.neigung_grad,
-                prognose_kwh=prognose_kwh,
-                ist_kwh=ist_kwh,
-                abweichung_kwh=abw_kwh,
-                abweichung_prozent=abw_pct,
-                spezifischer_ertrag=spez,
-            ))
-
-    # ==========================================================================
-    # 10. PDF generieren
-    # ==========================================================================
-    pdf_service = PDFService()
-    pdf_buffer = pdf_service.generate_jahresbericht(
-        anlage=anlage_dok,
-        stromtarif=tarif_dok,
-        investitionen=inv_dok_list,
-        jahres_kpis=jahres_kpis,
-        monats_daten=monats_daten,
-        finanz_prognose=finanz_prognose,
-        string_vergleiche=string_vergleiche,
-        jahr=jahr if not ist_gesamtzeitraum else None,
-        start_jahr=start_jahr if ist_gesamtzeitraum else None,
-        end_jahr=end_jahr if ist_gesamtzeitraum else None,
-    )
-
-    # ==========================================================================
-    # 11. Response
-    # ==========================================================================
-    # Dateiname ohne Umlaute und Sonderzeichen
+    # Anlage nur für Dateinamen nachladen
+    result = await db.execute(select(Anlage).where(Anlage.id == anlage_id))
+    anlage = result.scalar_one()
     safe_name = anlage.anlagenname.replace(" ", "_").replace("/", "-")
     for umlaut, ersatz in [("ä", "ae"), ("ö", "oe"), ("ü", "ue"), ("ß", "ss"),
                            ("Ä", "Ae"), ("Ö", "Oe"), ("Ü", "Ue")]:
         safe_name = safe_name.replace(umlaut, ersatz)
-
-    if ist_gesamtzeitraum:
-        filename = f"eedc_anlagenbericht_{safe_name}_{start_jahr}-{end_jahr}.pdf"
+    if jahr is None:
+        filename = f"eedc_anlagenbericht_{safe_name}.pdf"
     else:
         filename = f"eedc_jahresbericht_{safe_name}_{jahr}.pdf"
-
-    return StreamingResponse(
-        pdf_buffer,
+    return Response(
+        content=pdf_bytes,
         media_type="application/pdf",
-        headers={
-            "Content-Disposition": f'attachment; filename="{filename}"'
-        }
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )

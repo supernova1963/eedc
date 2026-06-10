@@ -198,8 +198,8 @@ export default function DokumentationsDialog({ anlage, onClose }: Dokumentations
         </div>
 
         <p className="text-xs text-gray-500 dark:text-gray-500 mt-2">
-          <strong>Beta-Hinweis:</strong> Die beiden neuen Dokumente (Anlagendokumentation, Finanzbericht) benötigen im HA-App
-          die Option <code className="text-xs">pdf_engine = weasyprint</code>. Standalone-Docker: Umgebungsvariable <code className="text-xs">PDF_ENGINE=weasyprint</code>.
+          <strong>Beta-Hinweis:</strong> Anlagendokumentation und Finanzbericht sind als Beta gekennzeichnet —
+          Rückmeldungen gerne über den Feedback-Link.
         </p>
       </div>
     </Modal>

@@ -47,6 +47,11 @@ from backend.core.berechnungen.einspeise_erloes import (
     EinspeiseErloes,
     einspeise_erloes_euro,
 )
+from backend.core.berechnungen.finanz_aggregat import (
+    FinanzAggregat,
+    FinanzMonatsZeile,
+    berechne_finanz_aggregat,
+)
 from backend.core.berechnungen.emob import (
     QUELLE_GEMESSEN,
     QUELLE_KEINE,
@@ -130,6 +135,9 @@ __all__ = [
     "verteile_counter_auf_stunden",
     "EinspeiseErloes",
     "einspeise_erloes_euro",
+    "FinanzAggregat",
+    "FinanzMonatsZeile",
+    "berechne_finanz_aggregat",
     "QUELLE_GEMESSEN",
     "QUELLE_LADUNG",
     "QUELLE_KEINE",
