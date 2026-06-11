@@ -29,9 +29,17 @@ LABEL \
     io.hass.version="3.8.17"
 
 # System-Abhängigkeiten
+# WeasyPrint (PDF-Engine seit #303) braucht Pango/Cairo/HarfBuzz als native
+# Libs. libpango-1.0-0 zieht libcairo + harfbuzz + libgobject/glib transitiv
+# mit, fontconfig ist für die Schriften-Auflösung nötig. Ohne diese Libs
+# schlägt der PDF-Export mit "cannot load library 'libgobject-2.0-0'" fehl.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     jq \
+    libpango-1.0-0 \
+    libpangoft2-1.0-0 \
+    fontconfig \
+    fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 
 # Arbeitsverzeichnis
