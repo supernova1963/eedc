@@ -246,8 +246,8 @@ def test_check_response_erfolg_liefert_data():
 
 # --- Monats-Parsing ------------------------------------------------------------------
 
-def _beispiel_response() -> dict:
-    """Realistische energy_analysis-Response (devType solar_production)."""
+def _solar_response() -> dict:
+    """energy_analysis-Response devType solar_production."""
     return {
         "power": [
             {"time": "2026-04-01", "value": "3.67"},
@@ -256,8 +256,6 @@ def _beispiel_response() -> dict:
         ],
         # power_unit behauptet 'wh', Werte sind aber kWh (API-Eigenheit)
         "power_unit": "wh",
-        "charge_total": "4.20",
-        "discharge_total": "3.11",
         "solar_to_grid_total": "1.50",
         "solar_to_home_total": "4.00",
         "solar_to_battery_total": "2.01",
@@ -265,37 +263,71 @@ def _beispiel_response() -> dict:
     }
 
 
+def _home_response() -> dict:
+    """energy_analysis-Response devType home_usage (Netzbezug + Entladung)."""
+    return {
+        "grid_to_home_total": "5.20",
+        "battery_to_home_total": "3.11",
+    }
+
+
+def _battery_response() -> dict:
+    """energy_analysis-Response devType solarbank (Netz-Ladung der Batterie)."""
+    return {
+        "grid_to_battery_total": "0.50",
+    }
+
+
 def test_parse_month_summiert_tageswerte():
-    result = _parse_month_response(_beispiel_response(), 2026, 4)
+    result = _parse_month_response(
+        _solar_response(), _home_response(), _battery_response(), 2026, 4
+    )
     assert result is not None
     assert result.jahr == 2026
     assert result.monat == 4
     assert result.pv_erzeugung_kwh == 7.51  # 3.67 + 3.29 + 0.55
     assert result.einspeisung_kwh == 1.50
-    assert result.batterie_ladung_kwh == 4.20
+    # #328: Netzbezug aus home_usage.grid_to_home_total
+    assert result.netzbezug_kwh == 5.20
+    # #328: Ladung = solar_to_battery (2.01) + grid_to_battery (0.50)
+    assert result.batterie_ladung_kwh == 2.51
+    # #328: Entladung = home_usage.battery_to_home_total
     assert result.batterie_entladung_kwh == 3.11
     # Eigenverbrauch = solar_to_home + solar_to_battery
     assert result.eigenverbrauch_kwh == 6.01
 
 
 def test_parse_month_eigenverbrauch_fallback_pv_minus_einspeisung():
-    data = _beispiel_response()
-    data["solar_to_home_total"] = ""
-    data["solar_to_battery_total"] = ""
-    result = _parse_month_response(data, 2026, 4)
+    solar = _solar_response()
+    solar["solar_to_home_total"] = ""
+    solar["solar_to_battery_total"] = ""
+    result = _parse_month_response(solar, _home_response(), {}, 2026, 4)
     assert result.eigenverbrauch_kwh == 6.01  # 7.51 − 1.50
 
 
 def test_parse_month_pv_fallback_auf_solar_total():
-    data = _beispiel_response()
-    data["power"] = []
-    result = _parse_month_response(data, 2026, 4)
+    solar = _solar_response()
+    solar["power"] = []
+    result = _parse_month_response(solar, {}, {}, 2026, 4)
     assert result.pv_erzeugung_kwh == 7.51
 
 
+def test_parse_month_nur_solar_ohne_home_und_battery():
+    """home_usage/solarbank dürfen fehlen (Anlage ohne Speicher/Netzbezug)."""
+    result = _parse_month_response(_solar_response(), {}, {}, 2026, 4)
+    assert result is not None
+    assert result.pv_erzeugung_kwh == 7.51
+    assert result.netzbezug_kwh is None
+    # Ladung nur aus solar_to_battery, Entladung unbekannt
+    assert result.batterie_ladung_kwh == 2.01
+    assert result.batterie_entladung_kwh is None
+
+
 def test_parse_month_leere_response_liefert_none():
-    assert _parse_month_response({}, 2026, 4) is None
-    assert _parse_month_response({"power": [], "solar_total": ""}, 2026, 4) is None
+    assert _parse_month_response({}, {}, {}, 2026, 4) is None
+    assert _parse_month_response(
+        {"power": [], "solar_total": ""}, {}, {}, 2026, 4
+    ) is None
 
 
 # --- _safe_float -----------------------------------------------------------------------

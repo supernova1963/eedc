@@ -19,6 +19,20 @@ existiert in der aktuellen API nicht (mehr). Das Abfrage-Fenster
 (start_time/end_time) ist TAG-INKLUSIV auf beiden Seiten: Für einen Monat
 muss end_time der letzte Monatstag sein, NICHT der 1. des Folgemonats.
 
+`energy_analysis` liefert je `device_type` (devType) NUR die Felder seines
+Bereichs — ein einzelner Aufruf reicht NICHT für alle eedc-Größen (#328,
+Gegentest Johnny_1993): `solar_production` hat PV/Einspeisung/Eigenverbrauch,
+aber WEDER Netzbezug NOCH die Batterie-Summen. Wir fragen daher pro Monat drei
+devTypes ab und setzen sie zusammen:
+- `solar_production` → PV, `solar_to_grid_total` (Einspeisung),
+  `solar_to_home_total` + `solar_to_battery_total` (Eigenverbrauch/Ladung-PV)
+- `home_usage`       → `grid_to_home_total` (Netzbezug), `battery_to_home_total`
+  (Batterie-Entladung)
+- `solarbank`        → `grid_to_battery_total` (Netz-Ladung der Batterie)
+Batterie-Ladung = solar_to_battery + grid_to_battery, Entladung =
+battery_to_home. (Frühere `charge_total`/`discharge_total` aus der solar-
+Response waren die falschen Felder — Netzbezug fehlte ganz, Batterie falsch.)
+
 Schema nachvollzogen anhand der Community-Dokumentation von
 https://github.com/thomluther/anker-solix-api (eigene Implementierung).
 
@@ -341,36 +355,61 @@ def _safe_float(value) -> Optional[float]:
         return None
 
 
-def _parse_month_response(
-    data: dict, year: int, month: int
-) -> Optional[ParsedMonthData]:
-    """energy_analysis-Response (devType solar_production) → ParsedMonthData.
+def _sum_optional(*values: Optional[float]) -> Optional[float]:
+    """Summe der nicht-None-Werte; None nur wenn ALLE None sind.
 
-    `power` enthält Tageswerte der PV-Erzeugung; die *_total-Felder sind
-    Summen über das abgefragte Intervall. Achtung: `power_unit` behauptet
-    'wh', die Werte sind aber kWh (bekannte API-Eigenheit).
+    Eine fehlende Teilkomponente (z. B. keine Netz-Ladung der Batterie)
+    darf die Gesamtsumme nicht auf None ziehen, ein komplett fehlendes
+    Feld aber schon (sonst würde 0 statt „unbekannt" geschrieben).
     """
-    if not data:
-        return None
+    present = [v for v in values if v is not None]
+    return sum(present) if present else None
+
+
+def _parse_month_response(
+    solar: dict,
+    home: dict,
+    battery: dict,
+    year: int,
+    month: int,
+) -> Optional[ParsedMonthData]:
+    """Drei energy_analysis-Responses (devTypes) → ParsedMonthData.
+
+    `solar` (solar_production) liefert PV/Einspeisung/Eigenverbrauch,
+    `home` (home_usage) den Netzbezug + die Batterie-Entladung,
+    `battery` (solarbank) die Netz-Ladung der Batterie. Die *_total-Felder
+    sind Summen über das abgefragte (inklusive) Intervall. Achtung:
+    `power_unit` behauptet 'wh', die Werte sind aber kWh (API-Eigenheit).
+    """
+    solar = solar or {}
+    home = home or {}
+    battery = battery or {}
 
     # PV-Erzeugung: Summe der Tageswerte, Fallback auf solar_total
     daily = [
         _safe_float(item.get("value"))
-        for item in (data.get("power") or [])
+        for item in (solar.get("power") or [])
     ]
     daily_values = [v for v in daily if v is not None]
     pv = round(sum(daily_values), 2) if daily_values else _safe_float(
-        data.get("solar_total")
+        solar.get("solar_total")
     )
 
-    einspeisung = _safe_float(data.get("solar_to_grid_total"))
-    batterie_ladung = _safe_float(data.get("charge_total"))
-    batterie_entladung = _safe_float(data.get("discharge_total"))
+    einspeisung = _safe_float(solar.get("solar_to_grid_total"))
+    netzbezug = _safe_float(home.get("grid_to_home_total"))
+
+    # Batterie-Ladung = PV in die Batterie + Netz in die Batterie.
+    # Entladung = Batterie ins Haus (Fallback: solarbank-Response).
+    solar_to_battery = _safe_float(solar.get("solar_to_battery_total"))
+    grid_to_battery = _safe_float(battery.get("grid_to_battery_total"))
+    batterie_ladung = _sum_optional(solar_to_battery, grid_to_battery)
+    batterie_entladung = _safe_float(
+        home.get("battery_to_home_total")
+    ) or _safe_float(battery.get("battery_to_home_total"))
 
     # Eigenverbrauch = PV direkt ins Haus + PV in die Batterie.
     # Fallback: Erzeugung − Einspeisung (gleiche Größe, andere Quelle).
-    solar_to_home = _safe_float(data.get("solar_to_home_total"))
-    solar_to_battery = _safe_float(data.get("solar_to_battery_total"))
+    solar_to_home = _safe_float(solar.get("solar_to_home_total"))
     if solar_to_home is not None or solar_to_battery is not None:
         eigenverbrauch = (solar_to_home or 0.0) + (solar_to_battery or 0.0)
     elif pv is not None and einspeisung is not None:
@@ -383,6 +422,7 @@ def _parse_month_response(
         monat=month,
         pv_erzeugung_kwh=round(pv, 2) if pv is not None else None,
         einspeisung_kwh=round(einspeisung, 2) if einspeisung is not None else None,
+        netzbezug_kwh=round(netzbezug, 2) if netzbezug is not None else None,
         eigenverbrauch_kwh=(
             round(eigenverbrauch, 2) if eigenverbrauch is not None else None
         ),
@@ -516,9 +556,13 @@ class AnkerSolixProvider(CloudImportProvider):
     ) -> list[ParsedMonthData]:
         """Holt historische Monatsdaten von der Anker SOLIX Cloud.
 
-        Pro Monat ein energy_analysis-Request (devType solar_production):
-        Tageswerte werden zur Monats-PV summiert, Einspeisung/Eigenverbrauch/
-        Batterie kommen aus den Intervall-Summen der Response.
+        Pro Monat DREI energy_analysis-Requests (devTypes solar_production,
+        home_usage, solarbank): PV/Einspeisung/Eigenverbrauch aus solar,
+        Netzbezug + Batterie-Entladung aus home_usage, Netz-Ladung der
+        Batterie aus solarbank — ein einzelner devType liefert nicht alle
+        Größen (#328). Endpunkt-Drosselung wird zwischen ALLEN Requests
+        eingehalten; home_usage/solarbank dürfen fehlschlagen (z. B. Anlage
+        ohne Speicher) ohne den ganzen Monat zu verlieren.
         """
         email, password, server = _trimmed_credentials(credentials)
 
@@ -542,26 +586,58 @@ class AnkerSolixProvider(CloudImportProvider):
             # Monate iterieren
             current_year = start_year
             current_month = start_month
-            first_request = True
+            # Flag in einer Liste, damit die innere Closure es mutieren kann.
+            first_request = [True]
+
+            async def _throttled(start_date, end_date, dev_type, allow_fail):
+                """Ein energy_analysis-Request mit Endpunkt-Drosselung.
+
+                Vor jedem Request (außer dem allerersten) wird gewartet, da
+                alle Requests denselben gedrosselten Endpunkt treffen.
+                `allow_fail` liefert {} statt zu werfen — für optionale
+                devTypes (home_usage/solarbank), die bei Anlagen ohne
+                Speicher/Netzbezug fehlen dürfen.
+                """
+                if not first_request[0]:
+                    await asyncio.sleep(REQUEST_DELAY_S)
+                first_request[0] = False
+                if allow_fail:
+                    try:
+                        return await _get_energy_analysis(
+                            client, api_base, auth_token, user_id,
+                            site_id, start_date, end_date, dev_type=dev_type,
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            f"Anker SOLIX devType {dev_type} "
+                            f"{current_year}-{current_month:02d}: {e}"
+                        )
+                        return {}
+                return await _get_energy_analysis(
+                    client, api_base, auth_token, user_id,
+                    site_id, start_date, end_date, dev_type=dev_type,
+                )
 
             while (current_year, current_month) <= (end_year, end_month):
                 # Monate in der Zukunft überspringen
                 now = datetime.now()
                 if datetime(current_year, current_month, 1) <= now:
-                    if not first_request:
-                        # Endpunkt-Drosselung der Anker-Server respektieren
-                        await asyncio.sleep(REQUEST_DELAY_S)
-                    first_request = False
                     try:
                         start_date, end_date = _month_window(
                             current_year, current_month
                         )
-                        data = await _get_energy_analysis(
-                            client, api_base, auth_token, user_id,
-                            site_id, start_date, end_date,
+                        solar = await _throttled(
+                            start_date, end_date, "solar_production",
+                            allow_fail=False,
+                        )
+                        home = await _throttled(
+                            start_date, end_date, "home_usage", allow_fail=True
+                        )
+                        battery = await _throttled(
+                            start_date, end_date, "solarbank", allow_fail=True
                         )
                         month_data = _parse_month_response(
-                            data, current_year, current_month
+                            solar, home, battery, current_year, current_month
                         )
                         if month_data:
                             results.append(month_data)
