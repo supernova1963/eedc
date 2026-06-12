@@ -437,13 +437,17 @@ async def get_kategorien():
 @router.get("/count")
 async def get_count(
     anlage_id: int = Query(..., description="Anlage-ID"),
+    aktiv: Optional[bool] = Query(None, description="Nur aktive (true) bzw. inaktive (false) Einträge zählen"),
     db: AsyncSession = Depends(get_db),
 ):
-    """Gibt die Anzahl der Infothek-Einträge zurück (für bedingte Menü-Anzeige)."""
-    result = await db.execute(
-        select(func.count(InfothekEintrag.id))
-        .where(InfothekEintrag.anlage_id == anlage_id)
-    )
+    """Gibt die Anzahl der Infothek-Einträge zurück (für bedingte Menü-Anzeige).
+
+    Mit ``aktiv=true`` zählt die Abfrage dieselbe Menge wie der PDF-Export
+    (Dossier-Karte im Dokumente-Hub, Dirk-PN 2026-06-12)."""
+    q = select(func.count(InfothekEintrag.id)).where(InfothekEintrag.anlage_id == anlage_id)
+    if aktiv is not None:
+        q = q.where(InfothekEintrag.aktiv == aktiv)
+    result = await db.execute(q)
     return {"count": result.scalar() or 0}
 
 

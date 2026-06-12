@@ -61,6 +61,8 @@ class AnlageBase(BaseModel):
     prognose_quelle: Optional[str] = Field("eedc", max_length=30, description="Prognosequelle: eedc (Default, mit Lernfaktor), solcast (pur), sfml (pur, nur HA)")
     # §51 EEG: Wegfall der Einspeisevergütung in Negativpreis-Stunden (manueller Schalter)
     unterliegt_eeg_51: Optional[bool] = Field(False, description="§51 EEG: Einspeisevergütung entfällt in Stunden mit negativem Börsenpreis (nur Neuanlagen ab Solarpaket I). Default aus.")
+    # Günstig-Schwelle der Börsenpreis-Sensoren (HA-Export)
+    guenstig_schwelle_prozent: Optional[float] = Field(10.0, ge=0, le=50, description="Günstig-Schwelle: Preis muss mind. X % unter dem Tagesdurchschnitt (ohne 3 Peak-Stunden) liegen. Default 10.")
 
 
 class AnlageCreate(AnlageBase):
@@ -98,6 +100,7 @@ class AnlageUpdate(BaseModel):
     netz_puffer_w: Optional[int] = Field(None, ge=0, le=1000)
     prognose_quelle: Optional[str] = Field(None, max_length=30)
     unterliegt_eeg_51: Optional[bool] = None
+    guenstig_schwelle_prozent: Optional[float] = Field(None, ge=0, le=50)
 
 
 class SensorConfigUpdate(BaseModel):

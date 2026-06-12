@@ -504,6 +504,8 @@ async def run_migrations(conn):
                 ('prognose_quelle', "VARCHAR(30) DEFAULT 'eedc'"),
                 # §51 EEG Negativpreis-Abzug pro Anlage (manueller Schalter, Default aus)
                 ('unterliegt_eeg_51', 'BOOLEAN DEFAULT 0'),
+                # v3.43: Günstig-Schwelle der Börsenpreis-Sensoren (% unter Ø ohne 3 Peaks)
+                ('guenstig_schwelle_prozent', 'FLOAT DEFAULT 10.0'),
             ]
             newly_added = set()
             for col_name, col_type in new_columns:

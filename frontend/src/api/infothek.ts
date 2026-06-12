@@ -33,8 +33,10 @@ export const infothekApi = {
     return api.get<KategorienResponse>('/infothek/kategorien')
   },
 
-  async getCount(anlageId: number): Promise<number> {
-    const result = await api.get<{ count: number }>(`/infothek/count?anlage_id=${anlageId}`)
+  async getCount(anlageId: number, aktiv?: boolean): Promise<number> {
+    const params = new URLSearchParams({ anlage_id: String(anlageId) })
+    if (aktiv !== undefined) params.set('aktiv', String(aktiv))
+    const result = await api.get<{ count: number }>(`/infothek/count?${params.toString()}`)
     return result.count
   },
 

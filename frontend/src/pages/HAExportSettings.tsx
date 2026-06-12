@@ -124,6 +124,11 @@ export default function HAExportSettings() {
   const [mqttPublishing, setMqttPublishing] = useState(false)
   const [mqttRemoving, setMqttRemoving] = useState(false)
 
+  // Günstig-Schwelle der Börsenpreis-Sensoren (pro Anlage, % unter Ø ohne 3 Peaks)
+  const [guenstigProzent, setGuenstigProzent] = useState<string>('10')
+  const [guenstigSaving, setGuenstigSaving] = useState(false)
+  const [guenstigSaved, setGuenstigSaved] = useState(false)
+
   // UI State
   const [activeTab, setActiveTab] = useState<'rest' | 'mqtt'>('mqtt')
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set(['energie', 'finanzen']))
@@ -187,6 +192,39 @@ export default function HAExportSettings() {
       loadAnlageData(selectedAnlageId)
     }
   }, [selectedAnlageId])
+
+  // Günstig-Schwelle aus der gewählten Anlage übernehmen
+  useEffect(() => {
+    const anlage = anlagen.find((a) => a.id === selectedAnlageId)
+    setGuenstigProzent(
+      anlage?.guenstig_schwelle_prozent != null
+        ? String(anlage.guenstig_schwelle_prozent)
+        : '10'
+    )
+    setGuenstigSaved(false)
+  }, [selectedAnlageId, anlagen])
+
+  const saveGuenstigSchwelle = async () => {
+    if (!selectedAnlageId) return
+    const wert = parseFloat(guenstigProzent.replace(',', '.'))
+    if (isNaN(wert) || wert < 0 || wert > 50) {
+      setError('Die Günstig-Schwelle muss zwischen 0 und 50 % liegen.')
+      return
+    }
+    setGuenstigSaving(true)
+    setError(null)
+    try {
+      const updated = await anlagenApi.update(selectedAnlageId, {
+        guenstig_schwelle_prozent: wert,
+      })
+      setAnlagen((prev) => prev.map((a) => (a.id === updated.id ? updated : a)))
+      setGuenstigSaved(true)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Speichern fehlgeschlagen')
+    } finally {
+      setGuenstigSaving(false)
+    }
+  }
 
   // MQTT Verbindung testen
   const testMqttConnection = async () => {
@@ -435,6 +473,48 @@ export default function HAExportSettings() {
           </select>
         </div>
       )}
+
+      {/* Günstig-Schwelle der Börsenpreis-Sensoren (gilt für MQTT + REST) */}
+      <div className="card p-4">
+        <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+          <div className="sm:flex-1">
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+              Günstig-Schwelle der Börsenpreis-Sensoren
+            </label>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+              Eine Stunde gilt als „günstig", wenn ihr Börsenpreis mindestens diesen Prozentsatz
+              unter dem Tagesdurchschnitt (ohne die 3 teuersten Stunden) liegt. Standard: 10&nbsp;%.
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <input
+              type="number"
+              min={0}
+              max={50}
+              step={0.5}
+              value={guenstigProzent}
+              onChange={(e) => {
+                setGuenstigProzent(e.target.value)
+                setGuenstigSaved(false)
+              }}
+              className="w-24 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300"
+            />
+            <span className="text-sm text-gray-500 dark:text-gray-400">%</span>
+            <Button
+              size="sm"
+              onClick={saveGuenstigSchwelle}
+              disabled={guenstigSaving || !selectedAnlageId}
+            >
+              {guenstigSaving ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                'Speichern'
+              )}
+            </Button>
+            {guenstigSaved && <CheckCircle className="h-4 w-4 text-green-500" />}
+          </div>
+        </div>
+      </div>
 
       {/* Tabs */}
       <div className="border-b border-gray-200 dark:border-gray-700">

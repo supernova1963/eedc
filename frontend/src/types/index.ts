@@ -84,6 +84,8 @@ export interface Anlage {
   netz_puffer_w?: number
   // Prognosequelle
   prognose_quelle?: PrognoseQuelle
+  // Günstig-Schwelle der Börsenpreis-Sensoren (% unter Ø ohne 3 Peaks, Default 10)
+  guenstig_schwelle_prozent?: number | null
 }
 
 // Sensor-Konfiguration

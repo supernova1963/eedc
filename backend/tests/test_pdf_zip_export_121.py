@@ -74,9 +74,10 @@ async def test_jahresbericht_mit_jahr_im_dateinamen(db):
         assert zf.namelist() == ["eedc_jahresbericht_ZIP-Test_Anlage_2025.pdf"]
 
 
-async def test_fehlschlag_benennt_bericht_und_liefert_kein_zip(db):
-    """Infothek ohne Einträge wirft ValueError — die Fehlermeldung muss den
-    Bericht benennen, kein halbes ZIP zurückkommen."""
+async def test_leere_infothek_klare_400_statt_500(db):
+    """Leere Infothek ist ein vorhersehbarer Zustand, kein Render-Fehler
+    (Dirk-PN 2026-06-12): klare 400 mit Berichtsname + verständlicher
+    Meldung — ohne Exception-Klassennamen, kein halbes ZIP."""
     anlage_id = await _seed(db)
     with pytest.raises(HTTPException) as ei:
         await export_pdf_zip(
@@ -85,8 +86,28 @@ async def test_fehlschlag_benennt_bericht_und_liefert_kein_zip(db):
             jahr=None,
             db=db,
         )
+    assert ei.value.status_code == 400
+    assert ei.value.detail.startswith("Infothek-Dossier:")
+    assert "ValueError" not in ei.value.detail
+    assert "keine aktiven Einträge" in ei.value.detail
+
+
+async def test_echter_renderfehler_bleibt_500_mit_klassennamen(db, monkeypatch):
+    """Die Alles-oder-nichts-Regel für ECHTE Fehler bleibt: 500 + Klassenname."""
+    import backend.services.pdf.builders.finanzbericht as fb
+
+    async def kaputt(*args, **kwargs):
+        raise RuntimeError("Render kaputt")
+
+    monkeypatch.setattr(fb, "build_finanzbericht_context", kaputt)
+
+    anlage_id = await _seed(db)
+    with pytest.raises(HTTPException) as ei:
+        await export_pdf_zip(
+            anlage_id=anlage_id, berichte=["finanzbericht"], jahr=None, db=db,
+        )
     assert ei.value.status_code == 500
-    assert ei.value.detail.startswith("Infothek-Dossier: ValueError:")
+    assert ei.value.detail.startswith("Finanzbericht: RuntimeError:")
 
 
 async def test_unbekannter_bericht_400(db):

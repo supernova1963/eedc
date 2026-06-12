@@ -112,6 +112,12 @@ class Anlage(Base):
     # "eedc" (Default, OpenMeteo × Lernfaktor), "solcast" (pur), "sfml" (pur, nur HA-Add-on)
     prognose_quelle: Mapped[Optional[str]] = mapped_column(String(30), nullable=True, default="eedc")
 
+    # Günstig-Schwelle der Börsenpreis-Sensoren (HA-Export): Preis muss mindestens
+    # X % unter dem Tagesdurchschnitt ohne die 3 Peak-Stunden liegen, um als
+    # „günstig" zu gelten. None → Default 10 % (Community-Wunsch: einstellbar,
+    # z. B. 7,5 % entspricht dem verbreiteten Faktor Ø×0,925).
+    guenstig_schwelle_prozent: Mapped[Optional[float]] = mapped_column(Float, nullable=True, default=10.0)
+
     # DEPRECATED — wird durch prognose_quelle ersetzt. Bleibt für Migration bestehender DBs.
     prognose_basis: Mapped[Optional[str]] = mapped_column(String(30), nullable=True, default="openmeteo")
 

@@ -41,6 +41,7 @@ class SensorDefinition:
     device_class: Optional[str] = None # HA device_class (z.B. "energy", "monetary")
     state_class: Optional[str] = None  # HA state_class (z.B. "total", "measurement")
     enabled_by_default: bool = True    # Standardmäßig aktiviert
+    entity_category: Optional[str] = None  # HA entity_category (z.B. "diagnostic")
 
 
 @dataclass
@@ -352,6 +353,7 @@ LETZTER_IMPORT_SENSOREN = [
         category=SensorCategory.STATUS,
         formel="Jahr des zuletzt erfassten Monats",
         state_class="measurement",
+        entity_category="diagnostic",
     ),
     SensorDefinition(
         key="letzter_import_monat",
@@ -361,6 +363,7 @@ LETZTER_IMPORT_SENSOREN = [
         category=SensorCategory.STATUS,
         formel="Monat des zuletzt erfassten Datensatzes (1-12)",
         state_class="measurement",
+        entity_category="diagnostic",
     ),
     SensorDefinition(
         key="letzter_import_monat_name",
@@ -369,6 +372,7 @@ LETZTER_IMPORT_SENSOREN = [
         icon="mdi:calendar-text",
         category=SensorCategory.STATUS,
         formel="Monatsname (z.B. 'Dezember 2025')",
+        entity_category="diagnostic",
     ),
     SensorDefinition(
         key="anzahl_monate_erfasst",
@@ -378,6 +382,7 @@ LETZTER_IMPORT_SENSOREN = [
         category=SensorCategory.STATUS,
         formel="Anzahl der erfassten Monatsdaten",
         state_class="total",
+        entity_category="diagnostic",
     ),
 ]
 
@@ -394,7 +399,7 @@ PROGNOSE_SENSOREN = [
         unit="kWh",
         icon="mdi:solar-power",
         category=SensorCategory.PROGNOSE,
-        formel="Rollender Tageswert: IST bisher + Σ Rest-Stunden (eedc = OpenMeteo × Lernfaktor)",
+        formel="Rollender Tageswert: IST bisher + Σ Rest-Stunden (eedc = OpenMeteo × Korrekturprofil-Kaskade); Stundenprofil als Attribut",
         device_class="energy",
         state_class="measurement",
     ),
@@ -404,7 +409,7 @@ PROGNOSE_SENSOREN = [
         unit="kWh",
         icon="mdi:solar-power",
         category=SensorCategory.PROGNOSE,
-        formel="Σ eedc-Prognose der verbleibenden Stunden heute (OpenMeteo × Lernfaktor)",
+        formel="Σ eedc-Prognose der verbleibenden Stunden heute (OpenMeteo × Korrekturprofil-Kaskade)",
         device_class="energy",
         state_class="measurement",
     ),
@@ -414,7 +419,7 @@ PROGNOSE_SENSOREN = [
         unit="kWh",
         icon="mdi:solar-power",
         category=SensorCategory.PROGNOSE,
-        formel="eedc-Tagesprognose morgen (OpenMeteo × Lernfaktor)",
+        formel="eedc-Tagesprognose morgen = Σ korrigierte Stunden-Slots (OpenMeteo × Korrekturprofil-Kaskade); Stundenprofil als Attribut",
         device_class="energy",
         state_class="measurement",
     ),
@@ -424,7 +429,7 @@ PROGNOSE_SENSOREN = [
         unit="kWh",
         icon="mdi:solar-power",
         category=SensorCategory.PROGNOSE,
-        formel="eedc-Tagesprognose übermorgen (OpenMeteo × Lernfaktor)",
+        formel="eedc-Tagesprognose übermorgen = Σ korrigierte Stunden-Slots (OpenMeteo × Korrekturprofil-Kaskade); Stundenprofil als Attribut",
         device_class="energy",
         state_class="measurement",
     ),
@@ -434,7 +439,7 @@ PROGNOSE_SENSOREN = [
         unit="kWh",
         icon="mdi:solar-power",
         category=SensorCategory.PROGNOSE,
-        formel="eedc-Tagesprognose Tag+3 (OpenMeteo × Lernfaktor)",
+        formel="eedc-Tagesprognose Tag+3 = Σ korrigierte Stunden-Slots (OpenMeteo × Korrekturprofil-Kaskade); Stundenprofil als Attribut",
         device_class="energy",
         state_class="measurement",
     ),
@@ -458,7 +463,7 @@ PREIS_SENSOREN = [
         unit="",
         icon="mdi:sort-numeric-ascending",
         category=SensorCategory.PREIS,
-        formel="Rang der aktuellen Stunde je Tag-/Nacht-Fenster (1=billigste … 5, 99=teuer/Rest); günstig nur ≥10 % unter Ø ohne 3 Peaks",
+        formel="Rang der aktuellen Stunde je Tag-/Nacht-Fenster (1=billigste … 5, 99=teuer/Rest); günstig nur unter der Günstig-Schwelle (Standard 10 % unter Ø ohne 3 Peaks, je Anlage einstellbar)",
         state_class="measurement",
     ),
     SensorDefinition(
@@ -467,7 +472,7 @@ PREIS_SENSOREN = [
         unit="",
         icon="mdi:counter",
         category=SensorCategory.PREIS,
-        formel="Anzahl günstiger Stunden heute (Rang 1–5 UND ≥10 % unter Ø ohne 3 Peaks)",
+        formel="Anzahl günstiger Stunden heute (Rang 1–5 UND unter der Günstig-Schwelle, je Anlage einstellbar)",
         state_class="measurement",
     ),
     SensorDefinition(

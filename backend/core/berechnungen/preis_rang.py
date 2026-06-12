@@ -31,7 +31,9 @@ RANG_TEUER = 99
 # Günstig-Schwelle: Preis muss ≥10 % unter dem Durchschnitt der Tagespreise
 # ohne die PEAK_AUSSCHLUSS_N teuersten Stunden liegen (Rainer-Definition:
 # „24 Tagespreise minus 3 Peakpreise, aus den verbleibenden 21 den
-# Durchschnitt, günstig = 10 % darunter").
+# Durchschnitt, günstig = 10 % darunter"). Der Faktor ist der DEFAULT —
+# pro Anlage einstellbar (Anlage.guenstig_schwelle_prozent, Folge-Wunsch
+# 2026-06-11: z. B. Ø×0,925), die Aufrufer reichen ihn durch.
 GUENSTIG_SCHWELLE_FAKTOR = 0.90
 PEAK_AUSSCHLUSS_N = 3
 
@@ -50,8 +52,9 @@ class PreisRangErgebnis:
 
 def guenstig_schwelle(
     preise_nach_stunde: Mapping[int, Optional[float]],
+    faktor: float = GUENSTIG_SCHWELLE_FAKTOR,
 ) -> Optional[float]:
-    """Günstig-Schwelle des Tages: Ø der Preise ohne die 3 Peaks, −10 %.
+    """Günstig-Schwelle des Tages: Ø der Preise ohne die 3 Peaks × ``faktor``.
 
     Returns ``None``, wenn nach Peak-Ausschluss keine Basis bleibt (weniger
     als ``PEAK_AUSSCHLUSS_N + 1`` Preise) — dann greift keine Schwelle.
@@ -60,7 +63,7 @@ def guenstig_schwelle(
     if len(werte) <= PEAK_AUSSCHLUSS_N:
         return None
     basis = werte[:-PEAK_AUSSCHLUSS_N]
-    return (sum(basis) / len(basis)) * GUENSTIG_SCHWELLE_FAKTOR
+    return (sum(basis) / len(basis)) * faktor
 
 
 def _rang_im_fenster(
@@ -94,6 +97,7 @@ def berechne_preis_rang(
     tag_stunden: Iterable[int],
     nacht_stunden: Iterable[int],
     aktuelle_stunde: int,
+    schwelle_faktor: float = GUENSTIG_SCHWELLE_FAKTOR,
 ) -> PreisRangErgebnis:
     """Bewertet Tag- und Nacht-Fenster getrennt und liest den Rang der aktuellen Stunde.
 
@@ -105,12 +109,14 @@ def berechne_preis_rang(
         tag_stunden: Stunden des Tag-Fensters (Sonnenauf→-untergang).
         nacht_stunden: Stunden des Nacht-Fensters.
         aktuelle_stunde: Stunde, deren Rang als ``rang_aktuell`` zurückkommt.
+        schwelle_faktor: Günstig-Faktor auf den Ø-ohne-Peaks (Default 0,90 =
+            10 % darunter; pro Anlage einstellbar).
 
     Returns:
         PreisRangErgebnis (rang_aktuell, günstige-Stunden-Anzahl gesamt /
         Tag / Nacht, Schwelle, Profil je Stunde).
     """
-    schwelle = guenstig_schwelle(preise_nach_stunde)
+    schwelle = guenstig_schwelle(preise_nach_stunde, faktor=schwelle_faktor)
 
     tag_raenge = _rang_im_fenster(preise_nach_stunde, tag_stunden, schwelle)
     nacht_raenge = _rang_im_fenster(preise_nach_stunde, nacht_stunden, schwelle)

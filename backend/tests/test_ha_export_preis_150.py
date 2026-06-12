@@ -38,6 +38,12 @@ def test_guenstig_schwelle_zu_wenige_preise_ist_none():
     assert guenstig_schwelle({0: 8.0, 1: 9.0, 2: 7.0}) is None
 
 
+def test_guenstig_schwelle_custom_faktor():
+    # Pro Anlage einstellbarer Faktor (Folge-Wunsch 2026-06-11): z. B. Ø×0,925.
+    preise = {h: float(h + 1) for h in range(24)}
+    assert guenstig_schwelle(preise, faktor=0.925) == pytest.approx(11.0 * 0.925)
+
+
 # ── Rang-Logik (rein) ───────────────────────────────────────────────────────
 
 def test_rang_billigste_ist_eins_schwelle_kappt_top5():
@@ -138,3 +144,25 @@ async def test_preis_sensoren_erscheinen(db, _patch_preis):
     profil = by_key["eedc_preis_rang"].zusatz_attribute["rang_profil"]
     assert profil and all("stunde" in e and "rang" in e for e in profil)
     assert by_key["eedc_preis_rang"].zusatz_attribute["guenstig_schwelle_cent"] > 0
+
+
+async def test_guenstig_schwelle_pro_anlage_einstellbar(db, _patch_preis):
+    """Anlage.guenstig_schwelle_prozent steuert das Günstig-Gating der Sensoren.
+
+    Fake-Kurve: 2/5/8/11/14/17 ct je 4×; Ø ohne 3 Peaks = 177/21 ≈ 8,43 ct.
+    Mit 45 % Schwelle (Faktor 0,55 → 4,64 ct) bleiben nur die vier
+    2-ct-Stunden günstig — unabhängig vom saisonalen Tag/Nacht-Fenster,
+    weil je Fenster höchstens 4 Kandidaten übrig sind (< Top-5-Kappung).
+    """
+    from backend.api.routes.ha_export import calculate_anlage_sensors
+
+    anlage = await _seed_anlage(db)
+    anlage.guenstig_schwelle_prozent = 45.0
+    await db.flush()
+
+    sensors = await calculate_anlage_sensors(db, anlage)
+    by_key = {sv.definition.key: sv for sv in sensors}
+
+    schwelle = by_key["eedc_preis_rang"].zusatz_attribute["guenstig_schwelle_cent"]
+    assert schwelle == pytest.approx((177.0 / 21.0) * 0.55, abs=0.01)
+    assert by_key["eedc_preis_guenstige_stunden_anzahl"].value == 4

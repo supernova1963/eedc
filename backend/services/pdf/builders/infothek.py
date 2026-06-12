@@ -110,7 +110,9 @@ async def build_infothek_context(
     eintraege_obj = list(res.scalars().all())
 
     if not eintraege_obj:
-        raise ValueError("Keine Einträge zum Exportieren")
+        raise ValueError(
+            "Die Infothek dieser Anlage hat keine aktiven Einträge — nichts zu exportieren"
+        )
 
     # Vertragspartner-Map (alle, auch wenn gefiltert wurde — Verknüpfungen)
     vp_res = await db.execute(

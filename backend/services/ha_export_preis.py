@@ -1,8 +1,10 @@
 """eedc-eigener Börsenpreis-Rang für den HA-Export (#150 Slice B).
 
 Liefert die Trigger-Sensoren für `calculate_anlage_sensors()`:
-  - Rang der aktuellen Stunde (1–5 = günstigste je Fenster UND ≥10 % unter
-    Ø-ohne-3-Peaks, 99 = teuer/Rest — Schwelle seit Rainer-PN 2026-06-11)
+  - Rang der aktuellen Stunde (1–5 = günstigste je Fenster UND unter der
+    Günstig-Schwelle, 99 = teuer/Rest — Schwelle seit Rainer-PN 2026-06-11;
+    Default 10 % unter Ø-ohne-3-Peaks, pro Anlage einstellbar via
+    ``Anlage.guenstig_schwelle_prozent``)
   - Anzahl als günstig markierter Stunden (gesamt + Tag/Nacht getrennt)
   - das Rang-Profil des Tages + die Günstig-Schwelle (als Sensor-Attribute,
     kein eigenes Topic)
@@ -67,8 +69,18 @@ async def berechne_preis_export(db, anlage) -> Optional[dict]:
         tag_stunden = {h for h in range(24) if sonnenaufgang <= h < sonnenuntergang}
         nacht_stunden = set(range(24)) - tag_stunden
 
+        # Günstig-Faktor pro Anlage (Prozent unter Ø → Faktor); None/aus dem
+        # Schema-Rahmen gefallene Werte → Default 10 %.
+        prozent = anlage.guenstig_schwelle_prozent
+        if prozent is None or not (0 <= prozent <= 50):
+            prozent = 10.0
+        schwelle_faktor = 1.0 - prozent / 100.0
+
         now = datetime.now(_BERLIN_TZ)
-        ergebnis = berechne_preis_rang(preise, tag_stunden, nacht_stunden, now.hour)
+        ergebnis = berechne_preis_rang(
+            preise, tag_stunden, nacht_stunden, now.hour,
+            schwelle_faktor=schwelle_faktor,
+        )
 
         rang_profil = [
             {"stunde": h, "rang": ergebnis.rang_profil[h]}

@@ -13,6 +13,7 @@ import { useState, useEffect } from 'react'
 import { FileText, Award, Euro, BookOpen, Download, FolderArchive, Loader2 } from 'lucide-react'
 import { Modal, Alert } from './ui'
 import { importApi } from '../api/import'
+import { infothekApi } from '../api/infothek'
 import { monatsdatenApi } from '../api/monatsdaten'
 import { downloadFile } from '../lib'
 import type { Anlage } from '../types'
@@ -34,6 +35,8 @@ interface DocCard {
   beta?: boolean
   feedbackUrl?: string
   accent: string
+  disabled?: boolean
+  disabledHint?: string
 }
 
 export default function DokumentationsDialog({ anlage, onClose }: DokumentationsDialogProps) {
@@ -44,6 +47,9 @@ export default function DokumentationsDialog({ anlage, onClose }: Dokumentations
   // null = Gesamtzeitraum (alle Jahre). Backend/Builder unterscheiden ueber den jahr-Query-Param.
   const [jahresberichtJahr, setJahresberichtJahr] = useState<number | null>(null)
   const [verfuegbareJahre, setVerfuegbareJahre] = useState<number[]>([])
+  // Leere Infothek: Dossier-Karte deaktivieren statt ZIP-Komplettfehler
+  // (Dirk-PN 2026-06-12). null = unbekannt/lädt → Karte bleibt aktiv.
+  const [infothekAnzahl, setInfothekAnzahl] = useState<number | null>(null)
 
   useEffect(() => {
     if (!anlage) return
@@ -55,8 +61,23 @@ export default function DokumentationsDialog({ anlage, onClose }: Dokumentations
         setVerfuegbareJahre(jahre)
       })
       .catch(() => { /* Jahresauswahl bleibt leer -> nur Gesamtzeitraum */ })
+    // aktiv=true zählt dieselbe Menge wie der Dossier-Export
+    infothekApi.getCount(anlage.id, true)
+      .then(count => { if (!abgebrochen) setInfothekAnzahl(count) })
+      .catch(() => { /* unbekannt → Karte bleibt aktiv, Backend-Meldung greift */ })
     return () => { abgebrochen = true }
   }, [anlage?.id])
+
+  // Falls die Infothek-Karte bereits angekreuzt war, Auswahl bereinigen
+  useEffect(() => {
+    if (infothekAnzahl !== 0) return
+    setZipAuswahl(prev => {
+      if (!prev.has('infothek')) return prev
+      const next = new Set(prev)
+      next.delete('infothek')
+      return next
+    })
+  }, [infothekAnzahl])
 
   if (!anlage) return null
 
@@ -84,6 +105,8 @@ export default function DokumentationsDialog({ anlage, onClose }: Dokumentations
       filename: `infothek_${safeName}.pdf`,
       zipKey: 'infothek',
       accent: 'text-blue-500 border-blue-200 dark:border-blue-900/40',
+      disabled: infothekAnzahl === 0,
+      disabledHint: 'Keine Infothek-Einträge vorhanden — das Dossier hätte keinen Inhalt. Einträge anlegen unter Einstellungen → Infothek.',
     },
     {
       icon: <Award className="h-8 w-8" />,
@@ -183,30 +206,34 @@ export default function DokumentationsDialog({ anlage, onClose }: Dokumentations
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {cards.map(card => {
             const isLoading = loading === card.titel
+            const isDisabled = !!card.disabled
             return (
               <div key={card.titel} className="relative flex flex-col">
-                <label
-                  className="absolute -top-2 -right-2 z-10 flex items-center justify-center h-7 w-7 rounded-full border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 shadow-sm cursor-pointer"
-                  title="Für ZIP-Download auswählen"
-                >
-                  <input
-                    type="checkbox"
-                    checked={zipAuswahl.has(card.zipKey)}
-                    onChange={() => toggleZipAuswahl(card.zipKey)}
-                    className="h-4 w-4 accent-orange-500 cursor-pointer"
-                    aria-label={`${card.titel} für ZIP-Download auswählen`}
-                  />
-                </label>
+                {!isDisabled && (
+                  <label
+                    className="absolute -top-2 -right-2 z-10 flex items-center justify-center h-7 w-7 rounded-full border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 shadow-sm cursor-pointer"
+                    title="Für ZIP-Download auswählen"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={zipAuswahl.has(card.zipKey)}
+                      onChange={() => toggleZipAuswahl(card.zipKey)}
+                      className="h-4 w-4 accent-orange-500 cursor-pointer"
+                      aria-label={`${card.titel} für ZIP-Download auswählen`}
+                    />
+                  </label>
+                )}
                 <button
                   type="button"
                   onClick={() => handleDownload(card)}
-                  disabled={!!loading}
+                  disabled={!!loading || isDisabled}
                   className={`
                     group flex-1 p-4 rounded-lg border-2 bg-white dark:bg-gray-800 text-left
-                    hover:shadow-md hover:-translate-y-0.5 transition-all
-                    disabled:opacity-60 disabled:cursor-wait
                     ${card.accent}
                     ${card.feedbackUrl ? 'rounded-b-none border-b-0' : ''}
+                    ${isDisabled
+                      ? 'opacity-50 cursor-not-allowed disabled:cursor-not-allowed'
+                      : 'hover:shadow-md hover:-translate-y-0.5 transition-all disabled:opacity-60 disabled:cursor-wait'}
                   `}
                 >
                   <div className="flex items-start gap-3 mb-2">
@@ -223,10 +250,15 @@ export default function DokumentationsDialog({ anlage, onClose }: Dokumentations
                     </div>
                     {isLoading
                       ? <Loader2 className="h-4 w-4 text-gray-400 animate-spin" />
-                      : <Download className="h-4 w-4 text-gray-400 group-hover:text-gray-600 dark:group-hover:text-gray-200" />
+                      : !isDisabled && <Download className="h-4 w-4 text-gray-400 group-hover:text-gray-600 dark:group-hover:text-gray-200" />
                     }
                   </div>
                   <p className="text-xs text-gray-600 dark:text-gray-400 leading-snug">{card.beschreibung}</p>
+                  {isDisabled && card.disabledHint && (
+                    <p className="text-xs text-amber-600 dark:text-amber-400 leading-snug mt-2">
+                      {card.disabledHint}
+                    </p>
+                  )}
                 </button>
                 {card.feedbackUrl && (
                   <div className={`px-4 py-2 border-2 border-t-0 rounded-b-lg bg-white dark:bg-gray-800 ${card.accent}`}>

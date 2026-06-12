@@ -182,6 +182,15 @@ async def export_pdf_zip(
             )
         except HTTPException:
             raise
+        except ValueError as exc:
+            # Vorhersehbarer Leere-Daten-Zustand (z. B. Infothek ohne aktive
+            # Einträge, Dirk-PN 2026-06-12) — kein Render-Fehler: klare 400
+            # statt 500 mit Klassennamen. Die Karte wird im Frontend zwar
+            # schon deaktiviert, direkte API-Aufrufe brauchen den Fallback.
+            raise HTTPException(
+                status_code=400,
+                detail=f"{BERICHT_LABELS[bericht]}: {exc}",
+            )
         except Exception as exc:
             logger.exception("ZIP-Export: %s fehlgeschlagen: %s", bericht, exc)
             raise HTTPException(
