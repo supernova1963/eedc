@@ -5,7 +5,11 @@ Ermöglicht den Import von historischen Energiedaten direkt aus
 Hersteller-Cloud-APIs (EcoFlow, etc.).
 """
 
+import asyncio
 import logging
+import time
+import uuid
+from dataclasses import dataclass, field
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -148,6 +152,17 @@ class FetchPreviewResponse(BaseModel):
     anzahl_monate: int
 
 
+class FetchStartResponse(BaseModel):
+    job_id: str
+
+
+class FetchStatusResponse(BaseModel):
+    # running | done | error
+    status: str
+    result: Optional[FetchPreviewResponse] = None
+    error: Optional[str] = None
+
+
 class SaveCredentialsRequest(BaseModel):
     provider_id: str
     credentials: dict
@@ -157,6 +172,70 @@ class CredentialsResponse(BaseModel):
     provider_id: Optional[str] = None
     credentials: dict = {}
     has_credentials: bool = False
+
+
+# ─── Async-Fetch-Job-Store ───────────────────────────────────────────────────
+# Der Cloud-Abruf kann bei langen Zeiträumen mehrere Minuten dauern (z. B. Anker
+# SOLIX: Monate × 3 Datenbereiche × Drosselung). Ein synchroner Request läuft
+# dann in Browser/Ingress-Timeouts ("Failed to fetch", #328 Johnny_1993), obwohl
+# das Backend weiterläuft. Daher: Abruf als Hintergrund-Job starten und den
+# Status pollen. In-Memory + TTL reicht im Single-Worker-Add-on (gleiches Muster
+# wie repair_orchestrator); ein Neustart verwirft laufende Jobs (Nutzer startet
+# neu). Gilt für ALLE Provider, da an der gemeinsamen Route.
+
+_IMPORT_JOB_TTL_S = 3600  # abgeschlossene/alte Jobs nach 1 h verwerfen
+
+
+@dataclass
+class _ImportJob:
+    status: str = "running"  # running | done | error
+    result: Optional[dict] = None
+    error: Optional[str] = None
+    created_at: float = field(default_factory=time.time)
+    # Referenz auf den Task halten, sonst kann der GC ihn mitten im Lauf einsammeln
+    task: object = None
+
+
+_import_jobs: dict[str, _ImportJob] = {}
+
+
+def _prune_import_jobs() -> None:
+    """Abgelaufene Jobs entfernen (TTL ab Erstellung)."""
+    now = time.time()
+    for key in [
+        k for k, j in _import_jobs.items() if now - j.created_at > _IMPORT_JOB_TTL_S
+    ]:
+        _import_jobs.pop(key, None)
+
+
+async def _run_fetch_job(
+    job_id: str, provider, data: "FetchPreviewRequest", credentials: dict
+) -> None:
+    """Hintergrund-Abruf; Ergebnis/Fehler in den Job-Store schreiben."""
+    job = _import_jobs.get(job_id)
+    if job is None:  # zwischenzeitlich abgelaufen/verworfen
+        return
+    try:
+        months = await provider.fetch_monthly_data(
+            credentials,
+            data.start_year, data.start_month,
+            data.end_year, data.end_month,
+        )
+        if not months:
+            job.status = "error"
+            job.error = "Keine Monatsdaten im gewählten Zeitraum gefunden."
+            return
+        result = FetchPreviewResponse(
+            provider=CloudProviderInfoResponse(**provider.info().to_dict()),
+            monate=[FetchedMonthResponse(**m.to_dict()) for m in months],
+            anzahl_monate=len(months),
+        )
+        job.result = result.model_dump()
+        job.status = "done"
+    except Exception as e:
+        logger.exception("Fehler beim Abrufen der Cloud-Daten (async-Job)")
+        job.status = "error"
+        job.error = str(e)
 
 
 # ─── Endpoints ───────────────────────────────────────────────────────────────
@@ -186,21 +265,29 @@ async def test_connection(data: TestConnectionRequest):
     return TestConnectionResponse(**result.to_dict())
 
 
-@router.post("/fetch-preview", response_model=FetchPreviewResponse)
-async def fetch_preview(data: FetchPreviewRequest):
-    """Monatsdaten aus der Cloud-API abrufen (Vorschau, ohne Speichern)."""
+def _resolve_provider_and_validate(data: "FetchPreviewRequest"):
+    """Provider auflösen + Zeitraum validieren (gemeinsam für sync + async)."""
     try:
         provider = get_provider(data.provider_id)
     except ValueError:
         raise HTTPException(400, f"Unbekannter Provider: {data.provider_id}")
-
-    # Validierung
     if data.start_month < 1 or data.start_month > 12:
         raise HTTPException(400, "Ungültiger Startmonat")
     if data.end_month < 1 or data.end_month > 12:
         raise HTTPException(400, "Ungültiger Endmonat")
     if (data.start_year, data.start_month) > (data.end_year, data.end_month):
         raise HTTPException(400, "Startzeitraum liegt nach dem Endzeitraum")
+    return provider
+
+
+@router.post("/fetch-preview", response_model=FetchPreviewResponse)
+async def fetch_preview(data: FetchPreviewRequest):
+    """Monatsdaten aus der Cloud-API abrufen (Vorschau, ohne Speichern).
+
+    Synchron — für kurze Zeiträume. Lange Zeiträume nutzen `fetch-async`
+    (Hintergrund-Job + Polling), um Browser/Ingress-Timeouts zu vermeiden.
+    """
+    provider = _resolve_provider_and_validate(data)
 
     try:
         months = await provider.fetch_monthly_data(
@@ -220,6 +307,37 @@ async def fetch_preview(data: FetchPreviewRequest):
         monate=[FetchedMonthResponse(**m.to_dict()) for m in months],
         anzahl_monate=len(months),
     )
+
+
+@router.post("/fetch-async", response_model=FetchStartResponse)
+async def fetch_async(data: FetchPreviewRequest):
+    """Cloud-Abruf als Hintergrund-Job starten — gibt sofort eine job_id zurück.
+
+    Den Fortschritt/das Ergebnis über `GET /fetch-status/{job_id}` pollen.
+    Vermeidet "Failed to fetch" bei langen Zeiträumen (#328).
+    """
+    provider = _resolve_provider_and_validate(data)
+
+    _prune_import_jobs()
+    job_id = uuid.uuid4().hex
+    _import_jobs[job_id] = _ImportJob()
+    task = asyncio.create_task(
+        _run_fetch_job(job_id, provider, data, _trim_credentials(data.credentials))
+    )
+    _import_jobs[job_id].task = task
+    return FetchStartResponse(job_id=job_id)
+
+
+@router.get("/fetch-status/{job_id}", response_model=FetchStatusResponse)
+async def fetch_status(job_id: str):
+    """Status/Ergebnis eines `fetch-async`-Jobs abrufen."""
+    _prune_import_jobs()
+    job = _import_jobs.get(job_id)
+    if job is None:
+        raise HTTPException(
+            404, "Import-Job nicht gefunden oder abgelaufen. Bitte erneut starten."
+        )
+    return FetchStatusResponse(status=job.status, result=job.result, error=job.error)
 
 
 @router.post("/save-credentials/{anlage_id}")

@@ -55,6 +55,7 @@ export default function CloudImportWizard() {
   const [endYear, setEndYear] = useState(now.getFullYear())
   const [endMonth, setEndMonth] = useState(now.getMonth() + 1)
   const [isFetching, setIsFetching] = useState(false)
+  const [fetchElapsed, setFetchElapsed] = useState(0)
   const [preview, setPreview] = useState<CloudPreviewResult | null>(null)
 
   // Step 3: Vorschau & Import
@@ -114,8 +115,16 @@ export default function CloudImportWizard() {
     if (!selectedProviderId) return
     setIsFetching(true)
     setError(null)
+    setFetchElapsed(0)
+    // #328: Abruf läuft als Hintergrund-Job (Polling) — bei langen Zeiträumen
+    // würde ein synchroner Request in Browser/Ingress-Timeouts laufen. Der
+    // Sekunden-Zähler gibt dem Nutzer Rückmeldung, dass es weiterläuft.
+    const startedAt = Date.now()
+    const timer = window.setInterval(() => {
+      setFetchElapsed(Math.round((Date.now() - startedAt) / 1000))
+    }, 1000)
     try {
-      const result = await cloudImportApi.fetchPreview(
+      const result = await cloudImportApi.fetchPreviewAsync(
         selectedProviderId, credentials,
         startYear, startMonth, endYear, endMonth
       )
@@ -127,6 +136,7 @@ export default function CloudImportWizard() {
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Datenabruf fehlgeschlagen')
     } finally {
+      window.clearInterval(timer)
       setIsFetching(false)
     }
   }, [selectedProviderId, credentials, startYear, startMonth, endYear, endMonth])
@@ -475,6 +485,12 @@ export default function CloudImportWizard() {
                   Die Cloud-API wird pro Woche abgefragt. Bei längeren Zeiträumen kann der Abruf
                   mehrere Minuten dauern.
                 </p>
+                {isFetching && (
+                  <p className="text-sm mt-2 font-medium">
+                    Abruf läuft im Hintergrund … ({fetchElapsed}s). Das Fenster kann offen bleiben —
+                    der Abruf wird nicht abgebrochen.
+                  </p>
+                )}
               </Alert>
             </div>
           </Card>

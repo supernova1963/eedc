@@ -1,7 +1,7 @@
 """Tests für den Anker SOLIX Cloud-Import-Provider — ECDH+AES-Login (#328).
 
 Deckt ab:
-- Provider-Metadaten (Felder, Registrierung, getestet=False bis Johnny-Gegentest).
+- Provider-Metadaten (Felder, Registrierung, getestet=True seit Johnny-Gegentest #328).
 - Krypto-Bausteine deterministisch: ECDH-Shared-Secret (P-256), AES-256-CBC-
   Passwort-Verschlüsselung (IV = Secret[:16], PKCS7, Base64), gtoken=MD5(user_id).
 - Login-Payload-Aufbau (enc=0, Public-Key unkomprimiert hex, kein MD5²-Legacy).
@@ -27,7 +27,7 @@ from cryptography.hazmat.primitives import padding
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
-from backend.services.cloud_import import get_provider, list_providers
+from backend.services.cloud_import import anker_solix, get_provider, list_providers
 from backend.services.cloud_import.anker_solix import (
     ANKER_SERVER_PUBLIC_KEY_HEX,
     AnkerSolixProvider,
@@ -38,6 +38,7 @@ from backend.services.cloud_import.anker_solix import (
     _default_headers,
     _encrypt_password,
     _generate_ecdh_keypair,
+    _get_energy_analysis,
     _gtoken,
     _login,
     _month_window,
@@ -54,8 +55,8 @@ def test_info_metadaten():
     info = AnkerSolixProvider().info()
     assert info.id == "anker_solix"
     assert info.hersteller == "Anker"
-    # Bleibt False, bis Johnnys Gegentest grün ist (#328).
-    assert info.getestet is False
+    # Validiert am echten Gerät (Johnny_1993, #328, 2026-06-11).
+    assert info.getestet is True
 
     by_id = {f.id: f for f in info.credential_fields}
     assert set(by_id) == {"email", "password", "server"}
@@ -375,6 +376,50 @@ async def test_login_flow_gemockt():
     assert payload["enc"] == 0
     assert payload["password"] != "geheim"
     assert len(payload["password"]) != 32  # MD5-Hex wäre exakt 32 Zeichen
+
+
+@pytest.mark.asyncio
+async def test_energy_analysis_retry_bei_429(monkeypatch):
+    """#328: transienter 429 → gestaffelter Retry, kein Bereich-Verlust."""
+    # Retry-Delays auf 0 → kein echtes Warten im Test (delay=0 → kein sleep).
+    monkeypatch.setattr(anker_solix, "RATE_LIMIT_RETRY_DELAYS_S", (0.0, 0.0))
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return httpx.Response(429, json={"code": 429, "msg": "too many"})
+        return httpx.Response(200, json={"code": 0, "data": {"solar_total": "5.0"}})
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as client:
+        result = await _get_energy_analysis(
+            client, "https://ankerpower-api-eu.anker.com",
+            "tok", "uid", "site", "2025-08-01", "2025-08-31",
+            dev_type="solarbank",
+        )
+    assert calls["n"] == 2  # 1× 429, dann Erfolg
+    assert result == {"solar_total": "5.0"}
+
+
+@pytest.mark.asyncio
+async def test_energy_analysis_429_dauerhaft_wirft(monkeypatch):
+    """Bleibt es bei 429, wird nach allen Retries die klare Meldung geworfen."""
+    monkeypatch.setattr(anker_solix, "RATE_LIMIT_RETRY_DELAYS_S", (0.0, 0.0))
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        return httpx.Response(429, json={"code": 429, "msg": "too many"})
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as client:
+        with pytest.raises(Exception, match="429"):
+            await _get_energy_analysis(
+                client, "https://ankerpower-api-eu.anker.com",
+                "tok", "uid", "site", "2025-08-01", "2025-08-31",
+            )
+    assert calls["n"] == 3  # Erstversuch + 2 Retries
 
 
 @pytest.mark.asyncio

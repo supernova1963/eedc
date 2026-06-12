@@ -130,6 +130,64 @@ export const cloudImportApi = {
   },
 
   /**
+   * Monatsdaten als Hintergrund-Job abrufen + Status pollen (#328).
+   *
+   * Vermeidet "Failed to fetch" bei langen Zeiträumen: der Server startet den
+   * Abruf im Hintergrund und gibt sofort eine job_id zurück; hier wird der
+   * Status gepollt, bis fertig/fehler. `onPoll` feuert je laufendem Tick (für
+   * eine Verlaufsanzeige), `signal` erlaubt Abbruch.
+   */
+  async fetchPreviewAsync(
+    providerId: string,
+    credentials: Record<string, string>,
+    startYear: number,
+    startMonth: number,
+    endYear: number,
+    endMonth: number,
+    opts?: { onPoll?: () => void; signal?: AbortSignal; pollMs?: number }
+  ): Promise<CloudPreviewResult> {
+    const startResp = await fetch(`${API_BASE}/cloud-import/fetch-async`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        provider_id: providerId,
+        credentials: trimCredentials(credentials),
+        start_year: startYear,
+        start_month: startMonth,
+        end_year: endYear,
+        end_month: endMonth,
+      }),
+      signal: opts?.signal,
+    })
+    if (!startResp.ok) {
+      const error = await startResp.json().catch(() => ({}))
+      throw new Error(error.detail || 'Datenabruf konnte nicht gestartet werden')
+    }
+    const { job_id: jobId } = await startResp.json()
+
+    const pollMs = opts?.pollMs ?? 3000
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      if (opts?.signal?.aborted) throw new DOMException('Abgebrochen', 'AbortError')
+      const statusResp = await fetch(
+        `${API_BASE}/cloud-import/fetch-status/${jobId}`,
+        { signal: opts?.signal }
+      )
+      if (!statusResp.ok) {
+        const error = await statusResp.json().catch(() => ({}))
+        throw new Error(error.detail || 'Status-Abruf fehlgeschlagen')
+      }
+      const data = await statusResp.json()
+      if (data.status === 'done') return data.result as CloudPreviewResult
+      if (data.status === 'error') {
+        throw new Error(data.error || 'Datenabruf fehlgeschlagen')
+      }
+      opts?.onPoll?.()
+      await new Promise((resolve) => setTimeout(resolve, pollMs))
+    }
+  },
+
+  /**
    * Credentials an einer Anlage speichern
    */
   async saveCredentials(
