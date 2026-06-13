@@ -6,6 +6,7 @@ import { TrendingDown, Minus, Calendar, Zap, AlertTriangle, Award } from 'lucide
 import { Card, LoadingSpinner, Alert } from '../../components/ui'
 import ChartTooltip from '../../components/ui/ChartTooltip'
 import { aussichtenApi, TrendAnalyseResponse } from '../../api/aussichten'
+import { CHART_COLORS, STATUS_COLORS } from '../../lib'
 import {
   ResponsiveContainer,
   BarChart,
@@ -152,7 +153,7 @@ export default function TrendTab({ anlageId }: Props) {
               )
             ) : (
               <div className="p-2 bg-gray-100 dark:bg-gray-800 rounded-lg">
-                <Minus className="h-5 w-5 text-gray-400" />
+                <Minus className="h-5 w-5 text-gray-400 dark:text-gray-500" />
               </div>
             )}
             <div>
@@ -163,11 +164,11 @@ export default function TrendTab({ anlageId }: Props) {
                     <span className="text-green-600">keine messbar</span>
                   ) : (
                     <span className={degradation < -1 ? 'text-red-600' : 'text-yellow-600'}>
-                      {degradation.toFixed(1)}%
+                      {degradation.toFixed(1)} %
                     </span>
                   )
                 ) : (
-                  <span className="text-gray-400">-</span>
+                  <span className="text-gray-400 dark:text-gray-500">-</span>
                 )}
               </p>
             </div>
@@ -229,7 +230,7 @@ export default function TrendTab({ anlageId }: Props) {
                 {jahresChartData.map((entry, index) => (
                   <Cell
                     key={`cell-${index}`}
-                    fill={entry.kwh === bestesJahr?.gesamt_kwh ? '#10b981' : '#eab308'}
+                    fill={entry.kwh === bestesJahr?.gesamt_kwh ? STATUS_COLORS.ok : CHART_COLORS.erzeugung}
                   />
                 ))}
               </Bar>
@@ -261,7 +262,7 @@ export default function TrendTab({ anlageId }: Props) {
                 type="monotone"
                 dataKey="spez_ertrag"
                 name="Spez. Ertrag"
-                stroke="#3b82f6"
+                stroke={CHART_COLORS.spezErtrag}
                 strokeWidth={2}
                 dot={{ r: 5 }}
               />
@@ -339,11 +340,11 @@ export default function TrendTab({ anlageId }: Props) {
                   </span>
                 ) : degradation < -1 ? (
                   <span className="text-red-600">
-                    {degradation.toFixed(2)}% pro Jahr
+                    {degradation.toFixed(2)} % pro Jahr
                   </span>
                 ) : (
                   <span className="text-yellow-600 dark:text-yellow-400">
-                    {degradation.toFixed(2)}% pro Jahr
+                    {degradation.toFixed(2)} % pro Jahr
                   </span>
                 )}
               </p>
@@ -415,14 +416,14 @@ export default function TrendTab({ anlageId }: Props) {
                         {j.gesamt_kwh.toLocaleString('de-DE')} kWh
                       </span>
                     ) : (
-                      <span className="text-gray-400">-</span>
+                      <span className="text-gray-400 dark:text-gray-500">-</span>
                     )}
                   </td>
                   <td className="py-2 px-3 text-right">
                     {j.spezifischer_ertrag_kwh_kwp > 0 ? (
                       `${j.spezifischer_ertrag_kwh_kwp.toFixed(0)} kWh/kWp`
                     ) : (
-                      <span className="text-gray-400">-</span>
+                      <span className="text-gray-400 dark:text-gray-500">-</span>
                     )}
                   </td>
                   <td className="py-2 px-3 text-right">
@@ -434,10 +435,10 @@ export default function TrendTab({ anlageId }: Props) {
                           ? 'text-red-600'
                           : 'text-gray-600'
                       }>
-                        {(j.performance_ratio * 100).toFixed(0)}%
+                        {(j.performance_ratio * 100).toFixed(0)} %
                       </span>
                     ) : (
-                      <span className="text-gray-400">-</span>
+                      <span className="text-gray-400 dark:text-gray-500">-</span>
                     )}
                   </td>
                 </tr>

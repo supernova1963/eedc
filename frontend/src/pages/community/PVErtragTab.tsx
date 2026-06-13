@@ -9,7 +9,8 @@
  */
 
 import { useState, useEffect, useMemo } from 'react'
-import { MONAT_KURZ } from '../../lib/constants'
+import { useChartTheme } from '../../context/ThemeContext'
+import { MONAT_KURZ, STATUS_COLORS, EIGENE_SERIE_FARBEN, SERIE_NEUTRAL } from '../../lib'
 import {
   Sun,
   TrendingUp,
@@ -43,6 +44,7 @@ interface PVErtragTabProps {
 }
 
 export default function PVErtragTab({ benchmark, benchmarkLoading, benchmarkError }: PVErtragTabProps) {
+  const achsen = useChartTheme()
   const [distribution, setDistribution] = useState<Verteilung | null>(null)
   const [monthlyAverages, setMonthlyAverages] = useState<MonatlicheDurchschnitte | null>(null)
   const [extraLoading, setExtraLoading] = useState(false)
@@ -184,11 +186,11 @@ export default function PVErtragTab({ benchmark, benchmarkLoading, benchmarkErro
           </div>
           <div className="flex items-baseline gap-2">
             <span className="text-3xl font-bold text-gray-900 dark:text-white">
-              Top {100 - (perzentil || 0)}%
+              Top {100 - (perzentil || 0)} %
             </span>
           </div>
           <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-            Besser als {perzentil}% der Community
+            Besser als {perzentil} % der Community
           </p>
         </Card>
 
@@ -215,7 +217,7 @@ export default function PVErtragTab({ benchmark, benchmarkLoading, benchmarkErro
                 : 'text-red-600 dark:text-red-400'
             }`}>
               {(performanceStats?.abweichungGesamt || 0) >= 0 ? '+' : ''}
-              {performanceStats?.abweichungGesamt.toFixed(1)}%
+              {performanceStats?.abweichungGesamt.toFixed(1)} %
             </span>
           </div>
           <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
@@ -242,7 +244,7 @@ export default function PVErtragTab({ benchmark, benchmarkLoading, benchmarkErro
                 : 'text-red-600 dark:text-red-400'
             }`}>
               {(performanceStats?.abweichungRegion || 0) >= 0 ? '+' : ''}
-              {performanceStats?.abweichungRegion.toFixed(1)}%
+              {performanceStats?.abweichungRegion.toFixed(1)} %
             </span>
           </div>
           <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
@@ -267,22 +269,22 @@ export default function PVErtragTab({ benchmark, benchmarkLoading, benchmarkErro
           <div className="h-72">
             <ResponsiveContainer width="100%" height="100%">
               <ComposedChart data={chartData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                <CartesianGrid strokeDasharray="3 3" stroke={achsen.grid} />
                 <XAxis
                   dataKey="name"
-                  tick={{ fill: '#6b7280', fontSize: 11 }}
+                  tick={{ fill: achsen.achse, fontSize: 11 }}
                   interval={0}
                   angle={-45}
                   textAnchor="end"
                   height={60}
                 />
                 <YAxis
-                  tick={{ fill: '#6b7280', fontSize: 12 }}
+                  tick={{ fill: achsen.achse, fontSize: 12 }}
                   label={{
                     value: 'kWh/kWp',
                     angle: -90,
                     position: 'insideLeft',
-                    style: { fill: '#6b7280', fontSize: 12 },
+                    style: { fill: achsen.achse, fontSize: 12 },
                   }}
                 />
                 <Tooltip
@@ -298,7 +300,7 @@ export default function PVErtragTab({ benchmark, benchmarkLoading, benchmarkErro
                 <Line
                   type="monotone"
                   dataKey="durchschnitt"
-                  stroke="#9ca3af"
+                  stroke={achsen.referenz}
                   strokeWidth={2}
                   strokeDasharray="5 5"
                   dot={false}
@@ -309,7 +311,7 @@ export default function PVErtragTab({ benchmark, benchmarkLoading, benchmarkErro
                   {chartData.map((entry, index) => (
                     <Cell
                       key={`cell-${index}`}
-                      fill={entry.isPositive ? '#22c55e' : '#ef4444'}
+                      fill={entry.isPositive ? STATUS_COLORS.ok : STATUS_COLORS.kritisch}
                       fillOpacity={0.8}
                     />
                   ))}
@@ -366,7 +368,7 @@ export default function PVErtragTab({ benchmark, benchmarkLoading, benchmarkErro
                       <td className="py-3 px-4">
                         <span className="font-medium text-gray-900 dark:text-white">{js.jahr}</span>
                         {!js.vollstaendig && (
-                          <span className="ml-2 text-xs text-gray-400">(unvollständig)</span>
+                          <span className="ml-2 text-xs text-gray-400 dark:text-gray-500">(unvollständig)</span>
                         )}
                       </td>
                       <td className="text-right py-3 px-4">
@@ -378,7 +380,7 @@ export default function PVErtragTab({ benchmark, benchmarkLoading, benchmarkErro
                         <span className={`font-medium ${
                           isPositive ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'
                         }`}>
-                          {isPositive ? '+' : ''}{abweichung.toFixed(1)}%
+                          {isPositive ? '+' : ''}{abweichung.toFixed(1)} %
                         </span>
                       </td>
                       <td className="text-right py-3 px-4 text-gray-500 dark:text-gray-400">
@@ -411,15 +413,15 @@ export default function PVErtragTab({ benchmark, benchmarkLoading, benchmarkErro
                 isOwn: benchmark.benchmark.spez_ertrag_anlage >= bin.von &&
                        benchmark.benchmark.spez_ertrag_anlage < bin.bis,
               }))}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                <CartesianGrid strokeDasharray="3 3" stroke={achsen.grid} />
                 <XAxis
                   dataKey="range"
-                  tick={{ fill: '#6b7280', fontSize: 10 }}
+                  tick={{ fill: achsen.achse, fontSize: 10 }}
                   angle={-45}
                   textAnchor="end"
                   height={60}
                 />
-                <YAxis tick={{ fill: '#6b7280', fontSize: 12 }} />
+                <YAxis tick={{ fill: achsen.achse, fontSize: 12 }} />
                 <Tooltip
                   content={<ChartTooltip
                     formatter={(value) => `${value} Anlagen`}
@@ -433,7 +435,7 @@ export default function PVErtragTab({ benchmark, benchmarkLoading, benchmarkErro
                     return (
                       <Cell
                         key={`cell-${index}`}
-                        fill={isOwn ? '#8b5cf6' : '#d1d5db'}
+                        fill={isOwn ? EIGENE_SERIE_FARBEN.du : SERIE_NEUTRAL}
                         fillOpacity={isOwn ? 1 : 0.7}
                       />
                     )

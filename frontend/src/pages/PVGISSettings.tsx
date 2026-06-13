@@ -11,6 +11,7 @@ import { useState, useEffect, useRef } from 'react'
 import { Sun, Download, Trash2, Check, RefreshCw, TrendingUp, MapPin, Compass, AlertCircle, Cloud, Mountain, Upload } from 'lucide-react'
 import { Card, LoadingSpinner, Alert, Select, Button } from '../components/ui'
 import { useSelectedAnlage } from '../hooks'
+import { STRING_COLORS, CHART_COLORS } from '../lib'
 import { pvgisApi, wetterApi } from '../api'
 import type { PVGISPrognose, GespeichertePrognose, AktivePrognoseResponse, PVGISOptimum, HorizontStatus } from '../api/pvgis'
 import type { WetterProviderList } from '../api/wetter'
@@ -255,7 +256,7 @@ export default function PVGISSettings() {
                 {aktivePrognose.monatswerte && aktivePrognose.monatswerte.length > 0 && (() => {
                   const module = aktivePrognose.module ?? []
                   const multiString = module.length > 1
-                  const stringFarben = ['#f59e0b', '#3b82f6', '#10b981', '#ef4444', '#8b5cf6', '#ec4899']
+                  const stringFarben = STRING_COLORS
 
                   const chartData = multiString
                     ? Array.from({ length: 12 }, (_, i) => {
@@ -294,7 +295,7 @@ export default function PVGISSettings() {
                               />
                             ))
                           ) : (
-                            <Bar dataKey="prognose" fill="#f59e0b" name="Prognose" />
+                            <Bar dataKey="prognose" fill={CHART_COLORS.erzeugung} name="Prognose" />
                           )}
                         </BarChart>
                       </ResponsiveContainer>
@@ -569,7 +570,7 @@ export default function PVGISSettings() {
                         tickFormatter={(v) => `${Number(v).toLocaleString('de-DE')} kWh`}
                       />
                       <Tooltip content={<ChartTooltip unit="kWh" />} />
-                      <Bar dataKey="ertrag" fill="#22c55e" name="Ertrag" />
+                      <Bar dataKey="ertrag" fill={CHART_COLORS.erzeugung} name="Ertrag" />
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
@@ -671,7 +672,7 @@ export default function PVGISSettings() {
                           {p.horizont_verwendet ? (
                             <span title="Eigenes Profil"><Mountain className="h-4 w-4 text-green-500 mx-auto" /></span>
                           ) : (
-                            <span className="text-gray-400 text-xs">DEM</span>
+                            <span className="text-gray-400 dark:text-gray-500 text-xs">DEM</span>
                           )}
                         </td>
                         <td className="text-center py-2 px-2">
@@ -681,7 +682,7 @@ export default function PVGISSettings() {
                               Aktiv
                             </span>
                           ) : (
-                            <span className="text-gray-400">-</span>
+                            <span className="text-gray-400 dark:text-gray-500">-</span>
                           )}
                         </td>
                         <td className="text-right py-2 px-2">
@@ -771,7 +772,7 @@ export default function PVGISSettings() {
                         {p.verfuegbar ? (
                           <span className="text-green-600 dark:text-green-400">✓ Verfügbar</span>
                         ) : (
-                          <span className="text-gray-400">Nicht verfügbar</span>
+                          <span className="text-gray-400 dark:text-gray-500">Nicht verfügbar</span>
                         )}
                       </div>
                     </div>

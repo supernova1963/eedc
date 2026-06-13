@@ -53,7 +53,8 @@ const ZEITRAUM_OPTIONS: { value: ZeitraumTyp; label: string }[] = [
   { value: 'seit_installation', label: 'Seit Installation' },
 ]
 
-import { REGION_NAMEN } from '../lib/constants'
+import { REGION_NAMEN, TYP_COLORS } from '../lib'
+import { useChartTheme } from '../context/ThemeContext'
 
 interface CommunityVergleichProps {
   /** Wenn true, wird ohne eigenen Header angezeigt (eingebettet in Auswertung) */
@@ -70,6 +71,7 @@ export default function CommunityVergleich({ embedded = false, anlageId: propsAn
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [notShared, setNotShared] = useState(false)
+  const achsen = useChartTheme()
 
   // Prüfen ob Anlage bereits geteilt wurde
   const [communityHash, setCommunityHash] = useState<string | null>(null)
@@ -240,7 +242,7 @@ export default function CommunityVergleich({ embedded = false, anlageId: propsAn
                     label="Community Durchschnitt"
                     wert={benchmark.benchmark.spez_ertrag_durchschnitt}
                     einheit="kWh/kWp"
-                    icon={<BarChart3 className="h-5 w-5 text-gray-400" />}
+                    icon={<BarChart3 className="h-5 w-5 text-gray-400 dark:text-gray-500" />}
                   />
                   <VergleichsBox
                     label={REGION_NAMEN[benchmark.anlage.region] || benchmark.anlage.region}
@@ -426,13 +428,13 @@ export default function CommunityVergleich({ embedded = false, anlageId: propsAn
                       ertrag: m.spez_ertrag_kwh_kwp || 0,
                     }))}
                   >
-                    <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                    <XAxis dataKey="name" tick={{ fill: '#6b7280', fontSize: 12 }} />
-                    <YAxis tick={{ fill: '#6b7280', fontSize: 12 }} />
+                    <CartesianGrid strokeDasharray="3 3" stroke={achsen.grid} />
+                    <XAxis dataKey="name" tick={{ fill: achsen.achse, fontSize: 12 }} />
+                    <YAxis tick={{ fill: achsen.achse, fontSize: 12 }} />
                     <Tooltip content={<ChartTooltip unit="kWh/kWp" decimals={1} />} />
                     <Bar dataKey="ertrag" radius={[4, 4, 0, 0]}>
                       {benchmark.anlage.monatswerte.slice(-12).map((_, index) => (
-                        <Cell key={`cell-${index}`} fill="#f97316" />
+                        <Cell key={`cell-${index}`} fill={TYP_COLORS['pv-system']} />
                       ))}
                     </Bar>
                   </BarChart>
@@ -478,7 +480,7 @@ function AbweichungBadge({ wert, durchschnitt }: { wert: number; durchschnitt: n
         <TrendingDown className="h-4 w-4" />
       )}
       {isPositive ? '+' : ''}
-      {abweichung.toFixed(1)}% vs. Durchschnitt
+      {abweichung.toFixed(1)} % vs. Durchschnitt
     </span>
   )
 }
@@ -509,7 +511,7 @@ function VergleichsBox({
         {isRank ? '#' : ''}
         {wert.toFixed(isRank ? 0 : 0)}
         {einheit && <span className="text-sm font-normal text-gray-500 ml-1">{einheit}</span>}
-        {zusatz && <span className="text-sm font-normal text-gray-400 ml-2">{zusatz}</span>}
+        {zusatz && <span className="text-sm font-normal text-gray-400 dark:text-gray-500 ml-2">{zusatz}</span>}
       </p>
     </div>
   )
@@ -580,7 +582,7 @@ function KPIRow({
                 : 'text-red-600 dark:text-red-400'
             }`}
           >
-            ({abweichung >= 0 ? '+' : ''}{abweichung.toFixed(1)}%)
+            ({abweichung >= 0 ? '+' : ''}{abweichung.toFixed(1)} %)
           </span>
         )}
       </div>

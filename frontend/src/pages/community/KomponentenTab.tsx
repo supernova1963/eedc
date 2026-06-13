@@ -36,6 +36,8 @@ import {
 } from 'lucide-react'
 import { Card, LoadingSpinner, Alert } from '../../components/ui'
 import ChartTooltip from '../../components/ui/ChartTooltip'
+import { useChartTheme } from '../../context/ThemeContext'
+import { SERIEN_PALETTE, EIGENE_SERIE_FARBEN, LADEQUELLEN_FARBEN } from '../../lib'
 import { communityApi } from '../../api'
 import type {
   CommunityBenchmarkResponse,
@@ -155,7 +157,7 @@ export default function KomponentenTab({ zeitraum, benchmark, benchmarkLoading, 
       <Card>
         <div className="text-center py-12">
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-gray-100 dark:bg-gray-800 mb-4">
-            <Battery className="h-8 w-8 text-gray-400" />
+            <Battery className="h-8 w-8 text-gray-400 dark:text-gray-500" />
           </div>
           <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-3">
             Keine Komponenten-Daten
@@ -226,9 +228,6 @@ export default function KomponentenTab({ zeitraum, benchmark, benchmarkLoading, 
 // Speicher Deep-Dive
 // =============================================================================
 
-// Farben für Speicherklassen
-const SPEICHER_COLORS = ['#22c55e', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6']
-
 function SpeicherDeepDive({
   benchmark,
   communityStats,
@@ -236,6 +235,7 @@ function SpeicherDeepDive({
   benchmark: CommunityBenchmarkResponse
   communityStats: SpeicherByClass | null
 }) {
+  const achsen = useChartTheme()
   const speicher = benchmark.benchmark_erweitert?.speicher
   const kapazitaet = benchmark.anlage.speicher_kwh || 0
 
@@ -286,7 +286,7 @@ function SpeicherDeepDive({
         return {
           name: label,
           anzahl: k.anzahl,
-          fill: SPEICHER_COLORS[i % SPEICHER_COLORS.length],
+          fill: SERIEN_PALETTE[i % SERIEN_PALETTE.length],
           avg_zyklen: k.durchschnitt_zyklen ?? 0,
           avg_wirkungsgrad: k.durchschnitt_wirkungsgrad ?? 0,
         }
@@ -349,21 +349,21 @@ function SpeicherDeepDive({
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* KPI-Übersicht */}
         <div className="space-y-4">
-          <KPICard
+          <CommunityVergleichsKPI
             label="Zyklen/Jahr"
             icon={<BatteryCharging className="h-5 w-5 text-green-500" />}
             kpi={speicher.zyklen_jahr}
             einheit=""
             beschreibung="Vollständige Lade-/Entladezyklen"
           />
-          <KPICard
+          <CommunityVergleichsKPI
             label="Wirkungsgrad"
             icon={<Gauge className="h-5 w-5 text-blue-500" />}
             kpi={speicher.wirkungsgrad}
             einheit="%"
             beschreibung="Entladen / Geladen"
           />
-          <KPICard
+          <CommunityVergleichsKPI
             label="Netzlade-Anteil"
             icon={<Zap className="h-5 w-5 text-yellow-500" />}
             kpi={speicher.netz_anteil}
@@ -382,12 +382,12 @@ function SpeicherDeepDive({
             <div className="h-48">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={vergleichsData} layout="vertical">
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" horizontal={false} />
-                  <XAxis type="number" domain={[0, 100]} tick={{ fill: '#6b7280', fontSize: 11 }} />
-                  <YAxis type="category" dataKey="name" tick={{ fill: '#6b7280', fontSize: 12 }} width={90} />
+                  <CartesianGrid strokeDasharray="3 3" stroke={achsen.grid} horizontal={false} />
+                  <XAxis type="number" domain={[0, 100]} tick={{ fill: achsen.achse, fontSize: 11 }} />
+                  <YAxis type="category" dataKey="name" tick={{ fill: achsen.achse, fontSize: 12 }} width={90} />
                   <Tooltip content={<ChartTooltip unit="%" decimals={1} />} />
-                  <Bar dataKey="du" name="Du" fill="#22c55e" radius={[0, 4, 4, 0]} />
-                  <Bar dataKey="community" name="Community" fill="#9ca3af" radius={[0, 4, 4, 0]} />
+                  <Bar dataKey="du" name="Du" fill={EIGENE_SERIE_FARBEN.du} radius={[0, 4, 4, 0]} />
+                  <Bar dataKey="community" name="Community" fill={achsen.referenz} radius={[0, 4, 4, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -413,7 +413,7 @@ function SpeicherDeepDive({
             <h4 className="font-medium text-gray-700 dark:text-gray-300">
               Community: Speicher nach Kapazitätsklasse
             </h4>
-            <span className="text-xs text-gray-400">
+            <span className="text-xs text-gray-400 dark:text-gray-500">
               ({gesamtAnzahl} Anlagen)
             </span>
           </div>
@@ -429,7 +429,7 @@ function SpeicherDeepDive({
                     cx="50%"
                     cy="50%"
                     outerRadius={70}
-                    label={({ name, percent }) => `${name} (${(percent * 100).toFixed(0)}%)`}
+                    label={({ name, percent }) => `${name} (${(percent * 100).toFixed(0)} %)`}
                     labelLine={false}
                   >
                     {klassenData.map((entry, index) => (
@@ -467,7 +467,7 @@ function SpeicherDeepDive({
                         {k.name === eigeneKlasse && <span className="text-xs text-primary-500">(Du)</span>}
                       </td>
                       <td className="text-right py-1">{k.avg_zyklen.toFixed(0)}</td>
-                      <td className="text-right py-1">{k.avg_wirkungsgrad.toFixed(1)}%</td>
+                      <td className="text-right py-1">{k.avg_wirkungsgrad.toFixed(1)} %</td>
                     </tr>
                   ))}
                 </tbody>
@@ -494,6 +494,7 @@ function WaermepumpeDeepDive({
   benchmark: CommunityBenchmarkResponse
   communityStats: WPByRegion | null
 }) {
+  const achsen = useChartTheme()
   const wp = benchmark.benchmark_erweitert?.waermepumpe
   const eigeneRegion = benchmark.anlage.region
 
@@ -566,7 +567,7 @@ function WaermepumpeDeepDive({
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <KPICard
+        <CommunityVergleichsKPI
           label="Jahresarbeitszahl (JAZ)"
           icon={<Thermometer className="h-5 w-5 text-blue-500" />}
           kpi={wp.jaz}
@@ -574,14 +575,14 @@ function WaermepumpeDeepDive({
           beschreibung="Wärmeenergie / Stromverbrauch"
           large
         />
-        <KPICard
+        <CommunityVergleichsKPI
           label="Stromverbrauch"
           icon={<Zap className="h-5 w-5 text-yellow-500" />}
           kpi={wp.stromverbrauch}
           einheit="kWh"
           beschreibung="Gesamt im Zeitraum"
         />
-        <KPICard
+        <CommunityVergleichsKPI
           label="Wärmeerzeugung"
           icon={<Home className="h-5 w-5 text-red-500" />}
           kpi={wp.waermeerzeugung}
@@ -598,7 +599,7 @@ function WaermepumpeDeepDive({
             <h4 className="font-medium text-gray-700 dark:text-gray-300">
               Community: JAZ nach Region
             </h4>
-            <span className="text-xs text-gray-400">
+            <span className="text-xs text-gray-400 dark:text-gray-500">
               ({gesamtAnzahlWP} {gesamtAnzahlWP === 1 ? 'Anlage' : 'Anlagen'})
             </span>
           </div>
@@ -620,12 +621,12 @@ function WaermepumpeDeepDive({
               <div className="h-64">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={regionData} layout="vertical">
-                    <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" horizontal={false} />
-                    <XAxis type="number" domain={[0, 5]} tick={{ fill: '#6b7280', fontSize: 11 }} />
+                    <CartesianGrid strokeDasharray="3 3" stroke={achsen.grid} horizontal={false} />
+                    <XAxis type="number" domain={[0, 5]} tick={{ fill: achsen.achse, fontSize: 11 }} />
                     <YAxis
                       type="category"
                       dataKey="name"
-                      tick={{ fill: '#6b7280', fontSize: 11 }}
+                      tick={{ fill: achsen.achse, fontSize: 11 }}
                       width={120}
                     />
                     <Tooltip content={<ChartTooltip formatter={(value) => `JAZ: ${value.toFixed(2)}`} />} />
@@ -633,14 +634,14 @@ function WaermepumpeDeepDive({
                       {regionData.map((entry, index) => (
                         <Cell
                           key={`cell-${index}`}
-                          fill={entry.region === eigeneRegion ? '#3b82f6' : '#9ca3af'}
+                          fill={entry.region === eigeneRegion ? EIGENE_SERIE_FARBEN.du : achsen.referenz}
                         />
                       ))}
                       <LabelList
                         dataKey="jaz"
                         position="right"
                         formatter={(value: number) => value.toFixed(2)}
-                        style={{ fill: '#374151', fontSize: 11 }}
+                        style={{ fill: achsen.achse, fontSize: 11 }}
                       />
                     </Bar>
                   </BarChart>
@@ -671,9 +672,6 @@ function WaermepumpeDeepDive({
 // E-Auto Deep-Dive
 // =============================================================================
 
-// Farben für E-Auto Nutzungsklassen
-const EAUTO_COLORS = ['#22c55e', '#3b82f6', '#f59e0b', '#ef4444']
-
 function EAutoDeepDive({
   benchmark,
   communityStats,
@@ -681,6 +679,7 @@ function EAutoDeepDive({
   benchmark: CommunityBenchmarkResponse
   communityStats: EAutoByUsage | null
 }) {
+  const achsen = useChartTheme()
   const eauto = benchmark.benchmark_erweitert?.eauto
 
   // Eigene Nutzungsklasse ermitteln (basierend auf km)
@@ -702,7 +701,7 @@ function EAutoDeepDive({
         name: k.klasse.charAt(0).toUpperCase() + k.klasse.slice(1), // Capitalize
         beschreibung: k.beschreibung,
         anzahl: k.anzahl,
-        fill: EAUTO_COLORS[i % EAUTO_COLORS.length],
+        fill: SERIEN_PALETTE[i % SERIEN_PALETTE.length],
         avg_pv_anteil: k.durchschnitt_pv_anteil ?? 0,
         avg_verbrauch: k.durchschnitt_verbrauch_100km ?? 0,
       }))
@@ -720,8 +719,8 @@ function EAutoDeepDive({
 
     const pvAnteil = eauto.pv_anteil.wert
     return [
-      { name: 'PV', wert: pvAnteil, fill: '#22c55e' },
-      { name: 'Netz/Extern', wert: 100 - pvAnteil, fill: '#ef4444' },
+      { name: 'PV', wert: pvAnteil, fill: LADEQUELLEN_FARBEN.pv },
+      { name: 'Netz/Extern', wert: 100 - pvAnteil, fill: LADEQUELLEN_FARBEN.netz },
     ]
   }, [eauto])
 
@@ -775,21 +774,21 @@ function EAutoDeepDive({
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* KPIs */}
         <div className="space-y-4">
-          <KPICard
+          <CommunityVergleichsKPI
             label="PV-Ladeanteil"
             icon={<Sun className="h-5 w-5 text-yellow-500" />}
             kpi={eauto.pv_anteil}
             einheit="%"
             beschreibung="Anteil PV an Gesamtladung"
           />
-          <KPICard
+          <CommunityVergleichsKPI
             label="Ladung gesamt"
             icon={<BatteryCharging className="h-5 w-5 text-purple-500" />}
             kpi={eauto.ladung_gesamt}
             einheit="kWh"
             beschreibung="Gesamte Lademenge"
           />
-          <KPICard
+          <CommunityVergleichsKPI
             label="Verbrauch"
             icon={<Gauge className="h-5 w-5 text-blue-500" />}
             kpi={eauto.verbrauch_100km}
@@ -798,7 +797,7 @@ function EAutoDeepDive({
             invertColors
           />
           {eauto.km && (
-            <KPICard
+            <CommunityVergleichsKPI
               label="Gefahrene km"
               icon={<Route className="h-5 w-5 text-gray-500" />}
               kpi={eauto.km}
@@ -807,7 +806,7 @@ function EAutoDeepDive({
             />
           )}
           {eauto.v2h && eauto.v2h.wert > 0 && (
-            <KPICard
+            <CommunityVergleichsKPI
               label="V2H Entladung"
               icon={<Zap className="h-5 w-5 text-green-500" />}
               kpi={eauto.v2h}
@@ -826,9 +825,9 @@ function EAutoDeepDive({
             <div className="h-48">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={ladequellenData} layout="vertical">
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" horizontal={false} />
-                  <XAxis type="number" domain={[0, 100]} tick={{ fill: '#6b7280', fontSize: 11 }} />
-                  <YAxis type="category" dataKey="name" tick={{ fill: '#6b7280', fontSize: 12 }} width={80} />
+                  <CartesianGrid strokeDasharray="3 3" stroke={achsen.grid} horizontal={false} />
+                  <XAxis type="number" domain={[0, 100]} tick={{ fill: achsen.achse, fontSize: 11 }} />
+                  <YAxis type="category" dataKey="name" tick={{ fill: achsen.achse, fontSize: 12 }} width={80} />
                   <Tooltip content={<ChartTooltip unit="%" decimals={1} />} />
                   <Bar dataKey="wert" radius={[0, 4, 4, 0]}>
                     {ladequellenData.map((entry, index) => (
@@ -850,7 +849,7 @@ function EAutoDeepDive({
             <h4 className="font-medium text-gray-700 dark:text-gray-300">
               Community: E-Autos nach Nutzungsintensität
             </h4>
-            <span className="text-xs text-gray-400">
+            <span className="text-xs text-gray-400 dark:text-gray-500">
               ({gesamtAnzahlEAuto} E-Autos)
             </span>
           </div>
@@ -866,7 +865,7 @@ function EAutoDeepDive({
                     cx="50%"
                     cy="50%"
                     outerRadius={70}
-                    label={({ name, percent }) => `${name} (${(percent * 100).toFixed(0)}%)`}
+                    label={({ name, percent }) => `${name} (${(percent * 100).toFixed(0)} %)`}
                     labelLine={false}
                   >
                     {nutzungData.map((entry, index) => (
@@ -904,7 +903,7 @@ function EAutoDeepDive({
                         {k.name.toLowerCase() === eigeneKlasse?.toLowerCase() && <span className="text-xs text-primary-500">(Du)</span>}
                       </td>
                       <td className="text-right py-1">{k.avg_verbrauch.toFixed(1)} kWh/100km</td>
-                      <td className="text-right py-1">{k.avg_pv_anteil.toFixed(0)}%</td>
+                      <td className="text-right py-1">{k.avg_pv_anteil.toFixed(0)} %</td>
                     </tr>
                   ))}
                 </tbody>
@@ -972,7 +971,7 @@ function WallboxDeepDive({ benchmark }: { benchmark: CommunityBenchmarkResponse 
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <KPICard
+        <CommunityVergleichsKPI
           label="PV-Ladeanteil"
           icon={<Sun className="h-5 w-5 text-yellow-500" />}
           kpi={wallbox.pv_anteil}
@@ -980,14 +979,14 @@ function WallboxDeepDive({ benchmark }: { benchmark: CommunityBenchmarkResponse 
           beschreibung="Anteil PV an Gesamtladung"
           large
         />
-        <KPICard
+        <CommunityVergleichsKPI
           label="Ladung gesamt"
           icon={<Zap className="h-5 w-5 text-cyan-500" />}
           kpi={wallbox.ladung}
           einheit="kWh"
           beschreibung="Im Zeitraum"
         />
-        <KPICard
+        <CommunityVergleichsKPI
           label="Ladevorgänge"
           icon={<BarChart3 className="h-5 w-5 text-gray-500" />}
           kpi={wallbox.ladevorgaenge}
@@ -1057,7 +1056,7 @@ function BKWDeepDive({ benchmark }: { benchmark: CommunityBenchmarkResponse }) {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <KPICard
+        <CommunityVergleichsKPI
           label="Spezifischer Ertrag"
           icon={<TrendingUp className="h-5 w-5 text-amber-500" />}
           kpi={bkw.spez_ertrag}
@@ -1065,14 +1064,14 @@ function BKWDeepDive({ benchmark }: { benchmark: CommunityBenchmarkResponse }) {
           beschreibung="Normierter Ertrag"
           large
         />
-        <KPICard
+        <CommunityVergleichsKPI
           label="Erzeugung"
           icon={<Zap className="h-5 w-5 text-yellow-500" />}
           kpi={bkw.erzeugung}
           einheit="kWh"
           beschreibung="Im Zeitraum"
         />
-        <KPICard
+        <CommunityVergleichsKPI
           label="Eigenverbrauch"
           icon={<Home className="h-5 w-5 text-green-500" />}
           kpi={bkw.eigenverbrauch}
@@ -1118,7 +1117,13 @@ function RangBadge({ rang, von }: { rang: number; von: number }) {
   )
 }
 
-function KPICard({
+/**
+ * Dokumentierter Sonderfall der KPICard-SoT (Style-Guide B9): Community-Vergleichs-
+ * Kachel mit community_avg-Delta + invertColors-Logik. Bewusst NICHT die zentrale
+ * `components/ui/KPICard`, weil die Vergleichsmechanik (Abweichung %, Trend-Färbung)
+ * dort nicht hingehört. Farb-/Größenlogik bleibt an die SoT-Konventionen angelehnt.
+ */
+function CommunityVergleichsKPI({
   label,
   icon,
   kpi,
@@ -1167,7 +1172,7 @@ function KPICard({
             <TrendingDown className="h-3 w-3" />
           )}
           <span>
-            {abweichung >= 0 ? '+' : ''}{abweichung.toFixed(1)}% vs. Ø
+            {abweichung >= 0 ? '+' : ''}{abweichung.toFixed(1)} % vs. Ø
           </span>
         </div>
       )}

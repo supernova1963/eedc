@@ -5,7 +5,7 @@ import { ChevronLeft, ChevronRight } from 'lucide-react'
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
 } from 'recharts'
-import { Card, CollapsibleSection } from '../../components/ui'
+import { Card, CollapsibleSection, KPICard } from '../../components/ui'
 import ChartTooltip from '../../components/ui/ChartTooltip'
 import { EnergieprofilTageTabelleEmbedded } from '../../components/energieprofil/EnergieprofilTageTabelle'
 import {
@@ -29,7 +29,8 @@ const METRIK_OPTIONEN: { key: Metrik; label: string; farbe: 'green' | 'red' | 'o
   { key: 'ueberschuss_kw', label: 'Überschuss / Defizit', farbe: 'divergent' },
 ]
 
-import { MONAT_KURZ, MONAT_NAMEN } from '../../lib/constants'
+import { MONAT_KURZ, MONAT_NAMEN, KATEGORIE_FARBEN, COLORS } from '../../lib'
+import { useChartTheme } from '../../context/ThemeContext'
 const MONATSNAMEN = MONAT_KURZ.slice(1)     // 0-basiert
 const MONATSNAMEN_LANG = MONAT_NAMEN.slice(1) // 0-basiert
 
@@ -75,7 +76,7 @@ function zellenFarbe(
     // -max..0..+max → blau (defizit)..weiss..amber (überschuss)
     const norm = Math.max(-1, Math.min(1, wert / max))
     if (norm >= 0) {
-      // 0..1 → weiss bis amber-500 (#f59e0b)
+      // 0..1 → weiss bis Amber-500
       const a = norm.toFixed(2)
       return `rgba(245, 158, 11, ${a})`
     } else {
@@ -259,44 +260,47 @@ export function EnergieprofilMonat({ anlageId }: Props) {
         <>
           {/* KPI-Strip: Haupt-Kennzahlen */}
           <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2">
-            <KpiCard label="PV-Erzeugung" value={fmt0(data.pv_kwh, 'kWh')} color="text-emerald-600 dark:text-emerald-400" />
-            <KpiCard label="Verbrauch" value={fmt0(data.verbrauch_kwh, 'kWh')} color="text-red-600 dark:text-red-400" />
-            <KpiCard label="Einspeisung" value={fmt0(data.einspeisung_kwh, 'kWh')} color="text-blue-600 dark:text-blue-400" />
-            <KpiCard label="Netzbezug" value={fmt0(data.netzbezug_kwh, 'kWh')} color="text-orange-600 dark:text-orange-400" />
-            <KpiCard label="Autarkie" value={data.autarkie_prozent != null ? `${data.autarkie_prozent.toFixed(0)} %` : '—'} />
-            <KpiCard label="Eigenverbrauch" value={data.eigenverbrauch_prozent != null ? `${data.eigenverbrauch_prozent.toFixed(0)} %` : '—'} />
-            <KpiCard label="PR Ø" value={data.performance_ratio_avg != null ? data.performance_ratio_avg.toFixed(2) : '—'} />
-            <KpiCard label="Batterie-Vollzyklen" value={data.batterie_vollzyklen_summe != null ? data.batterie_vollzyklen_summe.toFixed(1) : '—'} />
+            <KPICard size="sm" title="PV-Erzeugung" value={fmt0(data.pv_kwh, 'kWh')} color="green" />
+            <KPICard size="sm" title="Verbrauch" value={fmt0(data.verbrauch_kwh, 'kWh')} color="red" />
+            <KPICard size="sm" title="Einspeisung" value={fmt0(data.einspeisung_kwh, 'kWh')} color="blue" />
+            <KPICard size="sm" title="Netzbezug" value={fmt0(data.netzbezug_kwh, 'kWh')} color="orange" />
+            <KPICard size="sm" title="Autarkie" value={data.autarkie_prozent != null ? `${data.autarkie_prozent.toFixed(0)} %` : '—'} />
+            <KPICard size="sm" title="Eigenverbrauch" value={data.eigenverbrauch_prozent != null ? `${data.eigenverbrauch_prozent.toFixed(0)} %` : '—'} />
+            <KPICard size="sm" title="PR Ø" value={data.performance_ratio_avg != null ? data.performance_ratio_avg.toFixed(2) : '—'} />
+            <KPICard size="sm" title="Batterie-Vollzyklen" value={data.batterie_vollzyklen_summe != null ? data.batterie_vollzyklen_summe.toFixed(1) : '—'} />
           </div>
 
           {/* KPI-Strip: Erweiterte Analyse */}
           <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2">
-            <KpiCard label="Grundbedarf (Nacht)" value={data.grundbedarf_kw != null ? `${data.grundbedarf_kw.toFixed(2)} kW` : '—'} />
-            <KpiCard label="Direkt-Eigenverbrauch" value={fmt0(data.direkt_eigenverbrauch_kwh, 'kWh')} color="text-emerald-600 dark:text-emerald-400" />
-            <KpiCard label="Batterie geladen" value={fmt0(data.batterie_ladung_kwh, 'kWh')} color="text-blue-600 dark:text-blue-400" />
-            <KpiCard label="Batterie entladen" value={fmt0(data.batterie_entladung_kwh, 'kWh')} color="text-orange-600 dark:text-orange-400" />
-            <KpiCard label="Batterie-η" value={data.batterie_wirkungsgrad != null ? `${(data.batterie_wirkungsgrad * 100).toFixed(0)} %` : '—'} />
-            <KpiCard label="PV Best-Tag" value={fmt0(data.pv_tag_best_kwh, 'kWh')} />
-            <KpiCard label="PV Ø-Tag" value={fmt0(data.pv_tag_schnitt_kwh, 'kWh')} />
-            <KpiCard label="PV Schlecht-Tag" value={fmt0(data.pv_tag_schlecht_kwh, 'kWh')} />
+            <KPICard size="sm" title="Grundbedarf (Nacht)" value={data.grundbedarf_kw != null ? `${data.grundbedarf_kw.toFixed(2)} kW` : '—'} />
+            <KPICard size="sm" title="Direkt-Eigenverbrauch" value={fmt0(data.direkt_eigenverbrauch_kwh, 'kWh')} color="green" />
+            <KPICard size="sm" title="Batterie geladen" value={fmt0(data.batterie_ladung_kwh, 'kWh')} color="blue" />
+            <KPICard size="sm" title="Batterie entladen" value={fmt0(data.batterie_entladung_kwh, 'kWh')} color="orange" />
+            <KPICard size="sm" title="Batterie-η" value={data.batterie_wirkungsgrad != null ? `${(data.batterie_wirkungsgrad * 100).toFixed(0)} %` : '—'} />
+            <KPICard size="sm" title="PV Best-Tag" value={fmt0(data.pv_tag_best_kwh, 'kWh')} />
+            <KPICard size="sm" title="PV Ø-Tag" value={fmt0(data.pv_tag_schnitt_kwh, 'kWh')} />
+            <KPICard size="sm" title="PV Schlecht-Tag" value={fmt0(data.pv_tag_schlecht_kwh, 'kWh')} />
           </div>
 
           {/* Börsenpreis / Negativpreis (§51 EEG) — nur wenn Daten vorhanden */}
           {data.negative_preis_stunden != null && data.negative_preis_stunden > 0 && (
             <CollapsibleSection storageKey="monat-boersenpreis" title="Börsenpreis (§51 EEG)" defaultOpen>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                <KpiCard
-                  label="Neg. Börsenpreis"
+                <KPICard
+                  size="sm"
+                  title="Neg. Börsenpreis"
                   value={`${data.negative_preis_stunden} h`}
-                  color="text-amber-600 dark:text-amber-400"
+                  color="yellow"
                 />
-                <KpiCard
-                  label="Einspeisung bei neg. Preis"
+                <KPICard
+                  size="sm"
+                  title="Einspeisung bei neg. Preis"
                   value={fmt1(data.einspeisung_neg_preis_kwh, 'kWh')}
-                  color="text-amber-600 dark:text-amber-400"
+                  color="yellow"
                 />
-                <KpiCard
-                  label="Börsenpreis Ø"
+                <KPICard
+                  size="sm"
+                  title="Börsenpreis Ø"
                   value={data.boersenpreis_avg_cent != null ? `${data.boersenpreis_avg_cent.toFixed(1)} ct` : '—'}
                 />
               </div>
@@ -415,15 +419,6 @@ export function EnergieprofilMonat({ anlageId }: Props) {
 }
 
 // ─── Subkomponenten ──────────────────────────────────────────────────────────
-
-function KpiCard({ label, value, color }: { label: string; value: string; color?: string }) {
-  return (
-    <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 px-3 py-2">
-      <div className="text-[11px] text-gray-500 dark:text-gray-400 mb-0.5 truncate">{label}</div>
-      <div className={`text-sm font-semibold ${color ?? 'text-gray-900 dark:text-white'}`}>{value}</div>
-    </div>
-  )
-}
 
 interface HeatmapProps {
   tageImMonat: number
@@ -550,6 +545,7 @@ function KomponentenTabelle({ eintraege }: { eintraege: KomponentenEintrag[] }) 
 }
 
 function TagesprofilChart({ daten }: { daten: { stunde: number; pv_kw: number | null; verbrauch_kw: number | null }[] }) {
+  const achsen = useChartTheme()
   const chartDaten = daten.map(d => ({
     stunde: `${String(d.stunde).padStart(2, '0')}`,
     PV: d.pv_kw,
@@ -559,13 +555,13 @@ function TagesprofilChart({ daten }: { daten: { stunde: number; pv_kw: number | 
     <div style={{ width: '100%', height: 240 }}>
       <ResponsiveContainer>
         <LineChart data={chartDaten} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" strokeOpacity={0.3} />
+          <CartesianGrid strokeDasharray="3 3" stroke={achsen.grid} strokeOpacity={0.3} />
           <XAxis dataKey="stunde" tick={{ fontSize: 11 }} label={{ value: 'Stunde', position: 'insideBottom', offset: -2, fontSize: 11 }} />
           <YAxis tick={{ fontSize: 11 }} label={{ value: 'kW', angle: -90, position: 'insideLeft', fontSize: 11 }} />
           <Tooltip content={<ChartTooltip unit="kW" />} />
           <Legend wrapperStyle={{ fontSize: 12 }} />
-          <Line type="monotone" dataKey="PV" stroke="#10b981" strokeWidth={2} dot={false} name="PV Ø" />
-          <Line type="monotone" dataKey="Verbrauch" stroke="#ef4444" strokeWidth={2} dot={false} name="Verbrauch Ø" />
+          <Line type="monotone" dataKey="PV" stroke={KATEGORIE_FARBEN.pv} strokeWidth={2} dot={false} name="PV Ø" />
+          <Line type="monotone" dataKey="Verbrauch" stroke={COLORS.consumption} strokeWidth={2} dot={false} name="Verbrauch Ø" />
         </LineChart>
       </ResponsiveContainer>
     </div>
@@ -586,7 +582,7 @@ function PeakListe({ titel, hinweis, eintraege, farbe }: {
           <p className="text-xs text-gray-500 dark:text-gray-400">{hinweis}</p>
         </div>
         {eintraege.length === 0 ? (
-          <div className="py-4 text-center text-xs text-gray-400">Keine Daten</div>
+          <div className="py-4 text-center text-xs text-gray-400 dark:text-gray-500">Keine Daten</div>
         ) : (
           <table className="w-full text-xs">
             <thead>

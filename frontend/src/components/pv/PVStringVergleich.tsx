@@ -16,9 +16,7 @@ import { Sun, TrendingUp, TrendingDown, AlertTriangle, Calendar, BarChart3 } fro
 import { Card, LoadingSpinner, Alert } from '../ui'
 import ChartTooltip from '../ui/ChartTooltip'
 import { cockpitApi, type PVStringsGesamtlaufzeitResponse } from '../../api/cockpit'
-import { SOLL_IST_COLORS } from '../../lib/colors'
-
-const STRING_COLORS = ['#f59e0b', '#3b82f6', '#10b981', '#8b5cf6', '#06b6d4', '#ec4899']
+import { SOLL_IST_COLORS, STRING_COLORS } from '../../lib'
 
 interface Props {
   anlageId: number
@@ -139,7 +137,7 @@ export function PVStringVergleich({ anlageId }: Props) {
   if (!data || !data.strings || data.strings.length === 0) {
     return (
       <div className="text-center py-8">
-        <Sun className="h-12 w-12 mx-auto text-gray-400 mb-4" />
+        <Sun className="h-12 w-12 mx-auto text-gray-400 dark:text-gray-500 mb-4" />
         <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">
           Keine PV-Module gefunden
         </h3>
@@ -166,14 +164,14 @@ export function PVStringVergleich({ anlageId }: Props) {
 
   // Performance Badge
   const PerformanceBadge = ({ ratio }: { ratio: number | null | undefined }) => {
-    if (ratio == null) return <span className="text-gray-400">-</span>
+    if (ratio == null) return <span className="text-gray-400 dark:text-gray-500">-</span>
     const pct = ratio * 100
     const colorClass = pct >= 95 ? 'text-green-600' : pct < 85 ? 'text-red-600' : 'text-amber-600'
     const Icon = pct >= 95 ? TrendingUp : pct < 85 ? TrendingDown : null
     return (
       <span className={`flex items-center gap-1 ${colorClass}`}>
         {Icon && <Icon className="h-3 w-3" />}
-        {pct.toFixed(0)}%
+        {pct.toFixed(0)} %
       </span>
     )
   }

@@ -6,7 +6,7 @@ import { Euro, TrendingUp, PiggyBank, CheckCircle, Clock, Battery, Car, Flame, F
 import { Card, LoadingSpinner, Alert, FormelTooltip, fmtCalc } from '../../components/ui'
 import ChartTooltip from '../../components/ui/ChartTooltip'
 import { aussichtenApi, FinanzPrognose } from '../../api/aussichten'
-import { INVESTITION_TYP_ORDER } from '../../lib/constants'
+import { INVESTITION_TYP_ORDER, CHART_COLORS } from '../../lib'
 import {
   ResponsiveContainer,
   ComposedChart,
@@ -102,8 +102,8 @@ export default function FinanzenTab({ anlageId }: Props) {
 
   // Pie-Chart für Ertrags-Zusammensetzung
   const pieData = [
-    { name: 'EV-Ersparnis', value: prognose.jahres_ev_ersparnis_euro, fill: '#10b981' },
-    { name: 'Einspeise-Erlös', value: prognose.jahres_einspeise_erloes_euro, fill: '#3b82f6' },
+    { name: 'EV-Ersparnis', value: prognose.jahres_ev_ersparnis_euro, fill: CHART_COLORS.evErsparnis },
+    { name: 'Einspeise-Erlös', value: prognose.jahres_einspeise_erloes_euro, fill: CHART_COLORS.einspeiseErloes },
   ]
 
   // Amortisations-Fortschritt (kumuliert)
@@ -147,7 +147,7 @@ export default function FinanzenTab({ anlageId }: Props) {
                 ergebnis={`= ${prognose.amortisations_fortschritt_prozent.toFixed(1)} %`}
               >
                 <p className="text-xl font-bold text-gray-900 dark:text-white">
-                  {prognose.amortisations_fortschritt_prozent.toFixed(1)}%
+                  {prognose.amortisations_fortschritt_prozent.toFixed(1)} %
                 </p>
               </FormelTooltip>
             </div>
@@ -184,7 +184,7 @@ export default function FinanzenTab({ anlageId }: Props) {
                   ) : prognose.amortisation_prognose_jahr ? (
                     <span>{prognose.amortisation_prognose_jahr}</span>
                   ) : (
-                    <span className="text-gray-400">-</span>
+                    <span className="text-gray-400 dark:text-gray-500">-</span>
                   )}
                 </p>
               </FormelTooltip>
@@ -296,12 +296,12 @@ export default function FinanzenTab({ anlageId }: Props) {
                     return labels[value] || value
                   }}
                 />
-                <Bar dataKey="einspeise_erloes" stackId="a" fill="#3b82f6" name="einspeise_erloes" />
-                <Bar dataKey="ev_ersparnis" stackId="a" fill="#10b981" name="ev_ersparnis" />
+                <Bar dataKey="einspeise_erloes" stackId="a" fill={CHART_COLORS.einspeiseErloes} name="einspeise_erloes" />
+                <Bar dataKey="ev_ersparnis" stackId="a" fill={CHART_COLORS.evErsparnis} name="ev_ersparnis" />
                 <Line
                   type="monotone"
                   dataKey="netto_ertrag"
-                  stroke="#f59e0b"
+                  stroke={CHART_COLORS.nettoErtrag}
                   strokeWidth={2}
                   dot={{ r: 3 }}
                   name="netto_ertrag"
@@ -325,7 +325,7 @@ export default function FinanzenTab({ anlageId }: Props) {
                   outerRadius={80}
                   paddingAngle={5}
                   dataKey="value"
-                  label={({ percent }) => `${(percent * 100).toFixed(0)}%`}
+                  label={({ percent }) => `${(percent * 100).toFixed(0)} %`}
                 >
                   {pieData.map((entry, index) => (
                     <Cell key={`cell-${index}`} fill={entry.fill} />
@@ -339,7 +339,7 @@ export default function FinanzenTab({ anlageId }: Props) {
           <div className="mt-4 space-y-2 text-sm">
             <div className="flex justify-between">
               <span className="text-gray-500">EV-Quote:</span>
-              <span className="font-medium">{prognose.eigenverbrauchsquote_prozent.toFixed(1)}%</span>
+              <span className="font-medium">{prognose.eigenverbrauchsquote_prozent.toFixed(1)} %</span>
             </div>
             <div className="flex justify-between">
               <span className="text-gray-500">Eigenverbrauch:</span>

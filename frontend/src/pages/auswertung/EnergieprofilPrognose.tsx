@@ -10,7 +10,9 @@ import {
   Tooltip, Legend, ResponsiveContainer, ReferenceLine,
 } from 'recharts'
 import { Calendar, Battery, Zap, Sun, ArrowDown, ArrowUp, Info } from 'lucide-react'
-import { Card, Alert } from '../../components/ui'
+import { Card, Alert, KPICard } from '../../components/ui'
+import { COLORS, CHART_COLORS } from '../../lib'
+import { useChartTheme } from '../../context/ThemeContext'
 import { energieProfilApi, type TagesPrognose } from '../../api/energie_profil'
 
 interface Props {
@@ -53,6 +55,7 @@ export function EnergieprofilPrognose({ anlageId }: Props) {
   const [daten, setDaten] = useState<TagesPrognose | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const achsen = useChartTheme()
 
   useEffect(() => {
     if (!anlageId || !datum) return
@@ -116,7 +119,7 @@ export function EnergieprofilPrognose({ anlageId }: Props) {
         >
           Morgen
         </button>
-        {loading && <span className="text-xs text-gray-400">Lade...</span>}
+        {loading && <span className="text-xs text-gray-400 dark:text-gray-500">Lade...</span>}
       </div>
 
       {/* Error */}
@@ -128,48 +131,55 @@ export function EnergieprofilPrognose({ anlageId }: Props) {
       {daten && (
         <>
           <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
-            <KpiCard
-              icon={<Sun className="h-4 w-4 text-yellow-500" />}
-              label="PV-Prognose"
+            <KPICard
+              size="sm"
+              icon={Sun}
+              title="PV-Prognose"
               value={`${fmt1(daten.pv_summe_kwh)} kWh`}
-              color="text-yellow-600 dark:text-yellow-400"
+              color="yellow"
             />
-            <KpiCard
-              icon={<Zap className="h-4 w-4 text-gray-500" />}
-              label="Verbrauch"
+            <KPICard
+              size="sm"
+              icon={Zap}
+              title="Verbrauch"
               value={`${fmt1(daten.verbrauch_summe_kwh)} kWh`}
-              color="text-gray-600 dark:text-gray-300"
+              color="gray"
             />
-            <KpiCard
-              icon={<ArrowDown className="h-4 w-4 text-red-500" />}
-              label="Netzbezug"
+            <KPICard
+              size="sm"
+              icon={ArrowDown}
+              title="Netzbezug"
               value={`${fmt1(daten.netzbezug_summe_kwh)} kWh`}
-              color="text-red-600 dark:text-red-400"
+              color="red"
             />
-            <KpiCard
-              icon={<ArrowUp className="h-4 w-4 text-cyan-500" />}
-              label="Einspeisung"
+            <KPICard
+              size="sm"
+              icon={ArrowUp}
+              title="Einspeisung"
               value={`${fmt1(daten.einspeisung_summe_kwh)} kWh`}
-              color="text-cyan-600 dark:text-cyan-400"
+              color="cyan"
             />
-            <KpiCard
-              icon={<Sun className="h-4 w-4 text-green-500" />}
-              label="Eigenverbrauch"
+            <KPICard
+              size="sm"
+              icon={Sun}
+              title="Eigenverbrauch"
               value={`${fmt1(daten.eigenverbrauch_kwh)} kWh`}
-              color="text-green-600 dark:text-green-400"
+              color="green"
             />
-            <KpiCard
-              icon={<Zap className="h-4 w-4 text-primary-500" />}
-              label="Autarkie"
+            <KPICard
+              size="sm"
+              icon={Zap}
+              title="Autarkie"
               value={`${fmt0(daten.autarkie_prozent)} %`}
-              color="text-primary-600 dark:text-primary-400"
+              color="green"
             />
             {hatSpeicher && (
-              <KpiCard
-                icon={<Battery className="h-4 w-4 text-blue-500" />}
-                label="Speicher voll"
+              <KPICard
+                size="sm"
+                icon={Battery}
+                title="Speicher voll"
                 value={daten.speicher_voll_um ?? 'nicht erreicht'}
-                color="text-blue-600 dark:text-blue-400"
+                color="blue"
               />
             )}
           </div>
@@ -203,58 +213,58 @@ export function EnergieprofilPrognose({ anlageId }: Props) {
                     label={{ value: 'SoC', angle: 90, position: 'insideRight', style: { fontSize: 10 } }}
                   />
                 )}
-                <ReferenceLine yAxisId="kw" y={0} stroke="#9ca3af" strokeWidth={1.5} />
+                <ReferenceLine yAxisId="kw" y={0} stroke={achsen.referenz} strokeWidth={1.5} />
                 <Tooltip content={<PrognoseTooltip hatSpeicher={hatSpeicher} />} />
                 <Legend wrapperStyle={{ fontSize: 11 }} />
 
-                {/* PV-Erzeugung (oben, gelb) */}
+                {/* PV-Erzeugung (oben) */}
                 <Area
                   yAxisId="kw"
                   type="monotone"
                   dataKey="pv"
                   name="PV-Prognose"
-                  fill="#eab308"
-                  stroke="#eab308"
+                  fill={COLORS.solar}
+                  stroke={COLORS.solar}
                   fillOpacity={0.3}
                   strokeWidth={2}
                   isAnimationActive={false}
                 />
 
-                {/* Einspeisung (oben, cyan) */}
+                {/* Einspeisung (oben) */}
                 <Area
                   yAxisId="kw"
                   type="monotone"
                   dataKey="einspeisung"
                   name="Einspeisung"
-                  fill="#06b6d4"
-                  stroke="#06b6d4"
+                  fill={CHART_COLORS.einspeisung}
+                  stroke={CHART_COLORS.einspeisung}
                   fillOpacity={0.2}
                   strokeWidth={1}
                   strokeDasharray="4 2"
                   isAnimationActive={false}
                 />
 
-                {/* Verbrauch (unten, grau-grün) */}
+                {/* Verbrauch (unten) */}
                 <Area
                   yAxisId="kw"
                   type="monotone"
                   dataKey="verbrauch"
                   name="Verbrauch"
-                  fill="#6b7280"
-                  stroke="#6b7280"
+                  fill={COLORS.consumption}
+                  stroke={COLORS.consumption}
                   fillOpacity={0.25}
                   strokeWidth={2}
                   isAnimationActive={false}
                 />
 
-                {/* Netzbezug (unten, rot) */}
+                {/* Netzbezug (unten) */}
                 <Area
                   yAxisId="kw"
                   type="monotone"
                   dataKey="netzbezug"
                   name="Netzbezug"
-                  fill="#ef4444"
-                  stroke="#ef4444"
+                  fill={CHART_COLORS.netzbezug}
+                  stroke={CHART_COLORS.netzbezug}
                   fillOpacity={0.2}
                   strokeWidth={1}
                   strokeDasharray="4 2"
@@ -268,7 +278,7 @@ export function EnergieprofilPrognose({ anlageId }: Props) {
                     type="monotone"
                     dataKey="soc"
                     name="SoC"
-                    stroke="#3b82f6"
+                    stroke={COLORS.battery}
                     strokeWidth={2}
                     dot={false}
                     connectNulls
@@ -314,34 +324,17 @@ function PrognoseTooltip({ active, payload, label }: {
   if (!active || !payload) return null
 
   return (
-    <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg px-3 py-2 text-xs">
-      <p className="font-medium text-gray-900 dark:text-white mb-1">{label}</p>
+    <div className="bg-gray-900 dark:bg-gray-950 border border-gray-700 rounded-lg shadow-lg px-3 py-2 text-xs">
+      <p className="font-medium text-white mb-1">{label}</p>
       {payload.filter(p => p.value != null).map((p, i) => (
         <div key={i} className="flex items-center gap-2">
           <span className="w-2 h-2 rounded-full" style={{ backgroundColor: p.color }} />
-          <span className="text-gray-600 dark:text-gray-400">{p.name}:</span>
-          <span className="font-medium text-gray-900 dark:text-white">
-            {p.name === 'SoC' ? `${p.value.toFixed(1)}%` : `${Math.abs(p.value).toFixed(2)} kW`}
+          <span className="text-gray-300">{p.name}:</span>
+          <span className="font-medium text-white">
+            {p.name === 'SoC' ? `${p.value.toFixed(1)} %` : `${Math.abs(p.value).toFixed(2)} kW`}
           </span>
         </div>
       ))}
-    </div>
-  )
-}
-
-
-// ── KPI-Card ─────────────────────────────────────────────────────────────────
-
-function KpiCard({ icon, label, value, color }: {
-  icon: React.ReactNode; label: string; value: string; color?: string
-}) {
-  return (
-    <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 px-3 py-2">
-      <div className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400 mb-0.5">
-        {icon}
-        {label}
-      </div>
-      <div className={`text-sm font-semibold ${color ?? 'text-gray-900 dark:text-white'}`}>{value}</div>
     </div>
   )
 }

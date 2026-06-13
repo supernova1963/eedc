@@ -111,9 +111,9 @@ function KategorieSektion({
       >
         <div className="flex items-center gap-2">
           {open ? (
-            <ChevronDown className="h-4 w-4 text-gray-400" />
+            <ChevronDown className="h-4 w-4 text-gray-400 dark:text-gray-500" />
           ) : (
-            <ChevronRight className="h-4 w-4 text-gray-400" />
+            <ChevronRight className="h-4 w-4 text-gray-400 dark:text-gray-500" />
           )}
           <span className="font-medium text-sm text-gray-900 dark:text-white">
             {kategorieLabels[kategorie] || kategorie}
@@ -361,7 +361,7 @@ export default function DatenChecker() {
                   Monatsdaten-Abdeckung
                 </span>
                 <span className="text-sm text-gray-500">
-                  {result.monatsdaten_abdeckung.vorhanden} von {result.monatsdaten_abdeckung.erwartet} Monate ({result.monatsdaten_abdeckung.prozent}%)
+                  {result.monatsdaten_abdeckung.vorhanden} von {result.monatsdaten_abdeckung.erwartet} Monate ({result.monatsdaten_abdeckung.prozent} %)
                 </span>
               </div>
               <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2.5">

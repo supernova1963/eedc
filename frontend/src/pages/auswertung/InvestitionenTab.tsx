@@ -8,11 +8,10 @@ import {
   PiggyBank, Wallet, TrendingUp, Calendar,
   ChevronDown, ChevronRight, AlertTriangle
 } from 'lucide-react'
-import { Card, LoadingSpinner, FormelTooltip, fmtCalc } from '../../components/ui'
+import { Card, LoadingSpinner, FormelTooltip, fmtCalc, KPICard } from '../../components/ui'
 import ChartTooltip from '../../components/ui/ChartTooltip'
 import { useInvestitionen } from '../../hooks'
 import { investitionenApi, cockpitApi, type ROIDashboardResponse, type ROIKomponente, type CockpitUebersicht } from '../../api'
-import { KPICard } from './KPICard'
 import { COLORS, TYP_COLORS, TYP_LABELS } from './types'
 import type { useAktuellerStrompreis } from '../../hooks'
 
@@ -74,7 +73,7 @@ export function InvestitionenTab({ anlageId, strompreis, selectedYear = 'all' }:
       typ,
       label: TYP_LABELS[typ] || typ,
       kosten: invs.reduce((sum, inv) => sum + (inv.anschaffungskosten_gesamt || 0), 0),
-      color: TYP_COLORS[typ] || '#6b7280',
+      color: TYP_COLORS[typ] || TYP_COLORS['sonstiges'],
     })).filter(t => t.kosten > 0).sort((a, b) => b.kosten - a.kosten)
   }, [invByTyp])
 
@@ -105,7 +104,7 @@ export function InvestitionenTab({ anlageId, strompreis, selectedYear = 'all' }:
   if (investitionen.length === 0) {
     return (
       <Card className="text-center py-8">
-        <PiggyBank className="h-12 w-12 mx-auto text-gray-400 mb-4" />
+        <PiggyBank className="h-12 w-12 mx-auto text-gray-400 dark:text-gray-500 mb-4" />
         <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">
           Keine Investitionen erfasst
         </h3>
@@ -138,7 +137,7 @@ export function InvestitionenTab({ anlageId, strompreis, selectedYear = 'all' }:
                   outerRadius={80}
                   dataKey="kosten"
                   nameKey="label"
-                  label={({ label, percent }) => `${label}: ${(percent * 100).toFixed(0)}%`}
+                  label={({ label, percent }) => `${label}: ${(percent * 100).toFixed(0)} %`}
                   labelLine={false}
                 >
                   {kostenByTyp.map((entry, index) => (
@@ -181,8 +180,7 @@ export function InvestitionenTab({ anlageId, strompreis, selectedYear = 'all' }:
           unit="€"
           subtitle={`${investitionen.length} Komponenten`}
           icon={Wallet}
-          color="text-blue-500"
-          bgColor="bg-blue-50 dark:bg-blue-900/20"
+          color="blue"
           sicht="Gesamt-Anlage · Mehrkosten-Ansatz (Anschaffung minus Alternativkosten)"
           formel="Σ Anschaffungskosten − Alternativkosten"
           berechnung={roiData ? `${fmtCalc(roiData.gesamt_investition, 0)} € − ${fmtCalc(roiData.gesamt_investition - roiData.gesamt_relevante_kosten, 0)} € Alternativ` : undefined}
@@ -193,8 +191,7 @@ export function InvestitionenTab({ anlageId, strompreis, selectedYear = 'all' }:
           value={(roiData?.gesamt_jahres_einsparung || 0).toFixed(0)}
           unit="€/Jahr"
           icon={TrendingUp}
-          color="text-green-500"
-          bgColor="bg-green-50 dark:bg-green-900/20"
+          color="green"
           sicht="Gesamt-Anlage · Prognose auf Basis konfigurierter Parameter und aktueller Strompreise"
           formel="Einspeiseerlös + Eigenverbrauch-Ersparnis"
           berechnung={pvModulDetails ? `${fmtCalc(pvModulDetails.einspeise_erloes_euro as number, 2)} € + ${fmtCalc(pvModulDetails.ev_ersparnis_euro as number, 2)} €` : 'Σ aller Investitions-Einsparungen'}
@@ -206,20 +203,18 @@ export function InvestitionenTab({ anlageId, strompreis, selectedYear = 'all' }:
           unit="%"
           subtitle="pro Jahr"
           icon={TrendingUp}
-          color="text-purple-500"
-          bgColor="bg-purple-50 dark:bg-purple-900/20"
+          color="purple"
           sicht="Gesamt-Anlage · Jahres-ROI · Mehrkosten-Ansatz · Prognose"
           formel="Jahresersparnis ÷ Relevante Kosten × 100"
           berechnung={roiData && roiData.gesamt_relevante_kosten > 0 ? `${fmtCalc(roiData.gesamt_jahres_einsparung, 0)} € ÷ ${fmtCalc(roiData.gesamt_relevante_kosten, 0)} € × 100` : undefined}
-          ergebnis={roiData?.gesamt_roi_prozent ? `= ${roiData.gesamt_roi_prozent.toFixed(1)}% ROI p.a.` : undefined}
+          ergebnis={roiData?.gesamt_roi_prozent ? `= ${roiData.gesamt_roi_prozent.toFixed(1)} % ROI p.a.` : undefined}
         />
         <KPICard
           title="Amortisation"
           value={roiData?.gesamt_amortisation_jahre?.toFixed(1) || '—'}
           unit="Jahre"
           icon={Calendar}
-          color="text-amber-500"
-          bgColor="bg-amber-50 dark:bg-amber-900/20"
+          color="yellow"
           sicht="Gesamt-Anlage · Mehrkosten-Ansatz · Prognose (rechnerisch, ohne Berücksichtigung bisheriger Erträge)"
           formel="Relevante Kosten ÷ Jahresersparnis"
           berechnung={roiData && roiData.gesamt_jahres_einsparung > 0 ? `${fmtCalc(roiData.gesamt_relevante_kosten, 0)} € ÷ ${fmtCalc(roiData.gesamt_jahres_einsparung, 0)} €/Jahr` : undefined}
@@ -394,8 +389,8 @@ export function InvestitionenTab({ anlageId, strompreis, selectedYear = 'all' }:
                           <div className="flex items-center gap-2">
                             {isPVSystem && (
                               isExpanded
-                                ? <ChevronDown className="h-4 w-4 text-gray-400" />
-                                : <ChevronRight className="h-4 w-4 text-gray-400" />
+                                ? <ChevronDown className="h-4 w-4 text-gray-400 dark:text-gray-500" />
+                                : <ChevronRight className="h-4 w-4 text-gray-400 dark:text-gray-500" />
                             )}
                             {(isOrphanPVModule || isEmptyWR) && (
                               <span title={isOrphanPVModule ? 'PV-Modul ohne Wechselrichter-Zuordnung' : 'Wechselrichter ohne PV-Module'}>
@@ -404,7 +399,7 @@ export function InvestitionenTab({ anlageId, strompreis, selectedYear = 'all' }:
                             )}
                             {b.investition_bezeichnung}
                             {isPVSystem && (
-                              <span className="text-xs text-gray-400">
+                              <span className="text-xs text-gray-400 dark:text-gray-500">
                                 ({b.komponenten!.length} Komponenten)
                               </span>
                             )}
@@ -413,7 +408,7 @@ export function InvestitionenTab({ anlageId, strompreis, selectedYear = 'all' }:
                         <td className="px-4 py-3 text-sm text-gray-500">
                           <span
                             className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium"
-                            style={{ backgroundColor: `${TYP_COLORS[b.investition_typ] || '#6b7280'}20`, color: TYP_COLORS[b.investition_typ] || '#6b7280' }}
+                            style={{ backgroundColor: `${TYP_COLORS[b.investition_typ] || TYP_COLORS['sonstiges']}20`, color: TYP_COLORS[b.investition_typ] || TYP_COLORS['sonstiges'] }}
                           >
                             {TYP_LABELS[b.investition_typ] || b.investition_typ}
                           </span>
@@ -447,7 +442,7 @@ export function InvestitionenTab({ anlageId, strompreis, selectedYear = 'all' }:
                             sicht="Pro Investition · Jahres-ROI · Mehrkosten-Ansatz · Prognose"
                             formel="Ersparnis ÷ Mehrkosten × 100"
                             berechnung={`${fmtCalc(b.jahres_einsparung, 0)} € ÷ ${fmtCalc(b.relevante_kosten, 0)} € × 100`}
-                            ergebnis={b.roi_prozent ? `= ${b.roi_prozent.toFixed(1)}% p.a.` : 'nicht berechenbar'}
+                            ergebnis={b.roi_prozent ? `= ${b.roi_prozent.toFixed(1)} % p.a.` : 'nicht berechenbar'}
                           >
                             <span className="cursor-help border-b border-dotted border-gray-400">
                               {b.roi_prozent?.toFixed(1) || '—'}%
@@ -475,14 +470,14 @@ export function InvestitionenTab({ anlageId, strompreis, selectedYear = 'all' }:
                         >
                           <td className="px-4 py-2 text-sm text-gray-600 dark:text-gray-400 pl-10">
                             <span className="flex items-center gap-2">
-                              <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: TYP_COLORS[komp.typ] || '#6b7280' }} />
+                              <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: TYP_COLORS[komp.typ] || TYP_COLORS['sonstiges'] }} />
                               {komp.bezeichnung}
                             </span>
                           </td>
                           <td className="px-4 py-2 text-sm text-gray-500">
                             <span
                               className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium"
-                              style={{ backgroundColor: `${TYP_COLORS[komp.typ] || '#6b7280'}15`, color: TYP_COLORS[komp.typ] || '#6b7280' }}
+                              style={{ backgroundColor: `${TYP_COLORS[komp.typ] || TYP_COLORS['sonstiges']}15`, color: TYP_COLORS[komp.typ] || TYP_COLORS['sonstiges'] }}
                             >
                               {TYP_LABELS[komp.typ] || komp.typ}
                             </span>
@@ -494,12 +489,12 @@ export function InvestitionenTab({ anlageId, strompreis, selectedYear = 'all' }:
                             {komp.einsparung !== null ? (
                               <span className="text-green-500">{komp.einsparung.toFixed(0)} €</span>
                             ) : (
-                              <span className="text-gray-400 italic text-xs">via Module</span>
+                              <span className="text-gray-400 dark:text-gray-500 italic text-xs">via Module</span>
                             )}
                           </td>
-                          <td className="px-4 py-2 text-sm text-right text-gray-400" colSpan={2}>
+                          <td className="px-4 py-2 text-sm text-right text-gray-400 dark:text-gray-500" colSpan={2}>
                             {typeof komp.detail?.anteil_prozent === 'number' && (
-                              <span className="text-xs">{komp.detail.anteil_prozent.toFixed(0)}% Anteil</span>
+                              <span className="text-xs">{komp.detail.anteil_prozent.toFixed(0)} % Anteil</span>
                             )}
                             {typeof komp.detail?.hinweis === 'string' && (
                               <span className="text-xs italic">{komp.detail.hinweis}</span>

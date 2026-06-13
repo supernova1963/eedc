@@ -6,6 +6,8 @@ import { TrendingUp, TrendingDown, Minus, Calendar, Zap, Info } from 'lucide-rea
 import { Card, LoadingSpinner, Alert } from '../../components/ui'
 import ChartTooltip from '../../components/ui/ChartTooltip'
 import { aussichtenApi, LangfristPrognose } from '../../api/aussichten'
+import { CHART_COLORS, SOLL_IST_COLORS } from '../../lib'
+import { useChartTheme } from '../../context/ThemeContext'
 import {
   ResponsiveContainer,
   ComposedChart,
@@ -29,7 +31,7 @@ function TrendIcon({ richtung }: { richtung: string }) {
     case 'negativ':
       return <TrendingDown className="h-5 w-5 text-red-500" />
     default:
-      return <Minus className="h-5 w-5 text-gray-400" />
+      return <Minus className="h-5 w-5 text-gray-400 dark:text-gray-500" />
   }
 }
 
@@ -39,6 +41,7 @@ export default function LangfristTab({ anlageId }: Props) {
   const [error, setError] = useState<string | null>(null)
   const [monate, setMonate] = useState(12)
   const [showKonfidenz, setShowKonfidenz] = useState(true)
+  const achsen = useChartTheme()
 
   useEffect(() => {
     loadPrognose()
@@ -202,7 +205,7 @@ export default function LangfristTab({ anlageId }: Props) {
                   type="monotone"
                   dataKey="konfidenz"
                   name="Konfidenzband"
-                  fill="#3b82f6"
+                  fill={SOLL_IST_COLORS.soll}
                   fillOpacity={0.1}
                   stroke="none"
                 />
@@ -212,7 +215,7 @@ export default function LangfristTab({ anlageId }: Props) {
               <Bar
                 dataKey="pvgis"
                 name="PVGIS-Prognose"
-                fill="#9ca3af"
+                fill={achsen.referenz}
                 fillOpacity={0.5}
                 radius={[4, 4, 0, 0]}
               />
@@ -221,7 +224,7 @@ export default function LangfristTab({ anlageId }: Props) {
               <Bar
                 dataKey="trend"
                 name="Trend-korrigiert"
-                fill="#eab308"
+                fill={CHART_COLORS.erzeugung}
                 radius={[4, 4, 0, 0]}
               />
             </ComposedChart>
@@ -290,10 +293,10 @@ export default function LangfristTab({ anlageId }: Props) {
                   <td className="py-2 px-3 text-right font-semibold text-yellow-600">
                     {m.trend_korrigiert_kwh.toFixed(0)} kWh
                   </td>
-                  <td className="py-2 px-3 text-right text-gray-400">
+                  <td className="py-2 px-3 text-right text-gray-400 dark:text-gray-500">
                     {m.konfidenz_min_kwh.toFixed(0)} kWh
                   </td>
-                  <td className="py-2 px-3 text-right text-gray-400">
+                  <td className="py-2 px-3 text-right text-gray-400 dark:text-gray-500">
                     {m.konfidenz_max_kwh.toFixed(0)} kWh
                   </td>
                   <td className="py-2 px-3 text-right">
@@ -305,10 +308,10 @@ export default function LangfristTab({ anlageId }: Props) {
                           ? 'text-red-600'
                           : 'text-gray-600'
                       }>
-                        {(m.historische_performance_ratio * 100).toFixed(0)}%
+                        {(m.historische_performance_ratio * 100).toFixed(0)} %
                       </span>
                     ) : (
-                      <span className="text-gray-400">-</span>
+                      <span className="text-gray-400 dark:text-gray-500">-</span>
                     )}
                   </td>
                 </tr>

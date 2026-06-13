@@ -10,7 +10,7 @@ import { Card, LoadingSpinner, Alert, Select, KPICard } from '../components/ui'
 import ChartTooltip from '../components/ui/ChartTooltip'
 import { useSelectedAnlage } from '../hooks'
 import type { Anlage } from '../types'
-import { MONAT_KURZ } from '../lib'
+import { MONAT_KURZ, CHART_COLORS, KATEGORIE_FARBEN } from '../lib'
 import { investitionenApi } from '../api'
 import type { SonstigesDashboardResponse } from '../api/investitionen'
 import {
@@ -76,7 +76,7 @@ export default function SonstigesDashboard() {
               <Wrench className="h-12 w-12 mx-auto mb-4 opacity-50" />
               <p>Keine sonstigen Investitionen für diese Anlage erfasst.</p>
               <p className="text-sm mt-2">Füge eine sonstige Investition unter "Investitionen" hinzu.</p>
-              <p className="text-xs mt-1 text-gray-400">z.B. Mini-BHKW, Pelletofen, Mini-Wind, Brennstoffzelle</p>
+              <p className="text-xs mt-1 text-gray-400 dark:text-gray-500">z.B. Mini-BHKW, Pelletofen, Mini-Wind, Brennstoffzelle</p>
             </div>
           </Card>
         </>
@@ -290,10 +290,10 @@ function ErzeugerBlock({ investition, monatsdaten, zusammenfassung: z, selectorP
                   outerRadius={80}
                   paddingAngle={5}
                   dataKey="value"
-                  label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}
+                  label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)} %`}
                 >
-                  <Cell fill="#22c55e" />
-                  <Cell fill="#f59e0b" />
+                  <Cell fill={CHART_COLORS.eigenverbrauch} />
+                  <Cell fill={CHART_COLORS.einspeisung} />
                 </Pie>
                 <Tooltip content={<ChartTooltip unit="kWh" />} />
               </PieChart>
@@ -314,8 +314,8 @@ function ErzeugerBlock({ investition, monatsdaten, zusammenfassung: z, selectorP
                 <YAxis />
                 <Tooltip content={<ChartTooltip />} />
                 <Legend />
-                <Area type="monotone" dataKey="eigenverbrauch" stackId="1" fill="#22c55e" stroke="#16a34a" name="Eigenverbrauch" />
-                <Area type="monotone" dataKey="einspeisung" stackId="1" fill="#f59e0b" stroke="#d97706" name="Einspeisung" />
+                <Area type="monotone" dataKey="eigenverbrauch" stackId="1" fill={CHART_COLORS.eigenverbrauch} stroke={CHART_COLORS.eigenverbrauch} name="Eigenverbrauch" />
+                <Area type="monotone" dataKey="einspeisung" stackId="1" fill={CHART_COLORS.einspeisung} stroke={CHART_COLORS.einspeisung} name="Einspeisung" />
               </AreaChart>
             </ResponsiveContainer>
           </div>
@@ -461,10 +461,10 @@ function VerbraucherBlock({ investition, monatsdaten, zusammenfassung: z, select
                   outerRadius={80}
                   paddingAngle={5}
                   dataKey="value"
-                  label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}
+                  label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)} %`}
                 >
-                  <Cell fill="#22c55e" />
-                  <Cell fill="#ef4444" />
+                  <Cell fill={KATEGORIE_FARBEN.pv} />
+                  <Cell fill={KATEGORIE_FARBEN.netz} />
                 </Pie>
                 <Tooltip content={<ChartTooltip unit="kWh" />} />
               </PieChart>
@@ -485,8 +485,8 @@ function VerbraucherBlock({ investition, monatsdaten, zusammenfassung: z, select
                 <YAxis />
                 <Tooltip content={<ChartTooltip />} />
                 <Legend />
-                <Bar dataKey="bezug_pv" stackId="1" fill="#22c55e" name="PV-Strom" />
-                <Bar dataKey="bezug_netz" stackId="1" fill="#ef4444" name="Netzstrom" />
+                <Bar dataKey="bezug_pv" stackId="1" fill={KATEGORIE_FARBEN.pv} name="PV-Strom" />
+                <Bar dataKey="bezug_netz" stackId="1" fill={KATEGORIE_FARBEN.netz} name="Netzstrom" />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -621,8 +621,8 @@ function SpeicherBlock({ investition, monatsdaten, zusammenfassung: z, selectorP
               <YAxis />
               <Tooltip content={<ChartTooltip />} />
               <Legend />
-              <Bar dataKey="ladung" fill="#8b5cf6" name="Ladung" />
-              <Bar dataKey="entladung" fill="#22c55e" name="Entladung" />
+              <Bar dataKey="ladung" fill={CHART_COLORS.speicherLadung} name="Ladung" />
+              <Bar dataKey="entladung" fill={CHART_COLORS.speicherEntladung} name="Entladung" />
             </BarChart>
           </ResponsiveContainer>
         </div>
@@ -651,7 +651,7 @@ function SpeicherBlock({ investition, monatsdaten, zusammenfassung: z, selectorP
                     <td className="py-2 px-2">{md.name}</td>
                     <td className="text-right py-2 px-2 text-purple-600">{md.ladung.toFixed(1)}</td>
                     <td className="text-right py-2 px-2 text-green-600">{md.entladung.toFixed(1)}</td>
-                    <td className="text-right py-2 px-2">{effizienz.toFixed(1)}%</td>
+                    <td className="text-right py-2 px-2">{effizienz.toFixed(1)} %</td>
                   </tr>
                 )
               })}

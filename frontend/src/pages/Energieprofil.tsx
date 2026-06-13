@@ -208,7 +208,7 @@ export default function Energieprofil() {
                     Abdeckung: {stats.zeitraum.tage_mit_daten} von {stats.zeitraum.tage_gesamt} Tagen
                   </span>
                   <span className="text-sm font-bold text-emerald-700 dark:text-emerald-300">
-                    {stats.zeitraum.abdeckung_prozent}%
+                    {stats.zeitraum.abdeckung_prozent} %
                   </span>
                 </div>
                 <div className="w-full bg-emerald-200 dark:bg-emerald-800 rounded-full h-2">
@@ -262,7 +262,7 @@ export default function Energieprofil() {
                   <strong className="text-gray-700 dark:text-gray-200"> Bestehende Tage bleiben unverändert.</strong>
                   {' '}Sinnvoll nach Erstinstallation, längerem App-Stopp oder Sensor-Mapping-Änderungen.
                 </p>
-                <p className="text-xs text-gray-500 dark:text-gray-500 mt-2">
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
                   Möchtest du einen einzelnen Tag reparieren, der verzerrt aussieht? Nutze den Daten-Checker
                   (zeigt verdächtige Tage) und den Reload-Knopf in der Tagestabelle (mit Vorschau vor Übernahme).
                 </p>

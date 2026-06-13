@@ -9,6 +9,7 @@ import { Sun, Cloud, CloudSun, CloudRain, CloudSnow, CloudLightning, Thermometer
 import { Card, LoadingSpinner, Alert } from '../../components/ui'
 import ChartTooltip from '../../components/ui/ChartTooltip'
 import { wetterApi, SolarPrognose } from '../../api/wetter'
+import { CHART_COLORS, SOLAR_INTENSITAET } from '../../lib'
 import {
   ResponsiveContainer,
   ComposedChart,
@@ -74,7 +75,7 @@ const QUELLEN_KUERZEL: Record<string, { label: string; color: string }> = {
   icon_d2:              { label: 'ICON-D2', color: 'text-cyan-400' },
   icon_eu:              { label: 'ICON-EU', color: 'text-green-400' },
   ecmwf_ifs04:          { label: 'ECMWF', color: 'text-purple-400' },
-  best_match:           { label: 'Best Match', color: 'text-gray-400' },
+  best_match:           { label: 'Best Match', color: 'text-gray-400 dark:text-gray-500' },
 }
 
 
@@ -236,7 +237,7 @@ export default function KurzfristTab({ anlageId }: Props) {
                   </span>
                 )}
                 <div className="flex items-center gap-1 mt-1">
-                  <Thermometer className="h-3 w-3 text-gray-400" />
+                  <Thermometer className="h-3 w-3 text-gray-400 dark:text-gray-500" />
                   <span className="text-xs text-gray-500">
                     {tag.temperatur_max_c?.toFixed(0) ?? '-'}°C
                   </span>
@@ -293,14 +294,14 @@ export default function KurzfristTab({ anlageId }: Props) {
                     dataKey="pv_morgens"
                     name="Vormittag"
                     stackId="pv"
-                    fill="#f59e0b"
+                    fill={SOLAR_INTENSITAET[2]}
                   />
                   <Bar
                     yAxisId="left"
                     dataKey="pv_nachmittags"
                     name="Nachmittag"
                     stackId="pv"
-                    fill="#eab308"
+                    fill={SOLAR_INTENSITAET[1]}
                     radius={[4, 4, 0, 0]}
                   />
                 </>
@@ -309,7 +310,7 @@ export default function KurzfristTab({ anlageId }: Props) {
                   yAxisId="left"
                   dataKey="pv_kwh"
                   name="PV-Prognose"
-                  fill="#eab308"
+                  fill={CHART_COLORS.erzeugung}
                   radius={[4, 4, 0, 0]}
                 />
               )}
@@ -318,7 +319,7 @@ export default function KurzfristTab({ anlageId }: Props) {
                 type="monotone"
                 dataKey="temperatur"
                 name="Temperatur"
-                stroke="#ef4444"
+                stroke={CHART_COLORS.temperatur}
                 strokeWidth={2}
                 dot={{ r: 3 }}
               />
@@ -389,7 +390,7 @@ export default function KurzfristTab({ anlageId }: Props) {
                   </td>
                   {hasKaskade && (
                     <td className="py-2 px-3 text-right">
-                      <span className={`text-xs font-mono ${QUELLEN_KUERZEL[tag.datenquelle || 'best_match']?.color || 'text-gray-400'}`}>
+                      <span className={`text-xs font-mono ${QUELLEN_KUERZEL[tag.datenquelle || 'best_match']?.color || 'text-gray-400 dark:text-gray-500'}`}>
                         {QUELLEN_KUERZEL[tag.datenquelle || 'best_match']?.label || tag.datenquelle}
                       </span>
                     </td>

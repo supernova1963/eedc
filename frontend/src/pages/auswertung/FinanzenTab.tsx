@@ -5,11 +5,11 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer
 } from 'recharts'
 import { Euro, TrendingUp, Download, Wrench } from 'lucide-react'
-import { Card, Button, fmtCalc } from '../../components/ui'
+import { Card, Button, fmtCalc, KPICard } from '../../components/ui'
 import ChartTooltip from '../../components/ui/ChartTooltip'
 import { exportToCSV } from '../../utils/export'
-import { KPICard } from './KPICard'
 import { TabProps, COLORS, createMonatsZeitreihe } from './types'
+import { GELD_COLORS } from '../../lib'
 import { cockpitApi, KomponentenZeitreihe } from '../../api/cockpit'
 import type { Strompreis } from '../../types'
 
@@ -92,7 +92,7 @@ export function FinanzenTab({ data, stats, strompreis, alleTarife, anlageId, zei
   if (!strompreis) {
     return (
       <Card className="text-center py-8">
-        <Euro className="h-12 w-12 mx-auto text-gray-400 mb-4" />
+        <Euro className="h-12 w-12 mx-auto text-gray-400 dark:text-gray-500 mb-4" />
         <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">
           Strompreis erforderlich
         </h3>
@@ -141,8 +141,7 @@ export function FinanzenTab({ data, stats, strompreis, alleTarife, anlageId, zei
           unit="€"
           subtitle={hatMehrereTarife ? 'historische Tarife' : `${strompreis.einspeiseverguetung_cent_kwh.toFixed(1)} ct/kWh`}
           icon={TrendingUp}
-          color="text-green-500"
-          bgColor="bg-green-50 dark:bg-green-900/20"
+          color="green"
           formel={hatMehrereTarife ? "Σ (Einspeisung × Tarif) pro Monat" : "Einspeisung × Einspeisevergütung"}
           berechnung={`${fmtCalc(stats.gesamtEinspeisung, 0)} kWh gesamt`}
           ergebnis={`= ${fmtCalc(gesamt.einspeiseErloes, 2)} €`}
@@ -153,8 +152,7 @@ export function FinanzenTab({ data, stats, strompreis, alleTarife, anlageId, zei
           unit="€"
           subtitle="vermiedener Netzbezug"
           icon={Euro}
-          color="text-purple-500"
-          bgColor="bg-purple-50 dark:bg-purple-900/20"
+          color="purple"
           formel={hatMehrereTarife ? "Σ (Eigenverbrauch × Tarif) pro Monat" : "Eigenverbrauch × Netzbezugspreis"}
           berechnung={hatMehrereTarife
             ? `${fmtCalc(stats.gesamtEigenverbrauch, 0)} kWh gesamt`
@@ -167,8 +165,7 @@ export function FinanzenTab({ data, stats, strompreis, alleTarife, anlageId, zei
           unit="€"
           subtitle="inkl. Grundpreis, historische Tarife"
           icon={Euro}
-          color="text-red-500"
-          bgColor="bg-red-50 dark:bg-red-900/20"
+          color="red"
           formel="Σ (Netzbezug × Tarif + Grundpreis) pro Monat"
           berechnung={`${fmtCalc(stats.gesamtNetzbezug, 0)} kWh gesamt`}
           ergebnis={`= ${fmtCalc(gesamt.netzbezugKosten, 2)} €`}
@@ -187,8 +184,7 @@ export function FinanzenTab({ data, stats, strompreis, alleTarife, anlageId, zei
                   : 'Gesamt'
           }
           icon={Euro}
-          color="text-blue-500"
-          bgColor="bg-blue-50 dark:bg-blue-900/20"
+          color="blue"
           formel={
             gesamt.sonstigeErtraege > 0 || gesamt.sonderkosten > 0
               ? "Einspeiseerlös + EV-Ersparnis + Sonstige Erträge − Sonderkosten"
@@ -239,7 +235,7 @@ export function FinanzenTab({ data, stats, strompreis, alleTarife, anlageId, zei
               <Bar dataKey="ev_ersparnis" name="EV-Ersparnis" fill={COLORS.consumption} stackId="pos" />
               <Bar dataKey="netzbezug_kosten" name="Netzbezug (negativ)" fill={COLORS.grid} />
               {gesamt.sonderkosten > 0 && (
-                <Bar dataKey="sonderkosten" name="Sonderkosten" fill="#f59e0b" />
+                <Bar dataKey="sonderkosten" name="Sonderkosten" fill={GELD_COLORS.kosten} />
               )}
             </BarChart>
           </ResponsiveContainer>
@@ -276,7 +272,7 @@ export function FinanzenTab({ data, stats, strompreis, alleTarife, anlageId, zei
             {gesamt.nettoNachSonderkosten.toFixed(0)} €
           </span>
           {gesamt.sonderkosten > 0 && (
-            <span className="text-gray-400 text-xs">(nach {gesamt.sonderkosten.toFixed(0)} € Sonderkosten)</span>
+            <span className="text-gray-400 dark:text-gray-500 text-xs">(nach {gesamt.sonderkosten.toFixed(0)} € Sonderkosten)</span>
           )}
         </div>
       </Card>

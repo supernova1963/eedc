@@ -33,10 +33,11 @@ import {
   LineChart,
   Line,
 } from 'recharts'
-import { Card, Alert, LoadingSpinner, EmptyState, FormelTooltip, fmtCalc, QuelleBadge } from '../components/ui'
+import { Card, Alert, LoadingSpinner, EmptyState, FormelTooltip, fmtCalc, QuelleBadge, KPICard } from '../components/ui'
 import ChartTooltip from '../components/ui/ChartTooltip'
 import { useSelectedAnlage, useAktuellerStrompreis } from '../hooks'
 import { investitionenApi, type ROIDashboardResponse, type ROIBerechnung, type SpeicherRoiDetail } from '../api'
+import { TYP_COLORS, GELD_COLORS } from '../lib'
 
 const typIcons: Record<string, React.ElementType> = {
   'e-auto': Car,
@@ -47,17 +48,6 @@ const typIcons: Record<string, React.ElementType> = {
   'pv-module': Sun,
   'balkonkraftwerk': LayoutGrid,
   'sonstiges': Settings2,
-}
-
-const typColors: Record<string, string> = {
-  'e-auto': '#3b82f6',
-  'waermepumpe': '#f97316',
-  'speicher': '#22c55e',
-  'wallbox': '#a855f7',
-  'wechselrichter': '#06b6d4',
-  'pv-module': '#eab308',
-  'balkonkraftwerk': '#14b8a6',
-  'sonstiges': '#6b7280',
 }
 
 const typLabels: Record<string, string> = {
@@ -221,7 +211,7 @@ export default function ROIDashboard() {
       .map(([typ, value]) => ({
         name: typLabels[typ] || typ,
         value: Math.round(value),
-        color: typColors[typ] || '#6b7280',
+        color: TYP_COLORS[typ] || TYP_COLORS['sonstiges'],
       }))
       .filter(d => d.value > 0)
   }, [roiData])
@@ -239,7 +229,7 @@ export default function ROIDashboard() {
       einsparung: b.jahres_einsparung,
       amortisation: b.amortisation_jahre ?? 0,
       typ: b.investition_typ,
-      color: typColors[b.investition_typ] || '#6b7280',
+      color: TYP_COLORS[b.investition_typ] || TYP_COLORS['sonstiges'],
     }))
   }, [roiData])
 
@@ -370,8 +360,7 @@ export default function ROIDashboard() {
               title="Gesamtinvestition"
               value={`${roiData.gesamt_investition.toLocaleString('de-DE')} €`}
               subtitle={`Relevant: ${roiData.gesamt_relevante_kosten.toLocaleString('de-DE')} €`}
-              color="text-blue-500"
-              bgColor="bg-blue-50 dark:bg-blue-900/20"
+              color="blue"
               sicht="Gesamt-Anlage · Vollkosten + Mehrkosten-Ansatz im Untertitel"
               formel="Σ Anschaffungskosten aller Investitionen"
               berechnung={`Relevant = Gesamt − Alternativkosten`}
@@ -381,21 +370,19 @@ export default function ROIDashboard() {
               icon={TrendingUp}
               title="Jährliche Einsparung"
               value={`${roiData.gesamt_jahres_einsparung.toLocaleString('de-DE')} €`}
-              subtitle={roiData.gesamt_roi_prozent ? `ROI: ${roiData.gesamt_roi_prozent}%` : 'ROI: -'}
-              color="text-green-500"
-              bgColor="bg-green-50 dark:bg-green-900/20"
+              subtitle={roiData.gesamt_roi_prozent ? `ROI: ${roiData.gesamt_roi_prozent} %` : 'ROI: -'}
+              color="green"
               sicht="Gesamt-Anlage · Jahres-Prognose · Mehrkosten-Ansatz"
               formel="Σ Einsparungen aller Investitionen"
               berechnung={roiData.gesamt_relevante_kosten > 0 ? `ROI = Einsparung ÷ Kosten × 100` : undefined}
-              ergebnis={roiData.gesamt_roi_prozent ? `= ${roiData.gesamt_roi_prozent}% ROI` : undefined}
+              ergebnis={roiData.gesamt_roi_prozent ? `= ${roiData.gesamt_roi_prozent} % ROI` : undefined}
             />
             <KPICard
               icon={Clock}
               title="Amortisation"
               value={roiData.gesamt_amortisation_jahre ? `${roiData.gesamt_amortisation_jahre} Jahre` : '-'}
               subtitle="Bis zur Kostendeckung"
-              color="text-orange-500"
-              bgColor="bg-orange-50 dark:bg-orange-900/20"
+              color="orange"
               sicht="Gesamt-Anlage · Mehrkosten-Ansatz · Prognose (rechnerisch, ohne bisherige Erträge)"
               formel="Relevante Kosten ÷ Jährliche Einsparung"
               berechnung={roiData.gesamt_jahres_einsparung > 0 ? `${fmtCalc(roiData.gesamt_relevante_kosten, 0)} € ÷ ${fmtCalc(roiData.gesamt_jahres_einsparung, 0)} €/Jahr` : undefined}
@@ -406,8 +393,7 @@ export default function ROIDashboard() {
               title="CO2-Einsparung"
               value={`${roiData.gesamt_co2_einsparung_kg.toLocaleString('de-DE')} kg`}
               subtitle="pro Jahr"
-              color="text-emerald-500"
-              bgColor="bg-emerald-50 dark:bg-emerald-900/20"
+              color="green"
               sicht="Gesamt-Anlage · Jahres-Prognose"
               formel="Σ CO2-Einsparungen aller Investitionen"
               berechnung="Je nach Investitionstyp unterschiedlich"
@@ -444,7 +430,7 @@ export default function ROIDashboard() {
                       type="monotone"
                       dataKey="kumulierte_einsparung"
                       name="Kumulierte Einsparung"
-                      stroke="#22c55e"
+                      stroke={GELD_COLORS.ersparnis}
                       strokeWidth={2}
                       dot={false}
                     />
@@ -452,7 +438,7 @@ export default function ROIDashboard() {
                       type="monotone"
                       dataKey="investition"
                       name="Investition"
-                      stroke="#ef4444"
+                      stroke={GELD_COLORS.kosten}
                       strokeWidth={2}
                       strokeDasharray="5 5"
                       dot={false}
@@ -483,7 +469,7 @@ export default function ROIDashboard() {
                       cy="50%"
                       outerRadius={100}
                       label={({ name, percent }) =>
-                        `${name}: ${(percent * 100).toFixed(0)}%`
+                        `${name}: ${(percent * 100).toFixed(0)} %`
                       }
                       labelLine={true}
                     >
@@ -517,8 +503,8 @@ export default function ROIDashboard() {
                     }
                   />} />
                   <Legend />
-                  <Bar dataKey="kosten" fill="#94a3b8" name="Relevante Kosten" />
-                  <Bar dataKey="einsparung" fill="#22c55e" name="Jährliche Einsparung" />
+                  <Bar dataKey="kosten" fill={GELD_COLORS.kosten} name="Relevante Kosten" />
+                  <Bar dataKey="einsparung" fill={GELD_COLORS.ersparnis} name="Jährliche Einsparung" />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -572,7 +558,7 @@ export default function ROIDashboard() {
                                   else next.add(b.investition_id)
                                   return next
                                 })}
-                                className="text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 flex-shrink-0"
+                                className="text-gray-400 dark:text-gray-500 hover:text-gray-700 dark:hover:text-gray-200 flex-shrink-0"
                                 aria-label="Speicher-Details ein-/ausklappen"
                               >
                                 {isExpanded
@@ -584,7 +570,7 @@ export default function ROIDashboard() {
                             )}
                             <Icon
                               className="h-4 w-4 flex-shrink-0"
-                              style={{ color: typColors[b.investition_typ] }}
+                              style={{ color: TYP_COLORS[b.investition_typ] }}
                             />
                             <div>
                               <p className="text-sm font-medium text-gray-900 dark:text-white">
@@ -615,14 +601,14 @@ export default function ROIDashboard() {
                               sicht="Pro Investition · Jahres-ROI · Mehrkosten-Ansatz · Prognose"
                               formel="Jahresersparnis ÷ Relevante Kosten × 100"
                               berechnung={`${fmtCalc(b.jahres_einsparung, 0)} € ÷ ${fmtCalc(b.relevante_kosten, 0)} € × 100`}
-                              ergebnis={`= ${b.roi_prozent}% p.a.`}
+                              ergebnis={`= ${b.roi_prozent} % p.a.`}
                             >
                               <span className={b.roi_prozent >= 10 ? 'text-green-600 dark:text-green-400 cursor-help border-b border-dotted border-green-400' : 'text-gray-900 dark:text-white cursor-help border-b border-dotted border-gray-400'}>
-                                {b.roi_prozent}%
+                                {b.roi_prozent} %
                               </span>
                             </FormelTooltip>
                           ) : (
-                            <span className="text-gray-400">-</span>
+                            <span className="text-gray-400 dark:text-gray-500">-</span>
                           )}
                         </td>
                         <td className="px-4 py-3 whitespace-nowrap text-right text-sm">
@@ -638,7 +624,7 @@ export default function ROIDashboard() {
                               </span>
                             </FormelTooltip>
                           ) : (
-                            <span className="text-gray-400">-</span>
+                            <span className="text-gray-400 dark:text-gray-500">-</span>
                           )}
                         </td>
                         <td className="px-4 py-3 whitespace-nowrap text-right text-sm text-emerald-600 dark:text-emerald-400">
@@ -668,7 +654,7 @@ export default function ROIDashboard() {
                       {roiData.gesamt_jahres_einsparung.toLocaleString('de-DE')} €
                     </td>
                     <td className="px-4 py-3 text-right text-sm text-gray-900 dark:text-white">
-                      {roiData.gesamt_roi_prozent ? `${roiData.gesamt_roi_prozent}%` : '-'}
+                      {roiData.gesamt_roi_prozent ? `${roiData.gesamt_roi_prozent} %` : '-'}
                     </td>
                     <td className="px-4 py-3 text-right text-sm text-gray-900 dark:text-white">
                       {roiData.gesamt_amortisation_jahre ? `${roiData.gesamt_amortisation_jahre} J.` : '-'}
@@ -693,45 +679,3 @@ export default function ROIDashboard() {
   )
 }
 
-interface KPICardProps {
-  icon: React.ElementType
-  title: string
-  value: string
-  subtitle?: string
-  color: string
-  bgColor: string
-  // Tooltip-Props
-  formel?: string
-  berechnung?: string
-  ergebnis?: string
-  sicht?: string
-}
-
-function KPICard({ icon: Icon, title, value, subtitle, color, bgColor, formel, berechnung, ergebnis, sicht }: KPICardProps) {
-  const valueContent = (
-    <span className="text-2xl font-bold text-gray-900 dark:text-white">{value}</span>
-  )
-
-  return (
-    <Card>
-      <div className="flex items-start gap-4">
-        <div className={`p-3 rounded-lg ${bgColor}`}>
-          <Icon className={`h-6 w-6 ${color}`} />
-        </div>
-        <div className="flex-1 min-w-0">
-          <p className="text-sm text-gray-500 dark:text-gray-400">{title}</p>
-          {formel ? (
-            <FormelTooltip formel={formel} berechnung={berechnung} ergebnis={ergebnis} sicht={sicht}>
-              {valueContent}
-            </FormelTooltip>
-          ) : (
-            valueContent
-          )}
-          {subtitle && (
-            <p className="text-sm text-gray-500 dark:text-gray-400">{subtitle}</p>
-          )}
-        </div>
-      </div>
-    </Card>
-  )
-}

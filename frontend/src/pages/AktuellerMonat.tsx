@@ -15,7 +15,8 @@ import {
   FileSpreadsheet, Plug, Cloud, Upload, FileText,
 } from 'lucide-react'
 import { Card, Button, Select, KPICard, FormelTooltip, fmtCalc } from '../components/ui'
-import { MONAT_NAMEN } from '../lib/constants'
+import { MONAT_NAMEN, CHART_COLORS, GELD_COLORS, STATUS_COLORS, SOLL_IST_COLORS } from '../lib'
+import { useChartTheme } from '../context/ThemeContext'
 import ChartTooltip from '../components/ui/ChartTooltip'
 import { DataLoadingState } from '../components/common'
 import { useSelectedAnlage, useApiData } from '../hooks'
@@ -24,25 +25,6 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
   PieChart, Pie, Cell,
 } from 'recharts'
-
-// ─── Colors ──────────────────────────────────────────────────────────────────
-
-const COLORS = {
-  erzeugung: '#f59e0b',
-  einspeisung: '#10b981',
-  eigenverbrauch: '#8b5cf6',
-  netzbezug: '#ef4444',
-  speicher: '#3b82f6',
-  wp: '#f97316',
-  emob: '#a855f7',
-  bkw: '#eab308',
-  erloese: '#10b981',
-  kosten: '#ef4444',
-  ersparnis: '#3b82f6',
-  netto: '#8b5cf6',
-  soll: '#9ca3af',
-  vorjahr: '#94a3b8',
-}
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -89,6 +71,7 @@ function QuelleBadge({ quelle, aktiv }: { quelle: string; aktiv: boolean }) {
 
 export default function AktuellerMonat() {
   const navigate = useNavigate()
+  const achsen = useChartTheme()
   const { anlagen, selectedAnlageId, setSelectedAnlageId, loading: anlagenLoading } = useSelectedAnlage()
   const [refreshing, setRefreshing] = useState(false)
 
@@ -114,18 +97,18 @@ export default function AktuellerMonat() {
   const energieBilanzData = useMemo(() => {
     if (!data) return []
     return [
-      { name: 'Erzeugung', value: data.pv_erzeugung_kwh || 0, quellefeld: 'pv_erzeugung_kwh', fill: '#f59e0b' },
-      { name: 'Einspeisung', value: data.einspeisung_kwh || 0, quellefeld: 'einspeisung_kwh', fill: '#10b981' },
-      { name: 'Eigenverbr.', value: data.eigenverbrauch_kwh || 0, quellefeld: null, fill: '#8b5cf6' },
-      { name: 'Netzbezug', value: data.netzbezug_kwh || 0, quellefeld: 'netzbezug_kwh', fill: '#ef4444' },
+      { name: 'Erzeugung', value: data.pv_erzeugung_kwh || 0, quellefeld: 'pv_erzeugung_kwh', fill: CHART_COLORS.erzeugung },
+      { name: 'Einspeisung', value: data.einspeisung_kwh || 0, quellefeld: 'einspeisung_kwh', fill: CHART_COLORS.einspeisung },
+      { name: 'Eigenverbr.', value: data.eigenverbrauch_kwh || 0, quellefeld: null, fill: CHART_COLORS.eigenverbrauch },
+      { name: 'Netzbezug', value: data.netzbezug_kwh || 0, quellefeld: 'netzbezug_kwh', fill: CHART_COLORS.netzbezug },
     ].filter(d => d.value > 0)
   }, [data])
 
   const verteilungData = useMemo(() => {
     if (!data || !data.pv_erzeugung_kwh) return []
     return [
-      { name: 'Eigenverbrauch', value: data.eigenverbrauch_kwh || 0, color: COLORS.eigenverbrauch },
-      { name: 'Einspeisung', value: data.einspeisung_kwh || 0, color: COLORS.einspeisung },
+      { name: 'Eigenverbrauch', value: data.eigenverbrauch_kwh || 0, color: CHART_COLORS.eigenverbrauch },
+      { name: 'Einspeisung', value: data.einspeisung_kwh || 0, color: CHART_COLORS.einspeisung },
     ].filter(d => d.value > 0)
   }, [data])
 
@@ -175,28 +158,28 @@ export default function AktuellerMonat() {
     let cum = 0
 
     if (data.einspeise_erloes_euro !== null) {
-      items.push({ name: 'Einspeise', offset: cum, wert: data.einspeise_erloes_euro, fill: COLORS.erloese, label: `+${fmtCalc(data.einspeise_erloes_euro, 2)} €` })
+      items.push({ name: 'Einspeise', offset: cum, wert: data.einspeise_erloes_euro, fill: CHART_COLORS.einspeiseErloes, label: `+${fmtCalc(data.einspeise_erloes_euro, 2)} €` })
       cum += data.einspeise_erloes_euro
     }
     if (data.ev_ersparnis_euro !== null) {
-      items.push({ name: 'Eigenverbr.', offset: cum, wert: data.ev_ersparnis_euro, fill: COLORS.ersparnis, label: `+${fmtCalc(data.ev_ersparnis_euro, 2)} €` })
+      items.push({ name: 'Eigenverbr.', offset: cum, wert: data.ev_ersparnis_euro, fill: CHART_COLORS.evErsparnis, label: `+${fmtCalc(data.ev_ersparnis_euro, 2)} €` })
       cum += data.ev_ersparnis_euro
     }
     if (data.emob_ersparnis_euro !== null) {
-      items.push({ name: 'eMob', offset: cum, wert: data.emob_ersparnis_euro, fill: COLORS.emob, label: `+${fmtCalc(data.emob_ersparnis_euro, 2)} €` })
+      items.push({ name: 'eMob', offset: cum, wert: data.emob_ersparnis_euro, fill: CHART_COLORS.emobErsparnis, label: `+${fmtCalc(data.emob_ersparnis_euro, 2)} €` })
       cum += data.emob_ersparnis_euro
     }
     if (data.wp_ersparnis_euro !== null) {
-      items.push({ name: 'WP', offset: cum, wert: data.wp_ersparnis_euro, fill: COLORS.wp, label: `+${fmtCalc(data.wp_ersparnis_euro, 2)} €` })
+      items.push({ name: 'WP', offset: cum, wert: data.wp_ersparnis_euro, fill: CHART_COLORS.wpErsparnis, label: `+${fmtCalc(data.wp_ersparnis_euro, 2)} €` })
       cum += data.wp_ersparnis_euro
     }
     if (data.netzbezug_kosten_euro !== null && data.netzbezug_kosten_euro > 0) {
       cum -= data.netzbezug_kosten_euro
       // Balken zeigt von cum (nach Abzug) bis cum+kosten (vor Abzug) → visualisiert den Abzug
-      items.push({ name: 'Netzbezug', offset: cum, wert: data.netzbezug_kosten_euro, fill: COLORS.kosten, label: `−${fmtCalc(data.netzbezug_kosten_euro, 2)} €` })
+      items.push({ name: 'Netzbezug', offset: cum, wert: data.netzbezug_kosten_euro, fill: GELD_COLORS.kosten, label: `−${fmtCalc(data.netzbezug_kosten_euro, 2)} €` })
     }
     if (gesamtnettoertrag !== null) {
-      items.push({ name: 'Gesamt', offset: 0, wert: gesamtnettoertrag, fill: gesamtnettoertrag >= 0 ? '#059669' : '#dc2626', label: `${fmtEuro(gesamtnettoertrag)} €` })
+      items.push({ name: 'Gesamt', offset: 0, wert: gesamtnettoertrag, fill: gesamtnettoertrag >= 0 ? GELD_COLORS.netto : GELD_COLORS.kosten, label: `${fmtEuro(gesamtnettoertrag)} €` })
     }
     return items
   }, [data, gesamtnettoertrag])
@@ -299,7 +282,7 @@ export default function AktuellerMonat() {
         <Card>
           <div className="p-6">
             <div className="flex items-start gap-4 mb-6">
-              <AlertCircle className="h-8 w-8 text-gray-400 flex-shrink-0 mt-0.5" />
+              <AlertCircle className="h-8 w-8 text-gray-400 dark:text-gray-500 flex-shrink-0 mt-0.5" />
               <div>
                 <p className="text-lg font-medium text-gray-900 dark:text-white">
                   Keine Daten für {data.monat_name} {data.jahr}
@@ -395,7 +378,7 @@ export default function AktuellerMonat() {
             icon={Home}
             color="green"
             subtitle={vj?.autarkie_prozent !== undefined
-              ? `VJ: ${fmt(vj.autarkie_prozent, 0)}%`
+              ? `VJ: ${fmt(vj.autarkie_prozent, 0)} %`
               : undefined}
             formel="Eigenverbrauch ÷ Gesamtverbrauch × 100"
             berechnung={data.eigenverbrauch_kwh !== null && data.gesamtverbrauch_kwh !== null
@@ -444,7 +427,7 @@ export default function AktuellerMonat() {
                           </text>
                           {info && (
                             <circle cx={-2} cy={1} r={3.5} className={quelleColor(info.quelle).replace('bg-', 'fill-')}
-                              fill={info.quelle === 'ha_statistics' || info.quelle === 'ha_sensor' ? '#22c55e' : info.quelle === 'local_connector' ? '#3b82f6' : '#9ca3af'}
+                              fill={info.quelle === 'ha_statistics' || info.quelle === 'ha_sensor' ? STATUS_COLORS.ok : info.quelle === 'local_connector' ? STATUS_COLORS.info : achsen.referenz}
                             >
                               <title>{quelleLabel(info.quelle)}</title>
                             </circle>
@@ -481,7 +464,7 @@ export default function AktuellerMonat() {
                         cy="50%"
                         innerRadius={45}
                         outerRadius={75}
-                        label={({ percent }) => `${(percent * 100).toFixed(0)}%`}
+                        label={({ percent }) => `${(percent * 100).toFixed(0)} %`}
                         labelLine={false}
                       >
                         {verteilungData.map((entry, index) => (
@@ -495,14 +478,14 @@ export default function AktuellerMonat() {
                 <div className="mt-2 space-y-2 text-sm">
                   <div className="flex justify-between">
                     <span className="flex items-center gap-2">
-                      <span className="w-3 h-3 rounded-full" style={{ backgroundColor: COLORS.eigenverbrauch }} />
+                      <span className="w-3 h-3 rounded-full" style={{ backgroundColor: CHART_COLORS.eigenverbrauch }} />
                       <span className="text-gray-500">Eigenverbrauch:</span>
                     </span>
                     <span className="font-medium">{fmt(data.eigenverbrauch_kwh)} kWh</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="flex items-center gap-2">
-                      <span className="w-3 h-3 rounded-full" style={{ backgroundColor: COLORS.einspeisung }} />
+                      <span className="w-3 h-3 rounded-full" style={{ backgroundColor: CHART_COLORS.einspeisung }} />
                       <span className="text-gray-500">Einspeisung:</span>
                     </span>
                     <span className="font-medium">{fmt(data.einspeisung_kwh)} kWh</span>
@@ -517,14 +500,14 @@ export default function AktuellerMonat() {
                           : undefined}
                         ergebnis={`= ${fmtCalc(data.eigenverbrauch_quote_prozent, 1)} %`}
                       >
-                        <span className="font-medium">{fmt(data.eigenverbrauch_quote_prozent, 0)}%</span>
+                        <span className="font-medium">{fmt(data.eigenverbrauch_quote_prozent, 0)} %</span>
                       </FormelTooltip>
                     </div>
                   )}
                 </div>
               </>
             ) : (
-              <p className="text-gray-400 text-sm text-center py-8">Keine Verteilungsdaten</p>
+              <p className="text-gray-400 dark:text-gray-500 text-sm text-center py-8">Keine Verteilungsdaten</p>
             )}
           </Card>
         </div>
@@ -544,8 +527,8 @@ export default function AktuellerMonat() {
                 <YAxis tickFormatter={vorjahrFormatter} width={90} />
                 <Tooltip content={<ChartTooltip unit="kWh" />} />
                 <Legend />
-                <Bar dataKey="Aktuell" fill={COLORS.erzeugung} radius={[4, 4, 0, 0]} />
-                <Bar dataKey="Vorjahr" fill={COLORS.vorjahr} radius={[4, 4, 0, 0]} />
+                <Bar dataKey="Aktuell" fill={CHART_COLORS.erzeugung} radius={[4, 4, 0, 0]} />
+                <Bar dataKey="Vorjahr" fill={achsen.referenz} radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -582,7 +565,7 @@ export default function AktuellerMonat() {
                         berechnung={`${fmtCalc(data.speicher_entladung_kwh, 0)} kWh ÷ ${fmtCalc(data.speicher_ladung_kwh, 0)} kWh × 100`}
                         ergebnis={`= ${fmtCalc(data.speicher_entladung_kwh / data.speicher_ladung_kwh * 100, 1)} %`}
                       >
-                        <span className="font-medium">{fmt(data.speicher_entladung_kwh / data.speicher_ladung_kwh * 100, 0)}%</span>
+                        <span className="font-medium">{fmt(data.speicher_entladung_kwh / data.speicher_ladung_kwh * 100, 0)} %</span>
                       </FormelTooltip>
                     </div>
                   )}
@@ -606,13 +589,13 @@ export default function AktuellerMonat() {
                     <span className="font-medium">{fmt(data.wp_waerme_kwh)} kWh</span>
                   </div>
                   {(data.wp_heizung_kwh ?? 0) > 0 && (
-                    <div className="flex justify-between pl-3 text-gray-400">
+                    <div className="flex justify-between pl-3 text-gray-400 dark:text-gray-500">
                       <span>Heizung:</span>
                       <span>{fmt(data.wp_heizung_kwh)} kWh</span>
                     </div>
                   )}
                   {(data.wp_warmwasser_kwh ?? 0) > 0 && (
-                    <div className="flex justify-between pl-3 text-gray-400">
+                    <div className="flex justify-between pl-3 text-gray-400 dark:text-gray-500">
                       <span>Warmwasser:</span>
                       <span>{fmt(data.wp_warmwasser_kwh)} kWh</span>
                     </div>
@@ -689,7 +672,7 @@ export default function AktuellerMonat() {
                     if (!active || !payload?.length) return null
                     const p = payload[0]?.payload
                     return p ? (
-                      <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 text-sm shadow">
+                      <div className="bg-gray-900 dark:bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm shadow-lg text-white">
                         <span className="font-medium">{p.name}:</span> {p.label}
                       </div>
                     ) : null
@@ -792,6 +775,7 @@ export default function AktuellerMonat() {
                 <div className={`rounded-xl p-5 text-center border-2 ${gesamtnettoertrag >= 0 ? 'border-green-300 dark:border-green-700 bg-green-50/50 dark:bg-green-900/20' : 'border-red-300 dark:border-red-700 bg-red-50/50 dark:bg-red-900/20'}`}>
                   <p className="text-sm font-medium text-gray-500 dark:text-gray-400 mb-2">Gesamtnettoertrag</p>
                   <FormelTooltip formel={formel} berechnung={berechnung} ergebnis={`= ${fmtCalc(gesamtnettoertrag, 2)} €`}>
+                    {/* text-5xl: dokumentierte Ausnahme (Monatsbericht-Hero-Zahl, Style-Guide A1) */}
                     <span className={`text-5xl font-bold cursor-help ${gesamtnettoertrag >= 0 ? 'text-green-500' : 'text-red-500'}`}>
                       {fmtEuro(gesamtnettoertrag)}
                     </span>
@@ -820,8 +804,8 @@ export default function AktuellerMonat() {
                   <YAxis tickFormatter={sollIstFormatter} width={90} />
                   <Tooltip content={<ChartTooltip unit="kWh" />} />
                   <Legend />
-                  <Bar dataKey="IST" fill={COLORS.erzeugung} radius={[4, 4, 0, 0]} />
-                  <Bar dataKey="SOLL" fill={COLORS.soll} radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="IST" fill={SOLL_IST_COLORS.ist} radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="SOLL" fill={SOLL_IST_COLORS.soll} radius={[4, 4, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -833,11 +817,12 @@ export default function AktuellerMonat() {
                   berechnung={`${fmtCalc(data.pv_erzeugung_kwh, 0)} kWh ÷ ${fmtCalc(data.soll_pv_kwh, 0)} kWh × 100`}
                   ergebnis={`= ${fmtCalc(data.pv_erzeugung_kwh! / data.soll_pv_kwh! * 100, 1)} %`}
                 >
+                  {/* text-5xl: dokumentierte Ausnahme (Monatsbericht-Hero-Zahl, Style-Guide A1) */}
                   <p className={`text-5xl font-bold ${data.pv_erzeugung_kwh! >= data.soll_pv_kwh! ? 'text-green-500' : 'text-orange-500'}`}>
-                    {fmt(data.pv_erzeugung_kwh! / data.soll_pv_kwh! * 100, 0)}%
+                    {fmt(data.pv_erzeugung_kwh! / data.soll_pv_kwh! * 100, 0)} %
                   </p>
                 </FormelTooltip>
-                <p className="text-sm text-gray-400 mt-2">
+                <p className="text-sm text-gray-400 dark:text-gray-500 mt-2">
                   {fmt(data.pv_erzeugung_kwh)} von {fmt(data.soll_pv_kwh)} kWh
                 </p>
               </div>

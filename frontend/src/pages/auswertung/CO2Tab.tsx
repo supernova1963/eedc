@@ -5,12 +5,11 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine
 } from 'recharts'
 import { Leaf, Download, Sprout } from 'lucide-react'
-import { Card, Button, fmtCalc } from '../../components/ui'
+import { Card, Button, fmtCalc, KPICard } from '../../components/ui'
 import ChartTooltip from '../../components/ui/ChartTooltip'
 import { exportToCSV } from '../../utils/export'
-import { TYP_LABELS } from '../../lib/constants'
+import { TYP_LABELS, CHART_COLORS, MARKER_WARNUNG } from '../../lib'
 import { investitionenApi, type CO2AmortisationResponse } from '../../api/investitionen'
-import { KPICard } from './KPICard'
 import { TabProps, createMonatsZeitreihe } from './types'
 
 const CO2_FAKTOR = 0.38 // kg CO2 pro kWh (deutscher Strommix)
@@ -109,8 +108,7 @@ export function CO2Tab({ data, stats, zeitraumLabel, anlageId }: CO2TabProps) {
           unit="t"
           subtitle={`${stats.anzahlMonate} Monate`}
           icon={Leaf}
-          color="text-green-500"
-          bgColor="bg-green-50 dark:bg-green-900/20"
+          color="green"
           formel="PV-Erzeugung × CO2-Faktor"
           berechnung={`${fmtCalc(stats.gesamtErzeugung, 0)} kWh × ${CO2_FAKTOR * 1000} g/kWh`}
           ergebnis={`= ${fmtCalc(gesamtCO2, 0)} kg = ${fmtCalc(gesamtCO2 / 1000, 2)} t`}
@@ -121,8 +119,7 @@ export function CO2Tab({ data, stats, zeitraumLabel, anlageId }: CO2TabProps) {
           unit="Bäume/Jahr"
           subtitle="Bindungsleistung"
           icon={Leaf}
-          color="text-emerald-500"
-          bgColor="bg-emerald-50 dark:bg-emerald-900/20"
+          color="green"
           formel="CO2-Einsparung ÷ 12,5 kg/Baum/Jahr"
           berechnung={`${fmtCalc(gesamtCO2, 0)} kg ÷ 12,5 kg/Baum`}
           ergebnis={`= ${fmtCalc(baeume, 0)} Bäume`}
@@ -133,8 +130,7 @@ export function CO2Tab({ data, stats, zeitraumLabel, anlageId }: CO2TabProps) {
           unit="Tsd. km"
           subtitle="bei 120g CO2/km"
           icon={Leaf}
-          color="text-teal-500"
-          bgColor="bg-teal-50 dark:bg-teal-900/20"
+          color="cyan"
           formel="CO2-Einsparung ÷ 120 g/km"
           berechnung={`${fmtCalc(gesamtCO2 * 1000, 0)} g ÷ 120 g/km`}
           ergebnis={`= ${fmtCalc(autoKm, 0)} km`}
@@ -145,8 +141,7 @@ export function CO2Tab({ data, stats, zeitraumLabel, anlageId }: CO2TabProps) {
           unit="Flüge"
           subtitle="à 1000 km"
           icon={Leaf}
-          color="text-cyan-500"
-          bgColor="bg-cyan-50 dark:bg-cyan-900/20"
+          color="cyan"
           formel="CO2-Einsparung ÷ 230 kg/Flug"
           berechnung={`${fmtCalc(gesamtCO2, 0)} kg ÷ 230 kg/Flug`}
           ergebnis={`= ${fmtCalc(fluege, 1)} Flüge vermieden`}
@@ -166,7 +161,7 @@ export function CO2Tab({ data, stats, zeitraumLabel, anlageId }: CO2TabProps) {
               <XAxis dataKey="name" tick={{ fontSize: 10 }} interval="preserveStartEnd" />
               <YAxis unit=" kg" tick={{ fontSize: 11 }} />
               <Tooltip content={<ChartTooltip unit="kg CO2" decimals={0} />} />
-              <Bar dataKey="co2_einsparung" name="CO2 eingespart" fill="#10b981" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="co2_einsparung" name="CO2 eingespart" fill={CHART_COLORS.co2Pv} radius={[4, 4, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </div>
@@ -188,20 +183,20 @@ export function CO2Tab({ data, stats, zeitraumLabel, anlageId }: CO2TabProps) {
                 type="monotone"
                 dataKey="kumuliert_co2"
                 name="Kumulierte Einsparung"
-                stroke="#10b981"
-                fill="#10b981"
+                stroke={CHART_COLORS.co2Pv}
+                fill={CHART_COLORS.co2Pv}
                 fillOpacity={0.3}
               />
               {graueLast > 0 && (
                 <ReferenceLine
                   y={graueLast}
-                  stroke="#f59e0b"
+                  stroke={MARKER_WARNUNG.linie}
                   strokeDasharray="6 4"
                   label={{
                     value: `Graue Last ${(graueLast / 1000).toFixed(1)} t`,
                     position: 'insideTopLeft',
                     fontSize: 11,
-                    fill: '#b45309',
+                    fill: MARKER_WARNUNG.text,
                   }}
                 />
               )}
@@ -230,8 +225,7 @@ export function CO2Tab({ data, stats, zeitraumLabel, anlageId }: CO2TabProps) {
               unit="t CO2"
               subtitle="einmalig bei Anschaffung"
               icon={Sprout}
-              color="text-amber-600"
-              bgColor="bg-amber-50 dark:bg-amber-900/20"
+              color="yellow"
               formel="Σ Investitionen (Override ∨ Richtwert)"
               berechnung={`${fmtCalc(graueLast, 0)} kg CO2`}
               ergebnis={`= ${fmtCalc(graueLast / 1000, 2)} t`}
@@ -242,8 +236,7 @@ export function CO2Tab({ data, stats, zeitraumLabel, anlageId }: CO2TabProps) {
               unit="%"
               subtitle={`${(gesamtCO2 / 1000).toFixed(1)} t von ${(graueLast / 1000).toFixed(1)} t`}
               icon={Leaf}
-              color="text-green-600"
-              bgColor="bg-green-50 dark:bg-green-900/20"
+              color="green"
               formel="kumulierte Einsparung ÷ graue Last"
               berechnung={`${fmtCalc(gesamtCO2, 0)} kg ÷ ${fmtCalc(graueLast, 0)} kg`}
               ergebnis={`= ${fmtCalc(Math.min(100, (gesamtCO2 / graueLast) * 100), 0)} %`}
@@ -266,8 +259,7 @@ export function CO2Tab({ data, stats, zeitraumLabel, anlageId }: CO2TabProps) {
                     : 'keine Einsparung erfasst'
               }
               icon={Sprout}
-              color="text-emerald-600"
-              bgColor="bg-emerald-50 dark:bg-emerald-900/20"
+              color="green"
             />
           </div>
 

@@ -13,14 +13,11 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer
 } from 'recharts'
 import { Sun, TrendingUp, TrendingDown, Download, AlertTriangle, GitCompare } from 'lucide-react'
-import { Card, Button, LoadingSpinner, Alert, fmtCalc } from '../../components/ui'
+import { Card, Button, LoadingSpinner, Alert, fmtCalc, KPICard } from '../../components/ui'
 import ChartTooltip from '../../components/ui/ChartTooltip'
 import { exportToCSV } from '../../utils/export'
-import { KPICard } from './KPICard'
 import { cockpitApi, PVStringsResponse } from '../../api/cockpit'
-import { SOLL_IST_COLORS } from '../../lib/colors'
-
-const STRING_COLORS = ['#f59e0b', '#3b82f6', '#10b981', '#8b5cf6', '#06b6d4', '#ec4899']
+import { SOLL_IST_COLORS, STRING_COLORS, KATEGORIE_FARBEN } from '../../lib'
 
 interface PVAnlageTabProps {
   anlageId: number
@@ -203,7 +200,7 @@ export function PVAnlageTab({ anlageId, selectedYear, verfuegbareJahre, zeitraum
   if (!data || data.strings.length === 0) {
     return (
       <Card className="text-center py-8">
-        <Sun className="h-12 w-12 mx-auto text-gray-400 mb-4" />
+        <Sun className="h-12 w-12 mx-auto text-gray-400 dark:text-gray-500 mb-4" />
         <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">
           Keine PV-Module gefunden
         </h3>
@@ -255,8 +252,7 @@ export function PVAnlageTab({ anlageId, selectedYear, verfuegbareJahre, zeitraum
           unit="MWh"
           subtitle="PVGIS Jahresprognose"
           icon={Sun}
-          color="text-blue-500"
-          bgColor="bg-blue-50 dark:bg-blue-900/20"
+          color="blue"
           formel="Σ PVGIS-Prognose aller Strings"
           berechnung={data.strings.map(s => `${s.bezeichnung}: ${s.prognose_jahr_kwh.toFixed(0)} kWh`).join(' + ')}
           ergebnis={`= ${fmtCalc(data.prognose_gesamt_kwh, 0)} kWh`}
@@ -267,8 +263,7 @@ export function PVAnlageTab({ anlageId, selectedYear, verfuegbareJahre, zeitraum
           unit="MWh"
           subtitle={zeitraumLabel}
           icon={TrendingUp}
-          color="text-amber-500"
-          bgColor="bg-amber-50 dark:bg-amber-900/20"
+          color="yellow"
           formel="Σ Erzeugung aller Strings"
           berechnung={data.strings.map(s => `${s.bezeichnung}: ${s.ist_jahr_kwh.toFixed(0)} kWh`).join(' + ')}
           ergebnis={`= ${fmtCalc(data.ist_gesamt_kwh, 0)} kWh`}
@@ -279,8 +274,7 @@ export function PVAnlageTab({ anlageId, selectedYear, verfuegbareJahre, zeitraum
           unit="%"
           subtitle={`${data.abweichung_gesamt_kwh >= 0 ? '+' : ''}${data.abweichung_gesamt_kwh.toFixed(0)} kWh`}
           icon={(data.abweichung_gesamt_prozent || 0) >= 0 ? TrendingUp : TrendingDown}
-          color={(data.abweichung_gesamt_prozent || 0) >= 0 ? 'text-green-500' : 'text-red-500'}
-          bgColor={(data.abweichung_gesamt_prozent || 0) >= 0 ? 'bg-green-50 dark:bg-green-900/20' : 'bg-red-50 dark:bg-red-900/20'}
+          color={(data.abweichung_gesamt_prozent || 0) >= 0 ? 'green' : 'red'}
           formel="(IST - SOLL) ÷ SOLL × 100"
           berechnung={`(${fmtCalc(data.ist_gesamt_kwh, 0)} - ${fmtCalc(data.prognose_gesamt_kwh, 0)}) ÷ ${fmtCalc(data.prognose_gesamt_kwh, 0)} × 100`}
           ergebnis={`= ${fmtCalc(data.abweichung_gesamt_prozent || 0, 1)} %`}
@@ -291,8 +285,7 @@ export function PVAnlageTab({ anlageId, selectedYear, verfuegbareJahre, zeitraum
           unit="kWh/kWp"
           subtitle={zeitraumLabel}
           icon={GitCompare}
-          color="text-purple-500"
-          bgColor="bg-purple-50 dark:bg-purple-900/20"
+          color="purple"
           formel="IST-Erzeugung ÷ Anlagenleistung"
           berechnung={`${fmtCalc(data.ist_gesamt_kwh, 0)} kWh ÷ ${fmtCalc(data.anlagen_leistung_kwp, 1)} kWp`}
           ergebnis={`= ${fmtCalc(data.ist_gesamt_kwh / data.anlagen_leistung_kwp, 0)} kWh/kWp`}
@@ -421,7 +414,7 @@ export function PVAnlageTab({ anlageId, selectedYear, verfuegbareJahre, zeitraum
                 <Line
                   type="monotone"
                   dataKey="Gesamt"
-                  stroke="#6b7280"
+                  stroke={KATEGORIE_FARBEN.sonstige}
                   strokeWidth={3}
                   strokeDasharray="5 5"
                   dot={{ r: 4 }}

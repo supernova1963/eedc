@@ -13,6 +13,8 @@ import { useSelectedAnlage } from '../hooks'
 import { pvgisApi, monatsdatenApi } from '../api'
 import type { PVModulPrognose } from '../api/pvgis'
 import type { AggregierteMonatsdaten } from '../api/monatsdaten'
+import { SOLL_IST_COLORS } from '../lib'
+import { useChartTheme } from '../context/ThemeContext'
 // PrognoseVergleich-Import entfernt: SFML-Vergleichs-Card gelöscht (Prognosequellen-Wahl)
 import {
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
@@ -46,6 +48,7 @@ export default function PrognoseVsIst() {
   const [loading, setLoading] = useState(false)
   const [savingPrognose, setSavingPrognose] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const achsen = useChartTheme()
 
   // Daten laden
   useEffect(() => {
@@ -268,7 +271,7 @@ export default function PrognoseVsIst() {
               <p className="text-2xl font-bold text-yellow-600 dark:text-yellow-400">
                 {jahresPrognose.toLocaleString('de-DE', { maximumFractionDigits: 0 })} kWh
               </p>
-              <p className="text-xs text-gray-400">Jahr {selectedJahr}</p>
+              <p className="text-xs text-gray-400 dark:text-gray-500">Jahr {selectedJahr}</p>
             </Card>
 
             <Card className="p-4">
@@ -276,7 +279,7 @@ export default function PrognoseVsIst() {
               <p className="text-2xl font-bold text-green-600 dark:text-green-400">
                 {jahresIst.toLocaleString('de-DE', { maximumFractionDigits: 0 })} kWh
               </p>
-              <p className="text-xs text-gray-400">{monateMitDaten} von 12 Monaten</p>
+              <p className="text-xs text-gray-400 dark:text-gray-500">{monateMitDaten} von 12 Monaten</p>
             </Card>
 
             <Card className="p-4">
@@ -292,7 +295,7 @@ export default function PrognoseVsIst() {
                 </p>
               </div>
               <p className={`text-xs ${jahresAbweichung >= 0 ? 'text-green-500' : 'text-red-500'}`}>
-                {jahresAbweichung >= 0 ? '+' : ''}{jahresAbweichungProzent.toFixed(1)}%
+                {jahresAbweichung >= 0 ? '+' : ''}{jahresAbweichungProzent.toFixed(1)} %
               </p>
             </Card>
 
@@ -302,8 +305,8 @@ export default function PrognoseVsIst() {
                 <p className="text-2xl font-bold text-blue-600 dark:text-blue-400">
                   {hochgerechneterJahresIst.toLocaleString('de-DE', { maximumFractionDigits: 0 })} kWh
                 </p>
-                <p className="text-xs text-gray-400">
-                  ({((hochgerechneterJahresIst / jahresPrognose - 1) * 100).toFixed(1)}% vs. Prognose)
+                <p className="text-xs text-gray-400 dark:text-gray-500">
+                  ({((hochgerechneterJahresIst / jahresPrognose - 1) * 100).toFixed(1)} % vs. Prognose)
                 </p>
               </Card>
             )}
@@ -326,24 +329,24 @@ export default function PrognoseVsIst() {
                     content={
                       <ChartTooltip
                         formatter={(value: number, name: string) => {
-                          if (name === 'Abweichung %') return `${value.toFixed(1)}%`
+                          if (name === 'Abweichung %') return `${value.toFixed(1)} %`
                           return `${value.toFixed(0)} kWh`
                         }}
                       />
                     }
                   />
                   <Legend />
-                  <ReferenceLine yAxisId="right" y={0} stroke="#666" strokeDasharray="3 3" />
-                  <Bar yAxisId="left" dataKey="prognose" fill="#f59e0b" name="PVGIS Prognose" />
-                  <Bar yAxisId="left" dataKey="ist" fill="#22c55e" name="IST-Erzeugung" />
+                  <ReferenceLine yAxisId="right" y={0} stroke={achsen.referenz} strokeDasharray="3 3" />
+                  <Bar yAxisId="left" dataKey="prognose" fill={SOLL_IST_COLORS.soll} name="PVGIS Prognose" />
+                  <Bar yAxisId="left" dataKey="ist" fill={SOLL_IST_COLORS.ist} name="IST-Erzeugung" />
                   <Line
                     yAxisId="right"
                     type="monotone"
                     dataKey="abweichungProzent"
-                    stroke="#8b5cf6"
+                    stroke={SOLL_IST_COLORS.abweichung}
                     strokeWidth={2}
                     name="Abweichung %"
-                    dot={{ fill: '#8b5cf6' }}
+                    dot={{ fill: SOLL_IST_COLORS.abweichung }}
                   />
                 </ComposedChart>
               </ResponsiveContainer>
@@ -379,18 +382,18 @@ export default function PrognoseVsIst() {
                         {d.ist > 0 ? (
                           <span className="text-green-600">{d.ist.toFixed(0)} kWh</span>
                         ) : (
-                          <span className="text-gray-400">-</span>
+                          <span className="text-gray-400 dark:text-gray-500">-</span>
                         )}
                       </td>
                       <td className={`text-right py-2 px-2 ${d.abweichung >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                         {d.ist > 0 ? `${d.abweichung >= 0 ? '+' : ''}${d.abweichung.toFixed(0)} kWh` : '-'}
                       </td>
                       <td className={`text-right py-2 px-2 ${d.abweichungProzent >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                        {d.ist > 0 ? `${d.abweichungProzent >= 0 ? '+' : ''}${d.abweichungProzent.toFixed(1)}%` : '-'}
+                        {d.ist > 0 ? `${d.abweichungProzent >= 0 ? '+' : ''}${d.abweichungProzent.toFixed(1)} %` : '-'}
                       </td>
                       <td className="text-center py-2 px-2">
                         {d.ist === 0 ? (
-                          <span className="text-gray-400">Keine Daten</span>
+                          <span className="text-gray-400 dark:text-gray-500">Keine Daten</span>
                         ) : d.abweichungProzent >= 5 ? (
                           <span className="inline-flex items-center gap-1 text-green-600">
                             <TrendingUp className="h-4 w-4" />
@@ -423,7 +426,7 @@ export default function PrognoseVsIst() {
                       {jahresAbweichung >= 0 ? '+' : ''}{jahresAbweichung.toFixed(0)} kWh
                     </td>
                     <td className={`text-right py-2 px-2 ${jahresAbweichungProzent >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                      {jahresAbweichungProzent >= 0 ? '+' : ''}{jahresAbweichungProzent.toFixed(1)}%
+                      {jahresAbweichungProzent >= 0 ? '+' : ''}{jahresAbweichungProzent.toFixed(1)} %
                     </td>
                     <td></td>
                   </tr>
