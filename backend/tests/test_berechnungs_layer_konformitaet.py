@@ -155,6 +155,79 @@ def test_inline_einspeise_erloes_nur_im_layer():
     )
 
 
+# Pattern: gas-/öl-Kosten der Altanlage `(waerme / wirkungsgrad) * gaspreis / 100`
+# — der drift-anfällige Kern der WP-Alternativkosten-Rechnung („was hätte die
+# fossile Heizung gekostet"). Verlangt eine Division durch eine `…wirkungsgrad…`-
+# Variable, gefolgt von `* <preis> / 100`; sehr spezifisch (die WP rechnet ihre
+# EIGENEN Kosten über JAZ/COP/SCOP, nicht über `wirkungsgrad`).
+_INLINE_GAS_KOSTEN_ALTANLAGE = re.compile(
+    r'''/\s*[\w\["'\]]*wirkungsgrad[\w\["'\]]*\s*\)\s*\*\s*\w+\s*/\s*100'''
+)
+
+# Einzige Heimat der Fragment-Formel: der Helper `gas_kosten_altanlage`. Alle
+# vier vormals duplizierten Sites (Aggregat, per-WP-Service, HA-Export-Sensor,
+# Aussichten-Forecast) ziehen jetzt auf ihn → das Literal lebt nur noch in
+# seinem Funktionsrumpf.
+ALLOWED_GAS_KOSTEN_FILES = {
+    "core/berechnungen/alternativkosten.py",   # gas_kosten_altanlage (SoT)
+    "core/berechnungen/__init__.py",            # Re-Export
+}
+
+# Leer — die Schulden sind getilgt. Jede neue Inline-Kopie schlägt im Wächter
+# an; eine bewusste Ausnahme müsste hier mit Begründung + Migrations-Trigger
+# eingetragen werden (Format: relativer Pfad → Begründung).
+GAS_KOSTEN_GRANDFATHERED: dict[str, str] = {}
+
+
+def test_inline_gas_kosten_altanlage_nur_im_layer():
+    """Die Altanlagen-Gaskosten-Formel `(waerme / wirkungsgrad) * preis / 100`
+    darf nur in den designierten Helper-Heimaten oder (übergangsweise) in der
+    Grandfathered-Liste stehen — sonst driftet die WP-Alternativkosten-Rechnung
+    erneut (gleiche Klasse wie die in v3.x deduplizierten Einzel-Kopien)."""
+    verstoesse: list[tuple[str, int, str]] = []
+    for path, rel in _iter_py_files():
+        if rel in ALLOWED_GAS_KOSTEN_FILES or rel in GAS_KOSTEN_GRANDFATHERED:
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue
+        for line_no, line in enumerate(text.splitlines(), start=1):
+            if _INLINE_GAS_KOSTEN_ALTANLAGE.search(line):
+                verstoesse.append((rel, line_no, line.strip()))
+
+    assert not verstoesse, _format_verstoesse_meldung(
+        verstoesse,
+        regel='Inline `(waerme / wirkungsgrad) × gaspreis / 100` außerhalb der WP-Alternativkosten-Helfer',
+    ) + (
+        "\n\nSoT-Migration:\n"
+        "  from backend.core.berechnungen import berechne_wp_alternativkosten_ersparnis\n"
+        "  # bzw. services.wp_wirtschaftlichkeit.berechne_wp_ersparnis (per-WP).\n"
+        "  # Neue Inline-Kopie? In GAS_KOSTEN_GRANDFATHERED mit Begründung eintragen."
+    )
+
+
+def test_gas_kosten_grandfathered_enthalten_pattern_noch():
+    """Wenn eine grandfathered Datei das Pattern nicht mehr enthält, muss sie
+    aus GAS_KOSTEN_GRANDFATHERED entfernt werden (gegen Eintrags-Rotten)."""
+    veraltete: list[str] = []
+    for rel in GAS_KOSTEN_GRANDFATHERED:
+        path = _BACKEND_ROOT / rel
+        if not path.exists():
+            veraltete.append(f"{rel} — Datei existiert nicht mehr")
+            continue
+        text = path.read_text(encoding="utf-8")
+        if not _INLINE_GAS_KOSTEN_ALTANLAGE.search(text):
+            veraltete.append(
+                f"{rel} — kein Gaskosten-Pattern mehr, Eintrag aus "
+                f"GAS_KOSTEN_GRANDFATHERED entfernen"
+            )
+    assert not veraltete, (
+        "Veraltete GAS_KOSTEN_GRANDFATHERED-Einträge:\n"
+        + "\n".join(f"  - {e}" for e in veraltete)
+    )
+
+
 def test_grandfathered_dateien_existieren_und_enthalten_pattern():
     """Wenn eine Datei aus der Grandfathered-Liste keine Verstöße mehr enthält,
     muss sie aus der Liste entfernt werden — sonst rotten die Einträge."""
@@ -179,6 +252,87 @@ def test_grandfathered_dateien_existieren_und_enthalten_pattern():
     assert not veraltete, (
         "Veraltete Grandfathered-Einträge in test_berechnungs_layer_konformitaet.py:\n"
         + "\n".join(f"  - {e}" for e in veraltete)
+    )
+
+
+# Pattern: Netzbezugskosten-Formel `… / 100 + …grundpreis` (Schläfer-Block 2).
+# Nach der Konsolidierung lebt sie nur noch im Helper `berechne_netzbezug_kosten`.
+# Die bare `kWh × ct / 100`-Multiplikation (ohne Grundpreis) bleibt bewusst
+# inline und ist hier NICHT gemeint — der `+ …grundpreis`-Teil ist der Marker.
+_INLINE_NETZBEZUG_KOSTEN = re.compile(r'''/\s*100\s*\+\s*[\w\["'\].]*grundpreis''')
+
+ALLOWED_NETZBEZUG_KOSTEN_FILES = {
+    "core/berechnungen/netzbezug_kosten.py",  # berechne_netzbezug_kosten (SoT)
+}
+
+
+def test_inline_netzbezug_kosten_nur_im_layer():
+    """Die Netzbezugskosten-Formel `kWh × preis / 100 + grundpreis` darf nur im
+    Helper `berechne_netzbezug_kosten` stehen — sonst driftet der Grundpreis
+    erneut über die Finanz-Read-Sites (komponenten/uebersicht/aktueller_monat/
+    calculations)."""
+    verstoesse: list[tuple[str, int, str]] = []
+    for path, rel in _iter_py_files():
+        if rel in ALLOWED_NETZBEZUG_KOSTEN_FILES:
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue
+        for line_no, line in enumerate(text.splitlines(), start=1):
+            if _INLINE_NETZBEZUG_KOSTEN.search(line):
+                verstoesse.append((rel, line_no, line.strip()))
+
+    assert not verstoesse, _format_verstoesse_meldung(
+        verstoesse,
+        regel='Inline `kWh × preis / 100 + grundpreis` außerhalb von berechne_netzbezug_kosten',
+    ) + (
+        "\n\nSoT-Migration:\n"
+        "  from backend.core.berechnungen import berechne_netzbezug_kosten\n"
+        "  netzbezug_kosten = berechne_netzbezug_kosten(kwh, preis_cent, grundpreis_euro)"
+    )
+
+
+# Pattern: Inline-Eigenverbrauchsquote `eigenverbrauch… / (pv|erzeugung)… * 100`
+# (Schläfer-Block 3). Nach der Konsolidierung lebt sie nur noch im Helper
+# `eigenverbrauchsquote_prozent` (gecappt auf 100 %, Maintainer-Entscheid).
+_INLINE_EV_QUOTE = re.compile(
+    r'''eigenverbrauch\w*\s*/\s*(?:pv|erzeugung|gesamt_erzeugung)\w*\s*\*\s*100'''
+)
+
+# Erlaubt: Helfer-Heimat + dokumentierte Ausnahmen (kW-Live-Sichten +
+# energie_profil/views.py = offener IA-V4-Phase-1A-Produktentscheid).
+ALLOWED_EV_QUOTE_FILES = {
+    "core/berechnungen/kennzahlen.py",            # eigenverbrauchsquote_prozent (SoT)
+    "api/routes/live_dashboard.py",                # Live, kW statt kWh
+    "services/live_komponenten_builder.py",        # Live, kW statt kWh
+    "api/routes/energie_profil/views.py",          # IA-V4-Phase-1A-Produktentscheid
+}
+
+
+def test_inline_eigenverbrauchsquote_nur_im_layer():
+    """Die Eigenverbrauchsquote `eigenverbrauch / erzeugung × 100` darf nur im
+    Helper `eigenverbrauchsquote_prozent` (gecappt) oder den dokumentierten
+    Ausnahmen (kW-Live / views.py) stehen — sonst driftet der 100-%-Cap erneut."""
+    verstoesse: list[tuple[str, int, str]] = []
+    for path, rel in _iter_py_files():
+        if rel in ALLOWED_EV_QUOTE_FILES:
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue
+        for line_no, line in enumerate(text.splitlines(), start=1):
+            if _INLINE_EV_QUOTE.search(line):
+                verstoesse.append((rel, line_no, line.strip()))
+
+    assert not verstoesse, _format_verstoesse_meldung(
+        verstoesse,
+        regel='Inline `eigenverbrauch / erzeugung × 100` außerhalb von eigenverbrauchsquote_prozent',
+    ) + (
+        "\n\nSoT-Migration:\n"
+        "  from backend.core.berechnungen import eigenverbrauchsquote_prozent\n"
+        "  ev_quote = eigenverbrauchsquote_prozent(eigenverbrauch_kwh, pv_erzeugung_kwh)"
     )
 
 

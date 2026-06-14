@@ -28,7 +28,11 @@ from backend.core.berechnungen import (
     FinanzMonatsZeile,
     berechne_finanz_aggregat,
     berechne_verbrauchs_kennzahlen,
+    berechne_wp_alternativkosten_ersparnis,
+    eigenverbrauchsquote_prozent,
     einspeise_erloes_euro,
+    gas_kosten_altanlage,
+    spezifischer_ertrag_kwh_kwp,
 )
 from backend.services.einspeise_erloes_service import get_neg_preis_einspeisung_monat
 from backend.core.calculations import berechne_ust_eigenverbrauch
@@ -40,10 +44,12 @@ from backend.core.wirtschaftlichkeit_defaults import (
     WP_WIRKUNGSGRAD_GAS_DEFAULT,
     WP_WIRKUNGSGRAD_OEL_DEFAULT,
 )
-from backend.services.speicher_wirtschaftlichkeit import (
-    berechne_effektiver_ladepreis,
+from backend.core.berechnungen.speicher_wirtschaftlichkeit import (
     berechne_speicher_ersparnis,
     berechne_v2h_ersparnis,
+)
+from backend.services.speicher_wirtschaftlichkeit import (
+    berechne_effektiver_ladepreis,
 )
 from backend.core.investition_parameter import (
     PARAM_E_AUTO,
@@ -659,7 +665,7 @@ async def get_trend_analyse(
         max_monate = heute.month if jahr == heute.year else 12
         ist_vollstaendig = anzahl_monate >= max_monate
 
-        spez_ertrag = gesamt_kwh / anlagenleistung_kwp if anlagenleistung_kwp > 0 else 0
+        spez_ertrag = spezifischer_ertrag_kwh_kwp(gesamt_kwh, anlagenleistung_kwp) or 0
         pr = gesamt_kwh / pvgis_jahresertrag if pvgis_jahresertrag > 0 else None
 
         jahres_vergleich.append(JahresVergleichSchema(
@@ -1226,6 +1232,12 @@ async def get_finanz_prognose(
             "netz_kwh": 0.0,
             "pv_kwh": eauto_pv_pro_inv.get(ea.id, 0.0),
             "bisherige_ersparnis": 0.0,
+            # Invariante: immer gesetzt — der Jahres-Block unten (Zeile ~1589)
+            # läuft nur bei gesamt_km > 0. Ohne diese Init crasht die
+            # Komponenten-Schleife (Zeile ~1757) bei einem E-Auto OHNE
+            # historische km (frisch angelegt, noch keine Daten) → 500 auf der
+            # gesamten Aussichten-Finanzseite.
+            "jahres_ersparnis": 0.0,
         }
 
     # =====================================================================
@@ -1233,7 +1245,6 @@ async def get_finanz_prognose(
     # =====================================================================
     betriebskosten_ges = sum(i.betriebskosten_jahr or 0 for i in alle_investitionen)
     bisherige_ertraege = 0.0
-    bisherige_wp_ersparnis = 0.0
     bisherige_eauto_ersparnis = 0.0
 
     # Anschaffungsdatum-Grenze für den anlagenweiten PV-Ertrag (Einspeise-Erlös +
@@ -1294,38 +1305,37 @@ async def get_finanz_prognose(
             neg_preis_kwh=m_neg,
         ))
 
-    # Wärmepumpe Alternativkosten-Ersparnis
-    # Ersparnis = Gas-Kosten (was es kosten würde) + fixe Zusatzkosten - WP-Stromkosten
+    # Wärmepumpe Alternativkosten-Ersparnis (vs. Gas/Öl) — die „bisherige"-
+    # Ersparnis-FORMEL liegt jetzt im SoT-Helper `berechne_wp_alternativkosten_
+    # ersparnis` (core/berechnungen/alternativkosten.py), identisch zum HA-Export
+    # ([[feedback_aggregations_drift]]). `historische_inv_daten` ist bereits
+    # per-Investition auf das aktive Fenster gefiltert (Z. ~948–953), erfüllt
+    # also den Helper-Kontrakt; der Monats-Gaspreis (Monatsdaten → per-WP-Default-
+    # Fallback im Helper) wird als Perioden-Map durchgereicht.
+    gaspreis_by_periode = {
+        (md.jahr, md.monat): md.gaspreis_cent_kwh for md in monatsdaten
+    }
+    bisherige_wp_ersparnis = berechne_wp_alternativkosten_ersparnis(
+        waermepumpen,
+        historische_inv_daten,
+        gaspreis_by_periode,
+        wp_netzbezug_preis,
+    )
+
+    # Thermische Wärmemengen pro WP/gesamt — getrennte Concern: nur die
+    # WP-PROGNOSE (Z. ~1520) braucht sie (thermisch-gewichtete alter_preis/
+    # Wirkungsgrad-Mischung). Bewusst NICHT im Ersparnis-Helper, der reine
+    # Aggregat-Σ liefert.
     gesamt_wp_thermisch = 0.0
-    wp_monate_gezaehlt: set[tuple[int, int]] = set()
     for wp in waermepumpen:
         wp_agg = wp_aggregate[wp.id]
         for (inv_id, jahr, monat), daten in historische_inv_daten.items():
             if inv_id == wp.id and wp.ist_aktiv_im_monat(jahr, monat):
-                heiz = daten.get("heizenergie_kwh", 0)
-                ww = daten.get("warmwasser_kwh", 0)
-                strom = get_wp_strom_kwh(daten, wp.parameter)
-                thermisch = heiz + ww
+                thermisch = (daten.get("heizenergie_kwh", 0) or 0) + (
+                    daten.get("warmwasser_kwh", 0) or 0
+                )
                 gesamt_wp_thermisch += thermisch
                 wp_agg["thermisch_kwh"] += thermisch
-                # Monatspreis: Monatsdaten.gaspreis_cent_kwh → Fallback per-WP-Default
-                md = monatsdaten_dict.get((jahr, monat))
-                monats_gaspreis = (
-                    md.gaspreis_cent_kwh
-                    if md and md.gaspreis_cent_kwh is not None
-                    else wp_agg["alter_preis_cent"]
-                )
-                # Gas-Alternative: thermisch / Wirkungsgrad * Preis — pro WP
-                gas_kosten = (thermisch / wp_agg["alter_wirkungsgrad"]) * monats_gaspreis / 100
-                # WP-Stromkosten (nur Netzanteil, PV-Anteil ist bereits in EV-Ersparnis)
-                # Konservative 50/50-Annahme — TODO: aus tatsächlichen Daten herleiten
-                wp_netz_anteil = 1.0 - WP_PV_ANTEIL_DEFAULT
-                wp_stromkosten_netz = strom * wp_netz_anteil * wp_netzbezug_preis / 100
-                # Netto-Ersparnis (Gas-Alternative minus WP-Netzstrom)
-                bisherige_wp_ersparnis += gas_kosten - wp_stromkosten_netz
-                wp_monate_gezaehlt.add((jahr, monat))
-    # Fixe Zusatzkosten pro erfassten Monat (1/12 pro Monat)
-    bisherige_wp_ersparnis += wp_alternativ_zusatzkosten_jahr * len(wp_monate_gezaehlt) / 12
 
     # E-Auto Alternativkosten-Ersparnis
     # Ersparnis = Benzin-Kosten - Netzstrom-Kosten
@@ -1533,7 +1543,9 @@ async def get_finanz_prognose(
         )
         # Was es mit Gas kosten würde (Energiepreis + fixe Zusatzkosten)
         gas_kosten_jahr = (
-            (wp_thermisch_jahr / wp_alter_wirkungsgrad_agg) * prognose_gaspreis / 100
+            gas_kosten_altanlage(
+                wp_thermisch_jahr, wp_alter_wirkungsgrad_agg, prognose_gaspreis
+            )
             + wp_alternativ_zusatzkosten_jahr
         )
         # WP-Stromkosten pro Jahr (nur Netzanteil) — konservative 50/50-Annahme
@@ -1857,7 +1869,9 @@ async def get_finanz_prognose(
         jahres_erzeugung_kwh=round(jahres_erzeugung, 0),
         jahres_eigenverbrauch_kwh=round(jahres_eigenverbrauch, 0),
         jahres_einspeisung_kwh=round(jahres_einspeisung, 0),
-        eigenverbrauchsquote_prozent=round(jahres_eigenverbrauch / jahres_erzeugung * 100 if jahres_erzeugung > 0 else 0, 1),
+        eigenverbrauchsquote_prozent=round(
+            eigenverbrauchsquote_prozent(jahres_eigenverbrauch, jahres_erzeugung), 1
+        ),
         jahres_einspeise_erloes_euro=round(jahres_einspeise_erloes, 2),
         jahres_ev_ersparnis_euro=round(jahres_ev_ersparnis, 2),
         ust_eigenverbrauch_euro=round(ust_eigenverbrauch, 2) if ust_eigenverbrauch > 0 else None,

@@ -35,6 +35,7 @@ from backend.services.speicher_wirtschaftlichkeit import (  # noqa: E402
     SPEICHER_IST_MIN_MONATE,
     aggregiere_speicher_ist,
     berechne_speicher_ersparnis,
+    berechne_v2h_ersparnis,
 )
 
 
@@ -132,6 +133,67 @@ def test_keine_entladung_keine_ersparnis() -> None:
         einspeise_verg_cent=8,
         ladung_netz_kwh=100,
         lade_preis_cent=10,
+    )
+    assert _approx(r.ersparnis_euro, 0.0)
+
+
+# ----------------------------------------------------------------------------
+# Drift-Lock Block 4: services-Re-Export IST der Layer-SoT (kein Fork)
+# ----------------------------------------------------------------------------
+
+def test_services_reexport_ist_identisch_mit_core_sot() -> None:
+    """Die reinen Funktionen/Typen/Konstanten leben kanonisch im
+    Berechnungs-Layer; `services.speicher_wirtschaftlichkeit` re-exportiert
+    sie nur (Backward-Compat). Falls jemand in services/ eine lokale
+    Kopie wieder einführt, bricht dieser Identitätstest — die Drift wäre
+    sonst unsichtbar, weil beide Module gleich heißende Symbole hätten.
+    """
+    from backend.core.berechnungen import speicher_wirtschaftlichkeit as core_mod
+    from backend.services import speicher_wirtschaftlichkeit as svc_mod
+
+    for name in (
+        "SPEICHER_IST_MIN_MONATE",
+        "SOC_DRIFT_SCHWELLE_PROZENTPUNKTE",
+        "ETA_DEGRADATION_SCHWELLE_PROZENTPUNKTE",
+        "SpeicherIstAggregat",
+        "SpeicherErsparnisErgebnis",
+        "aggregiere_speicher_ist",
+        "berechne_speicher_ersparnis",
+        "berechne_v2h_ersparnis",
+        "ist_soc_drift_signifikant",
+        "ist_eta_degradation_alarm",
+    ):
+        assert getattr(svc_mod, name) is getattr(core_mod, name), (
+            f"{name}: services-Re-Export weicht von der core-SoT ab — "
+            "vermutlich wurde in services/ wieder eine lokale Kopie definiert."
+        )
+
+
+# ----------------------------------------------------------------------------
+# berechne_v2h_ersparnis — V2H-Spread (Char-Netz vor Layer-Umzug Block 4)
+# ----------------------------------------------------------------------------
+
+def test_v2h_ersparnis_entspricht_pv_speicher_spread() -> None:
+    # V2H nutzt das gleiche Spread-Modell wie der reine PV-Speicher (PV-Quelle,
+    # keine Netzladung). Pin: 400 kWh × (32 − 9) ct = 9200 ct = 92 €.
+    r = berechne_v2h_ersparnis(
+        v2h_entladung_kwh=400,
+        bezug_preis_cent=32,
+        einspeise_verg_cent=9,
+    )
+    assert _approx(r.ersparnis_euro, 92.0)
+    assert _approx(r.pv_anteil_euro, 92.0)
+    assert _approx(r.netz_anteil_euro, 0.0)
+    assert _approx(r.pv_anteil_entladung_kwh, 400.0)
+    assert _approx(r.netz_anteil_entladung_kwh, 0.0)
+    assert _approx(r.spread_cent_kwh, 23.0)
+
+
+def test_v2h_ersparnis_ohne_entladung_ist_null() -> None:
+    r = berechne_v2h_ersparnis(
+        v2h_entladung_kwh=0,
+        bezug_preis_cent=32,
+        einspeise_verg_cent=9,
     )
     assert _approx(r.ersparnis_euro, 0.0)
 
@@ -296,12 +358,15 @@ def test_wrapper_ist_modus_co2_basiert_auf_pv_anteil() -> None:
 # ----------------------------------------------------------------------------
 
 ALLE_TESTS = [
+    test_services_reexport_ist_identisch_mit_core_sot,
     test_reiner_pv_speicher_ohne_netzladung_regression,
     test_netzladung_ohne_ladepreis_kostet_keinen_pv_vorteil,
     test_netzladung_mit_guenstigem_ladepreis_bringt_arbitrage,
     test_netzladung_groesser_als_entladung_geclamped,
     test_bezug_unter_einspeisung_clampt_spread_auf_null,
     test_keine_entladung_keine_ersparnis,
+    test_v2h_ersparnis_entspricht_pv_speicher_spread,
+    test_v2h_ersparnis_ohne_entladung_ist_null,
     test_aggregiere_speicher_ist_hochrechnung_auf_jahr,
     test_aggregiere_speicher_ist_zu_wenig_monate_gibt_none,
     test_aggregiere_speicher_ist_ohne_entladung_gibt_none,

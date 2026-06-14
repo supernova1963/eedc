@@ -7,7 +7,13 @@ Alle Formeln für Kennzahlen, Einsparungen und Auswertungen.
 from dataclasses import dataclass
 from typing import Optional
 
-from backend.core.berechnungen import einspeise_erloes_euro
+from backend.core.berechnungen import (
+    autarkie_prozent,
+    berechne_netzbezug_kosten,
+    eigenverbrauchsquote_prozent,
+    einspeise_erloes_euro,
+    spezifischer_ertrag_kwh_kwp,
+)
 
 
 # =============================================================================
@@ -146,12 +152,12 @@ def berechne_monatskennzahlen(
     eigenverbrauch = direktverbrauch + batterie_entladung_kwh + v2h_entladung_kwh
     gesamtverbrauch = eigenverbrauch + netzbezug_kwh
 
-    # Quoten berechnen
-    ev_quote = min(eigenverbrauch / pv_erzeugung_kwh * 100, 100) if pv_erzeugung_kwh > 0 else 0
-    autarkie = (eigenverbrauch / gesamtverbrauch * 100) if gesamtverbrauch > 0 else 0
+    # Quoten berechnen (SoT-Primitive, ADR-001)
+    ev_quote = eigenverbrauchsquote_prozent(eigenverbrauch, pv_erzeugung_kwh)
+    autarkie = autarkie_prozent(eigenverbrauch, gesamtverbrauch)
 
     # Spezifischer Ertrag (kWh pro kWp)
-    spez_ertrag = (pv_erzeugung_kwh / leistung_kwp) if leistung_kwp and leistung_kwp > 0 else None
+    spez_ertrag = spezifischer_ertrag_kwh_kwp(pv_erzeugung_kwh, leistung_kwp)
 
     # Finanzielle Berechnungen (Cent -> Euro). §51-Erlös über SoT (ADR-001, M3);
     # neg_preis_kwh = None — diese Funktion kennt keine Negativpreis-Spalte →
@@ -159,7 +165,9 @@ def berechne_monatskennzahlen(
     einspeise_erloes = einspeise_erloes_euro(
         einspeisung_kwh, None, einspeiseverguetung_cent
     ).erloes_euro
-    netzbezug_kosten = netzbezug_kwh * netzbezug_preis_cent / 100 + grundpreis_euro_monat
+    netzbezug_kosten = berechne_netzbezug_kosten(
+        netzbezug_kwh, netzbezug_preis_cent, grundpreis_euro_monat
+    )
     ev_ersparnis = eigenverbrauch * netzbezug_preis_cent / 100
 
     # Netto-Ertrag der PV-Anlage:
@@ -229,11 +237,11 @@ def berechne_speicher_einsparung(
     Returns:
         SpeicherEinsparung mit gemappten pv_anteil_euro / arbitrage_anteil_euro.
     """
-    # --- IST-Modus: Delegation an den kanonischen Spread-Service ---
+    # --- IST-Modus: Delegation an die kanonische Spread-Berechnung ---
     if ist_entladung_kwh is not None:
-        # Lokaler Import vermeidet eine Modul-Zyklen-Falle, falls calculations.py
-        # je in den Service zurückgezogen wird.
-        from backend.services.speicher_wirtschaftlichkeit import berechne_speicher_ersparnis
+        # Lokaler Import hält calculations.py importseitig schlank (der
+        # Spread-Helper wird nur im IST-Modus gebraucht).
+        from backend.core.berechnungen.speicher_wirtschaftlichkeit import berechne_speicher_ersparnis
 
         # Im Arbitrage-Modus liefert `lade_preis_cent` den Ø-Ladepreis; sonst None →
         # Netzladung wird im Service als kostenneutral behandelt.

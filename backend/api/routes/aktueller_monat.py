@@ -25,7 +25,15 @@ from backend.models.monatsdaten import Monatsdaten
 from backend.models.pvgis_prognose import PVGISPrognose, PVGISMonatsprognose
 from backend.api.routes.strompreise import lade_tarife_fuer_anlage, resolve_netzbezug_preis_cent
 from backend.api.routes.connector import _calc_month_delta
-from backend.core.berechnungen import eauto_effizienz_100km, einspeise_erloes_euro
+from backend.core.berechnungen import (
+    autarkie_prozent,
+    berechne_netzbezug_kosten,
+    eauto_effizienz_100km,
+    eigenverbrauchsquote_prozent,
+    einspeise_erloes_euro,
+    imd_typ_beitrag,
+    merge_datenquellen,
+)
 from backend.services.einspeise_erloes_service import get_neg_preis_einspeisung_monat
 from backend.services.wp_wirtschaftlichkeit import berechne_wp_ersparnis
 from backend.services.eauto_wirtschaftlichkeit import (
@@ -375,38 +383,36 @@ async def _collect_saved_data(
             if not inv.ist_aktiv_im_monat(imd.jahr, imd.monat):
                 continue
             data = imd.verbrauch_daten or {}
+            # Per-Typ-Feld-Auflösung zentral ([[imd_typ_beitrag]], Block 1).
+            b = imd_typ_beitrag(inv, data)
 
             if inv.typ == "pv-module":
-                pv_erzeugung_total += data.get("pv_erzeugung_kwh", 0) or 0
+                pv_erzeugung_total += b.pv_erzeugung
             elif inv.typ == "speicher":
-                speicher_ladung_total += data.get("ladung_kwh", 0) or 0
-                speicher_entladung_total += data.get("entladung_kwh", 0) or 0
+                speicher_ladung_total += b.speicher_ladung
+                speicher_entladung_total += b.speicher_entladung
             elif inv.typ == "waermepumpe":
                 # #183: bei getrennter Strommessung Gesamt-Strom aus Einzel-
-                # Sensoren bilden, alter Gesamt-Sensor wird ignoriert.
-                wp_strom_total += get_wp_strom_kwh(data, inv.parameter)
-                wp_waerme_total += (
-                    data.get("waerme_kwh", 0) or
-                    get_wp_heizenergie_kwh(data) +
-                    (data.get("warmwasser_kwh", 0) or 0)
-                )
+                # Sensoren (im Resolver). wp_waerme = waerme_kwh oder Heiz+WW.
+                wp_strom_total += b.wp_strom
+                wp_waerme_total += b.wp_waerme
             elif inv.typ == "e-auto":
                 if not ist_dienstlich(inv):
                     eauto_imd_data.append(data)
-                    eauto_km_total += data.get("km_gefahren", 0) or 0
-                    eauto_verbrauch_total += data.get("verbrauch_kwh", 0) or 0
+                    eauto_km_total += b.eauto_km
+                    eauto_verbrauch_total += b.eauto_verbrauch
             elif inv.typ == "wallbox":
                 if not ist_dienstlich(inv):
                     wb_imd_data.append(data)
             elif inv.typ == "balkonkraftwerk":
-                bkw_kwh = (
-                    data.get("pv_erzeugung_kwh", 0) or
-                    data.get("erzeugung_kwh", 0) or 0
-                )
+                bkw_kwh = b.bkw_erzeugung
                 bkw_erzeugung_total += bkw_kwh
                 # BKW ist PV-Erzeugung → fließt in Gesamt-PV ein
                 pv_erzeugung_total += bkw_kwh
-                bkw_eigenverbrauch_total += data.get("eigenverbrauch_kwh", 0) or bkw_kwh
+                # D5 (Block 1, IST-Stand erhalten): eigenverbrauch fällt bei
+                # fehlendem Messwert auf die volle Erzeugung zurück — Site-1-Quirk,
+                # divergent zu Komponenten/Übersicht (siehe FELD-MATRIX D5).
+                bkw_eigenverbrauch_total += b.bkw_eigenverbrauch or bkw_kwh
 
         # E-Mobilitäts-Pool: EINE Quelle liefert die konsistente Heimladungs-
         # Trias (pv + netz == ladung). Früher feldweises max() — das nahm pv
@@ -524,7 +530,6 @@ async def _load_vorjahr(anlage_id: int, investitionen: list[Investition], jahr: 
     pv_inv_ids = [i.id for i in investitionen if i.typ in ("pv-module", "balkonkraftwerk")]
     bat_inv_ids = [i.id for i in investitionen if i.typ == "speicher"]
     wp_inv_ids = [i.id for i in investitionen if i.typ == "waermepumpe"]
-    wp_params_by_id = {i.id: (i.parameter or {}) for i in investitionen if i.typ == "waermepumpe"}
     # E-Auto und Wallbox separat halten — selbe Pool-Doppelzählungs-Falle wie
     # in `_collect_saved_data` (siehe dort). Max-pro-Feld statt Summe.
     eauto_inv_ids = [i.id for i in investitionen if i.typ == "e-auto" and not ist_dienstlich(i)]
@@ -548,25 +553,36 @@ async def _load_vorjahr(anlage_id: int, investitionen: list[Investition], jahr: 
         wb_ladung_vj = 0.0
         emob_km_vj = 0.0
 
+        inv_by_id_vj = {i.id: i for i in investitionen}
         for imd in imd_result.scalars().all():
+            inv = inv_by_id_vj.get(imd.investition_id)
+            if not inv:
+                continue
             data = imd.verbrauch_daten or {}
+            # Per-Typ-Feld-Auflösung zentral ([[imd_typ_beitrag]], Block 1).
+            b = imd_typ_beitrag(inv, data)
             if imd.investition_id in pv_inv_ids:
-                pv_vj += get_pv_erzeugung_kwh(data)
-            elif imd.investition_id in bat_inv_ids:
-                bat_ladung_vj += data.get("ladung_kwh", 0) or 0
-                bat_entladung_vj += data.get("entladung_kwh", 0) or 0
-            elif imd.investition_id in wp_inv_ids:
-                # #183: bei getrennter Strommessung Gesamt-Strom aus Einzel-
-                # Sensoren bilden.
-                wp_strom_vj += get_wp_strom_kwh(data, wp_params_by_id.get(imd.investition_id))
-                wp_waerme_vj += (
-                    (data.get("heizenergie_kwh", 0) or 0) + (data.get("warmwasser_kwh", 0) or 0)
+                # pv_inv_ids enthält PV-Module UND BKW. D6 (IST-Stand erhalten):
+                # pv-module behält den erzeugung_kwh-Legacy-Fallback (divergent zum
+                # aktuellen Monat); BKW kanonisch via Resolver.
+                pv_vj += (
+                    get_pv_erzeugung_kwh(data) if inv.typ == "pv-module"
+                    else b.bkw_erzeugung
                 )
+            elif imd.investition_id in bat_inv_ids:
+                bat_ladung_vj += b.speicher_ladung
+                bat_entladung_vj += b.speicher_entladung
+            elif imd.investition_id in wp_inv_ids:
+                # D1 (Block 1): wp_waerme kanonisch (waerme_kwh-Vorrang +
+                # heizung_kwh-Legacy) statt rohem Heiz+WW — angeglichen an den
+                # aktuellen Monat derselben Route.
+                wp_strom_vj += b.wp_strom
+                wp_waerme_vj += b.wp_waerme
             elif imd.investition_id in eauto_inv_ids:
-                eauto_ladung_vj += get_eauto_ladung_kwh(data)
-                emob_km_vj += data.get("km_gefahren", 0) or 0
+                eauto_ladung_vj += b.eauto_ladung_kanonisch
+                emob_km_vj += b.eauto_km
             elif imd.investition_id in wb_inv_ids:
-                wb_ladung_vj += data.get("ladung_kwh", 0) or 0
+                wb_ladung_vj += b.wallbox_ladung
 
         # Pool-Auswahl konsistent zu _collect_saved_data: pro Feld die größere
         # Quelle. WB liefert üblicherweise Loadpoint-Wahrheit, EAuto ist Vehicle-
@@ -626,7 +642,9 @@ async def _load_vorjahr(anlage_id: int, investitionen: list[Investition], jahr: 
                 )
                 result["einspeise_erloes_euro"] = round(m_erloes.erloes_euro, 2)
             if netz > 0:
-                result["netzbezug_kosten_euro"] = round(netz * netz_preis / 100 + grundpreis, 2)
+                result["netzbezug_kosten_euro"] = round(
+                    berechne_netzbezug_kosten(netz, netz_preis, grundpreis), 2
+                )
             if ev > 0:
                 result["ev_ersparnis_euro"] = round(ev * netz_preis / 100, 2)
             einspeise_e = result.get("einspeise_erloes_euro", 0) or 0
@@ -660,6 +678,160 @@ async def _load_soll_pv(anlage_id: int, monat: int, db: AsyncSession) -> Optiona
 # =============================================================================
 # Endpoint
 # =============================================================================
+
+def _baue_investition_financial(
+    inv,
+    data: dict,
+    *,
+    netz_p: float,
+    einsp_p: float,
+    wp_p: float,
+    wb_p: float,
+    monats_gaspreis: Optional[float],
+    monats_benzinpreis: Optional[float],
+    emob_pool_attr,
+) -> Optional[InvestitionFinancialDetail]:
+    """Baut das T-Konto-Detail (InvestitionFinancialDetail) EINER Investition.
+
+    Extrahiert aus get_aktueller_monat (Spur A, Refactoring-Plan). Bewusst IM
+    Route-Modul statt core/berechnungen: erzeugt deutsche Anzeige-Strings
+    (label/formel/berechnung) und das Pydantic-Response-Modell — Präsentations-
+    Finanzlogik, kein Aggregat-Σ. Verhaltensneutral 1:1 übernommen.
+
+    Gibt None zurück, wenn die Investition inaktiv ist ODER keinerlei finanzielle
+    Relevanz hat (Inclusion-Guard: weder Betriebskosten noch Ersparnis/Erlös/
+    sonstige Positionen). Preis-/Pool-Kontext wird vom Aufrufer einmal aufgelöst
+    und übergeben.
+    """
+    if not inv.aktiv:
+        return None
+    bk_monat = round((inv.betriebskosten_jahr or 0) / 12, 2)
+    # Sonstige Erträge/Ausgaben (z.B. AG-Vergütung Dienstwagen, THG-Quote)
+    # für JEDE Investition evaluieren — typ-unabhängig, auch wenn der
+    # Wirtschaftlichkeits-Zweig unten übersprungen wird (z.B. ist_dienstlich).
+    inv_sonstige = berechne_sonstige_summen(data)
+    inv_sonstige_ertraege = round(inv_sonstige["ertraege_euro"], 2)
+    inv_sonstige_ausgaben = round(inv_sonstige["ausgaben_euro"], 2)
+    inv_erloes: Optional[float] = None
+    inv_ersparnis: Optional[float] = None
+    inv_label = ""
+    inv_formel: Optional[str] = None
+    inv_berechnung: Optional[str] = None
+
+    if inv.typ == "balkonkraftwerk":
+        ev_kwh = data.get("eigenverbrauch_kwh") or data.get("pv_erzeugung_kwh")
+        einsp_kwh = data.get("einspeisung_kwh")
+        if ev_kwh:
+            inv_ersparnis = round(ev_kwh * netz_p / 100, 2)
+            inv_label = "Eigenverbrauch-Ersparnis"
+            inv_formel = "BKW-Eigenverbrauch × Netzbezugspreis"
+            inv_berechnung = f"{ev_kwh:.1f} kWh × {netz_p:.2f} ct/kWh"
+        if einsp_kwh and einsp_kwh > 0:
+            inv_erloes = round(einsp_kwh * einsp_p / 100, 2)
+
+    elif inv.typ == "speicher":
+        entl_kwh = data.get("entladung_kwh")
+        if entl_kwh and entl_kwh > 0:
+            inv_ersparnis = round(entl_kwh * netz_p / 100, 2)
+            inv_label = "Entladung-Ersparnis"
+            inv_formel = "Speicher-Entladung × Netzbezugspreis"
+            inv_berechnung = f"{entl_kwh:.1f} kWh × {netz_p:.2f} ct/kWh"
+
+    elif inv.typ == "waermepumpe":
+        waerme = get_wp_heizenergie_kwh(data)
+        ww = data.get("warmwasser_kwh", 0) or 0
+        strom = get_wp_strom_kwh(data, inv.parameter) or None
+        waerme_total = (waerme or 0) + (ww or 0)
+        if waerme_total > 0 and strom is not None:
+            wp_result = berechne_wp_ersparnis(
+                wp_waerme_kwh=waerme_total,
+                wp_strom_kwh=strom,
+                wp_strompreis_cent=wp_p,
+                wp_parameter=inv.parameter,
+                monats_gaspreis_cent=monats_gaspreis,
+            )
+            inv_ersparnis = round(wp_result.ersparnis_euro, 2)
+            inv_label = "Ersparnis vs. Gas"
+            inv_formel = "(Wärme ÷ Wirkungsgrad × Gaspreis) − Strom × WP-Strompreis"
+            inv_berechnung = (
+                f"{waerme_total:.1f} kWh / {wp_result.verwendeter_wirkungsgrad:.2f} "
+                f"× {wp_result.verwendeter_gaspreis_cent:.1f} ct − "
+                f"{strom:.1f} kWh × {wp_p:.2f} ct"
+            )
+
+    elif inv.typ in ("e-auto", "wallbox") and not ist_dienstlich(inv):
+        km = data.get("km_gefahren")
+        ladung = get_eauto_ladung_kwh(data) or None
+        # #262: SoT-Helper konsolidiert den vorherigen Inline-Fallback
+        # (netz = ladung_netz ?? total − pv) — gleiche Semantik, gleiche
+        # Drift-Quelle wie in den anderen Read-Sites.
+        ladung_pv, netz_kwh = get_emob_pv_netz_kwh(data, total_kwh=ladung or 0)
+        ladung_pv = ladung_pv or None
+        if km and km > 0:
+            extern_euro = data.get("ladung_extern_euro", 0) or 0
+            # Wallbox-Pool-Override für evcc-Setups (Ladedaten auf der
+            # Wallbox-IMD, nur km am E-Auto). Selbes Pattern wie im
+            # EAutoDashboard.
+            if emob_pool_attr.use_wb_pool and inv.typ == "e-auto":
+                share = attribute_emob_pool_by_km(emob_pool_attr, km)
+                if share.netz_kwh + share.pv_kwh > 0:
+                    netz_kwh = share.netz_kwh
+                    ladung_pv = share.pv_kwh or None
+                    extern_euro = share.extern_euro
+            eauto_result = berechne_eauto_ersparnis(
+                km_gefahren=km,
+                ladung_netz_kwh=max(0, netz_kwh),
+                ladung_extern_euro=extern_euro,
+                wallbox_strompreis_cent=wb_p,
+                eauto_parameter=inv.parameter,
+                monats_benzinpreis_euro=monats_benzinpreis,
+            )
+            inv_ersparnis = round(eauto_result.ersparnis_euro, 2)
+            inv_label = "Ersparnis vs. Verbrenner"
+            inv_formel = "(km × Verbrauch × Benzinpreis) − Netzladung × Strompreis"
+            inv_berechnung = (
+                f"{km:.0f} km × {eauto_result.verwendeter_verbrauch_l_100km:.1f} L/100km × "
+                f"{eauto_result.verwendeter_benzinpreis_euro:.2f} €"
+            )
+        elif inv.typ == "wallbox" and ladung_pv and ladung_pv > 0:
+            inv_ersparnis = round(ladung_pv * wb_p / 100, 2)
+            inv_label = "PV-Ladung-Ersparnis"
+            inv_formel = "PV-Ladung × Netzbezugspreis"
+            inv_berechnung = f"{ladung_pv:.1f} kWh × {wb_p:.2f} ct/kWh"
+
+    elif inv.typ == "sonstiges":
+        ev_kwh = data.get("eigenverbrauch_kwh")
+        einsp_kwh = data.get("einspeisung_kwh")
+        if ev_kwh and ev_kwh > 0:
+            inv_ersparnis = round(ev_kwh * netz_p / 100, 2)
+            inv_label = "Eigenverbrauch-Ersparnis"
+            inv_formel = "Eigenverbrauch × Netzbezugspreis"
+            inv_berechnung = f"{ev_kwh:.1f} kWh × {netz_p:.2f} ct/kWh"
+        if einsp_kwh and einsp_kwh > 0:
+            inv_erloes = round(einsp_kwh * einsp_p / 100, 2)
+
+    if (
+        bk_monat > 0
+        or inv_ersparnis is not None
+        or inv_erloes is not None
+        or inv_sonstige_ertraege > 0
+        or inv_sonstige_ausgaben > 0
+    ):
+        return InvestitionFinancialDetail(
+            investition_id=inv.id,
+            bezeichnung=inv.bezeichnung,
+            typ=inv.typ,
+            betriebskosten_monat_euro=bk_monat,
+            erloes_euro=inv_erloes,
+            ersparnis_euro=inv_ersparnis,
+            ersparnis_label=inv_label,
+            formel=inv_formel,
+            berechnung=inv_berechnung,
+            sonstige_ertraege_euro=inv_sonstige_ertraege,
+            sonstige_ausgaben_euro=inv_sonstige_ausgaben,
+        )
+    return None
+
 
 @router.get("/{anlage_id}", response_model=AktuellerMonatResponse)
 async def get_aktueller_monat(
@@ -695,43 +867,23 @@ async def get_aktueller_monat(
     ist_aktueller_monat = (jahr == now.year and monat == now.month)
     investitionen = [i for i in anlage.investitionen if i.aktiv]
 
-    # ── Daten sammeln (niedrigste Konfidenz zuerst, höchste überschreibt) ──
-    resolved: dict[str, tuple[float, DatenquelleInfo]] = {}
-
+    # ── Daten sammeln (I/O) — Zusammenführung nach Präzedenz im SoT-Helper ──
+    # Sammeln bleibt hier (DB/HA-Zugriff); die Merge-/Override-Regeln leben in
+    # core/berechnungen/datenquellen.merge_datenquellen (ADR-001) — eine Stelle,
+    # symmetrie-getestet, ohne Drift zwischen den Quellen-Zweigen.
+    # MQTT wird für abgeschlossene Monate gar nicht erst gesammelt.
     saved = await _collect_saved_data(anlage_id, jahr, monat, investitionen, db)
-    resolved.update(saved)
-
     connector = await _collect_connector_data(anlage, jahr, monat)
-    if ist_aktueller_monat:
-        # Laufender Monat: Connector (Konfidenz 90 %) ist frischer als die
-        # gespeicherten Werte und darf sie überschreiben (Vorschau).
-        resolved.update(connector)
-    else:
-        # Abgeschlossener Monat: gespeicherte Monatsdaten sind authoritativ
-        # (analog HA-Stats unten, #118). Der Connector darf gespeicherte/manuell
-        # gepflegte Werte NICHT rückwirkend überschreiben — sonst überschreibt
-        # z. B. ein Sungrow-Connector ohne separate Einspeisungs-Messung den
-        # gespeicherten Einspeisungs-Wert mit 0 (#325, detlefh68). Nur Felder
-        # füllen, die noch fehlen.
-        for k, v in connector.items():
-            resolved.setdefault(k, v)
-
     mqtt_energy = await _collect_mqtt_inbound_data(anlage, investitionen) if ist_aktueller_monat else {}
-    resolved.update(mqtt_energy)
-
     ha_stats = await _collect_ha_statistics_data(anlage, jahr, monat)
-    if ist_aktueller_monat:
-        # Laufender Monat: HA-Stats sind die frischeste Quelle und sollen die
-        # gespeicherten Werte überschreiben (Vorschau aus Live-Sensoren).
-        resolved.update(ha_stats)
-    else:
-        # Vergangener Monat: gespeicherte Monatsdaten + InvestitionMonatsdaten
-        # sind authoritativ (Monatsabschluss). HA-Stats nur als Fallback für
-        # Felder, die noch nicht vorhanden sind — kein Override mehr, sonst
-        # können sich Werte rückwirkend ändern (Sensor-Renames, Recorder-Drift)
-        # und Monatsbericht weicht von Auswertung→Tabelle ab (#118).
-        for k, v in ha_stats.items():
-            resolved.setdefault(k, v)
+
+    resolved: dict[str, tuple[float, DatenquelleInfo]] = merge_datenquellen(
+        saved=saved,
+        connector=connector,
+        mqtt_energy=mqtt_energy,
+        ha_stats=ha_stats,
+        ist_aktueller_monat=ist_aktueller_monat,
+    )
 
     # ── Investitions-Felder in Top-Level aggregieren (typabhängig) ──
     # Nur aggregieren wenn kein direkter Top-Level-Wert existiert (sonst Doppelzählung!)
@@ -861,10 +1013,10 @@ async def get_aktueller_monat(
         if netzbezug is not None:
             gesamtverbrauch = round(eigenverbrauch + netzbezug, 2)
             if gesamtverbrauch > 0:
-                autarkie = round(eigenverbrauch / gesamtverbrauch * 100, 1)
+                autarkie = round(autarkie_prozent(eigenverbrauch, gesamtverbrauch), 1)
 
         if pv > 0:
-            ev_quote = round(min(eigenverbrauch / pv * 100, 100), 1)
+            ev_quote = round(eigenverbrauchsquote_prozent(eigenverbrauch, pv), 1)
 
     # ── Finanzen ──
     einspeise_erloes = None
@@ -893,7 +1045,9 @@ async def get_aktueller_monat(
             einspeise_erloes = round(m_erloes.erloes_euro, 2)
         if netzbezug is not None:
             grundpreis = allgemein_tarif.grundpreis_euro_monat or 0
-            netzbezug_kosten = round(netzbezug * netzbezug_preis_cent / 100 + grundpreis, 2)
+            netzbezug_kosten = round(
+                berechne_netzbezug_kosten(netzbezug, netzbezug_preis_cent, grundpreis), 2
+            )
         if eigenverbrauch is not None:
             ev_ersparnis = round(eigenverbrauch * netzbezug_preis_cent / 100, 2)
 
@@ -1076,9 +1230,11 @@ async def get_aktueller_monat(
         # über die Monatsgrenze hinaus), nicht relativ zur Ladung.
         if sl > 0:
             from calendar import monthrange
+            from backend.core.berechnungen.speicher_wirtschaftlichkeit import (
+                ist_soc_drift_signifikant,
+            )
             from backend.services.speicher_wirtschaftlichkeit import (
                 _lese_soc_am_periodenrand,
-                ist_soc_drift_signifikant,
             )
             try:
                 monat_start = date(jahr, monat, 1)
@@ -1400,134 +1556,19 @@ async def get_aktueller_monat(
         )
 
         for inv in investitionen:
-            if not inv.aktiv:
-                continue
-            data = imd_by_inv.get(inv.id, {})
-            bk_monat = round((inv.betriebskosten_jahr or 0) / 12, 2)
-            # Sonstige Erträge/Ausgaben (z.B. AG-Vergütung Dienstwagen, THG-Quote)
-            # für JEDE Investition evaluieren — typ-unabhängig, auch wenn der
-            # Wirtschaftlichkeits-Zweig unten übersprungen wird (z.B. ist_dienstlich).
-            inv_sonstige = berechne_sonstige_summen(data)
-            inv_sonstige_ertraege = round(inv_sonstige["ertraege_euro"], 2)
-            inv_sonstige_ausgaben = round(inv_sonstige["ausgaben_euro"], 2)
-            inv_erloes: Optional[float] = None
-            inv_ersparnis: Optional[float] = None
-            inv_label = ""
-            inv_formel: Optional[str] = None
-            inv_berechnung: Optional[str] = None
-
-            if inv.typ == "balkonkraftwerk":
-                ev_kwh = data.get("eigenverbrauch_kwh") or data.get("pv_erzeugung_kwh")
-                einsp_kwh = data.get("einspeisung_kwh")
-                if ev_kwh:
-                    inv_ersparnis = round(ev_kwh * netz_p / 100, 2)
-                    inv_label = "Eigenverbrauch-Ersparnis"
-                    inv_formel = "BKW-Eigenverbrauch × Netzbezugspreis"
-                    inv_berechnung = f"{ev_kwh:.1f} kWh × {netz_p:.2f} ct/kWh"
-                if einsp_kwh and einsp_kwh > 0:
-                    inv_erloes = round(einsp_kwh * einsp_p / 100, 2)
-
-            elif inv.typ == "speicher":
-                entl_kwh = data.get("entladung_kwh")
-                if entl_kwh and entl_kwh > 0:
-                    inv_ersparnis = round(entl_kwh * netz_p / 100, 2)
-                    inv_label = "Entladung-Ersparnis"
-                    inv_formel = "Speicher-Entladung × Netzbezugspreis"
-                    inv_berechnung = f"{entl_kwh:.1f} kWh × {netz_p:.2f} ct/kWh"
-
-            elif inv.typ == "waermepumpe":
-                waerme = get_wp_heizenergie_kwh(data)
-                ww = data.get("warmwasser_kwh", 0) or 0
-                strom = get_wp_strom_kwh(data, inv.parameter) or None
-                waerme_total = (waerme or 0) + (ww or 0)
-                if waerme_total > 0 and strom is not None:
-                    wp_result = berechne_wp_ersparnis(
-                        wp_waerme_kwh=waerme_total,
-                        wp_strom_kwh=strom,
-                        wp_strompreis_cent=wp_p,
-                        wp_parameter=inv.parameter,
-                        monats_gaspreis_cent=monats_gaspreis,
-                    )
-                    inv_ersparnis = round(wp_result.ersparnis_euro, 2)
-                    inv_label = "Ersparnis vs. Gas"
-                    inv_formel = "(Wärme ÷ Wirkungsgrad × Gaspreis) − Strom × WP-Strompreis"
-                    inv_berechnung = (
-                        f"{waerme_total:.1f} kWh / {wp_result.verwendeter_wirkungsgrad:.2f} "
-                        f"× {wp_result.verwendeter_gaspreis_cent:.1f} ct − "
-                        f"{strom:.1f} kWh × {wp_p:.2f} ct"
-                    )
-
-            elif inv.typ in ("e-auto", "wallbox") and not ist_dienstlich(inv):
-                km = data.get("km_gefahren")
-                ladung = get_eauto_ladung_kwh(data) or None
-                # #262: SoT-Helper konsolidiert den vorherigen Inline-Fallback
-                # (netz = ladung_netz ?? total − pv) — gleiche Semantik, gleiche
-                # Drift-Quelle wie in den anderen Read-Sites.
-                ladung_pv, netz_kwh = get_emob_pv_netz_kwh(data, total_kwh=ladung or 0)
-                ladung_pv = ladung_pv or None
-                if km and km > 0:
-                    extern_euro = data.get("ladung_extern_euro", 0) or 0
-                    # Wallbox-Pool-Override für evcc-Setups (Ladedaten auf der
-                    # Wallbox-IMD, nur km am E-Auto). Selbes Pattern wie im
-                    # EAutoDashboard.
-                    if emob_pool_attr.use_wb_pool and inv.typ == "e-auto":
-                        share = attribute_emob_pool_by_km(emob_pool_attr, km)
-                        if share.netz_kwh + share.pv_kwh > 0:
-                            netz_kwh = share.netz_kwh
-                            ladung_pv = share.pv_kwh or None
-                            extern_euro = share.extern_euro
-                    eauto_result = berechne_eauto_ersparnis(
-                        km_gefahren=km,
-                        ladung_netz_kwh=max(0, netz_kwh),
-                        ladung_extern_euro=extern_euro,
-                        wallbox_strompreis_cent=wb_p,
-                        eauto_parameter=inv.parameter,
-                        monats_benzinpreis_euro=monats_benzinpreis,
-                    )
-                    inv_ersparnis = round(eauto_result.ersparnis_euro, 2)
-                    inv_label = "Ersparnis vs. Verbrenner"
-                    inv_formel = "(km × Verbrauch × Benzinpreis) − Netzladung × Strompreis"
-                    inv_berechnung = (
-                        f"{km:.0f} km × {eauto_result.verwendeter_verbrauch_l_100km:.1f} L/100km × "
-                        f"{eauto_result.verwendeter_benzinpreis_euro:.2f} €"
-                    )
-                elif inv.typ == "wallbox" and ladung_pv and ladung_pv > 0:
-                    inv_ersparnis = round(ladung_pv * wb_p / 100, 2)
-                    inv_label = "PV-Ladung-Ersparnis"
-                    inv_formel = "PV-Ladung × Netzbezugspreis"
-                    inv_berechnung = f"{ladung_pv:.1f} kWh × {wb_p:.2f} ct/kWh"
-
-            elif inv.typ == "sonstiges":
-                ev_kwh = data.get("eigenverbrauch_kwh")
-                einsp_kwh = data.get("einspeisung_kwh")
-                if ev_kwh and ev_kwh > 0:
-                    inv_ersparnis = round(ev_kwh * netz_p / 100, 2)
-                    inv_label = "Eigenverbrauch-Ersparnis"
-                    inv_formel = "Eigenverbrauch × Netzbezugspreis"
-                    inv_berechnung = f"{ev_kwh:.1f} kWh × {netz_p:.2f} ct/kWh"
-                if einsp_kwh and einsp_kwh > 0:
-                    inv_erloes = round(einsp_kwh * einsp_p / 100, 2)
-
-            if (
-                bk_monat > 0
-                or inv_ersparnis is not None
-                or inv_erloes is not None
-                or inv_sonstige_ertraege > 0
-                or inv_sonstige_ausgaben > 0
-            ):
-                investitionen_financials.append(InvestitionFinancialDetail(
-                    investition_id=inv.id,
-                    bezeichnung=inv.bezeichnung,
-                    typ=inv.typ,
-                    betriebskosten_monat_euro=bk_monat,
-                    erloes_euro=inv_erloes,
-                    ersparnis_euro=inv_ersparnis,
-                    ersparnis_label=inv_label,
-                    formel=inv_formel,
-                    berechnung=inv_berechnung,
-                    sonstige_ertraege_euro=inv_sonstige_ertraege,
-                    sonstige_ausgaben_euro=inv_sonstige_ausgaben,
-                ))
+            detail = _baue_investition_financial(
+                inv,
+                imd_by_inv.get(inv.id, {}),
+                netz_p=netz_p,
+                einsp_p=einsp_p,
+                wp_p=wp_p,
+                wb_p=wb_p,
+                monats_gaspreis=monats_gaspreis,
+                monats_benzinpreis=monats_benzinpreis,
+                emob_pool_attr=emob_pool_attr,
+            )
+            if detail is not None:
+                investitionen_financials.append(detail)
 
     # Ø Verbrauch (kWh/100 km) via zentralem Helper aus den FINALEN (ggf. connector-
     # überschriebenen) Werten — gemessener Fahrverbrauch hat Vorrang vor Ladung.

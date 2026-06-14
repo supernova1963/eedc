@@ -31,6 +31,11 @@ Geplant (step-by-step, wenn Konsumenten angefasst werden):
 - `kennzahlen` — Eigenverbrauch, Autarkie, spez. Tagesertrag (Migration aus calculations.py)
 """
 
+from backend.core.berechnungen.alternativkosten import (
+    berechne_bkw_alternativkosten_ersparnis,
+    berechne_wp_alternativkosten_ersparnis,
+    gas_kosten_altanlage,
+)
 from backend.core.berechnungen.co2_amortisation import (
     QUELLE_DEFAULT,
     QUELLE_FEHLT,
@@ -47,6 +52,9 @@ from backend.core.berechnungen.counter import (
     pruefe_counter_konsistent,
     verteile_counter_auf_stunden,
 )
+from backend.core.berechnungen.datenquellen import (
+    merge_datenquellen,
+)
 from backend.core.berechnungen.einspeise_erloes import (
     EinspeiseErloes,
     einspeise_erloes_euro,
@@ -62,6 +70,16 @@ from backend.core.berechnungen.emob import (
     QUELLE_LADUNG,
     EffizienzWert,
     eauto_effizienz_100km,
+)
+from backend.core.berechnungen.imd_monatsaggregat import (
+    ImdTypBeitrag,
+    imd_typ_beitrag,
+)
+from backend.core.berechnungen.netzbezug_kosten import berechne_netzbezug_kosten
+from backend.core.berechnungen.kennzahlen import (
+    autarkie_prozent,
+    eigenverbrauchsquote_prozent,
+    spezifischer_ertrag_kwh_kwp,
 )
 from backend.core.berechnungen.energie import (
     BATTERIE_KOMPONENTEN_PREFIXE,
@@ -134,12 +152,27 @@ from backend.core.berechnungen.speicher_simulation import (
     StundenBilanz,
     simuliere_speicher_tag,
 )
+from backend.core.berechnungen.speicher_wirtschaftlichkeit import (
+    ETA_DEGRADATION_SCHWELLE_PROZENTPUNKTE,
+    SOC_DRIFT_SCHWELLE_PROZENTPUNKTE,
+    SPEICHER_IST_MIN_MONATE,
+    SpeicherErsparnisErgebnis,
+    SpeicherIstAggregat,
+    aggregiere_speicher_ist,
+    berechne_speicher_ersparnis,
+    berechne_v2h_ersparnis,
+    ist_eta_degradation_alarm,
+    ist_soc_drift_signifikant,
+)
 from backend.core.berechnungen.verbrauch import (
     VerbrauchsKennzahlen,
     berechne_verbrauchs_kennzahlen,
 )
 
 __all__ = [
+    "berechne_bkw_alternativkosten_ersparnis",
+    "berechne_wp_alternativkosten_ersparnis",
+    "gas_kosten_altanlage",
     "QUELLE_OVERRIDE",
     "QUELLE_DEFAULT",
     "QUELLE_FEHLT",
@@ -152,11 +185,18 @@ __all__ = [
     "assert_counter_konsistent",
     "pruefe_counter_konsistent",
     "verteile_counter_auf_stunden",
+    "merge_datenquellen",
     "EinspeiseErloes",
     "einspeise_erloes_euro",
     "FinanzAggregat",
     "FinanzMonatsZeile",
     "berechne_finanz_aggregat",
+    "ImdTypBeitrag",
+    "imd_typ_beitrag",
+    "berechne_netzbezug_kosten",
+    "autarkie_prozent",
+    "eigenverbrauchsquote_prozent",
+    "spezifischer_ertrag_kwh_kwp",
     "QUELLE_GEMESSEN",
     "QUELLE_LADUNG",
     "QUELLE_KEINE",
@@ -204,6 +244,16 @@ __all__ = [
     "MonatsEffizienz",
     "gleitende_effizienz",
     "speicher_effizienz_prozent",
+    "SPEICHER_IST_MIN_MONATE",
+    "SOC_DRIFT_SCHWELLE_PROZENTPUNKTE",
+    "ETA_DEGRADATION_SCHWELLE_PROZENTPUNKTE",
+    "SpeicherIstAggregat",
+    "SpeicherErsparnisErgebnis",
+    "aggregiere_speicher_ist",
+    "berechne_speicher_ersparnis",
+    "berechne_v2h_ersparnis",
+    "ist_soc_drift_signifikant",
+    "ist_eta_degradation_alarm",
     "VerbrauchsKennzahlen",
     "berechne_verbrauchs_kennzahlen",
     "PV_QUELLE_GEMESSEN",
