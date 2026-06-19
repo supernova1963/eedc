@@ -15,6 +15,20 @@ describe('KPICard (SoT, B9)', () => {
     expect(screen.getByText('kWh')).toBeInTheDocument()
   })
 
+  it('schützt die Zahl, kürzt nur die Einheit mit … (einzeilig, #243)', () => {
+    // Einzeilig: die Zahl ist unantastbar (flex-shrink-0/nowrap, nie gekürzt). Reicht
+    // der Platz nicht, kürzt NUR die Einheit mit Ellipsis (truncate) — kein Umbruch.
+    const { getByText } = render(<KPICard title="Verbrauch" value="17,2" unit="kWh/100km" />)
+    const zahl = getByText('17,2')
+    expect(zahl.className).toMatch(/\bflex-shrink-0\b/)
+    expect(zahl.className).toMatch(/\bwhitespace-nowrap\b/)
+    const einheit = getByText('kWh/100km')
+    expect(einheit.className).toMatch(/\btruncate\b/)
+    expect(einheit.className).toMatch(/\bmin-w-0\b/)
+    // Einzeilig: der Wert-Container darf NICHT umbrechen.
+    expect((einheit.parentElement as HTMLElement).className).not.toMatch(/\bflex-wrap\b/)
+  })
+
   it('rendert ein String-Value unverändert', () => {
     render(<KPICard title="Status" value="—" />)
     expect(screen.getByText('—')).toBeInTheDocument()

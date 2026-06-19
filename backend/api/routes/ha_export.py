@@ -28,7 +28,9 @@ from backend.core.berechnungen import (
     monatsgewichte_aus_pvgis,
 )
 from backend.models.pvgis_prognose import PVGISPrognose
-from backend.api.routes.strompreise import resolve_netzbezug_preis_cent
+from datetime import date
+
+from backend.services.finanz_zeilen import FinanzZeileEingabe, baue_finanz_zeile
 from backend.services.einspeise_erloes_service import get_neg_preis_einspeisung_monat
 from backend.utils.sonstige_positionen import berechne_sonstige_netto
 from backend.core.field_definitions import get_emob_pv_netz_kwh, get_wp_strom_kwh
@@ -64,6 +66,8 @@ from backend.core.investition_parameter import (
 )
 from backend.core.calculations import CO2_FAKTOR_STROM_KG_KWH
 from backend.core.wirtschaftlichkeit_defaults import (
+    EINSPEISEVERGUETUNG_DEFAULT_CENT,
+    NETZBEZUG_DEFAULT_CENT,
     WP_PV_ANTEIL_DEFAULT,
     WP_WIRKUNGSGRAD_GAS_DEFAULT,
     WP_WIRKUNGSGRAD_OEL_DEFAULT,
@@ -420,8 +424,12 @@ async def calculate_anlage_sensors(
     ev_ersparnis = 0
     netto_ertrag = sonstige_netto_gesamt
     if strompreis:
-        verg_cent = strompreis.einspeiseverguetung_cent_kwh
-        netz_static_cent = strompreis.netzbezug_arbeitspreis_cent_kwh
+        # #326: FinanzMonatsZeile über den gemeinsamen Builder (einzige erlaubte
+        # Konstruktions-Stelle, Wächter) — er löst den Tarif PRO MONAT auf
+        # (historische Tarife via gueltig_ab/gueltig_bis), nicht den neuesten
+        # Strompreis für alle Jahre. Deckungsgleich mit Cockpit/Jahresbericht
+        # (rilmor-mhrs: Jahres-Tarife 23,90→32,80 ct).
+        _tarif_cache: dict[date, dict] = {}
         # PV-Quelle pro Monat wie das Aggregat: IMD bevorzugt, sonst Zähler-
         # Legacy-Feld (deckungsgleich mit cockpit/uebersicht.py `use_inv_pv`).
         use_inv_pv = bool(pv_by_ym)
@@ -433,17 +441,17 @@ async def calculate_anlage_sensors(
                 if m.einspeisung_kwh else None
             )
             m_pv = pv_by_ym.get(key, 0.0) if use_inv_pv else (m.pv_erzeugung_kwh or 0)
-            finanz_zeilen.append(FinanzMonatsZeile(
+            finanz_zeilen.append(await baue_finanz_zeile(db, anlage.id, FinanzZeileEingabe(
+                jahr=m.jahr, monat=m.monat,
                 einspeisung_kwh=m.einspeisung_kwh or 0,
                 netzbezug_kwh=m.netzbezug_kwh or 0,
                 pv_erzeugung_kwh=m_pv,
                 speicher_ladung_kwh=sp_lad_by_ym.get(key, 0.0),
                 speicher_entladung_kwh=sp_entl_by_ym.get(key, 0.0),
                 v2h_entladung_kwh=v2h_by_ym.get(key, 0.0),
-                netzbezug_preis_cent=resolve_netzbezug_preis_cent(m, netz_static_cent),
-                einspeiseverguetung_cent=verg_cent,
                 neg_preis_kwh=m_neg,
-            ))
+                monatsdaten=m,
+            ), tarif_cache=_tarif_cache))
         _finanz = berechne_finanz_aggregat(
             finanz_zeilen, sonstige_netto_euro=sonstige_netto_gesamt
         )

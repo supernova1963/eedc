@@ -9,7 +9,13 @@
  *   lg             Prominente Kachel (Hero/Featured)
  *
  * Konventionen (B1 #258): Einheit immer gedämpft hinter dem Wert, Icon-Position
- * konsistent rechts (boxed) bzw. inline links vor dem Label (sm). Optionaler
+ * konsistent rechts (boxed) bzw. inline links vor dem Label (sm). EINZEILIG: die
+ * ZAHL ist unantastbar (`flex-shrink-0 whitespace-nowrap` — nie gekürzt); reicht
+ * der Platz nicht, kürzt NUR die Einheit mit `…` (`min-w-0 truncate`), kein Umbruch
+ * (#243 Gernot). Die Grid-Mindestbreite (`auto-fit minmax`, KpiStrip = 248 px) ist
+ * so gewählt, dass Zahl (bis ~7 Stellen) + Icon + Einheit komfortabel inline passen
+ * (auch bei vielen Kacheln nicht gequetscht) — die Ellipsis greift fast nie.
+ * Optionaler
  * A6-FormelTooltip-Slot (`formel`/`berechnung`/`ergebnis`/`sicht`) — Optik aus dem
  * P3-Tooltip-Kanon (`FormelTooltip`). Ausbau des Herleitungs-Vertrags ist E4.
  *
@@ -66,10 +72,9 @@ export function KPICard({
     const valueColor = color ? COLOR_CLASSES[color].text : 'text-gray-900 dark:text-white'
     const iconColor = color ? COLOR_CLASSES[color].text : 'text-gray-500 dark:text-gray-400'
     const valueContent = (
-      <span className={`text-sm font-semibold ${valueColor} whitespace-nowrap`}>
-        {formattedValue}
-        {unit && <span className="text-xs font-normal text-gray-500 dark:text-gray-400 ml-1">{unit}</span>}
-        {trendMark}
+      <span className={`text-sm font-semibold ${valueColor} inline-flex items-baseline max-w-full`}>
+        <span className="flex-shrink-0 whitespace-nowrap">{formattedValue}{trendMark}</span>
+        {unit && <span className="text-xs font-normal text-gray-500 dark:text-gray-400 ml-1 min-w-0 truncate">{unit}</span>}
       </span>
     )
     return (
@@ -102,10 +107,9 @@ export function KPICard({
   }[size]
 
   const valueContent = (
-    <span className={`${dims.value} font-bold text-gray-900 dark:text-white whitespace-nowrap`}>
-      {formattedValue}
-      {unit && <span className="text-xs sm:text-sm font-normal text-gray-500 dark:text-gray-400 ml-1">{unit}</span>}
-      {trendMark}
+    <span className={`${dims.value} font-bold text-gray-900 dark:text-white inline-flex items-baseline max-w-full`}>
+      <span className="flex-shrink-0 whitespace-nowrap">{formattedValue}{trendMark}</span>
+      {unit && <span className="text-xs sm:text-sm font-normal text-gray-500 dark:text-gray-400 ml-1 min-w-0 truncate">{unit}</span>}
     </span>
   )
 

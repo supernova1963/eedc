@@ -111,4 +111,14 @@ export const REAL_ROUTE_PATHS: string[] = [
   'einstellungen/community',
   // Dev-only
   'dev/design-preview',
+  // IA-v4-Vorschau (flag-gated hinter VITE_IA_V4; eigenes LayoutV4)
+  'v4',
+  'v4/cockpit',
+  'v4/cockpit/:zeit',
+  'v4/auswertungen',
+  'v4/auswertungen/tabelle',
+  'v4/komponenten',
+  'v4/community',
+  'v4/hilfe',
+  'v4/einstellungen',
 ]
