@@ -42,6 +42,7 @@ export interface AktuellerMonatResponse {
   einspeisung_kwh: number | null
   netzbezug_kwh: number | null
   eigenverbrauch_kwh: number | null
+  direktverbrauch_kwh: number | null  // PV direkt verbraucht (ohne Speicher) = EV − Speicher-Entladung
   gesamtverbrauch_kwh: number | null
 
   // Quoten (%)
@@ -131,6 +132,7 @@ export interface AktuellerMonatResponse {
     einspeisung_kwh?: number
     netzbezug_kwh?: number
     eigenverbrauch_kwh?: number
+    direktverbrauch_kwh?: number
     gesamtverbrauch_kwh?: number
     autarkie_prozent?: number
     wp_strom_kwh?: number
@@ -149,6 +151,8 @@ export interface AktuellerMonatResponse {
 
   // Per-Investition Finanzdetails (T-Konto)
   investitionen_financials: InvestitionFinancialDetail[]
+  // Aktive Geräte je Typ im Monat (Namen) — für „aggregiert aus …"-Hinweise
+  komponenten_geraete: Record<string, string[]>
 
   // Quellenangabe pro Feld
   feld_quellen: Record<string, DatenquelleInfo>

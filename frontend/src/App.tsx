@@ -73,7 +73,7 @@ const V4 = import.meta.env.VITE_IA_V4 === 'true'
   ? {
       LayoutV4: lazy(() => import('./v4/LayoutV4')),
       CockpitV4: lazy(() => import('./v4/CockpitV4')),
-      AuswertungenTabelleV4: lazy(() => import('./v4/AuswertungenTabelleV4')),
+      KomponentenV4: lazy(() => import('./v4/KomponentenV4')),
       Platzhalter: lazy(() => import('./v4/V4Platzhalter')),
     }
   : null
@@ -86,8 +86,9 @@ function App() {
       <Suspense fallback={null}>
         <Routes>
           <Route path="/" element={<Layout />}>
-            {/* Redirect root to Live Dashboard */}
-            <Route index element={<Navigate to="/live" replace />} />
+            {/* Root-Redirect: Release → Live-Dashboard; flag-on Build (VITE_IA_V4)
+                → direkt in die IA-v4-Demo (Tester-Server landet auf v4). */}
+            <Route index element={<Navigate to={V4 ? '/v4/cockpit/monat' : '/live'} replace />} />
 
             {/* Cockpit (Dashboards) */}
             <Route path="cockpit" element={<Dashboard />} />
@@ -174,10 +175,15 @@ function App() {
               <Route index element={<Navigate to="/v4/cockpit/monat" replace />} />
               <Route path="cockpit" element={<Navigate to="/v4/cockpit/monat" replace />} />
               <Route path="cockpit/:zeit" element={<V4.CockpitV4 />} />
-              <Route path="auswertungen" element={<Navigate to="/v4/auswertungen/tabelle" replace />} />
-              <Route path="auswertungen/tabelle" element={<V4.AuswertungenTabelleV4 />} />
-              {/* Noch nicht gebaute Achsen — Platzhalter hält die Nav vollständig. */}
-              <Route path="komponenten" element={<V4.Platzhalter />} />
+              {/* Noch nicht gebaute Achsen/Sichten — Platzhalter hält die Nav
+                  vollständig. Auswertungen folgt als eigenes Muster nach Phase 3;
+                  bis dahin KEIN rohes Tabellen-Gerüst (AuswertungenTabelleV4 bleibt
+                  im Repo, aber unverdrahtet). */}
+              <Route path="auswertungen" element={<V4.Platzhalter />} />
+              <Route path="auswertungen/tabelle" element={<V4.Platzhalter />} />
+              {/* Komponenten-Hub (Was-Achse, Phase A.2): Index → erster Typ. */}
+              <Route path="komponenten" element={<V4.KomponentenV4 />} />
+              <Route path="komponenten/:typ" element={<V4.KomponentenV4 />} />
               <Route path="community" element={<V4.Platzhalter />} />
               <Route path="hilfe" element={<V4.Platzhalter />} />
               <Route path="einstellungen" element={<V4.Platzhalter />} />

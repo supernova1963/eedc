@@ -38,6 +38,8 @@ import {
 import type { LucideIcon } from 'lucide-react'
 import { IATopNav } from '../layout/IATopNav'
 import { IASubTabBar } from '../layout/IASubTabBar'
+import { AnlagenSelektorView } from '../layout/AnlagenSelektorView'
+import { APP_VERSION } from '../../config/version'
 
 // ─── Achsen / Tabs (Struktur-SoT: KONZEPT-IA-V4) ─────────────────────────────
 type TopKey = 'cockpit' | 'komponenten' | 'auswertungen' | 'community' | 'hilfe' | 'einstellungen'
@@ -427,12 +429,13 @@ function BloeckeView({ bloecke, sortierbar = false, persistKey }: { bloecke: Blo
 // Detail-Sektionen der Cockpit-Zeitsichten (Summary-Zeilen wie im Monatsbericht).
 // Universelle Blöcke aus dem Block-SoT (#3b), Komponenten-Zeilen aus dem
 // Identitäts-SoT (#3b') — keine hardcodierten Icons/Farben mehr.
+// Reihenfolge wie entschieden: Energie-Bilanz → Komponenten → Finanzen UNTEN (B5).
+// Community-Block bewusst ENTFERNT (O4 — lebt auf der Community-Top-Achse).
 const COCKPIT_DETAIL: { id: string; icon: LucideIcon; title: string; summary: string; farbe?: string }[] = [
   { id: 'd-energie',   ...BLOCK_IDENTITAET.energieBilanz, title: 'Energie-Bilanz',     summary: '618 kWh PV · 96 % Autarkie' },
-  { id: 'd-finanzen',  ...BLOCK_IDENTITAET.finanzen,      title: 'Finanzen',            summary: '+90,25 € Monatsergebnis' },
-  { id: 'd-community', ...BLOCK_IDENTITAET.community,      title: 'Community-Vergleich', summary: '2 Anlagen im Juni 2026' },
   { id: 'd-speicher',  icon: KOMPONENTEN_IDENTITAET['speicher'].icon, farbe: KOMPONENTEN_IDENTITAET['speicher'].farbe, title: 'Speicher',     summary: '99 kWh geladen · 7,7 Zyklen · 73 % η' },
   { id: 'd-emob',      icon: KOMPONENTEN_IDENTITAET['e-auto'].icon,   farbe: KOMPONENTEN_IDENTITAET['e-auto'].farbe,   title: 'E-Mobilität', summary: '62 kWh geladen · 221 km · +7,82 € vs. Verbrenner' },
+  { id: 'd-finanzen',  ...BLOCK_IDENTITAET.finanzen,      title: 'Finanzen',            summary: '+90,25 € Monatsergebnis' },
 ]
 
 // ─── Inhalts-Sichten ──────────────────────────────────────────────────────────
@@ -449,8 +452,9 @@ function CockpitView() {
         ]
       : [
           { id: 'kpi', title: 'Kennzahlen', ...BLOCK_IDENTITAET.kennzahlen, defaultOpen: true, render: (_f) => <KpiStrip kpis={cockpitStrip(sub)} /> },
-          { id: 'haupt', title: 'Hauptblock', ...BLOCK_IDENTITAET.verlauf, summary: 'Verlauf ⇄ Fluss', defaultOpen: true, render: (f) => <DummyChart label={istLive ? 'Energiefluss (Default Live) — ⤢ für Vollbild' : 'Verlauf'} tall={f} /> },
-          { id: 'werte', title: 'Werte/Tabelle', ...BLOCK_IDENTITAET.werte, summary: 'numerischer Zwilling', defaultOpen: !istLive, render: (f) => <DummyChart label="Werte-Embed" tall={f} /> },
+          // Hauptblock: Monat/Tag/Jahr = gestapelter Verlauf-Chart (Toggle „⇄ Fluss" verworfen, O3/B4);
+          // Live = Energiefluss-Default. Werte/Tabelle-Embed ENTFERNT (B9 → Auswertungen/Tabelle).
+          { id: 'haupt', title: 'Hauptblock', ...BLOCK_IDENTITAET.verlauf, summary: istLive ? 'Energiefluss' : 'Verlauf', defaultOpen: true, render: (f) => <DummyChart label={istLive ? 'Energiefluss (Default Live) — ⤢ für Vollbild' : 'Verlauf'} tall={f} /> },
           ...COCKPIT_DETAIL.map((d): Block => ({
             id: d.id, title: d.title, icon: d.icon, farbe: d.farbe, summary: d.summary, defaultOpen: false,
             render: (f) => <DummyChart label={`${d.title} — Detail`} tall={f} />,
@@ -835,8 +839,50 @@ function EinstellungenView() {
 }
 
 // ─── Schale ───────────────────────────────────────────────────────────────────
+// Demo-Anlagen für den Vorschau-Selektor (backendlos; ≥2 → Selektor sichtbar).
+const DEMO_ANLAGEN = [
+  { id: 1, anlagenname: 'Eigenheim' },
+  { id: 2, anlagenname: 'Ferienhaus Süd' },
+]
+
+// ─── VORSCHLAG Shell-Konzept-Runde: persistente Status-Fußzeile ───────────────
+// „Wie geht's dem System gerade?" — heute über die App verstreut (Connector-
+// Status, Daten-Checker, MQTT-Badge, Backup-Alter, Update-Banner). Idee (Gernot
+// 2026-06-20, à la Windows-Dienste): EINE glanceable Leiste unten, je Dienst ein
+// Status-Punkt + Detail, klickbar → Details/Cross-Link. Hier als Demo-Vorschlag;
+// gehört in die gemeinsame Shell-Konzept-Runde (Header-Chrome + Footer), bevor
+// die echte (geteilte) Komponente entsteht. Version wandert mit hierher.
+const STATUS_DIENSTE: { label: string; ton: 'ok' | 'warnung' | 'kritisch'; detail: string }[] = [
+  { label: 'Connectoren', ton: 'ok', detail: '2/2 online' },
+  { label: 'Daten-Checker', ton: 'warnung', detail: '3 Hinweise' },
+  { label: 'MQTT', ton: 'ok', detail: 'verbunden' },
+  { label: 'Backup', ton: 'ok', detail: 'vor 2 Tagen' },
+  { label: 'Solarprognose', ton: 'warnung', detail: 'PVGIS > 7 Tage' },
+]
+const TON_KLASSE = { ok: 'text-green-500', warnung: 'text-amber-500', kritisch: 'text-red-500' } as const
+
+function StatusFooter() {
+  return (
+    <footer className="shrink-0 h-9 border-t border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950 px-3 sm:px-6 flex items-center gap-4 overflow-x-auto scrollbar-none text-xs">
+      {STATUS_DIENSTE.map((d) => {
+        const Icon = d.ton === 'ok' ? CheckCircle2 : AlertTriangle
+        return (
+          <button key={d.label} type="button" title={`${d.label}: ${d.detail} — Details öffnen`}
+            className="flex items-center gap-1.5 whitespace-nowrap shrink-0 hover:underline">
+            <Icon className={`h-3.5 w-3.5 ${TON_KLASSE[d.ton]}`} />
+            <span className="text-gray-600 dark:text-gray-300 font-medium">{d.label}</span>
+            <span className="text-gray-400 dark:text-gray-500">{d.detail}</span>
+          </button>
+        )
+      })}
+      <span className="ml-auto shrink-0 font-mono text-gray-400 dark:text-gray-500 whitespace-nowrap">eedc v{APP_VERSION}</span>
+    </footer>
+  )
+}
+
 export default function IASkeleton() {
   const [top, setTop] = useState<TopKey>('cockpit')
+  const [demoAnlageId, setDemoAnlageId] = useState(1)
 
   // State-getriebene Items für die geteilte IATopNav (SoT). Marke, Theme-Cycle,
   // Hamburger + lg-Responsive liefert die Shell; die Vorschau steuert nur `top`.
@@ -851,7 +897,12 @@ export default function IASkeleton() {
 
   return (
     <div className="h-dvh flex flex-col overflow-hidden bg-gray-50 dark:bg-gray-900">
-      <IATopNav inhalt={TOP_INHALT.map(item)} meta={TOP_META.map(item)} modusBadge={badge} />
+      <IATopNav
+        inhalt={TOP_INHALT.map(item)}
+        meta={TOP_META.map(item)}
+        modusBadge={badge}
+        anlagenSelektor={<AnlagenSelektorView anlagen={DEMO_ANLAGEN} selectedId={demoAnlageId} onSelect={setDemoAnlageId} />}
+      />
 
       {/* Inhalt je Achse. Ab `lg` scrollt nur der Inhalt (ViewShell), darunter
           scrollt `main` komplett (zweite Leiste scrollt mit weg, Mobile-Schale). */}
@@ -863,6 +914,9 @@ export default function IASkeleton() {
         {top === 'hilfe' && <HilfeView />}
         {top === 'einstellungen' && <EinstellungenView />}
       </main>
+
+      {/* VORSCHLAG (Shell-Konzept-Runde): persistente Status-Fußzeile + Version. */}
+      <StatusFooter />
     </div>
   )
 }

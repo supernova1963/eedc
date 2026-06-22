@@ -16,8 +16,10 @@
  *   exklusiv für Kosten/negativ/Fehler. Komponenten-Identität WP bleibt #ef4444
  *   (TYP_COLORS — bewusste, dokumentierte Ko-Existenz).
  * - F3: Status-Achse ok/warnung/kritisch/info (= bisherige Ampel-Schwellen).
- * - F4: Grün-Duo bewusst getrennt: #10b981 = Einspeisung/Erlös (Emerald),
- *   #22c55e = Speicher-Ladung/Status-ok (Green) — erscheinen in denselben Charts.
+ * - F4: #10b981 = Einspeisung/Erlös (Emerald). Speicher-Ladung war früher
+ *   #22c55e (Green), las sich aber im selben Stapel zu nah am Einspeisung-
+ *   Emerald (IA-V4 #243, Gernot) → jetzt Orange #f97316 (klar abgesetzt, nicht-
+ *   grün). #22c55e bleibt für Status-ok / Ersparnis (eigene Achsen/Charts).
  */
 
 // ─── Energie-Rollen (A2-Datentyp-Achse) ─────────────────────────────────────
@@ -69,7 +71,7 @@ export const CHART_COLORS = {
   direktverbrauch: '#f97316',    // Orange
   spezErtrag: '#eab308',         // Yellow
   // Speicher
-  speicherLadung: '#22c55e',     // Green (F4)
+  speicherLadung: '#f97316',     // Orange (F4-Revision #243): klar abgesetzt von Einspeisung-Emerald; war #22c55e
   speicherEntladung: '#3b82f6',  // Blue
   speicherEffizienz: '#06b6d4',  // Cyan
   // Wärmepumpe (Komponenten-Identität Rot bleibt — dokumentiert, s. Kopf)
@@ -166,6 +168,25 @@ export const SERIEN_PALETTE = ['#f59e0b', '#22c55e', '#3b82f6', '#ef4444', '#8b5
 
 /** PV-String-Vergleich (bis 6 Strings) — identisch in allen String-Ansichten. */
 export const STRING_COLORS = ['#f59e0b', '#3b82f6', '#10b981', '#8b5cf6', '#06b6d4', '#ec4899']
+
+/** Tailwind-bg-Klassen-Zwillinge zu STRING_COLORS (Tailwind-500) — für VerteilungsBalken/
+ *  Anteils-Darstellungen pro String/Modul (dort sind bg-Klassen statt Inline-Hex nötig). */
+export const STRING_BG = ['bg-amber-500', 'bg-blue-500', 'bg-emerald-500', 'bg-violet-500', 'bg-cyan-500', 'bg-pink-500']
+
+/** Datenrollen → Tailwind-bg-Klasse für Aufteilungs-Segmente (VerteilungsBalken).
+ *  „Eine Datenrolle = eine Farbe" (Regel 0a) als bg-Klassen-SoT — analog
+ *  {@link STRING_BG}. Bezug zu den Hex-Rollen oben in Klammern. */
+export const ROLLEN_BG = {
+  pv: 'bg-green-500',          // PV-Strom / Eigenverbrauch-Quelle
+  ev: 'bg-green-500',          // Eigenverbrauch (= genutzte PV)
+  einspeisung: 'bg-blue-400',  // ins Netz abgegeben
+  netz: 'bg-red-500',          // Netzbezug (grid)
+  extern: 'bg-gray-400',       // externe Ladung
+  heizung: 'bg-orange-500',    // WP-Heizwärme
+  warmwasser: 'bg-red-400',    // WP-Warmwasser
+  ladung: 'bg-purple-500',     // Speicher-Ladung
+  entladung: 'bg-green-500',   // Speicher-Entladung
+} as const
 
 /** Solar-Intensitäts-Rampe (Sparklines: schwach → stark). */
 export const SOLAR_INTENSITAET = ['#fde68a', '#fbbf24', '#f59e0b']
