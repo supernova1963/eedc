@@ -9,7 +9,9 @@
  */
 import { useState } from 'react'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts'
-import { fmtCalc } from '../components/ui'
+import { CHART_HOVER_CURSOR, SERIE_GEDIMMT, xAchse, yAchse } from '../lib'
+import { useSchmaleAchse } from '../hooks'
+import { fmtCalc, ChartTooltip } from '../components/ui'
 import { ExternalLink } from 'lucide-react'
 
 export interface VergleichJahr { jahr: number; summe: number }
@@ -21,6 +23,7 @@ export function KomponentenVergleich({
   const sortiert = [...jahre].sort((a, b) => a.jahr - b.jahr)
   const neuestes = sortiert[sortiert.length - 1]
   const [vglJahr, setVglJahr] = useState<number>(sortiert[sortiert.length - 2]?.jahr ?? neuestes?.jahr)
+  const schmal = useSchmaleAchse()
 
   if (sortiert.length < 2) {
     return (
@@ -72,12 +75,12 @@ export function KomponentenVergleich({
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={sortiert.map((j) => ({ name: String(j.jahr), summe: j.summe }))} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="name" fontSize={11} />
-              <YAxis fontSize={10} width={44} unit={` ${einheit}`} />
-              <Tooltip formatter={(v: number) => [`${Math.round(v)} ${einheit}`, label]} />
+              <XAxis dataKey="name" {...xAchse(schmal)} />
+              <YAxis {...yAchse(schmal, 44)} unit={` ${einheit}`} />
+              <Tooltip cursor={CHART_HOVER_CURSOR} content={<ChartTooltip unit={einheit} decimals={0} />} />
               <Bar dataKey="summe" name={label}>
                 {sortiert.map((j) => (
-                  <Cell key={j.jahr} fill={farbe} fillOpacity={j.jahr === neuestes.jahr || j.jahr === ref.jahr ? 1 : 0.45} />
+                  <Cell key={j.jahr} fill={farbe} fillOpacity={j.jahr === neuestes.jahr || j.jahr === ref.jahr ? 1 : SERIE_GEDIMMT} />
                 ))}
               </Bar>
             </BarChart>

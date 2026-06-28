@@ -3,7 +3,7 @@
  */
 import { useState, useEffect } from 'react'
 import { TrendingDown, Minus, Calendar, Zap, AlertTriangle, Award } from 'lucide-react'
-import { Card, LoadingSpinner, Alert, KPICard } from '../../components/ui'
+import { Card, LoadingSpinner, Alert, KPICard, ChartLegende } from '../../components/ui'
 import ChartTooltip from '../../components/ui/ChartTooltip'
 import { aussichtenApi, TrendAnalyseResponse } from '../../api/aussichten'
 import { CHART_COLORS, STATUS_COLORS } from '../../lib'
@@ -161,17 +161,17 @@ export default function TrendTab({ anlageId }: Props) {
               <CartesianGrid strokeDasharray="3 3" className="stroke-gray-200 dark:stroke-gray-700" />
               <XAxis
                 dataKey="jahr"
-                tick={{ fontSize: 12 }}
+                tick={{ fontSize: 10 }}
                 className="text-gray-600 dark:text-gray-400"
               />
               <YAxis
-                tick={{ fontSize: 12 }}
+                tick={{ fontSize: 10 }}
                 className="text-gray-600 dark:text-gray-400"
                 label={{ value: 'kWh', angle: -90, position: 'insideLeft' }}
               />
               <Tooltip content={<ChartTooltip unit="kWh" decimals={0} />} />
-              <Legend />
-              <Bar dataKey="kwh" name="Jahresertrag" radius={[4, 4, 0, 0]}>
+              <Legend content={<ChartLegende />} />
+              <Bar dataKey="kwh" name="Jahresertrag" radius={[2, 2, 0, 0]}>
                 {jahresChartData.map((entry, index) => (
                   <Cell
                     key={`cell-${index}`}
@@ -193,16 +193,16 @@ export default function TrendTab({ anlageId }: Props) {
               <CartesianGrid strokeDasharray="3 3" className="stroke-gray-200 dark:stroke-gray-700" />
               <XAxis
                 dataKey="jahr"
-                tick={{ fontSize: 12 }}
+                tick={{ fontSize: 10 }}
                 className="text-gray-600 dark:text-gray-400"
               />
               <YAxis
-                tick={{ fontSize: 12 }}
+                tick={{ fontSize: 10 }}
                 className="text-gray-600 dark:text-gray-400"
                 domain={['auto', 'auto']}
               />
               <Tooltip content={<ChartTooltip unit="kWh/kWp" decimals={0} />} />
-              <Legend />
+              <Legend content={<ChartLegende />} />
               <Line
                 type="monotone"
                 dataKey="spez_ertrag"

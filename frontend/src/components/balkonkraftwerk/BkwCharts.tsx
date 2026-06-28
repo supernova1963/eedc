@@ -9,7 +9,9 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, AreaChart, Area,
 } from 'recharts'
 import ChartTooltip from '../ui/ChartTooltip'
-import { MONAT_KURZ, CHART_COLORS } from '../../lib'
+import { ChartLegende } from '../ui'
+import { MONAT_KURZ, CHART_COLORS, CHART_HOVER_CURSOR, DATENROLLE, xAchse, yAchse } from '../../lib'
+import { useSchmaleAchse } from '../../hooks'
 import type { InvestitionMonatsdaten } from '../../api/investitionen'
 
 export function prepBkwMonate(monatsdaten: InvestitionMonatsdaten[]) {
@@ -25,16 +27,17 @@ export function prepBkwMonate(monatsdaten: InvestitionMonatsdaten[]) {
 
 /** Erzeugung pro Monat (Eigenverbrauch + Einspeisung gestapelt). */
 export function BkwErzeugungVerlauf({ monatsdaten }: { monatsdaten: InvestitionMonatsdaten[] }) {
+  const schmal = useSchmaleAchse()
   const data = prepBkwMonate(monatsdaten)
   return (
     <div className="h-64">
       <ResponsiveContainer width="100%" height="100%">
         <AreaChart data={data}>
           <CartesianGrid strokeDasharray="3 3" />
-          <XAxis dataKey="name" fontSize={10} />
-          <YAxis />
-          <Tooltip content={<ChartTooltip />} />
-          <Legend />
+          <XAxis dataKey="name" {...xAchse(schmal)} />
+          <YAxis {...yAchse(schmal)} />
+          <Tooltip cursor={CHART_HOVER_CURSOR} content={<ChartTooltip />} />
+          <Legend content={<ChartLegende />} />
           <Area type="monotone" dataKey="eigenverbrauch" stackId="1" fill={CHART_COLORS.eigenverbrauch} stroke={CHART_COLORS.eigenverbrauch} name="Eigenverbrauch" />
           <Area type="monotone" dataKey="einspeisung" stackId="1" fill={CHART_COLORS.einspeisung} stroke={CHART_COLORS.einspeisung} name="Einspeisung" />
         </AreaChart>
@@ -45,16 +48,17 @@ export function BkwErzeugungVerlauf({ monatsdaten }: { monatsdaten: InvestitionM
 
 /** Integrierter Speicher: Ladung/Entladung pro Monat (Bar). */
 export function BkwSpeicherVerlauf({ monatsdaten }: { monatsdaten: InvestitionMonatsdaten[] }) {
+  const schmal = useSchmaleAchse()
   const data = prepBkwMonate(monatsdaten)
   return (
     <div className="h-48">
       <ResponsiveContainer width="100%" height="100%">
         <BarChart data={data}>
           <CartesianGrid strokeDasharray="3 3" />
-          <XAxis dataKey="name" fontSize={10} />
-          <YAxis />
-          <Tooltip content={<ChartTooltip />} />
-          <Legend />
+          <XAxis dataKey="name" {...xAchse(schmal)} />
+          <YAxis {...yAchse(schmal)} />
+          <Tooltip cursor={CHART_HOVER_CURSOR} content={<ChartTooltip />} />
+          <Legend content={<ChartLegende />} />
           <Bar dataKey="speicher_ladung" fill={CHART_COLORS.speicherLadung} name="Ladung" />
           <Bar dataKey="speicher_entladung" fill={CHART_COLORS.speicherEntladung} name="Entladung" />
         </BarChart>
@@ -85,12 +89,12 @@ export function BkwMonatsTabelle({ monatsdaten, hatSpeicher }: { monatsdaten: In
           {data.map((md, idx) => (
             <tr key={idx} className="border-b border-gray-100 dark:border-gray-800">
               <td className="py-2 px-2">{md.name}</td>
-              <td className="text-right py-2 px-2 text-yellow-600">{md.erzeugung.toFixed(1)}</td>
-              <td className="text-right py-2 px-2 text-green-600">{md.eigenverbrauch.toFixed(1)}</td>
-              <td className="text-right py-2 px-2 text-orange-600">{md.einspeisung.toFixed(1)}</td>
+              <td className={`text-right py-2 px-2 ${DATENROLLE.pv.text}`}>{md.erzeugung.toFixed(1)}</td>
+              <td className={`text-right py-2 px-2 ${DATENROLLE.eigenverbrauch.text}`}>{md.eigenverbrauch.toFixed(1)}</td>
+              <td className={`text-right py-2 px-2 ${DATENROLLE.einspeisung.text}`}>{md.einspeisung.toFixed(1)}</td>
               {hatSpeicher && <>
-                <td className="text-right py-2 px-2 text-purple-600">{md.speicher_ladung.toFixed(1)}</td>
-                <td className="text-right py-2 px-2 text-purple-600">{md.speicher_entladung.toFixed(1)}</td>
+                <td className={`text-right py-2 px-2 ${DATENROLLE.speicherLadung.text}`}>{md.speicher_ladung.toFixed(1)}</td>
+                <td className={`text-right py-2 px-2 ${DATENROLLE.speicherEntladung.text}`}>{md.speicher_entladung.toFixed(1)}</td>
               </>}
             </tr>
           ))}

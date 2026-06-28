@@ -16,7 +16,9 @@ import {
   AreaChart, Area, LineChart, Line,
 } from 'recharts'
 import ChartTooltip from '../ui/ChartTooltip'
-import { MONAT_KURZ, CHART_COLORS, COLORS } from '../../lib'
+import { ChartLegende } from '../ui'
+import { MONAT_KURZ, CHART_COLORS, COLORS, CHART_HOVER_CURSOR, DATENROLLE, xAchse, yAchse } from '../../lib'
+import { useSchmaleAchse } from '../../hooks'
 import type { InvestitionMonatsdaten, SpeicherDashboardResponse } from '../../api/investitionen'
 
 type Zusammenfassung = SpeicherDashboardResponse['zusammenfassung']
@@ -49,6 +51,7 @@ function ChartKopf({ children }: { children: string }) {
 }
 
 export function SpeicherVerlaufCharts({ monatsdaten, zusammenfassung: z, effizienzVerlauf, embed = false }: SpeicherVerlaufProps) {
+  const schmal = useSchmaleAchse()
   const monthlyData = prepSpeicherMonate(monatsdaten, z)
   const effizienzData = effizienzVerlauf.map((e) => ({
     name: `${MONAT_KURZ[e.monat]} ${e.jahr.toString().slice(2)}`,
@@ -66,10 +69,10 @@ export function SpeicherVerlaufCharts({ monatsdaten, zusammenfassung: z, effizie
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={monthlyData}>
                 <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="name" fontSize={10} />
-                <YAxis tickFormatter={(v) => `${v} kWh`} width={70} />
-                <Tooltip content={<ChartTooltip />} />
-                <Legend />
+                <XAxis dataKey="name" {...xAchse(schmal)} />
+                <YAxis tickFormatter={(v) => `${v} kWh`} {...yAchse(schmal, 70)} />
+                <Tooltip cursor={CHART_HOVER_CURSOR} content={<ChartTooltip />} />
+                <Legend content={<ChartLegende />} />
                 {arbitrageAktiv ? (
                   <>
                     <Bar dataKey="pvLadung" stackId="ladung" fill={CHART_COLORS.speicherLadung} name="PV-Ladung" />
@@ -91,9 +94,9 @@ export function SpeicherVerlaufCharts({ monatsdaten, zusammenfassung: z, effizie
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={monthlyData}>
                 <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="name" fontSize={10} />
-                <YAxis tickFormatter={(v) => v.toFixed(1)} width={40} />
-                <Tooltip content={<ChartTooltip decimals={1} />} />
+                <XAxis dataKey="name" {...xAchse(schmal)} />
+                <YAxis tickFormatter={(v) => v.toFixed(1)} {...yAchse(schmal, 40)} />
+                <Tooltip cursor={CHART_HOVER_CURSOR} content={<ChartTooltip decimals={1} />} />
                 <Area type="monotone" dataKey="zyklen" fill={CHART_COLORS.speicherZyklen} stroke={CHART_COLORS.speicherZyklen} name="Zyklen" />
               </AreaChart>
             </ResponsiveContainer>
@@ -108,9 +111,9 @@ export function SpeicherVerlaufCharts({ monatsdaten, zusammenfassung: z, effizie
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={effizienzData}>
               <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="name" fontSize={10} />
-              <YAxis domain={[0, 100]} tickFormatter={(v) => `${v}%`} width={55} />
-              <Tooltip content={<ChartTooltip unit="%" decimals={1} />} />
+              <XAxis dataKey="name" {...xAchse(schmal)} />
+              <YAxis domain={[0, 100]} tickFormatter={(v) => `${v}%`} {...yAchse(schmal, 55)} />
+              <Tooltip cursor={CHART_HOVER_CURSOR} content={<ChartTooltip unit="%" decimals={1} />} />
               <Line type="monotone" dataKey="effizienz" stroke={CHART_COLORS.speicherEffizienz} strokeWidth={2} dot={{ r: 4 }} name="Effizienz" connectNulls />
             </LineChart>
           </ResponsiveContainer>
@@ -136,8 +139,8 @@ export function SpeicherVerlaufCharts({ monatsdaten, zusammenfassung: z, effizie
               {monthlyData.map((md, idx) => (
                 <tr key={idx} className="border-b border-gray-100 dark:border-gray-800">
                   <td className="py-2 px-2">{md.name}</td>
-                  <td className="text-right py-2 px-2 text-blue-600">{md.ladung.toFixed(1)}</td>
-                  <td className="text-right py-2 px-2 text-green-600">{md.entladung.toFixed(1)}</td>
+                  <td className={`text-right py-2 px-2 ${DATENROLLE.speicherLadung.text}`}>{md.ladung.toFixed(1)}</td>
+                  <td className={`text-right py-2 px-2 ${DATENROLLE.speicherEntladung.text}`}>{md.entladung.toFixed(1)}</td>
                   <td className="text-right py-2 px-2">{md.zyklen.toFixed(1)}</td>
                 </tr>
               ))}

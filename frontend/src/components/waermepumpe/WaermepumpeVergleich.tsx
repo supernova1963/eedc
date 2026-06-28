@@ -14,7 +14,8 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell, LabelList,
 } from 'recharts'
 import ChartTooltip from '../ui/ChartTooltip'
-import { MONAT_KURZ, SAISON_FENSTER, SERIEN_PALETTE } from '../../lib'
+import { ChartLegende } from '../ui'
+import { MONAT_KURZ, SAISON_FENSTER, SERIEN_PALETTE, CHART_HOVER_CURSOR, SERIE_GEDIMMT } from '../../lib'
 import type { InvestitionMonatsdaten } from '../../api/investitionen'
 
 function Toggle({ aktiv, aktivKlasse, onClick, children, title }: {
@@ -130,10 +131,10 @@ export function WaermepumpeVergleich({ monatsdaten, hatGetrennteStrom }: {
             {achse === 'monate' ? (
               <BarChart data={monatData}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                <XAxis dataKey="name" fontSize={12} />
-                <YAxis domain={modus === 'jaz' ? [0, 6] : undefined} />
-                <Tooltip content={<ChartTooltip formatter={(v) => modus === 'jaz' ? v?.toFixed(2) : `${v} kWh`} />} />
-                <Legend />
+                <XAxis dataKey="name" tick={{ fontSize: 10 }} />
+                <YAxis domain={modus === 'jaz' ? [0, 6] : undefined} tick={{ fontSize: 10 }} />
+                <Tooltip cursor={CHART_HOVER_CURSOR} content={<ChartTooltip formatter={(v) => modus === 'jaz' ? v?.toFixed(2) : `${v} kWh`} />} />
+                <Legend content={<ChartLegende />} />
                 {jahre.map((jahr, i) => (
                   <Bar key={jahr} dataKey={`val_${jahr}`} name={`${jahr}`} fill={jahrFarben[i % jahrFarben.length]} />
                 ))}
@@ -141,12 +142,12 @@ export function WaermepumpeVergleich({ monatsdaten, hatGetrennteStrom }: {
             ) : (
               <BarChart data={saisonData} margin={{ top: 20, right: 8, left: 0, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                <XAxis dataKey="name" fontSize={12} />
-                <YAxis domain={modus === 'jaz' ? [0, 6] : undefined} />
-                <Tooltip content={<ChartTooltip formatter={(v) => modus === 'jaz' ? v?.toFixed(2) : `${v} kWh`} />} />
+                <XAxis dataKey="name" tick={{ fontSize: 10 }} />
+                <YAxis domain={modus === 'jaz' ? [0, 6] : undefined} tick={{ fontSize: 10 }} />
+                <Tooltip cursor={CHART_HOVER_CURSOR} content={<ChartTooltip formatter={(v) => modus === 'jaz' ? v?.toFixed(2) : `${v} kWh`} />} />
                 <Bar dataKey="value" name={modus === 'jaz' ? 'JAZ' : 'Strom'}>
                   {saisonData.map((s, i) => (
-                    <Cell key={i} fill={jahrFarben[i % jahrFarben.length]} fillOpacity={s.vollstaendig ? 1 : 0.4} />
+                    <Cell key={i} fill={jahrFarben[i % jahrFarben.length]} fillOpacity={s.vollstaendig ? 1 : SERIE_GEDIMMT} />
                   ))}
                   <LabelList dataKey="label" position="top" fill="currentColor" fontSize={13} fontWeight={600} />
                 </Bar>

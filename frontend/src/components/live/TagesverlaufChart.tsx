@@ -18,6 +18,8 @@ import {
 } from 'recharts'
 import type { TagesverlaufSerie, TagesverlaufPunkt } from '../../api/liveDashboard'
 import ChartTooltip from '../ui/ChartTooltip'
+import { CHART_HOVER_CURSOR, HILFSLINIE_DASH, AREA_FILL_OPACITY } from '../../lib'
+import { ChartLegende } from '../ui'
 import { useChartTheme } from '../../context/ThemeContext'
 
 interface TagesverlaufChartProps {
@@ -154,13 +156,13 @@ export default function TagesverlaufChart({ serien, punkte, uebersprungen }: Tag
           <CartesianGrid strokeDasharray="3 3" className="stroke-gray-200 dark:stroke-gray-700" />
           <XAxis
             dataKey="zeit"
-            tick={{ fontSize: 11 }}
+            tick={{ fontSize: 10 }}
             className="fill-gray-500 dark:fill-gray-400"
             interval="preserveStartEnd"
           />
           <YAxis
             yAxisId="left"
-            tick={{ fontSize: 11 }}
+            tick={{ fontSize: 10 }}
             className="fill-gray-500 dark:fill-gray-400"
             tickFormatter={(v: number) => v.toFixed(1)}
           />
@@ -174,7 +176,7 @@ export default function TagesverlaufChart({ serien, punkte, uebersprungen }: Tag
               label={{ value: overlaySerien[0].einheit || '', angle: -90, position: 'insideRight', fontSize: 10, className: 'fill-gray-400 dark:fill-gray-500' }}
             />
           )}
-          <Tooltip content={<ChartTooltip
+          <Tooltip cursor={CHART_HOVER_CURSOR} content={<ChartTooltip
             labelFormatter={(label) => `${label} Uhr`}
             itemSorter={(item) => -(Math.abs(item.value as number))}
             nameFormatter={(name) => {
@@ -195,8 +197,8 @@ export default function TagesverlaufChart({ serien, punkte, uebersprungen }: Tag
               return `${richtung} ${absVal} kW`
             }}
           />} />
-          <Legend
-            formatter={(value: string) => {
+          <Legend content={<ChartLegende
+            formatter={(value) => {
               // Overlay-Serien direkt
               const overlay = overlaySerien.find((s) => s.key === value)
               if (overlay) return `${overlay.label} (${overlay.einheit || ''})`
@@ -205,9 +207,8 @@ export default function TagesverlaufChart({ serien, punkte, uebersprungen }: Tag
               // Bidirektionale: nur einmal in Legende (pos zeigen, neg verstecken)
               return origSerie?.label || rs?.label || value
             }}
-            wrapperStyle={{ fontSize: 11, cursor: 'pointer' }}
-            onClick={(e) => {
-              if (e && typeof e.dataKey === 'string') {
+            onItemClick={(e) => {
+              if (typeof e.dataKey === 'string') {
                 // Overlay oder Render-Serie → Toggle
                 const overlay = overlaySerien.find((s) => s.key === e.dataKey)
                 if (overlay) { toggleSerie(overlay.key); return }
@@ -215,7 +216,7 @@ export default function TagesverlaufChart({ serien, punkte, uebersprungen }: Tag
                 if (rs) toggleSerie(rs.origKey)
               }
             }}
-          />
+          />} />
 
           {/* Null-Linie (Energiebilanz-Grenze) */}
           <ReferenceLine yAxisId="left" y={0} stroke={achsen.referenz} strokeWidth={1.5} />
@@ -236,7 +237,7 @@ export default function TagesverlaufChart({ serien, punkte, uebersprungen }: Tag
                 yAxisId="left"
                 fill={rs.farbe}
                 stroke={rs.farbe}
-                fillOpacity={0.3}
+                fillOpacity={AREA_FILL_OPACITY}
                 strokeWidth={1.5}
                 stackId={rs.stackId}
                 isAnimationActive={false}
@@ -258,7 +259,7 @@ export default function TagesverlaufChart({ serien, punkte, uebersprungen }: Tag
                 yAxisId="right"
                 stroke={s.farbe}
                 strokeWidth={1.5}
-                strokeDasharray="4 2"
+                strokeDasharray={HILFSLINIE_DASH}
                 dot={false}
                 isAnimationActive={false}
                 connectNulls={false}

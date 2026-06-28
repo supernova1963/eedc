@@ -22,8 +22,8 @@
 import { Activity, Battery, Clock, Droplet, Euro, Flame, Leaf, Percent, Power, TrendingUp, Zap } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { fmtCalc } from '../components/ui'
-import { MONAT_KURZ, STRING_COLORS, STRING_BG } from '../lib'
-import { CHART_COLORS, LADEQUELLEN_FARBEN, ROLLEN_BG } from '../lib/colors'
+import { MONAT_KURZ, PV_MODUL_FARBEN, PV_MODUL_BG } from '../lib'
+import { CHART_COLORS, LADEQUELLEN_FARBEN, ROLLEN_BG, SONSTIGES_ERZEUGER_FARBE } from '../lib/colors'
 import { cockpitApi } from '../api/cockpit'
 import { investitionenApi, type InvestitionMonatsdaten } from '../api/investitionen'
 import { monatsdatenApi, type AggregierteMonatsdaten } from '../api/monatsdaten'
@@ -215,7 +215,7 @@ function pvVerlauf(agg: AggregierteMonatsdaten[], module: Investition[]): NonNul
   }
   const modulAnteil = (m: Investition, erz: number) => totalKwp > 0 ? erz * (m.leistung_kwp ?? 0) / totalKwp : 0
   const bars: VerlaufBar[] = [
-    ...module.map((m, i) => ({ key: `m${m.id}`, label: m.bezeichnung, farbe: STRING_COLORS[i % STRING_COLORS.length], stapel: 'erz' })),
+    ...module.map((m, i) => ({ key: `m${m.id}`, label: m.bezeichnung, farbe: PV_MODUL_FARBEN[i % PV_MODUL_FARBEN.length], stapel: 'erz' })),
     { key: 'direkt', label: 'Direktverbrauch', farbe: CHART_COLORS.eigenverbrauch, stapel: 'verw' },
     { key: 'sladung', label: 'Speicherladung', farbe: CHART_COLORS.speicherLadung, stapel: 'verw' },
     { key: 'einsp', label: 'Einspeisung', farbe: CHART_COLORS.einspeisung, stapel: 'verw' },
@@ -230,7 +230,7 @@ function pvVerlauf(agg: AggregierteMonatsdaten[], module: Investition[]): NonNul
   return {
     bars, rows, gestapelt: true,
     verteilungen: [
-      { titel: 'Erzeugung nach Modul', segmente: module.map((m, i) => ({ label: m.bezeichnung, wert: modulAnteil(m, ges.erz), farbe: STRING_BG[i % STRING_BG.length] })) },
+      { titel: 'Erzeugung nach Modul', segmente: module.map((m, i) => ({ label: m.bezeichnung, wert: modulAnteil(m, ges.erz), farbe: PV_MODUL_BG[i % PV_MODUL_BG.length] })) },
       { titel: 'Verwendung der Erzeugung', segmente: [
         { label: 'Direktverbrauch', wert: ges.direkt, farbe: SEG.ev },
         { label: 'Speicherladung', wert: ges.speicher, farbe: SEG.ladung },
@@ -694,12 +694,13 @@ export const KOMPONENTEN_ADAPTER: Record<string, KompAdapter> = {
             ],
           } : undefined,
           // ④ Verlauf: Erzeugung je Monat (EV/Einspeisung-Split nur als Gesamt-Aufteilung, s. ①).
+          // Eigene Identitätsfarbe (Lime) — ein sonstiger Erzeuger/Mini-BHKW ist NICHT PV (Regel A).
           verlauf: md.length ? {
-            bars: [{ key: 'erz', label: 'Erzeugung', farbe: CHART_COLORS.erzeugung }],
+            bars: [{ key: 'erz', label: 'Erzeugung', farbe: SONSTIGES_ERZEUGER_FARBE.hex }],
             rows: rowsAusMd(md, [{ key: 'erz', wert: (vd) => vd.erzeugung_kwh }]),
           } : undefined,
           vergleich: md.length ? {
-            label: 'Erzeugung', einheit: 'kWh', farbe: CHART_COLORS.erzeugung,
+            label: 'Erzeugung', einheit: 'kWh', farbe: SONSTIGES_ERZEUGER_FARBE.hex,
             jahre: jahresSummen(md, (vd) => vd.erzeugung_kwh),
           } : undefined,
           // Wirtschaftlichkeit ehrlich „nicht bewertet": Brennstoffkosten und

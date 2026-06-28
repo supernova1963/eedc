@@ -6,10 +6,12 @@
  */
 import { useState, useEffect } from 'react'
 import { Sun, Cloud, CloudSun, CloudRain, CloudSnow, CloudLightning, Thermometer, Zap } from 'lucide-react'
-import { Card, LoadingSpinner, Alert, KPICard } from '../../components/ui'
+import { Card, LoadingSpinner, Alert, KPICard, ChartLegende } from '../../components/ui'
 import ChartTooltip from '../../components/ui/ChartTooltip'
 import { wetterApi, SolarPrognose } from '../../api/wetter'
-import { CHART_COLORS, SOLAR_INTENSITAET } from '../../lib'
+import { aussichtenApi } from '../../api/aussichten'
+import { CHART_COLORS, SOLAR_INTENSITAET, xAchse, yAchse } from '../../lib'
+import { useSchmaleAchse } from '../../hooks'
 import {
   ResponsiveContainer,
   ComposedChart,
@@ -81,8 +83,12 @@ const QUELLEN_KUERZEL: Record<string, { label: string; color: string }> = {
 
 export default function KurzfristTab({ anlageId }: Props) {
   const [prognose, setPrognose] = useState<SolarPrognose | null>(null)
+  // Prognose-Kanon: der „heute"-Wert ist überall der eedc-Tageswert (= Cockpit/
+  // Aussicht/Vergleich-eedc/MQTT), NICHT der roh-OM-Wert der 14-Tage-Kurzfrist.
+  const [eedcHeuteKwh, setEedcHeuteKwh] = useState<number | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const schmal = useSchmaleAchse()
   const tage = 14
 
   useEffect(() => {
@@ -95,6 +101,14 @@ export default function KurzfristTab({ anlageId }: Props) {
     try {
       const data = await wetterApi.getSolarPrognose(anlageId, tage, false)
       setPrognose(data)
+      // eedc-„heute" parallel holen (kanonischer Wert); scheitert es, bleibt
+      // die Kurzfrist-Ansicht trotzdem nutzbar (Fallback unten auf roh-OM).
+      try {
+        const vergleich = await aussichtenApi.getPrognosenVergleich(anlageId)
+        setEedcHeuteKwh(vergleich.eedc_heute_kwh)
+      } catch {
+        setEedcHeuteKwh(null)
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Fehler beim Laden der Prognose')
     } finally {
@@ -160,7 +174,7 @@ export default function KurzfristTab({ anlageId }: Props) {
         {heute && (
           <KPICard
             title="Heute"
-            value={(heute.pv_ertrag_kwh ?? 0).toFixed(1)}
+            value={(eedcHeuteKwh ?? heute.pv_ertrag_kwh ?? 0).toFixed(1)}
             unit="kWh"
             color="gray"
             icon={(p) => <WetterIcon symbol={heute.wetter_symbol} {...p} />}
@@ -241,19 +255,19 @@ export default function KurzfristTab({ anlageId }: Props) {
               <CartesianGrid strokeDasharray="3 3" className="stroke-gray-200 dark:stroke-gray-700" />
               <XAxis
                 dataKey="datum"
-                tick={{ fontSize: 12 }}
+                {...xAchse(schmal)}
                 className="text-gray-600 dark:text-gray-400"
               />
               <YAxis
                 yAxisId="left"
-                tick={{ fontSize: 12 }}
+                {...yAchse(schmal)}
                 className="text-gray-600 dark:text-gray-400"
                 label={{ value: 'kWh', angle: -90, position: 'insideLeft' }}
               />
               <YAxis
                 yAxisId="right"
                 orientation="right"
-                tick={{ fontSize: 12 }}
+                tick={{ fontSize: 10 }}
                 className="text-gray-600 dark:text-gray-400"
                 label={{ value: '°C', angle: 90, position: 'insideRight' }}
               />
@@ -262,7 +276,7 @@ export default function KurzfristTab({ anlageId }: Props) {
                   if (name === 'Temperatur') return `${value.toFixed(0)} °C`
                   return `${value.toFixed(1)}`
                 }} />} />
-              <Legend />
+              <Legend content={<ChartLegende />} />
               {hasVmNm ? (
                 <>
                   <Bar
@@ -278,7 +292,7 @@ export default function KurzfristTab({ anlageId }: Props) {
                     name="Nachmittag"
                     stackId="pv"
                     fill={SOLAR_INTENSITAET[1]}
-                    radius={[4, 4, 0, 0]}
+                    radius={[2, 2, 0, 0]}
                   />
                 </>
               ) : (
@@ -287,7 +301,7 @@ export default function KurzfristTab({ anlageId }: Props) {
                   dataKey="pv_kwh"
                   name="PV-Prognose"
                   fill={CHART_COLORS.erzeugung}
-                  radius={[4, 4, 0, 0]}
+                  radius={[2, 2, 0, 0]}
                 />
               )}
               <Line

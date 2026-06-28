@@ -18,6 +18,7 @@
 import { fmtCalc } from '../components/ui'
 import FormelTooltip, { SimpleTooltip } from '../components/ui/FormelTooltip'
 import { VerteilungsBalken, GeraeteHinweis } from '../components/blocks'
+import { DATENROLLE, AMPEL_TEXT_CLASS, AMPEL_BG_CLASS, sollIstStufe, VERGLEICH_BADGE } from '../lib'
 import { Sun, Activity, Zap, ArrowUpFromLine, Plug, Euro, Wallet } from 'lucide-react'
 import type { KpiStripItem } from '../components/blocks'
 import type { AktuellerMonatResponse } from '../api/aktuellerMonat'
@@ -92,7 +93,7 @@ export function baueMonatKpis(
   ]
 }
 
-function Delta({ a, b, inv = false, besser }: { a: number | null | undefined; b: number | null | undefined; inv?: boolean; besser?: boolean }) {
+export function Delta({ a, b, inv = false, besser }: { a: number | null | undefined; b: number | null | undefined; inv?: boolean; besser?: boolean }) {
   if (a == null || b == null || b === 0) return null
   const pct = ((a - b) / Math.abs(b)) * 100
   // `besser` (z. B. Autarkie-Richtung für Eigenverbrauch, #337) übersteuert die reine
@@ -101,9 +102,7 @@ function Delta({ a, b, inv = false, besser }: { a: number | null | undefined; b:
   const positive = besser != null ? besser : (inv ? pct <= 0 : pct >= 0)
   return (
     <span className={`text-xs font-medium px-1 py-0.5 rounded ${
-      positive
-        ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
-        : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
+      positive ? VERGLEICH_BADGE.besser : VERGLEICH_BADGE.schlechter
     }`}>
       {pct >= 0 ? '▲' : '▼'} {Math.abs(pct).toFixed(0)} %
     </span>
@@ -113,7 +112,7 @@ function Delta({ a, b, inv = false, besser }: { a: number | null | undefined; b:
 /** Vergleichs-Chip für die gestapelte Mobil-Ansicht (< sm): „VM ▲90 %", farbig,
  *  voller Absolutwert im Tooltip. Ersetzt die Tabellen-Spalten auf schmalen Schirmen
  *  (kein Spalten/Header-Versatz, umbruch-sicher). */
-function VglChip({ prefix, lang, ist, val, unit, dec, inv, besser }: {
+export function VglChip({ prefix, lang, ist, val, unit, dec, inv, besser }: {
   prefix: string; lang: string
   ist: number | null | undefined; val: number | null | undefined
   unit: string; dec: number; inv?: boolean; besser?: boolean
@@ -130,9 +129,7 @@ function VglChip({ prefix, lang, ist, val, unit, dec, inv, besser }: {
   return (
     <SimpleTooltip text={`${lang}: ${fmt(val, dec)} ${unit}`}>
       <span className={`inline-flex items-center gap-1 text-[11px] font-medium px-1.5 py-0.5 rounded ${
-        positive
-          ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
-          : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
+        positive ? VERGLEICH_BADGE.besser : VERGLEICH_BADGE.schlechter
       }`}>
         {prefix} {pct >= 0 ? '▲' : '▼'} {Math.abs(pct).toFixed(0)} %
       </span>
@@ -282,17 +279,11 @@ export function MonatBilanz({
               </FormelTooltip>
             </p>
             <div className="flex justify-end">
-              <span className={`text-4xl font-bold ${
-                sollPct >= 100 ? 'text-green-500 dark:text-green-400'
-                  : sollPct >= 75 ? 'text-yellow-500 dark:text-yellow-400'
-                  : 'text-orange-500'
-              }`}>{sollPct} %</span>
+              <span className={`text-4xl font-bold ${AMPEL_TEXT_CLASS[sollIstStufe(sollPct)]}`}>{sollPct} %</span>
             </div>
-            <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2 mt-2">
+            <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-sm h-2 mt-2">
               <div
-                className={`h-2 rounded-full ${
-                  sollPct >= 100 ? 'bg-green-500' : sollPct >= 75 ? 'bg-yellow-400' : 'bg-orange-400'
-                }`}
+                className={`h-2 rounded-sm ${AMPEL_BG_CLASS[sollIstStufe(sollPct)]}`}
                 style={{ width: `${Math.min(100, sollPct)}%` }}
               />
             </div>
@@ -312,8 +303,8 @@ export function MonatBilanz({
             <VerteilungsBalken
               titel="PV-Verteilung"
               segmente={[
-                { label: 'Eigenverbr.', wert: d.eigenverbrauch_kwh, farbe: 'bg-purple-500' },
-                { label: 'Einspeisung', wert: d.einspeisung_kwh, farbe: 'bg-green-500' },
+                { label: 'Eigenverbr.', wert: d.eigenverbrauch_kwh, farbe: DATENROLLE.eigenverbrauch.bg },
+                { label: 'Einspeisung', wert: d.einspeisung_kwh, farbe: DATENROLLE.einspeisung.bg },
               ]}
             />
           </div>

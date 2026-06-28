@@ -9,13 +9,16 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, AreaChart, Area,
 } from 'recharts'
 import ChartTooltip from '../ui/ChartTooltip'
-import { MONAT_KURZ, CHART_COLORS, GELD_COLORS } from '../../lib'
+import { ChartLegende } from '../ui'
+import { MONAT_KURZ, CHART_COLORS, GELD_COLORS, GELD_TEXT_CLASS, CHART_HOVER_CURSOR, xAchse, yAchse } from '../../lib'
+import { useSchmaleAchse } from '../../hooks'
 import type { InvestitionMonatsdaten, WaermepumpeDashboardResponse } from '../../api/investitionen'
 
 type Zusammenfassung = WaermepumpeDashboardResponse['zusammenfassung']
 
 /** Wärmeerzeugung pro Monat (Heizung + Warmwasser gestapelt). */
 export function WaermepumpeMonatsverlauf({ monatsdaten }: { monatsdaten: InvestitionMonatsdaten[] }) {
+  const schmal = useSchmaleAchse()
   const data = monatsdaten.map((md) => ({
     name: `${MONAT_KURZ[md.monat]} ${md.jahr.toString().slice(2)}`,
     heizung: md.verbrauch_daten.heizenergie_kwh || 0,
@@ -26,10 +29,10 @@ export function WaermepumpeMonatsverlauf({ monatsdaten }: { monatsdaten: Investi
       <ResponsiveContainer width="100%" height="100%">
         <AreaChart data={data}>
           <CartesianGrid strokeDasharray="3 3" />
-          <XAxis dataKey="name" fontSize={10} />
-          <YAxis label={{ value: 'kWh', angle: -90, position: 'insideLeft', style: { textAnchor: 'middle' } }} />
-          <Tooltip content={<ChartTooltip unit="kWh" />} />
-          <Legend />
+          <XAxis dataKey="name" {...xAchse(schmal)} />
+          <YAxis label={{ value: 'kWh', angle: -90, position: 'insideLeft', style: { textAnchor: 'middle' } }} {...yAchse(schmal)} />
+          <Tooltip cursor={CHART_HOVER_CURSOR} content={<ChartTooltip unit="kWh" />} />
+          <Legend content={<ChartLegende />} />
           <Area type="monotone" dataKey="heizung" stackId="1" fill={CHART_COLORS.wpWaerme} stroke={CHART_COLORS.wpWaerme} name="Heizung" />
           <Area type="monotone" dataKey="warmwasser" stackId="1" fill={CHART_COLORS.wpWarmwasser} stroke={CHART_COLORS.wpWarmwasser} name="Warmwasser" />
         </AreaChart>
@@ -51,14 +54,14 @@ export function WaermepumpeKostenvergleich({ zusammenfassung: z }: { zusammenfas
           <BarChart data={data} layout="vertical">
             <CartesianGrid strokeDasharray="3 3" />
             <XAxis type="number" tickFormatter={(v) => `${v}€`} />
-            <YAxis type="category" dataKey="name" width={110} />
-            <Tooltip content={<ChartTooltip unit="€" decimals={2} />} />
+            <YAxis type="category" dataKey="name" width={110} tick={{ fontSize: 10 }} />
+            <Tooltip cursor={CHART_HOVER_CURSOR} content={<ChartTooltip unit="€" decimals={2} />} />
             <Bar dataKey="value" />
           </BarChart>
         </ResponsiveContainer>
       </div>
       <div className="text-center">
-        <span className="text-lg font-semibold text-green-600 dark:text-green-400">
+        <span className={`text-lg font-semibold ${GELD_TEXT_CLASS.ersparnis}`}>
           Ersparnis: {z.ersparnis_euro.toFixed(2)} €
         </span>
       </div>
@@ -90,6 +93,7 @@ export function WaermepumpeMonatsTabelle({ monatsdaten }: { monatsdaten: Investi
               <tr key={md.id ?? `${md.jahr}-${md.monat}`} className="border-b border-gray-100 dark:border-gray-800">
                 <td className="py-2 px-2">{MONAT_KURZ[md.monat]} {md.jahr}</td>
                 <td className="text-right py-2 px-2">{strom.toFixed(0)}</td>
+                {/* Heizung = WP-Rot, Warmwasser = blau (= CHART_COLORS.wpWaerme/wpWarmwasser; Gernot 2026-06-25 nach detLAN). */}
                 <td className="text-right py-2 px-2 text-red-600">{heiz.toFixed(0)}</td>
                 <td className="text-right py-2 px-2 text-blue-600">{ww.toFixed(0)}</td>
                 <td className="text-right py-2 px-2 text-orange-600">{cop.toFixed(2)}</td>

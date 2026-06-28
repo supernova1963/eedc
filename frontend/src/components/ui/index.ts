@@ -2,7 +2,7 @@
  * UI Components - Re-exports
  */
 
-export { default as Button } from './Button'
+export { default as Button, buttonClasses } from './Button'
 export { default as Input } from './Input'
 export { default as Select } from './Select'
 export { default as Modal } from './Modal'
@@ -16,6 +16,10 @@ export { default as FormelTooltip, SimpleTooltip, fmtCalc } from './FormelToolti
 export { KPICard } from './KPICard'
 export { default as QuelleBadge } from './QuelleBadge'
 export { default as ChartTooltip } from './ChartTooltip'
+export { eedcTooltipProps } from './eedcTooltip'
+export { default as ChartLegende } from './ChartLegende'
+export type { LegendEintrag } from './ChartLegende'
+export { default as ScrollSchatten } from './ScrollSchatten'
 export { default as SortableSection, OrderedSections } from './SortableSection'
 export type { SortableSectionProps } from './SortableSection'
 export { default as DestructiveActionDialog } from './DestructiveActionDialog'

@@ -8,7 +8,7 @@ import { Battery, DollarSign } from 'lucide-react'
 import { Card, LoadingSpinner, Alert, Select, KPICard, QuelleBadge, FormelTooltip, fmtCalc } from '../components/ui'
 import { useSelectedAnlage } from '../hooks'
 import type { Anlage } from '../types'
-import { fmtKpi, WIRKUNGSGRAD_QUELLE_LABELS, SPEICHER_KPI } from '../lib'
+import { fmtZahl, WIRKUNGSGRAD_QUELLE_LABELS, SPEICHER_KPI } from '../lib'
 import { investitionenApi } from '../api'
 import type { SpeicherDashboardResponse } from '../api/investitionen'
 import { SpeicherVerlaufCharts } from '../components/speicher'
@@ -127,7 +127,7 @@ function SpeicherBlock({ dashboard, ...selectorProps }: { dashboard: SpeicherDas
     <div className="space-y-6">
       <div className="flex items-center justify-between flex-wrap gap-4">
         <div className="flex items-center gap-3 min-w-0">
-          <Battery className="h-8 w-8 text-green-500 flex-shrink-0" />
+          <Battery className="h-8 w-8 text-blue-500 flex-shrink-0" />
           <div className="min-w-0">
             <h1 className="text-2xl font-bold text-gray-900 dark:text-white truncate">
               {investition.bezeichnung}
@@ -151,7 +151,7 @@ function SpeicherBlock({ dashboard, ...selectorProps }: { dashboard: SpeicherDas
         />
         <KPICard
           {...SPEICHER_KPI.wirkungsgrad}
-          value={fmtKpi(istEta != null ? istEta : z.effizienz_prozent, 1)}
+          value={fmtZahl(istEta != null ? istEta : z.effizienz_prozent, 1)}
           unit="%"
           color={etaAlarm ? 'red' : SPEICHER_KPI.wirkungsgrad.color}
           subtitle={

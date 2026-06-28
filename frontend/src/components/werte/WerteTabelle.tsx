@@ -57,6 +57,15 @@ export interface WerteTabelleProps {
   /** Optionaler Cross-Link „alle Werte / Export →" (z. B. im Cockpit-Embed). */
   alleWerteHref?: string
   csvDateiname?: string
+  /** localStorage-Namensraum für Spaltenwahl/-reihenfolge. Default-Scope teilen sich
+   *  alle Embeds (Cockpit/Komponenten); eine eigene Sicht (z. B. Werte-Werkbank)
+   *  setzt einen eigenen Scope → unabhängige Spaltenwahl ohne Embed-Nebenwirkung. */
+  scope?: string
+  /** Initial sichtbare Spalten (Registry-keys) statt Registry-`defaultVisible` —
+   *  greift nur, solange im Scope nichts gespeichert ist. */
+  defaultSpalten?: string[]
+  /** Vergleich (cur/cmp/Δ) initial eingeschaltet, falls Vergleichszeilen vorliegen. */
+  vergleichDefaultAn?: boolean
 }
 
 export function WerteTabelle({
@@ -67,6 +76,9 @@ export function WerteTabelle({
   vergleichLabel = null,
   alleWerteHref,
   csvDateiname = 'werte_tabelle.csv',
+  scope = 'werte-werkbank',
+  defaultSpalten,
+  vergleichDefaultAn = false,
 }: WerteTabelleProps) {
   // Verfügbare Metriken + Picker-Gruppen je Granularität.
   const verfuegbar = useMemo(() => metrikenFuer(granularitaet), [granularitaet])
@@ -77,8 +89,15 @@ export function WerteTabelle({
   )
   const einheitLabel = granularitaet === 'tag' ? 'Tage' : 'Monate'
   // LS-Scope je Granularität, damit Monats-/Tages-Spaltenwahl unabhängig bleibt.
-  const lsCols = `eedc-werte-werkbank:cols:${granularitaet}`
-  const lsOrder = `eedc-werte-werkbank:order:${granularitaet}`
+  const lsCols = `eedc-${scope}:cols:${granularitaet}`
+  const lsOrder = `eedc-${scope}:order:${granularitaet}`
+  // Default-Sichtbarkeit: explizite Werkbank-Vorgabe (defaultSpalten) ∨ Registry.
+  const defaultVisibleKeys = useMemo(() => {
+    const base = defaultSpalten && defaultSpalten.length
+      ? defaultSpalten
+      : verfuegbar.filter((m) => m.defaultVisible).map((m) => m.key)
+    return base.filter((k) => verfuegbarKeys.has(k))
+  }, [defaultSpalten, verfuegbar, verfuegbarKeys])
 
   // ── Sichtbarkeit + Reihenfolge (persistiert je Granularität) ─
   const [visible, setVisible] = useState<Set<string>>(() => {
@@ -89,7 +108,7 @@ export function WerteTabelle({
         if (keys.length > 0) return new Set(keys)
       }
     } catch { /* ignore */ }
-    return new Set(verfuegbar.filter((m) => m.defaultVisible).map((m) => m.key))
+    return new Set(defaultVisibleKeys)
   })
   const [order, setOrder] = useState<string[]>(() => {
     try {
@@ -102,7 +121,17 @@ export function WerteTabelle({
     return verfuegbar.map((m) => m.key)
   })
   const [pickerOffen, setPickerOffen] = useState(false)
-  const [vergleichAn, setVergleichAn] = useState(false)
+  const [vergleichAn, setVergleichAn] = useState(vergleichDefaultAn)
+  // Spalten-Sortierung (IST-Parität TabelleTab): null = chronologisch aufsteigend
+  // (Default, wie die Cockpit-Embeds) · '__zeit' = Zeitraum-Spalte · sonst Metrik-key.
+  const [sortKey, setSortKey] = useState<string | null>(null)
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
+
+  function toggleSort(key: string) {
+    if (sortKey === key) { setSortDir((d) => (d === 'asc' ? 'desc' : 'asc')); return }
+    setSortKey(key)
+    setSortDir(key === '__zeit' ? 'asc' : 'desc') // Metrik: größter Wert zuerst
+  }
 
   // Granularitätswechsel → Sichtbarkeit/Reihenfolge neu aus dem passenden Scope.
   useEffect(() => {
@@ -114,7 +143,7 @@ export function WerteTabelle({
           if (keys.length > 0) return new Set(keys)
         }
       } catch { /* ignore */ }
-      return new Set(verfuegbar.filter((m) => m.defaultVisible).map((m) => m.key))
+      return new Set(defaultVisibleKeys)
     })
     setOrder(() => {
       try {
@@ -187,10 +216,22 @@ export function WerteTabelle({
     })
   }
 
-  const sorted = useMemo(
-    () => [...rows].sort((a, b) => a.sortKey - b.sortKey),
-    [rows],
-  )
+  const sorted = useMemo(() => {
+    const arr = [...rows]
+    if (sortKey === null || sortKey === '__zeit') {
+      arr.sort((a, b) => a.sortKey - b.sortKey)
+      if (sortKey === '__zeit' && sortDir === 'desc') arr.reverse()
+      return arr
+    }
+    arr.sort((a, b) => {
+      const av = a.wert(sortKey); const bv = b.wert(sortKey)
+      if (av == null && bv == null) return 0
+      if (av == null) return 1   // fehlende Werte ans Ende
+      if (bv == null) return -1
+      return sortDir === 'asc' ? av - bv : bv - av
+    })
+    return arr
+  }, [rows, sortKey, sortDir])
 
   if (sorted.length === 0) {
     return <p className="text-sm text-gray-500 dark:text-gray-400">Keine Werte im Zeitraum.</p>
@@ -213,7 +254,7 @@ export function WerteTabelle({
           </Button>
         )}
         <Button size="sm" variant="secondary" onClick={csvExport}>
-          <Download className="h-4 w-4" /> CSV
+          <Download className="h-4 w-4" /> CSV-Export
         </Button>
         {alleWerteHref && (
           <a href={alleWerteHref} className="ml-auto inline-flex items-center gap-1 text-sm text-primary-700 dark:text-primary-300 hover:underline">
@@ -267,10 +308,16 @@ export function WerteTabelle({
         <table className="w-full text-sm">
           <thead>
             <tr className="text-left text-xs text-gray-400 dark:text-gray-500 border-b border-gray-200 dark:border-gray-700">
-              <th className="px-3 py-2 font-medium whitespace-nowrap">Zeitraum</th>
+              <th className="px-3 py-2 font-medium whitespace-nowrap">
+                <button type="button" onClick={() => toggleSort('__zeit')} className="inline-flex items-center gap-1 hover:text-gray-700 dark:hover:text-gray-200">
+                  Zeitraum {sortKey === '__zeit' && (sortDir === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />)}
+                </button>
+              </th>
               {aktiveMetriken.map((m) => (
                 <th key={m.key} colSpan={zeigeVergleich ? 3 : 1} className="px-3 py-2 text-right font-medium whitespace-nowrap">
-                  {m.label}{m.unit ? ` (${m.unit})` : ''}
+                  <button type="button" onClick={() => toggleSort(m.key)} className="inline-flex items-center gap-1 hover:text-gray-700 dark:hover:text-gray-200">
+                    {m.label}{m.unit ? ` (${m.unit})` : ''} {sortKey === m.key && (sortDir === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />)}
+                  </button>
                 </th>
               ))}
             </tr>
@@ -287,13 +334,13 @@ export function WerteTabelle({
                       const pv = prev ? prev.wert(m.key) : null
                       return (
                         <Fragment key={m.key}>
-                          <td className="px-3 py-2 text-right tabular-nums text-gray-700 dark:text-gray-300">{fmtWert(v, m.decimals)}</td>
-                          <td className="px-3 py-2 text-right tabular-nums text-gray-500 dark:text-gray-400">{fmtWert(pv, m.decimals)}</td>
-                          <td className="px-3 py-2 text-right tabular-nums text-xs border-r border-gray-100 dark:border-gray-800"><DeltaZelle current={v} prev={pv} metrik={m} /></td>
+                          <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap text-gray-700 dark:text-gray-300">{fmtWert(v, m.decimals)}</td>
+                          <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap text-gray-500 dark:text-gray-400">{fmtWert(pv, m.decimals)}</td>
+                          <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap text-xs border-r border-gray-100 dark:border-gray-800"><DeltaZelle current={v} prev={pv} metrik={m} /></td>
                         </Fragment>
                       )
                     }
-                    return <td key={m.key} className="px-3 py-2 text-right tabular-nums text-gray-700 dark:text-gray-300">{fmtWert(v, m.decimals)}</td>
+                    return <td key={m.key} className="px-3 py-2 text-right tabular-nums whitespace-nowrap text-gray-700 dark:text-gray-300">{fmtWert(v, m.decimals)}</td>
                   })}
                 </tr>
               )
@@ -312,13 +359,13 @@ export function WerteTabelle({
                     const pv = vorjahrAggregat?.[m.key] ?? null
                     return (
                       <Fragment key={m.key}>
-                        <td className="px-3 py-2.5 text-right tabular-nums text-gray-800 dark:text-gray-100">{v != null ? `${prefix}${fmtWert(v, m.decimals)}` : '—'}</td>
-                        <td className="px-3 py-2.5 text-right tabular-nums text-gray-500 dark:text-gray-400">{pv != null ? `${prefix}${fmtWert(pv, m.decimals)}` : '—'}</td>
-                        <td className="px-3 py-2.5 text-right tabular-nums text-xs border-r border-gray-300 dark:border-gray-600"><DeltaZelle current={v} prev={pv} metrik={m} /></td>
+                        <td className="px-3 py-2.5 text-right tabular-nums whitespace-nowrap text-gray-800 dark:text-gray-100">{v != null ? `${prefix}${fmtWert(v, m.decimals)}` : '—'}</td>
+                        <td className="px-3 py-2.5 text-right tabular-nums whitespace-nowrap text-gray-500 dark:text-gray-400">{pv != null ? `${prefix}${fmtWert(pv, m.decimals)}` : '—'}</td>
+                        <td className="px-3 py-2.5 text-right tabular-nums whitespace-nowrap text-xs border-r border-gray-300 dark:border-gray-600"><DeltaZelle current={v} prev={pv} metrik={m} /></td>
                       </Fragment>
                     )
                   }
-                  return <td key={m.key} className="px-3 py-2.5 text-right tabular-nums text-gray-800 dark:text-gray-100">{v != null ? `${prefix}${fmtWert(v, m.decimals)}` : '—'}</td>
+                  return <td key={m.key} className="px-3 py-2.5 text-right tabular-nums whitespace-nowrap text-gray-800 dark:text-gray-100">{v != null ? `${prefix}${fmtWert(v, m.decimals)}` : '—'}</td>
                 })}
               </tr>
             </tfoot>

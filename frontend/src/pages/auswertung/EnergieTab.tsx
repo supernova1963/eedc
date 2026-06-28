@@ -5,14 +5,17 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer
 } from 'recharts'
 import { Sun, Zap, TrendingUp, Download } from 'lucide-react'
-import { Card, Button, fmtCalc, KPICard } from '../../components/ui'
+import { Card, Button, fmtCalc, KPICard, ChartLegende } from '../../components/ui'
 import ChartTooltip from '../../components/ui/ChartTooltip'
 import { exportToCSV } from '../../utils/export'
 import { TabProps, CHART_COLORS, createMonatsZeitreihe } from './types'
+import { xAchse, yAchse } from '../../lib'
+import { useSchmaleAchse } from '../../hooks'
 
 export function EnergieTab({ data, stats, anlage, strompreis, alleTarife, zeitraumLabel }: TabProps) {
   const [bilanzView, setBilanzView] = useState<'erzeugung' | 'verbrauch'>('erzeugung')
   const [showAutarkie, setShowAutarkie] = useState(false)
+  const schmal = useSchmaleAchse()
 
   // Monatszeitreihen erstellen
   const zeitreihe = useMemo(
@@ -51,7 +54,7 @@ export function EnergieTab({ data, stats, anlage, strompreis, alleTarife, zeitra
         </p>
         <Button variant="secondary" size="sm" onClick={handleExportCSV}>
           <Download className="h-4 w-4 mr-2" />
-          CSV Export
+          CSV-Export
         </Button>
       </div>
 
@@ -155,12 +158,12 @@ export function EnergieTab({ data, stats, anlage, strompreis, alleTarife, zeitra
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart data={zeitreihe} margin={{ top: 10, right: 30, left: 0, bottom: 5 }}>
               <CartesianGrid strokeDasharray="3 3" className="stroke-gray-200 dark:stroke-gray-700" />
-              <XAxis dataKey="name" tick={{ fontSize: 10 }} interval="preserveStartEnd" />
+              <XAxis dataKey="name" {...xAchse(schmal)} interval="preserveStartEnd" />
               <YAxis
                 yAxisId="kwh"
                 tickFormatter={(v) => `${v.toFixed(0)}`}
                 unit=" kWh"
-                tick={{ fontSize: 11 }}
+                {...yAchse(schmal)}
               />
               {showAutarkie && (
                 <YAxis
@@ -168,14 +171,14 @@ export function EnergieTab({ data, stats, anlage, strompreis, alleTarife, zeitra
                   orientation="right"
                   domain={[0, 100]}
                   unit="%"
-                  tick={{ fontSize: 11 }}
+                  tick={{ fontSize: 10 }}
                 />
               )}
               <Tooltip content={<ChartTooltip formatter={(value, name) => {
                   if (name === 'Autarkie') return `${value.toFixed(1)} %`
                   return `${value.toFixed(0)} kWh`
                 }} />} />
-              <Legend />
+              <Legend content={<ChartLegende />} />
 
               {/* Erzeugung-Ansicht: Eigenverbrauch + Einspeisung gestapelt, Netzbezug separat */}
               {bilanzView === 'erzeugung' && (
@@ -222,14 +225,14 @@ export function EnergieTab({ data, stats, anlage, strompreis, alleTarife, zeitra
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart data={zeitreihe} margin={{ top: 10, right: 30, left: 0, bottom: 5 }}>
               <CartesianGrid strokeDasharray="3 3" className="stroke-gray-200 dark:stroke-gray-700" />
-              <XAxis dataKey="name" tick={{ fontSize: 10 }} interval="preserveStartEnd" />
-              <YAxis yAxisId="left" domain={[0, 100]} unit="%" tick={{ fontSize: 11 }} />
-              <YAxis yAxisId="right" orientation="right" tickFormatter={(v) => `${v.toFixed(0)}`} unit=" kWh/kWp" tick={{ fontSize: 11 }} />
+              <XAxis dataKey="name" {...xAchse(schmal)} interval="preserveStartEnd" />
+              <YAxis yAxisId="left" domain={[0, 100]} unit=" %" {...yAchse(schmal)} />
+              <YAxis yAxisId="right" orientation="right" tickFormatter={(v) => `${v.toFixed(0)}`} unit=" kWh/kWp" tick={{ fontSize: 10 }} />
               <Tooltip content={<ChartTooltip formatter={(value, name) => {
                   if (name.includes('kWh/kWp')) return `${value.toFixed(0)} kWh/kWp`
                   return `${value.toFixed(1)} %`
                 }} />} />
-              <Legend />
+              <Legend content={<ChartLegende />} />
               <Line yAxisId="left" type="monotone" dataKey="autarkie" name="Autarkie (%)" stroke={CHART_COLORS.autarkie} strokeWidth={2} dot={false} />
               <Line yAxisId="left" type="monotone" dataKey="evQuote" name="EV-Quote (%)" stroke={CHART_COLORS.evQuote} strokeWidth={2} dot={false} />
               <Bar yAxisId="right" dataKey="spezErtrag" name="Spez. Ertrag (kWh/kWp)" fill={CHART_COLORS.spezErtrag} opacity={0.7} />
@@ -248,8 +251,8 @@ export function EnergieTab({ data, stats, anlage, strompreis, alleTarife, zeitra
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={zeitreihe} margin={{ top: 10, right: 30, left: 0, bottom: 5 }}>
               <CartesianGrid strokeDasharray="3 3" className="stroke-gray-200 dark:stroke-gray-700" />
-              <XAxis dataKey="name" tick={{ fontSize: 10 }} interval="preserveStartEnd" />
-              <YAxis unit=" kWh" width={60} tick={{ fontSize: 11 }} tickFormatter={(v) => v >= 1000 ? `${(v/1000).toFixed(1)}k` : v} />
+              <XAxis dataKey="name" {...xAchse(schmal)} interval="preserveStartEnd" />
+              <YAxis unit=" kWh" {...yAchse(schmal, 60)} tickFormatter={(v) => v >= 1000 ? `${(v/1000).toFixed(1)}k` : v} />
               <Tooltip content={<ChartTooltip unit="kWh" decimals={0} />} />
               <Line type="monotone" dataKey="erzeugung" name="PV-Erzeugung" stroke={CHART_COLORS.erzeugung} strokeWidth={2} dot={false} />
             </LineChart>

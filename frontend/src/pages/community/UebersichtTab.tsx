@@ -32,7 +32,7 @@ import {
   Shield,
   HelpCircle,
 } from 'lucide-react'
-import { Card, LoadingSpinner, Alert } from '../../components/ui'
+import { Card, LoadingSpinner, Alert, ChartLegende } from '../../components/ui'
 import { SimpleTooltip } from '../../components/ui/FormelTooltip'
 import { useChartTheme } from '../../context/ThemeContext'
 import type {
@@ -51,7 +51,7 @@ import {
 } from 'recharts'
 
 // Bundesland-Namen + Farb-Zentrale
-import { REGION_NAMEN, EIGENE_SERIE_FARBEN, SERIEN_PALETTE } from '../../lib'
+import { REGION_NAMEN, EIGENE_SERIE_FARBEN, SERIEN_PALETTE, ACHSEN_TICK } from '../../lib'
 
 interface UebersichtTabProps {
   anlageId: number
@@ -578,7 +578,7 @@ export default function UebersichtTab({ benchmark, benchmarkLoading: loading, be
                   <PolarGrid stroke={achsen.grid} />
                   <PolarAngleAxis
                     dataKey="kategorie"
-                    tick={{ fill: achsen.achse, fontSize: 11 }}
+                    tick={ACHSEN_TICK}
                   />
                   <PolarRadiusAxis
                     angle={90}
@@ -599,7 +599,7 @@ export default function UebersichtTab({ benchmark, benchmarkLoading: loading, be
                     fill={SERIEN_PALETTE[0]}
                     fillOpacity={0.15}
                   />
-                  <Legend />
+                  <Legend content={<ChartLegende />} />
                 </RadarChart>
               </ResponsiveContainer>
             </div>
@@ -1059,9 +1059,9 @@ function AchievementBadge({ achievement }: { achievement: Achievement }) {
       {/* Fortschrittsbalken für nicht erreichte */}
       {!achievement.erreicht && achievement.fortschritt !== undefined && (
         <div className="mt-2">
-          <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-1.5">
+          <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-sm h-1.5">
             <div
-              className={`h-1.5 rounded-full ${
+              className={`h-1.5 rounded-sm ${
                 achievement.farbe === 'yellow' ? 'bg-yellow-400' :
                 achievement.farbe === 'green' ? 'bg-green-400' :
                 achievement.farbe === 'blue' ? 'bg-blue-400' :

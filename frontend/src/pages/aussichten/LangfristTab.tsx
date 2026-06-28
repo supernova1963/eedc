@@ -3,10 +3,10 @@
  */
 import { useState, useEffect } from 'react'
 import { TrendingUp, TrendingDown, Minus, Calendar, Zap, Info } from 'lucide-react'
-import { Card, LoadingSpinner, Alert, KPICard } from '../../components/ui'
+import { Card, LoadingSpinner, Alert, KPICard, ChartLegende } from '../../components/ui'
 import ChartTooltip from '../../components/ui/ChartTooltip'
 import { aussichtenApi, LangfristPrognose } from '../../api/aussichten'
-import { CHART_COLORS, SOLL_IST_COLORS } from '../../lib'
+import { CHART_COLORS, SOLL_IST_COLORS, PROGNOSE_DASH } from '../../lib'
 import { useChartTheme } from '../../context/ThemeContext'
 import {
   ResponsiveContainer,
@@ -157,14 +157,14 @@ export default function LangfristTab({ anlageId }: Props) {
               <CartesianGrid strokeDasharray="3 3" className="stroke-gray-200 dark:stroke-gray-700" />
               <XAxis
                 dataKey="name"
-                tick={{ fontSize: 11 }}
+                tick={{ fontSize: 10 }}
                 angle={-45}
                 textAnchor="end"
                 height={60}
                 className="text-gray-600 dark:text-gray-400"
               />
               <YAxis
-                tick={{ fontSize: 12 }}
+                tick={{ fontSize: 10 }}
                 className="text-gray-600 dark:text-gray-400"
                 label={{ value: 'kWh', angle: -90, position: 'insideLeft' }}
               />
@@ -172,7 +172,7 @@ export default function LangfristTab({ anlageId }: Props) {
                   if (name === 'Konfidenzband') return null
                   return `${value.toFixed(0)} kWh`
                 }} />} />
-              <Legend />
+              <Legend content={<ChartLegende />} />
 
               {/* Konfidenzband */}
               {showKonfidenz && (
@@ -191,8 +191,10 @@ export default function LangfristTab({ anlageId }: Props) {
                 dataKey="pvgis"
                 name="PVGIS-Prognose"
                 fill={achsen.referenz}
-                fillOpacity={0.5}
-                radius={[4, 4, 0, 0]}
+                stroke={achsen.referenz}
+                strokeWidth={1}
+                strokeDasharray={PROGNOSE_DASH}
+                radius={[2, 2, 0, 0]}
               />
 
               {/* Trend-korrigierte Prognose */}
@@ -200,7 +202,7 @@ export default function LangfristTab({ anlageId }: Props) {
                 dataKey="trend"
                 name="Trend-korrigiert"
                 fill={CHART_COLORS.erzeugung}
-                radius={[4, 4, 0, 0]}
+                radius={[2, 2, 0, 0]}
               />
             </ComposedChart>
           </ResponsiveContainer>

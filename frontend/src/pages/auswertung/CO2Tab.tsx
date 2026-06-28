@@ -8,7 +8,8 @@ import { Leaf, Download, Sprout } from 'lucide-react'
 import { Card, Button, fmtCalc, KPICard } from '../../components/ui'
 import ChartTooltip from '../../components/ui/ChartTooltip'
 import { exportToCSV } from '../../utils/export'
-import { TYP_LABELS, CHART_COLORS, MARKER_WARNUNG } from '../../lib'
+import { TYP_LABELS, CHART_COLORS, MARKER_WARNUNG, xAchse, yAchse } from '../../lib'
+import { useSchmaleAchse } from '../../hooks'
 import { investitionenApi, type CO2AmortisationResponse } from '../../api/investitionen'
 import { TabProps, createMonatsZeitreihe } from './types'
 
@@ -22,6 +23,7 @@ interface CO2TabProps {
 }
 
 export function CO2Tab({ data, stats, zeitraumLabel, anlageId }: CO2TabProps) {
+  const schmal = useSchmaleAchse()
   // Monatszeitreihen erstellen
   const zeitreihe = useMemo(
     () => createMonatsZeitreihe(data),
@@ -96,7 +98,7 @@ export function CO2Tab({ data, stats, zeitraumLabel, anlageId }: CO2TabProps) {
         </p>
         <Button variant="secondary" size="sm" onClick={handleExportCSV}>
           <Download className="h-4 w-4 mr-2" />
-          CSV Export
+          CSV-Export
         </Button>
       </div>
 
@@ -158,10 +160,10 @@ export function CO2Tab({ data, stats, zeitraumLabel, anlageId }: CO2TabProps) {
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={zeitreihe} margin={{ top: 10, right: 30, left: 0, bottom: 5 }}>
               <CartesianGrid strokeDasharray="3 3" className="stroke-gray-200 dark:stroke-gray-700" />
-              <XAxis dataKey="name" tick={{ fontSize: 10 }} interval="preserveStartEnd" />
-              <YAxis unit=" kg" tick={{ fontSize: 11 }} />
+              <XAxis dataKey="name" {...xAchse(schmal)} interval="preserveStartEnd" />
+              <YAxis unit=" kg" {...yAchse(schmal)} />
               <Tooltip content={<ChartTooltip unit="kg CO2" decimals={0} />} />
-              <Bar dataKey="co2_einsparung" name="CO2 eingespart" fill={CHART_COLORS.co2Pv} radius={[4, 4, 0, 0]} />
+              <Bar dataKey="co2_einsparung" name="CO2 eingespart" fill={CHART_COLORS.co2Pv} radius={[2, 2, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </div>
@@ -176,8 +178,8 @@ export function CO2Tab({ data, stats, zeitraumLabel, anlageId }: CO2TabProps) {
           <ResponsiveContainer width="100%" height="100%">
             <AreaChart data={chartDataWithKumuliert} margin={{ top: 10, right: 30, left: 0, bottom: 5 }}>
               <CartesianGrid strokeDasharray="3 3" className="stroke-gray-200 dark:stroke-gray-700" />
-              <XAxis dataKey="name" tick={{ fontSize: 10 }} interval="preserveStartEnd" />
-              <YAxis tickFormatter={(v) => `${(v/1000).toFixed(1)}`} unit=" t" tick={{ fontSize: 11 }} />
+              <XAxis dataKey="name" {...xAchse(schmal)} interval="preserveStartEnd" />
+              <YAxis tickFormatter={(v) => `${(v/1000).toFixed(1)}`} unit=" t" {...yAchse(schmal)} />
               <Tooltip content={<ChartTooltip formatter={(value) => `${(value / 1000).toFixed(2)} t CO2`} />} />
               <Area
                 type="monotone"

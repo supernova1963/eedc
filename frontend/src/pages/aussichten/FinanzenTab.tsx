@@ -3,7 +3,7 @@
  */
 import { useState, useEffect } from 'react'
 import { Euro, TrendingUp, PiggyBank, CheckCircle, Clock, Battery, Car, Flame, Fuel } from 'lucide-react'
-import { Card, LoadingSpinner, Alert, FormelTooltip, fmtCalc, KPICard } from '../../components/ui'
+import { Card, LoadingSpinner, Alert, FormelTooltip, fmtCalc, KPICard, ChartLegende } from '../../components/ui'
 import ChartTooltip from '../../components/ui/ChartTooltip'
 import { aussichtenApi, FinanzPrognose } from '../../api/aussichten'
 import { INVESTITION_TYP_ORDER, CHART_COLORS } from '../../lib'
@@ -184,9 +184,9 @@ export default function FinanzenTab({ anlageId }: Props) {
             {prognose.bisherige_ertraege_euro.toLocaleString('de-DE')} € von {prognose.investition_gesamt_euro.toLocaleString('de-DE')} €
           </span>
         </div>
-        <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-4">
+        <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-sm h-4">
           <div
-            className={`h-4 rounded-full transition-all ${
+            className={`h-4 rounded-sm transition-all ${
               prognose.amortisation_erreicht
                 ? 'bg-green-500'
                 : amortFortschritt > 75
@@ -233,17 +233,17 @@ export default function FinanzenTab({ anlageId }: Props) {
                 <CartesianGrid strokeDasharray="3 3" className="stroke-gray-200 dark:stroke-gray-700" />
                 <XAxis
                   dataKey="name"
-                  tick={{ fontSize: 11 }}
+                  tick={{ fontSize: 10 }}
                   angle={-45}
                   textAnchor="end"
                   height={60}
                 />
                 <YAxis
-                  tick={{ fontSize: 12 }}
+                  tick={{ fontSize: 10 }}
                   label={{ value: '€', angle: -90, position: 'insideLeft' }}
                 />
                 <Tooltip content={<ChartTooltip unit="€" decimals={2} />} />
-                <Legend
+                <Legend content={<ChartLegende
                   formatter={(value) => {
                     const labels: Record<string, string> = {
                       einspeise_erloes: 'Einspeise-Erlös',
@@ -252,7 +252,7 @@ export default function FinanzenTab({ anlageId }: Props) {
                     }
                     return labels[value] || value
                   }}
-                />
+                />} />
                 <Bar dataKey="einspeise_erloes" stackId="a" fill={CHART_COLORS.einspeiseErloes} name="einspeise_erloes" />
                 <Bar dataKey="ev_ersparnis" stackId="a" fill={CHART_COLORS.evErsparnis} name="ev_ersparnis" />
                 <Line
@@ -289,7 +289,7 @@ export default function FinanzenTab({ anlageId }: Props) {
                   ))}
                 </Pie>
                 <Tooltip content={<ChartTooltip unit="€" decimals={2} />} />
-                <Legend />
+                <Legend content={<ChartLegende />} />
               </PieChart>
             </ResponsiveContainer>
           </div>

@@ -10,7 +10,9 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
 } from 'recharts'
 import ChartTooltip from '../ui/ChartTooltip'
-import { MONAT_KURZ, LADEQUELLEN_FARBEN, GELD_COLORS, CHART_COLORS } from '../../lib'
+import { ChartLegende } from '../ui'
+import { MONAT_KURZ, LADEQUELLEN_FARBEN, GELD_COLORS, GELD_TEXT_CLASS, CHART_COLORS, CHART_HOVER_CURSOR, xAchse, yAchse } from '../../lib'
+import { useSchmaleAchse } from '../../hooks'
 import type { InvestitionMonatsdaten, EAutoDashboardResponse } from '../../api/investitionen'
 
 type Zusammenfassung = EAutoDashboardResponse['zusammenfassung']
@@ -29,15 +31,16 @@ export function prepEAutoMonate(monatsdaten: InvestitionMonatsdaten[]) {
 
 /** Kilometer pro Monat (Bar). */
 export function EAutoKmVerlauf({ monatsdaten }: { monatsdaten: InvestitionMonatsdaten[] }) {
+  const schmal = useSchmaleAchse()
   const data = prepEAutoMonate(monatsdaten)
   return (
     <div className="h-64">
       <ResponsiveContainer width="100%" height="100%">
         <BarChart data={data}>
           <CartesianGrid strokeDasharray="3 3" />
-          <XAxis dataKey="name" fontSize={10} />
-          <YAxis />
-          <Tooltip content={<ChartTooltip />} />
+          <XAxis dataKey="name" {...xAchse(schmal)} />
+          <YAxis {...yAchse(schmal)} />
+          <Tooltip cursor={CHART_HOVER_CURSOR} content={<ChartTooltip />} />
           <Bar dataKey="km" fill={CHART_COLORS.emobKm} name="km" />
         </BarChart>
       </ResponsiveContainer>
@@ -47,16 +50,17 @@ export function EAutoKmVerlauf({ monatsdaten }: { monatsdaten: InvestitionMonats
 
 /** Ladung pro Monat nach Quelle (PV/Netz/Extern, gestapelt). */
 export function EAutoLadungVerlauf({ monatsdaten }: { monatsdaten: InvestitionMonatsdaten[] }) {
+  const schmal = useSchmaleAchse()
   const data = prepEAutoMonate(monatsdaten)
   return (
     <div className="h-64">
       <ResponsiveContainer width="100%" height="100%">
         <BarChart data={data}>
           <CartesianGrid strokeDasharray="3 3" />
-          <XAxis dataKey="name" fontSize={10} />
-          <YAxis />
-          <Tooltip content={<ChartTooltip />} />
-          <Legend />
+          <XAxis dataKey="name" {...xAchse(schmal)} />
+          <YAxis {...yAchse(schmal)} />
+          <Tooltip cursor={CHART_HOVER_CURSOR} content={<ChartTooltip />} />
+          <Legend content={<ChartLegende />} />
           <Bar dataKey="pv" stackId="a" fill={LADEQUELLEN_FARBEN.pv} name="Heim: PV" />
           <Bar dataKey="netz" stackId="a" fill={LADEQUELLEN_FARBEN.netz} name="Heim: Netz" />
           <Bar dataKey="extern" stackId="a" fill={LADEQUELLEN_FARBEN.extern} name="Extern" />
@@ -79,14 +83,14 @@ export function EAutoKostenvergleich({ zusammenfassung: z }: { zusammenfassung: 
           <BarChart data={data} layout="vertical">
             <CartesianGrid strokeDasharray="3 3" />
             <XAxis type="number" tickFormatter={(v) => `${v}€`} />
-            <YAxis type="category" dataKey="name" width={120} />
-            <Tooltip content={<ChartTooltip unit="€" decimals={2} />} />
+            <YAxis type="category" dataKey="name" width={120} tick={{ fontSize: 10 }} />
+            <Tooltip cursor={CHART_HOVER_CURSOR} content={<ChartTooltip unit="€" decimals={2} />} />
             <Bar dataKey="value" />
           </BarChart>
         </ResponsiveContainer>
       </div>
       <div className="text-center">
-        <span className="text-lg font-semibold text-green-600 dark:text-green-400">
+        <span className={`text-lg font-semibold ${GELD_TEXT_CLASS.ersparnis}`}>
           Ersparnis: {(z.ersparnis_vs_benzin_euro || 0).toFixed(2)} €
         </span>
       </div>
@@ -117,7 +121,8 @@ export function EAutoMonatsTabelle({ monatsdaten }: { monatsdaten: InvestitionMo
               <td className="text-right py-2 px-2">{(md.verbrauch_daten.verbrauch_kwh || 0).toFixed(1)}</td>
               <td className="text-right py-2 px-2 text-green-600">{(md.verbrauch_daten.ladung_pv_kwh || 0).toFixed(1)}</td>
               <td className="text-right py-2 px-2 text-red-600">{(md.verbrauch_daten.ladung_netz_kwh || 0).toFixed(1)}</td>
-              <td className="text-right py-2 px-2 text-purple-600">{(md.verbrauch_daten.v2h_entladung_kwh || 0).toFixed(1)}</td>
+              {/* V2H = emobV2h-Identität (cyan), war fälschlich violett (Audit-E). */}
+              <td className="text-right py-2 px-2 text-cyan-600">{(md.verbrauch_daten.v2h_entladung_kwh || 0).toFixed(1)}</td>
             </tr>
           ))}
         </tbody>

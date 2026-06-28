@@ -8,7 +8,7 @@ import {
   PiggyBank, Wallet, TrendingUp, Calendar,
   ChevronDown, ChevronRight, AlertTriangle
 } from 'lucide-react'
-import { Card, LoadingSpinner, FormelTooltip, fmtCalc, KPICard } from '../../components/ui'
+import { Card, LoadingSpinner, FormelTooltip, fmtCalc, KPICard, ChartLegende } from '../../components/ui'
 import ChartTooltip from '../../components/ui/ChartTooltip'
 import { useInvestitionen } from '../../hooks'
 import { investitionenApi, cockpitApi, type ROIDashboardResponse, type ROIKomponente, type CockpitUebersicht } from '../../api'
@@ -158,8 +158,8 @@ export function InvestitionenTab({ anlageId, strompreis, selectedYear = 'all' }:
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={kostenByTyp} layout="vertical">
                 <CartesianGrid strokeDasharray="3 3" className="stroke-gray-200 dark:stroke-gray-700" />
-                <XAxis type="number" unit=" €" tick={{ fontSize: 11 }} />
-                <YAxis type="category" dataKey="label" tick={{ fontSize: 11 }} width={100} />
+                <XAxis type="number" unit=" €" tick={{ fontSize: 10 }} />
+                <YAxis type="category" dataKey="label" tick={{ fontSize: 10 }} width={100} />
                 <Tooltip content={<ChartTooltip unit="€" />} />
                 <Bar dataKey="kosten" name="Kosten">
                   {kostenByTyp.map((entry, index) => (
@@ -232,10 +232,10 @@ export function InvestitionenTab({ anlageId, strompreis, selectedYear = 'all' }:
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={amortisationData}>
                 <CartesianGrid strokeDasharray="3 3" className="stroke-gray-200 dark:stroke-gray-700" />
-                <XAxis dataKey="jahr" unit=" J." tick={{ fontSize: 11 }} />
-                <YAxis unit=" €" tick={{ fontSize: 11 }} />
+                <XAxis dataKey="jahr" unit=" J." tick={{ fontSize: 10 }} />
+                <YAxis unit=" €" tick={{ fontSize: 10 }} />
                 <Tooltip content={<ChartTooltip unit="€" />} />
-                <Legend />
+                <Legend content={<ChartLegende />} />
                 <Area
                   type="monotone"
                   dataKey="investition"

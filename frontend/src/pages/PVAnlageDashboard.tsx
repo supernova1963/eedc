@@ -10,7 +10,7 @@
 
 import { useMemo } from 'react'
 import { Sun, Zap, TrendingUp, Activity, BarChart3, AlertTriangle, PieChart as PieChartIcon, Wrench } from 'lucide-react'
-import { Card, LoadingSpinner, Alert, Select, KPICard, fmtCalc, SortableSection, OrderedSections } from '../components/ui'
+import { Card, LoadingSpinner, Alert, Select, KPICard, fmtCalc, SortableSection, OrderedSections, ChartLegende } from '../components/ui'
 import { useSelectedAnlage, useApiData, useInvestitionen, useSectionOrder } from '../hooks'
 import { cockpitApi, type CockpitUebersicht } from '../api/cockpit'
 import { monatsdatenApi, type AggregierteMonatsdaten } from '../api/monatsdaten'
@@ -166,7 +166,7 @@ export default function PVAnlageDashboard() {
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-4">
         <div className="flex items-center gap-3 min-w-0">
-          <Sun className="h-8 w-8 text-yellow-500 flex-shrink-0" />
+          <Sun className="h-8 w-8 text-amber-500 flex-shrink-0" />
           <div className="min-w-0">
             <h1 className="text-2xl font-bold text-gray-900 dark:text-white truncate">{anlage?.anlagenname || 'PV-Anlage'}</h1>
             {zeitraumVon && zeitraumBis && (
@@ -379,10 +379,10 @@ export default function PVAnlageDashboard() {
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={jahresChartData}>
                 <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="name" />
-                <YAxis tickFormatter={jahresFormatter} width={80} />
+                <XAxis dataKey="name" tick={{ fontSize: 10 }} />
+                <YAxis tickFormatter={jahresFormatter} width={80} tick={{ fontSize: 10 }} />
                 <Tooltip content={<ChartTooltip unit="kWh" />} />
-                <Legend />
+                <Legend content={<ChartLegende />} />
                 <Bar dataKey="Erzeugung" fill={COLORS.solar} />
                 <Bar dataKey="Eigenverbrauch" fill={COLORS.consumption} />
                 <Bar dataKey="Einspeisung" fill={COLORS.feedin} />

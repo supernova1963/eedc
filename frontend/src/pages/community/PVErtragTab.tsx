@@ -10,7 +10,7 @@
 
 import { useState, useEffect, useMemo } from 'react'
 import { useChartTheme } from '../../context/ThemeContext'
-import { MONAT_KURZ, STATUS_COLORS, EIGENE_SERIE_FARBEN, SERIE_NEUTRAL } from '../../lib'
+import { MONAT_KURZ, STATUS_COLORS, EIGENE_SERIE_FARBEN, SERIE_NEUTRAL, ACHSEN_TICK } from '../../lib'
 import {
   Sun,
   TrendingUp,
@@ -225,14 +225,14 @@ export default function PVErtragTab({ benchmark, benchmarkLoading, benchmarkErro
                 <CartesianGrid strokeDasharray="3 3" stroke={achsen.grid} />
                 <XAxis
                   dataKey="name"
-                  tick={{ fill: achsen.achse, fontSize: 11 }}
+                  tick={ACHSEN_TICK}
                   interval={0}
                   angle={-45}
                   textAnchor="end"
                   height={60}
                 />
                 <YAxis
-                  tick={{ fill: achsen.achse, fontSize: 12 }}
+                  tick={ACHSEN_TICK}
                   label={{
                     value: 'kWh/kWp',
                     angle: -90,
@@ -260,7 +260,7 @@ export default function PVErtragTab({ benchmark, benchmarkLoading, benchmarkErro
                   name="durchschnitt"
                 />
                 {/* Eigener Ertrag als Balken */}
-                <Bar dataKey="ertrag" radius={[4, 4, 0, 0]} name="ertrag">
+                <Bar dataKey="ertrag" radius={[2, 2, 0, 0]} name="ertrag">
                   {chartData.map((entry, index) => (
                     <Cell
                       key={`cell-${index}`}
@@ -369,19 +369,19 @@ export default function PVErtragTab({ benchmark, benchmarkLoading, benchmarkErro
                 <CartesianGrid strokeDasharray="3 3" stroke={achsen.grid} />
                 <XAxis
                   dataKey="range"
-                  tick={{ fill: achsen.achse, fontSize: 10 }}
+                  tick={ACHSEN_TICK}
                   angle={-45}
                   textAnchor="end"
                   height={60}
                 />
-                <YAxis tick={{ fill: achsen.achse, fontSize: 12 }} />
+                <YAxis tick={ACHSEN_TICK} />
                 <Tooltip
                   content={<ChartTooltip
                     formatter={(value) => `${value} Anlagen`}
                     labelFormatter={(label) => `${label} kWh/kWp`}
                   />}
                 />
-                <Bar dataKey="anzahl" radius={[4, 4, 0, 0]}>
+                <Bar dataKey="anzahl" radius={[2, 2, 0, 0]}>
                   {distribution.bins.map((bin, index) => {
                     const isOwn = benchmark.benchmark.spez_ertrag_anlage >= bin.von &&
                                   benchmark.benchmark.spez_ertrag_anlage < bin.bis
