@@ -13,6 +13,7 @@ import ChartTooltip from '../../components/ui/ChartTooltip'
 import { useInvestitionen } from '../../hooks'
 import { investitionenApi, cockpitApi, type ROIDashboardResponse, type ROIKomponente, type CockpitUebersicht } from '../../api'
 import { COLORS, TYP_COLORS, TYP_LABELS } from './types'
+import { achsenEinheit, achsenTick, ACHSEN_MARGIN_TOP, fmtZahl } from '../../lib'
 import type { useAktuellerStrompreis } from '../../hooks'
 
 interface InvestitionenTabProps {
@@ -158,8 +159,8 @@ export function InvestitionenTab({ anlageId, strompreis, selectedYear = 'all' }:
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={kostenByTyp} layout="vertical">
                 <CartesianGrid strokeDasharray="3 3" className="stroke-gray-200 dark:stroke-gray-700" />
-                <XAxis type="number" unit=" €" tick={{ fontSize: 10 }} />
-                <YAxis type="category" dataKey="label" tick={{ fontSize: 10 }} width={100} />
+                <XAxis type="number" tickFormatter={(v) => `${fmtZahl(v, 0)} €`} tick={{ fontSize: 10 }} /* achsen-allow: Wert-Achse waagerecht, Einheit/Format pro Tick (de-DE) */ />
+                <YAxis type="category" dataKey="label" tick={{ fontSize: 10 }} width={100} /* achsen-allow: Kategorie-Namen */ />
                 <Tooltip content={<ChartTooltip unit="€" />} />
                 <Bar dataKey="kosten" name="Kosten">
                   {kostenByTyp.map((entry, index) => (
@@ -199,7 +200,7 @@ export function InvestitionenTab({ anlageId, strompreis, selectedYear = 'all' }:
         />
         <KPICard
           title="ROI"
-          value={roiData?.gesamt_roi_prozent?.toFixed(1) || '—'}
+          value={roiData?.gesamt_roi_prozent != null ? fmtCalc(roiData.gesamt_roi_prozent, 1) : '—'}
           unit="%"
           subtitle="pro Jahr"
           icon={TrendingUp}
@@ -207,18 +208,18 @@ export function InvestitionenTab({ anlageId, strompreis, selectedYear = 'all' }:
           sicht="Gesamt-Anlage · Jahres-ROI · Mehrkosten-Ansatz · Prognose"
           formel="Jahresersparnis ÷ Relevante Kosten × 100"
           berechnung={roiData && roiData.gesamt_relevante_kosten > 0 ? `${fmtCalc(roiData.gesamt_jahres_einsparung, 0)} € ÷ ${fmtCalc(roiData.gesamt_relevante_kosten, 0)} € × 100` : undefined}
-          ergebnis={roiData?.gesamt_roi_prozent ? `= ${roiData.gesamt_roi_prozent.toFixed(1)} % ROI p.a.` : undefined}
+          ergebnis={roiData?.gesamt_roi_prozent ? `= ${fmtCalc(roiData.gesamt_roi_prozent, 1)} % ROI p.a.` : undefined}
         />
         <KPICard
           title="Amortisation"
-          value={roiData?.gesamt_amortisation_jahre?.toFixed(1) || '—'}
+          value={roiData?.gesamt_amortisation_jahre != null ? fmtCalc(roiData.gesamt_amortisation_jahre, 1) : '—'}
           unit="Jahre"
           icon={Calendar}
           color="yellow"
           sicht="Gesamt-Anlage · Mehrkosten-Ansatz · Prognose (rechnerisch, ohne Berücksichtigung bisheriger Erträge)"
           formel="Relevante Kosten ÷ Jahresersparnis"
           berechnung={roiData && roiData.gesamt_jahres_einsparung > 0 ? `${fmtCalc(roiData.gesamt_relevante_kosten, 0)} € ÷ ${fmtCalc(roiData.gesamt_jahres_einsparung, 0)} €/Jahr` : undefined}
-          ergebnis={roiData?.gesamt_amortisation_jahre ? `= ${roiData.gesamt_amortisation_jahre.toFixed(1)} Jahre bis zur Kostendeckung` : undefined}
+          ergebnis={roiData?.gesamt_amortisation_jahre ? `= ${fmtCalc(roiData.gesamt_amortisation_jahre, 1)} Jahre bis zur Kostendeckung` : undefined}
         />
       </div>
 
@@ -230,10 +231,10 @@ export function InvestitionenTab({ anlageId, strompreis, selectedYear = 'all' }:
           </h3>
           <div className="h-72">
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={amortisationData}>
+              <AreaChart data={amortisationData} margin={{ top: ACHSEN_MARGIN_TOP }}>
                 <CartesianGrid strokeDasharray="3 3" className="stroke-gray-200 dark:stroke-gray-700" />
-                <XAxis dataKey="jahr" unit=" J." tick={{ fontSize: 10 }} />
-                <YAxis unit=" €" tick={{ fontSize: 10 }} />
+                <XAxis dataKey="jahr" tickFormatter={(v) => `${fmtZahl(v, 0)} J.`} tick={{ fontSize: 10 }} /* achsen-allow: Wert-Achse waagerecht, Einheit/Format pro Tick (de-DE) */ />
+                <YAxis tick={{ fontSize: 10 }} tickFormatter={achsenTick} label={achsenEinheit('€')} />
                 <Tooltip content={<ChartTooltip unit="€" />} />
                 <Legend content={<ChartLegende />} />
                 <Area
@@ -257,7 +258,7 @@ export function InvestitionenTab({ anlageId, strompreis, selectedYear = 'all' }:
           </div>
           {roiData?.gesamt_amortisation_jahre && (
             <p className="text-sm text-gray-500 mt-2">
-              Break-Even nach ca. {roiData.gesamt_amortisation_jahre.toFixed(1)} Jahren
+              Break-Even nach ca. {fmtCalc(roiData.gesamt_amortisation_jahre, 1)} Jahren
             </p>
           )}
         </Card>
@@ -442,10 +443,10 @@ export function InvestitionenTab({ anlageId, strompreis, selectedYear = 'all' }:
                             sicht="Pro Investition · Jahres-ROI · Mehrkosten-Ansatz · Prognose"
                             formel="Ersparnis ÷ Mehrkosten × 100"
                             berechnung={`${fmtCalc(b.jahres_einsparung, 0)} € ÷ ${fmtCalc(b.relevante_kosten, 0)} € × 100`}
-                            ergebnis={b.roi_prozent ? `= ${b.roi_prozent.toFixed(1)} % p.a.` : 'nicht berechenbar'}
+                            ergebnis={b.roi_prozent ? `= ${fmtCalc(b.roi_prozent, 1)} % p.a.` : 'nicht berechenbar'}
                           >
                             <span className="cursor-help border-b border-dotted border-gray-400">
-                              {b.roi_prozent?.toFixed(1) || '—'}%
+                              {b.roi_prozent?.toFixed(1) || '—'} %
                             </span>
                           </FormelTooltip>
                         </td>

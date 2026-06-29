@@ -25,7 +25,7 @@ import {
 import { energieProfilApi } from '../../api/energie_profil'
 import { getStratifizierung, StratifizierungResponse, Wetterklasse, wetterBackfill } from '../../api/korrekturprofil'
 import { KorrekturprofilHeatmapCard } from '../../pages/aussichten/KorrekturprofilHeatmapCard'
-import { PROGNOSE_QUELLEN_COLORS, PROGNOSE_QUELLEN_TEXT, PROGNOSE_DASH, fmtZahl } from '../../lib'
+import { PROGNOSE_QUELLEN_COLORS, PROGNOSE_QUELLEN_TEXT, PROGNOSE_DASH, fmtZahl, achsenEinheit, achsenTick, ACHSEN_MARGIN_TOP } from '../../lib'
 import { useChartTheme } from '../../context/ThemeContext'
 import {
   ResponsiveContainer, ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ReferenceLine,
@@ -672,10 +672,10 @@ export function PvgStundenprofil({ vm }: { vm: PrognoseVergleichVM }) {
       <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Tagesverlauf — Stundenprofil</h3>
       <div className="h-80">
         <ResponsiveContainer width="100%" height="100%">
-          <ComposedChart data={visibleChartData} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
+          <ComposedChart data={visibleChartData} margin={{ top: ACHSEN_MARGIN_TOP, right: 20, left: 0, bottom: 5 }}>
             <CartesianGrid strokeDasharray="3 3" stroke={achsen.grid} opacity={0.3} />
-            <XAxis dataKey="stunde" tick={{ fontSize: 10 }} tickFormatter={(v) => v.replace(':00', '')} padding={{ left: 8, right: 8 }} />
-            <YAxis tick={{ fontSize: 10 }} label={{ value: 'kW', angle: -90, position: 'insideLeft', style: { fontSize: 11 } }} />
+            <XAxis dataKey="stunde" tick={{ fontSize: 10 }} tickFormatter={(v) => v.replace(':00', '')} padding={{ left: 8, right: 8 }} /* achsen-allow: Zeit-/Kategorie-Achse */ />
+            <YAxis tick={{ fontSize: 10 }} tickFormatter={achsenTick} label={achsenEinheit('kW')} />
             <Tooltip content={<StundenTooltip hasEedc={hasEedc} />} />
             <Legend content={<ChartLegende formatter={(v) => ({ ist: 'IST', eedc: `eedc${lf != null ? ` (OpenMeteo ×${fmtZahl(lf, 2)})` : ''}`, solcast: 'Solcast', openmeteo: 'OpenMeteo (roh)' }[v] || v)} />} />
             {data.aktuelle_stunde !== null && (<ReferenceLine x={`${data.aktuelle_stunde}:00`} stroke={achsen.referenz} strokeDasharray="3 3" label={{ value: 'Jetzt', position: 'top', fontSize: 10, fill: achsen.achse }} />)}

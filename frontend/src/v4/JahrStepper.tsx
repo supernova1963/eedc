@@ -8,14 +8,17 @@ import { useMemo } from 'react'
 import { ChevronFirst, ChevronLeft, ChevronRight, ChevronLast } from 'lucide-react'
 import type { JahrRailEintrag } from './JahresRail'
 import { ZeitStepper, type ZeitStepperEintrag } from './ZeitStepper'
+import { fmtZahl } from '../lib'
 
 interface JahrStepperProps {
   entries: JahrRailEintrag[]
   jahr: number
   onSelect: (jahr: number) => void
+  /** D10-2: im Fokus/Vollbild-Kopf auf jeder Breite sichtbar (durchgereicht). */
+  immerSichtbar?: boolean
 }
 
-export function JahrStepper({ entries, jahr, onSelect }: JahrStepperProps) {
+export function JahrStepper({ entries, jahr, onSelect, immerSichtbar }: JahrStepperProps) {
   const desc = useMemo(() => [...entries].sort((a, b) => b.jahr - a.jahr), [entries])
   const oldest = useMemo(() => entries.reduce((m, e) => Math.min(m, e.jahr), entries[0]?.jahr ?? jahr), [entries, jahr])
   const newest = useMemo(() => entries.reduce((m, e) => Math.max(m, e.jahr), entries[0]?.jahr ?? jahr), [entries, jahr])
@@ -30,7 +33,7 @@ export function JahrStepper({ entries, jahr, onSelect }: JahrStepperProps) {
   const eintraege: ZeitStepperEintrag[] = desc.map((e) => ({
     key: String(e.jahr),
     label: String(e.jahr),
-    wert: e.laufend ? 'läuft' : `${Math.round(e.pv_kwh)} kWh`,
+    wert: e.laufend ? 'läuft' : `${fmtZahl(e.pv_kwh, 0)} kWh`,
     aktiv: !!e.laufend,
     gewaehlt: e.jahr === jahr,
     onClick: () => onSelect(e.jahr),
@@ -49,6 +52,7 @@ export function JahrStepper({ entries, jahr, onSelect }: JahrStepperProps) {
       titel={String(jahr)}
       badge={aktuell?.laufend ? 'läuft' : null}
       eintraege={eintraege}
+      immerSichtbar={immerSichtbar}
     />
   )
 }

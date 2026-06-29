@@ -9,6 +9,7 @@ import { useMemo } from 'react'
 import { ChevronFirst, ChevronsLeft, ChevronLeft, ChevronRight, ChevronsRight, ChevronLast } from 'lucide-react'
 import type { TagRailEintrag } from './TagesRail'
 import { ZeitStepper, type ZeitStepperEintrag } from './ZeitStepper'
+import { fmtZahl } from '../lib'
 
 interface TagStepperProps {
   entries: TagRailEintrag[]
@@ -17,6 +18,8 @@ interface TagStepperProps {
   /** Ältester verfügbarer Tag (jenseits der 90-Tage-Liste) — Untergrenze für die
    *  Datumsauswahl, damit ALLE vorhandenen Tage direkt anspringbar sind. */
   aeltesterTag?: string
+  /** D10-2: im Fokus/Vollbild-Kopf auf jeder Breite sichtbar (durchgereicht). */
+  immerSichtbar?: boolean
 }
 
 const WT_KURZ = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa']
@@ -28,7 +31,7 @@ const label = (iso: string) => {
   return `${WT_KURZ[d.getDay()]} ${d.getDate()}. ${d.toLocaleDateString('de-DE', { month: 'short', year: 'numeric' })}`
 }
 
-export function TagStepper({ entries, datum, onSelect, aeltesterTag }: TagStepperProps) {
+export function TagStepper({ entries, datum, onSelect, aeltesterTag, immerSichtbar }: TagStepperProps) {
   const desc = useMemo(() => [...entries].sort((a, b) => (a.datum < b.datum ? 1 : -1)), [entries])
   const oldest = useMemo(() => entries.reduce((m, e) => (m && m < e.datum ? m : e.datum), entries[0]?.datum ?? datum), [entries, datum])
   const newest = useMemo(() => entries.reduce((m, e) => (m && m > e.datum ? m : e.datum), entries[0]?.datum ?? datum), [entries, datum])
@@ -47,7 +50,7 @@ export function TagStepper({ entries, datum, onSelect, aeltesterTag }: TagSteppe
   const eintraege: ZeitStepperEintrag[] = desc.map((e) => ({
     key: e.datum,
     label: label(e.datum),
-    wert: e.heute ? 'heute' : `${Math.round(e.pv_kwh)} kWh`,
+    wert: e.heute ? 'heute' : `${fmtZahl(e.pv_kwh, 0)} kWh`,
     aktiv: !!e.heute,
     gewaehlt: e.datum === datum,
     onClick: () => onSelect(e.datum),
@@ -89,6 +92,7 @@ export function TagStepper({ entries, datum, onSelect, aeltesterTag }: TagSteppe
           )}
         </div>
       )}
+      immerSichtbar={immerSichtbar}
     />
   )
 }
