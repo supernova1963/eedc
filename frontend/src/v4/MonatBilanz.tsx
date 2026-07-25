@@ -15,11 +15,16 @@
  * + SOLL aus `aktuellerMonatApi.getData`, Vormonat + Ø-Monat aus der Monatsreihe
  * (`monatsdatenApi.listAggregiert`).
  */
+import { Gauge } from 'lucide-react'
 import { fmtCalc } from '../components/ui'
-import FormelTooltip, { SimpleTooltip } from '../components/ui/FormelTooltip'
-import { VerteilungsBalken, GeraeteHinweis } from '../components/blocks'
-import { DATENROLLE, AMPEL_TEXT_CLASS, AMPEL_BG_CLASS, sollIstStufe, VERGLEICH_BADGE } from '../lib'
-import { Sun, Activity, Zap, ArrowUpFromLine, Plug, Euro, Wallet } from 'lucide-react'
+import { Table, TableHead, TableBody } from '../components/ui/Table'
+import { ZELLE, KOPF_ZELLE } from '../components/ui/tabelleMasse'
+import { SimpleTooltip } from '../components/ui/FormelTooltip'
+import { VerteilungsBalken, GeraeteHinweis, GrundlastSollIstKachel } from '../components/blocks'
+import { Parkbar } from '../components/park'
+import { DATENROLLE, VERGLEICH_BADGE } from '../lib'
+// R3b S7/A5: Datenrollen-Icons aus der SoT-Map (eine Datenrolle = ein Icon).
+import { DATENROLLEN_ICONS } from '../lib/komponentenStyle'
 import type { KpiStripItem } from '../components/blocks'
 import type { AktuellerMonatResponse } from '../api/aktuellerMonat'
 import type { AggregierteMonatsdaten } from '../api/monatsdaten'
@@ -37,10 +42,15 @@ export interface GleicheMonatStats {
 
 const fmt = (v: number | null | undefined, dec = 0) => fmtCalc(v, dec, '—')
 
-/** D1-Strip: 5 Energie + Netto-Ertrag €. Vormonat in der Zweitzeile, SOLL am PV. */
+/** D1-Strip: 5 Energie + Netto-Ertrag €. Vormonat in der Zweitzeile, SOLL am PV.
+ *  `prAvg` (Monats-Ø der Performance Ratio, aus `getMonat.performance_ratio_avg`,
+ *  M1-Wiederherstellung 2026-07-19): eine zusätzliche neutrale Kachel, nur wenn
+ *  gesetzt — die Datenquelle ist die Auswertung, nicht das Monats-Aggregat, daher
+ *  als eigener Parameter durchgereicht statt aus `d` gelesen. */
 export function baueMonatKpis(
   d: AktuellerMonatResponse,
   vm: AggregierteMonatsdaten | null,
+  prAvg?: number | null,
 ): KpiStripItem[] {
   const pvSoll = d.soll_pv_kwh != null && d.pv_erzeugung_kwh != null
     ? `SOLL ${fmt(d.soll_pv_kwh)} kWh · ${fmt((d.pv_erzeugung_kwh / d.soll_pv_kwh) * 100)} %`
@@ -55,11 +65,11 @@ export function baueMonatKpis(
 
   return [
     {
-      title: 'PV-Erzeugung', value: fmt(d.pv_erzeugung_kwh), unit: 'kWh', color: 'yellow', icon: Sun,
+      title: 'PV-Erzeugung', value: fmt(d.pv_erzeugung_kwh), unit: 'kWh', color: 'yellow', icon: DATENROLLEN_ICONS.pv,
       subtitle: pvSoll,
     },
     {
-      title: 'Autarkie', value: fmt(d.autarkie_prozent), unit: '%', color: 'green', icon: Activity,
+      title: 'Autarkie', value: fmt(d.autarkie_prozent), unit: '%', color: 'green', icon: DATENROLLEN_ICONS.autarkie,
       subtitle: vm ? `VM: ${fmt(vm.autarkie_prozent)} %` : undefined,
       formel: 'Eigenverbrauch ÷ Gesamtverbrauch × 100',
       berechnung: d.eigenverbrauch_kwh != null && d.gesamtverbrauch_kwh != null
@@ -67,30 +77,75 @@ export function baueMonatKpis(
       ergebnis: d.autarkie_prozent != null ? `= ${fmtCalc(d.autarkie_prozent, 1)} %` : undefined,
     },
     {
-      title: 'Eigenverbrauch', value: fmt(d.eigenverbrauch_kwh), unit: 'kWh', color: 'purple', icon: Zap,
+      title: 'Eigenverbrauch', value: fmt(d.eigenverbrauch_kwh), unit: 'kWh', color: 'purple', icon: DATENROLLEN_ICONS.eigenverbrauch,
       subtitle: `EV-Quote ${fmt(d.eigenverbrauch_quote_prozent)} %${vm ? ` · VM: ${fmt(vm.eigenverbrauch_kwh)} kWh` : ''}`,
     },
     {
-      title: 'Einspeisung', value: fmt(d.einspeisung_kwh), unit: 'kWh', color: 'green', icon: ArrowUpFromLine,
+      title: 'Einspeisung', value: fmt(d.einspeisung_kwh), unit: 'kWh', color: 'green', icon: DATENROLLEN_ICONS.einspeisung,
       subtitle: vm ? `VM: ${fmt(vm.einspeisung_kwh)} kWh` : undefined,
     },
     {
-      title: 'Netzbezug', value: fmt(d.netzbezug_kwh), unit: 'kWh', color: 'red', icon: Plug,
+      title: 'Netzbezug', value: fmt(d.netzbezug_kwh), unit: 'kWh', color: 'red', icon: DATENROLLEN_ICONS.netzbezug,
       subtitle: vm ? `VM: ${fmt(vm.netzbezug_kwh)} kWh` : undefined,
     },
     {
-      title: 'Netto-Ertrag', value: fmtCalc(d.netto_ertrag_euro, 2, '—'), unit: '€', color: 'blue', icon: Euro,
+      title: 'Netto-Ertrag', value: fmtCalc(d.netto_ertrag_euro, 2, '—'), unit: '€', color: 'blue', icon: DATENROLLEN_ICONS.nettoErtrag,
       subtitle: 'vor Betriebskosten',
       formel: 'Einspeise-Erlös + Eigenverbrauchs-Ersparnis',
     },
     {
       title: 'Monatsergebnis',
       value: fmtCalc(monatsergebnis, 2, '—'), unit: '€',
-      color: monatsergebnis != null && monatsergebnis < 0 ? 'red' : 'green', icon: Wallet,
+      color: monatsergebnis != null && monatsergebnis < 0 ? 'red' : 'green', icon: DATENROLLEN_ICONS.ergebnis,
       subtitle: 'nach Betriebskosten',
       formel: 'Gesamt-Nettoertrag − Betriebskosten + Sonstiges',
     },
+    // Performance Ratio Ø des Monats (M1-Wiederherstellung) — neutrale Kachel, nur
+    // wenn ableitbar. Physikalische Kennzahl (keine Datenrolle) → raw Gauge-Icon
+    // wie die Komponenten-KPIs (Battery/Power/Clock in KomponentenSektionen).
+    ...(prAvg != null
+      ? [{
+          title: 'Performance Ratio', value: fmtCalc(prAvg, 2, '—'), color: 'gray' as const, icon: Gauge,
+          subtitle: 'Monats-Ø',
+          formel: 'Ø der täglichen Performance Ratio (Ertrag ÷ Einstrahlung × kWp)',
+        }]
+      : []),
+    ...baueNetzKostenKpis(d),
   ]
+}
+
+/** R15-1 (Rainer-PN #88625): Kosten-Kacheln „Batterieladung Netz" +
+ *  „Durchschnittspreis Netz" — Stromkosten der Periode sichtbar machen.
+ *  Erscheinen nur, wenn Daten vorliegen (Netzladung erfasst bzw. Preis
+ *  bekannt). Geteilt von Monat + Jahr (Jahres-Aggregat hat denselben Shape). */
+export function baueNetzKostenKpis(d: AktuellerMonatResponse): KpiStripItem[] {
+  const kpis: KpiStripItem[] = []
+  if (d.speicher_ladung_netz_kosten_euro != null) {
+    kpis.push({
+      // R16-A (Rainer #164): Ø-Ladepreis als Hauptwert, darunter kWh + Kosten —
+      // parallel zur Nachbarkachel „Durchschnittspreis Netz".
+      title: 'Batterieladung Netz',
+      value: fmtCalc(d.speicher_ladung_netz_preis_cent, 1, '—'), unit: 'ct/kWh',
+      color: 'red', icon: DATENROLLEN_ICONS.netzladungKosten,
+      subtitle: `${fmt(d.speicher_ladung_netz_kwh)} kWh · ${fmtCalc(d.speicher_ladung_netz_kosten_euro, 2, '—')} €`,
+      formel: 'Ø-Ladepreis der Netzladung (aus der Strompreis-Mitschrift) · Kosten = Netzladung × Ladepreis',
+      berechnung: `${fmt(d.speicher_ladung_netz_kwh)} kWh × ${fmtCalc(d.speicher_ladung_netz_preis_cent, 1)} ct/kWh`,
+      ergebnis: `= ${fmtCalc(d.speicher_ladung_netz_kosten_euro, 2)} € Kosten`,
+    })
+  }
+  const netzPreis = d.netzbezug_durchschnittspreis_cent ?? d.netzbezug_preis_cent
+  if (netzPreis != null && d.netzbezug_kwh != null) {
+    kpis.push({
+      title: 'Ø-Preis Netz',
+      value: fmtCalc(netzPreis, 1, '—'), unit: 'ct/kWh',
+      color: 'red', icon: DATENROLLEN_ICONS.netzpreis,
+      subtitle: `${fmt(d.netzbezug_kwh)} kWh · ${fmtCalc(d.netzbezug_kosten_euro, 2, '—')} €`,
+      formel: d.netzbezug_durchschnittspreis_cent != null
+        ? 'Ø-Bezugspreis (dynamischer Tarif, verbrauchsgewichtet) · Kosten inkl. Grundpreis'
+        : 'Arbeitspreis aus dem Strompreis-Tarif · Kosten inkl. Grundpreis',
+    })
+  }
+  return kpis
 }
 
 export function Delta({ a, b, inv = false, besser }: { a: number | null | undefined; b: number | null | undefined; inv?: boolean; besser?: boolean }) {
@@ -101,7 +156,7 @@ export function Delta({ a, b, inv = false, besser }: { a: number | null | undefi
   // weiter die absolute Änderung, die Farbe folgt `besser`.
   const positive = besser != null ? besser : (inv ? pct <= 0 : pct >= 0)
   return (
-    <span className={`text-xs font-medium px-1 py-0.5 rounded ${
+    <span className={`text-xs font-medium px-1 py-0.5 rounded-full ${
       positive ? VERGLEICH_BADGE.besser : VERGLEICH_BADGE.schlechter
     }`}>
       {pct >= 0 ? '▲' : '▼'} {fmtCalc(Math.abs(pct), 0)} %
@@ -119,7 +174,7 @@ export function VglChip({ prefix, lang, ist, val, unit, dec, inv, besser }: {
 }) {
   if (ist == null || val == null || val === 0) {
     return (
-      <span className="inline-flex items-center gap-1 text-[11px] font-medium px-1.5 py-0.5 rounded bg-gray-100 text-gray-400 dark:bg-gray-700/50 dark:text-gray-500">
+      <span className="inline-flex items-center gap-1 text-[11px] font-medium px-1.5 py-0.5 rounded-full bg-gray-50 text-gray-400 dark:bg-gray-700/50 dark:text-gray-500">
         {prefix} —
       </span>
     )
@@ -128,7 +183,7 @@ export function VglChip({ prefix, lang, ist, val, unit, dec, inv, besser }: {
   const positive = besser != null ? besser : (inv ? pct <= 0 : pct >= 0)
   return (
     <SimpleTooltip text={`${lang}: ${fmt(val, dec)} ${unit}`}>
-      <span className={`inline-flex items-center gap-1 text-[11px] font-medium px-1.5 py-0.5 rounded ${
+      <span className={`inline-flex items-center gap-1 text-[11px] font-medium px-1.5 py-0.5 rounded-full ${
         positive ? VERGLEICH_BADGE.besser : VERGLEICH_BADGE.schlechter
       }`}>
         {prefix} {pct >= 0 ? '▲' : '▼'} {fmtCalc(Math.abs(pct), 0)} %
@@ -150,6 +205,8 @@ interface BilanzRow {
   besserVj?: boolean
   besserGm?: boolean
 }
+
+// Park-IDs des Bilanz-Blocks → `./bilanzParkIds` (reines Modul, kein react-refresh-Treffer).
 
 export function MonatBilanz({
   d, vm, glMonStats, monatName,
@@ -184,18 +241,14 @@ export function MonatBilanz({
   // (rechtsbündig). Getrennte Zellen, damit Zahlen zeilenübergreifend fluchten (#4).
   const vglZellen = (val: number | null | undefined, row: BilanzRow, besser?: boolean) => (
     <>
-      <td className="py-1.5 pl-3 text-right tabular-nums text-gray-400 dark:text-gray-500 hidden sm:table-cell">
+      <td className={`${ZELLE} text-right tabular-nums text-gray-400 dark:text-gray-500 hidden sm:table-cell`}>
         {val != null ? fmt(val, dec(row)) : dash}
       </td>
-      <td className="py-1.5 pr-1 text-right tabular-nums">
+      <td className={`${ZELLE} text-right tabular-nums`}>
         {val != null ? <Delta a={row.ist} b={val} inv={row.inv} besser={besser} /> : dash}
       </td>
     </>
   )
-
-  const sollPct = d.soll_pv_kwh != null && d.pv_erzeugung_kwh != null && d.soll_pv_kwh > 0
-    ? Math.round((d.pv_erzeugung_kwh / d.soll_pv_kwh) * 100)
-    : null
 
   // Woraus sich die PV-Erzeugung zusammensetzt (Strings + WR) — Aggregations-Hinweis.
   const pvGeraete = [
@@ -204,9 +257,9 @@ export function MonatBilanz({
   ]
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-      {/* IST/VM/VJ/Ø-Vergleich (B10) */}
-      <div className="lg:col-span-2">
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
+      {/* IST/VM/VJ/Ø-Vergleich (B10) — eigene Parkbar (Doktrin: jede Anzeige einzeln). */}
+      <Parkbar id="el:bilanz-vergleich" titel="Vergleich (IST/VM/VJ)" className="lg:col-span-2">
         {/* Mobil (< sm): gestapelte Kennzahl-Karten statt Tabelle — keine Spalten/
             Header, die verrutschen können; Vergleiche als umbruch-sichere Chips,
             Absolutwerte im Tooltip. */}
@@ -228,78 +281,59 @@ export function MonatBilanz({
           ))}
         </div>
 
-        {/* Desktop (≥ sm): die aligned Tabelle. */}
-        <div className="hidden sm:block overflow-x-auto">
-        <table className="w-full text-xs">
-          <thead>
-            <tr className="text-gray-400 dark:text-gray-500 border-b border-gray-100 dark:border-gray-700">
-              <th className="text-left pb-1.5 font-medium"><span className="sr-only">Kennzahl</span></th>
+        {/* Desktop (≥ sm): aligned Tabelle über die Zentrale `ui/Table` (Regel T).
+            Mobil zeigt der Block darüber die Kachel-Variante. */}
+        <Table aussenClassName="hidden sm:block" flaeche="karte">
+          <TableHead>
+            <tr className="text-gray-500 dark:text-gray-400 border-b border-gray-100 dark:border-gray-700">
+              <th className={`${KOPF_ZELLE} text-left`}><span className="sr-only">Kennzahl</span></th>
               {/* Jede Wertspalte überspannt 2 Sub-Spalten (Zahl + Einheit/Δ%), Header zentriert (#4). */}
-              <th colSpan={2} className="text-center pb-1.5 font-medium">IST</th>
-              <th colSpan={2} className="text-center pb-1.5 font-medium">Vormonat</th>
-              <th colSpan={2} className="text-center pb-1.5 font-medium">Vorjahr</th>
-              {glMonStats && <th colSpan={2} className="text-center pb-1.5 font-medium">Ø {monatName}</th>}
+              <th colSpan={2} className={`${KOPF_ZELLE} text-center`}>IST</th>
+              <th colSpan={2} className={`${KOPF_ZELLE} text-center`}>Vormonat</th>
+              <th colSpan={2} className={`${KOPF_ZELLE} text-center`}>Vorjahr</th>
+              {glMonStats && <th colSpan={2} className={`${KOPF_ZELLE} text-center`}>Ø {monatName}</th>}
             </tr>
-          </thead>
-          <tbody>
+          </TableHead>
+          <TableBody>
             {rows.map((row) => (
-              <tr key={row.label} className="border-b border-gray-100 dark:border-gray-700/50 last:border-0">
-                <td className="py-1.5 text-gray-600 dark:text-gray-400">{row.label}</td>
+              // Kein eigener `border-b` — Zeilen-Trenner aus TableBody (`divide-y`,
+              // Regel T); ein zusätzlicher `border-b` kollidiert damit (Dark-Mode-
+              // Linie nur unter Zeile 1, gemessen 2026-07-11).
+              <tr key={row.label}>
+                <td className={`${ZELLE} text-gray-600 dark:text-gray-400`}>{row.label}</td>
                 {/* IST: Zahl rechtsbündig + Einheit als eigene linksbündige Spalte. */}
-                <td className="py-1.5 pl-3 text-right font-semibold text-gray-900 dark:text-white tabular-nums">
+                <td className={`${ZELLE} text-right font-semibold text-gray-900 dark:text-white tabular-nums`}>
                   {fmt(row.ist, dec(row))}
                 </td>
-                <td className="py-1.5 pr-1 text-left text-gray-500 dark:text-gray-400">{row.unit}</td>
+                <td className={`${ZELLE} text-left text-gray-500 dark:text-gray-400`}>{row.unit}</td>
                 {vglZellen(row.vm, row, row.besserVm)}
                 {vglZellen(row.vj, row, row.besserVj)}
                 {glMonStats && vglZellen(row.gm, row, row.besserGm)}
               </tr>
             ))}
-          </tbody>
-        </table>
-        </div>
+          </TableBody>
+        </Table>
         {glMonStats && (
           <p className="text-xs text-gray-400 dark:text-gray-500 mt-1.5">
             Ø aus {glMonStats.count} {monatName}-Monat{glMonStats.count !== 1 ? 'en' : ''}
           </p>
         )}
-      </div>
+      </Parkbar>
 
-      {/* SOLL/IST-Fortschritt (PVGIS, O2) */}
+      {/* Rechte Spalte: Grundlast-Kachel + PV-Verteilung + Geräte-Hinweis — je eigene
+          Parkbar (Doktrin), gestapelt in EINER Grid-Zelle. */}
       <div>
-        {sollPct != null ? (
-          <>
-            <p className="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-2">
-              <FormelTooltip
-                formel="IST ÷ SOLL × 100"
-                berechnung={d.pv_erzeugung_kwh != null && d.soll_pv_kwh != null ? `${fmt(d.pv_erzeugung_kwh)} ÷ ${fmt(d.soll_pv_kwh)} kWh` : undefined}
-                ergebnis={`= ${sollPct} %`}
-              >
-                IST/SOLL (PVGIS)
-              </FormelTooltip>
-            </p>
-            <div className="flex justify-end">
-              <span className={`text-4xl font-bold ${AMPEL_TEXT_CLASS[sollIstStufe(sollPct)]}`}>{sollPct} %</span>
-            </div>
-            <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-sm h-2 mt-2">
-              <div
-                className={`h-2 rounded-sm ${AMPEL_BG_CLASS[sollIstStufe(sollPct)]}`}
-                style={{ width: `${Math.min(100, sollPct)}%` }}
-              />
-            </div>
-            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1.5">
-              {fmt(d.pv_erzeugung_kwh)} von {fmt(d.soll_pv_kwh)} kWh
-            </p>
-          </>
-        ) : (
-          <p className="text-xs text-gray-400 dark:text-gray-500">Keine PVGIS-SOLL-Prognose für diesen Monat.</p>
-        )}
+        {/* Grundlast (Nacht-Sockel, R12-1) — ersetzt PVGIS-SOLL/IST; PVGIS bleibt
+            Fallback ohne Stundendaten. Geteilte SoT-Kachel (Monat + Jahr). */}
+        <Parkbar id="el:bilanz-grundlast" titel="Grundlast SOLL/IST">
+          <GrundlastSollIstKachel d={d} />
+        </Parkbar>
 
         {/* PV-Verteilung (EV/Einspeisung) — VerteilungsBalken-SoT (B7-Revision 2026-06-19):
             wie IST als Balken, zusätzlich kWh; eine Bildsprache wie WP/Lade-Mix.
             O3-Revision: bewusst hier, nicht nur in der Fluss-Linse. */}
         {d.eigenverbrauch_kwh != null && d.einspeisung_kwh != null && (d.pv_erzeugung_kwh ?? 0) > 0 && (
-          <div className="mt-4">
+          <Parkbar id="el:bilanz-verteilung" titel="PV-Verteilung" className="mt-4">
             <VerteilungsBalken
               titel="PV-Verteilung"
               segmente={[
@@ -307,13 +341,13 @@ export function MonatBilanz({
                 { label: 'Einspeisung', wert: d.einspeisung_kwh, farbe: DATENROLLE.einspeisung.bg },
               ]}
             />
-          </div>
+          </Parkbar>
         )}
 
         {pvGeraete.length >= 2 && (
-          <div className="mt-3">
+          <Parkbar id="el:bilanz-geraete" titel="PV-Erzeugung aus" className="mt-3">
             <GeraeteHinweis label="PV-Erzeugung aus" namen={pvGeraete} />
-          </div>
+          </Parkbar>
         )}
       </div>
     </div>

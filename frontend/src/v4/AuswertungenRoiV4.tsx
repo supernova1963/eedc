@@ -6,7 +6,7 @@
  *   ① Wirtschaftlichkeit auf einen Blick — 3 KPIs (Investition · Einsparung ·
  *      Amortisation; CO₂-KPI entfällt, R4)
  *   ② Amortisation — Break-Even-Kurve
- *   ③ Verteilung & Vergleich — Pie nach Typ + Bar je Investition
+ *   ③ Verteilung & Vergleich — Typ-Balken (R18-5: Rangfolge + Werte) + Bar je Investition
  *   ④ Detailübersicht je Investition — Tabelle (+ Speicher-C-Panel #264,
  *      Formel-Tooltips) ohne CO₂-Spalte (R4) + Disclaimer
  *
@@ -18,15 +18,16 @@
  * Sicht-Sockel), von allen Blöcken geteilt.
  */
 import { TrendingUp, Clock, PieChart, LayoutGrid, PiggyBank } from 'lucide-react'
-import { LoadingSpinner, Card, Alert, EmptyState } from '../components/ui'
-import { BlockShell, KpiStrip, type Block } from '../components/blocks'
-import { ParkProvider, ParkFuss, Parkbar } from '../components/park'
+import { Alert, EmptyState } from '../components/ui'
+import { BlockShell, BlockStackSkeleton, KpiStrip, type Block } from '../components/blocks'
+import { ParkProvider, ParkFuss, Parkbar, usePark } from '../components/park'
 import {
   useRoiAnalyse, roiKpiItems,
-  RoiAmortisationChart, RoiTypPie, RoiVergleichBar, RoiDetailTabelle, RoiHinweis,
+  RoiAmortisationChart, RoiTypBalken, RoiVergleichBar, RoiDetailTabelle, RoiHinweis,
 } from '../components/roi/RoiAnalyse'
 import { formatGeld } from '../lib'
 import { useSelectedAnlage, useAktuellerStrompreis } from '../hooks'
+import { AnlageLeer } from './OnboardingLeer'
 
 const SICHT_KEY = 'v4-auswertungen-roi'
 
@@ -39,19 +40,29 @@ export default function AuswertungenRoiV4() {
 }
 
 function RoiInner() {
+  const park = usePark()
   const { anlagen, selectedAnlageId, loading: anlagenLoading } = useSelectedAnlage()
   const { strompreis } = useAktuellerStrompreis(selectedAnlageId ?? null)
   const vm = useRoiAnalyse({
     anlageId: selectedAnlageId ?? 0,
     strompreis: strompreis?.netzbezug_arbeitspreis_cent_kwh,
     einspeiseverguetung: strompreis?.einspeiseverguetung_cent_kwh,
+    // R18-2 (SWR): beim Tab-Wechsel stehen die alten Daten sofort, kein Skeleton.
+    swrKeyBasis: 'v4-ausw-roi',
   })
 
-  if (anlagenLoading || vm.loading) return <LoadingSpinner text="Lade ROI-Daten…" />
+  if (anlagenLoading || vm.loading) {
+    // B8 (S15): Sicht-Skeleton in BlockShell-Form (4 Blöcke deterministisch).
+    return (
+      <div className="p-3 sm:p-6 max-w-[1920px] mx-auto">
+        <BlockStackSkeleton label="Lade ROI-Daten…" zu={3} />
+      </div>
+    )
+  }
   if (anlagen.length === 0 || !selectedAnlageId) {
     return (
       <div className="p-3 sm:p-6 max-w-[1920px] mx-auto">
-        <Card><p className="text-sm text-gray-500 dark:text-gray-400">Noch keine Anlage angelegt.</p></Card>
+        <AnlageLeer titel="Noch keine Anlage angelegt." />
       </div>
     )
   }
@@ -76,14 +87,17 @@ function RoiInner() {
   if (!vm.roiData) return null
   const roiData = vm.roiData
 
+  // Auto-Hide (Phase 3b, Gernot 2026-07-09): Block entfällt, wenn ALLE seine real
+  // gerenderten Park-Elemente geparkt sind (Block ① parkt je KPI via roiKpiItems-parkId).
+  const sichtbar = (ids: string[]) => !ids.every((id) => park.istGeparkt(id))
   const bloecke: Block[] = [
-    {
+    ...(sichtbar(['kpi:investition', 'kpi:einsparung', 'kpi:amortisation']) ? [{
       id: 'wirtschaftlichkeit', title: 'Wirtschaftlichkeit auf einen Blick', icon: TrendingUp,
       farbe: 'text-green-500', defaultOpen: true,
       summary: `${formatGeld(roiData.gesamt_investition).text} investiert · ${roiData.gesamt_amortisation_jahre ? `${roiData.gesamt_amortisation_jahre} J. Amortisation` : 'Amortisation offen'}`,
       render: () => <KpiStrip kpis={roiKpiItems(roiData, false)} />,
-    },
-    {
+    }] : []),
+    ...(sichtbar(['chart:amortisation']) ? [{
       id: 'amortisation', title: 'Amortisation', icon: Clock, farbe: 'text-orange-500', defaultOpen: false,
       summary: 'Break-Even-Kurve (kumulierte Einsparung vs. Investition)',
       render: () => (
@@ -91,19 +105,19 @@ function RoiInner() {
           <RoiAmortisationChart vm={vm} />
         </Parkbar>
       ),
-    },
-    {
+    }] : []),
+    ...(sichtbar(['chart:typ-pie', 'chart:vergleich-bar']) ? [{
       id: 'verteilung', title: 'Verteilung & Vergleich', icon: PieChart, farbe: 'text-blue-500', defaultOpen: false,
-      summary: 'Einsparungen nach Typ (Pie) · Investitionen im Vergleich (Bar)',
+      summary: 'Einsparungen nach Typ · Investitionen im Vergleich (Balken)',
       render: () => (
         <div className="space-y-4">
-          <Parkbar id="chart:typ-pie" titel="Einsparungen nach Typ"><RoiTypPie vm={vm} /></Parkbar>
+          <Parkbar id="chart:typ-pie" titel="Einsparungen nach Typ"><RoiTypBalken vm={vm} /></Parkbar>
           <Parkbar id="chart:vergleich-bar" titel="Investitionen im Vergleich"><RoiVergleichBar vm={vm} /></Parkbar>
         </div>
       ),
-    },
-    {
-      id: 'detail', title: 'Detailübersicht je Investition', icon: LayoutGrid, farbe: 'text-gray-400', defaultOpen: false,
+    }] : []),
+    ...(sichtbar(['tabelle:detail', 'info:roi-hinweis']) ? [{
+      id: 'detail', title: 'Detailübersicht je Investition', icon: LayoutGrid, farbe: 'text-gray-400 dark:text-gray-500', defaultOpen: false,
       summary: 'Kosten · ROI · Amortisation je Investition (+ Speicher-Detail #264)',
       render: () => (
         <div className="space-y-4">
@@ -111,7 +125,7 @@ function RoiInner() {
           <Parkbar id="info:roi-hinweis" titel="Hinweis zur Prognose"><RoiHinweis /></Parkbar>
         </div>
       ),
-    },
+    }] : []),
   ]
 
   return (

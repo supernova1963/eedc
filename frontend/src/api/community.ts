@@ -3,11 +3,23 @@
  */
 
 import { api } from './client'
+import { DEMO_DEFAULT } from '../lib/flags'
+import {
+  demoBenchmark, demoDistribution, demoMonthlyAverages,
+  demoSpeicherByClass, demoWaermepumpeByRegion, demoEAutoByUsage,
+  demoRegionalStatistics, demoTrends, demoDegradation,
+  demoGlobalStatistics, demoRanking,
+} from './communityDemo'
 
 // =============================================================================
 // Types
 // =============================================================================
 
+/**
+ * Ein Monatswert, wie er 1:1 an den Community-Server geht (Spiegel von
+ * `prepare_community_data` / eedc-community `MonatswertInput`). Komponenten-
+ * Felder sind nur gesetzt, wenn die Komponente im Monat Werte hatte.
+ */
 export interface MonatswertPreview {
   jahr: number
   monat: number
@@ -16,6 +28,31 @@ export interface MonatswertPreview {
   netzbezug_kwh: number | null
   autarkie_prozent: number | null
   eigenverbrauch_prozent: number | null
+  // Speicher
+  speicher_ladung_kwh?: number
+  speicher_entladung_kwh?: number
+  speicher_ladung_netz_kwh?: number
+  // Wärmepumpe
+  wp_stromverbrauch_kwh?: number
+  wp_heizwaerme_kwh?: number
+  wp_warmwasser_kwh?: number
+  // E-Auto
+  eauto_ladung_gesamt_kwh?: number
+  eauto_ladung_pv_kwh?: number
+  eauto_ladung_extern_kwh?: number
+  eauto_km?: number
+  eauto_v2h_kwh?: number
+  // Wallbox
+  wallbox_ladung_kwh?: number
+  wallbox_ladung_pv_kwh?: number
+  wallbox_ladevorgaenge?: number
+  // Balkonkraftwerk
+  bkw_erzeugung_kwh?: number
+  bkw_eigenverbrauch_kwh?: number
+  bkw_speicher_ladung_kwh?: number
+  bkw_speicher_entladung_kwh?: number
+  // Sonstiges
+  sonstiges_verbrauch_kwh?: number
 }
 
 export interface CommunityDataPreview {
@@ -28,6 +65,12 @@ export interface CommunityDataPreview {
   hat_waermepumpe: boolean
   hat_eauto: boolean
   hat_wallbox: boolean
+  hat_balkonkraftwerk: boolean
+  hat_sonstiges: boolean
+  wp_art: string | null
+  wallbox_kw: number | null
+  bkw_wp: number | null
+  sonstiges_bezeichnung: string | null
   monatswerte: MonatswertPreview[]
 }
 
@@ -432,6 +475,7 @@ export const communityApi = {
     zeitraum: ZeitraumTyp = 'letzte_12_monate',
     jahr?: number,
   ): Promise<CommunityBenchmarkResponse> {
+    if (DEMO_DEFAULT) return Promise.resolve(demoBenchmark(zeitraum))
     const params = new URLSearchParams({ zeitraum })
     if (jahr) {
       params.append('jahr', jahr.toString())
@@ -449,6 +493,7 @@ export const communityApi = {
    * Globale Community-Statistiken
    */
   async getGlobalStatistics(): Promise<GlobaleStatistik> {
+    if (DEMO_DEFAULT) return Promise.resolve(demoGlobalStatistics())
     return api.get<GlobaleStatistik>('/community/statistics/global')
   },
 
@@ -456,6 +501,7 @@ export const communityApi = {
    * Monatliche Community-Durchschnitte
    */
   async getMonthlyAverages(monate: number = 12): Promise<MonatlicheDurchschnitte> {
+    if (DEMO_DEFAULT) return Promise.resolve(demoMonthlyAverages())
     return api.get<MonatlicheDurchschnitte>(`/community/statistics/monthly-averages?monate=${monate}`)
   },
 
@@ -463,6 +509,7 @@ export const communityApi = {
    * Regionale Statistiken (alle Bundesländer)
    */
   async getRegionalStatistics(): Promise<RegionStatistik[]> {
+    if (DEMO_DEFAULT) return Promise.resolve(demoRegionalStatistics())
     return api.get<RegionStatistik[]>('/community/statistics/regional')
   },
 
@@ -477,6 +524,7 @@ export const communityApi = {
    * Verteilungsdaten für Histogramme
    */
   async getDistribution(metric: string, bins: number = 10): Promise<Verteilung> {
+    if (DEMO_DEFAULT) return Promise.resolve(demoDistribution())
     return api.get<Verteilung>(`/community/statistics/distributions/${metric}?bins=${bins}`)
   },
 
@@ -484,6 +532,7 @@ export const communityApi = {
    * Top-N Ranglisten
    */
   async getRanking(category: string, limit: number = 10): Promise<Ranking> {
+    if (DEMO_DEFAULT) return Promise.resolve(demoRanking())
     return api.get<Ranking>(`/community/statistics/rankings/${category}?limit=${limit}`)
   },
 
@@ -495,6 +544,7 @@ export const communityApi = {
    * Speicher-Statistiken nach Kapazitätsklasse
    */
   async getSpeicherByClass(): Promise<SpeicherByClass> {
+    if (DEMO_DEFAULT) return Promise.resolve(demoSpeicherByClass())
     return api.get<SpeicherByClass>('/community/components/speicher/by-class')
   },
 
@@ -502,6 +552,7 @@ export const communityApi = {
    * Wärmepumpen-Statistiken nach Region
    */
   async getWaermepumpeByRegion(): Promise<WPByRegion> {
+    if (DEMO_DEFAULT) return Promise.resolve(demoWaermepumpeByRegion())
     return api.get<WPByRegion>('/community/components/waermepumpe/by-region')
   },
 
@@ -509,6 +560,7 @@ export const communityApi = {
    * E-Auto-Statistiken nach Nutzungsintensität
    */
   async getEAutoByUsage(): Promise<EAutoByUsage> {
+    if (DEMO_DEFAULT) return Promise.resolve(demoEAutoByUsage())
     return api.get<EAutoByUsage>('/community/components/eauto/by-usage')
   },
 
@@ -520,6 +572,7 @@ export const communityApi = {
    * Zeitliche Trends der Community-Daten
    */
   async getTrends(period: TrendPeriod): Promise<TrendDaten> {
+    if (DEMO_DEFAULT) return Promise.resolve(demoTrends())
     return api.get<TrendDaten>(`/community/trends/${period}`)
   },
 
@@ -527,6 +580,7 @@ export const communityApi = {
    * Degradations-Analyse nach Anlagenalter
    */
   async getDegradation(): Promise<DegradationsAnalyse> {
+    if (DEMO_DEFAULT) return Promise.resolve(demoDegradation())
     return api.get<DegradationsAnalyse>('/community/trends/degradation')
   },
 

@@ -25,12 +25,16 @@ from backend.core.berechnungen import (
     spezifischer_ertrag_kwh_kwp,
 )
 from backend.services.einspeise_erloes_service import get_neg_preis_einspeisung_monat
-from backend.utils.sonstige_positionen import berechne_sonstige_netto
+from backend.utils.sonstige_positionen import (
+    berechne_sonstige_netto,
+    berechne_md_sonstige_summen,
+)
 from backend.core.field_definitions import get_wp_strom_kwh
+from backend.core.investition_parameter import ist_dienstlich
 from backend.services.eauto_wirtschaftlichkeit import get_emob_heimladung_canonical
 from backend.core.calculations import (
-    CO2_FAKTOR_GAS_KG_KWH,
     CO2_FAKTOR_STROM_KG_KWH,
+    co2_wp_ersparnis_kg,
 )
 from backend.core.wirtschaftlichkeit_defaults import (
     EINSPEISEVERGUETUNG_DEFAULT_CENT,
@@ -108,7 +112,12 @@ async def build_jahresbericht_context(
 
     hat_speicher = any(i.typ == "speicher" for i in investitionen)
     hat_waermepumpe = any(i.typ == "waermepumpe" for i in investitionen)
-    hat_emobilitaet = any(i.typ in ("e-auto", "wallbox") for i in investitionen)
+    # DI-3: Dienstwagen zählen nicht als (private) E-Mobilität — konsistent zum
+    # Cockpit (`hat_emobilitaet` schließt dienstliche Fahrzeuge aus).
+    hat_emobilitaet = any(
+        i.typ in ("e-auto", "wallbox") and not ist_dienstlich(i)
+        for i in investitionen
+    )
     hat_bkw = any(i.typ == "balkonkraftwerk" for i in investitionen)
 
     speicher_kapazitaet = 0.0
@@ -202,6 +211,13 @@ async def build_jahresbericht_context(
         if netto:
             key = (imd.jahr, imd.monat)
             sonstige_by_ym[key] = sonstige_by_ym.get(key, 0) + netto
+    # G19-1: Basis-Positionen (Monatsdaten.sonstige_positionen) wirken wie
+    # IMD-Positionen — gleiche per-Monat-Faltung, gleiche Summary-Symmetrie.
+    for m in monatsdaten_list:
+        md_netto = berechne_md_sonstige_summen(m)["netto_euro"]
+        if md_netto:
+            key = (m.jahr, m.monat)
+            sonstige_by_ym[key] = sonstige_by_ym.get(key, 0) + md_netto
 
     # ── 7. Aggregate Wärmepumpe / E-Mob / Speicher ──────────────────────
     pv_gesamt = 0.0
@@ -245,14 +261,17 @@ async def build_jahresbericht_context(
             wp_warmwasser += ww
             wp_waerme += d.get("waerme_kwh", 0) or (heiz + ww)
             wp_strom += get_wp_strom_kwh(d, inv.parameter)
-        elif inv.typ == "e-auto":
+        elif inv.typ == "e-auto" and not ist_dienstlich(inv):
+            # DI-3: Dienstwagen zählen NICHT in km/CO₂/Heimladung/V2H des Berichts
+            # (konsistent zum Cockpit, das dienstliche E-Autos aus der Emob-
+            # Aggregation nimmt — ihre Ladung ist eine Ausgabe, kein Ertrag).
             eauto_imd_data.append(d)
             emob_km += d.get("km_gefahren", 0) or 0
             v2h = d.get("v2h_entladung_kwh", 0) or 0
             emob_v2h += v2h
             key = (imd.jahr, imd.monat)
             v2h_by_ym[key] = v2h_by_ym.get(key, 0) + v2h
-        elif inv.typ == "wallbox":
+        elif inv.typ == "wallbox" and not ist_dienstlich(inv):
             wb_imd_data.append(d)
 
     emob_pool = get_emob_heimladung_canonical(
@@ -359,10 +378,10 @@ async def build_jahresbericht_context(
 
     # #326: Sonstige Erträge/Ausgaben (manuell gepflegt) gehören in den
     # Netto-Ertrag — exakt wie Cockpit/Auswertungen. `all_imd` ist bereits auf
-    # den Einsatzzeitraum (ist_aktiv_im_monat, #236) gefiltert.
-    sonstige_netto_gesamt = sum(
-        berechne_sonstige_netto(imd.verbrauch_daten) for imd in all_imd
-    )
+    # den Einsatzzeitraum (ist_aktiv_im_monat, #236) gefiltert. Summe über die
+    # per-Monat-Faltung (IMD + G19-1-Basis-Positionen) — per Konstruktion
+    # deckungsgleich mit den Monatszeilen.
+    sonstige_netto_gesamt = sum(sonstige_by_ym.values())
     # #326: Finanz-Summary über den SoT-Helper = Σ der per-Monat-Zeilen (EV mit
     # Monats-Flexpreis + §51-bereinigter Einspeise-Erlös) + Sonstige.
     _finanz = berechne_finanz_aggregat(
@@ -387,10 +406,15 @@ async def build_jahresbericht_context(
     rendite = (netto_nach_bk / investition_mehrkosten * 100) if investition_mehrkosten > 0 else None
     amortisation_pct = (netto_nach_bk / investition_mehrkosten * 100) if investition_mehrkosten > 0 else 0
 
+    # DI-1: WP-CO₂ über den kanonischen Helper — vermiedenes Gas-CO₂ MINUS
+    # WP-Strom-CO₂, deckungsgleich mit Cockpit/Social. Früher `wp_waerme × f_gas`
+    # (ohne Wirkungsgrad, ohne Strom-Abzug) → WP-Ersparnis deutlich zu hoch.
+    # Komponente roh (kann bei schlechter JAZ negativ sein), Gesamt-Bilanz per
+    # max(0, …) geklammert — exakt wie das Cockpit.
     co2_pv = ev_gesamt * CO2_FAKTOR_STROM_KG_KWH
-    co2_wp = wp_waerme * CO2_FAKTOR_GAS_KG_KWH if hat_waermepumpe else 0
+    co2_wp = co2_wp_ersparnis_kg(wp_waerme, wp_strom) if hat_waermepumpe else 0
     co2_emob = emob_km * 0.12 if hat_emobilitaet else 0
-    co2_gesamt = co2_pv + co2_wp + co2_emob
+    co2_gesamt = co2_pv + max(0, co2_wp) + max(0, co2_emob)
 
     speicher_zyklen = _safe_div(speicher_ladung, speicher_kapazitaet) if speicher_kapazitaet else None
     speicher_eff = _safe_div(speicher_entladung, speicher_ladung) * 100 if speicher_ladung else None

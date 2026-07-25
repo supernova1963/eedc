@@ -25,9 +25,9 @@
  */
 
 import { useEffect, useRef, useState } from 'react'
-import { Activity, AlertTriangle, ChevronDown, ChevronRight, Clock, FileWarning, History, Loader2, Play, Wrench } from 'lucide-react'
+import { Activity, AlertTriangle, ChevronDown, ChevronRight, Clock, FileWarning, History, Loader2, Play, Trash2, Wrench } from 'lucide-react'
 
-import { Alert, Button, Card, Select } from '../ui'
+import { Alert, Button, Card, Input, Select, DatumFeld, Checkbox } from '../ui'
 import {
   OPERATION_META,
   REAGGREGATE_RANGE_MAX_DAYS,
@@ -39,6 +39,16 @@ import {
   type RepairResult,
   repairApi,
 } from '../../api/repair'
+import { energieProfilApi } from '../../api/energie_profil'
+
+// D14-8 (detLAN #113/#123, Gernot #128): „Energieprofil-Daten löschen" wandert als
+// Eintrag ins Werkbank-Auswahlfeld — EINE Reparatur-UI. Technisch bleibt es der
+// direkte Bulk-Delete-Endpoint (Konzept Sektion 5.2: kein Orchestrator-Bedarf,
+// der Scheduler baut die Daten binnen 15 Min neu auf), kein Plan/Execute-Diff.
+// Gate (Gernot 2026-07-03): der Eintrag erscheint nur unter /v4 — in V3 bleibt
+// die IST-Lösch-Karte der Energieprofil-Seite zuständig (keine Doppel-UI je Welt).
+const DELETE_ENERGIEPROFIL = 'delete_energieprofil_direkt' as const
+type WorkbenchOp = RepairOperationType | typeof DELETE_ENERGIEPROFIL
 
 interface Props {
   anlageId: number
@@ -75,9 +85,12 @@ const WORKBENCH_OPERATIONS = OPERATION_META.filter((o) => o.inWorkbench)
 
 
 export default function RepairWorkbench({ anlageId, anlagenname }: Props) {
-  const [selectedOp, setSelectedOp] = useState<RepairOperationType>(
+  const [selectedOp, setSelectedOp] = useState<WorkbenchOp>(
     WORKBENCH_OPERATIONS[0].type
   )
+  // D14-8: Zustand des direkten Energieprofil-Löschens (kein Plan/Execute).
+  const [deleteRunning, setDeleteRunning] = useState(false)
+  const [deleteMessage, setDeleteMessage] = useState<string | null>(null)
   const [params, setParams] = useState<OperationParamsState>(DEFAULT_PARAMS)
   const [plan, setPlan] = useState<RepairPlan | null>(null)
   const [planLoading, setPlanLoading] = useState(false)
@@ -125,11 +138,28 @@ export default function RepairWorkbench({ anlageId, anlagenname }: Props) {
   ])
 
   // Operation-Wechsel: Plan-Vorschau + Result zurücksetzen
-  const handleOpChange = (op: RepairOperationType) => {
+  const handleOpChange = (op: WorkbenchOp) => {
     setSelectedOp(op)
     setPlan(null)
     setExecuteResult(null)
     setError(null)
+    setDeleteMessage(null)
+  }
+
+  // D14-8: direkter Lösch-Pfad (Bestätigung → Endpoint → Ergebnis-Meldung).
+  const handleDeleteEnergieprofil = async () => {
+    if (!window.confirm('Alle Energieprofil-Daten für diese Anlage löschen? Der Scheduler berechnet sie neu (max. 15 Min). Monatsdaten bleiben erhalten.')) return
+    try {
+      setDeleteRunning(true)
+      setDeleteMessage(null)
+      setError(null)
+      const res = await energieProfilApi.deleteRohdatenAnlage(anlageId)
+      setDeleteMessage(`${res.geloescht_stundenwerte} Stundenwerte + ${res.geloescht_tagessummen} Tagessummen gelöscht. Scheduler berechnet neu (max. 15 Min).`)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Löschen fehlgeschlagen')
+    } finally {
+      setDeleteRunning(false)
+    }
   }
 
   const buildOperationParams = (): Record<string, unknown> => {
@@ -202,7 +232,8 @@ export default function RepairWorkbench({ anlageId, anlagenname }: Props) {
     try {
       const req: RepairOperationRequest = {
         anlage_id: anlageId,
-        operation: selectedOp,
+        // handleCreatePlan wird für den Delete-Eintrag nie aufgerufen (eigener Pfad).
+        operation: selectedOp as RepairOperationType,
         params: buildOperationParams(),
       }
       const res = await repairApi.plan(req)
@@ -268,7 +299,11 @@ export default function RepairWorkbench({ anlageId, anlagenname }: Props) {
     reloadHistory()
   }
 
-  const opMeta = OPERATION_META.find((o) => o.type === selectedOp)
+  const istDelete = selectedOp === DELETE_ENERGIEPROFIL
+  const opMeta = istDelete ? undefined : OPERATION_META.find((o) => o.type === selectedOp)
+  const opBeschreibung = istDelete
+    ? 'Entfernt alle Stundenwerte und Tageszusammenfassungen dieser Anlage. Der Scheduler berechnet sie neu (max. 15 Min). Monatsdaten bleiben erhalten.'
+    : opMeta?.description
 
   return (
     <Card>
@@ -284,41 +319,96 @@ export default function RepairWorkbench({ anlageId, anlagenname }: Props) {
           {anlagenname ? ` Anlage: ${anlagenname}.` : ''}
         </p>
 
-        {/* Operation-Auswahl */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-              Operation
-            </label>
-            <Select
-              value={selectedOp}
-              onChange={(e) => handleOpChange(e.target.value as RepairOperationType)}
-              disabled={planLoading || executeRunning}
-              options={WORKBENCH_OPERATIONS.map((o) => ({ value: o.type, label: o.label }))}
-            />
-            {opMeta && (
-              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                {opMeta.description}
-              </p>
+        {/* D19-4 (detlan): Operation → Parameter → Aktion als EINE linke Spalte
+            (Parameter erscheinen UNTER dem Auswahlfeld), Verlauf rechts daneben. */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-4">
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                Operation
+              </label>
+              <Select
+                value={selectedOp}
+                onChange={(e) => handleOpChange(e.target.value as WorkbenchOp)}
+                disabled={planLoading || executeRunning || deleteRunning}
+                options={[
+                  ...WORKBENCH_OPERATIONS.map((o) => ({ value: o.type as string, label: o.label })),
+                  // D14-8: Lösch-Aktion als Werkbank-Eintrag (direkter Pfad).
+                  { value: DELETE_ENERGIEPROFIL as string, label: 'Energieprofil-Daten löschen' },
+                ]}
+              />
+              {opBeschreibung && (
+                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  {opBeschreibung}
+                </p>
+              )}
+            </div>
+
+            {/* Operation-spezifische Parameter — unter dem Auswahlfeld */}
+            {!istDelete && (
+              <OperationParamsEditor
+                operation={selectedOp as RepairOperationType}
+                params={params}
+                setParams={setParams}
+                disabled={planLoading || executeRunning}
+              />
+            )}
+
+            {/* Plan erstellen bzw. D14-8: direkter Lösch-Pfad (Gefahren-Stil) */}
+            {istDelete ? (
+              <div className="flex justify-end">
+                <Button
+                  variant="danger"
+                  size="sm"
+                  onClick={handleDeleteEnergieprofil}
+                  loading={deleteRunning}
+                >
+                  {!deleteRunning && <Trash2 className="w-4 h-4 mr-2" />}
+                  Energieprofil-Daten löschen
+                </Button>
+              </div>
+            ) : !plan && !executeResult && (
+              <div className="flex justify-end">
+                <Button onClick={handleCreatePlan} disabled={planLoading}>
+                  {/* D14-14: Icon mobil weg (Kontext-Regel; Spinner bleibt als Aktivitäts-Signal). */}
+                  {planLoading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Activity className="max-sm:hidden h-4 w-4 mr-2" />}
+                  Plan erstellen
+                </Button>
+              </div>
             )}
           </div>
 
-          {/* Operation-spezifische Parameter */}
-          <OperationParamsEditor
-            operation={selectedOp}
-            params={params}
-            setParams={setParams}
-            disabled={planLoading || executeRunning}
-          />
+          {/* Verlauf — rechte Spalte (mobil: unter dem Operations-Block) */}
+          <div className="md:border-l md:border-gray-200 md:dark:border-gray-700 md:pl-6">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setHistoryOpen((v) => !v)}
+              aria-expanded={historyOpen}
+            >
+              {historyOpen ? <ChevronDown className="h-4 w-4 mr-2" /> : <ChevronRight className="h-4 w-4 mr-2" />}
+              <History className="h-4 w-4 mr-2" />
+              Verlauf der letzten {history.length} Reparaturen
+            </Button>
+            {historyOpen && (
+              <div className="mt-3">
+                {historyLoading ? (
+                  <div className="text-sm text-gray-500"><Loader2 className="inline h-4 w-4 mr-1 animate-spin" /> wird geladen …</div>
+                ) : history.length === 0 ? (
+                  <div className="text-sm text-gray-500 dark:text-gray-400 italic">
+                    Noch kein Verlauf — neue Pläne erscheinen hier (max. 20 Einträge, 1h Cache).
+                  </div>
+                ) : (
+                  <HistoryList views={history} />
+                )}
+              </div>
+            )}
+          </div>
         </div>
 
-        {/* Plan erstellen */}
-        {!plan && !executeResult && (
-          <div className="flex justify-end">
-            <Button onClick={handleCreatePlan} disabled={planLoading}>
-              {planLoading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Activity className="h-4 w-4 mr-2" />}
-              Plan erstellen
-            </Button>
+        {deleteMessage && (
+          <div className="mt-4">
+            <Alert type="success">{deleteMessage}</Alert>
           </div>
         )}
 
@@ -347,31 +437,6 @@ export default function RepairWorkbench({ anlageId, anlagenname }: Props) {
           </div>
         )}
 
-        {/* Verlauf */}
-        <div className="mt-6 border-t border-gray-200 dark:border-gray-700 pt-4">
-          <button
-            type="button"
-            className="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white"
-            onClick={() => setHistoryOpen((v) => !v)}
-          >
-            {historyOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-            <History className="h-4 w-4" />
-            Verlauf der letzten {history.length} Reparaturen
-          </button>
-          {historyOpen && (
-            <div className="mt-3">
-              {historyLoading ? (
-                <div className="text-sm text-gray-500"><Loader2 className="inline h-4 w-4 mr-1 animate-spin" /> wird geladen …</div>
-              ) : history.length === 0 ? (
-                <div className="text-sm text-gray-500 dark:text-gray-400 italic">
-                  Noch kein Verlauf — neue Pläne erscheinen hier (max. 20 Einträge, 1h Cache).
-                </div>
-              ) : (
-                <HistoryList views={history} />
-              )}
-            </div>
-          )}
-        </div>
       </div>
     </Card>
   )
@@ -391,124 +456,83 @@ interface ParamsEditorProps {
 function OperationParamsEditor({ operation, params, setParams, disabled }: ParamsEditorProps) {
   if (operation === 'reaggregate_day') {
     return (
-      <div>
-        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-          Tag
-        </label>
-        <input
-          type="date"
-          aria-label="Tag, der neu aggregiert werden soll"
+      <div className="space-y-3">
+        <DatumFeld
+          label="Tag"
           value={params.datum}
-          onChange={(e) => setParams((p) => ({ ...p, datum: e.target.value }))}
+          onChange={(v) => setParams((p) => ({ ...p, datum: v }))}
           disabled={disabled}
-          className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm"
         />
-        <label className="mt-2 inline-flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
-          <input
-            type="checkbox"
-            checked={params.mit_resnap}
-            onChange={(e) => setParams((p) => ({ ...p, mit_resnap: e.target.checked }))}
-            disabled={disabled}
-          />
-          Snapshots vorher aus HA-Statistics frisch ziehen (Default an)
-        </label>
+        <Checkbox
+          checked={params.mit_resnap}
+          onChange={(e) => setParams((p) => ({ ...p, mit_resnap: e.target.checked }))}
+          disabled={disabled}
+          label="Snapshots vorher aus HA-Statistics frisch ziehen (Default an)"
+        />
       </div>
     )
   }
   if (operation === 'reaggregate_range') {
     return (
-      <div>
-        <div className="grid grid-cols-2 gap-2">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-              Von
-            </label>
-            <input
-              type="date"
-              aria-label="Mehrere-Tage-Reaggregate Startdatum"
-              value={params.von}
-              onChange={(e) => setParams((p) => ({ ...p, von: e.target.value }))}
-              disabled={disabled}
-              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-              Bis
-            </label>
-            <input
-              type="date"
-              aria-label="Mehrere-Tage-Reaggregate Enddatum"
-              value={params.bis}
-              onChange={(e) => setParams((p) => ({ ...p, bis: e.target.value }))}
-              disabled={disabled}
-              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm"
-            />
-          </div>
+      <div className="space-y-3">
+        <div className="grid grid-cols-2 gap-2 items-start">
+          <DatumFeld
+            label="Von"
+            value={params.von}
+            onChange={(v) => setParams((p) => ({ ...p, von: v }))}
+            disabled={disabled}
+          />
+          <DatumFeld
+            label="Bis"
+            value={params.bis}
+            onChange={(v) => setParams((p) => ({ ...p, bis: v }))}
+            disabled={disabled}
+          />
         </div>
-        <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+        <p className="text-xs text-gray-500 dark:text-gray-400">
           Max. {REAGGREGATE_RANGE_MAX_DAYS} Tage pro Lauf. Enddatum muss vor heute liegen.
         </p>
 
-        <label className="mt-3 inline-flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
-          <input
-            type="checkbox"
-            checked={params.mit_resnap}
-            onChange={(e) => setParams((p) => ({ ...p, mit_resnap: e.target.checked }))}
-            disabled={disabled}
-          />
-          Snapshots pro Tag aus HA-Statistics frisch ziehen (Default an)
-        </label>
+        <Checkbox
+          checked={params.mit_resnap}
+          onChange={(e) => setParams((p) => ({ ...p, mit_resnap: e.target.checked }))}
+          disabled={disabled}
+          label="Snapshots pro Tag aus HA-Statistics frisch ziehen (Default an)"
+        />
 
-        <div className="mt-3 p-3 border border-amber-300 dark:border-amber-700 rounded-lg bg-amber-50 dark:bg-amber-900/20">
-          <label className="inline-flex items-start gap-2 text-sm text-amber-900 dark:text-amber-200 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={params.range_confirmed}
-              onChange={(e) => setParams((p) => ({ ...p, range_confirmed: e.target.checked }))}
-              disabled={disabled}
-              className="mt-0.5"
-            />
-            <span>
-              <strong>Bestätigung:</strong> Per-Feld-Provenance älterer Verfahrensläufe wird überschrieben.
-              MQTT-Only-Daten und Strompreis-Sensor-Werte ohne HA-LTS-Pendant gehen verloren, falls vorhanden.
-              Prognosen + Korrekturprofil-Daten bleiben erhalten.
-              Reparatur erfolgt <strong>ohne Support-Anspruch</strong> auf Rekonstruktion überschriebener Felder.
-            </span>
-          </label>
+        <div className="p-3 border border-amber-300 dark:border-amber-700 rounded-lg bg-amber-50 dark:bg-amber-900/20">
+          <Checkbox
+            checked={params.range_confirmed}
+            onChange={(e) => setParams((p) => ({ ...p, range_confirmed: e.target.checked }))}
+            disabled={disabled}
+            label={
+              <span className="text-amber-900 dark:text-amber-200">
+                <strong>Bestätigung:</strong> Per-Feld-Provenance älterer Verfahrensläufe wird überschrieben.
+                MQTT-Only-Daten und Strompreis-Sensor-Werte ohne HA-LTS-Pendant gehen verloren, falls vorhanden.
+                Prognosen + Korrekturprofil-Daten bleiben erhalten.
+                Reparatur erfolgt <strong>ohne Support-Anspruch</strong> auf Rekonstruktion überschriebener Felder.
+              </span>
+            }
+          />
         </div>
       </div>
     )
   }
   if (operation === 'vollbackfill') {
     return (
-      <div className="grid grid-cols-2 gap-2">
-        <div>
-          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-            Von (optional)
-          </label>
-          <input
-            type="date"
-            aria-label="Vollbackfill-Startdatum"
-            value={params.von}
-            onChange={(e) => setParams((p) => ({ ...p, von: e.target.value }))}
-            disabled={disabled}
-            className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm"
-          />
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-            Bis (optional)
-          </label>
-          <input
-            type="date"
-            aria-label="Vollbackfill-Enddatum"
-            value={params.bis}
-            onChange={(e) => setParams((p) => ({ ...p, bis: e.target.value }))}
-            disabled={disabled}
-            className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm"
-          />
-        </div>
+      <div className="grid grid-cols-2 gap-2 items-start">
+        <DatumFeld
+          label="Von (optional)"
+          value={params.von}
+          onChange={(v) => setParams((p) => ({ ...p, von: v }))}
+          disabled={disabled}
+        />
+        <DatumFeld
+          label="Bis (optional)"
+          value={params.bis}
+          onChange={(v) => setParams((p) => ({ ...p, bis: v }))}
+          disabled={disabled}
+        />
       </div>
     )
   }
@@ -534,20 +558,15 @@ function OperationParamsEditor({ operation, params, setParams, disabled }: Param
   if (operation === 'reset_cloud_import') {
     return (
       <div>
-        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-          Provider-Filter (optional, kommagetrennt)
-        </label>
-        <input
+        <Input
           type="text"
+          label="Provider-Filter (optional, kommagetrennt)"
           placeholder="z. B. solaredge,fronius_solarweb (leer = alle)"
           value={params.providers}
           onChange={(e) => setParams((p) => ({ ...p, providers: e.target.value }))}
           disabled={disabled}
-          className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm"
+          hint="Setzt alle von dem/den Provider(n) geschriebenen Felder auf Default zurück."
         />
-        <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-          Setzt alle von dem/den Provider(n) geschriebenen Felder auf Default zurück.
-        </p>
       </div>
     )
   }
@@ -612,27 +631,18 @@ function PlanPreviewBlock({
       {/* Aktionen */}
       <div className="mt-4 flex flex-wrap items-center gap-2">
         <Button onClick={onExecute} disabled={executeRunning}>
-          {executeRunning ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Play className="h-4 w-4 mr-2" />}
+          {executeRunning ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Play className="max-sm:hidden h-4 w-4 mr-2" />}
           {totalDiff > 0
             ? `Diese ${totalDiff} ${totalDiff === 1 ? 'Änderung' : 'Änderungen'} anwenden`
             : 'Operation ausführen'}
         </Button>
-        <button
-          type="button"
-          onClick={onDiscard}
-          disabled={executeRunning}
-          className="px-3 py-2 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white disabled:opacity-50"
-        >
+        <Button variant="ghost" size="sm" onClick={onDiscard} disabled={executeRunning}>
           Plan verwerfen
-        </button>
+        </Button>
         {executeRunning && showCancelHint && (
-          <button
-            type="button"
-            onClick={onCancel}
-            className="ml-auto px-3 py-2 text-sm text-amber-700 dark:text-amber-300 border border-amber-300 dark:border-amber-700 rounded-lg hover:bg-amber-100 dark:hover:bg-amber-900/30"
-          >
+          <Button variant="secondary" size="sm" className="ml-auto" onClick={onCancel}>
             Abbrechen
-          </button>
+          </Button>
         )}
       </div>
     </div>

@@ -13,10 +13,63 @@ const d = {
 } as unknown as AktuellerMonatResponse
 
 describe('finanzTeaserBlock', () => {
-  it('Block mit Netto-Ertrag-Summary + Cross-Link-Heimat', () => {
+  it('G20-1: Kopf-Kennzahl = Tabellen-Saldo (Kopf == sichtbare Summe)', () => {
+    // Nur PV-Anlage-Zeile (Erträge 15 + Einsparungen 120 − Aufwand 0) = Saldo 135.
     const b = finanzTeaserBlock(d)!
     expect(b.id).toBe('finanzen')
-    expect(b.summary).toMatch(/\+128,00 € Netto-Ertrag/)
+    expect(b.summary).toMatch(/\+135,00 € Saldo/)
+  })
+
+  it('G20-1: Komponenten-Tabelle — Zeile je Komponente, Spalten + Summen-Saldo', () => {
+    const dd = {
+      ...d,
+      // PV-Anlage: 15 + 120. WP: Einsparung 31,67, Aufwand (bk) 16,67. E-Auto: Einsparung
+      // 65,37, Sonstige-Ertrag 185, Sonstige-Ausgabe 35. → Summen-Saldo:
+      // (15+120) + (0+31,67−16,67) + (185+65,37−35) = 135 + 15 + 215,37 = 365,37
+      investitionen_financials: [
+        { investition_id: 2, bezeichnung: 'Daikin WP', typ: 'waermepumpe', betriebskosten_monat_euro: 16.67,
+          erloes_euro: null, ersparnis_euro: 31.67, ersparnis_label: 'Ersparnis vs. Gas',
+          formel: '(Wärme ÷ …) − Strom × …', berechnung: '100 kWh / 0,9 …', sonstige_ertraege_euro: 0, sonstige_ausgaben_euro: 0 },
+        { investition_id: 3, bezeichnung: 'Tesla', typ: 'e-auto', betriebskosten_monat_euro: 0,
+          erloes_euro: null, ersparnis_euro: 65.37, ersparnis_label: 'Ersparnis vs. Verbrenner',
+          formel: '(km × …) − …', berechnung: '651 km × 7,5 L/100km × 1,65 €', sonstige_ertraege_euro: 185, sonstige_ausgaben_euro: 35 },
+      ],
+    } as unknown as AktuellerMonatResponse
+    const b = finanzTeaserBlock(dd)!
+    expect(b.summary).toMatch(/\+365,37 € Saldo/)
+    const node = b.render(false)
+    if (!isValidElement(node)) throw new Error('render() ergab kein Element')
+    render(node)
+    // Komponenten-Zeilen vorhanden (PV-Anlage synthetisch + WP + Tesla).
+    expect(screen.getAllByText('PV-Anlage').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('Daikin WP').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('Tesla').length).toBeGreaterThan(0)
+    // Spaltenköpfe (Desktop-Tabelle).
+    expect(screen.getByText('Erträge (€)')).toBeInTheDocument()
+    expect(screen.getByText('Einsparungen (€)')).toBeInTheDocument()
+    expect(screen.getByText('Aufwand (€)')).toBeInTheDocument()
+    expect(screen.getByText('Saldo (€)')).toBeInTheDocument()
+  })
+
+  it('G20-4: Haushaltsperspektive — Ergebnis nach Stromrechnung = Saldo − Netzbezug', () => {
+    // PV-Anlage-Saldo 135 (15 + 120), Netzbezug-Kosten 7 → Ergebnis 128,00 €.
+    const node = finanzTeaserBlock(d)!.render(false)
+    if (!isValidElement(node)) throw new Error('render() ergab kein Element')
+    render(node)
+    expect(screen.getByText('Haushaltsperspektive')).toBeInTheDocument()
+    expect(screen.getByText('= Ergebnis nach Stromrechnung')).toBeInTheDocument()
+    // Kopf-Kennzahl (Komponenten-Saldo) bleibt unverändert 135,00 €.
+    expect(finanzTeaserBlock(d)!.summary).toMatch(/\+135,00 € Saldo/)
+    // Zusatz-Zeile trägt das Haushaltsergebnis (135 − 7).
+    expect(screen.getByText(/^128,00 €$/)).toBeInTheDocument()
+  })
+
+  it('G20-4: keine Haushaltsperspektive ohne Netzbezug-Kosten', () => {
+    const dd = { ...d, netzbezug_kosten_euro: null } as unknown as AktuellerMonatResponse
+    const node = finanzTeaserBlock(dd)!.render(false)
+    if (!isValidElement(node)) throw new Error('render() ergab kein Element')
+    render(node)
+    expect(screen.queryByText('Haushaltsperspektive')).not.toBeInTheDocument()
   })
 
   it('C3: Tarif-Info-Zeile zeigt flexiblen Netzbezug-Ø + Einspeisepreis', () => {
@@ -40,6 +93,7 @@ describe('finanzTeaserBlock', () => {
   it('Element-Park: alle Finanz-Elemente geparkt → kein Block (null)', () => {
     const allesGeparkt: ParkApi = {
       aktiv: true, istGeparkt: () => true, park: () => {}, entparke: () => {}, zuruecksetzen: () => {}, geparkt: [],
+      registriere: () => () => {}, parkbareAnzahl: 0,
     }
     expect(finanzTeaserBlock(d, allesGeparkt)).toBeNull()
   })
@@ -58,7 +112,7 @@ describe('MonatHeader — C1/C2 Sicht-Aktionen', () => {
   it('C2: Abschluss-Cross-Link nur laufend + offene Abschlüsse, zeigt auf Einstellungen/Daten', () => {
     render(<MonatHeader titel="Mai 2026" laufend d={d} zeigeAbschlussLink />)
     const link = screen.getByRole('link', { name: /Abschluss starten/ })
-    expect(link).toHaveAttribute('href', '#/einstellungen/monatsdaten')
+    expect(link).toHaveAttribute('href', '#/einstellungen/daten')
   })
 
   it('C2: kein Abschluss-Link wenn keine offenen Abschlüsse', () => {

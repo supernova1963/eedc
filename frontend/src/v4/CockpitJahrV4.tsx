@@ -19,15 +19,18 @@
  *    (Σ der IMD je Monat), einmal je Anlage geladen.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { LoadingSpinner, Card, fmtCalc } from '../components/ui'
-import { BlockShell, KpiStrip, type Block } from '../components/blocks'
+import { fmtCalc, FehlerZustand, ChartDatenTabelle } from '../components/ui'
+import { AnlageLeer, DatenLeer } from './OnboardingLeer'
+import { BlockShell, BlockStackSkeleton, KpiStrip, type Block } from '../components/blocks'
 import { ParkProvider, ParkFuss, Parkbar, usePark } from '../components/park'
-import { useScrollErhalt } from '../hooks'
+import { useApiData, useScrollErhalt } from '../hooks'
 import { BLOCK_IDENTITAET } from '../lib'
 import { baueJahrKpis, JahrBilanz } from './JahrBilanz'
+import { monatBilanzParkIds } from './bilanzParkIds'
 import { baueKomponentenBloecke } from './KomponentenSektionen'
 import { finanzTeaserBlock } from './MonatRahmen'
-import { JahrVerlaufChart } from './JahrVerlaufChart'
+import { JahrVerlaufChart, baueJahrChartDaten } from './JahrVerlaufChart'
+import { verlaufTabellenSpalten } from './verlaufVergleich'
 import { JahresRail, type JahrRailEintrag } from './JahresRail'
 import { JahrStepper } from './JahrStepper'
 import { JahrHeader } from './JahrRahmen'
@@ -50,36 +53,23 @@ export default function CockpitJahrV4(props: { anlageId: number | undefined }) {
 
 function CockpitJahrInner({ anlageId }: { anlageId: number | undefined }) {
   const park = usePark()
-  const [alleMonate, setAlleMonate] = useState<AggregierteMonatsdaten[]>([])
   const [jahr, setJahr] = useState<number | null>(null)
-  const [jahrData, setJahrData] = useState<AktuellerMonatResponse | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [reloading, setReloading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  // B1: Scroll-Position beim Jahreswechsel halten (siehe CockpitMonatV4).
-  const rootRef = useRef<HTMLDivElement>(null)
-  const merkeScroll = useScrollErhalt(rootRef, loading)
-  const waehle = useCallback((j: number) => { merkeScroll(); setJahr(j) }, [merkeScroll])
 
   // Monatsreihe (alle Jahre) einmal je Anlage — liefert verfügbare Jahre, die
   // Verlauf-Monatsbalken und die Vorjahr/Ø-Jahr-Vergleiche. Default = neuestes
-  // Jahr mit Daten.
+  // Jahr mit Daten. R18-2 (SWR): über den Sicht-Cache von useApiData — beim
+  // Tab-Wechsel stehen die alten Daten sofort (kein Skeleton), still revalidiert.
+  const monateQ = useApiData(
+    () => monatsdatenApi.listAggregiert(anlageId!),
+    [anlageId],
+    { enabled: !!anlageId, swrKey: `v4-jahr-liste:${anlageId}` },
+  )
+  const alleMonate = useMemo<AggregierteMonatsdaten[]>(() => monateQ.data ?? [], [monateQ.data])
   useEffect(() => {
-    if (!anlageId) return
-    let ab = false
-    setLoading(true)
-    monatsdatenApi.listAggregiert(anlageId)
-      .then((agg) => {
-        if (ab) return
-        setAlleMonate(agg)
-        const jahre = [...new Set(agg.map((m) => m.jahr))].sort((a, b) => b - a)
-        if (jahre.length > 0) setJahr(jahre[0])
-        else setLoading(false)
-      })
-      .catch(() => { if (!ab) { setError('Fehler beim Laden der Jahre'); setLoading(false) } })
-    return () => { ab = true }
-  }, [anlageId])
+    if (!monateQ.data) return
+    const jahre = [...new Set(monateQ.data.map((m) => m.jahr))].sort((a, b) => b - a)
+    setJahr((aktuell) => aktuell ?? jahre[0] ?? null)
+  }, [monateQ.data])
 
   // Voll-Aggregat des gewählten Jahres = Σ der Monats-Antworten (nur Monate mit Daten).
   const ladeJahr = useCallback(async (anlage: number, j: number): Promise<AktuellerMonatResponse> => {
@@ -95,26 +85,29 @@ function CockpitJahrInner({ anlageId }: { anlageId: number | undefined }) {
     return baueJahrAlsMonat(monate, j)
   }, [alleMonate])
 
-  useEffect(() => {
-    if (!anlageId || jahr == null) return
-    let ab = false
-    setLoading(true)
-    setError(null)
-    ladeJahr(anlageId, jahr)
-      .then((jd) => { if (!ab) setJahrData(jd) })
-      .catch(() => { if (!ab) setError('Fehler beim Laden des Jahres') })
-      .finally(() => { if (!ab) setLoading(false) })
-    return () => { ab = true }
-  }, [anlageId, jahr, ladeJahr])
+  // keepPreviousData: Jahreswechsel aktualisiert den Block-Stack in-place statt
+  // Skeleton (detLAN D7-2) — auch ohne Cache-Stand für das Ziel-Jahr.
+  const jahrQ = useApiData(
+    () => ladeJahr(anlageId!, jahr!),
+    [anlageId, jahr, ladeJahr],
+    {
+      enabled: !!anlageId && jahr != null && alleMonate.length > 0,
+      swrKey: `v4-jahr:${anlageId}:${jahr}`,
+      keepPreviousData: true,
+    },
+  )
+  const jahrData = jahrQ.data
+  const loading = monateQ.loading || (jahr != null && jahrQ.loading)
+  const reloading = jahrQ.reloading
+  const error = monateQ.data == null && monateQ.error
+    ? 'Fehler beim Laden der Jahre'
+    : jahrQ.data == null && jahrQ.error ? 'Fehler beim Laden des Jahres' : null
+  const reload = jahrQ.refetch
 
-  const reload = useCallback(() => {
-    if (!anlageId || jahr == null) return
-    setReloading(true)
-    ladeJahr(anlageId, jahr)
-      .then((jd) => setJahrData(jd))
-      .catch(() => {})
-      .finally(() => setReloading(false))
-  }, [anlageId, jahr, ladeJahr])
+  // B1: Scroll-Position beim Jahreswechsel halten (siehe CockpitMonatV4).
+  const rootRef = useRef<HTMLDivElement>(null)
+  const merkeScroll = useScrollErhalt(rootRef, loading)
+  const waehle = useCallback((j: number) => { merkeScroll(); setJahr(j) }, [merkeScroll])
 
   // Rail-/Stepper-Liste = verfügbare Jahre + PV (Mini-Balken) + laufendes Jahr.
   const railEntries = useMemo<JahrRailEintrag[]>(() => {
@@ -166,27 +159,28 @@ function CockpitJahrInner({ anlageId }: { anlageId: number | undefined }) {
       ? (sichtbareKpi.length > 0
           ? {
               id: 'kpi', title: 'Kennzahlen', ...BLOCK_IDENTITAET.kennzahlen,
-              summary: '5 Energie-Kennzahlen + Netto-Ertrag + Jahresergebnis',
+              summary: '5 Energie-Kennzahlen + Netto-Ertrag + Jahresergebnis + Netz-Kosten',
               defaultOpen: true,
               render: () => <KpiStrip kpis={sichtbareKpi} />,
             }
           : null)
       : {
           id: 'kpi', title: 'Kennzahlen', ...BLOCK_IDENTITAET.kennzahlen,
-          summary: '5 Energie-Kennzahlen + Netto-Ertrag + Jahresergebnis',
+          summary: '5 Energie-Kennzahlen + Netto-Ertrag + Jahresergebnis + Netz-Kosten',
           defaultOpen: true,
           render: () => <p className="text-sm text-gray-500 dark:text-gray-400">Keine Jahres-Kennzahlen verfügbar.</p>,
         }
-    const finanzBlock = d ? finanzTeaserBlock(d, park) : null
+    const finanzBlock = d ? finanzTeaserBlock(d, park, 'jahr') : null
     return [
       ...(kennzahlenBlock ? [kennzahlenBlock] : []),
-      // Bilanz-/Verlauf-Element parkbar; geparkt → ganzer Block weg (Doktrin 2026-06-27).
-      ...(park.istGeparkt('el:bilanz') ? [] : [{
+      // Bilanz-Block: jede Teil-Anzeige einzeln parkbar (in JahrBilanz, gleiche IDs wie
+      // Monat — gleicher Aggregat-Shape); Block entfällt erst, wenn ALLE geparkt sind.
+      ...(d && monatBilanzParkIds(d).every((id) => park.istGeparkt(id)) ? [] : [{
         id: 'bilanz', title: 'Energie-Bilanz', ...BLOCK_IDENTITAET.energieBilanz,
         summary: bilanzSummary,
         defaultOpen: false,
         render: () => (d
-          ? <Parkbar id="el:bilanz" titel="Energie-Bilanz"><JahrBilanz d={d} vj={vorjahr} oj={oeJahr} ojCount={oeJahr?.count ?? 0} /></Parkbar>
+          ? <JahrBilanz d={d} vj={vorjahr} oj={oeJahr} ojCount={oeJahr?.count ?? 0} />
           : <p className="text-sm text-gray-500 dark:text-gray-400">Keine Vergleichsdaten verfügbar.</p>),
       }]),
       ...(park.istGeparkt('el:verlauf') ? [] : [{
@@ -194,6 +188,17 @@ function CockpitJahrInner({ anlageId }: { anlageId: number | undefined }) {
         summary: 'Monats-Bilanz: Erzeugung / Verbrauch / Autarkie',
         defaultOpen: false,
         render: () => <Parkbar id="el:verlauf" titel="Verlauf"><JahrVerlaufChart monate={monatsZeilen} /></Parkbar>,
+        // Paket CT (Pilot): Tabellen-Ablesung im Fokus-Overlay — dieselbe Datenreihe
+        // wie der Chart (baueJahrChartDaten), Spalten = Union der Chart-Serien.
+        renderTabelle: () => (
+          <ChartDatenTabelle
+            xLabel="Monat"
+            xKey="monat"
+            spalten={verlaufTabellenSpalten(true)}
+            daten={baueJahrChartDaten(monatsZeilen)}
+            csvDateiname={`verlauf_${jahr}.csv`}
+          />
+        ),
       }]),
       ...(d ? baueKomponentenBloecke(d, park, 'jahr') : []),
       ...(finanzBlock ? [finanzBlock] : []),
@@ -203,7 +208,7 @@ function CockpitJahrInner({ anlageId }: { anlageId: number | undefined }) {
   if (!anlageId) {
     return (
       <div className="p-3 sm:p-6 max-w-[1920px] mx-auto">
-        <Card><p className="text-sm text-gray-500 dark:text-gray-400">Noch keine Anlage gewählt.</p></Card>
+        <AnlageLeer titel="Noch keine Anlage gewählt." />
       </div>
     )
   }
@@ -223,14 +228,16 @@ function CockpitJahrInner({ anlageId }: { anlageId: number | undefined }) {
           <JahrHeader jahr={jahr ?? 0} laufend={istLaufend} d={jahrData} onReload={reload} reloading={reloading} />
 
           {error ? (
-            <Card><p className="text-red-500">{error}</p></Card>
+            // B8-Fehler-Baustein (S15). Retry nur wenn reload greifen kann (Jahr gewählt);
+            // beim Listen-Fetch-Fehler (jahr==null) wäre reload no-op → kein Fassade-Knopf.
+            <FehlerZustand text={error} onRetry={jahr != null ? reload : undefined} />
           ) : loading && !jahrData ? (
-            // Voll-Spinner NUR beim Erst-Load (detLAN D7-2, 2026-06-27; analog Tag T2).
+            // Skeleton NUR beim Erst-Load (detLAN D7-2, 2026-06-27; analog Tag T2).
             // Beim Jahreswechsel bleibt der Block-Stack stehen und aktualisiert sich
             // in-place; kein `key={…}` mehr → BlockShell re-rendert statt zu remounten.
-            <LoadingSpinner text="Lade Jahr…" />
+            <BlockStackSkeleton label="Lade Jahr…" />
           ) : jahr == null ? (
-            <Card><p className="text-sm text-gray-500 dark:text-gray-400">Noch keine Jahresdaten erfasst.</p></Card>
+            <DatenLeer titel="Noch keine Jahresdaten erfasst." />
           ) : (
             <BlockShell
               persistKey={SICHT_KEY}

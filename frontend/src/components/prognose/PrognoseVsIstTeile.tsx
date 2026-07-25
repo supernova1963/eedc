@@ -13,14 +13,15 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
   ComposedChart, Line, ReferenceLine, Bar,
 } from 'recharts'
-import { Card, Button, ChartLegende } from '../ui'
+import { Card, Button, ChartLegende, Table, TableHead, TableBody, TableFoot } from '../ui'
+import { ZELLE, KOPF_ZELLE } from '../ui/tabelleMasse'
 import ChartTooltip from '../ui/ChartTooltip'
 import type { KpiStripItem } from '../blocks'
 import { pvgisApi, monatsdatenApi } from '../../api'
 import type { PVModulPrognose } from '../../api/pvgis'
 import type { AggregierteMonatsdaten } from '../../api/monatsdaten'
-import { SOLL_IST_COLORS, PROGNOSE_DASH, formatEnergie, energieAchse, formatProzent, xAchse, yAchse, achsenEinheit, achsenTick, ACHSEN_MARGIN_TOP } from '../../lib'
-import { useSchmaleAchse } from '../../hooks'
+import { SOLL_IST_COLORS, formatEnergie, energieAchse, formatProzent, xAchse, yAchse, achsenEinheit, achsenTick, ACHSEN_MARGIN_TOP } from '../../lib'
+import { useLegendenToggle, useSchmaleAchse } from '../../hooks'
 import { useChartTheme } from '../../context/ThemeContext'
 
 const monatNamen = ['', 'Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez']
@@ -60,8 +61,17 @@ export interface PrognoseVsIstVM {
 }
 
 /** Lädt PVGIS-Prognose (gespeichert ∨ live) + Monatsdaten und berechnet den
- *  Jahres-SOLL/IST-Vergleich für ein konkretes Jahr. Geteilt von IST + v4. */
-export function usePrognoseVsIst(anlageId: number | null | undefined, jahr: number | undefined): PrognoseVsIstVM {
+ *  Jahres-SOLL/IST-Vergleich für ein konkretes Jahr. Geteilt von IST + v4.
+ *  `vorgeladeneMonatsdaten`: bereits geladene aggregierte Monatsdaten (alle
+ *  Jahre) — der V4-Dispatcher hält sie in `useAuswertungBasis`; wenn übergeben
+ *  (auch leer!), entfällt der eigene listAggregiert-Fetch (Doppel-Fetch).
+ *  ⚠️ Muss render-stabil sein (State/useMemo, ist Effekt-Dependency) — ein
+ *  Inline-Literal erzeugt eine Refetch-Schleife. */
+export function usePrognoseVsIst(
+  anlageId: number | null | undefined,
+  jahr: number | undefined,
+  vorgeladeneMonatsdaten?: AggregierteMonatsdaten[],
+): PrognoseVsIstVM {
   const [prognose, setPrognose] = useState<PrognoseData | null>(null)
   const [monatsdaten, setMonatsdaten] = useState<AggregierteMonatsdaten[]>([])
   const [loading, setLoading] = useState(false)
@@ -73,7 +83,11 @@ export function usePrognoseVsIst(anlageId: number | null | undefined, jahr: numb
     setLoading(true)
     setError(null)
     try {
-      const md = await monatsdatenApi.listAggregiert(anlageId)
+      // `!== undefined` bewusst: ein leeres Array gilt als vorgeladen (Basis
+      // fertig geladen, ehrlich leer) — kein Fallback-Fetch.
+      const md = vorgeladeneMonatsdaten !== undefined
+        ? vorgeladeneMonatsdaten
+        : await monatsdatenApi.listAggregiert(anlageId)
       setMonatsdaten(md)
       const gespeichert = await pvgisApi.getAktivePrognose(anlageId)
       if (gespeichert) {
@@ -98,7 +112,7 @@ export function usePrognoseVsIst(anlageId: number | null | undefined, jahr: numb
     } finally {
       setLoading(false)
     }
-  }, [anlageId])
+  }, [anlageId, vorgeladeneMonatsdaten])
 
   useEffect(() => { void load() }, [load, jahr])
 
@@ -202,6 +216,7 @@ export function PvgisSpeichern({ vm }: { vm: PrognoseVsIstVM }) {
 
 /** Monatlicher SOLL/IST-Vergleich (Balken) + Abweichungs-Linie. */
 export function PvgisMonatsChart({ vm, jahr }: { vm: PrognoseVsIstVM; jahr: number | undefined }) {
+  const legende = useLegendenToggle()
   const achsen = useChartTheme()
   const schmal = useSchmaleAchse()
   const maxKwh = Math.max(0, ...vm.vergleichsDaten.flatMap(d => [d.prognose, d.ist]))
@@ -217,14 +232,16 @@ export function PvgisMonatsChart({ vm, jahr }: { vm: PrognoseVsIstVM; jahr: numb
             <CartesianGrid strokeDasharray="3 3" />
             <XAxis dataKey="monatName" {...xAchse(schmal)} /* achsen-allow: Zeit-/Kategorie-Achse */ />
             <YAxis yAxisId="left" tickFormatter={eAchse.tick} label={achsenEinheit(eAchse.einheit)} {...yAchse(schmal)} />
-            <YAxis yAxisId="right" orientation="right" tickFormatter={achsenTick} label={achsenEinheit('%', 'rechts')} />
+            <YAxis yAxisId="right" orientation="right" {...yAchse(schmal)} tickFormatter={achsenTick} label={achsenEinheit('%', 'rechts')} />
             <Tooltip content={<ChartTooltip formatter={(value: number, name: string) =>
               name.includes('%') ? formatProzent(value).text : formatEnergie(value, maxKwh).text} />} />
-            <Legend content={<ChartLegende />} />
+            <Legend content={<ChartLegende onItemClick={legende.onItemClick} />} />
             <ReferenceLine yAxisId="right" y={0} stroke={achsen.referenz} strokeDasharray="3 3" />
-            <Bar yAxisId="left" dataKey="prognose" fill={SOLL_IST_COLORS.soll} stroke={SOLL_IST_COLORS.soll} strokeWidth={1} strokeDasharray={PROGNOSE_DASH} name="PVGIS Prognose" />
-            <Bar yAxisId="left" dataKey="ist" fill={SOLL_IST_COLORS.ist} name="IST-Erzeugung" />
-            <Line yAxisId="right" type="monotone" dataKey="abweichungProzent" stroke={SOLL_IST_COLORS.abweichung} strokeWidth={2} name="Abweichung %" dot={{ fill: SOLL_IST_COLORS.abweichung }} />
+            {/* D14-10 (detLAN #113): Balken ohne gestrichelte Umrandung — der Dash-Kanon
+                (PROGNOSE_DASH) gilt nur für LINIEN-Serien, nicht als Bar-Border. */}
+            <Bar yAxisId="left" dataKey="prognose" fill={SOLL_IST_COLORS.soll} name="PVGIS Prognose" hide={legende.istVersteckt('prognose')} />
+            <Bar yAxisId="left" dataKey="ist" fill={SOLL_IST_COLORS.ist} name="IST-Erzeugung" hide={legende.istVersteckt('ist')} />
+            <Line yAxisId="right" type="monotone" dataKey="abweichungProzent" stroke={SOLL_IST_COLORS.abweichung} strokeWidth={2} name="Abweichung %" dot={{ fill: SOLL_IST_COLORS.abweichung }} hide={legende.istVersteckt('abweichungProzent')} />
           </ComposedChart>
         </ResponsiveContainer>
       </div>
@@ -239,33 +256,32 @@ export function PvgisDetailTabelle({ vm }: { vm: PrognoseVsIstVM }) {
   return (
     <Card className="space-y-4">
       <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Monatliche Details</h2>
-      <div className="overflow-x-auto">
-        <table className="min-w-full text-sm">
-          <thead>
+      <Table mitFuss flaeche="karte">
+          <TableHead>
             <tr className="border-b border-gray-200 dark:border-gray-700">
-              <th className="text-left py-2 px-2">Monat</th>
-              <th className="text-right py-2 px-2">PVGIS Prognose</th>
-              <th className="text-right py-2 px-2">IST-Erzeugung</th>
-              <th className="text-right py-2 px-2">Abweichung</th>
-              <th className="text-right py-2 px-2">%</th>
-              <th className="text-center py-2 px-2">Bewertung</th>
+              <th className={`${KOPF_ZELLE} text-left`}>Monat</th>
+              <th className={`${KOPF_ZELLE} text-right`}>PVGIS Prognose</th>
+              <th className={`${KOPF_ZELLE} text-right`}>IST-Erzeugung</th>
+              <th className={`${KOPF_ZELLE} text-right`}>Abweichung</th>
+              <th className={`${KOPF_ZELLE} text-right`}>%</th>
+              <th className={`${KOPF_ZELLE} text-center`}>Bewertung</th>
             </tr>
-          </thead>
-          <tbody>
+          </TableHead>
+          <TableBody>
             {vm.vergleichsDaten.map((d) => (
               <tr key={d.monat} className="border-b border-gray-100 dark:border-gray-800">
-                <td className="py-2 px-2 font-medium">{d.monatName}</td>
-                <td className="text-right py-2 px-2 text-yellow-600">{e(d.prognose)}</td>
-                <td className="text-right py-2 px-2">
+                <td className={`${ZELLE} font-medium`}>{d.monatName}</td>
+                <td className={`${ZELLE} text-yellow-600`}>{e(d.prognose)}</td>
+                <td className={`${ZELLE} text-right`}>
                   {d.ist > 0 ? <span className="text-green-600">{e(d.ist)}</span> : <span className="text-gray-400 dark:text-gray-500">-</span>}
                 </td>
-                <td className={`text-right py-2 px-2 ${d.abweichung >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                <td className={`${ZELLE} text-right ${d.abweichung >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                   {d.ist > 0 ? `${d.abweichung >= 0 ? '+' : ''}${e(d.abweichung)}` : '-'}
                 </td>
-                <td className={`text-right py-2 px-2 ${d.abweichungProzent >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                <td className={`${ZELLE} text-right ${d.abweichungProzent >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                   {d.ist > 0 ? `${d.abweichungProzent >= 0 ? '+' : ''}${formatProzent(d.abweichungProzent).text}` : '-'}
                 </td>
-                <td className="text-center py-2 px-2">
+                <td className={`${ZELLE} text-center`}>
                   {d.ist === 0 ? <span className="text-gray-400 dark:text-gray-500">Keine Daten</span>
                     : d.abweichungProzent >= 5 ? <span className="inline-flex items-center gap-1 text-green-600"><TrendingUp className="h-4 w-4" />Übertroffen</span>
                     : d.abweichungProzent >= -5 ? <span className="text-blue-600">Im Plan</span>
@@ -274,23 +290,22 @@ export function PvgisDetailTabelle({ vm }: { vm: PrognoseVsIstVM }) {
                 </td>
               </tr>
             ))}
-          </tbody>
-          <tfoot>
+          </TableBody>
+          <TableFoot>
             <tr className="border-t-2 border-gray-300 dark:border-gray-600 font-bold">
-              <td className="py-2 px-2">Gesamt</td>
-              <td className="text-right py-2 px-2 text-yellow-600">{e(vm.jahresPrognose)}</td>
-              <td className="text-right py-2 px-2 text-green-600">{e(vm.jahresIst)}</td>
-              <td className={`text-right py-2 px-2 ${vm.jahresAbweichung >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+              <td className={ZELLE}>Gesamt</td>
+              <td className={`${ZELLE} text-yellow-600`}>{e(vm.jahresPrognose)}</td>
+              <td className={`${ZELLE} text-green-600`}>{e(vm.jahresIst)}</td>
+              <td className={`${ZELLE} text-right ${vm.jahresAbweichung >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                 {vm.jahresAbweichung >= 0 ? '+' : ''}{e(vm.jahresAbweichung)}
               </td>
-              <td className={`text-right py-2 px-2 ${vm.jahresAbweichungProzent >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+              <td className={`${ZELLE} text-right ${vm.jahresAbweichungProzent >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                 {vm.jahresAbweichungProzent >= 0 ? '+' : ''}{formatProzent(vm.jahresAbweichungProzent).text}
               </td>
               <td></td>
             </tr>
-          </tfoot>
-        </table>
-      </div>
+          </TableFoot>
+        </Table>
     </Card>
   )
 }

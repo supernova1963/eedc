@@ -26,6 +26,7 @@ export type WizardStep =
   | 'anlage'
   | 'strompreise'
   | 'investitionen'
+  | 'integration'
   | 'summary'
   | 'complete'
 
@@ -60,6 +61,7 @@ interface AnlageCreateData {
   installationsdatum?: string
   standort_plz?: string
   standort_ort?: string
+  standort_strasse?: string
   latitude?: number
   longitude?: number
 }
@@ -88,11 +90,15 @@ const INITIAL_STATE: WizardState = {
 }
 
 // Schritt-Reihenfolge (v1.0: ohne HA)
-const STEP_ORDER: WizardStep[] = [
+// D2 (2026-07-18): 'integration' nach den Investitionen — die Energy-Dashboard-
+// Vorschläge mappen auf Investitionen und brauchen sie daher zuerst.
+// SoT für Umfang UND Reihenfolge — SetupWizard leitet seine Anzeige hieraus ab.
+export const STEP_ORDER: WizardStep[] = [
   'welcome',
   'anlage',
   'strompreise',
   'investitionen',
+  'integration',
   'summary',
   'complete',
 ]
@@ -271,9 +277,9 @@ export function useSetupWizard(): UseSetupWizardReturn {
   }, [step, nextStep])
 
   // Geocoding
-  const geocodeAddress = useCallback(async (plz: string, ort?: string) => {
+  const geocodeAddress = useCallback(async (plz: string, ort?: string, strasse?: string) => {
     try {
-      const result = await anlagenApi.geocode(plz, ort)
+      const result = await anlagenApi.geocode(plz, ort, strasse)
       return { latitude: result.latitude, longitude: result.longitude }
     } catch {
       return null

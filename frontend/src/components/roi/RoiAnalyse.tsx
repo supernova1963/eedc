@@ -20,14 +20,18 @@ import {
   Settings2, Sun, LayoutGrid, ChevronDown, ChevronRight,
 } from 'lucide-react'
 import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
-  PieChart, Pie, Cell, LineChart, Line,
+  BarChart, Bar, Cell, LabelList, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
+  LineChart, Line,
 } from 'recharts'
-import { Card, Alert, LoadingSpinner, EmptyState, FormelTooltip, QuelleBadge, ChartLegende } from '../ui'
+import { Card, Alert, LoadingSpinner, EmptyState, FormelTooltip, QuelleBadge, ChartLegende, Table, TableHead, TableBody, TableFoot } from '../ui'
+import { ZELLE, KOPF_ZELLE } from '../ui/tabelleMasse'
 import ChartTooltip from '../ui/ChartTooltip'
+import { useLegendenToggle } from '../../hooks'
 import { KpiStrip, type KpiStripItem } from '../blocks'
 import { investitionenApi, type ROIDashboardResponse, type ROIBerechnung, type SpeicherRoiDetail } from '../../api'
-import { TYP_COLORS, GELD_COLORS, GELD_TEXT_CLASS, fmtZahl, formatGeld, formatCo2, achsenEinheit, ACHSEN_MARGIN_TOP } from '../../lib'
+import { swrCachePeek, swrCacheStore } from '../../hooks/useApiData'
+import { TYP_COLORS, GELD_COLORS, GELD_TEXT_CLASS, fmtZahl, formatGeld, formatCo2, xAchse, achsenEinheit, ACHSEN_MARGIN_TOP } from '../../lib'
+import { TYP_LABELS } from '../../lib/constants'
 
 const typIcons: Record<string, React.ElementType> = {
   'e-auto': Car,
@@ -40,17 +44,8 @@ const typIcons: Record<string, React.ElementType> = {
   'sonstiges': Settings2,
 }
 
-const typLabels: Record<string, string> = {
-  'e-auto': 'E-Auto',
-  'waermepumpe': 'Wärmepumpe',
-  'speicher': 'Speicher',
-  'wallbox': 'Wallbox',
-  'wechselrichter': 'Wechselrichter',
-  'pv-module': 'PV-Module',
-  'balkonkraftwerk': 'Balkonkraftwerk',
-  'sonstiges': 'Sonstiges',
-}
-
+// Typ-Labels: SoT `TYP_LABELS` (lib/constants) — die frühere lokale Kopie hier
+// driftete (fehlte 'pv-system' → ROI-Pie zeigte Roh-Key „pv-system", D17-5-Nebenfund).
 const geldTick = (v: number) => fmtZahl(v, 0)
 
 export interface RoiAnalyseProps {
@@ -65,6 +60,11 @@ export interface RoiAnalyseProps {
   /** Optionaler Rückkanal der geladenen Antwort (z. B. für den Benzinpreis-Hinweis
    *  im Slider der IST-Seite). */
   onLoaded?: (data: ROIDashboardResponse) => void
+  /** R18-2 (SWR, Opt-in der v4-Sicht): Basis des Sicht-Cache-Keys — bei Remount
+   *  stehen die alten Daten sofort (kein Skeleton), still revalidiert. Die
+   *  Berechnungs-Parameter werden an die Basis angehängt. IST/V3: weglassen
+   *  (Verhalten unverändert). */
+  swrKeyBasis?: string
 }
 
 export interface RoiAnalyseVM {
@@ -101,20 +101,34 @@ function getSpeicherCDetail(b: ROIBerechnung): SpeicherRoiDetail | null {
 
 /** Lädt das ROI-Dashboard (ein `getROIDashboard`-Call) und leitet Amortisations-
  *  Zeitreihe + Typ-/Investitions-Aggregate ab. Geteilt von IST + v4. */
-export function useRoiAnalyse({ anlageId, strompreis, einspeiseverguetung, benzinpreis, jahr, onLoaded }: RoiAnalyseProps): RoiAnalyseVM {
-  const [roiData, setRoiData] = useState<ROIDashboardResponse | null>(null)
+export function useRoiAnalyse({ anlageId, strompreis, einspeiseverguetung, benzinpreis, jahr, onLoaded, swrKeyBasis }: RoiAnalyseProps): RoiAnalyseVM {
+  // Voller Cache-Key inkl. Berechnungs-Parameter (jede Variante = eigener Stand).
+  const swrKey = swrKeyBasis
+    ? `${swrKeyBasis}:${anlageId}:${strompreis}:${einspeiseverguetung}:${benzinpreis}:${jahr}`
+    : undefined
+  const [roiData, setRoiData] = useState<ROIDashboardResponse | null>(
+    () => (swrKey ? swrCachePeek<ROIDashboardResponse>(swrKey) : undefined) ?? null,
+  )
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     if (!anlageId) return
     let ab = false
+    // R18-2 (SWR, Opt-in v4): Cache-Stand sofort zeigen + still revalidieren —
+    // Skeleton nur ohne Cache-Stand (echter Erst-Load).
+    const cached = swrKey ? swrCachePeek<ROIDashboardResponse>(swrKey) : undefined
+    if (cached !== undefined) setRoiData(cached)
     const loadROI = async () => {
       try {
-        setLoading(true)
+        if (cached === undefined) setLoading(true)
         setError(null)
         const data = await investitionenApi.getROIDashboard(anlageId, strompreis, einspeiseverguetung, benzinpreis, jahr)
-        if (!ab) { setRoiData(data); onLoaded?.(data) }
+        if (!ab) {
+          setRoiData(data)
+          if (swrKey) swrCacheStore(swrKey, data)
+          onLoaded?.(data)
+        }
       } catch (e) {
         if (!ab) setError(e instanceof Error ? e.message : 'Fehler beim Laden der ROI-Daten')
       } finally {
@@ -125,7 +139,7 @@ export function useRoiAnalyse({ anlageId, strompreis, einspeiseverguetung, benzi
     return () => { ab = true }
     // onLoaded bewusst nicht in den Deps (Eltern reicht inline-Callback durch).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [anlageId, strompreis, einspeiseverguetung, benzinpreis, jahr])
+  }, [anlageId, strompreis, einspeiseverguetung, benzinpreis, jahr, swrKey])
 
   const amortisationData = useMemo(() => {
     if (!roiData || roiData.gesamt_relevante_kosten <= 0) return []
@@ -151,7 +165,7 @@ export function useRoiAnalyse({ anlageId, strompreis, einspeiseverguetung, benzi
     })
     return Object.entries(grouped)
       .map(([typ, value]) => ({
-        name: typLabels[typ] || typ,
+        name: TYP_LABELS[typ] || typ,
         value: Math.round(value),
         color: TYP_COLORS[typ] || TYP_COLORS['sonstiges'],
       }))
@@ -222,6 +236,7 @@ export function roiKpiItems(roiData: ROIDashboardResponse, zeigeCo2 = false): Kp
 
 /** Block ② — Amortisationsverlauf (Break-Even-Kurve, 25–30 Jahre). */
 export function RoiAmortisationChart({ vm }: { vm: RoiAnalyseVM }) {
+  const legende = useLegendenToggle()
   const roiData = vm.roiData
   if (!roiData) return null
   return (
@@ -231,12 +246,12 @@ export function RoiAmortisationChart({ vm }: { vm: RoiAnalyseVM }) {
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={vm.amortisationData} margin={{ top: ACHSEN_MARGIN_TOP }}>
             <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
-            <XAxis dataKey="jahr" tickFormatter={geldTick} tick={{ fontSize: 10 }} /* achsen-allow: Jahres-Index (0–30), Einheit „Jahre" steht im Break-Even-Text + KPI; Achsen-Label kollidierte mit Legende (#29-15) */ />
+            <XAxis dataKey="jahr" tickFormatter={geldTick} {...xAchse()} /* achsen-allow: Jahres-Index (0–30), Einheit „Jahre" steht im Break-Even-Text + KPI; Achsen-Label kollidierte mit Legende (#29-15) */ />
             <YAxis tickFormatter={geldTick} tick={{ fontSize: 10 }} width={70} label={achsenEinheit('€')} />
             <Tooltip content={<ChartTooltip labelFormatter={(label) => `Jahr ${label}`} unit="€" />} />
-            <Legend content={<ChartLegende />} />
-            <Line type="monotone" dataKey="kumulierte_einsparung" name="Kumulierte Einsparung" stroke={GELD_COLORS.ersparnis} strokeWidth={2} dot={false} />
-            <Line type="monotone" dataKey="investition" name="Investition" stroke={GELD_COLORS.kosten} strokeWidth={2} strokeDasharray="5 5" dot={false} />
+            <Legend content={<ChartLegende onItemClick={legende.onItemClick} />} />
+            <Line type="monotone" dataKey="kumulierte_einsparung" name="Kumulierte Einsparung" stroke={GELD_COLORS.ersparnis} strokeWidth={2} dot={false} hide={legende.istVersteckt('kumulierte_einsparung')} />
+            <Line type="monotone" dataKey="investition" name="Investition" stroke={GELD_COLORS.kosten} strokeWidth={2} strokeDasharray="5 5" dot={false} hide={legende.istVersteckt('investition')} />
           </LineChart>
         </ResponsiveContainer>
       </div>
@@ -249,51 +264,40 @@ export function RoiAmortisationChart({ vm }: { vm: RoiAnalyseVM }) {
   )
 }
 
-/** Block ③a — Einsparungen nach Investitionstyp (Pie). */
-export function RoiTypPie({ vm }: { vm: RoiAnalyseVM }) {
-  const daten = vm.einsparungenByTyp
-  const summe = daten.reduce((s, d) => s + d.value, 0)
+/** Block ③a — Einsparungen nach Investitionstyp: horizontale Balken mit Werten
+ * (R18-5, rapahl #208 + Gernot-Entscheid 2026-07-10). Kriterium (B7-Schärfung):
+ * absolute Werte + Rangfolge → horizontale Balken · reiner Anteil am Ganzen →
+ * AnteilDonut. Hier sind es absolute €/Jahr mit Rangfolge — daher Balken nach
+ * der Mechanik der Nachbar-Kachel „Investitionen im Vergleich" (keine dritte
+ * Komponente). Sortierung bewusst nach Wert absteigend (Rangfolge IST die
+ * Aussage) — nicht INVESTITION_TYP_ORDER (die gilt für Typ-LISTEN). */
+export function RoiTypBalken({ vm }: { vm: RoiAnalyseVM }) {
+  const daten = [...vm.einsparungenByTyp].sort((a, b) => b.value - a.value)
   return (
     <Card>
       <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Einsparungen nach Typ</h3>
       <div className="h-72">
         <ResponsiveContainer width="100%" height="100%">
-          <PieChart>
-            {/* Keine Pie-Außenlabels: die ragten mit `labelLine` über den Container
-                und wurden auf schmalen Screens abgeschnitten (detLAN 2026-06-28).
-                Name + % stehen jetzt in der umbruchfähigen Legende darunter — auf
-                jeder Breite vollständig sichtbar. */}
-            <Pie
-              data={daten}
-              dataKey="value"
-              nameKey="name"
-              cx="50%"
-              cy="50%"
-              outerRadius={100}
-            >
-              {daten.map((entry, index) => (
-                <Cell key={`cell-${index}`} fill={entry.color} />
-              ))}
-            </Pie>
-            <Tooltip content={<ChartTooltip unit="€/Jahr" />} />
-          </PieChart>
+          <BarChart data={daten} layout="vertical" margin={{ right: 56 }}>
+            <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
+            <XAxis type="number" domain={[0, 'auto']} tickFormatter={(v) => `${fmtZahl(v, 0)} €`} tick={{ fontSize: 10 }} /* achsen-allow: Wert-Achse waagerecht, Einheit/Format pro Tick (de-DE) */ />
+            <YAxis dataKey="name" type="category" width={120} tick={{ fontSize: 10 }} /* achsen-allow: Kategorie-Namen (Typen) */ />
+            <Tooltip content={<ChartTooltip formatter={(value: number) => `${fmtZahl(value, 0)} €/Jahr`} />} />
+            <Bar dataKey="value" name="Jährliche Einsparung" radius={[0, 2, 2, 0]}>
+              {daten.map((d) => <Cell key={d.name} fill={d.color} />)}
+              {/* Rainers Kern: „Balken MIT Werten" — Wert am Balkenende. */}
+              <LabelList dataKey="value" position="right" formatter={(v: number) => `${fmtZahl(v, 0)} €`} className="fill-gray-500 dark:fill-gray-400" fontSize={10} />
+            </Bar>
+          </BarChart>
         </ResponsiveContainer>
       </div>
-      <ul className="mt-2 flex flex-wrap justify-center gap-x-4 gap-y-1">
-        {daten.map((d) => (
-          <li key={d.name} className="flex items-center gap-1.5 text-sm">
-            <span className="inline-block w-2.5 h-2.5 rounded-sm shrink-0" style={{ backgroundColor: d.color }} />
-            <span className="text-gray-700 dark:text-gray-300">{d.name}</span>
-            <span className="text-gray-400 dark:text-gray-500 tabular-nums">{fmtZahl(summe > 0 ? (d.value / summe) * 100 : 0, 0)} %</span>
-          </li>
-        ))}
-      </ul>
     </Card>
   )
 }
 
 /** Block ③b — Investitionen im Vergleich (Kosten vs. Einsparung, horizontale Bars). */
 export function RoiVergleichBar({ vm }: { vm: RoiAnalyseVM }) {
+  const legende = useLegendenToggle()
   return (
     <Card>
       <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Investitionen im Vergleich</h3>
@@ -305,9 +309,9 @@ export function RoiVergleichBar({ vm }: { vm: RoiAnalyseVM }) {
             <XAxis type="number" domain={[0, 'auto']} tickFormatter={(v) => `${fmtZahl(v, 0)} €`} tick={{ fontSize: 10 }} /* achsen-allow: Wert-Achse waagerecht, Einheit/Format pro Tick (de-DE) */ />
             <YAxis dataKey="name" type="category" width={120} tick={{ fontSize: 10 }} /* achsen-allow: Kategorie-Namen (Investitionen) */ />
             <Tooltip content={<ChartTooltip formatter={(value: number, name: string) => name === 'Relevante Kosten' ? `${fmtZahl(value, 0)} €` : `${fmtZahl(value, 0)} €/Jahr`} />} />
-            <Legend content={<ChartLegende />} />
-            <Bar dataKey="kosten" fill={GELD_COLORS.kosten} name="Relevante Kosten" />
-            <Bar dataKey="einsparung" fill={GELD_COLORS.ersparnis} name="Jährliche Einsparung" />
+            <Legend content={<ChartLegende onItemClick={legende.onItemClick} />} />
+            <Bar dataKey="kosten" fill={GELD_COLORS.kosten} name="Relevante Kosten" hide={legende.istVersteckt('kosten')} />
+            <Bar dataKey="einsparung" fill={GELD_COLORS.ersparnis} name="Jährliche Einsparung" hide={legende.istVersteckt('einsparung')} />
           </BarChart>
         </ResponsiveContainer>
       </div>
@@ -367,19 +371,18 @@ export function RoiDetailTabelle({ vm, zeigeCo2 = true }: { vm: RoiAnalyseVM; ze
   return (
     <Card>
       <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Detailübersicht</h3>
-      <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-          <thead>
+      <Table mitFuss flaeche="karte">
+          <TableHead>
             <tr>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Investition</th>
-              <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Kosten</th>
-              <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Einsparung/Jahr</th>
-              <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">ROI</th>
-              <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Amortisation</th>
-              {zeigeCo2 && <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">CO2</th>}
+              <th className={`${KOPF_ZELLE} text-left text-gray-500 dark:text-gray-400`}>Investition</th>
+              <th className={`${KOPF_ZELLE} text-right text-gray-500 dark:text-gray-400`}>Kosten</th>
+              <th className={`${KOPF_ZELLE} text-right text-gray-500 dark:text-gray-400`}>Einsparung/Jahr</th>
+              <th className={`${KOPF_ZELLE} text-right text-gray-500 dark:text-gray-400`}>ROI</th>
+              <th className={`${KOPF_ZELLE} text-right text-gray-500 dark:text-gray-400`}>Amortisation</th>
+              {zeigeCo2 && <th className={`${KOPF_ZELLE} text-right text-gray-500 dark:text-gray-400`}>CO2</th>}
             </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+          </TableHead>
+          <TableBody>
             {roiData.berechnungen.map((b) => {
               const Icon = typIcons[b.investition_typ] || Settings2
               const cDetail = getSpeicherCDetail(b)
@@ -387,7 +390,7 @@ export function RoiDetailTabelle({ vm, zeigeCo2 = true }: { vm: RoiAnalyseVM; ze
               return (
                 <Fragment key={b.investition_id}>
                   <tr className="hover:bg-gray-50 dark:hover:bg-gray-800">
-                    <td className="px-4 py-3 whitespace-nowrap">
+                    <td className={ZELLE}>
                       <div className="flex items-center gap-2">
                         {cDetail ? (
                           <button
@@ -409,20 +412,28 @@ export function RoiDetailTabelle({ vm, zeigeCo2 = true }: { vm: RoiAnalyseVM; ze
                         <Icon className="h-4 w-4 flex-shrink-0" style={{ color: TYP_COLORS[b.investition_typ] }} />
                         <div>
                           <p className="text-sm font-medium text-gray-900 dark:text-white">{b.investition_bezeichnung}</p>
-                          <p className="text-xs text-gray-500 dark:text-gray-400">{typLabels[b.investition_typ]}</p>
+                          <p className="text-xs text-gray-500 dark:text-gray-400">
+                            {TYP_LABELS[b.investition_typ] ?? b.investition_typ}
+                            {/* R15-4: DC-Speicher hat KEINE eigene Zeile (System-Ansatz) —
+                                sein Enthaltensein hier kenntlich machen. */}
+                            {(() => {
+                              const sp = b.komponenten?.filter((k) => k.typ === 'speicher') ?? []
+                              return sp.length > 0 ? ` · inkl. Speicher ${sp.map((k) => k.bezeichnung).join(', ')}` : ''
+                            })()}
+                          </p>
                         </div>
                       </div>
                     </td>
-                    <td className="px-4 py-3 whitespace-nowrap text-right">
+                    <td className={`${ZELLE} text-right`}>
                       <p className="text-sm text-gray-900 dark:text-white">{formatGeld(b.relevante_kosten).text}</p>
                       {b.anschaffungskosten_alternativ > 0 && (
                         <p className="text-xs text-gray-500 dark:text-gray-400">({formatGeld(b.anschaffungskosten).text} gesamt)</p>
                       )}
                     </td>
-                    <td className={`px-4 py-3 whitespace-nowrap text-right text-sm font-medium ${GELD_TEXT_CLASS.ersparnis}`}>
+                    <td className={`${ZELLE} text-right font-medium ${GELD_TEXT_CLASS.ersparnis}`}>
                       {formatGeld(b.jahres_einsparung).text}
                     </td>
-                    <td className="px-4 py-3 whitespace-nowrap text-right text-sm">
+                    <td className={`${ZELLE} text-right`}>
                       {b.roi_prozent ? (
                         <FormelTooltip
                           sicht="Pro Investition · Jahres-ROI · Mehrkosten-Ansatz · Prognose"
@@ -438,7 +449,7 @@ export function RoiDetailTabelle({ vm, zeigeCo2 = true }: { vm: RoiAnalyseVM; ze
                         <span className="text-gray-400 dark:text-gray-500">-</span>
                       )}
                     </td>
-                    <td className="px-4 py-3 whitespace-nowrap text-right text-sm">
+                    <td className={`${ZELLE} text-right`}>
                       {b.amortisation_jahre ? (
                         <FormelTooltip
                           sicht="Pro Investition · Mehrkosten-Ansatz · Prognose (rechnerisch, ohne bisherige Erträge)"
@@ -455,7 +466,7 @@ export function RoiDetailTabelle({ vm, zeigeCo2 = true }: { vm: RoiAnalyseVM; ze
                       )}
                     </td>
                     {zeigeCo2 && (
-                      <td className="px-4 py-3 whitespace-nowrap text-right text-sm text-emerald-600 dark:text-emerald-400">
+                      <td className={`${ZELLE} text-right text-emerald-600 dark:text-emerald-400`}>
                         {b.co2_einsparung_kg ? `${fmtZahl(b.co2_einsparung_kg, 0)} kg` : '-'}
                       </td>
                     )}
@@ -468,21 +479,20 @@ export function RoiDetailTabelle({ vm, zeigeCo2 = true }: { vm: RoiAnalyseVM; ze
                 </Fragment>
               )
             })}
-          </tbody>
-          <tfoot>
+          </TableBody>
+          <TableFoot>
             <tr className="bg-gray-50 dark:bg-gray-800 font-semibold">
-              <td className="px-4 py-3 text-sm text-gray-900 dark:text-white">Gesamt</td>
-              <td className="px-4 py-3 text-right text-sm text-gray-900 dark:text-white">{formatGeld(roiData.gesamt_relevante_kosten).text}</td>
-              <td className={`px-4 py-3 text-right text-sm ${GELD_TEXT_CLASS.ersparnis}`}>{formatGeld(roiData.gesamt_jahres_einsparung).text}</td>
-              <td className="px-4 py-3 text-right text-sm text-gray-900 dark:text-white">{roiData.gesamt_roi_prozent ? `${roiData.gesamt_roi_prozent} %` : '-'}</td>
-              <td className="px-4 py-3 text-right text-sm text-gray-900 dark:text-white">{roiData.gesamt_amortisation_jahre ? `${roiData.gesamt_amortisation_jahre} J.` : '-'}</td>
+              <td className={`${ZELLE} text-gray-900 dark:text-white`}>Gesamt</td>
+              <td className={`${ZELLE} text-right text-gray-900 dark:text-white`}>{formatGeld(roiData.gesamt_relevante_kosten).text}</td>
+              <td className={`${ZELLE} text-right ${GELD_TEXT_CLASS.ersparnis}`}>{formatGeld(roiData.gesamt_jahres_einsparung).text}</td>
+              <td className={`${ZELLE} text-right text-gray-900 dark:text-white`}>{roiData.gesamt_roi_prozent ? `${roiData.gesamt_roi_prozent} %` : '-'}</td>
+              <td className={`${ZELLE} text-right text-gray-900 dark:text-white`}>{roiData.gesamt_amortisation_jahre ? `${roiData.gesamt_amortisation_jahre} J.` : '-'}</td>
               {zeigeCo2 && (
-                <td className="px-4 py-3 text-right text-sm text-emerald-600 dark:text-emerald-400">{fmtZahl(roiData.gesamt_co2_einsparung_kg, 0)} kg</td>
+                <td className={`${ZELLE} text-right text-emerald-600 dark:text-emerald-400`}>{fmtZahl(roiData.gesamt_co2_einsparung_kg, 0)} kg</td>
               )}
             </tr>
-          </tfoot>
-        </table>
-      </div>
+          </TableFoot>
+        </Table>
     </Card>
   )
 }
@@ -528,7 +538,7 @@ export function RoiAnalyse(props: RoiAnalyseProps) {
       <KpiStrip kpis={roiKpiItems(vm.roiData, zeigeCo2)} />
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <RoiAmortisationChart vm={vm} />
-        <RoiTypPie vm={vm} />
+        <RoiTypBalken vm={vm} />
       </div>
       <RoiVergleichBar vm={vm} />
       <RoiDetailTabelle vm={vm} zeigeCo2={zeigeCo2} />

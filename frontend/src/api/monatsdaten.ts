@@ -3,7 +3,7 @@
  */
 
 import { api } from './client'
-import type { Monatsdaten, MonatsKennzahlen } from '../types'
+import type { Monatsdaten, MonatsKennzahlen, SonstigePosition } from '../types'
 
 export interface MonatsdatenCreate {
   anlage_id: number
@@ -23,6 +23,8 @@ export interface MonatsdatenCreate {
   sonnenstunden?: number
   datenquelle?: string
   notizen?: string
+  // G19-1: Anlage-Ebene Sonstige Erträge & Ausgaben ([] = bewusst geleert)
+  sonstige_positionen?: SonstigePosition[]
 }
 
 export interface MonatsdatenUpdate {
@@ -39,6 +41,8 @@ export interface MonatsdatenUpdate {
   globalstrahlung_kwh_m2?: number
   sonnenstunden?: number
   notizen?: string
+  // G19-1: Anlage-Ebene Sonstige Erträge & Ausgaben ([] = bewusst geleert)
+  sonstige_positionen?: SonstigePosition[]
 }
 
 export interface MonatsdatenMitKennzahlen extends Monatsdaten {
@@ -67,8 +71,13 @@ export interface AggregierteMonatsdaten {
   // WP-Heizung im Sommer). UI muss die Unterscheidung respektieren —
   // null als "—" rendern, nicht als "0 kWh" (#236).
   pv_erzeugung_kwh: number | null
+  // R17/Verlauf-Vergleich: PV-Anlage vs. BKW getrennt (Σ == pv_erzeugung_kwh) +
+  // Netzladung-Anteil + §51-Abzug-Volumen (nur wenn Anlage §51 unterliegt).
+  pv_anlage_kwh: number | null
+  bkw_kwh: number | null
   speicher_ladung_kwh: number | null
   speicher_entladung_kwh: number | null
+  speicher_netzladung_kwh: number | null
   wp_strom_kwh: number | null
   wp_strom_heizen_kwh: number | null  // #191: nur befüllt wenn getrennte_strommessung
   wp_strom_warmwasser_kwh: number | null  // #191: nur befüllt wenn getrennte_strommessung
@@ -84,6 +93,9 @@ export interface AggregierteMonatsdaten {
   gesamtverbrauch_kwh: number
   autarkie_prozent: number
   eigenverbrauchsquote_prozent: number
+  // §51-Abzug-Volumen (kWh bei neg. Börsenpreis eingespeist); null = Anlage
+  // unterliegt nicht §51 (R17/Verlauf).
+  einspeisung_neg_preis_kwh: number | null
   // Legacy-Marker
   hat_legacy_daten: boolean
 }

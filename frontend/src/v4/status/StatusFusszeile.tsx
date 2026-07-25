@@ -4,7 +4,7 @@
  * SPEC: `docs/drafts/SPEC-STATUS-FUSSZEILE.md`. Dünne Zeile am unteren Shell-Rand
  * (3. Flex-Kind in `LayoutV4`), drei Zonen:
  *   - **global (links)**: installations-weite Indikatoren aus {@link useGlobalStatus} —
- *     Versions-Update · offener Monatsabschluss · MQTT-Verbindung (P2).
+ *     Version/Update (immer sichtbar) · offener Monatsabschluss · Community-Teilen · MQTT-Verbindung (P2).
  *   - **sicht (rechts)**: Frische der gerade gezeigten Daten (Live-Punkt · „(5s)").
  *   - **meta (ganz rechts)**: Demo-Schalter (nur Debug).
  *
@@ -13,12 +13,13 @@
  * ok=grün; „neutral" = grau (kein Zustand). Jedes Symbol: Icon + Tap-Popover
  * (Erläuterung + Detail + optional Deep-Link). Mobile: nur Symbole.
  */
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, type ComponentType } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Clock, Radio, ArrowUpCircle, CalendarClock, ListChecks, Database, type LucideIcon } from 'lucide-react'
+import { Clock, Radio, ArrowUpCircle, CalendarClock, ListChecks, Database, Users, Slash } from 'lucide-react'
 import { SEVERITY_CONFIG, type CheckSchwere } from '../../config/datenCheckerKategorien'
 import { useAppStatus } from './AppStatusContext'
 import { useGlobalStatus } from './useGlobalStatus'
+import { APP_VERSION } from '../../config/version'
 
 type Severity = CheckSchwere | 'neutral'
 
@@ -34,9 +35,21 @@ function schlimmsteSchwere(z: { error: number; warning: number; info: number }):
   return 'ok'
 }
 
+/** Users-Symbol mit Durchstreichung — lucide führt kein „UsersOff"; komponiert
+ *  aus Users + Slash-Overlay (Gernot-Wunsch 2026-07-03: nicht geteilt = knallrot
+ *  durchgestrichen). Nimmt wie ein Lucide-Icon `className` (Größe + Farbe). */
+function UsersDurchgestrichen({ className = '' }: { className?: string }) {
+  return (
+    <span className="relative inline-flex">
+      <Users className={className} />
+      <Slash className={`absolute inset-0 ${className}`} />
+    </span>
+  )
+}
+
 interface ItemProps {
   id: string
-  icon: LucideIcon
+  icon: ComponentType<{ className?: string }>
   schwere: Severity
   /** Kurztitel (Popover-Kopf + aria-label). */
   label: string
@@ -92,8 +105,12 @@ function StatusItem({ id, icon: Icon, schwere, label, detail, wert, onOeffnen, a
 
 export function StatusFusszeile() {
   const { status, demoMode, setDemoMode, isDebug } = useAppStatus()
-  const { update, offenerMonat, mqtt, datencheck, anlageId } = useGlobalStatus()
+  const { update, offenerMonat, mqtt, datencheck, communityGeteilt } = useGlobalStatus()
+  const installiert = update?.aktuelle_version ?? APP_VERSION
   const navigate = useNavigate()
+  // B5: Monatsabschluss öffnet nicht mehr den Wizard-Overlay, sondern navigiert zur
+  // Werkzeuge-Kategorie und öffnet dort die assistierte Form für den offenen Monat
+  // (`?erfassen=YYYY-MM`); der Monatsdaten-Block klappt dabei auf.
   const [offen, setOffen] = useState<string | null>(null)
   const ref = useRef<HTMLElement | null>(null)
 
@@ -131,34 +148,68 @@ export function StatusFusszeile() {
               datencheck.info > 0 ? `${datencheck.info} ${datencheck.info === 1 ? 'Hinweis' : 'Hinweise'}` : null,
             ].filter(Boolean).join(' · ')}
             wert={`${checkBefunde}`}
-            onOeffnen={() => navigate('/einstellungen/daten-checker')}
+            onOeffnen={() => navigate('/einstellungen/daten')}
             ausrichtung="links"
             offen={offen}
             setOffen={setOffen}
           />
         )}
-        {updateDa && (
+        {/* Version IMMER sichtbar (SPEC §4 9.1: info/blau = Update da · neutral =
+            aktuell; Gernot-Fund 2026-07-03 — die Implementierung zeigte das Item
+            nur im Update-Fall; in v4 ist die Fusszeile das Zuhause der Version,
+            V3 trägt sie in Layout.tsx). Fallback = Frontend-APP_VERSION, solange
+            checkUpdate lädt oder fehlschlägt (dann keine „aktuell"-Behauptung). */}
+        <StatusItem
+          id="update"
+          icon={ArrowUpCircle}
+          schwere={updateDa ? 'info' : 'neutral'}
+          label={updateDa ? `eedc v${update!.neueste_version} verfügbar` : `eedc v${installiert}`}
+          detail={updateDa
+            ? `Aktuell installiert: v${installiert}. Docker: docker-compose pull && up -d · HA: Add-on aktualisieren.`
+            : update
+              ? `Installiert: v${installiert} — eedc ist aktuell.`
+              : `Installierte Version: v${installiert}.`}
+          wert={updateDa ? `v${update!.neueste_version}` : `v${installiert}`}
+          onOeffnen={updateDa && update!.release_url ? () => window.open(update!.release_url, '_blank', 'noopener') : undefined}
+          ausrichtung="links"
+          offen={offen}
+          setOffen={setOffen}
+        />
+        {/* R14-10 (Rainer #114/#127, Gernot #130): das Kalender-Symbol ist IMMER da
+            (überall verfügbarer Einstieg in den Monatsabschluss) — amber bei
+            offenem Monat, grün wenn alles abgeschlossen. */}
+        <StatusItem
+          id="monatsabschluss"
+          icon={CalendarClock}
+          schwere={offenerMonat ? 'warning' : 'ok'}
+          label={offenerMonat ? 'Monatsabschluss offen' : 'Monatsabschluss'}
+          detail={offenerMonat
+            ? `${offenerMonat.monat_name} ${offenerMonat.jahr} ist noch nicht abgeschlossen.`
+            : 'Alle Monate sind abgeschlossen.'}
+          onOeffnen={() => navigate(
+            offenerMonat
+              ? `/einstellungen/daten?erfassen=${offenerMonat.jahr}-${String(offenerMonat.monat).padStart(2, '0')}`
+              : '/einstellungen/daten',
+          )}
+          ausrichtung="links"
+          offen={offen}
+          setOffen={setOffen}
+        />
+        {/* Community-Teilen-Status (Gernot 2026-07-03): IMMER sichtbar sobald
+            bekannt — grün (ok) = Anlage geteilt · Signal-Rot durchgestrichen =
+            nicht geteilt (bewusster Blickfang per Maintainer-Entscheid, Status-
+            Achsen-Rot, keine Fehler-Semantik). Deep-Link = Community-Block in
+            Einstellungen/Stammdaten (§2a-Ziel wie CommunityV4). */}
+        {communityGeteilt !== null && (
           <StatusItem
-            id="update"
-            icon={ArrowUpCircle}
-            schwere="info"
-            label={`eedc v${update!.neueste_version} verfügbar`}
-            detail={`Aktuell installiert: v${update!.aktuelle_version}. Docker: docker-compose pull && up -d · HA: Add-on aktualisieren.`}
-            wert={`v${update!.neueste_version}`}
-            onOeffnen={update!.release_url ? () => window.open(update!.release_url, '_blank', 'noopener') : undefined}
-            ausrichtung="links"
-            offen={offen}
-            setOffen={setOffen}
-          />
-        )}
-        {offenerMonat && (
-          <StatusItem
-            id="monatsabschluss"
-            icon={CalendarClock}
-            schwere="warning"
-            label="Monatsabschluss offen"
-            detail={`${offenerMonat.monat_name} ${offenerMonat.jahr} ist noch nicht abgeschlossen.`}
-            onOeffnen={anlageId ? () => navigate(`/monatsabschluss/${anlageId}`) : undefined}
+            id="community"
+            icon={communityGeteilt ? Users : UsersDurchgestrichen}
+            schwere={communityGeteilt ? 'ok' : 'error'}
+            label={communityGeteilt ? 'Community: Anlage wird geteilt' : 'Community: Anlage wird nicht geteilt'}
+            detail={communityGeteilt
+              ? 'Anonymisierte Monatswerte fließen in den Community-Benchmark ein.'
+              : 'Diese Anlage teilt keine Daten mit der Community. Teilen lässt sich im Community-Block der Stammdaten aktivieren.'}
+            onOeffnen={() => navigate('/einstellungen/stammdaten')}
             ausrichtung="links"
             offen={offen}
             setOffen={setOffen}
@@ -174,7 +225,7 @@ export function StatusFusszeile() {
               mqtt!.letzte_nachricht ? ` · Letzte: ${new Date(mqtt!.letzte_nachricht).toLocaleTimeString('de-DE')}` : ''
             }`}
             wert={mqtt!.empfangene_nachrichten ? `MQTT (${mqtt!.empfangene_nachrichten})` : 'MQTT'}
-            onOeffnen={() => navigate('/einstellungen/mqtt-inbound')}
+            onOeffnen={() => navigate('/einstellungen/integration')}
             ausrichtung="links"
             offen={offen}
             setOffen={setOffen}

@@ -7,7 +7,8 @@
  * Donor `MonatsabschlussView` (`VerticalTimeline`).
  */
 import { useMemo } from 'react'
-import { MONAT_KURZ, DATENROLLE, fmtZahl } from '../lib'
+import { MONAT_KURZ, DATENROLLE, fmtZahl, LAUFEND_ZUSTAND } from '../lib'
+import ScrollSchatten from '../components/ui/ScrollSchatten'
 
 export interface RailEintrag {
   jahr: number
@@ -48,7 +49,7 @@ export function MonatsRail({ entries, jahr, monat, onSelect }: MonatsRailProps) 
   return (
     <>
       {/* Desktop (vertikal) — mobil übernimmt der MonatStepper */}
-      <div className="hidden lg:block lg:sticky lg:top-0 lg:max-h-[calc(100vh-8rem)] lg:overflow-y-auto scrollbar-none space-y-3 pr-1">
+      <ScrollSchatten achse="vertikal" aussenClassName="hidden lg:block lg:sticky lg:top-0" className="max-h-[calc(100vh-8rem)] space-y-3 pr-1">
         {jahre.map((j) => (
           <div key={j}>
             <div className="flex items-center gap-2 mb-1 px-1">
@@ -74,7 +75,7 @@ export function MonatsRail({ entries, jahr, monat, onSelect }: MonatsRailProps) 
                   >
                     <span className={`relative z-10 mt-1 h-3 w-3 rounded-full border-2 shrink-0 transition-all ${
                       e.laufend
-                        ? 'bg-emerald-400 border-emerald-500 animate-pulse'
+                        ? LAUFEND_ZUSTAND.punkt
                         : sel
                           ? 'bg-blue-600 border-blue-600 shadow shadow-blue-400/50'
                           : 'bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 group-hover:border-blue-400'
@@ -83,7 +84,7 @@ export function MonatsRail({ entries, jahr, monat, onSelect }: MonatsRailProps) 
                       <div className="flex items-baseline justify-between gap-1">
                         <span className={`text-sm font-medium ${sel ? 'text-blue-700 dark:text-blue-300' : ''}`}>{MONAT_KURZ[e.monat]}</span>
                         <span className={`text-xs tabular-nums ${
-                          e.laufend ? 'text-emerald-500 dark:text-emerald-400' : sel ? 'text-blue-500 dark:text-blue-400' : 'text-gray-400 dark:text-gray-500'
+                          e.laufend ? LAUFEND_ZUSTAND.text : sel ? 'text-blue-500 dark:text-blue-400' : 'text-gray-400 dark:text-gray-500'
                         }`}>
                           {e.laufend ? 'läuft' : `${fmtZahl(e.pv_kwh, 0)} kWh`}
                         </span>
@@ -101,7 +102,7 @@ export function MonatsRail({ entries, jahr, monat, onSelect }: MonatsRailProps) 
             </div>
           </div>
         ))}
-      </div>
+      </ScrollSchatten>
     </>
   )
 }

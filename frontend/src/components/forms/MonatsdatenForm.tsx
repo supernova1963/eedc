@@ -3,15 +3,23 @@
  * Zeigt Felder basierend auf den vorhandenen Investitionen der Anlage an.
  */
 
-import { useState, useEffect, useMemo, FormEvent } from 'react'
-import { Button, Input, Alert, Select } from '../ui'
+import { useState, useEffect, useMemo, useRef, useCallback, FormEvent } from 'react'
+import { Button, Input, Alert, Select, Textarea, FormSection } from '../ui'
 import { useInvestitionen, useAktuellerStrompreis } from '../../hooks'
-import { investitionenApi, wetterApi } from '../../api'
-import type { Monatsdaten } from '../../types'
-import { getFelderFuerInvestition, LEGACY_FELDNAMEN } from '../../lib/fieldDefinitions'
-import { fmtZahl } from '../../lib'
+import { investitionenApi, wetterApi, monatsabschlussApi } from '../../api'
+import type { MonatsabschlussResponse, FeldStatus } from '../../api/monatsabschluss'
+import type { Monatsdaten, Investition } from '../../types'
+import { getFelderFuerInvestition, LEGACY_FELDNAMEN, readFeldWert } from '../../lib/fieldDefinitions'
+import { prefillWert, ermittleZustand, zaehleAmpel, type ErfassungZustand } from '../../lib/erfassungZustand'
+import { istAktivImMonat } from '../../lib/investitionAktiv'
+import { fmtZahl, SONSTIGES_KATEGORIE_LABELS } from '../../lib'
 import { Plug, Sun, Flame, Cloud, Loader2, Battery, Car, Zap, MoreHorizontal } from 'lucide-react'
 import { InvestitionSection } from './sections/InvestitionSection'
+import { SonstigePositionenFields } from './SonstigePositionenFields'
+import AssistenzFeld from './AssistenzFeld'
+import KopfAmpel from './KopfAmpel'
+import ZustandLegende from './ZustandLegende'
+import AbschlussReview, { type ReviewWarnung } from './AbschlussReview'
 import type { SonstigePosition } from './sections/types'
 
 interface MonatsdatenFormProps {
@@ -19,6 +27,9 @@ interface MonatsdatenFormProps {
   anlageId: number
   onSubmit: (data: MonatsdatenSubmitData) => Promise<void>
   onCancel: () => void
+  /** Voreingestellter Monat beim Erfassen einer Tabellen-Lücke (§7, Bündel 4).
+   *  Setzt nur die initiale Jahr/Monat-Wahl beim Neuanlegen — sonst frei wählbar. */
+  voreingestellterMonat?: { jahr: number; monat: number } | null
   /** Vorausgefüllte Werte aus HA-Statistik */
   haVorausfuellung?: {
     jahr: number
@@ -49,8 +60,9 @@ export interface MonatsdatenSubmitData {
   globalstrahlung_kwh_m2?: number
   sonnenstunden?: number
   durchschnittstemperatur?: number
-  sonderkosten_euro?: number
-  sonderkosten_beschreibung?: string
+  // G19-1: Anlage-Ebene Sonstige Erträge & Ausgaben (ersetzt die Legacy-Felder
+  // sonderkosten_euro/_beschreibung; [] = bewusst geleert)
+  sonstige_positionen?: SonstigePosition[]
   notizen?: string
   // Investitions-spezifische Daten
   investitionen_daten?: Record<string, InvestitionMonatsdaten>
@@ -97,6 +109,8 @@ interface InvestitionMonatsdaten {
 
 // SonstigePosition wird aus ./sections/types importiert
 
+type PflichtFeld = 'einspeisung_kwh' | 'netzbezug_kwh'
+
 const monatOptions = [
   { value: '1', label: 'Januar' },
   { value: '2', label: 'Februar' },
@@ -112,33 +126,43 @@ const monatOptions = [
   { value: '12', label: 'Dezember' },
 ]
 
-export default function MonatsdatenForm({ monatsdaten, anlageId, onSubmit, onCancel, haVorausfuellung }: MonatsdatenFormProps) {
+/** Schlüssel eines Investitionsfeldes in `bestaetigteFelder`. Rein aus den
+ *  Argumenten gebildet — auf Modul-Ebene, damit die Funktion stabil ist und
+ *  Hook-Deps nicht bei jedem Render neu anschlagen. */
+const invKey = (invId: number, feld: string) => `${invId}:${feld}`
+
+export default function MonatsdatenForm({ monatsdaten, anlageId, onSubmit, onCancel, haVorausfuellung, voreingestellterMonat }: MonatsdatenFormProps) {
   const currentYear = new Date().getFullYear()
   const currentMonth = new Date().getMonth() + 1
 
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  // Investitionen für diese Anlage laden (nur aktive)
+  // V1/V2: Inline-Fehler erst nach Berührung bzw. Absende-Versuch (Muster Slice 1/2).
+  const [touched, setTouched] = useState<Set<string>>(new Set())
+  const [submitted, setSubmitted] = useState(false)
+  const feldRefs = useRef<Record<PflichtFeld, HTMLDivElement | null>>({
+    einspeisung_kwh: null,
+    netzbezug_kwh: null,
+  })
+  const markTouched = (name: string) => setTouched(prev => new Set(prev).add(name))
+  const feldFehler = (name: PflichtFeld): string | undefined => {
+    const roh = formData[name]
+    if (roh === '') return 'Pflichtfeld'
+    const n = parseFloat(roh)
+    if (Number.isNaN(n)) return 'Bitte eine Zahl eingeben'
+    if (n < 0) return 'Darf nicht negativ sein'
+    return undefined
+  }
+  const zeigeFehler = (name: PflichtFeld): string | undefined =>
+    (submitted || touched.has(name)) ? feldFehler(name) : undefined
+
+  // Investitionen für diese Anlage laden.
   const { investitionen, loading: invLoading } = useInvestitionen(anlageId)
-  const aktiveInvestitionen = useMemo(
-    () => investitionen.filter(i => i.aktiv),
-    [investitionen]
-  )
 
   // Strompreis für dynamischen Tarif prüfen
   const { strompreis } = useAktuellerStrompreis(anlageId)
   const hatDynamischenTarif = strompreis?.vertragsart === 'dynamisch'
-
-  // Welche Investitionstypen sind vorhanden?
-  const hatSpeicher = aktiveInvestitionen.some(i => i.typ === 'speicher')
-  const hatEAuto = aktiveInvestitionen.some(i => i.typ === 'e-auto')
-  const hatWallbox = aktiveInvestitionen.some(i => i.typ === 'wallbox')
-  const hatWaermepumpe = aktiveInvestitionen.some(i => i.typ === 'waermepumpe')
-  const hatWechselrichter = aktiveInvestitionen.some(i => i.typ === 'wechselrichter')
-  const hatPVModule = aktiveInvestitionen.some(i => i.typ === 'pv-module')
-  const hatBalkonkraftwerk = aktiveInvestitionen.some(i => i.typ === 'balkonkraftwerk')
-  const hatSonstiges = aktiveInvestitionen.some(i => i.typ === 'sonstiges')
 
   // Hilfsfunktion um HA-Basiswert zu finden
   const getHaBasisWert = (feld: string): string => {
@@ -149,8 +173,8 @@ export default function MonatsdatenForm({ monatsdaten, anlageId, onSubmit, onCan
 
   // Basis-Formulardaten
   const [formData, setFormData] = useState({
-    jahr: haVorausfuellung?.jahr?.toString() || monatsdaten?.jahr?.toString() || currentYear.toString(),
-    monat: haVorausfuellung?.monat?.toString() || monatsdaten?.monat?.toString() || currentMonth.toString(),
+    jahr: haVorausfuellung?.jahr?.toString() || monatsdaten?.jahr?.toString() || voreingestellterMonat?.jahr?.toString() || currentYear.toString(),
+    monat: haVorausfuellung?.monat?.toString() || monatsdaten?.monat?.toString() || voreingestellterMonat?.monat?.toString() || currentMonth.toString(),
     einspeisung_kwh: getHaBasisWert('einspeisung') || monatsdaten?.einspeisung_kwh?.toString() || '',
     netzbezug_kwh: getHaBasisWert('netzbezug') || monatsdaten?.netzbezug_kwh?.toString() || '',
     pv_erzeugung_kwh: monatsdaten?.pv_erzeugung_kwh?.toString() || '',
@@ -162,10 +186,48 @@ export default function MonatsdatenForm({ monatsdaten, anlageId, onSubmit, onCan
     netzbezug_durchschnittspreis_cent: monatsdaten?.netzbezug_durchschnittspreis_cent?.toString() || '',
     kraftstoffpreis_euro: monatsdaten?.kraftstoffpreis_euro?.toString() || '',
     gaspreis_cent_kwh: monatsdaten?.gaspreis_cent_kwh?.toString() || '',
-    sonderkosten_euro: monatsdaten?.sonderkosten_euro?.toString() || '',
-    sonderkosten_beschreibung: monatsdaten?.sonderkosten_beschreibung || '',
     notizen: monatsdaten?.notizen || '',
   })
+
+  // G19-1: Basis-Positionen (Anlage-Ebene) — DERSELBE Baustein wie je
+  // Investition. Legacy-Fallback fürs Bearbeiten von Alt-Daten, die die
+  // Start-Migration noch nicht gesehen hat (gleiche Regel wie IMD unten).
+  const [basisPositionen, setBasisPositionen] = useState<SonstigePosition[]>(() => {
+    if (monatsdaten?.sonstige_positionen) return monatsdaten.sonstige_positionen
+    if (monatsdaten?.sonderkosten_euro && monatsdaten.sonderkosten_euro > 0) {
+      return [{
+        bezeichnung: monatsdaten.sonderkosten_beschreibung || 'Sonderkosten (migriert)',
+        betrag: monatsdaten.sonderkosten_euro,
+        typ: 'ausgabe' as const,
+      }]
+    }
+    return []
+  })
+  // Löschsignal-Spur wie bei den IMD-Positionen (#286): hatte der Monat beim
+  // Laden Positionen, muss beim Leeren eine leere Liste ans Backend.
+  const [initialHatteBasisPositionen] = useState(() => (
+    (monatsdaten?.sonstige_positionen?.length ?? 0) > 0
+    || !!(monatsdaten?.sonderkosten_euro && monatsdaten.sonderkosten_euro > 0)
+  ))
+
+  // Nur die im GEWÄHLTEN Monat betriebenen Geräte (Anschaffungs-/Stilllegungs-
+  // Fenster, Backend-SoT `ist_aktiv_im_monat`) — steuert Anzeige UND Prüfungen.
+  // Das aktiv-Flag allein reicht nicht ([[feedback_anschaffungsdatum_grenze]],
+  // [[feedback_aktiv_inaktiv_semantik]]). Reagiert live auf die Zeitraum-Auswahl.
+  const aktiveInvestitionen = useMemo(
+    () => investitionen.filter(i => istAktivImMonat(i, parseInt(formData.jahr), parseInt(formData.monat))),
+    [investitionen, formData.jahr, formData.monat],
+  )
+
+  // Welche Investitionstypen sind im gewählten Monat vorhanden?
+  const hatSpeicher = aktiveInvestitionen.some(i => i.typ === 'speicher')
+  const hatEAuto = aktiveInvestitionen.some(i => i.typ === 'e-auto')
+  const hatWallbox = aktiveInvestitionen.some(i => i.typ === 'wallbox')
+  const hatWaermepumpe = aktiveInvestitionen.some(i => i.typ === 'waermepumpe')
+  const hatWechselrichter = aktiveInvestitionen.some(i => i.typ === 'wechselrichter')
+  const hatPVModule = aktiveInvestitionen.some(i => i.typ === 'pv-module')
+  const hatBalkonkraftwerk = aktiveInvestitionen.some(i => i.typ === 'balkonkraftwerk')
+  const hatSonstiges = aktiveInvestitionen.some(i => i.typ === 'sonstiges')
 
   // Wetter-Daten Auto-Fill
   const [wetterLoading, setWetterLoading] = useState(false)
@@ -325,6 +387,14 @@ export default function MonatsdatenForm({ monatsdaten, anlageId, onSubmit, onCan
     }
 
     initializeAndLoad()
+    // Bewusst OHNE `monatsdaten?.batterie_ladung_kwh`/`batterie_entladung_kwh`:
+    // Trigger dieses Effekts ist die IDENTITÄT des Datensatzes (jahr/monat/anlage),
+    // nicht sein Inhalt. Die beiden Legacy-Werte werden beim Initialisieren nur als
+    // Startwert gelesen (einmalige Verteilung auf Speicher ohne InvestitionMonats-
+    // daten, siehe oben). Als Dep würden sie den Effekt bei jedem Neuladen des
+    // Datensatzes erneut feuern und dabei ungespeicherte Eingaben in
+    // `investitionsDaten` überschreiben.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [aktiveInvestitionen, monatsdaten?.jahr, monatsdaten?.monat, anlageId, haVorausfuellung])
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
@@ -376,6 +446,153 @@ export default function MonatsdatenForm({ monatsdaten, anlageId, onSubmit, onCan
     return { batterieLadung, batterieEntladung, pvErzeugung }
   }, [aktiveInvestitionen, investitionsDaten])
 
+  // ─── Erfassungs-Assistenz (Monatsabschluss-V4 §4) ──────────────────────────
+  // Die Form hängt an DEMSELBEN Backend-Status wie der Wizard (V-a): Felder,
+  // Vorschläge, Quelle und Warnungen kommen aus einer Quelle
+  // (GET /monatsabschluss/{id}/{jahr}/{monat}). Client-Aggregate (PV-berechnet,
+  // Batterie-manuell) bleiben unberührt — die kennt der Status nicht.
+  const [status, setStatus] = useState<MonatsabschlussResponse | null>(null)
+  // Vom Nutzer per „✓ passt" bestätigte Felder (§6.6): geschätzt/weicht-ab → geprüft.
+  // Basis-Felder unter ihrem Namen, Investitionsfelder unter `${invId}:${feld}`.
+  const [bestaetigteFelder, setBestaetigteFelder] = useState<Set<string>>(new Set())
+  const bestaetigeFeld = (name: string) => setBestaetigteFelder(prev => new Set(prev).add(name))
+  const istInvBestaetigt = useCallback(
+    (invId: number, feld: string) => bestaetigteFelder.has(invKey(invId, feld)),
+    [bestaetigteFelder],
+  )
+  const bestaetigeInvFelder = (invId: number, felder: string[]) =>
+    setBestaetigteFelder(prev => {
+      const n = new Set(prev)
+      felder.forEach(f => n.add(invKey(invId, f)))
+      return n
+    })
+
+  useEffect(() => {
+    const j = parseInt(formData.jahr)
+    const m = parseInt(formData.monat)
+    if (!anlageId || !j || !m) return
+    let abgebrochen = false
+    monatsabschlussApi.getStatus(anlageId, j, m)
+      .then(res => { if (!abgebrochen) setStatus(res) })
+      .catch(() => { if (!abgebrochen) setStatus(null) })
+    return () => { abgebrochen = true }
+  }, [anlageId, formData.jahr, formData.monat])
+
+  // Lookups Feld → FeldStatus (Basis/Optionale) bzw. invId → feld → FeldStatus
+  const basisStatus = useMemo(() => {
+    const map: Record<string, FeldStatus> = {}
+    if (status) {
+      for (const f of status.basis_felder) map[f.feld] = f
+      for (const f of status.optionale_felder) map[f.feld] = f
+    }
+    return map
+  }, [status])
+
+  const invStatus = useMemo(() => {
+    const map: Record<number, Record<string, FeldStatus>> = {}
+    if (status) for (const inv of status.investitionen) {
+      map[inv.id] = {}
+      for (const f of inv.felder) map[inv.id][f.feld] = f
+    }
+    return map
+  }, [status])
+
+  // Wechselt beim Statusladen → Ampel-Blöcke remounten mit korrektem Einklapp-Default.
+  const statusMonthKey = status ? `${status.jahr}-${status.monat}` : 'nostatus'
+
+  // D1-Fix (Gernot 2026-07-12): der Backend-Status hat `bedingung_anlage` bereits
+  // aufgelöst (z. B. E-Auto „Heim: PV/Netz" fehlt, wenn eine Wallbox existiert).
+  // Ist der Status geladen, ist SEINE Feldmenge maßgeblich; sonst Fallback auf die
+  // clientseitige Registry.
+  const felderFuer = useCallback((inv: Investition) => {
+    const alle = getFelderFuerInvestition(inv.typ, inv.parameter)
+    const erlaubt = invStatus[inv.id]
+    if (!erlaubt || Object.keys(erlaubt).length === 0) return alle
+    return alle.filter(f => f.feld in erlaubt)
+  }, [invStatus])
+
+  // Kopf-Ampel (§6.2) + Review (§6.6): Zustände über den Pflicht-Kern (Zähler +
+  // Investitionsfelder; Wetter/Preise/Sonderkosten zählen nicht als „offen") und
+  // die vom Status gelieferten Plausibilitäts-Warnungen.
+  const { ampel, reviewWarnungen } = useMemo(() => {
+    const zustaende: ErfassungZustand[] = []
+    const warnungen: ReviewWarnung[] = []
+    if (status) {
+      // Alle Basis-Felder zählen mit ihrem Zustand; leere quellenlose Felder werden
+      // 'optional' und von zaehleAmpel ignoriert (§6.2) → Feld-Badge ≡ Kopf-Ampel.
+      for (const f of status.basis_felder) {
+        const wert = (formData as Record<string, string>)[f.feld] ?? ''
+        zustaende.push(ermittleZustand(wert, f, bestaetigteFelder.has(f.feld)).zustand)
+        for (const w of f.warnungen) {
+          warnungen.push({ feld: f.feld, feldLabel: f.label, meldung: w.meldung, schwere: w.schwere, basis: true })
+        }
+      }
+      for (const inv of aktiveInvestitionen) {
+        const daten = investitionsDaten[inv.id] ?? {}
+        for (const f of felderFuer(inv)) {
+          const fs = invStatus[inv.id]?.[f.feld]
+          zustaende.push(ermittleZustand(readFeldWert(daten, f.feld), fs, istInvBestaetigt(inv.id, f.feld)).zustand)
+          if (fs) for (const w of fs.warnungen) {
+            warnungen.push({ feld: f.feld, feldLabel: `${inv.bezeichnung} · ${f.label}`, meldung: w.meldung, schwere: w.schwere, basis: false })
+          }
+        }
+      }
+    }
+    return { ampel: zaehleAmpel(zustaende), reviewWarnungen: warnungen }
+  }, [status, formData, investitionsDaten, aktiveInvestitionen, invStatus, bestaetigteFelder, felderFuer, istInvBestaetigt])
+
+  const springeZuFeld = (feld: string) => {
+    document.querySelector(`[data-feld="${feld}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }
+  const springeZuOffen = () => {
+    document.querySelector('[data-erfassung-offen]')?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }
+
+  // Prefill R1/R2/R3: sobald Status geladen UND die Investitionsdaten initialisiert
+  // sind, NUR LEERE Felder mit dem besten Vorschlag füllen (Lücken füllen). Bereits
+  // befüllte (gespeicherte/manuelle) Werte bleiben unangetastet → kein stiller
+  // Overwrite (P4/P3b). Einmal je Monat.
+  const prefillRef = useRef<string>('')
+  useEffect(() => {
+    if (!status) return
+    const invReady =
+      aktiveInvestitionen.length === 0 ||
+      aktiveInvestitionen.every(i => investitionsDaten[i.id])
+    if (!invReady) return
+    const key = `${status.jahr}-${status.monat}`
+    if (prefillRef.current === key) return
+    prefillRef.current = key
+
+    setFormData(prev => {
+      const next = { ...prev } as Record<string, string>
+      for (const f of [...status.basis_felder, ...status.optionale_felder]) {
+        if (f.typ === 'text') continue
+        if (f.feld in next && (next[f.feld] ?? '') === '') {
+          const w = prefillWert(f)
+          if (w != null) next[f.feld] = String(w)
+        }
+      }
+      return next as typeof prev
+    })
+
+    setInvestitionsDaten(prev => {
+      const next = { ...prev }
+      for (const inv of status.investitionen) {
+        const cur = next[inv.id]
+        if (!cur) continue
+        const nc = { ...cur }
+        for (const f of inv.felder) {
+          if ((nc[f.feld] ?? '') === '') {
+            const w = prefillWert(f)
+            if (w != null) nc[f.feld] = String(w)
+          }
+        }
+        next[inv.id] = nc
+      }
+      return next
+    })
+  }, [status, investitionsDaten, aktiveInvestitionen])
+
   // Wetterdaten automatisch abrufen
   const fetchWetterdaten = async () => {
     if (!formData.jahr || !formData.monat) {
@@ -418,9 +635,13 @@ export default function MonatsdatenForm({ monatsdaten, anlageId, onSubmit, onCan
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
     setError(null)
+    setSubmitted(true)
 
-    if (!formData.einspeisung_kwh || !formData.netzbezug_kwh) {
-      setError('Bitte Einspeisung und Netzbezug eingeben')
+    // V2: Pflichtfelder prüfen, bei Fehler blockieren + zum ersten scrollen.
+    const pflicht: PflichtFeld[] = ['einspeisung_kwh', 'netzbezug_kwh']
+    const ersterFehler = pflicht.find(feldFehler)
+    if (ersterFehler) {
+      feldRefs.current[ersterFehler]?.scrollIntoView({ behavior: 'smooth', block: 'center' })
       return
     }
 
@@ -504,8 +725,12 @@ export default function MonatsdatenForm({ monatsdaten, anlageId, onSubmit, onCan
         globalstrahlung_kwh_m2: formData.globalstrahlung_kwh_m2 ? parseFloat(formData.globalstrahlung_kwh_m2) : undefined,
         sonnenstunden: formData.sonnenstunden ? parseFloat(formData.sonnenstunden) : undefined,
         durchschnittstemperatur: formData.durchschnittstemperatur ? parseFloat(formData.durchschnittstemperatur) : undefined,
-        sonderkosten_euro: formData.sonderkosten_euro ? parseFloat(formData.sonderkosten_euro) : undefined,
-        sonderkosten_beschreibung: formData.sonderkosten_beschreibung || undefined,
+        // G19-1: Basis-Positionen — gleiche Gültigkeits-/Löschsignal-Regel wie
+        // die IMD-Positionen oben (0-€ mit Bezeichnung legitim, #286).
+        sonstige_positionen: (() => {
+          const gueltige = basisPositionen.filter(p => p.bezeichnung.trim())
+          return (gueltige.length > 0 || initialHatteBasisPositionen) ? gueltige : undefined
+        })(),
         notizen: formData.notizen || undefined,
         investitionen_daten: Object.keys(invDaten).length > 0 ? invDaten : undefined,
       })
@@ -523,7 +748,7 @@ export default function MonatsdatenForm({ monatsdaten, anlageId, onSubmit, onCan
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-6">
+    <form onSubmit={handleSubmit} className="space-y-4" noValidate>
       {error && <Alert type="error">{error}</Alert>}
 
       {/* HA-Vorausfüllung Hinweis */}
@@ -534,9 +759,16 @@ export default function MonatsdatenForm({ monatsdaten, anlageId, onSubmit, onCan
         </Alert>
       )}
 
+      {/* Kopf-Ampel (§6.2) — Gesamtüberblick statt Step-Zähler */}
+      {status && (
+        <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50/60 dark:bg-gray-800/40 px-4 py-2.5">
+          <KopfAmpel ampel={ampel} onSpringeZuOffen={springeZuOffen} />
+          <ZustandLegende />
+        </div>
+      )}
+
       {/* Zeitraum */}
-      <div className="space-y-4">
-        <h3 className="text-sm font-medium text-gray-900 dark:text-white">Zeitraum</h3>
+      <FormSection title="Zeitraum">
         <div className="grid grid-cols-2 gap-4">
           <Input
             label="Jahr"
@@ -559,86 +791,61 @@ export default function MonatsdatenForm({ monatsdaten, anlageId, onSubmit, onCan
             disabled={!!monatsdaten}
           />
         </div>
-      </div>
+      </FormSection>
 
       {/* Energie-Daten */}
-      <div className="space-y-4">
-        <h3 className="text-sm font-medium text-gray-900 dark:text-white">Energie-Daten (kWh)</h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <Input
+      <FormSection title="Energie-Daten (kWh)">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
+          <AssistenzFeld
             label="Einspeisung"
             name="einspeisung_kwh"
-            type="number"
-            step="0.01"
             min="0"
             value={formData.einspeisung_kwh}
-            onChange={handleChange}
-            placeholder="z.B. 450"
+            onChange={(v) => setFormData(prev => ({ ...prev, einspeisung_kwh: v }))}
+            onBlur={() => markTouched('einspeisung_kwh')}
             required
+            error={zeigeFehler('einspeisung_kwh')}
+            feldStatus={basisStatus.einspeisung_kwh}
+            bestaetigt={bestaetigteFelder.has('einspeisung_kwh')}
+            onBestaetigen={() => bestaetigeFeld('einspeisung_kwh')}
+            containerRef={(el) => { feldRefs.current.einspeisung_kwh = el }}
           />
-          <Input
+          <AssistenzFeld
             label="Netzbezug"
             name="netzbezug_kwh"
-            type="number"
-            step="0.01"
             min="0"
             value={formData.netzbezug_kwh}
-            onChange={handleChange}
-            placeholder="z.B. 120"
+            onChange={(v) => setFormData(prev => ({ ...prev, netzbezug_kwh: v }))}
+            onBlur={() => markTouched('netzbezug_kwh')}
             required
+            error={zeigeFehler('netzbezug_kwh')}
+            feldStatus={basisStatus.netzbezug_kwh}
+            bestaetigt={bestaetigteFelder.has('netzbezug_kwh')}
+            onBestaetigen={() => bestaetigeFeld('netzbezug_kwh')}
+            containerRef={(el) => { feldRefs.current.netzbezug_kwh = el }}
           />
           {hatDynamischenTarif && (
-            <Input
+            <AssistenzFeld
               label="Ø Strompreis (dynamisch)"
               name="netzbezug_durchschnittspreis_cent"
-              type="number"
-              step="0.01"
               min="0"
               value={formData.netzbezug_durchschnittspreis_cent}
-              onChange={handleChange}
-              placeholder="z.B. 25.3"
+              onChange={(v) => setFormData(prev => ({ ...prev, netzbezug_durchschnittspreis_cent: v }))}
               hint="Monatsdurchschnitt bei dynamischem Tarif (ct/kWh)"
+              feldStatus={basisStatus.netzbezug_durchschnittspreis_cent}
+            bestaetigt={bestaetigteFelder.has('netzbezug_durchschnittspreis_cent')}
+            onBestaetigen={() => bestaetigeFeld('netzbezug_durchschnittspreis_cent')}
             />
           )}
-          {hatEAuto && (
-            <Input
-              label="Ø Benzinpreis"
-              name="kraftstoffpreis_euro"
-              type="number"
-              step="0.001"
-              min="0"
-              value={formData.kraftstoffpreis_euro}
-              onChange={handleChange}
-              placeholder="z.B. 1.85"
-              hint="€/L — Monatsdurchschnitt für E-Auto-Vergleich"
-            />
-          )}
-          {hatWaermepumpe && (
-            <Input
-              label="Ø Gas-/Ölpreis"
-              name="gaspreis_cent_kwh"
-              type="number"
-              step="0.01"
-              min="0"
-              value={formData.gaspreis_cent_kwh}
-              onChange={handleChange}
-              placeholder="z.B. 11.5"
-              hint="ct/kWh — Monatsdurchschnitt für WP-Vergleich"
-            />
-          )}
-          {/* PV-Erzeugung: readonly wenn PV-Module mit Werten vorhanden, sonst editierbar (Legacy) */}
+          {/* PV-Erzeugung: berechnet → Display (D1, kein Input), sonst editierbar (Legacy) */}
           {(hatPVModule || hatWechselrichter) && berechneteWerte.pvErzeugung > 0 ? (
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              <span className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                 PV-Erzeugung (berechnet)
-              </label>
-              <input
-                type="text"
-                value={`${fmtZahl(berechneteWerte.pvErzeugung, 1)} kWh`}
-                readOnly
-                disabled
-                className="input bg-gray-100 dark:bg-gray-800 cursor-not-allowed"
-              />
+              </span>
+              <div className="flex min-h-[42px] w-full items-center rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-100 dark:bg-gray-800 px-3 py-2 text-gray-900 dark:text-gray-100">
+                {fmtZahl(berechneteWerte.pvErzeugung, 1)} kWh
+              </div>
               <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
                 Aus {hatPVModule ? 'PV-Modulen' : 'Wechselrichtern'}: {fmtZahl(berechneteWerte.pvErzeugung, 1)} kWh
               </p>
@@ -657,7 +864,47 @@ export default function MonatsdatenForm({ monatsdaten, anlageId, onSubmit, onCan
             />
           )}
         </div>
-      </div>
+      </FormSection>
+
+      {/* R20-8 (Rainer): Vergleichspreise NICHT unter „Energie-Daten (kWh)" (sind
+          keine kWh-Bilanz-Größen) → eigene optionale Untergruppe. Reine Gruppierung,
+          Felder/Hinweise/Badges unverändert. Nur wenn eine Vergleichsgröße greift. */}
+      {(hatEAuto || hatWaermepumpe) && (
+        <FormSection
+          title="Vergleichspreise (optional)"
+          description="Monatsdurchschnitte für die Alternativ-Vergleiche (E-Auto / Wärmepumpe) — nicht Teil der kWh-Bilanz."
+        >
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
+            {hatEAuto && (
+              <AssistenzFeld
+                label="Ø Benzinpreis"
+                name="kraftstoffpreis_euro"
+                step="0.001"
+                min="0"
+                value={formData.kraftstoffpreis_euro}
+                onChange={(v) => setFormData(prev => ({ ...prev, kraftstoffpreis_euro: v }))}
+                hint="€/L — Monatsdurchschnitt für E-Auto-Vergleich"
+                feldStatus={basisStatus.kraftstoffpreis_euro}
+                bestaetigt={bestaetigteFelder.has('kraftstoffpreis_euro')}
+                onBestaetigen={() => bestaetigeFeld('kraftstoffpreis_euro')}
+              />
+            )}
+            {hatWaermepumpe && (
+              <AssistenzFeld
+                label="Ø Gas-/Ölpreis"
+                name="gaspreis_cent_kwh"
+                min="0"
+                value={formData.gaspreis_cent_kwh}
+                onChange={(v) => setFormData(prev => ({ ...prev, gaspreis_cent_kwh: v }))}
+                hint="ct/kWh — Monatsdurchschnitt für WP-Vergleich"
+                feldStatus={basisStatus.gaspreis_cent_kwh}
+                bestaetigt={bestaetigteFelder.has('gaspreis_cent_kwh')}
+                onBestaetigen={() => bestaetigeFeld('gaspreis_cent_kwh')}
+              />
+            )}
+          </div>
+        </FormSection>
+      )}
 
       {/* PV-Module (falls vorhanden) */}
       {hatPVModule && (
@@ -670,7 +917,11 @@ export default function MonatsdatenForm({ monatsdaten, anlageId, onSubmit, onCan
           onInvChange={handleInvChange}
           sonstigePositionen={sonstigePositionen}
           onPositionenChange={handlePositionenChange}
-          felderFn={(inv) => getFelderFuerInvestition('pv-module', inv.parameter)}
+          felderFn={felderFuer}
+          feldStatus={(id, f) => invStatus[id]?.[f]}
+          statusMonthKey={statusMonthKey}
+          istBestaetigt={istInvBestaetigt}
+          onBestaetigen={bestaetigeInvFelder}
         />
       )}
 
@@ -685,7 +936,11 @@ export default function MonatsdatenForm({ monatsdaten, anlageId, onSubmit, onCan
           onInvChange={handleInvChange}
           sonstigePositionen={sonstigePositionen}
           onPositionenChange={handlePositionenChange}
-          felderFn={(inv) => getFelderFuerInvestition('wechselrichter', inv.parameter)}
+          felderFn={felderFuer}
+          feldStatus={(id, f) => invStatus[id]?.[f]}
+          statusMonthKey={statusMonthKey}
+          istBestaetigt={istInvBestaetigt}
+          onBestaetigen={bestaetigeInvFelder}
         />
       )}
 
@@ -701,10 +956,14 @@ export default function MonatsdatenForm({ monatsdaten, anlageId, onSubmit, onCan
             onInvChange={handleInvChange}
             sonstigePositionen={sonstigePositionen}
             onPositionenChange={handlePositionenChange}
-            felderFn={(inv) => getFelderFuerInvestition('speicher', inv.parameter)}
+            felderFn={felderFuer}
+            feldStatus={(id, f) => invStatus[id]?.[f]}
+            statusMonthKey={statusMonthKey}
+            istBestaetigt={istInvBestaetigt}
+            onBestaetigen={bestaetigeInvFelder}
           />
           {(berechneteWerte.batterieLadung > 0 || berechneteWerte.batterieEntladung > 0) && (
-            <div className="text-xs text-gray-500 dark:text-gray-400 -mt-2 ml-7">
+            <div className="text-xs text-gray-500 dark:text-gray-400 px-1">
               Summe: Ladung {fmtZahl(berechneteWerte.batterieLadung, 1)} kWh | Entladung {fmtZahl(berechneteWerte.batterieEntladung, 1)} kWh
             </div>
           )}
@@ -722,7 +981,11 @@ export default function MonatsdatenForm({ monatsdaten, anlageId, onSubmit, onCan
           onInvChange={handleInvChange}
           sonstigePositionen={sonstigePositionen}
           onPositionenChange={handlePositionenChange}
-          felderFn={(inv) => getFelderFuerInvestition('e-auto', inv.parameter)}
+          felderFn={felderFuer}
+          feldStatus={(id, f) => invStatus[id]?.[f]}
+          statusMonthKey={statusMonthKey}
+          istBestaetigt={istInvBestaetigt}
+          onBestaetigen={bestaetigeInvFelder}
         />
       )}
 
@@ -737,7 +1000,11 @@ export default function MonatsdatenForm({ monatsdaten, anlageId, onSubmit, onCan
           onInvChange={handleInvChange}
           sonstigePositionen={sonstigePositionen}
           onPositionenChange={handlePositionenChange}
-          felderFn={(inv) => getFelderFuerInvestition('wallbox', inv.parameter)}
+          felderFn={felderFuer}
+          feldStatus={(id, f) => invStatus[id]?.[f]}
+          statusMonthKey={statusMonthKey}
+          istBestaetigt={istInvBestaetigt}
+          onBestaetigen={bestaetigeInvFelder}
         />
       )}
 
@@ -752,7 +1019,11 @@ export default function MonatsdatenForm({ monatsdaten, anlageId, onSubmit, onCan
           onInvChange={handleInvChange}
           sonstigePositionen={sonstigePositionen}
           onPositionenChange={handlePositionenChange}
-          felderFn={(inv) => getFelderFuerInvestition('waermepumpe', inv.parameter)}
+          felderFn={felderFuer}
+          feldStatus={(id, f) => invStatus[id]?.[f]}
+          statusMonthKey={statusMonthKey}
+          istBestaetigt={istInvBestaetigt}
+          onBestaetigen={bestaetigeInvFelder}
         />
       )}
 
@@ -767,7 +1038,11 @@ export default function MonatsdatenForm({ monatsdaten, anlageId, onSubmit, onCan
           onInvChange={handleInvChange}
           sonstigePositionen={sonstigePositionen}
           onPositionenChange={handlePositionenChange}
-          felderFn={(inv) => getFelderFuerInvestition('balkonkraftwerk', inv.parameter)}
+          felderFn={felderFuer}
+          feldStatus={(id, f) => invStatus[id]?.[f]}
+          statusMonthKey={statusMonthKey}
+          istBestaetigt={istInvBestaetigt}
+          onBestaetigen={bestaetigeInvFelder}
           subtitleFn={(inv) => inv.leistung_kwp ? `${inv.leistung_kwp} kWp` : null}
           hinweisFn={(inv) => inv.parameter?.hat_speicher
             ? 'Mit Speicher: Bei Nulleinspeisung entspricht Eigenverbrauch meist der Erzeugung.'
@@ -786,11 +1061,15 @@ export default function MonatsdatenForm({ monatsdaten, anlageId, onSubmit, onCan
           onInvChange={handleInvChange}
           sonstigePositionen={sonstigePositionen}
           onPositionenChange={handlePositionenChange}
-          felderFn={(inv) => getFelderFuerInvestition('sonstiges', inv.parameter)}
+          felderFn={felderFuer}
+          feldStatus={(id, f) => invStatus[id]?.[f]}
+          statusMonthKey={statusMonthKey}
+          istBestaetigt={istInvBestaetigt}
+          onBestaetigen={bestaetigeInvFelder}
           hinweisFn={(inv) => {
             const kat = (inv.parameter?.kategorie as string) || 'erzeuger'
-            const katLabel: Record<string, string> = { erzeuger: 'Erzeuger', verbraucher: 'Verbraucher', speicher: 'Speicher' }
-            const label = katLabel[kat] || kat
+            // SoT-Map (R3b S7); Fallback bewusst der rohe kat-Wert (wie zuvor).
+            const label = SONSTIGES_KATEGORIE_LABELS[kat] || kat
             return inv.parameter?.beschreibung ? `${label} - ${String(inv.parameter.beschreibung)}` : label
           }}
         />
@@ -798,8 +1077,7 @@ export default function MonatsdatenForm({ monatsdaten, anlageId, onSubmit, onCan
 
       {/* Batterie manuell (falls kein Speicher als Investition) */}
       {!hatSpeicher && (
-        <div className="space-y-4">
-          <h3 className="text-sm font-medium text-gray-900 dark:text-white">Batterie (optional)</h3>
+        <FormSection title="Batterie (optional)">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <Input
               label="Batterie Ladung"
@@ -822,16 +1100,12 @@ export default function MonatsdatenForm({ monatsdaten, anlageId, onSubmit, onCan
               placeholder="z.B. 140"
             />
           </div>
-        </div>
+        </FormSection>
       )}
 
       {/* Wetterdaten */}
-      <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <h3 className="text-sm font-medium text-gray-900 dark:text-white flex items-center gap-2">
-            <Cloud className="w-4 h-4" />
-            Wetterdaten (optional)
-          </h3>
+      <FormSection variant="erweitert" title="Wetterdaten (optional)" icon={Cloud}>
+        <div className="flex justify-end mb-3">
           <Button
             type="button"
             variant="secondary"
@@ -847,82 +1121,84 @@ export default function MonatsdatenForm({ monatsdaten, anlageId, onSubmit, onCan
           </Button>
         </div>
         {wetterInfo && (
-          <p className="text-xs text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-800 px-3 py-2 rounded">
+          <p className="text-xs text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-800 px-3 py-2 rounded mb-3">
             {wetterInfo}
           </p>
         )}
-        <div className="grid grid-cols-3 gap-4">
-          <Input
+        <div className="grid grid-cols-3 gap-4 items-start">
+          <AssistenzFeld
             label="Globalstrahlung"
             name="globalstrahlung_kwh_m2"
-            type="number"
             step="0.1"
             min="0"
             value={formData.globalstrahlung_kwh_m2}
-            onChange={handleChange}
-            placeholder="z.B. 152"
+            onChange={(v) => setFormData(prev => ({ ...prev, globalstrahlung_kwh_m2: v }))}
             hint="kWh/m²"
+            feldStatus={basisStatus.globalstrahlung_kwh_m2}
+            bestaetigt={bestaetigteFelder.has('globalstrahlung_kwh_m2')}
+            onBestaetigen={() => bestaetigeFeld('globalstrahlung_kwh_m2')}
           />
-          <Input
+          <AssistenzFeld
             label="Sonnenstunden"
             name="sonnenstunden"
-            type="number"
             step="0.1"
             min="0"
             value={formData.sonnenstunden}
-            onChange={handleChange}
-            placeholder="z.B. 245"
+            onChange={(v) => setFormData(prev => ({ ...prev, sonnenstunden: v }))}
             hint="Stunden"
+            feldStatus={basisStatus.sonnenstunden}
+            bestaetigt={bestaetigteFelder.has('sonnenstunden')}
+            onBestaetigen={() => bestaetigeFeld('sonnenstunden')}
           />
-          <Input
+          <AssistenzFeld
             label="Ø Temperatur"
             name="durchschnittstemperatur"
-            type="number"
             step="0.1"
             value={formData.durchschnittstemperatur}
-            onChange={handleChange}
-            placeholder="z.B. 14.5"
+            onChange={(v) => setFormData(prev => ({ ...prev, durchschnittstemperatur: v }))}
             hint="°C (optional)"
+            feldStatus={basisStatus.durchschnittstemperatur}
+            bestaetigt={bestaetigteFelder.has('durchschnittstemperatur')}
+            onBestaetigen={() => bestaetigeFeld('durchschnittstemperatur')}
           />
         </div>
-      </div>
+      </FormSection>
 
-      {/* Sonderkosten */}
-      <div className="grid grid-cols-2 gap-4">
-        <Input
-          label="Sonderkosten"
-          name="sonderkosten_euro"
-          type="number"
-          step="0.01"
-          min="0"
-          value={formData.sonderkosten_euro}
-          onChange={handleChange}
-          placeholder="z.B. 120.00"
-          hint="€ — Reparatur, Wartung, etc. (optional)"
+      {/* G19-1: Sonstige Erträge & Ausgaben (Anlage-Ebene) + Notizen —
+          DERSELBE Positions-Baustein wie je Investition (eine Code-Wahrheit). */}
+      <FormSection variant="erweitert" title="Sonstige Erträge & Ausgaben + Notizen">
+        <p className="text-xs text-gray-500 dark:text-gray-400">
+          Für Zahlungen auf Anlagen-Ebene, die keiner Komponente zuzuordnen sind —
+          beide Richtungen: Abschlag an den Versorger = Ausgabe · Einspeise-Abschlag
+          vom Netzbetreiber = Ertrag · Guthaben-Auszahlung aus der Jahresabrechnung =
+          Ertrag · Nachzahlung = Ausgabe. Wichtig: Wer Abschläge oder Guthaben erfasst,
+          erfasst die Jahresabrechnung entsprechend reduziert — eedc rechnet Abschläge
+          nicht gegen (sonst zählt derselbe Betrag doppelt).
+        </p>
+        <SonstigePositionenFields
+          positionen={basisPositionen}
+          onChange={setBasisPositionen}
         />
-        <Input
-          label="Sonderkosten Beschreibung"
-          name="sonderkosten_beschreibung"
-          value={formData.sonderkosten_beschreibung}
-          onChange={handleChange}
-          placeholder="z.B. Wechselrichter-Wartung"
-        />
-      </div>
+        <div className="mt-4">
+          <Textarea
+            label="Notizen"
+            name="notizen"
+            value={formData.notizen}
+            onChange={handleChange}
+            rows={2}
+            placeholder="Optionale Bemerkungen..."
+          />
+        </div>
+      </FormSection>
 
-      {/* Notizen */}
-      <div>
-        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-          Notizen
-        </label>
-        <textarea
-          name="notizen"
-          value={formData.notizen}
-          onChange={handleChange}
-          rows={2}
-          className="input"
-          placeholder="Optionale Bemerkungen..."
+      {/* Abschluss-Review (§6.6) — das Tor des „Abschlusses", kein eigener Schritt */}
+      {status && (
+        <AbschlussReview
+          ampel={ampel}
+          warnungen={reviewWarnungen}
+          onSpringeZuFeld={springeZuFeld}
         />
-      </div>
+      )}
 
       {/* Actions */}
       <div className="flex justify-end gap-3 pt-4 border-t border-gray-200 dark:border-gray-700">
@@ -930,7 +1206,7 @@ export default function MonatsdatenForm({ monatsdaten, anlageId, onSubmit, onCan
           Abbrechen
         </Button>
         <Button type="submit" loading={loading}>
-          {monatsdaten ? 'Speichern' : 'Monat erfassen'}
+          {monatsdaten ? 'Speichern & abschließen' : 'Monat erfassen & abschließen'}
         </Button>
       </div>
     </form>

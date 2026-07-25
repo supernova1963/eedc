@@ -9,10 +9,12 @@
  */
 import { useState } from 'react'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts'
-import { CHART_HOVER_CURSOR, SERIE_GEDIMMT, xAchse, yAchse, achsenEinheit, achsenTick, ACHSEN_MARGIN_TOP } from '../lib'
+import { SERIE_GEDIMMT, xAchse, yAchse, achsenEinheit, achsenTick, ACHSEN_MARGIN_TOP } from '../lib'
 import { useSchmaleAchse } from '../hooks'
-import { fmtCalc, ChartTooltip } from '../components/ui'
+import { fmtCalc, SegmentControl, Select, eedcTooltipProps } from '../components/ui'
 import { ExternalLink } from 'lucide-react'
+import { Table, TableHead, TableBody } from '../components/ui/Table'
+import { ZELLE, KOPF_ZELLE } from '../components/ui/tabelleMasse'
 
 export interface VergleichJahr { jahr: number; summe: number }
 
@@ -42,25 +44,22 @@ export function KomponentenVergleich({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <label className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300">
           Vergleichsjahr
-          <select
-            value={vglJahr} onChange={(e) => setVglJahr(Number(e.target.value))}
-            className="min-h-[36px] rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-2 text-sm"
-          >
-            {sortiert.filter((j) => j.jahr !== neuestes.jahr).map((j) => (
-              <option key={j.jahr} value={j.jahr}>{j.jahr}</option>
-            ))}
-          </select>
+          {/* B15/S5: Toolbar-Kontext → Select-SoT in der 32-px-steuer-Variante.
+              F10 (R3b ORD-2): Options absteigend (neueste zuerst) — nur die
+              Options-Quelle drehen; `sortiert` bleibt chronologisch (speist
+              Chart = erlaubte Verlaufs-Ausnahme + neuestes-Ableitung). */}
+          <Select
+            steuer
+            value={String(vglJahr)} onChange={(e) => setVglJahr(Number(e.target.value))}
+            aria-label="Vergleichsjahr"
+            options={[...sortiert].reverse().filter((j) => j.jahr !== neuestes.jahr).map((j) => ({ value: String(j.jahr), label: String(j.jahr) }))}
+          />
         </label>
-        <div className="flex items-center gap-1">
-          {(['diagramm', 'tabelle'] as const).map((m) => (
-            <button key={m} type="button" onClick={() => setModus(m)}
-              className={`min-h-[36px] px-3 rounded-lg text-sm font-medium capitalize ${
-                modus === m
-                  ? 'bg-primary-100 text-primary-700 dark:bg-primary-900/50 dark:text-primary-300'
-                  : 'text-gray-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800/50'
-              }`}>{m === 'diagramm' ? 'Diagramm' : 'Tabelle'}</button>
-          ))}
-        </div>
+        <SegmentControl
+          ariaLabel="Darstellung"
+          optionen={[{ key: 'diagramm', label: 'Diagramm' }, { key: 'tabelle', label: 'Tabelle' }]}
+          value={modus} onChange={setModus}
+        />
       </div>
 
       {deltaPct != null && (
@@ -73,11 +72,12 @@ export function KomponentenVergleich({
       {modus === 'diagramm' ? (
         <div className="h-64">
           <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={sortiert.map((j) => ({ name: String(j.jahr), summe: j.summe }))} margin={{ top: ACHSEN_MARGIN_TOP, right: 8, left: 0, bottom: 0 }}>
+            {/* D12-4: fill je Datum mitgeben → ChartTooltip-Swatch trifft die Balkenfarbe (sonst SERIE_NEUTRAL-Grau). */}
+            <BarChart data={sortiert.map((j) => ({ name: String(j.jahr), summe: j.summe, fill: farbe }))} margin={{ top: ACHSEN_MARGIN_TOP, right: 8, left: 0, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis dataKey="name" {...xAchse(schmal)} /* achsen-allow: Zeit-/Kategorie-Achse (Jahr) */ />
               <YAxis {...yAchse(schmal, 44)} tickFormatter={achsenTick} label={achsenEinheit(einheit)} />
-              <Tooltip cursor={CHART_HOVER_CURSOR} content={<ChartTooltip unit={einheit} decimals={0} />} />
+              <Tooltip {...eedcTooltipProps({ unit: einheit, decimals: 0 })} />
               <Bar dataKey="summe" name={label}>
                 {sortiert.map((j) => (
                   <Cell key={j.jahr} fill={farbe} fillOpacity={j.jahr === neuestes.jahr || j.jahr === ref.jahr ? 1 : SERIE_GEDIMMT} />
@@ -87,29 +87,29 @@ export function KomponentenVergleich({
           </ResponsiveContainer>
         </div>
       ) : (
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="text-left text-gray-400 dark:text-gray-500 border-b border-gray-200 dark:border-gray-700">
-              <th className="py-1 font-medium">Jahr</th>
-              <th className="py-1 font-medium text-right">{label} ({einheit})</th>
-              <th className="py-1 font-medium text-right">Δ vs. {ref.jahr}</th>
+        <Table flaeche="karte">
+          <TableHead>
+            <tr className="text-left text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-700">
+              <th className={`${KOPF_ZELLE} text-left`}>Jahr</th>
+              <th className={`${KOPF_ZELLE} text-right`}>{label} ({einheit})</th>
+              <th className={`${KOPF_ZELLE} text-right`}>Δ vs. {ref.jahr}</th>
             </tr>
-          </thead>
-          <tbody>
+          </TableHead>
+          <TableBody>
             {[...sortiert].reverse().map((j) => {
               const d = ref.summe > 0 ? ((j.summe - ref.summe) / ref.summe) * 100 : null
               return (
                 <tr key={j.jahr} className={`border-b border-gray-100 dark:border-gray-800 ${j.jahr === neuestes.jahr ? 'font-semibold' : ''}`}>
-                  <td className="py-1">{j.jahr}</td>
-                  <td className="py-1 text-right tabular-nums">{fmtCalc(j.summe, 0)}</td>
-                  <td className="py-1 text-right tabular-nums text-gray-500 dark:text-gray-400">
+                  <td className={ZELLE}>{j.jahr}</td>
+                  <td className={`${ZELLE} text-right tabular-nums`}>{fmtCalc(j.summe, 0)}</td>
+                  <td className={`${ZELLE} text-right tabular-nums text-gray-500 dark:text-gray-400`}>
                     {j.jahr === ref.jahr || d == null ? '—' : `${d >= 0 ? '+' : ''}${fmtCalc(d, 1)} %`}
                   </td>
                 </tr>
               )
             })}
-          </tbody>
-        </table>
+          </TableBody>
+        </Table>
       )}
       <Crosslink />
     </div>
@@ -118,7 +118,7 @@ export function KomponentenVergleich({
 
 function Crosslink() {
   return (
-    <a href="#/v4/auswertungen/tabelle" className="inline-flex items-center gap-1 text-sm text-primary-700 dark:text-primary-300 hover:underline">
+    <a href="#/auswertungen/tabelle" className="inline-flex items-center gap-1 text-sm text-primary-700 dark:text-primary-300 hover:underline">
       <ExternalLink className="h-4 w-4" /> Voller Mehrjahres-Vergleich + Export → Auswertungen / Tabelle
     </a>
   )

@@ -6,9 +6,10 @@
  * IST-Seite EINE Code-Wahrheit teilen (Konvergenz). Spalten-Picker (localStorage),
  * Sortierung, CSV-Export, Summenzeile. Reine Darstellung aus `StundenWert[]`.
  */
-import { useState, useEffect, useMemo, useRef } from 'react'
-import { Download, ChevronUp, ChevronDown, ChevronsUpDown, Columns } from 'lucide-react'
-import { Card, Button } from '../ui'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
+import { ChevronUp, ChevronDown, ChevronsUpDown, Columns } from 'lucide-react'
+import { Card, Button, CsvExportButton, Table, TableHead, TableBody, TableFoot } from '../ui'
+import { ZELLE, KOPF_ZELLE } from '../ui/tabelleMasse'
 import { exportToCSV } from '../../utils/export'
 import type { StundenWert, SerieInfo } from '../../api/energie_profil'
 
@@ -64,18 +65,19 @@ const TD_GROUPS: TdGroup[] = ['erzeugung', 'netz', 'verbrauch', 'bilanz', 'quali
 const TD_STORAGE_KEY = 'eedc_tagesprofil_visible_cols'
 
 export function TagWerteTabelle({ daten, extraSerien, datum }: { daten: StundenWert[], extraSerien: SerieInfo[], datum: string }) {
-  const extraErzeuger    = extraSerien.filter(s => s.seite === 'quelle')
-  const extraVerbraucher = extraSerien.filter(s => s.seite === 'senke')
+  // Memoisiert → stabile Referenzen (sonst re-rennt jede abhängige useMemo/useCallback je Render).
+  const extraErzeuger    = useMemo(() => extraSerien.filter(s => s.seite === 'quelle'), [extraSerien])
+  const extraVerbraucher = useMemo(() => extraSerien.filter(s => s.seite === 'senke'), [extraSerien])
 
   // Berechnete Werte pro Stunde
-  function calcGesamterzeugung(s: StundenWert): number {
+  const calcGesamterzeugung = useCallback((s: StundenWert): number => {
     const erzS = extraErzeuger.reduce((a, es) => a + Math.max(0, s.komponenten?.[es.key] ?? 0), 0)
     return round2((s.pv_kw ?? 0) + Math.max(0, s.batterie_kw ?? 0) + erzS)
-  }
-  function calcHausverbrauch(s: StundenWert): number {
+  }, [extraErzeuger])
+  const calcHausverbrauch = useCallback((s: StundenWert): number => {
     const vbrS = extraVerbraucher.reduce((a, es) => a + Math.abs(Math.min(0, s.komponenten?.[es.key] ?? 0)), 0)
     return round2(Math.max(0, (s.verbrauch_kw ?? 0) - (s.waermepumpe_kw ?? 0) - (s.wallbox_kw ?? 0) - vbrS))
-  }
+  }, [extraVerbraucher])
 
   // Sichtbare Spalten aus localStorage
   const [visibleCols, setVisibleCols] = useState<Set<string>>(() => {
@@ -147,7 +149,7 @@ export function TagWerteTabelle({ daten, extraSerien, datum }: { daten: StundenW
       const bv = b.vals[sortKey] ?? (sortDir === 'desc' ? -Infinity : Infinity)
       return sortDir === 'asc' ? av - bv : bv - av
     })
-  }, [daten, sortKey, sortDir, extraSerien])
+  }, [daten, sortKey, sortDir, extraSerien, calcGesamterzeugung, calcHausverbrauch])
 
   // Aktive Spalten in Reihenfolge: TD_COLUMNS + extra Serien (eingebettet in Gruppe)
   const allCols = useMemo(() => {
@@ -246,27 +248,31 @@ export function TagWerteTabelle({ daten, extraSerien, datum }: { daten: StundenW
               </div>
             )}
           </div>
-          <Button variant="secondary" size="sm" onClick={handleExport}>
-            <Download className="h-4 w-4 mr-1.5" />
-            CSV-Export
-          </Button>
+          {/* D13-10: Icon + Wort immer, Breakpoint lg (CsvExportButton-SoT). */}
+          <CsvExportButton onClick={handleExport} />
         </div>
       </div>
 
-      {/* Tabelle */}
-      <div className="overflow-auto max-h-[560px]">
-        <table className="w-full text-xs">
-          <thead className="sticky top-0 z-10 bg-gray-50 dark:bg-gray-800">
+      {/* Tabelle — Zentrale `ui/Table` (Regel T). Vorher: `sticky thead` in einem
+          ScrollSchatten OHNE Höhe ⇒ der Kopf klebte nie (der alte Kommentar
+          „klebt beim Seiten-Scroll" beruhte auf einer CSS-Fehlannahme: sticky
+          haftet am Scroll-Container, nicht am Viewport). Mit dem Höhenfenster
+          (24 Zeilen = fachliche Fenstergröße) kleben Kopf UND Summe.
+          G16-1 („alle 24 h ohne inneres Scrollen") gilt damit nur noch, solange
+          das Fenster unter dem 70dvh-Deckel bleibt — auf flachen Bildschirmen
+          scrollt die Tabelle intern. Bewusst abgenommen (Gernot 2026-07-10). */}
+      <Table zeilen={24} mitFuss flaeche="karte" className="w-full">
+          <TableHead>
             <tr className="border-b border-gray-200 dark:border-gray-700">
               <th
-                className="px-3 py-2 text-left font-medium text-gray-500 dark:text-gray-400 whitespace-nowrap cursor-pointer select-none"
+                className={`${KOPF_ZELLE} text-left text-gray-500 dark:text-gray-400 cursor-pointer select-none`}
                 onClick={() => { setSortKey(null); setSortDir('asc') }}
               >
                 <span className="flex items-center gap-1">Std {!sortKey && <ChevronUp className="h-3 w-3 text-primary-500" />}</span>
               </th>
               {allCols.map(c => (
                 <th key={c.key}
-                  className="px-2 py-2 text-right font-medium text-gray-500 dark:text-gray-400 whitespace-nowrap cursor-pointer select-none hover:text-gray-700 dark:hover:text-gray-200"
+                  className={`${KOPF_ZELLE} text-right text-gray-500 dark:text-gray-400 cursor-pointer select-none hover:text-gray-700 dark:hover:text-gray-200`}
                   onClick={() => handleSort(c.key)}
                 >
                   <span className="flex items-center justify-end gap-1">
@@ -277,31 +283,31 @@ export function TagWerteTabelle({ daten, extraSerien, datum }: { daten: StundenW
                 </th>
               ))}
             </tr>
-          </thead>
-          <tbody>
+          </TableHead>
+          <TableBody>
             {rows.map(({ h, vals }) => (
               <tr key={h} className="border-b border-gray-100 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-800/40">
-                <td className="px-3 py-1.5 font-medium text-gray-600 dark:text-gray-300 whitespace-nowrap tabular-nums">{h}:00</td>
+                <td className={`${ZELLE} font-medium text-gray-600 dark:text-gray-300 tabular-nums`}>{h}:00</td>
                 {allCols.map(c => (
-                  <td key={c.key} className="px-2 py-1.5 text-right tabular-nums text-gray-700 dark:text-gray-300">
+                  <td key={c.key} className={`${ZELLE} text-right tabular-nums text-gray-700 dark:text-gray-300`}>
                     {cell(vals[c.key], c.decimals)}
                   </td>
                 ))}
               </tr>
             ))}
-          </tbody>
-          <tfoot>
-            <tr className="border-t-2 border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-800 font-semibold sticky bottom-0">
-              <td className="px-3 py-2 text-gray-500 dark:text-gray-400">Σ kWh</td>
+          </TableBody>
+          <TableFoot>
+            {/* Betonung + deckender Grund kommen aus der Zentrale (FUSS_GRUND). */}
+            <tr>
+              <td className={`${ZELLE} text-gray-500 dark:text-gray-400`}>Σ kWh</td>
               {allCols.map(c => (
-                <td key={c.key} className="px-2 py-2 text-right tabular-nums text-gray-700 dark:text-gray-200">
+                <td key={c.key} className={`${ZELLE} text-right tabular-nums text-gray-700 dark:text-gray-200`}>
                   {cell(summen[c.key], c.decimals)}
                 </td>
               ))}
             </tr>
-          </tfoot>
-        </table>
-      </div>
+          </TableFoot>
+      </Table>
     </Card>
   )
 }

@@ -6,16 +6,16 @@
  * (HA-artig: von/bis); Vergleich Aus|Vorjahr.
  */
 import type { ReactNode } from 'react'
+import { DatumPicker } from '../components/ui/DatumPicker'
+// STEUER_H (32-px-Toolbar-Höhe) lebt seit R3b S5 im lib-SoT-Modul `komponentenStyle`.
+import { STEUER_H } from '../lib/komponentenStyle'
+import { SegmentControl } from '../components/ui/SegmentControl'
+import Select from '../components/ui/Select'
 
-/**
- * STEUER_H — EINE einheitliche Höhe (32 px) für ALLE Bedien-Elemente einer
- * Filter-/Toolbar-Leiste (Chips, Toggle-Pillen, `<input>`, `<select>`). Behebt
- * detLAN #27 Punkt 2 „unterschiedliche Höhen in einer Reihe" (Chips waren 24 px,
- * Inputs 32 px, Selects 39 px) ohne die D7-7-Aktions-Buttons (44 px) anzufassen.
- * Pillen/Buttons brauchen zusätzlich `inline-flex items-center`, `.input`-Felder
- * `py-0`, damit die feste Höhe greift.
- */
-export const STEUER_H = 'h-8'
+// D12-8: kleinerer/größerer der beiden ISO-Werte (lexikografisch, gilt für YYYY-MM
+// wie YYYY-MM-DD) — `undefined`, wenn keiner gesetzt ist, damit `max`/`min` entfällt.
+const kleinerVon = (a?: string, b?: string) => (a && b ? (a < b ? a : b) : a || b || undefined)
+const groesserVon = (a?: string, b?: string) => (a && b ? (a > b ? a : b) : a || b || undefined)
 
 export interface ZeitChip {
   label: string
@@ -26,7 +26,7 @@ export interface ZeitChip {
 }
 
 export function WerkbankZeitraum({
-  modus, von, bis, onRange, vergleich, onVergleich, vergleichSlot, chips, extra,
+  modus, von, bis, onRange, vergleich, onVergleich, vergleichSlot, chips, extra, minDatum, maxDatum,
 }: {
   modus: 'monat' | 'tag'
   von: string
@@ -40,8 +40,11 @@ export function WerkbankZeitraum({
   chips: ZeitChip[]
   /** optionaler Slot rechts (z. B. Status). */
   extra?: ReactNode
+  /** D12-8: harte Untergrenze für beide Felder (YYYY-MM bzw. YYYY-MM-DD), je nach `modus`. */
+  minDatum?: string
+  /** D12-8: harte Obergrenze für beide Felder (YYYY-MM bzw. YYYY-MM-DD), je nach `modus`. */
+  maxDatum?: string
 }) {
-  const inputType = modus === 'monat' ? 'month' : 'date'
   return (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/40 px-3 py-2">
       {chips.length > 0 && (
@@ -63,28 +66,39 @@ export function WerkbankZeitraum({
         </div>
       )}
 
-      <div className="flex items-center gap-1.5 text-sm">
-        <span className="text-xs text-gray-500 dark:text-gray-400">Zeitraum</span>
-        <input type={inputType} value={von} max={bis || undefined}
-          onChange={(e) => onRange(e.target.value, bis)} aria-label="Von" className={`input w-auto ${STEUER_H} py-0 text-sm`} />
-        <span className="text-gray-400">–</span>
-        <input type={inputType} value={bis} min={von || undefined}
-          onChange={(e) => onRange(von, e.target.value)} aria-label="Bis" className={`input w-auto ${STEUER_H} py-0 text-sm`} />
+      {/* D11-5: zwei type=month/date-Felder passen mobil nicht nebeneinander → auf
+          schmal 2 Zeilen „Zeitraum von:/bis:" (Feld volle Breite), ab sm inline
+          „Zeitraum [von] – [bis]". D11-4: Rand an die nicht-aktiven Chips angleichen. */}
+      <div className="flex flex-col sm:flex-row sm:items-center gap-1.5 text-sm w-full sm:w-auto">
+        <span className="hidden sm:inline text-xs text-gray-500 dark:text-gray-400">Zeitraum</span>
+        <label className="flex items-center gap-1.5 w-full sm:w-auto">
+          <span className="sm:hidden text-xs text-gray-500 dark:text-gray-400 w-24 shrink-0">Zeitraum von:</span>
+          {/* D12-8: von-Feld nach unten durch `minDatum` (ältester verfügbarer Zeitpunkt,
+              analog CockpitTagV4 R5-F2), nach oben durch `bis`/`maxDatum` begrenzt —
+              verhindert Phantasie-Jahre wie „1822". String-Vergleich gilt für YYYY-MM
+              wie YYYY-MM-DD. D13-4/12: EIN Custom-DatumPicker (SoT) für Monat UND Tag
+              — gleiches Icon/Stil app-weit statt Custom-Monat + nativem Tagesfeld. */}
+          <DatumPicker modus={modus} value={von} min={minDatum} max={kleinerVon(bis, maxDatum)}
+            onChange={(v) => onRange(v, bis)} ariaLabel="Von" className={`w-full sm:w-auto ${STEUER_H} text-sm`} />
+        </label>
+        <span className="hidden sm:inline text-gray-400 dark:text-gray-500">–</span>
+        <label className="flex items-center gap-1.5 w-full sm:w-auto">
+          <span className="sm:hidden text-xs text-gray-500 dark:text-gray-400 w-24 shrink-0">Zeitraum bis:</span>
+          {/* D12-8: bis-Feld nach unten durch `von`/`minDatum`, nach oben durch `maxDatum`. */}
+          <DatumPicker modus={modus} value={bis} min={groesserVon(von, minDatum)} max={maxDatum}
+            onChange={(v) => onRange(von, v)} ariaLabel="Bis" className={`w-full sm:w-auto ${STEUER_H} text-sm`} />
+        </label>
       </div>
 
       {vergleichSlot ? vergleichSlot : onVergleich && (
         <div className="flex items-center gap-1.5">
           <span className="text-xs text-gray-500 dark:text-gray-400">Vergleich</span>
-          <div className="inline-flex rounded-md border border-gray-200 dark:border-gray-700 overflow-hidden">
-            <button type="button" onClick={() => onVergleich(false)}
-              className={`px-2.5 ${STEUER_H} inline-flex items-center text-xs font-medium transition-colors ${!vergleich ? 'bg-primary-600 text-white' : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'}`}>
-              Aus
-            </button>
-            <button type="button" onClick={() => onVergleich(true)}
-              className={`px-2.5 ${STEUER_H} inline-flex items-center text-xs font-medium transition-colors ${vergleich ? 'bg-primary-600 text-white' : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'}`}>
-              Vorjahr
-            </button>
-          </div>
+          <SegmentControl
+            ariaLabel="Vergleich" size="sm" radius="md"
+            optionen={[{ key: 'aus', label: 'Aus' }, { key: 'vorjahr', label: 'Vorjahr' }]}
+            value={vergleich ? 'vorjahr' : 'aus'}
+            onChange={(k) => onVergleich(k === 'vorjahr')}
+          />
         </div>
       )}
 
@@ -131,10 +145,12 @@ export function VergleichLeisteTag({
         ))}
       </div>
       {modus === 'periodeImJahr' && (
-        <select value={jahr} onChange={(e) => onJahr(Number(e.target.value))}
-          aria-label="Vergleichsjahr" className={`input w-auto ${STEUER_H} py-0 text-sm`}>
-          {jahre.map((j) => <option key={j} value={j}>{j}</option>)}
-        </select>
+        <Select
+          steuer
+          value={String(jahr)} onChange={(e) => onJahr(Number(e.target.value))}
+          aria-label="Vergleichsjahr"
+          options={jahre.map((j) => ({ value: String(j), label: String(j) }))}
+        />
       )}
     </div>
   )

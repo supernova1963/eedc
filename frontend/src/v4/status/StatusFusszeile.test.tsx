@@ -3,17 +3,20 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { StatusFusszeile } from './StatusFusszeile'
 import { AppStatusProvider, useReportDatenStatus, type SichtStatus } from './AppStatusContext'
+import { WizardSteuerungContext } from '../wizardHost'
 
 // Global-Zone-Quellen mocken (Shell-Ebene, P2).
 const checkUpdate = vi.fn()
 const getNaechsterMonat = vi.fn()
 const getMqttStatus = vi.fn()
 const datenCheck = vi.fn()
+const getAnlage = vi.fn()
 
 vi.mock('../../api/system', () => ({ systemApi: { checkUpdate: () => checkUpdate() } }))
 vi.mock('../../api/monatsabschluss', () => ({ monatsabschlussApi: { getNaechsterMonat: () => getNaechsterMonat() } }))
 vi.mock('../../api/liveDashboard', () => ({ liveDashboardApi: { getMqttStatus: () => getMqttStatus() } }))
 vi.mock('../../api/datenChecker', () => ({ datenCheckerApi: { check: () => datenCheck() } }))
+vi.mock('../../api/anlagen', () => ({ anlagenApi: { get: () => getAnlage() } }))
 vi.mock('../../hooks', () => ({ useSelectedAnlage: () => ({ selectedAnlage: { id: 7 } }) }))
 
 beforeEach(() => {
@@ -21,6 +24,7 @@ beforeEach(() => {
   getNaechsterMonat.mockResolvedValue(null)
   getMqttStatus.mockResolvedValue({ subscriber_aktiv: false })
   datenCheck.mockResolvedValue({ zusammenfassung: { error: 0, warning: 0, info: 0, ok: 5 } })
+  getAnlage.mockResolvedValue({ id: 7, community_hash: null })
 })
 
 /** Hilfs-Sicht, die einen Status meldet — simuliert eine echte v4-Sicht. */
@@ -32,10 +36,14 @@ function MeldeSicht({ status }: { status: SichtStatus }) {
 function renderMit(status: SichtStatus, search = '') {
   return render(
     <MemoryRouter initialEntries={[`/v4/cockpit/live${search}`]}>
-      <AppStatusProvider>
-        <MeldeSicht status={status} />
-        <StatusFusszeile />
-      </AppStatusProvider>
+      {/* E1: der Monatsabschluss-Deep-Link hängt am app-weiten Wizard-Öffner
+          (WizardOverlayProvider in LayoutV4) — im Test als leichter Stub. */}
+      <WizardSteuerungContext.Provider value={vi.fn()}>
+        <AppStatusProvider>
+          <MeldeSicht status={status} />
+          <StatusFusszeile />
+        </AppStatusProvider>
+      </WizardSteuerungContext.Provider>
     </MemoryRouter>,
   )
 }
@@ -68,10 +76,19 @@ describe('StatusFusszeile — Sicht-Zone (P1)', () => {
 })
 
 describe('StatusFusszeile — Global-Zone (P2)', () => {
-  it('zeigt das Versions-Update-Symbol nur bei verfügbarem Update', async () => {
+  it('zeigt das Versions-Update-Symbol (info) bei verfügbarem Update', async () => {
     checkUpdate.mockResolvedValue({ update_verfuegbar: true, aktuelle_version: '3.45.5', neueste_version: '3.46.0', release_url: 'https://x/y' })
     renderMit({})
     expect(await screen.findByLabelText(/eedc v3\.46\.0 verfügbar/)).toBeInTheDocument()
+  })
+
+  it('zeigt die Version IMMER — neutral mit „aktuell"-Popover ohne Update (SPEC 9.1)', async () => {
+    renderMit({})
+    const btn = await screen.findByLabelText('eedc v3.45.5')
+    fireEvent.click(btn)
+    expect(screen.getByRole('dialog')).toHaveTextContent('eedc ist aktuell')
+    // Kein Update → kein „Öffnen"-Link im Versions-Popover.
+    expect(screen.queryByText('Öffnen →')).not.toBeInTheDocument()
   })
 
   it('zeigt offenen Monatsabschluss (warning) mit Deep-Link', async () => {
@@ -80,6 +97,31 @@ describe('StatusFusszeile — Global-Zone (P2)', () => {
     const btn = await screen.findByLabelText('Monatsabschluss offen')
     fireEvent.click(btn)
     expect(screen.getByRole('dialog')).toHaveTextContent('Dezember 2025')
+    expect(screen.getByText('Öffnen →')).toBeInTheDocument()
+  })
+
+  it('R14-10: Monatsabschluss-Symbol bleibt auch ohne offenen Monat sichtbar', async () => {
+    getNaechsterMonat.mockResolvedValue(null)
+    renderMit({})
+    const btn = await screen.findByLabelText('Monatsabschluss')
+    fireEvent.click(btn)
+    expect(screen.getByRole('dialog')).toHaveTextContent('Alle Monate sind abgeschlossen.')
+  })
+
+  it('Community geteilt: grünes Users-Symbol mit Popover (Gernot 2026-07-03)', async () => {
+    getAnlage.mockResolvedValue({ id: 7, community_hash: 'abc123' })
+    renderMit({})
+    const btn = await screen.findByLabelText('Community: Anlage wird geteilt')
+    fireEvent.click(btn)
+    expect(screen.getByRole('dialog')).toHaveTextContent('Community-Benchmark')
+  })
+
+  it('Community nicht geteilt: rot durchgestrichen + Deep-Link Stammdaten', async () => {
+    getAnlage.mockResolvedValue({ id: 7, community_hash: null })
+    renderMit({})
+    const btn = await screen.findByLabelText('Community: Anlage wird nicht geteilt')
+    fireEvent.click(btn)
+    expect(screen.getByRole('dialog')).toHaveTextContent('teilt keine Daten')
     expect(screen.getByText('Öffnen →')).toBeInTheDocument()
   })
 

@@ -12,7 +12,7 @@
  *
  * SoT: docs/drafts/SPEC-ELEMENT-LAYOUT-PAPIERKORB.md
  */
-import { useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { ParkingSquare } from 'lucide-react'
 import { usePark } from './ParkContext'
 
@@ -37,6 +37,12 @@ export function Parkbar({
   const [overlay, setOverlay] = useState(false)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const start = useRef<{ x: number; y: number } | null>(null)
+
+  // R17-5: als parkbares Element anmelden (auch wenn gerade geparkt → diese Instanz
+  // rendert unten `null`, bleibt aber montiert und damit gezählt). Stabile
+  // `registriere`-Referenz → läuft einmal pro Mount, kein Churn bei Park-State-Wechsel.
+  const registriere = park.registriere
+  useEffect(() => registriere(id), [registriere, id])
 
   // Inert ohne Provider bzw. wenn geparkt → nichts an der kanonischen Stelle.
   if (!park.aktiv) return className ? <div className={className}>{children}</div> : <>{children}</>
@@ -75,7 +81,18 @@ export function Parkbar({
 
   return (
     <div
-      className={`relative h-full${className ? ` ${className}` : ''}`}
+      // Selbst-Entdeckung für den Laufzeit-Leerblock-Gate (scripts/park-leertest.mjs):
+      // jedes gerenderte parkbare Element trägt seine ID im DOM → keine Hand-ID-Liste,
+      // driftfrei. Nur im aktiven+ungeparkten Zweig (geparkt → null; ohne Provider → v3
+      // rendert ohne diesen Wrapper, also kein Attribut).
+      data-park-id={id}
+      // D18-4 (detlan #210, @402px gemessen): KEIN h-full mehr — als direktes
+      // Grid-/Flex-Kind streckt der Container-Stretch (align-items) die Parkbar
+      // ohnehin; height:100% griff dagegen auch in GESTAPELTEN Spalten auf die
+      // Zeilenhöhe des Bilanz-Grids durch (224px-Wrapper um 16px Inhalt = detlans
+      // „halbe Bildschirmhöhe leere Karte"). Aufrufer, die Füllung brauchen,
+      // geben sie per className mit.
+      className={`relative${className ? ` ${className}` : ''}`}
       onContextMenu={onContextMenu}
       onTouchStart={onTouchStart}
       onTouchMove={onTouchMove}

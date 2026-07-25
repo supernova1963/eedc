@@ -1,7 +1,7 @@
 import { forwardRef, ButtonHTMLAttributes } from 'react'
 import { Loader2 } from 'lucide-react'
 
-type ButtonVariant = 'primary' | 'secondary' | 'danger' | 'ghost'
+type ButtonVariant = 'primary' | 'secondary' | 'danger' | 'ghost' | 'amber'
 type ButtonSize = 'sm' | 'md' | 'lg' | 'icon'
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
@@ -15,6 +15,12 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 // zu hoch / reingequetscht" (CSV-Export im kompakten Block-Kopf neben 32-px-Nav-Icons).
 // `min-h-[36px]` im Basis-Stil → alle Größen gleich hoch (sm/md/lg variieren nur
 // Padding/Schrift). Filter-Controls (Pillen/Inputs/Selects) liegen bei 32 px (STEUER_H).
+//
+// D14-14 (detLAN #116, Gernot-Entscheid 2026-07-03) — Kontext-Regel Icons mobil:
+// CSV-/PDF-/Export-Buttons behalten IMMER Icon + Wort (CsvExportButton-SoT bzw.
+// PDF-Primäraktion); ANDERE mehrwortige Aktions-Buttons verlieren < 640 px ihr
+// vorangestelltes Icon (`max-sm:hidden` an der Icon-Klasse), damit der Text
+// einzeilig bleibt. Lauf-Spinner (Loader2) bleiben als Aktivitäts-Signal sichtbar.
 const baseStyles = 'inline-flex items-center justify-center font-medium rounded-lg transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95 min-h-[36px]'
 
 const variants: Record<ButtonVariant, string> = {
@@ -22,6 +28,10 @@ const variants: Record<ButtonVariant, string> = {
   secondary: 'bg-gray-200 text-gray-900 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-100 dark:hover:bg-gray-600 focus:ring-gray-500',
   danger: 'bg-red-600 text-white hover:bg-red-700 focus:ring-red-500',
   ghost: 'text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700 focus:ring-gray-500',
+  // amber: Identitäts-Variante des Erst-Setup-Gates (Setup-Wizard) — dieselbe
+  // Achse wie Stepper `akzent="amber"` (Gernot 2026-07-17). Außerhalb des
+  // Setup-Chromes nicht verwenden; Primäraktionen der App bleiben `primary`.
+  amber: 'bg-amber-500 text-white hover:bg-amber-600 focus:ring-amber-500',
 }
 
 const sizes: Record<ButtonSize, string> = {

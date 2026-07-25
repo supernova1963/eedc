@@ -15,8 +15,9 @@ import {
 } from 'recharts'
 import ChartTooltip from '../ui/ChartTooltip'
 import { ChartLegende } from '../ui'
-import { MONAT_KURZ, SAISON_FENSTER, SERIEN_PALETTE, CHART_HOVER_CURSOR, SERIE_GEDIMMT, achsenEinheit, achsenTick, ACHSEN_MARGIN_TOP, fmtZahl } from '../../lib'
+import { MONAT_KURZ, SAISON_FENSTER, SERIEN_PALETTE, CHART_HOVER_CURSOR, SERIE_GEDIMMT, xAchse, yAchse, achsenEinheit, achsenTick, ACHSEN_MARGIN_TOP, fmtZahl } from '../../lib'
 import type { InvestitionMonatsdaten } from '../../api/investitionen'
+import { useLegendenToggle } from '../../hooks'
 
 function Toggle({ aktiv, aktivKlasse, onClick, children, title }: {
   aktiv: boolean; aktivKlasse: string; onClick: () => void; children: string; title?: string
@@ -35,6 +36,8 @@ export function WaermepumpeVergleich({ monatsdaten, hatGetrennteStrom }: {
   const [modus, setModus] = useState<'jaz' | 'strom'>('strom')
   const [achse, setAchse] = useState<'monate' | 'saison'>('monate')
   const [fenster, setFenster] = useState<keyof typeof SAISON_FENSTER>('winter')
+  // B7-Legenden-Toggle (Monate-Zweig, Serie = Jahr); Reset bei Modus-/Achsen-Wechsel.
+  const legende = useLegendenToggle(`${modus}:${achse}`)
 
   const jahre = [...new Set(monatsdaten.map((md) => md.jahr))].sort((a, b) => a - b)
   const jahrFarben = SERIEN_PALETTE
@@ -64,7 +67,7 @@ export function WaermepumpeVergleich({ monatsdaten, hatGetrennteStrom }: {
   const saisonData = (() => {
     if (jahre.length === 0) return []
     const minJ = jahre[0], maxJ = jahre[jahre.length - 1]
-    const rows: { name: string; value: number | null; label: string; vollstaendig: boolean }[] = []
+    const rows: { name: string; value: number | null; label: string; vollstaendig: boolean; fill: string }[] = []
     for (let startJahr = minJ - 1; startJahr <= maxJ; startJahr++) {
       let sumStrom = 0, sumWaerme = 0, monateMitDaten = 0
       for (const m of cfg.monate) {
@@ -93,6 +96,8 @@ export function WaermepumpeVergleich({ monatsdaten, hatGetrennteStrom }: {
         value: wert,
         label: wert == null ? '' : (modus === 'jaz' ? fmtZahl(wert, 2) : wert.toLocaleString('de-DE')),
         vollstaendig,
+        // D12-4: Farbe je Saison-Instanz in die Daten → ChartTooltip-Swatch trifft den Balken (sonst SERIE_NEUTRAL-Grau).
+        fill: jahrFarben[rows.length % jahrFarben.length],
       })
     }
     return rows
@@ -131,19 +136,26 @@ export function WaermepumpeVergleich({ monatsdaten, hatGetrennteStrom }: {
             {achse === 'monate' ? (
               <BarChart data={monatData} margin={{ top: ACHSEN_MARGIN_TOP }}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                <XAxis dataKey="name" tick={{ fontSize: 10 }} /* achsen-allow: Zeit-/Kategorie-Achse (Monat) */ />
-                <YAxis domain={modus === 'jaz' ? [0, 6] : undefined} tick={{ fontSize: 10 }} tickFormatter={achsenTick} label={achsenEinheit(modus === 'jaz' ? 'JAZ' : 'kWh')} />
+                <XAxis dataKey="name" {...xAchse()} /* achsen-allow: Zeit-/Kategorie-Achse (Monat) */ />
+                <YAxis domain={modus === 'jaz' ? [0, 6] : undefined} {...yAchse(false)} tickFormatter={achsenTick} label={achsenEinheit(modus === 'jaz' ? 'JAZ' : 'kWh')} />
                 <Tooltip cursor={CHART_HOVER_CURSOR} content={<ChartTooltip formatter={(v) => modus === 'jaz' ? fmtZahl(v, 2) : `${v} kWh`} />} />
-                <Legend content={<ChartLegende />} />
+                <Legend content={<ChartLegende onItemClick={legende.onItemClick} />} />
                 {jahre.map((jahr, i) => (
-                  <Bar key={jahr} dataKey={`val_${jahr}`} name={`${jahr}`} fill={jahrFarben[i % jahrFarben.length]} />
+                  <Bar key={jahr} dataKey={`val_${jahr}`} name={`${jahr}`} fill={jahrFarben[i % jahrFarben.length]} hide={legende.istVersteckt(`val_${jahr}`)} />
                 ))}
               </BarChart>
             ) : (
-              <BarChart data={saisonData} margin={{ top: ACHSEN_MARGIN_TOP, right: 8, left: 0, bottom: 0 }}>
+              // D17-4: SoT-Margin wie der Monats-Modus (die früheren left:0/bottom:0-Overrides
+              // schnitten die längeren, −45°-gedrehten Saison-Labels „23/24 (3/4)" ab).
+              // BEWUSST OHNE Legende: der Saison-Modus ist EINE Serie (JAZ bzw. Strom) mit
+              // per-Instanz-Farben je Saison — jede Scheibe/Balken IST über die X-Achse +
+              // Wert-Label beschriftet; eine Farb-Legende dazu wäre eine Doppel-Beschriftung
+              // (Style-Guide B7). Die Blass-Dimmung erklärt der Fuß-Hinweis. (check:charts
+              // erlaubt Einzelserien ohne Legende.)
+              <BarChart data={saisonData} margin={{ top: ACHSEN_MARGIN_TOP }}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                <XAxis dataKey="name" tick={{ fontSize: 10 }} /* achsen-allow: Zeit-/Kategorie-Achse (Saison) */ />
-                <YAxis domain={modus === 'jaz' ? [0, 6] : undefined} tick={{ fontSize: 10 }} tickFormatter={achsenTick} label={achsenEinheit(modus === 'jaz' ? 'JAZ' : 'kWh')} />
+                <XAxis dataKey="name" {...xAchse()} /* achsen-allow: Zeit-/Kategorie-Achse (Saison) */ />
+                <YAxis domain={modus === 'jaz' ? [0, 6] : undefined} {...yAchse(false)} tickFormatter={achsenTick} label={achsenEinheit(modus === 'jaz' ? 'JAZ' : 'kWh')} />
                 <Tooltip cursor={CHART_HOVER_CURSOR} content={<ChartTooltip formatter={(v) => modus === 'jaz' ? fmtZahl(v, 2) : `${v} kWh`} />} />
                 <Bar dataKey="value" name={modus === 'jaz' ? 'JAZ' : 'Strom'}>
                   {saisonData.map((s, i) => (

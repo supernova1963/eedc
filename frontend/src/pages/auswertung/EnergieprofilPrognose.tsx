@@ -10,9 +10,12 @@ import {
   Tooltip, Legend, ResponsiveContainer, ReferenceLine,
 } from 'recharts'
 import { Calendar, Battery, Zap, Sun, ArrowDown, ArrowUp, Info } from 'lucide-react'
-import { Card, Alert, KPICard, ChartLegende } from '../../components/ui'
+import { Card, Alert, KPICard, ChartLegende, Table, TableHead, TableBody, TableFoot } from '../../components/ui'
+import { ZELLE, KOPF_ZELLE } from '../../components/ui/tabelleMasse'
+import { DatumPicker } from '../../components/ui/DatumPicker'
 import { COLORS, CHART_COLORS, achsenEinheit, achsenTick, ACHSEN_MARGIN_TOP, fmtZahl } from '../../lib'
 import { useChartTheme } from '../../context/ThemeContext'
+import { useLegendenToggle } from '../../hooks'
 import { energieProfilApi, type TagesPrognose } from '../../api/energie_profil'
 
 interface Props {
@@ -82,15 +85,14 @@ export function EnergieprofilPrognose({ anlageId }: Props) {
     <div className="space-y-4">
       {/* Datum-Picker */}
       <div className="flex items-center gap-3 flex-wrap">
-        <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Prognose für:</label>
-        <input
-          type="date"
-          aria-label="Prognose-Datum"
+        <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Prognose für:</span>
+        <DatumPicker
+          modus="tag"
           value={datum}
           min={heuteISO()}
           max={maxDatum}
-          onChange={e => setDatum(e.target.value)}
-          className="input w-auto text-sm"
+          onChange={setDatum}
+          ariaLabel="Prognose-Datum"
         />
         <button
           type="button"
@@ -148,15 +150,9 @@ export function PrognoseChartKarte({ daten }: { daten: TagesPrognose }) {
     soc: s.soc_prozent,
   })), [daten])
   // R5-5c (Rainer): Serien per Legende an/aus — insb. die SoC-Linie, die manche
-  // im Prognose-Chart nicht brauchen. Klick auf einen Legenden-Eintrag blendet
-  // die Serie aus (Recharts `hide` → Eintrag wird gedimmt); SoT-Muster aus
-  // components/live/TagesverlaufChart. Nicht entfernen, nur abschaltbar.
-  const [versteckt, setVersteckt] = useState<Set<string>>(new Set())
-  const toggleSerie = (key: string) => setVersteckt((prev) => {
-    const next = new Set(prev)
-    if (next.has(key)) next.delete(key); else next.add(key)
-    return next
-  })
+  // im Prognose-Chart nicht brauchen (B7-Standard, SoT-Hook). Nicht entfernen,
+  // nur abschaltbar.
+  const { istVersteckt, onItemClick } = useLegendenToggle()
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
@@ -177,22 +173,26 @@ export function PrognoseChartKarte({ daten }: { daten: TagesPrognose }) {
           <span>Verbrauch: {VERBRAUCH_BASIS_LABELS[daten.verbrauch_basis] ?? daten.verbrauch_basis} ({daten.daten_tage} Tage)</span>
         </div>
         <ResponsiveContainer width="100%" height={360}>
-          <ComposedChart data={chartDaten} margin={{ top: ACHSEN_MARGIN_TOP, right: hatSpeicher ? 50 : 10, left: -10, bottom: 5 }}>
+          {/* D11-16 (detLAN „krassestes Beispiel"): right war 50 → großer Leerraum rechts
+              (Recharts reserviert die SoC-Achsenbreite ohnehin separat). Auf 10 getrimmt. */}
+          <ComposedChart data={chartDaten} margin={{ top: ACHSEN_MARGIN_TOP, right: hatSpeicher ? 10 : 8, left: -10, bottom: 5 }}>
             <CartesianGrid strokeDasharray="3 3" className="stroke-gray-200 dark:stroke-gray-700" />
-            <XAxis dataKey="stunde" tick={{ fontSize: 10 }} interval={2} /* achsen-allow: Zeit-/Kategorie-Achse */ />
+            {/* D11-16/Stunden: Labels überlappten mobil („0:003:00…") — −45° (konsistent
+                mit der app-weiten 45°-Regel; eigener XAxis, da kein xAchse-Spread). */}
+            <XAxis dataKey="stunde" tick={{ fontSize: 10 }} interval={2} angle={-45} textAnchor="end" height={40} /* achsen-allow: Zeit-/Kategorie-Achse */ />
             <YAxis yAxisId="kw" tick={{ fontSize: 10 }} tickFormatter={achsenTick} label={achsenEinheit('kW')} />
             {hatSpeicher && (
               <YAxis yAxisId="soc" orientation="right" domain={[0, 100]} tick={{ fontSize: 10 }} tickFormatter={achsenTick} label={achsenEinheit('%', 'rechts')} />
             )}
             <ReferenceLine yAxisId="kw" y={0} stroke={achsen.referenz} strokeWidth={1.5} />
             <Tooltip content={<PrognoseTooltip hatSpeicher={hatSpeicher} />} />
-            <Legend wrapperStyle={{ fontSize: 11 }} content={<ChartLegende onItemClick={(e) => { const k = String(e.dataKey ?? ''); if (k) toggleSerie(k) }} />} />
-            <Area yAxisId="kw" type="monotone" dataKey="pv" name="PV-Prognose" fill={COLORS.solar} stroke={COLORS.solar} fillOpacity={0.3} strokeWidth={2} isAnimationActive={false} hide={versteckt.has('pv')} />
-            <Area yAxisId="kw" type="monotone" dataKey="einspeisung" name="Einspeisung" fill={CHART_COLORS.einspeisung} stroke={CHART_COLORS.einspeisung} fillOpacity={0.2} strokeWidth={1} strokeDasharray="4 2" isAnimationActive={false} hide={versteckt.has('einspeisung')} />
-            <Area yAxisId="kw" type="monotone" dataKey="verbrauch" name="Verbrauch" fill={COLORS.consumption} stroke={COLORS.consumption} fillOpacity={0.25} strokeWidth={2} isAnimationActive={false} hide={versteckt.has('verbrauch')} />
-            <Area yAxisId="kw" type="monotone" dataKey="netzbezug" name="Netzbezug" fill={CHART_COLORS.netzbezug} stroke={CHART_COLORS.netzbezug} fillOpacity={0.2} strokeWidth={1} strokeDasharray="4 2" isAnimationActive={false} hide={versteckt.has('netzbezug')} />
+            <Legend wrapperStyle={{ fontSize: 11 }} content={<ChartLegende onItemClick={onItemClick} />} />
+            <Area yAxisId="kw" type="monotone" dataKey="pv" name="PV-Prognose" fill={COLORS.solar} stroke={COLORS.solar} fillOpacity={0.3} strokeWidth={2} isAnimationActive={false} hide={istVersteckt('pv')} />
+            <Area yAxisId="kw" type="monotone" dataKey="einspeisung" name="Einspeisung" fill={CHART_COLORS.einspeisung} stroke={CHART_COLORS.einspeisung} fillOpacity={0.2} strokeWidth={1} strokeDasharray="4 2" isAnimationActive={false} hide={istVersteckt('einspeisung')} />
+            <Area yAxisId="kw" type="monotone" dataKey="verbrauch" name="Verbrauch" fill={COLORS.consumption} stroke={COLORS.consumption} fillOpacity={0.25} strokeWidth={2} isAnimationActive={false} hide={istVersteckt('verbrauch')} />
+            <Area yAxisId="kw" type="monotone" dataKey="netzbezug" name="Netzbezug" fill={CHART_COLORS.netzbezug} stroke={CHART_COLORS.netzbezug} fillOpacity={0.2} strokeWidth={1} strokeDasharray="4 2" isAnimationActive={false} hide={istVersteckt('netzbezug')} />
             {hatSpeicher && (
-              <Line yAxisId="soc" type="monotone" dataKey="soc" name="SoC" stroke={COLORS.battery} strokeWidth={2} dot={false} connectNulls hide={versteckt.has('soc')} />
+              <Line yAxisId="soc" type="monotone" dataKey="soc" name="SoC" stroke={COLORS.battery} strokeWidth={2} dot={false} connectNulls hide={istVersteckt('soc')} />
             )}
           </ComposedChart>
         </ResponsiveContainer>
@@ -238,77 +238,84 @@ function PrognoseTooltip({ active, payload, label }: {
 
 // ── Stundentabelle ───────────────────────────────────────────────────────────
 
-export function PrognoseTabelle({ daten }: { daten: TagesPrognose }) {
+export function PrognoseTabelle({ daten, ohneCaption }: { daten: TagesPrognose; ohneCaption?: boolean }) {
   const hatSpeicher = daten.speicher_kapazitaet_kwh != null
 
   return (
     <Card padding="none" className="overflow-hidden">
-      <div className="px-3 py-2 border-b border-gray-200 dark:border-gray-700">
-        <span className="text-xs text-gray-500 dark:text-gray-400">
-          Stundenprognose in kW · Summenzeile = kWh/Tag
-        </span>
-      </div>
-      <div className="overflow-auto max-h-[500px]">
-        <table className="w-full text-xs">
-          <thead className="sticky top-0 z-10 bg-gray-50 dark:bg-gray-800">
+      {/* Caption unterdrückbar (`ohneCaption`), wenn ein Block-Header denselben Text
+          schon als Summary zeigt (Cockpit/Aussicht „Stundenwerte") — sonst doppelt.
+          Standalone (Energieprofil-Seite) bleibt sie die einzige Beschriftung. */}
+      {!ohneCaption && (
+        <div className={`${ZELLE} border-b border-gray-200 dark:border-gray-700`}>
+          <span className="text-xs text-gray-500 dark:text-gray-400">
+            Stundenprognose in kW · Summenzeile = kWh/Tag
+          </span>
+        </div>
+      )}
+      {/* D17-2 (G16-1): alle 24 Stunden am Stück, kein innerer Vertikal-Scroll
+          (max-h entfernt) — wie die Cockpit/Tag-Stundentabelle. Horizontaler Überlauf
+          zeigt den ScrollSchatten-Fade; thead sticky bleibt (harmlos ohne Eigen-Scroll),
+          tfoot NICHT sticky (schwebte sonst am Viewport-Boden). */}
+      <Table zeilen={24} mitFuss flaeche="karte">
+          <TableHead>
             <tr className="border-b border-gray-200 dark:border-gray-700">
-              <th className="px-3 py-2 text-left font-medium text-gray-500 dark:text-gray-400">Std</th>
-              <th className="px-2 py-2 text-right font-medium text-yellow-600 dark:text-yellow-400">PV</th>
-              <th className="px-2 py-2 text-right font-medium text-gray-600 dark:text-gray-300">Verbr.</th>
-              <th className="px-2 py-2 text-right font-medium text-green-600 dark:text-green-400">Netto</th>
-              <th className="px-2 py-2 text-right font-medium text-red-600 dark:text-red-400">Bezug</th>
-              <th className="px-2 py-2 text-right font-medium text-cyan-600 dark:text-cyan-400">Einsp.</th>
+              <th className={`${KOPF_ZELLE} text-left text-gray-500 dark:text-gray-400`}>Std</th>
+              <th className={`${KOPF_ZELLE} text-right text-yellow-600 dark:text-yellow-400`}>PV</th>
+              <th className={`${KOPF_ZELLE} text-right text-gray-600 dark:text-gray-300`}>Verbr.</th>
+              <th className={`${KOPF_ZELLE} text-right text-green-600 dark:text-green-400`}>Netto</th>
+              <th className={`${KOPF_ZELLE} text-right text-red-600 dark:text-red-400`}>Bezug</th>
+              <th className={`${KOPF_ZELLE} text-right text-cyan-600 dark:text-cyan-400`}>Einsp.</th>
               {hatSpeicher && (
-                <th className="px-2 py-2 text-right font-medium text-blue-600 dark:text-blue-400">SoC %</th>
+                <th className={`${KOPF_ZELLE} text-right text-blue-600 dark:text-blue-400`}>SoC %</th>
               )}
             </tr>
-          </thead>
-          <tbody>
+          </TableHead>
+          <TableBody>
             {daten.stunden.map(s => (
               <tr key={s.stunde} className="border-b border-gray-100 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-800/40">
-                <td className="px-3 py-1.5 font-medium text-gray-600 dark:text-gray-300 tabular-nums">{s.stunde}:00</td>
-                <td className="px-2 py-1.5 text-right tabular-nums text-yellow-700 dark:text-yellow-300">{fmtZahl(s.pv_kw, 2)}</td>
-                <td className="px-2 py-1.5 text-right tabular-nums text-gray-700 dark:text-gray-300">{fmtZahl(s.verbrauch_kw, 2)}</td>
-                <td className={`px-2 py-1.5 text-right tabular-nums font-medium ${
+                <td className={`${ZELLE} font-medium text-gray-600 dark:text-gray-300 tabular-nums`}>{s.stunde}:00</td>
+                <td className={`${ZELLE} text-right tabular-nums text-yellow-700 dark:text-yellow-300`}>{fmtZahl(s.pv_kw, 2)}</td>
+                <td className={`${ZELLE} text-right tabular-nums text-gray-700 dark:text-gray-300`}>{fmtZahl(s.verbrauch_kw, 2)}</td>
+                <td className={`${ZELLE} text-right tabular-nums font-medium ${
                   s.netto_kw >= 0
                     ? 'text-green-600 dark:text-green-400'
                     : 'text-red-600 dark:text-red-400'
                 }`}>
                   {s.netto_kw >= 0 ? '+' : ''}{fmtZahl(s.netto_kw, 2)}
                 </td>
-                <td className="px-2 py-1.5 text-right tabular-nums text-red-600 dark:text-red-400">
+                <td className={`${ZELLE} text-right tabular-nums text-red-600 dark:text-red-400`}>
                   {s.netzbezug_kw > 0.005 ? fmtZahl(s.netzbezug_kw, 2) : <Dash />}
                 </td>
-                <td className="px-2 py-1.5 text-right tabular-nums text-cyan-600 dark:text-cyan-400">
+                <td className={`${ZELLE} text-right tabular-nums text-cyan-600 dark:text-cyan-400`}>
                   {s.einspeisung_kw > 0.005 ? fmtZahl(s.einspeisung_kw, 2) : <Dash />}
                 </td>
                 {hatSpeicher && (
-                  <td className="px-2 py-1.5 text-right tabular-nums text-blue-600 dark:text-blue-400">
+                  <td className={`${ZELLE} text-right tabular-nums text-blue-600 dark:text-blue-400`}>
                     {s.soc_prozent != null ? fmtZahl(s.soc_prozent, 1) : <Dash />}
                   </td>
                 )}
               </tr>
             ))}
-          </tbody>
-          <tfoot>
-            <tr className="border-t-2 border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-800 font-semibold sticky bottom-0">
-              <td className="px-3 py-2 text-gray-500 dark:text-gray-400">kWh</td>
-              <td className="px-2 py-2 text-right tabular-nums text-yellow-700 dark:text-yellow-300">{fmtZahl(daten.pv_summe_kwh, 1)}</td>
-              <td className="px-2 py-2 text-right tabular-nums text-gray-700 dark:text-gray-300">{fmtZahl(daten.verbrauch_summe_kwh, 1)}</td>
-              <td className={`px-2 py-2 text-right tabular-nums ${
+          </TableBody>
+          <TableFoot>
+            <tr className="border-t-2 border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-800 font-semibold">
+              <td className={`${ZELLE} text-gray-500 dark:text-gray-400`}>kWh</td>
+              <td className={`${ZELLE} text-right tabular-nums text-yellow-700 dark:text-yellow-300`}>{fmtZahl(daten.pv_summe_kwh, 1)}</td>
+              <td className={`${ZELLE} text-right tabular-nums text-gray-700 dark:text-gray-300`}>{fmtZahl(daten.verbrauch_summe_kwh, 1)}</td>
+              <td className={`${ZELLE} text-right tabular-nums ${
                 daten.pv_summe_kwh - daten.verbrauch_summe_kwh >= 0
                   ? 'text-green-600 dark:text-green-400'
                   : 'text-red-600 dark:text-red-400'
               }`}>
                 {fmtZahl(daten.pv_summe_kwh - daten.verbrauch_summe_kwh, 1)}
               </td>
-              <td className="px-2 py-2 text-right tabular-nums text-red-600 dark:text-red-400">{fmtZahl(daten.netzbezug_summe_kwh, 1)}</td>
-              <td className="px-2 py-2 text-right tabular-nums text-cyan-600 dark:text-cyan-400">{fmtZahl(daten.einspeisung_summe_kwh, 1)}</td>
+              <td className={`${ZELLE} text-right tabular-nums text-red-600 dark:text-red-400`}>{fmtZahl(daten.netzbezug_summe_kwh, 1)}</td>
+              <td className={`${ZELLE} text-right tabular-nums text-cyan-600 dark:text-cyan-400`}>{fmtZahl(daten.einspeisung_summe_kwh, 1)}</td>
               {hatSpeicher && <td />}
             </tr>
-          </tfoot>
-        </table>
-      </div>
+          </TableFoot>
+        </Table>
     </Card>
   )
 }

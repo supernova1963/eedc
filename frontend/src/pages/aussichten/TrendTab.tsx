@@ -1,12 +1,13 @@
 /**
  * Trend-Tab: Historische Analyse und Degradation
  */
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { TrendingDown, Minus, Calendar, Zap, AlertTriangle, Award } from 'lucide-react'
 import { Card, LoadingSpinner, Alert, KPICard, ChartLegende } from '../../components/ui'
 import ChartTooltip from '../../components/ui/ChartTooltip'
+import { ScrollSchatten } from '../../components/ui/ScrollSchatten'
 import { aussichtenApi, TrendAnalyseResponse } from '../../api/aussichten'
-import { CHART_COLORS, STATUS_COLORS, achsenEinheit, achsenTick, ACHSEN_MARGIN_TOP } from '../../lib'
+import { CHART_COLORS, STATUS_COLORS, xAchse, achsenEinheit, achsenTick, ACHSEN_MARGIN_TOP } from '../../lib'
 import {
   ResponsiveContainer,
   BarChart,
@@ -31,11 +32,7 @@ export default function TrendTab({ anlageId }: Props) {
   const [error, setError] = useState<string | null>(null)
   const [jahre, setJahre] = useState(3)
 
-  useEffect(() => {
-    loadTrend()
-  }, [anlageId, jahre])
-
-  async function loadTrend() {
+  const loadTrend = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
@@ -46,7 +43,11 @@ export default function TrendTab({ anlageId }: Props) {
     } finally {
       setLoading(false)
     }
-  }
+  }, [anlageId, jahre])
+
+  useEffect(() => {
+    loadTrend()
+  }, [loadTrend])
 
   if (loading) {
     return <LoadingSpinner text="Lade Trend-Analyse..." />
@@ -161,7 +162,7 @@ export default function TrendTab({ anlageId }: Props) {
               <CartesianGrid strokeDasharray="3 3" className="stroke-gray-200 dark:stroke-gray-700" />
               <XAxis
                 dataKey="jahr"
-                tick={{ fontSize: 10 }}
+                {...xAchse()}
                 className="text-gray-600 dark:text-gray-400"
                 /* achsen-allow: Zeit-/Kategorie-Achse (Jahr) */
               />
@@ -195,7 +196,7 @@ export default function TrendTab({ anlageId }: Props) {
               <CartesianGrid strokeDasharray="3 3" className="stroke-gray-200 dark:stroke-gray-700" />
               <XAxis
                 dataKey="jahr"
-                tick={{ fontSize: 10 }}
+                {...xAchse()}
                 className="text-gray-600 dark:text-gray-400"
                 /* achsen-allow: Zeit-/Kategorie-Achse (Jahr) */
               />
@@ -330,7 +331,7 @@ export default function TrendTab({ anlageId }: Props) {
       {/* Detail-Tabelle */}
       <Card className="p-4">
         <h3 className="font-semibold text-gray-900 dark:text-white mb-4">Jahresübersicht</h3>
-        <div className="overflow-x-auto">
+        <ScrollSchatten achse="horizontal" fadeFrom="from-white dark:from-gray-800">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-200 dark:border-gray-700">
@@ -395,7 +396,7 @@ export default function TrendTab({ anlageId }: Props) {
               ))}
             </tbody>
           </table>
-        </div>
+        </ScrollSchatten>
       </Card>
 
       {/* Meta-Info */}

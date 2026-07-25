@@ -11,16 +11,18 @@ import {
   BarChart, Bar, LineChart, Line, ComposedChart,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
 } from 'recharts'
-import { Sun, TrendingUp, TrendingDown, Download, GitCompare } from 'lucide-react'
-import { Card, Button, ChartLegende } from '../ui'
+import { Sun, TrendingUp, TrendingDown, GitCompare } from 'lucide-react'
+import { Card, ChartLegende, CsvExportButton, Table, TableHead, TableBody, TableFoot } from '../ui'
+import { ZELLE, KOPF_ZELLE } from '../ui/tabelleMasse'
 import ChartTooltip from '../ui/ChartTooltip'
+import { useLegendenToggle } from '../../hooks'
 import type { KpiStripItem } from '../blocks'
 import { exportToCSV } from '../../utils/export'
 import { cockpitApi, PVStringsResponse } from '../../api/cockpit'
 import {
-  SOLL_IST_COLORS, STRING_COLORS, KATEGORIE_FARBEN, PROGNOSE_DASH, HILFSLINIE_DASH,
+  SOLL_IST_COLORS, STRING_COLORS, KATEGORIE_FARBEN, HILFSLINIE_DASH,
   formatEnergie, energieAchse, formatProzent, formatSpezErtrag, fmtZahl,
-  achsenEinheit, achsenTick, ACHSEN_MARGIN_TOP,
+  xAchse, yAchse, achsenEinheit, achsenTick, ACHSEN_MARGIN_TOP,
 } from '../../lib'
 
 export interface PvStringsVM {
@@ -166,11 +168,9 @@ export function PvStringHeaderZeile({ data, zeitraumLabel, onCsv }: {
         <span className="font-medium text-gray-700 dark:text-gray-300">{zeitraumLabel}</span>
         {' '}&bull;{' '}{data.strings.length} Strings &bull; {fmtZahl(data.anlagen_leistung_kwp, 1)} kWp
       </p>
-      {onCsv && (
-        <Button variant="secondary" size="sm" onClick={onCsv}>
-          <Download className="h-4 w-4 mr-2" />CSV-Export
-        </Button>
-      )}
+      {/* D13-10/D14-18: Icon + Wort IMMER (CsvExportButton-SoT) — Icon-only wirkte
+          mobil wie „CSV fehlt". */}
+      {onCsv && <CsvExportButton onClick={onCsv} />}
     </div>
   )
 }
@@ -202,6 +202,7 @@ export function PvStringBestSchlecht({ data }: { data: PVStringsResponse }) {
 }
 
 export function PvStringSollIstBar({ data }: { data: PVStringsResponse }) {
+  const legende = useLegendenToggle()
   const maxKwh = Math.max(0, ...data.strings.flatMap(s => [s.prognose_jahr_kwh, s.ist_jahr_kwh]))
   const eAchse = energieAchse(maxKwh)
   return (
@@ -223,9 +224,10 @@ export function PvStringSollIstBar({ data }: { data: PVStringsResponse }) {
             <XAxis type="number" tickFormatter={(v) => `${eAchse.tick(v)} ${eAchse.einheit}`} tick={{ fontSize: 10 }} /* achsen-allow: Wert-Achse waagerecht, Einheit/Format pro Tick (de-DE) */ />
             <YAxis type="category" dataKey="name" width={100} tick={{ fontSize: 10 }} /* achsen-allow: Kategorie-Namen (String) */ />
             <Tooltip content={<ChartTooltip formatter={(v: number) => formatEnergie(v, maxKwh).text} />} />
-            <Legend content={<ChartLegende />} />
-            <Bar dataKey="SOLL" fill={SOLL_IST_COLORS.soll} stroke={SOLL_IST_COLORS.soll} strokeWidth={1} strokeDasharray={PROGNOSE_DASH} name="SOLL (Prognose)" />
-            <Bar dataKey="IST" fill={SOLL_IST_COLORS.ist} name="IST (Erzeugt)" />
+            <Legend content={<ChartLegende onItemClick={legende.onItemClick} />} />
+            {/* D14-10: kein Dash-Border an Balken (Dash-Kanon nur für Linien-Serien). */}
+            <Bar dataKey="SOLL" fill={SOLL_IST_COLORS.soll} name="SOLL (Prognose)" hide={legende.istVersteckt('SOLL')} />
+            <Bar dataKey="IST" fill={SOLL_IST_COLORS.ist} name="IST (Erzeugt)" hide={legende.istVersteckt('IST')} />
           </BarChart>
         </ResponsiveContainer>
       </div>
@@ -234,6 +236,7 @@ export function PvStringSollIstBar({ data }: { data: PVStringsResponse }) {
 }
 
 export function PvStringMonatsverlauf({ data, selectedYear }: { data: PVStringsResponse; selectedYear: number | 'all' }) {
+  const legende = useLegendenToggle()
   const chartData = (data.strings[0]?.monatswerte.map((m, mIdx) => {
     const soll = data.strings.reduce((sum, s) => sum + (s.monatswerte[mIdx]?.prognose_kwh || 0), 0)
     const ist = data.strings.reduce((sum, s) => sum + (s.monatswerte[mIdx]?.ist_kwh || 0), 0)
@@ -250,13 +253,14 @@ export function PvStringMonatsverlauf({ data, selectedYear }: { data: PVStringsR
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart data={chartData} margin={{ top: ACHSEN_MARGIN_TOP }}>
             <CartesianGrid strokeDasharray="3 3" className="stroke-gray-200 dark:stroke-gray-700" />
-            <XAxis dataKey="name" tick={{ fontSize: 10 }} /* achsen-allow: Zeit-/Kategorie-Achse (Monat) */ />
+            <XAxis dataKey="name" {...xAchse()} /* achsen-allow: Zeit-/Kategorie-Achse (Monat) */ />
             <YAxis width={60} tick={{ fontSize: 10 }} tickFormatter={eAchse.tick} label={achsenEinheit(eAchse.einheit)} />
             <Tooltip content={<ChartTooltip formatter={(v: number) => formatEnergie(v, maxKwh).text} />} />
-            <Legend content={<ChartLegende />} />
-            <Bar dataKey="SOLL" fill={SOLL_IST_COLORS.soll} stroke={SOLL_IST_COLORS.soll} strokeWidth={1} strokeDasharray={PROGNOSE_DASH} name="SOLL" />
-            <Bar dataKey="IST" fill={SOLL_IST_COLORS.ist} name="IST" />
-            <Line type="monotone" dataKey="Abweichung" stroke={SOLL_IST_COLORS.abweichung} strokeWidth={2} dot={{ r: 3 }} name="Abweichung" />
+            <Legend content={<ChartLegende onItemClick={legende.onItemClick} />} />
+            {/* D14-10: kein Dash-Border an Balken (Dash-Kanon nur für Linien-Serien). */}
+            <Bar dataKey="SOLL" fill={SOLL_IST_COLORS.soll} name="SOLL" hide={legende.istVersteckt('SOLL')} />
+            <Bar dataKey="IST" fill={SOLL_IST_COLORS.ist} name="IST" hide={legende.istVersteckt('IST')} />
+            <Line type="monotone" dataKey="Abweichung" stroke={SOLL_IST_COLORS.abweichung} strokeWidth={2} dot={{ r: 3 }} name="Abweichung" hide={legende.istVersteckt('Abweichung')} />
           </ComposedChart>
         </ResponsiveContainer>
       </div>
@@ -271,57 +275,55 @@ export function PvStringTabelle({ data }: { data: PVStringsResponse }) {
   return (
     <Card>
       <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">String-Details</h3>
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead className="bg-gray-50 dark:bg-gray-800">
+      <Table mitFuss flaeche="karte">
+          <TableHead>
             <tr>
-              <th className="px-3 py-2 text-left font-medium text-gray-500">String</th>
-              <th className="px-3 py-2 text-right font-medium text-gray-500">kWp</th>
-              <th className="px-3 py-2 text-left font-medium text-gray-500">Ausrichtung</th>
-              <th className="px-3 py-2 text-right font-medium text-gray-500">SOLL</th>
-              <th className="px-3 py-2 text-right font-medium text-gray-500">IST</th>
-              <th className="px-3 py-2 text-right font-medium text-gray-500">Abweichung</th>
-              <th className="px-3 py-2 text-right font-medium text-gray-500">kWh/kWp</th>
+              <th className={`${KOPF_ZELLE} text-left text-gray-500`}>String</th>
+              <th className={`${KOPF_ZELLE} text-right text-gray-500`}>kWp</th>
+              <th className={`${KOPF_ZELLE} text-left text-gray-500`}>Ausrichtung</th>
+              <th className={`${KOPF_ZELLE} text-right text-gray-500`}>SOLL</th>
+              <th className={`${KOPF_ZELLE} text-right text-gray-500`}>IST</th>
+              <th className={`${KOPF_ZELLE} text-right text-gray-500`}>Abweichung</th>
+              <th className={`${KOPF_ZELLE} text-right text-gray-500`}>kWh/kWp</th>
             </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+          </TableHead>
+          <TableBody>
             {stringsSortedByPerf.map((s) => (
               <tr key={s.investition_id} className="hover:bg-gray-50 dark:hover:bg-gray-800">
-                <td className="px-3 py-3">
+                <td className={ZELLE}>
                   <div className="flex items-center gap-2">
                     <div className="w-3 h-3 rounded-full" style={{ backgroundColor: STRING_COLORS[data.strings.findIndex(x => x.investition_id === s.investition_id) % STRING_COLORS.length] }} />
                     <span className="font-medium text-gray-900 dark:text-white">{s.bezeichnung}</span>
                   </div>
                   {s.wechselrichter_name && <p className="text-xs text-gray-500 ml-5">→ {s.wechselrichter_name}</p>}
                 </td>
-                <td className="px-3 py-3 text-right">{fmtZahl(s.leistung_kwp, 1)}</td>
-                <td className="px-3 py-3">{s.ausrichtung || '-'}{s.neigung_grad ? ` / ${s.neigung_grad}°` : ''}</td>
-                <td className="px-3 py-3 text-right text-blue-600">{e(s.prognose_jahr_kwh)}</td>
-                <td className="px-3 py-3 text-right text-amber-600 font-medium">{e(s.ist_jahr_kwh)}</td>
-                <td className={`px-3 py-3 text-right font-medium ${(s.abweichung_jahr_prozent || 0) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                <td className={`${ZELLE} text-right`}>{fmtZahl(s.leistung_kwp, 1)}</td>
+                <td className={ZELLE}>{s.ausrichtung || '-'}{s.neigung_grad ? ` / ${s.neigung_grad}°` : ''}</td>
+                <td className={`${ZELLE} text-right text-blue-600`}>{e(s.prognose_jahr_kwh)}</td>
+                <td className={`${ZELLE} text-right text-amber-600 font-medium`}>{e(s.ist_jahr_kwh)}</td>
+                <td className={`${ZELLE} text-right font-medium ${(s.abweichung_jahr_prozent || 0) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                   {(s.abweichung_jahr_prozent || 0) >= 0 ? '+' : ''}{s.abweichung_jahr_prozent != null ? formatProzent(s.abweichung_jahr_prozent).text : '0 %'}
                 </td>
-                <td className="px-3 py-3 text-right text-purple-600">{s.spezifischer_ertrag_kwh_kwp != null ? fmtZahl(s.spezifischer_ertrag_kwh_kwp, 0) : '-'}</td>
+                <td className={`${ZELLE} text-right text-purple-600`}>{s.spezifischer_ertrag_kwh_kwp != null ? fmtZahl(s.spezifischer_ertrag_kwh_kwp, 0) : '-'}</td>
               </tr>
             ))}
-          </tbody>
+          </TableBody>
           {data.strings.length > 1 && (
-            <tfoot className="bg-gray-100 dark:bg-gray-800 font-medium">
+            <TableFoot>
               <tr>
-                <td className="px-3 py-2">Gesamt</td>
-                <td className="px-3 py-2 text-right">{fmtZahl(data.anlagen_leistung_kwp, 1)}</td>
-                <td className="px-3 py-2">-</td>
-                <td className="px-3 py-2 text-right text-blue-600">{e(data.prognose_gesamt_kwh)}</td>
-                <td className="px-3 py-2 text-right text-amber-600">{e(data.ist_gesamt_kwh)}</td>
-                <td className={`px-3 py-2 text-right ${(data.abweichung_gesamt_prozent || 0) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                <td className={ZELLE}>Gesamt</td>
+                <td className={`${ZELLE} text-right`}>{fmtZahl(data.anlagen_leistung_kwp, 1)}</td>
+                <td className={ZELLE}>-</td>
+                <td className={`${ZELLE} text-right text-blue-600`}>{e(data.prognose_gesamt_kwh)}</td>
+                <td className={`${ZELLE} text-right text-amber-600`}>{e(data.ist_gesamt_kwh)}</td>
+                <td className={`${ZELLE} text-right ${(data.abweichung_gesamt_prozent || 0) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                   {(data.abweichung_gesamt_prozent || 0) >= 0 ? '+' : ''}{data.abweichung_gesamt_prozent != null ? formatProzent(data.abweichung_gesamt_prozent).text : '0 %'}
                 </td>
-                <td className="px-3 py-2 text-right text-purple-600">{fmtZahl(data.anlagen_leistung_kwp > 0 ? data.ist_gesamt_kwh / data.anlagen_leistung_kwp : 0, 0)}</td>
+                <td className={`${ZELLE} text-right text-purple-600`}>{fmtZahl(data.anlagen_leistung_kwp > 0 ? data.ist_gesamt_kwh / data.anlagen_leistung_kwp : 0, 0)}</td>
               </tr>
-            </tfoot>
+            </TableFoot>
           )}
-        </table>
-      </div>
+        </Table>
     </Card>
   )
 }
@@ -330,6 +332,7 @@ export function PvStringTabelle({ data }: { data: PVStringsResponse }) {
 export function PvStringMehrjahr({ data, jahresvergleichData }: {
   data: PVStringsResponse; jahresvergleichData: Array<Record<string, number | string>>
 }) {
+  const legende = useLegendenToggle()
   return (
     <Card>
       <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Performance-Entwicklung über Jahre</h3>
@@ -337,15 +340,15 @@ export function PvStringMehrjahr({ data, jahresvergleichData }: {
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={jahresvergleichData} margin={{ top: ACHSEN_MARGIN_TOP }}>
             <CartesianGrid strokeDasharray="3 3" className="stroke-gray-200 dark:stroke-gray-700" />
-            <XAxis dataKey="name" tick={{ fontSize: 10 }} /* achsen-allow: Zeit-/Kategorie-Achse (Jahr) */ />
-            <YAxis label={achsenEinheit('%')} domain={[80, 120]} ticks={[80, 90, 100, 110, 120]} tickFormatter={achsenTick} tick={{ fontSize: 10 }} />
+            <XAxis dataKey="name" {...xAchse()} /* achsen-allow: Zeit-/Kategorie-Achse (Jahr) */ />
+            <YAxis label={achsenEinheit('%')} domain={[80, 120]} ticks={[80, 90, 100, 110, 120]} tickFormatter={achsenTick} {...yAchse(false)} />
             <Tooltip content={<ChartTooltip unit="%" />} />
-            <Legend content={<ChartLegende />} />
+            <Legend content={<ChartLegende onItemClick={legende.onItemClick} />} />
             {data.strings.map((s, idx) => (
               <Line key={s.investition_id} type="monotone" dataKey={s.bezeichnung}
-                stroke={STRING_COLORS[idx % STRING_COLORS.length]} strokeWidth={2} dot={{ r: 4 }} />
+                stroke={STRING_COLORS[idx % STRING_COLORS.length]} strokeWidth={2} dot={{ r: 4 }} hide={legende.istVersteckt(s.bezeichnung)} />
             ))}
-            <Line type="monotone" dataKey="Gesamt" stroke={KATEGORIE_FARBEN.sonstige} strokeWidth={3} strokeDasharray={HILFSLINIE_DASH} dot={{ r: 4 }} />
+            <Line type="monotone" dataKey="Gesamt" stroke={KATEGORIE_FARBEN.sonstige} strokeWidth={3} strokeDasharray={HILFSLINIE_DASH} dot={{ r: 4 }} hide={legende.istVersteckt('Gesamt')} />
           </LineChart>
         </ResponsiveContainer>
       </div>

@@ -73,6 +73,58 @@ export function sollIstStufe(pct: number): 'gut' | 'maessig' | 'hoch' {
   return pct >= 100 ? 'gut' : pct >= 75 ? 'maessig' : 'hoch'
 }
 
+/** Tailwind-Text-Klassen-Zwilling zu {@link STATUS_COLORS} (R3b S18, 2026-07-05 —
+ *  Muster = AMPEL_TEXT_CLASS/Regel G): Status-Färbung von Icons/Legenden als EINE
+ *  Quelle statt harter Klassen (Drift-Beleg: EinstellungenV4-warn zeigte amber-500
+ *  = Solar-Rolle statt Kanon-Gelb). */
+export const STATUS_TEXT_CLASS = {
+  ok: 'text-green-500',
+  warnung: 'text-yellow-500',
+  kritisch: 'text-red-500',
+  info: 'text-blue-500',
+} as const
+
+/**
+ * Erfassungs-Zustände Monatsabschluss-V4 (V-c, Gernot 2026-07-12) — die vier
+ * Feld-Zustände der Erfassung als EIN Vokabular, wiederholt an Feld · Kopf-Ampel ·
+ * Monatsdaten-Tabelle (Konzept `KONZEPT-MONATSABSCHLUSS-V4.md` §5). Bewusst aus der
+ * bestehenden Status-Achse abgeleitet, kein neuer Farbsatz (Regel 0a Stufe 2):
+ * - `gemessen`  = {@link STATUS_COLORS}.ok (grün, vertrauenswürdig)
+ * - `geschaetzt`= {@link STATUS_COLORS}.warnung (gelb, prüfen)
+ * - `weicht_ab` = {@link AMPEL_SKALA}.hoch (orange, bewusst entscheiden) — eine Stufe
+ *   UNTER Signal-Rot; Rot bleibt exklusiv für harte Blockier-Fehler (negative Zähler)
+ * - `fehlt`     = neutral-grau (ruhig; Frischmonat hat viele leere Felder und soll
+ *   nicht brüllen — Gernot 2026-07-12)
+ *
+ * `hex` für Recharts/Inline; `text`/`badge` als Tailwind-Zwillinge (Badge-Tönung wie
+ * VERGLEICH_BADGE/QuelleBadge). Icons liegen NICHT hier, sondern in der Zustands-
+ * Komponente (`ErfassungZustandBadge`) — colors.ts bleibt rein (tailwind.config via jiti).
+ */
+export const ERFASSUNG_ZUSTAND = {
+  gemessen:   { hex: STATUS_COLORS.ok,      text: 'text-green-500',                   badge: 'bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-400' },
+  // geprüft teilt bewusst das Grün von gemessen (Farb-Achse bleibt bei 4, Gernot
+  // 2026-07-12) — Icon/Label unterscheiden „von dir" von „vom Sensor".
+  geprueft:   { hex: STATUS_COLORS.ok,      text: 'text-green-500',                   badge: 'bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-400' },
+  geschaetzt: { hex: STATUS_COLORS.warnung, text: 'text-yellow-500',                  badge: 'bg-yellow-50 text-yellow-700 dark:bg-yellow-900/20 dark:text-yellow-300' },
+  weicht_ab:  { hex: AMPEL_SKALA.hoch,      text: 'text-orange-500',                  badge: 'bg-orange-50 text-orange-700 dark:bg-orange-900/20 dark:text-orange-300' },
+  fehlt:      { hex: '#9ca3af', /* gray-400 */ text: 'text-gray-500 dark:text-gray-400', badge: 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300' },
+  // optional = leiser als „offen" (gray-400, hellere Pille) → leer, aber nicht nötig.
+  optional:   { hex: '#9ca3af', /* gray-400 */ text: 'text-gray-400 dark:text-gray-500', badge: 'bg-gray-50 text-gray-400 dark:bg-gray-800 dark:text-gray-500' },
+} as const
+
+/**
+ * Zustands-Token „laufender Zeitraum" (R3b S18, 2026-07-05): heute/läuft-Markierung
+ * der Zeit-Sichten (Badges der Sicht-Köpfe, Pulse-Dots + Wert-Färbung der Rails,
+ * ZeitStepper). Emerald — bewusst getrennt von STATUS_COLORS.ok (green-500); die
+ * farbliche Nähe zur Einspeisung-Rolle (feedin #10b981) ist bekannt und akzeptiert
+ * (unterschiedliche Kontexte: Zustands-Chip vs. Chart-Serie).
+ */
+export const LAUFEND_ZUSTAND = {
+  badge: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-300',
+  punkt: 'bg-emerald-400 border-emerald-500 animate-pulse',
+  text: 'text-emerald-500 dark:text-emerald-400',
+} as const
+
 // ─── Geld-Logik — positiv = grün, negativ/Kosten = Signal-Rot ────────────────
 
 export const GELD_COLORS = {
@@ -91,6 +143,25 @@ export const GELD_TEXT_CLASS = {
   netto: 'text-emerald-700 dark:text-emerald-400',
 } as const
 
+/**
+ * Trend-/Delta-Wertungsfärbung (R3b S18, 2026-07-05): „besser = grün, schlechter =
+ * rot" für Trends/Abweichungen/Korrekturfaktoren. WICHTIG: der KONSUMENT bestimmt
+ * die Richtung — Vorzeichen ≠ Wertung (steigende JAZ = positiv, steigender
+ * Verbrauch wäre negativ). Optisch identisch mit GELD_TEXT_CLASS.ersparnis/kosten,
+ * semantisch getrennte Rolle (späterer Paletten-/CSS-Var-Umbau stellt beide
+ * unabhängig um).
+ */
+export const TREND_TEXT_CLASS = {
+  positiv: 'text-green-600 dark:text-green-400',
+  negativ: 'text-red-600 dark:text-red-400',
+  neutral: 'text-gray-500 dark:text-gray-400',
+} as const
+
+/** CO₂-/Umwelt-Text-Zwilling (R3b S18, 2026-07-05) — an CHART_COLORS.co2Pv
+ *  (#10b981 Emerald) verankert; für Einsparungs-Werte in KPIs/Tabellen statt
+ *  harter green-600-Klassen. */
+export const CO2_TEXT_CLASS = 'text-emerald-600 dark:text-emerald-400'
+
 // ─── Chart-Farben (nach Metrik) ──────────────────────────────────────────────
 
 export const CHART_COLORS = {
@@ -99,6 +170,10 @@ export const CHART_COLORS = {
   eigenverbrauch: COLORS.consumption,
   einspeisung: COLORS.feedin,
   netzbezug: COLORS.grid,
+  // R17/Verlauf-Vergleich: PV-Anlage vs. BKW getrennt (beide Amber-Familie,
+  // BKW heller abgesetzt) + §51-Abzug-Volumen (gedämpft = „nicht vergütet").
+  bkw: '#fbbf24',                // Amber-400 (BKW, abgesetzt von PV-Anlage-Solar)
+  einspeisungNeg51: '#94a3b8',   // Slate-400 (§51: eingespeist bei neg. Preis, nicht vergütet)
   autarkie: '#3b82f6',           // Blue (Metrik-Farbe, unabhängig von battery)
   evQuote: '#a855f7',            // Purple-500
   direktverbrauch: '#f97316',    // Orange
@@ -152,6 +227,11 @@ export const EIGENE_SERIE_FARBEN = {
   duRand: '#1d4ed8',   // Rahmen/Outline der eigenen Markierung (z. B. Choropleth)
   region: '#60a5fa',   // Zwischenebene Du ↔ Community
 }
+
+/** Hervorhebung einer einzelnen Scheibe/Serie als „die eigene" in Anteils-Charts
+ *  (Donut, Verteilungs-Pie) — kräftiger Ring statt Inline-`#000` (D17-6-SoT).
+ *  Als Recharts-`stroke` auf der eigenen `<Cell>` gesetzt; `breite` = strokeWidth. */
+export const SERIE_HERVORHEBUNG = { ring: '#111827', breite: 2 } // gray-900
 
 /** Karten-Darstellung (Choropleth). */
 export const KARTE_FARBEN = { grenze: '#ffffff' }
@@ -373,6 +453,25 @@ export const KATEGORIE_FARBEN: Record<string, string> = {
 }
 
 /**
+ * Energiefluss-Kategorien der Monats-Auswertung (Backend `KategorieSumme.kategorie`,
+ * `getMonat`) → Label · Balken-Farbe (Tailwind-bg) · Erzeuger/Verbraucher-Gruppe.
+ * EINE Quelle für die Kategorien-Anteils-Leiste (M4-Wiederherstellung 2026-07-19,
+ * war in `pages/auswertung/EnergieprofilMonat.tsx` inline). Farben aus der
+ * Komponenten-Identität ({@link KOMPONENTEN_FARBEN}/{@link SONSTIGES_ERZEUGER_FARBE})
+ * bzw. Haushalt-Slate wie {@link KATEGORIE_FARBEN}.haushalt — keine neuen Töne.
+ * Backend-Producer: `api/routes/energie_profil/views.py` (ERZEUGER_KAT/VERBRAUCHER_KAT).
+ */
+export const ENERGIE_KATEGORIE: Record<string, { label: string; bg: string; gruppe: 'erzeuger' | 'verbraucher' }> = {
+  pv_module:            { label: 'PV-Module',            bg: KOMPONENTEN_FARBEN['pv-module'].bg,       gruppe: 'erzeuger' },
+  bkw:                  { label: 'Balkonkraftwerk',      bg: KOMPONENTEN_FARBEN['balkonkraftwerk'].bg, gruppe: 'erzeuger' },
+  sonstige_erzeuger:    { label: 'Sonstige Erzeuger',    bg: SONSTIGES_ERZEUGER_FARBE.bg,              gruppe: 'erzeuger' },
+  waermepumpe:          { label: 'Wärmepumpe',           bg: KOMPONENTEN_FARBEN['waermepumpe'].bg,     gruppe: 'verbraucher' },
+  wallbox_eauto:        { label: 'Wallbox / E-Auto',     bg: KOMPONENTEN_FARBEN['wallbox'].bg,          gruppe: 'verbraucher' },
+  haushalt:             { label: 'Haushalt',             bg: 'bg-slate-500',                            gruppe: 'verbraucher' },
+  sonstige_verbraucher: { label: 'Sonstige Verbraucher', bg: KOMPONENTEN_FARBEN['sonstiges'].bg,        gruppe: 'verbraucher' },
+}
+
+/**
  * Kategorien die KEINE Energieflüsse darstellen (z.B. Preise, virtuelle Serien).
  * Werden im Verbrauchs-Stacking (WetterWidget etc.) ignoriert.
  * → Neue nicht-Energie-Kategorien hier ergänzen, nicht in einzelnen Komponenten.
@@ -418,9 +517,12 @@ export const CHART_LABELS: Record<string, string> = {
 
 /** Vergleichs-Badge (▲ besser / ▼ schlechter) — EIN Token statt 3× wortgleich in
  *  Monat-/Jahr-Bilanz + Rahmen (Regel H, 2026-06-25). Hell+Dunkel-Paar. */
+// R3b E3 (Folgepunkt aus Etappe-1-B17): Tönung von -100 auf den B17-Kanon -50
+// gehoben (+ dark auf /20) — der Token-Konflikt mit der Badge-Regel war in
+// Etappe 1 bewusst an S18 vertagt worden.
 export const VERGLEICH_BADGE = {
-  besser: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400',
-  schlechter: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
+  besser: 'bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-400',
+  schlechter: 'bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-400',
 } as const
 
 /** Chart-Flächen-/Dimm-Opazitäten als benannte Tokens statt roher Magic-Numbers

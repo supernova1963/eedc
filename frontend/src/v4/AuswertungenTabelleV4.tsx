@@ -12,14 +12,16 @@
  */
 import { useEffect, useMemo, useState } from 'react'
 import { Table, CalendarDays } from 'lucide-react'
-import { LoadingSpinner, Card } from '../components/ui'
-import { BlockShell, type Block } from '../components/blocks'
+import { FehlerZustand, TabellenSkeleton } from '../components/ui'
+import { BlockShell, BlockStackSkeleton, type Block } from '../components/blocks'
 import { ParkProvider, ParkFuss, Parkbar, usePark } from '../components/park'
 import { WerteTabelle } from '../components/werte'
 import { monatsZeile, tagesZeile, type WerteZeile } from '../lib/werte'
 import { useSelectedAnlage } from '../hooks'
+import type { AuswertungBasis } from './useAuswertungBasis'
 import { useWerteZeitreihe } from './useWerteZeitreihe'
 import { useTagesWerte } from './useTagesWerte'
+import { AnlageLeer } from './OnboardingLeer'
 import { WerkbankZeitraum, VergleichLeisteTag, type ZeitChip, type TagVergleichModus } from './WerkbankZeitraum'
 
 const SICHT_KEY = 'v4-auswertungen-tabelle'
@@ -41,19 +43,26 @@ function vergleichLabelVon(von: string, bis: string): string {
   const vy = Number(von.slice(0, 4)); const by = Number(bis.slice(0, 4))
   return vy === by ? `${vy - 1}` : 'Vorjahr'
 }
+/** Label der „aktuellen" Spalte (R20-1a): bei Einzeljahr das Jahr, sonst „Aktuell". */
+function jahrLabelVon(von: string, bis: string): string {
+  const vy = Number(von.slice(0, 4)); const by = Number(bis.slice(0, 4))
+  return vy === by ? `${vy}` : 'Aktuell'
+}
 
-export default function AuswertungenTabelleV4() {
+export default function AuswertungenTabelleV4({ basis }: { basis: AuswertungBasis }) {
   return (
     <ParkProvider persistKey={SICHT_KEY}>
-      <TabelleInner />
+      <TabelleInner basis={basis} />
     </ParkProvider>
   )
 }
 
-function TabelleInner() {
+function TabelleInner({ basis }: { basis: AuswertungBasis }) {
   const park = usePark()
   const { anlagen, selectedAnlageId, selectedAnlage, loading: anlagenLoading } = useSelectedAnlage()
-  const { rows, jahre, loading, error } = useWerteZeitreihe(selectedAnlageId, selectedAnlage)
+  // Monatswerte/Strompreise kommen aus der Dispatcher-Basis (EIN Fetch je Achse,
+  // Paket Q) — der Hook leitet nur noch ab.
+  const { rows, jahre, loading, error } = useWerteZeitreihe(basis, selectedAnlage)
 
   // Neuestes (Jahr, Monat) als Default-Anker.
   const anker = useMemo(() => {
@@ -86,18 +95,27 @@ function TabelleInner() {
     setVglJahr(anker.jahr - 1)  // Default-Vergleichsjahr = Primär-Jahr − 1
   }, [anker, vglJahr])
 
-  if (anlagenLoading || loading) return <LoadingSpinner text="Lade Werte…" />
+  if (anlagenLoading || loading) {
+    // B8 (S15): Sicht-Skeleton in BlockShell-Form (Monatswerte offen + Energieprofile zu).
+    return (
+      <div className="p-3 sm:p-6 max-w-[1920px] mx-auto">
+        <BlockStackSkeleton label="Lade Werte…" offen="tabelle" zu={1} />
+      </div>
+    )
+  }
   if (anlagen.length === 0) {
     return (
       <div className="p-3 sm:p-6 max-w-[1920px] mx-auto">
-        <Card><p className="text-sm text-gray-500 dark:text-gray-400">Noch keine Anlage angelegt.</p></Card>
+        <AnlageLeer titel="Noch keine Anlage angelegt." />
       </div>
     )
   }
   if (error) {
     return (
       <div className="p-3 sm:p-6 max-w-[1920px] mx-auto">
-        <Card><p className="text-red-500">{error}</p></Card>
+        {/* B8-Fehler-Baustein (S15) — Retry über den Basis-Refresh des Dispatchers
+            (schließt den in VERIFIKATION-S15 notierten reload-Folge-Punkt). */}
+        <FehlerZustand text={error} onRetry={basis.refresh} />
       </div>
     )
   }
@@ -123,20 +141,24 @@ function TabelleInner() {
   const bloecke: Block[] = []
   if (!monGeparkt) {
     bloecke.push({
-      id: 'monatswerte', title: 'Monatswerte', icon: Table, farbe: 'text-gray-400',
+      id: 'monatswerte', title: 'Monatswerte', icon: Table, farbe: 'text-gray-400 dark:text-gray-500',
       summary: `${monVon || '…'} – ${monBis || '…'}${monVergleich ? ' · vs. Vorjahr' : ''}`, defaultOpen: true,
       render: () => (
         <div className="space-y-3">
+          {/* D12-8: Eingabe-Grenzen aus dem verfügbaren Datenjahr-Bereich (analog
+              CockpitTagV4 R5-F2) — sperrt Phantasie-Jahre wie „1822". */}
           <WerkbankZeitraum
             modus="monat" von={monVon} bis={monBis}
             onRange={(v, b) => { setMonVon(v); setMonBis(b) }}
             vergleich={monVergleich} onVergleich={setMonVergleich} chips={monChips}
+            minDatum={`${minJahr}-01`} maxDatum={`${maxJahr}-12`}
           />
           <Parkbar id="tabelle:monatswerte" titel="Monatswerte">
             <WerteTabelle
               rows={monRows.map(monatsZeile)}
               vorjahrRows={monVorjahr ? monVorjahr.map(monatsZeile) : null}
               granularitaet="monat"
+              jahrLabel={jahrLabelVon(monVon, monBis)}
               vergleichLabel={monVergleich ? vergleichLabelVon(monVon, monBis) : null}
               vergleichDefaultAn={monVergleich}
               scope={SCOPE} defaultSpalten={DEFAULT_SPALTEN}
@@ -149,7 +171,7 @@ function TabelleInner() {
   }
   if (!tagGeparkt) {
     bloecke.push({
-      id: 'energieprofile', title: 'Tageswerte', icon: CalendarDays, farbe: 'text-gray-400',
+      id: 'energieprofile', title: 'Tageswerte', icon: CalendarDays, farbe: 'text-gray-400 dark:text-gray-500',
       summary: `${tagVon || '…'} – ${tagBis || '…'} · Vgl. ${vglLabel(vglModus, vglJahr)}`, defaultOpen: false,
       render: () => (
         <EnergieprofilBlock
@@ -158,6 +180,7 @@ function TabelleInner() {
           vglModus={vglModus} onVglModus={setVglModus}
           vglJahr={vglJahr} onVglJahr={setVglJahr} jahre={jahre}
           anker={anker} anlagenname={selectedAnlage?.anlagenname}
+          minJahr={minJahr} maxJahr={maxJahr}
         />
       ),
     })
@@ -165,7 +188,8 @@ function TabelleInner() {
 
   return (
     <div className="p-3 sm:p-6 max-w-[1920px] mx-auto space-y-4">
-      <h1 className="text-lg font-bold text-gray-900 dark:text-white">Werte-Werkbank</h1>
+      {/* R19-4c (Rainer, Gernot-Entscheid 2026-07-17): kein „Werkbank"-Jargon im Titel. */}
+      <h1 className="text-lg font-bold text-gray-900 dark:text-white">Monats- &amp; Tageswerte</h1>
       <BlockShell key="werkbank" persistKey={SICHT_KEY} bloecke={bloecke} sortierbar />
       <ParkFuss />
     </div>
@@ -233,7 +257,7 @@ export function richteAus(prim: WerteZeile[], comp: WerteZeile[] | null, vgl: Vg
 
 /** Tages-Block: lazy (mountet erst beim Aufklappen) → lädt nur dann die Tageswerte. */
 function EnergieprofilBlock({
-  anlageId, von, bis, onRange, vglModus, onVglModus, vglJahr, onVglJahr, jahre, anker, anlagenname,
+  anlageId, von, bis, onRange, vglModus, onVglModus, vglJahr, onVglJahr, jahre, anker, anlagenname, minJahr, maxJahr,
 }: {
   anlageId: number
   von: string; bis: string
@@ -245,6 +269,8 @@ function EnergieprofilBlock({
   jahre: number[]
   anker: { jahr: number; monat: number } | null
   anlagenname?: string
+  minJahr: number
+  maxJahr: number
 }) {
   const vgl = useMemo(
     () => (von && bis ? tagVergleich(vglModus, von, bis, vglJahr) : null),
@@ -271,6 +297,8 @@ function EnergieprofilBlock({
     <div className="space-y-3">
       <WerkbankZeitraum
         modus="tag" von={von} bis={bis} onRange={onRange} chips={chips}
+        // D12-8: Tages-Grenzen aus dem Datenjahr-Bereich (1. Jan – 31. Dez).
+        minDatum={`${minJahr}-01-01`} maxDatum={`${maxJahr}-12-31`}
         vergleichSlot={
           <VergleichLeisteTag
             modus={vglModus} onModus={onVglModus}
@@ -281,15 +309,20 @@ function EnergieprofilBlock({
       {loading && rows.length === 0 ? (
         // Spinner nur beim Erst-Load; bei Zeitraum-/Vergleichswechsel bleibt die
         // bestehende Tabelle stehen und aktualisiert sich in-place (detLAN D7-6).
-        <LoadingSpinner text="Lade Tageswerte…" />
+        <TabellenSkeleton label="Lade Tageswerte…" />
       ) : error ? (
-        <p className="text-red-500 text-sm">{error}</p>
+        // B8-Fehler-Baustein (S15). Implizites Retry: Zeitraum-/Vergleichswechsel in der
+        // stehenden Leiste re-triggert den Fetch; useTagesWerte hat kein explizites reload.
+        <FehlerZustand text={error} />
       ) : (
         <Parkbar id="tabelle:energieprofile" titel="Tageswerte">
           <WerteTabelle
             rows={primZeilen}
             vorjahrRows={vglZeilen}
             granularitaet="tag"
+            // R20-1a: bei „Periode im Jahr" das Primär-Jahr als Spalten-Label; bei
+            // „Vorperiode" neutral „Aktuell" (WerteTabelle-Default) — beide Spalten klar.
+            jahrLabel={vglModus === 'periodeImJahr' ? von.slice(0, 4) : undefined}
             vergleichLabel={vgl ? vglLabel(vglModus, vglJahr) : null}
             vergleichDefaultAn={!!vgl}
             scope={SCOPE} defaultSpalten={DEFAULT_SPALTEN}

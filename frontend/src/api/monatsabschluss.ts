@@ -11,8 +11,10 @@ import { api } from './client'
 // =============================================================================
 
 export interface Vorschlag {
+  // ha_statistics + mqtt_inbound werden vom View-Endpoint zusätzlich eingefügt
+  // (views.py insert(0, …)) — hier gespiegelt, sonst Typ-Lücke (SoT VorschlagQuelle).
   wert: number
-  quelle: 'ha_sensor' | 'cron_snapshot' | 'local_connector' | 'portal_import' | 'vormonat' | 'vorjahr' | 'berechnung' | 'durchschnitt' | 'parameter'
+  quelle: 'ha_sensor' | 'ha_statistics' | 'cron_snapshot' | 'local_connector' | 'mqtt_inbound' | 'portal_import' | 'vormonat' | 'vorjahr' | 'berechnung' | 'durchschnitt' | 'parameter'
   konfidenz: number
   beschreibung: string
   details?: Record<string, unknown>
@@ -40,11 +42,9 @@ export interface FeldStatus {
   gruppe: string | null  // zaehler, wetter, preise
 }
 
-export interface SonstigePosition {
-  bezeichnung: string
-  betrag: number
-  typ: 'ertrag' | 'ausgabe'
-}
+// SoT-Kanon in types/index.ts (G19-1) — hier nur Re-Export für Bestand
+import type { SonstigePosition } from '../types'
+export type { SonstigePosition }
 
 export interface InvestitionStatus {
   id: number

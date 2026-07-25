@@ -15,8 +15,9 @@
  */
 
 import {
-  Activity, AlertTriangle, Battery, Car, CheckCircle, Flame, Hash, Home, Info,
-  Leaf, Plug, RotateCw, Sun, Thermometer, TrendingUp, Wrench, XCircle, Zap,
+  Activity, AlertTriangle, ArrowUpFromLine, Battery, BatteryCharging, Car,
+  CheckCircle, Coins, Euro, Flame, Hash, Home, Info, Leaf, Plug, RotateCw,
+  Sun, Thermometer, TrendingUp, Wallet, Wrench, XCircle, Zap,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { TYP_TEXT_CLASS } from './colors'
@@ -30,6 +31,38 @@ export const STATUS_ICONS = {
   warnung: AlertTriangle,
   kritisch: XCircle,
   info: Info,
+} as const
+
+/**
+ * STEUER_H — EINE einheitliche Höhe (32 px) für ALLE Bedien-Elemente einer
+ * Filter-/Toolbar-Leiste (Chips, Toggle-Pillen, Segment-Controls, `<input>`,
+ * `<select>`) — dritte Kontroll-Höhen-Klasse neben Formular-42px und Button-36px
+ * (Style-Guide B15 Kontroll-Höhen-SoT, R3b S5). Behebt detLAN #27 Punkt 2
+ * „unterschiedliche Höhen in einer Reihe" (Chips waren 24 px, Inputs 32 px,
+ * Selects 39 px) ohne die Aktions-Buttons (36 px) anzufassen. Pillen/Buttons
+ * brauchen zusätzlich `inline-flex items-center`, `.input`-Felder `py-0`,
+ * damit die feste Höhe greift. (R3b Etappe 2: aus `v4/WerkbankZeitraum`
+ * hierher gehoben — Design-Konstante gehört ins lib-SoT-Modul, nicht in eine Sicht.)
+ */
+export const STEUER_H = 'h-8'
+
+/**
+ * Datenrollen-Icon-Kanon (R3b S7/A5 — „eine Datenrolle = ein Icon", analog zur
+ * Farb-Regel in `lib/colors.ts`): EINE Map für die Energiebilanz-/Finanz-Rollen
+ * der KPI-Kacheln (vorher 3 unabhängige Copy-Paste-Sätze in Tag-/Monat-/JahrBilanz).
+ * Prognose-/Preview-Kontexte (z. B. CockpitAussicht) sind eigene Rollen und
+ * NICHT über diese Map gebunden.
+ */
+export const DATENROLLEN_ICONS = {
+  pv: Sun,
+  autarkie: Activity,
+  eigenverbrauch: Zap,
+  einspeisung: ArrowUpFromLine,
+  netzbezug: Plug,
+  nettoErtrag: Euro,
+  ergebnis: Wallet,
+  netzladungKosten: BatteryCharging,
+  netzpreis: Coins,
 } as const
 
 export type KomponentenColor = 'orange' | 'red' | 'yellow' | 'green' | 'blue' | 'purple' | 'cyan' | 'gray'

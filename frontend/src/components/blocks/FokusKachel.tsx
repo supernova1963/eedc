@@ -14,33 +14,40 @@ import { Maximize2 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { FokusVollbild } from './FokusVollbild'
 
-export function FokusKachel({ titel, icon: Icon, farbe, className = '', kompakt = false, zeigeTitel = false, children }: {
+export function FokusKachel({ titel, icon: Icon, farbe, className = '', zeigeTitel = false, tabelle, children }: {
   titel: string
   icon?: LucideIcon
   farbe?: string
   className?: string
-  /** Weniger Padding (für schmale Sidebar-Sektionen). */
-  kompakt?: boolean
   /** Titel auch in der Karten-Kopfzeile zeigen (sonst nur im Vollbild). */
   zeigeTitel?: boolean
+  /** Paket CT: Tabellen-Ablesung des Karten-Charts — durchgereicht ans
+   *  {@link FokusVollbild} (Chart-⇄-Tabelle-Umschalter nur dort). */
+  tabelle?: ReactNode
   children: ReactNode
 }) {
   const [fokus, setFokus] = useState(false)
   return (
     <>
       {fokus && (
-        <FokusVollbild titel={titel} icon={Icon} farbe={farbe} onClose={() => setFokus(false)}>
+        <FokusVollbild titel={titel} icon={Icon} farbe={farbe} tabelle={tabelle} onClose={() => setFokus(false)}>
           {children}
         </FokusVollbild>
       )}
-      <div className={`relative bg-white dark:bg-gray-800 rounded-lg shadow ${kompakt ? 'p-3' : 'p-4 sm:p-6'} ${className}`}>
+      {/* C1/S11 (Flip v4.0.0): auf den Block-Standard rounded-xl/shadow-sm angeglichen.
+          D18-3 (detlan #210): Innenpolsterung auf die Gliederungsebene (12 px = p-3)
+          statt p-4 sm:p-6 — Charts in Live-Kacheln bekommen denselben Seitenrand
+          wie Charts im BlockShell-Body (px-3), keine Doppel-/Überpolsterung. */}
+      <div className={`relative bg-white dark:bg-gray-800 rounded-xl shadow-sm p-3 ${className}`}>
         {/* ⤢ sitzt absolut oben rechts — in der Titelzeile, keine eigene Leerzeile.
-            (Energiefluss bringt sein ⤢ über `kopfAktion` selbst mit.) */}
+            (Energiefluss bringt sein ⤢ über `kopfAktion` selbst mit.)
+            D14-16 (Gernot-Entscheid): unter 640 px ausgeblendet, NICHT entfernt —
+            „die paar Pixel" bringen dort nichts, Desktop-/Breitbild-Nutzen bleibt. */}
         <button
           type="button"
           onClick={() => setFokus(true)}
           aria-label={`${titel}: Fokus / Vollbild`}
-          className="absolute top-2 right-2 z-10 p-1 rounded text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700/50"
+          className="max-sm:hidden absolute top-2 right-2 z-10 p-1 rounded text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700/50"
         >
           <Maximize2 className="h-4 w-4" />
         </button>

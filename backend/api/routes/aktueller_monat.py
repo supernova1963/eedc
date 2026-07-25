@@ -27,7 +27,9 @@ from backend.api.routes.strompreise import lade_tarife_fuer_anlage, resolve_netz
 from backend.api.routes.connector import _calc_month_delta
 from backend.core.berechnungen import (
     autarkie_prozent,
+    berechne_grundlast,
     berechne_netzbezug_kosten,
+    berechne_netzladung_kosten,
     eauto_effizienz_100km,
     eigenverbrauchsquote_prozent,
     einspeise_erloes_euro,
@@ -43,7 +45,6 @@ from backend.services.eauto_wirtschaftlichkeit import (
     berechne_eauto_ersparnis,
     compute_emob_pool_attribution,
     get_emob_heimladung_canonical,
-    pick_emob_ref_parameter,
 )
 from backend.core.wirtschaftlichkeit_defaults import (
     EINSPEISEVERGUETUNG_DEFAULT_CENT,
@@ -54,10 +55,15 @@ from backend.core.field_definitions import (
     get_emob_pv_netz_kwh,
     get_pv_erzeugung_kwh,
     get_sonstiges_verbrauch_kwh,
+    get_speicher_netzladung_kwh,
     get_wp_heizenergie_kwh,
     get_wp_strom_kwh,
 )
-from backend.utils.sonstige_positionen import berechne_sonstige_summen, aggregiere_sonstige_je_monat
+from backend.utils.sonstige_positionen import (
+    berechne_sonstige_summen,
+    berechne_md_sonstige_summen,
+    aggregiere_sonstige_je_monat,
+)
 from backend.core.investition_parameter import ist_dienstlich
 
 logger = logging.getLogger(__name__)
@@ -155,6 +161,10 @@ class AktuellerMonatResponse(BaseModel):
     speicher_soc_drift_signifikant: bool = False
     speicher_effektiver_ladepreis_cent: Optional[float] = None
     speicher_effektiver_ladepreis_quelle: Optional[str] = None  # dyn-tarif | boersenpreis
+    # R15-1 (Rainer-Kostenkacheln): Kosten der Netzladung + verwendeter Preis
+    speicher_ladung_netz_kosten_euro: Optional[float] = None
+    speicher_ladung_netz_preis_cent: Optional[float] = None
+    speicher_ladung_netz_preis_quelle: Optional[str] = None  # tep | imd | bezugspreis
     hat_speicher: bool = False
 
     # Komponenten — Wärmepumpe
@@ -220,16 +230,33 @@ class AktuellerMonatResponse(BaseModel):
     sonstige_ertraege_euro: float = 0.0
     sonstige_ausgaben_euro: float = 0.0
     sonstige_netto_euro: float = 0.0
+    # G19-1: davon Anlage-Ebene (Monatsdaten.sonstige_positionen) — reiner
+    # Ausweis für die T-Konto-Zeile „Anlage — Sonstige …", bereits in den
+    # sonstige_*-Totals enthalten (kein zweiter Posten, R15-5-Muster).
+    anlage_sonstige_ertraege_euro: float = 0.0
+    anlage_sonstige_ausgaben_euro: float = 0.0
     gesamtnettoertrag_euro: Optional[float] = None  # Erlöse + Einsparungen − Kosten
 
     # Tarif-Info
     netzbezug_preis_cent: Optional[float] = None      # Verwendeter Tarif
     einspeise_preis_cent: Optional[float] = None
     netzbezug_durchschnittspreis_cent: Optional[float] = None  # Flexibler Tarif (Monatsdurchschnitt)
+    # G19-1 K3 (R19-3): Grundgebühr des Monats — steckt bereits in
+    # netzbezug_kosten_euro (reiner Ausweis, kein zweiter Posten).
+    grundgebuehr_euro: Optional[float] = None
+    # G19-1 K3: jährliche Zähler-/Messstellengebühr vom Tarif — reiner Ausweis
+    # in der Jahresaufstellung, NICHT in Kosten/Netto-Ertrag verrechnet.
+    zaehlergebuehr_euro_jahr: Optional[float] = None
 
     # Vergleiche
     vorjahr: Optional[dict] = None
     soll_pv_kwh: Optional[float] = None
+
+    # Grundlast (Nacht-Sockel; R12-1 ersetzt PVGIS-SOLL/IST). `grundlast_kwh` ist
+    # additiv → Cockpit/Jahr summiert die Monate (analog soll_pv_kwh).
+    grundlast_kw: Optional[float] = None              # Median der Nacht-Stunden-Leistung
+    grundlast_kwh: Optional[float] = None             # geschätzte Grundlast-Energie (kW × 24 × Tage)
+    grundlast_anteil_prozent: Optional[float] = None  # Anteil am Gesamtverbrauch
 
     # Betriebskosten (anteilig, Σ betriebskosten_jahr / 12 aller aktiven Investitionen)
     betriebskosten_anteilig_euro: Optional[float] = None
@@ -578,6 +605,11 @@ async def _load_vorjahr(anlage_id: int, investitionen: list[Investition], jahr: 
     sonstiges_inv_ids = [i.id for i in investitionen if i.typ == "sonstiges"]
     all_inv_ids = pv_inv_ids + bat_inv_ids + wp_inv_ids + eauto_inv_ids + wb_inv_ids + sonstiges_inv_ids
     sonstiges_vj = 0.0
+    # DI-5: für die symmetrische gesamtnettoertrag-Formel (WP-/eMob-Ersparnis
+    # auch im Vorjahr) außerhalb des `if all_inv_ids`-Blocks vorbelegt.
+    wp_strom_vj = 0.0
+    wp_waerme_vj = 0.0
+    imd_data_by_inv_vj: dict[int, dict] = {}
 
     if all_inv_ids:
         imd_result = await db.execute(
@@ -590,8 +622,6 @@ async def _load_vorjahr(anlage_id: int, investitionen: list[Investition], jahr: 
         pv_vj = 0.0
         bat_ladung_vj = 0.0
         bat_entladung_vj = 0.0
-        wp_strom_vj = 0.0
-        wp_waerme_vj = 0.0
         eauto_ladung_vj = 0.0
         wb_ladung_vj = 0.0
         emob_km_vj = 0.0
@@ -601,7 +631,18 @@ async def _load_vorjahr(anlage_id: int, investitionen: list[Investition], jahr: 
             inv = inv_by_id_vj.get(imd.investition_id)
             if not inv:
                 continue
+            # DI-2-C: Vor-Anschaffungs-/Nach-Stilllegungs-Monate überspringen —
+            # die Anschaffungsdatum-Grenze gilt für ALLE Auswertungen, nicht nur
+            # die Finanz (DI-5 filterte nur den Finanz-Loop unten). Sonst zeigt die
+            # VJ-Energieanzeige (wp_strom/wp_waerme, PV, eMob …) Werte einer im
+            # Vorjahres-Monat noch nicht aktiven Komponente (#236-Rest, Demo:
+            # WP-IMD 2024-01..03 vor Inbetriebnahme 04/2024 → wp_strom 320 kWh,
+            # wp_waerme 1400 kWh im VJ-Vergleich 2025→2024).
+            # [[feedback_anschaffungsdatum_grenze]]
+            if not inv.ist_aktiv_im_monat(imd.jahr, imd.monat):
+                continue
             data = imd.verbrauch_daten or {}
+            imd_data_by_inv_vj[imd.investition_id] = data  # DI-5: für WP-/eMob-Ersparnis
             # Per-Typ-Feld-Auflösung zentral ([[imd_typ_beitrag]], Block 1).
             b = imd_typ_beitrag(inv, data)
             if imd.investition_id in pv_inv_ids:
@@ -698,8 +739,98 @@ async def _load_vorjahr(anlage_id: int, investitionen: list[Investition], jahr: 
             einspeise_e = result.get("einspeise_erloes_euro", 0) or 0
             ev_e = result.get("ev_ersparnis_euro", 0) or 0
             netz_k = result.get("netzbezug_kosten_euro", 0) or 0
+
+            # DI-5 (G20-3): gesamtnettoertrag SYMMETRISCH zum aktuellen Monat —
+            # inkl. WP- und E-Mob-Ersparnis. Vorher fehlten beide im Vorjahr →
+            # das T-Konto-Δ verglich Äpfel (Monat mit WP/eMob) mit Birnen
+            # (Vorjahr ohne). Es werden dieselben Leaf-Helfer wie im aktuellen
+            # Monat mit den Vorjahres-Tarifen/-Preisen genutzt (kein Formel-Dupli).
+            monats_gaspreis_vj = md.gaspreis_cent_kwh
+            monats_benzinpreis_vj = md.kraftstoffpreis_euro
+
+            # WP-Ersparnis nur über die im Vorjahres-Monat AKTIVEN WPs summieren
+            # (ist_aktiv_im_monat, #236/[[feedback_anschaffungsdatum_grenze]]) —
+            # der aktuelle Monat filtert ebenso; sonst zählte Vor-Anschaffungs-
+            # Verbrauch mit (Demo: WP-IMD 2024-01..03 vor Inbetriebnahme 04/2024).
+            wp_waerme_fin = 0.0
+            wp_strom_fin = 0.0
+            for i in investitionen:
+                if (i.typ == "waermepumpe"
+                        and i.ist_aktiv_im_monat(vj, monat)
+                        and i.id in imd_data_by_inv_vj):
+                    _bwp = imd_typ_beitrag(i, imd_data_by_inv_vj[i.id])
+                    wp_waerme_fin += _bwp.wp_waerme
+                    wp_strom_fin += _bwp.wp_strom
+
+            wp_ersparnis_vj = 0.0
+            if wp_waerme_fin > 0 and wp_strom_fin > 0:
+                wp_tarif_vj = tarife_vj.get("waermepumpe")
+                wp_p_vj = (
+                    wp_tarif_vj.netzbezug_arbeitspreis_cent_kwh
+                    if wp_tarif_vj and wp_tarif_vj.netzbezug_arbeitspreis_cent_kwh is not None
+                    else netz_preis
+                )
+                wp_invs_vj = [
+                    i for i in investitionen
+                    if i.typ == "waermepumpe" and i.ist_aktiv_im_monat(vj, monat)
+                ]
+                wp_r_vj = berechne_wp_ersparnis(
+                    wp_waerme_kwh=wp_waerme_fin,
+                    wp_strom_kwh=wp_strom_fin,
+                    wp_strompreis_cent=wp_p_vj,
+                    wp_parameter=wp_invs_vj[0].parameter if wp_invs_vj else None,
+                    monats_gaspreis_cent=monats_gaspreis_vj,
+                )
+                wp_ersparnis_vj = round(wp_r_vj.ersparnis_euro, 2)
+
+            emob_ersparnis_vj = 0.0
+            wb_tarif_vj = tarife_vj.get("wallbox")
+            wb_p_vj = (
+                wb_tarif_vj.netzbezug_arbeitspreis_cent_kwh
+                if wb_tarif_vj and wb_tarif_vj.netzbezug_arbeitspreis_cent_kwh is not None
+                else netz_preis
+            )
+            _emob_aktiv = [
+                i for i in investitionen
+                if i.typ in ("e-auto", "wallbox")
+                and not ist_dienstlich(i)
+                and i.ist_aktiv_im_monat(vj, monat)
+                and i.id in imd_data_by_inv_vj
+            ]
+            _ea_data_vj = [imd_data_by_inv_vj[i.id] for i in _emob_aktiv if i.typ == "e-auto"]
+            _wb_data_vj = [imd_data_by_inv_vj[i.id] for i in _emob_aktiv if i.typ == "wallbox"]
+            _emob_pool_attr_vj = compute_emob_pool_attribution(
+                eauto_imd_data=_ea_data_vj,
+                wallbox_imd_data=_wb_data_vj,
+            )
+            for i in _emob_aktiv:
+                _d_vj = _baue_investition_financial(
+                    i,
+                    imd_data_by_inv_vj[i.id],
+                    netz_p=netz_preis,
+                    einsp_p=einsp_preis,
+                    wp_p=netz_preis,     # für eMob-Zweig irrelevant
+                    wb_p=wb_p_vj,
+                    monats_gaspreis=monats_gaspreis_vj,
+                    monats_benzinpreis=monats_benzinpreis_vj,
+                    emob_pool_attr=_emob_pool_attr_vj,
+                )
+                if (
+                    _d_vj is not None
+                    and _d_vj.ersparnis_label == "Ersparnis vs. Verbrenner"
+                    and _d_vj.ersparnis_euro is not None
+                ):
+                    emob_ersparnis_vj += _d_vj.ersparnis_euro
+            emob_ersparnis_vj = round(emob_ersparnis_vj, 2)
+
+            if wp_ersparnis_vj:
+                result["wp_ersparnis_euro"] = wp_ersparnis_vj
+            if emob_ersparnis_vj:
+                result["emob_ersparnis_euro"] = emob_ersparnis_vj
             if einspeise_e or ev_e:
-                result["gesamtnettoertrag_euro"] = round(einspeise_e + ev_e - netz_k, 2)
+                result["gesamtnettoertrag_euro"] = round(
+                    einspeise_e + ev_e + wp_ersparnis_vj + emob_ersparnis_vj - netz_k, 2
+                )
     except Exception:
         logger.warning("Vorjahr-Finanzen konnten nicht berechnet werden")
 
@@ -721,6 +852,30 @@ async def _load_soll_pv(anlage_id: int, monat: int, db: AsyncSession) -> Optiona
     if not prognosen:
         return None
     return round(sum(p.ertrag_kwh for p in prognosen), 1)
+
+
+async def _load_grundlast_nacht_kw(
+    anlage_id: int, jahr: int, monat: int, db: AsyncSession,
+) -> list[float]:
+    """Nacht-Stunden-Leistungen (0–5 Uhr, verbrauch_kw > 0) des Monats aus dem
+    stündlichen Energieprofil — Sourcing für `berechne_grundlast` (ADR-001:
+    Formel liegt im Berechnungs-Layer, hier nur die Query). Leer, wenn die Anlage
+    keine Stundenprofile hat (dann fällt die Sicht auf PVGIS-SOLL/IST zurück)."""
+    from calendar import monthrange
+    from backend.models.tages_energie_profil import TagesEnergieProfil
+
+    monat_ende = date(jahr, monat, monthrange(jahr, monat)[1])
+    result = await db.execute(
+        select(TagesEnergieProfil.verbrauch_kw).where(
+            TagesEnergieProfil.anlage_id == anlage_id,
+            TagesEnergieProfil.datum >= date(jahr, monat, 1),
+            TagesEnergieProfil.datum <= monat_ende,
+            TagesEnergieProfil.stunde < 5,
+            TagesEnergieProfil.verbrauch_kw.is_not(None),
+            TagesEnergieProfil.verbrauch_kw > 0,
+        )
+    )
+    return [float(w) for w in result.scalars().all()]
 
 
 # =============================================================================
@@ -1083,9 +1238,15 @@ async def get_aktueller_monat(
     netto_ertrag = None
     netzbezug_preis_cent = None
     einspeise_cent = None
+    grundgebuehr = None
+    zaehlergebuehr_jahr = None
 
     tarife = await lade_tarife_fuer_anlage(db, anlage_id)
     allgemein_tarif = tarife.get("allgemein")
+    if allgemein_tarif:
+        # G19-1 K3: jährliche Zählergebühr (Ausweis in der Jahresaufstellung,
+        # NICHT verrechnet) — Frontend zeigt sie nur im Jahres-Finanzblock.
+        zaehlergebuehr_jahr = allgemein_tarif.zaehlergebuehr_euro_jahr
     if allgemein_tarif:
         netzbezug_preis_cent = allgemein_tarif.netzbezug_arbeitspreis_cent_kwh if allgemein_tarif.netzbezug_arbeitspreis_cent_kwh is not None else NETZBEZUG_DEFAULT_CENT
         einspeise_cent = allgemein_tarif.einspeiseverguetung_cent_kwh if allgemein_tarif.einspeiseverguetung_cent_kwh is not None else EINSPEISEVERGUETUNG_DEFAULT_CENT
@@ -1106,6 +1267,9 @@ async def get_aktueller_monat(
             netzbezug_kosten = round(
                 berechne_netzbezug_kosten(netzbezug, netzbezug_preis_cent, grundpreis), 2
             )
+            # G19-1 K3 (R19-3): Grundgebühr separat ausweisen — steckt bereits
+            # in netzbezug_kosten (kein zweiter Posten, nur Annotation).
+            grundgebuehr = round(grundpreis, 2)
         if eigenverbrauch is not None:
             ev_ersparnis = round(eigenverbrauch * netzbezug_preis_cent / 100, 2)
 
@@ -1151,26 +1315,13 @@ async def get_aktueller_monat(
         )
         wp_ersparnis = round(wp_ersparnis_result.ersparnis_euro, 2)
 
-    emob_ladung = get_val("emob_ladung_kwh")
-    emob_km = get_val("emob_km")
-    emob_pv_ladung = get_val("emob_pv_ladung_kwh") or 0.0
-    emob_extern_euro = get_val("emob_ladung_extern_euro") or 0.0
-    if emob_km is not None and emob_km > 0 and allgemein_tarif:
-        wallbox_tarif = tarife.get("wallbox")
-        wallbox_preis_cent = (
-            wallbox_tarif.netzbezug_arbeitspreis_cent_kwh
-            if wallbox_tarif and wallbox_tarif.netzbezug_arbeitspreis_cent_kwh is not None
-            else netzbezug_preis_cent
-        )
-        emob_result = berechne_eauto_ersparnis(
-            km_gefahren=emob_km,
-            ladung_netz_kwh=(emob_ladung or 0) - emob_pv_ladung,
-            ladung_extern_euro=emob_extern_euro,
-            wallbox_strompreis_cent=wallbox_preis_cent,
-            eauto_parameter=pick_emob_ref_parameter(investitionen),
-            monats_benzinpreis_euro=monats_benzinpreis,
-        )
-        emob_ersparnis = round(emob_result.ersparnis_euro, 2)
+    # G20-2 (Gernot 2026-07-20): Die eMob-Ersparnis-Aggregation folgt weiter unten
+    # als **Summe der Per-Fahrzeug-Ersparnisse** (dieselben Werte wie die
+    # investitionen_financials-Zeilen), NACHDEM diese gebaut sind. Der frühere
+    # Einmal-Lauf über die Gesamt-km mit dem parameter-Satz des ERSTEN E-Autos
+    # (pick_emob_ref_parameter) rechnete bei unterschiedlichem Verbrauch je Fahrzeug
+    # falsch (Demo: 167,79 € statt 65,37 + 85,59 = 150,96 €).
+    # [[feedback_aggregator_symmetrie]] [[feedback_aggregations_drift]]
 
     # BKW-Ersparnis wird NICHT separat ausgewiesen — BKW-Erzeugung fließt in
     # pv_erzeugung_total und damit in eigenverbrauch ein → bereits in ev_ersparnis enthalten.
@@ -1213,20 +1364,25 @@ async def get_aktueller_monat(
     _sonstige_agg = aggregiere_sonstige_je_monat(_sonstige_rows).get((jahr, monat), {})
     sonstige_ertraege_total = round(_sonstige_agg.get("ertraege_euro", 0.0), 2)
     sonstige_ausgaben_total = round(_sonstige_agg.get("ausgaben_euro", 0.0), 2)
+
+    # G19-1: Basis-Positionen (Monatsdaten.sonstige_positionen, Anlage-Ebene)
+    # wirken GENAU wie IMD-Positionen: eigene T-Konto-Zeile „Anlage — Sonstige …"
+    # (anlage_*-Felder, reiner Ausweis) + einmalig in die Totals gefaltet
+    # (R15-5-Muster: kein zweiter Kostenposten). md_for_gas ist der bereits
+    # geladene Monatsdaten-Row dieses Monats.
+    _anlage_sonstige = berechne_md_sonstige_summen(md_for_gas)
+    anlage_sonstige_ertraege = round(_anlage_sonstige["ertraege_euro"], 2)
+    anlage_sonstige_ausgaben = round(_anlage_sonstige["ausgaben_euro"], 2)
+    sonstige_ertraege_total = round(sonstige_ertraege_total + anlage_sonstige_ertraege, 2)
+    sonstige_ausgaben_total = round(sonstige_ausgaben_total + anlage_sonstige_ausgaben, 2)
     sonstige_netto_total = round(sonstige_ertraege_total - sonstige_ausgaben_total, 2)
 
     # ── Gesamtnettoertrag = Erlöse + Einsparungen − Kosten ──
-    # Sonstige Positionen werden NICHT eingerechnet — sie werden separat im
-    # T-Konto gerendert und im Monatsergebnis (nettoNachAllem) addiert.
+    # G20-2: erst NACH den Per-Investition-Financials berechnet, damit
+    # `emob_ersparnis` die Summe der Fahrzeug-Zeilen ist (siehe unten). Sonstige
+    # Positionen werden NICHT eingerechnet — sie werden separat im T-Konto
+    # gerendert und im Monatsergebnis (nettoNachAllem) addiert.
     gesamtnettoertrag = None
-    if einspeise_erloes is not None and ev_ersparnis is not None and netzbezug_kosten is not None:
-        gesamtnettoertrag = round(
-            einspeise_erloes + ev_ersparnis
-            + (wp_ersparnis or 0)
-            + (emob_ersparnis or 0)
-            - netzbezug_kosten,
-            2,
-        )
 
     # ── Komponenten-Detail aus gespeicherten InvestitionMonatsdaten ──
     # Batch-Query: Alle InvestitionMonatsdaten für diesen Monat auf einmal laden
@@ -1260,6 +1416,7 @@ async def get_aktueller_monat(
     speicher_soc_drift_flag = False
     speicher_eff_ladepreis = None
     speicher_eff_ladepreis_quelle = None
+    speicher_imd_ladepreis = None
     if speicher_invs:
         # Kapazität aus parameter
         kap_sum = sum((i.parameter or {}).get("kapazitaet_kwh", 0) or 0 for i in speicher_invs)
@@ -1270,13 +1427,26 @@ async def get_aktueller_monat(
             for i in speicher_invs
         )
 
-        # Arbitrage-Ladung aus gespeicherten Daten
+        # Arbitrage-Ladung aus gespeicherten Daten (Kanon-Key + Legacy-Fallback,
+        # deckt frisch geschriebene Legacy-Rows vor dem nächsten Migrations-Lauf).
+        # Parallel: kWh-gewichteter Ø der manuell erfassten IMD-Ladepreise als
+        # Preis-Fallback für die Netzladung-Kosten-Kachel (R15-1).
         ladung_netz_total = 0.0
+        imd_preis_gewichtet = 0.0
+        imd_preis_kwh = 0.0
         for imd in get_imd_for_invs(speicher_invs):
             data = imd.verbrauch_daten or {}
-            ladung_netz_total += data.get("ladung_netz_kwh", 0) or 0
+            nl = get_speicher_netzladung_kwh(data)
+            ladung_netz_total += nl
+            imd_preis = data.get("speicher_ladepreis_cent")
+            if nl > 0 and imd_preis is not None and imd_preis > 0:
+                imd_preis_gewichtet += nl * imd_preis
+                imd_preis_kwh += nl
         if ladung_netz_total > 0:
             speicher_ladung_netz = round(ladung_netz_total, 2)
+        speicher_imd_ladepreis = (
+            imd_preis_gewichtet / imd_preis_kwh if imd_preis_kwh > 0 else None
+        )
 
         # Wirkungsgrad und Vollzyklen
         sl = speicher_ladung or 0
@@ -1487,6 +1657,16 @@ async def get_aktueller_monat(
     if md_flex and md_flex.netzbezug_durchschnittspreis_cent is not None:
         netzbezug_durchschnittspreis = md_flex.netzbezug_durchschnittspreis_cent
 
+    # R15-1 (Rainer-Kostenkacheln): Kosten der Speicher-Netzladung.
+    # Preis-Kette TEP-effektiv → IMD-Ø (Handeingabe) → Bezugspreis
+    # (Ø-Monatspreis vor festem Tarif) — Berechnungs-Layer-Helper.
+    netzladung_kosten = berechne_netzladung_kosten(
+        speicher_ladung_netz,
+        eff_ladepreis_cent=speicher_eff_ladepreis,
+        imd_preis_cent=speicher_imd_ladepreis,
+        netzbezug_preis_cent=netzbezug_durchschnittspreis or netzbezug_preis_cent,
+    )
+
     # ── Komponenten-Flags ──
     # #239 detLAN: pro Monat filtern, nicht pro Anlage. Sonst wird die
     # Sektion (z.B. Wärmepumpe) im Monatsbericht angezeigt, bevor die
@@ -1572,6 +1752,17 @@ async def get_aktueller_monat(
     # ── Vergleichsdaten ──
     vorjahr = await _load_vorjahr(anlage_id, investitionen, jahr, monat, db)
     soll_pv = await _load_soll_pv(anlage_id, monat, db)
+
+    # ── Grundlast (Nacht-Sockel, R12-1: ersetzt PVGIS-SOLL/IST in Cockpit/Monat
+    # + Jahr; Formel im Berechnungs-Layer, Median wie der Live-Wert). Im aktuellen
+    # Monat nur die bisherigen Tage hochrechnen, sonst alle Kalendertage. ──
+    from calendar import monthrange as _monthrange_gl
+    grundlast_tage = now.day if ist_aktueller_monat else _monthrange_gl(jahr, monat)[1]
+    grundlast = berechne_grundlast(
+        nacht_verbrauch_kw=await _load_grundlast_nacht_kw(anlage_id, jahr, monat, db),
+        gesamtverbrauch_kwh=gesamtverbrauch,
+        tage=grundlast_tage,
+    )
 
     # ── Quellen-Übersicht ──
     quellen = {
@@ -1662,6 +1853,32 @@ async def get_aktueller_monat(
             if detail is not None:
                 investitionen_financials.append(detail)
 
+    # ── G20-2: eMob-Ersparnis-Aggregat = Σ der Per-Fahrzeug-Ersparnisse ──
+    # Deckungsgleich mit den investitionen_financials-Zeilen (jede mit dem
+    # parameter-Satz IHRES Fahrzeugs), statt Einmal-Lauf über die Gesamt-km mit
+    # dem Referenz-Parameter des ersten E-Autos. Nur die vs-Verbrenner-Zeilen
+    # (E-Auto + km-fahrende Wallbox) — die Wallbox-PV-Ladung-Ersparnis gehört
+    # nicht in dieses Aggregat (wie zuvor). Dienstwagen sind bereits durch
+    # `_baue_investition_financial` ausgeschlossen ([[feedback_aggregator_symmetrie]]).
+    _emob_rows = [
+        d for d in investitionen_financials
+        if d.typ in ("e-auto", "wallbox")
+        and d.ersparnis_label == "Ersparnis vs. Verbrenner"
+        and d.ersparnis_euro is not None
+    ]
+    if _emob_rows:
+        emob_ersparnis = round(sum(d.ersparnis_euro for d in _emob_rows), 2)
+
+    # Gesamtnettoertrag jetzt bilden (emob_ersparnis = Summe der Fahrzeug-Zeilen).
+    if einspeise_erloes is not None and ev_ersparnis is not None and netzbezug_kosten is not None:
+        gesamtnettoertrag = round(
+            einspeise_erloes + ev_ersparnis
+            + (wp_ersparnis or 0)
+            + (emob_ersparnis or 0)
+            - netzbezug_kosten,
+            2,
+        )
+
     # Ø Verbrauch (kWh/100 km) via zentralem Helper aus den FINALEN (ggf. connector-
     # überschriebenen) Werten — gemessener Fahrverbrauch hat Vorrang vor Ladung.
     emob_eff = eauto_effizienz_100km(
@@ -1702,6 +1919,9 @@ async def get_aktueller_monat(
         speicher_soc_drift_signifikant=speicher_soc_drift_flag,
         speicher_effektiver_ladepreis_cent=speicher_eff_ladepreis,
         speicher_effektiver_ladepreis_quelle=speicher_eff_ladepreis_quelle,
+        speicher_ladung_netz_kosten_euro=netzladung_kosten.kosten_euro if netzladung_kosten else None,
+        speicher_ladung_netz_preis_cent=netzladung_kosten.preis_cent if netzladung_kosten else None,
+        speicher_ladung_netz_preis_quelle=netzladung_kosten.quelle if netzladung_kosten else None,
         hat_speicher=hat_speicher,
         # Komponenten — WP
         wp_strom_kwh=get_val("wp_strom_kwh"),
@@ -1748,15 +1968,22 @@ async def get_aktueller_monat(
         sonstige_ertraege_euro=sonstige_ertraege_total,
         sonstige_ausgaben_euro=sonstige_ausgaben_total,
         sonstige_netto_euro=sonstige_netto_total,
+        anlage_sonstige_ertraege_euro=anlage_sonstige_ertraege,
+        anlage_sonstige_ausgaben_euro=anlage_sonstige_ausgaben,
         gesamtnettoertrag_euro=gesamtnettoertrag,
         betriebskosten_anteilig_euro=betriebskosten_anteilig,
         # Tarif-Info
         netzbezug_preis_cent=netzbezug_preis_cent if allgemein_tarif else None,
         einspeise_preis_cent=einspeise_cent if allgemein_tarif else None,
         netzbezug_durchschnittspreis_cent=netzbezug_durchschnittspreis,
+        grundgebuehr_euro=grundgebuehr,
+        zaehlergebuehr_euro_jahr=zaehlergebuehr_jahr,
         # Vergleiche
         vorjahr=vorjahr,
         soll_pv_kwh=soll_pv,
+        grundlast_kw=grundlast.grundlast_kw,
+        grundlast_kwh=grundlast.grundlast_kwh,
+        grundlast_anteil_prozent=grundlast.grundlast_anteil_prozent,
         # Per-Investition Finanzdetails
         investitionen_financials=investitionen_financials,
         komponenten_geraete=komponenten_geraete,

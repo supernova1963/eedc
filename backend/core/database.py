@@ -178,6 +178,57 @@ def _migrate_speicher_laedt_aus_netz_backfill(connection) -> None:
         )
 
 
+def _migrate_monatsdaten_sonderkosten_zu_positionen(connection) -> None:
+    """
+    G19-1: Basis-Sonderkosten → strukturierte `sonstige_positionen` (Anlage-Ebene).
+
+    Alt-`sonderkosten_euro > 0` wird als EINE Ausgabe-Position „… (migriert)"
+    materialisiert — gleiche Mechanik wie der IMD-Legacy-Fallback in
+    `utils/sonstige_positionen.get_sonstige_positionen`. Die Legacy-Spalten
+    bleiben unangetastet lesbar (deprecated, [[feedback_legacy_felder]]).
+
+    Additiv + idempotent: füllt nur Zeilen, deren `sonstige_positionen` noch
+    NULL ist (deckt auch Restores von Alt-Backups nach dem ersten Lauf ab).
+    Kein HTTP, kein Blocking ([[feedback_migration_startup_kein_http]]).
+    """
+    import json
+    from sqlalchemy import text as _text
+
+    from backend.utils.sonstige_positionen import _safe_float
+
+    rows = connection.execute(_text(
+        "SELECT id, sonderkosten_euro, sonderkosten_beschreibung FROM monatsdaten "
+        "WHERE sonstige_positionen IS NULL "
+        "AND sonderkosten_euro IS NOT NULL AND sonderkosten_euro > 0"
+    )).fetchall()
+
+    for md_id, euro, beschreibung in rows:
+        # SQLite ist dynamisch typisiert und wertet TEXT > 0 als wahr — ein
+        # korrupter String-Wert in der Spalte erreicht diese Schleife. Die
+        # Migration läuft im ungeschützten Boot-Pfad (run_migrations): ein
+        # nackter float()-Wurf hieße Add-on-Restart-Schleife (v3.45.8-Klasse).
+        # Daher _safe_float (rettet '150,00'); Unrettbares überspringen —
+        # die Zeile bleibt über den Legacy-Fallback des Helpers lesbar.
+        betrag = _safe_float(euro)
+        if betrag is None or betrag <= 0:
+            logger.warning(
+                "G19-1-Migration: monatsdaten.id=%s sonderkosten_euro=%r "
+                "nicht numerisch — übersprungen",
+                md_id, euro,
+            )
+            continue
+        bezeichnung = (beschreibung or "").strip() or "Sonderkosten"
+        position = [{
+            "bezeichnung": f"{bezeichnung} (migriert)",
+            "betrag": round(betrag, 2),
+            "typ": "ausgabe",
+        }]
+        connection.execute(
+            _text("UPDATE monatsdaten SET sonstige_positionen = :p WHERE id = :id"),
+            {"p": json.dumps(position, ensure_ascii=False), "id": md_id},
+        )
+
+
 def _migrate_pv_erzeugung_aggregat_clear(connection) -> None:
     """kWp-Verteilung-Etappe: `monatsdaten.pv_erzeugung_kwh` als rein manuelles
     Aggregat etablieren (Invariante, [[project_kwp_verteilung_aggregator]]).
@@ -568,10 +619,16 @@ async def run_migrations(conn):
                 ('kraftstoffpreis_euro', 'FLOAT'),
                 # v3.21.0: Alter Energiepreis (Gas/Öl) pro Monat für WP-Alternativvergleich
                 ('gaspreis_cent_kwh', 'FLOAT'),
+                # G19-1: Strukturierte sonstige Erträge & Ausgaben (Anlage-Ebene)
+                ('sonstige_positionen', 'JSON'),
             ]
             for col_name, col_type in new_columns:
                 if col_name not in existing_columns:
                     connection.execute(text(f'ALTER TABLE monatsdaten ADD COLUMN {col_name} {col_type}'))
+
+            # G19-1: Alt-Sonderkosten als Ausgabe-Position materialisieren
+            # (idempotent — füllt nur Zeilen mit sonstige_positionen IS NULL).
+            _migrate_monatsdaten_sonderkosten_zu_positionen(connection)
 
         # v2.3.2: Neue Spalten zur pvgis_prognosen Tabelle (per-Modul-Daten + gesamt kWp)
         if 'pvgis_prognosen' in inspector.get_table_names():
@@ -632,6 +689,9 @@ async def run_migrations(conn):
             existing_columns = {col['name'] for col in inspector.get_columns('strompreise')}
             if 'verwendung' not in existing_columns:
                 connection.execute(text("ALTER TABLE strompreise ADD COLUMN verwendung VARCHAR(30) DEFAULT 'allgemein'"))
+            # G19-1 K3 (R19-3): jährliche Zähler-/Messstellengebühr (Ausweis-only)
+            if 'zaehlergebuehr_euro_jahr' not in existing_columns:
+                connection.execute(text("ALTER TABLE strompreise ADD COLUMN zaehlergebuehr_euro_jahr FLOAT"))
 
         # v3.5.0: Preset-ID für MQTT-Gateway-Mappings
         if 'mqtt_gateway_mappings' in inspector.get_table_names():
@@ -879,6 +939,40 @@ async def _run_data_migrations() -> None:
         await _apply_once(
             "phase_2a_emob_canonical_source",
             migrate_emob_canonical_source,
+        )
+
+        # Datenquellen-V4 B8: effektive Quelle jedes Feldes explizit machen
+        # (§2h HA-first, konservativ Inbound). Additiv/idempotent, kein HTTP →
+        # Fundament für den keine-Default-Flip (B8-2).
+        from backend.services.migrations.migrate_datenquellen_materialisieren import (
+            materialisiere_datenquellen,
+        )
+        await _apply_once(
+            "datenquellen_v4_b8_materialisieren",
+            materialisiere_datenquellen,
+        )
+
+        # Datenquellen-V4: Vorzeichen-Umkehr vereinheitlichen — Legacy live_invert
+        # + quellen[].invertieren + Gateway-Transform-Invert in EINEN quellen-
+        # unabhängigen Store `sensor_mapping.invertieren`. Additiv/idempotent, kein HTTP.
+        from backend.services.migrations.migrate_invert_vereinheitlichen import (
+            migrate_invert_vereinheitlichen,
+        )
+        await _apply_once(
+            "datenquellen_v4_invert_vereinheitlichen",
+            migrate_invert_vereinheitlichen,
+        )
+
+        # Datenquellen-V4 B7-5c: Import-/Export-Richtung explizit festschreiben,
+        # BEVOR der neue Default greift (HA vorhanden → Import aus). Ohne diesen
+        # Schritt verstummte ein Bestands-Add-on, das heute per ENV-Flag über MQTT
+        # importiert, still. Additiv/idempotent, kein HTTP.
+        from backend.services.migrations.migrate_mqtt_richtungen import (
+            migriere_mqtt_richtungen,
+        )
+        await _apply_once(
+            "datenquellen_v4_b7_5c_mqtt_richtungen",
+            migriere_mqtt_richtungen,
         )
 
         # HINWEIS (v3.45.8): Die in v3.45.7 hier registrierte Migration

@@ -74,6 +74,10 @@ export interface AktuellerMonatResponse {
   speicher_soc_drift_signifikant: boolean
   speicher_effektiver_ladepreis_cent: number | null
   speicher_effektiver_ladepreis_quelle: string | null
+  // R15-1 (Rainer-Kostenkacheln): Kosten der Netzladung + verwendeter Preis
+  speicher_ladung_netz_kosten_euro: number | null
+  speicher_ladung_netz_preis_cent: number | null
+  speicher_ladung_netz_preis_quelle: string | null
 
   // Komponenten — Wärmepumpe
   wp_strom_kwh: number | null
@@ -131,6 +135,11 @@ export interface AktuellerMonatResponse {
   sonstige_ertraege_euro: number
   sonstige_ausgaben_euro: number
   sonstige_netto_euro: number
+  // G19-1: davon Anlage-Ebene (Monatsdaten.sonstige_positionen) — reiner
+  // Ausweis für die T-Konto-Zeile „Anlage — Sonstige …", bereits in den
+  // sonstige_*-Totals enthalten.
+  anlage_sonstige_ertraege_euro: number
+  anlage_sonstige_ausgaben_euro: number
   gesamtnettoertrag_euro: number | null
   betriebskosten_anteilig_euro: number | null
 
@@ -138,6 +147,11 @@ export interface AktuellerMonatResponse {
   netzbezug_preis_cent: number | null
   einspeise_preis_cent: number | null
   netzbezug_durchschnittspreis_cent: number | null
+  // G19-1 K3: Grundgebühr des Monats (steckt bereits in netzbezug_kosten_euro,
+  // reiner Ausweis) + jährliche Zählergebühr vom Tarif (nur Jahresaufstellung,
+  // nicht verrechnet).
+  grundgebuehr_euro: number | null
+  zaehlergebuehr_euro_jahr: number | null
 
   // Vergleiche
   vorjahr: {
@@ -161,6 +175,12 @@ export interface AktuellerMonatResponse {
     netzbezug_durchschnittspreis_cent?: number
   } | null
   soll_pv_kwh: number | null
+
+  // Grundlast (Nacht-Sockel; R12-1 ersetzt PVGIS-SOLL/IST). grundlast_kwh additiv
+  // → Cockpit/Jahr (JahrAggregat) summiert die Monate.
+  grundlast_kw?: number | null              // Median der Nacht-Stunden-Leistung
+  grundlast_kwh?: number | null             // geschätzte Grundlast-Energie (kW × 24 × Tage)
+  grundlast_anteil_prozent?: number | null  // Anteil am Gesamtverbrauch
 
   // Per-Investition Finanzdetails (T-Konto)
   investitionen_financials: InvestitionFinancialDetail[]

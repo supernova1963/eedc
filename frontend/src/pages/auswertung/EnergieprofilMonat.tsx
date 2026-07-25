@@ -6,6 +6,7 @@ import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
 } from 'recharts'
 import { Card, CollapsibleSection, KPICard, ChartLegende } from '../../components/ui'
+import { ScrollSchatten } from '../../components/ui/ScrollSchatten'
 import ChartTooltip from '../../components/ui/ChartTooltip'
 import { EnergieprofilTageTabelleEmbedded } from '../../components/energieprofil/EnergieprofilTageTabelle'
 import {
@@ -29,7 +30,7 @@ const METRIK_OPTIONEN: { key: Metrik; label: string; farbe: 'green' | 'red' | 'o
   { key: 'ueberschuss_kw', label: 'Überschuss / Defizit', farbe: 'divergent' },
 ]
 
-import { MONAT_KURZ, MONAT_NAMEN, KATEGORIE_FARBEN, COLORS, achsenEinheit, achsenTick, ACHSEN_MARGIN_TOP } from '../../lib'
+import { MONAT_KURZ, MONAT_NAMEN, KATEGORIE_FARBEN, COLORS, xAchse, achsenEinheit, achsenTick, ACHSEN_MARGIN_TOP } from '../../lib'
 import { useChartTheme } from '../../context/ThemeContext'
 const MONATSNAMEN = MONAT_KURZ.slice(1)     // 0-basiert
 const MONATSNAMEN_LANG = MONAT_NAMEN.slice(1) // 0-basiert
@@ -433,7 +434,7 @@ function Heatmap({ tageImMonat, matrix, metrik, maxWert, farbe }: HeatmapProps) 
   const tage = Array.from({ length: tageImMonat }, (_, i) => i + 1)
 
   return (
-    <div className="overflow-x-auto">
+    <ScrollSchatten achse="horizontal" fadeFrom="from-white dark:from-gray-800">
       <table className="border-separate border-spacing-px text-[10px] select-none">
         <thead>
           <tr>
@@ -471,7 +472,7 @@ function Heatmap({ tageImMonat, matrix, metrik, maxWert, farbe }: HeatmapProps) 
           ))}
         </tbody>
       </table>
-    </div>
+    </ScrollSchatten>
   )
 }
 
@@ -504,7 +505,7 @@ function KategorieBadge({ eintrag }: { eintrag: KategorieSumme }) {
 
 function KomponentenTabelle({ eintraege }: { eintraege: KomponentenEintrag[] }) {
   return (
-    <div className="overflow-x-auto">
+    <ScrollSchatten achse="horizontal" fadeFrom="from-white dark:from-gray-800">
       <table className="w-full text-xs">
         <thead>
           <tr className="text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-700">
@@ -540,7 +541,7 @@ function KomponentenTabelle({ eintraege }: { eintraege: KomponentenEintrag[] }) 
           })}
         </tbody>
       </table>
-    </div>
+    </ScrollSchatten>
   )
 }
 
@@ -556,7 +557,7 @@ function TagesprofilChart({ daten }: { daten: { stunde: number; pv_kw: number | 
       <ResponsiveContainer>
         <LineChart data={chartDaten} margin={{ top: ACHSEN_MARGIN_TOP, right: 10, left: 0, bottom: 5 }}>
           <CartesianGrid strokeDasharray="3 3" stroke={achsen.grid} strokeOpacity={0.3} />
-          <XAxis dataKey="stunde" tick={{ fontSize: 10 }} label={{ value: 'Stunde', position: 'insideBottom', offset: -2, fontSize: 10 }} /* achsen-allow: Zeit-/Kategorie-Achse */ />
+          <XAxis dataKey="stunde" {...xAchse()} label={{ value: 'Stunde', position: 'insideBottom', offset: -2, fontSize: 10 }} /* achsen-allow: Zeit-/Kategorie-Achse */ />
           <YAxis tick={{ fontSize: 10 }} tickFormatter={achsenTick} label={achsenEinheit('kW')} />
           <Tooltip content={<ChartTooltip unit="kW" />} />
           <Legend wrapperStyle={{ fontSize: 12 }} content={<ChartLegende />} />

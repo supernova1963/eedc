@@ -4,14 +4,14 @@
  */
 
 import { useState, FormEvent } from 'react'
-import { Sun, MapPin, Calendar, ArrowLeft, ArrowRight, Info, Search, CheckCircle2 } from 'lucide-react'
-import { Alert } from '../../ui'
+import { Sun, MapPin, ArrowLeft, ArrowRight, Search, CheckCircle2 } from 'lucide-react'
+import { Alert, Button, Input, DatumFeld } from '../../ui'
 
 interface AnlageStepProps {
   isLoading: boolean
   error: string | null
   onSubmit: (data: AnlageCreateData) => Promise<void>
-  onGeocode: (plz: string, ort?: string) => Promise<{ latitude: number; longitude: number } | null>
+  onGeocode: (plz: string, ort?: string, strasse?: string) => Promise<{ latitude: number; longitude: number } | null>
   onBack: () => void
 }
 
@@ -21,6 +21,7 @@ interface AnlageCreateData {
   installationsdatum?: string
   standort_plz?: string
   standort_ort?: string
+  standort_strasse?: string
   latitude?: number
   longitude?: number
 }
@@ -32,6 +33,7 @@ export default function AnlageStep({ isLoading, error, onSubmit, onGeocode, onBa
     installationsdatum: '',
     standort_plz: '',
     standort_ort: '',
+    standort_strasse: '',
     latitude: '',
     longitude: '',
   })
@@ -45,7 +47,7 @@ export default function AnlageStep({ isLoading, error, onSubmit, onGeocode, onBa
     setFormData(prev => ({ ...prev, [name]: value }))
     setValidationError(null)
     // Reset geocode success wenn PLZ/Ort geändert wird
-    if (name === 'standort_plz' || name === 'standort_ort') {
+    if (name === 'standort_plz' || name === 'standort_ort' || name === 'standort_strasse') {
       setGeocodeSuccess(false)
     }
   }
@@ -61,7 +63,7 @@ export default function AnlageStep({ isLoading, error, onSubmit, onGeocode, onBa
     setGeocodeSuccess(false)
 
     try {
-      const result = await onGeocode(formData.standort_plz, formData.standort_ort || undefined)
+      const result = await onGeocode(formData.standort_plz, formData.standort_ort || undefined, formData.standort_strasse || undefined)
       if (result) {
         setFormData(prev => ({
           ...prev,
@@ -100,6 +102,7 @@ export default function AnlageStep({ isLoading, error, onSubmit, onGeocode, onBa
       installationsdatum: formData.installationsdatum || undefined,
       standort_plz: formData.standort_plz || undefined,
       standort_ort: formData.standort_ort || undefined,
+      standort_strasse: formData.standort_strasse || undefined,
       latitude: formData.latitude ? parseFloat(formData.latitude) : undefined,
       longitude: formData.longitude ? parseFloat(formData.longitude) : undefined,
     })
@@ -131,63 +134,36 @@ export default function AnlageStep({ isLoading, error, onSubmit, onGeocode, onBa
 
         {/* Pflichtfelder */}
         <div className="space-y-6">
-          <div className="grid md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                Anlagenname <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="text"
-                name="anlagenname"
-                value={formData.anlagenname}
-                onChange={handleChange}
-                placeholder="z.B. Meine PV-Anlage"
-                className="w-full px-4 py-2.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-amber-500 focus:border-transparent"
-                required
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                Leistung (kWp) <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="number"
-                name="leistung_kwp"
-                value={formData.leistung_kwp}
-                onChange={handleChange}
-                placeholder="z.B. 10.5"
-                step="0.01"
-                min="0.1"
-                className="w-full px-4 py-2.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-amber-500 focus:border-transparent"
-                required
-              />
-              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                Gesamtleistung aller Module in Kilowatt-Peak
-              </p>
-            </div>
+          <div className="grid md:grid-cols-2 gap-4 items-start">
+            <Input
+              label="Anlagenname"
+              name="anlagenname"
+              value={formData.anlagenname}
+              onChange={handleChange}
+              placeholder="z.B. Meine PV-Anlage"
+              required
+            />
+            <Input
+              label="Leistung (kWp)"
+              name="leistung_kwp"
+              type="number" step="0.01" min="0.1"
+              value={formData.leistung_kwp}
+              onChange={handleChange}
+              placeholder="z.B. 10.5"
+              required
+              hint="Gesamtleistung aller Module in Kilowatt-Peak"
+            />
           </div>
 
-          {/* Installationsdatum */}
-          <div className="grid md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                <Calendar className="w-4 h-4 inline mr-1" />
-                Installationsdatum
-              </label>
-              <input
-                type="date"
-                name="installationsdatum"
-                min="2000-01-01"
-                max="2099-12-31"
-                value={formData.installationsdatum}
-                onChange={handleChange}
-                className="w-full px-4 py-2.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-amber-500 focus:border-transparent"
-              />
-              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                Für korrekten Start der Stromtarif-Gültigkeit
-              </p>
-            </div>
+          {/* Inbetriebnahme (Anlage) — R18-9: Stammdatum der Gesamt-Anlage, Label
+              gegen die Fehldeutung „ältestes Gerät" geschärft. */}
+          <div className="grid md:grid-cols-2 gap-4 items-start">
+            <DatumFeld
+              label="Inbetriebnahme (Anlage)"
+              value={formData.installationsdatum}
+              onChange={(v) => { setFormData(prev => ({ ...prev, installationsdatum: v })); setValidationError(null) }}
+              hint="Stammdatum der Gesamt-Anlage (nicht das älteste Gerät) — für Stromtarif-Gültigkeit und Community-Vergleichszeitraum"
+            />
           </div>
 
           {/* Standort */}
@@ -197,149 +173,112 @@ export default function AnlageStep({ isLoading, error, onSubmit, onGeocode, onBa
               Standort (für PVGIS-Prognose)
             </h3>
 
-            <div className="grid md:grid-cols-3 gap-4 mb-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  PLZ
-                </label>
-                <input
-                  type="text"
-                  name="standort_plz"
-                  value={formData.standort_plz}
-                  onChange={handleChange}
-                  placeholder="z.B. 12345"
-                  maxLength={5}
-                  className="w-full px-4 py-2.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-amber-500 focus:border-transparent"
-                />
-              </div>
-
+            <div className="grid md:grid-cols-3 gap-4 mb-4 items-start">
+              <Input
+                label="PLZ"
+                name="standort_plz"
+                value={formData.standort_plz}
+                onChange={handleChange}
+                placeholder="z.B. 12345"
+                maxLength={5}
+              />
               <div className="md:col-span-2">
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Ort
-                </label>
-                <input
-                  type="text"
+                <Input
+                  label="Ort"
                   name="standort_ort"
                   value={formData.standort_ort}
                   onChange={handleChange}
                   placeholder="z.B. Berlin"
-                  className="w-full px-4 py-2.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                />
+              </div>
+              {/* D2: EIN Feld Straße & Hausnummer → präzisere Koordinaten (standort_strasse). */}
+              <div className="md:col-span-3">
+                <Input
+                  label="Straße & Hausnummer (optional)"
+                  name="standort_strasse"
+                  value={formData.standort_strasse}
+                  onChange={handleChange}
+                  placeholder="z.B. Musterweg 12"
                 />
               </div>
             </div>
 
             {/* Geocoding Button */}
             <div className="mb-4">
-              <button
+              <Button
                 type="button"
+                variant="secondary"
                 onClick={handleGeocode}
-                disabled={isGeocoding || !formData.standort_plz}
-                className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-amber-700 dark:text-amber-300 bg-amber-100 dark:bg-amber-900/30 rounded-lg hover:bg-amber-200 dark:hover:bg-amber-900/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                loading={isGeocoding}
+                disabled={!formData.standort_plz}
               >
                 {isGeocoding ? (
-                  <>
-                    <span className="w-4 h-4 border-2 border-amber-500/30 border-t-amber-500 rounded-full animate-spin" />
-                    Ermittle Koordinaten...
-                  </>
+                  'Ermittle Koordinaten...'
                 ) : geocodeSuccess ? (
                   <>
-                    <CheckCircle2 className="w-4 h-4 text-green-500" />
+                    <CheckCircle2 className="w-4 h-4 mr-2 text-green-500" />
                     Koordinaten ermittelt
                   </>
                 ) : (
                   <>
-                    <Search className="w-4 h-4" />
+                    <Search className="w-4 h-4 mr-2 max-sm:hidden" />
                     Koordinaten aus PLZ ermitteln
                   </>
                 )}
-              </button>
+              </Button>
             </div>
 
-            <div className="grid md:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Breitengrad (Latitude)
-                </label>
-                <input
-                  type="number"
-                  name="latitude"
-                  value={formData.latitude}
-                  onChange={handleChange}
-                  placeholder="z.B. 52.520008"
-                  step="0.000001"
-                  className="w-full px-4 py-2.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-amber-500 focus:border-transparent"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Längengrad (Longitude)
-                </label>
-                <input
-                  type="number"
-                  name="longitude"
-                  value={formData.longitude}
-                  onChange={handleChange}
-                  placeholder="z.B. 13.404954"
-                  step="0.000001"
-                  className="w-full px-4 py-2.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-amber-500 focus:border-transparent"
-                />
-              </div>
+            <div className="grid md:grid-cols-2 gap-4 items-start">
+              <Input
+                label="Breitengrad (Latitude)"
+                name="latitude"
+                type="number" step="0.000001"
+                value={formData.latitude}
+                onChange={handleChange}
+                placeholder="z.B. 52.520008"
+              />
+              <Input
+                label="Längengrad (Longitude)"
+                name="longitude"
+                type="number" step="0.000001"
+                value={formData.longitude}
+                onChange={handleChange}
+                placeholder="z.B. 13.404954"
+              />
             </div>
 
-            <div className="mt-4 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
-              <p className="text-xs text-blue-700 dark:text-blue-300 flex items-start gap-2">
-                <Info className="w-4 h-4 flex-shrink-0 mt-0.5" />
-                <span>
-                  Die Koordinaten werden für die PVGIS-Ertragsprognose benötigt.
-                  Klicken Sie auf "Koordinaten aus PLZ ermitteln" oder geben Sie sie manuell ein.
-                </span>
-              </p>
-            </div>
+            <Alert type="info" className="mt-4">
+              Die Koordinaten werden für die PVGIS-Ertragsprognose benötigt.
+              Klicken Sie auf „Koordinaten aus PLZ ermitteln" oder geben Sie sie manuell ein.
+            </Alert>
           </div>
 
           {/* Hinweis steuerliche Behandlung */}
-          <div className="p-3 bg-amber-50 dark:bg-amber-900/20 rounded-lg">
-            <p className="text-xs text-amber-700 dark:text-amber-300 flex items-start gap-2">
-              <Info className="w-4 h-4 flex-shrink-0 mt-0.5" />
-              <span>
-                Steuerliche Einstellungen (Regelbesteuerung/Kleinunternehmer) können
-                unter <strong>Einstellungen &rarr; Anlage bearbeiten</strong> konfiguriert werden.
-              </span>
-            </p>
-          </div>
+          <Alert type="warning">
+            Steuerliche Einstellungen (Regelbesteuerung/Kleinunternehmer) können
+            unter <strong>Einstellungen &rarr; Anlage bearbeiten</strong> konfiguriert werden.
+          </Alert>
 
         </div>
       </div>
 
       {/* Footer */}
       <div className="px-6 md:px-8 py-4 bg-gray-50 dark:bg-gray-700/50 border-t border-gray-200 dark:border-gray-700 flex justify-between">
-        <button
-          type="button"
-          onClick={onBack}
-          className="inline-flex items-center gap-2 px-4 py-2 text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white transition-colors"
-        >
-          <ArrowLeft className="w-4 h-4" />
+        <Button type="button" variant="ghost" onClick={onBack}>
+          <ArrowLeft className="w-4 h-4 mr-2" />
           Zurück
-        </button>
+        </Button>
 
-        <button
-          type="submit"
-          disabled={isLoading}
-          className="inline-flex items-center gap-2 px-6 py-2.5 bg-amber-500 text-white font-medium rounded-lg hover:bg-amber-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-        >
+        <Button type="submit" variant="amber" loading={isLoading}>
           {isLoading ? (
-            <>
-              <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-              Speichern...
-            </>
+            'Speichern...'
           ) : (
             <>
               Weiter
-              <ArrowRight className="w-4 h-4" />
+              <ArrowRight className="w-4 h-4 ml-2" />
             </>
           )}
-        </button>
+        </Button>
       </div>
     </form>
   )

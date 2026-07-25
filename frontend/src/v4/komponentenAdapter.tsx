@@ -19,10 +19,11 @@
  * → lebt in Cockpit/Aussicht. Typ-spezifische IST-Analysen (PV-SOLL/IST je String)
  * kommen aus `komponentenAnalyse.tsx`, nicht aus diesem Daten-Adapter.
  */
-import { Activity, Battery, Clock, Droplet, Euro, Flame, Leaf, Percent, Power, TrendingUp, Zap } from 'lucide-react'
+import { Activity, Battery, Clock, Droplet, Euro, Flame, Leaf, Power, TrendingUp, Zap } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { fmtCalc } from '../components/ui'
-import { MONAT_KURZ, PV_MODUL_FARBEN, PV_MODUL_BG } from '../lib'
+import { formatEnergie, formatEffizienz } from '../lib/einheiten'
+import { MONAT_KURZ, PV_MODUL_FARBEN, PV_MODUL_BG, SONSTIGES_KATEGORIE_LABELS } from '../lib'
 import { CHART_COLORS, LADEQUELLEN_FARBEN, ROLLEN_BG, SONSTIGES_ERZEUGER_FARBE } from '../lib/colors'
 import { cockpitApi } from '../api/cockpit'
 import { investitionenApi, type InvestitionMonatsdaten } from '../api/investitionen'
@@ -151,8 +152,10 @@ function unbewertet(stil: KpiStyle, hinweis: string): KpiStripItem {
   return { title: stil.title, icon: stil.icon, color: 'gray', value: '—', subtitle: hinweis }
 }
 
-/** MWh-formatiert (kWh-Eingang), 1 Nachkomma; '—' bei fehlend. */
-const mwh = (kwh: number | null | undefined) => fmtCalc(kwh != null ? kwh / 1000 : null, 1, '—')
+/** Energie-KPI über die formatEnergie-SoT (C3/S17): kWh bis < 10.000, dann MWh
+ *  mit 2 NK — statt unbedingter kWh→MWh-Umrechnung. `referenzKwh` koppelt
+ *  zusammengehörige KPIs einer Sicht an EINE Skala (kein kWh/MWh-Mix im Strip). */
+const energie = (kwh: number | null | undefined, referenzKwh?: number) => formatEnergie(kwh, referenzKwh)
 const n0 = (v: number | null | undefined) => fmtCalc(v, 0, '—')
 const n1 = (v: number | null | undefined) => fmtCalc(v, 1, '—')
 const n2 = (v: number | null | undefined) => fmtCalc(v, 2, '—')
@@ -261,7 +264,7 @@ export const KOMPONENTEN_ADAPTER: Record<string, KompAdapter> = {
         label: 'PV-Anlage',
         status: [
           kpi(PV_ANLAGE_KPI.leistung, n1(u.anlagenleistung_kwp), 'kWp'),
-          kpi(PV_ANLAGE_KPI.erzeugung, mwh(u.pv_erzeugung_kwh), 'MWh'),
+          kpi(PV_ANLAGE_KPI.erzeugung, energie(u.pv_erzeugung_kwh).wert, energie(u.pv_erzeugung_kwh).einheit),
           kpi(PV_ANLAGE_KPI.spezErtrag, n0(u.spezifischer_ertrag_kwh_kwp), 'kWh/kWp'),
           kpi(PV_ANLAGE_KPI.eigenverbrauch, n0(u.eigenverbrauch_quote_prozent), '%'),
         ],
@@ -301,6 +304,10 @@ export const KOMPONENTEN_ADAPTER: Record<string, KompAdapter> = {
       return ds.map(({ investition: inv, zusammenfassung: z, monatsdaten: md }) => {
       // η-Alarm färbt die Wirkungsgrad-Kachel rot (IST-getreu, #264).
       const wirkungsgradKpi = kpi(SPEICHER_KPI.wirkungsgrad, n0(z.ist_wirkungsgrad_prozent ?? z.effizienz_prozent), '%')
+      // R15-5a: Netzladung-Kosten als reiner AUSWEIS — die Energie läuft über
+      // den Hauszähler, die Kosten stecken bereits in den Netzbezug-Kosten der
+      // Anlage (kein neuer Kostenposten, sonst Doppelzählung).
+      const nlPreis = z.effektiver_ladepreis_cent ?? z.arbitrage_avg_preis_cent
       if (z.eta_degradation_alarm) wirkungsgradKpi.color = 'red'
       // ① Alarme (IST-getreu): Degradation + Durchsatz-Invariante.
       const hinweise: NonNullable<KompGeraet['hinweise']> = []
@@ -315,7 +322,7 @@ export const KOMPONENTEN_ADAPTER: Record<string, KompAdapter> = {
         status: [
           kpi(SPEICHER_KPI.vollzyklen, n0(z.vollzyklen)),
           wirkungsgradKpi,
-          kpi(SPEICHER_KPI.durchsatz, mwh(z.gesamt_entladung_kwh), 'MWh'),
+          kpi(SPEICHER_KPI.durchsatz, energie(z.gesamt_entladung_kwh).wert, energie(z.gesamt_entladung_kwh).einheit),
           kpi(SPEICHER_KPI.ersparnis, n0(z.ersparnis_euro), '€'),
         ],
         hinweise: hinweise.length ? hinweise : undefined,
@@ -333,9 +340,11 @@ export const KOMPONENTEN_ADAPTER: Record<string, KompAdapter> = {
           titel: 'Arbitrage (Netzladung)',
           kpis: [
             k('Netzladung', n0(z.arbitrage_kwh), 'kWh', 'red', Zap),
-            k('Ø Ladepreis', n1(z.effektiver_ladepreis_cent ?? z.arbitrage_avg_preis_cent), 'ct/kWh', 'yellow', Euro),
-            k('Anteil an Ladung', z.gesamt_ladung_kwh > 0 ? n0((z.arbitrage_kwh / z.gesamt_ladung_kwh) * 100) : '—', '%', 'gray', Percent,
-              { formel: 'Netzladung ÷ Gesamtladung × 100' }),
+            k('Ø Ladepreis', n1(nlPreis), 'ct/kWh', 'yellow', Euro),
+            k('Netzladung-Kosten', nlPreis != null ? n2((z.arbitrage_kwh * nlPreis) / 100) : '—', '€', 'red', Euro, {
+              subtitle: 'in den Netzbezug-Kosten enthalten',
+              formel: 'Netzladung × Ø Ladepreis — reiner Ausweis, kein zusätzlicher Kostenposten',
+            }),
             k('Arbitrage-Gewinn', n0(z.arbitrage_gewinn_euro), '€', 'green', TrendingUp),
           ],
         } : undefined,
@@ -387,8 +396,8 @@ export const KOMPONENTEN_ADAPTER: Record<string, KompAdapter> = {
       return ds.map(({ investition: inv, zusammenfassung: z, monatsdaten: md }) => {
       // ① Sekundär: getrennte JAZ (cop_*) + #238 Starts/Betriebsstunden — nur was gepflegt ist.
       const sek: KpiStripItem[] = []
-      if (z.cop_heizen != null) sek.push(k('JAZ Heizen', n1(z.cop_heizen), undefined, 'orange', Flame, { formel: 'Heizwärme ÷ Strom Heizen' }))
-      if (z.cop_warmwasser != null) sek.push(k('JAZ Warmwasser', n1(z.cop_warmwasser), undefined, 'cyan', Droplet, { formel: 'Warmwasser ÷ Strom Warmwasser' }))
+      if (z.cop_heizen != null) sek.push(k('JAZ Heizen', formatEffizienz(z.cop_heizen).wert, undefined, 'orange', Flame, { formel: 'Heizwärme ÷ Strom Heizen' }))
+      if (z.cop_warmwasser != null) sek.push(k('JAZ Warmwasser', formatEffizienz(z.cop_warmwasser).wert, undefined, 'cyan', Droplet, { formel: 'Warmwasser ÷ Strom Warmwasser' }))
       if (z.kompressor_starts_summe_erfasst != null) sek.push(k('Kompressor-Starts', n0(z.kompressor_starts_summe_erfasst), undefined, 'purple', Power, {
         subtitle: z.kompressor_starts_max_tag != null ? `Max/Tag: ${n0(z.kompressor_starts_max_tag)}` : undefined,
         berechnung: z.kompressor_starts_gesamt != null ? `Zählerstand (Lebensdauer): ${n0(z.kompressor_starts_gesamt)}` : undefined,
@@ -398,12 +407,15 @@ export const KOMPONENTEN_ADAPTER: Record<string, KompAdapter> = {
       }))
       if (z.oe_laufzeit_pro_start_h != null) sek.push(k('Ø Laufzeit/Start', n2(z.oe_laufzeit_pro_start_h), 'h', 'gray', Clock, { formel: 'Betriebsstunden ÷ Kompressor-Starts' }))
       if (z.starts_pro_betriebsstunde != null) sek.push(k('Starts/Betriebsstunde', n2(z.starts_pro_betriebsstunde), undefined, 'gray', Activity, { formel: 'Kompressor-Starts ÷ Betriebsstunden' }))
+      // Gemeinsame Skalen-Referenz für Wärme+Strom (größerer Wert bestimmt kWh/MWh).
+      const wpEnergieRef = Math.max(z.gesamt_waerme_kwh ?? 0, z.gesamt_stromverbrauch_kwh ?? 0)
       return {
         inv, label: inv.bezeichnung,
         status: [
-          kpi(WP_KPI.jaz, n1(z.durchschnitt_cop)),
-          kpi(WP_KPI.waerme, mwh(z.gesamt_waerme_kwh), 'MWh'),
-          kpi(WP_KPI.strom, mwh(z.gesamt_stromverbrauch_kwh), 'MWh'),
+          kpi(WP_KPI.jaz, formatEffizienz(z.durchschnitt_cop).wert),
+          // Wärme+Strom an EINER Referenz skaliert (kein kWh/MWh-Mix im Strip, C3).
+          kpi(WP_KPI.waerme, energie(z.gesamt_waerme_kwh, wpEnergieRef).wert, energie(z.gesamt_waerme_kwh, wpEnergieRef).einheit),
+          kpi(WP_KPI.strom, energie(z.gesamt_stromverbrauch_kwh, wpEnergieRef).wert, energie(z.gesamt_stromverbrauch_kwh, wpEnergieRef).einheit),
           kpi(WP_KPI.ersparnis, n0(z.ersparnis_euro), '€'),
         ],
         sekundaer: sek.length ? { titel: 'Betrieb & getrennte JAZ', kpis: sek } : undefined,
@@ -490,7 +502,7 @@ export const KOMPONENTEN_ADAPTER: Record<string, KompAdapter> = {
       return ds.map(({ investition: inv, zusammenfassung: z, monatsdaten: md }) => ({
         inv, label: inv.bezeichnung,
         status: [
-          kpi(WALLBOX_KPI.heimladung, mwh(z.gesamt_heim_ladung_kwh), 'MWh'),
+          kpi(WALLBOX_KPI.heimladung, energie(z.gesamt_heim_ladung_kwh).wert, energie(z.gesamt_heim_ladung_kwh).einheit),
           kpi(WALLBOX_KPI.pvAnteil, n0(z.pv_anteil_prozent), '%'),
           kpi(WALLBOX_KPI.ladevorgaenge, n0(z.gesamt_ladevorgaenge)),
           kpi(WALLBOX_KPI.ersparnis, n0(z.ersparnis_vs_extern_euro), '€'),
@@ -587,10 +599,9 @@ export const KOMPONENTEN_ADAPTER: Record<string, KompAdapter> = {
   sonstiges: {
     async fetch(anlageId) {
       const ds = await investitionenApi.getSonstigesDashboard(anlageId)
-      const KAT_BADGE: Record<string, string> = { erzeuger: 'Erzeuger', verbraucher: 'Verbraucher', speicher: 'Speicher' }
       return ds.map(({ investition: inv, zusammenfassung: z, monatsdaten: md }) => {
-        // Kategorie-Badge (Selektor-Differenzierung) + Sonderkosten-Alert (IST-getreu).
-        const selektorBadge = KAT_BADGE[z.kategorie] ?? 'Sonstiges'
+        // Kategorie-Badge (Selektor-Differenzierung, SoT-Map R3b S7) + Sonderkosten-Alert (IST-getreu).
+        const selektorBadge = SONSTIGES_KATEGORIE_LABELS[z.kategorie] ?? 'Sonstiges'
         const hinweise: KompGeraet['hinweise'] = (z.sonderkosten_euro ?? 0) > 0
           ? [{ ton: 'warning', text: `Sonderkosten (Reparaturen, Wartung): ${n2(z.sonderkosten_euro)} €` }]
           : undefined

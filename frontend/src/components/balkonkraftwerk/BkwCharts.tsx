@@ -9,9 +9,10 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, AreaChart, Area,
 } from 'recharts'
 import ChartTooltip from '../ui/ChartTooltip'
-import { ChartLegende } from '../ui'
+import { ChartLegende, Table, TableHead, TableBody } from '../ui'
+import { ZELLE, KOPF_ZELLE } from '../ui/tabelleMasse'
 import { MONAT_KURZ, CHART_COLORS, CHART_HOVER_CURSOR, DATENROLLE, xAchse, yAchse, achsenEinheit, achsenTick, ACHSEN_MARGIN_TOP, fmtZahl } from '../../lib'
-import { useSchmaleAchse } from '../../hooks'
+import { useLegendenToggle, useSchmaleAchse } from '../../hooks'
 import type { InvestitionMonatsdaten } from '../../api/investitionen'
 
 export function prepBkwMonate(monatsdaten: InvestitionMonatsdaten[]) {
@@ -28,6 +29,7 @@ export function prepBkwMonate(monatsdaten: InvestitionMonatsdaten[]) {
 /** Erzeugung pro Monat (Eigenverbrauch + Einspeisung gestapelt). */
 export function BkwErzeugungVerlauf({ monatsdaten }: { monatsdaten: InvestitionMonatsdaten[] }) {
   const schmal = useSchmaleAchse()
+  const legende = useLegendenToggle()
   const data = prepBkwMonate(monatsdaten)
   return (
     <div className="h-64">
@@ -37,9 +39,9 @@ export function BkwErzeugungVerlauf({ monatsdaten }: { monatsdaten: InvestitionM
           <XAxis dataKey="name" {...xAchse(schmal)} /* achsen-allow: Zeit-/Kategorie-Achse */ />
           <YAxis {...yAchse(schmal)} tickFormatter={achsenTick} label={achsenEinheit('kWh')} />
           <Tooltip cursor={CHART_HOVER_CURSOR} content={<ChartTooltip />} />
-          <Legend content={<ChartLegende />} />
-          <Area type="monotone" dataKey="eigenverbrauch" stackId="1" fill={CHART_COLORS.eigenverbrauch} stroke={CHART_COLORS.eigenverbrauch} name="Eigenverbrauch" />
-          <Area type="monotone" dataKey="einspeisung" stackId="1" fill={CHART_COLORS.einspeisung} stroke={CHART_COLORS.einspeisung} name="Einspeisung" />
+          <Legend content={<ChartLegende onItemClick={legende.onItemClick} />} />
+          <Area type="monotone" dataKey="eigenverbrauch" stackId="1" fill={CHART_COLORS.eigenverbrauch} stroke={CHART_COLORS.eigenverbrauch} name="Eigenverbrauch" hide={legende.istVersteckt('eigenverbrauch')} />
+          <Area type="monotone" dataKey="einspeisung" stackId="1" fill={CHART_COLORS.einspeisung} stroke={CHART_COLORS.einspeisung} name="Einspeisung" hide={legende.istVersteckt('einspeisung')} />
         </AreaChart>
       </ResponsiveContainer>
     </div>
@@ -49,6 +51,7 @@ export function BkwErzeugungVerlauf({ monatsdaten }: { monatsdaten: InvestitionM
 /** Integrierter Speicher: Ladung/Entladung pro Monat (Bar). */
 export function BkwSpeicherVerlauf({ monatsdaten }: { monatsdaten: InvestitionMonatsdaten[] }) {
   const schmal = useSchmaleAchse()
+  const legende = useLegendenToggle()
   const data = prepBkwMonate(monatsdaten)
   return (
     <div className="h-48">
@@ -58,9 +61,9 @@ export function BkwSpeicherVerlauf({ monatsdaten }: { monatsdaten: InvestitionMo
           <XAxis dataKey="name" {...xAchse(schmal)} /* achsen-allow: Zeit-/Kategorie-Achse */ />
           <YAxis {...yAchse(schmal)} tickFormatter={achsenTick} label={achsenEinheit('kWh')} />
           <Tooltip cursor={CHART_HOVER_CURSOR} content={<ChartTooltip />} />
-          <Legend content={<ChartLegende />} />
-          <Bar dataKey="speicher_ladung" fill={CHART_COLORS.speicherLadung} name="Ladung" />
-          <Bar dataKey="speicher_entladung" fill={CHART_COLORS.speicherEntladung} name="Entladung" />
+          <Legend content={<ChartLegende onItemClick={legende.onItemClick} />} />
+          <Bar dataKey="speicher_ladung" fill={CHART_COLORS.speicherLadung} name="Ladung" hide={legende.istVersteckt('speicher_ladung')} />
+          <Bar dataKey="speicher_entladung" fill={CHART_COLORS.speicherEntladung} name="Entladung" hide={legende.istVersteckt('speicher_entladung')} />
         </BarChart>
       </ResponsiveContainer>
     </div>
@@ -71,35 +74,34 @@ export function BkwSpeicherVerlauf({ monatsdaten }: { monatsdaten: InvestitionMo
 export function BkwMonatsTabelle({ monatsdaten, hatSpeicher }: { monatsdaten: InvestitionMonatsdaten[]; hatSpeicher?: boolean }) {
   const data = prepBkwMonate(monatsdaten)
   return (
-    <div className="overflow-x-auto">
-      <table className="min-w-full text-sm">
-        <thead>
-          <tr className="border-b border-gray-200 dark:border-gray-700">
-            <th className="text-left py-2 px-2">Monat</th>
-            <th className="text-right py-2 px-2">Erzeugung</th>
-            <th className="text-right py-2 px-2">Eigenverbrauch</th>
-            <th className="text-right py-2 px-2">Einspeisung</th>
+    <Table>
+      <TableHead>
+        <tr className="border-b border-gray-200 dark:border-gray-700">
+          {/* B2/C3 (#237): Einheit im Header „Name (Einheit)", nicht pro Zelle. */}
+          <th className={`${KOPF_ZELLE} text-left`}>Monat</th>
+          <th className={`${KOPF_ZELLE} text-right`}>Erzeugung (kWh)</th>
+          <th className={`${KOPF_ZELLE} text-right`}>Eigenverbrauch (kWh)</th>
+          <th className={`${KOPF_ZELLE} text-right`}>Einspeisung (kWh)</th>
+          {hatSpeicher && <>
+            <th className={`${KOPF_ZELLE} text-right`}>Sp. Ladung (kWh)</th>
+            <th className={`${KOPF_ZELLE} text-right`}>Sp. Entl. (kWh)</th>
+          </>}
+        </tr>
+      </TableHead>
+      <TableBody>
+        {data.map((md, idx) => (
+          <tr key={idx} className="border-b border-gray-100 dark:border-gray-800">
+            <td className={ZELLE}>{md.name}</td>
+            <td className={`${ZELLE} text-right ${DATENROLLE.pv.text}`}>{fmtZahl(md.erzeugung, 1)}</td>
+            <td className={`${ZELLE} text-right ${DATENROLLE.eigenverbrauch.text}`}>{fmtZahl(md.eigenverbrauch, 1)}</td>
+            <td className={`${ZELLE} text-right ${DATENROLLE.einspeisung.text}`}>{fmtZahl(md.einspeisung, 1)}</td>
             {hatSpeicher && <>
-              <th className="text-right py-2 px-2">Sp. Ladung</th>
-              <th className="text-right py-2 px-2">Sp. Entl.</th>
+              <td className={`${ZELLE} text-right ${DATENROLLE.speicherLadung.text}`}>{fmtZahl(md.speicher_ladung, 1)}</td>
+              <td className={`${ZELLE} text-right ${DATENROLLE.speicherEntladung.text}`}>{fmtZahl(md.speicher_entladung, 1)}</td>
             </>}
           </tr>
-        </thead>
-        <tbody>
-          {data.map((md, idx) => (
-            <tr key={idx} className="border-b border-gray-100 dark:border-gray-800">
-              <td className="py-2 px-2">{md.name}</td>
-              <td className={`text-right py-2 px-2 ${DATENROLLE.pv.text}`}>{fmtZahl(md.erzeugung, 1)}</td>
-              <td className={`text-right py-2 px-2 ${DATENROLLE.eigenverbrauch.text}`}>{fmtZahl(md.eigenverbrauch, 1)}</td>
-              <td className={`text-right py-2 px-2 ${DATENROLLE.einspeisung.text}`}>{fmtZahl(md.einspeisung, 1)}</td>
-              {hatSpeicher && <>
-                <td className={`text-right py-2 px-2 ${DATENROLLE.speicherLadung.text}`}>{fmtZahl(md.speicher_ladung, 1)}</td>
-                <td className={`text-right py-2 px-2 ${DATENROLLE.speicherEntladung.text}`}>{fmtZahl(md.speicher_entladung, 1)}</td>
-              </>}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+        ))}
+      </TableBody>
+    </Table>
   )
 }

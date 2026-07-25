@@ -44,6 +44,8 @@ export function TKonto({ d, sonderkosten = null }: { d: AktuellerMonatResponse; 
     berechnung?: string
     ergebnis?: string
     color: string
+    /** Nachrichtliche Unterzeile („davon …") — reiner Ausweis, zählt NICHT in die Summe. */
+    hinweis?: string
   }
 
   // Farbe je Investitionstyp
@@ -142,6 +144,17 @@ export function TKonto({ d, sonderkosten = null }: { d: AktuellerMonatResponse; 
       }
       return rows
     }),
+    // G19-1: Basis-Positionen (Anlage-Ebene) — eigene Zeile neben den
+    // Per-Investition-Zeilen. Reiner Zeilen-Ausweis: der Betrag steckt bereits
+    // in d.sonstige_ertraege_euro (kein zweiter Posten, R15-5-Muster). Im
+    // !hasPerInv-Fallback unten ist er im Aggregat enthalten — keine Extra-Zeile.
+    ...(hasPerInv && (d.anlage_sonstige_ertraege_euro ?? 0) > 0 ? [{
+      label: 'Anlage — Sonstige Erträge',
+      wert: d.anlage_sonstige_ertraege_euro,
+      color: 'text-green-600 dark:text-green-400',
+      formel: 'Erfasst in den Monatsdaten als Position vom Typ "Ertrag" (Anlage-Ebene)',
+      ergebnis: `= ${fmtCalc(d.anlage_sonstige_ertraege_euro, 2)} €`,
+    } as TKontoPosten] : []),
     // Fallback-Aggregat ohne per-Inv-Daten: sonst weichen
     // T-Konto-Summe und Monatsergebnis auseinander.
     ...(!hasPerInv && (d.sonstige_ertraege_euro ?? 0) > 0 ? [{
@@ -188,6 +201,11 @@ export function TKonto({ d, sonderkosten = null }: { d: AktuellerMonatResponse; 
         d.netzbezug_durchschnittspreis_cent != null ? '(flex. Tarif, Monatsdurchschnitt)' : null,
       ].filter(Boolean).join('\n') : undefined,
       ergebnis: `= ${fmtCalc(d.netzbezug_kosten_euro, 2)} €`,
+      // R15-5b: nachrichtlicher Ausweis — die Netzladung des Speichers steckt
+      // bereits in diesen Kosten (Hauszähler), KEIN zusätzlicher Posten.
+      hinweis: d.speicher_ladung_netz_kosten_euro != null
+        ? `davon Batterieladung Netz: ${fmtCalc(d.speicher_ladung_netz_kosten_euro, 2)} € (${fmt(d.speicher_ladung_netz_kwh, 1)} kWh)`
+        : undefined,
     },
     // ── Betriebskosten: per Investition wenn Daten da, sonst Aggregat ──
     ...(hasPerInv
@@ -220,12 +238,21 @@ export function TKonto({ d, sonderkosten = null }: { d: AktuellerMonatResponse; 
             ergebnis: `= ${fmtCalc(inv.sonstige_ausgaben_euro, 2)} €`,
           } as TKontoPosten))
       // Fallback ohne per-Inv-Daten: Aggregat aus cockpit/komponenten
+      // (enthält seit G19-1 auch die Basis-Positionen — keine Extra-Zeile)
       : (sonderkosten ?? 0) > 0 ? [{
           label: 'Sonderkosten',
           wert: sonderkosten!,
           color: 'text-red-500',
         } as TKontoPosten] : []
     ),
+    // G19-1: Basis-Positionen (Anlage-Ebene) — Zeilen-Ausweis wie im Haben-Teil.
+    ...(hasPerInv && (d.anlage_sonstige_ausgaben_euro ?? 0) > 0 ? [{
+      label: 'Anlage — Sonstige Ausgaben',
+      wert: d.anlage_sonstige_ausgaben_euro,
+      color: 'text-red-500',
+      formel: 'Erfasst in den Monatsdaten als Position vom Typ "Ausgabe" (Anlage-Ebene)',
+      ergebnis: `= ${fmtCalc(d.anlage_sonstige_ausgaben_euro, 2)} €`,
+    } as TKontoPosten] : []),
   ]
 
   // Summen aus tatsächlich angezeigten Zeilen berechnen
@@ -392,9 +419,14 @@ export function TKonto({ d, sonderkosten = null }: { d: AktuellerMonatResponse; 
                         {sollPosten.map((s, i) => (
                           <React.Fragment key={i}>
                             {mobileRow(
-                              s.formel
-                                ? <FormelTooltip formel={s.formel} berechnung={s.berechnung} ergebnis={s.ergebnis}>{s.label}</FormelTooltip>
-                                : s.label,
+                              <>
+                                {s.formel
+                                  ? <FormelTooltip formel={s.formel} berechnung={s.berechnung} ergebnis={s.ergebnis}>{s.label}</FormelTooltip>
+                                  : s.label}
+                                {s.hinweis && (
+                                  <span className="block text-xs text-gray-400 dark:text-gray-500">{s.hinweis}</span>
+                                )}
+                              </>,
                               s.wert, s.vjWert, s.color, false, true,
                             )}
                           </React.Fragment>
@@ -469,6 +501,10 @@ export function TKonto({ d, sonderkosten = null }: { d: AktuellerMonatResponse; 
 
       {/* Tarif-Info */}
       <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-400 dark:text-gray-500 px-1">
+        {/* E4 (R3b, Regel-0a-STUFE-3-AUSNAHME, Gernot 2026-07-05): flexibler
+            Ø-Netzbezugspreis bewusst BLAU hervorgehoben (Hinweis „dynamischer Tarif
+            aktiv") statt Strompreis-Purple — dokumentierte Ausnahme (Style-Guide-
+            Ausnahmen-Liste); Zwilling in v4/MonatRahmen.tsx. */}
         {d.netzbezug_durchschnittspreis_cent != null
           ? <span>Netzbezug Ø <span className="text-blue-500 font-medium">{fmtCalc(d.netzbezug_durchschnittspreis_cent, 2)} ct/kWh</span> (flex)</span>
           : d.netzbezug_preis_cent != null && <span>Netzbezug {fmtCalc(d.netzbezug_preis_cent, 2)} ct/kWh</span>

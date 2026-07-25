@@ -14,6 +14,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Sigma, RefreshCw } from 'lucide-react'
 import { Card } from '../../components/ui'
+import { ScrollSchatten } from '../../components/ui/ScrollSchatten'
 import { fmtZahl } from '../../lib'
 import {
   aggregateKorrekturprofil,
@@ -90,13 +91,16 @@ export function KorrekturprofilHeatmapCard({ anlageId }: Props) {
   const [aggregateError, setAggregateError] = useState<string | null>(null)
   const [sicht, setSicht] = useState<Sicht>('klar')
 
-  const reload = async () => {
-    setLoading(true)
+  // D11-9(b): `silent` = ohne Voll-Spinner neu laden → nach „Neu aggregieren" bleibt
+  // die Heatmap stehen und die Daten werden in-place getauscht (kein „Zucken"); das
+  // Feedback liefert der „Aggregiert…"-Button-State.
+  const reload = async (silent = false) => {
+    if (!silent) setLoading(true)
     try {
       const res = await getProfile(anlageId)
       setProfile(res.profile)
     } finally {
-      setLoading(false)
+      if (!silent) setLoading(false)
     }
   }
 
@@ -127,7 +131,7 @@ export function KorrekturprofilHeatmapCard({ anlageId }: Props) {
           `${res.bins_sonnenstand ?? 0} Bins (Sonnenstand), ` +
           `Skalar ${fmtZahl(res.skalar, 3)}`
         )
-        await reload()
+        await reload(true)
       } else {
         setAggregateError(res.grund ?? 'Aggregator übersprungen')
       }
@@ -223,12 +227,14 @@ export function KorrekturprofilHeatmapCard({ anlageId }: Props) {
           <Sigma className="h-4 w-4 text-orange-500" />
           Korrekturprofil — Sonnenstand × Wetter
         </h3>
+        {/* D12-13: kein nativer `title` mehr — der lange Hinweis ragte am rechten
+            Seitenrand aus dem Viewport. Dieselbe Erklärung („Datenbasis: Day-Ahead-
+            Snapshots + stündliche Wetter-Historie") steht sichtbar im Kartentext unten. */}
         <button
           type="button"
           onClick={handleAggregate}
           disabled={aggregating}
           className="flex items-center gap-1 px-2 py-1 text-xs font-medium bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-white rounded transition-colors"
-          title="Profile aus Day-Ahead-Snapshots + Wetter-Historie neu berechnen"
         >
           <RefreshCw className={`h-3 w-3 ${aggregating ? 'animate-spin' : ''}`} />
           {aggregating ? 'Aggregiert…' : 'Neu aggregieren'}
@@ -269,14 +275,19 @@ export function KorrekturprofilHeatmapCard({ anlageId }: Props) {
 
       {!loading && !isEmpty && (
         <>
-          {/* Klassen-Tabs */}
-          <div className="flex gap-1 mb-3 border-b border-gray-200 dark:border-gray-700">
+          {/* Klassen-Tabs — D11-13: auf schmalen Screens (iPhone SE) ragten die 5 Labels
+              aus dem Fenster → horizontal scrollbar statt Überlauf. */}
+          {/* D12-13: horizontal scrollbare Tab-Zeile bekommt den Links/Rechts-Fade
+              (ScrollSchatten) als Affordanz „da kommt noch was" — überlauf-getrieben,
+              Karten-Fläche als Maske. */}
+          <ScrollSchatten achse="horizontal" fadeFrom="from-white dark:from-gray-800"
+            className="flex gap-1 mb-3 border-b border-gray-200 dark:border-gray-700">
             {KLASSEN.map(k => (
               <button
                 key={k.key}
                 type="button"
                 onClick={() => setSicht(k.key)}
-                className={`px-3 py-1 text-xs font-medium border-b-2 -mb-px transition-colors ${
+                className={`px-3 py-1 text-xs font-medium border-b-2 -mb-px transition-colors whitespace-nowrap shrink-0 ${
                   sicht === k.key
                     ? 'border-orange-500 text-orange-600 dark:text-orange-400'
                     : 'border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
@@ -285,15 +296,17 @@ export function KorrekturprofilHeatmapCard({ anlageId }: Props) {
                 {k.label}
               </button>
             ))}
-          </div>
+          </ScrollSchatten>
 
           {/* Heatmap */}
           {sicht !== 'saison' ? (
-            <div className="overflow-x-auto">
+            <ScrollSchatten achse="horizontal" fadeFrom="from-white dark:from-gray-800">
               <table className="text-[10px] border-collapse">
                 <thead>
                   <tr>
-                    <th className="text-right pr-1 font-medium text-gray-400 dark:text-gray-500 sticky left-0 bg-white dark:bg-gray-900">
+                    {/* D12-6: dark:bg-gray-900 wirkte als tief-schwarzer Block gegen die
+                        gray-800-Card → auf Card-Surface angeglichen (dezent, kein Schwarz). */}
+                    <th className="text-right pr-1 font-medium text-gray-400 dark:text-gray-500 sticky left-0 bg-white dark:bg-gray-800">
                       Elev↓ \ Az→
                     </th>
                     {azimute.map(az => (
@@ -306,7 +319,8 @@ export function KorrekturprofilHeatmapCard({ anlageId }: Props) {
                 <tbody>
                   {elevationen.map(el => (
                     <tr key={el}>
-                      <td className="text-right pr-1 text-gray-400 dark:text-gray-500 font-mono sticky left-0 bg-white dark:bg-gray-900">
+                      {/* D12-6: siehe oben — Card-Surface statt gray-900 (kein Schwarz). */}
+                      <td className="text-right pr-1 text-gray-400 dark:text-gray-500 font-mono sticky left-0 bg-white dark:bg-gray-800">
                         {el}°
                       </td>
                       {azimute.map(az => {
@@ -339,13 +353,14 @@ export function KorrekturprofilHeatmapCard({ anlageId }: Props) {
                   ))}
                 </tbody>
               </table>
-            </div>
+            </ScrollSchatten>
           ) : (
-            <div className="overflow-x-auto">
+            <ScrollSchatten achse="horizontal" fadeFrom="from-white dark:from-gray-800">
               <table className="text-[10px] border-collapse">
                 <thead>
                   <tr>
-                    <th className="text-right pr-1 font-medium text-gray-400 dark:text-gray-500 sticky left-0 bg-white dark:bg-gray-900">
+                    {/* D12-6: siehe oben — Card-Surface statt gray-900 (kein Schwarz). */}
+                    <th className="text-right pr-1 font-medium text-gray-400 dark:text-gray-500 sticky left-0 bg-white dark:bg-gray-800">
                       Monat \ Slot→
                     </th>
                     {saisonStunden.map(h => (
@@ -358,7 +373,8 @@ export function KorrekturprofilHeatmapCard({ anlageId }: Props) {
                 <tbody>
                   {monate.map(m => (
                     <tr key={m}>
-                      <td className="text-right pr-1 text-gray-400 dark:text-gray-500 font-mono sticky left-0 bg-white dark:bg-gray-900">
+                      {/* D12-6: siehe oben — Card-Surface statt gray-900 (kein Schwarz). */}
+                      <td className="text-right pr-1 text-gray-400 dark:text-gray-500 font-mono sticky left-0 bg-white dark:bg-gray-800">
                         {MONAT_KURZ[m]}
                       </td>
                       {saisonStunden.map(h => {
@@ -391,7 +407,7 @@ export function KorrekturprofilHeatmapCard({ anlageId }: Props) {
                   ))}
                 </tbody>
               </table>
-            </div>
+            </ScrollSchatten>
           )}
 
           {/* Legende */}

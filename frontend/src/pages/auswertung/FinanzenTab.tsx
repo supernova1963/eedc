@@ -227,7 +227,7 @@ export function FinanzenTab({ data, stats, strompreis, alleTarife, anlageId, zei
         </h3>
         <div className="h-72">
           <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={chartDataWithKumuliert} margin={{ top: ACHSEN_MARGIN_TOP, right: 30, left: 0, bottom: 5 }}>
+            <BarChart data={chartDataWithKumuliert} margin={{ top: ACHSEN_MARGIN_TOP, right: 8, left: 0, bottom: 5 }}>
               <CartesianGrid strokeDasharray="3 3" className="stroke-gray-200 dark:stroke-gray-700" />
               <XAxis dataKey="name" {...xAchse(schmal)} interval="preserveStartEnd" /* achsen-allow: Zeit-/Kategorie-Achse */ />
               <YAxis tickFormatter={achsenTick} {...yAchse(schmal)} label={achsenEinheit('€')} />
@@ -235,7 +235,7 @@ export function FinanzenTab({ data, stats, strompreis, alleTarife, anlageId, zei
               <Legend content={<ChartLegende />} />
               <Bar dataKey="einspeise_erloes" name="Einspeiseerlös" fill={COLORS.feedin} stackId="pos" />
               <Bar dataKey="ev_ersparnis" name="EV-Ersparnis" fill={COLORS.consumption} stackId="pos" />
-              <Bar dataKey="netzbezug_kosten" name="Netzbezug (negativ)" fill={COLORS.grid} />
+              <Bar dataKey="netzbezug_kosten" name="Netzbezug (Kosten)" fill={COLORS.grid} />
               {gesamt.sonderkosten > 0 && (
                 <Bar dataKey="sonderkosten" name="Sonderkosten" fill={GELD_COLORS.kosten} />
               )}
@@ -252,7 +252,7 @@ export function FinanzenTab({ data, stats, strompreis, alleTarife, anlageId, zei
         </h3>
         <div className="h-64">
           <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={chartDataWithKumuliert} margin={{ top: ACHSEN_MARGIN_TOP, right: 30, left: 0, bottom: 5 }}>
+            <AreaChart data={chartDataWithKumuliert} margin={{ top: ACHSEN_MARGIN_TOP, right: 8, left: 0, bottom: 5 }}>
               <CartesianGrid strokeDasharray="3 3" className="stroke-gray-200 dark:stroke-gray-700" />
               <XAxis dataKey="name" {...xAchse(schmal)} interval="preserveStartEnd" /* achsen-allow: Zeit-/Kategorie-Achse */ />
               <YAxis tickFormatter={achsenTick} {...yAchse(schmal)} label={achsenEinheit('€')} />
@@ -286,11 +286,13 @@ export function FinanzenTab({ data, stats, strompreis, alleTarife, anlageId, zei
         </h3>
         <div className="h-64">
           <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart data={chartDataWithKumuliert} margin={{ top: ACHSEN_MARGIN_TOP, right: 30, left: 0, bottom: 5 }}>
+            <ComposedChart data={chartDataWithKumuliert} margin={{ top: ACHSEN_MARGIN_TOP, right: 8, left: 0, bottom: 5 }}>
               <CartesianGrid strokeDasharray="3 3" className="stroke-gray-200 dark:stroke-gray-700" />
               <XAxis dataKey="name" {...xAchse(schmal)} interval="preserveStartEnd" /* achsen-allow: Zeit-/Kategorie-Achse */ />
               <YAxis tickFormatter={achsenTick} {...yAchse(schmal)} label={achsenEinheit('€')} />
               <Tooltip content={<ChartTooltip unit="€" decimals={2} />} />
+              {/* D12-5: Legende fehlte (Netto-Ertrag + Trend) — wie der Einspeise-/EV-Chart oben. */}
+              <Legend content={<ChartLegende />} />
               <Bar dataKey="netto_nach_sonderkosten" name="Netto-Ertrag" fill={COLORS.feedin} opacity={0.7} />
               <Line type="monotone" dataKey="netto_nach_sonderkosten" name="Trend" stroke={COLORS.solar} strokeWidth={2} dot={false} />
             </ComposedChart>

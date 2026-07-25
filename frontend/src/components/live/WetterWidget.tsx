@@ -8,9 +8,10 @@
 import { useMemo, useState, useEffect } from 'react'
 import { AreaChart, Area, XAxis, YAxis, ResponsiveContainer, Tooltip, ReferenceLine } from 'recharts'
 import ChartTooltip from '../ui/ChartTooltip'
+import SegmentControl from '../ui/SegmentControl'
 import { Sun, Cloud, CloudRain, CloudSnow, CloudDrizzle, CloudFog, CloudLightning, Droplets, Thermometer, CloudSun, Zap, BatteryCharging } from 'lucide-react'
 import type { LiveWetterResponse, TagesverlaufResponse } from '../../api/liveDashboard'
-import { CHART_COLORS, COLORS, KATEGORIE_FARBEN, NICHT_ENERGIE_KATEGORIEN, achsenEinheit, achsenTick, ACHSEN_MARGIN_TOP, fmtZahl } from '../../lib'
+import { CHART_COLORS, COLORS, KATEGORIE_FARBEN, NICHT_ENERGIE_KATEGORIEN, xAchse, achsenEinheit, achsenTick, ACHSEN_MARGIN_TOP, fmtZahl } from '../../lib'
 import { useChartTheme } from '../../context/ThemeContext'
 
 // Wetter-Symbol zu Lucide-Icon Mapping
@@ -282,16 +283,18 @@ export default function WetterWidget({ wetter, tagesverlauf, loading, anlageId }
     [vorhandeneKategorien, sonstigeLabel]
   )
 
-  // Stunden-Index für 24h-Timeline (Wetter-Icons über dem Chart)
+  // Stunden-Index für 24h-Timeline (Wetter-Icons über dem Chart). Nur die
+  // Stunden-Liste ist der Trigger — nicht das ganze Wetter-Objekt.
+  const wetterStunden = wetter?.stunden
   const stundenMap = useMemo(() => {
-    if (!wetter?.stunden) return {}
-    const map: Record<number, (typeof wetter.stunden)[0]> = {}
-    for (const s of wetter.stunden) {
+    if (!wetterStunden) return {}
+    const map: Record<number, NonNullable<typeof wetterStunden>[0]> = {}
+    for (const s of wetterStunden) {
       const h = parseInt(s.zeit.split(':')[0])
       map[h] = s
     }
     return map
-  }, [wetter?.stunden])
+  }, [wetterStunden])
 
   if (loading) {
     return (
@@ -402,27 +405,17 @@ export default function WetterWidget({ wetter, tagesverlauf, loading, anlageId }
                 : chartView === 'verbrauch' ? 'Verbrauch — IST + Prognose'
                 : 'PV-Ertrag vs. Verbrauch — IST + Prognose'}
             </div>
-            <div className="inline-flex rounded-lg border border-gray-200 dark:border-gray-700 text-[10px] overflow-hidden shrink-0">
-              {([
-                { k: 'pv', label: 'Nur PV' },
-                { k: 'verbrauch', label: 'Nur Verbrauch' },
-                { k: 'beides', label: 'Beides' },
-              ] as const).map(({ k, label }) => (
-                <button
-                  key={k}
-                  type="button"
-                  onClick={() => updateChartView(k)}
-                  className={`px-2 py-1 transition-colors ${
-                    chartView === k
-                      ? 'bg-primary-600 text-white'
-                      : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700/50'
-                  }`}
-                  title={`Chart: ${label}`}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
+            {/* B15/S4: 1-aus-3-Umschalter → SegmentControl-SoT (statt handgebauter Pillen-Gruppe). */}
+            <SegmentControl
+              ariaLabel="Chart-Ansicht" size="sm" className="shrink-0"
+              optionen={[
+                { key: 'pv', label: 'Nur PV' },
+                { key: 'verbrauch', label: 'Nur Verbrauch' },
+                { key: 'beides', label: 'Beides' },
+              ]}
+              value={chartView}
+              onChange={(k) => updateChartView(k as 'pv' | 'verbrauch' | 'beides')}
+            />
           </div>
           {/* Wetter-Timeline: 24h-Grid, aligned mit Chart-X-Achse.
               Recharts plot-area startet bei container_x + margin.left + YAxis.width.
@@ -495,7 +488,7 @@ export default function WetterWidget({ wetter, tagesverlauf, loading, anlageId }
               </defs>
               <XAxis
                 dataKey="zeit"
-                tick={{ fontSize: 10 }}
+                {...xAchse()}
                 className="fill-gray-400 dark:fill-gray-500"
                 interval={2}
                 padding={{ left: 8, right: 8 }}
@@ -509,6 +502,7 @@ export default function WetterWidget({ wetter, tagesverlauf, loading, anlageId }
                 label={achsenEinheit('kW')}
               />
               <Tooltip content={<ChartTooltip
+                lineStyle /* D12-2: IST (durchgezogen) vs. Prognose (gestrichelt) bei gleicher Farbe unterscheidbar */
                 labelFormatter={(label) => {
                   // Forward-Slot-Konvention: zeit=h ist Intervall [h, h+1]
                   const h = parseInt(String(label))
@@ -669,7 +663,14 @@ export default function WetterWidget({ wetter, tagesverlauf, loading, anlageId }
               )}
             </AreaChart>
           </ResponsiveContainer>
-          {/* Legende */}
+          {/* Legende — DOKUMENTIERTER EINZELFALL (D18-5, Gernot 2026-07-11):
+              handgebaut statt ChartLegende-SoT, weil die Linien-Marker hier echte
+              Information tragen (durchgezogen = IST vs. gestrichelt = Prognose bei
+              gleicher Farbe) — reine Quadrat-Swatches (ChartLegende) würden
+              IST/Prognose ununterscheidbar machen. Flächen-Kategorien nutzen den
+              SoT-Swatch (w-2.5 h-2.5, echtes Quadrat = ChartLegende.tsx). Offener
+              Entscheid D18-5b: ChartLegende um Linien-/Flächen-Marker für
+              Composite-Charts erweitern (Regel 0a Fall 2) — nur mit Gernot. */}
           {/* Schrift wie der ChartLegende-Standard (text-xs / gray-600/300), detLAN T5. */}
           <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-600 dark:text-gray-300 mt-1 justify-center">
             {showPv && (
@@ -684,7 +685,9 @@ export default function WetterWidget({ wetter, tagesverlauf, loading, anlageId }
             )}
             {showVerbrauch && aktiveKategorien.map(k => (
               <span key={k.key} className="flex items-center gap-1">
-                <span className="w-2.5 h-2 rounded-sm" style={{ backgroundColor: k.farbe, opacity: 0.7 }} /> {k.label}
+                {/* D18-5 (detlan #217 „Quadratisch sieht anders aus"): SoT-Maß
+                    w-2.5 h-2.5 — vorher h-2 = gestauchtes Rechteck. */}
+                <span className="w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: k.farbe, opacity: 0.7 }} /> {k.label}
               </span>
             ))}
             {showVerbrauch && (

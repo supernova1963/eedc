@@ -13,10 +13,15 @@ import {
   ComposedChart, Line, Area, LabelList
 } from 'recharts'
 import { Sun, TrendingUp, TrendingDown, AlertTriangle, Calendar, BarChart3 } from 'lucide-react'
-import { Card, LoadingSpinner, Alert, KPICard, ChartLegende } from '../ui'
+import { Card, LoadingSpinner, Alert, KPICard, ChartLegende, Table, TableHead, TableBody } from '../ui'
+import { ZELLE, KOPF_ZELLE } from '../ui/tabelleMasse'
 import ChartTooltip from '../ui/ChartTooltip'
+import { useLegendenToggle } from '../../hooks'
+import { Parkbar } from '../park'
 import { cockpitApi, type PVStringsGesamtlaufzeitResponse } from '../../api/cockpit'
-import { SOLL_IST_COLORS, STRING_COLORS, CHART_HOVER_CURSOR, PROGNOSE_DASH, achsenEinheit, ACHSEN_MARGIN_TOP, fmtZahl } from '../../lib'
+import { SOLL_IST_COLORS, STRING_COLORS, CHART_HOVER_CURSOR, PROGNOSE_DASH, xAchse, achsenEinheit, ACHSEN_MARGIN_TOP, fmtZahl } from '../../lib'
+
+const KEINE_IDS: string[] = []
 
 interface Props {
   anlageId: number
@@ -24,6 +29,8 @@ interface Props {
    *  ohne verschachtelte Cards + komponentengerechte Diagramme (SOLL/IST je Modul,
    *  Saison-Modulauswahl). Default false = IST-Dashboard-Darstellung (unverändert). */
   embed?: boolean
+  /** v4-Hub: meldet die real gerenderten Park-IDs hoch (Block-Auto-Hide). v3/IST: undefined. */
+  melde?: (ids: string[]) => void
 }
 
 /** Sektions-Rahmen: im Embed kompakte Überschrift (subordiniert dem Block-Titel),
@@ -53,7 +60,10 @@ function Sektion({ embed, icon: Icon, farbe, titel, hinweis, children }: {
   )
 }
 
-export function PVStringVergleich({ anlageId, embed = false }: Props) {
+export function PVStringVergleich({ anlageId, embed = false, melde }: Props) {
+  // B7-Legenden-Toggle — je Chart eine Instanz (SOLL/IST-Vergleich + Saison).
+  const vergleichLegende = useLegendenToggle()
+  const saisonLegende = useLegendenToggle()
   const [data, setData] = useState<PVStringsGesamtlaufzeitResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -178,6 +188,22 @@ export function PVStringVergleich({ anlageId, embed = false }: Props) {
     }
   }, [saisonalChartData])
 
+  // v4-Hub-Auto-Hide (D3, Gernot 2026-07-09): real gerenderte Park-IDs hochmelden.
+  // 4 KPIs + (Badges, wenn ≥2 Strings) + (SOLL/IST-Chart) + (Saison-Chart) + Tabelle;
+  // der Cross-Link wird vom Aufrufer (komponentenAnalyse) beigemischt.
+  const parkIds = useMemo(() => {
+    if (loading || error || !data || !data.strings || data.strings.length === 0 || !data.hat_prognose) return KEINE_IDS
+    const out: string[] = []
+    if (data.prognose_warnung) out.push('info:pv-warnung')
+    out.push('kpi:pv-soll', 'kpi:pv-ist', 'kpi:pv-abweichung', 'kpi:pv-zeitraum')
+    if (data.strings.length > 1 && (data.bester_string || data.schlechtester_string)) out.push('badge:pv-best-schlecht')
+    if (embed ? moduleVergleichData.length > 0 : jahresChartData.length > 0) out.push('chart:pv-soll-ist')
+    if (saisonalChartData.length > 0) out.push('chart:pv-saison')
+    out.push('tabelle:pv-strings')
+    return out
+  }, [loading, error, data, embed, moduleVergleichData, jahresChartData, saisonalChartData])
+  useEffect(() => { melde?.(parkIds) }, [melde, parkIds])
+
   // Loading State
   if (loading) {
     return <LoadingSpinner text="Lade String-Vergleich..." />
@@ -235,50 +261,53 @@ export function PVStringVergleich({ anlageId, embed = false }: Props) {
     <div className="space-y-6">
       {/* Diagnose-Hinweis: stale/oversize PVGIS-Prognose (passt nicht zur kWp) */}
       {data.prognose_warnung && (
+        <Parkbar id="info:pv-warnung" titel="Prognose-Warnung">
         <Alert type="warning">
           <div className="flex items-start gap-2">
             <AlertTriangle className="h-4 w-4 flex-shrink-0 mt-0.5" />
             <span>{data.prognose_warnung}</span>
           </div>
         </Alert>
+        </Parkbar>
       )}
 
-      {/* KPI Übersicht */}
+      {/* KPI Übersicht — je Kachel einzeln parkbar (Element-Park-Doktrin). */}
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
-        <KPICard
+        <Parkbar id="kpi:pv-soll" titel="SOLL (Prognose)"><KPICard
           title="SOLL (Prognose)"
           value={fmtZahl(data.prognose_gesamt_kwh / 1000, 1)}
           unit="MWh"
           color="blue"
           icon={TrendingUp}
           subtitle={`${data.anzahl_jahre} Jahre × PVGIS`}
-        />
-        <KPICard
+        /></Parkbar>
+        <Parkbar id="kpi:pv-ist" titel="IST (Erzeugt)"><KPICard
           title="IST (Erzeugt)"
           value={fmtZahl(data.ist_gesamt_kwh / 1000, 1)}
           unit="MWh"
           color="yellow"
           icon={Sun}
           subtitle={`${data.anzahl_monate} Monate erfasst`}
-        />
-        <KPICard
+        /></Parkbar>
+        <Parkbar id="kpi:pv-abweichung" titel="Abweichung"><KPICard
           title="Abweichung"
           value={`${(data.abweichung_gesamt_prozent ?? 0) >= 0 ? '+' : ''}${data.abweichung_gesamt_prozent != null ? fmtZahl(data.abweichung_gesamt_prozent, 1) : '0'}`}
           unit="%"
           color={(data.abweichung_gesamt_prozent ?? 0) >= 0 ? 'green' : 'red'}
           icon={(data.abweichung_gesamt_prozent ?? 0) >= 0 ? TrendingUp : TrendingDown}
-        />
-        <KPICard
+        /></Parkbar>
+        <Parkbar id="kpi:pv-zeitraum" titel="Zeitraum"><KPICard
           title="Zeitraum"
           value={`${data.erstes_jahr} - ${data.letztes_jahr}`}
           color="gray"
           icon={Calendar}
           subtitle={`${fmtZahl(data.anlagen_leistung_kwp, 1)} kWp`}
-        />
+        /></Parkbar>
       </div>
 
       {/* Beste/Schlechteste Performance */}
       {data.strings.length > 1 && (data.bester_string || data.schlechtester_string) && (
+        <Parkbar id="badge:pv-best-schlecht" titel="Beste/Schwächste Performance">
         <div className="flex flex-wrap gap-4 text-sm">
           {data.bester_string && (
             <div className="flex items-center gap-2 bg-green-50 dark:bg-green-900/20 px-3 py-1 rounded-full">
@@ -297,10 +326,12 @@ export function PVStringVergleich({ anlageId, embed = false }: Props) {
             </div>
           )}
         </div>
+        </Parkbar>
       )}
 
       {/* SOLL vs IST — Embed: je Modul nebeneinander + Delta-Label; IST-Seite: pro Jahr */}
       {(embed ? moduleVergleichData.length > 0 : jahresChartData.length > 0) && (
+        <Parkbar id="chart:pv-soll-ist" titel="SOLL vs IST">
         <Sektion embed={embed} icon={Calendar} farbe="text-blue-500"
           titel={embed ? 'SOLL vs IST je Modul (Gesamtlaufzeit)' : 'SOLL vs IST pro Jahr'}
           hinweis={embed ? 'PVGIS-Prognose vs. erzeugt je Modul; Label = Abweichung.' : undefined}>
@@ -309,31 +340,31 @@ export function PVStringVergleich({ anlageId, embed = false }: Props) {
               {embed ? (
                 <BarChart data={moduleVergleichData} margin={{ top: 20, right: 8, left: 0, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="name" tick={{ fontSize: 10 }} /* achsen-allow: Kategorie-Achse (Modul-Name) */ />
+                  <XAxis dataKey="name" {...xAchse()} /* achsen-allow: Kategorie-Achse (Modul-Name) */ />
                   <YAxis tickFormatter={jahresAchse.tick} label={achsenEinheit(jahresAchse.einheit)} width={70} tick={{ fontSize: 10 }} />
                   <Tooltip cursor={CHART_HOVER_CURSOR} content={<ChartTooltip unit="kWh" />} />
-                  <Legend content={<ChartLegende />} />
+                  <Legend content={<ChartLegende onItemClick={vergleichLegende.onItemClick} />} />
                   {/* SOLL deckend (S4: Balken nicht transparent); als Prognose nur
                       über den gestrichelten Rand markiert. */}
-                  <Bar dataKey="SOLL" name="SOLL (PVGIS)" fill={SOLL_IST_COLORS.soll} stroke={SOLL_IST_COLORS.soll} strokeWidth={1} strokeDasharray={PROGNOSE_DASH} />
-                  <Bar dataKey="IST" name="IST (erzeugt)" fill={SOLL_IST_COLORS.ist}>
+                  <Bar dataKey="SOLL" name="SOLL (PVGIS)" fill={SOLL_IST_COLORS.soll} stroke={SOLL_IST_COLORS.soll} strokeWidth={1} strokeDasharray={PROGNOSE_DASH} hide={vergleichLegende.istVersteckt('SOLL')} />
+                  <Bar dataKey="IST" name="IST (erzeugt)" fill={SOLL_IST_COLORS.ist} hide={vergleichLegende.istVersteckt('IST')}>
                     <LabelList dataKey="deltaLabel" position="top" fontSize={11} />
                   </Bar>
                 </BarChart>
               ) : (
                 <BarChart data={jahresChartData} margin={{ top: ACHSEN_MARGIN_TOP }}>
                   <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="name" tick={{ fontSize: 10 }} /* achsen-allow: Zeit-/Kategorie-Achse (Jahr) */ />
+                  <XAxis dataKey="name" {...xAchse()} /* achsen-allow: Zeit-/Kategorie-Achse (Jahr) */ />
                   <YAxis tickFormatter={jahresAchse.tick} label={achsenEinheit(jahresAchse.einheit)} width={80} tick={{ fontSize: 10 }} />
                   <Tooltip cursor={CHART_HOVER_CURSOR} content={<ChartTooltip unit="kWh" />} />
-                  <Legend content={<ChartLegende />} />
+                  <Legend content={<ChartLegende onItemClick={vergleichLegende.onItemClick} />} />
                   {data.strings.map((s, idx) => {
                     const single = data.strings.length === 1
                     const baseColor = single ? SOLL_IST_COLORS.soll : STRING_COLORS[idx % STRING_COLORS.length]
                     return (
                       <Bar key={`${s.investition_id}-soll`} dataKey={`${s.bezeichnung} SOLL`}
                         fill={baseColor} stroke={baseColor} strokeWidth={1} strokeDasharray={PROGNOSE_DASH}
-                        name={`${s.bezeichnung} SOLL`} />
+                        name={`${s.bezeichnung} SOLL`} hide={vergleichLegende.istVersteckt(`${s.bezeichnung} SOLL`)} />
                     )
                   })}
                   {data.strings.map((s, idx) => {
@@ -341,7 +372,7 @@ export function PVStringVergleich({ anlageId, embed = false }: Props) {
                     const baseColor = single ? SOLL_IST_COLORS.ist : STRING_COLORS[idx % STRING_COLORS.length]
                     return (
                       <Bar key={`${s.investition_id}-ist`} dataKey={`${s.bezeichnung} IST`}
-                        fill={baseColor} name={`${s.bezeichnung} IST`} />
+                        fill={baseColor} name={`${s.bezeichnung} IST`} hide={vergleichLegende.istVersteckt(`${s.bezeichnung} IST`)} />
                     )
                   })}
                 </BarChart>
@@ -349,10 +380,12 @@ export function PVStringVergleich({ anlageId, embed = false }: Props) {
             </ResponsiveContainer>
           </div>
         </Sektion>
+        </Parkbar>
       )}
 
       {/* Saisonaler Vergleich — Embed: Modulauswahl (Gesamt / einzelnes Modul) */}
       {saisonalChartData.length > 0 && (
+        <Parkbar id="chart:pv-saison" titel="Saisonaler Vergleich">
         <Sektion embed={embed} icon={BarChart3} farbe="text-green-500" titel="Saisonaler Vergleich (Jan – Dez)"
           hinweis="Monatliche PVGIS-Prognose vs. Durchschnitt der tatsächlichen Erzeugung über alle Jahre.">
           {embed && data.strings.length > 1 && (
@@ -372,10 +405,10 @@ export function PVStringVergleich({ anlageId, embed = false }: Props) {
             <ResponsiveContainer width="100%" height="100%">
               <ComposedChart data={saisonalChartData} margin={{ top: ACHSEN_MARGIN_TOP }}>
                 <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="name" tick={{ fontSize: 10 }} /* achsen-allow: Zeit-/Kategorie-Achse (Monat) */ />
+                <XAxis dataKey="name" {...xAchse()} /* achsen-allow: Zeit-/Kategorie-Achse (Monat) */ />
                 <YAxis tickFormatter={saisonalAchse.tick} label={achsenEinheit(saisonalAchse.einheit)} width={80} tick={{ fontSize: 10 }} />
                 <Tooltip cursor={CHART_HOVER_CURSOR} content={<ChartTooltip unit="kWh" />} />
-                <Legend content={<ChartLegende />} />
+                <Legend content={<ChartLegende onItemClick={saisonLegende.onItemClick} />} />
                 <Area
                   type="monotone"
                   dataKey="SOLL"
@@ -384,6 +417,7 @@ export function PVStringVergleich({ anlageId, embed = false }: Props) {
                   strokeDasharray={PROGNOSE_DASH}
                   fillOpacity={0.2}
                   name="PVGIS Prognose"
+                  hide={saisonLegende.istVersteckt('SOLL')}
                 />
                 <Line
                   type="monotone"
@@ -392,14 +426,17 @@ export function PVStringVergleich({ anlageId, embed = false }: Props) {
                   strokeWidth={3}
                   dot={{ r: 4 }}
                   name="IST Durchschnitt"
+                  hide={saisonLegende.istVersteckt('IST Ø')}
                 />
               </ComposedChart>
             </ResponsiveContainer>
           </div>
         </Sektion>
+        </Parkbar>
       )}
 
       {/* String-Detail-Tabelle */}
+      <Parkbar id="tabelle:pv-strings" titel="Einzelne Strings / Module">
       <Sektion embed={embed} icon={BarChart3} farbe="text-gray-500" titel="Einzelne Strings / Module (Gesamtlaufzeit)">
         {/* Mobil (< sm): Karten je String/Modul statt Tabelle — Muster wie
             Cockpit-Energiebilanz (eine Datenliste, zwei Render-Pfade). */}
@@ -425,68 +462,67 @@ export function PVStringVergleich({ anlageId, embed = false }: Props) {
         </div>
 
         {/* Desktop (≥ sm): Tabelle */}
-        <div className="hidden sm:block overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="bg-gray-50 dark:bg-gray-800">
-              <tr>
-                <th className="px-3 py-2 text-left font-medium text-gray-500">String / Modul</th>
-                <th className="px-3 py-2 text-right font-medium text-gray-500">kWp</th>
-                <th className="px-3 py-2 text-left font-medium text-gray-500">Ausrichtung</th>
-                <th className="px-3 py-2 text-right font-medium text-gray-500">SOLL</th>
-                <th className="px-3 py-2 text-right font-medium text-gray-500">IST</th>
-                <th className="px-3 py-2 text-right font-medium text-gray-500">Abw.</th>
-                <th className="px-3 py-2 text-right font-medium text-gray-500">Performance</th>
-                <th className="px-3 py-2 text-right font-medium text-gray-500">kWh/kWp</th>
+        <Table aussenClassName="hidden sm:block">
+          <TableHead>
+            <tr>
+              <th className={`${KOPF_ZELLE} text-left text-gray-500`}>String / Modul</th>
+              <th className={`${KOPF_ZELLE} text-right text-gray-500`}>kWp</th>
+              <th className={`${KOPF_ZELLE} text-left text-gray-500`}>Ausrichtung</th>
+              <th className={`${KOPF_ZELLE} text-right text-gray-500`}>SOLL</th>
+              <th className={`${KOPF_ZELLE} text-right text-gray-500`}>IST</th>
+              <th className={`${KOPF_ZELLE} text-right text-gray-500`}>Abw.</th>
+              <th className={`${KOPF_ZELLE} text-right text-gray-500`}>Performance</th>
+              <th className={`${KOPF_ZELLE} text-right text-gray-500`}>kWh/kWp</th>
+            </tr>
+          </TableHead>
+          <TableBody>
+            {data.strings.map((s, idx) => (
+              <tr key={s.investition_id} className="hover:bg-gray-50 dark:hover:bg-gray-800">
+                <td className={ZELLE}>
+                  <div className="flex items-center gap-2">
+                    <div
+                      className="w-3 h-3 rounded-full flex-shrink-0"
+                      style={{ backgroundColor: STRING_COLORS[idx % STRING_COLORS.length] }}
+                    />
+                    <span className="font-medium text-gray-900 dark:text-white">
+                      {s.bezeichnung}
+                    </span>
+                  </div>
+                  {s.wechselrichter_name && (
+                    <p className="text-xs text-gray-500 ml-5">→ {s.wechselrichter_name}</p>
+                  )}
+                </td>
+                <td className={`${ZELLE} text-right text-gray-600 dark:text-gray-400`}>
+                  {fmtZahl(s.leistung_kwp, 1)}
+                </td>
+                <td className={`${ZELLE} text-gray-600 dark:text-gray-400`}>
+                  {s.ausrichtung || '-'}
+                  {s.neigung_grad != null && ` / ${s.neigung_grad}°`}
+                </td>
+                <td className={`${ZELLE} text-right text-blue-600 dark:text-blue-400`}>
+                  {fmtZahl(s.prognose_gesamt_kwh / 1000, 1)} MWh
+                </td>
+                <td className={`${ZELLE} text-right font-medium`} style={{ color: STRING_COLORS[idx % STRING_COLORS.length] }}>
+                  {fmtZahl(s.ist_gesamt_kwh / 1000, 1)} MWh
+                </td>
+                <td className={`${ZELLE} text-right ${
+                  (s.abweichung_gesamt_prozent ?? 0) >= 0 ? 'text-green-600' : 'text-red-600'
+                }`}>
+                  {(s.abweichung_gesamt_prozent ?? 0) >= 0 ? '+' : ''}
+                  {s.abweichung_gesamt_prozent != null ? fmtZahl(s.abweichung_gesamt_prozent, 1) : '0'} %
+                </td>
+                <td className={`${ZELLE} text-right`}>
+                  <PerformanceBadge ratio={s.performance_ratio_gesamt} />
+                </td>
+                <td className={`${ZELLE} text-right text-gray-600 dark:text-gray-400`}>
+                  {s.spezifischer_ertrag_kwh_kwp != null ? fmtZahl(s.spezifischer_ertrag_kwh_kwp, 0) : '-'}
+                </td>
               </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
-              {data.strings.map((s, idx) => (
-                <tr key={s.investition_id} className="hover:bg-gray-50 dark:hover:bg-gray-800">
-                  <td className="px-3 py-3">
-                    <div className="flex items-center gap-2">
-                      <div
-                        className="w-3 h-3 rounded-full flex-shrink-0"
-                        style={{ backgroundColor: STRING_COLORS[idx % STRING_COLORS.length] }}
-                      />
-                      <span className="font-medium text-gray-900 dark:text-white">
-                        {s.bezeichnung}
-                      </span>
-                    </div>
-                    {s.wechselrichter_name && (
-                      <p className="text-xs text-gray-500 ml-5">→ {s.wechselrichter_name}</p>
-                    )}
-                  </td>
-                  <td className="px-3 py-3 text-right text-gray-600 dark:text-gray-400">
-                    {fmtZahl(s.leistung_kwp, 1)}
-                  </td>
-                  <td className="px-3 py-3 text-gray-600 dark:text-gray-400">
-                    {s.ausrichtung || '-'}
-                    {s.neigung_grad != null && ` / ${s.neigung_grad}°`}
-                  </td>
-                  <td className="px-3 py-3 text-right text-blue-600 dark:text-blue-400">
-                    {fmtZahl(s.prognose_gesamt_kwh / 1000, 1)} MWh
-                  </td>
-                  <td className="px-3 py-3 text-right font-medium" style={{ color: STRING_COLORS[idx % STRING_COLORS.length] }}>
-                    {fmtZahl(s.ist_gesamt_kwh / 1000, 1)} MWh
-                  </td>
-                  <td className={`px-3 py-3 text-right ${
-                    (s.abweichung_gesamt_prozent ?? 0) >= 0 ? 'text-green-600' : 'text-red-600'
-                  }`}>
-                    {(s.abweichung_gesamt_prozent ?? 0) >= 0 ? '+' : ''}
-                    {s.abweichung_gesamt_prozent != null ? fmtZahl(s.abweichung_gesamt_prozent, 1) : '0'} %
-                  </td>
-                  <td className="px-3 py-3 text-right">
-                    <PerformanceBadge ratio={s.performance_ratio_gesamt} />
-                  </td>
-                  <td className="px-3 py-3 text-right text-gray-600 dark:text-gray-400">
-                    {s.spezifischer_ertrag_kwh_kwp != null ? fmtZahl(s.spezifischer_ertrag_kwh_kwp, 0) : '-'}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+            ))}
+          </TableBody>
+        </Table>
       </Sektion>
+      </Parkbar>
     </div>
   )
 }

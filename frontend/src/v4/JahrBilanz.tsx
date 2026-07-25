@@ -14,11 +14,14 @@
  * Ø-Jahr = Σ der aggregierten Monatszeilen je Jahr (`jahrVergleichAus`).
  */
 import { fmtCalc } from '../components/ui'
-import FormelTooltip from '../components/ui/FormelTooltip'
-import { VerteilungsBalken, GeraeteHinweis } from '../components/blocks'
-import { DATENROLLE, AMPEL_TEXT_CLASS, AMPEL_BG_CLASS, sollIstStufe } from '../lib'
-import { Delta, VglChip } from './MonatBilanz'
-import { Sun, Activity, Zap, ArrowUpFromLine, Plug, Euro, Wallet } from 'lucide-react'
+import { Table, TableHead, TableBody } from '../components/ui/Table'
+import { ZELLE, KOPF_ZELLE } from '../components/ui/tabelleMasse'
+import { VerteilungsBalken, GeraeteHinweis, GrundlastSollIstKachel } from '../components/blocks'
+import { Parkbar } from '../components/park'
+import { DATENROLLE } from '../lib'
+import { Delta, VglChip, baueNetzKostenKpis } from './MonatBilanz'
+// R3b S7/A5: Datenrollen-Icons aus der SoT-Map (eine Datenrolle = ein Icon).
+import { DATENROLLEN_ICONS } from '../lib/komponentenStyle'
 import type { KpiStripItem } from '../components/blocks'
 import type { AktuellerMonatResponse } from '../api/aktuellerMonat'
 import type { JahrVergleich } from './JahrAggregat'
@@ -39,9 +42,9 @@ export function baueJahrKpis(d: AktuellerMonatResponse, vj: JahrVergleich | null
     : null
 
   return [
-    { title: 'PV-Erzeugung', value: fmt(d.pv_erzeugung_kwh), unit: 'kWh', color: 'yellow', icon: Sun, subtitle: pvSoll },
+    { title: 'PV-Erzeugung', value: fmt(d.pv_erzeugung_kwh), unit: 'kWh', color: 'yellow', icon: DATENROLLEN_ICONS.pv, subtitle: pvSoll },
     {
-      title: 'Autarkie', value: fmt(d.autarkie_prozent), unit: '%', color: 'green', icon: Activity,
+      title: 'Autarkie', value: fmt(d.autarkie_prozent), unit: '%', color: 'green', icon: DATENROLLEN_ICONS.autarkie,
       subtitle: vj?.autarkie != null ? `VJ: ${fmt(vj.autarkie)} %` : undefined,
       formel: 'Eigenverbrauch ÷ Gesamtverbrauch × 100',
       berechnung: d.eigenverbrauch_kwh != null && d.gesamtverbrauch_kwh != null
@@ -49,26 +52,28 @@ export function baueJahrKpis(d: AktuellerMonatResponse, vj: JahrVergleich | null
       ergebnis: d.autarkie_prozent != null ? `= ${fmtCalc(d.autarkie_prozent, 1)} %` : undefined,
     },
     {
-      title: 'Eigenverbrauch', value: fmt(d.eigenverbrauch_kwh), unit: 'kWh', color: 'purple', icon: Zap,
+      title: 'Eigenverbrauch', value: fmt(d.eigenverbrauch_kwh), unit: 'kWh', color: 'purple', icon: DATENROLLEN_ICONS.eigenverbrauch,
       subtitle: `EV-Quote ${fmt(d.eigenverbrauch_quote_prozent)} %${vj?.ev != null ? ` · VJ: ${fmt(vj.ev)} kWh` : ''}`,
     },
     {
-      title: 'Einspeisung', value: fmt(d.einspeisung_kwh), unit: 'kWh', color: 'green', icon: ArrowUpFromLine,
+      title: 'Einspeisung', value: fmt(d.einspeisung_kwh), unit: 'kWh', color: 'green', icon: DATENROLLEN_ICONS.einspeisung,
       subtitle: vj?.einsp != null ? `VJ: ${fmt(vj.einsp)} kWh` : undefined,
     },
     {
-      title: 'Netzbezug', value: fmt(d.netzbezug_kwh), unit: 'kWh', color: 'red', icon: Plug,
+      title: 'Netzbezug', value: fmt(d.netzbezug_kwh), unit: 'kWh', color: 'red', icon: DATENROLLEN_ICONS.netzbezug,
       subtitle: vj?.netz != null ? `VJ: ${fmt(vj.netz)} kWh` : undefined,
     },
     {
-      title: 'Netto-Ertrag', value: fmtCalc(d.netto_ertrag_euro, 2, '—'), unit: '€', color: 'blue', icon: Euro,
+      title: 'Netto-Ertrag', value: fmtCalc(d.netto_ertrag_euro, 2, '—'), unit: '€', color: 'blue', icon: DATENROLLEN_ICONS.nettoErtrag,
       subtitle: 'vor Betriebskosten', formel: 'Einspeise-Erlös + Eigenverbrauchs-Ersparnis',
     },
     {
       title: 'Jahresergebnis', value: fmtCalc(jahresergebnis, 2, '—'), unit: '€',
-      color: jahresergebnis != null && jahresergebnis < 0 ? 'red' : 'green', icon: Wallet,
+      color: jahresergebnis != null && jahresergebnis < 0 ? 'red' : 'green', icon: DATENROLLEN_ICONS.ergebnis,
       subtitle: 'nach Betriebskosten', formel: 'Gesamt-Nettoertrag − Betriebskosten + Sonstiges',
     },
+    // R15-1: Kosten-Kacheln (geteilter Bauer, Jahres-Aggregat = Monats-Shape).
+    ...baueNetzKostenKpis(d),
   ]
 }
 
@@ -110,18 +115,14 @@ export function JahrBilanz({
 
   const vglZellen = (val: number | null | undefined, row: BilanzRow, besser?: boolean) => (
     <>
-      <td className="py-1.5 pl-3 text-right tabular-nums text-gray-400 dark:text-gray-500 hidden sm:table-cell">
+      <td className={`${ZELLE} text-right tabular-nums text-gray-400 dark:text-gray-500 hidden sm:table-cell`}>
         {val != null ? fmt(val, dec(row)) : dash}
       </td>
-      <td className="py-1.5 pr-1 text-right tabular-nums">
+      <td className={`${ZELLE} text-right tabular-nums`}>
         {val != null ? <Delta a={row.ist} b={val} inv={row.inv} besser={besser} /> : dash}
       </td>
     </>
   )
-
-  const sollPct = d.soll_pv_kwh != null && d.pv_erzeugung_kwh != null && d.soll_pv_kwh > 0
-    ? Math.round((d.pv_erzeugung_kwh / d.soll_pv_kwh) * 100)
-    : null
 
   const pvGeraete = [
     ...(d.komponenten_geraete?.['pv-module'] ?? []),
@@ -129,9 +130,9 @@ export function JahrBilanz({
   ]
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-      {/* IST / Vorjahr / Ø-Jahr-Vergleich */}
-      <div className="lg:col-span-2">
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
+      {/* IST / Vorjahr / Ø-Jahr-Vergleich — eigene Parkbar (Doktrin). */}
+      <Parkbar id="el:bilanz-vergleich" titel="Vergleich (IST/VJ/Ø)" className="lg:col-span-2">
         {/* Mobil (< sm): gestapelte Karten + Vergleichs-Chips. */}
         <div className="sm:hidden divide-y divide-gray-100 dark:divide-gray-700/50">
           {rows.map((row) => (
@@ -150,71 +151,50 @@ export function JahrBilanz({
           ))}
         </div>
 
-        {/* Desktop (≥ sm): aligned Tabelle. */}
-        <div className="hidden sm:block overflow-x-auto">
-          <table className="w-full text-xs">
-            <thead>
-              <tr className="text-gray-400 dark:text-gray-500 border-b border-gray-100 dark:border-gray-700">
-                <th className="text-left pb-1.5 font-medium"><span className="sr-only">Kennzahl</span></th>
-                <th colSpan={2} className="text-center pb-1.5 font-medium">IST</th>
-                <th colSpan={2} className="text-center pb-1.5 font-medium">Vorjahr</th>
-                {oj && <th colSpan={2} className="text-center pb-1.5 font-medium">Ø Jahre</th>}
+        {/* Desktop (≥ sm): aligned Tabelle über die Zentrale `ui/Table` (Regel T).
+            Mobil zeigt der Block darüber die Kachel-Variante. */}
+        <Table aussenClassName="hidden sm:block" flaeche="karte">
+            <TableHead>
+              <tr className="text-gray-500 dark:text-gray-400 border-b border-gray-100 dark:border-gray-700">
+                <th className={`${KOPF_ZELLE} text-left`}><span className="sr-only">Kennzahl</span></th>
+                <th colSpan={2} className={`${KOPF_ZELLE} text-center`}>IST</th>
+                <th colSpan={2} className={`${KOPF_ZELLE} text-center`}>Vorjahr</th>
+                {oj && <th colSpan={2} className={`${KOPF_ZELLE} text-center`}>Ø Jahre</th>}
               </tr>
-            </thead>
-            <tbody>
+            </TableHead>
+            <TableBody>
               {rows.map((row) => (
-                <tr key={row.label} className="border-b border-gray-100 dark:border-gray-700/50 last:border-0">
-                  <td className="py-1.5 text-gray-600 dark:text-gray-400">{row.label}</td>
-                  <td className="py-1.5 pl-3 text-right font-semibold text-gray-900 dark:text-white tabular-nums">
+                // Kein eigener `border-b` — Zeilen-Trenner aus TableBody (`divide-y`,
+                // Regel T); zusätzlicher `border-b` kollidiert (Dark-Mode-Linie nur
+                // unter Zeile 1, gemessen 2026-07-11).
+                <tr key={row.label}>
+                  <td className={`${ZELLE} text-gray-600 dark:text-gray-400`}>{row.label}</td>
+                  <td className={`${ZELLE} text-right font-semibold text-gray-900 dark:text-white tabular-nums`}>
                     {fmt(row.ist, dec(row))}
                   </td>
-                  <td className="py-1.5 pr-1 text-left text-gray-500 dark:text-gray-400">{row.unit}</td>
+                  <td className={`${ZELLE} text-left text-gray-500 dark:text-gray-400`}>{row.unit}</td>
                   {vglZellen(row.vj, row, row.besserVj)}
                   {oj && vglZellen(row.oj, row, row.besserOj)}
                 </tr>
               ))}
-            </tbody>
-          </table>
-        </div>
+            </TableBody>
+          </Table>
         {oj && (
           <p className="text-xs text-gray-400 dark:text-gray-500 mt-1.5">
             Ø aus {ojCount} {ojCount !== 1 ? 'Jahren' : 'Jahr'}
           </p>
         )}
-      </div>
+      </Parkbar>
 
-      {/* SOLL/IST-Fortschritt (Σ PVGIS) + PV-Verteilung */}
+      {/* Rechte Spalte: Grundlast-Kachel + PV-Verteilung + Geräte-Hinweis — je eigene
+          Parkbar (Doktrin), gestapelt in EINER Grid-Zelle. */}
       <div>
-        {sollPct != null ? (
-          <>
-            <p className="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-2">
-              <FormelTooltip
-                formel="IST ÷ SOLL × 100"
-                berechnung={d.pv_erzeugung_kwh != null && d.soll_pv_kwh != null ? `${fmt(d.pv_erzeugung_kwh)} ÷ ${fmt(d.soll_pv_kwh)} kWh` : undefined}
-                ergebnis={`= ${sollPct} %`}
-              >
-                IST/SOLL (PVGIS)
-              </FormelTooltip>
-            </p>
-            <div className="flex justify-end">
-              <span className={`text-4xl font-bold ${AMPEL_TEXT_CLASS[sollIstStufe(sollPct)]}`}>{sollPct} %</span>
-            </div>
-            <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-sm h-2 mt-2">
-              <div
-                className={`h-2 rounded-sm ${AMPEL_BG_CLASS[sollIstStufe(sollPct)]}`}
-                style={{ width: `${Math.min(100, sollPct)}%` }}
-              />
-            </div>
-            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1.5">
-              {fmt(d.pv_erzeugung_kwh)} von {fmt(d.soll_pv_kwh)} kWh
-            </p>
-          </>
-        ) : (
-          <p className="text-xs text-gray-400 dark:text-gray-500">Keine PVGIS-SOLL-Prognose für dieses Jahr.</p>
-        )}
+        <Parkbar id="el:bilanz-grundlast" titel="Grundlast SOLL/IST">
+          <GrundlastSollIstKachel d={d} />
+        </Parkbar>
 
         {d.eigenverbrauch_kwh != null && d.einspeisung_kwh != null && (d.pv_erzeugung_kwh ?? 0) > 0 && (
-          <div className="mt-4">
+          <Parkbar id="el:bilanz-verteilung" titel="PV-Verteilung" className="mt-4">
             <VerteilungsBalken
               titel="PV-Verteilung"
               segmente={[
@@ -222,13 +202,13 @@ export function JahrBilanz({
                 { label: 'Einspeisung', wert: d.einspeisung_kwh, farbe: DATENROLLE.einspeisung.bg },
               ]}
             />
-          </div>
+          </Parkbar>
         )}
 
         {pvGeraete.length >= 2 && (
-          <div className="mt-3">
+          <Parkbar id="el:bilanz-geraete" titel="PV-Erzeugung aus" className="mt-3">
             <GeraeteHinweis label="PV-Erzeugung aus" namen={pvGeraete} />
-          </div>
+          </Parkbar>
         )}
       </div>
     </div>

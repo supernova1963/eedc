@@ -5,13 +5,17 @@
  * und Finanzbericht (Beta) in einer einzigen Stelle. Die beiden neuen
  * Dokumente werden in v3.15.0 als Beta eingeführt (Issue #121).
  *
+ * Wächter-Ausnahme: die Download-Karten-KACHEL ist ein roher <button> (ganze
+ * Karte als Klickfläche, Akzent-Rahmen-Optik — kein ui/Button-Fall) —
+ * check:v4-migration-Fall-3-Allowlist (Regel 0a Fall 3, Gernot-Freigabe 2026-07-11).
+ *
  * PDFs werden per fetch() geladen und als Blob-Download angeboten,
  * damit der HA-Ingress-Auth-Token nicht verloren geht (Mobile 401-Fix).
  */
 
 import { useState, useEffect } from 'react'
 import { FileText, Award, Euro, BookOpen, Download, FolderArchive, Loader2 } from 'lucide-react'
-import { Modal, Alert } from './ui'
+import { Modal, Alert, Button, Checkbox, Select } from './ui'
 import { importApi } from '../api/import'
 import { infothekApi } from '../api/infothek'
 import { monatsdatenApi } from '../api/monatsdaten'
@@ -51,10 +55,12 @@ export default function DokumentationsDialog({ anlage, onClose }: Dokumentations
   // (Dirk-PN 2026-06-12). null = unbekannt/lädt → Karte bleibt aktiv.
   const [infothekAnzahl, setInfothekAnzahl] = useState<number | null>(null)
 
+  // Nur die ID ist der Trigger — das Anlage-Objekt selbst wird hier nicht gelesen.
+  const anlageId = anlage?.id
   useEffect(() => {
-    if (!anlage) return
+    if (!anlageId) return
     let abgebrochen = false
-    monatsdatenApi.list(anlage.id)
+    monatsdatenApi.list(anlageId)
       .then(monate => {
         if (abgebrochen) return
         const jahre = Array.from(new Set(monate.map(m => m.jahr))).sort((a, b) => b - a)
@@ -62,11 +68,11 @@ export default function DokumentationsDialog({ anlage, onClose }: Dokumentations
       })
       .catch(() => { /* Jahresauswahl bleibt leer -> nur Gesamtzeitraum */ })
     // aktiv=true zählt dieselbe Menge wie der Dossier-Export
-    infothekApi.getCount(anlage.id, true)
+    infothekApi.getCount(anlageId, true)
       .then(count => { if (!abgebrochen) setInfothekAnzahl(count) })
       .catch(() => { /* unbekannt → Karte bleibt aktiv, Backend-Meldung greift */ })
     return () => { abgebrochen = true }
-  }, [anlage?.id])
+  }, [anlageId])
 
   // Falls die Infothek-Karte bereits angekreuzt war, Auswahl bereinigen
   useEffect(() => {
@@ -95,7 +101,7 @@ export default function DokumentationsDialog({ anlage, onClose }: Dokumentations
         ? `jahresbericht_${safeName}_${jahresberichtJahr}.pdf`
         : `jahresbericht_${safeName}.pdf`,
       zipKey: 'jahresbericht',
-      accent: 'text-orange-500 border-orange-200 dark:border-orange-900/40',
+      accent: 'text-orange-500',
     },
     {
       icon: <BookOpen className="h-8 w-8" />,
@@ -104,7 +110,7 @@ export default function DokumentationsDialog({ anlage, onClose }: Dokumentations
       url: `./api/infothek/export/pdf?anlage_id=${anlage.id}`,
       filename: `infothek_${safeName}.pdf`,
       zipKey: 'infothek',
-      accent: 'text-blue-500 border-blue-200 dark:border-blue-900/40',
+      accent: 'text-blue-500',
       disabled: infothekAnzahl === 0,
       disabledHint: 'Keine Infothek-Einträge vorhanden — das Dossier hätte keinen Inhalt. Einträge anlegen unter Einstellungen → Infothek.',
     },
@@ -117,7 +123,7 @@ export default function DokumentationsDialog({ anlage, onClose }: Dokumentations
       zipKey: 'anlagendokumentation',
       beta: true,
       feedbackUrl: 'https://github.com/supernova1963/eedc-homeassistant/issues/121',
-      accent: 'text-emerald-600 border-emerald-200 dark:border-emerald-900/40',
+      accent: 'text-emerald-600',
     },
     {
       icon: <Euro className="h-8 w-8" />,
@@ -128,7 +134,7 @@ export default function DokumentationsDialog({ anlage, onClose }: Dokumentations
       zipKey: 'finanzbericht',
       beta: true,
       feedbackUrl: 'https://github.com/supernova1963/eedc-homeassistant/issues/121',
-      accent: 'text-amber-600 border-amber-200 dark:border-amber-900/40',
+      accent: 'text-amber-600',
     },
   ]
 
@@ -183,17 +189,16 @@ export default function DokumentationsDialog({ anlage, onClose }: Dokumentations
             <label htmlFor="jahresbericht-jahr" className="text-sm font-medium text-gray-700 dark:text-gray-300">
               Jahresbericht-Zeitraum:
             </label>
-            <select
+            <Select
               id="jahresbericht-jahr"
+              compact
               value={jahresberichtJahr ?? ''}
               onChange={(e) => setJahresberichtJahr(e.target.value ? parseInt(e.target.value, 10) : null)}
-              className="px-3 py-1.5 text-sm rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
-            >
-              <option value="">Gesamtzeitraum (alle Jahre)</option>
-              {verfuegbareJahre.map(jahr => (
-                <option key={jahr} value={jahr}>{jahr}</option>
-              ))}
-            </select>
+              options={[
+                { value: '', label: 'Gesamtzeitraum (alle Jahre)' },
+                ...verfuegbareJahre.map(jahr => ({ value: String(jahr), label: String(jahr) })),
+              ]}
+            />
           </div>
         )}
 
@@ -209,35 +214,33 @@ export default function DokumentationsDialog({ anlage, onClose }: Dokumentations
             const isDisabled = !!card.disabled
             return (
               <div key={card.titel} className="relative flex flex-col">
+                {/* D19-2 (detlan): Checkbox OHNE Kreis-Badge direkt auf der Karte;
+                    Karten-Ränder neutral (Typ-Farbe nur noch am Icon) und ohne
+                    Hover-Lift — dezenter Rahmen-Hover statt Schweben. */}
                 {!isDisabled && (
-                  <label
-                    className="absolute -top-2 -right-2 z-10 flex items-center justify-center h-7 w-7 rounded-full border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 shadow-sm cursor-pointer"
-                    title="Für ZIP-Download auswählen"
-                  >
-                    <input
-                      type="checkbox"
+                  <div className="absolute top-2 right-2 z-10" title="Für ZIP-Download auswählen">
+                    <Checkbox
+                      id={`zip-${card.zipKey}`}
+                      label={<span className="sr-only">{card.titel} für ZIP-Download auswählen</span>}
                       checked={zipAuswahl.has(card.zipKey)}
                       onChange={() => toggleZipAuswahl(card.zipKey)}
-                      className="h-4 w-4 accent-orange-500 cursor-pointer"
-                      aria-label={`${card.titel} für ZIP-Download auswählen`}
                     />
-                  </label>
+                  </div>
                 )}
                 <button
                   type="button"
                   onClick={() => handleDownload(card)}
                   disabled={!!loading || isDisabled}
                   className={`
-                    group flex-1 p-4 rounded-lg border-2 bg-white dark:bg-gray-800 text-left
-                    ${card.accent}
+                    group flex-1 p-4 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-left
                     ${card.feedbackUrl ? 'rounded-b-none border-b-0' : ''}
                     ${isDisabled
                       ? 'opacity-50 cursor-not-allowed disabled:cursor-not-allowed'
-                      : 'hover:shadow-md hover:-translate-y-0.5 transition-all disabled:opacity-60 disabled:cursor-wait'}
+                      : 'hover:border-gray-300 dark:hover:border-gray-600 transition-colors disabled:opacity-60 disabled:cursor-wait'}
                   `}
                 >
                   <div className="flex items-start gap-3 mb-2">
-                    <div className={card.accent.split(' ')[0]}>{card.icon}</div>
+                    <div className={card.accent}>{card.icon}</div>
                     <div className="flex-1">
                       <div className="flex items-center gap-2">
                         <h3 className="font-semibold text-gray-900 dark:text-white">{card.titel}</h3>
@@ -261,7 +264,7 @@ export default function DokumentationsDialog({ anlage, onClose }: Dokumentations
                   )}
                 </button>
                 {card.feedbackUrl && (
-                  <div className={`px-4 py-2 border-2 border-t-0 rounded-b-lg bg-white dark:bg-gray-800 ${card.accent}`}>
+                  <div className="px-4 py-2 border border-t-0 border-gray-200 dark:border-gray-700 rounded-b-lg bg-white dark:bg-gray-800">
                     <a
                       href={card.feedbackUrl}
                       target="_blank"
@@ -278,20 +281,16 @@ export default function DokumentationsDialog({ anlage, onClose }: Dokumentations
         </div>
 
         {zipBerichte.length >= 2 && (
-          <button
+          <Button
             type="button"
+            className="w-full"
             onClick={handleZipDownload}
             disabled={!!loading}
-            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg
-              bg-orange-500 hover:bg-orange-600 text-white font-medium text-sm
-              transition-colors disabled:opacity-60 disabled:cursor-wait"
+            loading={loading === 'ZIP'}
           >
-            {loading === 'ZIP'
-              ? <Loader2 className="h-4 w-4 animate-spin" />
-              : <FolderArchive className="h-4 w-4" />
-            }
+            {loading !== 'ZIP' && <FolderArchive className="h-4 w-4 mr-2" />}
             Als ZIP herunterladen ({zipBerichte.length} Berichte)
-          </button>
+          </Button>
         )}
 
         <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">

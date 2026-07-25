@@ -15,6 +15,8 @@ import { useState, type ReactNode } from 'react'
 import type { LucideIcon } from 'lucide-react'
 import { ChevronDown } from 'lucide-react'
 import { ScrollSchatten } from '../components/ui/ScrollSchatten'
+import Button from '../components/ui/Button'
+import { LAUFEND_ZUSTAND } from '../lib'
 
 /** Ein Player-Schritt (Pfeil-Button). `go=null` → am Rand deaktiviert. */
 export interface ZeitSchritt {
@@ -49,11 +51,17 @@ interface ZeitStepperProps {
   /** Optionales Direktsprung-Element oben in der Liste (Tag: Date-Picker);
    *  bekommt eine `close`-Funktion zum Schließen der Liste nach Auswahl. */
   direktsprung?: (close: () => void) => ReactNode
+  /** „↺ Zurücksetzen"-Aktion unter dem Direktsprung (B15/S2: EIN Unterbau-Render
+   *  über ui/Button ghost+sm statt handgebauter Kopien in Tag-/MonatStepper);
+   *  `null`/undefined → entfällt. Schließen der Liste übernimmt der Stepper. */
+  zuruecksetzen?: { label: string; onClick: () => void } | null
   /** D10-2: im Fokus/Vollbild-Kopf wird der Stepper auf JEDER Breite gezeigt (kein
    *  `lg:hidden`) und sitzt nicht sticky — er ist dort die einzige Datums-Nav. */
   immerSichtbar?: boolean
 }
 
+// C1/S10 (R3b): rounded-md = dokumentierter Zeit-Nav-Kompakt-Radius (Familie
+// ZeitStepper/Zeitraum-Chips/SegmentControl radius="md"), bewusst nicht rounded-lg.
 const BTN_CLASS =
   'flex items-center justify-center h-9 w-8 shrink-0 rounded-md text-gray-600 dark:text-gray-300 ' +
   'hover:bg-gray-100 dark:hover:bg-gray-700/50 transition-colors disabled:opacity-30 ' +
@@ -67,7 +75,7 @@ function StepBtn({ icon: Icon, label, go }: ZeitSchritt) {
   )
 }
 
-export function ZeitStepper({ zurueck, vor, titel, badge, eintraege, direktsprung, immerSichtbar = false }: ZeitStepperProps) {
+export function ZeitStepper({ zurueck, vor, titel, badge, eintraege, direktsprung, zuruecksetzen, immerSichtbar = false }: ZeitStepperProps) {
   const [offen, setOffen] = useState(false)
 
   // D7-3 (detLAN R7): KEIN Voll-Bleed (`-mx-3`) mehr → der Streifen bleibt auf
@@ -88,7 +96,7 @@ export function ZeitStepper({ zurueck, vor, titel, badge, eintraege, direktsprun
         >
           <span className="truncate">{titel}</span>
           {badge && (
-            <span className="text-[10px] leading-none px-1 py-0.5 rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">{badge}</span>
+            <span className={`text-[10px] leading-none px-1 py-0.5 rounded-full ${LAUFEND_ZUSTAND.badge}`}>{badge}</span>
           )}
           <ChevronDown className={`h-4 w-4 shrink-0 transition-transform ${offen ? 'rotate-180' : ''}`} />
         </button>
@@ -97,9 +105,17 @@ export function ZeitStepper({ zurueck, vor, titel, badge, eintraege, direktsprun
 
       {offen && (
         <div className="mt-1 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-lg overflow-hidden">
-          {direktsprung && (
-            <div className="px-3 py-2 border-b border-gray-100 dark:border-gray-700/50">
-              {direktsprung(() => setOffen(false))}
+          {(direktsprung || zuruecksetzen) && (
+            <div className="px-3 py-2 border-b border-gray-100 dark:border-gray-700/50 space-y-2">
+              {direktsprung?.(() => setOffen(false))}
+              {zuruecksetzen && (
+                <Button
+                  variant="ghost" size="sm" className="w-full"
+                  onClick={() => { zuruecksetzen.onClick(); setOffen(false) }}
+                >
+                  {zuruecksetzen.label}
+                </Button>
+              )}
             </div>
           )}
           <ScrollSchatten achse="vertikal" className="max-h-72" fadeFrom="from-white dark:from-gray-800">
@@ -116,7 +132,7 @@ export function ZeitStepper({ zurueck, vor, titel, badge, eintraege, direktsprun
                   }`}
                 >
                   <span>{e.label}</span>
-                  <span className={`text-xs ${e.aktiv ? 'text-emerald-500 dark:text-emerald-400' : 'text-gray-400 dark:text-gray-500 tabular-nums'}`}>
+                  <span className={`text-xs ${e.aktiv ? LAUFEND_ZUSTAND.text : 'text-gray-400 dark:text-gray-500 tabular-nums'}`}>
                     {e.wert}
                   </span>
                 </button>

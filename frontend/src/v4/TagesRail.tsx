@@ -7,7 +7,9 @@
  * (gruppiert nach Monat statt Jahr).
  */
 import { useMemo } from 'react'
-import { MONAT_KURZ, DATENROLLE, fmtZahl } from '../lib'
+import { MONAT_KURZ, WT_KURZ, DATENROLLE, fmtZahl, LAUFEND_ZUSTAND } from '../lib'
+import ScrollSchatten from '../components/ui/ScrollSchatten'
+import { DatumPicker } from '../components/ui/DatumPicker'
 
 export interface TagRailEintrag {
   datum: string   // YYYY-MM-DD
@@ -24,7 +26,6 @@ interface TagesRailProps {
   aeltesterTag?: string
 }
 
-const WT_KURZ = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa']
 const monatKey = (d: string) => d.slice(0, 7)            // YYYY-MM
 const wochentag = (d: string) => WT_KURZ[new Date(d + 'T12:00:00').getDay()]
 const tagNr = (d: string) => new Date(d + 'T12:00:00').getDate()
@@ -58,12 +59,13 @@ export function TagesRail({ entries, datum, onSelect, aeltesterTag }: TagesRailP
     e.heute ? `${wochentag(e.datum)} ${tagNr(e.datum)}. — heute` : `${wochentag(e.datum)} ${tagNr(e.datum)}.: ${fmtZahl(e.pv_kwh, 0)} kWh`
 
   return (
-    <div className="hidden lg:block lg:sticky lg:top-0 lg:max-h-[calc(100vh-8rem)] lg:overflow-y-auto scrollbar-none space-y-3 pr-1">
-      {/* Direktsprung (Tage sind viele — anders als Monate). */}
-      <input
-        type="date" aria-label="Datum wählen" value={datum} max={heuteISO} min={aeltester || undefined}
-        onChange={(e) => { if (e.target.value) onSelect(e.target.value) }}
-        className="input w-full text-xs"
+    <ScrollSchatten achse="vertikal" aussenClassName="hidden lg:block lg:sticky lg:top-0" className="max-h-[calc(100vh-8rem)] space-y-3 pr-1">
+      {/* Direktsprung (Tage sind viele — anders als Monate). D13-4/12: Custom-DatumPicker
+          (SoT), Portal-Popover → nicht mehr vom scrollenden Rail abgeschnitten (löst
+          auch D12-9-Fokus-Ring-Clip, da der Popover außerhalb des Rails liegt). */}
+      <DatumPicker
+        modus="tag" ariaLabel="Datum wählen" value={datum} max={heuteISO} min={aeltester || undefined}
+        onChange={(v) => onSelect(v)} className="w-full text-xs"
       />
       {monate.map((mk) => (
         <div key={mk}>
@@ -90,7 +92,7 @@ export function TagesRail({ entries, datum, onSelect, aeltesterTag }: TagesRailP
                 >
                   <span className={`relative z-10 mt-1 h-3 w-3 rounded-full border-2 shrink-0 transition-all ${
                     e.heute
-                      ? 'bg-emerald-400 border-emerald-500 animate-pulse'
+                      ? LAUFEND_ZUSTAND.punkt
                       : sel
                         ? 'bg-blue-600 border-blue-600 shadow shadow-blue-400/50'
                         : 'bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 group-hover:border-blue-400'
@@ -101,7 +103,7 @@ export function TagesRail({ entries, datum, onSelect, aeltesterTag }: TagesRailP
                         {wochentag(e.datum)} {tagNr(e.datum)}.
                       </span>
                       <span className={`text-xs tabular-nums ${
-                        e.heute ? 'text-emerald-500 dark:text-emerald-400' : sel ? 'text-blue-500 dark:text-blue-400' : 'text-gray-400 dark:text-gray-500'
+                        e.heute ? LAUFEND_ZUSTAND.text : sel ? 'text-blue-500 dark:text-blue-400' : 'text-gray-400 dark:text-gray-500'
                       }`}>
                         {e.heute ? 'heute' : `${fmtZahl(e.pv_kwh, 0)} kWh`}
                       </span>
@@ -119,6 +121,6 @@ export function TagesRail({ entries, datum, onSelect, aeltesterTag }: TagesRailP
           </div>
         </div>
       ))}
-    </div>
+    </ScrollSchatten>
   )
 }

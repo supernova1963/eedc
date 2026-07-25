@@ -14,20 +14,25 @@
  * docken später als weitere Blöcke an.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { LoadingSpinner, Card, fmtCalc } from '../components/ui'
-import { BlockShell, KpiStrip, type Block } from '../components/blocks'
+import { useSearchParams } from 'react-router-dom'
+import { fmtCalc, FehlerZustand, ChartDatenTabelle } from '../components/ui'
+import { AnlageLeer, DatenLeer } from './OnboardingLeer'
+import { BlockShell, BlockStackSkeleton, KpiStrip, type Block } from '../components/blocks'
 import { ParkProvider, ParkFuss, Parkbar, usePark } from '../components/park'
-import { useScrollErhalt } from '../hooks'
+import { useApiData, useScrollErhalt } from '../hooks'
 import { MONAT_KURZ, BLOCK_IDENTITAET } from '../lib'
-import { TagesverlaufChart } from './TagesverlaufChart'
+import { TagesverlaufChart, baueChartDaten } from './TagesverlaufChart'
 import { baueMonatKpis, MonatBilanz, type GleicheMonatStats } from './MonatBilanz'
+import { monatBilanzParkIds } from './bilanzParkIds'
 import { baueKomponentenBloecke } from './KomponentenSektionen'
+import { baueMonatAuswertungBloecke } from './MonatAuswertungBloecke'
 import { MonatsRail, type RailEintrag } from './MonatsRail'
 import { MonatStepper } from './MonatStepper'
 import { MonatHeader, finanzTeaserBlock } from './MonatRahmen'
-import { energieProfilApi, type TagWerte, type VerfuegbarerMonat } from '../api/energie_profil'
-import { aktuellerMonatApi, type AktuellerMonatResponse } from '../api/aktuellerMonat'
+import { energieProfilApi, type VerfuegbarerMonat } from '../api/energie_profil'
+import { aktuellerMonatApi } from '../api/aktuellerMonat'
 import { monatsdatenApi, type AggregierteMonatsdaten } from '../api/monatsdaten'
+import { monatRefAusQuery, verlaufTabellenSpalten } from './verlaufVergleich'
 
 interface MonatRef { jahr: number; monat: number }
 
@@ -72,74 +77,92 @@ export default function CockpitMonatV4(props: { anlageId: number | undefined }) 
 
 function CockpitMonatInner({ anlageId }: { anlageId: number | undefined }) {
   const park = usePark()
-  const [monate, setMonate] = useState<VerfuegbarerMonat[]>([])
-  const [gewaehlt, setGewaehlt] = useState<MonatRef | null>(null)
-  const [tage, setTage] = useState<TagWerte[]>([])
-  const [monatData, setMonatData] = useState<AktuellerMonatResponse | null>(null)
-  const [alleMonate, setAlleMonate] = useState<AggregierteMonatsdaten[]>([])
-  const [loading, setLoading] = useState(true)
-  const [reloading, setReloading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  // B1: Scroll-Position beim Monatswechsel halten (Container vom Wurzel-Element
-  // aus gefunden — mobil `main`, Desktop ViewShell). `merkeScroll` vor jedem
-  // setGewaehlt; Wiederherstellung nach dem Reload (Signal = loading-Flip).
-  const rootRef = useRef<HTMLDivElement>(null)
-  const merkeScroll = useScrollErhalt(rootRef, loading)
-  const waehle = useCallback((j: number, m: number) => { merkeScroll(); setGewaehlt({ jahr: j, monat: m }) }, [merkeScroll])
+  // B3-Drill-in: Verlauf-Balken der Jahr-Sicht landet mit `?jahr=&monat=` hier. Beim
+  // Erst-Load dem Default (neuester Monat mit Daten) vorziehen; nur am Mount gelesen (Ref).
+  const [searchParams] = useSearchParams()
+  const initialGewaehltRef = useRef<MonatRef | null>(monatRefAusQuery(searchParams))
+  const [gewaehlt, setGewaehlt] = useState<MonatRef | null>(initialGewaehltRef.current)
 
   // Verfügbare Monate + Monatsreihe (für Vormonat/Ø-Monat) laden → Default vorwählen.
   // Beide Quellen parallel, damit die Default-Wahl die Monatsdaten kennt.
+  // R18-2 (SWR): über den Sicht-Cache von useApiData — beim Tab-Wechsel stehen die
+  // alten Daten sofort (kein Skeleton), still revalidiert.
+  const monateQ = useApiData(
+    () => Promise.all([
+      monatsdatenApi.listAggregiert(anlageId!),
+      energieProfilApi.getVerfuegbareMonate(anlageId!),
+    ]),
+    [anlageId],
+    { enabled: !!anlageId, swrKey: `v4-monat-liste:${anlageId}` },
+  )
+  const alleMonate = useMemo<AggregierteMonatsdaten[]>(() => monateQ.data?.[0] ?? [], [monateQ.data])
+  const monate = useMemo<VerfuegbarerMonat[]>(() => monateQ.data?.[1] ?? [], [monateQ.data])
+
+  // Default vorwählen, sobald die Listen da sind.
   useEffect(() => {
-    if (!anlageId) return
-    let ab = false
-    Promise.all([
-      monatsdatenApi.listAggregiert(anlageId),
-      energieProfilApi.getVerfuegbareMonate(anlageId),
-    ])
-      .then(([agg, ms]) => {
-        if (ab) return
-        setAlleMonate(agg)
-        setMonate(ms)
-        // Default = neuester Monat MIT Monatsdaten — NICHT bloß die neueste TEP/TZ-
-        // Zeile: ein laufender Monat ohne Abschluss (oder eine Snapshot-Streuzeile)
-        // würde sonst leer vorgewählt. Fallback: neuester verfügbarer Monat.
-        const desc = <T extends { jahr: number; monat: number }>(xs: T[]) =>
-          [...xs].sort((a, b) => (a.jahr !== b.jahr ? b.jahr - a.jahr : b.monat - a.monat))
-        const wahl = desc(agg)[0] ?? desc(ms)[0]
-        if (wahl) {
-          setGewaehlt({ jahr: wahl.jahr, monat: wahl.monat })
-        } else {
-          setLoading(false)
-        }
-      })
-      .catch(() => { if (!ab) { setError('Fehler beim Laden der Monate'); setLoading(false) } })
-    return () => { ab = true }
-  }, [anlageId])
+    if (!monateQ.data) return
+    // B3: Drill-in-`?jahr=&monat=` hat schon vorgewählt → Default nicht überschreiben
+    // (Ref ist mount-stabil, keine exhaustive-deps-Pflicht).
+    const [agg, ms] = monateQ.data
+    setGewaehlt((aktuell) => {
+      if (aktuell) return aktuell
+      // Default = neuester Monat MIT Monatsdaten — NICHT bloß die neueste TEP/TZ-
+      // Zeile: ein laufender Monat ohne Abschluss (oder eine Snapshot-Streuzeile)
+      // würde sonst leer vorgewählt. Fallback: neuester verfügbarer Monat.
+      const desc = <T extends { jahr: number; monat: number }>(xs: T[]) =>
+        [...xs].sort((a, b) => (a.jahr !== b.jahr ? b.jahr - a.jahr : b.monat - a.monat))
+      const wahl = desc(agg)[0] ?? desc(ms)[0]
+      return wahl ? { jahr: wahl.jahr, monat: wahl.monat } : null
+    })
+  }, [monateQ.data])
 
   // Tages-Werte (Monat + Vormonat) + Einzelmonats-KPIs (IST/Vorjahr/SOLL) laden.
-  useEffect(() => {
-    if (!anlageId || !gewaehlt) return
-    let ab = false
-    setLoading(true)
-    setError(null)
-    ladeMonatsdaten(anlageId, gewaehlt)
-      .then(([t, m]) => { if (!ab) { setTage(t); setMonatData(m) } })
-      .catch(() => { if (!ab) setError('Fehler beim Laden der Tageswerte') })
-      .finally(() => { if (!ab) setLoading(false) })
-    return () => { ab = true }
-  }, [anlageId, gewaehlt])
+  // keepPreviousData: Monatswechsel aktualisiert den Block-Stack in-place statt
+  // Skeleton (detLAN D7-2) — auch ohne Cache-Stand für den Ziel-Monat.
+  const tageQ = useApiData(
+    () => ladeMonatsdaten(anlageId!, gewaehlt!),
+    [anlageId, gewaehlt?.jahr, gewaehlt?.monat],
+    {
+      enabled: !!anlageId && !!gewaehlt,
+      swrKey: `v4-monat:${anlageId}:${gewaehlt?.jahr}-${gewaehlt?.monat}`,
+      keepPreviousData: true,
+    },
+  )
+  const tage = useMemo(() => tageQ.data?.[0] ?? [], [tageQ.data])
+  const monatData = tageQ.data?.[1] ?? null
 
+  // Monats-Auswertung (getMonat) — fertig berechnete Analyse-Werte für die vor dem
+  // Flip wiederhergestellten Energieprofil-Blöcke (Peaks/Tagesprofil/Kategorien/§51 +
+  // PR Ø). EIGENER Fetch/swrKey, an `gewaehlt` gebunden (kein Doppel-Fetch); getMonat
+  // respektiert das Installationsdatum backend-seitig. Fehlt die Antwort (Fehler/
+  // laden), bleiben die Blöcke einfach aus — sie sind additiv zur Monatsbilanz.
+  const auswQ = useApiData(
+    () => energieProfilApi.getMonat(anlageId!, gewaehlt!.jahr, gewaehlt!.monat),
+    [anlageId, gewaehlt?.jahr, gewaehlt?.monat],
+    {
+      enabled: !!anlageId && !!gewaehlt,
+      swrKey: `v4-monat-auswertung:${anlageId}:${gewaehlt?.jahr}-${gewaehlt?.monat}`,
+      keepPreviousData: true,
+    },
+  )
+  const monatAusw = auswQ.data ?? null
+  const loading = monateQ.loading || (!!gewaehlt && tageQ.loading)
+  const reloading = tageQ.reloading
+  const error = monateQ.data == null && monateQ.error
+    ? 'Fehler beim Laden der Monate'
+    : tageQ.data == null && tageQ.error ? 'Fehler beim Laden der Tageswerte' : null
   // C1: Aktualisieren (nur laufender Monat) — refetcht dieselben Quellen wie der
-  // Initial-Load, ohne den Voll-Spinner (nur das Reload-Icon dreht).
-  const reload = useCallback(() => {
-    if (!anlageId || !gewaehlt) return
-    setReloading(true)
-    ladeMonatsdaten(anlageId, gewaehlt)
-      .then(([t, m]) => { setTage(t); setMonatData(m) })
-      .catch(() => {})
-      .finally(() => setReloading(false))
-  }, [anlageId, gewaehlt])
+  // Initial-Load, ohne den Voll-Spinner (refetch ist bei Cache-Stand still).
+  const reload = tageQ.refetch
+
+  // B1: Scroll-Position beim Monatswechsel halten (Container vom Wurzel-Element
+  // aus gefunden — mobil `main`, Desktop ViewShell). `merkeScroll` vor jedem
+  // setGewaehlt; Wiederherstellung nach dem Reload (Signal = loading-Flip; mit
+  // SWR-In-Place-Update flippt loading beim Monatswechsel nicht mehr → der
+  // Scroll bleibt ohnehin natürlich stehen, der Hook greift nur im Skeleton-Fall).
+  const rootRef = useRef<HTMLDivElement>(null)
+  const merkeScroll = useScrollErhalt(rootRef, loading)
+  const waehle = useCallback((j: number, m: number) => { merkeScroll(); setGewaehlt({ jahr: j, monat: m }) }, [merkeScroll])
 
   // C2: „Abschluss starten" nur wenn Vergangenheits-Monate noch offen sind
   // (verhaltensgleich zu MonatsabschlussView.hatOffeneAbschluesse).
@@ -215,7 +238,7 @@ function CockpitMonatInner({ anlageId }: { anlageId: number | undefined }) {
     // werden im Strip ausgeblendet. Sind ALLE geparkt → Block-Hülle ausblenden
     // (Gernot-Abnahme 2026-06-25, Entscheidung 2).
     const kpiItems = monatData
-      ? baueMonatKpis(monatData, vormonatAgg).map((k) => ({
+      ? baueMonatKpis(monatData, vormonatAgg, monatAusw?.performance_ratio_avg).map((k) => ({
           ...k,
           parkId: `kpi:${k.title.toLowerCase().replace(/[^a-z0-9]+/gi, '-')}`,
         }))
@@ -227,7 +250,7 @@ function CockpitMonatInner({ anlageId }: { anlageId: number | undefined }) {
               id: 'kpi',
               title: 'Kennzahlen',
               ...BLOCK_IDENTITAET.kennzahlen,
-              summary: '5 Energie-Kennzahlen + Netto-Ertrag + Monatsergebnis',
+              summary: '5 Energie-Kennzahlen + Netto-Ertrag + Monatsergebnis + Netz-Kosten',
               defaultOpen: true,
               render: () => <KpiStrip kpis={sichtbareKpi} />,
             }
@@ -236,7 +259,7 @@ function CockpitMonatInner({ anlageId }: { anlageId: number | undefined }) {
           id: 'kpi',
           title: 'Kennzahlen',
           ...BLOCK_IDENTITAET.kennzahlen,
-          summary: '5 Energie-Kennzahlen + Netto-Ertrag + Monatsergebnis',
+          summary: '5 Energie-Kennzahlen + Netto-Ertrag + Monatsergebnis + Netz-Kosten',
           defaultOpen: true,
           render: () => <p className="text-sm text-gray-500 dark:text-gray-400">Keine Monats-Kennzahlen verfügbar.</p>,
         }
@@ -248,14 +271,17 @@ function CockpitMonatInner({ anlageId }: { anlageId: number | undefined }) {
       ...(kennzahlenBlock ? [kennzahlenBlock] : []),
       // Bilanz-/Verlauf-Blöcke: ihr eines Element ist parkbar; ist es geparkt,
       // entfällt der ganze Block (Element-Park-Doktrin, Gernot 2026-06-27).
-      ...(park.istGeparkt('el:bilanz') ? [] : [{
+      // Bilanz-Block: jede Teil-Anzeige (Vergleich/Grundlast/Verteilung/Geräte) ist
+      // einzeln parkbar (in MonatBilanz); der Block entfällt erst, wenn ALLE geparkt
+      // sind (Speicher-Muster `alleGeparkt`).
+      ...(monatData && monatBilanzParkIds(monatData).every((id) => park.istGeparkt(id)) ? [] : [{
         id: 'bilanz',
         title: 'Energie-Bilanz',
         ...BLOCK_IDENTITAET.energieBilanz,
         summary: bilanzSummary,
         defaultOpen: false,
         render: () => (monatData
-          ? <Parkbar id="el:bilanz" titel="Energie-Bilanz"><MonatBilanz d={monatData} vm={vormonatAgg} glMonStats={glMonStats} monatName={MONAT_KURZ[gewaehlt.monat]} /></Parkbar>
+          ? <MonatBilanz d={monatData} vm={vormonatAgg} glMonStats={glMonStats} monatName={MONAT_KURZ[gewaehlt.monat]} />
           : <p className="text-sm text-gray-500 dark:text-gray-400">Keine Vergleichsdaten verfügbar.</p>),
       }]),
       ...(park.istGeparkt('el:verlauf') ? [] : [{
@@ -265,19 +291,35 @@ function CockpitMonatInner({ anlageId }: { anlageId: number | undefined }) {
         summary: 'Tages-Bilanz: Erzeugung / Verbrauch / Autarkie',
         defaultOpen: false,
         render: () => <Parkbar id="el:verlauf" titel="Verlauf"><TagesverlaufChart tage={tage} /></Parkbar>,
+        // Paket CT (Pilot): Tabellen-Ablesung im Fokus-Overlay — dieselbe Datenreihe
+        // wie der Chart (baueChartDaten), Spalten = Union der Chart-Serien.
+        renderTabelle: () => (
+          <ChartDatenTabelle
+            xLabel="Tag"
+            xKey="tag"
+            spalten={verlaufTabellenSpalten(false)}
+            daten={baueChartDaten(tage)}
+            zeilen={31}
+            csvDateiname={gewaehlt ? `verlauf_${gewaehlt.jahr}-${String(gewaehlt.monat).padStart(2, '0')}.csv` : 'verlauf.csv'} /* de-de-allow: Dateiname (ISO sortierbar) */
+          />
+        ),
       }]),
+      // Wiederhergestellte Energieprofil-Analysen (M4/M8/M9/M3, ante-flip) — fertig
+      // aus getMonat berechnet; jeder Block versteckt sich selbst bei leerer Daten-
+      // /Park-Lage (Element-Park-Doktrin).
+      ...(monatAusw ? baueMonatAuswertungBloecke(monatAusw, park) : []),
       // Komponenten-Detailblöcke (aktiv-gegatet, B6/B7).
       ...(monatData ? baueKomponentenBloecke(monatData, park) : []),
       // Finanz-Teaser (B5) — bewusst GANZ UNTEN: Netto-Ertrag/Monatsergebnis stehen
       // bereits in den Kennzahlen (D), hier nur Aufschlüsselung + Tarif + Cross-Link.
       ...(finanzBlock ? [finanzBlock] : []),
     ]
-  }, [gewaehlt, tage, monatData, vormonatAgg, glMonStats, park])
+  }, [gewaehlt, tage, monatData, monatAusw, vormonatAgg, glMonStats, park])
 
   if (!anlageId) {
     return (
       <div className="p-3 sm:p-6 max-w-[1920px] mx-auto">
-        <Card><p className="text-sm text-gray-500 dark:text-gray-400">Noch keine Anlage gewählt.</p></Card>
+        <AnlageLeer titel="Noch keine Anlage gewählt." />
       </div>
     )
   }
@@ -316,15 +358,17 @@ function CockpitMonatInner({ anlageId }: { anlageId: number | undefined }) {
           />
 
           {error ? (
-            <Card><p className="text-red-500">{error}</p></Card>
+            // B8-Fehler-Baustein (S15). Retry nur wenn reload greifen kann (Monat gewählt);
+            // beim Listen-Fetch-Fehler (gewaehlt==null) wäre reload no-op → kein Fassade-Knopf.
+            <FehlerZustand text={error} onRetry={gewaehlt ? reload : undefined} />
           ) : loading && !monatData ? (
-            // Voll-Spinner NUR beim Erst-Load (noch keine Daten). Beim Monatswechsel
+            // Skeleton NUR beim Erst-Load (noch keine Daten). Beim Monatswechsel
             // bleibt der bestehende Block-Stack stehen und aktualisiert sich in-place
             // → kein „Aufblitzen" (detLAN D7-2, 2026-06-27; analog Tag T2). Kein
             // `key={…}` mehr → BlockShell re-rendert statt zu remounten.
-            <LoadingSpinner text="Lade Monat…" />
+            <BlockStackSkeleton label="Lade Monat…" />
           ) : monate.length === 0 ? (
-            <Card><p className="text-sm text-gray-500 dark:text-gray-400">Noch keine Monatsdaten erfasst.</p></Card>
+            <DatenLeer titel="Noch keine Monatsdaten erfasst." />
           ) : (
             <BlockShell
               persistKey={SICHT_KEY}

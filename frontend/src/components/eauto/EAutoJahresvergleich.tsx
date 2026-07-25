@@ -6,12 +6,19 @@
  * %-Anteile am Jahres-Ladungsvolumen im Tooltip + aufklappbare Werte-Tabelle.
  * (Das IST-Dashboard hat keinen Jahresvergleich — Hub-Mehrwert ohne IST-Verlust.)
  */
+import { useEffect } from 'react'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
 } from 'recharts'
-import { LADEQUELLEN_FARBEN, achsenEinheit, achsenTick, ACHSEN_MARGIN_TOP, fmtZahl } from '../../lib'
-import { ChartLegende, eedcTooltipProps } from '../ui'
+import { LADEQUELLEN_FARBEN, xAchse, achsenEinheit, achsenTick, ACHSEN_MARGIN_TOP, fmtZahl } from '../../lib'
+import { ChartLegende, eedcTooltipProps, Table, TableHead, TableBody } from '../ui'
+import { useLegendenToggle } from '../../hooks'
+import { ZELLE, KOPF_ZELLE } from '../ui/tabelleMasse'
+import { Parkbar } from '../park'
 import type { InvestitionMonatsdaten } from '../../api/investitionen'
+
+const KEINE_IDS: string[] = []
+const JAHRES_IDS = ['info:eauto-jahres', 'chart:eauto-jahresvergleich', 'tabelle:eauto-jahre']
 
 interface JahrLadung { jahr: number; pv: number; netz: number; extern: number; gesamt: number }
 
@@ -37,59 +44,67 @@ export function prepEAutoJahresLadung(monatsdaten: InvestitionMonatsdaten[]): Ja
 const fmt = (v: number) => Math.round(v).toLocaleString('de-DE')
 const pct = (v: number, ganz: number) => (ganz > 0 ? `${fmtZahl((v / ganz) * 100, 0)} %` : '—')
 
-export function EAutoJahresvergleich({ monatsdaten, embed = false }: { monatsdaten: InvestitionMonatsdaten[]; embed?: boolean }) {
+export function EAutoJahresvergleich({ monatsdaten, embed = false, melde }: { monatsdaten: InvestitionMonatsdaten[]; embed?: boolean; melde?: (ids: string[]) => void }) {
   const daten = prepEAutoJahresLadung(monatsdaten)
-  if (daten.length === 0) return <p className="text-sm text-gray-500 dark:text-gray-400">Keine Jahresdaten erfasst.</p>
+  const legende = useLegendenToggle()
+  const leer = daten.length === 0
+  useEffect(() => { melde?.(leer ? KEINE_IDS : JAHRES_IDS) }, [melde, leer])
+  if (leer) return <p className="text-sm text-gray-500 dark:text-gray-400">Keine Jahresdaten erfasst.</p>
   const hatExtern = daten.some((d) => d.extern > 0)
   const serien = SERIEN.filter((s) => s.key !== 'extern' || hatExtern)
 
   return (
     <div className={embed ? 'space-y-4' : 'space-y-6'}>
+      <Parkbar id="info:eauto-jahres" titel="Jahresvergleich-Erklärung">
       <p className="text-sm text-gray-500 dark:text-gray-400">
         Ladung je Jahr nach Quelle — zeigt die Entwicklung des <span className="font-medium">PV-Anteils</span>.
       </p>
+      </Parkbar>
+      <Parkbar id="chart:eauto-jahresvergleich" titel="Ladung nach Quelle pro Jahr">
       <div className="h-72">
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={daten} margin={{ top: ACHSEN_MARGIN_TOP, right: 8, left: 0, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" />
-            <XAxis dataKey="jahr" tick={{ fontSize: 10 }} /* achsen-allow: Zeit-/Kategorie-Achse (Jahr) */ />
+            <XAxis dataKey="jahr" {...xAchse()} /* achsen-allow: Zeit-/Kategorie-Achse (Jahr) */ />
             <YAxis tick={{ fontSize: 10 }} width={56} tickFormatter={achsenTick} label={achsenEinheit('kWh')} />
             <Tooltip {...eedcTooltipProps({ unit: ' kWh', decimals: 0, percentOf: 'gesamt' })} />
-            <Legend wrapperStyle={{ fontSize: 11 }} content={<ChartLegende />} />
+            <Legend wrapperStyle={{ fontSize: 11 }} content={<ChartLegende onItemClick={legende.onItemClick} />} />
             {serien.map((s) => (
-              <Bar key={s.key} dataKey={s.key} name={s.name} stackId="lad" fill={s.farbe} />
+              <Bar key={s.key} dataKey={s.key} name={s.name} stackId="lad" fill={s.farbe} hide={legende.istVersteckt(s.key)} />
             ))}
           </BarChart>
         </ResponsiveContainer>
       </div>
+      </Parkbar>
 
+      <Parkbar id="tabelle:eauto-jahre" titel="Jahres-Tabelle">
       <details className="border-t border-gray-100 dark:border-gray-800 pt-3">
         <summary className="cursor-pointer text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white">
           Werte anzeigen ({daten.length} Jahre)
         </summary>
-        <div className="mt-3 overflow-x-auto">
-          <table className="min-w-full text-sm">
-            <thead>
-              <tr className="border-b border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400">
-                <th className="text-left py-2 px-2 font-medium">Jahr</th>
-                <th className="text-right py-2 px-2 font-medium">PV</th>
-                <th className="text-right py-2 px-2 font-medium">Netz</th>
-                {hatExtern && <th className="text-right py-2 px-2 font-medium">Extern</th>}
+        <Table aussenClassName="mt-3">
+          <TableHead>
+            <tr className="border-b border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400">
+              {/* B2/C3 (#237): Einheit im Header — Zellen tragen nur Zahl + %-Anteil. */}
+              <th className={`${KOPF_ZELLE} text-left`}>Jahr</th>
+              <th className={`${KOPF_ZELLE} text-right`}>PV (kWh)</th>
+              <th className={`${KOPF_ZELLE} text-right`}>Netz (kWh)</th>
+              {hatExtern && <th className={`${KOPF_ZELLE} text-right`}>Extern (kWh)</th>}
+            </tr>
+          </TableHead>
+          <TableBody>
+            {[...daten].reverse().map((d) => (
+              <tr key={d.jahr} className="border-b border-gray-100 dark:border-gray-800">
+                <td className={`${ZELLE} text-gray-700 dark:text-gray-300`}>{d.jahr}</td>
+                <td className={`${ZELLE} text-right tabular-nums text-gray-900 dark:text-white`}>{fmt(d.pv)} <span className="text-gray-400 dark:text-gray-500">({pct(d.pv, d.gesamt)})</span></td>
+                <td className={`${ZELLE} text-right tabular-nums text-gray-900 dark:text-white`}>{fmt(d.netz)} <span className="text-gray-400 dark:text-gray-500">({pct(d.netz, d.gesamt)})</span></td>
+                {hatExtern && <td className={`${ZELLE} text-right tabular-nums text-gray-900 dark:text-white`}>{fmt(d.extern)} <span className="text-gray-400 dark:text-gray-500">({pct(d.extern, d.gesamt)})</span></td>}
               </tr>
-            </thead>
-            <tbody>
-              {[...daten].reverse().map((d) => (
-                <tr key={d.jahr} className="border-b border-gray-100 dark:border-gray-800">
-                  <td className="py-1.5 px-2 text-gray-700 dark:text-gray-300">{d.jahr}</td>
-                  <td className="text-right py-1.5 px-2 tabular-nums text-gray-900 dark:text-white">{fmt(d.pv)} <span className="text-gray-400 dark:text-gray-500">({pct(d.pv, d.gesamt)})</span></td>
-                  <td className="text-right py-1.5 px-2 tabular-nums text-gray-900 dark:text-white">{fmt(d.netz)} <span className="text-gray-400 dark:text-gray-500">({pct(d.netz, d.gesamt)})</span></td>
-                  {hatExtern && <td className="text-right py-1.5 px-2 tabular-nums text-gray-900 dark:text-white">{fmt(d.extern)} <span className="text-gray-400 dark:text-gray-500">({pct(d.extern, d.gesamt)})</span></td>}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+            ))}
+          </TableBody>
+        </Table>
       </details>
+      </Parkbar>
     </div>
   )
 }

@@ -11,21 +11,50 @@
  * positive und negative Werte nicht gegenseitig aufheben.
  */
 
-import { useState, useCallback, useMemo } from 'react'
+import { useMemo } from 'react'
 import {
   ComposedChart, Area, Line, XAxis, YAxis, ResponsiveContainer,
   Tooltip, ReferenceLine, Legend, CartesianGrid,
 } from 'recharts'
 import type { TagesverlaufSerie, TagesverlaufPunkt } from '../../api/liveDashboard'
 import ChartTooltip from '../ui/ChartTooltip'
-import { CHART_HOVER_CURSOR, HILFSLINIE_DASH, AREA_FILL_OPACITY, achsenEinheit, achsenTick, ACHSEN_MARGIN_TOP, fmtZahl } from '../../lib'
-import { ChartLegende } from '../ui'
+import { CHART_HOVER_CURSOR, HILFSLINIE_DASH, AREA_FILL_OPACITY, xAchse, yAchse, achsenEinheit, achsenTick, ACHSEN_MARGIN_TOP, fmtZahl } from '../../lib'
+import { ChartLegende, type ChartTabelleSpalte } from '../ui'
 import { useChartTheme } from '../../context/ThemeContext'
+import { useLegendenToggle } from '../../hooks'
 
 interface TagesverlaufChartProps {
   serien: TagesverlaufSerie[]
   punkte: TagesverlaufPunkt[]
   uebersprungen?: string[]
+}
+
+/**
+ * Paket CT: Tabellen-Ablesung des Live-Tagesverlaufs — 1 Zeile je 10-Min-Slot,
+ * 1 Spalte je Backend-Serie. Bidirektionale Serien bleiben EINE Spalte mit
+ * Vorzeichen (der _pos/_neg-Split ist reine Render-Mechanik des Butterfly);
+ * Overlay-Serien (Strompreis) behalten ihre eigene Einheit. Werte wie im Chart:
+ * fehlend → 0 (Flächen), Overlay fehlend → null (Lücke).
+ */
+export function tagesverlaufTabelle(serien: TagesverlaufSerie[], punkte: TagesverlaufPunkt[]): {
+  spalten: ChartTabelleSpalte[]
+  daten: Array<Record<string, string | number | null>>
+} {
+  const spalten: ChartTabelleSpalte[] = serien.map((s) => ({
+    key: s.key,
+    label: s.label,
+    einheit: s.seite === 'overlay' ? (s.einheit || undefined) : (s.einheit || 'kW'),
+    nachkomma: 2,
+  }))
+  const daten = punkte.map((p) => {
+    const row: Record<string, string | number | null> = { zeit: p.zeit }
+    for (const s of serien) {
+      const raw = p.werte[s.key]
+      row[s.key] = s.seite === 'overlay' ? (raw ?? null) : (raw ?? 0)
+    }
+    return row
+  })
+  return { spalten, daten }
 }
 
 /** Interne Darstellung einer Render-Serie (nach Aufspaltung bidirektionaler Serien). */
@@ -40,21 +69,16 @@ interface RenderSerie {
 
 export default function TagesverlaufChart({ serien, punkte, uebersprungen }: TagesverlaufChartProps) {
   const achsen = useChartTheme()
-  const [hidden, setHidden] = useState<Set<string>>(new Set())
-
-  const toggleSerie = useCallback((origKey: string) => {
-    setHidden((prev) => {
-      const next = new Set(prev)
-      if (next.has(origKey)) next.delete(origKey)
-      else next.add(origKey)
-      return next
-    })
-  }, [])
+  // B7-Legenden-Toggle (SoT-Hook); Key = origKey, damit bidirektionale _pos/_neg-Paare
+  // gemeinsam schalten (Legende zeigt nur den _pos-Eintrag).
+  const { istVersteckt, toggleSerie } = useLegendenToggle()
 
   // Overlay-Serien (z.B. Strompreis) — separate Achse, als Linie
   const overlaySerien = useMemo(() => serien.filter((s) => s.seite === 'overlay'), [serien])
   // Einheit der Hauptachse (links) = erste Nicht-Overlay-Serie (D9-A: Achse trägt ihre Einheit).
-  const hauptEinheit = useMemo(() => serien.find((s) => s.seite !== 'overlay')?.einheit || '', [serien])
+  // Butterfly = Leistungs-Verlauf → Fallback kW, falls die Serie keine einheit trägt
+  // (Backend taggt nur die Preis-Overlay). Sonst label-Drop = Y-Achse ohne Einheit (D11-14).
+  const hauptEinheit = useMemo(() => serien.find((s) => s.seite !== 'overlay')?.einheit || 'kW', [serien])
 
   // Render-Serien: Bidirektionale werden in _pos/_neg aufgespalten (ohne Overlays)
   const renderSerien = useMemo<RenderSerie[]>(() => {
@@ -154,27 +178,27 @@ export default function TagesverlaufChart({ serien, punkte, uebersprungen }: Tag
         <span>▼ Senken (Verbrauch, Einspeisung)</span>
       </div>
       <ResponsiveContainer width="100%" height={320}>
-        <ComposedChart data={chartData} margin={{ top: ACHSEN_MARGIN_TOP, right: overlaySerien.length > 0 ? 10 : 10, left: -10, bottom: 5 }}>
+        <ComposedChart data={chartData} margin={{ top: ACHSEN_MARGIN_TOP, right: overlaySerien.length > 0 ? 10 : 10, left: 0, bottom: 5 }}>
           <CartesianGrid strokeDasharray="3 3" className="stroke-gray-200 dark:stroke-gray-700" />
           <XAxis
             dataKey="zeit"
-            tick={{ fontSize: 10 }}
+            {...xAchse()}
             className="fill-gray-500 dark:fill-gray-400"
             interval="preserveStartEnd"
             /* achsen-allow: Zeit-/Kategorie-Achse */
           />
           <YAxis
             yAxisId="left"
-            tick={{ fontSize: 10 }}
+            {...yAchse(false)}
             className="fill-gray-500 dark:fill-gray-400"
             tickFormatter={achsenTick}
-            label={hauptEinheit ? achsenEinheit(hauptEinheit) : undefined}
+            label={achsenEinheit(hauptEinheit)}
           />
           {overlaySerien.length > 0 && (
             <YAxis
               yAxisId="right"
               orientation="right"
-              tick={{ fontSize: 10 }}
+              {...yAchse(false)}
               className="fill-gray-400 dark:fill-gray-500"
               tickFormatter={achsenTick}
               label={achsenEinheit(overlaySerien[0].einheit || '', 'rechts')}
@@ -246,7 +270,7 @@ export default function TagesverlaufChart({ serien, punkte, uebersprungen }: Tag
                 stackId={rs.stackId}
                 isAnimationActive={false}
                 legendType={legendHide ? 'none' : undefined}
-                hide={hidden.has(rs.origKey)}
+                hide={istVersteckt(rs.origKey)}
               />
             )
           })}
@@ -267,7 +291,7 @@ export default function TagesverlaufChart({ serien, punkte, uebersprungen }: Tag
                 dot={false}
                 isAnimationActive={false}
                 connectNulls={false}
-                hide={hidden.has(s.key)}
+                hide={istVersteckt(s.key)}
               />
             )
           })}

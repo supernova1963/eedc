@@ -1,6 +1,12 @@
 /**
  * IASkeleton — klickbares Vorschau-Skelett der IA-v4.0.0-Struktur
- * (Etappenziel 1/2). **Guard-frei** und damit in zwei Kontexten lauffähig:
+ * (Etappenziel 1/2).
+ *
+ * Wächter-Ausnahme: rohe Controls (Klick-Attrappen der Dev-Preview, nicht
+ * user-erreichbar) — check:v4-migration-Infra-Allowlist (Regel 0a Fall 3,
+ * Gernot-Freigabe 2026-07-11).
+ *
+ * **Guard-frei** und damit in zwei Kontexten lauffähig:
  *   1. lokal über `pages/DesignPreview.tsx` (DEV-Guard davor) auf
  *      `/dev/design-preview`;
  *   2. als eigenständiger Vorschau-Entry (`preview-main.tsx` + `preview.html`,
@@ -26,14 +32,14 @@ import { useEffect, useMemo, useState } from 'react'
 import { KPICard } from '../ui'
 import { compareTyp } from '../../lib/constants'
 import { BLOCK_IDENTITAET } from '../../lib/blockStyle'
-import { KOMPONENTEN_IDENTITAET } from '../../lib/komponentenStyle'
+import { KOMPONENTEN_IDENTITAET, STATUS_ICONS } from '../../lib/komponentenStyle'
 import type { KomponentenColor } from '../../lib/komponentenStyle'
 import {
   LayoutDashboard, Boxes, BarChart3, Users, HelpCircle, Settings,
   Sun, Battery, Flame, Car, Plug, Wrench, Zap, Euro, Leaf, PiggyBank, Table2,
   Activity, TrendingUp, Trophy, MapPin, ArrowRight, LineChart, Wallet,
   ArrowUp, ArrowDown, ChevronDown, Maximize2,
-  CheckCircle2, AlertTriangle, Sparkles, BookOpen, FileText,
+  BookOpen, FileText,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { FokusVollbild } from '../blocks/FokusVollbild'
@@ -560,10 +566,12 @@ function HilfeView() {
 // App aus dem STATUS_ICONS/colors-SoT). `hinweis` = Daten-Checker-artiger
 // Tooltip, der bei ⚠ erklärt, WAS zu tun ist (OK/NOK mit Begründung).
 type KachelStatus = 'ok' | 'warn' | 'neu'
+// R3b A2-5: warn = Kanon-GELB (yellow-500, F3-Status-Achse) statt amber — die
+// Preview-SoT war der Drift-Ursprung der EinstellungenV4-STATUS_META.
 const STATUS_META: Record<KachelStatus, { icon: LucideIcon; farbe: string; standardTitel: string }> = {
-  ok:   { icon: CheckCircle2,  farbe: 'text-green-500', standardTitel: 'eingerichtet' },
-  warn: { icon: AlertTriangle, farbe: 'text-amber-500', standardTitel: 'braucht Aufmerksamkeit' },
-  neu:  { icon: Sparkles,      farbe: 'text-blue-500',  standardTitel: 'neu — noch nicht eingerichtet' },
+  ok:   { icon: STATUS_ICONS.ok,   farbe: 'text-green-500', standardTitel: 'eingerichtet' },
+  warn: { icon: STATUS_ICONS.warnung, farbe: 'text-yellow-500', standardTitel: 'braucht Aufmerksamkeit' },
+  neu:  { icon: STATUS_ICONS.info, farbe: 'text-blue-500',  standardTitel: 'neu — noch nicht eingerichtet' },
 }
 
 // Einstellungs-Eintrag = ein Block (auf-/zuklappbar + Fokus, analog Komponenten):
@@ -700,7 +708,7 @@ function EinstellungSeite({ inhalt, fokus }: { inhalt: Inhalt; fokus: boolean })
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-left text-xs text-gray-400 dark:text-gray-500">
+              <tr className="text-left text-xs text-gray-500 dark:text-gray-400">
                 {inhalt.spalten.map((s) => <th key={s} className="py-1 pr-4 font-medium whitespace-nowrap">{s}</th>)}
               </tr>
             </thead>
@@ -813,9 +821,9 @@ function EinstellungenView() {
           className="w-full min-h-[44px] rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-4 text-sm text-gray-900 dark:text-white"
         />
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-400 dark:text-gray-500">
-          <span className="flex items-center gap-1"><CheckCircle2 className="h-3.5 w-3.5 text-green-500" /> eingerichtet</span>
-          <span className="flex items-center gap-1"><AlertTriangle className="h-3.5 w-3.5 text-amber-500" /> braucht Aufmerksamkeit (Tooltip zeigt Grund)</span>
-          <span className="flex items-center gap-1"><Sparkles className="h-3.5 w-3.5 text-blue-500" /> neu</span>
+          <span className="flex items-center gap-1"><STATUS_META.ok.icon className={`h-3.5 w-3.5 ${STATUS_META.ok.farbe}`} /> eingerichtet</span>
+          <span className="flex items-center gap-1"><STATUS_META.warn.icon className={`h-3.5 w-3.5 ${STATUS_META.warn.farbe}`} /> braucht Aufmerksamkeit (Tooltip zeigt Grund)</span>
+          <span className="flex items-center gap-1"><STATUS_META.neu.icon className={`h-3.5 w-3.5 ${STATUS_META.neu.farbe}`} /> neu</span>
         </div>
         <p className="text-xs text-gray-400 dark:text-gray-500">
           Komponenten-Parameter (z. B. WP-Effizienz, Speicher-Preise) bearbeitest du an beiden Stellen:
@@ -855,7 +863,7 @@ function StatusFooter() {
   return (
     <footer className="shrink-0 h-9 border-t border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950 px-3 sm:px-6 flex items-center gap-4 overflow-x-auto scrollbar-none text-xs">
       {STATUS_DIENSTE.map((d) => {
-        const Icon = d.ton === 'ok' ? CheckCircle2 : AlertTriangle
+        const Icon = d.ton === 'ok' ? STATUS_ICONS.ok : STATUS_ICONS.warnung
         return (
           <button key={d.label} type="button" title={`${d.label}: ${d.detail} — Details öffnen`}
             className="flex items-center gap-1.5 whitespace-nowrap shrink-0 hover:underline">

@@ -8,17 +8,22 @@ import {
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import ChartTooltip from '../../components/ui/ChartTooltip'
 import { Card, KPICard, ChartLegende } from '../../components/ui'
+import { DatumPicker } from '../../components/ui/DatumPicker'
+import { ScrollSchatten } from '../../components/ui/ScrollSchatten'
 import { TagVerlaufChart, TagWerteTabelle } from '../../components/tag'
 import { energieProfilApi, type StundenWert, type SerieInfo, type WochenmusterPunkt } from '../../api/energie_profil'
 import { EnergieprofilMonat } from './EnergieprofilMonat'
 import { EnergieprofilPrognose } from './EnergieprofilPrognose'
 import {
-  DEDIZIERTE_KATEGORIEN, WOCHENTAG_FARBEN, achsenEinheit, achsenTick, ACHSEN_MARGIN_TOP,
+  DEDIZIERTE_KATEGORIEN, WOCHENTAG_FARBEN, WT_KURZ, xAchse, achsenEinheit, achsenTick, ACHSEN_MARGIN_TOP,
 } from '../../lib'
 
 // ─── Konstanten ───────────────────────────────────────────────────────────────
 
-const WOCHENTAG_KURZ = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So']
+// ⚠️ Index hier = Backend-`wochentag` = Python-weekday (0 = MONTAG) — deshalb
+// Mo-first-ROTATION der So-first-SoT (WT_KURZ, Index = Date.getDay()). Ein
+// naiver WT_KURZ-Import wäre ein stiller Um-eins-Versatz aller Spalten (R3b S7).
+const WOCHENTAG_KURZ = [...WT_KURZ.slice(1), WT_KURZ[0]]
 
 // Gruppierungen für Wochenvergleich
 const GRUPPEN = [
@@ -156,7 +161,7 @@ function Tagesdetail({ anlageId }: TagesdetailProps) {
           Maximum ist heute (rollierend via aggregate_today_all geschrieben).
           detLAN D#181: heutiger Tag muss erreichbar sein, war vorher disabled. */}
       <div className="flex items-center gap-2 flex-wrap">
-        <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Tag:</label>
+        <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Tag:</span>
         <button
           type="button"
           onClick={() => setDatum(tagVerschieben(datum, -1))}
@@ -165,8 +170,7 @@ function Tagesdetail({ anlageId }: TagesdetailProps) {
         >
           <ChevronLeft className="h-4 w-4" />
         </button>
-        <input type="date" aria-label="Tag auswählen" value={datum} max={heuteISO()}
-          onChange={e => setDatum(e.target.value)} className="input w-auto text-sm" />
+        <DatumPicker modus="tag" value={datum} max={heuteISO()} onChange={setDatum} ariaLabel="Tag auswählen" />
         <button
           type="button"
           onClick={() => setDatum(tagVerschieben(datum, 1))}
@@ -198,7 +202,11 @@ function Tagesdetail({ anlageId }: TagesdetailProps) {
           Keine Daten für diesen Tag vorhanden.
         </Card>
       ) : (
-        <TagVerlaufChart daten={daten} extraSerien={extraSerien} />
+        /* D18-3: Card-Hülle liegt am IST-Aufrufer — im V4-Block trägt die
+           BlockShell die Gliederungsebene (keine Doppel-Polsterung). */
+        <Card>
+          <TagVerlaufChart daten={daten} extraSerien={extraSerien} />
+        </Card>
       )}
 
       {/* Detailtabelle — geteilte SoT-Komponente */}
@@ -223,6 +231,8 @@ function Wochenvergleich({ anlageId }: WochenvergleichProps) {
   const bis = toISODate(new Date())
   const von = vorTagenISO(zeitraumTage)
 
+  // `von`/`bis` sind ISO-STRINGS — als Deps lösen sie keinen Render-Loop aus
+  // (Wertvergleich) und decken `zeitraumTage` mit ab, aus dem `von` entsteht.
   useEffect(() => {
     if (!anlageId) return
     setLoading(true)
@@ -230,7 +240,7 @@ function Wochenvergleich({ anlageId }: WochenvergleichProps) {
       .then(setDaten)
       .catch(() => setDaten([]))
       .finally(() => setLoading(false))
-  }, [anlageId, zeitraumTage])
+  }, [anlageId, von, bis])
 
   // Chart-Daten: eine Zeile pro Stunde, eine Spalte pro aktiver Gruppe
   const chartDaten = useMemo(() => {
@@ -358,7 +368,7 @@ function Wochenvergleich({ anlageId }: WochenvergleichProps) {
           <ResponsiveContainer width="100%" height={320}>
             <ComposedChart data={chartDaten} margin={{ top: ACHSEN_MARGIN_TOP, right: 8, bottom: 0, left: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(128,128,128,0.15)" />
-              <XAxis dataKey="stunde" tick={{ fontSize: 10 }} interval={2} /* achsen-allow: Zeit-/Kategorie-Achse */ />
+              <XAxis dataKey="stunde" {...xAchse()} interval={2} /* achsen-allow: Zeit-/Kategorie-Achse */ />
               <YAxis tick={{ fontSize: 10 }} tickFormatter={achsenTick} label={achsenEinheit('kW')} />
               <Tooltip content={<ChartTooltip unit=" kW" decimals={2} />} />
               <Legend wrapperStyle={{ fontSize: 12 }} content={<ChartLegende />} />
@@ -409,7 +419,7 @@ function WochenmusterTabelle({ daten }: { daten: WochenmusterPunkt[] }) {
       <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-3">
         Ø-Stundenwerte je Wochentag · alle Felder
       </div>
-      <div className="overflow-x-auto">
+      <ScrollSchatten achse="horizontal" fadeFrom="from-white dark:from-gray-800">
         <table className="w-full text-xs">
           <thead>
             <tr className="border-b border-gray-200 dark:border-gray-700">
@@ -453,7 +463,7 @@ function WochenmusterTabelle({ daten }: { daten: WochenmusterPunkt[] }) {
             ))}
           </tbody>
         </table>
-      </div>
+      </ScrollSchatten>
     </Card>
   )
 }

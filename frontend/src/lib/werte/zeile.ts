@@ -5,7 +5,7 @@
  * beide Granularitäten läuft (IA v4 E3, O1: „gleiche Funktion + Aussehen, nur
  * Zeiträume variieren").
  */
-import { MONAT_KURZ } from '../constants'
+import { MONAT_KURZ, WT_KURZ } from '../constants'
 import type { MonatsZeitreihe } from '../../pages/auswertung/types'
 import type { TagWerte } from '../../api/energie_profil'
 import { getMonatWert, getTagWert } from './registry'
@@ -17,6 +17,11 @@ export interface WerteZeile {
   sortKey: number
   /** Anzeige-Label der Zeitraum-Spalte (z. B. „Mai 2026" / „Mo 10.05."). */
   label: string
+  /** Zeitraum-Teil links (Wochentag / Monatskürzel) — R20-1: eigene Teil-Spalte,
+   *  linksbündig, damit Datum/Jahr sauber rechtsbündig danebensteht. */
+  zeitLinks: string
+  /** Zeitraum-Teil rechts (Datum / Jahr) — R20-1: rechtsbündig. */
+  zeitRechts: string
   /** Schlüssel zum Matchen der Vergleichszeile (Monat 1–12 / Tag-im-Monat 1–31). */
   vergleichKey: number
   /** Metrik-Wert-Accessor (Registry-key → Wert). */
@@ -29,12 +34,12 @@ export function monatsZeile(r: MonatsZeitreihe): WerteZeile {
     id: `${r.jahr}-${r.monat}`,
     sortKey: r.jahr * 100 + r.monat,
     label: `${MONAT_KURZ[r.monat]} ${r.jahr}`,
+    zeitLinks: MONAT_KURZ[r.monat],
+    zeitRechts: String(r.jahr),
     vergleichKey: r.monat,
     wert: (key) => getMonatWert(r, key),
   }
 }
-
-const WT_KURZ = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa']
 
 /** Tages-Werte → normalisierte Zeile. Vergleich = gleicher Tag-im-Monat. */
 export function tagesZeile(r: TagWerte): WerteZeile {
@@ -47,6 +52,8 @@ export function tagesZeile(r: TagWerte): WerteZeile {
     id: r.datum,
     sortKey: y * 10000 + m * 100 + d,
     label: `${WT_KURZ[wt]} ${dd}.${mm}.`,
+    zeitLinks: WT_KURZ[wt],
+    zeitRechts: `${dd}.${mm}.`,
     vergleichKey: d,
     wert: (key) => getTagWert(r, key),
   }

@@ -16,14 +16,23 @@
  * unangetastet — diese Komponente ist der künftige SoT.
  */
 import { Fragment, useEffect, useMemo, useState } from 'react'
-import { Download, Columns, GitCompareArrows, ChevronUp, ChevronDown, ArrowRight } from 'lucide-react'
-import { Button } from '../ui'
+import { Columns, GitCompareArrows, ChevronUp, ChevronDown, ArrowRight } from 'lucide-react'
+import { Button, Checkbox, CsvExportButton } from '../ui'
+// Tabellen-SoT (Regel T): Container liefert Höhenfenster, klebenden Kopf/Fuß und
+// sichtbare Leisten. Zellen nutzen die exportierte Typo — `TableCell`/`TableHeader`
+// würden hier mit den Farbvarianten (Vorjahr grau, Delta klein) kollidieren.
+import { Table, TableBody, TableFoot, TableHead, TableSortKopf } from '../ui/Table'
+import { ZELLE, KOPF_ZELLE } from '../ui/tabelleMasse'
 import {
   WERTE_GRUPPEN, GRUPPE_LABELS, METRIK_BY_KEY,
   fmtWert, aggregiere, bewerteDelta, exportWerteCsv, metrikenFuer,
   type WerteMetrik, type WerteZeile, type Granularitaet,
 } from '../../lib/werte'
 
+// Dokumentierte KONVENTION (R3b E2, Gernot 2026-07-05): eigenes 2-stufiges
+// Urteil-Vokabular der WerteTabelle (bewerteDelta: gut/schlecht/neutral) —
+// bewusst NICHT aus AMPEL_TEXT_CLASS abgeleitet (das ist die 4-stufige
+// Gauge-Skala; hier gilt Delta-Semantik mit eigener Tönung gut=green-600).
 const URTEIL_KLASSE: Record<string, string> = {
   gut: 'text-green-600 dark:text-green-400',
   schlecht: 'text-red-500 dark:text-red-400',
@@ -124,6 +133,10 @@ export function WerteTabelle({
   const [vergleichAn, setVergleichAn] = useState(vergleichDefaultAn)
   // Spalten-Sortierung (IST-Parität TabelleTab): null = chronologisch aufsteigend
   // (Default, wie die Cockpit-Embeds) · '__zeit' = Zeitraum-Spalte · sonst Metrik-key.
+  // Dokumentierte F10-AUSNAHME (R3b E1, Gernot 2026-07-05): WerteTabelle-Zeitreihen
+  // bleiben bewusst AUFSTEIGEND (Lese-Richtung der Analyse-Tabelle mit Δ-Vergleich);
+  // die F10-Regel „Datums-Listen absteigend" gilt unverändert für alle anderen
+  // Tabellen (z. B. KomponentenMonatsTabelle). Scope der Ausnahme: NUR dieser Default.
   const [sortKey, setSortKey] = useState<string | null>(null)
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
 
@@ -172,6 +185,9 @@ export function WerteTabelle({
 
   const vergleichVerfuegbar = vorjahrRows != null && vorjahrRows.length > 0 && vergleichLabel != null
   const zeigeVergleich = vergleichVerfuegbar && vergleichAn
+  // Sub-Label der „aktuellen" Vergleichs-Spalte (R20-1a): explizites Perioden-Label
+  // (z. B. „2026"), sonst neutral „Aktuell". Die Vergleichs-Spalte trägt `vergleichLabel`.
+  const aktuellLabel = jahrLabel !== '' && jahrLabel != null ? String(jahrLabel) : 'Aktuell'
 
   const vorjahrLookup = useMemo<Record<number, WerteZeile>>(() => {
     const m: Record<number, WerteZeile> = {}
@@ -241,21 +257,22 @@ export function WerteTabelle({
     <div className="space-y-3">
       {/* ── Steuerung (überall identisch) ──────────────────────────────────── */}
       <div className="flex flex-wrap items-center gap-2">
-        <Button size="sm" variant="secondary" onClick={() => setPickerOffen((o) => !o)}>
-          <Columns className="h-4 w-4" /> Spalten
+        {/* B2 #292: Anzahl-Badge (gewählt/gesamt) am Picker-Button. */}
+        <Button size="sm" variant="secondary" className="gap-1.5" onClick={() => setPickerOffen((o) => !o)}>
+          <Columns className="h-4 w-4" /> Spalten ({visible.size}/{verfuegbar.length})
         </Button>
         {vergleichVerfuegbar && (
           <Button
             size="sm"
             variant={zeigeVergleich ? 'primary' : 'secondary'}
+            className="gap-1.5"
             onClick={() => setVergleichAn((v) => !v)}
           >
             <GitCompareArrows className="h-4 w-4" /> Vergleich {vergleichLabel}
           </Button>
         )}
-        <Button size="sm" variant="secondary" onClick={csvExport}>
-          <Download className="h-4 w-4" /> CSV-Export
-        </Button>
+        {/* D13-10: Icon + Wort immer, Breakpoint lg (CsvExportButton-SoT). */}
+        <CsvExportButton onClick={csvExport} />
         {alleWerteHref && (
           <a href={alleWerteHref} className="ml-auto inline-flex items-center gap-1 text-sm text-primary-700 dark:text-primary-300 hover:underline">
             Alle Werte / Export <ArrowRight className="h-4 w-4" />
@@ -264,7 +281,8 @@ export function WerteTabelle({
       </div>
 
       {pickerOffen && (
-        <div className="rounded-lg border border-gray-200 dark:border-gray-700 p-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        <div className="rounded-lg border border-gray-200 dark:border-gray-700 p-3 space-y-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
           {gruppen.map((g) => (
             <div key={g}>
               <p className="text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500 mb-1">{GRUPPE_LABELS[g]}</p>
@@ -274,18 +292,17 @@ export function WerteTabelle({
                   const an = visible.has(k)
                   return (
                     <li key={k} className="flex items-center gap-1 text-sm">
-                      <label className="flex-1 flex items-center gap-2 cursor-pointer min-w-0">
-                        <input
-                          type="checkbox"
+                      <div className="flex-1 min-w-0">
+                        <Checkbox
                           checked={an}
                           onChange={() => setVisible((prev) => {
                             const n = new Set(prev)
                             n.has(k) ? n.delete(k) : n.add(k)
                             return n
                           })}
+                          label={<span className="block truncate">{m.label}</span>}
                         />
-                        <span className="truncate text-gray-700 dark:text-gray-300">{m.label}</span>
-                      </label>
+                      </div>
                       <button type="button" aria-label="nach oben" onClick={() => verschiebe(k, 'up')}
                         className="p-1 rounded text-gray-400 hover:text-gray-700 dark:hover:text-gray-200">
                         <ChevronUp className="h-3.5 w-3.5" />
@@ -301,55 +318,98 @@ export function WerteTabelle({
             </div>
           ))}
         </div>
+        {/* B2 #292: „Standard wiederherstellen" — zurück auf den Spalten-Default
+            (Werkbank-`defaultSpalten` ∨ Registry) UND die Registry-Reihenfolge. */}
+        <div className="border-t border-gray-100 dark:border-gray-700/50 pt-2">
+          <Button
+            size="sm" variant="ghost"
+            onClick={() => { setVisible(new Set(defaultVisibleKeys)); setOrder(verfuegbar.map((m) => m.key)) }}
+          >
+            Standard wiederherstellen
+          </Button>
+        </div>
+        </div>
       )}
 
-      {/* ── Tabelle ────────────────────────────────────────────────────────── */}
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="text-left text-xs text-gray-400 dark:text-gray-500 border-b border-gray-200 dark:border-gray-700">
-              <th className="px-3 py-2 font-medium whitespace-nowrap">
-                <button type="button" onClick={() => toggleSort('__zeit')} className="inline-flex items-center gap-1 hover:text-gray-700 dark:hover:text-gray-200">
-                  Zeitraum {sortKey === '__zeit' && (sortDir === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />)}
-                </button>
+      {/* ── Tabelle — Zentrale `ui/Table` (Regel T, D18-2 + G18-1) ──────────── */}
+      <Table zeilen={12} mitFuss={sorted.length > 1} flaeche="karte" className="w-full">
+          <TableHead>
+            <tr className="text-left text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-700">
+              {/* R20-1b (Rainer): vertikale Trennlinie nach der Zeitraum-Spalte
+                  (Stil = Gruppen-Trennlinien R19-4b). Im Vergleich-Modus überspannt
+                  der Zeitraum-Kopf beide Kopfzeilen (Sub-Labels sitzen unter den Metriken). */}
+              <th rowSpan={zeigeVergleich ? 2 : 1} className={`${KOPF_ZELLE} border-r border-gray-200 dark:border-gray-700`}>
+                <TableSortKopf aktiv={sortKey === '__zeit'} richtung={sortDir} onClick={() => toggleSort('__zeit')}>
+                  Zeitraum
+                </TableSortKopf>
               </th>
               {aktiveMetriken.map((m) => (
-                <th key={m.key} colSpan={zeigeVergleich ? 3 : 1} className="px-3 py-2 text-right font-medium whitespace-nowrap">
-                  <button type="button" onClick={() => toggleSort(m.key)} className="inline-flex items-center gap-1 hover:text-gray-700 dark:hover:text-gray-200">
-                    {m.label}{m.unit ? ` (${m.unit})` : ''} {sortKey === m.key && (sortDir === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />)}
-                  </button>
+                // R19-4a (Rainer): im Vergleich-Modus sitzt der Gruppen-Kopf ZENTRIERT
+                // über seinen 3 Spalten (Wert · Vergleich · Δ) + feine Gruppen-Trennlinie.
+                <th
+                  key={m.key}
+                  colSpan={zeigeVergleich ? 3 : 1}
+                  className={`${KOPF_ZELLE} ${zeigeVergleich ? 'text-center border-r border-gray-200 dark:border-gray-700' : 'text-right'}`}
+                >
+                  <TableSortKopf aktiv={sortKey === m.key} richtung={sortDir} onClick={() => toggleSort(m.key)}>
+                    {m.label}{m.unit ? ` (${m.unit})` : ''}
+                  </TableSortKopf>
                 </th>
               ))}
             </tr>
-          </thead>
-          <tbody>
+            {/* R20-1a (Rainer „2 Spalten ?"): Sub-Label-Zeile beschriftet die drei
+                Vergleichs-Spalten je Metrik (aktuell · Vergleichsperiode · Δ), damit
+                erkennbar ist, welcher Wert welcher ist. Nicht klickbar (Sortierung
+                bleibt am Gruppen-Kopf oben). */}
+            {zeigeVergleich && (
+              <tr className="text-left text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-700">
+                {aktiveMetriken.map((m) => (
+                  <Fragment key={m.key}>
+                    <th className={`${KOPF_ZELLE} font-normal text-right`}>{aktuellLabel}</th>
+                    <th className={`${KOPF_ZELLE} font-normal text-right`}>{vergleichLabel}</th>
+                    <th className={`${KOPF_ZELLE} font-normal text-right border-r border-gray-200 dark:border-gray-700`}>Δ</th>
+                  </Fragment>
+                ))}
+              </tr>
+            )}
+          </TableHead>
+          <TableBody>
             {sorted.map((r) => {
               const prev = zeigeVergleich ? vorjahrLookup[r.vergleichKey] : undefined
               return (
                 <tr key={r.id} className="border-b border-gray-100 dark:border-gray-800">
-                  <td className="px-3 py-2 whitespace-nowrap text-gray-600 dark:text-gray-400">{r.label}</td>
+                  {/* R20-1b: Wochentag/Monat linksbündig, Datum/Jahr rechtsbündig,
+                      danach die Zeitraum-Trennlinie (Kopf trägt sie ebenso). */}
+                  <td className={`${ZELLE} text-gray-600 dark:text-gray-400 border-r border-gray-100 dark:border-gray-800`}>
+                    <span className="flex items-baseline justify-between gap-3">
+                      <span>{r.zeitLinks}</span>
+                      <span className="tabular-nums">{r.zeitRechts}</span>
+                    </span>
+                  </td>
                   {aktiveMetriken.map((m) => {
                     const v = r.wert(m.key)
                     if (zeigeVergleich) {
                       const pv = prev ? prev.wert(m.key) : null
                       return (
                         <Fragment key={m.key}>
-                          <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap text-gray-700 dark:text-gray-300">{fmtWert(v, m.decimals)}</td>
-                          <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap text-gray-500 dark:text-gray-400">{fmtWert(pv, m.decimals)}</td>
-                          <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap text-xs border-r border-gray-100 dark:border-gray-800"><DeltaZelle current={v} prev={pv} metrik={m} /></td>
+                          <td className={`${ZELLE} text-right tabular-nums text-gray-700 dark:text-gray-300`}>{fmtWert(v, m.decimals)}</td>
+                          <td className={`${ZELLE} text-right tabular-nums text-gray-500 dark:text-gray-400`}>{fmtWert(pv, m.decimals)}</td>
+                          {/* R19-4b: Gruppen-Trennlinie im Zeilen-Ton (gray-100/800 war im Dark-Mode unsichtbar). */}
+                          <td className={`${ZELLE} text-right tabular-nums text-xs border-r border-gray-200 dark:border-gray-700`}><DeltaZelle current={v} prev={pv} metrik={m} /></td>
                         </Fragment>
                       )
                     }
-                    return <td key={m.key} className="px-3 py-2 text-right tabular-nums whitespace-nowrap text-gray-700 dark:text-gray-300">{fmtWert(v, m.decimals)}</td>
+                    return <td key={m.key} className={`${ZELLE} text-right tabular-nums text-gray-700 dark:text-gray-300`}>{fmtWert(v, m.decimals)}</td>
                   })}
                 </tr>
               )
             })}
-          </tbody>
+          </TableBody>
           {sorted.length > 1 && (
-            <tfoot>
-              <tr className="border-t-2 border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-700/40 font-semibold">
-                <td className="px-3 py-2.5 text-gray-600 dark:text-gray-300 text-xs uppercase tracking-wide whitespace-nowrap">
+            <TableFoot>
+              {/* Betonung + deckender Grund kommen aus der Zentrale (FUSS_GRUND). */}
+              <tr>
+                <td className={`${ZELLE} text-gray-600 dark:text-gray-300 text-xs uppercase tracking-wide border-r border-gray-300 dark:border-gray-600`}>
                   {sorted.length} {einheitLabel}
                 </td>
                 {aktiveMetriken.map((m) => {
@@ -359,19 +419,18 @@ export function WerteTabelle({
                     const pv = vorjahrAggregat?.[m.key] ?? null
                     return (
                       <Fragment key={m.key}>
-                        <td className="px-3 py-2.5 text-right tabular-nums whitespace-nowrap text-gray-800 dark:text-gray-100">{v != null ? `${prefix}${fmtWert(v, m.decimals)}` : '—'}</td>
-                        <td className="px-3 py-2.5 text-right tabular-nums whitespace-nowrap text-gray-500 dark:text-gray-400">{pv != null ? `${prefix}${fmtWert(pv, m.decimals)}` : '—'}</td>
-                        <td className="px-3 py-2.5 text-right tabular-nums whitespace-nowrap text-xs border-r border-gray-300 dark:border-gray-600"><DeltaZelle current={v} prev={pv} metrik={m} /></td>
+                        <td className={`${ZELLE} text-right tabular-nums text-gray-800 dark:text-gray-100`}>{v != null ? `${prefix}${fmtWert(v, m.decimals)}` : '—'}</td>
+                        <td className={`${ZELLE} text-right tabular-nums text-gray-500 dark:text-gray-400`}>{pv != null ? `${prefix}${fmtWert(pv, m.decimals)}` : '—'}</td>
+                        <td className={`${ZELLE} text-right tabular-nums text-xs border-r border-gray-300 dark:border-gray-600`}><DeltaZelle current={v} prev={pv} metrik={m} /></td>
                       </Fragment>
                     )
                   }
-                  return <td key={m.key} className="px-3 py-2.5 text-right tabular-nums whitespace-nowrap text-gray-800 dark:text-gray-100">{v != null ? `${prefix}${fmtWert(v, m.decimals)}` : '—'}</td>
+                  return <td key={m.key} className={`${ZELLE} text-right tabular-nums text-gray-800 dark:text-gray-100`}>{v != null ? `${prefix}${fmtWert(v, m.decimals)}` : '—'}</td>
                 })}
               </tr>
-            </tfoot>
+            </TableFoot>
           )}
-        </table>
-      </div>
+      </Table>
     </div>
   )
 }

@@ -1,10 +1,11 @@
 /**
  * Finanzen-Tab: Finanzprognose mit ROI und Amortisation
  */
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { Euro, TrendingUp, PiggyBank, CheckCircle, Clock, Battery, Car, Flame, Fuel } from 'lucide-react'
 import { Card, LoadingSpinner, Alert, FormelTooltip, fmtCalc, KPICard, ChartLegende } from '../../components/ui'
 import ChartTooltip from '../../components/ui/ChartTooltip'
+import { ScrollSchatten } from '../../components/ui/ScrollSchatten'
 import { aussichtenApi, FinanzPrognose } from '../../api/aussichten'
 import { INVESTITION_TYP_ORDER, CHART_COLORS, achsenEinheit, achsenTick, ACHSEN_MARGIN_TOP } from '../../lib'
 import {
@@ -63,11 +64,7 @@ export default function FinanzenTab({ anlageId }: Props) {
   const [error, setError] = useState<string | null>(null)
   const [monate, setMonate] = useState(12)
 
-  useEffect(() => {
-    loadPrognose()
-  }, [anlageId, monate])
-
-  async function loadPrognose() {
+  const loadPrognose = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
@@ -78,7 +75,11 @@ export default function FinanzenTab({ anlageId }: Props) {
     } finally {
       setLoading(false)
     }
-  }
+  }, [anlageId, monate])
+
+  useEffect(() => {
+    loadPrognose()
+  }, [loadPrognose])
 
   if (loading) {
     return <LoadingSpinner text="Lade Finanzprognose..." />
@@ -441,7 +442,7 @@ export default function FinanzenTab({ anlageId }: Props) {
       {/* Detail-Tabelle */}
       <Card className="p-4">
         <h3 className="font-semibold text-gray-900 dark:text-white mb-4">Monatswerte</h3>
-        <div className="overflow-x-auto">
+        <ScrollSchatten achse="horizontal" fadeFrom="from-white dark:from-gray-800">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-200 dark:border-gray-700">
@@ -479,7 +480,7 @@ export default function FinanzenTab({ anlageId }: Props) {
               </tr>
             </tfoot>
           </table>
-        </div>
+        </ScrollSchatten>
       </Card>
 
       {/* Meta-Info */}

@@ -4,10 +4,11 @@
  * Nutzt Open-Meteo Solar API mit GTI-Berechnung (Global Tilted Irradiance),
  * die Modulneigung und -ausrichtung für genauere Prognosen berücksichtigt.
  */
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { Sun, Cloud, CloudSun, CloudRain, CloudSnow, CloudLightning, Thermometer, Zap } from 'lucide-react'
 import { Card, LoadingSpinner, Alert, KPICard, ChartLegende } from '../../components/ui'
 import ChartTooltip from '../../components/ui/ChartTooltip'
+import { ScrollSchatten } from '../../components/ui/ScrollSchatten'
 import { wetterApi, SolarPrognose } from '../../api/wetter'
 import { aussichtenApi } from '../../api/aussichten'
 import { CHART_COLORS, SOLAR_INTENSITAET, xAchse, yAchse, achsenEinheit, achsenTick, ACHSEN_MARGIN_TOP } from '../../lib'
@@ -91,11 +92,7 @@ export default function KurzfristTab({ anlageId }: Props) {
   const schmal = useSchmaleAchse()
   const tage = 14
 
-  useEffect(() => {
-    loadPrognose()
-  }, [anlageId])
-
-  async function loadPrognose() {
+  const loadPrognose = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
@@ -114,7 +111,11 @@ export default function KurzfristTab({ anlageId }: Props) {
     } finally {
       setLoading(false)
     }
-  }
+  }, [anlageId])
+
+  useEffect(() => {
+    loadPrognose()
+  }, [loadPrognose])
 
   if (loading) {
     return <LoadingSpinner text="Lade Kurzfrist-Prognose..." />
@@ -324,7 +325,7 @@ export default function KurzfristTab({ anlageId }: Props) {
       {/* Detail-Tabelle */}
       <Card className="p-4">
         <h3 className="font-semibold text-gray-900 dark:text-white mb-4">Details</h3>
-        <div className="overflow-x-auto">
+        <ScrollSchatten achse="horizontal" fadeFrom="from-white dark:from-gray-800">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-200 dark:border-gray-700">
@@ -392,7 +393,7 @@ export default function KurzfristTab({ anlageId }: Props) {
               ))}
             </tbody>
           </table>
-        </div>
+        </ScrollSchatten>
       </Card>
 
       {/* Meta-Info */}

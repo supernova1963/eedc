@@ -14,6 +14,7 @@ from backend.core.berechnungen import (
     einspeise_erloes_euro,
     spezifischer_ertrag_kwh_kwp,
 )
+from backend.core.wirtschaftlichkeit_defaults import WP_WIRKUNGSGRAD_GAS_DEFAULT
 
 
 # =============================================================================
@@ -478,6 +479,119 @@ def berechne_waermepumpe_einsparung(
         wp_kosten_euro=round(wp_kosten, 2),
         alte_heizung_kosten_euro=round(alte_kosten, 2),
         co2_einsparung_kg=round(co2_einsparung, 1),
+    )
+
+
+def co2_wp_ersparnis_kg(wp_waerme_kwh: float, wp_strom_kwh: float) -> float:
+    """Kanonische CO₂-Ersparnis einer Wärmepumpe aus GEMESSENEN Werten (kg).
+
+    Vermiedenes Gas-CO₂ (die abgegebene Wärme über den Gas-Kessel-Wirkungsgrad
+    in Brennstoff zurückgerechnet) MINUS das tatsächliche Strom-CO₂ der WP:
+
+        wärme / η_gas × f_gas  −  strom × f_strom
+
+    Einzige erlaubte Konstruktions-Stelle dieser Kennzahl (ADR-001, DI-1).
+    Cockpit, Social-Share und der WeasyPrint-Jahresbericht rufen ausschließlich
+    hier auf — sonst driftet der Wert: der Jahresbericht rechnete früher
+    `wärme × f_gas` OHNE Wirkungsgrad-Umrechnung UND OHNE Strom-Abzug und wies
+    die WP-CO₂-Ersparnis dadurch deutlich zu hoch aus (Demo 2025: 2280,7 → 1567,1 kg).
+
+    Args:
+        wp_waerme_kwh: Gemessene abgegebene Wärme (Heizung + Warmwasser).
+        wp_strom_kwh: Gemessener Stromverbrauch der WP.
+
+    Returns:
+        CO₂-Ersparnis in kg, ungerundet. Kann bei sehr schlechter JAZ negativ
+        werden; die Anzeige-Sites zeigen die Komponente roh, klammern aber die
+        CO₂-Gesamtbilanz per ``max(0, …)``.
+    """
+    if wp_waerme_kwh <= 0:
+        return 0.0
+    vermiedenes_gas_co2 = (
+        wp_waerme_kwh / WP_WIRKUNGSGRAD_GAS_DEFAULT * CO2_FAKTOR_GAS_KG_KWH
+    )
+    wp_strom_co2 = wp_strom_kwh * CO2_FAKTOR_STROM_KG_KWH
+    return vermiedenes_gas_co2 - wp_strom_co2
+
+
+def co2_emob_ersparnis_kg(
+    benzin_verbrauch_liter: float,
+    emob_netz_ladung_kwh: float,
+    emob_km: float,
+) -> float:
+    """Kanonische CO₂-Ersparnis der E-Mobilität aus GEMESSENEN Werten (kg).
+
+    Vermiedenes Verbrenner-CO₂ (Benzinverbrauch des Vergleichs-Verbrenners)
+    MINUS das Netz-CO₂ der Heim-Netzladung. PV-Ladung ist bewusst CO₂-frei
+    (bereits über die PV-Bilanz gutgeschrieben), daher nur der Netz-Anteil.
+    Nur wenn tatsächlich Kilometer gefahren wurden (`emob_km > 0`).
+
+    Args:
+        benzin_verbrauch_liter: Σ über die Fahrzeuge von
+            `km/100 × Vergleichsverbrauch_l_100km` (je Fahrzeug sein eigener Wert).
+        emob_netz_ladung_kwh: Heim-Netzladung (Pool-Netz-Anteil) in kWh.
+        emob_km: gefahrene Kilometer (nur als Aktiv-Schalter).
+
+    Returns:
+        CO₂-Ersparnis in kg, ungerundet (kann bei viel Netzladung negativ werden).
+    """
+    if emob_km <= 0:
+        return 0.0
+    return (
+        benzin_verbrauch_liter * CO2_FAKTOR_BENZIN_KG_LITER
+        - emob_netz_ladung_kwh * CO2_FAKTOR_STROM_KG_KWH
+    )
+
+
+@dataclass
+class Co2Bilanz:
+    """CO₂-Ersparnis-Bilanz aus gemessenen Werten (kg), ungerundet.
+
+    `co2_gesamt_kg` klammert die WP- und E-Mob-Komponente per ``max(0, …)`` —
+    die Einzel-Komponenten bleiben roh (können negativ sein), damit eine schlecht
+    laufende WP / viel-Netz-ladendes E-Auto sichtbar bleibt, ohne die Gesamt-
+    Bilanz zu drücken.
+    """
+
+    co2_pv_kg: float
+    co2_wp_kg: float
+    co2_emob_kg: float
+    co2_gesamt_kg: float
+
+
+def berechne_co2_bilanz(
+    *,
+    eigenverbrauch_kwh: float,
+    wp_waerme_kwh: float = 0.0,
+    wp_strom_kwh: float = 0.0,
+    emob_km: float = 0.0,
+    emob_netz_ladung_kwh: float = 0.0,
+    benzin_verbrauch_liter: float = 0.0,
+) -> Co2Bilanz:
+    """Kanonische CO₂-Gesamtbilanz (PV-Eigenverbrauch + WP + E-Mobilität).
+
+    Einzige erlaubte Konstruktions-Stelle der CO₂-Gesamt-Kennzahl (ADR-001,
+    DI-2). Cockpit und HA-Export rufen ausschließlich hier auf, damit der in
+    Home Assistant exportierte „CO₂ Einsparung"-Sensor exakt die Cockpit-Kachel
+    trägt (vorher nur `pv_erzeugung × f_strom`, WP + E-Mob fehlten ganz).
+
+    Die Aufrufer aggregieren die Eingaben (Eigenverbrauch, WP-Wärme/-Strom,
+    E-Mob-km/-Netzladung/-Benzinverbrauch) jeweils selbst — sie müssen dazu
+    dieselben SoT-Helfer nutzen (`berechne_verbrauchs_kennzahlen`,
+    `get_emob_heimladung_canonical`, Dienstwagen-Ausschluss), sonst driftet die
+    Eingabe (Lehre #326).
+    """
+    co2_pv = eigenverbrauch_kwh * CO2_FAKTOR_STROM_KG_KWH
+    co2_wp = co2_wp_ersparnis_kg(wp_waerme_kwh, wp_strom_kwh)
+    co2_emob = co2_emob_ersparnis_kg(
+        benzin_verbrauch_liter, emob_netz_ladung_kwh, emob_km
+    )
+    co2_gesamt = co2_pv + max(0.0, co2_wp) + max(0.0, co2_emob)
+    return Co2Bilanz(
+        co2_pv_kg=co2_pv,
+        co2_wp_kg=co2_wp,
+        co2_emob_kg=co2_emob,
+        co2_gesamt_kg=co2_gesamt,
     )
 
 

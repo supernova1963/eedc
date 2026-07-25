@@ -12,9 +12,10 @@ import {
   ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid,
   Tooltip, Legend, ResponsiveContainer, ReferenceLine,
 } from 'recharts'
-import { Card, ChartLegende, eedcTooltipProps } from '../ui'
-import { EXTRA_SERIEN_FARBEN, KATEGORIE_FARBEN, COLORS, HILFSLINIE_DASH, AREA_FILL_OPACITY, achsenEinheit, achsenTick, ACHSEN_MARGIN_TOP, fmtZahl } from '../../lib'
+import { ChartLegende, eedcTooltipProps } from '../ui'
+import { EXTRA_SERIEN_FARBEN, KATEGORIE_FARBEN, CHART_LABELS, HILFSLINIE_DASH, AREA_FILL_OPACITY, xAchse, yAchse, achsenEinheit, achsenTick, ACHSEN_MARGIN_TOP, fmtZahl } from '../../lib'
 import { useChartTheme } from '../../context/ThemeContext'
+import { useLegendenToggle } from '../../hooks'
 import type { StundenWert, SerieInfo } from '../../api/energie_profil'
 
 function round2(v: number): number {
@@ -25,6 +26,10 @@ interface ChartSerie { dataKey: string; label: string; farbe: string; stackId: '
 
 export function TagVerlaufChart({ daten, extraSerien }: { daten: StundenWert[]; extraSerien: SerieInfo[] }) {
   const achsen = useChartTheme()
+  // B7-Legenden-Toggle; Paar-Mapping: bidirektionale _pos/_neg-Serien (Batterie/Netz)
+  // schalten gemeinsam über ihren Basis-Key (Legende zeigt nur den _pos-Eintrag).
+  const { istVersteckt, toggleSerie } = useLegendenToggle()
+  const basisKey = (k: string) => k.replace(/_(pos|neg)$/, '')
   const extraErzeuger    = useMemo(() => extraSerien.filter(s => s.seite === 'quelle'), [extraSerien])
   const extraVerbraucher = useMemo(() => extraSerien.filter(s => s.seite === 'senke'), [extraSerien])
 
@@ -71,25 +76,30 @@ export function TagVerlaufChart({ daten, extraSerien }: { daten: StundenWert[]; 
     }), [daten, extraErzeuger, extraVerbraucher])
 
   return (
-    <Card>
+    // D18-3 (detlan #210): KEINE eigene <Card> mehr um den Chart — die
+    // Gliederungsebene (BlockShell-Body px-3) trägt den Seitenrand, die
+    // IST-Seite hüllt am Aufrufer. YAxis-Breite aus chartAchse (44, wie das
+    // Vorbild KomponentenVerlaufChart) statt Recharts-Default 60.
+    <div>
       <div className="text-[10px] text-gray-400 dark:text-gray-500 mb-1 flex justify-between">
         <span>▲ Quellen (Erzeugung, Bezug)</span>
         <span>Stundenmittelwerte aus Energieprofil · gestrichelt = Verfügbare Energie</span>
         <span>▼ Senken (Verbrauch, Einspeisung)</span>
       </div>
       <ResponsiveContainer width="100%" height={320}>
-        <ComposedChart data={chartDaten} margin={{ top: ACHSEN_MARGIN_TOP, right: 10, left: -10, bottom: 5 }}>
+        <ComposedChart data={chartDaten} margin={{ top: ACHSEN_MARGIN_TOP, right: 10, left: 0, bottom: 5 }}>
           <CartesianGrid strokeDasharray="3 3" className="stroke-gray-200 dark:stroke-gray-700" />
-          <XAxis dataKey="stunde" tick={{ fontSize: 10 }} interval={2} /* achsen-allow: Zeit-/Kategorie-Achse (Stunde) */ />
-          <YAxis tick={{ fontSize: 10 }} tickFormatter={achsenTick} label={achsenEinheit('kW')} />
+          <XAxis dataKey="stunde" {...xAchse()} interval={2} /* achsen-allow: Zeit-/Kategorie-Achse (Stunde) */ />
+          <YAxis {...yAchse(false, 44)} tickFormatter={achsenTick} label={achsenEinheit('kW')} />
           <ReferenceLine y={0} stroke={achsen.referenz} strokeWidth={1.5} />
           <Tooltip {...eedcTooltipProps({
             unit: ' kW', decimals: 2,
-            nameFormatter: (name) => chartSerien.find(cs => cs.dataKey === name)?.label ?? name,
+            nameFormatter: (name) => chartSerien.find(cs => cs.dataKey === name)?.label ?? CHART_LABELS[name] ?? name,
             formatter: (v) => Math.abs(v) < 0.001 ? null : `${v > 0 ? '▲' : '▼'} ${fmtZahl(Math.abs(v), 2)} kW`,
           })} />
           <Legend content={<ChartLegende
             formatter={(value) => chartSerien.find(cs => cs.dataKey === value)?.label ?? value}
+            onItemClick={(e) => toggleSerie(basisKey(String(e.dataKey ?? e.value)))}
           />} />
 
           {chartSerien.map(cs => (
@@ -105,15 +115,19 @@ export function TagVerlaufChart({ daten, extraSerien }: { daten: StundenWert[]; 
               stackId={cs.stackId}
               isAnimationActive={false}
               legendType={cs.hideLabel ? 'none' : undefined}
+              hide={istVersteckt(basisKey(cs.dataKey))}
             />
           ))}
 
-          {/* Summen-/Hilfslinie (keine Prognose) → HILFSLINIE_DASH, nicht PROGNOSE_DASH (Regel C). */}
+          {/* Summen-/Hilfslinie (keine Prognose) → HILFSLINIE_DASH, nicht PROGNOSE_DASH (Regel C).
+              D17-1: neutrale Hilfslinien-Farbe (nicht COLORS.solar = PV-Rolle) — sonst wirkte
+              „Gesamterzeugung" im Tooltip wie eine Farb-/Wert-Dublette der PV-Zeile. Label
+              „Gesamterzeugung" (groß) kommt aus CHART_LABELS (nameFormatter-Fallback oben). */}
           <Line dataKey="gesamterzeugung" name="gesamterzeugung"
-            stroke={COLORS.solar} strokeWidth={2} strokeDasharray={HILFSLINIE_DASH}
+            stroke={achsen.referenz} strokeWidth={2} strokeDasharray={HILFSLINIE_DASH}
             dot={false} connectNulls legendType="none" />
         </ComposedChart>
       </ResponsiveContainer>
-    </Card>
+    </div>
   )
 }

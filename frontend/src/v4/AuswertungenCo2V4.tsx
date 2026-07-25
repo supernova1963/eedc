@@ -8,30 +8,38 @@
  *
  * Regel-SoT: R1 alle Zahlen via `fmtZahl`/`formatCo2` (kein `.toFixed`) · R2 CO₂-
  * Einheit zentral (`formatCo2`/`co2Achse`: kg→t ab ≥1.000, 2 NK; KEIN freies t/kg/g,
- * Auto-km ohne Tsd-Transform) · R6 KPIs + Charts parkbar. Daten = `useAuswertungBasis`
- * (Jahr-Filter) + `getCO2Amortisation`; CO₂-Faktor aus lib-SoT (kein lokales 0,38).
+ * Auto-km ohne Tsd-Transform) · R6 KPIs + Charts parkbar. Daten = `basis`-Prop aus
+ * dem Dispatcher (R18-3 Option B, Jahr-Filter in dessen Steuerleiste) +
+ * `getCO2Amortisation`; CO₂-Faktor aus lib-SoT (kein lokales 0,38).
+ *
+ * R18-3c (Kennzahlen-Bug, Root-Cause upstream): Block ② (Amortisation) rechnet
+ * IMMER auf der GESAMT-Historie — die graue Last ist eine Gesamt-Größe; ein
+ * jahrgefilterter Kumuliert-Vergleich machte „klimapositiv" bei Einzeljahr
+ * falsch. Block ① (Bilanz) folgt weiterhin dem Jahr-Filter; ② kennzeichnet die
+ * Abweichung sichtbar (`ZeitraumHinweis`).
  */
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo } from 'react'
 import {
   BarChart, Bar, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, ReferenceLine,
 } from 'recharts'
-import { Leaf, Sprout, Download } from 'lucide-react'
-import { LoadingSpinner, Card, Button, fmtCalc } from '../components/ui'
-import ChartTooltip from '../components/ui/ChartTooltip'
-import { BlockShell, KpiStrip, type Block, type KpiStripItem } from '../components/blocks'
-import { ParkProvider, ParkFuss, Parkbar } from '../components/park'
+import { Leaf, Sprout } from 'lucide-react'
+import { fmtCalc, FehlerZustand } from '../components/ui'
+import { eedcTooltipProps } from '../components/ui'
+import { BlockShell, BlockStackSkeleton, KpiStrip, type Block, type KpiStripItem } from '../components/blocks'
+import { ParkProvider, ParkFuss, Parkbar, usePark } from '../components/park'
 import {
   CO2_FAKTOR_KG_KWH, CHART_COLORS, MARKER_WARNUNG, TYP_LABELS,
   formatCo2, fmtZahl, formatProzent, co2Achse, xAchse, yAchse,
-  achsenEinheit, ACHSEN_MARGIN_TOP,
+  achsenEinheit, ACHSEN_MARGIN_TOP, CO2_TEXT_CLASS,
 } from '../lib'
-import { exportToCSV } from '../utils/export'
 import { investitionenApi, type CO2AmortisationResponse } from '../api/investitionen'
 import { createMonatsZeitreihe } from '../pages/auswertung/types'
-import { useSelectedAnlage, useSchmaleAchse } from '../hooks'
-import { useAuswertungBasis } from './useAuswertungBasis'
+import { useApiData, useSelectedAnlage, useSchmaleAchse } from '../hooks'
+import type { AuswertungBasis } from './useAuswertungBasis'
 import { AuswertungKopf } from './AuswertungKopf'
+import { ZeitraumHinweis } from './ZeitraumHinweis'
+import { AnlageLeer } from './OnboardingLeer'
 
 const SICHT_KEY = 'v4-auswertungen-co2'
 // Anschauliche Äquivalenz-Faktoren (kg CO₂).
@@ -39,60 +47,57 @@ const KG_PRO_BAUM_JAHR = 12.5
 const KG_PRO_AUTO_KM = 0.12
 const KG_PRO_FLUG = 230
 
-export default function AuswertungenCo2V4() {
+export default function AuswertungenCo2V4({ basis }: { basis: AuswertungBasis }) {
   return (
     <ParkProvider persistKey={SICHT_KEY}>
-      <Co2Inner />
+      <Co2Inner basis={basis} />
     </ParkProvider>
   )
 }
 
-function Co2Inner() {
+function Co2Inner({ basis }: { basis: AuswertungBasis }) {
+  const park = usePark()
   const { anlagen, selectedAnlageId, loading: anlagenLoading } = useSelectedAnlage()
-  const basis = useAuswertungBasis(selectedAnlageId)
 
   // Graue Last lädt asynchron → erst rendern, wenn sie gesettled ist. Sonst mountet
   // BlockShell mit nur [①③] und nimmt den später ergänzten ②-Block (data-gated)
   // nicht mehr auf (Order wird nur beim Mount initialisiert).
-  const [co2Amort, setCo2Amort] = useState<CO2AmortisationResponse | null>(null)
-  const [amortGeladen, setAmortGeladen] = useState(false)
-  useEffect(() => {
-    if (!selectedAnlageId) { setCo2Amort(null); setAmortGeladen(true); return }
-    let aktiv = true
-    setAmortGeladen(false)
-    investitionenApi.getCO2Amortisation(selectedAnlageId)
-      .then((r) => { if (aktiv) setCo2Amort(r) })
-      .catch(() => { if (aktiv) setCo2Amort(null) })
-      .finally(() => { if (aktiv) setAmortGeladen(true) })
-    return () => { aktiv = false }
-  }, [selectedAnlageId])
+  // R18-2 (SWR): via Sicht-Cache — beim Sub-Tab-Wechsel sofort da; Soft-fail
+  // (catch → null) bleibt erhalten.
+  const amortQ = useApiData<CO2AmortisationResponse | null>(
+    () => investitionenApi.getCO2Amortisation(selectedAnlageId!).catch(() => null),
+    [selectedAnlageId],
+    { enabled: !!selectedAnlageId, swrKey: `v4-ausw-co2amort:${selectedAnlageId}` },
+  )
+  const co2Amort = selectedAnlageId ? (amortQ.data ?? null) : null
+  const amortGeladen = !selectedAnlageId || !amortQ.loading
 
   const schmal = useSchmaleAchse()
   const zeitreihe = useMemo(() => createMonatsZeitreihe(basis.gefiltert), [basis.gefiltert])
-  const kumuliert = useMemo(() => {
-    let summe = 0
-    return zeitreihe.map((z) => { summe += z.co2_einsparung; return { ...z, kumuliert_co2: summe } })
-  }, [zeitreihe])
 
   const anzahlMonate = basis.stats.anzahlMonate
   const gesamtCo2 = basis.stats.gesamtErzeugung * CO2_FAKTOR_KG_KWH
   const graueLast = co2Amort?.graue_last_gesamt_kg ?? 0
 
+  // R18-3c: Amortisation IMMER auf der GESAMT-Historie — die graue Last ist eine
+  // Gesamt-Größe. Eine jahrgefilterte Kumuliert-Kurve gegen die gesamte graue
+  // Last machte „klimapositiv" bei Einzeljahr-Filter falsch (stille Fehlanzeige).
+  const kumuliertGesamt = useMemo(() => {
+    let summe = 0
+    return createMonatsZeitreihe(basis.daten).map((z) => { summe += z.co2_einsparung; return { ...z, kumuliert_co2: summe } })
+  }, [basis.daten])
+  const anzahlMonateGesamt = basis.statsGesamt.anzahlMonate
+  const gesamtCo2Gesamt = basis.statsGesamt.gesamtErzeugung * CO2_FAKTOR_KG_KWH
+
   const klimapositiv = useMemo(() => {
     if (graueLast <= 0) return { status: 'keine' as const }
-    const idx = kumuliert.findIndex((z) => z.kumuliert_co2 >= graueLast)
-    if (idx >= 0) return { status: 'erreicht' as const, label: kumuliert[idx].name }
-    const avgProMonat = anzahlMonate > 0 ? gesamtCo2 / anzahlMonate : 0
-    const fehlend = graueLast - (kumuliert[kumuliert.length - 1]?.kumuliert_co2 ?? 0)
+    const idx = kumuliertGesamt.findIndex((z) => z.kumuliert_co2 >= graueLast)
+    if (idx >= 0) return { status: 'erreicht' as const, label: kumuliertGesamt[idx].name }
+    const avgProMonat = anzahlMonateGesamt > 0 ? gesamtCo2Gesamt / anzahlMonateGesamt : 0
+    const fehlend = graueLast - (kumuliertGesamt[kumuliertGesamt.length - 1]?.kumuliert_co2 ?? 0)
     const monateNoch = avgProMonat > 0 ? Math.ceil(fehlend / avgProMonat) : null
     return { status: 'prognose' as const, monateNoch }
-  }, [graueLast, kumuliert, anzahlMonate, gesamtCo2])
-
-  const handleCsv = () => {
-    const headers = ['Monat', 'CO₂-Einsparung (kg)', 'Kumuliert (kg)']
-    const rows = kumuliert.map((z) => [z.name, z.co2_einsparung, z.kumuliert_co2])
-    exportToCSV(headers, rows, 'co2_export.csv')
-  }
+  }, [graueLast, kumuliertGesamt, anzahlMonateGesamt, gesamtCo2Gesamt])
 
   const bloecke: Block[] = useMemo(() => {
     const fc = formatCo2(gesamtCo2)
@@ -132,17 +137,15 @@ function Co2Inner() {
     // Achsen-Einheit je Chart (R2: ganze Achse = eine Einheit vom Max).
     const monMax = Math.max(0, ...zeitreihe.map((z) => z.co2_einsparung))
     const monAchse = co2Achse(monMax)
-    const kumMax = Math.max(0, graueLast, ...kumuliert.map((z) => z.kumuliert_co2))
+    const kumMax = Math.max(0, graueLast, ...kumuliertGesamt.map((z) => z.kumuliert_co2))
     const kumAchse = co2Achse(kumMax)
 
     const blockBilanz: Block = {
       id: 'bilanz', title: 'CO₂-Bilanz & Wirkung', icon: Leaf, farbe: 'text-green-500',
       summary: `${fc.text} eingespart`, defaultOpen: true,
-      badge: (
-        <Button variant="secondary" size="sm" onClick={handleCsv}>
-          <Download className="h-4 w-4 mr-1" /> CSV-Export
-        </Button>
-      ),
+      // D14-18 (detLAN #107 v7, SS 08-46-23) — Gernot-Entscheid 2026-07-03:
+      // CSV-Export an diesem Block-Kopf ERSATZLOS entfernt (kein Badge). Die
+      // CO₂-Zeitreihe bleibt über Auswertungen → Tabelle exportierbar.
       render: () => (
         <div className="space-y-4">
           <KpiStrip kpis={bilanzKpis} />
@@ -151,11 +154,11 @@ function Co2Inner() {
               <p className="text-sm font-semibold text-gray-900 dark:text-white mb-2">CO₂-Einsparung pro Monat</p>
               <div className="h-72">
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={zeitreihe} margin={{ top: ACHSEN_MARGIN_TOP, right: 30, left: 0, bottom: 5 }}>
+                  <BarChart data={zeitreihe} margin={{ top: ACHSEN_MARGIN_TOP, right: 8, left: 0, bottom: 5 }}>
                     <CartesianGrid strokeDasharray="3 3" className="stroke-gray-200 dark:stroke-gray-700" />
                     <XAxis dataKey="name" {...xAchse(schmal)} interval="preserveStartEnd" /* achsen-allow: Zeit-/Kategorie-Achse (Monat) */ />
                     <YAxis tickFormatter={monAchse.tick} {...yAchse(schmal)} label={achsenEinheit(monAchse.einheit)} />
-                    <Tooltip content={<ChartTooltip formatter={(v) => `${monAchse.tick(v)} ${monAchse.einheit}`} />} />
+                    <Tooltip {...eedcTooltipProps({ formatter: (v) => `${monAchse.tick(v)} ${monAchse.einheit}` })} />
                     <Bar dataKey="co2_einsparung" name="CO₂ eingespart" fill={CHART_COLORS.co2Pv} radius={[2, 2, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
@@ -166,7 +169,7 @@ function Co2Inner() {
       ),
     }
 
-    // ② Amortisation (nur wenn graue Last erfasst).
+    // ② Amortisation (nur wenn graue Last erfasst) — IMMER Gesamt-Historie (R18-3c).
     const amortKpis: KpiStripItem[] = graueLast > 0 ? [
       {
         title: 'Graue Herstellungs-Last', value: formatCo2(graueLast).wert, unit: formatCo2(graueLast).einheit,
@@ -175,11 +178,11 @@ function Co2Inner() {
         ergebnis: `= ${formatCo2(graueLast).text}`,
       },
       {
-        title: 'Bereits ausgeglichen', value: formatProzent(Math.min(100, (gesamtCo2 / graueLast) * 100)).wert, unit: '%',
-        color: 'green', icon: Leaf, subtitle: `${formatCo2(gesamtCo2).text} von ${formatCo2(graueLast).text}`,
-        parkId: 'kpi:ausgeglichen', formel: 'kumulierte Einsparung ÷ graue Last',
-        berechnung: `${fmtZahl(gesamtCo2, 0)} kg ÷ ${fmtZahl(graueLast, 0)} kg`,
-        ergebnis: `= ${formatProzent(Math.min(100, (gesamtCo2 / graueLast) * 100)).text}`,
+        title: 'Bereits ausgeglichen', value: formatProzent(Math.min(100, (gesamtCo2Gesamt / graueLast) * 100)).wert, unit: '%',
+        color: 'green', icon: Leaf, subtitle: `${formatCo2(gesamtCo2Gesamt).text} von ${formatCo2(graueLast).text}`,
+        parkId: 'kpi:ausgeglichen', formel: 'kumulierte Einsparung (gesamte Historie) ÷ graue Last',
+        berechnung: `${fmtZahl(gesamtCo2Gesamt, 0)} kg ÷ ${fmtZahl(graueLast, 0)} kg`,
+        ergebnis: `= ${formatProzent(Math.min(100, (gesamtCo2Gesamt / graueLast) * 100)).text}`,
       },
       {
         title: 'Klimapositiv', color: 'green', icon: Sprout, parkId: 'kpi:klimapositiv',
@@ -201,17 +204,20 @@ function Co2Inner() {
       summary: `graue Last ${formatCo2(graueLast).text}`, defaultOpen: false,
       render: () => (
         <div className="space-y-4">
+          {basis.jahr !== 'alle' && (
+            <ZeitraumHinweis text="Der Jahr-Filter wirkt hier nicht — die CO₂-Amortisation vergleicht die graue Last immer mit der gesamten Historie." />
+          )}
           <KpiStrip kpis={amortKpis} />
           <Parkbar id="chart:co2-kumuliert" titel="Kumulierte CO₂-Einsparung">
             <div>
               <p className="text-sm font-semibold text-gray-900 dark:text-white mb-2">Kumulierte CO₂-Einsparung</p>
               <div className="h-64">
                 <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={kumuliert} margin={{ top: ACHSEN_MARGIN_TOP, right: 30, left: 0, bottom: 5 }}>
+                  <AreaChart data={kumuliertGesamt} margin={{ top: ACHSEN_MARGIN_TOP, right: 8, left: 0, bottom: 5 }}>
                     <CartesianGrid strokeDasharray="3 3" className="stroke-gray-200 dark:stroke-gray-700" />
                     <XAxis dataKey="name" {...xAchse(schmal)} interval="preserveStartEnd" /* achsen-allow: Zeit-/Kategorie-Achse (Monat) */ />
                     <YAxis tickFormatter={kumAchse.tick} {...yAchse(schmal)} label={achsenEinheit(kumAchse.einheit)} />
-                    <Tooltip content={<ChartTooltip formatter={(v) => `${kumAchse.tick(v)} ${kumAchse.einheit}`} />} />
+                    <Tooltip {...eedcTooltipProps({ cursor: false, formatter: (v) => `${kumAchse.tick(v)} ${kumAchse.einheit}` })} />
                     <Area type="monotone" dataKey="kumuliert_co2" name="Kumulierte Einsparung"
                       stroke={CHART_COLORS.co2Pv} fill={CHART_COLORS.co2Pv} fillOpacity={0.3} />
                     <ReferenceLine y={graueLast} stroke={MARKER_WARNUNG.linie} strokeDasharray="6 4"
@@ -244,11 +250,13 @@ function Co2Inner() {
               </div>
             </Parkbar>
           )}
-          <p className="text-xs text-gray-500 dark:text-gray-400">
-            Kumulierte Einsparung = vermiedene Netz-CO₂ der PV-Erzeugung ({fmtZahl(CO2_FAKTOR_KG_KWH * 1000, 0)} g/kWh).
-            Graue Last für PV/Speicher = voller Herstellungs-Aufwand, für Wärmepumpe/E-Auto = Differenz zur Alternative.
-            Richtwerte, pro Investition per Datenblatt übersteuerbar.
-          </p>
+          <Parkbar id="info:co2-amort-methodik" titel="Amortisations-Methodik">
+            <p className="text-xs text-gray-500 dark:text-gray-400">
+              Kumulierte Einsparung = vermiedene Netz-CO₂ der PV-Erzeugung ({fmtZahl(CO2_FAKTOR_KG_KWH * 1000, 0)} g/kWh).
+              Graue Last für PV/Speicher = voller Herstellungs-Aufwand, für Wärmepumpe/E-Auto = Differenz zur Alternative.
+              Richtwerte, pro Investition per Datenblatt übersteuerbar.
+            </p>
+          </Parkbar>
         </div>
       ),
     } : null
@@ -256,40 +264,73 @@ function Co2Inner() {
     // ③ Berechnungsgrundlage (Methodik + Ø-Werte).
     const oProMonat = anzahlMonate > 0 ? gesamtCo2 / anzahlMonate : 0
     const blockBasis: Block = {
-      id: 'basis', title: 'Berechnungsgrundlage', icon: Leaf, farbe: 'text-gray-400',
+      id: 'basis', title: 'Berechnungsgrundlage', icon: Leaf, farbe: 'text-gray-400 dark:text-gray-500',
       summary: `Strommix ${fmtZahl(CO2_FAKTOR_KG_KWH * 1000, 0)} g/kWh`, defaultOpen: false,
+      // Methodik-Text + Ø-Werte-Grid = EINE kohäsive „Berechnungsgrundlage"-Anzeige
+      // → eine Parkbar (Vollständigkeit Phase 1, Gernot 2026-07-09). Ist sie geparkt,
+      // löst sich Block ③ per Park-Gate (parkIds) auf.
       render: () => (
-        <div className="space-y-4">
-          <p className="text-sm text-gray-600 dark:text-gray-400">
-            Die CO₂-Einsparung rechnet mit dem deutschen Strommix von{' '}
-            <strong>{fmtZahl(CO2_FAKTOR_KG_KWH * 1000, 0)} g CO₂/kWh</strong>. Jede selbst erzeugte kWh,
-            die fossilen Strom ersetzt, spart entsprechend CO₂.
-          </p>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm border-t border-gray-200 dark:border-gray-700 pt-4">
-            <div><p className="text-gray-500">Ø pro Monat</p><p className="font-medium text-green-600 dark:text-green-400">{formatCo2(oProMonat).text}</p></div>
-            <div><p className="text-gray-500">Ø pro kWh</p><p className="font-medium text-green-600 dark:text-green-400">{fmtZahl(CO2_FAKTOR_KG_KWH * 1000, 0)} g</p></div>
-            <div><p className="text-gray-500">Ø pro Jahr</p><p className="font-medium text-green-600 dark:text-green-400">{formatCo2(oProMonat * 12).text}</p></div>
-            <div><p className="text-gray-500">Hochgerechnet 20 J.</p><p className="font-medium text-green-600 dark:text-green-400">{formatCo2(oProMonat * 12 * 20).text}</p></div>
+        <Parkbar id="info:co2-berechnung" titel="Berechnungsgrundlage">
+          <div className="space-y-4">
+            <p className="text-sm text-gray-600 dark:text-gray-400">
+              Die CO₂-Einsparung rechnet mit dem deutschen Strommix von{' '}
+              <strong>{fmtZahl(CO2_FAKTOR_KG_KWH * 1000, 0)} g CO₂/kWh</strong>. Jede selbst erzeugte kWh,
+              die fossilen Strom ersetzt, spart entsprechend CO₂.
+            </p>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm border-t border-gray-200 dark:border-gray-700 pt-4">
+              <div><p className="text-gray-500 dark:text-gray-400">Ø pro Monat</p><p className={`font-medium ${CO2_TEXT_CLASS}`}>{formatCo2(oProMonat).text}</p></div>
+              <div><p className="text-gray-500 dark:text-gray-400">Ø pro kWh</p><p className={`font-medium ${CO2_TEXT_CLASS}`}>{fmtZahl(CO2_FAKTOR_KG_KWH * 1000, 0)} g</p></div>
+              <div><p className="text-gray-500 dark:text-gray-400">Ø pro Jahr</p><p className={`font-medium ${CO2_TEXT_CLASS}`}>{formatCo2(oProMonat * 12).text}</p></div>
+              <div><p className="text-gray-500 dark:text-gray-400">Hochgerechnet 20 J.</p><p className={`font-medium ${CO2_TEXT_CLASS}`}>{formatCo2(oProMonat * 12 * 20).text}</p></div>
+            </div>
           </div>
-        </div>
+        </Parkbar>
       ),
     }
 
-    return [blockBilanz, ...(blockAmort ? [blockAmort] : []), blockBasis]
-  }, [zeitreihe, kumuliert, gesamtCo2, graueLast, anzahlMonate, klimapositiv, co2Amort, basis.stats.gesamtErzeugung])
+    // Auto-Hide (Phase 3b, Gernot 2026-07-09): ein Block entfällt, wenn ALLE seine
+    // real gerenderten Park-Elemente geparkt sind (wie Cockpit-Bilanz via bilanzParkIds).
+    const bilanzIds = ['kpi:co2-eingespart', 'kpi:baeume', 'kpi:autokm', 'kpi:fluege', 'chart:co2-monat']
+    const amortIds = ['kpi:graue-last', 'kpi:ausgeglichen', 'kpi:klimapositiv', 'chart:co2-kumuliert',
+      ...(posten.length > 0 ? ['tabelle:graue-last'] : []), 'info:co2-amort-methodik']
+    const basisIds = ['info:co2-berechnung']
+    const sichtbar = (ids: string[]) => !ids.every((id) => park.istGeparkt(id))
+    return [
+      ...(sichtbar(bilanzIds) ? [blockBilanz] : []),
+      ...(blockAmort && sichtbar(amortIds) ? [blockAmort] : []),
+      ...(sichtbar(basisIds) ? [blockBasis] : []),
+    ]
+  }, [zeitreihe, kumuliertGesamt, gesamtCo2, gesamtCo2Gesamt, graueLast, anzahlMonate, klimapositiv, co2Amort, basis.stats.gesamtErzeugung, basis.jahr, schmal, park])
 
-  if (anlagenLoading || basis.loading || !amortGeladen) return <LoadingSpinner text="Lade CO₂-Daten…" />
+  if (basis.error) {
+    // B8 (S15): Basis-Fetch-Fehler sichtbar machen — vorher 0-Wert-KPIs (stille Leere).
+    // VOR dem Lade-Gate, damit ein hängender Amortisations-Call den Fehler nicht verdeckt
+    // (refresh nullt error beim Start → während des Retrys greift wieder das Lade-Gate).
+    return (
+      <div className="p-3 sm:p-6 max-w-[1920px] mx-auto">
+        <FehlerZustand text={basis.error} onRetry={basis.refresh} />
+      </div>
+    )
+  }
+  if (anlagenLoading || basis.loading || !amortGeladen) {
+    // B8 (S15): Sicht-Skeleton in BlockShell-Form (3 Blöcke) statt Vollseiten-Spinner.
+    return (
+      <div className="p-3 sm:p-6 max-w-[1920px] mx-auto">
+        <BlockStackSkeleton label="Lade CO₂-Daten…" zu={2} />
+      </div>
+    )
+  }
   if (anlagen.length === 0) {
     return (
       <div className="p-3 sm:p-6 max-w-[1920px] mx-auto">
-        <Card><p className="text-sm text-gray-500 dark:text-gray-400">Noch keine Anlage angelegt.</p></Card>
+        <AnlageLeer titel="Noch keine Anlage angelegt." />
       </div>
     )
   }
 
   return (
     <div className="p-3 sm:p-6 max-w-[1920px] mx-auto space-y-4">
-      <AuswertungKopf titel="CO₂-Bilanz" jahr={basis.jahr} setJahr={basis.setJahr} jahre={basis.jahre} />
+      <AuswertungKopf titel="CO₂-Bilanz" />
       <BlockShell key={`co2-${basis.jahr}`} persistKey={SICHT_KEY} bloecke={bloecke} sortierbar />
       <ParkFuss />
     </div>

@@ -1,58 +1,77 @@
 /**
- * LayoutV4 — Schale für den IA-v4-Routenbaum (`/v4/…`), nur hinter `VITE_IA_V4`.
+ * LayoutV4 — die kanonische App-Schale (IA-V4, `/`-Routenbaum).
  *
- * Bewusst PARALLEL zur Produktiv-`components/layout/Layout`. Die obere Leiste ist
- * jetzt die geteilte {@link IATopNav} (Struktur-SoT, auch von der Vorschau
- * konsumiert) — volle 3-Achsen-Nav (Cockpit · Komponenten · Auswertungen ·
- * Community) + Meta (Hilfe · Einstellungen) + Theme-Cycle + Hamburger. Noch nicht
- * gebaute Achsen zeigen einen Platzhalter ({@link V4Platzhalter}); ihr echter
- * Bau folgt nach Phase 3. Mobile-Querschnitt: `h-dvh`, Touch-Targets ≥ 44 px.
+ * Die obere Leiste ist die geteilte {@link IATopNav} (Struktur-SoT) — volle
+ * 3-Achsen-Nav (Cockpit · Komponenten · Auswertungen · Community) + Meta (Hilfe ·
+ * Einstellungen) + Theme-Cycle + Hamburger. Mobile-Querschnitt: `h-dvh`,
+ * Touch-Targets ≥ 44 px.
  */
+import { useLayoutEffect, useRef } from 'react'
 import { Outlet, useLocation } from 'react-router-dom'
 import { LayoutDashboard, Boxes, BarChart3, Users, HelpCircle, Settings } from 'lucide-react'
 import { IATopNav, type IANavItem } from '../components/layout/IATopNav'
 import { AnlagenSelektor } from './AnlagenSelektor'
 import { AppStatusProvider } from './status/AppStatusContext'
+import { GlobalStatusProvider } from './status/GlobalStatusProvider'
 import { StatusFusszeile } from './status/StatusFusszeile'
+import { WizardOverlayProvider } from './EinstellungenModalHost'
 
 export default function LayoutV4() {
   const { pathname } = useLocation()
   const aktiv = (praefix: string) => pathname.startsWith(praefix)
 
+  // D14-1/D13-13 (detLAN): Tab-/Routen-Wechsel öffnet die Sicht am Seitenanfang.
+  // Bleibt der Sicht-Container gemountet (Sub-Tab = Routen-Param, z. B.
+  // Einstellungen-Kategorien, Community-Tabs), behält er sonst seinen scrollTop.
+  // Zurückgesetzt werden main (mobiler Scroller) + ViewShell-Innencontainer
+  // (`data-sicht-scroll`, Desktop-Scroller ab lg). Zeit-Navigation INNERHALB einer
+  // Sicht ändert den pathname nicht → `useScrollErhalt` (B1) bleibt unberührt.
+  const mainRef = useRef<HTMLElement>(null)
+  useLayoutEffect(() => {
+    const m = mainRef.current
+    if (!m) return
+    m.scrollTop = 0
+    m.querySelectorAll<HTMLElement>('[data-sicht-scroll]').forEach((el) => { el.scrollTop = 0 })
+  }, [pathname])
+
   // Inhalts-Achse (Struktur-SoT: KONZEPT-IA-V4). Achsen-Aktivität via Pfad-Präfix
   // (eine Achse bleibt aktiv über all ihre Sub-Routen).
   const inhalt: IANavItem[] = [
-    { key: 'cockpit',      label: 'Cockpit',      icon: LayoutDashboard, to: '/v4/cockpit/live',         active: aktiv('/v4/cockpit') },
-    { key: 'komponenten',  label: 'Komponenten',  icon: Boxes,           to: '/v4/komponenten',          active: aktiv('/v4/komponenten') },
-    { key: 'auswertungen', label: 'Auswertungen', icon: BarChart3,       to: '/v4/auswertungen',         active: aktiv('/v4/auswertungen') },
-    { key: 'community',    label: 'Community',    icon: Users,           to: '/v4/community',            active: aktiv('/v4/community') },
+    { key: 'cockpit',      label: 'Cockpit',      icon: LayoutDashboard, to: '/cockpit/live',         active: aktiv('/cockpit') },
+    { key: 'komponenten',  label: 'Komponenten',  icon: Boxes,           to: '/komponenten',          active: aktiv('/komponenten') },
+    { key: 'auswertungen', label: 'Auswertungen', icon: BarChart3,       to: '/auswertungen',         active: aktiv('/auswertungen') },
+    { key: 'community',    label: 'Community',    icon: Users,           to: '/community',            active: aktiv('/community') },
   ]
   const meta: IANavItem[] = [
-    { key: 'hilfe',         label: 'Hilfe',         icon: HelpCircle, to: '/v4/hilfe',         active: aktiv('/v4/hilfe') },
-    { key: 'einstellungen', label: 'Einstellungen', icon: Settings,   to: '/v4/einstellungen', active: aktiv('/v4/einstellungen') },
+    { key: 'hilfe',         label: 'Hilfe',         icon: HelpCircle, to: '/hilfe',         active: aktiv('/hilfe') },
+    { key: 'einstellungen', label: 'Einstellungen', icon: Settings,   to: '/einstellungen', active: aktiv('/einstellungen') },
   ]
-
-  const badge = (
-    <span className="ml-3 px-2 py-0.5 text-[10px] font-mono rounded bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-200">
-      Vorschau
-    </span>
-  )
 
   return (
     <AppStatusProvider>
+      {/* Paket Q: EINE fetchende Global-Status-Instanz für Fusszeile + Einstellungen-Ampeln. */}
+      <GlobalStatusProvider>
+      {/* Mängelbehebung D/E: EIN app-weiter Wizard-Overlay-Host (oeffneWizard mit
+          Payload) — auch für Fusszeile/Teile außerhalb der Einstellungen-Sicht. */}
+      <WizardOverlayProvider>
       <div className="h-dvh bg-gray-50 dark:bg-gray-900 flex flex-col overflow-hidden">
-        <IATopNav inhalt={inhalt} meta={meta} modusBadge={badge} anlagenSelektor={<AnlagenSelektor />} />
+        <IATopNav inhalt={inhalt} meta={meta} anlagenSelektor={<AnlagenSelektor />} />
         {/* Ab lg gibt main keine eigene Scroll-Leiste mehr her, sondern wird flex-
             Container für die ViewShell (fixe 2. Leiste). Mobile: alles scrollt.
             D6-1: `scrollbar-gutter:stable` (nur mobil) reserviert eine eigene
             Scrollbar-Spalte → die vollbreite, milchige Datums-Nav (ZeitStepper,
             `-mx-3` + backdrop-blur) verdeckt die Scrollbar nicht mehr. */}
-        <main className="flex-1 overflow-auto max-lg:[scrollbar-gutter:stable] lg:overflow-hidden lg:flex lg:flex-col lg:min-h-0">
+        {/* A9-Ausnahme (dokumentiert, check:scrollschatten-Allowlist): SEITEN-Scroller —
+            der Haupt-Scroll der App behält den nativen Balken; der ScrollSchatten-Fade
+            gilt für INHALTS-Container (Tabellen, Rails, Leisten), nicht die Seite selbst. */}
+        <main ref={mainRef} className="flex-1 overflow-auto max-lg:[scrollbar-gutter:stable] lg:overflow-hidden lg:flex lg:flex-col lg:min-h-0">
           <Outlet />
         </main>
         {/* G11 Shell-Slice: app-weite Status-Fusszeile (klebt unten via flex-col). */}
         <StatusFusszeile />
       </div>
+      </WizardOverlayProvider>
+      </GlobalStatusProvider>
     </AppStatusProvider>
   )
 }

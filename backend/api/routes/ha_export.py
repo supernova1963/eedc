@@ -25,6 +25,8 @@ from backend.core.berechnungen import (
     berechne_spez_ertrag_annualisiert,
     gas_kosten_altanlage,
     berechne_verbrauchs_kennzahlen,
+    erzeugung_hinter_zaehler_kwh,
+    imd_typ_beitrag,
     monatsgewichte_aus_pvgis,
 )
 from backend.models.pvgis_prognose import PVGISPrognose
@@ -32,7 +34,14 @@ from datetime import date
 
 from backend.services.finanz_zeilen import FinanzZeileEingabe, baue_finanz_zeile
 from backend.services.einspeise_erloes_service import get_neg_preis_einspeisung_monat
-from backend.utils.sonstige_positionen import berechne_sonstige_netto
+from backend.api.routes.strompreise import (
+    lade_tarife_fuer_anlage,
+    resolve_strompreis_for_komponente,
+)
+from backend.utils.sonstige_positionen import (
+    berechne_sonstige_netto,
+    berechne_md_sonstige_summen,
+)
 from backend.core.field_definitions import get_emob_pv_netz_kwh, get_wp_strom_kwh
 from backend.services.eauto_wirtschaftlichkeit import (
     attribute_month_share,
@@ -56,6 +65,13 @@ from backend.services.ha_export_prognose import berechne_prognose_export
 from backend.services.ha_export_preis import berechne_preis_export
 from backend.services.mqtt_client import MQTTClient, MQTTConfig
 from backend.services.ha_mqtt_sync import resolve_mqtt_config, publish_anlage_sensors
+from backend.services.mqtt_broker_settings import (
+    resolve_broker_config,
+    broker_aktiviert,
+    broker_konfiguriert,
+    export_aktiviert,
+    MQTT_EXPORT_SETTINGS_KEY,
+)
 from backend.core.investition_parameter import (
     PARAM_E_AUTO,
     PARAM_E_AUTO_DEFAULTS,
@@ -64,7 +80,7 @@ from backend.core.investition_parameter import (
     PARAM_WAERMEPUMPE_DEFAULTS,
     ist_dienstlich,
 )
-from backend.core.calculations import CO2_FAKTOR_STROM_KG_KWH
+from backend.core.calculations import berechne_co2_bilanz
 from backend.core.wirtschaftlichkeit_defaults import (
     EINSPEISEVERGUETUNG_DEFAULT_CENT,
     NETZBEZUG_DEFAULT_CENT,
@@ -138,14 +154,23 @@ class HAYamlSnippet(BaseModel):
 
 
 class MQTTConfigResponse(BaseModel):
-    """MQTT-Konfiguration aus Add-on Optionen."""
-    enabled: bool
+    """Aufgelöste MQTT-Verbindung + Export-Richtung (B7-5/B7-5b/B7-5d)."""
+    enabled: bool  # Verbindung wird genutzt = mindestens eine Richtung an
     host: str
     port: int
     username: str
     password: str  # Wird als Maske zurückgegeben wenn gesetzt
-    auto_publish: bool
+    auto_publish: bool  # Export-Toggle (Eigenwert) — nicht mit `enabled` verundet
     publish_interval_minutes: int
+    # Ist überhaupt ein Broker hinterlegt? `host` allein taugt nicht als Antwort:
+    # die Auflösung liefert IMMER einen (Default `core-mosquitto`). Ohne Broker
+    # kann der Export nichts publizieren — die Sensoren erscheinen dann nie in HA.
+    broker_konfiguriert: bool
+
+
+class AutoPublishRequest(BaseModel):
+    """Body für den Export-Toggle (B7-5b)."""
+    enabled: bool
 
 
 # =============================================================================
@@ -289,6 +314,40 @@ async def calculate_anlage_sensors(
             pv_erzeugung += pv_kwh
             pv_by_ym[(imd.jahr, imd.monat)] = pv_by_ym.get((imd.jahr, imd.monat), 0.0) + pv_kwh
 
+    # DI-2-B: Erzeuger hinter dem EINEN Hauszähler in die EV-/Autarkie-/CO₂-
+    # Bilanz aufnehmen — deckungsgleich mit dem Cockpit (uebersicht.py:309-322,
+    # Layer-SoT `erzeugung_hinter_zaehler_kwh`, v3.45.4). Vorher zählte der
+    # HA-Export nur `pv-module` zur Erzeugung → bei BKW-Anlagen wichen
+    # Eigenverbrauch/Autarkie/EV-Quote und der daraus abgeleitete CO₂-Sensor
+    # vom Cockpit ab (Demo lifetime: EV 14.465 vs. 17.366 kWh).
+    #   • Balkonkraftwerk zählt als PV (Erzeugung + kWp, Cockpit-Konvention):
+    #     fällt in `pv_erzeugung` (Sensor, spez. Ertrag, EV/Autarkie/CO₂).
+    #   • Sonstige Erzeuger (Mini-BHKW/KWK) speisen ebenfalls hinter den Zähler →
+    #     zählen in EV/Autarkie, bleiben aber aus den PV-eigenen Kennzahlen
+    #     (spez. Ertrag/PR) und aus der PV-Erzeugungs-Anzeige draußen.
+    # Der Finanz-Pfad (`pv_by_ym`) bleibt REIN pv-module — die BKW-Ersparnis läuft
+    # separat über `bisherige_bkw_ersparnis` (kein Doppel-Ansatz); CO₂/Wirtschaft-
+    # lichkeit eines Brennstoff-Erzeugers bleibt bewusst neutral.
+    bkw_erzeugung = 0.0
+    sonstiges_erzeugung = 0.0
+    erzeuger_ids = [
+        inv.id for inv in investitionen
+        if inv.typ in ("balkonkraftwerk", "sonstiges")
+    ]
+    if erzeuger_ids:
+        erz_result = await db.execute(
+            select(InvestitionMonatsdaten)
+            .where(InvestitionMonatsdaten.investition_id.in_(erzeuger_ids))
+        )
+        for imd in erz_result.scalars().all():
+            inv = inv_by_id.get(imd.investition_id)
+            if not inv or not inv.ist_aktiv_im_monat(imd.jahr, imd.monat):
+                continue
+            b = imd_typ_beitrag(inv, imd.verbrauch_daten or {})
+            bkw_erzeugung += b.bkw_erzeugung
+            sonstiges_erzeugung += b.sonstiges_erzeugung
+    pv_erzeugung += bkw_erzeugung
+
     # Fallback: Falls keine InvestitionMonatsdaten vorhanden, berechne aus Einspeisung
     einspeisung = sum(m.einspeisung_kwh or 0 for m in monatsdaten)
     if pv_erzeugung == 0:
@@ -352,8 +411,13 @@ async def calculate_anlage_sensors(
     # den SoT-Helper aus IMD-gesourcten Energiemengen (PV + Speicher + V2H) und
     # den Zählerwerten (Einspeisung/Netzbezug) — kanonische Formel, deckungs-
     # gleich mit cockpit/uebersicht.py.
+    # DI-2-B: Netzpunkt-Bilanz-Eingang = PV(inkl. BKW) + sonstige Erzeuger,
+    # deckungsgleich mit dem Cockpit (`erzeugung_bilanz`, uebersicht.py:416).
+    # `pv_erzeugung` selbst (inkl. BKW, ohne BHKW) bleibt für die PV-eigenen
+    # Kennzahlen (spez. Ertrag) und die PV-Erzeugungs-Anzeige.
+    erzeugung_bilanz = erzeugung_hinter_zaehler_kwh(pv_erzeugung, sonstiges_erzeugung)
     kennzahlen = berechne_verbrauchs_kennzahlen(
-        pv_erzeugung_kwh=pv_erzeugung,
+        pv_erzeugung_kwh=erzeugung_bilanz,
         einspeisung_kwh=einspeisung,
         netzbezug_kwh=netzbezug,
         speicher_ladung_kwh=batterie_ladung,
@@ -420,6 +484,11 @@ async def calculate_anlage_sensors(
                 continue
             sonstige_netto_gesamt += berechne_sonstige_netto(imd.verbrauch_daten)
 
+    # G19-1: Basis-Positionen (Monatsdaten.sonstige_positionen) wirken wie
+    # IMD-Positionen — gleiche Netto-Faltung wie Cockpit/Jahresbericht.
+    for m in monatsdaten:
+        sonstige_netto_gesamt += berechne_md_sonstige_summen(m)["netto_euro"]
+
     einspeise_erloes = 0
     ev_ersparnis = 0
     netto_ertrag = sonstige_netto_gesamt
@@ -459,8 +528,10 @@ async def calculate_anlage_sensors(
         ev_ersparnis = _finanz.ev_ersparnis_euro
         netto_ertrag = _finanz.netto_ertrag_euro
 
-    # CO2
-    co2_ersparnis = pv_erzeugung * CO2_FAKTOR_STROM_KG_KWH
+    # CO2 (DI-2): der HA-Sensor „CO2 Einsparung" trägt jetzt die volle
+    # Cockpit-Bilanz (PV-Eigenverbrauch + WP + E-Mobilität) statt nur
+    # `pv_erzeugung × f_strom`. Berechnung weiter unten, nachdem WP- und
+    # E-Mob-Aggregate stehen (kanonischer Helper `berechne_co2_bilanz`).
 
     # Investitions-KPIs berechnen
     investition_gesamt = sum(i.anschaffungskosten_gesamt or 0 for i in investitionen)
@@ -520,6 +591,14 @@ async def calculate_anlage_sensors(
     # Monatsdaten-Dict für Monats-Gaspreis / -Benzinpreis
     md_by_periode = {(md.jahr, md.monat): md for md in monatsdaten}
 
+    # DI-4: WP-Strom mit dem WP-Spezialtarif bewerten (Fallback allgemein), wie
+    # in aktueller_monat.py — sonst rechnet der HA-Export die WP-Ersparnis mit
+    # dem allgemeinen Netzbezugspreis, obwohl ein günstigerer WP-Tarif gepflegt ist.
+    _tarife = await lade_tarife_fuer_anlage(db, anlage.id)
+    wp_netzbezug_preis_cent = resolve_strompreis_for_komponente(
+        _tarife, "waermepumpe", fallback=netzbezug_preis_cent
+    )
+
     # WP-Alternativkosten (vs. Gas/Öl) über den Berechnungs-Layer (ADR-001):
     # per-WP-Parameter (kein last-write-wins über waermepumpen), per-Monat-
     # Gaspreis aus Monatsdaten mit Fallback auf den WP-Parameter-Default.
@@ -527,7 +606,7 @@ async def calculate_anlage_sensors(
         waermepumpen,
         historische_inv_daten,
         {k: md.gaspreis_cent_kwh for k, md in md_by_periode.items()},
-        netzbezug_preis_cent,
+        wp_netzbezug_preis_cent,
     )
 
     # Per-E-Auto-Aufschlüsselung der bisherige-Ersparnis. Vorher las eine
@@ -540,6 +619,12 @@ async def calculate_anlage_sensors(
     # Sensor driftete deshalb auch gegen den per-Investition-Sensor
     # `e_auto_ersparnis_vs_benzin_euro` (Zeile 583+, der hatte den Fallback).
     bisherige_eauto_ersparnis = 0.0
+    # DI-2: E-Mob-CO₂-Aggregate (Dienstwagen bereits über e_autos ausgeschlossen,
+    # deckungsgleich mit der Cockpit-Bilanz): gefahrene km, Heim-Netzladung und
+    # der Benzin-Vergleichsverbrauch in Litern (je Fahrzeug sein eigener Wert).
+    co2_emob_km = 0.0
+    co2_emob_netz_kwh = 0.0
+    co2_benzin_liter = 0.0
     for ea in e_autos:
         params = ea.parameter or {}
         ea_benzinpreis_default = params.get(
@@ -569,6 +654,33 @@ async def calculate_anlage_sensors(
             bisherige_eauto_ersparnis += (
                 benzin_liter * monats_benzinpreis - netz * netzbezug_preis_cent / 100
             )
+            # DI-2: CO₂-Aggregate mitziehen (gleicher Netz-/km-/Benzin-Pfad).
+            co2_emob_km += km
+            co2_emob_netz_kwh += netz
+            co2_benzin_liter += benzin_liter
+
+    # DI-2: WP-CO₂-Aggregate (gemessene Wärme/Strom) über den kanonischen
+    # Zeilen-Helper `imd_typ_beitrag` — dieselbe Wärme-/Strom-Auflösung wie das
+    # Cockpit (waerme_kwh-Vorrang, sonst Heizung+Warmwasser; WP-Split-Strom).
+    wp_ids = {w.id for w in waermepumpen}
+    co2_wp_waerme_kwh = 0.0
+    co2_wp_strom_kwh = 0.0
+    for (inv_id, _j, _m), daten in historische_inv_daten.items():
+        if inv_id in wp_ids:
+            _b = imd_typ_beitrag(inv_by_id_export[inv_id], daten)
+            co2_wp_waerme_kwh += _b.wp_waerme
+            co2_wp_strom_kwh += _b.wp_strom
+
+    # DI-2: Gesamt-CO₂-Bilanz (PV-Eigenverbrauch + WP + E-Mob) über den
+    # kanonischen Helper — deckungsgleich mit der Cockpit-Kachel `co2_gesamt_kg`.
+    co2_ersparnis = berechne_co2_bilanz(
+        eigenverbrauch_kwh=eigenverbrauch,
+        wp_waerme_kwh=co2_wp_waerme_kwh,
+        wp_strom_kwh=co2_wp_strom_kwh,
+        emob_km=co2_emob_km,
+        emob_netz_ladung_kwh=co2_emob_netz_kwh,
+        benzin_verbrauch_liter=co2_benzin_liter,
+    ).co2_gesamt_kg
 
     # BKW-Alternativkosten: Eigenverbrauch zum Netzbezugspreis (Berechnungs-Layer).
     bisherige_bkw_ersparnis = berechne_bkw_alternativkosten_ersparnis(
@@ -643,7 +755,9 @@ async def calculate_anlage_sensors(
             berechnung = f"{eigenverbrauch:.0f} ÷ {gesamtverbrauch:.0f} × 100"
         elif sensor.key == "eigenverbrauch_quote_prozent":
             value = round(ev_quote, 1)
-            berechnung = f"{eigenverbrauch:.0f} ÷ {pv_erzeugung:.0f} × 100"
+            # DI-2-B: Nenner = Netzpunkt-Erzeugung (PV inkl. BKW + sonstige
+            # Erzeuger), deckungsgleich mit der Cockpit-EV-Quote.
+            berechnung = f"{eigenverbrauch:.0f} ÷ {erzeugung_bilanz:.0f} × 100"
         elif sensor.key == "spezifischer_ertrag_kwh_kwp":
             value = round(spez_ertrag, 0) if spez_ertrag else None
             if value is not None:
@@ -664,7 +778,7 @@ async def calculate_anlage_sensors(
                 berechnung = f"{eigenverbrauch:.0f} × {strompreis.netzbezug_arbeitspreis_cent_kwh:.2f} ct/kWh"
         elif sensor.key == "co2_ersparnis_kg":
             value = round(co2_ersparnis, 1)
-            berechnung = f"{pv_erzeugung:.0f} × 0.38"
+            berechnung = "PV-Eigenverbrauch + Wärmepumpe + E-Mobilität (vermiedenes CO₂)"
 
         if value is not None:
             sensor_values.append(SensorValue(
@@ -948,6 +1062,12 @@ async def calculate_investition_sensors(
 
     # Wärmepumpe Sensoren
     elif investition.typ == "waermepumpe":
+        # DI-4: WP-Strom mit dem WP-Spezialtarif bewerten (Fallback allgemein),
+        # deckungsgleich mit aktueller_monat.py und der Anlage-Aggregation oben.
+        _wp_tarife = await lade_tarife_fuer_anlage(db, investition.anlage_id)
+        wp_netzbezug_preis = resolve_strompreis_for_komponente(
+            _wp_tarife, "waermepumpe", fallback=netzbezug_preis
+        )
         gesamt_strom = 0.0
         gesamt_heizung = 0.0
         gesamt_warmwasser = 0.0
@@ -1016,7 +1136,7 @@ async def calculate_investition_sensors(
                         alte_kosten += gas_kosten_altanlage(waerme, alter_wirkungsgrad, gp)
                     # Fixe Zusatzkosten anteilig
                     alte_kosten += zusatzkosten_jahr * len(monatsdaten) / 12
-                    wp_kosten = gesamt_strom * netzbezug_preis / 100
+                    wp_kosten = gesamt_strom * wp_netzbezug_preis / 100
                     value = round(alte_kosten - wp_kosten, 2)
                     berechnung = f"{alte_kosten:.2f} (alt) - {wp_kosten:.2f} (WP)"
             elif sensor.key == "wp_kompressor_starts":
@@ -1043,27 +1163,62 @@ async def calculate_investition_sensors(
 # =============================================================================
 
 @router.get("/mqtt/config", response_model=MQTTConfigResponse)
-async def get_mqtt_config():
-    """
-    Gibt die MQTT-Konfiguration aus den Add-on Optionen zurück.
+async def get_mqtt_config(db: AsyncSession = Depends(get_db)):
+    """Gibt die aufgelöste MQTT-Broker-Konfiguration zurück.
 
-    Diese Werte werden in der HA Add-on Konfiguration gesetzt und
-    können im Frontend für die MQTT-Einstellungen vorausgefüllt werden.
+    B7-5: Quelle ist jetzt der **gemeinsame Broker** (DB-Broker-Block → ENV-Fallback
+    = Add-on-Optionen), nicht mehr ENV allein — sonst zeigt der Export-Block einen
+    anderen Broker an als den, auf den er publiziert (#655-Klasse).
+
+    B7-5b: ``auto_publish`` ist der **Eigenwert des Export-Toggles** (DB → ENV),
+    bewusst NICHT mit ``enabled`` (Broker) verundet: der Switch im Block soll den
+    eigenen Zustand zeigen und nicht umspringen, wenn jemand den Broker abschaltet.
+    Die Und-Verknüpfung „darf jetzt publiziert werden" macht der Job selbst.
     """
     from backend.core.config import settings
 
+    cfg = await resolve_broker_config(db)
+
     # Passwort als Maske zurückgeben wenn gesetzt
-    password_masked = "••••••" if settings.mqtt_password else ""
+    password_masked = "••••••" if cfg.password else ""
 
     return MQTTConfigResponse(
-        enabled=settings.mqtt_enabled,
-        host=settings.mqtt_host,
-        port=settings.mqtt_port,
-        username=settings.mqtt_username,
+        enabled=await broker_aktiviert(db),
+        host=cfg.host,
+        port=cfg.port,
+        username=cfg.username or "",
         password=password_masked,
-        auto_publish=settings.mqtt_auto_publish,
+        auto_publish=await export_aktiviert(db),
         publish_interval_minutes=settings.mqtt_publish_interval,
+        broker_konfiguriert=await broker_konfiguriert(db),
     )
+
+
+@router.post("/mqtt/auto-publish")
+async def set_auto_publish(payload: AutoPublishRequest, db: AsyncSession = Depends(get_db)):
+    """Schaltet den automatischen Export (Auto-Publish) ein/aus — B7-5b.
+
+    Schreibt den DB-Settings-Key ``mqtt_export``; ENV bleibt reiner Fallback für
+    Bestandsinstallationen ohne Eintrag. Wirkt sofort — der Scheduler-Job prüft
+    die Einstellung bei jedem Lauf, ein Neustart ist nicht nötig.
+    """
+    from backend.models.settings import Settings as SettingsModel
+    from sqlalchemy.orm.attributes import flag_modified
+
+    setting = (
+        await db.execute(
+            select(SettingsModel).where(SettingsModel.key == MQTT_EXPORT_SETTINGS_KEY)
+        )
+    ).scalar_one_or_none()
+
+    if setting:
+        setting.value = {"enabled": payload.enabled}
+        flag_modified(setting, "value")
+    else:
+        db.add(SettingsModel(key=MQTT_EXPORT_SETTINGS_KEY, value={"enabled": payload.enabled}))
+    await db.commit()
+
+    return {"gespeichert": True, "enabled": payload.enabled}
 
 
 @router.get("/sensors", response_model=FullExportResponse)
@@ -1330,9 +1485,13 @@ async def get_sensor_definitions():
 # =============================================================================
 
 @router.post("/mqtt/test")
-async def test_mqtt_connection(config: Optional[MQTTConfigRequest] = None):
-    """Testet die MQTT-Verbindung zum Broker."""
-    mqtt_config = resolve_mqtt_config(
+async def test_mqtt_connection(
+    config: Optional[MQTTConfigRequest] = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """Testet die MQTT-Verbindung zum Broker (gemeinsamer Broker, B7-5)."""
+    mqtt_config = await resolve_broker_config(
+        db,
         config.host if config else None,
         config.port if config else None,
         config.username if config else None,
@@ -1366,8 +1525,10 @@ async def publish_sensors_mqtt(
     if not anlage:
         raise not_found("Anlage")
 
-    # Broker-Config: Override-Felder aus dem Request, sonst ENV (#655).
-    mqtt_config = resolve_mqtt_config(
+    # Broker-Config: Override-Felder aus dem Request, sonst gemeinsamer Broker
+    # (DB-Broker-Block → ENV, #655/B7-5).
+    mqtt_config = await resolve_broker_config(
+        db,
         config.host if config else None,
         config.port if config else None,
         config.username if config else None,
@@ -1430,12 +1591,15 @@ async def remove_sensors_mqtt(
     if not anlage:
         raise not_found("Anlage")
 
-    # MQTT Client konfigurieren
-    mqtt_config = MQTTConfig(
-        host=config.host if config else os.environ.get("MQTT_HOST", "core-mosquitto"),
-        port=config.port if config else int(os.environ.get("MQTT_PORT", "1883")),
-        username=config.username if config else os.environ.get("MQTT_USER"),
-        password=config.password if config else os.environ.get("MQTT_PASSWORD"),
+    # B7-5: baute den MQTTConfig bisher von Hand aus ENV und umging damit den
+    # Resolver — genau der Broker-Mismatch aus #655 (Remove traf einen anderen
+    # Broker als Publish). Jetzt der gemeinsame Weg.
+    mqtt_config = await resolve_broker_config(
+        db,
+        config.host if config else None,
+        config.port if config else None,
+        config.username if config else None,
+        config.password if config else None,
     )
 
     client = MQTTClient(mqtt_config)

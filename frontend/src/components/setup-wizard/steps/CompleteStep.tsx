@@ -4,7 +4,9 @@
  * v1.0.0 - Leitet zur Monatsdaten-Erfassung weiter
  */
 
-import { Sun, PartyPopper, FileSpreadsheet, LayoutDashboard } from 'lucide-react'
+import { Sun, PartyPopper, FileSpreadsheet, LayoutDashboard, Plug } from 'lucide-react'
+import { Button } from '../../ui'
+import { v3RouteZuV4 } from '../../../config/v3ZuV4Route'
 import type { Anlage } from '../../../types'
 
 interface CompleteStepProps {
@@ -13,15 +15,22 @@ interface CompleteStepProps {
 }
 
 export default function CompleteStep({ anlage, onGoToDashboard }: CompleteStepProps) {
-  // Navigation zur Monatsdaten-Seite
-  const handleGoToMonatsdaten = () => {
+  // Navigation zur Monatsdaten-Seite. Das Gate rendert VOR dem Router (kein
+  // navigate) — die Alt-Route-Strings werden über die Re-Kategorisierungs-Map
+  // (v3RouteZuV4-SoT) auf die V4-Kategorie umgebogen (z. B. „Daten").
+  const springeZu = (v3Ziel: string) => {
     // Wizard als abgeschlossen markieren (wird von onGoToDashboard gemacht)
     onGoToDashboard()
-    // Nach kurzem Delay zur Monatsdaten-Seite navigieren
+    const ziel = v3RouteZuV4(v3Ziel) ?? v3Ziel
+    // Nach kurzem Delay zur Zielseite navigieren
     setTimeout(() => {
-      window.location.hash = '#/einstellungen/monatsdaten'
+      window.location.hash = '#' + ziel
     }, 100)
   }
+  const handleGoToMonatsdaten = () => springeZu('/einstellungen/monatsdaten')
+  // D2: direkter Absprung in die Sensor-/Topic-Pflege (Datenquellen-Fläche;
+  // V3 = Sensor-Mapping-Route, unter IA_V4 via v3RouteZuV4 → datenquellen).
+  const handleGoToDatenquellen = () => springeZu('/einstellungen/sensor-mapping')
 
   return (
     <div className="p-8 md:p-12 text-center">
@@ -69,21 +78,21 @@ export default function CompleteStep({ anlage, onGoToDashboard }: CompleteStepPr
 
       {/* CTAs */}
       <div className="flex flex-col sm:flex-row gap-4 justify-center">
-        <button
-          onClick={handleGoToMonatsdaten}
-          className="inline-flex items-center justify-center gap-3 px-8 py-4 bg-gradient-to-r from-amber-500 to-orange-500 text-white font-semibold text-lg rounded-xl shadow-lg hover:shadow-xl hover:from-amber-600 hover:to-orange-600 transition-all"
-        >
-          <FileSpreadsheet className="w-5 h-5" />
+        <Button variant="amber" size="lg" onClick={handleGoToMonatsdaten}>
+          <FileSpreadsheet className="w-5 h-5 mr-2 max-sm:hidden" />
           Monatsdaten erfassen
-        </button>
+        </Button>
 
-        <button
-          onClick={onGoToDashboard}
-          className="inline-flex items-center justify-center gap-3 px-6 py-4 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 font-medium rounded-xl hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
-        >
-          <LayoutDashboard className="w-5 h-5" />
+        {/* D2-Absprung in die Datenquellen-Fläche (Sensor-/Topic-Pflege). */}
+        <Button variant="secondary" size="lg" onClick={handleGoToDatenquellen}>
+          <Plug className="w-5 h-5 mr-2 max-sm:hidden" />
+          Sensor- & Topic-Pflege
+        </Button>
+
+        <Button variant="secondary" size="lg" onClick={onGoToDashboard}>
+          <LayoutDashboard className="w-5 h-5 mr-2 max-sm:hidden" />
           Zum Cockpit
-        </button>
+        </Button>
       </div>
     </div>
   )
