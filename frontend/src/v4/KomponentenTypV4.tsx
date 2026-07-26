@@ -16,7 +16,7 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Card, Alert, fmtCalc, FehlerZustand } from '../components/ui'
 import ScrollSchatten from '../components/ui/ScrollSchatten'
-import { BlockShell, BlockStackSkeleton, KpiStrip, VerteilungsBalken, type Block, type KpiStripItem } from '../components/blocks'
+import { BlockShell, BlockStackSkeleton, HerkunftZeile, KpiStrip, VerteilungsBalken, type Block, type KpiStripItem } from '../components/blocks'
 import { ParkProvider, ParkFuss, Parkbar, usePark, type ParkApi } from '../components/park'
 import { BLOCK_IDENTITAET, STATUS_COLORS, STATUS_ICONS, formatDatum, jaNein, fmtZahl } from '../lib'
 import { KOMPONENTEN_IDENTITAET } from '../lib/komponentenStyle'
@@ -444,13 +444,16 @@ function StrukturInhalt({ s }: { s: KompStruktur }) {
       </dl>
     )
   }
+  // Nur PV-Module BRAUCHEN einen Wechselrichter (Backend: PARENT_REQUIRED).
+  // Ein Speicher ohne Zuordnung ist der Normalfall eines AC-gekoppelten Speichers
+  // — die frühere Warnung forderte den falschen Zustand ein und trieb Tester in
+  // eine Zuordnung, die sie danach nicht mehr lösen konnten (JayJay, Forum v4.0.0).
   const hatOrphan = s.orphanModule.length > 0 || s.orphanSpeicher.length > 0
   return (
     <div className="space-y-3">
-      {hatOrphan && (
+      {s.orphanModule.length > 0 && (
         <Alert type="warning">
-          {s.orphanModule.length > 0 && `${s.orphanModule.length} PV-Modul(e) ohne Wechselrichter-Zuordnung. `}
-          {s.orphanSpeicher.length > 0 && `${s.orphanSpeicher.length} Speicher ohne Wechselrichter-Zuordnung.`}
+          {`${s.orphanModule.length} PV-Modul(e) ohne Wechselrichter-Zuordnung.`}
         </Alert>
       )}
       {s.wr.map((w, i) => (
@@ -469,7 +472,8 @@ function StrukturInhalt({ s }: { s: KompStruktur }) {
       {hatOrphan && (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2">
           <TopoListe titel="Module ohne Zuordnung" items={s.orphanModule} />
-          <TopoListe titel="Speicher ohne Zuordnung" items={s.orphanSpeicher} />
+          {/* Neutral formuliert: eigenständig ist für Speicher ein gültiger Zustand. */}
+          <TopoListe titel="Eigenständige Speicher" items={s.orphanSpeicher} />
         </div>
       )}
     </div>
@@ -542,7 +546,8 @@ function WirtschaftlichkeitInhalt({ w, kpis }: {
 
 type MeldeBlock = (block: string, ids: string[]) => void
 
-function geraetBloecke(g: KompGeraet, typ: string, anlageId: number, park: ParkApi, gemeldet: Record<string, string[]>, melde: MeldeBlock): Block[] {
+/** Blöcke eines Geräts — exportiert für Block-Tests (Muster `baueKomponentenBloecke`). */
+export function geraetBloecke(g: KompGeraet, typ: string, anlageId: number, park: ParkApi, gemeldet: Record<string, string[]>, melde: MeldeBlock): Block[] {
   const analyse = KOMPONENTEN_ANALYSE[typ]
   const istGeparkt = (id: string) => park.istGeparkt(id)
   // Element-Park-Doktrin (Gernot 2026-06-27): JEDE Anzeige im Block einzeln parkbar
@@ -636,12 +641,16 @@ function geraetBloecke(g: KompGeraet, typ: string, anlageId: number, park: ParkA
         ? (
           <div className="space-y-4">
             <Parkbar id="el:verlauf" titel="Verlauf">
+              {/* Gerechnete statt gemessene Werte werden am Chart-Kopf ausgewiesen
+                  (PV: Modul-Stapel = kWp-Anteil) — dasselbe Zustands-Badge wie am
+                  Verteilungsbalken, kein zweiter Satz Bildsprache (Regel 0a). */}
+              <HerkunftZeile herkunft={g.verlauf.herkunft} className="mb-2" />
               <KomponentenVerlaufChart rows={g.verlauf.rows} bars={g.verlauf.bars} einheit={g.verlauf.einheit} gestapelt={g.verlauf.gestapelt} tall={fokus} />
             </Parkbar>
             {g.verlauf.verteilungen && g.verlauf.verteilungen.length > 0 && (
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 {g.verlauf.verteilungen.map((v, i) => (
-                  <Parkbar key={v.titel} id={`el:verlauf-vert-${i}`} titel={v.titel}><VerteilungsBalken titel={v.titel} einheit={v.einheit} segmente={v.segmente} /></Parkbar>
+                  <Parkbar key={v.titel} id={`el:verlauf-vert-${i}`} titel={v.titel}><VerteilungsBalken titel={v.titel} einheit={v.einheit} segmente={v.segmente} herkunft={v.herkunft} /></Parkbar>
                 ))}
               </div>
             )}

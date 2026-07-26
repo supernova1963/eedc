@@ -45,6 +45,30 @@ router = APIRouter()
 
 
 # =============================================================================
+# Konfidenz der Connector-Vorschläge
+# =============================================================================
+# Ein Connector liefert EINEN Zählerstand pro Kategorie (PV gesamt, Batterie
+# gesamt). Gibt es mehrere Module/Speicher, wird dieser Gesamtwert anteilig
+# nach Nennleistung bzw. Kapazität zerlegt (`_distribute_by_param`) — der
+# Vorschlag je Gerät ist dann KEINE Messung dieses Geräts, sondern ein Modell.
+# Es ist dieselbe Einschränkung, die der Daten-Checker als „Pro-String-
+# Genauigkeit eingeschränkt" meldet (services/daten_checker/energieprofil.py).
+#
+# Eine projektweite Konfidenz-Skala gibt es nicht; die Nachbarwerte sind:
+#   95 WP-Gesamtstrom = Σ(Heizen+WW) · 92 HA-Statistik · 91 MQTT-Inbound ·
+#   90 Connector-Zählerstand · 90/55 Speicher-Ladepreis · 85 Kraftstoffpreis ·
+#   80 Vormonat · 70 Vorjahr / HA-Momentanwert · 60 WP-Wärme = Strom×COP ·
+#   50 Ø 12 Monate · 30 Jahresfahrleistung÷12
+# (services/vorschlag_service.py, strompreis_aggregator.py, views.py).
+#
+# Der verteilte Wert liegt deshalb unter JEDER gemessenen Quelle (90/91/92),
+# aber über „Wert vom Vormonat" (80): Summe und Monat sind gemessen, nur der
+# Verteilungsschlüssel ist gerechnet.
+KONFIDENZ_CONNECTOR_GEMESSEN = 90
+KONFIDENZ_CONNECTOR_VERTEILT = 85
+
+
+# =============================================================================
 # Pydantic-Models — view-spezifisch
 # =============================================================================
 
@@ -162,10 +186,20 @@ async def get_monatsabschluss(
     cloud_import_konfiguriert = bool(cloud_config and cloud_config.get("provider_id"))
     connector_delta: Optional[dict] = None
     connector_inv_verteilung: dict[int, dict[str, float]] = {}
+    # Felder, deren Vorschlagswert ein ZERLEGTER Anlagen-Gesamtwert ist (mehr als
+    # ein Empfänger): {inv_id: {feld: Beschreibung}}. Steuert Beschriftung und
+    # Konfidenz — bei genau einem Modul/Speicher geht der Zählerstand
+    # unverändert dorthin, das ist eine Messung und bleibt als solche etikettiert.
+    connector_inv_verteilt_hinweis: dict[int, dict[str, str]] = {}
 
     if connector_konfiguriert:
-        from backend.api.routes.connector import _calc_month_delta, _distribute_by_param
+        from backend.api.routes.connector import _calc_month_delta, _mapped_or_distribute
         snapshots = connector_config.get("meter_snapshots", {})
+        # Explizite Kategorie→Investition-Zuordnung — dieselbe SoT wie die
+        # Connector-Vorschau (`api/routes/connector.py:484`) und die
+        # MQTT-Energie-Bridge. Wer sein Wechselrichter-Feld einem Modul
+        # zugeordnet hat, bekommt dessen Wert und keine kWp-Zerlegung.
+        field_inv_map = connector_config.get("field_inv_map") or {}
         if snapshots:
             connector_delta = _calc_month_delta(snapshots, jahr, monat)
             # PV auf Module verteilen
@@ -174,8 +208,19 @@ async def get_monatsabschluss(
                 if pv_kwh is not None and pv_kwh > 0:
                     pv_module = [i for i in anlage.investitionen if i.typ == "pv-module"]
                     if pv_module:
-                        for inv, anteil in _distribute_by_param(pv_module, pv_kwh, "leistung_kwp"):
+                        verteilung = _mapped_or_distribute(
+                            field_inv_map, "pv", pv_module, pv_kwh, "leistung_kwp"
+                        )
+                        # Genau ein Empfänger = der Zählerstand geht unverzerrt
+                        # dorthin (ein Modul, oder eine explizite Zuordnung).
+                        ist_verteilt = len(verteilung) > 1
+                        for inv, anteil in verteilung:
                             connector_inv_verteilung.setdefault(inv.id, {})["pv_erzeugung_kwh"] = anteil
+                            if ist_verteilt:
+                                connector_inv_verteilt_hinweis.setdefault(inv.id, {})["pv_erzeugung_kwh"] = (
+                                    "anteilig nach kWp auf die Strings verteilt — "
+                                    "Pro-String-Genauigkeit eingeschränkt"
+                                )
                 # Batterie auf Speicher verteilen
                 for bat_feld, inv_feld in [
                     ("batterie_ladung_kwh", "ladung_kwh"),
@@ -185,8 +230,17 @@ async def get_monatsabschluss(
                     if bat_val is not None and bat_val > 0:
                         speicher = [i for i in anlage.investitionen if i.typ == "speicher"]
                         if speicher:
-                            for inv, anteil in _distribute_by_param(speicher, bat_val, "kapazitaet_kwh"):
+                            verteilung = _mapped_or_distribute(
+                                field_inv_map, "speicher", speicher, bat_val, "kapazitaet_kwh"
+                            )
+                            ist_verteilt = len(verteilung) > 1
+                            for inv, anteil in verteilung:
                                 connector_inv_verteilung.setdefault(inv.id, {})[inv_feld] = anteil
+                                if ist_verteilt:
+                                    connector_inv_verteilt_hinweis.setdefault(inv.id, {})[inv_feld] = (
+                                        "anteilig nach Kapazität auf die Speicher verteilt — "
+                                        "Pro-Speicher-Genauigkeit eingeschränkt"
+                                    )
 
     # MQTT Inbound Energy-Daten sammeln
     mqtt_energy: dict[str, float] = {}
@@ -307,7 +361,8 @@ async def get_monatsabschluss(
                 vorschlaege.insert(0, Vorschlag(
                     wert=round(conn_wert, 1),
                     quelle=VorschlagQuelle.LOCAL_CONNECTOR,
-                    konfidenz=90,
+                    # Basis-Feld = anlagenweiter Zählerstand, nichts verteilt.
+                    konfidenz=KONFIDENZ_CONNECTOR_GEMESSEN,
                     beschreibung="Vom Wechselrichter (Zählerstand-Differenz)",
                 ))
 
@@ -429,16 +484,26 @@ async def get_monatsabschluss(
                         beschreibung="Aus HA-Statistik (Recorder-DB)",
                     ))
 
-            # Connector-Vorschlag einfügen (verteilte Werte)
+            # Connector-Vorschlag einfügen — bei mehreren Modulen/Speichern ist
+            # der Wert der ZERLEGTE Anlagen-Gesamtwert und wird als solcher
+            # beschriftet (A3/a2: keine Anzeige behauptet, gemessen zu sein).
             inv_conn_values = connector_inv_verteilung.get(inv.id, {})
             if feld in inv_conn_values:
                 conn_wert = inv_conn_values[feld]
                 if conn_wert > 0:
+                    verteilt_hinweis = connector_inv_verteilt_hinweis.get(inv.id, {}).get(feld)
                     vorschlaege.insert(0, Vorschlag(
                         wert=round(conn_wert, 1),
                         quelle=VorschlagQuelle.LOCAL_CONNECTOR,
-                        konfidenz=90,
-                        beschreibung="Vom Wechselrichter (Zählerstand-Differenz)",
+                        konfidenz=(
+                            KONFIDENZ_CONNECTOR_VERTEILT if verteilt_hinweis
+                            else KONFIDENZ_CONNECTOR_GEMESSEN
+                        ),
+                        beschreibung=(
+                            f"Vom Wechselrichter — Gesamtwert, {verteilt_hinweis}"
+                            if verteilt_hinweis
+                            else "Vom Wechselrichter (Zählerstand-Differenz)"
+                        ),
                     ))
 
             # MQTT Inbound-Vorschlag einfügen (Konfidenz 91)
@@ -593,18 +658,32 @@ async def fetch_cloud_monatswerte(
 
     # Investitionen: PV auf Module, Batterie auf Speicher verteilen
     inv_result: list[dict] = []
-    from backend.api.routes.connector import _distribute_by_param
+    from backend.api.routes.connector import _mapped_or_distribute
 
+    # Die Cloud liefert je Kategorie EINEN Gesamtwert. Ist die Kategorie einer
+    # Investition zugeordnet, geht er dorthin (gleiche Zuordnungs-SoT wie der
+    # lokale Connector-Pfad); sonst ist der Pro-Gerät-Wert die kWp-/Kapazitäts-
+    # Zerlegung davon — das steht dann im Label, damit kein zerlegter Wert wie
+    # eine Gerätemessung aussieht (A3/a2, gleicher Wortlaut wie im
+    # Connector-Pfad und im Daten-Checker).
+    field_inv_map = (anlage.connector_config or {}).get("field_inv_map") or {}
     pv_kwh = getattr(month_data, "pv_erzeugung_kwh", None)
     if pv_kwh and pv_kwh > 0:
         pv_module = [i for i in anlage.investitionen if i.typ == "pv-module"]
         if pv_module:
-            for inv, anteil in _distribute_by_param(pv_module, pv_kwh, "leistung_kwp"):
+            pv_verteilung = _mapped_or_distribute(
+                field_inv_map, "pv", pv_module, pv_kwh, "leistung_kwp"
+            )
+            pv_label = (
+                "PV Erzeugung (Gesamtwert, anteilig nach kWp verteilt)"
+                if len(pv_verteilung) > 1 else "PV Erzeugung"
+            )
+            for inv, anteil in pv_verteilung:
                 inv_result.append({
                     "investition_id": inv.id,
                     "bezeichnung": inv.bezeichnung,
                     "typ": inv.typ,
-                    "felder": [{"feld": "pv_erzeugung_kwh", "label": "PV Erzeugung", "wert": round(anteil, 1), "einheit": "kWh"}],
+                    "felder": [{"feld": "pv_erzeugung_kwh", "label": pv_label, "wert": round(anteil, 1), "einheit": "kWh"}],
                 })
 
     for cloud_feld, inv_feld, label in [
@@ -615,16 +694,23 @@ async def fetch_cloud_monatswerte(
         if bat_val and bat_val > 0:
             speicher = [i for i in anlage.investitionen if i.typ == "speicher"]
             if speicher:
-                for inv, anteil in _distribute_by_param(speicher, bat_val, "kapazitaet_kwh"):
+                bat_verteilung = _mapped_or_distribute(
+                    field_inv_map, "speicher", speicher, bat_val, "kapazitaet_kwh"
+                )
+                bat_label = (
+                    f"{label} (Gesamtwert, anteilig nach Kapazität verteilt)"
+                    if len(bat_verteilung) > 1 else label
+                )
+                for inv, anteil in bat_verteilung:
                     existing = next((r for r in inv_result if r["investition_id"] == inv.id), None)
                     if existing:
-                        existing["felder"].append({"feld": inv_feld, "label": label, "wert": round(anteil, 1), "einheit": "kWh"})
+                        existing["felder"].append({"feld": inv_feld, "label": bat_label, "wert": round(anteil, 1), "einheit": "kWh"})
                     else:
                         inv_result.append({
                             "investition_id": inv.id,
                             "bezeichnung": inv.bezeichnung,
                             "typ": inv.typ,
-                            "felder": [{"feld": inv_feld, "label": label, "wert": round(anteil, 1), "einheit": "kWh"}],
+                            "felder": [{"feld": inv_feld, "label": bat_label, "wert": round(anteil, 1), "einheit": "kWh"}],
                         })
 
     await log_activity(

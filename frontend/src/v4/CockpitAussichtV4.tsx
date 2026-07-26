@@ -24,9 +24,14 @@ import { Card, SegmentControl, FehlerZustand } from '../components/ui'
 import { ReloadButton } from './ReloadButton'
 import { AnlageLeer, OnboardingLeer } from './OnboardingLeer'
 import { DatumPicker } from '../components/ui/DatumPicker'
-import { BlockShell, BlockStackSkeleton, KpiStrip, type Block, type KpiStripItem } from '../components/blocks'
+import { BlockShell, BlockStackSkeleton, HerkunftZeile, KpiStrip, type Block, type KpiStripItem, type WertHerkunft } from '../components/blocks'
 import { ParkProvider, ParkFuss, usePark, Parkbar } from '../components/park'
-import { BLOCK_IDENTITAET, STATUS_ICONS, fmtZahl } from '../lib'
+import {
+  BLOCK_IDENTITAET, STATUS_ICONS, WT_KURZ, fmtZahl,
+  pvErtragKwh, pvVormittagKwh, pvNachmittagKwh,
+  prognoseSummeKwh, prognoseDurchschnittKwh, prognoseQuelleLabel,
+  unvollstaendigHerkunft,
+} from '../lib'
 import {
   TagesPrognose, KurzfristDetails, LangfristVerlaufChart, LangfristMonatswerte,
   SaisonMuster, DegradationsPrognose, WpAussicht, AussichtFinanzTeaser, euroVz,
@@ -46,6 +51,15 @@ const HORIZONTE: { key: Horizont; label: string }[] = [
   { key: 'lang', label: 'Langfristig' },
 ]
 const DEFAULT_HORIZONT: Horizont = 'kurz'
+
+/** „So., 26.07." — beide Prognose-Blöcke tragen damit sichtbar IHREN Tag.
+ *  Der Datumswähler sitzt nur im Stunden-Block; wer den Stundenwerte-Block
+ *  allein aufklappt, sah sonst nicht, dass er standardmäßig MORGEN zeigt
+ *  (Rainer-PN „Nachtrag" 2026-07-25). */
+const tagLabel = (iso: string) => {
+  const d = new Date(iso + 'T12:00:00')
+  return `${WT_KURZ[d.getDay()]}., ${d.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' })}`
+}
 const KURZ_TAGE = 14
 
 function istHorizont(v: string | null): v is Horizont {
@@ -54,22 +68,25 @@ function istHorizont(v: string | null): v is Horizont {
 
 // ─── KPI-Builder (Kopf, reparametrisiert pro Horizont) ────────────────────────
 
-// `eedcHeute` = kanonischer eedc-Tageswert (Prognose-Kanon, v3.45.6). Die „Heute"-KPI
-// MUSS ihn zeigen — sonst stünde hier der pure `/solar-prognose`-Wert und wiche von
-// allen anderen Anzeigen ab (R8-4). Spiegelt `KurzfristTab` (`eedc ?? pur`).
+// Alle Tageswerte kommen über den Anzeige-SoT (`pvErtragKwh` & Co.): eedc-
+// korrigiert, sonst OpenMeteo roh. `eedcHeute` = derselbe Wert aus dem
+// Prognosen-Vergleich (`days=4`-Snapshot, identisch zu Live/MQTT) und bleibt
+// deshalb für „Heute" vorne — die 14-Tage-Antwort ruft OpenMeteo mit anderem
+// `days` ab und kann minimal abweichen (R8-4). Keine dritte Mechanik: der
+// Kanon-Wert der Solar-Prognose ist jetzt der Fallback derselben Kette.
 function kurzKpis(p: SolarPrognose, eedcHeute?: number | null): KpiStripItem[] {
   const heute = p.tage[0]
   const morgen = p.tage[1]
   const vmNm = (t?: typeof heute) =>
-    t?.pv_ertrag_morgens_kwh != null
-      ? `VM ${fmtZahl(t.pv_ertrag_morgens_kwh, 1)} · NM ${fmtZahl(t.pv_ertrag_nachmittags_kwh ?? 0, 1)}`
+    t && pvVormittagKwh(t) != null
+      ? `VM ${fmtZahl(pvVormittagKwh(t)!, 1)} · NM ${fmtZahl(pvNachmittagKwh(t) ?? 0, 1)}`
       : undefined
   // R13-4c (Rainer #77): Reihenfolge Heute · Morgen · Summe · Durchschnitt.
   return [
-    { title: 'Heute', value: fmtZahl(eedcHeute ?? heute?.pv_ertrag_kwh ?? 0, 1), unit: 'kWh', color: 'gray', icon: CloudSun, subtitle: vmNm(heute) },
-    { title: 'Morgen', value: fmtZahl(morgen?.pv_ertrag_kwh ?? 0, 1), unit: 'kWh', color: 'gray', icon: CloudSun, subtitle: vmNm(morgen) },
-    { title: `Summe ${p.tage.length} Tage`, value: fmtZahl(p.summe_kwh, 0), unit: 'kWh', color: 'yellow', icon: Zap },
-    { title: `Ø/Tag (${p.tage.length} T)`, value: fmtZahl(p.durchschnitt_kwh_tag, 1), unit: 'kWh', color: 'blue', icon: Sun },
+    { title: 'Heute', value: fmtZahl(eedcHeute ?? (heute ? pvErtragKwh(heute) : 0), 1), unit: 'kWh', color: 'gray', icon: CloudSun, subtitle: vmNm(heute) },
+    { title: 'Morgen', value: fmtZahl(morgen ? pvErtragKwh(morgen) : 0, 1), unit: 'kWh', color: 'gray', icon: CloudSun, subtitle: vmNm(morgen) },
+    { title: `Summe ${p.tage.length} Tage`, value: fmtZahl(prognoseSummeKwh(p), 0), unit: 'kWh', color: 'yellow', icon: Zap },
+    { title: `Ø/Tag (${p.tage.length} T)`, value: fmtZahl(prognoseDurchschnittKwh(p), 1), unit: 'kWh', color: 'blue', icon: Sun },
   ]
 }
 
@@ -222,31 +239,52 @@ function CockpitAussichtInner({ anlageId }: { anlageId: number | undefined }) {
     } : null
     // R5-5a (Rainer): Kennzahlen-Kacheln parkbar (SLICE 1) — stabile parkId je
     // Titel, geparkte raus; sind ALLE geparkt → Block ganz weg (wie Cockpit/Monat).
-    const kennzahlenBlock = (items: KpiStripItem[], summary: string): Block | null => {
+    const kennzahlenBlock = (
+      items: KpiStripItem[], summary: string, herkunft?: WertHerkunft,
+    ): Block | null => {
       const mit = items.map((k) => ({ ...k, parkId: `kpi:${k.title.toLowerCase().replace(/[^a-z0-9]+/gi, '-')}` }))
       const sichtbar = mit.filter((k) => !park.istGeparkt(k.parkId!))
       if (!sichtbar.length) return null
       return {
         id: 'kpi', title: 'Kennzahlen', ...BLOCK_IDENTITAET.kennzahlen,
-        summary, defaultOpen: true, render: () => <KpiStrip kpis={sichtbar} />,
+        summary, defaultOpen: true, render: () => (
+          <div className="space-y-2">
+            <HerkunftZeile herkunft={herkunft} />
+            <KpiStrip kpis={sichtbar} />
+          </div>
+        ),
       }
     }
     if (istKurz) {
       if (!kurz) return []
-      const kpi = kennzahlenBlock(kurzKpis(kurz, eedcHeute), `${fmtZahl(kurz.summe_kwh, 0)} kWh in ${kurz.tage.length} Tagen · Ø ${fmtZahl(kurz.durchschnitt_kwh_tag, 1)} kWh/Tag`)
+      // Summenzeile == Σ der Balken: dieselben Aggregate wie die KPIs (SoT),
+      // sonst widerspräche sich die Seite an anderer Stelle erneut.
+      const quelleLabel = prognoseQuelleLabel(kurz)
+      // P4 (N77): war der Multi-String-Fan-out unvollständig, sind Summe, Ø/Tag und
+      // alle Tagesbalken eine Teilsumme. Das Backend sagt es in `hinweise`; hier
+      // steht es an beiden Stellen, wo die betroffenen Zahlen stehen.
+      const kurzHerkunft = unvollstaendigHerkunft(kurz.hinweise, 'PV-Prognose')
+      const kpi = kennzahlenBlock(kurzKpis(kurz, eedcHeute), `${fmtZahl(prognoseSummeKwh(kurz), 0)} kWh in ${kurz.tage.length} Tagen · Ø ${fmtZahl(prognoseDurchschnittKwh(kurz), 1)} kWh/Tag`, kurzHerkunft)
       // Aussicht-Anzeigen sind einzeln parkbar (Doktrin): render in `Parkbar`, und ist
       // die Anzeige geparkt → ganzer Block weg (wie Cockpit/Monat-Verlauf).
       const list: Block[] = [
         ...(kpi ? [kpi] : []),
         ...(park.istGeparkt('el:aussicht-tages') ? [] : [{
           id: 'verlauf', title: 'Tages-Prognose', ...BLOCK_IDENTITAET.wetter,
-          summary: `${kurz.tage.length} Tage: Wetter, Temperatur & PV-Ertrag je Tag`,
+          summary: `${kurz.tage.length} Tage: Wetter, Temperatur & PV-Ertrag je Tag · Quelle ${quelleLabel}`,
           defaultOpen: true,
-          render: () => <Parkbar id="el:aussicht-tages" titel="Tages-Prognose"><TagesPrognose tage={kurz.tage} /></Parkbar>,
+          render: () => (
+            <Parkbar id="el:aussicht-tages" titel="Tages-Prognose">
+              <div className="space-y-2">
+                <HerkunftZeile herkunft={kurzHerkunft} />
+                <TagesPrognose tage={kurz.tage} quelleLabel={quelleLabel} />
+              </div>
+            </Parkbar>
+          ),
         }]),
         ...(park.istGeparkt('el:aussicht-tage-tabelle') ? [] : [{
           id: 'details', title: `${kurz.tage.length}-Tage-Tabelle`, ...BLOCK_IDENTITAET.werte,
-          summary: 'VM/NM · GTI · Bewölkung · Temp · Niederschlag · Quelle',
+          summary: `VM/NM · GTI · Bewölkung · Temp · Niederschlag · Wettermodell · Quelle ${quelleLabel}`,
           defaultOpen: false,
           render: () => <Parkbar id="el:aussicht-tage-tabelle" titel={`${kurz.tage.length}-Tage-Tabelle`}><KurzfristDetails tage={kurz.tage} /></Parkbar>,
         }]),
@@ -254,8 +292,8 @@ function CockpitAussichtInner({ anlageId }: { anlageId: number | undefined }) {
         // Datum-Picker = Chrome (bleibt), nur der Chart ist die parkbare Anzeige →
         // geparkt entfällt der ganze Stunden-Block (Picker ohne Chart sinnlos).
         ...(park.istGeparkt('el:aussicht-stunden') ? [] : [{
-          id: 'stunden', title: 'Stunden-Prognose', ...BLOCK_IDENTITAET.verlauf,
-          summary: 'PV + Verbrauch + Speicher je Stunde (wählbarer Tag)',
+          id: 'stunden', title: `Stunden-Prognose · ${tagLabel(pDatum)}`, ...BLOCK_IDENTITAET.verlauf,
+          summary: `PV + Verbrauch + Speicher je Stunde${pDaten?.pv_quelle ? ` · Quelle ${pDaten.pv_quelle}` : ''} (wählbarer Tag)`,
           defaultOpen: false,
           render: () => (
             <div className="space-y-4">
@@ -268,8 +306,8 @@ function CockpitAussichtInner({ anlageId }: { anlageId: number | undefined }) {
           ),
         }]),
         ...(park.istGeparkt('el:aussicht-stundenwerte') ? [] : [{
-          id: 'stundenwerte', title: 'Stundenwerte', ...BLOCK_IDENTITAET.werte,
-          summary: 'Stundenprognose in kW · Summenzeile = kWh/Tag',
+          id: 'stundenwerte', title: `Stundenwerte · ${tagLabel(pDatum)}`, ...BLOCK_IDENTITAET.werte,
+          summary: `Stundenprognose in kW · Summenzeile = kWh/Tag${pDaten?.pv_quelle ? ` · Quelle ${pDaten.pv_quelle}` : ''}`,
           defaultOpen: false,
           render: () => (pDaten
             ? <Parkbar id="el:aussicht-stundenwerte" titel="Stundenwerte"><PrognoseTabelle daten={pDaten} ohneCaption /></Parkbar>

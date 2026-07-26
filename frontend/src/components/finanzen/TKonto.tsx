@@ -16,6 +16,14 @@ import type { AktuellerMonatResponse } from '../../api/aktuellerMonat'
 
 const fmt = (v: number | null | undefined, d = 1) => fmtCalc(v, d, '—')
 
+// R18-9 (Rainer-PN 2026-07-25): Die Ergebniszeile war die einzige Zeile ohne
+// Herleitung — und sie trägt einen ANDEREN Netto-Begriff als die Kachel
+// „Netto-Ertrag (PV)" im Block darüber. Beides steht jetzt im Tooltip.
+const ERGEBNIS_FORMEL =
+  'HABEN − SOLL = Einspeiseerlös + EV-Ersparnis + Wärmepumpen-/E-Mobilitäts-Ersparnis − Netzbezug-Kosten − Sonstige Ausgaben'
+const ERGEBNIS_ABGRENZUNG =
+  'Andere Abgrenzung als „Netto-Ertrag (PV)" oben: hier zählen Netzbezug-Kosten und Wärmepumpe/E-Mobilität mit.'
+
 function Δ({ a, b, inv = false }: { a: number | null | undefined; b: number | null | undefined; inv?: boolean }) {
   if (a == null || b == null || b === 0) return null
   const pct = ((a - b) / Math.abs(b)) * 100
@@ -73,6 +81,9 @@ export function TKonto({ d, sonderkosten = null }: { d: AktuellerMonatResponse; 
   const pvEvResidual = Math.max(0, (d.ev_ersparnis_euro ?? 0) - evInErsparnis)
 
   const preisBez = d.netzbezug_durchschnittspreis_cent != null ? 'Ø-Preis flex' : 'Netzbezugspreis'
+  // §51 EEG greift nur, wenn tatsächlich zu Negativpreisen eingespeist wurde —
+  // bei 0 kWh gäbe es sonst einen „§51-Verlust: 0,00 €"-Hinweis ohne Inhalt.
+  const hatNeg51 = (d.einspeisung_neg_preis_kwh ?? 0) > 0
 
   const habenPosten: TKontoPosten[] = [
     // ── Einspeise-Erlöse (immer) ──
@@ -81,11 +92,21 @@ export function TKonto({ d, sonderkosten = null }: { d: AktuellerMonatResponse; 
       wert: d.einspeise_erloes_euro ?? 0,
       vjWert: vj?.einspeise_erloes_euro,
       color: 'text-green-600 dark:text-green-400',
-      formel: 'Einspeisung × Einspeisevergütung',
+      // §51 EEG: der Erlös oben ist bereits gekürzt — dann muss auch die
+      // Herleitung die gekürzte Menge zeigen, sonst passt „1000 kWh × 8,2 ct"
+      // nicht zum Ergebnis darunter.
+      formel: hatNeg51
+        ? 'Vergütete Einspeisung × Einspeisevergütung (§51 EEG: Negativpreis-Stunden ohne Vergütung)'
+        : 'Einspeisung × Einspeisevergütung',
       berechnung: d.einspeisung_kwh != null && d.einspeise_preis_cent != null
-        ? `${fmt(d.einspeisung_kwh, 1)} kWh × ${fmtCalc(d.einspeise_preis_cent, 2)} ct/kWh`
+        ? (hatNeg51
+          ? `(${fmt(d.einspeisung_kwh, 1)} − ${fmt(d.einspeisung_neg_preis_kwh, 1)}) kWh × ${fmtCalc(d.einspeise_preis_cent, 2)} ct/kWh`
+          : `${fmt(d.einspeisung_kwh, 1)} kWh × ${fmtCalc(d.einspeise_preis_cent, 2)} ct/kWh`)
         : undefined,
       ergebnis: `= ${fmtCalc(d.einspeise_erloes_euro, 2)} €`,
+      hinweis: hatNeg51
+        ? `§51-Verlust: ${fmt(d.einspeisung_neg_preis_kwh, 1)} kWh ohne Vergütung — ${fmtCalc(d.nicht_vergueteter_erloes_euro, 2)} € entgangen`
+        : undefined,
     },
     // ── PV-Eigenverbrauch ──
     // Mit per-Inv-Daten: Residual (ohne BKW/Speicher die separat gezeigt werden)
@@ -203,7 +224,10 @@ export function TKonto({ d, sonderkosten = null }: { d: AktuellerMonatResponse; 
       ergebnis: `= ${fmtCalc(d.netzbezug_kosten_euro, 2)} €`,
       // R15-5b: nachrichtlicher Ausweis — die Netzladung des Speichers steckt
       // bereits in diesen Kosten (Hauszähler), KEIN zusätzlicher Posten.
-      hinweis: d.speicher_ladung_netz_kosten_euro != null
+      // Hier bewusst `> 0`: „davon Batterieladung Netz: 0,00 €" wäre eine
+      // Aufgliederung ohne Inhalt. Die Kennzahlen-Kachel zeigt die 0 dagegen,
+      // weil dort die Abwesenheit selbst die Information ist.
+      hinweis: (d.speicher_ladung_netz_kosten_euro ?? 0) > 0
         ? `davon Batterieladung Netz: ${fmtCalc(d.speicher_ladung_netz_kosten_euro, 2)} € (${fmt(d.speicher_ladung_netz_kwh, 1)} kWh)`
         : undefined,
     },
@@ -303,7 +327,9 @@ export function TKonto({ d, sonderkosten = null }: { d: AktuellerMonatResponse; 
               const isGewinn = seite === 'soll'
               return <>
                 <td className="py-2 pl-4 pr-2 font-bold text-gray-900 dark:text-white border-b border-gray-200 dark:border-gray-600">
-                  {isGewinn ? 'Gewinn' : 'Verlust'}
+                  <FormelTooltip formel={ERGEBNIS_FORMEL} berechnung={ERGEBNIS_ABGRENZUNG}>
+                    {isGewinn ? 'Gewinn (Haushalt)' : 'Verlust (Haushalt)'}
+                  </FormelTooltip>
                 </td>
                 <td className={`py-2 pr-3 text-right tabular-nums whitespace-nowrap font-bold border-b border-gray-200 dark:border-gray-600 ${isGewinn ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
                   {fmtCalc(Math.abs(nettoT), 2)} €
@@ -322,6 +348,11 @@ export function TKonto({ d, sonderkosten = null }: { d: AktuellerMonatResponse; 
                 {item.formel
                   ? <FormelTooltip formel={item.formel} berechnung={item.berechnung} ergebnis={item.ergebnis}>{item.label}</FormelTooltip>
                   : item.label}
+                {/* Nachrichtlicher Zusatz (§51-Verlust, „davon Batterieladung Netz"):
+                    stand bisher NUR in der Mobil-Tabelle — am Desktop war er unsichtbar. */}
+                {item.hinweis && (
+                  <span className="block text-xs text-gray-400 dark:text-gray-500">{item.hinweis}</span>
+                )}
               </td>
               <td className={`py-2 pr-3 text-right tabular-nums whitespace-nowrap font-semibold border-b border-gray-100 dark:border-gray-700/50 ${item.color}`}>
                 {fmtCalc(item.wert, 2)} €
@@ -475,7 +506,9 @@ export function TKonto({ d, sonderkosten = null }: { d: AktuellerMonatResponse; 
                       <tbody>
                         <tr className="bg-gray-100 dark:bg-gray-700/60">
                           <td className="py-2 pl-2 pr-2 text-sm font-bold text-gray-900 dark:text-white uppercase tracking-wider">
-                            {nettoT >= 0 ? 'Gewinn' : 'Verlust'}
+                            <FormelTooltip formel={ERGEBNIS_FORMEL} berechnung={ERGEBNIS_ABGRENZUNG}>
+                              {nettoT >= 0 ? 'Gewinn (Haushalt)' : 'Verlust (Haushalt)'}
+                            </FormelTooltip>
                           </td>
                           <td className="py-2 pr-2 text-right align-top">
                             <div className={`tabular-nums whitespace-nowrap font-bold ${nettoT >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>

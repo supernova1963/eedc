@@ -229,58 +229,216 @@ def _migrate_monatsdaten_sonderkosten_zu_positionen(connection) -> None:
         )
 
 
+def _parse_iso_datum(wert):
+    """`date` aus einem DB-Wert (ISO-String oder bereits `date`); None bei Murks."""
+    from datetime import date as _d, datetime as _dt
+    if wert is None or isinstance(wert, _d) and not isinstance(wert, _dt):
+        return wert
+    if isinstance(wert, _dt):
+        return wert.date()
+    try:
+        return _d.fromisoformat(str(wert)[:10])
+    except ValueError:
+        return None
+
+
+def _pv_quelle_aktiv_im_monat(aktiv, anschaffung, stilllegung, jahr, monat) -> bool:
+    """Roh-SQL-Variante von `Investition.ist_aktiv_im_monat` (models/investition.py:145)."""
+    from calendar import monthrange
+    from datetime import date as _d
+    if aktiv is not None and not aktiv:
+        return False
+    start, end = _d(jahr, monat, 1), _d(jahr, monat, monthrange(jahr, monat)[1])
+    a, s = _parse_iso_datum(anschaffung), _parse_iso_datum(stilllegung)
+    if a and a > end:
+        return False
+    if s and s < start:
+        return False
+    return True
+
+
 def _migrate_pv_erzeugung_aggregat_clear(connection) -> None:
     """kWp-Verteilung-Etappe: `monatsdaten.pv_erzeugung_kwh` als rein manuelles
     Aggregat etablieren (Invariante, [[project_kwp_verteilung_aggregator]]).
 
-    Bestandszeilen, bei denen für denselben Monat Pro-Modul-IMD-Werte
-    (pv-module/balkonkraftwerk mit `pv_erzeugung_kwh`) existieren, hatten das
-    Feld bislang als Auto-Summe der Module befüllt (alter Form-Pfad
-    MonatsdatenForm). Diese Auto-Summen werden geleert — die Pro-Modul-Werte
-    sind die Wahrheit und werden zur Lesezeit aggregiert/verteilt. Feldwerte
-    OHNE Pro-Modul-Werte bleiben erhalten (echtes Aggregat, z. B. JayJayX #651).
-    Kriterium ist „Pro-Modul vorhanden ja/nein", NICHT die Herkunft.
+    Geleert wird ausschließlich, was **ohne Verlust weg kann**: eine Auto-Summe
+    des alten Form-Pfads (MonatsdatenForm vor `ba0d8d9d`). Zwei Bedingungen,
+    beide nötig:
 
-    Idempotent (No-Op nach erstem Lauf — danach gibt es keine Zeile mehr mit
-    Feldwert UND Pro-Modul-Werten). Verifiziert 2026-06-06: kein Code-Pfad
-    schrieb je verteilte Werte in die Modul-IMD, Bestands-Pro-Modul-Werte sind
-    gemessen/importiert → Migration sicher.
+    1. **Signatur.** Der Feldwert entspricht (Rundungstoleranz) der Summe der
+       Pro-Quellen-Werte dieses Monats — genau das schrieb die alte Auto-Summe.
+       Weicht er ab, ist es ein gepflegtes Aggregat und bleibt stehen.
+    2. **Redundanz.** JEDE im Monat aktive PV-Quelle (pv-module +
+       balkonkraftwerk) hat einen eigenen Wert. Nur dann ist die Information
+       nach dem Leeren noch vollständig vorhanden; sonst wäre das Feld die
+       letzte Quelle und der Monat stünde danach auf `fehlt`.
+
+    A16/N44 — warum das Kriterium geschärft wurde: vorher genügte, dass für den
+    Monat IRGENDEINE pv-module/balkonkraftwerk-IMD einen Wert hat (`break` beim
+    ersten Treffer). Wer ein echtes Gesamt-Aggregat pflegt UND ein
+    Balkonkraftwerk mit eigenem Sensor hat, verlor damit das Aggregat für jeden
+    Monat mit BKW-Daten — die Dachflächen standen anschließend auf `fehlt`.
+    Der Docstring versprach dabei das Gegenteil („Feldwerte OHNE Pro-Modul-Werte
+    bleiben erhalten, z. B. JayJayX #651"); genau dieser Nutzer war der Fall,
+    der zerstört wurde.
+
+    Die alte Auto-Summe umfasste `pv-module` + `wechselrichter` +
+    `balkonkraftwerk` + `sonstiges`/Erzeuger (Git: MonatsdatenForm vor
+    `ba0d8d9d`, Zeilen 352-375). Verglichen wird hier bewusst nur gegen die
+    Quellen, deren Werte auch GELESEN werden (pv-module + balkonkraftwerk):
+    Wechselrichter- und BHKW-Werte fließen in keinen PV-Lesepfad, eine Summe,
+    die sie enthält, ist deshalb nicht redundant und bleibt stehen. Das ist die
+    sichere Richtung — Stehenlassen ist korrigierbar, Löschen nicht.
+
+    KEINE rückwirkende Reparatur: bereits geleerte Monate stellt diese Migration
+    nicht wieder her (Projekt-Doktrin — Historien-Korrekturen laufen als
+    Daten-Checker-Aktion, nie als Start-Migration). Der Daten-Checker
+    (`_check_pv_erzeugung`) weist solche Monate als Fehler aus und nennt den
+    Weg; der Wert selbst ist nicht rekonstruierbar, weil die frühere Migration
+    als rohes SQL ohne `write_with_provenance` lief (kein `old_value`).
+
+    Idempotent: nach dem Leeren ist die Zeile NULL und taucht in der Auswahl
+    nicht mehr auf; bleibende Zeilen erfüllen die Bedingungen weiterhin nicht.
     """
     import json
     from sqlalchemy import text as _text
 
     md_rows = connection.execute(_text(
-        "SELECT id, anlage_id, jahr, monat FROM monatsdaten "
+        "SELECT id, anlage_id, jahr, monat, pv_erzeugung_kwh FROM monatsdaten "
         "WHERE pv_erzeugung_kwh IS NOT NULL"
     )).fetchall()
     if not md_rows:
         return
 
-    for md_id, anlage_id, jahr, monat in md_rows:
-        imd_rows = connection.execute(_text(
-            "SELECT imd.verbrauch_daten FROM investition_monatsdaten imd "
-            "JOIN investitionen i ON i.id = imd.investition_id "
-            "WHERE i.anlage_id = :aid AND i.typ IN ('pv-module', 'balkonkraftwerk') "
-            "AND imd.jahr = :j AND imd.monat = :m"
+    def _wert(typ, vd_raw):
+        """Gelesener Pro-Quellen-Wert (None = nicht erfasst) — Keys wie `imd_typ_beitrag`."""
+        if not vd_raw:
+            return None
+        try:
+            vd = json.loads(vd_raw) if isinstance(vd_raw, str) else dict(vd_raw)
+        except (TypeError, ValueError):
+            return None
+        if not isinstance(vd, dict):
+            return None
+        wert = vd.get("pv_erzeugung_kwh")
+        if wert is None and typ == "balkonkraftwerk":
+            wert = vd.get("erzeugung_kwh")  # Legacy-Key wie get_pv_erzeugung_kwh
+        try:
+            return float(wert) if wert is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    for md_id, anlage_id, jahr, monat, feldwert in md_rows:
+        quellen = connection.execute(_text(
+            "SELECT i.typ, i.aktiv, i.anschaffungsdatum, i.stilllegungsdatum, "
+            "       imd.verbrauch_daten "
+            "FROM investitionen i "
+            "LEFT JOIN investition_monatsdaten imd "
+            "  ON imd.investition_id = i.id AND imd.jahr = :j AND imd.monat = :m "
+            "WHERE i.anlage_id = :aid AND i.typ IN ('pv-module', 'balkonkraftwerk')"
         ), {"aid": anlage_id, "j": jahr, "m": monat}).fetchall()
 
-        hat_pro_modul = False
-        for (vd_raw,) in imd_rows:
-            if not vd_raw:
-                continue
-            try:
-                vd = json.loads(vd_raw) if isinstance(vd_raw, str) else dict(vd_raw)
-            except (TypeError, ValueError):
-                continue
-            if isinstance(vd, dict) and vd.get("pv_erzeugung_kwh") is not None:
-                hat_pro_modul = True
-                break
+        werte = [
+            _wert(typ, vd_raw)
+            for typ, aktiv, anschaffung, stilllegung, vd_raw in quellen
+            if _pv_quelle_aktiv_im_monat(aktiv, anschaffung, stilllegung, jahr, monat)
+        ]
+        # Keine aktive Quelle oder eine ohne eigenen Wert → das Feld ist (auch)
+        # Träger von Information, die sonst nirgends steht. Stehen lassen.
+        if not werte or any(w is None for w in werte):
+            continue
 
-        if hat_pro_modul:
-            connection.execute(
-                _text("UPDATE monatsdaten SET pv_erzeugung_kwh = NULL WHERE id = :id"),
-                {"id": md_id},
-            )
+        summe = sum(werte)
+        # Toleranz gegen Rundung beim Speichern (0,1er-Schritte je Quelle);
+        # relativer Anteil fängt sehr große Summen ab.
+        if abs((feldwert or 0) - summe) > max(0.5, abs(summe) * 0.0005):
+            continue
+
+        connection.execute(
+            _text("UPDATE monatsdaten SET pv_erzeugung_kwh = NULL WHERE id = :id"),
+            {"id": md_id},
+        )
+
+
+def _migrate_pvgis_eine_aktive_prognose(connection) -> None:
+    """Invariante „genau eine aktive PVGIS-Prognose je Anlage" herstellen (P5/A17).
+
+    **Warum überhaupt Bestandsdaten betroffen sind:** der JSON-Backup-Import
+    (`import_export/json_operations.py`) setzte `ist_aktiv` je importierter
+    Prognose auf `pvgis_data.get("ist_aktiv", True)` — bei einem Backup, in dem
+    das Feld fehlt, wurden damit ALLE Prognosen der Anlage aktiv. Ein solcher
+    Zustand ließ danach den Daten-Checker und die Social-Karte mit HTTP 500
+    antworten und verdoppelte den SOLL-PV-Wert im Monatsbericht.
+
+    **Was hier passiert:** je Anlage bleibt die **zuletzt abgerufene** aktive
+    Prognose aktiv (`abgerufen_am DESC`, bei Gleichstand die höhere `id` — genau
+    die Reihenfolge, die der Auswahl-SoT `services/prognose_auswahl.py` liest,
+    damit Bereinigung und Lesepfad dieselbe Zeile wählen). Alle weiteren aktiven
+    werden **deaktiviert**.
+
+    **Was hier NICHT passiert:** nichts wird gelöscht (A16/N44 — eine Migration,
+    die Daten entfernt, ist nicht korrigierbar). `ist_aktiv = 0` ist über
+    „Prognose aktivieren" jederzeit rückholbar, die Prognose selbst bleibt in
+    der Historie stehen. Kein HTTP, kein externer Abruf, keine Rückrechnung
+    ([[feedback_migration_startup_kein_http]]).
+
+    Idempotent: nach dem Durchlauf hat jede Anlage höchstens eine aktive
+    Prognose, die Auswahl unten findet dann keine Anlage mehr.
+    """
+    from sqlalchemy import text as _text
+
+    mehrfach = connection.execute(_text(
+        "SELECT anlage_id FROM pvgis_prognosen WHERE ist_aktiv = 1 "
+        "GROUP BY anlage_id HAVING COUNT(*) > 1"
+    )).fetchall()
+    if not mehrfach:
+        return
+
+    for (anlage_id,) in mehrfach:
+        behalten = connection.execute(_text(
+            "SELECT id FROM pvgis_prognosen WHERE anlage_id = :aid AND ist_aktiv = 1 "
+            "ORDER BY abgerufen_am DESC, id DESC LIMIT 1"
+        ), {"aid": anlage_id}).scalar()
+        connection.execute(_text(
+            "UPDATE pvgis_prognosen SET ist_aktiv = 0 "
+            "WHERE anlage_id = :aid AND ist_aktiv = 1 AND id != :behalten"
+        ), {"aid": anlage_id, "behalten": behalten})
+        logger.info(
+            "PVGIS-Invariante hergestellt: Anlage %s hatte mehrere aktive Prognosen, "
+            "Prognose %s bleibt aktiv (zuletzt abgerufene), die übrigen wurden "
+            "deaktiviert (nicht gelöscht).",
+            anlage_id, behalten,
+        )
+
+
+def _migrate_pvgis_index_eine_aktive(connection) -> None:
+    """Partiellen Unique-Index auf „eine aktive Prognose je Anlage" nachrüsten.
+
+    Für Bestands-Datenbanken; frische DBs bekommen ihn über `create_all` aus
+    `PVGISPrognose.__table_args__`. Läuft NACH der Bereinigung oben — auf
+    verletzten Daten würde `CREATE UNIQUE INDEX` scheitern.
+
+    **Nicht blockierend:** ein Fehlschlag wird geloggt und verschluckt, statt den
+    Start zu verhindern. Der Index ist die Ursachenbehebung, die Absicherung im
+    Lesepfad steht unabhängig davon (`services/prognose_auswahl.py` führt überall
+    `LIMIT 1` mit). Eine App, die wegen eines Index nicht mehr startet, wäre der
+    schlechtere Zustand als eine, die eine Warnung schreibt.
+    """
+    from sqlalchemy import text as _text
+    from backend.models.pvgis_prognose import INDEX_EINE_AKTIVE_PROGNOSE
+
+    try:
+        connection.execute(_text(
+            f"CREATE UNIQUE INDEX IF NOT EXISTS {INDEX_EINE_AKTIVE_PROGNOSE} "
+            "ON pvgis_prognosen (anlage_id) WHERE ist_aktiv = 1"
+        ))
+    except Exception as exc:  # pragma: no cover — nur bei weiterhin verletzten Daten
+        logger.warning(
+            "Unique-Index für „eine aktive PVGIS-Prognose je Anlage“ konnte nicht "
+            "angelegt werden (%s). Die Lesepfade bleiben über den Auswahl-SoT "
+            "deterministisch; die Invariante ist aber nicht DB-seitig erzwungen.",
+            exc,
+        )
 
 
 _DEAD_STRATEGIEN = {"kwp_verteilung", "ev_quote", "cop_berechnung", "manuell"}
@@ -641,6 +799,13 @@ async def run_migrations(conn):
             for col_name, col_type in new_columns:
                 if col_name not in existing_columns:
                     connection.execute(text(f'ALTER TABLE pvgis_prognosen ADD COLUMN {col_name} {col_type}'))
+
+            # A17/P5: Invariante „genau eine aktive Prognose je Anlage".
+            # Reihenfolge ist zwingend — erst bereinigen, dann der Index, sonst
+            # scheitert `CREATE UNIQUE INDEX` auf Bestandsdaten. Beides idempotent,
+            # beides ohne Löschen (deaktivieren ≠ entfernen) und nicht blockierend.
+            _migrate_pvgis_eine_aktive_prognose(connection)
+            _migrate_pvgis_index_eine_aktive(connection)
 
         # v0.9.5+: Neue Spalten zur investitionen Tabelle (PV-Module spezifisch)
         if 'investitionen' in inspector.get_table_names():

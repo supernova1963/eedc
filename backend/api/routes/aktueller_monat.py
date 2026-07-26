@@ -22,7 +22,7 @@ from backend.core.config import HA_INTEGRATION_AVAILABLE
 from backend.models.anlage import Anlage
 from backend.models.investition import Investition, InvestitionMonatsdaten
 from backend.models.monatsdaten import Monatsdaten
-from backend.models.pvgis_prognose import PVGISPrognose, PVGISMonatsprognose
+from backend.services.prognose_auswahl import lade_aktive_monatsprognosen
 from backend.api.routes.strompreise import lade_tarife_fuer_anlage, resolve_netzbezug_preis_cent
 from backend.api.routes.connector import _calc_month_delta
 from backend.core.berechnungen import (
@@ -218,6 +218,13 @@ class AktuellerMonatResponse(BaseModel):
 
     # Finanzen (Euro)
     einspeise_erloes_euro: Optional[float] = None
+    # §51 EEG: was der Abzug gekostet hat. `None` = keine Tages-Aggregate bzw.
+    # Anlage unterliegt nicht §51; `0.0` = betroffen, aber in dem Monat keine
+    # Einspeisung zu Negativpreisen. Der Erlös oben ist bereits gekürzt — ohne
+    # diesen Ausweis bliebe die Kürzung unsichtbar (Versprechen im Anlage-
+    # Formular: „der entgangene Erlös wird im Cockpit als §51-Verlust ausgewiesen").
+    einspeisung_neg_preis_kwh: Optional[float] = None
+    nicht_vergueteter_erloes_euro: Optional[float] = None
     netzbezug_kosten_euro: Optional[float] = None
     ev_ersparnis_euro: Optional[float] = None
     netto_ertrag_euro: Optional[float] = None
@@ -838,17 +845,15 @@ async def _load_vorjahr(anlage_id: int, investitionen: list[Investition], jahr: 
 
 
 async def _load_soll_pv(anlage_id: int, monat: int, db: AsyncSession) -> Optional[float]:
-    """Lädt PVGIS SOLL-Wert für den Monat."""
-    result = await db.execute(
-        select(PVGISMonatsprognose)
-        .join(PVGISPrognose)
-        .where(
-            PVGISPrognose.anlage_id == anlage_id,
-            PVGISPrognose.ist_aktiv == True,
-            PVGISMonatsprognose.monat == monat,
-        )
-    )
-    prognosen = result.scalars().all()
+    """Lädt PVGIS SOLL-Wert für den Monat — aus der AKTIVEN Prognose (P5).
+
+    Vorher stand hier ein `JOIN` auf `ist_aktiv` **ohne `limit`** und ein `sum()`
+    darüber: bei zwei aktiven Prognosen kam der Monatswert doppelt zurück (N83).
+    Der Fehler war nicht sichtbar, weil die Summe plausibel aussah — sie war nur
+    doppelt so groß, und die SOLL/IST-Abweichung sowie die Grundlast-SOLL-Kachel
+    rechneten mit. Der Auswahl-SoT trägt das `LIMIT 1` in der Subquery.
+    """
+    prognosen = await lade_aktive_monatsprognosen(db, anlage_id, monat=monat)
     if not prognosen:
         return None
     return round(sum(p.ertrag_kwh for p in prognosen), 1)
@@ -1233,6 +1238,8 @@ async def get_aktueller_monat(
 
     # ── Finanzen ──
     einspeise_erloes = None
+    einspeisung_neg_preis = None
+    nicht_vergueteter_erloes = None
     netzbezug_kosten = None
     ev_ersparnis = None
     netto_ertrag = None
@@ -1262,6 +1269,11 @@ async def get_aktueller_monat(
                 verguetung_ct_kwh=einspeise_cent,
             )
             einspeise_erloes = round(m_erloes.erloes_euro, 2)
+            # Den Abzug mitgeben, sonst ist die Kürzung im Erlös unsichtbar.
+            # `m_neg is None` = Anlage nicht §51-pflichtig / keine Mitschrift.
+            if m_neg is not None:
+                einspeisung_neg_preis = round(m_erloes.nicht_verguetete_kwh, 1)
+                nicht_vergueteter_erloes = round(m_erloes.nicht_vergueteter_erloes_euro, 2)
         if netzbezug is not None:
             grundpreis = allgemein_tarif.grundpreis_euro_monat or 0
             netzbezug_kosten = round(
@@ -1434,7 +1446,8 @@ async def get_aktueller_monat(
         ladung_netz_total = 0.0
         imd_preis_gewichtet = 0.0
         imd_preis_kwh = 0.0
-        for imd in get_imd_for_invs(speicher_invs):
+        speicher_imds = get_imd_for_invs(speicher_invs)
+        for imd in speicher_imds:
             data = imd.verbrauch_daten or {}
             nl = get_speicher_netzladung_kwh(data)
             ladung_netz_total += nl
@@ -1442,7 +1455,10 @@ async def get_aktueller_monat(
             if nl > 0 and imd_preis is not None and imd_preis > 0:
                 imd_preis_gewichtet += nl * imd_preis
                 imd_preis_kwh += nl
-        if ladung_netz_total > 0:
+        # Sobald Speicher-Monatsdaten existieren, ist auch 0 kWh ein Ergebnis
+        # („nichts aus dem Netz geladen", Rainer-PN 2026-07-25). Nur ganz ohne
+        # IMD-Zeilen bleibt es None = „keine Daten" und die Kachel aus.
+        if speicher_imds:
             speicher_ladung_netz = round(ladung_netz_total, 2)
         speicher_imd_ladepreis = (
             imd_preis_gewichtet / imd_preis_kwh if imd_preis_kwh > 0 else None
@@ -1960,6 +1976,8 @@ async def get_aktueller_monat(
         hat_sonstiges=hat_sonstiges,
         # Finanzen
         einspeise_erloes_euro=einspeise_erloes,
+        einspeisung_neg_preis_kwh=einspeisung_neg_preis,
+        nicht_vergueteter_erloes_euro=nicht_vergueteter_erloes,
         netzbezug_kosten_euro=netzbezug_kosten,
         ev_ersparnis_euro=ev_ersparnis,
         netto_ertrag_euro=netto_ertrag,

@@ -20,7 +20,7 @@ from backend.api.deps import get_db
 from backend.models.anlage import Anlage
 from backend.models.investition import Investition, InvestitionMonatsdaten
 from backend.utils.investition_filter import aktiv_jetzt, aktiv_im_zeitraum
-from backend.models.pvgis_prognose import PVGISPrognose
+from backend.services.prognose_auswahl import lade_aktive_prognose
 from backend.models.strompreis import Strompreis
 from backend.models.monatsdaten import Monatsdaten
 from backend.api.routes.strompreise import lade_tarife_fuer_anlage, resolve_netzbezug_preis_cent
@@ -67,7 +67,7 @@ from backend.services.wetter.utils import wetter_symbol_aus_tag
 from backend.services.wetter.pvgis import get_pvgis_tmy_defaults
 from backend.services.wetter.models import WETTER_MODELLE
 from backend.services.prognose_service import berechne_pv_ertrag_tag
-from backend.services.pv_orientation import resolve_system_losses
+from backend.services.pv_orientation import get_pv_kwp, resolve_system_losses
 
 logger = logging.getLogger(__name__)
 
@@ -335,9 +335,13 @@ async def _lade_anlage_mit_pv(
     pv_module = [i for i in alle_pv if i.typ == "pv-module"]
     balkonkraftwerke = [i for i in alle_pv if i.typ == "balkonkraftwerk"]
 
-    anlagenleistung_kwp = (
-        sum(m.leistung_kwp or 0 for m in pv_module)
-        + sum(b.leistung_kwp or 0 for b in balkonkraftwerke)
+    # N36/P3: kWp über den SoT-Helper (Spalte → `parameter.kwp`), nicht über die
+    # Spalte allein. Ein Modul mit kWp nur im `parameter`-JSON zählte sonst als
+    # 0 — die Aussichten rechneten mit einer Teilsumme, und der
+    # `or anlage.leistung_kwp`-Fallback darunter greift nur bei Summe 0, nicht
+    # bei gemischter Pflege.
+    anlagenleistung_kwp = sum(
+        get_pv_kwp(i) for i in (*pv_module, *balkonkraftwerke)
     )
     if anlagenleistung_kwp <= 0:
         anlagenleistung_kwp = anlage.leistung_kwp or 0
@@ -375,14 +379,8 @@ async def get_kurzfrist_prognose(
             detail="Keine PV-Leistung konfiguriert. Bitte PV-Module in Investitionen anlegen."
         )
 
-    # Systemverluste aus PVGIS (mit limit(1) falls mehrere aktiv)
-    result = await db.execute(
-        select(PVGISPrognose).where(
-            PVGISPrognose.anlage_id == anlage_id,
-            PVGISPrognose.ist_aktiv == True
-        ).order_by(PVGISPrognose.abgerufen_am.desc()).limit(1)
-    )
-    pvgis = result.scalar_one_or_none()
+    # Systemverluste aus der aktiven PVGIS-Prognose (Auswahl-SoT, P5)
+    pvgis = await lade_aktive_prognose(db, anlage_id)
     system_losses = resolve_system_losses(pvgis)
 
     # Wettervorhersage abrufen (Wettermodell der Anlage berücksichtigen)
@@ -471,14 +469,8 @@ async def get_langfrist_prognose(
     if anlagenleistung_kwp <= 0:
         raise bad_request("Keine PV-Leistung konfiguriert")
 
-    # PVGIS-Prognose (mit limit(1) falls mehrere aktiv)
-    result = await db.execute(
-        select(PVGISPrognose).where(
-            PVGISPrognose.anlage_id == anlage_id,
-            PVGISPrognose.ist_aktiv == True
-        ).order_by(PVGISPrognose.abgerufen_am.desc()).limit(1)
-    )
-    pvgis = result.scalar_one_or_none()
+    # Aktive PVGIS-Prognose (Auswahl-SoT, P5)
+    pvgis = await lade_aktive_prognose(db, anlage_id)
 
     pvgis_monatswerte = {}
     if pvgis and pvgis.monatswerte:
@@ -605,14 +597,8 @@ async def get_trend_analyse(
         db, anlage_id, require_coords=False
     )
 
-    # PVGIS (mit limit(1) falls mehrere aktiv)
-    result = await db.execute(
-        select(PVGISPrognose).where(
-            PVGISPrognose.anlage_id == anlage_id,
-            PVGISPrognose.ist_aktiv == True
-        ).order_by(PVGISPrognose.abgerufen_am.desc()).limit(1)
-    )
-    pvgis = result.scalar_one_or_none()
+    # Aktive PVGIS-Prognose (Auswahl-SoT, P5)
+    pvgis = await lade_aktive_prognose(db, anlage_id)
     pvgis_jahresertrag = pvgis.jahresertrag_kwh if pvgis else 0
 
     # PVGIS Monatswerte für TMY-Auffüllung
@@ -933,9 +919,9 @@ async def get_finanz_prognose(
     _heute = _date.today()
     aktuelle_pv_module = [m for m in pv_module if m.ist_aktiv_an(_heute)]
     aktuelle_bkw = [b for b in balkonkraftwerke if b.ist_aktiv_an(_heute)]
-    anlagenleistung_kwp = (
-        sum(m.leistung_kwp or 0 for m in aktuelle_pv_module)
-        + sum(b.leistung_kwp or 0 for b in aktuelle_bkw)
+    # N36/P3: kWp über den SoT-Helper — wie in `_lade_anlage_mit_pv`.
+    anlagenleistung_kwp = sum(
+        get_pv_kwp(i) for i in (*aktuelle_pv_module, *aktuelle_bkw)
     ) or anlage.leistung_kwp or 0
 
     # =====================================================================
@@ -1112,15 +1098,9 @@ async def get_finanz_prognose(
     wp_strom_monat_avg = gesamt_wp_strom / anzahl_monate_hist if waermepumpen else 0
 
     # =====================================================================
-    # PVGIS-PROGNOSE (mit limit(1) falls mehrere aktiv)
+    # PVGIS-PROGNOSE — die aktive (Auswahl-SoT, P5)
     # =====================================================================
-    result = await db.execute(
-        select(PVGISPrognose).where(
-            PVGISPrognose.anlage_id == anlage_id,
-            PVGISPrognose.ist_aktiv == True
-        ).order_by(PVGISPrognose.abgerufen_am.desc()).limit(1)
-    )
-    pvgis = result.scalar_one_or_none()
+    pvgis = await lade_aktive_prognose(db, anlage_id)
 
     pvgis_monatswerte = {}
     if pvgis and pvgis.monatswerte:

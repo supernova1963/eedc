@@ -13,11 +13,13 @@ import {
   ComposedChart, Line, Area, LabelList
 } from 'recharts'
 import { Sun, TrendingUp, TrendingDown, AlertTriangle, Calendar, BarChart3 } from 'lucide-react'
-import { Card, LoadingSpinner, Alert, KPICard, ChartLegende, Table, TableHead, TableBody } from '../ui'
+import { Card, LoadingSpinner, Alert, KPICard, ChartLegende, Table, TableHead, TableBody, Select } from '../ui'
 import { ZELLE, KOPF_ZELLE } from '../ui/tabelleMasse'
 import ChartTooltip from '../ui/ChartTooltip'
 import { useLegendenToggle } from '../../hooks'
 import { Parkbar } from '../park'
+import { HerkunftZeile } from '../blocks'
+import { pvVerteiltHerkunft } from '../../lib/pvHerkunft'
 import { cockpitApi, type PVStringsGesamtlaufzeitResponse } from '../../api/cockpit'
 import { SOLL_IST_COLORS, STRING_COLORS, CHART_HOVER_CURSOR, PROGNOSE_DASH, xAchse, achsenEinheit, ACHSEN_MARGIN_TOP, fmtZahl } from '../../lib'
 
@@ -195,6 +197,7 @@ export function PVStringVergleich({ anlageId, embed = false, melde }: Props) {
     if (loading || error || !data || !data.strings || data.strings.length === 0 || !data.hat_prognose) return KEINE_IDS
     const out: string[] = []
     if (data.prognose_warnung) out.push('info:pv-warnung')
+    if (data.ist_quelle === 'verteilt' || data.vergleich_hinweis) out.push('info:pv-herkunft')
     out.push('kpi:pv-soll', 'kpi:pv-ist', 'kpi:pv-abweichung', 'kpi:pv-zeitraum')
     if (data.strings.length > 1 && (data.bester_string || data.schlechtester_string)) out.push('badge:pv-best-schlecht')
     if (embed ? moduleVergleichData.length > 0 : jahresChartData.length > 0) out.push('chart:pv-soll-ist')
@@ -268,6 +271,17 @@ export function PVStringVergleich({ anlageId, embed = false, melde }: Props) {
             <span>{data.prognose_warnung}</span>
           </div>
         </Alert>
+        </Parkbar>
+      )}
+
+      {/* Herkunft der IST-Werte (A4/b1): wer nur einen Gesamt-Sensor hat, sieht
+          hier seit v4.0.1 die nach kWp verteilten Werte statt einer leeren Sicht —
+          das muss dranstehen. Der Erklärsatz kommt vom Backend
+          (`vergleich_hinweis`, enthält auch das Ranking-Verbot), sonst der
+          Wortlaut-SoT aus `lib/pvHerkunft`. Dieselbe Zeile wie am Verlauf-Chart. */}
+      {(data.ist_quelle === 'verteilt' || data.vergleich_hinweis) && (
+        <Parkbar id="info:pv-herkunft" titel="Herkunft der Werte">
+          <HerkunftZeile herkunft={pvVerteiltHerkunft('IST je Modul', data.vergleich_hinweis)} />
         </Parkbar>
       )}
 
@@ -391,14 +405,16 @@ export function PVStringVergleich({ anlageId, embed = false, melde }: Props) {
           {embed && data.strings.length > 1 && (
             <div className="flex items-center gap-2">
               <label className="text-xs text-gray-500 dark:text-gray-400">Modul:</label>
-              <select
+              <Select
+                steuer
+                aria-label="Modul"
                 value={saisonModul}
                 onChange={(e) => setSaisonModul(e.target.value)}
-                className="min-h-[36px] rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm px-2 text-gray-700 dark:text-gray-300"
-              >
-                <option value="gesamt">Gesamt (alle Module)</option>
-                {data.strings.map(s => <option key={s.investition_id} value={String(s.investition_id)}>{s.bezeichnung}</option>)}
-              </select>
+                options={[
+                  { value: 'gesamt', label: 'Gesamt (alle Module)' },
+                  ...data.strings.map(s => ({ value: String(s.investition_id), label: s.bezeichnung })),
+                ]}
+              />
             </div>
           )}
           <div className="h-64">

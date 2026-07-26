@@ -13,7 +13,8 @@ from backend.api.deps import get_db
 from backend.models.monatsdaten import Monatsdaten
 from backend.models.anlage import Anlage
 from backend.models.investition import Investition, InvestitionMonatsdaten
-from backend.models.pvgis_prognose import PVGISPrognose as PVGISPrognoseModel
+from backend.services.prognose_auswahl import lade_aktive_prognose
+from backend.services.pv_orientation import get_pv_kwp
 from backend.api.routes.strompreise import lade_tarife_fuer_anlage, resolve_netzbezug_preis_cent
 from backend.core.berechnungen import (
     autarkie_prozent,
@@ -88,18 +89,23 @@ async def get_share_text(
                 pass
         return inv.ausrichtung or "Süd"
 
+    # P1 (N53): Der Guard vergleicht die Ausrichtungs-Labels aller Module und
+    # zeigt die Ausrichtung nur, wenn sie übereinstimmen — genau die Form, die
+    # P1 verlangt. Die daneben aus `pv_module[0].neigung_grad` gezogene Neigung
+    # ist **ersatzlos entfallen**: sie war eine Aussage aus EINER Investition
+    # ohne eigenen Guard (zwei Module beide Süd, eines 30°, eines 15°) — und in
+    # keiner Karten-Variante ausgegeben (tote lokale Variable). Kommt eine
+    # Neigungs-Zeile dazu, braucht sie ihren eigenen Übereinstimmungs-Beweis.
     ausrichtung_anzeigen: str | None = None
-    neigung = 30
-    if len(pv_module) == 1:
-        ausrichtung_anzeigen = _ausrichtung_label(pv_module[0])
-        neigung = pv_module[0].neigung_grad if pv_module[0].neigung_grad is not None else 30
-    elif len(pv_module) > 1:
-        labels = [_ausrichtung_label(m) for m in pv_module]
-        if len(set(labels)) == 1:
-            ausrichtung_anzeigen = labels[0]
-            neigung = pv_module[0].neigung_grad if pv_module[0].neigung_grad is not None else 30
+    if pv_module:
+        labels = {_ausrichtung_label(m) for m in pv_module}
+        if len(labels) == 1:
+            ausrichtung_anzeigen = next(iter(labels))
 
-    kwp = sum(i.leistung_kwp or 0 for i in investitionen if i.typ == "pv-module")
+    # kWp über den SoT-Helper (Spalte → `parameter.kwp`): mit dem direkten
+    # Spalten-Zugriff fehlte ein nur im `parameter` gepflegtes Modul in der
+    # Summe, und der daraus gerechnete spez. Ertrag wurde zu groß.
+    kwp = sum(get_pv_kwp(i) for i in investitionen if i.typ == "pv-module")
     for i in investitionen:
         if i.typ == "balkonkraftwerk":
             kwp += (i.parameter or {}).get("leistung_wp", 0) / 1000
@@ -205,14 +211,11 @@ async def get_share_text(
     netzbezug_cent = resolve_netzbezug_preis_cent(md, allgemein_tarif.netzbezug_arbeitspreis_cent_kwh if allgemein_tarif else NETZBEZUG_DEFAULT_CENT)
     netto_ertrag = (einspeisung * einspeise_cent + eigenverbrauch * netzbezug_cent) / 100
 
+    # Aktive Prognose über den Auswahl-SoT. Vorher `scalar_one_or_none()` ohne
+    # `limit`: zwei aktive Prognosen → `MultipleResultsFound` → HTTP 500 statt
+    # der Karte (N85/P5).
     prognose_kwh = None
-    pvgis_result = await db.execute(
-        select(PVGISPrognoseModel).where(
-            PVGISPrognoseModel.anlage_id == anlage_id,
-            PVGISPrognoseModel.ist_aktiv == True,
-        )
-    )
-    pvgis = pvgis_result.scalar_one_or_none()
+    pvgis = await lade_aktive_prognose(db, anlage_id)
     if pvgis and pvgis.monatswerte:
         for mw in pvgis.monatswerte:
             if mw.get("monat") == monat:

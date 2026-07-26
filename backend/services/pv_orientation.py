@@ -27,10 +27,10 @@ from typing import Any
 # Mapping für Ausrichtung-Strings → Azimut-Grad (EEDC/PVGIS-Konvention:
 # 0=Süd, -90=Ost, 90=West, 180/-180=Nord).
 AUSRICHTUNG_MAP = {
-    "sued": 0, "süd": 0, "s": 0,
-    "ost": -90, "o": -90, "e": -90,
+    "sued": 0, "süd": 0, "s": 0, "south": 0,
+    "ost": -90, "o": -90, "e": -90, "east": -90,
     "west": 90, "w": 90,
-    "nord": 180, "n": 180,
+    "nord": 180, "n": 180, "north": 180,
     "suedost": -45, "südost": -45, "so": -45, "se": -45,
     "suedwest": 45, "südwest": 45, "sw": 45,
     "nordost": -135, "no": -135, "ne": -135,
@@ -39,15 +39,28 @@ AUSRICHTUNG_MAP = {
 
 
 def get_pv_kwp(inv: Any) -> float:
-    """Leistung in kWp. Priorität: Top-Level-Spalte → parameter.kwp → 0."""
+    """Leistung in kWp. Priorität: Top-Level-Spalte → parameter.kwp →
+    parameter.leistung_kwp → 0.
+
+    Die drei Konventionen sind historisch (Befund-Sweep §4.1): die Spalte ist
+    SoT, `kwp` ist der Legacy-Key dieses Helpers, `leistung_kwp` der des
+    Verteilungs-Helpers `utils.investition_value.get_inv_value`. Dass beide
+    Helper verschiedene JSON-Keys lasen, war der Nährboden für N59 — deshalb
+    liest dieser hier jetzt BEIDE. `get_pv_kwp ⊇ get_inv_value("leistung_kwp")`:
+    wer eine kWp gepflegt hat, wird von beiden Wegen gefunden.
+    """
     direct = getattr(inv, "leistung_kwp", None)
     if direct:
         return float(direct)
     params = getattr(inv, "parameter", None) or {}
-    try:
-        return float(params.get("kwp") or 0)
-    except (TypeError, ValueError):
-        return 0.0
+    for key in ("kwp", "leistung_kwp"):
+        try:
+            wert = float(params.get(key) or 0)
+        except (TypeError, ValueError):
+            continue
+        if wert:
+            return wert
+    return 0.0
 
 
 def get_pv_neigung(inv: Any, default: int = 35) -> int:

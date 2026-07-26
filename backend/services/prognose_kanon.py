@@ -23,6 +23,9 @@ Kanon-Rechenweg (abgenommen):
    Invariante ``tageswert == Σ Export-Slots``.
 4. **VM/NM**-Split an Solar-Noon; **rest_heute**/**ist_bisher**/
    **heute_rollend** aus den korrigierten Slots + ``TagesEnergieProfil``.
+5. **Bestandsfilter je Prognosetag** (N31): Anschaffungs-/Stilllegungsdatum
+   werden gegen das jeweilige TAGESDATUM geprüft, nicht gegen heute — ein am
+   Tag +5 stillgelegter String zählt ab Tag +5 nicht mehr mit.
 
 Konsumenten (alle über diesen Service → per Konstruktion derselbe Wert):
 ``eedc_prognose_service`` (dünner Adapter), ``live_wetter`` (Anzeige +
@@ -50,7 +53,7 @@ from backend.core.berechnungen.prognose_korrektur import (
     korrigiere_tagesprofil,
 )
 from backend.models.investition import Investition
-from backend.models.pvgis_prognose import PVGISPrognose
+from backend.services.prognose_auswahl import lade_aktive_prognose
 from backend.models.tages_energie_profil import TagesEnergieProfil
 from backend.services import solar_forecast_service as sfs
 from backend.services.korrekturprofil_lookup import korrekturfaktoren_fuer_tag
@@ -88,13 +91,39 @@ class KanonPrognose:
     """Kanonische Prognose über mehrere Tage. ``tage[i]`` = heute + i Tage."""
 
     tage: list[Optional[KanonTag]]
-    rest_heute_kwh: Optional[float]    # Σ korrigierte Slots der Reststunden
+    rest_heute_kwh: Optional[float]    # laufende Stunde anteilig + Σ Slots danach (#339)
     ist_bisher_kwh: Optional[float]    # IST heute bis jetzt (TagesEnergieProfil)
     heute_rollend_kwh: Optional[float]  # ist_bisher + rest_heute
     skalar_fallback: Optional[float]   # Legacy-Lernfaktor (Diagnose/Fallback)
 
 
-async def _aktive_pv_invs(db, anlage, heute: date) -> list[Investition]:
+# Untergrenze des Kanon-Horizonts. Der OpenMeteo-Cache-Key enthält `days`
+# (`gti:lat:lon:neigung:ausrichtung:days:model`) — heute/morgen/übermorgen
+# treffen damit nur dann DENSELBEN Snapshot wie Prognosen-Vergleich, HA-Export
+# und Live, wenn alle mit demselben `days` abrufen. 4 ist dieser gemeinsame
+# Nenner (MQTT/Vergleich/Live rufen fix `days=4`).
+KANON_MIN_DAYS = 4
+
+
+def kanon_days(horizont_tage: int) -> int:
+    """``days`` für ``kanon_tagesprognose`` aus dem gewünschten Horizont.
+
+    EINE Horizont-Formel für alle Aufrufer mit variablem Ziel (Tagesprognose-
+    Datumspicker, ``/solar-prognose?tage=N``): mindestens ``KANON_MIN_DAYS``,
+    darüber der angefragte Horizont. OpenMeteo deckelt selbst bei 16
+    (``fetch_gti_forecast``), der Picker erlaubt +14 → maximal 15.
+    """
+    return max(int(horizont_tage), KANON_MIN_DAYS)
+
+
+async def _pv_invs_im_horizont(db, anlage, von: date, bis: date) -> list[Investition]:
+    """PV-/BKW-Investitionen, die im Horizont [von, bis] **irgendwann** aktiv sind.
+
+    Obermenge für den Fan-out; die tagesgenaue Gewichtung passiert danach über
+    ``ist_aktiv_an`` je Prognosetag (N31). Vorher filterte der Kanon gegen HEUTE
+    und ignorierte das Anschaffungsdatum — ein am Zieltag bereits stillgelegter
+    (oder erst später angeschaffter) String zählte im ganzen Horizont mit.
+    """
     res = await db.execute(
         select(Investition).where(
             Investition.anlage_id == anlage.id,
@@ -102,10 +131,51 @@ async def _aktive_pv_invs(db, anlage, heute: date) -> list[Investition]:
             Investition.aktiv.is_(True),
         )
     )
-    return [
-        i for i in res.scalars().all()
-        if not i.stilllegungsdatum or i.stilllegungsdatum >= heute
-    ]
+    return [i for i in res.scalars().all() if i.ist_aktiv_im_zeitraum(von, bis)]
+
+
+def _tages_gewichte(
+    invs: list[Investition],
+    gruppen: list[Orientierungsgruppe],
+    tage: list[date],
+) -> Optional[list[list[float]]]:
+    """kWp-Anteil je (Tag, Orientierungsgruppe) — ``None``, wenn durchgehend 1.
+
+    Hintergrund (N31): OpenMeteo wird EINMAL je Orientierungsgruppe über den
+    ganzen Horizont abgerufen; wechselt der Bestand innerhalb des Horizonts
+    (Anschaffung/Stilllegung), muss der Ertrag dieser Gruppe pro Tag auf die an
+    diesem Tag aktive kWp heruntergewichtet werden. Das ist exakt äquivalent zu
+    einem eigenen Abruf mit kleinerer kWp: ``berechne_pv_ertrag`` ist strikt
+    linear in kWp (kWp ist reiner Multiplikator; Temperatur-/Schnee-Korrektur
+    hängen nicht davon ab).
+
+    ``None`` heißt „kein Bestandswechsel im Horizont" — der Normalfall läuft
+    dann rechnerisch unverändert (keine zusätzliche Multiplikation, keine
+    Rundungsdrift gegenüber vorher).
+    """
+    if not invs or not gruppen:
+        return None
+    if not any(
+        (i.anschaffungsdatum and i.anschaffungsdatum > tage[0])
+        or (i.stilllegungsdatum and i.stilllegungsdatum < tage[-1])
+        for i in invs
+    ):
+        return None
+
+    keys = [(g.neigung, g.ausrichtung) for g in gruppen]
+    gewichte: list[list[float]] = []
+    for tag in tage:
+        # Bewusst über die SoT-Gruppierung, damit die kWp-Ermittlung (Spalte →
+        # parameter-JSON → Default) dieselbe ist wie beim Fan-out.
+        kwp_am_tag = {
+            (g.neigung, g.ausrichtung): g.kwp
+            for g in orientierungs_gruppen([i for i in invs if i.ist_aktiv_an(tag)])
+        }
+        gewichte.append([
+            (kwp_am_tag.get(k, 0.0) / g.kwp) if g.kwp else 0.0
+            for k, g in zip(keys, gruppen)
+        ])
+    return gewichte
 
 
 async def kanon_tagesprognose(
@@ -124,8 +194,12 @@ async def kanon_tagesprognose(
         return None
 
     heute = date.today()
-    invs = await _aktive_pv_invs(db, anlage, heute)
+    tagesdaten = [heute + timedelta(days=o) for o in range(days)]
+    invs = await _pv_invs_im_horizont(db, anlage, tagesdaten[0], tagesdaten[-1])
     gruppen = orientierungs_gruppen(invs)
+    # N31: kWp-Gewicht je (Tag, Gruppe); None = Bestand ändert sich im Horizont
+    # nicht (Normalfall → Rechnung bleibt bitgleich zu vorher).
+    gewichte = _tages_gewichte(invs, gruppen, tagesdaten)
 
     if not gruppen:
         # Keine Modul-Orientierung gepflegt → eine Default-Gruppe aus der
@@ -136,13 +210,7 @@ async def kanon_tagesprognose(
             return None
         gruppen = [Orientierungsgruppe(neigung=35, ausrichtung=0, kwp=kwp)]
 
-    pvgis_res = await db.execute(
-        select(PVGISPrognose).where(
-            PVGISPrognose.anlage_id == anlage.id,
-            PVGISPrognose.ist_aktiv == True,  # noqa: E712 (SQLAlchemy-Vergleich)
-        ).order_by(PVGISPrognose.abgerufen_am.desc()).limit(1)
-    )
-    system_losses = resolve_system_losses(pvgis_res.scalar_one_or_none())
+    system_losses = resolve_system_losses(await lade_aktive_prognose(db, anlage.id))
 
     # Fan-out: pro Orientierungsgruppe ein get_solar_prognose (eigener Cache-
     # Eintrag, parallel). Aufruf über das Modul (sfs.) — Monkeypatch-fähig.
@@ -178,7 +246,7 @@ async def kanon_tagesprognose(
 
     tage: list[Optional[KanonTag]] = []
     for offset in range(days):
-        datum = heute + timedelta(days=offset)
+        datum = tagesdaten[offset]
         datum_iso = datum.isoformat()
 
         om_slots = [0.0] * 24
@@ -192,12 +260,16 @@ async def kanon_tagesprognose(
             if tag is None:
                 continue
             groups_present += 1
-            pv_ertrag_sum += getattr(tag, "pv_ertrag_kwh", 0.0) or 0.0
+            # N31: Anteil der an DIESEM Tag aktiven kWp der Gruppe (1.0, wenn
+            # sich im Horizont nichts ändert). Ein Faktor 0 ist kein fehlender
+            # Tag — die Gruppe hat an diesem Tag legitim keinen Ertrag.
+            gew = gewichte[offset][grp_idx] if gewichte is not None else 1.0
+            pv_ertrag_sum += (getattr(tag, "pv_ertrag_kwh", 0.0) or 0.0) * gew
             stunden_kw = getattr(tag, "stunden_kw", None)
             if stunden_kw and any(v for v in stunden_kw):
                 has_hourly = True
                 for h in range(min(24, len(stunden_kw))):
-                    om_slots[h] += stunden_kw[h] or 0.0
+                    om_slots[h] += (stunden_kw[h] or 0.0) * gew
             # Wetter ist standort- (nicht orientierungs-)abhängig → erste
             # liefernde Gruppe genügt für die Kaskaden-Klassifikation.
             if wetter_bew is None:
@@ -257,7 +329,16 @@ async def kanon_tagesprognose(
         from backend.services.prognose_adapter import ist_profil
         now = datetime.now(_BERLIN_TZ)
         slots = heute_tag.profil.stunden_kwh
-        rest_heute = round(sum(slots[h] for h in range(now.hour + 1, 24)), 1)
+        # #339: laufende Stunde anteilig nach verstrichenen Minuten. Backward-
+        # Konvention (#144): Slot N = Energie [N-1, N), also ist slots[now.hour]
+        # bereits abgelaufen und slots[now.hour + 1] die laufende Stunde. Ohne den
+        # frac-Term sinkt der Rest nur einmal je Stunde in EINEM Sprung (bei
+        # kleinen Anlagen 5–8 kWh) statt gleichmäßig.
+        frac = 1.0 - now.minute / 60.0
+        laufend = frac * slots[now.hour + 1] if now.hour + 1 < len(slots) else 0.0
+        rest_heute = round(
+            laufend + sum(slots[h] for h in range(now.hour + 2, len(slots))), 1
+        )
         ist_res = await db.execute(
             select(TagesEnergieProfil).where(
                 TagesEnergieProfil.anlage_id == anlage.id,
