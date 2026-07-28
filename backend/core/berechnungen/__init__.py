@@ -34,6 +34,7 @@ Geplant (step-by-step, wenn Konsumenten angefasst werden):
 from backend.core.berechnungen.alternativkosten import (
     berechne_bkw_alternativkosten_ersparnis,
     berechne_wp_alternativkosten_ersparnis,
+    alter_wirkungsgrad,
     gas_kosten_altanlage,
 )
 from backend.core.berechnungen.co2_amortisation import (
@@ -153,6 +154,7 @@ from backend.core.berechnungen.speicher import (
     MonatsEffizienz,
     gleitende_effizienz,
     speicher_effizienz_prozent,
+    vollzyklen,
 )
 from backend.core.berechnungen.speicher_simulation import (
     SpeicherSimErgebnis,
@@ -193,6 +195,7 @@ __all__ = [
     "bilanz_aus_stundenrows",
     "berechne_bkw_alternativkosten_ersparnis",
     "berechne_wp_alternativkosten_ersparnis",
+    "alter_wirkungsgrad",
     "gas_kosten_altanlage",
     "QUELLE_OVERRIDE",
     "QUELLE_DEFAULT",
@@ -270,6 +273,7 @@ __all__ = [
     "MonatsEffizienz",
     "gleitende_effizienz",
     "speicher_effizienz_prozent",
+    "vollzyklen",
     "SPEICHER_IST_MIN_MONATE",
     "SOC_DRIFT_SCHWELLE_PROZENTPUNKTE",
     "ETA_DEGRADATION_SCHWELLE_PROZENTPUNKTE",

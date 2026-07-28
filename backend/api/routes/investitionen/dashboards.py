@@ -28,6 +28,12 @@ from backend.api.routes.strompreise import (
     resolve_strompreis_for_komponente,
 )
 from backend.utils.sonstige_positionen import berechne_sonstige_summen
+from backend.core.investition_kennwerte import (
+    ANZAHL_LESE_DEFAULT,
+    get_bkw_kwp,
+    get_speicher_kapazitaet_kwh,
+    get_speicher_nutzbare_kapazitaet_kwh,
+)
 from backend.core.investition_parameter import (
     PARAM_SPEICHER,
     PARAM_SPEICHER_DEFAULTS,
@@ -77,6 +83,7 @@ from backend.core.berechnungen import (
     speicher_effizienz_prozent,
     spezifischer_ertrag_kwh_kwp,
     summe_graue_last,
+    vollzyklen as berechne_vollzyklen,
 )
 from backend.api.routes.investitionen.crud import InvestitionResponse
 
@@ -821,11 +828,22 @@ async def get_speicher_dashboard(
                 f"{durchsatz}"
             )
 
-        # Zyklen (basierend auf Kapazität)
+        # Vollzyklen über den Layer-SoT — ENTLADUNG ÷ Kapazität (Kanon seit
+        # 2026-07-28). Vorher stand hier die Ladung, während der HA-Sensor
+        # schon die Entladung nahm: zwei Zahlen unter demselben Namen.
         params = speicher.parameter or {}
-        kapazitaet = params.get(PARAM_SPEICHER["KAPAZITAET_KWH"], 10)
+        # N127: BRUTTO-Kapazität über den SoT-Helper, ohne Default. Hier stand
+        # `.get(…, 10)` — ein Speicher ohne gepflegte Kapazität bekam still
+        # 10 kWh und daraus eine Zyklenzahl, die es nie gab. Ohne Kapazität
+        # gibt es keine Zyklenzahl: `None` („unbekannt"), nicht 0 („nie
+        # zyklisiert"). Bei gepflegter Kapazität bleibt der bisherige
+        # 0-Ersatz für „keine Entladung" unverändert.
+        kapazitaet = get_speicher_kapazitaet_kwh(speicher)
         arbitrage_faehig = params.get(PARAM_SPEICHER["ARBITRAGE_FAEHIG"], PARAM_SPEICHER_DEFAULTS["arbitrage_faehig"])
-        vollzyklen = gesamt_ladung / kapazitaet if kapazitaet > 0 else 0
+        vollzyklen = (
+            (berechne_vollzyklen(gesamt_entladung, kapazitaet) or 0)
+            if kapazitaet is not None else None
+        )
 
         # Etappe C (#264): SoC-korrigierter η-IST pro Speicher.
         # aggregiere_speicher_ist als SoT-Helper statt Parallel-Summe.
@@ -836,10 +854,9 @@ async def get_speicher_dashboard(
                     [md.verbrauch_daten or {} for md in monatsdaten]
                 )
                 if ist_agg.jahres_faktor > 0:
-                    nutzbar = params.get(
-                        PARAM_SPEICHER["NUTZBARE_KAPAZITAET_KWH"],
-                        params.get(PARAM_SPEICHER["KAPAZITAET_KWH"], 0),
-                    ) or 0
+                    # A31-2: netto mit stillem Brutto-Fallback über den SoT-
+                    # Helper (bisher inline). Identisches Verhalten.
+                    nutzbar = get_speicher_nutzbare_kapazitaet_kwh(speicher) or 0
                     eta_ist = await berechne_ist_wirkungsgrad(
                         db, anlage_id=anlage_id, von=periode_von, bis=periode_bis,
                         ladung_kwh=ist_agg.ladung_kwh_jahr / ist_agg.jahres_faktor,
@@ -865,9 +882,16 @@ async def get_speicher_dashboard(
             'gesamt_ladung_kwh': round(gesamt_ladung, 1),
             'gesamt_entladung_kwh': round(gesamt_entladung, 1),
             'effizienz_prozent': round(effizienz, 1),
-            'vollzyklen': round(vollzyklen, 1),
-            'zyklen_pro_monat': round(vollzyklen / len(monatsdaten), 1) if monatsdaten else 0,
+            'vollzyklen': round(vollzyklen, 1) if vollzyklen is not None else None,
+            'zyklen_pro_monat': (
+                (round(vollzyklen / len(monatsdaten), 1) if monatsdaten else 0)
+                if vollzyklen is not None else None
+            ),
             'kapazitaet_kwh': kapazitaet,
+            # P4: die fehlende Kapazität sagt sich selbst, statt als 0 oder als
+            # erfundene 10 durchzulaufen (N127). Das Frontend hängt daraus einen
+            # Hinweis in das bestehende `hinweise`-Array des Speicher-Geräts.
+            'kapazitaet_fehlt': kapazitaet is None,
             'ersparnis_euro': round(ersparnis, 2),
             'anzahl_monate': len(monatsdaten),
             # Arbitrage-Daten
@@ -1181,12 +1205,17 @@ async def get_balkonkraftwerk_dashboard(
         # Parameter
         params = bkw.parameter or {}
         leistung_wp = params.get('leistung_wp', 0)
-        anzahl = params.get('anzahl', 2)
+        # Lese-Default 1 (`ANZAHL_LESE_DEFAULT`), nicht die Formular-Vorbelegung 2:
+        # ein BKW ohne gepflegte `anzahl` wurde hier mit DOPPELTER Leistung und
+        # damit halbem spez. Ertrag ausgewiesen (N-D).
+        anzahl = params.get('anzahl') or ANZAHL_LESE_DEFAULT
         hat_speicher = params.get('hat_speicher', False)
         speicher_kapazitaet = params.get('speicher_kapazitaet_wh', 0)
 
-        # Berechnungen
-        gesamt_leistung_wp = leistung_wp * anzahl if leistung_wp else (bkw.leistung_kwp or 0) * 1000
+        # Berechnungen — kWp über den SoT-Helper (ADR-002/P3-a). Die frühere
+        # Formel hatte die Priorität UMGEKEHRT (`parameter` vor Spalte) und
+        # ignorierte damit den vom Formular gepflegten Spaltenwert.
+        gesamt_leistung_wp = get_bkw_kwp(bkw) * 1000
 
         # Einspeisung berechnen falls nicht explizit erfasst
         # Einspeisung = Erzeugung - Eigenverbrauch (unvergütet ins Netz)

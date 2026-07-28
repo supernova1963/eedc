@@ -25,6 +25,7 @@ from backend.core.berechnungen import (
     erzeugung_hinter_zaehler_kwh,
     imd_typ_beitrag,
     spezifischer_ertrag_kwh_kwp,
+    vollzyklen as berechne_vollzyklen,
 )
 from backend.services.einspeise_erloes_service import get_neg_preis_einspeisung_monat
 from backend.utils.sonstige_positionen import (
@@ -32,6 +33,7 @@ from backend.utils.sonstige_positionen import (
     berechne_md_sonstige_summen,
 )
 from backend.core.field_definitions import get_wp_strom_kwh
+from backend.core.investition_kennwerte import get_speicher_kapazitaet_kwh
 from backend.core.investition_parameter import ist_dienstlich
 from backend.services.eauto_wirtschaftlichkeit import get_emob_heimladung_canonical
 from backend.core.calculations import (
@@ -46,7 +48,7 @@ from backend.models.anlage import Anlage
 from backend.models.investition import Investition, InvestitionMonatsdaten
 from backend.models.monatsdaten import Monatsdaten
 from backend.services.prognose_auswahl import lade_aktive_prognose
-from backend.services.pv_orientation import get_pv_kwp
+from backend.core.investition_kennwerte import get_erzeuger_kwp, get_pv_kwp
 from backend.models.strompreis import Strompreis
 
 from ..charts import autarkie_chart, energie_fluss_chart, pv_erzeugung_chart
@@ -123,10 +125,12 @@ async def build_jahresbericht_context(
     )
     hat_bkw = any(i.typ == "balkonkraftwerk" for i in investitionen)
 
+    # BRUTTO-Kapazität über den SoT-Helper (ADR-002/P3-a). `or 0`, weil ein
+    # ungepflegter Speicher `None` liefert und die Summe der übrigen weiterläuft.
     speicher_kapazitaet = 0.0
     for inv in investitionen:
         if inv.typ == "speicher":
-            speicher_kapazitaet += (inv.parameter or {}).get("kapazitaet_kwh", 0) or 0
+            speicher_kapazitaet += get_speicher_kapazitaet_kwh(inv) or 0
 
     # ── 4. PVGIS-Prognose (die aktive) ──────────────────────────────────
     # Auswahlregel über den SoT `services/prognose_auswahl.py` — dieselbe
@@ -450,7 +454,8 @@ async def build_jahresbericht_context(
     co2_emob = emob_km * 0.12 if hat_emobilitaet else 0
     co2_gesamt = co2_pv + max(0, co2_wp) + max(0, co2_emob)
 
-    speicher_zyklen = _safe_div(speicher_ladung, speicher_kapazitaet) if speicher_kapazitaet else None
+    # Vollzyklen = ENTLADUNG ÷ Kapazität über den Layer-SoT (Kanon 2026-07-28).
+    speicher_zyklen = berechne_vollzyklen(speicher_entladung, speicher_kapazitaet)
     speicher_eff = _safe_div(speicher_entladung, speicher_ladung) * 100 if speicher_ladung else None
     # JAZ/COP nur wenn beide Seiten gemessen sind (Klima ohne Wärmemengenzähler).
     wp_cop = _safe_div(wp_waerme, wp_strom) if (wp_strom and wp_waerme) else None
@@ -676,7 +681,19 @@ async def build_jahresbericht_context(
                 "typ_label": _INV_TYP_LABELS.get(i.typ, i.typ),
                 "bezeichnung": i.bezeichnung,
                 "anschaffungsdatum": i.anschaffungsdatum,
-                "leistung_kwp": i.leistung_kwp,
+                # `leistung_kwp` ist ein Mehrzweckfeld (N-G): `jahresbericht.html`
+                # rendert dieselbe Spalte als kWh (Speicher), kW AC
+                # (Wechselrichter) und kWp (Rest). Nur für die Erzeuger-Typen
+                # trägt sie PV-Semantik — dort läuft sie über den SoT-Helper,
+                # damit eine nur im `parameter` gepflegte Nennleistung (#229)
+                # nicht als leere Spalte im PDF landet. Für Speicher und
+                # Wechselrichter bleibt die Rohspalte stehen: ein
+                # PV-kWp-Fallback wäre dort schlicht die falsche Größe.
+                "leistung_kwp": (
+                    (get_erzeuger_kwp(i) or None)
+                    if i.typ in ("pv-module", "balkonkraftwerk")
+                    else i.leistung_kwp
+                ),
                 "ausrichtung": i.ausrichtung,
                 "neigung_grad": i.neigung_grad,
                 "parameter": i.parameter or {},

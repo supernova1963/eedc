@@ -5,7 +5,7 @@
  * Hintergrund: das `parameter`-Feld auf einer Investition ist ein unstrukturiertes
  * JSON. Über mehrere Iterationen sind Schlüsselnamen zwischen Form, Wizard und
  * Backend-Lese-Code gedriftet — siehe Inventur in
- * `docs/drafts/INVENTUR-INVESTITIONS-PARAMETER.md`.
+ * `docs/archive/INVENTUR-INVESTITIONS-PARAMETER.md`.
  *
  * Dieses Modul macht die Keys statisch typisiert + auffindbar:
  *   - `PARAM_<TYP>` exportiert die kanonischen Schlüsselnamen pro Investitions-Typ
@@ -232,13 +232,32 @@ export const PARAM_PV_MODULE = {
   MODUL_LEISTUNG_WP: 'modul_leistung_wp',
   MODUL_TYP: 'modul_typ',
   AUSRICHTUNG_GRAD: 'ausrichtung_grad',
+  // Nennleistung: SoT ist das Top-Level-Feld `leistung_kwp` (= DB-Spalte).
+  // Dieser Schlüssel ist ausschließlich LESE-Fallback für Bestands- und
+  // Importdaten (#229) — kein Schreibpfad erzeugt ihn: InvestitionForm und
+  // SetupInvestitionForm schreiben beide `leistung_kwp` als Top-Level-Feld
+  // (beim BKW berechnet aus Anzahl × Wp). Die ältere Schreibweise `kwp` steht
+  // backend-seitig in LEGACY_PARAM_KEYS und wird dort ebenfalls gelesen.
+  //
+  // ACHTUNG: `Investition.leistung_kwp` ist ein Mehrzweckfeld — bei `speicher`
+  // steht dort kWh, bei `wechselrichter` kW (AC), erst sonst kWp. Eine Regel
+  // „leistung_kwp = PV-Nennleistung" gilt nur typgefiltert.
+  LEISTUNG_KWP: 'leistung_kwp',
 } as const
+
+/** Ältere Schreibweise derselben Nennleistung im `parameter`-JSON.
+ *  Pendant zu `LEGACY_KWP_KEY` im Backend-Kanon (`core/investition_parameter.py`),
+ *  wo der Lese-Helper sie über `KWP_PARAM_KEYS` mit auswertet. Als Konstante,
+ *  damit Anzeige-Code den Schlüssel nicht als Literal wiederholt. */
+export const LEGACY_KWP_KEY = 'kwp' as const
 
 export interface PvModuleParameter {
   anzahl_module?: number
   modul_leistung_wp?: number
   modul_typ?: string
   ausrichtung_grad?: number
+  /** Nur Lese-Fallback für Bestandsdaten — SoT ist das Top-Level-Feld. */
+  leistung_kwp?: number
 }
 
 // ============================================================================
@@ -255,6 +274,9 @@ export const PARAM_BALKONKRAFTWERK = {
 } as const
 
 export const PARAM_BALKONKRAFTWERK_DEFAULTS = {
+  // Formular-VORBELEGUNG (typisches BKW = 2 Module), KEIN Lese-Default —
+  // backend-seitig rechnet `get_bkw_kwp` mit 1, damit eine ungepflegte Anzahl
+  // nicht still die doppelte Leistung ausweist.
   anzahl: 2,
   ausrichtung: 'Süd' as const,
   neigung_grad: 30,

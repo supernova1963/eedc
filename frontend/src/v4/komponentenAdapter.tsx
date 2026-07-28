@@ -171,8 +171,13 @@ function pnum(p: Record<string, unknown> | undefined, key: string): number | nul
   return typeof v === 'number' ? v : null
 }
 
+/** Topologie-Zeile eines PV-Moduls.
+ *
+ *  kWp aus `leistung_kwp_effektiv`, nicht aus der Rohspalte (A26/N106): wer
+ *  seine Nennleistung nur im `parameter`-JSON gepflegt hat (#229), stand hier
+ *  ohne kWp-Angabe da. */
 function pvModItem(m: Investition): TopoItem {
-  const teile = [m.leistung_kwp != null ? `${n1(m.leistung_kwp)} kWp` : null, m.ausrichtung].filter(Boolean)
+  const teile = [m.leistung_kwp_effektiv != null ? `${n1(m.leistung_kwp_effektiv)} kWp` : null, m.ausrichtung].filter(Boolean)
   return { label: m.bezeichnung, detail: teile.join(' · ') || undefined }
 }
 function pvSpItem(s: Investition): TopoItem {
@@ -257,7 +262,10 @@ function pvVerlauf(
   module: Investition[],
   pvStrings?: PVStringsGesamtlaufzeitResponse | null,
 ): NonNullable<KompGeraet['verlauf']> {
-  const totalKwp = module.reduce((s, m) => s + (m.leistung_kwp ?? 0), 0)
+  // Not-Fallback-Bezugsgröße: `leistung_kwp_effektiv`, nicht die Rohspalte
+  // (A26/N106). Auf der Rohspalte bekam ein nur im `parameter` gepflegtes Modul
+  // (#229) hier 0 zugeteilt — und die übrigen Module entsprechend zu viel.
+  const totalKwp = module.reduce((s, m) => s + (m.leistung_kwp_effektiv ?? 0), 0)
   type JahrWerte = { erz: number; direkt: number; speicher: number; einsp: number; zusatz: Record<string, number> }
   const jahr = new Map<number, JahrWerte>()
   for (const r of agg) {
@@ -285,7 +293,7 @@ function pvVerlauf(
     gemessen.set(s.investition_id, new Map(s.jahreswerte.map((j) => [j.jahr, j.ist_kwh])))
   }
   const hatModulwerte = module.some((m) => gemessen.has(m.id))
-  const kwpAnteil = (m: Investition, erz: number) => totalKwp > 0 ? erz * (m.leistung_kwp ?? 0) / totalKwp : 0
+  const kwpAnteil = (m: Investition, erz: number) => totalKwp > 0 ? erz * (m.leistung_kwp_effektiv ?? 0) / totalKwp : 0
   const modulWert = (m: Investition, j: number, erz: number) => hatModulwerte
     ? (gemessen.get(m.id)?.get(j) ?? 0)
     : kwpAnteil(m, erz)
@@ -414,6 +422,12 @@ export const KOMPONENTEN_ADAPTER: Record<string, KompAdapter> = {
       }
       if (z.durchsatz_inkonsistent) {
         hinweise.push({ ton: 'warning', text: 'Die kumulierte Entladung übersteigt die kumulierte Ladung — über die gesamte Historie physikalisch unmöglich. Bitte die erfassten Lade- und Entlade-Werte prüfen (beim Datenübertrag leicht vertauscht).' })
+      }
+      // N127 / P4: ohne gepflegte Kapazität stehen Vollzyklen und Zyklen/Monat
+      // auf „—" statt auf einer Zahl, die aus 10 kWh Annahme entstand. Der
+      // Grund gehört sichtbar daneben, sonst liest sich das „—" wie ein Bug.
+      if (z.kapazitaet_fehlt) {
+        hinweise.push({ ton: 'warning', text: 'Für diesen Speicher ist keine Kapazität gepflegt — Vollzyklen und Zyklen pro Monat lassen sich daraus nicht berechnen. Kapazität in den Einstellungen unter Investitionen nachtragen.' })
       }
       return {
         inv, label: inv.bezeichnung,

@@ -37,6 +37,7 @@ from backend.core.berechnungen import (
     imd_typ_beitrag,
     merge_datenquellen,
     spezifischer_ertrag_kwh_kwp,
+    vollzyklen as berechne_vollzyklen,
 )
 from backend.services.einspeise_erloes_service import get_neg_preis_einspeisung_monat
 from backend.services.wp_wirtschaftlichkeit import berechne_wp_ersparnis
@@ -64,6 +65,7 @@ from backend.utils.sonstige_positionen import (
     berechne_md_sonstige_summen,
     aggregiere_sonstige_je_monat,
 )
+from backend.core.investition_kennwerte import get_speicher_kapazitaet_kwh
 from backend.core.investition_parameter import ist_dienstlich
 
 logger = logging.getLogger(__name__)
@@ -152,7 +154,7 @@ class AktuellerMonatResponse(BaseModel):
     speicher_entladung_kwh: Optional[float] = None
     speicher_ladung_netz_kwh: Optional[float] = None   # Arbitrage-Ladung vom Netz
     speicher_wirkungsgrad_prozent: Optional[float] = None  # Entladung / Ladung * 100
-    speicher_vollzyklen: Optional[float] = None        # Ladung / Kapazität
+    speicher_vollzyklen: Optional[float] = None        # Entladung / Kapazität
     speicher_kapazitaet_kwh: Optional[float] = None    # Aus Investition.parameter
     # Etappe C (#264): SoC-Drift über die Monatsgrenze macht den Monats-η
     # unzuverlässig (Speicher Anfang voll → Ende leer ergibt naiv > 100 %).
@@ -1430,14 +1432,14 @@ async def get_aktueller_monat(
     speicher_eff_ladepreis_quelle = None
     speicher_imd_ladepreis = None
     if speicher_invs:
-        # Kapazität aus parameter
-        kap_sum = sum((i.parameter or {}).get("kapazitaet_kwh", 0) or 0 for i in speicher_invs)
+        # Kapazität aus parameter — BRUTTO, das ist die Zyklen-Konvention des
+        # ganzen Baums (docs/BERECHNUNGEN.md §Speicher). Eine hier früher
+        # zusätzlich gebildete Netto-Summe (`nutzbare_kapazitaet_kwh` mit
+        # Brutto-Fallback) wurde nirgends gelesen — sie suggerierte eine
+        # zweite Basis, die es an dieser Stelle nicht gibt (R22-4).
+        kap_sum = sum(get_speicher_kapazitaet_kwh(i) or 0 for i in speicher_invs)
         if kap_sum > 0:
             speicher_kapazitaet = round(kap_sum, 1)
-        nutzbare_kapazitaet = sum(
-            (i.parameter or {}).get("nutzbare_kapazitaet_kwh") or (i.parameter or {}).get("kapazitaet_kwh", 0) or 0
-            for i in speicher_invs
-        )
 
         # Arbitrage-Ladung aus gespeicherten Daten (Kanon-Key + Legacy-Fallback,
         # deckt frisch geschriebene Legacy-Rows vor dem nächsten Migrations-Lauf).
@@ -1505,8 +1507,11 @@ async def get_aktueller_monat(
         # Monats-η nur ausweisen, wenn SoC-Drift nicht signifikant ist
         if sl > 0 and se > 0 and not speicher_soc_drift_flag:
             speicher_wirkungsgrad = round(se / sl * 100, 1)
-        if sl > 0 and speicher_kapazitaet and speicher_kapazitaet > 0:
-            speicher_vollzyklen = round(sl / speicher_kapazitaet, 2)
+        # Vollzyklen = ENTLADUNG ÷ Kapazität über den Layer-SoT (Kanon seit
+        # 2026-07-28; vorher stand hier die Ladung `sl`).
+        _vz = berechne_vollzyklen(se, speicher_kapazitaet)
+        if _vz is not None:
+            speicher_vollzyklen = round(_vz, 2)
 
         # Etappe C1+C4: stundengewichteter effektiver Netz-Ladepreis für den Monat.
         # Helper liefert immer ein Ergebnis (auch bei dünner Datenlage) — UI

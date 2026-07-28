@@ -23,6 +23,7 @@ from typing import Optional, List
 
 from backend.services.wetter.utils import wetter_symbol_aus_tag
 from backend.services.wetter.cache import (
+    snapshot_days,
     _cache_get, _cache_set, _error_cache_check, _error_cache_set,
     FORECAST_CACHE_TTL, JITTER_MAX_SECONDS,
     ERROR_TTL_RATE_LIMIT, ERROR_TTL_SERVER_ERROR, ERROR_TTL_NETWORK,
@@ -30,7 +31,7 @@ from backend.services.wetter.cache import (
 from backend.services.wetter.models import WETTER_MODELLE, MODELL_ANZEIGE
 
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -217,17 +218,29 @@ async def fetch_gti_forecast(
 
     days = min(days, 16)  # API-Maximum
 
+    # E15: abgerufen und gecacht wird IMMER der volle Snapshot des Modells (das
+    # Ergebnis ist ein echtes Präfix), zugeschnitten wird lokal in
+    # `get_solar_prognose`. Sonst hat jeder Horizont seinen eigenen Cache-
+    # Eintrag und damit seinen eigenen Snapshot desselben Tages (N20/N33) —
+    # Begründung am SoT: `services/wetter/cache.snapshot_days`.
+    abruf_days = snapshot_days(model)
+
     # Cache prüfen (GTI-Forecast → 60 Min TTL)
     model_key = model or "auto"
-    cache_key = f"gti:{latitude:.2f}:{longitude:.2f}:{neigung}:{ausrichtung}:{days}:{model_key}"
+    cache_key = (
+        f"gti:{latitude:.2f}:{longitude:.2f}:{neigung}:{ausrichtung}"
+        f":{abruf_days}:{model_key}"
+    )
     cached = _cache_get(cache_key)
     if cached is not None:
-        logger.debug(f"Open-Meteo Solar: Cache-Hit ({days} Tage, {model_key})")
+        logger.debug(f"Open-Meteo Solar: Cache-Hit ({abruf_days} Tage, {model_key})")
         return cached
 
     # Negative Cache: kürzlich fehlgeschlagen → API-Call überspringen
     if _error_cache_check(cache_key):
-        logger.debug(f"Open-Meteo Solar: Negative-Cache-Hit ({days} Tage, {model_key})")
+        logger.debug(
+            f"Open-Meteo Solar: Negative-Cache-Hit ({abruf_days} Tage, {model_key})"
+        )
         return None
 
     params = {
@@ -257,7 +270,7 @@ async def fetch_gti_forecast(
         "tilt": neigung,
         "azimuth": azimuth_to_openmeteo(ausrichtung),
         "timezone": "Europe/Berlin",
-        "forecast_days": days,
+        "forecast_days": abruf_days,
     }
 
     if model is not None:
@@ -275,8 +288,9 @@ async def fetch_gti_forecast(
 
             model_info = f", Modell={model}" if model else ""
             logger.info(
-                f"Open-Meteo Solar: {days} Tage @ ({latitude}, {longitude}), "
+                f"Open-Meteo Solar: {abruf_days} Tage @ ({latitude}, {longitude}), "
                 f"Neigung={neigung}°, Azimut={ausrichtung}°{model_info}"
+                f" (Anfrage: {days} Tage)"
             )
 
             _cache_set(cache_key, data, FORECAST_CACHE_TTL)
@@ -355,7 +369,91 @@ def berechne_pv_ertrag(
     return max(0, ertrag)
 
 
+def _auf_horizont_kuerzen(
+    prognose: Optional[SolarPrognoseResponse], days: int
+) -> Optional[SolarPrognoseResponse]:
+    """Schneidet eine Prognose auf die ersten ``days`` Tage zu (Gegenstück zu E15).
+
+    Seit ``fetch_gti_forecast`` immer den vollen Modell-Snapshot abruft (EIN
+    Cache-Eintrag je Standort/Modell statt einem je Horizont), liefert
+    ``_build_prognose`` mehr Tage, als der Aufrufer angefragt hat. Hier fällt
+    der Überhang wieder weg — **rein als Präfix**: die Tageswerte selbst sind
+    unberührt, nur die Aggregate darüber werden über den verbliebenen Ausschnitt
+    neu gebildet. Für jeden Aufrufer sieht die Antwort damit exakt so aus wie
+    vor der Vereinheitlichung.
+    """
+    if prognose is None or len(prognose.tageswerte) <= days:
+        return prognose
+
+    tageswerte = prognose.tageswerte[:days]
+    summe = sum(t.pv_ertrag_kwh for t in tageswerte)
+    return replace(
+        prognose,
+        tageswerte=tageswerte,
+        prognose_zeitraum={
+            "von": tageswerte[0].datum,
+            "bis": tageswerte[-1].datum,
+        },
+        summe_kwh=round(summe, 1),
+        durchschnitt_kwh_tag=round(summe / len(tageswerte), 2),
+    )
+
+
 async def get_solar_prognose(
+    latitude: float,
+    longitude: float,
+    kwp: float,
+    neigung: int = 35,
+    ausrichtung: int = 0,
+    days: int = 7,
+    system_losses: float = DEFAULT_SYSTEM_LOSSES,
+    wetter_modell: str = "auto",
+    skip_jitter: bool = False,
+) -> Optional[SolarPrognoseResponse]:
+    """PV-Ertragsprognose (GTI) über genau ``days`` Tage.
+
+    Dünner Zuschnitt über ``_solar_prognose_snapshot``: der Abruf darunter holt
+    immer den vollen Modell-Snapshot (E15, siehe ``cache.snapshot_days``), diese
+    Funktion gibt daraus den angefragten Horizont zurück.
+    """
+    return _auf_horizont_kuerzen(
+        await _solar_prognose_snapshot(
+            latitude, longitude, kwp, neigung, ausrichtung, days,
+            system_losses, wetter_modell, skip_jitter,
+        ),
+        days,
+    )
+
+
+def _hat_nutzbares_gti(data: Optional[dict]) -> bool:
+    """Trägt die Antwort überhaupt einen GTI-Wert? (A30)
+
+    Ein Wettermodell kann bei Open-Meteo mit HTTP 200 antworten und trotzdem
+    für JEDE Stunde ``null`` liefern — dann rechnet ``_build_prognose`` einen
+    0-kWh-Tag, der wie eine Prognose aussieht, aber keine ist. Am 2026-07-28
+    gemessen für ``ecmwf_ifs04`` (München, 3 Tage): 0 von 72 Stundenwerten
+    gesetzt, auch ``temperature_2m`` und ``shortwave_radiation_sum`` leer — das
+    Modell läuft bei Open-Meteo nicht mehr, der Name wird aber weiter
+    akzeptiert. Ein leeres Ergebnis ist deshalb wie „kein Ergebnis" zu
+    behandeln, damit die bestehende best_match-Kaskade greift.
+    """
+    if not data:
+        return False
+    werte = (data.get("hourly") or {}).get("global_tilted_irradiance") or []
+    return any(v is not None for v in werte)
+
+
+async def _modell_gti_oder_none(*args, **kwargs) -> Optional[dict]:
+    """``fetch_gti_forecast`` für ein GEWÄHLTES Modell; GTI-los zählt als ``None``.
+
+    Bewusst nur für den Modell-Abruf: best_match bleibt unangetastet, damit die
+    Kontrollprobe „``wetter_modell='auto'`` ändert sich nicht" wörtlich gilt.
+    """
+    data = await fetch_gti_forecast(*args, **kwargs)
+    return data if _hat_nutzbares_gti(data) else None
+
+
+async def _solar_prognose_snapshot(
     latitude: float,
     longitude: float,
     kwp: float,
@@ -371,6 +469,12 @@ async def get_solar_prognose(
 
     Bei wetter_modell != "auto" wird eine Kaskade verwendet:
     bevorzugtes Modell (begrenzte Tage) + best_match Fallback für den Rest.
+    Liefert das gewählte Modell GAR KEIN GTI (``_hat_nutzbares_gti``), gilt es
+    als ausgefallen und best_match trägt den ganzen Horizont — sichtbar an
+    ``datenquelle``, nicht still.
+
+    Liefert den vollen Snapshot (≥ ``days`` Tage) — den Zuschnitt macht
+    ``get_solar_prognose``.
 
     Args:
         latitude: Breitengrad
@@ -389,18 +493,38 @@ async def get_solar_prognose(
 
     if wetter_modell == "auto" or days <= max_days:
         # Einfacher Fall: ein Call reicht
-        data = await fetch_gti_forecast(
-            latitude, longitude, neigung, ausrichtung, days,
-            model=model_name, skip_jitter=skip_jitter,
-        )
+        datenquelle_tag = wetter_modell if wetter_modell != "auto" else "best_match"
+        if model_name is None:
+            data = await fetch_gti_forecast(
+                latitude, longitude, neigung, ausrichtung, days,
+                model=None, skip_jitter=skip_jitter,
+            )
+        else:
+            data = await _modell_gti_oder_none(
+                latitude, longitude, neigung, ausrichtung, days,
+                model=model_name, skip_jitter=skip_jitter,
+            )
+            if data is None:
+                # Innerhalb des Modell-Horizonts gibt es keine Kaskade, die
+                # einspränge — den best_match-Fallback deshalb hier holen. Ohne
+                # ihn verlöre ein Nutzer mit ausgefallenem Modell nicht die
+                # Modellwahl, sondern die Prognose komplett (A30).
+                logger.warning(
+                    "Wettermodell %s lieferte kein GTI (%s Tage) — nutze best_match",
+                    wetter_modell, days,
+                )
+                data = await fetch_gti_forecast(
+                    latitude, longitude, neigung, ausrichtung, days,
+                    model=None, skip_jitter=skip_jitter,
+                )
+                datenquelle_tag = "best_match"
         if not data:
             return None
-        datenquelle_tag = wetter_modell if wetter_modell != "auto" else "best_match"
         return _build_prognose(data, kwp, neigung, ausrichtung, days, system_losses,
                                longitude, datenquelle_tag=datenquelle_tag)
 
     # Kaskade: bevorzugtes Modell + best_match Fallback (parallel)
-    primary_coro = fetch_gti_forecast(
+    primary_coro = _modell_gti_oder_none(
         latitude, longitude, neigung, ausrichtung, max_days,
         model=model_name, skip_jitter=skip_jitter,
     )

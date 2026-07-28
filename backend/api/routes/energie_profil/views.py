@@ -24,8 +24,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.core.berechnungen.kennzahlen import (
+    autarkie_prozent,
+    eigenverbrauchsquote_prozent,
+)
 from backend.core.berechnungen.speicher_simulation import simuliere_speicher_tag
 from backend.core.exceptions import bad_request, not_found
+from backend.core.investition_kennwerte import get_speicher_nutzbare_kapazitaet_kwh
 from backend.api.deps import get_db
 from backend.models.anlage import Anlage
 from backend.models.investition import Investition, InvestitionTyp
@@ -564,13 +569,17 @@ async def get_monatsauswertung(
     einspeisung_kandidaten.sort(key=lambda p: p.wert_kw, reverse=True)
 
     # ── KPIs ──
+    # Beide Quoten über den Layer-SoT (ADR-001) statt inline: die Formeln standen
+    # hier ausgeschrieben und stimmten, aber dieselbe Kennzahl inline zu rechnen
+    # ist genau der Weg, auf dem N129 entstanden ist — an der dritten Stelle
+    # (Tagesvorschau) wich der Zähler ab, und kein Test sah es.
     eigenverbrauch_pv = pv_sum - einspeisung_sum
     autarkie = (
-        round((verbrauch_sum - netzbezug_sum) / verbrauch_sum * 100, 1)
+        round(autarkie_prozent(verbrauch_sum - netzbezug_sum, verbrauch_sum), 1)
         if verbrauch_sum > 0 else None
     )
     eigenverbrauch = (
-        round(eigenverbrauch_pv / pv_sum * 100, 1)
+        round(eigenverbrauchsquote_prozent(eigenverbrauch_pv, pv_sum), 1)
         if pv_sum > 0 else None
     )
 
@@ -998,11 +1007,12 @@ async def _pv_stunden_aus_kanon(db, anlage, datum: date) -> Optional[list[float]
     — dieselbe Anlage bekam so je nach Pfad verschiedene Tagessummen.
 
     ``days`` kommt aus ``kanon_days`` (Horizont-Formel-SoT, geteilt mit
-    ``/solar-prognose``): mindestens 4, damit für heute/morgen/übermorgen
-    **derselbe** OpenMeteo-Cache-Eintrag (Key enthält ``days``) und damit
-    derselbe Snapshot gezogen wird wie im Prognosen-Vergleich und im HA-/
-    MQTT-Export. Für spätere Zieltage aus dem Datum abgeleitet — der Picker
-    erlaubt +14 Tage, also ``days`` ≤ 15 (OpenMeteo-Maximum 16).
+    ``/solar-prognose``): mindestens 4, für spätere Zieltage aus dem Datum
+    abgeleitet — der Picker erlaubt +14 Tage, also ``days`` ≤ 15 (OpenMeteo-
+    Maximum 16). Dass dabei derselbe OpenMeteo-Snapshot gezogen wird wie im
+    Prognosen-Vergleich und im HA-/MQTT-Export, hängt seit E15/A29 nicht mehr
+    an diesem Horizont: der Cache-Key trägt den Modell-Snapshot, nicht die
+    Anfrage (``services/wetter/cache.snapshot_days``).
     """
     tage_bis_ziel = (datum - date.today()).days
     if tage_bis_ziel < 0:
@@ -1050,6 +1060,12 @@ async def get_tagesprognose(
     - Verbrauchsprofil aus historischen Stundenmitteln (Wochenmuster-Basis)
     - PV-Stundenprofil aus Solar Forecast (OpenMeteo GTI oder Solcast)
     - Netto-Bilanz und optionale Batterie-SoC-Simulation
+
+    **Ohne Verbrauchshistorie** (< 3 vollständige Tage Energieprofil, also jede
+    frische Installation) liefert die Route trotzdem die PV-Hälfte — sie hängt
+    nur an Wetterdienst und kWp. Die verbrauchsabhängigen Felder sind dann
+    ``None`` (nicht 0, das sähe aus wie ein Messwert) und ``hinweise`` sagt es.
+    Bis A28 (N122) stand hier ein HTTP 422 für den GANZEN Endpoint.
     """
     if datum is None:
         datum = date.today() + timedelta(days=1)
@@ -1063,25 +1079,32 @@ async def get_tagesprognose(
     if not anlage.latitude or not anlage.longitude:
         raise HTTPException(status_code=400, detail="Anlage hat keine Koordinaten konfiguriert")
 
+    # `hinweise` begleitet die Antwort: jede Abweichung von „das ist die volle
+    # Prognose für DIESEN Tag" wird hier vermerkt und geht in die Response (P4).
+    hinweise: list[str] = []
+
     # ── 1. Verbrauchsprognose ──
     from backend.services.verbrauch_prognose_service import get_verbrauch_prognose
 
     vp = await get_verbrauch_prognose(anlage_id, datum, db)
-    if not vp:
-        raise HTTPException(
-            status_code=422,
-            detail="Zu wenig historische Energieprofil-Daten für Verbrauchsprognose. "
-                   "Mindestens 3 vollständige Tage benötigt."
+    verbrauch_stunden = vp["stunden_kw"] if vp else None
+    if vp is None:
+        # A28 (N122): hier stand ein HTTP 422 für den ganzen Endpoint — die
+        # PV-Stundenwerte fielen mit, obwohl sie keine Historie brauchen. Jede
+        # frische Installation sah in den ersten Tagen deshalb nur eine
+        # Fehlermeldung statt der PV-Vorschau. Der fehlende Teil wird jetzt
+        # benannt (P4), statt die ganze Antwort zu verweigern.
+        hinweise.append(
+            "Für die Verbrauchsprognose fehlt noch die Historie — dafür braucht "
+            "eedc mindestens 3 vollständige Tage Energieprofil. Gezeigt wird "
+            "deshalb nur die PV-Vorschau; Verbrauch, Netzbezug, Einspeisung, "
+            "Eigenverbrauch, Autarkie und die Speicher-Vorschau bleiben leer, "
+            "bis genug Tage aufgezeichnet sind."
         )
 
-    verbrauch_stunden = vp["stunden_kw"]
-
     # ── 2. PV-Stundenprofil ──
-    # `pv_hinweise` begleitet das Profil: jede Abweichung von „das ist die
-    # Prognose für DIESEN Tag" wird hier vermerkt und geht in die Response (P4).
     pv_stunden = [0.0] * 24
     pv_quelle = "openmeteo"
-    pv_hinweise: list[str] = []
     pv_profil_vorhanden = False
 
     # Versuche Solcast zuerst (wenn als Quelle gewählt)
@@ -1103,7 +1126,7 @@ async def get_tagesprognose(
                 pv_quelle = "solcast"
                 pv_profil_vorhanden = True
                 if datum != date.today():
-                    pv_hinweise.append(
+                    hinweise.append(
                         "Solcast liefert das Stundenprofil nur für heute. Der "
                         "Tagesverlauf ist deshalb das heutige Profil als Näherung "
                         f"für den {datum.strftime('%d.%m.%Y')} — die Tagessumme "
@@ -1111,7 +1134,7 @@ async def get_tagesprognose(
                     )
         except Exception as e:
             logger.warning("Solcast für Tagesprognose fehlgeschlagen: %s", e)
-            pv_hinweise.append(
+            hinweise.append(
                 "Die Solcast-Prognose war nicht abrufbar; für den PV-Tagesverlauf "
                 "liegt keine Solcast-Quelle vor."
             )
@@ -1227,7 +1250,7 @@ async def get_tagesprognose(
                     # Tagesverlauf — der Wert bleibt (beste verfügbare
                     # Information), aber nicht ungekennzeichnet.
                     if geliefert < len(gruppen):
-                        pv_hinweise.append(
+                        hinweise.append(
                             f"Nur {geliefert} von {len(gruppen)} Dachflächen "
                             "(Orientierungsgruppen) haben eine Prognose geliefert. "
                             "Der PV-Tagesverlauf ist deshalb eine Teilsumme und zu "
@@ -1249,7 +1272,7 @@ async def get_tagesprognose(
     # „Speicher lädt nicht". Die Zahlen bleiben (kein geschätzter Ersatz), aber
     # die Antwort sagt jetzt, dass sie keine Prognose sind.
     if not pv_profil_vorhanden:
-        pv_hinweise.append(
+        hinweise.append(
             "Für diesen Tag liegt keine PV-Prognose vor — der Wetterabruf ist "
             "ausgefallen oder der Tag liegt außerhalb des Prognose-Horizonts. Die "
             "PV-Werte im Verlauf sind deshalb 0 und bedeuten NICHT, dass die "
@@ -1270,8 +1293,13 @@ async def get_tagesprognose(
         if not inv.stilllegungsdatum or inv.stilllegungsdatum >= datum
     ]
 
+    # A31-2/E-1: NETTO-Kapazität. Die Simulation unten fährt den Speicher von
+    # 0 auf 100 % der übergebenen Zahl; mit der Brutto-Kapazität ist er
+    # rechnerisch später voll als real. Stiller Brutto-Fallback (E17) — bei
+    # ungepflegtem Netto-Feld bleibt alles wie bisher, deshalb hier bewusst
+    # KEIN `hinweise`-Eintrag.
     speicher_kap = sum(
-        (inv.parameter or {}).get("kapazitaet_kwh", 0) or 0
+        get_speicher_nutzbare_kapazitaet_kwh(inv) or 0
         for inv in speicher_invs
     )
 
@@ -1298,55 +1326,93 @@ async def get_tagesprognose(
     # Diese deskriptive Ganztags-Vorschau simuliert ab Mitternacht (start_soc =
     # 7-Tage-Mittel, start_stunde=0) — bewusst anders parametrisiert als der
     # HA-Export (ab aktuellem SoC), daher kein Symmetrie-Paar.
-    sim = simuliere_speicher_tag(
-        pv_stunden=pv_stunden,
-        verbrauch_stunden=verbrauch_stunden,
-        speicher_kap_kwh=speicher_kap,
-        start_soc_prozent=start_soc,
-        start_stunde=0,
-    )
-    speicher_voll_um = sim.speicher_voll_um
-    speicher_leer_um = sim.speicher_leer_um
-
     stunden: list[StundenPrognose] = []
     sum_pv = 0.0
-    sum_verbrauch = 0.0
-    sum_netzbezug = 0.0
-    sum_einspeisung = 0.0
+    sum_verbrauch: Optional[float] = None
+    sum_netzbezug: Optional[float] = None
+    sum_einspeisung: Optional[float] = None
+    eigenverbrauch: Optional[float] = None
+    autarkie: Optional[float] = None
+    speicher_voll_um: Optional[str] = None
+    speicher_leer_um: Optional[str] = None
 
-    for b in sim.stunden_bilanz:
-        sum_pv += b.pv_kwh
-        sum_verbrauch += b.verbrauch_kwh
-        sum_netzbezug += b.netzbezug_kwh
-        sum_einspeisung += b.einspeisung_kwh
+    if verbrauch_stunden is None:
+        # A28: ohne Verbrauchsprofil ist jede Bilanzgröße unbestimmt — die
+        # Simulation liefe zwar durch (sie liest fehlende Slots als 0), würde
+        # dann aber „Netzbezug 0, Autarkie 100 %" behaupten. Also gar nicht
+        # rechnen und die Felder leer lassen (P4); das PV-Profil bleibt.
+        sum_pv = sum(pv_stunden[:24])
+        stunden = [
+            StundenPrognose(
+                stunde=h,
+                pv_kw=round(pv_stunden[h] if h < len(pv_stunden) else 0.0, 3),
+            )
+            for h in range(24)
+        ]
+    else:
+        sim = simuliere_speicher_tag(
+            pv_stunden=pv_stunden,
+            verbrauch_stunden=verbrauch_stunden,
+            speicher_kap_kwh=speicher_kap,
+            start_soc_prozent=start_soc,
+            start_stunde=0,
+        )
+        speicher_voll_um = sim.speicher_voll_um
+        speicher_leer_um = sim.speicher_leer_um
 
-        stunden.append(StundenPrognose(
-            stunde=b.stunde,
-            pv_kw=round(b.pv_kwh, 3),
-            verbrauch_kw=round(b.verbrauch_kwh, 3),
-            netto_kw=round(b.netto_kwh, 3),
-            netzbezug_kw=round(b.netzbezug_kwh, 3),
-            einspeisung_kw=round(b.einspeisung_kwh, 3),
-            soc_prozent=b.soc_prozent,
-        ))
+        sum_verbrauch = 0.0
+        sum_netzbezug = 0.0
+        sum_einspeisung = 0.0
 
-    eigenverbrauch = sum_pv - sum_einspeisung
-    autarkie = (eigenverbrauch / sum_verbrauch * 100) if sum_verbrauch > 0 else 0.0
+        for b in sim.stunden_bilanz:
+            sum_pv += b.pv_kwh
+            sum_verbrauch += b.verbrauch_kwh
+            sum_netzbezug += b.netzbezug_kwh
+            sum_einspeisung += b.einspeisung_kwh
+
+            stunden.append(StundenPrognose(
+                stunde=b.stunde,
+                pv_kw=round(b.pv_kwh, 3),
+                verbrauch_kw=round(b.verbrauch_kwh, 3),
+                netto_kw=round(b.netto_kwh, 3),
+                netzbezug_kw=round(b.netzbezug_kwh, 3),
+                einspeisung_kw=round(b.einspeisung_kwh, 3),
+                soc_prozent=b.soc_prozent,
+            ))
+
+        # `eigenverbrauch` ist der PV-Eigenverbrauch (was die Anlage selbst nutzt,
+        # inklusive der Speicherladung) — dieselbe Größe wie in
+        # `core/berechnungen/tagesbilanz.py`, deshalb gleich benannt.
+        eigenverbrauch = sum_pv - sum_einspeisung
+        # N129: die Autarkie hat einen ANDEREN Zähler — den netzunabhängig
+        # gedeckten Verbrauch. Bis 2026-07-28 stand hier der PV-Eigenverbrauch,
+        # und weil der bei ladendem Speicher den Tagesverbrauch übersteigen kann,
+        # meldete die Vorschau Autarkiegrade bis 125 %. Der Layer-SoT
+        # (`kennzahlen.autarkie_prozent`) verzichtet ausdrücklich auf einen Cap
+        # mit der Begründung „strukturell ≤ 100 %, weil Eigenverbrauch Teilmenge
+        # des Gesamtverbrauchs ist" — diese Zusicherung gilt nur für den
+        # richtigen Zähler. Ein Cap wäre hier die falsche Antwort gewesen: er
+        # hätte 125 % auf 100 % gedrückt und den Fehler unsichtbar gemacht,
+        # statt ihn zu beheben (ADR-001: Formel im Layer, nicht inline).
+        autarkie = (
+            autarkie_prozent(sum_verbrauch - sum_netzbezug, sum_verbrauch)
+            if sum_verbrauch > 0 else 0.0
+        )
 
     return TagesPrognoseResponse(
         datum=datum.isoformat(),
         stunden=stunden,
         pv_summe_kwh=round(sum_pv, 2),
-        verbrauch_summe_kwh=round(sum_verbrauch, 2),
-        netzbezug_summe_kwh=round(sum_netzbezug, 2),
-        einspeisung_summe_kwh=round(sum_einspeisung, 2),
-        eigenverbrauch_kwh=round(eigenverbrauch, 2),
-        autarkie_prozent=round(autarkie, 1),
+        verbrauch_summe_kwh=round(sum_verbrauch, 2) if sum_verbrauch is not None else None,
+        netzbezug_summe_kwh=round(sum_netzbezug, 2) if sum_netzbezug is not None else None,
+        einspeisung_summe_kwh=round(sum_einspeisung, 2) if sum_einspeisung is not None else None,
+        eigenverbrauch_kwh=round(eigenverbrauch, 2) if eigenverbrauch is not None else None,
+        autarkie_prozent=round(autarkie, 1) if autarkie is not None else None,
         speicher_kapazitaet_kwh=round(speicher_kap, 1) if speicher_kap > 0 else None,
         speicher_voll_um=speicher_voll_um,
         speicher_leer_um=speicher_leer_um,
-        verbrauch_basis=vp["basis"],
+        verbrauch_basis=vp["basis"] if vp else None,
         pv_quelle=pv_quelle,
-        daten_tage=vp["daten_tage"],
-        hinweise=pv_hinweise,
+        daten_tage=vp["daten_tage"] if vp else None,
+        hinweise=hinweise,
     )

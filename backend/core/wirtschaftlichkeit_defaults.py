@@ -1,7 +1,7 @@
 """Wirtschaftlichkeits-Defaults — zentrale Konstanten für Berechnungen.
 
 Single Source of Truth für hartcodierte Werte, die bisher an mehreren Stellen
-dupliziert waren (siehe `docs/drafts/INVENTUR-DRIFT-AUDIT.md`, Domäne B).
+dupliziert waren (siehe `docs/archive/INVENTUR-DRIFT-AUDIT.md`, Domäne B).
 
 Pendant im Frontend: `eedc/frontend/src/lib/wirtschaftlichkeitDefaults.ts`
 — bei Änderungen dort spiegeln.
@@ -14,6 +14,9 @@ from typing import Final
 # Quelle: Übliche Annahmen für Brennwert-/Niedertemperatur-Heizungen.
 WP_WIRKUNGSGRAD_GAS_DEFAULT: Final[float] = 0.90
 WP_WIRKUNGSGRAD_OEL_DEFAULT: Final[float] = 0.85
+# Strom-Direktheizung (Nachtspeicher, Heizlüfter, Infrarot): Widerstandsheizung
+# setzt Strom praktisch verlustfrei in Wärme um. Kein „Kessel"-Verlust, deshalb 1,0.
+WP_WIRKUNGSGRAD_STROM_DEFAULT: Final[float] = 1.0
 
 # Energiepreise (Defaults wenn nichts gepflegt)
 # Gaspreis: typischer Endkundenpreis 2025/2026 (kanonisch in PARAM_WAERMEPUMPE_DEFAULTS).

@@ -10,10 +10,16 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
 from datetime import date
 
 from backend.core.exceptions import not_found
+from backend.core.investition_kennwerte import (
+    get_erzeuger_kwp,
+    get_pv_kwp,
+    get_speicher_kapazitaet_kwh,
+    get_speicher_nutzbare_kapazitaet_kwh,
+)
 from backend.api.deps import get_db
 from backend.models.investition import Investition, InvestitionTyp, InvestitionMonatsdaten
 from backend.utils.investition_filter import aktiv_jetzt, aktiv_im_jahr, sort_investitionen_nach_typ
@@ -47,7 +53,7 @@ from backend.services.eauto_wirtschaftlichkeit import (
     resolve_eauto_benzinpreis,
 )
 from backend.core.calculations import CO2_FAKTOR_STROM_KG_KWH
-from backend.core.berechnungen import einspeise_erloes_euro
+from backend.core.berechnungen import PV_ERZEUGER_TYPEN, einspeise_erloes_euro
 
 
 # ============================================================================
@@ -161,6 +167,47 @@ class InvestitionResponse(InvestitionBase):
     class Config:
         from_attributes = True
 
+    @computed_field(  # type: ignore[prop-decorator]
+        description=(
+            "Nennleistung zur ANZEIGE/RECHNUNG — bei Erzeugern inkl. Fallback auf "
+            "das `parameter`-JSON (#229). Nur lesend: der Schreibpfad (POST/PUT) "
+            "kennt das Feld nicht. Einheit wie bei `leistung_kwp`."
+        )
+    )
+    @property
+    def leistung_kwp_effektiv(self) -> Optional[float]:
+        """Der effektive Nennleistungs-Wert dieser Investition (A26/N106).
+
+        **Warum es dieses Feld gibt:** `leistung_kwp` ist die ROHSPALTE. Wer
+        seine Nennleistung nur im `parameter`-JSON gepflegt hat (Import-/
+        Altbestand), hat dort `None` — im Client sah das aus wie „nicht
+        gepflegt", und `v4/komponentenAdapter.tsx` verteilte die Erzeugung
+        danach anteilig (das Modul bekam 0, die übrigen zu viel). Das ist die
+        #229-Klasse jenseits jedes Backend-Wächters (ADR-002/P3-a Grenze (c)).
+
+        **Die Trennlinie:** ANZEIGE und RECHNUNG lesen dieses Feld,
+        FORMULARE und WIZARDS die Rohspalte `leistung_kwp` — läse ein
+        Eingabefeld den abgeleiteten Wert, schriebe das nächste Speichern ihn
+        in die Spalte. Genau deshalb steht das Feld in `InvestitionResponse`
+        und **nicht** in `InvestitionBase`: `InvestitionCreate`/`-Update`
+        erben es damit nicht und nehmen es auch nicht entgegen.
+
+        **Typabhängigkeit (N-G):** `Investition.leistung_kwp` ist ein
+        Mehrzweckfeld — beim Speicher kWh, beim Wechselrichter kW (AC). Die
+        SoT-Helper tragen PV-Semantik und sind laut ihrem eigenen Docstring
+        nur für Erzeuger-Typen zuständig. Für alle anderen Typen ist dieses
+        Feld deshalb unverändert die Rohspalte; es „heilt" nur dort, wo
+        Heilung definiert ist, und ist nirgends kleiner als `leistung_kwp`.
+
+        `or roh` hält die Semantik „nicht gepflegt": die Helper liefern `0.0`,
+        wenn sie nichts finden — eine 0,0-kWp-Zeile statt einer fehlenden wäre
+        eine erfundene Zahl. Eine echte 0 in der Spalte bleibt eine 0.
+        """
+        roh = self.leistung_kwp
+        if self.typ in PV_ERZEUGER_TYPEN:
+            return get_erzeuger_kwp(self) or roh
+        return roh
+
 
 def _gruppiere_investitionen(
     investitionen: list[Investition],
@@ -228,7 +275,7 @@ router = APIRouter()
 # v3.25.0: Phantom-Endpoint /typen + InvestitionTypInfo + parameter_schema entfernt.
 # Niemand hat das Schema im Frontend gelesen (useInvestitionTypen war exportiert, aber
 # nirgends aufgerufen), und der Schema-Inhalt war historisch von Form/Wizard und
-# Backend-Reads auseinandergedriftet — siehe docs/drafts/INVENTUR-INVESTITIONS-PARAMETER.md.
+# Backend-Reads auseinandergedriftet — siehe docs/archive/INVENTUR-INVESTITIONS-PARAMETER.md.
 # Single Source of Truth ist jetzt:
 #   - Frontend: eedc/frontend/src/lib/investitionParameter.ts
 #   - Backend:  eedc/backend/core/investition_parameter.py
@@ -964,11 +1011,9 @@ async def get_roi_dashboard(
                 ist = speicher_ist_by_inv.get(sp.id)
                 if ist is None:
                     continue
-                params_sp = sp.parameter or {}
-                nutzbar = params_sp.get(
-                    PARAM_SPEICHER["NUTZBARE_KAPAZITAET_KWH"],
-                    params_sp.get(PARAM_SPEICHER["KAPAZITAET_KWH"], 0),
-                ) or 0
+                # A31-2: netto mit stillem Brutto-Fallback — bisher hier inline,
+                # jetzt der SoT-Helper. Identisches Verhalten.
+                nutzbar = get_speicher_nutzbare_kapazitaet_kwh(sp) or 0
                 speicher_eta_by_inv[sp.id] = await berechne_ist_wirkungsgrad(
                     db,
                     anlage_id=anlage_id,
@@ -983,13 +1028,16 @@ async def get_roi_dashboard(
     # PV-Einsparung einmal berechnen (wird auf Module verteilt)
     pv_jahres_einsparung, pv_co2, pv_detail = await berechne_pv_einsparung_aus_monatsdaten()
 
-    # Gesamt-kWp aller PV-Module für proportionale Verteilung
+    # Gesamt-kWp aller PV-Module für proportionale Verteilung.
+    # kWp über den SoT-Helper (ADR-002/P3-a): ein nur im `parameter` gepflegtes
+    # Modul (#229) bekam sonst `anteil = 0` — also 0 € Einsparung, 0 kg CO₂ und
+    # keine Amortisation, während die übrigen Module zu viel zugerechnet bekamen.
     gesamt_kwp = sum(
-        inv.leistung_kwp or 0
+        get_pv_kwp(inv)
         for system in pv_systeme.values()
         for inv in system["pv_module"]
     )
-    gesamt_kwp += sum(inv.leistung_kwp or 0 for inv in orphan_pv_module)
+    gesamt_kwp += sum(get_pv_kwp(inv) for inv in orphan_pv_module)
 
     for wr_id, system in pv_systeme.items():
         wr = system["wr"]
@@ -1025,7 +1073,7 @@ async def get_roi_dashboard(
         ))
 
         # PV-Module Einsparung proportional nach kWp verteilen
-        system_kwp = sum(inv.leistung_kwp or 0 for inv in pv_module)
+        system_kwp = sum(get_pv_kwp(inv) for inv in pv_module)
         system_einsparung = 0.0
         system_co2 = 0.0
 
@@ -1036,8 +1084,12 @@ async def get_roi_dashboard(
             system_alternativ += inv_alternativ
             system_betriebskosten += (inv.betriebskosten_jahr or 0)
 
-            # Einsparung proportional nach kWp
-            inv_kwp = inv.leistung_kwp or 0
+            # Einsparung proportional nach kWp.
+            # `anteil` vor dem Zweig setzen: Zeile 1066 liest es, sobald
+            # `gesamt_kwp > 0` — bei einem Modul ganz ohne Nennleistung war es
+            # dort ungebunden ⇒ 500er im ROI-Dashboard (an der Box gemessen).
+            inv_kwp = get_pv_kwp(inv)
+            anteil = 0.0
             if gesamt_kwp > 0 and inv_kwp > 0:
                 anteil = inv_kwp / gesamt_kwp
                 inv_einsparung = pv_jahres_einsparung * anteil
@@ -1073,7 +1125,19 @@ async def get_roi_dashboard(
             system_betriebskosten += (inv.betriebskosten_jahr or 0)
 
             params = inv.parameter or {}
-            kapazitaet = params.get(PARAM_SPEICHER["KAPAZITAET_KWH"], 10)
+            # N127: BRUTTO-Kapazität über den SoT-Helper, ohne Default. Hier
+            # stand `.get(…, 10)` — ein Speicher ohne gepflegte Kapazität bekam
+            # still 10 kWh und daraus eine Jahres-Ersparnis, die es nie gab.
+            # Sie geht NUR in den Prognose-Modus ein (s. `ist_aggregat` unten);
+            # im IST-Modus rechnet `berechne_speicher_einsparung` aus der
+            # gemessenen Entladung und die Kapazität bleibt ungelesen.
+            kapazitaet = get_speicher_kapazitaet_kwh(inv)
+            # A31-2/E-1: der Prognose-Modus rechnet NETTO — Kapazität × 250
+            # Zyklen × η ist eine durchgefahrene Energiemenge, und durch den
+            # Speicher geht nur der nutzbare Hub. `kapazitaet` (brutto) bleibt
+            # daneben stehen: sie ist die *Beschreibung* der Komponente
+            # (Detail-Feld und Label unten), nicht die Rechengröße.
+            kapazitaet_netto = get_speicher_nutzbare_kapazitaet_kwh(inv)
             wirkungsgrad = params.get(PARAM_SPEICHER["WIRKUNGSGRAD_PROZENT"], PARAM_SPEICHER_DEFAULTS["wirkungsgrad_prozent"])
             # Bug #5 v3.25.0: vorher 'nutzt_arbitrage' (toter Schema-Key), Form/Wizard schreiben 'arbitrage_faehig'.
             nutzt_arbitrage = params.get(PARAM_SPEICHER["ARBITRAGE_FAEHIG"], PARAM_SPEICHER_DEFAULTS["arbitrage_faehig"])
@@ -1099,8 +1163,14 @@ async def get_roi_dashboard(
                 param_lade_preis=lade_preis_dc,
             )
 
-            result = berechne_speicher_einsparung(
-                kapazitaet_kwh=kapazitaet,
+            # N127: Prognose-Modus ohne gepflegte Kapazität = keine Rechnung.
+            # Statt eine erfundene Basis einzusetzen, entfällt der Beitrag —
+            # die Komponente bleibt in der Liste (die Kosten sind ja real), aber
+            # Einsparung und CO₂ sind `None` („—" im UI) statt einer Zahl, und
+            # der Grund steht als Hinweis in `detail` (P4).
+            kapazitaet_fehlt = kapazitaet_netto is None and ist_aggregat is None
+            result = None if kapazitaet_fehlt else berechne_speicher_einsparung(
+                kapazitaet_kwh=kapazitaet_netto or 0,
                 wirkungsgrad_prozent=wirkungsgrad_eff,
                 netzbezug_preis_cent=strompreis_cent,
                 einspeiseverguetung_cent=einspeiseverguetung_cent,
@@ -1109,12 +1179,17 @@ async def get_roi_dashboard(
                 ist_entladung_kwh=ist_aggregat.entladung_kwh_jahr if ist_aggregat else None,
                 ist_ladung_netz_kwh=ist_aggregat.ladung_netz_kwh_jahr if ist_aggregat else 0,
             )
-            inv_einsparung = result.jahres_einsparung_euro
-            inv_co2 = result.co2_einsparung_kg
-            system_einsparung += inv_einsparung
-            system_co2 += inv_co2
+            inv_einsparung = result.jahres_einsparung_euro if result else None
+            inv_co2 = result.co2_einsparung_kg if result else None
+            system_einsparung += inv_einsparung or 0
+            system_co2 += inv_co2 or 0
 
             komp_detail: dict[str, Any] = {'kapazitaet_kwh': kapazitaet, 'dc_gekoppelt': True}
+            if kapazitaet_fehlt:
+                komp_detail['hinweis'] = (
+                    'Keine Kapazität gepflegt — ohne sie lässt sich die Ersparnis '
+                    'nicht abschätzen. Kapazität in der Investitionspflege nachtragen.'
+                )
             if ist_aggregat is not None:
                 komp_detail.update({
                     'modus': 'ist',
@@ -1142,13 +1217,18 @@ async def get_roi_dashboard(
                 komp_detail['modus'] = 'prognose'
             komponenten.append(ROIKomponente(
                 investition_id=inv.id,
-                bezeichnung=f"{inv.bezeichnung} ({kapazitaet} kWh)",
+                # Ohne gepflegte Kapazität steht der Name ohne Klammerzusatz da —
+                # „(None kWh)" wäre schlechter als gar keine Angabe (N127).
+                bezeichnung=(
+                    f"{inv.bezeichnung} ({kapazitaet} kWh)" if kapazitaet is not None
+                    else inv.bezeichnung
+                ),
                 typ=inv.typ,
                 kosten=inv_kosten,
                 kosten_alternativ=inv_alternativ,
                 relevante_kosten=inv_kosten - inv_alternativ,
-                einsparung=round(inv_einsparung, 2),
-                co2_einsparung_kg=round(inv_co2, 1),
+                einsparung=round(inv_einsparung, 2) if inv_einsparung is not None else None,
+                co2_einsparung_kg=round(inv_co2, 1) if inv_co2 is not None else None,
                 detail=komp_detail,
             ))
 
@@ -1197,8 +1277,14 @@ async def get_roi_dashboard(
         alternativ = inv.anschaffungskosten_alternativ or 0
         relevante = kosten - alternativ
 
-        # Einsparung proportional nach kWp
-        inv_kwp = inv.leistung_kwp or 0
+        # Einsparung proportional nach kWp.
+        # `anteil` wird VOR dem Zweig gesetzt: Zeile 1231 liest es, sobald
+        # `gesamt_kwp > 0` — bei einem Orphan-Modul ganz ohne Nennleistung war
+        # es dort ungebunden und das ROI-Dashboard antwortete mit einem 500er
+        # (an der Box gemessen). Die Migration auf `get_pv_kwp` nimmt dem
+        # Fehler die häufigste Ursache (#229), beseitigt ihn aber nicht.
+        inv_kwp = get_pv_kwp(inv)
+        anteil = 0.0
         if gesamt_kwp > 0 and inv_kwp > 0:
             anteil = inv_kwp / gesamt_kwp
             jahres_einsparung = pv_jahres_einsparung * anteil
@@ -1253,7 +1339,10 @@ async def get_roi_dashboard(
 
         if inv.typ == InvestitionTyp.SPEICHER.value:
             # AC-gekoppelter Speicher — Bug #5 v3.25.0 fix wie oben (DC-Speicher)
-            kapazitaet = params.get(PARAM_SPEICHER["KAPAZITAET_KWH"], 10)
+            # N127 + A31-2: Kapazität über die SoT-Helper, ohne Default — s. den
+            # DC-Pfad oben. Der Prognose-Modus rechnet NETTO; hier gibt es kein
+            # Detail-Feld mit der Brutto-Zahl, also wird sie auch nicht gelesen.
+            kapazitaet_netto = get_speicher_nutzbare_kapazitaet_kwh(inv)
             wirkungsgrad = params.get(PARAM_SPEICHER["WIRKUNGSGRAD_PROZENT"], PARAM_SPEICHER_DEFAULTS["wirkungsgrad_prozent"])
             nutzt_arbitrage = params.get(PARAM_SPEICHER["ARBITRAGE_FAEHIG"], PARAM_SPEICHER_DEFAULTS["arbitrage_faehig"])
             lade_preis = params.get(PARAM_SPEICHER["LADE_DURCHSCHNITTSPREIS_CENT"], PARAM_SPEICHER_DEFAULTS["lade_durchschnittspreis_cent"])
@@ -1274,8 +1363,11 @@ async def get_roi_dashboard(
                 param_lade_preis=lade_preis,
             )
 
-            result = berechne_speicher_einsparung(
-                kapazitaet_kwh=kapazitaet,
+            # N127: siehe DC-Pfad — ohne Kapazität und ohne IST-Messung gibt es
+            # keine Prognose-Basis, also keinen Beitrag statt eines erfundenen.
+            kapazitaet_fehlt = kapazitaet_netto is None and ist_aggregat is None
+            result = None if kapazitaet_fehlt else berechne_speicher_einsparung(
+                kapazitaet_kwh=kapazitaet_netto or 0,
                 wirkungsgrad_prozent=wirkungsgrad_eff,
                 netzbezug_preis_cent=strompreis_cent,
                 einspeiseverguetung_cent=einspeiseverguetung_cent,
@@ -1285,15 +1377,30 @@ async def get_roi_dashboard(
                 ist_entladung_kwh=ist_aggregat.entladung_kwh_jahr if ist_aggregat else None,
                 ist_ladung_netz_kwh=ist_aggregat.ladung_netz_kwh_jahr if ist_aggregat else 0,
             )
-            jahres_einsparung = result.jahres_einsparung_euro
-            co2_einsparung = result.co2_einsparung_kg
-            detail = {
-                'nutzbare_speicherung_kwh': result.nutzbare_speicherung_kwh,
-                'pv_anteil_euro': result.pv_anteil_euro,
-                'arbitrage_anteil_euro': result.arbitrage_anteil_euro,
-                'hinweis': 'AC-gekoppelter Speicher',
-                'modus': 'ist' if ist_aggregat is not None else 'prognose',
-            }
+            if result is None:
+                # `jahres_einsparung`/`co2_einsparung` bleiben bei 0 — die
+                # Gesamtsumme darf keinen Beitrag bekommen. Dass es ein
+                # fehlender Wert und keine Null-Ersparnis ist, sagt `detail`
+                # (P4); `ROIBerechnung.jahres_einsparung` ist nicht optional.
+                detail = {
+                    'hinweis': (
+                        'AC-gekoppelter Speicher — keine Kapazität gepflegt, '
+                        'ohne sie lässt sich die Ersparnis nicht abschätzen. '
+                        'Kapazität in der Investitionspflege nachtragen.'
+                    ),
+                    'kapazitaet_fehlt': True,
+                    'modus': 'prognose',
+                }
+            else:
+                jahres_einsparung = result.jahres_einsparung_euro
+                co2_einsparung = result.co2_einsparung_kg
+                detail = {
+                    'nutzbare_speicherung_kwh': result.nutzbare_speicherung_kwh,
+                    'pv_anteil_euro': result.pv_anteil_euro,
+                    'arbitrage_anteil_euro': result.arbitrage_anteil_euro,
+                    'hinweis': 'AC-gekoppelter Speicher',
+                    'modus': 'ist' if ist_aggregat is not None else 'prognose',
+                }
             if ist_aggregat is not None:
                 detail.update({
                     'ist_entladung_kwh_jahr': round(ist_aggregat.entladung_kwh_jahr, 1),

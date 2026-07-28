@@ -7,13 +7,14 @@ Single Source of Truth für „PV-Tagesprognose heute (+ Rest, + morgen/
 verschiedenen Stellen (GTI vs. Energie-Slot) und mit verschiedenen
 losses-Quellen → vier verschiedene „heute"-Werte (Rainer-PN 2026-06-26).
 
-Bau-Vertrag: ``docs/drafts/KONZEPT-PROGNOSE-KANON.md``.
+Bau-Vertrag: ``docs/drafts/archive/KONZEPT-PROGNOSE-KANON.md``.
 
 Kanon-Rechenweg (abgenommen):
 
 1. **Orientierungsgruppen** (``pv_orientation.orientierungs_gruppen``) — Multi-
    String-Fan-out wie der Live-Pfad: pro Gruppe ein OpenMeteo-Abruf
-   (``get_solar_prognose``, PVGIS-Losses via ``resolve_system_losses``).
+   (``get_solar_prognose``, PVGIS-Losses via ``resolve_system_losses``,
+   Wettermodell aus ``Anlage.wetter_modell`` — A30/N16).
 2. **Gruppen slot-weise summieren** → rohes OM-kWh-Stundenprofil/Tag
    (= „OpenMeteo"-Spalte überall, multi-string, unkorrigiert).
 3. **eedc-Korrektur PRO ENERGIE-SLOT** (``korrigiere_tagesprofil`` +
@@ -97,11 +98,16 @@ class KanonPrognose:
     skalar_fallback: Optional[float]   # Legacy-Lernfaktor (Diagnose/Fallback)
 
 
-# Untergrenze des Kanon-Horizonts. Der OpenMeteo-Cache-Key enthält `days`
-# (`gti:lat:lon:neigung:ausrichtung:days:model`) — heute/morgen/übermorgen
-# treffen damit nur dann DENSELBEN Snapshot wie Prognosen-Vergleich, HA-Export
-# und Live, wenn alle mit demselben `days` abrufen. 4 ist dieser gemeinsame
-# Nenner (MQTT/Vergleich/Live rufen fix `days=4`).
+# Untergrenze des Kanon-Horizonts: so viele Tage, wie der weitest blickende
+# Konsument braucht — MQTT/HA-Export und der Prognosen-Vergleich lesen fix
+# `tage[0..3]`.
+#
+# Bis A29 stand hier eine zweite, inzwischen überholte Begründung: der
+# OpenMeteo-Cache-Key enthielt `days`, weshalb ein abweichender Horizont einen
+# ANDEREN Snapshot desselben Tages zog und 4 der erzwungene gemeinsame Nenner
+# war. Seit E15 bestimmt nicht mehr der Aufrufer den Cache-Key, sondern das
+# Wettermodell (`services/wetter/cache.snapshot_days`) — `days` ist hier wieder
+# das, was es sein soll: wie viele Tage der Kanon RECHNET.
 KANON_MIN_DAYS = 4
 
 
@@ -187,8 +193,9 @@ async def kanon_tagesprognose(
     """Berechnet die kanonische PV-Tagesprognose einer Anlage.
 
     Quelle ist IMMER die eedc-eigene Prognose (OpenMeteo-Basis × Korrektur) —
-    Solcast/SFML sind eigene Pfade. ``None`` bei fehlenden Koordinaten,
-    fehlender PV-Leistung oder fehlgeschlagenem OpenMeteo-Abruf.
+    Solcast/SFML sind eigene Pfade. Als OpenMeteo-Basis dient das in der Anlage
+    gewählte ``wetter_modell`` (A30/N16, s. u.). ``None`` bei fehlenden
+    Koordinaten, fehlender PV-Leistung oder fehlgeschlagenem OpenMeteo-Abruf.
     """
     if not anlage.latitude or not anlage.longitude:
         return None
@@ -212,6 +219,19 @@ async def kanon_tagesprognose(
 
     system_losses = resolve_system_losses(await lade_aktive_prognose(db, anlage.id))
 
+    # A30/N16: das in der Anlage gewählte Wettermodell — in derselben Form wie
+    # `prefetch_service` und `/solar-prognose` (WETTER_MODELLE-Key; die Kaskade
+    # „bevorzugtes Modell + best_match für die Tage jenseits seines Horizonts"
+    # steckt in `get_solar_prognose`, hier wird nichts nachgebaut).
+    #
+    # Bis dahin rechnete der Kanon IMMER mit best_match, während Live-Wetter,
+    # 14-Tage-Wettertabelle und die OpenMeteo-Spalte in `/solar-prognose` das
+    # gewählte Modell schon nutzten: dieselbe Seite zeigte für denselben Tag
+    # OM-Balken aus Modell A und den eedc-Wert aus Modell B, und der MQTT-/HA-
+    # Export folgte dem Kanon (= best_match). Für `wetter_modell="auto"` — den
+    # Default — ändert sich dadurch nichts.
+    wetter_modell = getattr(anlage, "wetter_modell", None) or "auto"
+
     # Fan-out: pro Orientierungsgruppe ein get_solar_prognose (eigener Cache-
     # Eintrag, parallel). Aufruf über das Modul (sfs.) — Monkeypatch-fähig.
     coros = [
@@ -223,6 +243,7 @@ async def kanon_tagesprognose(
             ausrichtung=g.ausrichtung,
             days=days,
             system_losses=system_losses,
+            wetter_modell=wetter_modell,
             skip_jitter=skip_jitter,
         )
         for g in gruppen

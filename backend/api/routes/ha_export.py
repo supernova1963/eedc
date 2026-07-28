@@ -16,6 +16,10 @@ from dataclasses import dataclass
 import os
 
 from backend.core.exceptions import not_found
+from backend.core.investition_kennwerte import (
+    get_speicher_kapazitaet_kwh,
+    get_speicher_nutzbare_kapazitaet_kwh,
+)
 from backend.api.deps import get_db
 from backend.core.berechnungen import (
     FinanzMonatsZeile,
@@ -23,11 +27,13 @@ from backend.core.berechnungen import (
     berechne_finanz_aggregat,
     berechne_wp_alternativkosten_ersparnis,
     berechne_spez_ertrag_annualisiert,
+    alter_wirkungsgrad,
     gas_kosten_altanlage,
     berechne_verbrauchs_kennzahlen,
     erzeugung_hinter_zaehler_kwh,
     imd_typ_beitrag,
     monatsgewichte_aus_pvgis,
+    vollzyklen as berechne_vollzyklen,
 )
 from backend.services.prognose_auswahl import lade_aktive_prognose
 from datetime import date
@@ -75,7 +81,6 @@ from backend.services.mqtt_broker_settings import (
 from backend.core.investition_parameter import (
     PARAM_E_AUTO,
     PARAM_E_AUTO_DEFAULTS,
-    PARAM_SPEICHER,
     PARAM_WAERMEPUMPE,
     PARAM_WAERMEPUMPE_DEFAULTS,
     ist_dienstlich,
@@ -85,8 +90,6 @@ from backend.core.wirtschaftlichkeit_defaults import (
     EINSPEISEVERGUETUNG_DEFAULT_CENT,
     NETZBEZUG_DEFAULT_CENT,
     WP_PV_ANTEIL_DEFAULT,
-    WP_WIRKUNGSGRAD_GAS_DEFAULT,
-    WP_WIRKUNGSGRAD_OEL_DEFAULT,
 )
 
 router = APIRouter(prefix="/ha/export", tags=["HA Export"])
@@ -707,16 +710,33 @@ async def calculate_anlage_sensors(
     speicher_kapazitaet = 0
     for inv in investitionen:
         if inv.typ == 'speicher' and inv.parameter:
-            # Defensive Doppel-Read: kapazitaet_kwh ist Brutto, nutzbare_kapazitaet_kwh
-            # ist optionaler User-Override (DOD-Reserve). Wenn beides leer → kein Speicher gepflegt.
-            kap = inv.parameter.get(PARAM_SPEICHER["KAPAZITAET_KWH"]) or inv.parameter.get(PARAM_SPEICHER["NUTZBARE_KAPAZITAET_KWH"])
+            # Zyklen-Basis ist die BRUTTO-Kapazität — dieselbe Konvention wie in
+            # Monatsbericht, Speicher-Dashboard und Jahresbericht
+            # (docs/BERECHNUNGEN.md §3.3). Der Kommentar behauptete hier
+            # früher, `nutzbare_kapazitaet_kwh` sei ein Override; der Code liest
+            # aber bewusst zuerst Brutto. Ein Dreher hätte den HA-Sensor gegen
+            # den Monatsbericht laufen lassen (R22-4). `nutzbare_kapazitaet_kwh`
+            # ist nur der Fallback, wenn Brutto nicht gepflegt ist; ist beides
+            # leer → kein Speicher gepflegt.
+            #
+            # A31-2: die Lese-REIHENFOLGE bleibt genau so — dies ist der
+            # Vollzyklen-Nenner, und der ist brutto (Kanon
+            # `core/berechnungen/speicher.py::vollzyklen`, Entscheidung Gernot
+            # 2026-07-28). Der Netto-Umstieg von A31-2 gilt für Simulation und
+            # Wirtschaftlichkeits-Prognose, NICHT hier. Migriert ist nur der
+            # Zugriffsweg: statt zweier Roh-Lesungen die beiden SoT-Helper —
+            # `get_speicher_nutzbare_kapazitaet_kwh` greift erst, wenn brutto
+            # `None` ist, und liefert dann den Netto-Wert (sein eigener
+            # Brutto-Fallback läuft in diesem Fall ins Leere). Identisches
+            # Verhalten, nur ohne Literal-Zugriff.
+            kap = get_speicher_kapazitaet_kwh(inv) or get_speicher_nutzbare_kapazitaet_kwh(inv)
             if kap:
                 speicher_kapazitaet += float(kap)
 
     if batterie_ladung > 0:
         speicher_effizienz = (batterie_entladung / batterie_ladung) * 100
-    if speicher_kapazitaet > 0 and batterie_entladung > 0:
-        speicher_zyklen = batterie_entladung / speicher_kapazitaet
+    # Layer-SoT statt eigener Division — dieselbe Zahl wie Hub/Monat/PDF.
+    speicher_zyklen = berechne_vollzyklen(batterie_entladung, speicher_kapazitaet)
 
     # Sensor-Werte erstellen
     sensor_values = []
@@ -1107,7 +1127,7 @@ async def calculate_investition_sensors(
             elif sensor.key == "wp_ersparnis_euro":
                 if gesamt_waerme > 0:
                     fallback_alter_preis = params.get(PARAM_WAERMEPUMPE["ALTER_PREIS_CENT_KWH"], PARAM_WAERMEPUMPE_DEFAULTS["alter_preis_cent_kwh"])
-                    alter_wirkungsgrad = WP_WIRKUNGSGRAD_OEL_DEFAULT if params.get(PARAM_WAERMEPUMPE["ALTER_ENERGIETRAEGER"]) == "oel" else WP_WIRKUNGSGRAD_GAS_DEFAULT
+                    wirkungsgrad_alt = alter_wirkungsgrad(params.get(PARAM_WAERMEPUMPE["ALTER_ENERGIETRAEGER"]))
                     zusatzkosten_jahr = params.get(PARAM_WAERMEPUMPE["ALTERNATIV_ZUSATZKOSTEN_JAHR"], 0) or 0
                     # Monatliche Gaspreise laden (Fallback: statischer Parameter)
                     anlage_md_result = await db.execute(
@@ -1124,7 +1144,7 @@ async def calculate_investition_sensors(
                         gp = (amd.gaspreis_cent_kwh
                               if amd and amd.gaspreis_cent_kwh is not None
                               else fallback_alter_preis)
-                        alte_kosten += gas_kosten_altanlage(waerme, alter_wirkungsgrad, gp)
+                        alte_kosten += gas_kosten_altanlage(waerme, wirkungsgrad_alt, gp)
                     # Fixe Zusatzkosten anteilig
                     alte_kosten += zusatzkosten_jahr * len(monatsdaten) / 12
                     wp_kosten = gesamt_strom * wp_netzbezug_preis / 100
