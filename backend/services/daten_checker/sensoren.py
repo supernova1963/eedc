@@ -181,7 +181,19 @@ class SensorChecks:
         - **kWh-Feld + nicht in LTS** → WARNING (Korrektur-Werkzeuge wirken nicht)
         - **Counter-Feld + nicht in LTS** → WARNING (Korrektur-Werkzeuge wirken nicht;
           jeder Aussetzer permanent verloren, einzelne Stunden können fehlen)
-        - **kWh-Feld + LTS vorhanden** → OK
+        - **kWh-/Counter-Feld + in LTS, aber OHNE Summen-Spalte** → WARNING
+          (`state_class: measurement` statt `total_increasing`; die Aggregation
+          kann daraus keine Deltas bilden — s. u.)
+        - **kWh-Feld + LTS-Eintrag mit Summen-Spalte** → OK
+
+        Der dritte Fall ist der stille: HA legt auch für `measurement` eine
+        `statistics_meta`-Zeile an, nur ohne `sum`. Wer bloß die Existenz prüft,
+        meldet OK, während `get_hourly_kwh_deltas_for_day` jede Zeile dieses
+        Sensors überspringt und Cockpit/Tag auf 0 bleibt. Betroffen ist vor allem
+        die Familie, bei der `state_class` von Hand nachgetragen wird
+        (bitShake/Tasmota — Tasmota-Discovery setzt gar keins, HA-Core #104305);
+        `measurement` ist dort der bekannte Griff daneben.
+        Forum simon42 #89667/44.
         """
         from backend.core.field_definitions import FELD_LABELS
         from backend.services.ha_statistics_service import get_ha_statistics_service
@@ -208,24 +220,19 @@ class SensorChecks:
         # (Joachim-PN 2026-05-04: grid_price_monitor wurde fälschlich als
         # fehlender kWh-Sensor gemeldet.)
         #
-        # `pv_gesamt` fehlt hier bewusst — die frühere Begründung („heute nur als
-        # `pv_gesamt_w` (Live-W) gemappt") ist zwar überholt (der Zählerstand ist
+        # `pv_gesamt` gehört seit 2026-07-29 dazu (N131/M1): der Zählerstand ist
         # über `BASIS_ENERGY_TOPICS` zuordenbar und wird von
         # `aktueller_monat._ha_stats_monatswerte` als `pv_erzeugung_kwh` aus LTS
-        # gelesen), aber die Aufnahme ist NICHT die Einzeiler-Ergänzung, als die
-        # sie aussieht: der Sammelzähler ist der Notstopfen für Wechselrichter
-        # ohne einzeln erfasste Strings und wird nach kWp verteilt. Ob er
-        # gelesen wird, entscheidet die dreistufige Präzedenz in
-        # `core/berechnungen/pv_verteilung.resolve_pv_je_modul` — das Aggregat
-        # gilt, sobald AUCH NUR EIN aktives Modul keinen eigenen Wert hat, nicht
-        # erst wenn keines misst. Ein Guard „irgendein Modul-Zähler vorhanden"
-        # würde genau die Teil-Abdeckung stumm schalten, in der das Aggregat
-        # zählt; und er wäre eine zweite Wahrheit neben
-        # `datenquellen_validierung.finde_redundante_aggregate` (die den
-        # Wechselrichter bewusst NICHT als Komponente zählt). Sauber gelöst
-        # gehört das zusammen mit N51/DOK-9 in dieselbe Checker-Datei
-        # (Backlog §F R4), nicht als Anhängsel hier.
-        for key in ("einspeisung", "netzbezug"):
+        # gelesen — ein Sammelzähler ohne state_class liefert dort still nichts.
+        # BEWUSST OHNE GUARD „liest die Rechnung ihn diesen Monat überhaupt?":
+        # das wäre die Laufzeitfrage, dieser Check beantwortet die
+        # Konfigurationsfrage („diesem Feld ist ein Sensor zugeordnet — hat er
+        # Langzeitstatistik?"). Die Antwort darauf ist in JEDER Präzedenz-Stufe
+        # von `pv_verteilung.resolve_pv_je_modul` dieselbe, und die Stufe kann
+        # jeden Monat wechseln (fällt ein String-Sensor aus, ist der
+        # Sammelzähler plötzlich die einzige Quelle). Ein Check, der die
+        # Präzedenz nachbaut, wäre die zweite Wahrheit neben ihr.
+        for key in ("einspeisung", "netzbezug", "pv_gesamt"):
             m = basis.get(key)
             if isinstance(m, dict) and m.get("strategie") == "sensor" and m.get("sensor_id"):
                 kwh_sensors.append((m["sensor_id"], f"Basis: {FELD_LABELS.get(key, key)}"))
@@ -272,14 +279,22 @@ class SensorChecks:
             ))
             return ergebnisse
 
+        # Summen-fähig statt nur „vorhanden" (2026-07-29): ein Sensor mit
+        # `state_class: measurement` steht in `statistics_meta`, hat aber kein
+        # `has_sum` — `get_hourly_kwh_deltas_for_day` überspringt ihn dann
+        # vollständig. Vorher meldete dieser Check dafür OK, während Cockpit/Tag
+        # auf 0 stand (Forum simon42 #89667/44).
         all_sids = list({s for s, _ in kwh_sensors} | {s for s, _ in counter_sensors})
-        valid_sids, missing_sids = await asyncio.to_thread(
-            ha_service.filter_valid_sensor_ids, all_sids
+        _mit_sum, ohne_sum_sids, missing_sids = await asyncio.to_thread(
+            ha_service.filter_summen_faehige_sensor_ids, all_sids
         )
         missing = set(missing_sids)
+        ohne_sum = set(ohne_sum_sids)
 
         kwh_missing = [(sid, lbl) for sid, lbl in kwh_sensors if sid in missing]
         counter_missing = [(sid, lbl) for sid, lbl in counter_sensors if sid in missing]
+        kwh_ohne_sum = [(sid, lbl) for sid, lbl in kwh_sensors if sid in ohne_sum]
+        counter_ohne_sum = [(sid, lbl) for sid, lbl in counter_sensors if sid in ohne_sum]
 
         if kwh_missing:
             beispiele = "; ".join(f"{lbl} ({sid})" for sid, lbl in kwh_missing[:5])
@@ -328,7 +343,58 @@ class SensorChecks:
                 link=LINK_DATENQUELLEN,
             ))
 
-        if kwh_sensors and not kwh_missing:
+        if kwh_ohne_sum:
+            beispiele = "; ".join(f"{lbl} ({sid})" for sid, lbl in kwh_ohne_sum[:5])
+            if len(kwh_ohne_sum) > 5:
+                beispiele += f" (+{len(kwh_ohne_sum) - 5} weitere)"
+            ergebnisse.append(CheckErgebnis(
+                kategorie=kat, schwere=CheckSeverity.WARNING,
+                meldung=(
+                    f"{len(kwh_ohne_sum)} kWh-Sensor(en) ohne Summen-Spalte — "
+                    "Tages- und Stundenwerte bleiben leer"
+                ),
+                details=(
+                    "Diese Sensoren stehen in HA's Langzeitstatistik, aber ohne "
+                    "Summen-Spalte: ihr `state_class` ist `measurement` statt "
+                    "`total_increasing`. Damit führt HA nur Mittel-/Min-/Max-Werte "
+                    "und keine Zählerstände — eedc kann daraus keine Stunden- und "
+                    "Tagesdeltas bilden. Die Live-Ansicht ist NICHT betroffen, sie "
+                    "rechnet aus den Watt-Sensoren; deshalb sieht man dort Werte, "
+                    "während Cockpit → Tag und die Stundenwerte auf 0 stehen. "
+                    "Lösung: `state_class: total_increasing` setzen (bei Tasmota-/"
+                    "bitShake-Zählern üblicherweise per `customize` in der "
+                    "configuration.yaml, HA-Neustart nötig). Danach die Tage über "
+                    "die Reparatur-Werkbank neu berechnen — HA sammelt die "
+                    "Summenwerte erst ab der Umstellung. "
+                    f"Betroffen: {beispiele}"
+                ),
+                link=LINK_DATENQUELLEN,
+            ))
+
+        if counter_ohne_sum:
+            beispiele = "; ".join(f"{lbl} ({sid})" for sid, lbl in counter_ohne_sum[:5])
+            if len(counter_ohne_sum) > 5:
+                beispiele += f" (+{len(counter_ohne_sum) - 5} weitere)"
+            ergebnisse.append(CheckErgebnis(
+                kategorie=kat, schwere=CheckSeverity.WARNING,
+                meldung=(
+                    f"{len(counter_ohne_sum)} Counter-Sensor(en) ohne Summen-Spalte — "
+                    "Korrektur-Werkzeuge wirken nicht"
+                ),
+                details=(
+                    "Der laufende Betrieb erfasst diese Counter über den stündlichen "
+                    "Snapshot-Service und funktioniert. Ihr `state_class` ist aber "
+                    "`measurement` statt `total_increasing`, deshalb führt HA für sie "
+                    "keine Summen-Spalte — und alle Korrektur-Werkzeuge lesen genau "
+                    "die (Vollbackfill, Verlauf nachrechnen, Per-Tag-Reaggregation). "
+                    "Ein Aussetzer lässt sich damit nicht nachholen. Empfohlen: "
+                    "`state_class: total_increasing` setzen. "
+                    f"Betroffen: {beispiele}"
+                ),
+                link=LINK_DATENQUELLEN,
+            ))
+
+        if kwh_sensors and not kwh_missing and not kwh_ohne_sum:
             ergebnisse.append(CheckErgebnis(
                 kategorie=kat, schwere=CheckSeverity.OK,
                 meldung=(

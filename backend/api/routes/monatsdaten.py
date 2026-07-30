@@ -22,6 +22,7 @@ from backend.core.berechnungen import (
     berechne_verbrauchs_kennzahlen,
     erzeugung_hinter_zaehler_kwh,
     imd_typ_beitrag,
+    ist_vollstaendig,
     resolve_pv_je_modul,
     PvModul,
     PV_QUELLE_FEHLT,
@@ -37,6 +38,7 @@ from backend.services.provenance import (
     write_json_subkey_with_provenance,
     write_with_provenance,
 )
+from backend.services.pv_monatswerte import lade_pv_je_monat, pv_summe_je_monat
 
 
 # Source-Tag-Konstanten (Etappe 3d Päckchen 3)
@@ -451,9 +453,16 @@ async def list_monatsdaten_aggregiert(
                     for inv in aktive_pv_module
                 ],
             )
-            if any(w.quelle != PV_QUELLE_FEHLT for w in pv_resolved.values()):
-                # PV vorhanden (gemessen oder über Aggregat verteilt) — auf das
-                # bereits gesammelte BKW-PV oben aufaddieren. Σ == Gesamterzeugung.
+            # `ist_vollstaendig` statt „irgendein Modul aufgelöst": seit der
+            # modulweisen Präzedenz behalten gemessene Module ihren Wert, auch
+            # wenn daneben eine Lücke offen ist. Ohne diese Prüfung würde hier
+            # jetzt eine TEILSUMME als Anlagenerzeugung ausgewiesen — genau das,
+            # was N42 verhindert. Die Anlagensumme bleibt dadurch in allen
+            # Konstellationen bitgleich zu vorher; nur die Pro-Modul-Aufteilung
+            # ist ehrlicher geworden.
+            if ist_vollstaendig(pv_resolved):
+                # PV vollständig (gemessen und/oder Lücken über das Aggregat
+                # gefüllt) — auf das bereits gesammelte BKW-PV oben aufaddieren.
                 hat_pv_imd = True
                 pv_erzeugung += sum(w.pv_erzeugung_kwh for w in pv_resolved.values())
 
@@ -629,11 +638,24 @@ async def get_monatsdaten(monatsdaten_id: int, db: AsyncSession = Depends(get_db
     preis_result = await db.execute(preis_query)
     strompreis = preis_result.scalar_one_or_none()
 
+    # PV des Monats über den Read-time-SoT statt aus dem Aggregat-Feld: wer je
+    # String misst, hat dort NULL stehen — die Kennzahlen dieses Endpoints
+    # (Autarkie, Eigenverbrauchsquote, Erträge) rechneten dann mit PV = 0.
+    pv_module = list((await db.execute(
+        select(Investition).where(
+            Investition.anlage_id == md.anlage_id,
+            Investition.typ == "pv-module",
+        )
+    )).scalars().all())
+    pv_kwh = pv_summe_je_monat(
+        await lade_pv_je_monat(db, md.anlage_id, pv_module, md.jahr)
+    ).get((md.jahr, md.monat))
+
     # Kennzahlen berechnen
     kennzahlen = berechne_monatskennzahlen(
         einspeisung_kwh=md.einspeisung_kwh,
         netzbezug_kwh=md.netzbezug_kwh,
-        pv_erzeugung_kwh=md.pv_erzeugung_kwh or 0,
+        pv_erzeugung_kwh=pv_kwh or 0,
         batterie_ladung_kwh=md.batterie_ladung_kwh or 0,
         batterie_entladung_kwh=md.batterie_entladung_kwh or 0,
         einspeiseverguetung_cent=strompreis.einspeiseverguetung_cent_kwh if strompreis else 8.2,

@@ -13,17 +13,14 @@ from backend.core.exceptions import not_found
 from backend.core.investition_kennwerte import get_pv_kwp
 from backend.api.deps import get_db
 from backend.core.berechnungen import (
-    resolve_pv_je_modul,
-    PvModul,
     PV_QUELLE_GEMESSEN,
     PV_QUELLE_VERTEILT,
     PV_QUELLE_FEHLT,
 )
 from backend.models.anlage import Anlage
-from backend.models.investition import Investition, InvestitionMonatsdaten
-from backend.models.monatsdaten import Monatsdaten
+from backend.models.investition import Investition
 from backend.services.prognose_auswahl import lade_aktive_prognose
-from backend.utils.investition_value import get_inv_value
+from backend.services.pv_monatswerte import lade_pv_je_monat
 from backend.api.routes.cockpit._shared import MONATSNAMEN
 
 router = APIRouter()
@@ -90,7 +87,7 @@ async def _lade_ist_je_modul(
     anlage_id: int,
     pv_module: list[Investition],
     jahr: Optional[int] = None,
-) -> tuple[dict[int, dict[int, dict[int, float]]], dict[tuple[int, int], str]]:
+) -> tuple[dict[int, dict[int, dict[int, float]]], dict[tuple[int, int, int], str]]:
     """IST-Erzeugung je Modul/Monat über den Read-time-SoT ``resolve_pv_je_modul``.
 
     Vorher las diese Sicht roh aus den IMD und kannte die Aggregat-Präzedenz
@@ -102,73 +99,34 @@ async def _lade_ist_je_modul(
 
     Returns:
         ``(werte, quellen)`` mit ``werte[inv_id][jahr][monat] = kwh`` und
-        ``quellen[(jahr, monat)]`` = ``gemessen`` | ``verteilt``. Monate ohne
-        jede PV-Quelle tauchen in beiden Strukturen nicht auf.
+        ``quellen[(inv_id, jahr, monat)]`` = ``gemessen`` | ``verteilt``.
+        Die Herkunft hängt am MODUL, nicht am Monat: ein Monat kann gemessene
+        und aus dem Aggregat gefüllte Strings zugleich enthalten. Module ohne
+        PV-Quelle tauchen in beiden Strukturen nicht auf.
     """
-    pv_ids = [m.id for m in pv_module]
-
-    imd_query = select(InvestitionMonatsdaten).where(
-        InvestitionMonatsdaten.investition_id.in_(pv_ids)
-    )
-    md_query = select(Monatsdaten).where(Monatsdaten.anlage_id == anlage_id)
-    if jahr is not None:
-        imd_query = imd_query.where(InvestitionMonatsdaten.jahr == jahr)
-        md_query = md_query.where(Monatsdaten.jahr == jahr)
-
-    roh: dict[tuple[int, int], dict[int, float]] = {}
-    for imd in (await db.execute(imd_query)).scalars().all():
-        data = imd.verbrauch_daten or {}
-        wert = data.get("pv_erzeugung_kwh")
-        if wert is None:
-            continue
-        roh.setdefault((imd.jahr, imd.monat), {})[imd.investition_id] = wert
-
-    # Anlagen-Aggregat je Monat (manuell/importiert, NIE programmatisch gefüllt).
-    aggregat: dict[tuple[int, int], Optional[float]] = {
-        (md.jahr, md.monat): md.pv_erzeugung_kwh
-        for md in (await db.execute(md_query)).scalars().all()
-    }
-
     werte: dict[int, dict[int, dict[int, float]]] = {m.id: {} for m in pv_module}
-    quellen: dict[tuple[int, int], str] = {}
+    quellen: dict[tuple[int, int, int], str] = {}
 
-    kandidaten = set(roh.keys()) | {k for k, v in aggregat.items() if v is not None}
-    for (j, monat) in sorted(kandidaten):
-        # #236: nur im Monat aktive Module (Anschaffungs-/Stilllegungsdatum) —
-        # sonst verteilt das Aggregat auf Module, die es noch nicht gab.
-        aktive = [m for m in pv_module if m.ist_aktiv_im_monat(j, monat)]
-        if not aktive:
-            continue
-        roh_monat = roh.get((j, monat), {})
-        aufgeloest = resolve_pv_je_modul(
-            aggregat_kwh=aggregat.get((j, monat)),
-            module=[
-                PvModul(
-                    inv_id=m.id,
-                    leistung_kwp=get_inv_value(m, "leistung_kwp"),
-                    eigen_kwh=roh_monat.get(m.id),
-                )
-                for m in aktive
-            ],
-        )
-        monatswerte = {i: w.pv_erzeugung_kwh for i, w in aufgeloest.items()}
-        quelle = _rollup_quelle([w.quelle for w in aufgeloest.values()])
-
-        if quelle == PV_QUELLE_FEHLT:
-            # Teil-Lücke ohne Aggregat: der Helper liefert für die ANLAGEN-Summe
-            # bewusst nichts (eine Teilsumme wäre als Gesamt-PV irreführend). Die
-            # Pro-Modul-Sicht kennt keine Gesamtsumme und darf einen vorhandenen
-            # Messwert deshalb nicht verwerfen — sonst nähme dieser Umbau dem
-            # Nutzer echte Zahlen weg. Modul ohne Wert bleibt leer (Lücke sichtbar,
-            # Daten-Checker meldet sie als WARNING).
-            monatswerte = {i: v for i, v in roh_monat.items() if v is not None}
-            if not monatswerte:
-                continue
-            quelle = PV_QUELLE_GEMESSEN
-
-        quellen[(j, monat)] = quelle
-        for inv_id, wert in monatswerte.items():
-            werte.setdefault(inv_id, {}).setdefault(j, {})[monat] = wert
+    # EIN Ladepfad für alle Monats-PV-Sichten (`services/pv_monatswerte.py`):
+    # IMD-Werte + Anlagen-Aggregat laden, nach Anschaffungs-/Stilllegungsdatum
+    # filtern (#236) und durch `resolve_pv_je_modul` schicken. Diese Funktion
+    # trug den Ladeteil bis 2026-07-29 als dritte Kopie — dieselbe Klasse, die
+    # `19ae5f73` in Cockpit und HA-Export aufgelöst hat.
+    for (j, monat), aufgeloest in sorted((await lade_pv_je_monat(
+        db, anlage_id, pv_module, jahr
+    )).items()):
+        # Herkunft JE MODUL, nicht je Monat: seit der modulweisen Präzedenz
+        # (Gernot 2026-07-29) stehen in einem Monat gemessene und aus dem
+        # Aggregat gefüllte Strings nebeneinander. Ein Monats-Rollup würde einen
+        # echt gemessenen String als „geschätzt (kWp-Anteil)" etikettieren —
+        # also genau die Unterscheidung einreißen, um die es bei der Umstellung
+        # geht. Die frühere Teil-Lücken-Rückfalllogik entfällt dabei: der SoT
+        # liefert den Messwert jetzt selbst, statt ihn zu verwerfen.
+        for inv_id, w in aufgeloest.items():
+            if w.quelle == PV_QUELLE_FEHLT:
+                continue  # Lücke bleibt leer und sichtbar (Daten-Checker meldet sie)
+            quellen[(inv_id, j, monat)] = w.quelle
+            werte.setdefault(inv_id, {}).setdefault(j, {})[monat] = w.pv_erzeugung_kwh
 
     return werte, quellen
 
@@ -427,14 +385,14 @@ async def get_pv_strings(
                 abweichung_kwh=round(abweichung, 1),
                 abweichung_prozent=round(abweichung_pct, 1) if abweichung_pct is not None else None,
                 performance_ratio=round(perf_ratio, 3) if perf_ratio is not None else None,
-                ist_quelle=ist_quellen.get((jahr, monat), PV_QUELLE_FEHLT)
-                if monat in months_with_data else PV_QUELLE_FEHLT,
+                ist_quelle=ist_quellen.get((modul.id, jahr, monat), PV_QUELLE_FEHLT),
             ))
             prognose_jahr += prog_monat
             ist_jahr += ist_monat
 
         modul_quelle = _rollup_quelle(
-            ist_quellen[(jahr, m)] for m in sorted(months_with_data) if (jahr, m) in ist_quellen
+            ist_quellen[(modul.id, jahr, m)]
+            for m in sorted(months_with_data) if (modul.id, jahr, m) in ist_quellen
         )
         abweichung_jahr = ist_jahr - prognose_jahr
         abweichung_jahr_pct = (abweichung_jahr / prognose_jahr * 100) if prognose_jahr > 0 else None
@@ -549,14 +507,16 @@ async def get_pv_strings_gesamtlaufzeit(
     # aus reinen Aggregat-Monaten, die vorher zu einer leeren Antwort führten.
     md_by_inv, ist_quellen = await _lade_ist_je_modul(db, anlage_id, pv_module)
 
-    jahre = sorted({j for (j, _) in ist_quellen})
+    jahre = sorted({j for (_, j, _) in ist_quellen})
     if not jahre:
         return _empty
 
     erstes_jahr = jahre[0]
     letztes_jahr = jahre[-1]
     anzahl_jahre = len(jahre)
-    anzahl_monate = len(ist_quellen)
+    # Distinct (Jahr, Monat) — die Schlüssel tragen seit der modulweisen
+    # Provenance zusätzlich die Investitions-ID und würden sonst je Modul zählen.
+    anzahl_monate = len({(j, m) for (_, j, m) in ist_quellen})
 
     strings_data = []
     prognose_gesamt_total = 0
@@ -586,7 +546,8 @@ async def get_pv_strings_gesamtlaufzeit(
             abweichung_pct = ((ist_jahr - prognose_jahr) / prognose_jahr * 100) if prognose_jahr > 0 else None
             perf_ratio = (ist_jahr / prognose_jahr) if prognose_jahr > 0 else None
             jahr_quelle = _rollup_quelle(
-                ist_quellen[(jahr, m)] for m in sorted(months_with_data_year) if (jahr, m) in ist_quellen
+                ist_quellen[(modul.id, jahr, m)]
+                for m in sorted(months_with_data_year) if (modul.id, jahr, m) in ist_quellen
             )
             jahreswerte.append(PVStringJahreswert(
                 jahr=jahr, prognose_kwh=round(prognose_jahr, 1), ist_kwh=round(ist_jahr, 1),

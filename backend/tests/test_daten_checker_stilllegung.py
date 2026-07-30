@@ -295,7 +295,7 @@ async def test_pv_erzeugung_map_filtert_post_stilllegung_imds(db):
     )).scalar_one()
 
     checker = DatenChecker(db)
-    pv_map = checker._get_pv_erzeugung_map(anlage)
+    pv_map = await checker._get_pv_erzeugung_map(anlage)
     assert pv_map.get((2024, 5)) == 500.0, f"Mai-IMD soll zählen, Karte: {pv_map}"
     assert (2024, 8) not in pv_map, f"August-IMD nach Stilllegung darf nicht zählen, Karte: {pv_map}"
 
@@ -345,6 +345,13 @@ async def test_sensor_mapping_lts_ignoriert_stillgelegten_sensor(db, monkeypatch
             valid = [s for s in sids if s != "sensor.wr_b_alt_kwh"]
             missing = [s for s in sids if s == "sensor.wr_b_alt_kwh"]
             return valid, missing
+
+        def filter_summen_faehige_sensor_ids(self, sids):
+            # Seit 2026-07-29 fragt der Check zusätzlich die Summen-Spalte ab;
+            # hier haben alle vorhandenen Sensoren eine (Gegenprobe:
+            # test_daten_checker_lts_summen_spalte.py).
+            mit_sum, fehlend = self.filter_valid_sensor_ids(sids)
+            return mit_sum, [], fehlend
 
     monkeypatch.setattr(ha_mod, "get_ha_statistics_service", lambda: _FakeHaStats())
 

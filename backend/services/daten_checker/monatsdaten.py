@@ -7,6 +7,7 @@ Reiner Move aus dem früheren Modul `daten_checker.py` (Tier-4 Achse C).
 from datetime import date
 from typing import Optional
 
+from backend.core.field_definitions import get_speicher_netzladung_kwh
 from backend.models.anlage import Anlage
 from backend.models.monatsdaten import Monatsdaten
 from backend.models.investition import Investition
@@ -31,6 +32,65 @@ PV_MAX_KWH_PRO_KWP = {
 
 class MonatsdatenChecks:
     """Prüfungen rund um Monatsdaten und Investition-Monatsdaten."""
+
+    async def _tages_pv_summe_monat(
+        self, anlage_id: int, jahr: int, monat: int,
+    ) -> Optional[float]:
+        """Σ der gespeicherten PV-Tageswerte eines Monats (TagesZusammenfassung).
+
+        Nachlauf v4.0.3: der **Diskriminator** für „der Monat wurde nie
+        nachgezogen". Nach einer Tages-Reparatur stehen die Tage voll da,
+        während der Monatswert auf seinem alten (oder leeren) Stand bleibt —
+        genau der Zustand, in dem Prüfung 3/3b sonst die falsche Ursache zuerst
+        nennt („Sensoren vertauscht" bzw. „ungepflegte Netzladung").
+
+        Bewusst **lazy je Monat** statt einer Vorab-Query über die ganze
+        Historie: aufgerufen wird nur, wenn eine der beiden Prüfungen ohnehin
+        anschlägt — in aller Regel also gar nicht.
+
+        Returns:
+            Σ kWh, oder ``None`` wenn für den Monat keine Tageszeilen
+            existieren (dann gibt es nichts zu vergleichen).
+        """
+        from sqlalchemy import select, extract
+        from backend.core.berechnungen import summe_pv_bkw_kwh
+        from backend.models.tages_energie_profil import TagesZusammenfassung
+
+        result = await self.db.execute(
+            select(TagesZusammenfassung).where(
+                TagesZusammenfassung.anlage_id == anlage_id,
+                extract("year", TagesZusammenfassung.datum) == jahr,
+                extract("month", TagesZusammenfassung.datum) == monat,
+            )
+        )
+        zeilen = list(result.scalars().all())
+        if not zeilen:
+            return None
+        return sum(summe_pv_bkw_kwh(tz.komponenten_kwh or {}) for tz in zeilen)
+
+    @staticmethod
+    def _nachzug_hinweis(tages_pv: Optional[float], monats_pv: Optional[float]) -> Optional[str]:
+        """Detail-Vorspann, wenn die Tageswerte den Monatswert deutlich übersteigen.
+
+        Schwelle: ≥ 20 % **und** ≥ 20 kWh über dem Monatswert. Beides zusammen,
+        damit weder die normale Rundungs-/Boundary-Drift noch ein kleiner
+        Wintermonat den Hinweis auslöst.
+        """
+        if tages_pv is None or monats_pv is None:
+            return None
+        if tages_pv <= max(monats_pv * 1.2, monats_pv + 20.0):
+            return None
+        return (
+            f"Wahrscheinlichste Ursache zuerst: die Tageswerte dieses Monats "
+            f"summieren sich bereits auf {tages_pv:.0f} kWh PV, der gespeicherte "
+            f"Monatswert steht aber bei {monats_pv:.0f} kWh. Die Tage wurden also "
+            f"nachgetragen oder repariert, der Monatswert nie nachgezogen. "
+            f"Weg dorthin: Einstellungen → Integration → Statistik-Import, "
+            f"„Vorschau laden“ — bereits belegte Monate stehen dort unter "
+            f"„Konflikte“ und sind zum Überschreiben vorausgewählt, also vor "
+            f"dem Import einmal durchsehen. "
+            f"Erst wenn das nichts ändert, kommen die folgenden Ursachen infrage. "
+        )
 
     # ─── Monatsdaten Vollständigkeit ─────────────────────────────────────
 
@@ -112,7 +172,7 @@ class MonatsdatenChecks:
 
     # ─── Monatsdaten Plausibilität ───────────────────────────────────────
 
-    def _check_monatsdaten_plausibilitaet(
+    async def _check_monatsdaten_plausibilitaet(
         self,
         anlage: Anlage,
         monatsdaten: list[Monatsdaten],
@@ -130,7 +190,7 @@ class MonatsdatenChecks:
 
         # Fallback falls nicht von außen übergeben
         if pv_erzeugung_map is None:
-            pv_erzeugung_map = self._get_pv_erzeugung_map(anlage)
+            pv_erzeugung_map = await self._get_pv_erzeugung_map(anlage)
         if pvgis_monat_map is None:
             pvgis_monat_map = self._get_pvgis_monat_map(pvgis_prognose)
 
@@ -150,6 +210,7 @@ class MonatsdatenChecks:
         # das ist korrekt und darf keine Warnung auslösen.
         # Werte werden auch für die Energiebilanz gebraucht (aggregiert über alle Speicher).
         speicher_imd_bat: dict[tuple[int, int], tuple[float, float]] = {}  # (jahr,monat) → (ladung, entladung)
+        speicher_imd_netzladung: dict[tuple[int, int], float] = {}  # (jahr,monat) → Netzladung
         # Monate, in denen mind. ein Speicher zeitlich aktiv war (Anschaffung erfolgt,
         # noch nicht stillgelegt). Verhindert Warnungen für Monate VOR der ersten
         # Batterie-Installation (Issue #226 JanKgh: PV seit 11/2021, Speicher erst
@@ -177,16 +238,24 @@ class MonatsdatenChecks:
                             prev[0] + (ladung or 0),
                             prev[1] + (entladung or 0),
                         )
+                        # Netzladung (Arbitrage) getrennt mitführen: sie kommt
+                        # NICHT aus der PV und darf im Verwendungs-Stapel (N51)
+                        # nicht gegen die Erzeugung gerechnet werden.
+                        speicher_imd_netzladung[key] = (
+                            speicher_imd_netzladung.get(key, 0.0)
+                            + get_speicher_netzladung_kwh(daten)
+                        )
         speicher_imd_monate = set(speicher_imd_bat.keys())
 
         for md in monatsdaten:
             prefix = f"{md.monat:02d}/{md.jahr}"
             md_link = f"/monatsabschluss/{anlage.id}/{md.jahr}/{md.monat}"
 
-            # PV-Erzeugung bestimmen (InvestitionMonatsdaten oder Legacy)
+            # PV-Erzeugung des Monats aus dem Read-time-SoT (Messwerte +
+            # Aggregat-Lückenfüllung). `None` heißt „nicht auflösbar", nicht
+            # „0" — die PV-abhängigen Prüfungen unten überspringen den Monat
+            # dann, statt mit einer Teilsumme oder einer 0 zu rechnen.
             pv_erzeugung = pv_erzeugung_map.get((md.jahr, md.monat))
-            if pv_erzeugung is None and md.pv_erzeugung_kwh is not None:
-                pv_erzeugung = md.pv_erzeugung_kwh
 
             # 0. Pflichtfelder nicht befüllt
             if md.einspeisung_kwh is None:
@@ -271,6 +340,23 @@ class MonatsdatenChecks:
                         link=md_link,
                     ))
 
+            # Diskriminator für 3 + 3b: stehen in den Tageswerten deutlich mehr
+            # kWh als im Monatswert, wurde der Monat schlicht nie nachgezogen —
+            # dann ist die sonst zuerst genannte Ursache falsch (coolxmad #353).
+            # Lazy: nur berechnen, wenn eine der beiden Prüfungen anschlägt.
+            nachzug: Optional[str] = None
+            nachzug_geprueft = False
+
+            async def _hole_nachzug_hinweis() -> Optional[str]:
+                nonlocal nachzug, nachzug_geprueft
+                if not nachzug_geprueft:
+                    nachzug_geprueft = True
+                    nachzug = self._nachzug_hinweis(
+                        await self._tages_pv_summe_monat(anlage.id, md.jahr, md.monat),
+                        pv_erzeugung,
+                    )
+                return nachzug
+
             # 3. Einspeisung > PV-Erzeugung
             if (
                 pv_erzeugung is not None
@@ -278,17 +364,76 @@ class MonatsdatenChecks:
                 and md.einspeisung_kwh is not None
                 and md.einspeisung_kwh > pv_erzeugung
             ):
+                details_3 = (
+                    "Einspeisung kann nicht höher als die Erzeugung sein. "
+                    "Häufigste Ursache: Einspeisungs- und Netzbezugs-Sensor "
+                    "sind im Sensor-Mapping vertauscht (oder das Vorzeichen "
+                    "eines kombinierten Netz-Sensors ist invertiert)."
+                )
+                vorspann = await _hole_nachzug_hinweis()
                 ergebnisse.append(CheckErgebnis(
                     kategorie=kat, schwere=CheckSeverity.ERROR,
                     meldung=f"{prefix}: Einspeisung ({md.einspeisung_kwh:.0f} kWh) > PV-Erzeugung ({pv_erzeugung:.0f} kWh)",
-                    details=(
-                        "Einspeisung kann nicht höher als die Erzeugung sein. "
-                        "Häufigste Ursache: Einspeisungs- und Netzbezugs-Sensor "
-                        "sind im Sensor-Mapping vertauscht (oder das Vorzeichen "
-                        "eines kombinierten Netz-Sensors ist invertiert)."
-                    ),
+                    details=(vorspann or "") + details_3,
                     link=md_link,
                 ))
+
+            # 3b. Verwendungs-Stapel > Erzeugung (N51, Gernot 2026-07-29)
+            #
+            # Prüfung 3 vergleicht nur die Einspeisung mit der Erzeugung. Was
+            # in den Speicher geladen wurde, kam aber ebenfalls aus der PV —
+            # AUSSER dem Arbitrage-Anteil, der aus dem Netz stammt. Übersteigt
+            # `Einspeisung + (Speicherladung − Netzladung)` die Erzeugung, ist
+            # eine der drei Zahlen falsch.
+            #
+            # **Bewusst als FRAGE und als WARNING**, nicht als Fehler: der
+            # häufigste Auslöser ist eine ungepflegte Netzladung — wer nachts
+            # billig lädt und das nicht erfasst, bekommt hier einen ehrlichen
+            # Hinweis statt einer Anschuldigung. Rein diagnostisch: die Meldung
+            # ändert keine Berechnung und keine Anzeige.
+            #
+            # Nur wenn PV-Ladung > 0, sonst wäre es eine zweite (und schwächere)
+            # Meldung über denselben Sachverhalt wie Prüfung 3.
+            bat_ladung_monat, _ = speicher_imd_bat.get((md.jahr, md.monat), (0.0, 0.0))
+            pv_ladung_speicher = max(
+                0.0,
+                bat_ladung_monat - speicher_imd_netzladung.get((md.jahr, md.monat), 0.0),
+            )
+            if (
+                pv_erzeugung is not None
+                and pv_erzeugung > 0
+                and md.einspeisung_kwh is not None
+                and pv_ladung_speicher > 0
+            ):
+                stapel = md.einspeisung_kwh + pv_ladung_speicher
+                # Toleranz: Zählerstände werden je Quelle gerundet, und die drei
+                # Zahlen kommen aus verschiedenen Sensoren mit eigenen Messfehlern.
+                toleranz = max(5.0, pv_erzeugung * 0.02)
+                if stapel > pv_erzeugung + toleranz:
+                    vorspann = await _hole_nachzug_hinweis()
+                    ergebnisse.append(CheckErgebnis(
+                        kategorie=kat, schwere=CheckSeverity.WARNING,
+                        meldung=(
+                            f"{prefix}: mehr PV verwendet als erzeugt? "
+                            f"Einspeisung ({md.einspeisung_kwh:.0f}) + Speicherladung aus PV "
+                            f"({pv_ladung_speicher:.0f}) = {stapel:.0f} kWh, "
+                            f"erzeugt wurden {pv_erzeugung:.0f} kWh"
+                        ),
+                        details=(vorspann or "") + (
+                            "Beides kommt aus derselben Erzeugung — zusammen kann es "
+                            "nicht mehr sein als die PV geliefert hat. Drei häufige "
+                            "Ursachen, in dieser Reihenfolge: (1) Der Speicher wird "
+                            "auch aus dem Netz geladen (Arbitrage/Notladung), aber das "
+                            "Feld „Ladung aus Netz“ ist nicht gepflegt — dann ist nur "
+                            "die Zuordnung unvollständig, nicht die Energie. "
+                            "(2) Die Erzeugung ist zu niedrig erfasst, etwa weil ein "
+                            "String-Sensor im Monat ausgesetzt hat. (3) Einspeisung "
+                            "und Netzbezug sind vertauscht (dann meldet die Prüfung "
+                            "darüber meist zusätzlich). Rein diagnostisch — es wird "
+                            "nichts automatisch korrigiert."
+                        ),
+                        link=md_link,
+                    ))
 
             # 4. Beide Kernfelder 0
             if md.einspeisung_kwh == 0 and md.netzbezug_kwh == 0:
@@ -324,12 +469,17 @@ class MonatsdatenChecks:
                         ))
 
             # 6. Energiebilanz: Hausverbrauch = PV - Einspeisung + Netzbezug ± Batterie
-            # Nur prüfbar wenn alle Kernfelder vorhanden
+            # Nur prüfbar wenn alle Kernfelder vorhanden — die PV gehört dazu.
+            # `pv_erzeugung or 0` stand hier bis 2026-07-29 und machte aus einer
+            # unauflösbaren PV eine 0; bei erfasster Einspeisung ergab das einen
+            # negativen Hausverbrauch und damit einen ERROR über eine Bilanz,
+            # die schlicht nicht prüfbar ist.
             if (
                 md.einspeisung_kwh is not None
                 and md.netzbezug_kwh is not None
+                and pv_erzeugung is not None
             ):
-                pv = pv_erzeugung or 0
+                pv = pv_erzeugung
                 # Batterie: InvestitionMonatsdaten bevorzugen (neuer Weg), Legacy als Fallback
                 imd_key = (md.jahr, md.monat)
                 if imd_key in speicher_imd_bat:

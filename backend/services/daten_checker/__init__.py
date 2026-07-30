@@ -88,7 +88,7 @@ class DatenChecker(
         pvgis_prognose = await lade_aktive_prognose(self.db, anlage_id)
 
         # PV-Erzeugung und PVGIS-Lookup vorab berechnen (wird mehrfach benötigt)
-        pv_erzeugung_map = self._get_pv_erzeugung_map(anlage)
+        pv_erzeugung_map = await self._get_pv_erzeugung_map(anlage)
         pvgis_monat_map = self._get_pvgis_monat_map(pvgis_prognose)
         pr, pr_count = self._calculate_performance_ratio(
             pv_erzeugung_map, pvgis_monat_map, monatsdaten
@@ -100,7 +100,7 @@ class DatenChecker(
         ergebnisse.extend(self._check_strompreise(anlage))
         ergebnisse.extend(self._check_investitionen(anlage, monatsdaten))
         ergebnisse.extend(self._check_monatsdaten_vollstaendigkeit(anlage, monatsdaten))
-        ergebnisse.extend(self._check_monatsdaten_plausibilitaet(
+        ergebnisse.extend(await self._check_monatsdaten_plausibilitaet(
             anlage, monatsdaten, pvgis_prognose, pv_erzeugung_map, pvgis_monat_map, pr, pr_count
         ))
         ergebnisse.extend(self._check_energieprofil_abdeckung(anlage, monatsdaten))
@@ -112,6 +112,7 @@ class DatenChecker(
         ergebnisse.extend(await self._check_datenquelle_status(anlage))
         ergebnisse.extend(await self._check_datenquelle_drift(anlage))
         ergebnisse.extend(await self._check_batterie_vorzeichen_historie(anlage))
+        ergebnisse.extend(await self._check_leere_tage_trotz_zaehler(anlage))
         ergebnisse.extend(await self._check_pv_ueber_erfassung(anlage))
         ergebnisse.extend(self._check_emob_pool_pflege(anlage))
         ergebnisse.extend(self._check_emob_sensor_doppelmapping(anlage))

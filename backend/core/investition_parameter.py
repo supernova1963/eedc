@@ -209,7 +209,24 @@ PARAM_BALKONKRAFTWERK: Final[dict[str, str]] = {
     "NEIGUNG_GRAD": "neigung_grad",
     "HAT_SPEICHER": "hat_speicher",
     "SPEICHER_KAPAZITAET_WH": "speicher_kapazitaet_wh",
+    # AC-Grenze des BKW-Wechselrichters in Watt (#347, Rainer). Ein BKW ist
+    # regelmäßig überbelegt — 3 × 420 Wp an einem 600-W-Wechselrichter —, und
+    # ohne diese Grenze prognostiziert eedc die volle Modulleistung. Gelesen
+    # NUR über `core/investition_kennwerte.get_wr_grenze_kw`; die Kappung ist
+    # eine STÜNDLICHE (die Mittagsspitze wird gekappt, die Randstunden nicht),
+    # deshalb steht sie im Kanon-Pfad und nicht als kWp-Deckel.
+    # Optional: fehlt der Wert, wird nicht gekappt.
+    "WECHSELRICHTER_LEISTUNG_W": "wechselrichter_leistung_w",
 }
+
+# Typische AC-Einspeisegrenze eines Balkonkraftwerks in Watt (seit 2024 in DE
+# 800 W, davor 600 W). **Kein Lese-Default** — es wird nie damit gerechnet.
+# Der Daten-Checker nutzt sie als Schwelle: liegt die Modulleistung darüber und
+# ist keine Wechselrichter-Leistung gepflegt, ist Überbelegung so wahrscheinlich,
+# dass die ungekappte Prognose gemeldet gehört (#347). Darunter lohnt der
+# Hinweis nicht — die Abweichung wäre bestenfalls marginal.
+BKW_EINSPEISEGRENZE_W_TYPISCH: Final[int] = 800
+
 
 PARAM_BALKONKRAFTWERK_DEFAULTS: Final[dict[str, object]] = {
     # Formular-VORBELEGUNG (typisches BKW = 2 Module), KEIN Lese-Default.
