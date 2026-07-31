@@ -17,6 +17,8 @@ Regel (siehe `docs/ADR-001-BERECHNUNGS-LAYER.md`):
 Submodule:
 - `energie` — kWh-Aggregate aus komponenten_kwh, TagesEnergieProfil
 - `einspeise_erloes` — §51-bereinigte Einspeise-Erlös-Berechnung
+- `dienstliche_ladekosten` — Euro-Bewertung der Dienstwagen-Ladung (Gegenposten
+  zur AG-Erstattung); PV-Anteil zum Netzbezugspreis, Netzanteil zum Wallbox-Preis
 - `counter` — Counter-Aggregate (WP-Starts/Betriebsstunden): Stunden-Σ aus
   Tages-Boundary-Diff ableiten + Pflicht-Invariante (Variante 2-light)
 - `invarianten` — Konsistenz-Asserts (Σ Hourly == Daily, Σ pv == komponenten_pv etc.)
@@ -32,7 +34,6 @@ Geplant (step-by-step, wenn Konsumenten angefasst werden):
 """
 
 from backend.core.berechnungen.alternativkosten import (
-    berechne_bkw_alternativkosten_ersparnis,
     berechne_wp_alternativkosten_ersparnis,
     alter_wirkungsgrad,
     gas_kosten_altanlage,
@@ -54,7 +55,19 @@ from backend.core.berechnungen.counter import (
     verteile_counter_auf_stunden,
 )
 from backend.core.berechnungen.datenquellen import (
+    connector_deckt_monatsanfang,
     merge_datenquellen,
+)
+from backend.core.berechnungen.bkw_finanz import (
+    BkwEigenverbrauchsAnteil,
+    BkwFinanzBeitrag,
+    bkw_eigenverbrauch_anteil,
+    bkw_finanz_beitrag,
+)
+from backend.core.berechnungen.dienstliche_ladekosten import (
+    DienstlicheLadekosten,
+    DienstlicheLadungZeile,
+    berechne_dienstliche_ladekosten,
 )
 from backend.core.berechnungen.einspeise_erloes import (
     EinspeiseErloes,
@@ -194,7 +207,6 @@ __all__ = [
     "berechne_grundlast",
     "TagesBilanz",
     "bilanz_aus_stundenrows",
-    "berechne_bkw_alternativkosten_ersparnis",
     "berechne_wp_alternativkosten_ersparnis",
     "alter_wirkungsgrad",
     "gas_kosten_altanlage",
@@ -210,7 +222,15 @@ __all__ = [
     "assert_counter_konsistent",
     "pruefe_counter_konsistent",
     "verteile_counter_auf_stunden",
+    "connector_deckt_monatsanfang",
     "merge_datenquellen",
+    "BkwFinanzBeitrag",
+    "bkw_finanz_beitrag",
+    "BkwEigenverbrauchsAnteil",
+    "bkw_eigenverbrauch_anteil",
+    "DienstlicheLadekosten",
+    "DienstlicheLadungZeile",
+    "berechne_dienstliche_ladekosten",
     "EinspeiseErloes",
     "einspeise_erloes_euro",
     "FinanzAggregat",

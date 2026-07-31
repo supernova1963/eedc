@@ -111,9 +111,17 @@ def berechne_wp_alternativkosten_ersparnis(
     waermepumpen: Iterable,
     historische_inv_daten: dict[tuple[int, int, int], dict],
     gaspreis_by_periode: dict[tuple[int, int], Optional[float]],
-    netzbezug_preis_cent: float,
+    netzbezug_preis_by_periode: dict[tuple[int, int], float],
+    netzbezug_preis_fallback: float,
 ) -> float:
     """Bisherige WP-Ersparnis vs. Gas/Öl über alle erfassten Monate.
+
+    Der Strompreis kommt **je Monat** herein, wie der Gaspreis daneben: Die
+    Funktion summiert über die gesamte Historie, ein Skalar hätte einen
+    Tarifwechsel rückwirkend über alle Jahre gezogen (ADR-002/P8). Bewusst
+    zwei Pflicht-Parameter statt eines optionalen Mappings — ein Caller, der
+    das Mapping vergisst, würde sonst still auf einen Einheitspreis
+    zurückfallen, und genau diese stille Rückfall-Form ist die Drift-Quelle.
 
     Args:
         waermepumpen: Investitionen vom Typ ``waermepumpe`` (gelesen: ``.id``,
@@ -122,7 +130,11 @@ def berechne_wp_alternativkosten_ersparnis(
             ``{(inv_id, jahr, monat): verbrauch_daten}``.
         gaspreis_by_periode: aufgelöster Monats-Gaspreis (ct/kWh) je
             ``(jahr, monat)``; ``None``/fehlend → WP-Parameter-Default.
-        netzbezug_preis_cent: Netzbezugs-Arbeitspreis (ct/kWh).
+        netzbezug_preis_by_periode: WP-Arbeitspreis (ct/kWh) je ``(jahr, monat)``
+            — der Caller löst ihn über ``lade_tarife_fuer_anlage`` mit dem
+            Monatsersten als Stichtag auf.
+        netzbezug_preis_fallback: Arbeitspreis für Monate, die im Mapping
+            fehlen (ct/kWh).
 
     Returns:
         Σ über alle WPs/Monate ``(gas_kosten − wp_stromkosten_netz)`` plus die
@@ -148,34 +160,13 @@ def berechne_wp_alternativkosten_ersparnis(
             gas_kosten = gas_kosten_altanlage(
                 thermisch, wp_agg["alter_wirkungsgrad"], monats_gaspreis
             )
+            monats_strompreis = netzbezug_preis_by_periode.get(
+                (jahr, monat), netzbezug_preis_fallback
+            )
             wp_stromkosten_netz = (
-                strom * (1.0 - WP_PV_ANTEIL_DEFAULT) * netzbezug_preis_cent / 100
+                strom * (1.0 - WP_PV_ANTEIL_DEFAULT) * monats_strompreis / 100
             )
             ersparnis += gas_kosten - wp_stromkosten_netz
             monate_gezaehlt.add((jahr, monat))
     ersparnis += zusatzkosten_jahr_gesamt * len(monate_gezaehlt) / 12
-    return ersparnis
-
-
-def berechne_bkw_alternativkosten_ersparnis(
-    balkonkraftwerke: Iterable,
-    historische_inv_daten: dict[tuple[int, int, int], dict],
-    netzbezug_preis_cent: float,
-) -> float:
-    """Bisherige BKW-Ersparnis: Eigenverbrauch zum Netzbezugspreis bewertet.
-
-    Args:
-        balkonkraftwerke: Investitionen vom Typ ``balkonkraftwerk`` (gelesen: ``.id``).
-        historische_inv_daten: gefilterte IMD ``{(inv_id, jahr, monat): daten}``.
-        netzbezug_preis_cent: Netzbezugs-Arbeitspreis (ct/kWh).
-
-    Returns:
-        Σ über alle BKW/Monate ``eigenverbrauch_kwh × netzbezug_preis_cent / 100``.
-    """
-    ersparnis = 0.0
-    for bkw in balkonkraftwerke:
-        for (inv_id, _jahr, _monat), daten in historische_inv_daten.items():
-            if inv_id == bkw.id:
-                bkw_ev = daten.get("eigenverbrauch_kwh", 0) or 0
-                ersparnis += bkw_ev * netzbezug_preis_cent / 100
     return ersparnis

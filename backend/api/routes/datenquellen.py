@@ -471,6 +471,77 @@ async def _standard_topic_suffix(db: AsyncSession, anlage: Anlage, field_id: str
     return None
 
 
+async def _basis_preis_eintraege(db: AsyncSession, anlage_id: int) -> list[dict]:
+    """Preis-Slots der Anlage im Eintrags-Shape der Fläche — HA-only.
+
+    Bewusst NICHT in `build_expected_topics`: dort ist jeder Eintrag ein
+    ERWARTETES MQTT-Topic (Wizard-Anzeige + Abdeckungs-Check #134). Ein
+    Preis-Feld kommt aber nur über HA herein — als Topic gelistet wäre es eine
+    Lücke, die niemand schließen kann. `topic` bleibt deshalb leer; damit
+    findet auch `topic_suffix()` kein Gateway-Ziel und die 3-Stufen-Auflösung
+    endet bei HA oder „keine".
+
+    Sichtbar nur bei ausdrücklich dynamischem Tarif (`vertragsart`): bei einem
+    Festpreis gehört der Preis in die Stammdaten. Ein angebotener Preis-Slot
+    verleitet sonst dazu, sich einen Konstanten-Sensor zu bauen (Forum simon42
+    #89667/54).
+    """
+    from backend.api.routes.strompreise import lade_tarife_fuer_anlage
+    from backend.core.field_definitions import BASIS_PREIS_FELDER, get_feld_bedarf
+
+    tarife = await lade_tarife_fuer_anlage(db, anlage_id)
+    allgemein = tarife.get("allgemein")
+    if not (allgemein and allgemein.vertragsart == "dynamisch"):
+        return []
+
+    eintraege: list[dict] = []
+    for feld in BASIS_PREIS_FELDER:
+        bedarf, bedarf_gruppe = get_feld_bedarf("basis", feld["key"])
+        eintraege.append({
+            "topic": "",
+            "label": f"{feld['label']} ({feld['einheit']})",
+            "kategorie": "preis",
+            "typ": "basis",
+            "match_key": ("basis_preis", feld["key"]),
+            "feld": feld["key"],
+            "feld_label": feld["label"],
+            "einheit": feld["einheit"],
+            "hinweis": feld.get("hinweis", ""),
+            "bedarf": bedarf,
+            "bedarf_gruppe": bedarf_gruppe,
+            "gruppe_id": "basis",
+            "gruppe_titel": "Anlage (Basis)",
+            "nur_ha": True,
+        })
+    return eintraege
+
+
+def ohne_nicht_zuordenbare(eintraege: list[dict], quellen: dict) -> list[dict]:
+    """Entfernt `nur_manuell`-Felder aus der Zuordnungs-Fläche.
+
+    Solche Felder sind **erfassbar** (Monatsabschluss, CSV-Import), aber nicht
+    mehr **zuordenbar** — der automatische Erfassungsweg ist zurückgebaut, das
+    Feld nicht gelöscht. Begründung je Feld in `core/field_definitions.py`
+    (Attribut `nur_manuell`); erster Fall sind die BKW-eigenen Akku-Felder,
+    seit der Akku als eigene Speicher-Investition erfasst wird.
+
+    AUSNAHME — hat das Feld heute eine Quelle, bleibt es stehen. Sonst
+    verschwände eine bestehende Zuordnung unsichtbar und ließe sich nicht mehr
+    entfernen; dieselbe Falle hat `bedingung_anlage` schon einmal gestellt
+    (s. `get_felder_fuer_investition`).
+    """
+    def _hat_quelle(fid: str) -> bool:
+        eintrag = quellen.get(fid)
+        if not isinstance(eintrag, dict):
+            return False
+        return eintrag.get("quelle", QUELLE_KEINE) != QUELLE_KEINE
+
+    return [
+        e for e in eintraege
+        if not e.get("nur_manuell") or _hat_quelle(_feld_id(e["match_key"]))
+    ]
+
+
 def _quellen_map(anlage: Anlage) -> dict:
     """Liest die Feld→Quelle-Map aus anlage.sensor_mapping (leer wenn keine)."""
     mapping = anlage.sensor_mapping or {}
@@ -660,9 +731,24 @@ async def get_datenquellen_felder(anlage_id: int, db: AsyncSession = Depends(get
         select(Investition).where(Investition.anlage_id == anlage_id, aktiv_am_tag(date.today()))
     )).scalars().all()
     invs = sort_investitionen_nach_typ(invs)
-    eintraege = await build_expected_topics(db, anlage, investitionen=invs)
+    eintraege = list(await build_expected_topics(db, anlage, investitionen=invs))
+    # Preis-Slots hängen an derselben Basis-Gruppe, kommen aber nicht aus der
+    # MQTT-Registry (s. Helper). Angehängt statt eingemischt: die Gruppierung
+    # ist reihenfolge-erhaltend, „Anlage (Basis)" existiert an dieser Stelle
+    # bereits — der Preis landet damit am Ende seines eigenen Abschnitts.
+    eintraege += await _basis_preis_eintraege(db, anlage_id)
 
     quellen = _quellen_map(anlage)
+
+    # `nur_manuell`-Felder gehören nicht auf diese Fläche: sie sind erfassbar
+    # (Monatsabschluss, CSV-Import), aber nicht mehr zuordenbar — der Erfassungsweg
+    # ist zurückgebaut, nicht das Feld (Begründung je Feld in
+    # `core/field_definitions.py`). AUSNAHME: hat das Feld heute eine Quelle,
+    # bleibt es stehen. Sonst verschwände eine bestehende Zuordnung unsichtbar und
+    # ließe sich nicht mehr entfernen — dieselbe Falle, die `bedingung_anlage`
+    # schon einmal gestellt hat (s. `get_felder_fuer_investition`).
+    eintraege = ohne_nicht_zuordenbare(eintraege, quellen)
+
     # Vereinheitlichter Invert-Store (quellen-unabhängig, feld-/wert-level).
     invert_store = (anlage.sensor_mapping or {}).get("invertieren") or {}
 
@@ -827,6 +913,9 @@ async def get_datenquellen_felder(anlage_id: int, db: AsyncSession = Depends(get
             "kategorie": e.get("kategorie", "energy"),
             "hinweis": e.get("hinweis", ""),
             "standard_topic": e["topic"],
+            # HA-only-Feld (Preis): die Fläche blendet Gateway/Inbound aus,
+            # statt Quellen anzubieten, die kein Leser abfragt.
+            "nur_ha": bool(e.get("nur_ha")),
             "quelle": q,
             # Gateway-Quell-Topic (falls zugeordnet) für die UI-Anzeige.
             "gateway_topic": gateway_topics.get(eintrag.get("mapping_id")),
@@ -955,6 +1044,16 @@ async def set_feld_quelle(
     if quelle not in QUELLEN_ERLAUBT:
         raise HTTPException(status_code=400, detail=f"Unbekannte/nicht verfügbare Quelle: {quelle}")
 
+    # Preis-Felder werden ausschließlich als HA-Sensor gelesen (stündlicher
+    # LTS-Mittelwert). Ein Gateway-/Inbound-Eintrag würde eine Quelle
+    # versprechen, die kein Leser abfragt — die Fläche blendet die Knöpfe
+    # deshalb aus, und hier steht der Riegel für den direkten API-Weg.
+    if field_id.startswith("basis_preis_") and quelle not in (*QUELLEN_HA, QUELLE_KEINE):
+        raise HTTPException(
+            status_code=400,
+            detail="Preis-Felder werden nur als HA-Sensor gelesen — MQTT ist hier ohne Wirkung.",
+        )
+
     anlage = (
         await db.execute(select(Anlage).where(Anlage.id == anlage_id))
     ).scalar_one_or_none()
@@ -1080,9 +1179,14 @@ async def uebernehme_energy_vorschlaege(
     if kind not in ("ha_app", "ha_connector"):
         raise HTTPException(status_code=400, detail="Keine aktive HA-Verbindung")
 
-    # Gueltige Feld-IDs der Anlage aus der Registry (wie /felder).
+    # Gueltige Feld-IDs der Anlage aus der Registry (wie /felder) — ohne die
+    # `nur_manuell`-Felder: was auf der Fläche nicht zuordenbar ist, darf auch
+    # der HA-Energie-Übernahmepfad nicht zuordnen (sonst entstünde eine
+    # Zuordnung, die die Fläche gar nicht anbietet).
     erwartete = await build_expected_topics(db, anlage)
-    gueltig = {_feld_id(e["match_key"]) for e in erwartete}
+    gueltig = {
+        _feld_id(e["match_key"]) for e in erwartete if not e.get("nur_manuell")
+    }
 
     zuordnungen: list[tuple[str, str]] = []
     for feld, entity in (body.basis or {}).items():

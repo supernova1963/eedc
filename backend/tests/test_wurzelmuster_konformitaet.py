@@ -1241,6 +1241,10 @@ P7_BASELINE_AUSNAHMEN: frozenset[str] = frozenset({
     # vorschreibt; die Summe daraus ist die Anlagen-PV.
     "backend/api/routes/cockpit/pv_strings.py::w",
     "backend/api/routes/monatsdaten.py::w",
+    # Dito, aus den Monats-Fakten (`erzeugung.pv_je_modul`) statt aus
+    # `lade_pv_je_monat` direkt — dieselbe Auflösung, eine Schicht weiter oben
+    # (ADR-002/P10). Trägt den String-Vergleich SOLL/IST im Jahresbericht.
+    "backend/services/pdf/builders/jahresbericht.py::w",
     # Import-/Connector-/Parser-DTOs auf dem Weg IN die Datenbank. Sie tragen
     # den Wert, bevor es eine Monatsdaten-Zeile gibt — eine Auflösung wäre dort
     # gegenstandslos.
@@ -1250,8 +1254,10 @@ P7_BASELINE_AUSNAHMEN: frozenset[str] = frozenset({
     "backend/services/import_parsers/base.py::self",
     # Finanz-Schicht: `FinanzZeileEingabe` (Dataclass) bzw. `FinanzMonatsZeile`.
     # Wer die Zeile FÜLLT, ist der Aufrufer — und der steht mit seinem eigenen
-    # Empfänger in dieser Erhebung (`cockpit/uebersicht.py`, `ha_export.py`
-    # lesen seit `19ae5f73` über `pv_monatswerte`).
+    # Empfänger in dieser Erhebung. `cockpit/uebersicht.py` und `ha_export.py`
+    # lasen seit `19ae5f73` über `pv_monatswerte`, seit S4 (2026-07-31) über
+    # `lade_monats_fakten`/`finanz_zeile_eingabe` (ADR-002/P10) — beide Wege
+    # führen durch dieselbe Auflösung, nur eine Schicht weiter oben.
     "backend/services/finanz_zeilen.py::eingabe",
     "backend/core/berechnungen/finanz_aggregat.py::z",
     #
@@ -1276,11 +1282,12 @@ P7_BASELINE_AUSNAHMEN: frozenset[str] = frozenset({
     #          Die Felder sind deprecated (CLAUDE.md Prinzip 3); sie hier auf
     #          die Auflösung umzustellen hieße, ein totes Feld neu zu beleben.
     "backend/api/routes/monatsdaten.py::md",
-    # N110: der Endpoint hat keinen Konsumenten (Produktentscheidung
-    # „anschließen oder löschen?" offen, Backlog §P4/R8-5, Gernot 2026-07-29).
-    # Wird der Text angeschlossen, MUSS die Stelle auf den SoT — dann ist diese
-    # Zeile zu streichen, nicht zu verlängern.
-    "backend/api/routes/cockpit/social.py::md",
+    #
+    # Gestrichen mit dem S3-Umbau (2026-07-31): `cockpit/social.py::md` war als
+    # N110 freigestellt, weil der Endpoint keinen Konsumenten hat — mit der
+    # Auflage „wird der Text angeschlossen, MUSS die Stelle auf den SoT". Die
+    # Sicht liest die Monatszeile jetzt über `lade_monats_fakten` (ADR-002/P10);
+    # der Rohzugriff existiert nicht mehr, die Zeile ist damit gegenstandslos.
 })
 
 
@@ -1310,7 +1317,9 @@ def _p7_verstoesse() -> list[str]:
 def test_p7_pv_aggregat_nur_als_eingang_der_aufloesung():
     """Das PV-Anlagen-Aggregat wird nirgends direkt verrechnet.
 
-    Baseline 0 (26 Zugriffe im Baum, 2 in den SoT-Modulen, 12 klassifiziert).
+    Baseline 0 (26 Zugriffe im Baum, 3 in den SoT-Modulen, 12 klassifizierte
+    Allowlist-Schlüssel — nachgezählt beim S3-Umbau 2026-07-31, die Zahlen
+    standen auf einem älteren Stand).
     **Grenzen, beide gemessen und keine Fußnote:** (a) kein Typwissen — ein
     Empfänger, der wie ein DTO heißt, aber eine Monatsdaten-Zeile hält, ist
     falsch-negativ per Konstruktion (dieselbe Grenze wie P3-a); (b) nur die
@@ -1352,4 +1361,490 @@ def test_p7_baseline_ausnahmen_sind_noch_belegt():
         f"P7-SoT-Module ohne Fundstelle: {sorted(verwaiste_module)} — liest der "
         "Ladepfad das Aggregat nicht mehr, ist die Regel gegenstandslos "
         "geworden oder der SoT ist umgezogen."
+    )
+
+
+# ============================================================================
+# P8 — Tarif-Werte tragen den Stichtag ihres Monats
+# ============================================================================
+#
+# `lade_tarife_fuer_anlage(db, anlage_id)` ohne `target_date` liefert den HEUTE
+# gültigen Tarif. Für die Sicht nach vorn (ROI, Prognose, „aktueller Tarif",
+# Feld-/Spaltenstruktur nach Vertragsart) ist das richtig — für jeden Wert, der
+# einen vergangenen Monat beschreibt, ist es falsch: eine Preiserhöhung schreibt
+# dann die gesamte Historie um.
+#
+# Die Klasse ist teuer geworden. Sie kostete den Jahresbericht-Drift (#326,
+# ~174 € bei vier Tibber-Jahrestarifen), danach dieselbe Form in `aussichten`,
+# `ha_export`, `cockpit/uebersicht`, `aktueller_monat`, `social`, allen vier
+# Komponenten-Dashboards und als Handquery in `monatsdaten.py`. Jeder Fund wurde
+# einzeln geheilt, jeder Fix erzeugte den nächsten (Forum simon42 #89667/60).
+#
+# Zweite Form derselben Sache: `FinanzZeileEingabe` ohne `monatsdaten`. Der
+# Builder setzt den abgerechneten Flex-Ø des Monats VOR den Stammdaten-Tarif
+# (`resolve_netzbezug_preis_cent`) — wer die Zeile nicht durchreicht, verliert
+# den Override STILL. So rechnete Cockpit/Tag mit dem Referenzpreis, während
+# Monat und Jahr den Ø nahmen: Σ Tage ≠ Monat.
+
+# Aufrufe, die bewusst den HEUTIGEN Tarif brauchen. Wer hier etwas hinzufügt,
+# begründet im Klartext, warum die Stelle NICHTS über einen vergangenen Monat
+# aussagt. Ein Wert, der in einer Monats- oder Historien-Summe landet, gehört
+# nicht hierher, sondern auf den Stichtag.
+#
+#   strompreise.py            — Endpoint `/aktuell/{anlage_id}`: „aktuell" IST
+#                               die Frage; ein Stichtag wäre sinnlos.
+#   datenquellen.py           — entscheidet, ob die Preis-Felder angeboten
+#                               werden (Vertragsart heute). Konfigurations-
+#                               Sicht, kein Messwert.
+#   import_export/csv_operations.py
+#                             — Spaltenstruktur von Vorlage und Export nach
+#                               heutiger Vertragsart. Der Zahlenwert je Zeile
+#                               kommt aus den Monatsdaten, nicht von hier.
+#   investitionen/crud.py     — ROI-/Wirtschaftlichkeits-Prognose NACH VORN.
+#   investitionen/dashboards.py
+#                             — Query-Param-Default + Fallback der
+#                               `_gewichteter_monatspreis`-Mittelung; die
+#                               historischen Beträge laufen über den Helper.
+#   ha_export.py              — heutiger WP-Tarif als Fallback des
+#                               Perioden-Mappings und für die nach vorn
+#                               gerichteten Sensor-Werte.
+#   cockpit/uebersicht.py     — Anzeige des aktuellen Tarifs + Komponenten-
+#                               Kennwerte; alle Monats-Summen laufen seit S4
+#                               über `fakt.tarif` bzw. `baue_finanz_zeile`,
+#                               beide mit dem Monats-Stichtag (ADR-002/P10).
+#   aussichten.py             — Hochrechnung + ausgewiesener Tarif der
+#                               Response; die Historie läuft über
+#                               `_tarife_fuer_stichtag`.
+P8_BASELINE_AUSNAHMEN: frozenset[str] = frozenset({
+    "backend/api/routes/strompreise.py",
+    "backend/api/routes/datenquellen.py",
+    "backend/api/routes/import_export/csv_operations.py",
+    "backend/api/routes/investitionen/crud.py",
+    "backend/api/routes/investitionen/dashboards.py",
+    "backend/api/routes/ha_export.py",
+    "backend/api/routes/cockpit/uebersicht.py",
+    "backend/api/routes/aussichten.py",
+})
+
+_P8_TARIF_LADER = "lade_tarife_fuer_anlage"
+_P8_EINGABE = "FinanzZeileEingabe"
+
+
+def _p8_lader_ohne_stichtag() -> list[str]:
+    """Alle `lade_tarife_fuer_anlage`-Aufrufe ohne Stichtag außerhalb der Baseline.
+
+    Der Stichtag darf als Keyword (`target_date=`) oder als dritte Position
+    stehen — `speicher_wirtschaftlichkeit.py` nutzt die positionale Form.
+    """
+    treffer: list[str] = []
+    for pfad, baum in _quelldateien():
+        modul = f"backend/{pfad.relative_to(_BACKEND).as_posix()}"
+        if modul in P8_BASELINE_AUSNAHMEN:
+            continue
+        for knoten in ast.walk(baum):
+            if not isinstance(knoten, ast.Call):
+                continue
+            name = getattr(knoten.func, "id", None) or getattr(knoten.func, "attr", None)
+            if name != _P8_TARIF_LADER:
+                continue
+            hat_keyword = any(kw.arg == "target_date" for kw in knoten.keywords)
+            hat_positional = len(knoten.args) >= 3
+            if not (hat_keyword or hat_positional):
+                treffer.append(_ort(pfad, knoten))
+    return treffer
+
+
+def _p8_eingaben_ohne_monatsdaten() -> list[str]:
+    """Alle `FinanzZeileEingabe(...)` ohne `monatsdaten=`."""
+    treffer: list[str] = []
+    for pfad, baum in _quelldateien():
+        for knoten in ast.walk(baum):
+            if not isinstance(knoten, ast.Call):
+                continue
+            name = getattr(knoten.func, "id", None) or getattr(knoten.func, "attr", None)
+            if name != _P8_EINGABE:
+                continue
+            if not any(kw.arg == "monatsdaten" for kw in knoten.keywords):
+                treffer.append(_ort(pfad, knoten))
+    return treffer
+
+
+def test_p8_tarif_wird_mit_dem_stichtag_des_monats_geladen():
+    offen = _p8_lader_ohne_stichtag()
+
+    assert offen == [], (
+        f"{len(offen)} Tarif-Ladevorgang/-vorgänge ohne Stichtag: {offen}\n"
+        "`lade_tarife_fuer_anlage(db, anlage_id)` liefert den HEUTE gültigen "
+        "Tarif. Jeder Wert, der einen vergangenen Monat beschreibt, braucht "
+        "`target_date=date(jahr, monat, 1)` — sonst rechnet eine Preiserhöhung "
+        "die Historie um (#326: ~174 € im Jahresbericht).\n"
+        "Wer bewusst den heutigen Tarif braucht (Prognose, „aktueller Tarif“, "
+        "Feld-/Spaltenstruktur), trägt sich mit Klartext-Begründung in "
+        "P8_BASELINE_AUSNAHMEN ein."
+    )
+
+
+def test_p8_finanz_zeile_bekommt_die_monatsdaten_zeile():
+    offen = _p8_eingaben_ohne_monatsdaten()
+
+    assert offen == [], (
+        f"{len(offen)} `FinanzZeileEingabe` ohne `monatsdaten=`: {offen}\n"
+        "Der Builder setzt den abgerechneten Monats-Ø eines dynamischen Tarifs "
+        "VOR den Stammdaten-Arbeitspreis. Ohne die Zeile fällt dieser Override "
+        "STILL weg — so nannten Cockpit/Tag und Cockpit/Monat verschiedene "
+        "Preise für denselben Zeitraum. `monatsdaten=None` ist erlaubt, aber "
+        "explizit hinzuschreiben."
+    )
+
+
+def test_p8_baseline_ausnahmen_sind_noch_belegt():
+    """Keine verwaiste Ausnahme — dieselbe Pflicht wie bei P3-a/P5/P6/P7."""
+    module_mit_lader: set[str] = set()
+    for pfad, baum in _quelldateien():
+        for knoten in ast.walk(baum):
+            if isinstance(knoten, ast.Call) and (
+                getattr(knoten.func, "id", None) or getattr(knoten.func, "attr", None)
+            ) == _P8_TARIF_LADER:
+                module_mit_lader.add(f"backend/{pfad.relative_to(_BACKEND).as_posix()}")
+
+    verwaist = P8_BASELINE_AUSNAHMEN - module_mit_lader
+
+    assert not verwaist, (
+        f"P8-Ausnahmen ohne Fundstelle: {sorted(verwaist)} — die Stelle lädt "
+        "keine Tarife mehr; Eintrag streichen."
+    )
+
+
+# ============================================================================
+# P9 — ein Energiefluss trägt genau einmal zum Finanz-Netto bei
+# ============================================================================
+#
+# Die Finanz-Zeile hat zwei BKW-Eingänge, die sich BEDINGT überlappen:
+# `pv_erzeugung_kwh` (Erzeugung hinter dem Hauszähler — Module UND BKW) und
+# `bkw_eigenverbrauch_kwh`. Wessen BKW die Erzeugung mitschreibt, dessen
+# Eigenverbrauch steckt bereits in der Ableitung aus dem ersten Eingang; der
+# zweite darf dann nur noch 0 tragen. Wer die Entscheidung selbst trifft,
+# trifft sie irgendwann anders als die Nachbar-Sicht — genau so standen vier
+# Read-Sites mit vier verschiedenen Kombinationen im Baum (#326-Inventur:
+# Aussichten zählten doppelt, Cockpit und PDF verloren die Datenlücken-Zeile,
+# der HA-Export trug sie nur im ROI-Pfad und dort mit statischem Preis).
+#
+# Der Wächter greift auf der SCHREIB-Seite: jeder Wert, der als
+# `bkw_eigenverbrauch_kwh=` in eine Finanz-Zeile geht, muss sichtbar aus
+# `bkw_finanz_beitrag` stammen. Er fängt damit auch eine fünfte Sicht, die es
+# heute noch nicht gibt.
+_P9_ZEILEN_KONSTRUKTOREN = ("FinanzZeileEingabe", "FinanzMonatsZeile")
+_P9_FELD = "bkw_eigenverbrauch_kwh"
+# Belege im Wert-Ausdruck, die den Helper nachweisen. `rest_ev` ist die
+# Namenskonvention der vier Faltungen (`bkw_rest_ev_by_ym` & Co.),
+# `bkw_finanz_beitrag` der direkte Aufruf.
+_P9_HELFER_BELEGE = ("bkw_finanz_beitrag", "rest_ev", "rest_eigenverbrauch")
+# Der Builder selbst reicht den bereits entschiedenen Wert nur durch.
+P9_DURCHREICHER: frozenset[str] = frozenset({
+    "backend/services/finanz_zeilen.py",
+})
+
+
+def _p9_roh_uebergebene_bkw_werte() -> list[str]:
+    """Alle `bkw_eigenverbrauch_kwh=`-Argumente ohne Helper-Beleg im Ausdruck."""
+    treffer: list[str] = []
+    for pfad, baum in _quelldateien():
+        modul = f"backend/{pfad.relative_to(_BACKEND).as_posix()}"
+        if modul in P9_DURCHREICHER:
+            continue
+        quelltext = pfad.read_text(errors="ignore")
+        for knoten in ast.walk(baum):
+            if not isinstance(knoten, ast.Call):
+                continue
+            name = getattr(knoten.func, "id", None) or getattr(knoten.func, "attr", None)
+            if name not in _P9_ZEILEN_KONSTRUKTOREN:
+                continue
+            for kw in knoten.keywords:
+                if kw.arg != _P9_FELD:
+                    continue
+                ausdruck = ast.get_source_segment(quelltext, kw.value) or ""
+                if not any(beleg in ausdruck for beleg in _P9_HELFER_BELEGE):
+                    treffer.append(f"{_ort(pfad, kw.value)} → {ausdruck}")
+    return treffer
+
+
+def test_p9_bkw_eigenverbrauch_kommt_aus_dem_helper():
+    offen = _p9_roh_uebergebene_bkw_werte()
+
+    assert offen == [], (
+        f"{len(offen)} roh übergebene BKW-Eigenverbrauchswerte: {offen}\n"
+        "`bkw_eigenverbrauch_kwh` der Finanz-Zeile ist KEIN Zusatzposten, "
+        "sondern der Ersatzträger für BKW-Monate OHNE erfasste Erzeugung. "
+        "Wer den gemessenen Eigenverbrauch roh übergibt, zählt ihn bei jedem "
+        "BKW mit Erzeugung doppelt — er steckt dann schon in der Ableitung aus "
+        "`pv_erzeugung_kwh`. Die Aufteilung entscheidet `bkw_finanz_beitrag` "
+        "je (BKW, Monat)."
+    )
+
+
+def test_p9_durchreicher_sind_noch_belegt():
+    """Keine verwaiste Ausnahme — dieselbe Pflicht wie bei P3-a/P5/P6/P7/P8."""
+    module_mit_feld: set[str] = set()
+    for pfad, baum in _quelldateien():
+        for knoten in ast.walk(baum):
+            if isinstance(knoten, ast.Call) and any(
+                kw.arg == _P9_FELD for kw in knoten.keywords
+            ):
+                module_mit_feld.add(f"backend/{pfad.relative_to(_BACKEND).as_posix()}")
+
+    verwaist = P9_DURCHREICHER - module_mit_feld
+
+    assert not verwaist, (
+        f"P9-Durchreicher ohne Fundstelle: {sorted(verwaist)} — die Stelle "
+        "baut keine Finanz-Zeile mehr; Eintrag streichen."
+    )
+
+
+# ============================================================================
+# P10 — eine Monatszeile wird genau einmal aufbereitet
+# ============================================================================
+#
+# Die Drift-Inventur vom 2026-07-31 fand KEINEN Rechenfehler im
+# Berechnungs-Layer und sechsmal dieselbe Struktur: jede Sicht faltet die
+# Rohdaten selbst zu Monatswerten, und dabei fällt jedes Mal etwas anderes weg
+# — mal V2H, mal der Erzeuger hinter dem Zähler, mal der Aggregat-Fallback, mal
+# der Monatstarif, mal der Dienstwagen-Filter. SoT ist seit S1
+# `services/monats_fakten.py` (`docs/KONZEPT-MONATS-FAKTEN.md`).
+#
+# **Der Wächter ist funktions-granular, nicht modul-granular**, und das ist der
+# Kern seiner Schärfe: `dashboards.py` darf für seine per-Investition-Sicht
+# `InvestitionMonatsdaten` laden — aber eine NEUE Funktion in derselben Datei
+# ist ein Treffer. Ein Wächter, dessen Ausnahme eine ganze Datei freistellt,
+# hätte genau die Stellen gedeckt, die der Auftrag ohnehin anfasst, und nichts
+# darüber hinaus (Lehre A24-1/2/3, A31-1/2/3).
+#
+# **Drei Kategorien, bewusst getrennt statt einer Sammelliste** — die mittlere
+# und die untere sind Schuld, nicht Freispruch, und sie sind zählbar:
+#
+#   SCHREIBEN_IMPORT_CHECKER  legitim auf Dauer. Diese Pfade schreiben, prüfen
+#                             oder reichen Zeilen durch; sie leiten nichts ab.
+#   PER_INVESTITION           die Schicht hat heute KEINE per-Investition-Sicht
+#                             (Register N-2). Fällt, sobald sie eine bekommt.
+#   NOCH_NICHT_MIGRIERT       faltet eine ANLAGEN-weite Monatszeile selbst —
+#                             also genau die Klasse, die P10 schließen soll.
+#                             Jeder Eintrag trägt eine Register-ID.
+#
+# **Was der Wächter NICHT sieht** (gehört in die „gesichert durch"-Spalte, nicht
+# in eine Fußnote): eine neue anlagenweite Faltung INNERHALB einer bereits
+# gelisteten Funktion. Dagegen stehen die Wert-Tests — die Vier-Wege-Symmetrie,
+# `test_co2_autarkie_sichten_symmetrie` und `test_monats_fakten_schicht` —, und
+# die Lücke schrumpft mit jedem Migrationsschritt, weil sie an die Liste unten
+# gebunden ist.
+
+_P10_SCHICHT = "backend/services/monats_fakten.py"
+
+#: Schreib-, Import-, Migrations- und Checker-Pfade + reine Durchreicher.
+P10_SCHREIBEN_IMPORT_CHECKER: frozenset[str] = frozenset({
+    # Die P7-Auflösung selbst — die Schicht ruft sie, sie ist ihr Unterbau.
+    "backend/services/pv_monatswerte.py::lade_pv_je_monat",
+    # Monatsabschluss: Formular füllen und speichern.
+    "backend/api/routes/aktueller_monat.py::_collect_saved_data",
+    "backend/api/routes/monatsabschluss/views.py::get_monatsabschluss",
+    "backend/api/routes/monatsabschluss/wizard.py::save_monatsabschluss",
+    "backend/api/routes/monatsdaten.py::_save_investitionen_monatsdaten",
+    "backend/services/import_writer.py::upsert_investition_monatsdaten_with_provenance",
+    # Import / Export / Migration.
+    "backend/api/routes/ha_statistics.py::get_import_vorschau",
+    "backend/api/routes/ha_statistics.py::import_ha_statistics",
+    "backend/api/routes/import_export/csv_operations.py::export_csv",
+    "backend/api/routes/import_export/json_operations.py::_export_anlage_full_impl",
+    "backend/services/migrations/migrate_emob_canonical_source.py::migrate_emob_canonical_source",
+    # Reparatur-Werkbank: prüft und schreibt Provenance, leitet nichts ab.
+    "backend/services/repair_orchestrator.py::_scan_cloud_provenance",
+    "backend/services/repair_orchestrator.py::_execute_reset_cloud_import",
+    # Daten-Checker / Vorschläge: lesen EINEN Feldwert, um ihn zu prüfen.
+    "backend/services/vorschlag_service.py::_get_feld_wert",
+    # Zählt Zeilen für die DB-Statistik.
+    "backend/main.py::get_database_stats",
+    # Reicht die Zeilen EINES Monats unverändert an das Frontend durch.
+    "backend/api/routes/investitionen/dashboards.py::get_investition_monatsdaten_by_month",
+})
+
+#: Aggregate JE INVESTITION — für sie hat die Schicht heute keine Sicht (N-2).
+#: Diese Funktionen beziehen ihre ANLAGEN-Größen bereits aus `lade_monats_fakten`
+#: (bzw. brauchen keine); selbst gefaltet wird nur, was an einem einzelnen Gerät
+#: hängt. Der Eintrag fällt, sobald `MonatsFakt` eine per-Investition-Gruppe hat.
+P10_PER_INVESTITION: frozenset[str] = frozenset({
+    "backend/api/routes/aussichten.py::get_finanz_prognose",
+    "backend/api/routes/ha_export.py::_load_emob_pool_ctx",
+    "backend/api/routes/ha_export.py::calculate_anlage_sensors",
+    "backend/api/routes/ha_export.py::calculate_investition_sensors",
+    "backend/api/routes/investitionen/crud.py::get_roi_dashboard",
+    "backend/api/routes/investitionen/dashboards.py::get_eauto_dashboard",
+    "backend/api/routes/investitionen/dashboards.py::get_waermepumpe_dashboard",
+    "backend/api/routes/investitionen/dashboards.py::get_speicher_dashboard",
+    "backend/api/routes/investitionen/dashboards.py::get_wallbox_dashboard",
+    "backend/api/routes/investitionen/dashboards.py::get_balkonkraftwerk_dashboard",
+    "backend/api/routes/investitionen/dashboards.py::get_sonstiges_dashboard",
+})
+
+#: **Offene Schuld.** Diese Funktionen falten eine ANLAGEN-weite Monatszeile
+#: selbst — die Klasse, gegen die P10 gebaut ist. Jeder Eintrag trägt seine
+#: Register-ID in `~/.claude/plans/uebergabe-monats-fakten.md`; die Liste darf
+#: nur schrumpfen. Wer hier etwas hinzufügt, trifft eine Entscheidung und
+#: dokumentiert sie — genau dafür steht der Eintrag im Code und nicht in einer
+#: Allowlist-Datei daneben.
+P10_NOCH_NICHT_MIGRIERT: frozenset[str] = frozenset({
+    # N-15 — Auswertungen → Tabelle (`list_monatsdaten_aggregiert`).
+    "backend/api/routes/monatsdaten.py::list_monatsdaten_aggregiert",
+    # N-16 — Monatsbericht + Vorjahresvergleich.
+    "backend/api/routes/aktueller_monat.py::get_aktueller_monat",
+    "backend/api/routes/aktueller_monat.py::_load_vorjahr",
+    # N-17 — Cockpit → Komponenten-Zeitreihe.
+    "backend/api/routes/cockpit/komponenten.py::get_komponenten_zeitreihe",
+})
+
+P10_BASELINE_AUSNAHMEN: frozenset[str] = (
+    P10_SCHREIBEN_IMPORT_CHECKER | P10_PER_INVESTITION | P10_NOCH_NICHT_MIGRIERT
+)
+
+#: Wo eine `FinanzZeileEingabe` außerhalb der Schicht entstehen darf.
+#: Der **Tages-Pfad** ist Nicht-Ziel der Schicht (`KONZEPT-MONATS-FAKTEN.md` §4):
+#: seine Mengen kommen aus `bilanz_aus_stundenrows` über die Snapshots — eine
+#: eigene, korrekte Quelle auf einer anderen Zeitachse. `jahr`/`monat` trägt er
+#: nur, damit der Tarif-Stichtag (P8) und §51 aufgelöst werden können; er faltet
+#: keine Monatszeile. Ihn auf die Schicht zu ziehen hieße, eine Tagesbilanz
+#: durch eine Monatsaufbereitung zu ersetzen — das wäre kein Fix, sondern eine
+#: andere Zahl.
+_P10_ZEILE_ERLAUBT: frozenset[str] = frozenset({
+    _P10_SCHICHT,
+    # Der Builder selbst nimmt die Eingabe entgegen.
+    "backend/services/finanz_zeilen.py",
+    # Tages-Pfad (§4).
+    "backend/api/routes/energie_profil/views.py",
+    "backend/services/energie_profil/tage_werte.py",
+})
+
+
+def _p10_imd_lader() -> dict[str, list[int]]:
+    """`modul.py::funktion` → Zeilen, an denen `InvestitionMonatsdaten` geladen wird.
+
+    Erfasst wird jedes `select(...)`, in dessen Ausdruck das Modell vorkommt —
+    also auch `select(InvestitionMonatsdaten, Investition).join(...)` und
+    mehrzeilige Aufrufe, an denen ein Regex vorbeiliefe.
+    """
+    treffer: dict[str, list[int]] = {}
+
+    for pfad, baum in _quelldateien():
+        modul = f"backend/{pfad.relative_to(_BACKEND).as_posix()}"
+        stapel: list[str] = []
+
+        def besuche(knoten: ast.AST) -> None:
+            if isinstance(knoten, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                stapel.append(knoten.name)
+                for kind in ast.iter_child_nodes(knoten):
+                    besuche(kind)
+                stapel.pop()
+                return
+            if (
+                isinstance(knoten, ast.Call)
+                and isinstance(knoten.func, ast.Name)
+                and knoten.func.id == "select"
+                and any(
+                    isinstance(teil, ast.Name)
+                    and teil.id == "InvestitionMonatsdaten"
+                    for teil in ast.walk(knoten)
+                )
+            ):
+                schluessel = f"{modul}::{stapel[-1] if stapel else '<modul>'}"
+                treffer.setdefault(schluessel, []).append(knoten.lineno)
+            for kind in ast.iter_child_nodes(knoten):
+                besuche(kind)
+
+        besuche(baum)
+
+    return treffer
+
+
+def test_p10_monatszeile_nur_aus_der_schicht():
+    """Baumweit: keine neue Sicht faltet `InvestitionMonatsdaten` selbst."""
+    offen = sorted(
+        f"{schluessel} (Z. {zeilen[0]})"
+        for schluessel, zeilen in _p10_imd_lader().items()
+        if not schluessel.startswith(_P10_SCHICHT)
+        and schluessel not in P10_BASELINE_AUSNAHMEN
+    )
+
+    assert offen == [], (
+        f"{len(offen)} Funktionen laden `InvestitionMonatsdaten` selbst: {offen}\n"
+        "Eine abgeleitete Monatsgröße einer Anlage kommt aus "
+        "`services/monats_fakten.py::lade_monats_fakten` — dort gelten die "
+        "Zeitfilter (aktiv · Anschaffung · Stilllegung), der Dienstwagen-Filter, "
+        "die P7-Auflösung der PV und der Monatstarif (P8) genau einmal. Wer "
+        "selbst faltet, verliert erfahrungsgemäß eine davon, und niemand merkt "
+        "es, weil die Zahl plausibel bleibt (Drift-Inventur 2026-07-31, sechs "
+        "Befunde, kein einziger Rechenfehler).\n"
+        "Schreib-, Import- und Checker-Pfade gehören mit Begründung in "
+        "P10_SCHREIBEN_IMPORT_CHECKER. Ein per-Investition-Aggregat gehört in "
+        "P10_PER_INVESTITION. Alles andere ist offene Schuld und braucht einen "
+        "Register-Eintrag, bevor es in P10_NOCH_NICHT_MIGRIERT darf."
+    )
+
+
+def test_p10_baseline_ausnahmen_sind_noch_belegt():
+    """Keine verwaiste Ausnahme — dieselbe Pflicht wie bei P3-a/P5/P6/P7/P8/P9.
+
+    Ohne diesen Test bliebe eine Ausnahme stehen, nachdem ihre Sicht migriert
+    wurde, und die nächste Fassung derselben Funktion liefe still an P10 vorbei.
+    """
+    vorhanden = set(_p10_imd_lader())
+    verwaist = P10_BASELINE_AUSNAHMEN - vorhanden
+
+    assert not verwaist, (
+        f"P10-Ausnahmen ohne Fundstelle: {sorted(verwaist)} — die Funktion lädt "
+        "keine `InvestitionMonatsdaten` mehr (oder heißt anders). Eintrag "
+        "streichen; bei P10_NOCH_NICHT_MIGRIERT zusätzlich den Register-Eintrag "
+        "in `uebergabe-monats-fakten.md` als erledigt markieren."
+    )
+
+
+def test_p10_offene_schuld_waechst_nicht():
+    """Die anlagenweite Restschuld ist eine ZAHL, und sie darf nur fallen.
+
+    P10_NOCH_NICHT_MIGRIERT ist die einzige Kategorie, die dieselbe Klasse
+    enthält, gegen die der Wächter gebaut ist. Sie ohne Gegenzahl zu führen
+    hieße, sie unsichtbar wachsen zu lassen — dann wäre der Wächter genau das
+    Aufräum-Paket mit einem grünen Test obendrauf, das ADR-002 §80 ablehnt.
+    """
+    assert len(P10_NOCH_NICHT_MIGRIERT) <= 4, (
+        f"{len(P10_NOCH_NICHT_MIGRIERT)} Sichten falten eine anlagenweite "
+        "Monatszeile selbst — nach S5 waren es 5, nach S6 sind es 4 "
+        "(N-15/N-16/N-17; `community_service` ist mit S6 gefallen). Diese Zahl "
+        "darf nur sinken. Wer eine Sicht hinzufügen will, migriert sie "
+        "stattdessen."
+    )
+
+
+def test_p10_finanz_zeile_eingabe_nur_aus_einem_monats_fakt():
+    """`FinanzZeileEingabe` entsteht nur noch in der Schicht.
+
+    Der benannte Nachbar von `test_finanz_monatszeile_nur_im_builder`
+    (`KONZEPT-MONATS-FAKTEN.md` §6). Die vier Finanz-Sichten haben ihre Zeile
+    bis S2 aus zwölf site-eigenen Dicts zusammengesetzt — und genau dort saßen
+    P8 (Tarif-Stichtag) und P9 (BKW-Doppelzählung). Wer die Eingabe woanders
+    baut, baut die Auflösungsentscheidungen mit.
+    """
+    treffer: list[str] = []
+    for pfad, baum in _quelldateien():
+        modul = f"backend/{pfad.relative_to(_BACKEND).as_posix()}"
+        if modul in _P10_ZEILE_ERLAUBT:
+            continue
+        for knoten in ast.walk(baum):
+            if (
+                isinstance(knoten, ast.Call)
+                and getattr(knoten.func, "id", None) == "FinanzZeileEingabe"
+            ):
+                treffer.append(_ort(pfad, knoten))
+
+    assert treffer == [], (
+        f"`FinanzZeileEingabe` außerhalb der Schicht gebaut: {treffer}\n"
+        "Die Eingabe der Finanz-Zeile entsteht in "
+        "`services/monats_fakten.py::finanz_zeile_eingabe` aus einem "
+        "`MonatsFakt` — nur so tragen alle Sichten denselben Tarif-Stichtag (P8) "
+        "und dieselbe BKW-Aufteilung (P9)."
     )

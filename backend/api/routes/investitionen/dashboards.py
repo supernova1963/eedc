@@ -54,7 +54,10 @@ from backend.services.eauto_wirtschaftlichkeit import (
 from backend.core.wirtschaftlichkeit_defaults import (
     EINSPEISEVERGUETUNG_DEFAULT_CENT,
     EXTERNE_LADUNG_DEFAULT_EURO_KWH,
+    NETZBEZUG_DEFAULT_CENT,
 )
+from backend.core.investition_parameter import ist_dienstlich
+from backend.services.monats_fakten import lade_monats_fakten
 from backend.core.berechnungen.speicher_wirtschaftlichkeit import (
     aggregiere_speicher_ist,
     berechne_v2h_ersparnis,
@@ -75,6 +78,8 @@ from backend.core.field_definitions import (
     get_speicher_netzladung_kwh,
 )
 from backend.core.berechnungen import (
+    bkw_eigenverbrauch_anteil,
+    imd_typ_beitrag,
     eauto_effizienz_100km,
     eigenverbrauchsquote_prozent,
     einspeise_erloes_euro,
@@ -90,6 +95,48 @@ from backend.api.routes.investitionen.crud import InvestitionResponse
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+async def _gewichteter_monatspreis(
+    db: AsyncSession,
+    anlage_id: int,
+    verwendung: str,
+    gewichte: dict[tuple[int, int], float],
+    fallback: float,
+) -> float:
+    """Mengengewichteter Ø der Tarife, die in den Monaten der Periode galten.
+
+    ADR-002/P8 für die Komponenten-Dashboards. Sie summieren Energien über die
+    ganze Lebensdauer und bewerten sie EINMAL — mit dem heutigen Tarif hätte
+    jede Preiserhöhung die komplette Historie rückwirkend neu bewertet.
+
+    Warum ein gewichteter Ø statt einer strengen Monatsmultiplikation: Bei
+    aktivem Wallbox-Pool (#262) ersetzt `attribute_emob_pool_by_km` die
+    Monatswerte durch EINEN nach km verteilten Gesamtwert — eine
+    Monatsaufteilung der Netzladung existiert dort nicht. Der Ø wird deshalb
+    mit derselben Größe gewichtet, nach der auch attribuiert wird. Für Anlagen
+    ohne Tarifwechsel ist das Ergebnis identisch zum bisherigen Wert.
+
+    Args:
+        gewichte: ``{(jahr, monat): menge}`` — Netzladung bzw. km je Monat.
+        fallback: Preis für den Fall, dass keine Gewichte vorliegen (ct/kWh).
+    """
+    summe_gewicht = sum(g for g in gewichte.values() if g and g > 0)
+    if summe_gewicht <= 0:
+        return fallback
+
+    gewichteter_preis = 0.0
+    for (jahr, monat), gewicht in gewichte.items():
+        if not gewicht or gewicht <= 0:
+            continue
+        m_tarife = await lade_tarife_fuer_anlage(
+            db, anlage_id, target_date=date(jahr, monat, 1)
+        )
+        m_preis = resolve_strompreis_for_komponente(
+            m_tarife, verwendung, fallback=fallback
+        )
+        gewichteter_preis += m_preis * gewicht
+    return gewichteter_preis / summe_gewicht
 
 
 class InvestitionMonatsdatenResponse(BaseModel):
@@ -161,6 +208,28 @@ async def get_eauto_dashboard(
     E-Auto Dashboard für eine Anlage.
 
     Zeigt alle E-Autos mit Monatsdaten, km-Statistik, PV-Anteil, Ersparnis.
+
+    **Befund F-7 der Drift-Inventur 2026-07-31**, hier behoben: diese Datei
+    enthielt keinen einzigen ``ist_dienstlich``-Aufruf, während Cockpit,
+    Aussichten, Jahresbericht-PDF und HA-Export das Flag längst führen
+    ([[feedback_dienstwagen_alle_checks]]). Ein dienstlich geladenes Fahrzeug
+    erschien im Komponenten-Hub als **private** Ersparnis.
+
+    Zwei Wirkungen, bewusst getrennt:
+
+    1. **Der Pool wird privat gebildet.** Ein Dienstwagen und eine dienstliche
+       Wallbox gehen nicht mehr in ``compute_emob_pool_attribution`` ein — sonst
+       zieht ihre Ladung die km-anteilige Attribution der privaten Fahrzeuge
+       nach oben. Das ist derselbe Schnitt, den die Monats-Fakten-Schicht
+       macht (``EmobFakten``: gefiltert, aber als ``dienstlich_*`` getrennt
+       ausgewiesen statt verworfen).
+    2. **Die Karte bleibt, die Ersparnis nicht.** Das Fahrzeug ist registriert
+       und seine physischen Größen (km, Ladung, PV-Anteil, V2H) sind gemessen —
+       es zu verstecken wäre ein Lösch-Feature
+       ([[feedback_reparatur_statt_loesch_features]]). Die Euro- und
+       CO₂-Ersparnis steht auf 0 und die Zusammenfassung trägt ``dienstlich``,
+       damit die Oberfläche den Grund nennen kann statt eine stille Null zu
+       zeigen.
     """
     # Wallbox-Tarif laden (E-Auto lädt über Wallbox)
     tarife = await lade_tarife_fuer_anlage(db, anlage_id)
@@ -206,17 +275,23 @@ async def get_eauto_dashboard(
     for md in all_monatsdaten:
         md_by_inv.setdefault(md.investition_id, []).append(md)
 
+    # F-7: der Pool ist eine PRIVATE Größe. Ein dienstlich geladenes Fahrzeug
+    # gehört nicht hinein — sonst verteilt `attribute_emob_pool_by_km` seine
+    # Ladung anteilig auf die privaten Fahrzeuge und überhöht deren Ersparnis.
+    private_eautos = [e for e in eautos if not ist_dienstlich(e)]
+    private_wallboxen = [w for w in wallboxen if not ist_dienstlich(w)]
+
     # Wallbox-Heimladung als Wahrheit, wenn größer als Σ E-Auto-Heimladung
     # (typisches evcc-Portal-Import-Setup). Km-Anteile pro E-Auto unten.
     pool_attr = compute_emob_pool_attribution(
         eauto_imd_data=[
             (md.verbrauch_daten or {})
-            for e in eautos for md in md_by_inv.get(e.id, [])
+            for e in private_eautos for md in md_by_inv.get(e.id, [])
             if e.ist_aktiv_im_monat(md.jahr, md.monat)
         ],
         wallbox_imd_data=[
             (md.verbrauch_daten or {})
-            for w in wallboxen for md in md_by_inv.get(w.id, [])
+            for w in private_wallboxen for md in md_by_inv.get(w.id, [])
             if w.ist_aktiv_im_monat(md.jahr, md.monat)
         ],
     )
@@ -228,12 +303,12 @@ async def get_eauto_dashboard(
     # Zeilen und Kacheln konsistent bleiben.
     wb_pool_by_month = build_wb_pool_by_month(
         (md.jahr, md.monat, md.verbrauch_daten or {})
-        for w in wallboxen for md in md_by_inv.get(w.id, [])
+        for w in private_wallboxen for md in md_by_inv.get(w.id, [])
         if w.ist_aktiv_im_monat(md.jahr, md.monat)
     )
     eauto_km_by_month = build_eauto_km_by_month(
         (md.jahr, md.monat, md.verbrauch_daten or {})
-        for e in eautos for md in md_by_inv.get(e.id, [])
+        for e in private_eautos for md in md_by_inv.get(e.id, [])
         if e.ist_aktiv_im_monat(md.jahr, md.monat)
     )
 
@@ -251,6 +326,10 @@ async def get_eauto_dashboard(
 
     dashboards = []
     for eauto in eautos:
+        # F-7: dienstlich = die Mengen sind gemessen, die Ersparnis ist keine
+        # private. Steuert unten die Pool-Attribution und die Euro-/CO₂-Zeilen.
+        dienstlich = ist_dienstlich(eauto)
+
         # Issue #153 / #155 / #236: SoT-Filter inkl. stilllegungsdatum
         monatsdaten = [
             md for md in md_by_inv.get(eauto.id, [])
@@ -269,17 +348,25 @@ async def get_eauto_dashboard(
         # mit dem jeweils gültigen Monats-Benzinpreis rechnen kann.
         km_pro_monat: list[tuple[int, int, float]] = []
 
+        # ADR-002/P8: Gewichte je Monat mitführen, um den Tarif über die
+        # tatsächlich gültigen Monatstarife zu mitteln statt über den heutigen.
+        netz_pro_monat: dict[tuple[int, int], float] = {}
+        km_gewichte: dict[tuple[int, int], float] = {}
+
         for md in monatsdaten:
             d = md.verbrauch_daten or {}
             km_this = d.get('km_gefahren', 0) or 0
             gesamt_km += km_this
             if km_this > 0:
                 km_pro_monat.append((md.jahr, md.monat, km_this))
+                km_gewichte[(md.jahr, md.monat)] = km_this
             gesamt_verbrauch += d.get('verbrauch_kwh', 0)
             # #262: PV/Netz via SoT-Helper (evcc-Import schreibt nur Total + PV).
             pv, netz = get_emob_pv_netz_kwh(d)
             gesamt_pv_ladung += pv
             gesamt_netz_ladung += netz
+            if netz:
+                netz_pro_monat[(md.jahr, md.monat)] = netz
             gesamt_extern_ladung += d.get('ladung_extern_kwh', 0)
             gesamt_extern_kosten += d.get('ladung_extern_euro', 0)
             gesamt_v2h += d.get('v2h_entladung_kwh', 0)
@@ -288,12 +375,28 @@ async def get_eauto_dashboard(
         # mehr Heim-Ladung enthält als alle E-Autos zusammen, sind die Daten
         # offenbar via evcc-Portal-Import in die Wallbox geflossen. Anteilig
         # nach gefahrenen km auf die E-Autos verteilen.
-        share = attribute_emob_pool_by_km(pool_attr, gesamt_km)
-        if pool_attr.use_wb_pool and share.netz_kwh + share.pv_kwh > 0:
+        # F-7: der Pool ist privat gebildet — ein Dienstwagen darf nicht daraus
+        # schöpfen, sonst bekäme er km-anteilig fremde Ladung zugeschrieben.
+        share = attribute_emob_pool_by_km(pool_attr, 0 if dienstlich else gesamt_km)
+        ist_pool = (
+            not dienstlich
+            and pool_attr.use_wb_pool
+            and share.netz_kwh + share.pv_kwh > 0
+        )
+        if ist_pool:
             gesamt_pv_ladung = share.pv_kwh
             gesamt_netz_ladung = share.netz_kwh
             gesamt_extern_ladung = share.extern_kwh
             gesamt_extern_kosten = share.extern_euro
+
+        # ADR-002/P8: Tarif über die Monate der Periode mitteln. Beim Pool-Fall
+        # nach km gewichten — das ist der Schlüssel, nach dem auch attribuiert
+        # wird; sonst nach der Netzladung des Monats.
+        eauto_strompreis_cent = await _gewichteter_monatspreis(
+            db, anlage_id, "wallbox",
+            km_gewichte if ist_pool else netz_pro_monat,
+            fallback=strompreis_cent,
+        )
 
         # Heim-Ladung (Wallbox) = PV + Netz
         gesamt_heim_ladung = gesamt_pv_ladung + gesamt_netz_ladung
@@ -312,12 +415,12 @@ async def get_eauto_dashboard(
             km_pro_monat=km_pro_monat,
             ladung_netz_kwh_gesamt=gesamt_netz_ladung,
             ladung_extern_euro_gesamt=gesamt_extern_kosten,
-            wallbox_strompreis_cent=strompreis_cent,
+            wallbox_strompreis_cent=eauto_strompreis_cent,
             eauto_parameter=params,
             monats_benzinpreis_lookup=benzinpreis_lookup,
         )
         benzin_kosten = eauto_result.benzin_kosten_euro
-        heim_netz_kosten = gesamt_netz_ladung * strompreis_cent / 100
+        heim_netz_kosten = gesamt_netz_ladung * eauto_strompreis_cent / 100
         strom_kosten_gesamt = eauto_result.strom_kosten_euro
         ersparnis_vs_benzin = eauto_result.ersparnis_euro
         benzin_verbrauch_100km = eauto_result.verwendeter_verbrauch_l_100km
@@ -332,7 +435,7 @@ async def get_eauto_dashboard(
         else:
             v2h_ersparnis = berechne_v2h_ersparnis(
                 v2h_entladung_kwh=gesamt_v2h,
-                bezug_preis_cent=strompreis_cent,
+                bezug_preis_cent=eauto_strompreis_cent,
                 einspeise_verg_cent=einspeise_verg_cent,
             ).ersparnis_euro
 
@@ -357,6 +460,16 @@ async def get_eauto_dashboard(
         # wenn der User — korrekt — verbrauch_kwh nicht doppelt mappt). Quelle für
         # ehrliches UI-Label. Single Source: core/berechnungen/emob.py.
         eff = eauto_effizienz_100km(gesamt_verbrauch, gesamt_ladung, gesamt_km)
+
+        # F-7: dienstlich gefahrene Kilometer sind keine private Ersparnis. Die
+        # Mengen oben bleiben stehen (sie sind gemessen), die Bewertung fällt.
+        if dienstlich:
+            benzin_kosten = 0.0
+            strom_kosten_gesamt = 0.0
+            ersparnis_vs_benzin = 0.0
+            v2h_ersparnis = 0.0
+            wallbox_ersparnis = 0.0
+            co2_ersparnis = 0.0
 
         zusammenfassung = {
             'gesamt_km': round(gesamt_km, 0),
@@ -392,6 +505,9 @@ async def get_eauto_dashboard(
             'gesamt_ersparnis_euro': round(ersparnis_vs_benzin + v2h_ersparnis, 2),
             'co2_ersparnis_kg': round(co2_ersparnis, 1),
             'anzahl_monate': len(monatsdaten),
+            # F-7: Grund für die Nullen oben — die Oberfläche soll „dienstlich,
+            # keine private Ersparnis" sagen können statt still 0 € zu zeigen.
+            'dienstlich': dienstlich,
         }
 
         # #262: Detailzeilen mit dem km-anteiligen Wallbox-Pool anreichern, wenn
@@ -402,7 +518,7 @@ async def get_eauto_dashboard(
         monatsdaten_response = []
         for md in monatsdaten:
             d = dict(md.verbrauch_daten or {})
-            if pool_attr.use_wb_pool:
+            if pool_attr.use_wb_pool and not dienstlich:
                 ms = attribute_month_share(
                     wb_pool_by_month.get((md.jahr, md.monat)),
                     (md.verbrauch_daten or {}).get('km_gefahren', 0) or 0,
@@ -531,6 +647,13 @@ async def get_waermepumpe_dashboard(
             if isinstance(hours, (int, float)) and hours > 0:
                 stunden_by_inv[inv_id].append(float(hours))
 
+    # Anlage-Monatsdaten für den Monats-Gaspreis (Vorrang vor dem
+    # WP-Parameter-Default, wie in `aussichten.py` und im HA-Export).
+    wp_anlage_md_result = await db.execute(
+        select(Monatsdaten).where(Monatsdaten.anlage_id == anlage_id)
+    )
+    wp_anlage_md = {(m.jahr, m.monat): m for m in wp_anlage_md_result.scalars().all()}
+
     dashboards = []
     for wp in waermepumpen:
         # Issue #153 / #236: SoT-Filter inkl. stilllegungsdatum
@@ -566,17 +689,41 @@ async def get_waermepumpe_dashboard(
         # Drift-Audit Domäne A1 / Issue #178: vorher las dieser Endpoint
         # `gas_kwh_preis_cent` (toter Key, Form schreibt `alter_preis_cent_kwh`)
         # und ignorierte den Wirkungsgrad-Faktor → Ergebnis +16€ Drift.
-        # TODO: monatlicher Gaspreis-Override (analog `aussichten.py`-Loop)
-        # könnte ergänzt werden, ist aber für Lebenszeit-Aggregat weniger relevant.
-        wp_result = berechne_wp_ersparnis(
-            wp_waerme_kwh=gesamt_waerme,
-            wp_strom_kwh=gesamt_strom,
-            wp_strompreis_cent=strompreis_cent,
-            wp_parameter=wp.parameter,
-        )
-        wp_kosten = wp_result.wp_kosten_euro
-        alte_heizung_kosten = wp_result.alte_heizung_kosten_euro
-        ersparnis = wp_result.ersparnis_euro
+        #
+        # ADR-002/P8: JE MONAT rechnen statt Energien über die Lebensdauer zu
+        # summieren und einmal mit dem HEUTIGEN Tarif zu multiplizieren. Ein
+        # Tarifwechsel hätte sonst die gesamte WP-Historie neu bewertet. Der
+        # Helper ist linear und kennt keine Jahres-Fixkosten, die Summe der
+        # Monate ist also identisch, solange der Preis konstant ist. Nebenbei
+        # erledigt das den TODO „monatlicher Gaspreis-Override": er wird jetzt
+        # wie in `aussichten.py` je Monat gezogen.
+        wp_kosten = 0.0
+        alte_heizung_kosten = 0.0
+        for md in monatsdaten:
+            d = md.verbrauch_daten or {}
+            m_waerme = (d.get('heizenergie_kwh', 0) or 0) + (d.get('warmwasser_kwh', 0) or 0)
+            m_strom = d.get('stromverbrauch_kwh', 0) or 0
+            if m_waerme <= 0 and m_strom <= 0:
+                continue
+            m_tarife = await lade_tarife_fuer_anlage(
+                db, anlage_id, target_date=date(md.jahr, md.monat, 1)
+            )
+            m_wp_preis = resolve_strompreis_for_komponente(
+                m_tarife, "waermepumpe", fallback=strompreis_cent
+            )
+            m_anlage_md = wp_anlage_md.get((md.jahr, md.monat))
+            m_ergebnis = berechne_wp_ersparnis(
+                wp_waerme_kwh=m_waerme,
+                wp_strom_kwh=m_strom,
+                wp_strompreis_cent=m_wp_preis,
+                wp_parameter=wp.parameter,
+                monats_gaspreis_cent=(
+                    m_anlage_md.gaspreis_cent_kwh if m_anlage_md else None
+                ),
+            )
+            wp_kosten += m_ergebnis.wp_kosten_euro
+            alte_heizung_kosten += m_ergebnis.alte_heizung_kosten_euro
+        ersparnis = alte_heizung_kosten - wp_kosten
 
         # CO2-Ersparnis: kanonischer Helfer (ADR-001, DI-1/DI-2-A). Vorher rechnete
         # dieser Endpoint `wärme × f_gas − strom × f_strom` OHNE den Gas-Kessel-
@@ -734,11 +881,20 @@ async def get_speicher_dashboard(
         (m.jahr, m.monat): m for m in anlage_md_result.scalars().all()
     }
 
-    # Gewichteter Ø-Netzbezugspreis für Spread-Berechnung
-    gew_preis_sum = sum(
-        resolve_netzbezug_preis_cent(m, strompreis_cent) * (m.netzbezug_kwh or 0)
-        for m in anlage_md_dict.values()
-    )
+    # Gewichteter Ø-Netzbezugspreis für Spread-Berechnung — Basistarif JE MONAT
+    # (ADR-002/P8). Mit dem heutigen Tarif als Basis hätte eine Preiserhöhung
+    # den Ø über die gesamte Speicher-Historie angehoben und damit den
+    # Arbitrage-Spread rückwirkend verändert. Der Flex-Ø des Monats behält
+    # weiterhin Vorrang (`resolve_netzbezug_preis_cent`).
+    gew_preis_sum = 0.0
+    for m in anlage_md_dict.values():
+        m_tarife = await lade_tarife_fuer_anlage(
+            db, anlage_id, target_date=date(m.jahr, m.monat, 1)
+        )
+        m_basis = resolve_strompreis_for_komponente(
+            m_tarife, "allgemein", fallback=strompreis_cent
+        )
+        gew_preis_sum += resolve_netzbezug_preis_cent(m, m_basis) * (m.netzbezug_kwh or 0)
     gew_kwh_sum = sum(m.netzbezug_kwh or 0 for m in anlage_md_dict.values())
     eff_strompreis_cent = gew_preis_sum / gew_kwh_sum if gew_kwh_sum > 0 else strompreis_cent
 
@@ -810,7 +966,7 @@ async def get_speicher_dashboard(
                 # Fallback: Monatsdaten Ø-Preis für dynamische Tarife
                 if preis <= 0:
                     anlage_md = anlage_md_dict.get((md.jahr, md.monat))
-                    if anlage_md and anlage_md.netzbezug_durchschnittspreis_cent:
+                    if anlage_md and anlage_md.netzbezug_durchschnittspreis_cent is not None:
                         preis = anlage_md.netzbezug_durchschnittspreis_cent
                 if preis > 0:
                     arbitrage_preis_sum += preis * netzladung
@@ -999,6 +1155,13 @@ async def get_wallbox_dashboard(
 
     Zeigt Wallboxen mit Heimladung (aus E-Auto-Daten) und Ersparnis vs. externe Ladung.
     Die Wallbox-Daten kommen primär aus den E-Auto-Monatsdaten (ladung_pv_kwh + ladung_netz_kwh).
+
+    **Befund F-7**, zweite Hälfte: die Heimladung ist hier eine *anlagenweite*
+    Summe, kein per-Gerät-Wert — ein dienstlich geladenes Fahrzeug ging also
+    ungefiltert in ``ersparnis_vs_extern`` ein und wurde auf **jeder**
+    Wallbox-Karte als private Ersparnis ausgewiesen. Der Filter sitzt jetzt an
+    der Quelle (``private_*``), damit Pool, kWh und Euro dieselbe Grundmenge
+    haben ([[feedback_dienstwagen_alle_checks]]).
     """
     # Wallbox-Tarif laden
     tarife = await lade_tarife_fuer_anlage(db, anlage_id)
@@ -1060,8 +1223,10 @@ async def get_wallbox_dashboard(
             return False
         return not inv.ist_aktiv_im_monat(jahr, monat)
 
-    eauto_id_set = set(eauto_ids)
-    wallbox_id_set = set(wallbox_ids)
+    # F-7: nur privat geladene Fahrzeuge/Wallboxen bilden die Heimladung, aus
+    # der unten kWh, PV-Anteil und `ersparnis_vs_extern` entstehen.
+    eauto_id_set = {e.id for e in eautos if not ist_dienstlich(e)}
+    wallbox_id_set = {w.id for w in wallboxen if not ist_dienstlich(w)}
     eauto_imd_data: list[dict] = []
     wb_imd_data: list[dict] = []
     for inv_id, md_list in md_by_inv.items():
@@ -1073,6 +1238,12 @@ async def get_wallbox_dashboard(
                 eauto_imd_data.append(d)
             elif inv_id in wallbox_id_set:
                 wb_imd_data.append(d)
+            else:
+                # Dienstwagen / dienstliche Wallbox: die Zeile öffnet auch
+                # keinen Periodenmonat. Sonst verlängert sie `anzahl_monate`,
+                # drückt `ladevorgaenge_pro_monat` und zieht einen Monat ohne
+                # private Ladung in den gewichteten Tarif-Ø (P8).
+                continue
             monate_set.add((md.jahr, md.monat))
 
     emob_pool = get_emob_heimladung_canonical(
@@ -1090,8 +1261,19 @@ async def get_wallbox_dashboard(
     # PV-Anteil der Heimladung
     pv_anteil = (gesamt_heim_pv / gesamt_heim_ladung * 100) if gesamt_heim_ladung > 0 else 0
 
-    # Kosten Heimladung (nur Netzstrom, PV ist "kostenlos")
-    heim_kosten = gesamt_heim_netz * strompreis_cent / 100
+    # Kosten Heimladung (nur Netzstrom, PV ist "kostenlos").
+    # ADR-002/P8: Tarif über die Monate der Periode mitteln statt den heutigen
+    # zu nehmen. Hier bewusst GLEICHGEWICHTET über `monate_set`: die
+    # Heimladung kommt aus `get_emob_heimladung_canonical`, das die IMD-Dicts
+    # zu einem Pool zusammenfasst — eine Netz-kWh-Aufteilung je Monat gibt es
+    # an dieser Stelle nicht. Genauer als der heutige Tarif, gröber als das
+    # mengengewichtete Mittel im E-Auto-Dashboard.
+    wb_strompreis_cent = await _gewichteter_monatspreis(
+        db, anlage_id, "wallbox",
+        {periode: 1.0 for periode in monate_set},
+        fallback=strompreis_cent,
+    )
+    heim_kosten = gesamt_heim_netz * wb_strompreis_cent / 100
 
     # Was hätte externe Ladung gekostet?
     # Durchschnittspreis extern (wenn vorhanden) oder Annahme 50 ct/kWh
@@ -1115,6 +1297,11 @@ async def get_wallbox_dashboard(
         # 'max_ladeleistung_kw' → Dashboard zeigte immer 11 kW Default unabhängig vom User-Setup.
         leistung_kw = params.get(PARAM_WALLBOX["MAX_LADELEISTUNG_KW"], PARAM_WALLBOX_DEFAULTS["max_ladeleistung_kw"])
 
+        # F-7: eine dienstliche Wallbox trägt keine private Ersparnis. Die
+        # anlagenweite Heimladung steht daneben weiter — sie ist gemessen.
+        wb_dienstlich = ist_dienstlich(wallbox)
+        wb_ersparnis = 0.0 if wb_dienstlich else ersparnis_vs_extern
+
         zusammenfassung = {
             # Heimladung (aus E-Auto-Daten)
             'gesamt_heim_ladung_kwh': round(gesamt_heim_ladung, 1),
@@ -1128,8 +1315,9 @@ async def get_wallbox_dashboard(
             # Kostenvergleich
             'heim_kosten_euro': round(heim_kosten, 2),
             'heim_als_extern_kosten_euro': round(heim_als_extern_kosten, 2),
-            'ersparnis_vs_extern_euro': round(ersparnis_vs_extern, 2),
+            'ersparnis_vs_extern_euro': round(wb_ersparnis, 2),
             # Wallbox-Info
+            'dienstlich': wb_dienstlich,
             'leistung_kw': leistung_kw,
             'gesamt_ladevorgaenge': int(gesamt_ladevorgaenge),
             'ladevorgaenge_pro_monat': round(gesamt_ladevorgaenge / anzahl_monate, 1) if anzahl_monate > 0 else 0,
@@ -1148,7 +1336,9 @@ async def get_wallbox_dashboard(
 @router.get("/dashboard/balkonkraftwerk/{anlage_id}", response_model=list[BalkonkraftwerkDashboardResponse])
 async def get_balkonkraftwerk_dashboard(
     anlage_id: int,
-    strompreis_cent: float = Query(30.0),
+    strompreis_cent: Optional[float] = Query(
+        None, description="Override: Strompreis (auto aus dem Monatstarif wenn leer)"
+    ),
     einspeiseverguetung_cent: float = Query(8.0),
     db: AsyncSession = Depends(get_db)
 ):
@@ -1156,6 +1346,26 @@ async def get_balkonkraftwerk_dashboard(
     Balkonkraftwerk Dashboard für eine Anlage.
 
     Zeigt Balkonkraftwerke mit Erzeugung, Eigenverbrauch, Ersparnis.
+
+    **Befund F-4 der Drift-Inventur 2026-07-31**, hier behoben — die Sicht
+    bewertete zweimal an der Wirklichkeit vorbei:
+
+    (a) ``strompreis_cent`` war ein **Pflicht-Query mit Default 30,0**, und
+    keiner der beiden Frontend-Aufrufer (``v4/komponentenAdapter.tsx``,
+    ``v4/BkwHubBloecke.tsx``) übergab je einen Preis — der Default griff also
+    immer, unabhängig vom gepflegten Tarif. Jetzt kommt der Preis je Monat aus
+    den Monats-Fakten (ADR-002/**P8**) und wird mit dem Eigenverbrauch des
+    jeweiligen Monats gewichtet; der Query-Parameter bleibt als Override.
+
+    (b) Bewertet wurde der **gemessene** ``eigenverbrauch_kwh``. Der ist im
+    Normalfall 0 — beim Balkonkraftwerk ist ``pv_erzeugung_kwh`` das
+    Pflichtfeld und das einzige, das Sensor-/MQTT-Pfad schreiben können. Der
+    Hub zeigte deshalb **0 € Ersparnis**, während das Cockpit dieselbe Energie
+    seit ``0faad16b`` (ADR-002/**P9**) korrekt bewertet. Jetzt entscheidet
+    ``bkw_eigenverbrauch_anteil`` (ADR-001, ``core/berechnungen/bkw_finanz.py``)
+    je Monat: gemessener EV bei fehlender Erzeugung, sonst der Anteil an der
+    Hausbilanz — und **nicht bewertbar**, wo mangels Zählerzeile keine Bilanz
+    existiert (P4), statt still 0 €.
     """
     inv_result = await db.execute(
         select(Investition)
@@ -1179,6 +1389,14 @@ async def get_balkonkraftwerk_dashboard(
     for md in all_monatsdaten:
         md_by_inv.setdefault(md.investition_id, []).append(md)
 
+    # Anlagen-Kontext je Monat aus der EINEN Aufbereitung (ADR-002/P10):
+    # Hausbilanz-Eigenverbrauch, Erzeugung hinter dem Zähler und der Tarif, der
+    # in DIESEM Monat galt. Die BKW-eigenen Mengen bleiben per-Investition —
+    # dafür hat die Schicht bewusst keine Sicht (Register N-2).
+    fakten_je_monat = {
+        f.schluessel: f for f in await lade_monats_fakten(db, anlage_id)
+    }
+
     dashboards = []
     for bkw in balkonkraftwerke:
         # Issue #153 / #155 / #236: SoT-Filter inkl. stilllegungsdatum
@@ -1192,15 +1410,45 @@ async def get_balkonkraftwerk_dashboard(
         gesamt_einspeisung = 0
         gesamt_speicher_ladung = 0
         gesamt_speicher_entladung = 0
+        # F-4: die bewertete Menge und ihr Preis, beide je Monat aufgelöst.
+        ev_bewertet_kwh = 0.0
+        ersparnis_eigenverbrauch = 0.0
+        ev_monate_nicht_bewertbar = 0
 
         for md in monatsdaten:
             d = md.verbrauch_daten or {}
-            # Akzeptiere beide Feldnamen für Rückwärtskompatibilität
-            gesamt_erzeugung += d.get('pv_erzeugung_kwh', 0) or d.get('erzeugung_kwh', 0) or 0
-            gesamt_eigenverbrauch += d.get('eigenverbrauch_kwh', 0) or 0
+            # Kanonische Auflösung statt Literal-Schlüsseln (ADR-002/P6):
+            # `imd_typ_beitrag` kennt beide Schreibweisen der Erzeugung.
+            beitrag = imd_typ_beitrag(bkw, d)
+            gesamt_erzeugung += beitrag.bkw_erzeugung
+            gesamt_eigenverbrauch += beitrag.bkw_eigenverbrauch
+            gesamt_speicher_ladung += beitrag.bkw_speicher_ladung
+            gesamt_speicher_entladung += beitrag.bkw_speicher_entladung
             gesamt_einspeisung += d.get('einspeisung_kwh', 0) or 0
-            gesamt_speicher_ladung += d.get('speicher_ladung_kwh', 0) or 0
-            gesamt_speicher_entladung += d.get('speicher_entladung_kwh', 0) or 0
+
+            fakt = fakten_je_monat.get((md.jahr, md.monat))
+            anteil = bkw_eigenverbrauch_anteil(
+                bkw_erzeugung_kwh=beitrag.bkw_erzeugung,
+                bkw_eigenverbrauch_gemessen_kwh=beitrag.bkw_eigenverbrauch,
+                erzeugung_hinter_zaehler_kwh=(
+                    fakt.erzeugung.hinter_zaehler_kwh if fakt else 0.0
+                ),
+                eigenverbrauch_gesamt_kwh=(
+                    fakt.kennzahlen.eigenverbrauch_kwh if fakt else 0.0
+                ),
+                hat_zaehlerzeile=bool(fakt and fakt.meta.hat_zaehlerzeile),
+            )
+            if not anteil.bewertbar and beitrag.bkw_erzeugung > 0:
+                ev_monate_nicht_bewertbar += 1
+            ev_bewertet_kwh += anteil.kwh
+            # P8: der Preis DIESES Monats, nicht der heutige — ein Tarifwechsel
+            # hätte sonst die ganze Historie rückwirkend neu bewertet.
+            preis_cent = (
+                strompreis_cent
+                if strompreis_cent is not None
+                else (fakt.tarif.netzbezug_preis_cent if fakt else NETZBEZUG_DEFAULT_CENT)
+            )
+            ersparnis_eigenverbrauch += anteil.kwh * preis_cent / 100
 
         # Parameter
         params = bkw.parameter or {}
@@ -1218,25 +1466,30 @@ async def get_balkonkraftwerk_dashboard(
         gesamt_leistung_wp = get_bkw_kwp(bkw) * 1000
 
         # Einspeisung berechnen falls nicht explizit erfasst
-        # Einspeisung = Erzeugung - Eigenverbrauch (unvergütet ins Netz)
-        if gesamt_einspeisung == 0 and gesamt_erzeugung > 0 and gesamt_eigenverbrauch > 0:
-            gesamt_einspeisung = max(0, gesamt_erzeugung - gesamt_eigenverbrauch)
+        # Einspeisung = Erzeugung - Eigenverbrauch (unvergütet ins Netz).
+        # Auf der BEWERTETEN Menge, wie Quote und CO₂ — sonst stünde hier 0 kWh
+        # Einspeisung neben einer Eigenverbrauchsquote von 70 %.
+        if gesamt_einspeisung == 0 and gesamt_erzeugung > 0 and ev_bewertet_kwh > 0:
+            gesamt_einspeisung = max(0, gesamt_erzeugung - ev_bewertet_kwh)
 
-        # Eigenverbrauchsquote
-        eigenverbrauch_quote = eigenverbrauchsquote_prozent(gesamt_eigenverbrauch, gesamt_erzeugung)
+        # Eigenverbrauchsquote — auf der BEWERTETEN Menge, nicht auf dem
+        # gemessenen Feld: sonst nennt die Kachel 0 % neben einer Ersparnis > 0.
+        eigenverbrauch_quote = eigenverbrauchsquote_prozent(ev_bewertet_kwh, gesamt_erzeugung)
 
         # Speicher-Effizienz
         speicher_effizienz = (gesamt_speicher_entladung / gesamt_speicher_ladung * 100) if gesamt_speicher_ladung > 0 else 0
 
-        # Ersparnis: Eigenverbrauch spart Netzbezug
-        ersparnis_eigenverbrauch = gesamt_eigenverbrauch * strompreis_cent / 100
+        # `ersparnis_eigenverbrauch` steht bereits — je Monat aus
+        # `bkw_eigenverbrauch_anteil` × Monatstarif (s. Docstring, F-4).
         # Einspeisung bei BKW ist i.d.R. unvergütet (keine Einspeisevergütung ohne Anmeldung)
         # Wird nur als Info angezeigt, nicht als Erlös
         erloes_einspeisung = 0  # BKW-Einspeisung ist unvergütet
         gesamt_ersparnis = ersparnis_eigenverbrauch
 
-        # CO2-Einsparung für Eigenverbrauch
-        co2_ersparnis = gesamt_eigenverbrauch * CO2_FAKTOR_STROM_KG_KWH
+        # CO2-Einsparung für Eigenverbrauch — dieselbe Menge wie die Ersparnis.
+        # Der Kanon rechnet CO₂-PV auf dem EIGENVERBRAUCH (`berechne_co2_bilanz`,
+        # DI-2); eingespeister Strom ist nicht die eigene Ersparnis.
+        co2_ersparnis = ev_bewertet_kwh * CO2_FAKTOR_STROM_KG_KWH
 
         # Spezifischer Ertrag (kWh pro kWp)
         spezifischer_ertrag = spezifischer_ertrag_kwh_kwp(
@@ -1245,7 +1498,15 @@ async def get_balkonkraftwerk_dashboard(
 
         zusammenfassung = {
             'gesamt_erzeugung_kwh': round(gesamt_erzeugung, 1),
-            'gesamt_eigenverbrauch_kwh': round(gesamt_eigenverbrauch, 1),
+            # Die BEWERTETE Menge (F-4): gemessen, wo gemessen wurde, sonst der
+            # Anteil an der Hausbilanz. Der rohe Messwert steht daneben, damit
+            # eine Pflege-Lücke sichtbar bleibt statt als 0 zu verschwinden.
+            'gesamt_eigenverbrauch_kwh': round(ev_bewertet_kwh, 1),
+            'eigenverbrauch_gemessen_kwh': round(gesamt_eigenverbrauch, 1),
+            # P4: Monate mit Erzeugung, für die mangels Zählerzeile keine
+            # Hausbilanz existiert — dort ist die Ersparnis nicht 0, sondern
+            # unbekannt, und das Frontend darf das sagen.
+            'monate_nicht_bewertbar': ev_monate_nicht_bewertbar,
             'gesamt_einspeisung_kwh': round(gesamt_einspeisung, 1),  # Berechnet: unvergütet ins Netz
             'eigenverbrauch_quote_prozent': round(eigenverbrauch_quote, 1),
             'spezifischer_ertrag_kwh_kwp': round(spezifischer_ertrag, 0),

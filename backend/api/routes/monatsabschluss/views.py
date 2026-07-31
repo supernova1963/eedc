@@ -9,6 +9,7 @@ GET  /historie/{anlage_id}                      — Historie der letzten N Monat
 Schreib-Pfad (POST {anlage_id}/{jahr}/{monat}) liegt in wizard.py.
 """
 
+from datetime import date
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -25,6 +26,7 @@ from backend.core.field_definitions import (
     OPTIONALE_FELDER,
     get_basis_felder,
     get_felder_fuer_investition,
+    ist_zaehler_differenz_feld,
 )
 from backend.models.anlage import Anlage
 from backend.models.investition import InvestitionMonatsdaten
@@ -201,7 +203,8 @@ async def get_monatsabschluss(
         # zugeordnet hat, bekommt dessen Wert und keine kWp-Zerlegung.
         field_inv_map = connector_config.get("field_inv_map") or {}
         if snapshots:
-            connector_delta = _calc_month_delta(snapshots, jahr, monat)
+            _delta = _calc_month_delta(snapshots, jahr, monat)
+            connector_delta = _delta.werte if _delta else None
             # PV auf Module verteilen
             if connector_delta:
                 pv_kwh = connector_delta.get("pv_erzeugung_kwh")
@@ -309,8 +312,11 @@ async def get_monatsabschluss(
     # Datenquelle des Monats ermitteln
     datenquelle = getattr(monatsdaten, "datenquelle", None) if monatsdaten else None
 
-    # Bedingungen für bedingte Basis-Felder ermitteln
-    tarife = await lade_tarife_fuer_anlage(db, anlage_id)
+    # Bedingungen für bedingte Basis-Felder ermitteln. Stichtag ist der Monat,
+    # der abgeschlossen wird — sonst entscheidet die HEUTIGE Vertragsart, ob das
+    # Feld „Ø Strompreis" erscheint: nach einem Wechsel dynamisch → fest käme man
+    # an den abgerechneten Ø eines Altmonats nicht mehr heran.
+    tarife = await lade_tarife_fuer_anlage(db, anlage_id, target_date=date(jahr, monat, 1))
     allgemein_tarif = tarife.get("allgemein")
     hat_dynamischen_tarif = bool(allgemein_tarif and allgemein_tarif.vertragsart == "dynamisch")
     aktive_inv_typen = {i.typ for i in anlage.investitionen if not i.stilllegungsdatum}
@@ -473,8 +479,15 @@ async def get_monatsabschluss(
                 anlage_id, feld, jahr, monat, investition_id=inv.id
             )
 
-            # Bei konfiguriertem Sensor: HA Statistics Wert als Vorschlag hinzufügen
-            if strategie == "sensor" and sensor_id and sensor_id in ha_stats_werte:
+            # Bei konfiguriertem Sensor: HA Statistics Wert als Vorschlag hinzufügen.
+            # Nur für Zählerfelder — der Wert ist eine Zählerdifferenz
+            # (MAX−MIN), bei einem Preis-Feld also die Monats-Spreizung. Ohne
+            # den Filter stand die mit Konfidenz 92 ÜBER dem korrekt
+            # gerechneten Vorschlag (s. `ist_zaehler_differenz_feld`).
+            if (
+                strategie == "sensor" and sensor_id and sensor_id in ha_stats_werte
+                and ist_zaehler_differenz_feld(feld)
+            ):
                 stats_wert = ha_stats_werte[sensor_id]
                 if stats_wert > 0:
                     vorschlaege.insert(0, Vorschlag(
@@ -740,8 +753,6 @@ async def get_naechster_monat(
 
     Rückgabe: der früheste offene Monat, oder ``None`` bei lückenlosem Bereich.
     """
-    from datetime import date
-
     from backend.core.monats_luecken import naechster_offener_monat_fuer
 
     # Anlage inkl. Investitionen laden (Investitions-anschaffungsdatum = Start-Anker).

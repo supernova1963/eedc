@@ -134,6 +134,17 @@ def investition_beitraege(
     beitraege: list[KomponentenBeitrag] = []
 
     if typ in ("pv-module", "balkonkraftwerk"):
+        # Ein Balkonkraftwerk trägt GENAU EINEN Ziel-Key: `bkw_{id}`, Erzeugung.
+        # Paket D gab ihm kurzzeitig einen zweiten (`batterie_{id}`) für die
+        # BKW-eigenen Speicher-Felder — zurückgenommen mit dem Kanon-Entscheid am
+        # selben Tag: ein BKW-Akku wird als eigene Speicher-Investition mit
+        # Parent Balkonkraftwerk erfasst und läuft damit durch den `speicher`-Zweig
+        # unten, mitsamt Live-Leistung, SoC und Energiefluss-Knoten.
+        # Warum die Speicher-Hälfte NIE auf `bkw_{id}` durfte, bleibt wissenswert:
+        # dieser Präfix steht in PV_KOMPONENTEN_PREFIXE und wird als *Erzeugung*
+        # summiert (`summe_pv_bkw_kwh`, nur-positiv) — eine Entladung landete dort
+        # als PV-Erzeugung, eine Ladung hätte die BKW-Erzeugung still gekürzt,
+        # exakt die Klasse des BKW-Bugs vom 2026-05-19 (Rainer-PN).
         _add("pv_erzeugung_kwh")
 
     elif typ == "speicher":

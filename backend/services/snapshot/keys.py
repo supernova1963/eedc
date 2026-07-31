@@ -18,6 +18,16 @@ from typing import Optional
 # Wird von _build_counter_map konsumiert.
 KUMULATIVE_ZAEHLER_FELDER: dict[str, tuple[str, ...]] = {
     "pv-module": ("pv_erzeugung_kwh",),
+    # Balkonkraftwerk: NUR die Erzeugung. Die BKW-eigenen Felder
+    # `speicher_ladung_kwh`/`speicher_entladung_kwh` standen hier kurzzeitig
+    # (Paket D, 2026-07-31) — zurückgenommen am selben Tag, weil der Kanon für
+    # einen BKW-Akku die **eigene Speicher-Investition mit Parent
+    # Balkonkraftwerk** ist (Weg A). Die trägt Live-Leistung, SoC und
+    # Energiefluss-Knoten und läuft über den Eintrag `"speicher"` unten; ein
+    # zweiter Zählerpfad für dasselbe Gerät wäre die Doppelerfassung, die der
+    # Rückbau gerade beseitigt. `eigenverbrauch_kwh` steht ebenfalls nicht hier:
+    # optionale Verfeinerung aus manueller Pflege/Import, kein Zähler
+    # (Begründung im Modul-Docstring von `core/berechnungen/bkw_finanz.py`).
     "balkonkraftwerk": ("pv_erzeugung_kwh",),
     "speicher": ("ladung_kwh", "entladung_kwh", "ladung_netz_kwh"),
     "waermepumpe": (

@@ -22,8 +22,9 @@ from backend.core.investition_kennwerte import (
 )
 from backend.api.deps import get_db
 from backend.core.berechnungen import (
+    DienstlicheLadungZeile,
     FinanzMonatsZeile,
-    berechne_bkw_alternativkosten_ersparnis,
+    berechne_dienstliche_ladekosten,
     berechne_finanz_aggregat,
     berechne_wp_alternativkosten_ersparnis,
     berechne_spez_ertrag_annualisiert,
@@ -36,18 +37,13 @@ from backend.core.berechnungen import (
     vollzyklen as berechne_vollzyklen,
 )
 from backend.services.prognose_auswahl import lade_aktive_prognose
-from backend.services.pv_monatswerte import lade_pv_je_monat, pv_summe_je_monat
 from datetime import date
 
-from backend.services.finanz_zeilen import FinanzZeileEingabe, baue_finanz_zeile
-from backend.services.einspeise_erloes_service import get_neg_preis_einspeisung_monat
+from backend.services.finanz_zeilen import baue_finanz_zeile
+from backend.services.monats_fakten import finanz_zeile_eingabe, lade_monats_fakten
 from backend.api.routes.strompreise import (
     lade_tarife_fuer_anlage,
     resolve_strompreis_for_komponente,
-)
-from backend.utils.sonstige_positionen import (
-    berechne_sonstige_netto,
-    berechne_md_sonstige_summen,
 )
 from backend.core.field_definitions import get_emob_pv_netz_kwh, get_wp_strom_kwh
 from backend.services.eauto_wirtschaftlichkeit import (
@@ -86,7 +82,7 @@ from backend.core.investition_parameter import (
     PARAM_WAERMEPUMPE_DEFAULTS,
     ist_dienstlich,
 )
-from backend.core.calculations import berechne_co2_bilanz
+from backend.core.calculations import berechne_co2_bilanz, ust_eigenverbrauch_fuer_anlage
 from backend.core.wirtschaftlichkeit_defaults import (
     EINSPEISEVERGUETUNG_DEFAULT_CENT,
     NETZBEZUG_DEFAULT_CENT,
@@ -295,59 +291,44 @@ async def calculate_anlage_sensors(
     )
     investitionen = result.scalars().all()
 
-    # PV-Module IDs für InvestitionMonatsdaten
-    pv_module_invs = [inv for inv in investitionen if inv.typ == "pv-module"]
-    pv_module_ids = [inv.id for inv in pv_module_invs]
-    inv_by_id = {inv.id: inv for inv in investitionen}
+    # =====================================================================
+    # MONATSZEILE AUS DEN MONATS-FAKTEN (ADR-002/P10)
+    # =====================================================================
+    # Bis 2026-07-31 hat diese Funktion die IMD-Zeilen in VIER getrennten
+    # Queries + Schleifen selbst gefaltet (Erzeuger · Speicher · V2H · sonstige
+    # Positionen), jede mit ihrer eigenen Filter-Handschrift. Die Rechnung war
+    # korrekt — Befund F-5 der Drift-Inventur traf andere Sichten. Umgehängt
+    # wird sie trotzdem, weil eine selbst faltende Sicht die nächste Drift-Quelle
+    # ist (`docs/KONZEPT-MONATS-FAKTEN.md` §11).
+    #
+    # Die Schicht lädt Investitionen bewusst OHNE `aktiv`-Vorfilter und
+    # entscheidet je Monat über `ist_aktiv_im_monat` (#123: historische
+    # Kennzahlen dürfen später stillgelegte Komponenten nicht rückwirkend
+    # ausblenden). Der `aktiv_jetzt()`-Vorfilter oben bleibt für alles, was einen
+    # HEUTIGEN Zustand beschreibt (kWp, Investitionssummen, Komponenten-Listen);
+    # die MENGEN kommen ab jetzt aus der Schicht. Das ist derselbe Schnitt wie
+    # im Cockpit — und es ist eine bewegte Zahl für Anlagen mit stillgelegter
+    # Komponente (s. Übergabe N-11).
+    _tarif_cache: dict[date, dict] = {}
+    fakten = await lade_monats_fakten(db, anlage.id, tarif_cache=_tarif_cache)
 
-    # PV-Erzeugung aus InvestitionMonatsdaten aggregieren
-    # Drift-Audit F: nur Monate ab Anschaffungsdatum berücksichtigen.
-    # #326: zusätzlich pro (jahr, monat) für die per-Monat-korrekte EV-Ersparnis.
     # PV je Monat über den Read-time-SoT (Messwerte + Aggregat-Lückenfüllung)
     # statt einer rohen IMD-Summe. Die rohe Summe kannte das Anlagen-Aggregat
     # gar nicht: eine Anlage, deren frühe Monate nur als Gesamtwert vorliegen
     # (Umstellung auf Pro-String-Messung mitten in der Historie), verlor diese
-    # Monate im PV-Sensor, im spezifischen Ertrag und in den Finanzzeilen —
-    # bzw. bekam über den Fallback unten eine SCHÄTZUNG, obwohl echte Werte
-    # gepflegt waren. Zwillingsstelle: `cockpit/uebersicht.py`.
-    pv_je_monat = pv_summe_je_monat(
-        await lade_pv_je_monat(db, anlage.id, pv_module_invs)
-    )
-    pv_erzeugung = sum(v or 0.0 for v in pv_je_monat.values())
-
-    # DI-2-B: Erzeuger hinter dem EINEN Hauszähler in die EV-/Autarkie-/CO₂-
-    # Bilanz aufnehmen — deckungsgleich mit dem Cockpit (uebersicht.py:309-322,
-    # Layer-SoT `erzeugung_hinter_zaehler_kwh`, v3.45.4). Vorher zählte der
-    # HA-Export nur `pv-module` zur Erzeugung → bei BKW-Anlagen wichen
-    # Eigenverbrauch/Autarkie/EV-Quote und der daraus abgeleitete CO₂-Sensor
-    # vom Cockpit ab (Demo lifetime: EV 14.465 vs. 17.366 kWh).
-    #   • Balkonkraftwerk zählt als PV (Erzeugung + kWp, Cockpit-Konvention):
-    #     fällt in `pv_erzeugung` (Sensor, spez. Ertrag, EV/Autarkie/CO₂).
+    # Monate im PV-Sensor, im spezifischen Ertrag und in den Finanzzeilen.
+    #
+    # DI-2-B: Erzeuger hinter dem EINEN Hauszähler zählen in die EV-/Autarkie-/
+    # CO₂-Bilanz — deckungsgleich mit dem Cockpit (Layer-SoT
+    # `erzeugung_hinter_zaehler_kwh`, v3.45.4):
+    #   • Balkonkraftwerk zählt als PV (Cockpit-Konvention) → in `pv_erzeugung`.
     #   • Sonstige Erzeuger (Mini-BHKW/KWK) speisen ebenfalls hinter den Zähler →
     #     zählen in EV/Autarkie, bleiben aber aus den PV-eigenen Kennzahlen
     #     (spez. Ertrag/PR) und aus der PV-Erzeugungs-Anzeige draußen.
-    # Der Finanz-Pfad (`pv_je_monat`) bleibt REIN pv-module — die BKW-Ersparnis läuft
-    # separat über `bisherige_bkw_ersparnis` (kein Doppel-Ansatz); CO₂/Wirtschaft-
-    # lichkeit eines Brennstoff-Erzeugers bleibt bewusst neutral.
-    bkw_erzeugung = 0.0
-    sonstiges_erzeugung = 0.0
-    erzeuger_ids = [
-        inv.id for inv in investitionen
-        if inv.typ in ("balkonkraftwerk", "sonstiges")
-    ]
-    if erzeuger_ids:
-        erz_result = await db.execute(
-            select(InvestitionMonatsdaten)
-            .where(InvestitionMonatsdaten.investition_id.in_(erzeuger_ids))
-        )
-        for imd in erz_result.scalars().all():
-            inv = inv_by_id.get(imd.investition_id)
-            if not inv or not inv.ist_aktiv_im_monat(imd.jahr, imd.monat):
-                continue
-            b = imd_typ_beitrag(inv, imd.verbrauch_daten or {})
-            bkw_erzeugung += b.bkw_erzeugung
-            sonstiges_erzeugung += b.sonstiges_erzeugung
-    pv_erzeugung += bkw_erzeugung
+    # Falle 1 der S1-Übergabe: `erzeugung.pv_kwh` für die PV-Achse und die
+    # Finanz-Zeile, `erzeugung.hinter_zaehler_kwh` für die Bilanz.
+    pv_erzeugung = sum(f.erzeugung.pv_kwh for f in fakten)
+    sonstiges_erzeugung = sum(f.sonstiges.erzeugung_kwh for f in fakten)
 
     # Fallback: Falls keine InvestitionMonatsdaten vorhanden, berechne aus Einspeisung
     einspeisung = sum(m.einspeisung_kwh or 0 for m in monatsdaten)
@@ -363,50 +344,21 @@ async def calculate_anlage_sensors(
     # PV(IMD) + Speicher(IMD) + Zählerwerten über den SoT-Helper berechnet.
     netzbezug = sum(m.netzbezug_kwh or 0 for m in monatsdaten)
 
-    # Speicher-Summen aus InvestitionMonatsdaten (korrekt) statt Legacy Monatsdaten
-    speicher_ids = [inv.id for inv in investitionen if inv.typ == "speicher"]
-    batterie_ladung = 0.0
-    batterie_entladung = 0.0
-    sp_lad_by_ym: dict[tuple[int, int], float] = {}
-    sp_entl_by_ym: dict[tuple[int, int], float] = {}
-    if speicher_ids:
-        sp_result = await db.execute(
-            select(InvestitionMonatsdaten)
-            .where(InvestitionMonatsdaten.investition_id.in_(speicher_ids))
-        )
-        for imd in sp_result.scalars().all():
-            inv = inv_by_id.get(imd.investition_id)
-            if inv and not inv.ist_aktiv_im_monat(imd.jahr, imd.monat):
-                continue
-            data = imd.verbrauch_daten or {}
-            lad = data.get("ladung_kwh", 0) or 0
-            entl = data.get("entladung_kwh", 0) or 0
-            batterie_ladung += lad
-            batterie_entladung += entl
-            sp_lad_by_ym[(imd.jahr, imd.monat)] = sp_lad_by_ym.get((imd.jahr, imd.monat), 0.0) + lad
-            sp_entl_by_ym[(imd.jahr, imd.monat)] = sp_entl_by_ym.get((imd.jahr, imd.monat), 0.0) + entl
+    # Speicher-Summen aus den Monats-Fakten (kanonisch über `imd_typ_beitrag`)
+    # statt Legacy Monatsdaten. Die frühere Handschrift las die Roh-Schlüssel
+    # `ladung_kwh`/`entladung_kwh` direkt (P6-Klasse).
+    batterie_ladung = sum(f.speicher.ladung_kwh for f in fakten)
+    batterie_entladung = sum(f.speicher.entladung_kwh for f in fakten)
 
     # Fallback auf Legacy wenn keine InvestitionMonatsdaten
     if batterie_ladung == 0 and batterie_entladung == 0:
         batterie_ladung = sum(m.batterie_ladung_kwh or 0 for m in monatsdaten)
         batterie_entladung = sum(m.batterie_entladung_kwh or 0 for m in monatsdaten)
 
-    # V2H (E-Auto → Haus) wird wie Speicher-Entladung als Eigenverbrauch gezählt
-    eauto_ids = [inv.id for inv in investitionen if inv.typ == "e-auto"]
-    v2h_entladung = 0.0
-    v2h_by_ym: dict[tuple[int, int], float] = {}
-    if eauto_ids:
-        ea_result = await db.execute(
-            select(InvestitionMonatsdaten)
-            .where(InvestitionMonatsdaten.investition_id.in_(eauto_ids))
-        )
-        for imd in ea_result.scalars().all():
-            inv = inv_by_id.get(imd.investition_id)
-            if inv and not inv.ist_aktiv_im_monat(imd.jahr, imd.monat):
-                continue
-            v2h = (imd.verbrauch_daten or {}).get("v2h_entladung_kwh", 0) or 0
-            v2h_entladung += v2h
-            v2h_by_ym[(imd.jahr, imd.monat)] = v2h_by_ym.get((imd.jahr, imd.monat), 0.0) + v2h
+    # V2H (E-Auto → Haus) wird wie Speicher-Entladung als Eigenverbrauch gezählt.
+    # Dienstwagen sind darin nicht mehr enthalten — die Schicht filtert sie,
+    # die frühere Schleife hier nicht ([[feedback_dienstwagen_alle_checks]]).
+    v2h_entladung = sum(f.emob.v2h_entladung_kwh for f in fakten)
 
     # #304: Eigenverbrauch/Direktverbrauch/Gesamtverbrauch + Quoten zentral über
     # den SoT-Helper aus IMD-gesourcten Energiemengen (PV + Speicher + V2H) und
@@ -439,7 +391,7 @@ async def calculate_anlage_sensors(
     # Zwei-Wege-Aufbau (IMD-Monate, sonst Monate mit Legacy-PV>0) ließ bei
     # gemischter Historie die Aggregat-Monate aus und machte den spezifischen
     # Ertrag dadurch zu hoch.
-    spez_covered_months = set(pv_je_monat)
+    spez_covered_months = {f.schluessel for f in fakten if f.erzeugung.pv_je_modul}
     spez_gewichte = None
     if spez_covered_months:
         pvgis = await lade_aktive_prognose(db, anlage.id)
@@ -462,23 +414,26 @@ async def calculate_anlage_sensors(
     # bei vorhandenem Tages-Aggregat wird die in Negativpreis-Stunden
     # eingespeiste kWh-Menge unvergütet. Sonstige (manuell gepflegt) wie im
     # Cockpit im Netto-Ertrag.
-    sonstige_netto_gesamt = 0.0
-    alle_inv_ids = [i.id for i in investitionen]
-    if alle_inv_ids:
-        son_result = await db.execute(
-            select(InvestitionMonatsdaten)
-            .where(InvestitionMonatsdaten.investition_id.in_(alle_inv_ids))
-        )
-        for imd in son_result.scalars().all():
-            inv = inv_by_id.get(imd.investition_id)
-            if inv and not inv.ist_aktiv_im_monat(imd.jahr, imd.monat):
-                continue
-            sonstige_netto_gesamt += berechne_sonstige_netto(imd.verbrauch_daten)
+    # Sonstige Positionen: aus den Monats-Fakten — sie falten IMD-Positionen
+    # (typ-unabhängig, #310) UND die Basis-Positionen der Monatsdaten-Zeile
+    # (G19-1) an einer Stelle, gleiche Netto-Faltung wie Cockpit/Jahresbericht.
+    sonstige_netto_gesamt = sum(f.sonstiges.netto_euro for f in fakten)
 
-    # G19-1: Basis-Positionen (Monatsdaten.sonstige_positionen) wirken wie
-    # IMD-Positionen — gleiche Netto-Faltung wie Cockpit/Jahresbericht.
-    for m in monatsdaten:
-        sonstige_netto_gesamt += berechne_md_sonstige_summen(m)["netto_euro"]
+    # Dienstliche Ladekosten — bis 2026-07-31 hat der HA-Export sie als einzige
+    # der drei Sichten **gar nicht** abgezogen (N-13): der Sensor
+    # `netto_ertrag_euro` stand bei Dienstwagen-Anlagen über der Cockpit-Kachel,
+    # auf die er sich bezieht. Gleiche Formel, gleicher Layer-SoT
+    # (ADR-001) wie Cockpit/Übersicht und Aussichten; die Mengen kommen aus den
+    # Monats-Fakten (Dienstwagen-Filter + PV/Netz-Split, P10).
+    sonstige_netto_gesamt -= berechne_dienstliche_ladekosten(
+        DienstlicheLadungZeile(
+            ladung_pv_kwh=f.emob.dienstlich_ladung_pv_kwh,
+            ladung_netz_kwh=f.emob.dienstlich_ladung_netz_kwh,
+            netzbezug_preis_cent=f.tarif.netzbezug_preis_cent,
+            wallbox_preis_cent=f.tarif.wallbox_preis_effektiv_cent,
+        )
+        for f in fakten
+    ).gesamt_euro
 
     einspeise_erloes = 0
     ev_ersparnis = 0
@@ -488,38 +443,17 @@ async def calculate_anlage_sensors(
         # Konstruktions-Stelle, Wächter) — er löst den Tarif PRO MONAT auf
         # (historische Tarife via gueltig_ab/gueltig_bis), nicht den neuesten
         # Strompreis für alle Jahre. Deckungsgleich mit Cockpit/Jahresbericht
-        # (rilmor-mhrs: Jahres-Tarife 23,90→32,80 ct).
-        _tarif_cache: dict[date, dict] = {}
-        # PV je Monat über den Read-time-SoT statt über ein globales Flag.
-        # Vorher: `use_inv_pv = bool(pv_by_ym)` und dann `pv_by_ym.get(key, 0.0)`
-        # — zwei Fehler in einem. (a) In einem Monat mit nur TEILWEISE gemessenen
-        # Strings ging die rohe Teilsumme in die Finanzzeile. (b) Sobald
-        # IRGENDEIN Monat IMD-Werte hatte, lieferte `.get(key, 0.0)` für alle
-        # anderen Monate 0 — auch dort, wo ein Anlagen-Aggregat vorlag. Eine
-        # Anlage, die mitten in der Historie auf Pro-String-Messung umgestellt
-        # hat, verlor damit ihre Vorgeschichte in Finanzen und spez. Ertrag.
-        finanz_zeilen: list[FinanzMonatsZeile] = []
-        for m in monatsdaten:
-            key = (m.jahr, m.monat)
-            m_neg = (
-                await get_neg_preis_einspeisung_monat(db, anlage.id, m.jahr, m.monat)
-                if m.einspeisung_kwh else None
+        # (rilmor-mhrs: Jahres-Tarife 23,90→32,80 ct). Die Eingabe entsteht aus
+        # dem Monats-Fakt (P10) statt aus fünf site-eigenen Maps; `pv_kwh` darin
+        # ist „Module + BKW" (P9) mit `None`-Auflösung als 0 statt als Teilsumme
+        # (N42). Nur Monate MIT Zählerzeile — ohne gemessene Einspeisung/Bezug
+        # gibt es keine Finanz-Zeile.
+        finanz_zeilen: list[FinanzMonatsZeile] = [
+            await baue_finanz_zeile(
+                db, anlage.id, finanz_zeile_eingabe(f), tarif_cache=_tarif_cache
             )
-            # `None` = Auflösung unvollständig (Modul ohne Wert UND ohne
-            # Aggregat) — dann bleibt die Zeile bei 0, statt eine Teilsumme
-            # als Erzeugung auszuweisen (N42).
-            m_pv = pv_je_monat.get(key) or 0.0
-            finanz_zeilen.append(await baue_finanz_zeile(db, anlage.id, FinanzZeileEingabe(
-                jahr=m.jahr, monat=m.monat,
-                einspeisung_kwh=m.einspeisung_kwh or 0,
-                netzbezug_kwh=m.netzbezug_kwh or 0,
-                pv_erzeugung_kwh=m_pv,
-                speicher_ladung_kwh=sp_lad_by_ym.get(key, 0.0),
-                speicher_entladung_kwh=sp_entl_by_ym.get(key, 0.0),
-                v2h_entladung_kwh=v2h_by_ym.get(key, 0.0),
-                neg_preis_kwh=m_neg,
-                monatsdaten=m,
-            ), tarif_cache=_tarif_cache))
+            for f in fakten if f.meta.hat_zaehlerzeile
+        ]
         _finanz = berechne_finanz_aggregat(
             finanz_zeilen, sonstige_netto_euro=sonstige_netto_gesamt
         )
@@ -538,6 +472,19 @@ async def calculate_anlage_sensors(
     relevante_kosten = investition_gesamt - alternativ_gesamt
     betriebskosten_ges = sum(i.betriebskosten_jahr or 0 for i in investitionen)
 
+    # #326-Inventur Dimension 2: USt auf Eigenverbrauch bei Regelbesteuerung.
+    # Cockpit und Aussichten ziehen sie ab, der HA-Export bisher nicht — der
+    # Sensor `netto_ertrag_euro` stand damit um den USt-Betrag über der Kachel,
+    # auf die er sich bezieht. Vorprüfung im SoT-Helper.
+    ust_eigenverbrauch = ust_eigenverbrauch_fuer_anlage(
+        anlage,
+        eigenverbrauch_kwh=eigenverbrauch,
+        investition_gesamt_euro=investition_gesamt,
+        betriebskosten_jahr_euro=betriebskosten_ges,
+        pv_erzeugung_jahr_kwh=pv_erzeugung,
+    )
+    netto_ertrag -= ust_eigenverbrauch
+
     # Alternativkosten-Ersparnisse aus historischen InvestitionMonatsdaten:
     # WP vs. Gas/Öl, E-Auto vs. Benzin, BKW-Eigenverbrauch.
     # Ohne diese Komponenten wäre die Jahresersparnis nur PV-Netto-Ertrag,
@@ -551,7 +498,6 @@ async def calculate_anlage_sensors(
         i for i in investitionen
         if i.typ == "wallbox" and not ist_dienstlich(i)
     ]
-    balkonkraftwerke = [i for i in investitionen if i.typ == "balkonkraftwerk"]
 
     # IMD vor anschaffungsdatum / nach stilllegungsdatum überspringen (#236):
     # Sonst fließen Werte in HA-Sensor-Aggregate ein, obwohl die Komponente
@@ -593,6 +539,23 @@ async def calculate_anlage_sensors(
     # DI-4: WP-Strom mit dem WP-Spezialtarif bewerten (Fallback allgemein), wie
     # in aktueller_monat.py — sonst rechnet der HA-Export die WP-Ersparnis mit
     # dem allgemeinen Netzbezugspreis, obwohl ein günstigerer WP-Tarif gepflegt ist.
+    # ADR-002/P8: JE MONAT auflösen — die WP-Ersparnis summiert über die ganze
+    # Historie, ein Einheitstarif hätte einen Tarifwechsel rückwirkend über alle
+    # Jahre gezogen (dieselbe Klasse wie der Jahresbericht-Drift, #326).
+    wp_preis_by_periode: dict[tuple[int, int], float] = {}
+    for (_inv_id, _p_jahr, _p_monat) in historische_inv_daten:
+        _periode = (_p_jahr, _p_monat)
+        if _periode in wp_preis_by_periode:
+            continue
+        _p_tarife = await lade_tarife_fuer_anlage(
+            db, anlage.id, target_date=date(_p_jahr, _p_monat, 1)
+        )
+        wp_preis_by_periode[_periode] = resolve_strompreis_for_komponente(
+            _p_tarife, "waermepumpe", fallback=netzbezug_preis_cent
+        )
+
+    # Heutiger WP-Tarif: Fallback für Monate ohne Auflösung und Grundlage der
+    # nach vorn gerichteten Sensor-Werte weiter unten.
     _tarife = await lade_tarife_fuer_anlage(db, anlage.id)
     wp_netzbezug_preis_cent = resolve_strompreis_for_komponente(
         _tarife, "waermepumpe", fallback=netzbezug_preis_cent
@@ -605,6 +568,7 @@ async def calculate_anlage_sensors(
         waermepumpen,
         historische_inv_daten,
         {k: md.gaspreis_cent_kwh for k, md in md_by_periode.items()},
+        wp_preis_by_periode,
         wp_netzbezug_preis_cent,
     )
 
@@ -681,16 +645,16 @@ async def calculate_anlage_sensors(
         benzin_verbrauch_liter=co2_benzin_liter,
     ).co2_gesamt_kg
 
-    # BKW-Alternativkosten: Eigenverbrauch zum Netzbezugspreis (Berechnungs-Layer).
-    bisherige_bkw_ersparnis = berechne_bkw_alternativkosten_ersparnis(
-        balkonkraftwerke, historische_inv_daten, netzbezug_preis_cent,
-    )
-
+    # BKW: KEIN eigener Posten mehr (ADR-002/P9). Die Ersparnis steckt seit
+    # 2026-07-31 in `netto_ertrag` — entweder über die gemeinsame PV-Basis der
+    # Finanz-Zeilen (Erzeugung erfasst) oder über deren Rest-Eigenverbrauchs-
+    # Term (nicht erfasst), beides mit dem Preis DES MONATS. Der frühere
+    # Zuschlag hier rechnete mit einem statischen Netzbezugspreis und tauchte
+    # im Sensor `netto_ertrag_euro` gar nicht auf, nur in ROI/Amortisation.
     historischer_netto_ertrag = (
         netto_ertrag
         + bisherige_wp_ersparnis
         + bisherige_eauto_ersparnis
-        + bisherige_bkw_ersparnis
     )
 
     # Jahresersparnis aus Monatsdaten berechnen (annualisiert)

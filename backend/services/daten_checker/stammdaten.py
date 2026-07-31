@@ -18,6 +18,7 @@ from backend.core.investition_parameter import (
     ist_dienstlich,
 )
 from backend.core.berechnungen import pruefe_speicher_netzladung_kumulativ
+from backend.core.wirtschaftlichkeit_defaults import NETZBEZUG_DEFAULT_CENT
 from backend.core.field_definitions import get_speicher_netzladung_kwh
 from backend.core.investition_kennwerte import (
     get_bkw_kwp,
@@ -182,7 +183,9 @@ class StammdatenChecks:
 
     # ─── Strompreise ─────────────────────────────────────────────────────
 
-    def _check_strompreise(self, anlage: Anlage) -> list[CheckErgebnis]:
+    def _check_strompreise(
+        self, anlage: Anlage, monatsdaten: list | None = None
+    ) -> list[CheckErgebnis]:
         ergebnisse: list[CheckErgebnis] = []
         kat = CheckKategorie.STROMPREISE
 
@@ -206,11 +209,53 @@ class StammdatenChecks:
             meldung=f"{len(tarife)} Strompreis-Tarif(e) vorhanden",
         ))
 
-        # Lücken prüfen
-        if anlage.installationsdatum:
-            start = anlage.installationsdatum
-            for i, tarif in enumerate(tarife):
-                if tarif.gueltig_ab > start:
+        # ── Monate MIT DATEN vor dem ersten Tarif ────────────────────────────
+        # Diese rechnen still mit der Vorbelegung (NETZBEZUG_DEFAULT_CENT).
+        # Der Fall entsteht regelmäßig bei Neuinstallationen: erst Monate aus
+        # der HA-Statistik importieren, danach den Tarif anlegen — dessen
+        # Formular schlägt „heute" als Gültigkeitsbeginn vor (Forum simon42
+        # #89667/60). Bewusst an den DATEN gemessen, nicht am
+        # `installationsdatum`: das ist nullable, und genau bei frischen
+        # Installationen leer — die Prüfung wurde dann komplett übersprungen.
+        erster_tarif_ab = tarife[0].gueltig_ab
+        monate_ohne_tarif = [
+            m for m in (monatsdaten or [])
+            # Stichtag ist der Monatserste (`baue_finanz_zeile`): ein Tarif ab
+            # dem 15. gilt erst für den Folgemonat.
+            if erster_tarif_ab > date(m.jahr, m.monat, 1)
+        ]
+        if monate_ohne_tarif:
+            aeltester = min((m.jahr, m.monat) for m in monate_ohne_tarif)
+            ergebnisse.append(CheckErgebnis(
+                kategorie=kat, schwere=CheckSeverity.WARNING,
+                meldung=(
+                    f"{len(monate_ohne_tarif)} Monat(e) mit Daten liegen vor dem "
+                    f"ersten Tarif ({erster_tarif_ab.strftime('%m/%Y')})"
+                ),
+                details=(
+                    f"Ab {aeltester[1]:02d}/{aeltester[0]} sind Werte erfasst, aber kein "
+                    f"Strompreis hinterlegt — diese Monate rechnen mit der Vorbelegung "
+                    f"{NETZBEZUG_DEFAULT_CENT:.0f} ct/kWh. Beim ältesten Tarif das "
+                    f"Gültig-ab-Datum auf den Beginn der Daten zurücksetzen; die "
+                    f"Auswertungen rechnen sofort neu."
+                ),
+                link="/einstellungen/strompreise",
+            ))
+
+        # ── Lücken ZWISCHEN Tarifen ──────────────────────────────────────────
+        # Anker ist der früheste bekannte Betriebsbeginn: Inbetriebnahme oder
+        # der erste Monat mit Daten, je nachdem was früher liegt.
+        anker = [d for d in (
+            anlage.installationsdatum,
+            date(*min((m.jahr, m.monat) for m in monatsdaten), 1) if monatsdaten else None,
+        ) if d]
+        if anker:
+            start = min(anker)
+            for tarif in tarife:
+                # Der führende Fall ist oben schon (präziser) gemeldet.
+                if tarif.gueltig_ab > start and not (
+                    monate_ohne_tarif and tarif.gueltig_ab == erster_tarif_ab
+                ):
                     ergebnisse.append(CheckErgebnis(
                         kategorie=kat, schwere=CheckSeverity.WARNING,
                         meldung=f"Strompreis-Lücke: {start.strftime('%d.%m.%Y')} bis {tarif.gueltig_ab.strftime('%d.%m.%Y')}",
@@ -234,11 +279,24 @@ class StammdatenChecks:
                 details="Wärmepumpe vorhanden – bei eigenem WP-Tarif (Wärmestrom) hier ergänzen",
                 link="/einstellungen/strompreise",
             ))
-        if hat_eauto and "e-auto" not in verwendungen:
+        # Ladetarif hängt an der Verwendung `wallbox` — „e-auto" gibt es als
+        # Verwendung nicht (`Strompreis.verwendung`: allgemein | waermepumpe |
+        # wallbox), das Formular bietet sie nicht an und
+        # `resolve_strompreis_for_komponente` kennt sie auch nicht. Der Hinweis
+        # war damit unerfüllbar: er stand bei jedem E-Auto dauerhaft, ohne dass
+        # ihn irgendeine Eingabe hätte abstellen können. Was ein Anwender
+        # wirklich hinterlegen kann und was gelesen wird, ist der Wallbox-Tarif
+        # — beide Dashboards ziehen ihn („E-Auto lädt über Wallbox",
+        # investitionen/dashboards.py). Wallbox ohne E-Auto zählt genauso: der
+        # Ladetarif hängt am Ladepunkt.
+        hat_wallbox = any(i.typ == "wallbox" and i.ist_aktiv_an(heute) for i in anlage.investitionen)
+        if (hat_eauto or hat_wallbox) and "wallbox" not in verwendungen:
             ergebnisse.append(CheckErgebnis(
                 kategorie=kat, schwere=CheckSeverity.INFO,
-                meldung="Kein E-Auto-Spezialtarif hinterlegt",
-                details="E-Auto vorhanden – bei eigenem Ladetarif hier ergänzen",
+                meldung="Kein Ladetarif hinterlegt",
+                details="E-Auto/Wallbox vorhanden – bei eigenem Ladetarif einen "
+                        "Strompreis mit Verwendung „Wallbox“ ergänzen. Ohne ihn "
+                        "rechnet eedc die Ladung mit dem allgemeinen Tarif.",
                 link="/einstellungen/strompreise",
             ))
 
@@ -266,6 +324,69 @@ class StammdatenChecks:
         return ergebnisse
 
     # ─── Investitionen ───────────────────────────────────────────────────
+
+    def _check_bkw_akku_erfassungsweg(self, inv, name: str, alle_invs) -> list[CheckErgebnis]:
+        """Weist Weg-B-Altbestand auf den Kanon hin — mit benannter Handlung.
+
+        Ein BKW-Akku wird als **eigene Speicher-Investition mit Parent
+        Balkonkraftwerk** erfasst (Kanon seit 2026-07-31): nur so hat er
+        Live-Leistung, Ladestand, Energiefluss-Knoten und Tages-/Stundenwerte.
+        Die BKW-eigenen Felder `speicher_ladung_kwh`/`speicher_entladung_kwh`
+        kennen nur einen Monatswert und sind seither `nur_manuell` — erfassbar,
+        aber nicht mehr zuordenbar (`core/field_definitions.py`).
+
+        Gemeldet wird NUR, wer die alten Felder tatsächlich gepflegt hat und
+        noch kein Speicher-Kind am BKW hängen hat. Kein stiller Umbau seiner
+        Daten ([[feedback_kein_grosser_heiler_knopf]]), sondern ein Hinweis mit
+        Handlung ([[feedback_reparatur_statt_loesch_features]]) — die gepflegten
+        Werte bleiben unangetastet und weiter sichtbar.
+        """
+        ergebnisse: list[CheckErgebnis] = []
+        kat = CheckKategorie.INVESTITIONEN
+
+        # Hängt schon ein Speicher am BKW? Dann ist der Anwender auf Weg A.
+        # Bewusst über die bereits geladene Investitions-Liste statt über die
+        # `children`-Backref: die ist NICHT eager-geladen (`__init__.py` lädt
+        # `Anlage.investitionen` + `Investition.monatsdaten`), ein Zugriff wäre
+        # im Async-Kontext ein Lazy-Load und damit ein MissingGreenlet-Fehler.
+        if any(
+            k.typ == "speicher" and k.parent_investition_id == inv.id
+            for k in (alle_invs or [])
+        ):
+            return ergebnisse
+
+        monate = sorted(
+            (imd.jahr, imd.monat)
+            for imd in (inv.monatsdaten or [])
+            if any(
+                (imd.verbrauch_daten or {}).get(f) is not None
+                for f in ("speicher_ladung_kwh", "speicher_entladung_kwh")
+            )
+        )
+        if not monate:
+            return ergebnisse
+
+        von = f"{monate[0][1]:02d}/{monate[0][0]}"
+        bis = f"{monate[-1][1]:02d}/{monate[-1][0]}"
+        zeitraum = von if len(monate) == 1 else f"{von} bis {bis}"
+        ergebnisse.append(CheckErgebnis(
+            kategorie=kat, schwere=CheckSeverity.INFO,
+            meldung=f"{name}: Akku-Werte nur als Monatswert erfasst",
+            details=(
+                f"Für {len(monate)} Monate ({zeitraum}) sind Lade-/Entlademengen "
+                "direkt am Balkonkraftwerk gepflegt. In dieser Form gibt es sie "
+                "nur monatlich — im Live-Dashboard, im Tagesverlauf und im "
+                "Energiefluss fehlt der Akku. "
+                "Empfohlen: den Akku zusätzlich als eigene Investition vom Typ "
+                "„Speicher“ anlegen und unter „Gehört zu“ "
+                "dieses Balkonkraftwerk wählen; die Lade-/Entladesensoren "
+                "dann dort zuordnen. "
+                "Die bereits gepflegten Monatswerte bleiben erhalten und werden "
+                "weiter angezeigt — es geht nichts verloren."
+            ),
+            link="/einstellungen/investitionen",
+        ))
+        return ergebnisse
 
     def _check_investitionen(self, anlage: Anlage, monatsdaten: list[Monatsdaten]) -> list[CheckErgebnis]:
         ergebnisse: list[CheckErgebnis] = []
@@ -353,6 +474,9 @@ class StammdatenChecks:
                 ergebnisse.extend(self._check_investition_monatsdaten(
                     inv, name, "pv_erzeugung_kwh", "PV-Erzeugung", CheckSeverity.WARNING, monatsdaten,
                 ))
+                ergebnisse.extend(
+                    self._check_bkw_akku_erfassungsweg(inv, name, anlage.investitionen)
+                )
 
             elif inv.typ == "speicher":
                 # Diese Meldung ist die Bedingung, unter der `None` als

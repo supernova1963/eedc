@@ -35,6 +35,14 @@ Feld-Attribute:
                   Sensor-Zuordnungs-Wizard, im MQTT-Inbound-Wizard und in der
                   manuellen Monatsdaten-Eingabe. Sensor-Felder konsistent zu
                   docs/SENSOR-REFERENZ.md halten.
+  nur_manuell   — True: das Feld bleibt in Monatsabschluss, CSV-Import und
+                  Export **erfassbar**, verschwindet aber als **zuordenbare
+                  Quelle** — `mqtt_topic_registry.build_expected_topics` lässt es
+                  aus, damit weder die Datenquellen-Fläche noch ein MQTT-Topic
+                  darauf zeigen kann. Der Rückbau-Modus dieses Projekts: kein
+                  Löschen, gepflegte Werte bleiben lesbar und pflegbar, nur der
+                  automatische Erfassungsweg entfällt
+                  ([[feedback_reparatur_statt_loesch_features]]).
 """
 
 from typing import Optional
@@ -298,20 +306,29 @@ INVESTITION_FELDER: dict = {
             "csv_suffix": "Eigenverbrauch_kWh",
             "hinweis": "Direkt im Haushalt verbrauchte BKW-Erzeugung (kWh, kumulativ oder Tagessensor). Optional — sonst aus Erzeugung − Einspeisung berechnet.",
         },
-        # Konditionell — nur wenn hat_speicher=true:
+        # Konditionell — nur wenn hat_speicher=true. ALTBESTAND, `nur_manuell`:
+        # Der Kanon für einen BKW-Akku ist seit 2026-07-31 die **eigene
+        # Speicher-Investition mit Parent Balkonkraftwerk** (Weg A) — die trägt
+        # Live-Leistung, SoC, Energiefluss-Knoten und Zählerpfad, während diese
+        # beiden Felder nur einen Monatswert kennen. Sie bleiben erfassbar,
+        # damit gepflegte Werte lesbar bleiben, sind aber nicht mehr
+        # **zuordenbar**: kein Sensor, kein MQTT-Topic. Wer sie gepflegt hat,
+        # wird vom Daten-Checker auf Weg A gewiesen (`daten_checker/stammdaten.py`).
         {
             "feld": "speicher_ladung_kwh", "label": "Speicher Ladung", "einheit": "kWh",
             "bedingung": "hat_speicher",
+            "nur_manuell": True,
             "csv_suffix": "Speicher_Ladung_kWh",
             "aggregiert_in": "batterie_ladung_sum",
-            "hinweis": "In den BKW-Akku geladene Energie (kWh, kumulativ oder Tagessensor). Nur bei BKW mit Speicher.",
+            "hinweis": "In den BKW-Akku geladene Energie (kWh). Nur manuell oder per Import — für Sensor-/MQTT-Zuordnung den Akku als eigene Speicher-Investition mit Parent Balkonkraftwerk erfassen.",
         },
         {
             "feld": "speicher_entladung_kwh", "label": "Speicher Entladung", "einheit": "kWh",
             "bedingung": "hat_speicher",
+            "nur_manuell": True,
             "csv_suffix": "Speicher_Entladung_kWh",
             "aggregiert_in": "batterie_entladung_sum",
-            "hinweis": "Aus dem BKW-Akku entladene Energie (kWh, kumulativ oder Tagessensor). Nur bei BKW mit Speicher.",
+            "hinweis": "Aus dem BKW-Akku entladene Energie (kWh). Nur manuell oder per Import — für Sensor-/MQTT-Zuordnung den Akku als eigene Speicher-Investition mit Parent Balkonkraftwerk erfassen.",
         },
     ],
 
@@ -469,6 +486,37 @@ BASIS_LIVE_FELDER: list[dict] = [
                 "fehlt sie, nutzt eedc die Wetterdaten des Standorts."},
     # SFML- und Solcast-Sensoren werden per Auto-Discovery erkannt (prognose_discovery.py),
     # kein manuelles Mapping mehr nötig.
+]
+
+# Preis-Felder auf Anlage-Ebene — weder Zähler noch Live-Leistung.
+#
+# Eigene Familie, weil ein Preis an drei Stellen anders behandelt wird als die
+# übrigen Basis-Felder:
+#   1. **Kein MQTT.** Der Wert wird ausschließlich als HA-Sensor gelesen
+#      (stündlicher LTS-Mittelwert, `energie_profil/_helpers.py`). Deshalb steht
+#      er NICHT in `BASIS_ENERGY_TOPICS` — dort wäre er ein erwartetes
+#      MQTT-Topic, das niemand bedient, und der Abdeckungs-Check (#134) würde
+#      ihn als Lücke melden.
+#   2. **Kein Zähler.** `state_class: measurement` ist hier richtig; der
+#      LTS-Summen-Check ist nicht zuständig (`daten_checker/sensoren.py`).
+#   3. **Nur bei dynamischem Tarif sichtbar.** Bei einem Festpreis gehört der
+#      Preis in die Stammdaten, nicht an einen Sensor — und ein angebotener
+#      Preis-Slot verleitet genau dazu (Forum simon42 #89667/54, MartyBr hatte
+#      seinen Festpreis-Template-Sensor mangels Alternative an den
+#      Speicher-Ø-Ladepreis gehängt).
+#
+# Der Slot existierte bis v3 im Sensor-Mapping-Wizard („Basis-Sensoren") und ist
+# beim V4-Umbau ersatzlos entfallen — das Backend las `basis.strompreis` weiter,
+# nur setzen konnte man ihn nicht mehr. Bestehende v3-Zuordnungen waren davon
+# nie betroffen.
+BASIS_PREIS_FELDER: list[dict] = [
+    {"key": "strompreis", "label": "Strompreis (dynamischer Tarif)", "einheit": "ct/kWh",
+     "bedingung_basis": "dynamischer_tarif",
+     "hinweis": "HA-Sensor mit dem aktuellen Arbeitspreis (Tibber, aWATTar, EPEX-Endpreis). "
+                "eedc schreibt daraus die Stundenpreise mit und rechnet damit den "
+                "verbrauchsgewichteten Ø-Bezugspreis des Monats sowie den Ø-Ladepreis der "
+                "Speicher-Netzladung. Einheit ct/kWh oder €/kWh — eedc rechnet um. "
+                "Ohne Sensor bleibt der Arbeitspreis aus den Stammdaten maßgeblich."},
 ]
 
 # =============================================================================
@@ -679,7 +727,9 @@ def get_felder_fuer_investition(
     v2h_faehig = bool(params.get("v2h_faehig") or params.get("nutzt_v2h"))
     hat_speicher = bool(params.get("hat_speicher"))
 
-    SKIP_KEYS = {"bedingung", "bedingung_anlage", "label_wenn"}
+    # Steuer-Schlüssel — hier ausgewertet bzw. nur für die Zuordnungs-Fläche
+    # relevant, gehören nicht in die Eingabe-Antwort.
+    SKIP_KEYS = {"bedingung", "bedingung_anlage", "label_wenn", "nur_manuell"}
 
     # #281: konditionelles Label — nutzt dieselben Bedingungs-Keys wie `bedingung`.
     bedingungs_werte = {
@@ -975,6 +1025,49 @@ def einheit_klasse(unit: Optional[str]) -> Optional[str]:
     if unit in _ENERGY_EINHEITEN:
         return "energie"
     return None
+
+
+# ─── Zählerdifferenz-Felder (SoT für „darf aus HA-LTS gelesen werden?") ─────
+# Zähler ohne Energie-Einheit: monoton steigend, der Monatswert ist die
+# Differenz zweier Zählerstände. Energie-Felder erkennt `einheit_klasse`.
+_ZAEHLER_FELDER_OHNE_ENERGIE_EINHEIT: frozenset[str] = frozenset({
+    "km_gefahren",        # km-Zähler (Auto-Integration/OBD)
+    "ladevorgaenge",      # Anzahl-Zähler der Wallbox
+    "wp_starts_anzahl",   # #136
+    "wp_betriebsstunden",  # #238
+    # Basis-Mapping-Schlüssel des PV-Sammelzählers. kWh wie „einspeisung"/
+    # „netzbezug", steht aber in KEINER Feld-Registry: es ist ein reiner
+    # Mapping-Key, kein IMD-Feld — `FELD_EINHEITEN` kennt ihn deshalb nicht.
+    # Ohne diesen Eintrag fiele der Sammelzähler still aus dem Statistik-Import
+    # (gewächtert in test_zaehler_differenz_feld.py).
+    "pv_gesamt",
+})
+
+
+def ist_zaehler_differenz_feld(feld: str) -> bool:
+    """Darf der Monatswert dieses Feldes als Zählerdifferenz gelesen werden?
+
+    Die Monatswert-Pfade aus HA (`monatsabschluss`-Vorschläge,
+    HA-Statistik-Import) rechnen ausnahmslos `MAX(sum) − MIN(sum)` mit
+    Fallback `MAX(state) − MIN(state)`. Das ist für einen Zählerstand richtig
+    und für alles andere Unsinn: bei einem Preis-Sensor käme die **Preis-Spanne
+    des Monats** heraus, bei einer Temperatur die Spreizung.
+
+    Vorher iterierten beide Pfade ungefiltert über alles, was im Mapping stand.
+    Praktisch blieb das meist folgenlos, weil ein `measurement`-Sensor weder
+    `state` noch `sum` führt und still `None` liefert — aber eine Preis-Entität
+    mit gefüllter `state`-Spalte schrieb ihre Monats-Spreizung als Ø Ladepreis
+    in die Datenbank (Forum simon42 #89667/54, Anlass war die Sensor-Zuordnung
+    an einem ct/kWh-Feld).
+
+    Kein Gegenstück in `snapshot/keys.py`: dort geht es um den stündlichen
+    Snapshot-Job, hier um den Monatswert aus HA-Langzeitstatistik. Die Mengen
+    überschneiden sich, sind aber nicht dieselbe Frage — `ladung_extern_kwh`
+    etwa ist ein Monatswert ohne Snapshot-Erfassung.
+    """
+    if einheit_klasse(FELD_EINHEITEN.get(feld)) == "energie":
+        return True
+    return feld in _ZAEHLER_FELDER_OHNE_ENERGIE_EINHEIT
 
 
 # =============================================================================

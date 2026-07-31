@@ -21,7 +21,14 @@ from backend.core.investition_kennwerte import (
     get_speicher_nutzbare_kapazitaet_kwh,
 )
 from backend.api.deps import get_db
-from backend.models.investition import Investition, InvestitionTyp, InvestitionMonatsdaten
+from backend.models.investition import (
+    Investition,
+    InvestitionTyp,
+    InvestitionMonatsdaten,
+    ERLAUBTE_PARENT_TYPEN,
+    PARENT_PFLICHT_TYPEN,
+    TYP_LABELS as _TYP_LABEL,
+)
 from backend.utils.investition_filter import aktiv_jetzt, aktiv_im_jahr, sort_investitionen_nach_typ
 from backend.models.anlage import Anlage
 from backend.models.monatsdaten import Monatsdaten
@@ -53,6 +60,7 @@ from backend.services.eauto_wirtschaftlichkeit import (
     resolve_eauto_benzinpreis,
 )
 from backend.core.calculations import CO2_FAKTOR_STROM_KG_KWH
+from backend.services.monats_fakten import lade_monats_fakten
 from backend.core.berechnungen import PV_ERZEUGER_TYPEN, einspeise_erloes_euro
 
 
@@ -91,8 +99,8 @@ def _aufloesen_ladepreis(
     """Liefert (ladepreis_cent, quelle) für die ROI-Berechnung.
 
     Etappe C1/C4: Helper liefert immer ein Ergebnis. Bei nicht-belastbarer
-    Quelle (`keine-tep-daten`, `keine-netzladung`, `datenbasis-zu-duenn` mit
-    `effektiver_ladepreis_cent=None`) Param-Fallback. Ohne Arbitrage und
+    Quelle (`keine-tep-daten`, `keine-netzladung`, `kein-dyn-tarif`,
+    `datenbasis-zu-duenn` mit `effektiver_ladepreis_cent=None`) Param-Fallback. Ohne Arbitrage und
     ohne Param: `None` → der Spread-Service behandelt das als kostenneutral.
     """
     if eff_ladepreis is None:
@@ -297,49 +305,46 @@ async def get_parent_options(
     """
     Gibt verfügbare Parent-Optionen für jeden Typ zurück.
 
+    Gebaut aus `ERLAUBTE_PARENT_TYPEN`/`PARENT_PFLICHT_TYPEN`
+    (`models/investition.py`) — derselben SoT, gegen die
+    `_validate_parent_child` prüft. Bis 2026-07-31 zählte diese Funktion
+    ausschließlich Wechselrichter auf und behauptete damit, ein Speicher könne
+    keinem Balkonkraftwerk zugeordnet werden — im Widerspruch zur Validierung
+    UND zum Formular (BKW mit Akku ist genau der Fall, für den es die
+    Zuordnung gibt).
+
     Returns:
-        dict: Typ -> Liste der möglichen Parents
+        dict: Typ -> Liste der möglichen Parents (leer, wo es keine gibt)
 
     Beispiel:
         {
             "pv-module": [{"id": 1, "bezeichnung": "Fronius GEN24", "typ": "wechselrichter", "required": true}],
-            "speicher": [{"id": 1, "bezeichnung": "Fronius GEN24", "typ": "wechselrichter", "required": false}]
+            "speicher": [{"id": 1, "bezeichnung": "Fronius GEN24", "typ": "wechselrichter", "required": false},
+                         {"id": 9, "bezeichnung": "Balkon Süd", "typ": "balkonkraftwerk", "required": false}]
         }
     """
-    # Wechselrichter der Anlage laden
-    wr_result = await db.execute(
+    benoetigte_typen = {t for typen in ERLAUBTE_PARENT_TYPEN.values() for t in typen}
+    kandidaten = (await db.execute(
         select(Investition)
         .where(Investition.anlage_id == anlage_id)
-        .where(Investition.typ == InvestitionTyp.WECHSELRICHTER.value)
+        .where(Investition.typ.in_(benoetigte_typen))
         .where(aktiv_jetzt())
         .order_by(Investition.bezeichnung)
-    )
-    wechselrichter = wr_result.scalars().all()
+    )).scalars().all()
 
-    wr_options = [
-        ParentOption(id=wr.id, bezeichnung=wr.bezeichnung, typ=wr.typ)
-        for wr in wechselrichter
-    ]
-
-    return {
-        # PV-Module: Wechselrichter ist Pflicht (wenn vorhanden)
-        "pv-module": [
-            ParentOption(id=o.id, bezeichnung=o.bezeichnung, typ=o.typ, required=len(wechselrichter) > 0)
-            for o in wr_options
-        ],
-        # Speicher: Wechselrichter ist optional (für Hybrid-WR)
-        "speicher": [
-            ParentOption(id=o.id, bezeichnung=o.bezeichnung, typ=o.typ, required=False)
-            for o in wr_options
-        ],
-        # Andere Typen: Keine Parent-Optionen
-        "wechselrichter": [],
-        "e-auto": [],
-        "wallbox": [],
-        "waermepumpe": [],
-        "balkonkraftwerk": [],
-        "sonstiges": [],
-    }
+    optionen: dict[str, list[ParentOption]] = {t.value: [] for t in InvestitionTyp}
+    for typ, erlaubte in ERLAUBTE_PARENT_TYPEN.items():
+        passend = [k for k in kandidaten if k.typ in erlaubte]
+        # `required` ist keine Eigenschaft des Typs allein: Pflicht wird die
+        # Zuordnung erst, wenn es überhaupt einen möglichen Parent gibt
+        # (sonst bliebe ein Altbestands-Modul unspeicherbar) — dieselbe
+        # Bedingung wie in `_validate_parent_child`.
+        pflicht = typ in PARENT_PFLICHT_TYPEN and len(passend) > 0
+        optionen[typ] = [
+            ParentOption(id=k.id, bezeichnung=k.bezeichnung, typ=k.typ, required=pflicht)
+            for k in passend
+        ]
+    return optionen
 
 
 @router.get("/", response_model=list[InvestitionResponse])
@@ -447,77 +452,62 @@ async def _validate_parent_child(
     """
     Validiert Parent-Child Beziehungen für Investitionen.
 
+    Die erlaubten Kombinationen stehen NICHT hier, sondern in der SoT
+    `models/investition.py::ERLAUBTE_PARENT_TYPEN` / `PARENT_PFLICHT_TYPEN` —
+    dieselbe Quelle, aus der `get_parent_options` seine Liste baut und die das
+    Client-Pendant spiegelt. Bis 2026-07-31 gab es drei uneinige Kopien.
+
     Regeln:
-    - PV-Module MÜSSEN einem Wechselrichter zugeordnet sein
-    - Speicher KÖNNEN optional einem Wechselrichter zugeordnet sein (Hybrid-WR)
+    - PV-Module MÜSSEN einem Wechselrichter zugeordnet sein (sofern einer existiert)
+    - Speicher KÖNNEN optional einem Wechselrichter (Hybrid-WR) oder einem
+      Balkonkraftwerk (BKW mit Akku) zugeordnet sein
     - Andere Typen haben keinen Parent
     """
-    # PV-Module: Parent (Wechselrichter) ist Pflicht
-    if typ == InvestitionTyp.PV_MODULE.value:
-        if not parent_id:
-            # Prüfen ob überhaupt Wechselrichter existieren
-            wr_result = await db.execute(
-                select(Investition)
-                .where(Investition.anlage_id == anlage_id)
-                .where(Investition.typ == InvestitionTyp.WECHSELRICHTER.value)
-            )
-            wechselrichter = wr_result.scalars().all()
-            if wechselrichter:
-                raise HTTPException(
-                    status_code=400,
-                    detail="PV-Module müssen einem Wechselrichter zugeordnet werden. "
-                           f"Verfügbare Wechselrichter: {[w.bezeichnung for w in wechselrichter]}"
-                )
-            # Kein Wechselrichter vorhanden - PV-Modul ohne Parent erlauben (Migration)
-            return
+    erlaubt = ERLAUBTE_PARENT_TYPEN.get(typ, ())
 
-        # Parent muss Wechselrichter sein
-        parent_result = await db.execute(
-            select(Investition).where(Investition.id == parent_id)
-        )
-        parent = parent_result.scalar_one_or_none()
-        if not parent:
-            raise not_found("Parent-Investition")
-        if parent.typ != InvestitionTyp.WECHSELRICHTER.value:
-            raise HTTPException(
-                status_code=400,
-                detail=f"PV-Module können nur Wechselrichtern zugeordnet werden, nicht '{parent.typ}'"
-            )
-        if parent.anlage_id != anlage_id:
-            raise HTTPException(
-                status_code=400,
-                detail="Parent-Investition gehört zu einer anderen Anlage"
-            )
-
-    # Speicher: Parent (Wechselrichter oder Balkonkraftwerk) ist optional
-    elif typ == InvestitionTyp.SPEICHER.value:
+    # Typen ohne Parent-Beziehung: jede Zuordnung ist ein Fehler.
+    if not erlaubt:
         if parent_id:
-            parent_result = await db.execute(
-                select(Investition).where(Investition.id == parent_id)
+            raise HTTPException(
+                status_code=400,
+                detail=f"Investitionen vom Typ '{typ}' können keinem Parent zugeordnet werden"
             )
-            parent = parent_result.scalar_one_or_none()
-            if not parent:
-                raise not_found("Parent-Investition")
-            erlaubte_parent_typen = {
-                InvestitionTyp.WECHSELRICHTER.value,
-                InvestitionTyp.BALKONKRAFTWERK.value,
-            }
-            if parent.typ not in erlaubte_parent_typen:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Speicher können nur Wechselrichtern oder Balkonkraftwerken zugeordnet werden, nicht '{parent.typ}'"
-                )
-            if parent.anlage_id != anlage_id:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Parent-Investition gehört zu einer anderen Anlage"
-                )
+        return
 
-    # Andere Typen: Kein Parent erlaubt
-    elif parent_id:
+    if not parent_id:
+        if typ not in PARENT_PFLICHT_TYPEN:
+            return
+        # Pflicht — aber nur, wenn es überhaupt einen möglichen Parent gibt.
+        # Ohne einen bleibt die Investition parentlos (Migration/Altbestand).
+        moegliche = (await db.execute(
+            select(Investition)
+            .where(Investition.anlage_id == anlage_id)
+            .where(Investition.typ.in_(erlaubt))
+        )).scalars().all()
+        if moegliche:
+            raise HTTPException(
+                status_code=400,
+                detail=f"{_TYP_LABEL.get(typ, typ)} müssen zugeordnet werden. "
+                       f"Verfügbar: {[m.bezeichnung for m in moegliche]}"
+            )
+        return
+
+    parent = (await db.execute(
+        select(Investition).where(Investition.id == parent_id)
+    )).scalar_one_or_none()
+    if not parent:
+        raise not_found("Parent-Investition")
+    if parent.typ not in erlaubt:
+        erlaubt_labels = " oder ".join(_TYP_LABEL.get(t, t) for t in erlaubt)
         raise HTTPException(
             status_code=400,
-            detail=f"Investitionen vom Typ '{typ}' können keinem Parent zugeordnet werden"
+            detail=f"{_TYP_LABEL.get(typ, typ)} können nur {erlaubt_labels} "
+                   f"zugeordnet werden, nicht '{parent.typ}'"
+        )
+    if parent.anlage_id != anlage_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Parent-Investition gehört zu einer anderen Anlage"
         )
 
 
@@ -788,8 +778,16 @@ async def get_roi_dashboard(
         """
         Berechnet PV-Einsparung für alle PV-Module gemeinsam.
 
-        WICHTIG: Die PV-Erzeugung kommt aus InvestitionMonatsdaten (pro PV-Modul),
-        NICHT aus Monatsdaten.pv_erzeugung_kwh (Legacy-Feld!).
+        Die PV-Erzeugung kommt aus den Monats-Fakten (ADR-002/**P10**), die sie
+        nach **P7** auflösen: gemessene Pro-Modul-Werte, und wo nur das
+        Anlagen-Aggregat (`Monatsdaten.pv_erzeugung_kwh`) gepflegt ist, dessen
+        kWp-Verteilung. Dieser Docstring nannte das Aggregat bis 2026-07-31 ein
+        „Legacy-Feld!" — genau die Annahme, die P7 widerlegt hat: es ist kein
+        Legacy, sondern der einzige Wert bei manueller Pflege und beim Import
+        mit einem Gesamt-PV-Sensor. Die rohe IMD-Summe daneben lieferte dort 0
+        und damit 32,00 € statt 212,00 € Jahres-Einsparung — der ROI-Fortschritt
+        und die Amortisation standen um 85 % zu niedrig (Befund F-5).
+
         Einspeisung/Netzbezug kommen weiterhin aus Monatsdaten (Zählerwerte).
         """
         # 1. PV-Module IDs ermitteln
@@ -812,26 +810,27 @@ async def get_roi_dashboard(
         if jahr is not None:
             md_query = md_query.where(Monatsdaten.jahr == jahr)
 
-        # 3. PV-Erzeugung aus InvestitionMonatsdaten aggregieren
-        async def get_pv_erzeugung(filter_jahr: int = None) -> dict[tuple[int, int], float]:
-            """Holt PV-Erzeugung aus InvestitionMonatsdaten."""
+        # 3. PV-Erzeugung je Monat über die Monats-Fakten (ADR-002/P10)
+        async def get_pv_erzeugung(filter_jahr: Optional[int] = None) -> dict[tuple[int, int], float]:
+            """Modul-PV je Monat, kanonisch aufgelöst (P7).
+
+            `erzeugung.pv_module_kwh` ist bewusst die **Modul**-Summe, nicht
+            `pv_kwh`: das Balkonkraftwerk hat in diesem Dashboard eine eigene
+            ROI-Zeile (`standalone`), seine Erzeugung zählte hier sonst zweimal.
+            `None` heißt N42-Lücke (mindestens ein aktives Modul ohne Wert und
+            ohne Aggregat) und wird — wie bisher — als 0 verrechnet.
+            """
             if not pv_module_ids:
                 return {}
 
-            imd_query = select(InvestitionMonatsdaten).where(
-                InvestitionMonatsdaten.investition_id.in_(pv_module_ids)
+            fakten = await lade_monats_fakten(
+                db, anlage_id,
+                von=(filter_jahr, 1) if filter_jahr is not None else None,
+                bis=(filter_jahr, 12) if filter_jahr is not None else None,
             )
-            if filter_jahr is not None:
-                imd_query = imd_query.where(InvestitionMonatsdaten.jahr == filter_jahr)
-
-            imd_result = await db.execute(imd_query)
-            erzeugung_by_monat: dict[tuple[int, int], float] = {}
-            for imd in imd_result.scalars().all():
-                data = imd.verbrauch_daten or {}
-                pv_kwh = data.get("pv_erzeugung_kwh", 0) or 0
-                key = (imd.jahr, imd.monat)
-                erzeugung_by_monat[key] = erzeugung_by_monat.get(key, 0) + pv_kwh
-            return erzeugung_by_monat
+            return {
+                f.schluessel: (f.erzeugung.pv_module_kwh or 0.0) for f in fakten
+            }
 
         if jahr is None:
             # Alle Jahre: Jahresdurchschnitt
