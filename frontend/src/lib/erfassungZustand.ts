@@ -13,7 +13,7 @@
  *   Erscheint NUR als Prefill — gespeicherte Werte sind nie „geschätzt".
  */
 
-import type { FeldStatus, Vorschlag } from '../api/monatsabschluss'
+import type { BehalteneAbweichung, FeldStatus, Vorschlag } from '../api/monatsabschluss'
 import type { ErfassungZustand } from '../components/ui/ErfassungZustandBadge'
 export type { ErfassungZustand } from '../components/ui/ErfassungZustandBadge'
 
@@ -42,16 +42,97 @@ export function besterVorschlag(vorschlaege: Vorschlag[] | undefined): Vorschlag
   return vorschlaege.reduce((best, v) => (v.konfidenz > best.konfidenz ? v : best), vorschlaege[0])
 }
 
-const EPS = 0.005
+// ─── Toleranz (PN 90128) ────────────────────────────────────────────────────
+//
+// Ein Vorschlag wird nur so genau genommen, wie er geliefert wird: das Backend
+// rundet den HA-Statistics-/Connector-Vorschlag auf EINE Nachkommastelle
+// (`round(wert, 1)`), der gespeicherte Wert trägt dagegen zwei. Gegen eine feste
+// Schwelle verglichen weicht der Vorschlag damit systematisch ab (2,3 ↔ 2,33 =
+// 0,03) — genau die Meldung „fast überall wird die 2. Nachkommastelle
+// angemeckert". Deshalb bestimmt die Genauigkeit des VORSCHLAGS die Toleranz.
+
+/** Gröbste berücksichtigte Genauigkeit. Vorschläge werden im Backend auf ≥1
+ *  Nachkommastelle gerundet — ein glatter Wert wie 2,0 heißt also NICHT
+ *  „ganzzahlig genau", sonst würde eine Toleranz von 0,5 entstehen. */
+export const MIN_NACHKOMMASTELLEN = 1
+/** Feinste berücksichtigte Genauigkeit (Entscheid Gernot: höchstens drei). */
+export const MAX_NACHKOMMASTELLEN = 3
+
+/** Nachkommastellen, auf die für den Vergleich gerundet wird — geklammert auf
+ *  [{@link MIN_NACHKOMMASTELLEN}, {@link MAX_NACHKOMMASTELLEN}]. */
+export function vergleichsStellen(wert: number): number {
+  if (!Number.isFinite(wert)) return MIN_NACHKOMMASTELLEN
+  const s = String(wert)
+  // Exponentialschreibweise (1e-7) → feinste Stufe, nie die gröbste.
+  if (s.includes('e') || s.includes('E')) return MAX_NACHKOMMASTELLEN
+  const punkt = s.indexOf('.')
+  const stellen = punkt < 0 ? 0 : s.length - punkt - 1
+  return Math.min(Math.max(stellen, MIN_NACHKOMMASTELLEN), MAX_NACHKOMMASTELLEN)
+}
+
+/** Halbe Einheit der letzten berücksichtigten Stelle = „auf `stellen` gerundet gleich". */
+const toleranz = (stellen: number): number => 0.5 * Math.pow(10, -stellen)
+
+/** Standard-Genauigkeit für Vergleiche ohne Vorschlags-Bezug (Form ↔ gespeichert):
+ *  zwei Nachkommastellen, entspricht der bisherigen festen Schwelle 0,005. */
+const STANDARD_STELLEN = 2
+
 /** Zwei gerundete Messwerte gelten als gleich (Werte sind auf ≤2 Nachkommastellen gerundet). */
-export const gleich = (a: number, b: number): boolean => Math.abs(a - b) < EPS
+export const gleich = (a: number, b: number): boolean =>
+  Math.abs(a - b) < toleranz(STANDARD_STELLEN)
+
+/**
+ * Vergleich gegen einen Vorschlags-/Sensorwert **mit dessen Genauigkeit**: beide
+ * Seiten zählen als gleich, wenn sie auf die Nachkommastellen von
+ * `vorschlagWert` gerundet übereinstimmen (1 ≤ Stellen ≤ 3).
+ *
+ * Beispiele: Sensor 2,3 ↔ gespeichert 2,33 → gleich (reine Rundung).
+ * Sensor 453,7 ↔ gespeichert 454,74 → NICHT gleich (echte Abweichung, 1,04 kWh).
+ */
+export const gleichWieVorschlag = (wert: number, vorschlagWert: number): boolean =>
+  Math.abs(wert - vorschlagWert) < toleranz(vergleichsStellen(vorschlagWert))
 
 export interface ZustandErgebnis {
   zustand: ErfassungZustand
   /** Roh-Quelle des aktuellen Werts/Prefills (für Badge-Label via getQuelleLabel). */
   quelle?: string | null
-  /** Nur bei 'weicht_ab': gemessener Sensor-Vorschlag ≠ gespeicherter Wert. */
+  /**
+   * Der gemessene Sensor-Vorschlag weicht vom gespeicherten Wert ab.
+   *
+   * Gesetzt bei `weicht_ab` **und** bei `geprueft`, wenn der Nutzer die
+   * Abweichung bewusst behalten hat (PN 90128) — die Wahrheit „Sensor sagt X,
+   * gespeichert ist Y" bleibt in beiden Fällen lesbar. Der Unterschied liegt
+   * nur in der Lautstärke: bestätigt zählt als fertig und mahnt nicht mehr.
+   */
   weichtAb?: { sensorWert: number; gespeichert: number }
+}
+
+/**
+ * Gilt eine gespeicherte Bestätigung noch? Nur wenn **beide** Seiten der
+ * damaligen Situation unverändert sind: derselbe Sensor-Vorschlag (in dessen
+ * Genauigkeit) und derselbe behaltene Wert. Meldet der Zähler etwas Neues oder
+ * wurde der Wert geändert, ist die Bestätigung gegenstandslos — sonst wäre sie
+ * eine Stummschaltung statt einer Entscheidung.
+ */
+export function bestaetigungGilt(
+  geprueftGegen: BehalteneAbweichung | null | undefined,
+  sensorWert: number,
+  gespeichert: number,
+): boolean {
+  if (!geprueftGegen) return false
+  return gleichWieVorschlag(geprueftGegen.sensor, sensorWert)
+    && gleich(geprueftGegen.wert, gespeichert)
+}
+
+/**
+ * Was für dieses Feld als „bewusst behalten" zu speichern ist — `null`, wenn
+ * es nichts zu merken gibt. Die Form baut daraus den `geprueft_gegen`-Payload;
+ * weil sie ihn bei jedem Speichern neu aus den aktuellen Zuständen bildet,
+ * fallen überholte Bestätigungen von selbst heraus.
+ */
+export function behaltenEintrag(erg: ZustandErgebnis): BehalteneAbweichung | null {
+  if (erg.zustand !== 'geprueft' || !erg.weichtAb) return null
+  return { sensor: erg.weichtAb.sensorWert, wert: erg.weichtAb.gespeichert }
 }
 
 /**
@@ -72,17 +153,24 @@ export function ermittleZustand(
   const formNum = hatForm ? parseFloat(formWert) : NaN
 
   // „Weicht ab": es gibt einen gespeicherten Wert UND einen gemessenen Vorschlag,
-  // der abweicht, und der Eingabewert entspricht noch dem gespeicherten (der
+  // der — gemessen an SEINER Genauigkeit (gleichWieVorschlag, PN 90128) —
+  // abweicht, und der Eingabewert entspricht noch dem gespeicherten (der
   // Nutzer hat also noch nicht bewusst entschieden). Nur beim Bearbeiten (R2).
-  // Hat der Nutzer „gespeicherten behalten" bestätigt (bestaetigt), entfällt der
-  // Hinweis → der gespeicherte Wert gilt als bewusst geprüft.
+  //
+  // Hat der Nutzer „gespeicherten behalten" gewählt — in dieser Sitzung
+  // (`bestaetigt`) oder früher und gespeichert (`feld.geprueft_gegen`) —, ist
+  // der Zustand `geprueft`: zählt als fertig, mahnt nicht mehr. Die Abweichung
+  // selbst bleibt in `weichtAb` stehen und damit auf dem Feld sichtbar.
   if (
-    !bestaetigt &&
     gespeichert != null && best && istGemesseneQuelle(best.quelle) &&
-    !gleich(best.wert, gespeichert) &&
+    !gleichWieVorschlag(gespeichert, best.wert) &&
     hatForm && !Number.isNaN(formNum) && gleich(formNum, gespeichert)
   ) {
-    return { zustand: 'weicht_ab', quelle: best.quelle, weichtAb: { sensorWert: best.wert, gespeichert } }
+    const weichtAb = { sensorWert: best.wert, gespeichert }
+    if (bestaetigt || bestaetigungGilt(feld?.geprueft_gegen, best.wert, gespeichert)) {
+      return { zustand: 'geprueft', quelle: feld?.quelle ?? 'manuell', weichtAb }
+    }
+    return { zustand: 'weicht_ab', quelle: best.quelle, weichtAb }
   }
 
   // Leeres Feld → „offen" nur wenn erwartet (Zähler ODER gemappter Sensor); sonst
@@ -102,7 +190,7 @@ export function ermittleZustand(
 
   // Entspricht dem besten Vorschlag → Prefill. Gemessene Quelle = gemessen; eine
   // Schätzung ist „prüfen", nach Bestätigen (✓ passt) „geprüft".
-  if (best && gleich(formNum, best.wert)) {
+  if (best && gleichWieVorschlag(formNum, best.wert)) {
     if (istGemesseneQuelle(best.quelle)) return { zustand: 'gemessen', quelle: best.quelle }
     return { zustand: bestaetigt ? 'geprueft' : 'geschaetzt', quelle: best.quelle }
   }
