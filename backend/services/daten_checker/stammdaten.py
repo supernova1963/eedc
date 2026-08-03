@@ -16,6 +16,7 @@ from backend.core.investition_parameter import (
     BKW_EINSPEISEGRENZE_W_TYPISCH,
     PARAM_PV_MODULE,
     ist_dienstlich,
+    ist_luft_luft_waermepumpe,
 )
 from backend.core.berechnungen import pruefe_speicher_netzladung_kumulativ
 from backend.core.wirtschaftlichkeit_defaults import NETZBEZUG_DEFAULT_CENT
@@ -168,13 +169,28 @@ class StammdatenChecks:
         if pr_count >= 6 and pr > 1.1 and pvgis_prognose:
             system_losses = pvgis_prognose.system_losses if pvgis_prognose.system_losses is not None else 14
             abweichung_pct = round((pr - 1) * 100)
+            # Der Hinweis nannte bis 02.08. Befund und Handlung, aber nicht die
+            # Folge — dietmar1968 (#89667/87): „Für den ersten Hinweis bräuchte
+            # ich eine Erklärung." Ohne die Folge ist die angebotene Handlung
+            # nicht zu bewerten: die Systemverluste sind eine ANNAHME der
+            # Prognose, und sie zu senken hebt das SOLL. Damit fallen Performance
+            # Ratio und jede SOLL-Erfüllung (Prognose-vs-IST, Jahresbericht),
+            # ohne dass sich ein einziger IST-Wert ändert.
             ergebnisse.append(CheckErgebnis(
                 kategorie=kat, schwere=CheckSeverity.INFO,
                 meldung=f"PVGIS-Systemverluste ggf. zu hoch ({system_losses:.0f}%)",
                 details=(
                     f"Anlage produziert Ø {abweichung_pct}% mehr als die PVGIS-Prognose "
-                    f"(Performance Ratio: {pr:.2f} über {pr_count} Monate). "
-                    f"Systemverluste in der Solarprognose reduzieren?"
+                    f"(Performance Ratio: {pr:.2f} über {pr_count} Monate). Die "
+                    f"{system_losses:.0f}% sind eine Annahme der Prognose, keine Messung. "
+                    f"Wirksam wird eine Änderung erst mit einem neuen PVGIS-Abruf "
+                    f"(Solarprognose → „Neue Prognose abrufen“ → „Speichern & Aktivieren“). "
+                    f"Folge: das SOLL steigt, deshalb sinken Performance Ratio und "
+                    f"SOLL-Erfüllung in Prognose-vs-IST und im Jahresbericht — die "
+                    f"IST-Werte bleiben unverändert. Die bisherige Prognose bleibt als "
+                    f"Historie erhalten und lässt sich wieder aktivieren. Wer die "
+                    f"Prognose bewusst als konservative Untergrenze behält, lässt sie "
+                    f"stehen."
                 ),
                 link="/einstellungen/solarprognose",
             ))
@@ -272,11 +288,28 @@ class StammdatenChecks:
         heute = date.today()
         hat_wp = any(i.typ == "waermepumpe" and i.ist_aktiv_an(heute) for i in anlage.investitionen)
         hat_eauto = any(i.typ == "e-auto" and i.ist_aktiv_an(heute) for i in anlage.investitionen)
+        # Wer einen Einheitstarif hat — der Normalfall —, kann diesen Hinweis
+        # durch keine Eingabe abstellen; genau deshalb kam die Bitte ums
+        # Quittieren (dietmar1968, Forum #89667/87). Quittieren ist
+        # ausgeschlossen ([[feedback_daten_checker_kein_akzeptiert]]), und eine
+        # schärfere Bedingung gibt es nicht: ein Wärmestrom-Tarif ist unabhängig
+        # von jedem anderen Parameter, „habe ich nicht" ist im Datenmodell nicht
+        # von „noch nicht eingetragen" zu unterscheiden. Also sagt der Hinweis,
+        # was ohne ihn passiert, und dass Nichtstun in Ordnung ist — wie der
+        # Ladetarif-Hinweis darunter. Die Meldung beschreibt seither einen
+        # Zustand statt einen Mangel zu behaupten.
         if hat_wp and "waermepumpe" not in verwendungen:
             ergebnisse.append(CheckErgebnis(
                 kategorie=kat, schwere=CheckSeverity.INFO,
-                meldung="Kein WP-Spezialtarif hinterlegt",
-                details="Wärmepumpe vorhanden – bei eigenem WP-Tarif (Wärmestrom) hier ergänzen",
+                meldung="Wärmepumpe rechnet mit dem allgemeinen Tarif",
+                details=(
+                    "Es ist kein Tarif mit Verwendung „Wärmepumpe“ hinterlegt — "
+                    "der WP-Strom wird deshalb mit dem allgemeinen Arbeitspreis "
+                    "bewertet. Wer einen eigenen Wärmestrom-Tarif hat (§14a, "
+                    "separater Zähler), ergänzt ihn hier. Wer einen Einheitstarif "
+                    "hat, muss nichts tun: die Rechnung stimmt dann bereits, und "
+                    "dieser Hinweis bleibt als Information stehen."
+                ),
                 link="/einstellungen/strompreise",
             ))
         # Ladetarif hängt an der Verwendung `wallbox` — „e-auto" gibt es als
@@ -580,7 +613,18 @@ class StammdatenChecks:
                     ))
 
             elif inv.typ == "waermepumpe":
-                if inv.anschaffungskosten_alternativ is None:
+                # N-87 / #263: Eine Split-Klimaanlage ersetzt keine Heizung — der
+                # Vergleich gegen Gas/Öl wird für sie nicht mehr gerechnet
+                # (`investitionen/crud.py`, ROI-Dashboard). Die drei Hinweise, die
+                # ausschließlich diesen Vergleich füttern, wären damit Forderungen
+                # ohne Zweck; „Heizwärmebedarf" wäre sogar unauflösbar, weil das
+                # Feld für Klimaanlagen gar nicht mehr angeboten wird. Derselbe
+                # Grundsatz wie in P-6: ein Befund, den der Anwender nicht
+                # auflösen kann, ist ein Fehler bei uns
+                # ([[feedback_daten_checker_kein_akzeptiert]]).
+                ist_klima = ist_luft_luft_waermepumpe(param)
+
+                if inv.anschaffungskosten_alternativ is None and not ist_klima:
                     ergebnisse.append(CheckErgebnis(
                         kategorie=kat, schwere=CheckSeverity.WARNING,
                         meldung=f"{name}: Alternativkosten (Gas-/Ölheizung) fehlen",
@@ -629,7 +673,7 @@ class StammdatenChecks:
 
                 # Alter Energieträger / Preis für Vergleichsrechnung
                 alter_preis = param.get("alter_preis_cent_kwh")
-                if alter_preis is None:
+                if alter_preis is None and not ist_klima:
                     ergebnisse.append(CheckErgebnis(
                         kategorie=kat, schwere=CheckSeverity.INFO,
                         meldung=f"{name}: Alter Energiepreis nicht gesetzt",
@@ -638,7 +682,7 @@ class StammdatenChecks:
                     ))
 
                 # Wärmebedarf für Jahres-Einsparungsschätzung
-                if not param.get("heizwaermebedarf_kwh"):
+                if not param.get("heizwaermebedarf_kwh") and not ist_klima:
                     ergebnisse.append(CheckErgebnis(
                         kategorie=kat, schwere=CheckSeverity.INFO,
                         meldung=f"{name}: Heizwärmebedarf nicht gesetzt",

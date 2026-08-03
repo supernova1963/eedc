@@ -16,6 +16,7 @@
  * Quoten (Autarkie/EV-Quote/η/JAZ/Verbrauch/100km) → aus den Summen NEU berechnet
  * (nie Monats-Mittel der Quoten); Preise → Mittel der Monate; Kapazität → Max.
  */
+import { MONAT_KURZ } from '../lib/constants'
 import type { AktuellerMonatResponse, InvestitionFinancialDetail, SonstigesGeraet } from '../api/aktuellerMonat'
 import type { AggregierteMonatsdaten } from '../api/monatsdaten'
 
@@ -71,6 +72,94 @@ function gewichtet(
   }
   if (mengenSumme === 0) return mittel(preise)
   return produktSumme / mengenSumme
+}
+
+/**
+ * Die GEMESSENEN Mengen einer Monats-Antwort — daran wird abgelesen, ob ein Monat
+ * überhaupt Daten trägt (s. {@link monatHatDaten}).
+ *
+ * Bewusst NUR Mengen: `/aktueller-monat` beantwortet auch Monate, in denen die
+ * Anlage noch gar nicht lief, und liefert dort trotzdem `soll_pv_kwh` (PVGIS),
+ * Tarif-Preise und die Speicher-Kapazität — alles Stammdaten-Ableitungen, keine
+ * Messung. An der Box gemessen (Winterborn, 2026-08-02): Januar 2023, drei Monate
+ * vor Inbetriebnahme, antwortet mit `soll_pv_kwh: 396,1`. Wer solche Monate mitzählt,
+ * bläht das SOLL auf und drückt die SOLL-Erfüllung — genau die Falle, die ein
+ * blindes 1–12-Fanout aufstellt.
+ */
+const MENGEN_FELDER = [
+  'pv_erzeugung_kwh', 'einspeisung_kwh', 'netzbezug_kwh', 'eigenverbrauch_kwh',
+  'direktverbrauch_kwh', 'gesamtverbrauch_kwh',
+  'speicher_ladung_kwh', 'speicher_entladung_kwh',
+  'wp_strom_kwh', 'wp_waerme_kwh',
+  'emob_ladung_kwh', 'emob_km',
+  'bkw_erzeugung_kwh', 'sonstiges_erzeugung_kwh', 'sonstiges_verbrauch_kwh',
+] as const satisfies readonly (keyof AktuellerMonatResponse)[]
+
+/** Trägt dieser Monat gemessene Daten — oder ist er nur eine Stammdaten-Antwort? */
+export function monatHatDaten(m: AktuellerMonatResponse): boolean {
+  return MENGEN_FELDER.some((k) => m[k] != null)
+}
+
+/**
+ * Die Monate eines Jahres, die abgefragt werden müssen, um es VOLLSTÄNDIG zu
+ * kennen (Fund N-65).
+ *
+ * Bis v4.0.6 war die Menge „Monate mit aggregierter Zeile (+ der heutige)". Eine
+ * `Monatsdaten`-Zeile entsteht aber erst beim **Monatsabschluss**; ein längst
+ * gelaufener Monat ohne Abschluss fiel damit komplett aus der Jahreszahl. An der
+ * Box gemessen (Winterborn 2026-08-02): `/monatsdaten/aggregiert` meldet Jan–Jun,
+ * Juli trägt aber 1.843 kWh — knapp ein Viertel der angezeigten Jahresernte fehlte.
+ * Das ist kein Einzelfall, sondern das Muster; mehrere offene Monate sind möglich
+ * und werden mitgefangen, weil hier ein **Intervall** entsteht, keine Aufzählung.
+ *
+ * Die Menge ist bewusst KEIN blindes 1–12 (zwölf Requests je Jahreswechsel), sondern
+ * das Intervall zwischen dem ersten Datenmonat der Anlage und der Obergrenze
+ * (laufender Monat bzw. Dezember). Für jedes abgeschlossene Jahr ist sie damit exakt
+ * so groß wie bisher; nur das laufende Jahr wächst um seine Lücken. Erfasste Zeilen
+ * sind immer enthalten — die Menge ist nie kleiner als die bisherige.
+ */
+export function zuLadendeMonate(
+  rows: AggregierteMonatsdaten[],
+  jahr: number,
+  heute: Date,
+): number[] {
+  const menge = new Set<number>()
+  // Eine erfasste Zeile zählt immer — auch außerhalb des Intervalls (Nachtrag).
+  for (const r of rows) if (r.jahr === jahr) menge.add(r.monat)
+
+  if (rows.length > 0 && jahr <= heute.getFullYear()) {
+    const erstesJahr = Math.min(...rows.map((r) => r.jahr))
+    if (jahr >= erstesJahr) {
+      // Untergrenze: im Startjahr der erste erfasste Monat, davor lief die Anlage
+      // nicht (dort antwortet der Endpoint mit reinen Stammdaten, s. MENGEN_FELDER).
+      const von = jahr === erstesJahr
+        ? Math.min(...rows.filter((r) => r.jahr === erstesJahr).map((r) => r.monat))
+        : 1
+      // Obergrenze: künftige Monate haben nichts.
+      const bis = jahr === heute.getFullYear() ? heute.getMonth() + 1 : 12
+      for (let m = von; m <= bis; m++) menge.add(m)
+    }
+  }
+  return [...menge].sort((a, b) => a - b)
+}
+
+/**
+ * Die abgeschlossenen Monate einer Monatsmenge — die Grundgesamtheit des Vergleichs.
+ *
+ * Der laufende Monat trägt Daten (er gehört in die Kopfzahl „das Jahr bis heute"),
+ * darf aber in KEINEN Vergleich: zwei Augusttage gegen einen vollen August des
+ * Vorjahrs wären N-37 in klein. Beschnitten wird dabei die IST-Seite genauso wie die
+ * Vergleichsseite — ein Delta über ungleiche Fenster bleibt sonst falsch, egal wie
+ * gut die Spalte beschriftet ist (Entscheid Gernot 2026-08-02).
+ */
+export function abgeschlosseneMonate(
+  monate: readonly number[],
+  jahr: number,
+  heute: Date,
+): number[] {
+  if (jahr !== heute.getFullYear()) return [...monate]
+  const laufend = heute.getMonth() + 1
+  return monate.filter((m) => m < laufend)
 }
 
 /**
@@ -254,6 +343,11 @@ export function baueJahrAlsMonat(monate: AktuellerMonatResponse[], jahr: number)
     einspeisung_neg_preis_kwh: summe(f('einspeisung_neg_preis_kwh')),
     nicht_vergueteter_erloes_euro: summe(f('nicht_vergueteter_erloes_euro')),
     netzbezug_kosten_euro: summe(f('netzbezug_kosten_euro')),
+    // Arbeitspreis-Anteil additiv summieren — NICHT als
+    // `netzbezug_kosten_euro − grundgebuehr_euro` nachbilden. Beides ergäbe
+    // hier dasselbe, aber die Ø-Preis-Kachel darf, wenn sie jemand in die
+    // Jahres-Sicht holt, keine zwölf Grundpreise im Divisor haben.
+    netzbezug_arbeitspreis_kosten_euro: summe(f('netzbezug_arbeitspreis_kosten_euro')),
     ev_ersparnis_euro: summe(f('ev_ersparnis_euro')),
     netto_ertrag_euro: summe(f('netto_ertrag_euro')),
     wp_ersparnis_euro: summe(f('wp_ersparnis_euro')),
@@ -310,10 +404,39 @@ export interface JahrVergleich {
   netz: number | null
   gesamt: number | null
   autarkie: number | null
+  /**
+   * Die Monate (1–12, aufsteigend), die wirklich in die Summen eingegangen sind.
+   *
+   * Leer ⇒ dieses Jahr hat mit der Grundgesamtheit keine Überschneidung. Der
+   * Aufrufer zeigt dann KEINEN Vergleich — eine Spalte aus lauter 0 wäre eine
+   * Aussage über die Anlage und ist keine.
+   */
+  monate: number[]
 }
 
-export function jahrVergleichAus(rows: AggregierteMonatsdaten[], jahr: number): JahrVergleich {
-  const j = rows.filter((r) => r.jahr === jahr)
+/**
+ * Σ der aggregierten Monatszeilen EINES Jahres — wahlweise nur über eine
+ * Monatsauswahl.
+ *
+ * `auswahl` ist die **Grundgesamtheit** des Vergleichs: die Monate, für die das
+ * ANGEZEIGTE Jahr Zeilen hat. Ohne sie stehen im laufenden Jahr sieben gelaufene
+ * Monate gegen die zwölf vollen des Vorjahrs (Fund N-37) — dieselbe Frage, die
+ * {@link vergleichsAggregatBasis} (`lib/werte/vergleich.ts`) für den Tabellenfuß
+ * stellt. Dort fällt die Antwort bewusst anders aus: ein Fuß MUSS die Summe der
+ * Spalte über ihm sein und verwirft den Vergleich deshalb lieber ganz. Eine
+ * Vergleichsspalte hat diese Bindung nicht — sie darf beschneiden, solange sie
+ * das Fenster ausweist (ADR-002/P4 in klein, s. {@link monatsFenster}).
+ *
+ * Beschnitten wird nach Monatsnummer, nicht nach „die ersten N": eine Lücke
+ * mitten im angezeigten Jahr nimmt denselben Monat auch dem Vergleichsjahr.
+ */
+export function jahrVergleichAus(
+  rows: AggregierteMonatsdaten[],
+  jahr: number,
+  auswahl?: readonly number[] | null,
+): JahrVergleich {
+  const zulaessig = auswahl ? new Set(auswahl) : null
+  const j = rows.filter((r) => r.jahr === jahr && (zulaessig == null || zulaessig.has(r.monat)))
   const s = (f: (r: AggregierteMonatsdaten) => number | null | undefined) => summe(j.map(f))
   const ev = s((r) => r.eigenverbrauch_kwh)
   const gesamt = s((r) => r.gesamtverbrauch_kwh)
@@ -326,17 +449,101 @@ export function jahrVergleichAus(rows: AggregierteMonatsdaten[], jahr: number): 
     netz: s((r) => r.netzbezug_kwh),
     gesamt,
     autarkie: quote(ev, gesamt),
+    monate: [...new Set(j.map((r) => r.monat))].sort((a, b) => a - b),
   }
 }
 
-/** Mittelung mehrerer Jahres-Vergleiche (Ø über die übrigen Jahre). */
-export function mittelJahre(jahre: JahrVergleich[]): (JahrVergleich & { count: number }) | null {
-  if (jahre.length === 0) return null
-  const m = (f: (j: JahrVergleich) => number | null) => mittel(jahre.map(f))
+/**
+ * Mittelung mehrerer Jahres-Vergleiche (Ø über die übrigen Jahre).
+ *
+ * Mit `grundgesamtheit` trägt nur bei, wer sie **ganz** abdeckt. Ein Jahr mit
+ * halber Überschneidung — die Anlage lief 2023 erst ab Juni, verglichen wird
+ * Jan–Jun — brächte eine Summe über EINEN Monat in einen Ø über sechs. Genau
+ * dieser Fehler eine Ebene tiefer, und eine Einzelspalte könnte ihn wenigstens
+ * beschriften; ein Mittelwert kann kein Fenster je Jahr tragen. Deshalb fällt
+ * das Jahr hier ganz raus statt schief einzugehen — und `count` sagt es
+ * („Ø aus 2 Jahren" statt 3).
+ *
+ * Ohne `grundgesamtheit` bleibt das alte Verhalten (alle Jahre, die überhaupt
+ * einen Monat tragen).
+ */
+export function mittelJahre(
+  jahre: JahrVergleich[],
+  grundgesamtheit?: readonly number[] | null,
+): (JahrVergleich & { count: number }) | null {
+  const g = grundgesamtheit && grundgesamtheit.length > 0 ? new Set(grundgesamtheit) : null
+  const beitragend = jahre.filter((j) => {
+    if (j.monate.length === 0) return false
+    if (g == null) return true
+    const eigene = new Set(j.monate)
+    return [...g].every((m) => eigene.has(m))
+  })
+  if (beitragend.length === 0) return null
+  const m = (f: (j: JahrVergleich) => number | null) => mittel(beitragend.map(f))
   return {
     jahr: 0,
     pv: m((j) => j.pv), ev: m((j) => j.ev), direkt: m((j) => j.direkt),
     einsp: m((j) => j.einsp), netz: m((j) => j.netz), gesamt: m((j) => j.gesamt),
-    autarkie: m((j) => j.autarkie), count: jahre.length,
+    autarkie: m((j) => j.autarkie),
+    monate: [...new Set(beitragend.flatMap((j) => j.monate))].sort((a, b) => a - b),
+    count: beitragend.length,
   }
+}
+
+/** „Jan–Jul" bzw. „Jan–Feb, Apr–Jul" — zusammenhängende Läufe zusammengefasst. */
+function monatsBereiche(monate: number[]): string {
+  const teile: string[] = []
+  let start = monate[0]
+  let vorher = monate[0]
+  const schliesse = () => teile.push(start === vorher ? MONAT_KURZ[start] : `${MONAT_KURZ[start]}–${MONAT_KURZ[vorher]}`)
+  for (const m of monate.slice(1)) {
+    if (m === vorher + 1) { vorher = m; continue }
+    schliesse()
+    start = m
+    vorher = m
+  }
+  schliesse()
+  return teile.join(', ')
+}
+
+/**
+ * Beschriftung des Vergleichsfensters — oder `null`, wenn nichts zu sagen ist.
+ *
+ * Die Regel ist bewusst schlicht: **steht dort weniger als ein volles Jahr, muss
+ * dranstehen, welche Monate es sind.** Ein voller Zwölfmonats-Wert braucht keine
+ * Erklärung, alles andere schon — die Spalte heißt „Vorjahr", und ohne Zusatz
+ * liest sie sich als ganzes Jahr.
+ *
+ * Geprüft wird damit die tatsächliche Deckung, NICHT „läuft das Jahr noch":
+ * abgeschlossene Jahre mit Datenlücke fallen genauso darunter, und ein
+ * abgeschlossenes Jahr gegen ein volles Vorjahr bleibt unbeschriftet wie bisher.
+ * (`beschnitten ⟹ weniger als 12` — die Beschneidung ist der häufigste, aber
+ * nicht der einzige Weg zu einem Teil-Fenster.)
+ */
+export function monatsFenster(vergleich: JahrVergleich | null): string | null {
+  return monatsFensterAus(vergleich?.monate)
+}
+
+/** Dieselbe Regel für eine nackte Monatsmenge (IST-Spalte, s. {@link monatsFenster}). */
+export function monatsFensterAus(monate: readonly number[] | null | undefined): string | null {
+  if (!monate || monate.length === 0 || monate.length >= 12) return null
+  return monatsBereiche([...monate])
+}
+
+/**
+ * Fenster der KENNZAHLEN-Kacheln — gesetzt genau dann, wenn die Kopfzahl mehr
+ * Monate umfasst als der Vergleich darunter (ADR-002/P4).
+ *
+ * Die 12-Monats-Ausnahme von {@link monatsFensterAus} gilt hier NICHT: im Dezember
+ * deckt die Kopfzahl Jan–Dez ab, der Vergleich aber nur Jan–Nov — dann ist gerade
+ * ein volles Fenster erklärungsbedürftig, weil es den angefangenen Dezember enthält.
+ */
+export function kennzahlenFensterAus(
+  kopfMonate: readonly number[],
+  vergleichsMonate: readonly number[],
+): string | null {
+  if (kopfMonate.length === 0) return null
+  if (kopfMonate.length === vergleichsMonate.length
+    && kopfMonate.every((m, i) => m === vergleichsMonate[i])) return null
+  return monatsBereiche([...kopfMonate])
 }

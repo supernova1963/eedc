@@ -1240,7 +1240,6 @@ P7_BASELINE_AUSNAHMEN: frozenset[str] = frozenset({
     # `PvModulWert` — das ERGEBNIS der Auflösung. Genau der Weg, den die Regel
     # vorschreibt; die Summe daraus ist die Anlagen-PV.
     "backend/api/routes/cockpit/pv_strings.py::w",
-    "backend/api/routes/monatsdaten.py::w",
     # Dito, aus den Monats-Fakten (`erzeugung.pv_je_modul`) statt aus
     # `lade_pv_je_monat` direkt — dieselbe Auflösung, eine Schicht weiter oben
     # (ADR-002/P10). Trägt den String-Vergleich SOLL/IST im Jahresbericht.
@@ -1271,16 +1270,21 @@ P7_BASELINE_AUSNAHMEN: frozenset[str] = frozenset({
     # Spalte wandern — der Export VERÄNDERTE die Daten (dieselbe Begründung wie
     # P3A_BASELINE_AUSNAHMEN für `json_operations.py::inv`).
     "backend/api/routes/import_export/json_operations.py::md",
-    # Vier Rollen in einer Datei, alle vier gedeckt (Granularität ist
-    # `modul::empfänger`, feiner geht die Allowlist nicht):
-    #   :446 — Eingang von `resolve_pv_je_modul`. Die Regel selbst.
-    #   :500 — Legacy-Erkennung: die Meldung handelt VOM Feld („Aggregat
-    #          gepflegt, aber keine Pro-Modul-Werte") — ein aufgelöster Wert
-    #          beantwortete die Frage nicht mehr.
-    #   :718/:863 — das Legacy-Trio (`direktverbrauch_kwh`/`eigenverbrauch_kwh`)
-    #          wird aus dem MANUELL eingetragenen Aggregat fortgeschrieben.
-    #          Die Felder sind deprecated (CLAUDE.md Prinzip 3); sie hier auf
-    #          die Auflösung umzustellen hieße, ein totes Feld neu zu beleben.
+    # Drei Rollen in einer Datei, alle drei gedeckt (Granularität ist
+    # `modul::empfänger`, feiner geht die Allowlist nicht). **Zeilennummern
+    # bewusst weggelassen** — sie standen hier und waren schon vor dem
+    # C1a-Umbau um rund zwanzig Zeilen daneben:
+    #   • Legacy-Erkennung in `list_monatsdaten_aggregiert`: die Meldung handelt
+    #     VOM Feld („Aggregat gepflegt, aber keine Pro-Modul-Werte") — ein
+    #     aufgelöster Wert beantwortete die Frage nicht mehr.
+    #   • zweimal das Legacy-Trio (`direktverbrauch_kwh`/`eigenverbrauch_kwh`),
+    #     fortgeschrieben aus dem MANUELL eingetragenen Aggregat. Die Felder
+    #     sind deprecated (CLAUDE.md Prinzip 3); sie hier auf die Auflösung
+    #     umzustellen hieße, ein totes Feld neu zu beleben.
+    # Die vierte Rolle (Eingang von `resolve_pv_je_modul`) ist mit **C1a**
+    # entfallen: die Route liest ihre PV jetzt über `lade_monats_fakten`, die
+    # Auflösung passiert eine Schicht tiefer. Der Empfänger `::w` derselben
+    # Datei ist damit gestrichen.
     "backend/api/routes/monatsdaten.py::md",
     #
     # Gestrichen mit dem S3-Umbau (2026-07-31): `cockpit/social.py::md` war als
@@ -1400,11 +1404,29 @@ def test_p7_baseline_ausnahmen_sind_noch_belegt():
 #                             — Spaltenstruktur von Vorlage und Export nach
 #                               heutiger Vertragsart. Der Zahlenwert je Zeile
 #                               kommt aus den Monatsdaten, nicht von hier.
-#   investitionen/crud.py     — ROI-/Wirtschaftlichkeits-Prognose NACH VORN.
+#   investitionen/crud.py     — ROI-/Wirtschaftlichkeits-Prognose NACH VORN:
+#                               die Route liefert einen Ø-JAHRESWERT für die
+#                               Amortisationsrechnung, und `AuswertungenRoiV4`
+#                               übergibt kein `jahr` (nachgemessen 03.08.).
+#                               ⚠ Wer den `jahr`-Filter erstmals aus einer
+#                               Sicht heraus setzt, bewertet damit ein
+#                               EINZELNES Altjahr mit dem heutigen Tarif —
+#                               dann gehört die Stelle auf den Stichtag und
+#                               nicht mehr hierher.
 #   investitionen/dashboards.py
 #                             — Query-Param-Default + Fallback der
-#                               `_gewichteter_monatspreis`-Mittelung; die
+#                               `_gewichtete_monatspreise`-Mittelung; die
 #                               historischen Beträge laufen über den Helper.
+#                               Seit v4.0.7 gilt das für BEIDE Preisseiten:
+#                               bis dahin zog der Helper nur den Bezugspreis
+#                               auf den Monats-Stichtag, während die
+#                               Einspeisevergütung daneben der HEUTIGE Wert
+#                               blieb — in jedem Spread (`bezug − einspeise`
+#                               bei V2H, Speicher, Sonstiges/Speicher) standen
+#                               damit zwei Summanden aus verschiedenen
+#                               Zeitpunkten. Diese Datei-Ausnahme hat das
+#                               gedeckt, weil sie den LADER zählt und nicht,
+#                               was mit dem geladenen Tarif geschieht.
 #   ha_export.py              — heutiger WP-Tarif als Fallback des
 #                               Perioden-Mappings und für die nach vorn
 #                               gerichteten Sensor-Werte.
@@ -1643,7 +1665,10 @@ P10_SCHREIBEN_IMPORT_CHECKER: frozenset[str] = frozenset({
     # Die P7-Auflösung selbst — die Schicht ruft sie, sie ist ihr Unterbau.
     "backend/services/pv_monatswerte.py::lade_pv_je_monat",
     # Monatsabschluss: Formular füllen und speichern.
-    "backend/api/routes/aktueller_monat.py::_collect_saved_data",
+    # (`aktueller_monat.py::_collect_saved_data` stand hier bis C1c — als
+    # „Formular füllen" eingeordnet, obwohl es ein reiner Lesepfad mit
+    # anlagenweiter Faltung war (N-98). Es bezieht seine Mengen jetzt aus der
+    # Schicht und lädt nichts mehr selbst.)
     "backend/api/routes/monatsabschluss/views.py::get_monatsabschluss",
     "backend/api/routes/monatsabschluss/wizard.py::save_monatsabschluss",
     "backend/api/routes/monatsdaten.py::_save_investitionen_monatsdaten",
@@ -1670,6 +1695,11 @@ P10_SCHREIBEN_IMPORT_CHECKER: frozenset[str] = frozenset({
 #: (bzw. brauchen keine); selbst gefaltet wird nur, was an einem einzelnen Gerät
 #: hängt. Der Eintrag fällt, sobald `MonatsFakt` eine per-Investition-Gruppe hat.
 P10_PER_INVESTITION: frozenset[str] = frozenset({
+    # C1c: alle anlagenweiten Mengen (PV · Speicher · WP · E-Mob · sonstiger
+    # Erzeuger · Eigenverbrauch/Autarkie) kommen aus `lade_monats_fakten`.
+    # Selbst geladen wird nur die Zuordnung `inv → verbrauch_daten` für die
+    # eMob-Zeilen des Vorjahres-T-Kontos.
+    "backend/api/routes/aktueller_monat.py::_load_vorjahr",
     "backend/api/routes/aussichten.py::get_finanz_prognose",
     "backend/api/routes/ha_export.py::_load_emob_pool_ctx",
     "backend/api/routes/ha_export.py::calculate_anlage_sensors",
@@ -1690,13 +1720,27 @@ P10_PER_INVESTITION: frozenset[str] = frozenset({
 #: dokumentiert sie — genau dafür steht der Eintrag im Code und nicht in einer
 #: Allowlist-Datei daneben.
 P10_NOCH_NICHT_MIGRIERT: frozenset[str] = frozenset({
-    # N-15 — Auswertungen → Tabelle (`list_monatsdaten_aggregiert`).
-    "backend/api/routes/monatsdaten.py::list_monatsdaten_aggregiert",
-    # N-16 — Monatsbericht + Vorjahresvergleich.
+    # N-15 ist mit C1a (2026-08-03) getilgt: `list_monatsdaten_aggregiert`
+    # bezieht seine Monatsgrößen aus `lade_monats_fakten` und lädt keine
+    # `InvestitionMonatsdaten` mehr selbst.
+    # N-16 — Monatsbericht. Der **Energiekern** ist mit C1c (2026-08-03) auf der
+    # Schicht: der `saved`-Zweig der Quellen-Kaskade (`_collect_saved_data`) und
+    # die Sonstige-Positionen kommen aus `lade_monats_fakten`. Der
+    # Vorjahresvergleich (`_load_vorjahr`) ist ganz umgezogen.
+    #
+    # **Was hier noch offen ist, und warum der Eintrag deshalb bleibt** (N-107):
+    # der Komponenten-Detailblock faltet weiter anlagenweit über eine eigene
+    # IMD-Batch (Speicher-Netzladung + Ø-Ladepreis, WP-Heiz-/WW-Split, eMob
+    # Netz/Extern/V2H, BKW-Eigenverbrauch, die sechs Sonstiges-Summen). Vier
+    # davon hat die Schicht heute nicht (Sonstiges: Eigenverbrauch, Einspeisung,
+    # Bezug PV/Netz), und zwei änderten beim Umhängen ihre Bedeutung (eMob
+    # Netz/Extern: Roh-Summe → kanonischer Pool). Der Auftrag C1c hatte diesen
+    # Select als rein per-Investition eingeordnet; am Code gemessen ist er es
+    # nicht. Umbuchen wäre hier Umetikettieren, nicht Tilgen.
     "backend/api/routes/aktueller_monat.py::get_aktueller_monat",
-    "backend/api/routes/aktueller_monat.py::_load_vorjahr",
-    # N-17 — Cockpit → Komponenten-Zeitreihe.
-    "backend/api/routes/cockpit/komponenten.py::get_komponenten_zeitreihe",
+    # N-17 ist mit C1b (2026-08-03) getilgt: `get_komponenten_zeitreihe`
+    # bezieht seine Monatszeile aus `lade_monats_fakten` und lädt keine
+    # `InvestitionMonatsdaten` mehr selbst.
 })
 
 P10_BASELINE_AUSNAHMEN: frozenset[str] = (
@@ -1811,12 +1855,15 @@ def test_p10_offene_schuld_waechst_nicht():
     hieße, sie unsichtbar wachsen zu lassen — dann wäre der Wächter genau das
     Aufräum-Paket mit einem grünen Test obendrauf, das ADR-002 §80 ablehnt.
     """
-    assert len(P10_NOCH_NICHT_MIGRIERT) <= 4, (
+    assert len(P10_NOCH_NICHT_MIGRIERT) <= 1, (
         f"{len(P10_NOCH_NICHT_MIGRIERT)} Sichten falten eine anlagenweite "
-        "Monatszeile selbst — nach S5 waren es 5, nach S6 sind es 4 "
-        "(N-15/N-16/N-17; `community_service` ist mit S6 gefallen). Diese Zahl "
-        "darf nur sinken. Wer eine Sicht hinzufügen will, migriert sie "
-        "stattdessen."
+        "Monatszeile selbst — nach S5 waren es 5, nach S6 vier, nach **C1a** "
+        "drei, nach **C1b** zwei, nach **C1c** ist es 1 (`community_service` "
+        "fiel mit S6, `list_monatsdaten_aggregiert` mit C1a, "
+        "`get_komponenten_zeitreihe` mit C1b, `_load_vorjahr` mit C1c — es "
+        "bleibt `get_aktueller_monat`, dessen Komponenten-Detailblock die "
+        "Schicht noch nicht abbildet, siehe Kommentar dort). Diese Zahl darf "
+        "nur sinken. Wer eine Sicht hinzufügen will, migriert sie stattdessen."
     )
 
 

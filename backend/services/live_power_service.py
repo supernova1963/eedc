@@ -185,34 +185,34 @@ class LivePowerService:
     async def _fetch_ha_states(self, db: AsyncSession, entity_ids: set) -> dict:
         """W-normalisierte States einer Entity-Menge über die aktive HA-Verbindung.
 
-        Nutzt den zentralen `resolve_ha_connection` (Supervisor ODER Remote-HA),
-        EIN `/states`-Batch. Nur für explizit zugeordnete quellen-HA-Entities (C2a);
-        der alte sensor_mapping-Pfad bleibt Supervisor-gebunden.
+        Nutzt den zentralen `resolve_ha_connection` (Supervisor ODER Remote-HA)
+        und holt **genau** die gebrauchten Entities über `fetch_selected_states`
+        — nicht mehr den Voll-Dump `/api/states`. Dieselbe Begründung wie im
+        Supervisor-Pfad (`ha_state_service`): der Dump kostet auf einer
+        gewachsenen Instanz Megabytes, und beide Pfade hängen am 5-s-Poll des
+        Live-Cockpits. Einen von beiden zu heilen wäre kein Fix gewesen.
+
+        Nur für explizit zugeordnete quellen-HA-Entities (C2a); der alte
+        sensor_mapping-Pfad bleibt Supervisor-gebunden.
         """
         if not entity_ids:
             return {}
         from backend.services.ha_connection import resolve_ha_connection
+        from backend.services.ha_state_service import fetch_selected_states
         api_url, token, _ = await resolve_ha_connection(db)
         if not api_url or not token:
             return {}
-        import httpx
-        try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.get(f"{api_url}/states", headers={"Authorization": f"Bearer {token}"})
-        except Exception:  # noqa: BLE001 — Netzwerk-/TLS-Fehler → keine Werte
-            return {}
-        if resp.status_code != 200:
-            return {}
+        roh = await fetch_selected_states(api_url, token, list(entity_ids))
         out: dict = {}
-        for st in resp.json():
-            eid = st.get("entity_id")
-            if eid in entity_ids:
-                attrs = st.get("attributes", {}) or {}
-                unit = attrs.get("unit_of_measurement", "")
-                try:
-                    out[eid] = normalize_to_w(float(st.get("state")), unit)
-                except (ValueError, TypeError):
-                    out[eid] = None
+        for eid, st in roh.items():
+            if not st:
+                continue
+            attrs = st.get("attributes", {}) or {}
+            unit = attrs.get("unit_of_measurement", "")
+            try:
+                out[eid] = normalize_to_w(float(st.get("state")), unit)
+            except (ValueError, TypeError):
+                out[eid] = None
         return out
 
     async def get_live_data(self, anlage: Anlage, db: AsyncSession) -> dict:
@@ -382,22 +382,44 @@ class LivePowerService:
     ) -> tuple[Optional[float], Optional[float]]:
         """Berechnet Eigenverbrauch und Hausverbrauch aus Tages-kWh inkl. Batterie.
 
+        **Eine Regel für beide Werte** (KONZEPT-UNVOLLSTAENDIGE-WERTE §3): jeder
+        Wert wird genau dann geliefert, wenn **seine eigenen** Summanden vorliegen.
+        Beide sind Differenzen bzw. bauen auf einer auf — ihre Fehlerrichtung hängt
+        davon ab, *welcher* Summand fehlt, also wird eine Lücke unterdrückt und
+        nicht als 0 eingesetzt. Die Leitfrage ist nie „ist irgendein Sensor
+        ausgefallen", sondern „braucht *dieser* Wert den fehlenden Sensor".
+
+        Vorher galten hier drei verschiedene Regeln nebeneinander: PV/Einspeisung
+        → beide Werte weg, Batterie-Lücke → still 0, Netzbezug-Lücke → `bezug or 0`
+        und damit ein Hausverbrauch, der ohne Kennzeichnung zu niedrig war.
+
         Returns:
             (eigenverbrauch, hausverbrauch) — jeweils Optional[float]
         """
         pv = kwh.get("pv")
         einsp = kwh.get("einspeisung")
         bezug = kwh.get("netzbezug")
-        if pv is None or einsp is None:
-            return None, None
 
-        # Batterie-Ladung/-Entladung summieren (Keys: batterie_X_ladung, batterie_X_entladung)
-        bat_ladung = sum(v for k, v in kwh.items() if k.endswith("_ladung") and v)
-        bat_entladung = sum(v for k, v in kwh.items() if k.endswith("_entladung") and v)
+        # Batterie-Ladung/-Entladung summieren (Keys: batterie_X_ladung, batterie_X_entladung).
+        # `is not None` statt `and v`: eine gemessene 0 ist eine Aussage, keine Lücke.
+        bat_ladung = sum(
+            v for k, v in kwh.items() if k.endswith("_ladung") and v is not None
+        )
+        bat_entladung = sum(
+            v for k, v in kwh.items() if k.endswith("_entladung") and v is not None
+        )
 
-        direktverbrauch = max(0, pv - einsp - bat_ladung)
-        eigenverbrauch = round(direktverbrauch + bat_entladung, 1)
-        hausverbrauch = round(eigenverbrauch + (bezug or 0), 1) if bezug is not None or eigenverbrauch > 0 else None
+        # Eigenverbrauch = (PV − Einspeisung − Ladung) + Entladung.
+        eigenverbrauch: Optional[float] = None
+        if pv is not None and einsp is not None:
+            direktverbrauch = max(0, pv - einsp - bat_ladung)
+            eigenverbrauch = round(direktverbrauch + bat_entladung, 1)
+
+        # Hausverbrauch = Eigenverbrauch + Netzbezug — beide Summanden nötig.
+        hausverbrauch: Optional[float] = None
+        if eigenverbrauch is not None and bezug is not None:
+            hausverbrauch = round(eigenverbrauch + bezug, 1)
+
         return eigenverbrauch, hausverbrauch
 
     async def get_tagesverlauf(

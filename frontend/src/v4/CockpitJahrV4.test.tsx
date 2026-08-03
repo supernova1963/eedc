@@ -55,8 +55,22 @@ vi.mock('../api/monatsdaten', () => ({
   monatsdatenApi: { listAggregiert: vi.fn(() => Promise.resolve(aggregiert)) },
 }))
 
+// Monate ohne Zeile antworten wie die Box: nur Stammdaten-Ableitungen (SOLL/Tarif),
+// keine gemessenen Mengen. Seit P-12 fragt die Sicht das ganze Jahr ab und filtert
+// über `monatHatDaten` — eine Fixture, die für JEDEN Monat Werte liefert, würde die
+// Jahres-Summen still vervierfachen.
+const MIT_DATEN = new Set(aggregiert.map((m) => `${m.jahr}-${m.monat}`))
+const ohneDaten = (jahr: number, monat: number): AktuellerMonatResponse => ({
+  anlage_id: 1, anlage_name: 'Demo', jahr, monat, monat_name: String(monat),
+  aktualisiert_um: '', quellen: {}, soll_pv_kwh: 320,
+  investitionen_financials: [], komponenten_geraete: {}, feld_quellen: {}, vorjahr: null,
+} as unknown as AktuellerMonatResponse)
+
 vi.mock('../api/aktuellerMonat', () => ({
-  aktuellerMonatApi: { getData: vi.fn((_id: number, j: number, m: number) => Promise.resolve(monatsAntwort(j, m))) },
+  aktuellerMonatApi: {
+    getData: vi.fn((_id: number, j: number, m: number) =>
+      Promise.resolve(MIT_DATEN.has(`${j}-${m}`) ? monatsAntwort(j, m) : ohneDaten(j, m))),
+  },
 }))
 
 // CO₂-Zeitreihe: der Endpoint liefert die GANZE Historie ohne `?jahr=` — die
@@ -126,6 +140,18 @@ describe('CockpitJahrV4 — Jahr', () => {
     expect(screen.getByText('Speicher')).toBeInTheDocument()
     expect(screen.getByText('Wärme/Klima')).toBeInTheDocument()
     expect(screen.getByText('Finanzen')).toBeInTheDocument()
+  })
+
+  it('beschneidet Vorjahr/Ø-Jahr auf die Monate des angezeigten Jahres und sagt es (N-37)', async () => {
+    // Fixture: 2025 hat Jan–Mär, 2024 nur Jan–Feb ⇒ Überschneidung = Jan–Feb.
+    // Vorher summierte die Vergleichsspalte das ganze Jahr 2024.
+    renderView()
+    const titel = await screen.findByText('Energie-Bilanz')
+    fireEvent.click(titel.closest('button')!)
+    expect(screen.getByText(/Vergleich beschnitten auf die gemeinsamen Monate: Jan–Feb/))
+      .toBeInTheDocument()
+    // Dieselbe Angabe an der Kachel (Einspeisung: 2 × 120 kWh aus 2024).
+    expect(screen.getByText('VJ (Jan–Feb): 240 kWh')).toBeInTheDocument()
   })
 })
 

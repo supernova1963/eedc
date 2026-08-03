@@ -12,6 +12,19 @@
  * identisch zum Monat (gleiche Bauer-Bildsprache). Vergleichs-Chips (Delta/
  * VglChip) aus `MonatBilanz` wiederverwendet (eine SoT-Komponente). Vorjahr/
  * Ø-Jahr = Σ der aggregierten Monatszeilen je Jahr (`jahrVergleichAus`).
+ *
+ * Vergleichs-Fenster (Fund N-37): Vorjahr und Ø-Jahr sind auf die Monate
+ * beschnitten, für die das angezeigte Jahr Daten hat — sonst stünden im laufenden
+ * Jahr sieben gelaufene Monate gegen zwölf volle. Beschnitten wird in
+ * `jahrVergleichAus`; hier wird das Fenster nur AUSGEWIESEN (`vjFenster`/
+ * `ojFenster` = `Jan–Jul` o. Ä., `null` bei voller Deckung).
+ *
+ * ZWEI Fenster seit P-12 (Fund N-65): die Kacheln zeigen „das Jahr bis heute"
+ * (alle Monate mit Daten, `d`), die Vergleichstabelle darunter rechnet über die
+ * ABGESCHLOSSENEN Monate (`dVgl`) — auf beiden Seiten, damit das Delta nicht acht
+ * IST-Monate gegen sieben Vorjahres-Monate stellt. Ausgewiesen wird der Unterschied
+ * in den beiden Block-Kopfzeilen (`CockpitJahrV4`), über der IST-Spalte
+ * (`istFenster`) und im Tabellenfuß (`kennzahlenFenster`).
  */
 import { fmtCalc } from '../components/ui'
 import { Table, TableHead, TableBody } from '../components/ui/Table'
@@ -29,11 +42,30 @@ import type { JahrVergleich } from './JahrAggregat'
 const fmt = (v: number | null | undefined, dec = 0) => fmtCalc(v, dec, '—')
 
 /** D1-Strip: 5 Energie + Netto-Ertrag € + Jahresergebnis €. Vorjahr in der
- *  Zweitzeile, SOLL am PV. */
-export function baueJahrKpis(d: AktuellerMonatResponse, vj: JahrVergleich | null): KpiStripItem[] {
+ *  Zweitzeile, SOLL am PV.
+ *
+ *  `vjFenster` (z. B. `Jan–Jul`) benennt die Monate, über die der Vorjahres-Wert
+ *  summiert ist — gesetzt genau dann, wenn das nicht die volle Grundgesamtheit des
+ *  angezeigten Jahres ist (s. {@link monatsFenster}). Ohne diese Angabe wäre „VJ:
+ *  3.890 kWh" im laufenden Jahr eine Behauptung über eine andere Zeitspanne.
+ *
+ *  Das Fenster der KACHELWERTE selbst (P-12/N-65 — die Kachel zeigt „das Jahr bis
+ *  heute", der Vergleich darunter endet einen Monat früher) steht bewusst NICHT
+ *  hier, sondern in der Block-Kopfzeile: s. Kommentar an `pvSoll`. */
+export function baueJahrKpis(
+  d: AktuellerMonatResponse,
+  vj: JahrVergleich | null,
+  vjFenster?: string | null,
+): KpiStripItem[] {
+  const VJ = vjFenster ? `VJ (${vjFenster})` : 'VJ'
+  // Das Fenster der Kacheln steht NICHT in der Zweitzeile: die ist `truncate` und
+  // fasst rund 22 Zeichen — an der Box gemessen (2026-08-02) schnitt ein Präfix
+  // „IST Jan–Aug · " genau die Angabe ab, die es einordnen sollte („… VJ (Jan–…").
+  // Es steht deshalb in der Block-Kopfzeile darüber (`kennzahlenSummary`), die
+  // ungekürzt rendert, und über der IST-Spalte der Vergleichstabelle.
   const pvSoll = d.soll_pv_kwh != null && d.pv_erzeugung_kwh != null && d.soll_pv_kwh > 0
     ? `SOLL ${fmt(d.soll_pv_kwh)} kWh · ${fmt((d.pv_erzeugung_kwh / d.soll_pv_kwh) * 100)} %`
-    : vj?.pv != null ? `VJ: ${fmt(vj.pv)} kWh` : undefined
+    : vj?.pv != null ? `${VJ}: ${fmt(vj.pv)} kWh` : undefined
 
   // Jahresergebnis = nach Betriebskosten (verhaltensgleich Monat: Gesamt-
   // Nettoertrag − Betriebskosten + Sonstiges). `!= null`, damit 0 € nicht verschwindet.
@@ -45,7 +77,7 @@ export function baueJahrKpis(d: AktuellerMonatResponse, vj: JahrVergleich | null
     { title: 'PV-Erzeugung', value: fmt(d.pv_erzeugung_kwh), unit: 'kWh', color: 'yellow', icon: DATENROLLEN_ICONS.pv, subtitle: pvSoll },
     {
       title: 'Autarkie', value: fmt(d.autarkie_prozent), unit: '%', color: 'green', icon: DATENROLLEN_ICONS.autarkie,
-      subtitle: vj?.autarkie != null ? `VJ: ${fmt(vj.autarkie)} %` : undefined,
+      subtitle: vj?.autarkie != null ? `${VJ}: ${fmt(vj.autarkie)} %` : undefined,
       formel: 'Eigenverbrauch ÷ Gesamtverbrauch × 100',
       berechnung: d.eigenverbrauch_kwh != null && d.gesamtverbrauch_kwh != null
         ? `${fmt(d.eigenverbrauch_kwh)} ÷ ${fmt(d.gesamtverbrauch_kwh)} kWh` : undefined,
@@ -53,15 +85,15 @@ export function baueJahrKpis(d: AktuellerMonatResponse, vj: JahrVergleich | null
     },
     {
       title: 'Eigenverbrauch', value: fmt(d.eigenverbrauch_kwh), unit: 'kWh', color: 'purple', icon: DATENROLLEN_ICONS.eigenverbrauch,
-      subtitle: `EV-Quote ${fmt(d.eigenverbrauch_quote_prozent)} %${vj?.ev != null ? ` · VJ: ${fmt(vj.ev)} kWh` : ''}`,
+      subtitle: `EV-Quote ${fmt(d.eigenverbrauch_quote_prozent)} %${vj?.ev != null ? ` · ${VJ}: ${fmt(vj.ev)} kWh` : ''}`,
     },
     {
       title: 'Einspeisung', value: fmt(d.einspeisung_kwh), unit: 'kWh', color: 'green', icon: DATENROLLEN_ICONS.einspeisung,
-      subtitle: vj?.einsp != null ? `VJ: ${fmt(vj.einsp)} kWh` : undefined,
+      subtitle: vj?.einsp != null ? `${VJ}: ${fmt(vj.einsp)} kWh` : undefined,
     },
     {
       title: 'Netzbezug', value: fmt(d.netzbezug_kwh), unit: 'kWh', color: 'red', icon: DATENROLLEN_ICONS.netzbezug,
-      subtitle: vj?.netz != null ? `VJ: ${fmt(vj.netz)} kWh` : undefined,
+      subtitle: vj?.netz != null ? `${VJ}: ${fmt(vj.netz)} kWh` : undefined,
     },
     {
       title: 'Netto-Ertrag', value: fmtCalc(d.netto_ertrag_euro, 2, '—'), unit: '€', color: 'blue', icon: DATENROLLEN_ICONS.nettoErtrag,
@@ -89,29 +121,74 @@ interface BilanzRow {
 }
 
 export function JahrBilanz({
-  d, vj, oj, ojCount,
+  d, dVgl, vj, oj, ojCount, vjFenster, ojFenster, istFenster, kennzahlenFenster,
 }: {
+  /** Jahres-Aggregat der KOPFZAHL — alle Monate mit Daten, inkl. dem laufenden. */
   d: AktuellerMonatResponse
+  /**
+   * Aggregat der VERGLEICHS-Grundgesamtheit (nur abgeschlossene Monate). Ohne
+   * Angabe = `d`; identisch, sobald das Jahr abgeschlossen ist.
+   *
+   * Getrennt, weil ein Delta beide Seiten über dasselbe Fenster rechnen muss
+   * (P-12/N-65, Entscheid Gernot 2026-08-02). Nur die Vergleichsspalte zu
+   * beschneiden hätte den laufenden Monat auf der IST-Seite gelassen — also genau
+   * das, was N-37 verbietet, nur andersherum.
+   */
+  dVgl?: AktuellerMonatResponse
   vj: JahrVergleich | null
   oj: JahrVergleich | null
   ojCount: number
+  /** Monatsfenster der Vergleichsspalte, `null` bei voller Deckung (s. `monatsFenster`). */
+  vjFenster?: string | null
+  ojFenster?: string | null
+  /** Monatsfenster der IST-Spalte = die Vergleichs-Grundgesamtheit. */
+  istFenster?: string | null
+  /** Fenster der Kacheln darüber — gesetzt, wenn sie mehr Monate zählen als diese Tabelle. */
+  kennzahlenFenster?: string | null
 }) {
+  const dv = dVgl ?? d
   // Eigenverbrauch-Färbung folgt der Autarkie-Richtung (analog Monat #337).
   const evBesser = (vglAutarkie: number | null | undefined): boolean | undefined =>
-    d.autarkie_prozent != null && vglAutarkie != null ? d.autarkie_prozent >= vglAutarkie : undefined
+    dv.autarkie_prozent != null && vglAutarkie != null ? dv.autarkie_prozent >= vglAutarkie : undefined
   const rows: BilanzRow[] = [
-    { label: 'PV-Erzeugung',    ist: d.pv_erzeugung_kwh,   vj: vj?.pv ?? null,     oj: oj?.pv ?? null,     unit: 'kWh' },
-    { label: 'Eigenverbrauch',  ist: d.eigenverbrauch_kwh,  vj: vj?.ev ?? null,     oj: oj?.ev ?? null,     unit: 'kWh',
+    { label: 'PV-Erzeugung',    ist: dv.pv_erzeugung_kwh,   vj: vj?.pv ?? null,     oj: oj?.pv ?? null,     unit: 'kWh' },
+    { label: 'Eigenverbrauch',  ist: dv.eigenverbrauch_kwh,  vj: vj?.ev ?? null,     oj: oj?.ev ?? null,     unit: 'kWh',
       besserVj: evBesser(vj?.autarkie), besserOj: evBesser(oj?.autarkie) },
-    { label: 'Direktverbrauch', ist: d.direktverbrauch_kwh, vj: vj?.direkt ?? null, oj: oj?.direkt ?? null, unit: 'kWh' },
-    { label: 'Einspeisung',     ist: d.einspeisung_kwh,     vj: vj?.einsp ?? null,  oj: oj?.einsp ?? null,  unit: 'kWh' },
-    { label: 'Netzbezug',       ist: d.netzbezug_kwh,       vj: vj?.netz ?? null,   oj: oj?.netz ?? null,   unit: 'kWh', inv: true },
-    { label: 'Gesamtverbrauch', ist: d.gesamtverbrauch_kwh, vj: vj?.gesamt ?? null, oj: oj?.gesamt ?? null, unit: 'kWh', inv: true },
-    { label: 'Autarkie',        ist: d.autarkie_prozent,    vj: vj?.autarkie ?? null, oj: oj?.autarkie ?? null, unit: '%' },
+    { label: 'Direktverbrauch', ist: dv.direktverbrauch_kwh, vj: vj?.direkt ?? null, oj: oj?.direkt ?? null, unit: 'kWh' },
+    { label: 'Einspeisung',     ist: dv.einspeisung_kwh,     vj: vj?.einsp ?? null,  oj: oj?.einsp ?? null,  unit: 'kWh' },
+    { label: 'Netzbezug',       ist: dv.netzbezug_kwh,       vj: vj?.netz ?? null,   oj: oj?.netz ?? null,   unit: 'kWh', inv: true },
+    { label: 'Gesamtverbrauch', ist: dv.gesamtverbrauch_kwh, vj: vj?.gesamt ?? null, oj: oj?.gesamt ?? null, unit: 'kWh', inv: true },
+    { label: 'Autarkie',        ist: dv.autarkie_prozent,    vj: vj?.autarkie ?? null, oj: oj?.autarkie ?? null, unit: '%' },
   ]
 
   const dash = <span className="text-gray-300 dark:text-gray-600">—</span>
   const dec = (row: BilanzRow) => (row.unit === '%' ? 1 : 0)
+
+  // Fund N-37: Vorjahr/Ø-Jahr sind auf die Monate beschnitten, für die das
+  // angezeigte Jahr Daten hat. Steht ein Fenster an, MUSS es dranstehen — sonst
+  // liest sich die Spalte wieder als ganzes Jahr. Formuliert als „gemeinsame
+  // Monate", weil auch eine Lücke im VERGLEICHSjahr das Fenster verkleinert.
+  // Ohne Ø-Spalte trägt deren Fenster auch nichts bei; je Spalte benannt wird nur,
+  // wenn beide da sind UND sich unterscheiden (Vergleichsjahr mit eigener Lücke).
+  const ojF = oj ? ojFenster : null
+  const fensterText = vjFenster && ojF && vjFenster !== ojF
+    ? `Vorjahr ${vjFenster} · Ø Jahre ${ojF}`
+    : (vjFenster ?? ojF)
+  const fensterNote = fensterText
+    ? `Vergleich beschnitten auf die gemeinsamen Monate: ${fensterText}`
+    : null
+  // P-12/N-65: die Kacheln über der Tabelle zählen „das Jahr bis heute", diese
+  // Tabelle endet einen Monat früher. Der Unterschied wird benannt, nicht verschwiegen.
+  const kennzahlenNote = kennzahlenFenster ? `Kennzahlen oben: ${kennzahlenFenster}` : null
+  const fussNoten = [
+    oj ? `Ø aus ${ojCount} ${ojCount !== 1 ? 'Jahren' : 'Jahr'}` : null,
+    fensterNote,
+    kennzahlenNote,
+  ].filter((t): t is string => t != null)
+  // Kopf-Zusatz: dieselbe Angabe direkt über der Spalte (Desktop-Tabelle).
+  const kopfFenster = (f: string | null | undefined) => (f
+    ? <span className="block font-normal text-[10px] text-gray-400 dark:text-gray-500">{f}</span>
+    : null)
 
   const vglZellen = (val: number | null | undefined, row: BilanzRow, besser?: boolean) => (
     <>
@@ -144,8 +221,10 @@ export function JahrBilanz({
                 </span>
               </div>
               <div className="flex flex-wrap gap-1.5 mt-1">
-                <VglChip prefix="VJ" lang="Vorjahr" ist={row.ist} val={row.vj} unit={row.unit} dec={dec(row)} inv={row.inv} besser={row.besserVj} />
-                {oj && <VglChip prefix="Ø Jahre" lang="Ø übrige Jahre" ist={row.ist} val={row.oj} unit={row.unit} dec={dec(row)} inv={row.inv} besser={row.besserOj} />}
+                {/* Mobil bleibt das Kürzel kurz; das Fenster steht im Tooltip und —
+                    immer sichtbar — in der Fußnote unter der Anzeige. */}
+                <VglChip prefix="VJ" lang={vjFenster ? `Vorjahr (${vjFenster})` : 'Vorjahr'} ist={row.ist} val={row.vj} unit={row.unit} dec={dec(row)} inv={row.inv} besser={row.besserVj} />
+                {oj && <VglChip prefix="Ø Jahre" lang={ojFenster ? `Ø übrige Jahre (${ojFenster})` : 'Ø übrige Jahre'} ist={row.ist} val={row.oj} unit={row.unit} dec={dec(row)} inv={row.inv} besser={row.besserOj} />}
               </div>
             </div>
           ))}
@@ -157,9 +236,9 @@ export function JahrBilanz({
             <TableHead>
               <tr className="text-gray-500 dark:text-gray-400 border-b border-gray-100 dark:border-gray-700">
                 <th className={`${KOPF_ZELLE} text-left`}><span className="sr-only">Kennzahl</span></th>
-                <th colSpan={2} className={`${KOPF_ZELLE} text-center`}>IST</th>
-                <th colSpan={2} className={`${KOPF_ZELLE} text-center`}>Vorjahr</th>
-                {oj && <th colSpan={2} className={`${KOPF_ZELLE} text-center`}>Ø Jahre</th>}
+                <th colSpan={2} className={`${KOPF_ZELLE} text-center`}>IST{kopfFenster(istFenster)}</th>
+                <th colSpan={2} className={`${KOPF_ZELLE} text-center`}>Vorjahr{kopfFenster(vjFenster)}</th>
+                {oj && <th colSpan={2} className={`${KOPF_ZELLE} text-center`}>Ø Jahre{kopfFenster(ojFenster)}</th>}
               </tr>
             </TableHead>
             <TableBody>
@@ -179,10 +258,8 @@ export function JahrBilanz({
               ))}
             </TableBody>
           </Table>
-        {oj && (
-          <p className="text-xs text-gray-400 dark:text-gray-500 mt-1.5">
-            Ø aus {ojCount} {ojCount !== 1 ? 'Jahren' : 'Jahr'}
-          </p>
+        {fussNoten.length > 0 && (
+          <p className="text-xs text-gray-400 dark:text-gray-500 mt-1.5">{fussNoten.join(' · ')}</p>
         )}
       </Parkbar>
 
