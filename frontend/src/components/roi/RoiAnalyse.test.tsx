@@ -4,6 +4,7 @@
  */
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
+import { readFileSync } from 'node:fs'
 
 vi.mock('../../api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../api')>()),
@@ -26,6 +27,20 @@ vi.mock('../../api', async (importOriginal) => ({
   },
 }))
 
+vi.mock('../../api/aussichten', () => ({
+  aussichtenApi: {
+    getFinanzPrognose: vi.fn(() => Promise.resolve({
+      amortisations_fortschritt_prozent: 40,
+      amortisation_erreicht: false,
+      bisherige_ertraege_euro: 6000,
+      // Derselbe Nenner wie `gesamt_relevante_kosten` oben — das ist die
+      // Zusicherung, die N-137 überhaupt erst möglich gemacht hat.
+      investition_gesamt_euro: 15000,
+      amortisation_prognose_jahr: 2032,
+    })),
+  },
+}))
+
 import { RoiAnalyse } from './RoiAnalyse'
 
 describe('RoiAnalyse', () => {
@@ -40,5 +55,33 @@ describe('RoiAnalyse', () => {
     // Rückkanal liefert den Benzinpreis-Hinweis.
     await waitFor(() => expect(onLoaded).toHaveBeenCalled())
     expect(onLoaded.mock.calls[0][0].benzinpreis_hinweis_euro).toBe(1.7)
+  })
+
+  it('N-90: die Leerwerte der ROI-Tabelle sind Halbgeviertstriche, keine Bindestriche', () => {
+    // Style-Guide A3: Display-Token `—` (etabliert v3.29.1). In dieser Datei
+    // standen sechs nicht migrierte ASCII-Bindestriche neben bereits
+    // umgestellten Nachbarn — eine Anzeige, zwei Zeichen.
+    const quelle = readFileSync('src/components/roi/RoiAnalyse.tsx', 'utf-8')
+    // Leerwert-Formen, die es nicht mehr geben darf.
+    expect(quelle).not.toMatch(/: '-'/)
+    expect(quelle).not.toMatch(/>-</)
+    expect(quelle).not.toMatch(/\? `[^`]*` : '-'/)
+  })
+
+  it('N-137: Amortisations-Fortschritt steht als eigene Kachel neben der Dauer', async () => {
+    render(<RoiAnalyse anlageId={1} />)
+    expect(await screen.findAllByText(/Amortisations-Fortschritt/)).not.toHaveLength(0)
+    // 6.000 von 15.000 = 40 % — gemessen, nicht hochgerechnet.
+    expect(screen.getAllByText('40,0').length).toBeGreaterThan(0)
+    // Der Untertitel nennt Restbetrag und voraussichtliches Jahr.
+    expect(screen.getAllByText(/noch 9\.000 €.*2032/).length).toBeGreaterThan(0)
+  })
+
+  it('N-137: ohne Fortschritts-Zahl entfällt die Kachel, der Rest steht', async () => {
+    const { aussichtenApi } = await import('../../api/aussichten')
+    vi.mocked(aussichtenApi.getFinanzPrognose).mockRejectedValueOnce(new Error('offline'))
+    render(<RoiAnalyse anlageId={1} />)
+    expect(await screen.findAllByText(/Gesamtinvestition/)).not.toHaveLength(0)
+    expect(screen.queryByText(/Amortisations-Fortschritt/)).not.toBeInTheDocument()
   })
 })

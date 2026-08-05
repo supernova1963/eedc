@@ -26,10 +26,16 @@ from backend.services.prognose_auswahl import lade_aktive_monatsprognosen
 from backend.api.routes.strompreise import lade_tarife_fuer_anlage, resolve_netzbezug_preis_cent
 from backend.api.routes.connector import _calc_month_delta
 from backend.core.berechnungen import (
+    Monatsfenster,
+    anteilig,
+    auslastung_prozent,
+    auslastungs_basis_kwh,
     autarkie_prozent,
     berechne_grundlast,
+    monatsfenster,
     berechne_netzbezug_kosten,
     berechne_netzladung_kosten,
+    berechne_speicher_ersparnis,
     eauto_effizienz_100km,
     eigenverbrauchsquote_prozent,
     einspeise_erloes_euro,
@@ -58,7 +64,6 @@ from backend.core.wirtschaftlichkeit_defaults import (
 from backend.core.field_definitions import (
     get_eauto_ladung_kwh,
     get_emob_pv_netz_kwh,
-    get_sonstiges_verbrauch_kwh,
     get_speicher_netzladung_kwh,
     get_wp_heizenergie_kwh,
     get_wp_strom_kwh,
@@ -172,6 +177,17 @@ class AktuellerMonatResponse(BaseModel):
     speicher_ladung_netz_kosten_euro: Optional[float] = None
     speicher_ladung_netz_preis_cent: Optional[float] = None
     speicher_ladung_netz_preis_quelle: Optional[str] = None  # tep | imd | bezugspreis
+    # #358 Phase 1 — Auslastung und Netto-Nutzen des Zeitraums.
+    # `basis` = Kapazität × Tage (theoretisch verfügbare Menge). Sie steht als
+    # eigenes Feld daneben, damit die Jahres-Sicht Entladung und Basis SUMMIEREN
+    # und einmal teilen kann: Auslastungen mehrerer Monate lassen sich nicht
+    # mitteln (Februar wiegt weniger als Juli). Ohne gepflegte Kapazität bleiben
+    # beide `None` — „unbekannt", nicht 0.
+    speicher_auslastungs_basis_kwh: Optional[float] = None
+    speicher_auslastung_prozent: Optional[float] = None
+    # Σ der Speicher-Ersparnisse des Monats — dieselbe Zahl wie im T-Konto
+    # (Spread-SoT), aufgesammelt statt zweitgerechnet.
+    speicher_ersparnis_euro: Optional[float] = None
     hat_speicher: bool = False
 
     # Komponenten — Wärmepumpe
@@ -270,7 +286,14 @@ class AktuellerMonatResponse(BaseModel):
 
     # Vergleiche
     vorjahr: Optional[dict] = None
+    # PVGIS-SOLL des Monats. Im LAUFENDEN Monat nur der Anteil der abgelaufenen
+    # Tage (N-69) — sonst stünde ein voller Monats-Nenner über einem
+    # angefangenen Ertrag. `soll_pv_tage`/`_gesamt` benennen das Fenster, damit
+    # die Anzeige „anteilig" sagen kann statt eine gekürzte Zahl als Monats-SOLL
+    # auszugeben; `tage == tage_gesamt` heißt „voller Monat".
     soll_pv_kwh: Optional[float] = None
+    soll_pv_tage: Optional[int] = None
+    soll_pv_tage_gesamt: Optional[int] = None
 
     # Grundlast (Nacht-Sockel; R12-1 ersetzt PVGIS-SOLL/IST). `grundlast_kwh` ist
     # additiv → Cockpit/Jahr summiert die Monate (analog soll_pv_kwh).
@@ -752,7 +775,9 @@ async def _load_vorjahr(anlage_id: int, investitionen: list[Investition], jahr: 
     return result
 
 
-async def _load_soll_pv(anlage_id: int, monat: int, db: AsyncSession) -> Optional[float]:
+async def _load_soll_pv(
+    anlage_id: int, jahr: int, monat: int, db: AsyncSession, fenster: Monatsfenster,
+) -> Optional[float]:
     """Lädt PVGIS SOLL-Wert für den Monat — aus der AKTIVEN Prognose (P5).
 
     Vorher stand hier ein `JOIN` auf `ist_aktiv` **ohne `limit`** und ein `sum()`
@@ -760,11 +785,21 @@ async def _load_soll_pv(anlage_id: int, monat: int, db: AsyncSession) -> Optiona
     Der Fehler war nicht sichtbar, weil die Summe plausibel aussah — sie war nur
     doppelt so groß, und die SOLL/IST-Abweichung sowie die Grundlast-SOLL-Kachel
     rechneten mit. Der Auswahl-SoT trägt das `LIMIT 1` in der Subquery.
+
+    **Im laufenden Monat trägt der Rückgabewert nur die abgelaufenen Tage**
+    (N-69, Entscheid Gernot 2026-08-04): PVGIS liefert eine Monatssumme, der IST
+    daneben ist angefangen. Ungekürzt maß die Erfüllungsquote das Datum statt
+    die Anlage — am 4. August 19 % für eine Anlage, die über die abgeschlossenen
+    Monate auf 119 % kam. Begründung der Kürzung im Layer-Docstring
+    (`core/berechnungen/monatsfenster.py`); die Jahres-Sicht summiert diese
+    Monatswerte und erbt die Korrektur damit ohne eigene Rechnung.
     """
     prognosen = await lade_aktive_monatsprognosen(db, anlage_id, monat=monat)
     if not prognosen:
         return None
-    return round(sum(p.ertrag_kwh for p in prognosen), 1)
+    voll = sum(p.ertrag_kwh for p in prognosen)
+    gekuerzt = anteilig(voll, fenster)
+    return round(gekuerzt, 1) if gekuerzt is not None else None
 
 
 async def _load_grundlast_nacht_kw(
@@ -848,10 +883,42 @@ def _baue_investition_financial(
     elif inv.typ == "speicher":
         entl_kwh = data.get("entladung_kwh")
         if entl_kwh and entl_kwh > 0:
-            inv_ersparnis = round(entl_kwh * netz_p / 100, 2)
+            # SPREAD, nicht Voll-Netzbezugspreis (Entscheid Gernot 2026-08-04,
+            # #358 — er bestätigt den Drift-Audit-Entscheid A3, der seit
+            # `core/berechnungen/speicher_wirtschaftlichkeit.py` im Docstring
+            # steht und den ROI und Aussichten längst befolgen). Bis hierher
+            # rechnete das T-Konto `Entladung × Netzbezug` und damit bei 30/8 ct
+            # 36 % über der Zahl, die dieselbe Anlage in der ROI-Sicht trug.
+            #
+            # Begründung: die entladene kWh hätte sonst eingespeist werden
+            # können — die entgangene Vergütung ist eine reale Gegenposition.
+            # Netzgeladene Energie ist davon ausgenommen (sie hätte nie
+            # eingespeist werden können); diese Trennung macht der Layer, nicht
+            # dieser Aufrufer.
+            netzladung = get_speicher_netzladung_kwh(data)
+            lad_kwh = data.get("ladung_kwh") or 0
+            # Gemessener Monats-η, sonst der Layer-Default. Er wirkt nur auf die
+            # Aufteilung der Entladung nach Herkunft, nicht auf den PV-Spread.
+            eta = (entl_kwh / lad_kwh * 100) if lad_kwh > 0 else None
+            erg = berechne_speicher_ersparnis(
+                entladung_kwh=entl_kwh,
+                bezug_preis_cent=netz_p,
+                einspeise_verg_cent=einsp_p,
+                ladung_netz_kwh=netzladung,
+                **({"wirkungsgrad_prozent": eta} if eta is not None else {}),
+                lade_preis_cent=data.get("speicher_ladepreis_cent"),
+            )
+            inv_ersparnis = round(erg.ersparnis_euro, 2)
             inv_label = "Entladung-Ersparnis"
-            inv_formel = "Speicher-Entladung × Netzbezugspreis"
-            inv_berechnung = f"{entl_kwh:.1f} kWh × {netz_p:.2f} ct/kWh"
+            if netzladung > 0:
+                inv_formel = "PV-Anteil × (Netzbezug − Einspeisung) + Netz-Anteil × (Netzbezug − Ladepreis)"
+                inv_berechnung = (
+                    f"{erg.pv_anteil_entladung_kwh:.1f} kWh × {erg.spread_cent_kwh:.2f} ct/kWh"
+                    f" + {erg.netz_anteil_entladung_kwh:.1f} kWh Netz-Anteil"
+                )
+            else:
+                inv_formel = "Speicher-Entladung × (Netzbezugspreis − Einspeisevergütung)"
+                inv_berechnung = f"{entl_kwh:.1f} kWh × {erg.spread_cent_kwh:.2f} ct/kWh"
 
     elif inv.typ == "waermepumpe":
         waerme = get_wp_heizenergie_kwh(data)
@@ -959,11 +1026,38 @@ async def get_aktueller_monat(
     """
     Übersicht eines Monats mit Daten aus allen verfügbaren Quellen.
 
-    Datenquellen-Priorität (höchste überschreibt niedrigere):
+    Reihenfolge der vier Quellen (spätere überschreiben frühere):
     1. Gespeicherte Monatsdaten (85%) — DB
     2. Connector (90%) — Geräte-Snapshot-Delta
     3. MQTT-Inbound (91%) — Energy-Topics aus Smarthome (nur aktueller Monat)
     4. HA Statistics (92%) — Recorder-DB
+
+    **Die Konfidenz allein entscheidet nicht** — überschreiben darf eine
+    frischere Quelle nur im **laufenden** Monat (Live-Vorschau). Im
+    abgeschlossenen Monat sind die gespeicherten Werte authoritativ: Connector
+    (#325 detlefh68) und HA-Statistics (#118 Safi105) füllen dort nur
+    **fehlende** Felder (`setdefault`), MQTT wird gar nicht erst gesammelt.
+    Ein importierter Monatswert (Cloud-/Portal-/CSV-Import) wird von einem
+    zugeordneten HA-Sensor hier also **nicht** verdrängt — die Zuordnung
+    stehen zu lassen kostet ihn nichts.
+
+    Was „fehlend" heißt, entscheiden die `> 0`-Gates in `_collect_saved_data`:
+    eine gespeicherte 0,0 gilt der Kaskade nicht als Wert und darf gefüllt
+    werden. Begründung im Docstring dort.
+
+    **Nur diese Route.** Auf der **Schreib**-Seite gilt die Aussage nicht:
+    `external:portal_import` (Cloud-/Portal-Import) und `external:ha_statistics`
+    stehen auf derselben Hierarchie-Stufe (`core/source_priority.py`), gleiche
+    Stufe ist Last-Writer-Wins. Ein HA-Statistik-Import mit gesetztem
+    `ueberschreiben` überschreibt einen Cloud-Wert dauerhaft in der DB. Wer
+    den Wert wirklich festnageln will, pflegt ihn im Formular (`manual:form`,
+    Stufe 1 — die einzige, die beide schlägt).
+
+    Der Connector überschreibt zusätzlich nur mit belegter Monatsabdeckung
+    (#361), sonst ist sein Delta ein Teilzeitraum.
+
+    Die Regeln selbst stehen in `core/berechnungen/datenquellen.py`
+    (ADR-001) — hier steht nur, was diese Route hineinreicht.
     """
     # Anlage mit Investitionen laden
     result = await db.execute(
@@ -981,6 +1075,11 @@ async def get_aktueller_monat(
     if monat is None:
         monat = now.month
     ist_aktueller_monat = (jahr == now.year and monat == now.month)
+    # Das gemessene Fenster des Monats — EIN Anker für alle Größen, die im
+    # laufenden Monat mit den abgelaufenen Tagen wachsen (SOLL · Grundlast ·
+    # Speicher-Auslastung). Vorher zählte jede dieser drei Stellen ihre Tage
+    # selbst, mit drei Kopien derselben `min(heute.day, tage_im_monat)`-Zeile.
+    fenster = monatsfenster(jahr, monat, heute=now.date())
     investitionen = [i for i in anlage.investitionen if i.aktiv]
 
     # ── Daten sammeln (I/O) — Zusammenführung nach Präzedenz im SoT-Helper ──
@@ -1372,33 +1471,39 @@ async def get_aktueller_monat(
     # gerendert und im Monatsergebnis (nettoNachAllem) addiert.
     gesamtnettoertrag = None
 
-    # ── Komponenten-Detail aus gespeicherten InvestitionMonatsdaten ──
-    # Batch-Query: Alle InvestitionMonatsdaten für diesen Monat auf einmal laden
-    all_inv_ids = [i.id for i in investitionen]
-    imd_by_inv: dict[int, list] = {}
-    if all_inv_ids:
-        all_imd_result = await db.execute(
-            select(InvestitionMonatsdaten).where(
-                InvestitionMonatsdaten.investition_id.in_(all_inv_ids),
-                InvestitionMonatsdaten.jahr == jahr,
-                InvestitionMonatsdaten.monat == monat,
-            )
-        )
-        for imd in all_imd_result.scalars().all():
-            imd_by_inv.setdefault(imd.investition_id, []).append(imd)
+    # ── Komponenten-Detail aus den Monats-Fakten (ADR-002/P10, C1d) ──
+    # Bis C1d lief hier eine eigene `InvestitionMonatsdaten`-Batch mit fünf
+    # anlagenweiten Faltungen daneben — die letzte des Baums. Sie hatte zwei
+    # Fehler, die die Schicht nicht hat:
+    #
+    #   * **E-Auto und Wallbox wurden roh addiert.** Beide messen denselben
+    #     Fluss aus zwei Perspektiven; wo beide gepflegt sind, stand die
+    #     Netzladung doppelt in der Kachel, im T-Konto (× Arbeitspreis!) und in
+    #     der Jahressumme. Die Schicht poolt kanonisch (#262).
+    #   * **Kein Laufzeit-Filter.** Die Batch nahm jede IMD-Zeile des Typs,
+    #     auch aus Monaten vor der Anschaffung (#236-Klasse).
+    #
+    # `monats_fakt` ist oben schon geladen (derselbe Monat) — hier wird nichts
+    # nachgeladen. Die Präzedenz der vier Quellen bleibt davon unberührt: der
+    # Detailblock war immer schon reiner DB-Zweig.
+    mf_speicher = monats_fakt.speicher if monats_fakt else None
+    mf_wp = monats_fakt.wp if monats_fakt else None
+    mf_emob = monats_fakt.emob if monats_fakt else None
+    mf_bkw = monats_fakt.bkw if monats_fakt else None
+    mf_sonstiges = monats_fakt.sonstiges if monats_fakt else None
+    #: Welche Typen im Monat eine SICHTBARE Zeile hatten — trennt „0 gemessen"
+    #: von „gar keine Daten" (P4). Vorher leistete das die Frage, ob die
+    #: IMD-Batch für den Typ etwas hergab.
+    typen_mit_zeile = monats_fakt.meta.typen_mit_zeile if monats_fakt else frozenset()
 
-    def get_imd_for_invs(invs: list) -> list:
-        """Sammelt InvestitionMonatsdaten für eine Liste von Investitionen."""
-        result = []
-        for inv in invs:
-            result.extend(imd_by_inv.get(inv.id, []))
-        return result
-
-    # Speicher: Kapazität, Arbitrage-Ladung, Wirkungsgrad, Vollzyklen
+    # Speicher: Kapazität, Arbitrage-Ladung, Wirkungsgrad, Vollzyklen, Auslastung
     speicher_ladung_netz = None
     speicher_wirkungsgrad = None
     speicher_vollzyklen = None
     speicher_kapazitaet = None
+    speicher_auslastungs_basis = None
+    speicher_auslastung = None
+    speicher_ersparnis = None
 
     speicher_invs = [i for i in investitionen if i.typ == "speicher"]
     speicher_soc_drift_flag = False
@@ -1415,29 +1520,17 @@ async def get_aktueller_monat(
         if kap_sum > 0:
             speicher_kapazitaet = round(kap_sum, 1)
 
-        # Arbitrage-Ladung aus gespeicherten Daten (Kanon-Key + Legacy-Fallback,
-        # deckt frisch geschriebene Legacy-Rows vor dem nächsten Migrations-Lauf).
-        # Parallel: kWh-gewichteter Ø der manuell erfassten IMD-Ladepreise als
-        # Preis-Fallback für die Netzladung-Kosten-Kachel (R15-1).
-        ladung_netz_total = 0.0
-        imd_preis_gewichtet = 0.0
-        imd_preis_kwh = 0.0
-        speicher_imds = get_imd_for_invs(speicher_invs)
-        for imd in speicher_imds:
-            data = imd.verbrauch_daten or {}
-            nl = get_speicher_netzladung_kwh(data)
-            ladung_netz_total += nl
-            imd_preis = data.get("speicher_ladepreis_cent")
-            if nl > 0 and imd_preis is not None and imd_preis > 0:
-                imd_preis_gewichtet += nl * imd_preis
-                imd_preis_kwh += nl
+        # Arbitrage-Ladung + kWh-gewichteter Ø der erfassten Ladepreise als
+        # Preis-Fallback für die Netzladung-Kosten-Kachel (R15-1) — beides aus
+        # der Schicht (Kanon-Key + Legacy-Fallback stecken in `imd_typ_beitrag`).
+        #
         # Sobald Speicher-Monatsdaten existieren, ist auch 0 kWh ein Ergebnis
         # („nichts aus dem Netz geladen", Rainer-PN 2026-07-25). Nur ganz ohne
-        # IMD-Zeilen bleibt es None = „keine Daten" und die Kachel aus.
-        if speicher_imds:
-            speicher_ladung_netz = round(ladung_netz_total, 2)
+        # Zeile bleibt es None = „keine Daten" und die Kachel aus.
+        if mf_speicher is not None and "speicher" in typen_mit_zeile:
+            speicher_ladung_netz = round(mf_speicher.netzladung_kwh, 2)
         speicher_imd_ladepreis = (
-            imd_preis_gewichtet / imd_preis_kwh if imd_preis_kwh > 0 else None
+            mf_speicher.netzladung_preis_cent if mf_speicher is not None else None
         )
 
         # Wirkungsgrad und Vollzyklen
@@ -1487,6 +1580,21 @@ async def get_aktueller_monat(
         if _vz is not None:
             speicher_vollzyklen = round(_vz, 2)
 
+        # #358 Phase 1: Auslastung = Entladung ÷ (Kapazität × Tage).
+        #
+        # Im LAUFENDEN Monat zählen nur die abgelaufenen Tage. Sonst stünde am
+        # 3. eines Monats eine Auslastung von 10 %, die nichts über den Speicher
+        # sagt, sondern über das Datum — ein Quotient aus einem vollen Nenner und
+        # einem angefangenen Zähler ist genau der Fall, den die P4-Doktrin
+        # unterdrücken oder ehrlich machen will (KONZEPT-UNVOLLSTAENDIGE-WERTE
+        # §3). Hier ist er ehrlich zu machen: die Basis wächst mit.
+        _basis = auslastungs_basis_kwh(speicher_kapazitaet, fenster.tage)
+        if _basis is not None:
+            speicher_auslastungs_basis = round(_basis, 1)
+            _au = auslastung_prozent(se, _basis)
+            if _au is not None:
+                speicher_auslastung = round(_au, 1)
+
         # Etappe C1+C4: stundengewichteter effektiver Netz-Ladepreis für den Monat.
         # Helper liefert immer ein Ergebnis (auch bei dünner Datenlage) — UI
         # entscheidet anhand der `quelle`, ob KPI anzeigen oder nur Param.
@@ -1517,31 +1625,16 @@ async def get_aktueller_monat(
     wp_warmwasser = None
     wp_strom_heizen = None
     wp_strom_warmwasser = None
-    wp_invs = [i for i in investitionen if i.typ == "waermepumpe"]
-    if wp_invs:
-        h_total = 0.0
-        ww_total = 0.0
-        sh_total = 0.0
-        sww_total = 0.0
-        any_getrennt = False
-        for imd in get_imd_for_invs(wp_invs):
-            data = imd.verbrauch_daten or {}
-            inv = next((i for i in wp_invs if i.id == imd.investition_id), None)
-            h_total += get_wp_heizenergie_kwh(data)
-            ww_total += data.get("warmwasser_kwh", 0) or 0
-            if inv and (inv.parameter or {}).get("getrennte_strommessung"):
-                any_getrennt = True
-                sh_total += data.get("strom_heizen_kwh", 0) or 0
-                sww_total += data.get("strom_warmwasser_kwh", 0) or 0
-        if h_total > 0:
-            wp_heizung = round(h_total, 2)
-        if ww_total > 0:
-            wp_warmwasser = round(ww_total, 2)
-        if any_getrennt:
+    if mf_wp is not None:
+        if mf_wp.heizung_kwh > 0:
+            wp_heizung = round(mf_wp.heizung_kwh, 2)
+        if mf_wp.warmwasser_kwh > 0:
+            wp_warmwasser = round(mf_wp.warmwasser_kwh, 2)
+        if mf_wp.hat_split:
             # Auch 0-Werte zurückgeben, damit Frontend "getrennt erfasst, aktuell 0"
             # vs. "gar nicht getrennt erfasst" unterscheiden kann.
-            wp_strom_heizen = round(sh_total, 2)
-            wp_strom_warmwasser = round(sww_total, 2)
+            wp_strom_heizen = round(mf_wp.strom_heizen_kwh, 2)
+            wp_strom_warmwasser = round(mf_wp.strom_warmwasser_kwh, 2)
 
     # E-Mobilität: PV/Netz/Extern-Split + V2H
     emob_pv = get_val("emob_pv_ladung_kwh")
@@ -1549,36 +1642,24 @@ async def get_aktueller_monat(
     emob_ladung_extern = None
     emob_v2h = None
 
-    emob_invs = [i for i in investitionen if i.typ in ("e-auto", "wallbox") and not ist_dienstlich(i)]
-    if emob_invs:
-        netz_total = 0.0
-        extern_total = 0.0
-        v2h_total = 0.0
-        for imd in get_imd_for_invs(emob_invs):
-            data = imd.verbrauch_daten or {}
-            # #262: Netz via SoT-Helper — bei evcc-Imports wird aus Total − PV
-            # abgeleitet, wenn `ladung_netz_kwh` nicht als eigener Key existiert.
-            _, netz = get_emob_pv_netz_kwh(data)
-            netz_total += netz
-            extern_total += data.get("ladung_extern_kwh", 0) or 0
-            v2h_total += data.get("v2h_entladung_kwh", 0) or 0
-        if netz_total > 0:
-            emob_ladung_netz = round(netz_total, 2)
-        if extern_total > 0:
-            emob_ladung_extern = round(extern_total, 2)
-        if v2h_total > 0:
-            emob_v2h = round(v2h_total, 2)
+    # C1d: der Netz-Anteil kommt aus dem KANONISCHEN Pool, nicht aus einer
+    # Roh-Summe über beide Typen. E-Auto und Wallbox messen denselben Fluss
+    # (Vehicle- vs. Loadpoint-Perspektive) — genau die Doppelzählung, die
+    # `typ_aggregation` oben schon bewusst vermeidet. `emob_pv` daneben stammt
+    # aus derselben Trias (`get_val` → Fakten-Zweig), beide passen jetzt
+    # zusammen statt aus zwei Rechnungen zu kommen.
+    if mf_emob is not None:
+        if mf_emob.ladung_netz_kwh > 0:
+            emob_ladung_netz = round(mf_emob.ladung_netz_kwh, 2)
+        if mf_emob.extern_kwh > 0:
+            emob_ladung_extern = round(mf_emob.extern_kwh, 2)
+        if mf_emob.v2h_entladung_kwh > 0:
+            emob_v2h = round(mf_emob.v2h_entladung_kwh, 2)
 
     # BKW: Eigenverbrauch
     bkw_eigenverbrauch = None
-    bkw_invs = [i for i in investitionen if i.typ == "balkonkraftwerk"]
-    if bkw_invs:
-        ev_total = 0.0
-        for imd in get_imd_for_invs(bkw_invs):
-            data = imd.verbrauch_daten or {}
-            ev_total += data.get("eigenverbrauch_kwh", 0) or 0
-        if ev_total > 0:
-            bkw_eigenverbrauch = round(ev_total, 2)
+    if mf_bkw is not None and mf_bkw.eigenverbrauch_gemessen_kwh > 0:
+        bkw_eigenverbrauch = round(mf_bkw.eigenverbrauch_gemessen_kwh, 2)
 
     # Sonstiges: erzeuger + verbraucher aggregieren
     sonstiges_erzeugung = None
@@ -1588,55 +1669,49 @@ async def get_aktueller_monat(
     sonstiges_bezug_pv = None
     sonstiges_bezug_netz = None
 
-    sonstiges_invs = [i for i in investitionen if i.typ == "sonstiges"]
     sonstiges_geraete: list[SonstigesGeraet] = []
-    if sonstiges_invs:
-        se_total = 0.0
-        sev_total = 0.0
-        sei_total = 0.0
-        sv_total = 0.0
-        sbpv_total = 0.0
-        sbnetz_total = 0.0
-        # Pro-Gerät-Akkumulator (für die Sonder-Darstellung: Werte je Gerät).
-        acc: dict[int, dict[str, float]] = {}
-        for imd in get_imd_for_invs(sonstiges_invs):
-            data = imd.verbrauch_daten or {}
-            erz = data.get("erzeugung_kwh", 0) or 0
-            eig = data.get("eigenverbrauch_kwh", 0) or 0
-            ein = data.get("einspeisung_kwh", 0) or 0
-            vrb = get_sonstiges_verbrauch_kwh(data)
-            bpv = data.get("bezug_pv_kwh", 0) or 0
-            bnz = data.get("bezug_netz_kwh", 0) or 0
-            se_total += erz; sev_total += eig; sei_total += ein
-            sv_total += vrb; sbpv_total += bpv; sbnetz_total += bnz
-            g = acc.setdefault(imd.investition_id, {"erz": 0.0, "eig": 0.0, "ein": 0.0, "vrb": 0.0, "bpv": 0.0, "bnz": 0.0})
-            g["erz"] += erz; g["eig"] += eig; g["ein"] += ein
-            g["vrb"] += vrb; g["bpv"] += bpv; g["bnz"] += bnz
-        if se_total > 0:   sonstiges_erzeugung    = round(se_total, 2)
-        if sev_total > 0:  sonstiges_eigenverbrauch = round(sev_total, 2)
-        if sei_total > 0:  sonstiges_einspeisung  = round(sei_total, 2)
-        if sv_total > 0:   sonstiges_verbrauch    = round(sv_total, 2)
-        if sbpv_total > 0: sonstiges_bezug_pv     = round(sbpv_total, 2)
-        if sbnetz_total > 0: sonstiges_bezug_netz = round(sbnetz_total, 2)
-        # Pro-Gerät-Liste in Investitions-Reihenfolge; Kategorie aus parameter.
+    if mf_sonstiges is not None:
+        if mf_sonstiges.erzeugung_kwh > 0:
+            sonstiges_erzeugung = round(mf_sonstiges.erzeugung_kwh, 2)
+        if mf_sonstiges.eigenverbrauch_kwh > 0:
+            sonstiges_eigenverbrauch = round(mf_sonstiges.eigenverbrauch_kwh, 2)
+        if mf_sonstiges.einspeisung_kwh > 0:
+            sonstiges_einspeisung = round(mf_sonstiges.einspeisung_kwh, 2)
+        if mf_sonstiges.verbrauch_kwh > 0:
+            sonstiges_verbrauch = round(mf_sonstiges.verbrauch_kwh, 2)
+        if mf_sonstiges.bezug_pv_kwh > 0:
+            sonstiges_bezug_pv = round(mf_sonstiges.bezug_pv_kwh, 2)
+        if mf_sonstiges.bezug_netz_kwh > 0:
+            sonstiges_bezug_netz = round(mf_sonstiges.bezug_netz_kwh, 2)
+
+        # Pro-Gerät-Liste in Investitions-Reihenfolge. Die MENGEN kommen aus
+        # `je_geraet` (dort schon kategorie-bewusst und laufzeitgefiltert),
+        # Bezeichnung und Kategorie aus der Investition — die Anzeige-Form
+        # bleibt hier, die Auflösung nicht mehr.
         def _v(x: float) -> Optional[float]:
             return round(x, 2) if x > 0 else None
-        for inv in sonstiges_invs:
-            g = acc.get(inv.id)
-            if not g:
+        for inv in investitionen:
+            if inv.typ != "sonstiges":
+                continue
+            g = mf_sonstiges.je_geraet.get(inv.id)
+            if g is None:
                 continue
             kat = (inv.parameter or {}).get("kategorie", "erzeuger")
             if kat == "verbraucher":
-                if g["vrb"] > 0 or g["bpv"] > 0 or g["bnz"] > 0:
+                if g.verbrauch_kwh > 0 or g.bezug_pv_kwh > 0 or g.bezug_netz_kwh > 0:
                     sonstiges_geraete.append(SonstigesGeraet(
                         bezeichnung=inv.bezeichnung, kategorie="verbraucher",
-                        verbrauch_kwh=_v(g["vrb"]), bezug_pv_kwh=_v(g["bpv"]), bezug_netz_kwh=_v(g["bnz"]),
+                        verbrauch_kwh=_v(g.verbrauch_kwh),
+                        bezug_pv_kwh=_v(g.bezug_pv_kwh),
+                        bezug_netz_kwh=_v(g.bezug_netz_kwh),
                     ))
             else:
-                if g["erz"] > 0:
+                if g.erzeugung_kwh > 0:
                     sonstiges_geraete.append(SonstigesGeraet(
                         bezeichnung=inv.bezeichnung, kategorie="erzeuger",
-                        erzeugung_kwh=_v(g["erz"]), eigenverbrauch_kwh=_v(g["eig"]), einspeisung_kwh=_v(g["ein"]),
+                        erzeugung_kwh=_v(g.erzeugung_kwh),
+                        eigenverbrauch_kwh=_v(g.eigenverbrauch_kwh),
+                        einspeisung_kwh=_v(g.einspeisung_kwh),
                     ))
 
     # (`netzbezug_durchschnittspreis` wird oben mit der Monatszeile geladen —
@@ -1736,13 +1811,12 @@ async def get_aktueller_monat(
 
     # ── Vergleichsdaten ──
     vorjahr = await _load_vorjahr(anlage_id, investitionen, jahr, monat, db)
-    soll_pv = await _load_soll_pv(anlage_id, monat, db)
+    soll_pv = await _load_soll_pv(anlage_id, jahr, monat, db, fenster)
 
     # ── Grundlast (Nacht-Sockel, R12-1: ersetzt PVGIS-SOLL/IST in Cockpit/Monat
     # + Jahr; Formel im Berechnungs-Layer, Median wie der Live-Wert). Im aktuellen
     # Monat nur die bisherigen Tage hochrechnen, sonst alle Kalendertage. ──
-    from calendar import monthrange as _monthrange_gl
-    grundlast_tage = now.day if ist_aktueller_monat else _monthrange_gl(jahr, monat)[1]
+    grundlast_tage = fenster.tage
     grundlast = berechne_grundlast(
         nacht_verbrauch_kw=await _load_grundlast_nacht_kw(anlage_id, jahr, monat, db),
         gesamtverbrauch_kwh=gesamtverbrauch,
@@ -1836,6 +1910,16 @@ async def get_aktueller_monat(
             if detail is not None:
                 investitionen_financials.append(detail)
 
+    # #358 Phase 1: Σ Speicher-Ersparnis des Monats — AUFGESAMMELT aus den
+    # T-Konto-Zeilen, nicht zweitgerechnet. Damit kann die Kachel nie eine
+    # andere Zahl zeigen als die Zeile darunter (die Klasse hinter N-129/N-130).
+    # `None`, solange keine Speicher-Zeile finanziell relevant ist.
+    _sp_zeilen = [d for d in investitionen_financials if d.typ == "speicher"]
+    if _sp_zeilen:
+        speicher_ersparnis = round(
+            sum(d.ersparnis_euro or 0 for d in _sp_zeilen), 2
+        )
+
     # ── G20-2: eMob-Ersparnis-Aggregat = Σ der Per-Fahrzeug-Ersparnisse ──
     # Deckungsgleich mit den investitionen_financials-Zeilen (jede mit dem
     # parameter-Satz IHRES Fahrzeugs), statt Einmal-Lauf über die Gesamt-km mit
@@ -1900,6 +1984,9 @@ async def get_aktueller_monat(
         speicher_vollzyklen=speicher_vollzyklen,
         speicher_kapazitaet_kwh=speicher_kapazitaet,
         speicher_soc_drift_signifikant=speicher_soc_drift_flag,
+        speicher_auslastungs_basis_kwh=speicher_auslastungs_basis,
+        speicher_auslastung_prozent=speicher_auslastung,
+        speicher_ersparnis_euro=speicher_ersparnis,
         speicher_effektiver_ladepreis_cent=speicher_eff_ladepreis,
         speicher_effektiver_ladepreis_quelle=speicher_eff_ladepreis_quelle,
         speicher_ladung_netz_kosten_euro=netzladung_kosten.kosten_euro if netzladung_kosten else None,
@@ -1967,6 +2054,8 @@ async def get_aktueller_monat(
         # Vergleiche
         vorjahr=vorjahr,
         soll_pv_kwh=soll_pv,
+        soll_pv_tage=fenster.tage if soll_pv is not None else None,
+        soll_pv_tage_gesamt=fenster.tage_gesamt if soll_pv is not None else None,
         grundlast_kw=grundlast.grundlast_kw,
         grundlast_kwh=grundlast.grundlast_kwh,
         grundlast_anteil_prozent=grundlast.grundlast_anteil_prozent,

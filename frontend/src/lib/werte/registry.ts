@@ -14,7 +14,7 @@
 import type { MonatsZeitreihe } from '../../pages/auswertung/types'
 import type { TagWerte } from '../../api/energie_profil'
 
-export type WerteGruppe = 'basis' | 'quoten' | 'wetter' | 'speicher' | 'waermepumpe' | 'eauto' | 'finanzen' | 'co2' | 'tagdetail'
+export type WerteGruppe = 'basis' | 'quoten' | 'wetter' | 'speicher' | 'waermepumpe' | 'eauto' | 'finanzen' | 'co2' | 'tagdetail' | 'erzeuger'
 export type WerteAggregation = 'sum' | 'avg' | 'none'
 
 /**
@@ -89,7 +89,13 @@ export const WERTE_METRIKEN: WerteMetrik[] = [
   // „(PV)" grenzt gegen die T-Konto-Ergebniszeile ab (Gewinn/Verlust Haushalt):
   // hier ohne Netzbezug-Kosten und ohne WP/E-Mobilität. Wortgleich zur
   // Finanz-Seite (AuswertungenFinanzenV4), sonst zwei Namen für eine Zahl.
+  // ⚠ Der Monatswert trägt seit N-22 die **USt auf Eigenverbrauch** abgezogen
+  // (Regelbesteuerung; sonst 0), der Tageswert nicht — die USt ist eine
+  // Jahresgröße (Selbstkosten je kWh aus Investition und Jahres-Erzeugung), sie
+  // lässt sich einem Tag nicht zuordnen. Bei Regelbesteuerung gilt deshalb
+  // Σ Tage ≠ Monat, wie bei der CO₂-Spalte. Die Spalte daneben macht es sichtbar.
   { key: 'netto_ertrag',       label: 'Netto-Ertrag (PV)', unit: '€',       gruppe: 'finanzen',    decimals: 2, aggregation: 'sum', defaultVisible: false, granular: MONAT_TAG, higherIsBetter: true },
+  { key: 'ust_eigenverbrauch', label: 'USt Eigenverbrauch', unit: '€',      gruppe: 'finanzen',    decimals: 2, aggregation: 'sum', defaultVisible: false, granular: NUR_MONAT, higherIsBetter: false },
   { key: 'netto_bilanz',       label: 'Netto-Bilanz',      unit: '€',       gruppe: 'finanzen',    decimals: 2, aggregation: 'sum', defaultVisible: true,  granular: MONAT_TAG, higherIsBetter: true },
   { key: 'netzbezug_preis_cent', label: 'Ø Netzpreis',     unit: 'ct/kWh',  gruppe: 'finanzen',    decimals: 2, aggregation: 'avg', defaultVisible: false, granular: NUR_MONAT, higherIsBetter: false },
   // CO₂ — „(PV)" grenzt gegen die vollständige Bilanz ab, wie „Netto-Ertrag (PV)"
@@ -113,7 +119,7 @@ export const WERTE_METRIKEN: WerteMetrik[] = [
   { key: 'temperatur_max_c',       label: 'Temp. max',      unit: '°C',     gruppe: 'tagdetail',   decimals: 1, aggregation: 'avg', defaultVisible: false, granular: NUR_TAG, higherIsBetter: undefined },
 ]
 
-export const WERTE_GRUPPEN: WerteGruppe[] = ['basis', 'quoten', 'wetter', 'speicher', 'waermepumpe', 'eauto', 'finanzen', 'co2', 'tagdetail']
+export const WERTE_GRUPPEN: WerteGruppe[] = ['basis', 'quoten', 'wetter', 'speicher', 'waermepumpe', 'eauto', 'finanzen', 'co2', 'tagdetail', 'erzeuger']
 
 export const GRUPPE_LABELS: Record<WerteGruppe, string> = {
   basis:       'Energie',
@@ -125,6 +131,37 @@ export const GRUPPE_LABELS: Record<WerteGruppe, string> = {
   finanzen:    'Finanzen',
   co2:         'CO₂',
   tagdetail:   'Tagesdetail',
+  erzeuger:    'Je Erzeuger',
+}
+
+/** Präfix der dynamischen Erzeuger-Spalten (`erzeuger:7`) — kein Feld der
+ *  Antwort-Zeile, sondern ein Zugriff in `TagWerte.erzeuger_kwh`. */
+export const ERZEUGER_METRIK_PREFIX = 'erzeuger:'
+
+/**
+ * Spalten „Ertrag je Erzeuger" (#350, Rainer) — eine Metrik je PV-String bzw.
+ * Balkonkraftwerk, gebaut aus den Investitionen, die im geladenen Zeitraum
+ * überhaupt Tageswerte haben.
+ *
+ * Warum dynamisch statt in {@link WERTE_METRIKEN}: die Spalten hängen an der
+ * Anlage, nicht am Produkt. Sie sind bewusst **nicht** `defaultVisible` — wer
+ * fünf Strings hat, bekommt sonst fünf Spalten ungefragt dazu; der Spalten-
+ * Picker führt sie unter „Je Erzeuger".
+ */
+export function erzeugerMetriken(
+  erzeuger: { id: number | string; bezeichnung: string }[],
+): WerteMetrik[] {
+  return erzeuger.map((e) => ({
+    key: `${ERZEUGER_METRIK_PREFIX}${e.id}`,
+    label: e.bezeichnung,
+    unit: 'kWh',
+    gruppe: 'erzeuger' as WerteGruppe,
+    decimals: 1,
+    aggregation: 'sum' as WerteAggregation,
+    defaultVisible: false,
+    granular: NUR_TAG,
+    higherIsBetter: true,
+  }))
 }
 
 /** Metriken, die in der gegebenen Granularität verfügbar sind (Reihenfolge erhalten). */
@@ -153,6 +190,14 @@ export function getMonatWert(row: MonatsZeitreihe, key: string): number | null {
  * den Registry-keys (analog `getMonatWert`).
  */
 export function getTagWert(row: TagWerte, key: string): number | null {
+  if (key.startsWith(ERZEUGER_METRIK_PREFIX)) {
+    // Erzeuger-Spalten liegen nicht flach in der Zeile, sondern in
+    // `erzeuger_kwh` (Investitions-ID → kWh). Fehlt der Eintrag, ist an dem Tag
+    // für dieses Gerät **nichts gemessen** — `null` (das Display-Token „—"),
+    // nicht 0: eine 0 hieße „lief, brachte nichts".
+    const v = row.erzeuger_kwh?.[key.slice(ERZEUGER_METRIK_PREFIX.length)]
+    return v == null ? null : v
+  }
   const v = (row as unknown as Record<string, number | null | undefined>)[key]
   return v == null ? null : v
 }

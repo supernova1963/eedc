@@ -4,6 +4,7 @@ Monatsdaten API Routes
 CRUD Endpoints für monatliche Energiedaten.
 """
 
+from datetime import date
 from typing import Annotated, Optional, Any
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
@@ -16,7 +17,20 @@ from backend.api.deps import get_db
 from backend.models.monatsdaten import Monatsdaten
 from backend.models.anlage import Anlage
 from backend.models.investition import Investition, InvestitionMonatsdaten
-from backend.core.calculations import berechne_monatskennzahlen, MonatsKennzahlen
+from backend.core.calculations import (
+    berechne_monatskennzahlen,
+    MonatsKennzahlen,
+)
+from backend.core.berechnungen import (
+    berechne_finanz_aggregat,
+    berechne_netzbezug_kosten,
+)
+from backend.core.berechnungen.ust_eigenverbrauch import (
+    UstJahresanteil,
+    bemessungsgrundlage_aus_investitionen,
+    ust_eigenverbrauch_fuer_anlage,
+)
+from backend.services.finanz_zeilen import baue_finanz_zeile
 from backend.utils.sonstige_positionen import ist_gueltige_position
 from backend.core.field_definitions import get_feld_hinweise
 from backend.api.routes.strompreise import (
@@ -27,8 +41,15 @@ from backend.core.wirtschaftlichkeit_defaults import (
     EINSPEISEVERGUETUNG_DEFAULT_CENT,
     NETZBEZUG_DEFAULT_CENT,
 )
-from backend.services.monats_fakten import lade_monats_fakten
+from backend.services.monats_fakten import (
+    TAGESWERT_BKW,
+    TAGESWERT_PV,
+    TAGESWERT_SPEICHER,
+    finanz_zeile_eingabe,
+    lade_monats_fakten,
+)
 from backend.services.provenance import (
+    gepruefte_ableitungen,
     log_delete,
     seed_provenance,
     write_json_subkey_with_provenance,
@@ -245,8 +266,52 @@ class AggregierteMonatsdatenResponse(BaseModel):
     # §51-Abzug-Volumen). Σ der Tages-`einspeisung_neg_preis_kwh` über den Monat
     # (R17/Verlauf, Weg 1). None = Anlage unterliegt nicht §51 (`unterliegt_eeg_51`).
     einspeisung_neg_preis_kwh: Optional[float]
+    # ── Finanzen je Monat (Fund N-22) ────────────────────────────────────────
+    # Bis 2026-08-04 rechnete der **Client** sie selbst
+    # (`pages/auswertung/types.ts::createMonatsZeitreihe`): eigene
+    # Tarif-Stichtags-Auflösung, eigener §51-Abzug, eigene EV-Ersparnis — eine
+    # zweite Finanz-Engine neben `services/finanz_zeilen.py::baue_finanz_zeile`.
+    # Sie kannte den BKW-Ersatzträger (ADR-002/**P9**) nicht und zog die USt auf
+    # Eigenverbrauch nicht ab, die alle vier Backend-Sichten abziehen. Dieselbe
+    # Tabelle rechnete damit in der **Tages**-Granularität über den SoT
+    # (`energie_profil/tage_werte.py`) und in der **Monats**-Granularität daneben.
+    #
+    # Der Grundpreis steckt in `netzbezug_kosten_euro` (Monatsposten, SoT
+    # `berechne_netzbezug_kosten`), nicht im Arbeitspreis.
+    einspeise_erloes_euro: float
+    # §51-Diagnose: was der negative Börsenpreis gekostet hat. Der Erlös oben ist
+    # bereits gekürzt — ohne diese Zahl wirkt die Kürzung wie ein Fehler.
+    einspeise_nicht_verguetet_euro: float
+    ev_ersparnis_euro: float
+    # BKW-Monate **ohne** erfasste Erzeugung (Datenlücke): ihr gemessener
+    # Eigenverbrauch trägt hier, sonst 0 — sonst zählte derselbe Fluss zweimal
+    # (`bkw_finanz_beitrag`, ADR-002/P9).
+    bkw_ersparnis_euro: float
+    # Unentgeltliche Wertabgabe § 3 Abs. 1b UStG, **nur** bei
+    # `steuerliche_behandlung == "regelbesteuerung"`, sonst 0,0. Je Monat aus dem
+    # Eigenverbrauch dieses Monats × Selbstkosten je kWh; der Nenner der
+    # Selbstkosten ist die **Jahres**-PV der ausgelieferten Monate, damit
+    # Σ USt_m == USt(Σ EV_m) eines Jahres bleibt.
+    ust_eigenverbrauch_euro: float
+    netzbezug_kosten_euro: float
+    # Einspeise-Erlös + EV- + BKW-Ersparnis − USt. **Ohne** „Sonstige Erträge &
+    # Ausgaben" (die kommen aus der Komponenten-Zeitreihe und werden erst in der
+    # Finanz-Sicht aufgeschlagen) — das ist der Unterschied zur Cockpit-Kachel.
+    netto_ertrag_euro: float
+    # Netto-Ertrag − Netzbezugskosten (die T-Konto-Ergebniszeile des Monats).
+    netto_bilanz_euro: float
+    # Der **effektive** Arbeitspreis des Monats: abgerechneter Flex-Ø vor dem
+    # Stammdaten-Tarif (`resolve_netzbezug_preis_cent`, ADR-002/**P8**). Ohne
+    # gepflegten Tarif der Default aus `wirtschaftlichkeit_defaults` — dass ein
+    # Monat keine Tarif-Abdeckung hat, meldet der Daten-Checker.
+    netzbezug_preis_cent: float
     # Legacy-Felder (für Migration-Warnung)
     hat_legacy_daten: bool
+    # Feldgruppen, die NICHT aus der DB stammen, sondern aus der lokalen
+    # Tagesebene (`inkl_nur_tageswerte`, N-121) — z. B. `["pv", "zaehler"]`.
+    # `None` = alles steht so in der Datenbank. Eine Sicht, die solche Monate
+    # zeigt, sagt es; ohne das Flag ist es immer `None`.
+    aus_tageswerten: Optional[list[str]] = None
 
     class Config:
         from_attributes = True
@@ -265,6 +330,14 @@ async def list_monatsdaten_aggregiert(
         description=(
             "Auch Monate ohne Zählerzeile (kein Monatsabschluss) liefern. "
             "Diese Zeilen tragen `id: null` und keine Zählerwerte."
+        ),
+    )] = False,
+    inkl_nur_tageswerte: Annotated[bool, Query(
+        description=(
+            "Auch Monate liefern, deren einzige Spur die lokale Tagesebene ist "
+            "(weder Monatsabschluss noch Komponenten-Zeile). Setzt "
+            "`inkl_ohne_zaehlerzeile` voraus und markiert die betroffenen "
+            "Größen über `aus_tageswerten`."
         ),
     )] = False,
     db: AsyncSession = Depends(get_db)
@@ -290,10 +363,32 @@ async def list_monatsdaten_aggregiert(
     Zeilen tragen ``id=None``, keine Zählerwerte (Einspeisung/Netzbezug = 0,0)
     und kein ``globalstrahlung``/``sonnenstunden``. Die aus den IMD gerechneten
     Größen — PV, Speicher, WP, E-Mob, Autarkie — sind vollständig.
+
+    Mit zusätzlich ``inkl_nur_tageswerte=true`` kommen Monate mit, die **auch**
+    keine Komponenten-Zeile haben und nur in der lokalen Tagesebene existieren
+    (Fund **N-121**). Das ist der Normalfall für den **laufenden** Monat: einen
+    automatischen Monatsabschluss gibt es nicht, deshalb fehlte er im Verlauf
+    immer. Solche Zeilen tragen ``aus_tageswerten`` mit den Feldgruppen, die von
+    dort stammen; Zählerwerte sind dann echte Messwerte statt 0,0. Der fehlende
+    Abschluss selbst wird als Fehlerquelle vom **Daten-Checker** ausgewiesen
+    (Kategorie ``monatsdaten_vollstaendigkeit``, mit Link auf den Abschluss) —
+    hier wird er nicht zusätzlich beklagt, sondern schlicht mitgerechnet.
+
+    **Die Finanzzeile je Monat kommt aus demselben SoT wie Cockpit,
+    Jahresbericht-PDF und HA-Export** (`baue_finanz_zeile` +
+    `berechne_finanz_aggregat`, seit Fund **N-22**). Bis 2026-08-04 rechnete der
+    Client sie neben diesem Weg noch einmal selbst.
     """
     von = (jahr, 1) if jahr else None
     bis = (jahr, 12) if jahr else None
-    fakten = await lade_monats_fakten(db, anlage_id, von=von, bis=bis)
+    # Ein Tarif-Cache für die ganze Anfrage: die Schicht füllt ihn beim Laden,
+    # `baue_finanz_zeile` liest ihn danach nur noch. Ohne ihn löste jeder Monat
+    # seinen Stichtag zweimal auf.
+    tarif_cache: dict[date, dict] = {}
+    fakten = await lade_monats_fakten(
+        db, anlage_id, von=von, bis=bis, tarif_cache=tarif_cache,
+        inkl_nur_tageswerte=inkl_nur_tageswerte,
+    )
     # Absteigend (neueste zuerst) — Datums-Listen-Konvention, wie die frühere
     # `order_by(...desc())`.
     fakten = [
@@ -303,6 +398,33 @@ async def list_monatsdaten_aggregiert(
 
     if not fakten:
         return []
+
+    # ── USt-Basis der Anlage (nur bei Regelbesteuerung wirksam) ──────────────
+    # Bemessungsgrundlage über den Layer-SoT: Σ max(0, gesamt − alternativ).
+    # Bis 04.08. standen dafür vier Formen im Baum (N-129) und diese Sicht wählte
+    # die damalige Mehrheitsform (Vollkosten). Entschieden ist seither die
+    # Mehrkosten-Form — sie liest das Feld, das der Anwender pflegt, statt den
+    # vollen Kaufpreis eines E-Autos in die Selbstkosten des PV-Stroms zu legen.
+    anlage_obj = (
+        await db.execute(select(Anlage).where(Anlage.id == anlage_id))
+    ).scalar_one_or_none()
+    inv_rows = (
+        await db.execute(select(Investition).where(Investition.anlage_id == anlage_id))
+    ).scalars().all()
+    ust_bemessungsgrundlage_euro = bemessungsgrundlage_aus_investitionen(inv_rows)
+    betriebskosten_jahr_euro = sum(i.betriebskosten_jahr or 0 for i in inv_rows)
+    # Nenner der Selbstkosten je kWh ist eine **Jahres**-Erzeugung. Je
+    # Kalenderjahr über die ausgelieferten Monate summiert, damit die Summe der
+    # Monats-USt genau die Jahres-USt ergibt (die Formel ist linear im
+    # Eigenverbrauch). Ein angefangenes Jahr trägt seinen angefangenen Nenner —
+    # und seit 04.08. auch nur den entsprechenden Anteil an AfA und
+    # Betriebskosten (`monate`), sonst stünden zwölf Monate Abschreibung gegen
+    # sieben Monate Ertrag.
+    pv_je_jahr: dict[int, float] = {}
+    monate_je_jahr: dict[int, int] = {}
+    for f in fakten:
+        pv_je_jahr[f.jahr] = pv_je_jahr.get(f.jahr, 0.0) + f.erzeugung.pv_kwh
+        monate_je_jahr[f.jahr] = monate_je_jahr.get(f.jahr, 0) + 1
 
     result = []
     for f in fakten:
@@ -315,7 +437,17 @@ async def list_monatsdaten_aggregiert(
         # geliefert. Die PV zählt zusätzlich als vorhanden, sobald die
         # P7-Auflösung einen Wert ergibt (auch ohne eigene Modul-Zeile, z. B.
         # aus dem Anlagen-Aggregat).
-        hat_pv_imd = "balkonkraftwerk" in typen or f.erzeugung.pv_module_kwh is not None
+        # Feldgruppen, die aus der lokalen Tagesebene stammen (N-121). Sie
+        # zählen für die „hat etwas beigetragen?"-Weichen genauso wie eine
+        # IMD-Zeile — sonst käme ein belegter Wert als `None` heraus, und die
+        # Sicht zeichnete wieder nichts.
+        aus_tagen = f.meta.tageswert_gruppen
+        hat_pv_imd = (
+            "balkonkraftwerk" in typen
+            or f.erzeugung.pv_module_kwh is not None
+            or TAGESWERT_PV in aus_tagen
+            or TAGESWERT_BKW in aus_tagen
+        )
         # ALTBESTAND (N-28), bewusst so belassen: die BKW-eigenen Akku-Felder
         # zählen hier in dieselbe anlagenweite Speicher-Summe wie ein echter
         # Speicher, während `monats_fakten.SpeicherFakten` sie getrennt hält.
@@ -325,7 +457,11 @@ async def list_monatsdaten_aggregiert(
         # der Anwender zu bewegen, die noch auf dem alten Weg pflegen; sie
         # bekommen stattdessen den Migrationshinweis des Daten-Checkers
         # (`daten_checker/stammdaten.py::_check_bkw_akku_erfassungsweg`).
-        hat_speicher_imd = "speicher" in typen or "balkonkraftwerk" in typen
+        hat_speicher_imd = (
+            "speicher" in typen
+            or "balkonkraftwerk" in typen
+            or TAGESWERT_SPEICHER in aus_tagen
+        )
         speicher_ladung = f.speicher.ladung_kwh + f.bkw.speicher_ladung_kwh
         speicher_entladung = f.speicher.entladung_kwh + f.bkw.speicher_entladung_kwh
 
@@ -353,6 +489,34 @@ async def list_monatsdaten_aggregiert(
         hat_inv_pv = f.erzeugung.pv_kwh > 0
         hat_inv_speicher = speicher_ladung > 0 or speicher_entladung > 0
         hat_legacy = (hat_legacy_pv and not hat_inv_pv) or (hat_legacy_speicher and not hat_inv_speicher)
+
+        # ── Finanzen dieses Monats über den SoT (N-22) ───────────────────────
+        # `berechne_finanz_aggregat` über EINE Zeile: derselbe Weg, den der
+        # Tages-Pfad derselben Tabelle längst geht (`tage_werte.py`).
+        finanz_zeile = await baue_finanz_zeile(
+            db, anlage_id, finanz_zeile_eingabe(f), tarif_cache=tarif_cache
+        )
+        finanz = berechne_finanz_aggregat([finanz_zeile])
+        netzbezug_kosten = berechne_netzbezug_kosten(
+            netzbezug, f.tarif.netzbezug_preis_cent, f.tarif.grundpreis_euro_monat
+        )
+        ust_eigenverbrauch = (
+            ust_eigenverbrauch_fuer_anlage(
+                anlage_obj,
+                jahresanteile=[UstJahresanteil(
+                    jahr=f.jahr,
+                    eigenverbrauch_kwh=finanz.eigenverbrauch_kwh,
+                    pv_kwh=pv_je_jahr.get(f.jahr, 0.0),
+                    monate=monate_je_jahr.get(f.jahr, 12),
+                )],
+                bemessungsgrundlage_euro=ust_bemessungsgrundlage_euro,
+                betriebskosten_jahr_euro=betriebskosten_jahr_euro,
+            )
+            if anlage_obj is not None else 0.0
+        )
+        # `netto_ertrag_euro` des Aggregats ist die naive Summe der vier
+        # Komponenten (Sonstige = 0, die kommen aus der Komponenten-Zeitreihe).
+        netto_ertrag = finanz.netto_ertrag_euro - ust_eigenverbrauch
 
         result.append(AggregierteMonatsdatenResponse(
             # `md is None` ⇒ Monat ohne Zählerzeile (nur mit
@@ -418,7 +582,17 @@ async def list_monatsdaten_aggregiert(
             einspeisung_neg_preis_kwh=(
                 round(f.eeg.neg_preis_kwh, 1) if f.eeg.neg_preis_kwh is not None else None
             ),
+            einspeise_erloes_euro=round(finanz.einspeise_erloes_euro, 2),
+            einspeise_nicht_verguetet_euro=round(finanz.nicht_vergueteter_erloes_euro, 2),
+            ev_ersparnis_euro=round(finanz.ev_ersparnis_euro, 2),
+            bkw_ersparnis_euro=round(finanz.bkw_ersparnis_euro, 2),
+            ust_eigenverbrauch_euro=round(ust_eigenverbrauch, 2),
+            netzbezug_kosten_euro=round(netzbezug_kosten, 2),
+            netto_ertrag_euro=round(netto_ertrag, 2),
+            netto_bilanz_euro=round(netto_ertrag - netzbezug_kosten, 2),
+            netzbezug_preis_cent=round(f.tarif.netzbezug_preis_cent, 2),
             hat_legacy_daten=hat_legacy,
+            aus_tageswerten=sorted(aus_tagen) or None,
         ))
 
     return result
@@ -642,6 +816,13 @@ async def _save_investitionen_monatsdaten(
     Investitions-Payload an, ist aber **kein** Messwert und landet deshalb in
     der gleichnamigen Spalte statt in `verbrauch_daten` — dort lesen
     Aggregatoren, CSV-Export und MQTT mit.
+
+    Sonderfall `abgeleitet_felder` (#352): gleiches Muster, ein Dict
+    ``{feld: ABGELEITET_*}``. Es meldet, welche der mitgeschickten Werte der
+    **zerlegte Anlagen-Gesamtwert** aus Connector oder Cloud-Import sind statt
+    einer Gerätemessung. Die Marke landet in der Provenance des jeweiligen
+    Sub-Keys, nicht in `verbrauch_daten` — der gespeicherte Wert selbst bleibt
+    unverändert, nur seine Herkunft ist eine andere.
     """
     for inv_id_str, verbrauch_daten in investitionen_daten.items():
         try:
@@ -664,12 +845,16 @@ async def _save_investitionen_monatsdaten(
         existing = existing_result.scalar_one_or_none()
         sub_payload = dict(verbrauch_daten or {})
         geprueft_gegen = sub_payload.pop("geprueft_gegen", None)
+        abgeleitet_felder = gepruefte_ableitungen(
+            sub_payload.pop("abgeleitet_felder", None)
+        )
 
         if existing:
             for sub_key, value in sub_payload.items():
                 await write_json_subkey_with_provenance(
                     db, existing, "verbrauch_daten", sub_key, value,
                     source="manual:form", writer=_MANUAL_WRITER,
+                    abgeleitet=abgeleitet_felder.get(sub_key),
                 )
             if geprueft_gegen is not None:
                 existing.geprueft_gegen = geprueft_gegen
@@ -688,6 +873,7 @@ async def _save_investitionen_monatsdaten(
                 seed_provenance(
                     imd, source="manual:form", writer=_MANUAL_WRITER,
                     json_subkeys={"verbrauch_daten": list(sub_payload.keys())},
+                    abgeleitet_je_subkey=abgeleitet_felder,
                 )
 
     await db.flush()

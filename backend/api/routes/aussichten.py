@@ -8,6 +8,7 @@ Prognosen und Vorhersagen für PV-Erträge:
 """
 
 import logging
+from collections import defaultdict
 from datetime import datetime
 from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -31,8 +32,10 @@ from backend.api.routes.strompreise import (
 from backend.core.berechnungen import (
     DienstlicheLadungZeile,
     FinanzMonatsZeile,
+    berechne_amortisations_fortschritt,
     berechne_dienstliche_ladekosten,
     berechne_finanz_aggregat,
+    relevante_kosten_aus_investitionen,
     alter_wirkungsgrad,
     berechne_wp_alternativkosten_ersparnis,
     eigenverbrauchsquote_prozent,
@@ -42,7 +45,11 @@ from backend.core.berechnungen import (
 )
 from backend.services.finanz_zeilen import baue_finanz_zeile
 from backend.services.monats_fakten import finanz_zeile_eingabe, lade_monats_fakten
-from backend.core.calculations import ust_eigenverbrauch_fuer_anlage
+from backend.core.berechnungen.ust_eigenverbrauch import (
+    UstJahresanteil,
+    bemessungsgrundlage_aus_investitionen,
+    ust_eigenverbrauch_fuer_anlage,
+)
 from backend.core.field_definitions import get_wp_strom_kwh
 from backend.core.wirtschaftlichkeit_defaults import (
     EINSPEISEVERGUETUNG_DEFAULT_CENT,
@@ -1086,49 +1093,48 @@ async def get_finanz_prognose(
     # =====================================================================
     # INVESTITIONEN SUMMIEREN (mit Alternativkosten-Berechnung)
     # =====================================================================
-    # Für ROI werden MEHRKOSTEN gegenüber Alternativen berechnet:
-    # - PV-System: volle Kosten (keine Alternative)
-    # - Wärmepumpe: Mehrkosten vs. Gasheizung
-    # - E-Auto: Mehrkosten vs. Verbrenner
-    # - Sonstiges: volle Kosten
+    # Relevante Kosten = MEHRKOSTEN gegenüber der Alternative, je Position
+    # geklemmt — über den Layer-SoT (ADR-001), dieselbe Zahl wie USt-Bemessung
+    # (N-129/N-130) und ROI-Sicht.
+    #
+    # N-137/N-134: Hier stand bis 04.08. eine **Hybrid-Summe** — PV-System voll
+    # + WP-/eAuto-Mehrkosten + Sonstiges voll —, und ihre Mehrkosten kamen aus
+    # `inv.parameter["alternativ_kosten_euro"]`. Dieser Schlüssel hat baumweit
+    # KEINEN Schreiber (gemessen): kein Formular, kein Wizard, kein Import setzt
+    # ihn. Gepflegt wird die Spalte `anschaffungskosten_alternativ`, die der
+    # Daten-Checker mit WARNING einfordert („werden für ROI-Berechnung
+    # benötigt") — die Summe fiel also immer auf die Festannahmen 8.000/35.000 €
+    # zurück und ignorierte genau das Feld, nach dem eedc fragt. Dieselbe
+    # Hybrid-Summe stand ein zweites Mal in `cockpit/uebersicht.py`.
+    #
+    # Sichtbare Folge: keine. Die Summe erreichte über diesen Endpoint keine
+    # Oberfläche (kein `.tsx` las `investition_gesamt_euro`) — sie war der
+    # Nenner des Amortisations-Fortschritts, den es am Bildschirm nicht gab.
+    # Mit der neuen Fortschritts-Kachel in Auswertungen → ROI wird sie sichtbar,
+    # deshalb wird sie jetzt richtig.
+    investition_gesamt = relevante_kosten_aus_investitionen(alle_investitionen)
 
+    # Aufschlüsselung für die Response — dieselbe Klemmung je Position, nur nach
+    # Typ gruppiert. `investition_pv_system` und `investition_sonstige` sind
+    # dort, wo keine Alternative gepflegt ist, weiterhin die Vollkosten; das ist
+    # keine Sonderregel, sondern `max(0, gesamt − 0)`.
     PV_RELEVANTE_TYPEN = [
         "pv-module", "wechselrichter", "speicher", "wallbox", "balkonkraftwerk"
     ]
-
     investition_pv_system = 0.0
     investition_wp_mehrkosten = 0.0
     investition_eauto_mehrkosten = 0.0
     investition_sonstige = 0.0
-
     for inv in alle_investitionen:
-        kosten = inv.anschaffungskosten_gesamt or 0
+        relevant = relevante_kosten_aus_investitionen([inv])
         if inv.typ in PV_RELEVANTE_TYPEN:
-            investition_pv_system += kosten
+            investition_pv_system += relevant
         elif inv.typ == "waermepumpe":
-            # Mehrkosten WP vs. Gasheizung (ca. 8.000-10.000€)
-            # Kann über Parameter konfiguriert werden
-            alternativ_kosten = 8000.0
-            if inv.parameter:
-                alternativ_kosten = inv.parameter.get(PARAM_WAERMEPUMPE["ALTERNATIV_KOSTEN_EURO"], 8000.0)
-            investition_wp_mehrkosten += max(0, kosten - alternativ_kosten)
+            investition_wp_mehrkosten += relevant
         elif inv.typ == "e-auto":
-            # Mehrkosten E-Auto vs. Verbrenner
-            # Kann über Parameter konfiguriert werden
-            alternativ_kosten = 35000.0  # Default: vergleichbarer Verbrenner
-            if inv.parameter:
-                alternativ_kosten = inv.parameter.get(PARAM_E_AUTO["ALTERNATIV_KOSTEN_EURO"], 35000.0)
-            investition_eauto_mehrkosten += max(0, kosten - alternativ_kosten)
+            investition_eauto_mehrkosten += relevant
         else:
-            investition_sonstige += kosten
-
-    # Gesamtinvestition = PV-System + Mehrkosten für WP/E-Auto + Sonstiges
-    investition_gesamt = (
-        investition_pv_system +
-        investition_wp_mehrkosten +
-        investition_eauto_mehrkosten +
-        investition_sonstige
-    )
+            investition_sonstige += relevant
 
     # =====================================================================
     # ALTERNATIVKOSTEN-PARAMETER LADEN
@@ -1222,12 +1228,18 @@ async def get_finanz_prognose(
     # Erzeuger bleibt das Verhalten unverändert.
     _tarif_cache: dict[date, dict] = {}
     finanz_zeilen: list[FinanzMonatsZeile] = []
+    # Dieselben Zeilen je Kalenderjahr — die USt rechnet je Jahr (N-130), und
+    # `eigenverbrauch_kwh` des Aggregats ist die Summe der Monatswerte, das
+    # Zerlegen ist also exakt.
+    finanz_zeilen_je_jahr: dict[int, list[FinanzMonatsZeile]] = defaultdict(list)
     for f in fakten:
         if not f.meta.hat_zaehlerzeile or not f.meta.erzeuger_aktiv:
             continue
-        finanz_zeilen.append(await baue_finanz_zeile(
+        _zeile = await baue_finanz_zeile(
             db, anlage_id, finanz_zeile_eingabe(f), tarif_cache=_tarif_cache
-        ))
+        )
+        finanz_zeilen.append(_zeile)
+        finanz_zeilen_je_jahr[f.jahr].append(_zeile)
 
     async def _tarife_fuer_stichtag(jahr: int, monat: int) -> dict:
         """Kompletter Tarifsatz des Monats (allgemein + WP/Wallbox).
@@ -1381,14 +1393,30 @@ async def get_finanz_prognose(
     # die bisherigen Erträge trugen sie nicht, obwohl der Cockpit-Netto-Ertrag
     # sie abzieht. Bei Regelbesteuerung lagen ROI-Fortschritt und Amortisation
     # damit um den USt-Betrag zu günstig (#326-Inventur, Dimension 2).
+    #
+    # N-130: Der Rückblick geht IMMER über den gesamten bisherigen Zeitraum —
+    # er war damit von der Zeitraum-Kollaps-Klasse durchgehend betroffen, nicht
+    # nur bei gesetztem Filter. `sum(pv_pro_monat.values())` stand als
+    # „Jahres-Erzeugung" gegen eine Ein-Jahres-AfA. N-129: Bemessungsgrundlage
+    # über den Layer-SoT (Mehrkosten) statt der Vollkosten.
+    _pv_je_jahr: dict[int, float] = defaultdict(float)
+    for (_j, _m), _pv in pv_pro_monat.items():
+        _pv_je_jahr[_j] += _pv
     bisherige_ertraege -= ust_eigenverbrauch_fuer_anlage(
         anlage,
-        eigenverbrauch_kwh=_finanz.eigenverbrauch_kwh,
-        investition_gesamt_euro=sum(
-            i.anschaffungskosten_gesamt or 0 for i in alle_investitionen
-        ),
+        jahresanteile=[
+            UstJahresanteil(
+                jahr=_j,
+                eigenverbrauch_kwh=berechne_finanz_aggregat(
+                    finanz_zeilen_je_jahr[_j]
+                ).eigenverbrauch_kwh,
+                pv_kwh=_pv_je_jahr.get(_j, 0.0),
+                monate=len(finanz_zeilen_je_jahr[_j]),
+            )
+            for _j in sorted(finanz_zeilen_je_jahr)
+        ],
+        bemessungsgrundlage_euro=bemessungsgrundlage_aus_investitionen(alle_investitionen),
         betriebskosten_jahr_euro=betriebskosten_ges,
-        pv_erzeugung_jahr_kwh=sum(pv_pro_monat.values()),
     )
 
     # =====================================================================
@@ -1604,13 +1632,20 @@ async def get_finanz_prognose(
     # Gesamter Jahres-Netto-Ertrag inkl. Alternativkosten, BKW, Sonstige und Betriebskosten
     jahres_netto_ertrag = jahres_einspeise_erloes + jahres_ev_ersparnis + jahres_wp_ersparnis + jahres_eauto_km_ersparnis + jahres_bkw_ersparnis + jahres_sonstige_netto - betriebskosten_ges
 
-    # USt auf Eigenverbrauch bei Regelbesteuerung
+    # USt auf Eigenverbrauch bei Regelbesteuerung.
+    # N-130 greift hier NICHT: `jahres_*` sind auf zwölf Monate hochgerechnete
+    # Jahresmengen, kein Zeitraum-Aggregat ⇒ genau EIN Anteil mit `monate=12`.
+    # Geändert hat sich nur die Bemessungsgrundlage (N-129).
     ust_eigenverbrauch = ust_eigenverbrauch_fuer_anlage(
         anlage,
-        eigenverbrauch_kwh=jahres_eigenverbrauch,
-        investition_gesamt_euro=sum(i.anschaffungskosten_gesamt or 0 for i in alle_investitionen),
+        jahresanteile=[UstJahresanteil(
+            jahr=heute.year,
+            eigenverbrauch_kwh=jahres_eigenverbrauch,
+            pv_kwh=jahres_erzeugung,
+            monate=12,
+        )],
+        bemessungsgrundlage_euro=bemessungsgrundlage_aus_investitionen(alle_investitionen),
         betriebskosten_jahr_euro=betriebskosten_ges,
-        pv_erzeugung_jahr_kwh=jahres_erzeugung,
     )
     jahres_netto_ertrag -= ust_eigenverbrauch
 
@@ -1794,17 +1829,20 @@ async def get_finanz_prognose(
     # =====================================================================
     # ROI UND AMORTISATION
     # =====================================================================
-    roi_fortschritt = (bisherige_ertraege / investition_gesamt * 100) if investition_gesamt > 0 else 0
-    amortisation_erreicht = bisherige_ertraege >= investition_gesamt
-
-    amortisation_prognose_jahr = None
-    restlaufzeit_monate = None
-
-    if not amortisation_erreicht and jahres_netto_ertrag > 0 and investition_gesamt > 0:
-        rest_betrag = investition_gesamt - bisherige_ertraege
-        monate_bis_amort = rest_betrag / (jahres_netto_ertrag / 12)
-        restlaufzeit_monate = int(monate_bis_amort)
-        amortisation_prognose_jahr = heute.year + int(monate_bis_amort / 12)
+    # Layer-SoT (ADR-001) statt vier Zeilen Arithmetik an dieser Stelle — dieselbe
+    # Formel speist seit N-137 die Kachel „Amortisations-Fortschritt" in
+    # Auswertungen → ROI. Der Fortschritt ist reine MESSUNG (kumulierte Erträge
+    # ÷ relevante Kosten); `jahres_netto_ertrag` geht nur in die Restlaufzeit ein.
+    _amort = berechne_amortisations_fortschritt(
+        relevante_kosten_euro=investition_gesamt,
+        bisherige_ertraege_euro=bisherige_ertraege,
+        jahres_netto_ertrag_euro=jahres_netto_ertrag,
+        aktuelles_jahr=heute.year,
+    )
+    roi_fortschritt = _amort.fortschritt_prozent
+    amortisation_erreicht = _amort.erreicht
+    amortisation_prognose_jahr = _amort.prognose_jahr
+    restlaufzeit_monate = _amort.rest_monate
 
     # =====================================================================
     # RESPONSE

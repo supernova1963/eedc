@@ -18,6 +18,8 @@ from backend.core.investition_kennwerte import (
     get_erzeuger_kwp,
     get_pv_kwp,
     get_speicher_kapazitaet_kwh,
+    get_speicher_kopplung,
+    get_speicher_kopplung_gepflegt,
     get_speicher_nutzbare_kapazitaet_kwh,
 )
 from backend.api.deps import get_db
@@ -43,6 +45,7 @@ from backend.core.investition_parameter import (
     PARAM_SPEICHER_DEFAULTS,
     PARAM_WAERMEPUMPE,
     PARAM_WAERMEPUMPE_DEFAULTS,
+    SPEICHER_KOPPLUNG_DC,
     ist_luft_luft_waermepumpe,
 )
 from backend.core.wirtschaftlichkeit_defaults import EINSPEISEVERGUETUNG_DEFAULT_CENT
@@ -62,7 +65,11 @@ from backend.services.eauto_wirtschaftlichkeit import (
 )
 from backend.core.calculations import CO2_FAKTOR_STROM_KG_KWH
 from backend.services.monats_fakten import lade_monats_fakten
-from backend.core.berechnungen import PV_ERZEUGER_TYPEN, einspeise_erloes_euro
+from backend.core.berechnungen import (
+    PV_ERZEUGER_TYPEN,
+    einspeise_erloes_euro,
+    relevante_kosten_aus_investitionen,
+)
 
 
 # ============================================================================
@@ -675,6 +682,10 @@ async def get_roi_dashboard(
         berechne_eauto_einsparung,
         berechne_waermepumpe_einsparung,
         berechne_roi,
+    )
+    from backend.core.berechnungen.ust_eigenverbrauch import (
+        UstJahresanteil,
+        bemessungsgrundlage_aus_investitionen,
         berechne_ust_eigenverbrauch,
     )
     from sqlalchemy import func
@@ -955,6 +966,18 @@ async def get_roi_dashboard(
     # Phase 3: Berechne ROI für PV-Systeme (aggregiert)
     # ==========================================================================
 
+    def _relevante_kosten(*invs) -> float:
+        """Relevante Kosten über den Layer-SoT (ADR-001) — je Position geklemmt.
+
+        N-137: Hier stand `kosten − alternativ` an sechs Stellen, ohne Klemmung.
+        Eine Position, deren gepflegte Alternative teurer war als sie selbst,
+        senkte damit die relevanten Kosten der ganzen Anlage — und der
+        Amortisations-Fortschritt, der in derselben Sicht daneben steht, rechnet
+        über `relevante_kosten_aus_investitionen` mit `max(0, …)`. Zwei Nenner in
+        einer Sicht sind genau das, was dieses Paket beseitigt.
+        """
+        return relevante_kosten_aus_investitionen(invs)
+
     berechnungen: list[ROIBerechnung] = []
     gesamt_investition = 0.0
     gesamt_relevante = 0.0
@@ -1054,6 +1077,10 @@ async def get_roi_dashboard(
         system_kosten = (wr.anschaffungskosten_gesamt or 0)
         system_alternativ = (wr.anschaffungskosten_alternativ or 0)
         system_betriebskosten = (wr.betriebskosten_jahr or 0)
+        # Die beteiligten Positionen wandern mit, damit die relevanten Kosten
+        # des Bündels je Position geklemmt werden (siehe `_relevante_kosten`)
+        # statt als `Σ gesamt − Σ alternativ`.
+        system_invs = [wr]
 
         komponenten: list[ROIKomponente] = []
 
@@ -1066,7 +1093,7 @@ async def get_roi_dashboard(
             typ=wr.typ,
             kosten=wr_kosten,
             kosten_alternativ=wr_alternativ,
-            relevante_kosten=wr_kosten - wr_alternativ,
+            relevante_kosten=_relevante_kosten(wr),
             einsparung=None,  # WR hat keine eigene Einsparung
             co2_einsparung_kg=None,
             detail={'hinweis': 'Wechselrichter - Einsparung über PV-Module'}
@@ -1083,6 +1110,7 @@ async def get_roi_dashboard(
             system_kosten += inv_kosten
             system_alternativ += inv_alternativ
             system_betriebskosten += (inv.betriebskosten_jahr or 0)
+            system_invs.append(inv)
 
             # Einsparung proportional nach kWp.
             # `anteil` vor dem Zweig setzen: Zeile 1066 liest es, sobald
@@ -1107,7 +1135,7 @@ async def get_roi_dashboard(
                 typ=inv.typ,
                 kosten=inv_kosten,
                 kosten_alternativ=inv_alternativ,
-                relevante_kosten=inv_kosten - inv_alternativ,
+                relevante_kosten=_relevante_kosten(inv),
                 einsparung=round(inv_einsparung, 2),
                 co2_einsparung_kg=round(inv_co2, 1),
                 detail={
@@ -1123,6 +1151,7 @@ async def get_roi_dashboard(
             system_kosten += inv_kosten
             system_alternativ += inv_alternativ
             system_betriebskosten += (inv.betriebskosten_jahr or 0)
+            system_invs.append(inv)
 
             params = inv.parameter or {}
             # N127: BRUTTO-Kapazität über den SoT-Helper, ohne Default. Hier
@@ -1184,7 +1213,16 @@ async def get_roi_dashboard(
             system_einsparung += inv_einsparung or 0
             system_co2 += inv_co2 or 0
 
-            komp_detail: dict[str, Any] = {'kapazitaet_kwh': kapazitaet, 'dc_gekoppelt': True}
+            # #351: `dc_gekoppelt` stand hier hart auf `True` — eine Behauptung
+            # über eine Eigenschaft, die eedc nie erhoben hatte. Sie kommt jetzt
+            # aus dem Feld (Vorbelegung: zugeordnet ⇒ DC), die Gruppierung
+            # darüber bleibt unverändert an der Zuordnung.
+            komp_detail: dict[str, Any] = {
+                'kapazitaet_kwh': kapazitaet,
+                'dc_gekoppelt': get_speicher_kopplung(inv) == SPEICHER_KOPPLUNG_DC,
+                'kopplung': get_speicher_kopplung(inv),
+                'kopplung_gepflegt': get_speicher_kopplung_gepflegt(inv) is not None,
+            }
             if kapazitaet_fehlt:
                 komp_detail['hinweis'] = (
                     'Keine Kapazität gepflegt — ohne sie lässt sich die Ersparnis '
@@ -1226,7 +1264,7 @@ async def get_roi_dashboard(
                 typ=inv.typ,
                 kosten=inv_kosten,
                 kosten_alternativ=inv_alternativ,
-                relevante_kosten=inv_kosten - inv_alternativ,
+                relevante_kosten=_relevante_kosten(inv),
                 einsparung=round(inv_einsparung, 2) if inv_einsparung is not None else None,
                 co2_einsparung_kg=round(inv_co2, 1) if inv_co2 is not None else None,
                 detail=komp_detail,
@@ -1239,7 +1277,7 @@ async def get_roi_dashboard(
             [wr.id, *(m.id for m in pv_module), *(s.id for s in dc_speicher)]
         )
         system_einsparung += system_sonstige
-        system_relevante = system_kosten - system_alternativ
+        system_relevante = _relevante_kosten(*system_invs)
         system_netto_einsparung = system_einsparung - system_betriebskosten
         roi_result = berechne_roi(system_kosten, system_einsparung, system_alternativ, system_betriebskosten)
 
@@ -1275,7 +1313,7 @@ async def get_roi_dashboard(
     for inv in orphan_pv_module:
         kosten = inv.anschaffungskosten_gesamt or 0
         alternativ = inv.anschaffungskosten_alternativ or 0
-        relevante = kosten - alternativ
+        relevante = _relevante_kosten(inv)
 
         # Einsparung proportional nach kWp.
         # `anteil` wird VOR dem Zweig gesetzt: Zeile 1231 liest es, sobald
@@ -1332,16 +1370,25 @@ async def get_roi_dashboard(
         params = inv.parameter or {}
         kosten = inv.anschaffungskosten_gesamt or 0
         alternativ = inv.anschaffungskosten_alternativ or 0
-        relevante = kosten - alternativ
+        relevante = _relevante_kosten(inv)
         jahres_einsparung = 0.0
         co2_einsparung = 0.0
         detail: dict[str, Any] = {}
 
         if inv.typ == InvestitionTyp.SPEICHER.value:
-            # AC-gekoppelter Speicher — Bug #5 v3.25.0 fix wie oben (DC-Speicher)
+            # Eigenständig geführter Speicher (keine WR-Zuordnung) — Bug #5
+            # v3.25.0 fix wie oben. #351: dieser Zweig hieß „AC-gekoppelter
+            # Speicher" und nannte das auch im ausgelieferten `hinweis`; das war
+            # eine Folgerung aus der Zuordnung, kein erhobener Wert. Die Kopplung
+            # steht jetzt im Feld, der Zweig bleibt der der **Rechnung**.
             # N127 + A31-2: Kapazität über die SoT-Helper, ohne Default — s. den
             # DC-Pfad oben. Der Prognose-Modus rechnet NETTO; hier gibt es kein
             # Detail-Feld mit der Brutto-Zahl, also wird sie auch nicht gelesen.
+            kopplung = get_speicher_kopplung(inv)
+            kopplung_felder: dict[str, Any] = {
+                'kopplung': kopplung,
+                'kopplung_gepflegt': get_speicher_kopplung_gepflegt(inv) is not None,
+            }
             kapazitaet_netto = get_speicher_nutzbare_kapazitaet_kwh(inv)
             wirkungsgrad = params.get(PARAM_SPEICHER["WIRKUNGSGRAD_PROZENT"], PARAM_SPEICHER_DEFAULTS["wirkungsgrad_prozent"])
             nutzt_arbitrage = params.get(PARAM_SPEICHER["ARBITRAGE_FAEHIG"], PARAM_SPEICHER_DEFAULTS["arbitrage_faehig"])
@@ -1382,14 +1429,24 @@ async def get_roi_dashboard(
                 # Gesamtsumme darf keinen Beitrag bekommen. Dass es ein
                 # fehlender Wert und keine Null-Ersparnis ist, sagt `detail`
                 # (P4); `ROIBerechnung.jahres_einsparung` ist nicht optional.
+                # N-89: `kapazitaet_fehlt` allein hat das der ROI-Tabelle NICHT
+                # gesagt — sie liest ausschließlich `nicht_bewertet` (der
+                # Mechanismus aus N-87). Die Zeile stand deshalb mit „0 €" da,
+                # also mit der Behauptung „spart nichts", statt mit „unbekannt".
+                # `kapazitaet_fehlt` bleibt: es ist die speicherspezifische
+                # URSACHE und wird vom Komponenten-Hub gelesen
+                # (`v4/komponentenAdapter.tsx`), `nicht_bewertet` die
+                # anzeigeseitige Folge.
                 detail = {
                     'hinweis': (
-                        'AC-gekoppelter Speicher — keine Kapazität gepflegt, '
-                        'ohne sie lässt sich die Ersparnis nicht abschätzen. '
-                        'Kapazität in der Investitionspflege nachtragen.'
+                        'Keine Kapazität gepflegt — ohne sie lässt sich die '
+                        'Ersparnis nicht abschätzen. Kapazität in der '
+                        'Investitionspflege nachtragen.'
                     ),
                     'kapazitaet_fehlt': True,
+                    'nicht_bewertet': True,
                     'modus': 'prognose',
+                    **kopplung_felder,
                 }
             else:
                 jahres_einsparung = result.jahres_einsparung_euro
@@ -1398,8 +1455,9 @@ async def get_roi_dashboard(
                     'nutzbare_speicherung_kwh': result.nutzbare_speicherung_kwh,
                     'pv_anteil_euro': result.pv_anteil_euro,
                     'arbitrage_anteil_euro': result.arbitrage_anteil_euro,
-                    'hinweis': 'AC-gekoppelter Speicher',
+                    'hinweis': 'Eigenständig gerechneter Speicher',
                     'modus': 'ist' if ist_aggregat is not None else 'prognose',
+                    **kopplung_felder,
                 }
             if ist_aggregat is not None:
                 detail.update({
@@ -1657,13 +1715,24 @@ async def get_roi_dashboard(
         )
         alle_inv = alle_inv_result.scalars().all()
         betriebskosten_ges = sum(i.betriebskosten_jahr or 0 for i in alle_inv)
-        alle_kosten = sum(i.anschaffungskosten_gesamt or 0 for i in alle_inv)
         _ust = getattr(anlage, 'ust_satz_prozent', None)
+        # N-130 greift hier NICHT: `*_kwh_jahr` ist bereits eine auf zwölf
+        # Monate hochgerechnete Jahresmenge (`faktor` weiter oben), kein
+        # Zeitraum-Aggregat — deshalb genau EIN Jahresanteil mit `monate=12`.
+        # Geändert hat sich nur die Bemessungsgrundlage (N-129: Mehrkosten
+        # statt Vollkosten).
         ust_abzug = berechne_ust_eigenverbrauch(
-            eigenverbrauch_kwh=pv_detail.get('eigenverbrauch_kwh_jahr', 0),
-            investition_gesamt_euro=alle_kosten,
+            # `jahr` ist hier nur ein Etikett für die Diagnose. `isinstance`
+            # statt `jahr or …`, weil `= Query(None, …)` beim direkten
+            # Funktionsaufruf das truthy `Query`-Objekt ablegt (N-111).
+            [UstJahresanteil(
+                jahr=jahr if isinstance(jahr, int) else date.today().year,
+                eigenverbrauch_kwh=pv_detail.get('eigenverbrauch_kwh_jahr', 0),
+                pv_kwh=pv_detail.get('erzeugung_kwh_jahr', 0),
+                monate=12,
+            )],
+            bemessungsgrundlage_euro=bemessungsgrundlage_aus_investitionen(alle_inv),
             betriebskosten_jahr_euro=betriebskosten_ges,
-            pv_erzeugung_jahr_kwh=pv_detail.get('erzeugung_kwh_jahr', 0),
             ust_satz_prozent=_ust if _ust is not None else 19.0,
         )
         gesamt_einsparung -= ust_abzug

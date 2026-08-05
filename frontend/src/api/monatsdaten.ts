@@ -120,8 +120,32 @@ export interface AggregierteMonatsdaten {
   // §51-Abzug-Volumen (kWh bei neg. Börsenpreis eingespeist); null = Anlage
   // unterliegt nicht §51 (R17/Verlauf).
   einspeisung_neg_preis_kwh: number | null
+  // ── Finanzen je Monat (N-22) ────────────────────────────────────────────
+  // Fertig gerechnet aus dem Backend-SoT (`baue_finanz_zeile` +
+  // `berechne_finanz_aggregat`) — derselbe Weg, den die Tages-Granularität
+  // derselben Tabelle längst geht. Der Client rechnet hier nichts nach;
+  // `createMonatsZeitreihe` tat es bis 2026-08-04 und wich dabei ab.
+  einspeise_erloes_euro: number
+  // §51-Diagnose: entgangener Erlös. Der Erlös oben ist bereits gekürzt.
+  einspeise_nicht_verguetet_euro: number
+  ev_ersparnis_euro: number
+  // Nur für BKW-Monate ohne erfasste Erzeugung besetzt (Datenlücke, ADR-002/P9).
+  bkw_ersparnis_euro: number
+  // Bereits in `netto_ertrag_euro` abgezogen; 0 außerhalb der Regelbesteuerung.
+  ust_eigenverbrauch_euro: number
+  // Arbeitspreis × kWh + Grundpreis des Monats.
+  netzbezug_kosten_euro: number
+  // Erlös + EV- + BKW-Ersparnis − USt. OHNE „Sonstige Erträge & Ausgaben".
+  netto_ertrag_euro: number
+  netto_bilanz_euro: number
+  // Effektiver Arbeitspreis des Monats (Flex-Ø vor Stammdaten-Tarif, P8).
+  netzbezug_preis_cent: number
   // Legacy-Marker
   hat_legacy_daten: boolean
+  // Feldgruppen, die nicht aus der Datenbank stammen, sondern aus der lokalen
+  // Tagesebene (`inklNurTageswerte`, N-121) — z. B. `['pv', 'zaehler']`.
+  // null/undefined = alles steht so in der Datenbank.
+  aus_tageswerten?: string[] | null
 }
 
 export const monatsdatenApi = {
@@ -172,15 +196,22 @@ export const monatsdatenApi = {
    * noch keinen Monatsabschluss haben (`id: null`). Für **Zeitreihen** gedacht
    * (Cockpit → Jahr, Fund N-68) — nicht für Datensatz-Listen wie
    * *Auswertungen → Tabelle*, wo eine nicht bearbeitbare Zeile stünde.
+   *
+   * `inklNurTageswerte` geht einen Schritt weiter und nimmt Monate mit, die
+   * **auch** keine Komponenten-Zeile haben und nur in der lokalen Tagesebene
+   * existieren (Fund N-121). Das betrifft immer den **laufenden** Monat — einen
+   * automatischen Monatsabschluss gibt es nicht. Die betroffenen Größen sind in
+   * `aus_tageswerten` benannt.
    */
   async listAggregiert(
     anlageId: number,
     jahr?: number,
-    opts?: { inklOhneZaehlerzeile?: boolean },
+    opts?: { inklOhneZaehlerzeile?: boolean; inklNurTageswerte?: boolean },
   ): Promise<AggregierteMonatsdaten[]> {
     const params = new URLSearchParams()
     if (jahr) params.append('jahr', jahr.toString())
     if (opts?.inklOhneZaehlerzeile) params.append('inkl_ohne_zaehlerzeile', 'true')
+    if (opts?.inklNurTageswerte) params.append('inkl_nur_tageswerte', 'true')
     const query = params.toString()
     return api.get<AggregierteMonatsdaten[]>(`/monatsdaten/aggregiert/${anlageId}${query ? '?' + query : ''}`)
   },

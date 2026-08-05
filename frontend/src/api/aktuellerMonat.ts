@@ -82,6 +82,16 @@ export interface AktuellerMonatResponse {
   speicher_ladung_netz_kosten_euro: number | null
   speicher_ladung_netz_preis_cent: number | null
   speicher_ladung_netz_preis_quelle: string | null
+  /** #358 Phase 1 — Auslastung des Zeitraums und ihre additive Basis
+   *  (Kapazität × Tage; im laufenden Monat nur die abgelaufenen Tage).
+   *  Über mehrere Monate wird NICHT der Prozentwert gemittelt, sondern
+   *  Entladung und Basis summiert und einmal geteilt — ein Februar wiegt
+   *  weniger als ein Juli. */
+  speicher_auslastungs_basis_kwh: number | null
+  speicher_auslastung_prozent: number | null
+  /** Σ Speicher-Ersparnis des Zeitraums (Spread-SoT) — dieselbe Zahl wie in
+   *  den T-Konto-Zeilen, dort aufgesammelt statt zweitgerechnet. */
+  speicher_ersparnis_euro: number | null
 
   // Komponenten — Wärmepumpe
   wp_strom_kwh: number | null
@@ -188,7 +198,12 @@ export interface AktuellerMonatResponse {
     gesamtnettoertrag_euro?: number
     netzbezug_durchschnittspreis_cent?: number
   } | null
+  // PVGIS-SOLL. Im LAUFENDEN Monat nur der Anteil der abgelaufenen Tage (N-69) —
+  // `soll_pv_tage < soll_pv_tage_gesamt` heißt „anteilig". Wer die Zahl anzeigt,
+  // nimmt `lib/sollErfuellung.ts`, nicht die Felder direkt.
   soll_pv_kwh: number | null
+  soll_pv_tage?: number | null
+  soll_pv_tage_gesamt?: number | null
 
   // Grundlast (Nacht-Sockel; R12-1 ersetzt PVGIS-SOLL/IST). grundlast_kwh additiv
   // → Cockpit/Jahr (JahrAggregat) summiert die Monate.

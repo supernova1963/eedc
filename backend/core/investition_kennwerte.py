@@ -32,6 +32,10 @@ from backend.core.investition_parameter import (
     PARAM_BALKONKRAFTWERK,
     PARAM_PV_MODULE,
     PARAM_SPEICHER,
+    PARAM_WECHSELRICHTER,
+    SPEICHER_KOPPLUNG_AC,
+    SPEICHER_KOPPLUNG_DC,
+    SPEICHER_KOPPLUNG_WERTE,
 )
 from backend.models.investition import InvestitionTyp
 
@@ -49,6 +53,16 @@ KWP_PARAM_KEYS: Final[tuple[str, ...]] = (
 # doppelte Leistung ausgewiesen (derselbe Fehlertyp wie ein 35°-Neigungs-
 # Default, der „fehlt" nicht von „gepflegt" unterscheiden kann).
 ANZAHL_LESE_DEFAULT: Final[int] = 1
+
+# Lese-Reihenfolge der AC-Grenze eines Wechselrichters im `parameter`-JSON.
+# `leistung_ac_kw` steht in `LEGACY_PARAM_KEYS` als „nur im toten Schema" — der
+# Daten-Checker liest ihn trotzdem (`stammdaten.py`, WR-Zweig), also gibt es
+# Bestände damit. Wer hier nur den kanonischen Schlüssel läse, kappte bei genau
+# diesen Anlagen nicht und meldete gleichzeitig „Leistung gepflegt".
+AC_GRENZE_PARAM_KEYS: Final[tuple[str, ...]] = (
+    PARAM_WECHSELRICHTER["MAX_LEISTUNG_KW"],
+    "leistung_ac_kw",
+)
 
 
 def get_pv_kwp(inv: Any) -> float:
@@ -134,33 +148,73 @@ def get_erzeuger_kwp(inv: Any) -> float:
 
 
 def get_wr_grenze_kw(inv: Any) -> Optional[float]:
-    """AC-Grenze des Wechselrichters in kW — oder `None`, wenn keine gepflegt ist.
+    """AC-Grenze in kW, die diese Investition **selbst** trägt — sonst `None`.
 
     `None` heißt „nicht begrenzen", **nicht** „0". Ein Default wäre hier die
     Klasse, gegen die ADR-002 geschrieben ist: er machte aus „nicht gepflegt"
     eine Zahl, die wie eine Messung aussieht, und würde still Ertrag wegkappen.
 
-    Heute nur für `balkonkraftwerk` gepflegt (#347): dort ist Überbelegung der
-    Normalfall — 3 × 420 Wp an einem 600-W-Wechselrichter. Für PV-Module
-    existiert dieselbe Physik (#354), aber noch kein Feld; sobald es eines gibt,
-    kommt der Zweig hierher und nicht an die Aufrufstelle.
+    Zwei Typen tragen eine eigene Grenze:
 
-    Die Grenze wirkt **stündlich** (siehe `services/prognose_kanon.py`), nicht
-    als kWp-Deckel: ein 600-W-Wechselrichter begrenzt die Mittagsspitze, nicht
-    den Morgen. Wer die kWp deckelte, kürzte die Randstunden mit — bei starker
-    Überbelegung deutlich daneben.
+    * `balkonkraftwerk` (#347) — Überbelegung ist dort der Normalfall,
+      3 × 420 Wp an einem 600-W-Wechselrichter. Die Grenze steht im eigenen
+      Parameter, das Gerät ist Erzeuger und Wechselrichter in einem.
+    * `wechselrichter` (#354/#367) — dieselbe Physik, nur eine Ebene höher:
+      22 × 440 Wp an einem 7-kW-Gerät. Die Grenze steht seit jeher im Formular
+      („Max. Leistung (kW)"), die Prognose hat sie nur nie gelesen.
+
+    **Ein `pv-module` trägt hier bewusst nichts.** Seine Grenze gehört dem
+    Wechselrichter, dem er zugeordnet ist — und sie gilt für **alle** Strings
+    daran gemeinsam, nicht für jeden einzeln. Wer sie je String anwendete,
+    kappte einen 7-kW-Wechselrichter mit zwei Strings bei 14 kW. Die Zuordnung
+    macht `core/berechnungen/wr_kappung.zuordne_grenzen`; sie ist der einzige
+    Weg, auf dem ein String an eine Grenze kommt.
+
+    Die Grenze wirkt **stündlich** (siehe `services/prognose_kanon.py` und
+    `api/routes/pvgis.py`), nicht als kWp-Deckel: ein 600-W-Wechselrichter
+    begrenzt die Mittagsspitze, nicht den Morgen. Wer die kWp deckelte, kürzte
+    die Randstunden mit — bei starker Überbelegung deutlich daneben.
     """
-    if getattr(inv, "typ", None) != InvestitionTyp.BALKONKRAFTWERK.value:
-        return None
+    typ = getattr(inv, "typ", None)
     params = getattr(inv, "parameter", None) or {}
-    roh = params.get(PARAM_BALKONKRAFTWERK["WECHSELRICHTER_LEISTUNG_W"])
+
+    if typ == InvestitionTyp.BALKONKRAFTWERK.value:
+        return _positiv_oder_none(
+            params.get(PARAM_BALKONKRAFTWERK["WECHSELRICHTER_LEISTUNG_W"]),
+            teiler=1000.0,
+        )
+
+    if typ == InvestitionTyp.WECHSELRICHTER.value:
+        # Reihenfolge wie beim Daten-Checker (`stammdaten.py`, WR-Zweig): der
+        # kanonische Schlüssel zuerst, dann der Legacy-Name aus dem toten
+        # `parameter_schema` — der Checker liest beide, also darf die Prognose
+        # nicht bei einem davon blind sein.
+        for key in AC_GRENZE_PARAM_KEYS:
+            grenze = _positiv_oder_none(params.get(key))
+            if grenze is not None:
+                return grenze
+        # Die Spalte ist ein Mehrzweckfeld und trägt beim Wechselrichter kW (AC)
+        # — dieselbe #229-Lage wie bei der kWp, nur mit vertauschten Rollen:
+        # hier ist das `parameter`-JSON der gepflegte Ort und die Spalte der
+        # Fallback (Setup-Wizard und Import schreiben sie).
+        return _positiv_oder_none(getattr(inv, "leistung_kwp", None))
+
+    return None
+
+
+def _positiv_oder_none(roh: Any, teiler: float = 1.0) -> Optional[float]:
+    """`float(roh) / teiler`, aber nur wenn daraus etwas Positives wird.
+
+    0 und Unfug sind hier gleichbedeutend mit „nicht gepflegt": eine AC-Grenze
+    von 0 kW gibt es nicht, sie würde die ganze Erzeugung wegkappen.
+    """
     if roh is None:
         return None
     try:
-        watt = float(roh)
+        wert = float(roh)
     except (TypeError, ValueError):
         return None
-    return watt / 1000 if watt > 0 else None
+    return wert / teiler if wert > 0 else None
 
 
 def get_speicher_kapazitaet_kwh(inv: Any) -> Optional[float]:
@@ -290,3 +344,51 @@ def _speicher_param_kwh(inv: Any, schluessel: str) -> Optional[float]:
     except (TypeError, ValueError):
         return None
     return wert or None
+
+
+def get_speicher_kopplung_gepflegt(inv: Any) -> Optional[str]:
+    """Die **gepflegte** Kopplung (`"ac"`/`"dc"`) oder `None`, wenn sie fehlt.
+
+    Getrennt vom auflösenden Helper, weil der Unterschied „der Anwender hat es
+    gesagt" gegen „wir leiten es ab" eine eigene Aussage ist: die Anzeige
+    schreibt die Ableitung dazu, das Formular stellt sie auf „Automatisch".
+    Unbekannte Werte gelten als ungepflegt (nicht als Fehler) — ein Altbestand
+    mit Tippfehler soll die Auflösung nicht kippen, sondern in die Ableitung
+    fallen.
+    """
+    params = getattr(inv, "parameter", None) or {}
+    roh = params.get(PARAM_SPEICHER["KOPPLUNG"])
+    if not isinstance(roh, str):
+        return None
+    wert = roh.strip().lower()
+    return wert if wert in SPEICHER_KOPPLUNG_WERTE else None
+
+
+def get_speicher_kopplung(inv: Any) -> str:
+    """Die Kopplung eines Speichers — gepflegt schlägt abgeleitet (#351).
+
+    Bis v4.0.8 war die Kopplung **keine** Eigenschaft, sondern eine Folgerung
+    aus `parent_investition_id`: Speicher am Wechselrichter ⇒ DC, sonst AC. Das
+    ist als *Vorbelegung* richtig und als *Wahrheit* falsch — zwei reale
+    Konstellationen fielen durch (JayJay, Forum v4.0.0):
+
+    * **AC-Speicher am Hybrid-Wechselrichter** — fachlich üblich, wurde
+      zwangsweise als DC geführt, sobald man ihn zuordnete;
+    * **DC-Speicher ohne erfassten Wechselrichter** — wurde als AC geführt.
+
+    Die Zuordnung bleibt die **Struktur**-Information (sie entscheidet, ob die
+    Wirtschaftlichkeit als Teil des PV-Systems gerechnet wird); die Kopplung ist
+    daneben eine eigene Eigenschaft. Deshalb ändert dieser Helper **keine Zahl**:
+    ADR-001-Formeln lesen ihn nicht, `berechne_speicher_einsparung` rechnet für
+    beide Fälle identisch. Was er ändert, ist die *Aussage* — vorher behauptete
+    `dc_gekoppelt=True` bzw. „AC-gekoppelter Speicher" etwas, das nie erhoben
+    worden war.
+    """
+    gepflegt = get_speicher_kopplung_gepflegt(inv)
+    if gepflegt is not None:
+        return gepflegt
+    return (
+        SPEICHER_KOPPLUNG_DC
+        if getattr(inv, "parent_investition_id", None) is not None
+        else SPEICHER_KOPPLUNG_AC
+    )

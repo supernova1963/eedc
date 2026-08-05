@@ -40,6 +40,7 @@ import { baueKomponentenBloecke } from './KomponentenSektionen'
 import { finanzTeaserBlock } from './MonatRahmen'
 import { JahrVerlaufChart, baueJahrChartDaten } from './JahrVerlaufChart'
 import { JahrCo2Chart, baueJahrCo2ChartDaten, co2JahresSumme, CO2_TABELLEN_SPALTEN } from './JahrCo2Chart'
+import { JahrSpeicherTabelle, baueSpeicherZeilen } from './JahrSpeicherTabelle'
 import { verlaufTabellenSpalten } from './verlaufVergleich'
 import { JahresRail, type JahrRailEintrag } from './JahresRail'
 import { JahrStepper } from './JahrStepper'
@@ -68,6 +69,11 @@ interface JahrLadung {
   dVgl: AktuellerMonatResponse
   monate: number[]
   vergleichsMonate: number[]
+  /** Die EINZELNEN Monats-Antworten, aus denen `d` gefaltet wurde (#358). Der
+   *  Speicher-Block zeigt sie als Monatstabelle — dieselbe Quelle wie die
+   *  Kacheln darüber, deshalb kein zusätzlicher Abruf und keine zweite
+   *  Wahrheit. */
+  antworten: AktuellerMonatResponse[]
 }
 
 export default function CockpitJahrV4(props: { anlageId: number | undefined }) {
@@ -95,8 +101,18 @@ function CockpitJahrInner({ anlageId }: { anlageId: number | undefined }) {
   // Lücke, die P-12 (N-65) für die Kopfzahl geschlossen hat, eine Ebene tiefer.
   // Der Default der Route bleibt aus: *Auswertungen → Tabelle* ist eine
   // Datensatz-Liste und darf keine Zeile zeigen, die man nicht bearbeiten kann.
+  //
+  // N-121: dazu die Monate, deren einzige Spur die lokale Tagesebene ist. N-68
+  // allein reichte an einer echten Anlage nicht — es hob nur die Zählerzeilen-
+  // Bedingung auf, während die Grundgesamtheit der Schicht weiterhin eine
+  // DB-Spur verlangte. Da es **keinen automatischen Monatsabschluss** gibt,
+  // fehlte damit immer mindestens der laufende Monat (gemessen 03.08.: Juli
+  // *und* August fehlten, Kopfzahl 9.653 kWh über sechs Balken).
   const monateQ = useApiData(
-    () => monatsdatenApi.listAggregiert(anlageId!, undefined, { inklOhneZaehlerzeile: true }),
+    () => monatsdatenApi.listAggregiert(anlageId!, undefined, {
+      inklOhneZaehlerzeile: true,
+      inklNurTageswerte: true,
+    }),
     [anlageId],
     // Eigener swrKey-Namensraum: der Inhalt ist eine Obermenge dessen, was die
     // übrigen Sichten unter `listAggregiert` cachen.
@@ -129,7 +145,7 @@ function CockpitJahrInner({ anlageId }: { anlageId: number | undefined }) {
     const dVgl = vergleichsMonate.length === monate.length
       ? d
       : baueJahrAlsMonat(antworten.filter((m) => vergleichsMonate.includes(m.monat)), j)
-    return { d, dVgl, monate, vergleichsMonate }
+    return { d, dVgl, monate, vergleichsMonate, antworten }
   }, [alleMonate])
 
   // keepPreviousData: Jahreswechsel aktualisiert den Block-Stack in-place statt
@@ -168,6 +184,9 @@ function CockpitJahrInner({ anlageId }: { anlageId: number | undefined }) {
 
   const jahrData = jahrQ.data?.d ?? null
   const jahrVglData = jahrQ.data?.dVgl ?? null
+  // #358: die Monats-Antworten des Jahres für den Speicher-Block.
+  const jahrAntworten = useMemo(() => jahrQ.data?.antworten ?? [], [jahrQ.data])
+  const speicherZeilen = useMemo(() => baueSpeicherZeilen(jahrAntworten), [jahrAntworten])
   const loading = monateQ.loading || (jahr != null && jahrQ.loading)
   const reloading = jahrQ.reloading
   const error = monateQ.data == null && monateQ.error
@@ -246,12 +265,16 @@ function CockpitJahrInner({ anlageId }: { anlageId: number | undefined }) {
     // nicht die Kopfzahl. Sonst nennte die eingeklappte Zeile eine andere PV-Zahl als
     // die Tabelle darin.
     const b = jahrVglData ?? d
-    // Die SOLL-Erfüllung steht NUR an der PV-Kachel. Über die abgeschlossenen Monate
-    // gerechnet ergäbe sie hier eine zweite, andere Prozentzahl für dieselbe Größe
-    // (an der Box 119 % gegen 103 % an der Kachel) — der Unterschied ist echt, aber
-    // er gehört an EINE Stelle. Ursache ist, dass der laufende Monat sein VOLLES
-    // PVGIS-SOLL mitbringt und nur ein paar Tage Ertrag; das ist ein eigener Fund und
-    // bestand schon vor P-12 (damals 98,7 % aus Jan–Jun + vollem August).
+    // Die SOLL-Erfüllung steht im laufenden Jahr NUR an der PV-Kachel: die
+    // Kopfzeile fasst die TABELLE zusammen (abgeschlossene Monate), die Kachel das
+    // Jahr bis heute — zwei Fenster, also zwei Prozentzahlen für dieselbe Größe.
+    //
+    // Der Abstand war der eigentliche Grund und ist mit N-69 (2026-08-04) getilgt:
+    // der laufende Monat brachte sein VOLLES PVGIS-SOLL über ein paar Tage Ertrag
+    // mit, an der Box 119 % (Tabelle) gegen 103 % (Kachel). Seit das Backend den
+    // SOLL-Nenner auf die abgelaufenen Tage kürzt, liegen beide bei ~119 %. Die
+    // Unterdrückung bleibt trotzdem stehen — ob die Kopfzeile die Zahl wieder
+    // tragen soll, ist eine Anzeige-Entscheidung und kein Rechenfehler mehr.
     // Bei abgeschlossenem Jahr fallen beide Fenster zusammen ⇒ Anzeige wie bisher.
     const bilanzSummary = b
       ? mitFenster(istFenster, `${fmtCalc(b.pv_erzeugung_kwh, 0, '—')} kWh PV · ${fmtCalc(b.autarkie_prozent, 0, '—')} % Autarkie${
@@ -389,10 +412,20 @@ function CockpitJahrInner({ anlageId }: { anlageId: number | undefined }) {
       }]),
       ...(co2Block ? [co2Block] : []),
       ...(d ? baueKomponentenBloecke(d, park, 'jahr') : []),
+      // #358 Phase 1 — die Tiefe unter dem Speicher-Abschnitt: Monatstabelle
+      // (Vollzyklen · Solar-Anteil · Auslastung · Netto-Nutzen) + Saison-
+      // Vergleich. Nur wenn überhaupt ein Speicher Bewegung hatte; die Zeilen
+      // kommen aus denselben Monats-Antworten wie die Kacheln darüber.
+      ...(speicherZeilen.length > 0 ? [{
+        id: 'speicher-verlauf', title: 'Speicher im Jahr', ...BLOCK_IDENTITAET.werte,
+        summary: `${speicherZeilen.length} Monate mit Speicher-Bewegung`,
+        defaultOpen: false,
+        render: () => <JahrSpeicherTabelle monate={jahrAntworten} />,
+      }] : []),
       ...(finanzBlock ? [finanzBlock] : []),
     ]
   }, [jahr, jahrData, jahrVglData, vorjahr, oeJahr, vjFenster, ojFenster, istFenster,
-      kennzahlenFenster, monatsZeilen, park,
+      kennzahlenFenster, monatsZeilen, park, jahrAntworten, speicherZeilen,
       co2Punkte, co2Monate.length, co2Kumuliert, co2Fehler, co2Reload])
 
   if (!anlageId) {

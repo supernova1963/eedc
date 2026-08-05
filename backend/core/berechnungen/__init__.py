@@ -79,6 +79,20 @@ from backend.core.berechnungen.finanz_aggregat import (
     FinanzMonatsZeile,
     berechne_finanz_aggregat,
 )
+from backend.core.berechnungen.amortisation import (
+    AmortisationsFortschritt,
+    berechne_amortisations_fortschritt,
+)
+from backend.core.berechnungen.investitionskosten import (
+    relevante_kosten_aus_investitionen,
+)
+from backend.core.berechnungen.ust_eigenverbrauch import (
+    AFA_JAHRE,
+    UstJahresanteil,
+    bemessungsgrundlage_aus_investitionen,
+    berechne_ust_eigenverbrauch,
+    ust_eigenverbrauch_fuer_anlage,
+)
 from backend.core.berechnungen.emob import (
     QUELLE_GEMESSEN,
     QUELLE_KEINE,
@@ -102,6 +116,7 @@ from backend.core.berechnungen.energie import (
     WAERMEPUMPE_KOMPONENTEN_PREFIXE,
     WALLBOX_KOMPONENTEN_PREFIXE,
     batterie_kw_spalte,
+    erzeuger_kwh_je_investition,
     erzeugung_hinter_zaehler_kwh,
     summe_batterie_netto_kwh,
     summe_bkw_kwh,
@@ -112,6 +127,7 @@ from backend.core.berechnungen.energie import (
     wert_basis_kwh,
 )
 from backend.core.berechnungen.invarianten import (
+    aggregiere_tep_komponenten,
     assert_speicher_durchsatz_konsistent,
     assert_speicher_ladung_konsistent,
     assert_speicher_netzladung_kumulativ,
@@ -167,6 +183,8 @@ from backend.core.berechnungen.spez_ertrag import (
 from backend.core.berechnungen.speicher import (
     EFFIZIENZ_FENSTER_MONATE,
     MonatsEffizienz,
+    auslastung_prozent,
+    auslastungs_basis_kwh,
     gleitende_effizienz,
     speicher_effizienz_prozent,
     vollzyklen,
@@ -202,10 +220,18 @@ from backend.core.berechnungen.grundlast import (
     GrundlastKennzahlen,
     berechne_grundlast,
 )
+from backend.core.berechnungen.monatsfenster import (
+    Monatsfenster,
+    anteilig,
+    monatsfenster,
+)
 
 __all__ = [
     "GrundlastKennzahlen",
     "berechne_grundlast",
+    "Monatsfenster",
+    "anteilig",
+    "monatsfenster",
     "TagesBilanz",
     "bilanz_aus_stundenrows",
     "berechne_wp_alternativkosten_ersparnis",
@@ -238,6 +264,14 @@ __all__ = [
     "FinanzAggregat",
     "FinanzMonatsZeile",
     "berechne_finanz_aggregat",
+    "AFA_JAHRE",
+    "UstJahresanteil",
+    "AmortisationsFortschritt",
+    "berechne_amortisations_fortschritt",
+    "relevante_kosten_aus_investitionen",
+    "bemessungsgrundlage_aus_investitionen",
+    "berechne_ust_eigenverbrauch",
+    "ust_eigenverbrauch_fuer_anlage",
     "ImdTypBeitrag",
     "imd_typ_beitrag",
     "berechne_netzbezug_kosten",
@@ -256,6 +290,7 @@ __all__ = [
     "summe_pv_bkw_kwh",
     "summe_pv_anlage_kwh",
     "summe_bkw_kwh",
+    "erzeuger_kwh_je_investition",
     "erzeugung_hinter_zaehler_kwh",
     "summe_waermepumpe_kwh",
     "summe_wallbox_eauto_kwh",
@@ -266,6 +301,7 @@ __all__ = [
     "pruefe_tep_tz_konsistenz",
     "assert_tep_tz_komponenten_konsistent",
     "pruefe_tep_tz_komponenten_konsistenz",
+    "aggregiere_tep_komponenten",
     "assert_tep_komponenten_intern_konsistent",
     "pruefe_tep_komponenten_intern_konsistenz",
     "assert_speicher_ladung_konsistent",
@@ -294,6 +330,8 @@ __all__ = [
     "simuliere_speicher_tag",
     "EFFIZIENZ_FENSTER_MONATE",
     "MonatsEffizienz",
+    "auslastung_prozent",
+    "auslastungs_basis_kwh",
     "gleitende_effizienz",
     "speicher_effizienz_prozent",
     "vollzyklen",

@@ -2,6 +2,7 @@
 Cockpit Übersicht — Aggregierte KPI-Übersicht für eine Anlage.
 """
 
+from collections import Counter
 from datetime import date
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -27,14 +28,17 @@ from backend.core.berechnungen import (
     eauto_effizienz_100km,
     erzeugung_hinter_zaehler_kwh,
     monatsgewichte_aus_pvgis,
+    vollzyklen as berechne_vollzyklen,
 )
-from backend.core.calculations import (
+from backend.core.berechnungen import relevante_kosten_aus_investitionen
+from backend.core.berechnungen.ust_eigenverbrauch import (
+    UstJahresanteil,
     ust_eigenverbrauch_fuer_anlage,
-    berechne_co2_bilanz,
 )
+from backend.core.calculations import berechne_co2_bilanz
 from backend.services.finanz_zeilen import baue_finanz_zeile
 from backend.services.monats_fakten import finanz_zeile_eingabe, lade_monats_fakten
-from backend.core.investition_parameter import PARAM_E_AUTO, PARAM_WAERMEPUMPE, ist_dienstlich
+from backend.core.investition_parameter import ist_dienstlich
 from backend.core.wirtschaftlichkeit_defaults import (
     EINSPEISEVERGUETUNG_DEFAULT_CENT,
     NETZBEZUG_DEFAULT_CENT,
@@ -403,7 +407,14 @@ async def get_cockpit_uebersicht(
         get_speicher_kapazitaet_kwh(i) or 0 for i in speicher_invs
     )
     speicher_effizienz = (speicher_entladung / speicher_ladung * 100) if speicher_ladung > 0 else None
-    speicher_vollzyklen = (speicher_ladung / speicher_kapazitaet) if speicher_kapazitaet > 0 else None
+    # Vollzyklen = ENTLADUNG ÷ Kapazität über den Layer-SoT. Hier stand bis zum
+    # 04.08. die LADUNG — die eine Route, die der Kanon-Sweep vom 2026-07-28
+    # (Entscheid Gernot, Rainer-PN 89768) übersehen hat. Die beiden Zahlen
+    # liegen genau um den Speicher-Wirkungsgrad auseinander; die Begründung
+    # („ein Vollzyklus ist die einmal entnommene Kapazität") steht im Docstring
+    # von `vollzyklen`. Der Wert hatte hier keinen Client-Leser — mit dem
+    # Speicher-Block in Cockpit → Jahr (#358 Phase 1) bekommt er einen.
+    speicher_vollzyklen = berechne_vollzyklen(speicher_entladung, speicher_kapazitaet)
 
     wp_invs = [i for i in investitionen if i.typ == "waermepumpe" and i.ist_aktiv_an(today)]
     hat_waermepumpe = len(wp_invs) > 0
@@ -521,49 +532,69 @@ async def get_cockpit_uebersicht(
     # verlieren.
     netto_ertrag = einspeise_erloes + ev_ersparnis + _finanz.bkw_ersparnis_euro
 
-    PV_RELEVANTE_TYPEN = ["pv-module", "wechselrichter", "speicher", "wallbox", "balkonkraftwerk"]
-    investition_pv_system = 0.0
-    investition_wp_mehrkosten = 0.0
-    investition_eauto_mehrkosten = 0.0
-    investition_sonstige = 0.0
-    for inv in investitionen:
-        kosten = inv.anschaffungskosten_gesamt or 0
-        if inv.typ in PV_RELEVANTE_TYPEN:
-            investition_pv_system += kosten
-        elif inv.typ == "waermepumpe":
-            alternativ_kosten = 8000.0
-            if inv.parameter:
-                alternativ_kosten = inv.parameter.get(PARAM_WAERMEPUMPE["ALTERNATIV_KOSTEN_EURO"], 8000.0)
-            investition_wp_mehrkosten += max(0, kosten - alternativ_kosten)
-        elif inv.typ == "e-auto":
-            alternativ_kosten = 35000.0
-            if inv.parameter:
-                alternativ_kosten = inv.parameter.get(PARAM_E_AUTO["ALTERNATIV_KOSTEN_EURO"], 35000.0)
-            investition_eauto_mehrkosten += max(0, kosten - alternativ_kosten)
-        else:
-            investition_sonstige += kosten
-    investition_gesamt = (
-        investition_pv_system + investition_wp_mehrkosten +
-        investition_eauto_mehrkosten + investition_sonstige
-    )
-    if investition_gesamt <= 0:
-        investition_gesamt = sum(i.anschaffungskosten_gesamt or 0 for i in investitionen)
-
     investition_vollkosten = sum(i.anschaffungskosten_gesamt or 0 for i in investitionen)
-    investition_mehrkosten = sum(
-        max(0, (i.anschaffungskosten_gesamt or 0) - (i.anschaffungskosten_alternativ or 0))
-        for i in investitionen
-    )
+    # Zugleich die kanonische USt-Bemessungsgrundlage (N-129) — die Formel stand
+    # hier als Inline-Kopie, jetzt liegt sie im Layer.
+    investition_mehrkosten = relevante_kosten_aus_investitionen(investitionen)
+
+    # N-137/N-134: Hier stand bis 04.08. eine dritte Summe — PV-System voll +
+    # WP-/eAuto-Mehrkosten aus `parameter["alternativ_kosten_euro"]` + Sonstiges
+    # voll. Dieser Parameter-Schlüssel hat baumweit KEINEN Schreiber; gepflegt
+    # wird die Spalte `anschaffungskosten_alternativ`, die der Daten-Checker mit
+    # WARNING einfordert. Die Summe rechnete also mit Festannahmen (8.000 /
+    # 35.000 €) an genau dem Feld vorbei, nach dem eedc fragt — und ein Fallback
+    # darunter setzte bei 0 auf die VOLLkosten, also auf eine vierte Lesart.
+    # Wortgleich stand sie ein zweites Mal in `aussichten.py`.
+    #
+    # Seit dem Entscheid zu N-137 gibt es EINE Definition relevanter Kosten
+    # (Mehrkosten, Layer-SoT). `investition_gesamt_euro` bleibt als Feld
+    # erhalten — es ist ausgeliefert und typisiert (`api/cockpit.ts`) —, trägt
+    # aber denselben Wert wie `investition_mehrkosten_euro`. Der Fallback
+    # entfällt: sind die relevanten Kosten 0, gibt es nichts zu amortisieren,
+    # und der ROI-Fortschritt sagt das (None), statt gegen die Vollkosten zu
+    # rechnen.
+    investition_gesamt = investition_mehrkosten
 
     betriebskosten_ges = sum(i.betriebskosten_jahr or 0 for i in investitionen)
 
     steuerliche_beh = getattr(anlage, 'steuerliche_behandlung', None) or 'keine_ust'
+    # N-129 + N-130: Bis 04.08. bekam die USt hier `investition_gesamt` — die
+    # ad-hoc zusammengesetzte Summe darüber, die als einzige Sicht im Baum
+    # NICHT `anschaffungskosten_alternativ` las, sondern die Parameter-Defaults
+    # 35.000/8.000 €. Und sie bekam die PV des ganzen gewählten Zeitraums als
+    # „Jahres-Erzeugung": bei „alle Jahre" stand eine mehrjährige Menge im
+    # Nenner gegen eine Ein-Jahres-AfA ⇒ die USt fiel um den Faktor der
+    # Jahresanzahl zu niedrig aus (Demo-Bestand: 646 € statt 2.447 €).
+    #
+    # Je Kalenderjahr dieselben Eingänge wie die Perioden-Kennzahlen oben:
+    # Zählerwerte aus `md_pv`, Mengen aus `fakten`.
+    monate_je_jahr = Counter(f.jahr for f in fakten)
+    ust_jahresanteile: list[UstJahresanteil] = []
+    for _jahr in sorted(monate_je_jahr):
+        _f_jahr = [f for f in fakten if f.jahr == _jahr]
+        _md_jahr = [f for f in md_pv if f.jahr == _jahr]
+        _pv_jahr = sum(f.erzeugung.pv_kwh for f in _f_jahr)
+        _kz_jahr = berechne_verbrauchs_kennzahlen(
+            pv_erzeugung_kwh=erzeugung_hinter_zaehler_kwh(
+                _pv_jahr, sum(f.sonstiges.erzeugung_kwh for f in _f_jahr)
+            ),
+            einspeisung_kwh=sum(f.zaehler.einspeisung_kwh for f in _md_jahr),
+            netzbezug_kwh=sum(f.zaehler.netzbezug_kwh for f in _md_jahr),
+            speicher_ladung_kwh=sum(f.speicher.ladung_kwh for f in _f_jahr),
+            speicher_entladung_kwh=sum(f.speicher.entladung_kwh for f in _f_jahr),
+            v2h_entladung_kwh=sum(f.emob.v2h_entladung_kwh for f in _f_jahr),
+        )
+        ust_jahresanteile.append(UstJahresanteil(
+            jahr=_jahr,
+            eigenverbrauch_kwh=_kz_jahr.eigenverbrauch_kwh,
+            pv_kwh=_pv_jahr,
+            monate=monate_je_jahr[_jahr],
+        ))
     ust_eigenverbrauch = ust_eigenverbrauch_fuer_anlage(
         anlage,
-        eigenverbrauch_kwh=eigenverbrauch,
-        investition_gesamt_euro=investition_gesamt,
+        jahresanteile=ust_jahresanteile,
+        bemessungsgrundlage_euro=investition_mehrkosten,
         betriebskosten_jahr_euro=betriebskosten_ges,
-        pv_erzeugung_jahr_kwh=pv_erzeugung,
     )
     netto_ertrag -= ust_eigenverbrauch
 

@@ -98,6 +98,27 @@ describe('KOMPONENTEN_ADAPTER', () => {
     expect(g.hinweise!.every((h) => h.ton === 'warning')).toBe(true)
   })
 
+  it('#358: die Wirtschaftlichkeits-Posten sind disjunkt (kein doppelter Netz-Anteil)', async () => {
+    // Vorher stand im PV-Posten die GESAMT-Ersparnis, daneben zusätzlich der
+    // Arbitrage-Gewinn — die netzgeladene kWh war damit zweimal gutgeschrieben
+    // und die Aufstellung summierte über die ausgewiesene Ersparnis hinaus.
+    getSpeicherDashboard.mockResolvedValue([{
+      investition: inv({ typ: 'speicher' }),
+      zusammenfassung: { vollzyklen: 8, effizienz_prozent: 80, arbitrage_faehig: true,
+        gesamt_entladung_kwh: 400, gesamt_ladung_kwh: 500, arbitrage_kwh: 100,
+        ersparnis_euro: 86.4, pv_anteil_euro: 70.4, arbitrage_gewinn_euro: 16 },
+      monatsdaten: [{ jahr: 2025, monat: 11, verbrauch_daten: { ladung_kwh: 100, entladung_kwh: 90 } }],
+    }])
+    const [g] = await KOMPONENTEN_ADAPTER.speicher.fetch(1)
+    const posten = g.wirtschaftlichkeit!.posten
+    expect(posten.map((p) => [p.label, p.euro])).toEqual([
+      ['Eigenverbrauchs-Ersparnis', 70.4],
+      ['Arbitrage-Gewinn', 16],
+    ])
+    // Die Invariante: Σ Posten = ausgewiesene Ersparnis.
+    expect(posten.reduce((s, p) => s + (p.euro ?? 0), 0)).toBeCloseTo(86.4, 2)
+  })
+
   it('Vergleich: Jahressummen über mehrere Jahre, chronologisch', async () => {
     getSpeicherDashboard.mockResolvedValue([{
       investition: inv({ typ: 'speicher' }),
@@ -383,6 +404,11 @@ describe('KOMPONENTEN_ADAPTER — spezifische Blöcke (Inc. 3b)', () => {
     expect(g.struktur.zeilen[0].label).toBe('Zuordnung')
     expect(g.struktur.zeilen[0].wert).toBe('WR Nord')
     expect(g.struktur.zeilen[0].hinweis).not.toContain('DC-gekoppelt')
+    // #351: die Kopplung steht in einer EIGENEN Zeile. Ohne gepflegtes Feld
+    // wird sie aus der Zuordnung abgeleitet — und sagt das auch.
+    expect(g.struktur.zeilen[1].label).toBe('Kopplung')
+    expect(g.struktur.zeilen[1].wert).toBe('DC-gekoppelt')
+    expect(g.struktur.zeilen[1].hinweis).toContain('abgeleitet')
   })
 
   it('Speicher ohne Wechselrichter: „Eigenständig" statt Fehlerzustand', async () => {
@@ -396,8 +422,29 @@ describe('KOMPONENTEN_ADAPTER — spezifische Blöcke (Inc. 3b)', () => {
     const [g] = await KOMPONENTEN_ADAPTER.speicher.fetch(1)
     if (g.struktur?.art !== 'referenz') throw new Error('referenz erwartet')
     expect(g.struktur.zeilen[0].wert).toBe('Eigenständig')
-    // Für AC-gekoppelte Speicher ist das der Normalfall — der Hinweis sagt das.
-    expect(g.struktur.zeilen[0].hinweis).toContain('AC-gekoppelte')
+    // #351: die Zuordnungs-Zeile sagt seither NICHTS mehr über die Kopplung —
+    // sie ist die Struktur-Information. Die Bauform steht daneben.
+    expect(g.struktur.zeilen[0].hinweis).not.toContain('gekoppelt')
+    expect(g.struktur.zeilen[1].wert).toBe('AC-gekoppelt')
+  })
+
+  it('#351 Speicher: gepflegte Kopplung schlägt die Ableitung aus der Zuordnung', async () => {
+    // Der Fall aus JayJays Meldung: AC-Speicher an einem Hybrid-Wechselrichter.
+    // Zugeordnet (⇒ Ableitung wäre DC), gepflegt ist aber „ac".
+    getSpeicherDashboard.mockResolvedValue([{
+      investition: inv({ id: 5, typ: 'speicher', parent_investition_id: 10, parameter: { kopplung: 'ac' } }),
+      zusammenfassung: { vollzyklen: 100, effizienz_prozent: 90, gesamt_entladung_kwh: 1000,
+        gesamt_ladung_kwh: 1000, ersparnis_euro: 100, arbitrage_faehig: false },
+      monatsdaten: [],
+    }])
+    list.mockResolvedValue([inv({ id: 10, typ: 'wechselrichter', bezeichnung: 'Hybrid-WR' })])
+    const [g] = await KOMPONENTEN_ADAPTER.speicher.fetch(1)
+    if (g.struktur?.art !== 'referenz') throw new Error('referenz erwartet')
+    // Die Zuordnung bleibt bestehen — die Wirtschaftlichkeit rechnet weiter als
+    // Teil des PV-Systems. Nur die Bauform ist eine andere.
+    expect(g.struktur.zeilen[0].wert).toBe('Hybrid-WR')
+    expect(g.struktur.zeilen[1].wert).toBe('AC-gekoppelt')
+    expect(g.struktur.zeilen[1].hinweis).not.toContain('abgeleitet')
   })
 
   it('Speicher: keine Arbitrage-Sekundär wenn nicht fähig', async () => {
