@@ -15,7 +15,7 @@
  */
 
 import {
-  Activity, AlertTriangle, ArrowUpFromLine, Battery, BatteryCharging, Car,
+  Activity, AlertTriangle, ArrowUpFromLine, Battery, BatteryCharging, BatteryMedium, Car,
   CheckCircle, Coins, Euro, Flame, Gauge, Hash, Home, Info, Leaf, Plug, RotateCw,
   Sun, Thermometer, TrendingUp, Wallet, Wrench, XCircle, Zap,
 } from 'lucide-react'
@@ -104,6 +104,12 @@ export const SPEICHER_KPI = {
   // #358 Phase 1: zeitraum-normierte Nutzung — Entladung ÷ (Kapazität × Tage).
   // Anders als die Vollzyklen ist sie zwischen Monat und Jahr vergleichbar.
   auslastung:   { title: 'Auslastung',     icon: Gauge,      color: 'purple' as const },
+  // Ladezustand (Tag): der einzige BESTANDS-Wert unter lauter Flussgrößen —
+  // deshalb eine eigene Farbe statt der von „Auslastung" (Nutzungsgrad der
+  // Kapazität, inhaltlich verwandt und gerade darum nicht gleich zu färben).
+  // Wortwahl wie im Live-Dashboard („Ladezustand"); „SoC" bleibt der Fachbegriff
+  // in der Stundentabelle. Gemeldet von dietmar1968 (Forum T89667 #97).
+  ladezustand:  { title: 'Ladezustand',    icon: BatteryMedium, color: 'orange' as const },
 } as const satisfies Record<string, KpiStyle>
 
 /** Wärme/Klima: JAZ · Wärme erzeugt · Strom verbraucht · Ersparnis vs. Gas */
@@ -162,6 +168,20 @@ export const SONSTIGES_SPEICHER_KPI = {
   entladung: { title: 'Entladung', icon: Zap,        color: 'green'  as const },
   effizienz: { title: 'Effizienz', icon: TrendingUp, color: 'blue'   as const },
   ersparnis: { title: 'Ersparnis', icon: TrendingUp, color: 'green'  as const },
+} as const satisfies Record<string, KpiStyle>
+
+/** Börsenpreis-Kennzahlen des Live-Blocks (#335).
+ *
+ *  Alle drei sind dieselbe Größe in ct/kWh und tragen deshalb dieselbe Farbe —
+ *  `purple`, die Rollenfarbe des Strompreises (`CHART_COLORS.strompreis`). Was
+ *  sie unterscheidet, ist ihre Rolle zueinander (Ist · Bezugsgröße · Grenze),
+ *  und das sagt der Titel, nicht die Farbe. Die Stufenfarben der Chart-Linie
+ *  stehen getrennt in `colors.ts::PREISSTUFEN_FARBEN` — sie färben nach Wert,
+ *  diese hier benennen Kennzahlen. */
+export const BOERSENPREIS_KPI = {
+  aktuell:      { title: 'Aktueller Preis',  icon: Coins, color: 'purple' as const },
+  durchschnitt: { title: 'Ø ohne 3 Peaks',   icon: Gauge, color: 'purple' as const },
+  schwelle:     { title: 'Günstig-Schwelle', icon: Hash,  color: 'purple' as const },
 } as const satisfies Record<string, KpiStyle>
 
 // ─── Komponenten-Identität (#3b') — Icon + Farbe + Label je Investitionstyp ───

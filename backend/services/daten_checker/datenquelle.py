@@ -9,6 +9,9 @@ import json
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
+from zoneinfo import ZoneInfo
+
+import httpx
 
 from sqlalchemy import select
 
@@ -218,15 +221,41 @@ class DatenquelleChecks:
                     "(Σ Stundenwerte = Tagessumme per Konstruktion)."
                 ),
             )]
+        if ha_lts_verfuegbar and tz is None:
+            # Es gibt ÜBERHAUPT keine aggregierte Tageszeile. Bis 2026-08-05
+            # fiel dieser Fall in den Zweig darunter und erzeugte den Satz
+            # „die TagesZusammenfassung vom **?** wurde aber noch aus
+            # **unbekannt** geschrieben" — eine Behauptung über eine Zeile, die
+            # es nicht gibt, und ein Fehlerbild, das jeder frisch eingerichtete
+            # Anwender in der ersten Stunde zu sehen bekam. Der Zustand ist
+            # nicht „falsche Quelle", sondern „noch nichts da"; ein Anwender,
+            # der nach der Quelle sucht, sucht am falschen Ort.
+            return [CheckErgebnis(
+                kategorie=kat, schwere=CheckSeverity.INFO.value,
+                meldung="Noch keine Tageswerte aggregiert",
+                details=(
+                    "HA-Statistics ist erreichbar, aber es liegt noch keine "
+                    "Tageszusammenfassung mit Stundenwerten vor. Direkt nach "
+                    "der Einrichtung ist das normal — die Aggregation läuft "
+                    "stündlich, die ersten Werte stehen also innerhalb einer "
+                    "Stunde bereit. Bleibt es dabei, fehlt meist die Zuordnung "
+                    "der kWh-Zähler (Einstellungen → Datenquellen — es müssen "
+                    "die kWh-Zeilen belegt sein, nicht nur die Watt-Zeilen). "
+                    "Zurückliegende Tage holt „Lücken aus HA-LTS nachfüllen“ "
+                    "in der Reparatur-Werkbank."
+                ),
+                link=LINK_DATENQUELLEN,
+            )]
         if ha_lts_verfuegbar:
             # HA verfügbar, aber Aggregate aus älterem Pfad — typisch nach
-            # Upgrade auf v3.31.0 vor erstem Reaggregations-Lauf
+            # Upgrade auf v3.31.0 vor erstem Reaggregations-Lauf. Ab hier ist
+            # `tz` garantiert vorhanden (der Zweig darüber fängt None ab).
             return [CheckErgebnis(
                 kategorie=kat, schwere=CheckSeverity.INFO.value,
                 meldung="HA-Statistics-Pfad bereit, Aggregate aus älterer Quelle",
                 details=(
-                    "HA-Statistics ist verfügbar, die TagesZusammenfassung "
-                    f"vom {tz.datum.isoformat() if tz else '?'} wurde aber noch "
+                    "HA-Statistics ist verfügbar, die Tageszusammenfassung "
+                    f"vom {tz.datum.isoformat()} wurde aber noch "
                     f"aus '{letzte_source or 'unbekannt'}' geschrieben. "
                     "Sobald diese Tage neu aus HA-Statistics aggregiert "
                     "werden (nächster Monatsabschluss oder Tag-Reparatur), "
@@ -629,23 +658,15 @@ class DatenquelleChecks:
         # 2026-07-30 E2E gemessen. Ein Knopf, der garantiert nichts holen kann,
         # ist schlimmer als keiner (der Anwender sucht den Fehler bei sich),
         # deshalb wird er hier gar nicht angeboten und die Meldung sagt, was
-        # fehlt. Dieselbe Bedingung wie im Aggregator, nicht eine zweite.
-        basis_live = (sensor_mapping.get("basis") or {}).get("live") or {}
-        inv_live = any(
-            isinstance(v, dict) and v.get("live")
-            for v in (sensor_mapping.get("investitionen") or {}).values()
+        # fehlt. Dieselbe Bedingung wie im Aggregator, nicht eine zweite —
+        # seit v4.0.10 auch buchstäblich: `ermittle_aggregations_quelle` ist der
+        # geteilte Ort, vorher stand hier eine wortgleiche Kopie.
+        from backend.services.energie_profil.aggregations_quelle import (
+            ermittle_aggregations_quelle,
         )
-        reparatur_moeglich = bool(basis_live or inv_live)
-        if not reparatur_moeglich:
-            from backend.models.mqtt_energy_snapshot import MqttEnergySnapshot
-            cutoff = datetime.combine(aeltester, datetime.min.time()) - timedelta(days=1)
-            mqtt_check = await self.db.execute(
-                select(MqttEnergySnapshot.id).where(
-                    MqttEnergySnapshot.anlage_id == anlage.id,
-                    MqttEnergySnapshot.timestamp >= cutoff,
-                ).limit(1)
-            )
-            reparatur_moeglich = mqtt_check.scalar_one_or_none() is not None
+        reparatur_moeglich = (
+            await ermittle_aggregations_quelle(self.db, anlage, aeltester)
+        ).vorhanden
 
         # Bereichs-Knopf auf das jüngste erlaubte Fenster begrenzen; ältere Tage
         # bleiben für einen zweiten Lauf stehen (Cap mehrfach anbieten statt
@@ -1018,6 +1039,96 @@ class DatenquelleChecks:
         )]
 
 
+    async def _check_zeitzone_ha(self, anlage: Anlage) -> list[CheckErgebnis]:
+        """N-161: läuft eedc in derselben Zeitzone wie Home Assistant?
+
+        Verglichen wird der **aktuelle UTC-Offset**, nicht der Zonenname —
+        Wien, Zürich und Amsterdam teilen sich Berlins Offset, und ein
+        Namensvergleich meldete dort einen Fehler, den es nicht gibt.
+
+        Der Check **schweigt**, wenn keine HA-Verbindung besteht, HA nicht
+        antwortet oder seine Zone unbekannt ist: ein Hinweis, den niemand
+        auflösen kann, ist genau die P-6-Klasse. Die HA-Verbindung kommt aus
+        `resolve_ha_connection` und deckt damit **beide** Modi ab (Supervisor
+        und Remote-Token) — die N-156-Falle („liest nur den Supervisor-Token“)
+        entsteht hier gar nicht erst.
+
+        **Was er nicht kann:** bereits schief gespeicherte Tageszeilen erkennen
+        oder heilen. Er misst den Zustand von jetzt.
+        """
+        from backend.services.ha_connection import resolve_ha_connection, HA_APP
+
+        kat = CheckKategorie.ZEITZONE_ABWEICHUNG.value
+        api_url, token, kind = await resolve_ha_connection(self.db)
+        if not api_url or not token:
+            return []
+
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.get(
+                    f"{api_url}/config",
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+                resp.raise_for_status()
+                ha_zone = (resp.json() or {}).get("time_zone")
+        except Exception as e:
+            logger.debug(f"Zeitzonen-Check: HA-Konfiguration nicht lesbar: {e}")
+            return []
+
+        if not ha_zone:
+            return []
+        try:
+            ha_offset = datetime.now(ZoneInfo(str(ha_zone))).utcoffset()
+        except Exception:
+            logger.debug(f"Zeitzonen-Check: unbekannte HA-Zeitzone {ha_zone!r}")
+            return []
+
+        eigen_offset = _lokaler_utc_offset()
+        if ha_offset is None or eigen_offset is None or ha_offset == eigen_offset:
+            return []
+
+        stunden = (eigen_offset - ha_offset).total_seconds() / 3600
+        betrag = abs(stunden)
+        betrag_text = (
+            f"{int(betrag)} Stunde" if betrag == 1
+            else f"{int(betrag)} Stunden" if betrag == int(betrag)
+            else f"{betrag:.1f} Stunden".replace(".", ",")
+        )
+        richtung = "vor" if stunden > 0 else "hinter"
+
+        if kind == HA_APP:
+            weg = (
+                "Das Add-on übernimmt die Zeitzone beim Start von Home Assistant. "
+                "Starte das Add-on einmal neu, damit es die aktuelle Einstellung "
+                "übernimmt."
+            )
+        else:
+            weg = (
+                "eedc läuft in einem eigenen Container. Setze dort die "
+                f"Umgebungsvariable TZ={ha_zone} (in docker-compose.yml unter "
+                "environment) und starte den Container neu."
+            )
+
+        return [CheckErgebnis(
+            kategorie=kat,
+            schwere=CheckSeverity.WARNING.value,
+            meldung=(
+                f"eedc und Home Assistant rechnen mit verschiedenen Zeitzonen "
+                f"({betrag_text} Unterschied)"
+            ),
+            details=(
+                f"Home Assistant steht auf {ha_zone} ({_offset_text(ha_offset)}), "
+                f"eedc läuft {betrag_text} {richtung} dieser Zeit "
+                f"({_offset_text(eigen_offset)}). Rund um Mitternacht werden "
+                "Stundenwerte dadurch dem falschen Tag zugeordnet. "
+                f"{weg} Bereits gespeicherte Tage ändern sich davon nicht — "
+                "die lassen sich anschließend über die Datenverwaltung neu "
+                "berechnen."
+            ),
+            link=LINK_DATENQUELLEN,
+        )]
+
+
 def _juengster_snapshot(snapshots: dict) -> Optional[datetime]:
     """Zeitstempel des jüngsten Snapshots (naiv, wie `_calc_month_delta`)."""
     neuster: Optional[datetime] = None
@@ -1029,3 +1140,25 @@ def _juengster_snapshot(snapshots: dict) -> Optional[datetime]:
         if neuster is None or ts > neuster:
             neuster = ts
     return neuster
+
+
+def _lokaler_utc_offset() -> Optional[timedelta]:
+    """UTC-Offset der Systemzeit, in der eedc `date.today()` auswertet.
+
+    Eigene Funktion, weil genau das im Test gesetzt werden muss: die Alternative
+    wäre, im Test die Prozess-Zeitzone umzuschalten (`time.tzset()`), was den
+    gesamten Testlauf beeinflusst. Eine Stelle, ein Vertrag.
+    """
+    return datetime.now().astimezone().utcoffset()
+
+
+def _offset_text(offset: timedelta) -> str:
+    """`timedelta` → „UTC+2“ / „UTC-3:30“ (halbe Stunden kommen vor)."""
+    minuten = int(offset.total_seconds() // 60)
+    vz = "+" if minuten >= 0 else "-"
+    minuten = abs(minuten)
+    return (
+        f"UTC{vz}{minuten // 60}"
+        if minuten % 60 == 0
+        else f"UTC{vz}{minuten // 60}:{minuten % 60:02d}"
+    )

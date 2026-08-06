@@ -34,6 +34,7 @@ import { aktuellerMonatApi } from '../api/aktuellerMonat'
 import { monatsdatenApi, type AggregierteMonatsdaten } from '../api/monatsdaten'
 import { monatRefAusQuery, verlaufTabellenSpalten } from './verlaufVergleich'
 import { sollErfuellungProzent, sollFensterText } from '../lib/sollErfuellung'
+import { naechsterOffenerMonat } from '../lib/monatsLuecken'
 
 interface MonatRef { jahr: number; monat: number }
 
@@ -66,6 +67,80 @@ function ladeMonatsdaten(anlageId: number, ref: MonatRef) {
 // (Element-Ebene); eigene LS-Prefixe (`eedc-bloecke:` vs. `eedc-park:`).
 const SICHT_KEY = 'v4-cockpit-monat'
 
+/** Neueste Monatsreferenz zuerst. */
+function neuesteZuerst<T extends MonatRef>(xs: T[]): T[] {
+  return [...xs].sort((a, b) => (a.jahr !== b.jahr ? b.jahr - a.jahr : b.monat - a.monat))
+}
+
+/**
+ * Gibt es Vergangenheits-Monate ohne Abschluss?
+ *
+ * Rein und exportiert, weil zwei Stellen sie brauchen — der „Abschluss
+ * starten"-Link und seit N-99 die Default-Vorauswahl. `heute` wird
+ * hereingereicht statt gelesen: eine Probe, die die echte Uhr nimmt, ist nicht
+ * hermetisch (N-167).
+ *
+ * ⚠ Die Ableitung kommt aus dem SoT `lib/monatsLuecken` — **nicht** aus einer
+ * eigenen Regel. Bis 06.08. stand hier „ist der jüngste Monat mit Daten älter
+ * als der Vormonat?", also genau das naive „letzter Monat + 1", das der SoT
+ * ausdrücklich ablöst: eine **Binnen-Lücke** (Januar fehlt, Februar–Juli
+ * gepflegt) galt damit als „nichts offen", während die Status-Fußzeile
+ * daneben „nächster offener: Jan" meldete. Solange nur der Knopf daran hing,
+ * blieb das unauffällig; mit N-99 hängt die Vorauswahl daran.
+ *
+ * Als Bereichs-Start dient der **früheste vorhandene Monat** — der dritte
+ * Fallback von `ermittleStartAnker`. Lücken *vor* der ersten Datenzeile
+ * bleiben damit unerkannt; dafür bräuchte es das Anschaffungsdatum der
+ * Investitionen und einen zusätzlichen Fetch beim Öffnen der Sicht.
+ */
+export function hatOffeneAbschluesse(mitMonatsdaten: MonatRef[], heute: Date): boolean {
+  if (mitMonatsdaten.length === 0) return true
+  const aeltester = neuesteZuerst(mitMonatsdaten).at(-1)!
+  return naechsterOffenerMonat({
+    vorhandene: mitMonatsdaten,
+    start: { jahr: aeltester.jahr, monat: aeltester.monat },
+    heute: { jahr: heute.getFullYear(), monat: heute.getMonth() + 1 },
+  }) !== null
+}
+
+/**
+ * Default-Vorauswahl der Monats-Sicht (N-99, Meldung coolxmad #353).
+ *
+ * Zwei Lagen, weil die Sicht zwei Aufgaben hat:
+ * - **Abschlüsse offen** → neuester Monat MIT Monatsdaten. Er ist der Anfang
+ *   des Weges zum offenen Abschluss; auf den laufenden Monat zu springen
+ *   würde daran vorbeiführen.
+ * - **Keine offenen Abschlüsse** → neuester Monat, für den es überhaupt Werte
+ *   gibt (`voll` = inkl. Monate ohne Abschluss und ohne Zählerzeile). Das ist
+ *   in aller Regel der laufende — und damit dieselbe Doktrin, der
+ *   Cockpit → Tag („neuester Tag mit Daten") und Cockpit → Jahr schon folgen.
+ *
+ * Die Auflage stammt von Gernot (03.08.); die volle Liste lag seit F-1
+ * (`ce3d316a`) bereits in der Komponente, die Vorauswahl las sie nur nicht.
+ *
+ * Monate **nach** dem laufenden werden nie vorgewählt: die volle Liste kennt
+ * auch Monate, deren einzige Spur eine Tagesebene-Zeile ist — eine
+ * Snapshot-Streuzeile in der Zukunft würde sonst eine leere Sicht öffnen.
+ */
+export function waehleDefaultMonat(
+  mitMonatsdaten: MonatRef[],
+  verfuegbar: MonatRef[],
+  voll: MonatRef[],
+  heute: Date,
+): MonatRef | null {
+  const streng = neuesteZuerst(mitMonatsdaten)[0] ?? neuesteZuerst(verfuegbar)[0] ?? null
+  if (hatOffeneAbschluesse(mitMonatsdaten, heute)) return alsMonatRef(streng)
+  const hj = heute.getFullYear()
+  const hm = heute.getMonth() + 1
+  const bisHeute = voll.filter((m) => m.jahr < hj || (m.jahr === hj && m.monat <= hm))
+  const neuester = neuesteZuerst(bisHeute)[0] ?? null
+  return alsMonatRef(neuester ?? streng)
+}
+
+function alsMonatRef(m: MonatRef | null): MonatRef | null {
+  return m ? { jahr: m.jahr, monat: m.monat } : null
+}
+
 export default function CockpitMonatV4(props: { anlageId: number | undefined }) {
   // ParkProvider muss den Body umschließen, damit `usePark` (Kennzahlen-Filter,
   // ParkFuss) im selben Baum greift. SLICE 1 — Referenz-Sicht.
@@ -88,33 +163,49 @@ function CockpitMonatInner({ anlageId }: { anlageId: number | undefined }) {
   // Beide Quellen parallel, damit die Default-Wahl die Monatsdaten kennt.
   // R18-2 (SWR): über den Sicht-Cache von useApiData — beim Tab-Wechsel stehen die
   // alten Daten sofort (kein Skeleton), still revalidiert.
+  //
+  // DREI Quellen, und die dritte ist der Grund für dieses Paket (Melder
+  // kaba-kakao, Forum T89667/98): die **Rail** hing allein an
+  // `getVerfuegbareMonate` — das ist ein `GROUP BY` über `TagesZusammenfassung`,
+  // also die reine **Tagesebene**. Wer eedc über Monatsabschlüsse oder Import
+  // pflegt (der Standalone-Kernfall), hat dort nichts stehen; die Rail zeigte
+  // dann als einzigen Eintrag den laufenden Monat, den der Client unten
+  // bedingungslos nachschiebt — während die Sicht daneben einen Monat mit
+  // vollen Werten darstellte, der in seiner eigenen Auswahlliste fehlte.
+  // Cockpit → Jahr wurde von genau dieser Klasse mit N-68 + N-121 geheilt und
+  // zieht seither `listAggregiert` mit beiden Flags; die Monats-Rail ist bei
+  // der alten Quelle geblieben.
+  //
+  // Die **volle** Liste steht bewusst NEBEN der strengen, statt sie zu
+  // ersetzen: die beiden beantworten verschiedene Fragen (Datensatz-Liste vs.
+  // Zeitreihe, siehe Route-Docstring), und `inkl_nur_tageswerte` füllt in der
+  // Schicht auch **Lücken bestehender** Monate (PV/BKW aus der Tagesebene).
+  // Die strenge Liste hier zu ersetzen würde daher Vormonats- und Ø-Vergleiche
+  // bewegen — eine Zahlenänderung, die dieses Paket nicht beauftragt hat.
   const monateQ = useApiData(
     () => Promise.all([
       monatsdatenApi.listAggregiert(anlageId!),
       energieProfilApi.getVerfuegbareMonate(anlageId!),
+      monatsdatenApi.listAggregiert(anlageId!, undefined, {
+        inklOhneZaehlerzeile: true,
+        inklNurTageswerte: true,
+      }),
     ]),
     [anlageId],
     { enabled: !!anlageId, swrKey: `v4-monat-liste:${anlageId}` },
   )
   const alleMonate = useMemo<AggregierteMonatsdaten[]>(() => monateQ.data?.[0] ?? [], [monateQ.data])
   const monate = useMemo<VerfuegbarerMonat[]>(() => monateQ.data?.[1] ?? [], [monateQ.data])
+  /** Obermenge für die Rail: inkl. Monate ohne Abschluss und ohne DB-Spur. */
+  const alleMonateVoll = useMemo<AggregierteMonatsdaten[]>(() => monateQ.data?.[2] ?? [], [monateQ.data])
 
   // Default vorwählen, sobald die Listen da sind.
   useEffect(() => {
     if (!monateQ.data) return
     // B3: Drill-in-`?jahr=&monat=` hat schon vorgewählt → Default nicht überschreiben
     // (Ref ist mount-stabil, keine exhaustive-deps-Pflicht).
-    const [agg, ms] = monateQ.data
-    setGewaehlt((aktuell) => {
-      if (aktuell) return aktuell
-      // Default = neuester Monat MIT Monatsdaten — NICHT bloß die neueste TEP/TZ-
-      // Zeile: ein laufender Monat ohne Abschluss (oder eine Snapshot-Streuzeile)
-      // würde sonst leer vorgewählt. Fallback: neuester verfügbarer Monat.
-      const desc = <T extends { jahr: number; monat: number }>(xs: T[]) =>
-        [...xs].sort((a, b) => (a.jahr !== b.jahr ? b.jahr - a.jahr : b.monat - a.monat))
-      const wahl = desc(agg)[0] ?? desc(ms)[0]
-      return wahl ? { jahr: wahl.jahr, monat: wahl.monat } : null
-    })
+    const [agg, ms, voll] = monateQ.data
+    setGewaehlt((aktuell) => aktuell ?? waehleDefaultMonat(agg, ms, voll, new Date()))
   }, [monateQ.data])
 
   // Tages-Werte (Monat + Vormonat) + Einzelmonats-KPIs (IST/Vorjahr/SOLL) laden.
@@ -165,17 +256,9 @@ function CockpitMonatInner({ anlageId }: { anlageId: number | undefined }) {
   const merkeScroll = useScrollErhalt(rootRef, loading)
   const waehle = useCallback((j: number, m: number) => { merkeScroll(); setGewaehlt({ jahr: j, monat: m }) }, [merkeScroll])
 
-  // C2: „Abschluss starten" nur wenn Vergangenheits-Monate noch offen sind
-  // (verhaltensgleich zu MonatsabschlussView.hatOffeneAbschluesse).
-  const hatOffeneAbschluesse = useMemo(() => {
-    const heute = new Date()
-    const hj = heute.getFullYear()
-    const hm = heute.getMonth() + 1
-    const vm = hm === 1 ? { jahr: hj - 1, monat: 12 } : { jahr: hj, monat: hm - 1 }
-    if (alleMonate.length === 0) return true
-    const letzter = [...alleMonate].sort((a, b) => (b.jahr !== a.jahr ? b.jahr - a.jahr : b.monat - a.monat))[0]
-    return letzter.jahr < vm.jahr || (letzter.jahr === vm.jahr && letzter.monat < vm.monat)
-  }, [alleMonate])
+  // C2: „Abschluss starten" nur wenn Vergangenheits-Monate noch offen sind —
+  // dieselbe reine Funktion, die auch die Vorauswahl steuert (N-99).
+  const offeneAbschluesse = useMemo(() => hatOffeneAbschluesse(alleMonate, new Date()), [alleMonate])
 
   // Vormonat-Aggregat + Ø gleicher Monat (andere Jahre) aus der Monatsreihe.
   const vormonatAgg = useMemo<AggregierteMonatsdaten | null>(() => {
@@ -203,21 +286,37 @@ function CockpitMonatInner({ anlageId }: { anlageId: number | undefined }) {
     }
   }, [alleMonate, gewaehlt])
 
-  // Rail-Einträge: verfügbare Monate + PV (Mini-Balken) + laufender Monat.
+  // Rail-Einträge = **Vereinigung** beider Grundgesamtheiten + laufender Monat:
+  // die Monats-Fakten (Abschlüsse, Import, Komponenten-Zeilen) UND die lokale
+  // Tagesebene. Keine der beiden allein reicht — die Tagesebene kennt keinen
+  // importierten Monat, die Monats-Fakten keinen Monat, der ausschließlich aus
+  // Tageswerten besteht (dafür brauchte Cockpit → Jahr seinerzeit N-121).
   const railEntries = useMemo<RailEintrag[]>(() => {
     const heute = new Date()
     const hj = heute.getFullYear()
     const hm = heute.getMonth() + 1
-    const entries: RailEintrag[] = monate.map((m) => ({
-      jahr: m.jahr, monat: m.monat,
-      pv_kwh: alleMonate.find((a) => a.jahr === m.jahr && a.monat === m.monat)?.pv_erzeugung_kwh ?? 0,
-      laufend: m.jahr === hj && m.monat === hm,
+    const key = (jahr: number, monat: number) => `${jahr}-${monat}`
+    const pvJeMonat = new Map<string, number>()
+    const schluessel = new Map<string, { jahr: number; monat: number }>()
+    const merke = (jahr: number, monat: number) => {
+      const k = key(jahr, monat)
+      if (!schluessel.has(k)) schluessel.set(k, { jahr, monat })
+    }
+    alleMonateVoll.forEach((m) => {
+      pvJeMonat.set(key(m.jahr, m.monat), m.pv_erzeugung_kwh ?? 0)
+      merke(m.jahr, m.monat)
+    })
+    monate.forEach((m) => merke(m.jahr, m.monat))
+    const entries: RailEintrag[] = [...schluessel.values()].map(({ jahr: j, monat: m }) => ({
+      jahr: j, monat: m,
+      pv_kwh: pvJeMonat.get(key(j, m)) ?? 0,
+      laufend: j === hj && m === hm,
     }))
     if (!entries.some((e) => e.jahr === hj && e.monat === hm)) {
       entries.push({ jahr: hj, monat: hm, pv_kwh: 0, laufend: true })
     }
     return entries
-  }, [monate, alleMonate])
+  }, [monate, alleMonateVoll])
 
   const istLaufend = useMemo(() => {
     if (!gewaehlt) return false
@@ -361,7 +460,7 @@ function CockpitMonatInner({ anlageId }: { anlageId: number | undefined }) {
             d={monatData}
             onReload={reload}
             reloading={reloading}
-            zeigeAbschlussLink={hatOffeneAbschluesse}
+            zeigeAbschlussLink={offeneAbschluesse}
           />
 
           {error ? (
