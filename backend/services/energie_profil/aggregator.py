@@ -423,14 +423,22 @@ async def aggregate_day(
     temp_values = []
     strahlung_summe = 0.0
     pv_ertrag_summe = 0.0
+    pv_ertrag_erfasst = False  # mind. eine Stunde mit gemessener PV — s. PR unten
     gti_summe = 0.0  # kWp-gewichtete GTI (Wh/m²) über den Tag — für PR (#139)
     gti_stunden_count = 0
     soc_values = []
     stunden_count = 0
     komponenten_summen: dict[str, float] = {}  # Per-Komponenten Tages-kWh
     einspeisung_pro_stunde: dict[int, float] = {}  # h → kWh (für Negativpreis-Berechnung)
+    # Eingänge für die Ableitung des PV-Anteils der Heimladung (N-141 Weg c).
+    # Hier gesammelt statt nachträglich aus `TagesEnergieProfil` gelesen:
+    # Rahmenbedingung 2 („Rechnung im Aggregator") — die Größen liegen in
+    # dieser Schleife ohnehin vor, ein zweiter Lesepfad wäre eine zweite
+    # Wahrheit.
+    lade_stunden: list[dict[str, Optional[float]]] = []
 
     from backend.core.berechnungen import batterie_kw_spalte
+    from backend.core.berechnungen.pv_anteil_ladung import stunde_aus_bilanzwerten
 
     for punkt in punkte:
         h = int(punkt["zeit"].split(":")[0])
@@ -470,6 +478,24 @@ async def aggregate_day(
         if einspeisung_kw is not None and einspeisung_kw > 0:
             einspeisung_pro_stunde[h] = einspeisung_kw
 
+        # Eingänge für die PV-Anteils-Ableitung der Heimladung (N-141 Weg c).
+        # Die Vorzeichen-Übersetzung macht der Layer-Helfer — sie ist die eine
+        # Stelle, an der man sich hier vertun könnte (s. seinen Docstring).
+        #
+        # ⚠ Der Nenner ist bewusst `wallbox_kw`, also GENAU die Größe, aus der
+        # auch die gespeicherte Wallbox-Spalte entsteht. Sie ist `ladung_wallbox
+        # + verbrauch_eauto` und gegen Doppelzählung nur über
+        # `parent_investition_id` geschützt (N-196, dieselbe Masche wie F-14 im
+        # Leistungspfad). Das hier ist Absicht: eine eigene Sonderregel wäre
+        # eine zweite Wahrheit über dieselbe Ladung, und wird N-196 behoben,
+        # zieht diese Rechnung ohne Zutun mit.
+        lade_stunden.append(stunde_aus_bilanzwerten(
+            ladung=wallbox_kw,
+            netzbezug=netzbezug_kw,
+            einspeisung=einspeisung_kw,
+            batterie_spalte=batterie_kw,
+        ))
+
         # Bilanz-Aggregate (nur wenn pv und verbrauch bekannt)
         if pv_kw is not None and verbrauch_kw is not None:
             ueberschuss = max(0.0, pv_kw - verbrauch_kw)
@@ -484,6 +510,7 @@ async def aggregate_day(
             # Performance-Ratio = reine PV-Qualität (Ertrag vs. GTI) → den in `pv`
             # enthaltenen Sonstiges-Erzeuger-Anteil (BHKW, kein GTI-Bezug) abziehen.
             pv_ertrag_summe += pv_kw - (sonstige_erz_kw or 0.0)
+            pv_ertrag_erfasst = True
 
         peak_pv = max(peak_pv, pv_kw_w)
         peak_bezug = max(peak_bezug, netzbezug_kw_w)
@@ -586,9 +613,13 @@ async def aggregate_day(
     # als GHI — mit GHI liefen PR-Werte im Winter künstlich auf 1.5–2.8
     # (Issue #139). Ohne GTI (keine PV-Module, API-Fehler) bleibt PR = None
     # statt einen physikalisch unsinnigen Wert zu liefern.
+    # Zweiter Fall derselben Regel: ohne EINE gemessene PV-Stunde ist der
+    # Zähler dieses Bruchs kein Ertrag, sondern eine Lücke — die PR liefe sonst
+    # auf 0,0 und der Daten-Checker meldete „auffällig niedrig" für eine Anlage,
+    # die schlicht keinen PV-Zähler je Erzeuger hat (Forum kaba-kakao 2026-08-07).
     performance_ratio = None
     kwp = anlage.leistung_kwp
-    if kwp and kwp > 0 and gti_summe > 0:
+    if kwp and kwp > 0 and gti_summe > 0 and pv_ertrag_erfasst:
         theoretisch_kwh = gti_summe * kwp / 1000  # Wh/m² × kWp / 1000
         if theoretisch_kwh > 0:
             performance_ratio = round(pv_ertrag_summe / theoretisch_kwh, 3)
@@ -696,6 +727,24 @@ async def aggregate_day(
     except Exception as e:
         logger.debug(f"Peak-HA-LTS-Override für {datum}: {e}")
 
+    # ── PV-Anteil der Heimladung ableiten (N-141 Weg c) ───────────────────
+    # Eine Wallbox misst ihren PV-Anteil nicht; ohne evcc gab es dafür bisher
+    # gar keine Quelle, und der Leser setzte ihn auf 0 — die ganze Heimladung
+    # galt als Netzstrom. SoT der Regel: `core/berechnungen/pv_anteil_ladung.py`
+    # (Regel „Einspeise-Deckung", am 2026-08-08 gegen evcc vermessen: −3,2 pp).
+    #
+    # `None` heißt „keine Aussage" und bleibt None — daraus 0 kWh PV zu machen
+    # wäre genau die Behauptung, die dieser Fund auflöst. Der Wert ist eine
+    # SCHÄTZUNG; die Provenance trägt Regel und Deckungsgrad, damit eine
+    # Teilsumme sich als solche zu erkennen gibt (P4).
+    from backend.core.berechnungen.pv_anteil_ladung import leite_pv_anteil_ab
+    from backend.services.provenance import (
+        ABGELEITET_EINSPEISE_DECKUNG,
+        ABGELEITET_EINSPEISE_DECKUNG_TEILWEISE,
+    )
+
+    lade_anteil = leite_pv_anteil_ab(lade_stunden)
+
     # ── TagesZusammenfassung speichern ────────────────────────────────────
     zusammenfassung = TagesZusammenfassung(
         anlage_id=anlage.id,
@@ -716,6 +765,12 @@ async def aggregate_day(
         boersenpreis_min_cent=boersenpreis_min,
         negative_preis_stunden=neg_stunden,
         einspeisung_neg_preis_kwh=einsp_neg_kwh,
+        emob_ladung_pv_abgeleitet_kwh=(
+            lade_anteil.pv_kwh if lade_anteil is not None else None
+        ),
+        emob_ladung_netz_abgeleitet_kwh=(
+            lade_anteil.netz_kwh if lade_anteil is not None else None
+        ),
         # Preserve-Logik nur bei manueller Reaggregation — Pattern-Adaption
         # v3.32.4 (#290, Audit §4.2). Ursprung: Monatsdaten-Kontext, wo
         # manuell editierte Werte vor Scheduler-Überschreibung geschützt
@@ -779,7 +834,25 @@ async def aggregate_day(
         else "auto:monatsabschluss"
     )
     db.add(zusammenfassung)
-    seed_tz_provenance(zusammenfassung, writer=auto_writer, source=tz_source_label)
+    # Die beiden Ladeanteils-Spalten tragen eine eigene Herkunfts-Marke: der
+    # Source-Tag beschreibt den LAUF (HA-LTS/Snapshot), die Marke die HERKUNFT
+    # der Zahl. Ohne sie sähe eine Schätzung aus wie eine Messung — und war
+    # nicht jede Ladestunde gedeckt, sagt die Marke auch das (P4).
+    abgeleitet_marken: dict[str, str] = {}
+    if lade_anteil is not None:
+        marke = (
+            ABGELEITET_EINSPEISE_DECKUNG
+            if lade_anteil.vollstaendig
+            else ABGELEITET_EINSPEISE_DECKUNG_TEILWEISE
+        )
+        abgeleitet_marken["emob_ladung_pv_abgeleitet_kwh"] = marke
+        abgeleitet_marken["emob_ladung_netz_abgeleitet_kwh"] = marke
+    seed_tz_provenance(
+        zusammenfassung,
+        writer=auto_writer,
+        source=tz_source_label,
+        abgeleitet_je_feld=abgeleitet_marken or None,
+    )
 
     # Gerettete extern-befüllte Felder wiederherstellen (Prognose + Kraftstoffpreis).
     # #299: bewusst NACH seed_tz_provenance und über write_with_provenance statt

@@ -96,6 +96,10 @@ from backend.services.eauto_wirtschaftlichkeit import (
 from backend.services.einspeise_erloes_service import (
     get_neg_preis_einspeisung_je_monat,
 )
+from backend.services.emob_ladeanteil import (
+    hat_gepflegten_pv_anteil,
+    reichere_ladezeilen_an,
+)
 from backend.services.energie_profil.monats_aus_tagen import (
     TagesMonatsSumme,
     lade_monats_summen_aus_tagen,
@@ -123,6 +127,10 @@ TAGESWERT_ZAEHLER = "zaehler"
 TAGESWERT_PV = "pv"
 TAGESWERT_BKW = "bkw"
 TAGESWERT_SPEICHER = "speicher"
+#: Sonderfall unter den Gruppen: hier kommt aus der Tagesebene **keine Menge**,
+#: sondern nur die *Aufteilung* der Heimladung in PV und Netz (N-141 Weg c).
+#: Die Ladungsmenge selbst stammt weiter aus der Monatszeile.
+TAGESWERT_EMOB_ANTEIL = "emob_anteil"
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -178,6 +186,13 @@ class BkwFakten:
     Monats fehlt (Datenlücke) — sonst steckt der Eigenverbrauch bereits in der
     Ableitung aus ``pv_kwh`` und ein zweiter Term wäre Doppelzählung.
     ``eigenverbrauch_gemessen_kwh`` bleibt daneben der ROHE Wert für die Anzeige.
+
+    ``erzeugung_je_investition`` ist dieselbe Erzeugung, nur nicht summiert (F-10):
+    String-Vergleiche stellen **jeden** Erzeuger einzeln seinem SOLL gegenüber,
+    und ein Balkonkraftwerk steht nicht in ``ErzeugungFakten.pv_je_modul`` — dort
+    stehen ausschließlich ``pv-module``. Bewusst ein eigenes Feld statt einer
+    Erweiterung von ``pv_je_modul``: dessen Summe ``pv_module_kwh`` geht in die
+    ROI-Rechnung, wo das BKW eine eigene Zeile hat und sonst doppelt zählte.
     """
 
     erzeugung_kwh: float = 0.0
@@ -185,6 +200,13 @@ class BkwFakten:
     rest_eigenverbrauch_kwh: float = 0.0
     speicher_ladung_kwh: float = 0.0
     speicher_entladung_kwh: float = 0.0
+    #: ``{investition_id: erzeugung_kwh}`` aus den IMD-Zeilen des Monats.
+    #: Σ der Werte == ``erzeugung_kwh`` — **außer** wenn der Monat seine BKW-Zahl
+    #: aus der Tagesebene bezieht (``TAGESWERT_BKW``): die Tagessumme ist
+    #: anlagenweit und lässt sich nicht je Investition aufteilen. Dann bleibt
+    #: dieses Feld **leer**, während ``erzeugung_kwh`` einen Wert trägt. Wer je
+    #: Investition auswertet, behandelt das wie eine Lücke, nicht wie 0.
+    erzeugung_je_investition: dict[int, float] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -232,12 +254,18 @@ class EmobFakten:
     ``eauto_summe`` / ``wallbox_summe`` sind dieselben Rohdicts, aber je Quelle
     **getrennt** und über denselben SoT-Leser aufsummiert
     (``summiere_emob_quelle``) — für Sichten, die die beiden Seiten einzeln
-    ausweisen müssen statt sie zu poolen (der Community-Payload trägt
-    ``eauto_*`` und ``wallbox_*`` als eigene Felder). Sie sind **kein** Ersatz
+    ausweisen müssen statt sie zu poolen. Sie sind **kein** Ersatz
     für die Trias oben: wer eine Gesamt-Heimladung braucht, nimmt den Pool,
     sonst zählt derselbe Fluss zweimal (die Wallbox misst am Ladepunkt, was das
     E-Auto als Ladung meldet). ``quelle`` ist in beiden leer — die Quellen-Wahl
     trifft nur der Pool.
+
+    ⚠ **Die durchgereichten Zeilen tragen den abgeleiteten PV-Anteil** (F-16):
+    ``eauto_ladedaten``/``wallbox_ladedaten`` und die beiden Summen darüber sind
+    bereits durch ``services/emob_ladeanteil.reichere_ladezeilen_an`` gelaufen,
+    genauso wie die Trias oben. Wer sie neu poolt, bekommt deshalb dieselbe
+    Aufteilung wie die Trias — vorher bekam er die ungeteilten Rohwerte und
+    zeigte 0 % neben dem abgeleiteten Anteil derselben Größe.
 
     ``dienstlich_*`` ist der herausgefilterte Anteil — nicht verworfen, sondern
     getrennt ausgewiesen, weil er als *Ausgabe* (dienstliche Ladekosten) in die
@@ -248,6 +276,16 @@ class EmobFakten:
     ladung_kwh: float = 0.0
     ladung_pv_kwh: float = 0.0
     ladung_netz_kwh: float = 0.0
+    #: Steht die Aufteilung ``ladung_pv_kwh``/``ladung_netz_kwh`` so in den
+    #: Monatsdaten, oder ist sie aus der Tagesebene **abgeleitet** (N-141 Weg c)?
+    #: Eine Wallbox misst ihren PV-Anteil nicht; fehlt er, galt bisher die ganze
+    #: Heimladung als Netzstrom. Wer die Zahl anzeigt, sagt mit diesem Flag, dass
+    #: sie gerechnet ist — eine Schätzung, die aussieht wie eine Messung, ist
+    #: genau der Fehler, den die P4-Linie verhindern soll.
+    #: ⚠ **Die Trias bleibt geschlossen**: abgeleitet wird der *Anteil*, und er
+    #: wird auf die kanonische ``ladung_kwh`` angewandt — nicht die kWh der
+    #: Tagesebene übernommen (sonst #262-Klasse, PV-Anteil > 100 %).
+    ladung_anteil_abgeleitet: bool = False
     extern_kwh: float = 0.0
     extern_euro: float = 0.0
     ladevorgaenge: float = 0.0
@@ -258,6 +296,13 @@ class EmobFakten:
     #: km je Fahrzeug (``Investition.id``) — Voraussetzung dafür, dass eine
     #: Ersparnis je Fahrzeug mit DESSEN Verbrauchs-Parameter gerechnet wird (G20-2).
     km_je_fahrzeug: dict[int, float] = field(default_factory=dict)
+    #: Elektrischer Fahrverbrauch je Fahrzeug (``Investition.id``) — dieselbe
+    #: Begründung wie ``km_je_fahrzeug`` eine Zeile höher, eine Stufe weiter:
+    #: der elektrische Fahranteil eines Plug-in-Hybrids folgt aus DESSEN
+    #: Fahrverbrauch und DESSEN ``verbrauch_kwh_100km`` (#331, Phase 4). Die
+    #: anlagenweite Summe ``fahrverbrauch_kwh`` darüber bleibt unverändert —
+    #: additiv statt umgedeutet (Muster ``BkwFakten.erzeugung_je_investition``).
+    fahrverbrauch_je_fahrzeug: dict[int, float] = field(default_factory=dict)
     dienstlich_ladung_pv_kwh: float = 0.0
     dienstlich_ladung_netz_kwh: float = 0.0
     eauto_ladedaten: tuple[dict, ...] = ()
@@ -266,6 +311,19 @@ class EmobFakten:
         default_factory=lambda: EmobLadungPool(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, "")
     )
     wallbox_summe: EmobLadungPool = field(
+        default_factory=lambda: EmobLadungPool(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, "")
+    )
+    #: Dieselben Summen **ohne** die Ableitung — ausschließlich für den
+    #: Community-Payload. Er trägt Werte an einen fremden Server, der die
+    #: Rohdaten nie gesehen hat und nichts nachrechnet; eine Schätzung wäre dort
+    #: in einem Benchmark nicht mehr als solche erkennbar, und der Anlagen-Hash
+    #: bewegte sich ohne neue Messung. Jede andere Sicht nimmt die angereicherten
+    #: Felder darüber — wer hier greift, ohne den Payload zu bauen, erzeugt genau
+    #: die zweite Zahl, die F-16 aufgelöst hat.
+    eauto_summe_gemessen: EmobLadungPool = field(
+        default_factory=lambda: EmobLadungPool(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, "")
+    )
+    wallbox_summe_gemessen: EmobLadungPool = field(
         default_factory=lambda: EmobLadungPool(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, "")
     )
 
@@ -540,8 +598,21 @@ async def lade_monats_fakten(
     # Die lokale Tagesebene als **zusätzliche** Grundgesamtheit (N-121). Ohne
     # das Flag wird sie nicht einmal geladen — die Kosten trägt nur, wer sie
     # bestellt.
+    #
+    # ⚠ Seit N-141 Weg (c) gibt es einen **zweiten** Grund, sie zu laden, und er
+    # hat nichts mit der Grundgesamtheit zu tun: der PV-Anteil der Heimladung
+    # ist nirgends gemessen und wird aus der Tagesebene abgeleitet. Ohne dieses
+    # Nachladen sähe genau EINE Sicht (Cockpit → Monat, der einzige Aufrufer mit
+    # dem Flag) einen PV-Anteil, während Komponenten-Hub, CO₂-Bilanz und
+    # E-Auto-Ersparnis weiter 0 % behaupten — zwei Zahlen für dieselbe Größe,
+    # die Klasse hinter #331 und F-15. Deshalb **bedingt**: nur wenn ein Monat
+    # überhaupt Heimladung ohne gepflegten PV-Anteil trägt. Eine Anlage ohne
+    # Wallbox und ohne E-Auto zahlt dafür nichts (Entscheid Gernot 2026-08-08).
     tages_summen: dict[MonatsSchluessel, TagesMonatsSumme] = {}
-    if inkl_nur_tageswerte:
+    nur_fuer_ladeanteil = not inkl_nur_tageswerte and any(
+        m.emob_ladung_ohne_pv_anteil for m in roh.values()
+    )
+    if inkl_nur_tageswerte or nur_fuer_ladeanteil:
         tages_summen = await lade_monats_summen_aus_tagen(
             db, anlage_id, von=von, bis=bis
         )
@@ -551,7 +622,12 @@ async def lade_monats_fakten(
         | set(pv_summen)
         | set(pv_je_modul)
         | set(roh)
-        | set(tages_summen)
+        # ⚠ Nur mit dem Flag erweitert die Tagesebene die Grundgesamtheit. Wurde
+        # sie allein für den Ladeanteil geholt, darf sie KEINE zusätzlichen
+        # Monate aufmachen — sonst tauchten in jeder Sicht plötzlich Monate auf,
+        # die nur eine Tagesspur haben. Das ist genau die Wirkung, die N-121
+        # hinter das Flag gestellt hat.
+        | (set(tages_summen) if inkl_nur_tageswerte else set())
     )
 
     if tarif_cache is None:
@@ -574,6 +650,39 @@ async def lade_monats_fakten(
             )
         )
     return fakten
+
+
+async def ist_pv_ladeanteil_prozent(
+    db: AsyncSession,
+    anlage_id: int,
+    *,
+    von: Optional[MonatsSchluessel] = None,
+    bis: Optional[MonatsSchluessel] = None,
+) -> Optional[float]:
+    """Wie viel Prozent der Heimladung kam bisher aus eigener Sonne? (N-188)
+
+    Der **gemessene bzw. abgeleitete IST-Anteil** über den Zeitraum, in Prozent
+    — für die Prognose-Achse, die ihn bisher als Handwert mit Default 60 %
+    führte. Dieselbe Anlage stand damit auf 60 % in der Prognose und 0 % im IST;
+    seit der Ableitung (N-141 Weg c) gibt es einen belegten Wert, und die
+    Prognose darf ihn nehmen, statt eine Zahl zu raten.
+
+    ⚠ **Gewichtet über die Ladung, nicht über die Monate.** Ein Monat mit 5 kWh
+    Heimladung darf den Jahresanteil nicht so stark bewegen wie einer mit 300.
+    Deshalb Σ PV ÷ Σ Ladung und nicht der Mittelwert der Monatsanteile.
+
+    ⚠ **Ein gepflegter Parameter schlägt diesen Wert** — die Entscheidung trifft
+    der Aufrufer, nicht diese Funktion. Sie sagt nur, was das IST hergibt.
+
+    Returns:
+        ``0…100``, oder ``None``, wenn im Zeitraum keine Heimladung stattfand —
+        „keine Aussage", nicht 0 %.
+    """
+    fakten = await lade_monats_fakten(db, anlage_id, von=von, bis=bis)
+    ladung = sum(f.emob.ladung_kwh for f in fakten)
+    if ladung <= 0:
+        return None
+    return sum(f.emob.ladung_pv_kwh for f in fakten) / ladung * 100
 
 
 def finanz_zeile_eingabe(fakt: MonatsFakt) -> FinanzZeileEingabe:
@@ -653,6 +762,7 @@ class _RohMonat:
         #: gehört in die Erzeugungs-Anzeige.
         self.hat_sonstigen_erzeuger = False
         self.pv_je_modul_roh: dict[int, float] = {}
+        self.bkw_je_investition: dict[int, float] = {}
         self.bkw_erzeugung = 0.0
         self.bkw_eigenverbrauch = 0.0
         self.bkw_rest_eigenverbrauch = 0.0
@@ -674,6 +784,7 @@ class _RohMonat:
         self.wallbox_ladedaten: list[dict] = []
         self.eauto_km = 0.0
         self.eauto_km_je_fahrzeug: dict[int, float] = {}
+        self.eauto_fahrverbrauch_je_fahrzeug: dict[int, float] = {}
         self.eauto_fahrverbrauch = 0.0
         self.eauto_v2h = 0.0
         self.dienstlich_pv = 0.0
@@ -692,6 +803,24 @@ class _RohMonat:
         self.ertraege_euro = 0.0
         self.ausgaben_euro = 0.0
 
+    @property
+    def emob_ladung_ohne_pv_anteil(self) -> bool:
+        """Gibt es Heimlade-Zeilen, aber keine erfasste PV-/Netz-Aufteilung?
+
+        Die **Vorprüfung** vor dem Nachladen der Tagesebene (N-141 Weg c): nur
+        wenn sie zutrifft, lohnt die zusätzliche Query. Sie liest ausschließlich
+        die bereits gefalteten Rohzeilen, kostet also nichts.
+
+        Bewusst grob — ob am Ende überhaupt Ladung > 0 herauskommt, entscheidet
+        erst der Pool in `_baue_fakt`. Eine zu großzügige Vorprüfung kostet eine
+        Query zu viel; eine zu strenge verlöre den Wert still.
+        """
+        if not (self.eauto_ladedaten or self.wallbox_ladedaten):
+            return False
+        return not hat_gepflegten_pv_anteil(
+            self.eauto_ladedaten, self.wallbox_ladedaten
+        )
+
     def falte(self, inv: Investition, data: dict) -> None:
         b = imd_typ_beitrag(inv, data)
         # Dienstwagen zählen NICHT als Beitrag: sie sind aus dem E-Mob-Pool der
@@ -709,6 +838,17 @@ class _RohMonat:
                 eigenverbrauch_kwh=b.bkw_eigenverbrauch,
             )
             self.bkw_erzeugung += b.bkw_erzeugung
+            # Je Investition zusätzlich zur Summe (F-10): der String-Vergleich
+            # des Jahresbericht-PDF stellt jeden Erzeuger einzeln seinem SOLL
+            # gegenüber und findet ein BKW in `pv_je_modul` nicht — dort stehen
+            # nur `pv-module`. Die Summe `bkw_erzeugung` hilft ihm nicht, sobald
+            # zwei Balkonkraftwerke da sind. Rein additiv; `pv_je_modul` und
+            # `pv_module_kwh` bleiben unberührt, weil `pv_module_kwh` in die
+            # ROI-Rechnung geht, wo das BKW bewusst eine eigene Zeile hat
+            # (`investitionen/crud.py::get_pv_erzeugung`) und sonst doppelt zählte.
+            self.bkw_je_investition[inv.id] = (
+                self.bkw_je_investition.get(inv.id, 0.0) + b.bkw_erzeugung
+            )
             self.bkw_eigenverbrauch += b.bkw_eigenverbrauch
             self.bkw_rest_eigenverbrauch += beitrag.rest_eigenverbrauch_kwh
             self.bkw_speicher_ladung += b.bkw_speicher_ladung
@@ -748,6 +888,11 @@ class _RohMonat:
                 if b.eauto_km:
                     self.eauto_km_je_fahrzeug[inv.id] = (
                         self.eauto_km_je_fahrzeug.get(inv.id, 0.0) + b.eauto_km
+                    )
+                if b.eauto_verbrauch:
+                    self.eauto_fahrverbrauch_je_fahrzeug[inv.id] = (
+                        self.eauto_fahrverbrauch_je_fahrzeug.get(inv.id, 0.0)
+                        + b.eauto_verbrauch
                     )
             else:
                 self.wallbox_ladedaten.append(data)
@@ -853,14 +998,37 @@ async def _baue_fakt(
         pv_vollstaendig=pv_vollstaendig,
     )
 
-    pool = get_emob_heimladung_canonical(
-        eauto_imd_data=roh.eauto_ladedaten,
-        wallbox_imd_data=roh.wallbox_ladedaten,
+    # ── PV-Anteil der Heimladung: echter Wert gewinnt, sonst ableiten ──────
+    # Rahmenbedingung 1 (N-141 Weg c): die Ableitung füllt NUR Lücken. Gepflegt
+    # ist der Anteil, sobald irgendeine Quellzeile den Schlüssel trägt — auch
+    # mit **0**. Das ist bewusst `is not None` und nicht `> 0`: eine gepflegte
+    # 0 („diesen Monat nur nachts geladen") ist eine Aussage, keine Lücke, und
+    # sie darf keine Schätzung auslösen (CLAUDE.md §0-Werte prüfen).
+    #
+    # ⚠ **Angereichert wird VOR dem Pool, nicht danach (F-16).** Bis `a7a50abc`
+    # saß die Ableitung unter `pool` und traf damit nur die Felder
+    # `ladung_pv_kwh`/`ladung_netz_kwh` — jede Sicht, die die mitgereichten
+    # Rohdicts selbst poolt (Cockpit → Jahr, Jahresbericht-PDF) oder die IMD
+    # direkt liest (Komponenten-Hub, Aussichten, HA-Export), zeigte weiter 0 %.
+    # Unterhalb des Pools angesetzt gilt die Aufteilung für jeden dieser Wege.
+    eauto_ladedaten, wallbox_ladedaten, anteil_abgeleitet = reichere_ladezeilen_an(
+        eauto_daten=roh.eauto_ladedaten,
+        wallbox_daten=roh.wallbox_ladedaten,
+        quote=tages_summe.abgeleiteter_pv_anteil if tages_summe is not None else None,
     )
+    if anteil_abgeleitet:
+        tageswert_gruppen.add(TAGESWERT_EMOB_ANTEIL)
+
+    pool = get_emob_heimladung_canonical(
+        eauto_imd_data=eauto_ladedaten,
+        wallbox_imd_data=wallbox_ladedaten,
+    )
+
     emob = EmobFakten(
         ladung_kwh=pool.ladung_kwh,
         ladung_pv_kwh=pool.pv_kwh,
         ladung_netz_kwh=pool.netz_kwh,
+        ladung_anteil_abgeleitet=anteil_abgeleitet,
         extern_kwh=pool.extern_kwh,
         extern_euro=pool.extern_euro,
         ladevorgaenge=pool.ladevorgaenge,
@@ -869,12 +1037,16 @@ async def _baue_fakt(
         fahrverbrauch_kwh=roh.eauto_fahrverbrauch,
         v2h_entladung_kwh=roh.eauto_v2h,
         km_je_fahrzeug=dict(roh.eauto_km_je_fahrzeug),
+        fahrverbrauch_je_fahrzeug=dict(roh.eauto_fahrverbrauch_je_fahrzeug),
         dienstlich_ladung_pv_kwh=roh.dienstlich_pv,
         dienstlich_ladung_netz_kwh=roh.dienstlich_netz,
-        eauto_ladedaten=tuple(roh.eauto_ladedaten),
-        wallbox_ladedaten=tuple(roh.wallbox_ladedaten),
-        eauto_summe=summiere_emob_quelle(roh.eauto_ladedaten),
-        wallbox_summe=summiere_emob_quelle(roh.wallbox_ladedaten),
+        eauto_ladedaten=tuple(eauto_ladedaten),
+        wallbox_ladedaten=tuple(wallbox_ladedaten),
+        eauto_summe=summiere_emob_quelle(eauto_ladedaten),
+        wallbox_summe=summiere_emob_quelle(wallbox_ladedaten),
+        # Ungeschätzt — nur für den Community-Payload (s. Feld-Docstring).
+        eauto_summe_gemessen=summiere_emob_quelle(roh.eauto_ladedaten),
+        wallbox_summe_gemessen=summiere_emob_quelle(roh.wallbox_ladedaten),
     )
 
     md_summen = berechne_md_sonstige_summen(monatsdaten) if monatsdaten else None
@@ -916,6 +1088,12 @@ async def _baue_fakt(
             rest_eigenverbrauch_kwh=roh.bkw_rest_eigenverbrauch,
             speicher_ladung_kwh=roh.bkw_speicher_ladung,
             speicher_entladung_kwh=roh.bkw_speicher_entladung,
+            # Leer lassen, sobald die Zahl von der Tagesebene kommt: dort ist sie
+            # anlagenweit, eine Aufteilung wäre erfunden (s. Feld-Docstring).
+            erzeugung_je_investition=(
+                {} if TAGESWERT_BKW in tageswert_gruppen
+                else dict(roh.bkw_je_investition)
+            ),
         ),
         speicher=speicher,
         emob=emob,

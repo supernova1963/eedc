@@ -37,6 +37,7 @@ from backend.services.snapshot.komponenten_beitraege import (
     investition_beitraege,
     investition_hourly_eintraege,
     resolve_either_or_eintraege,
+    wallbox_deckt_ladung_ab,
 )
 from backend.services.snapshot.plausibility import (
     cap_pv_einspeisung_stunde,
@@ -79,7 +80,10 @@ async def get_hourly_kwh_by_category_lts(
     # rohen `_categorize_counter`-Aufrufen pro Feld — Issue #298 (Audit-§6.2,
     # Pattern-Klasse [[feedback_aggregator_symmetrie]]). Anders als bei der
     # Snapshot-Variante: HA-LTS hat keine MQTT-Zähler, also nur HA-gemappte
-    # Sensoren.
+    # Sensoren — deshalb bleibt hier auch die Alles-oder-nichts-Prüfung für
+    # `basis:pv_gesamt` (Stufe 1 zu F-7) beim Mapping-Default: ein per MQTT
+    # gespeister Zähler je Erzeuger hat keine HA-Entity und liefert diesem Pfad
+    # ohnehin nichts, was das Aggregat verdrängen könnte.
     eintraege: list[tuple[str, str, Optional[str]]] = []  # (entity_id, kategorie, gruppe)
     quellen_energy = extract_quellen_energy(anlage)  # C2b-Read-Through (HA-only-Pfad)
 
@@ -275,6 +279,9 @@ async def get_komponenten_tageskwh_lts(
                     eintraege.append((eid, b, basis_map))
 
     investitionen_map = sensor_mapping.get("investitionen", {}) or {}
+    # N-196: strukturelle Quellen-Regel der E-Mob-Fläche, einmal je Lauf —
+    # dieselbe Regel, die der Leistungspfad seit #356 kennt.
+    _wb_deckt = wallbox_deckt_ladung_ab(investitionen_by_id.values(), sensor_mapping)
     for inv_id_str, inv_data in investitionen_map.items():
         if not isinstance(inv_data, dict):
             continue
@@ -282,7 +289,7 @@ async def get_komponenten_tageskwh_lts(
         if inv is None:
             continue
         felder = inv_data.get("felder", {}) or {}
-        for b in investition_beitraege(inv, inv_data):
+        for b in investition_beitraege(inv, inv_data, wallbox_deckt_ladung=_wb_deckt):
             cfg = felder.get(b.feld)
             if isinstance(cfg, dict):
                 eid = cfg.get("sensor_id")

@@ -117,7 +117,9 @@ class DatenChecker(
         ergebnisse.extend(await self._check_leere_tage_trotz_zaehler(anlage))
         ergebnisse.extend(await self._check_pv_ueber_erfassung(anlage))
         ergebnisse.extend(self._check_emob_pool_pflege(anlage))
+        ergebnisse.extend(self._check_phev_anteil_unbestimmt(anlage))
         ergebnisse.extend(self._check_emob_sensor_doppelmapping(anlage))
+        ergebnisse.extend(await self._check_emob_doppelzaehlung_tage(anlage))
 
         # Zusammenfassung
         zusammenfassung = {"error": 0, "warning": 0, "info": 0, "ok": 0}

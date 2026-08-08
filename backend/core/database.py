@@ -795,6 +795,11 @@ async def run_migrations(conn):
                 ('gesamt_leistung_kwp', 'FLOAT'),
                 ('module_monatswerte', 'JSON'),
                 ('horizont_verwendet', 'BOOLEAN DEFAULT 0'),
+                # v4.0.11 (#363): Strahlungsdatensatz der Zahl. Bewusst ohne
+                # DEFAULT — NULL bedeutet „vor der Umstellung geschrieben, also
+                # aus PVGIS v5_2/SARAH2" und ist der Auslöser, der eine Anlage
+                # ohne Stammdaten-Änderung einmalig nachziehen lässt.
+                ('raddatabase', 'VARCHAR(50)'),
             ]
             for col_name, col_type in new_columns:
                 if col_name not in existing_columns:
@@ -911,6 +916,14 @@ async def run_migrations(conn):
                 connection.execute(text('ALTER TABLE tages_zusammenfassung ADD COLUMN pv_prognose_final_kwh FLOAT'))
             if 'pv_prognose_final_at' not in existing_columns:
                 connection.execute(text('ALTER TABLE tages_zusammenfassung ADD COLUMN pv_prognose_final_at VARCHAR(40)'))
+            # N-141 Weg (c): abgeleiteter PV-/Netz-Anteil der Heimladung.
+            # Rein additiv — Bestandszeilen bleiben NULL, und NULL heißt
+            # „keine Aussage". Damit gibt es KEINE rückwirkende Änderung an
+            # historischen Werten (Rahmenbedingung 5, Gernot 2026-08-08).
+            if 'emob_ladung_pv_abgeleitet_kwh' not in existing_columns:
+                connection.execute(text('ALTER TABLE tages_zusammenfassung ADD COLUMN emob_ladung_pv_abgeleitet_kwh FLOAT'))
+            if 'emob_ladung_netz_abgeleitet_kwh' not in existing_columns:
+                connection.execute(text('ALTER TABLE tages_zusammenfassung ADD COLUMN emob_ladung_netz_abgeleitet_kwh FLOAT'))
 
         # v3.6.9: Energieprofil-Revision — vorzeichenbasierte Aggregation, WP/Wallbox separat
         # Altdaten werden gelöscht (fehlerhafte kategorie-basierte Aggregation),

@@ -7,7 +7,7 @@ Balkonkraftwerk, Sonstiges) plus die Investition-Monatsdaten-Abfrage.
 in investitionen/__init__.py aggregiert.
 """
 
-from typing import Optional, Any, NamedTuple
+from typing import Optional, Any, Iterable, NamedTuple
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -50,6 +50,7 @@ from backend.services.eauto_wirtschaftlichkeit import (
     build_eauto_km_by_month,
     build_wb_pool_by_month,
     compute_emob_pool_attribution,
+    eigener_verbrauch_l_100km,
     get_emob_heimladung_canonical,
 )
 from backend.core.wirtschaftlichkeit_defaults import (
@@ -58,6 +59,7 @@ from backend.core.wirtschaftlichkeit_defaults import (
     NETZBEZUG_DEFAULT_CENT,
 )
 from backend.core.investition_parameter import ist_dienstlich
+from backend.services.emob_ladeanteil import reichere_monatszeilen_an
 from backend.services.monats_fakten import lade_monats_fakten
 from backend.core.berechnungen.speicher_wirtschaftlichkeit import (
     aggregiere_speicher_ist,
@@ -100,9 +102,18 @@ router = APIRouter()
 
 
 class GewichtetePreise(NamedTuple):
-    """Mengengewichtete Ø-Tarife einer Periode, beide Preisseiten (ct/kWh)."""
+    """Mengengewichtete Ø-Tarife einer Periode, beide Preisseiten (ct/kWh).
+
+    ``bezug_lookup`` trägt zusätzlich die **ungemittelten** Monatspreise, aus
+    denen der Ø entstanden ist. Er geht an
+    ``berechne_eauto_ersparnis_periode`` weiter, damit die Preisachse dort
+    aufgelöst wird und nicht hier — sonst gäbe es die Mittelung an zwei Orten
+    (F-18/N-181). Zwei getrennte Query-Schleifen über dieselben Monate wären
+    der Preis dafür gewesen; so bleibt es bei einer.
+    """
     bezug_cent: float
     einspeise_cent: float
+    bezug_lookup: dict[tuple[int, int], float] = {}
 
 
 async def _gewichtete_monatspreise(
@@ -146,25 +157,29 @@ async def _gewichtete_monatspreise(
     """
     summe_gewicht = sum(g for g in gewichte.values() if g and g > 0)
     if summe_gewicht <= 0:
-        return GewichtetePreise(fallback_bezug, fallback_einspeise)
+        return GewichtetePreise(fallback_bezug, fallback_einspeise, {})
 
     gewichteter_bezug = 0.0
     gewichtete_einspeisung = 0.0
+    bezug_lookup: dict[tuple[int, int], float] = {}
     for (jahr, monat), gewicht in gewichte.items():
         if not gewicht or gewicht <= 0:
             continue
         m_tarife = await lade_tarife_fuer_anlage(
             db, anlage_id, target_date=date(jahr, monat, 1)
         )
-        gewichteter_bezug += resolve_strompreis_for_komponente(
+        m_bezug = resolve_strompreis_for_komponente(
             m_tarife, verwendung, fallback=fallback_bezug
-        ) * gewicht
+        )
+        bezug_lookup[(jahr, monat)] = m_bezug
+        gewichteter_bezug += m_bezug * gewicht
         gewichtete_einspeisung += resolve_einspeiseverguetung_cent(
             m_tarife, fallback=fallback_einspeise
         ) * gewicht
     return GewichtetePreise(
         gewichteter_bezug / summe_gewicht,
         gewichtete_einspeisung / summe_gewicht,
+        bezug_lookup,
     )
 
 
@@ -311,16 +326,53 @@ async def get_eauto_dashboard(
     private_eautos = [e for e in eautos if not ist_dienstlich(e)]
     private_wallboxen = [w for w in wallboxen if not ist_dienstlich(w)]
 
+    # F-16: der abgeleitete PV-Anteil der Heimladung gilt auch hier. Dieser Hub
+    # liest `InvestitionMonatsdaten` direkt (P10-Restschuld), sieht die
+    # Monats-Fakten also nie — ohne diese Anreicherung zeigte seine KPI-Kachel
+    # „PV-Anteil" weiter 0 %, während Auswertungen → Komponenten für DIESELBE
+    # Größe einen abgeleiteten Anteil nennt. Der Torwächter (gepflegter Wert
+    # gewinnt) und die Query-Vorprüfung stecken im Service.
+    _wb_id_set = {w.id for w in private_wallboxen}
+    _emob_zeilen = [
+        (inv, md)
+        for inv in (*private_eautos, *private_wallboxen)
+        for md in md_by_inv.get(inv.id, [])
+        if inv.ist_aktiv_im_monat(md.jahr, md.monat)
+    ]
+    _emob_daten = await reichere_monatszeilen_an(
+        db,
+        anlage_id,
+        [
+            ((md.jahr, md.monat), inv.id in _wb_id_set, md.verbrauch_daten or {})
+            for inv, md in _emob_zeilen
+        ],
+    )
+    emob_daten_by_md: dict[tuple[int, int, int], dict] = {
+        (inv.id, md.jahr, md.monat): daten
+        for (inv, md), daten in zip(_emob_zeilen, _emob_daten)
+    }
+
+    def _emob_daten_von(inv, md) -> dict:
+        """Die Zeile mit abgeleitetem PV-Anteil — Fallback ist das Original.
+
+        Der Fallback greift für **dienstliche** Fahrzeuge und für Monate außerhalb
+        der Laufzeit: beide gehören nicht in den privaten Pool und damit auch
+        nicht in die Ableitung (F-7 / [[feedback_dienstwagen_alle_checks]]).
+        """
+        return emob_daten_by_md.get(
+            (inv.id, md.jahr, md.monat), md.verbrauch_daten or {}
+        )
+
     # Wallbox-Heimladung als Wahrheit, wenn größer als Σ E-Auto-Heimladung
     # (typisches evcc-Portal-Import-Setup). Km-Anteile pro E-Auto unten.
     pool_attr = compute_emob_pool_attribution(
         eauto_imd_data=[
-            (md.verbrauch_daten or {})
+            _emob_daten_von(e, md)
             for e in private_eautos for md in md_by_inv.get(e.id, [])
             if e.ist_aktiv_im_monat(md.jahr, md.monat)
         ],
         wallbox_imd_data=[
-            (md.verbrauch_daten or {})
+            _emob_daten_von(w, md)
             for w in private_wallboxen for md in md_by_inv.get(w.id, [])
             if w.ist_aktiv_im_monat(md.jahr, md.monat)
         ],
@@ -332,12 +384,12 @@ async def get_eauto_dashboard(
     # Hier dieselbe use_wb_pool-Entscheidung, nur monatsweise aufgelöst, damit
     # Zeilen und Kacheln konsistent bleiben.
     wb_pool_by_month = build_wb_pool_by_month(
-        (md.jahr, md.monat, md.verbrauch_daten or {})
+        (md.jahr, md.monat, _emob_daten_von(w, md))
         for w in private_wallboxen for md in md_by_inv.get(w.id, [])
         if w.ist_aktiv_im_monat(md.jahr, md.monat)
     )
     eauto_km_by_month = build_eauto_km_by_month(
-        (md.jahr, md.monat, md.verbrauch_daten or {})
+        (md.jahr, md.monat, _emob_daten_von(e, md))
         for e in private_eautos for md in md_by_inv.get(e.id, [])
         if e.ist_aktiv_im_monat(md.jahr, md.monat)
     )
@@ -384,7 +436,8 @@ async def get_eauto_dashboard(
         km_gewichte: dict[tuple[int, int], float] = {}
 
         for md in monatsdaten:
-            d = md.verbrauch_daten or {}
+            # F-16: mit abgeleitetem PV-Anteil, wo keiner gepflegt ist.
+            d = _emob_daten_von(eauto, md)
             km_this = d.get('km_gefahren', 0) or 0
             gesamt_km += km_this
             if km_this > 0:
@@ -419,15 +472,34 @@ async def get_eauto_dashboard(
             gesamt_extern_ladung = share.extern_kwh
             gesamt_extern_kosten = share.extern_euro
 
-        # ADR-002/P8: Tarif über die Monate der Periode mitteln. Beim Pool-Fall
-        # nach km gewichten — das ist der Schlüssel, nach dem auch attribuiert
-        # wird; sonst nach der Netzladung des Monats.
-        eauto_strompreis_cent, eauto_einspeise_cent = await _gewichtete_monatspreise(
+        # ADR-002/P8: Tarif über die Monate der Periode mitteln.
+        #
+        # F-18: die Gewichte sind seit 2026-08-08 **auch im Pool-Fall** die
+        # Netzladung je Monat. Vorher fiel der Pool-Fall auf km zurück, weil
+        # `attribute_emob_pool_by_km` nur einen Gesamtwert verteilt — die
+        # monatliche Aufteilung existiert aber sehr wohl, `wb_pool_by_month`
+        # baut sie ein paar Zeilen weiter oben für die Detailtabelle. Der
+        # Unterschied ist nicht akademisch: die Netzquote je km ist im Winter
+        # deutlich höher, ein km-gewichteter Preis verschiebt sich damit
+        # gegenüber dem kWh-gewichteten. Und Cockpit → Jahr rechnet jetzt mit
+        # derselben Größe — ohne diese Angleichung wäre die eine Drift durch
+        # eine andere ersetzt worden.
+        netz_gewichte_pool = {
+            k: v.netz_kwh for k, v in wb_pool_by_month.items() if v.netz_kwh > 0
+        }
+        preis_gewichte = netz_gewichte_pool if ist_pool else netz_pro_monat
+        # Ohne jede Netzladung (reines PV-Laden) bleibt km der einzige
+        # Schlüssel, den es gibt — ein leeres Gewicht ergäbe den Fallback.
+        if not preis_gewichte:
+            preis_gewichte = km_gewichte
+        _preise = await _gewichtete_monatspreise(
             db, anlage_id, "wallbox",
-            km_gewichte if ist_pool else netz_pro_monat,
+            preis_gewichte,
             fallback_bezug=strompreis_cent,
             fallback_einspeise=einspeise_verg_fallback_cent,
         )
+        eauto_strompreis_cent = _preise.bezug_cent
+        eauto_einspeise_cent = _preise.einspeise_cent
 
         # Heim-Ladung (Wallbox) = PV + Netz
         gesamt_heim_ladung = gesamt_pv_ladung + gesamt_netz_ladung
@@ -449,6 +521,14 @@ async def get_eauto_dashboard(
             wallbox_strompreis_cent=eauto_strompreis_cent,
             eauto_parameter=params,
             monats_benzinpreis_lookup=benzinpreis_lookup,
+            # F-18: die Auflösung liegt im Layer — dieselbe Funktion, die
+            # Cockpit, Aussichten und HA-Export rufen. Der Ø oben bleibt für
+            # die Anzeige und den V2H-Spread.
+            monats_strompreis_lookup=_preise.bezug_lookup,
+            netz_pro_monat=[(j, m, g) for (j, m), g in preis_gewichte.items()],
+            # #331: Σ `verbrauch_kwh` der Periode — der explizite elektrische
+            # Fahrverbrauch dieses Fahrzeugs, nicht seine Ladung.
+            fahrverbrauch_kwh_gesamt=gesamt_verbrauch or None,
         )
         benzin_kosten = eauto_result.benzin_kosten_euro
         heim_netz_kosten = gesamt_netz_ladung * eauto_strompreis_cent / 100
@@ -484,7 +564,15 @@ async def get_eauto_dashboard(
         # CO2 Ersparnis: Benzin vs. Strommix
         benzin_co2 = (gesamt_km / 100) * benzin_verbrauch_100km * CO2_FAKTOR_BENZIN_KG_LITER
         strom_co2 = gesamt_verbrauch * CO2_FAKTOR_STROM_KG_KWH
-        co2_ersparnis = benzin_co2 - strom_co2
+        # #331: die real getankten Liter des Verbrenner-Anteils mindern die
+        # vermiedene Emission — dieselbe Menge, die als Kosten in
+        # `eauto_result.fossile_kosten_euro` steht. Bei einem BEV ist sie 0.
+        fossil_co2 = (
+            eauto_result.km_verbrenner / 100
+            * (eigener_verbrauch_l_100km(params) or 0.0)
+            * CO2_FAKTOR_BENZIN_KG_LITER
+        )
+        co2_ersparnis = benzin_co2 - strom_co2 - fossil_co2
 
         # Ø Verbrauch (kWh/100 km) via zentralem Helper: gemessener verbrauch_kwh
         # hat Vorrang, sonst Näherung aus der Ladung (sonst zeigte die Karte 0,0,
@@ -494,6 +582,7 @@ async def get_eauto_dashboard(
 
         # F-7: dienstlich gefahrene Kilometer sind keine private Ersparnis. Die
         # Mengen oben bleiben stehen (sie sind gemessen), die Bewertung fällt.
+        fossile_kosten = eauto_result.fossile_kosten_euro
         if dienstlich:
             benzin_kosten = 0.0
             strom_kosten_gesamt = 0.0
@@ -501,6 +590,10 @@ async def get_eauto_dashboard(
             v2h_ersparnis = 0.0
             wallbox_ersparnis = 0.0
             co2_ersparnis = 0.0
+            # #331: der Kraftstoff eines Dienstwagens ist Sache des
+            # Arbeitgebers und war nie in eedcs Bilanz — dieselbe Linie wie
+            # der Benzinvergleich eine Zeile höher.
+            fossile_kosten = 0.0
 
         zusammenfassung = {
             'gesamt_km': round(gesamt_km, 0),
@@ -530,6 +623,13 @@ async def get_eauto_dashboard(
             'strom_kosten_extern_euro': round(gesamt_extern_kosten, 2),
             'strom_kosten_gesamt_euro': round(strom_kosten_gesamt, 2),
             'ersparnis_vs_benzin_euro': round(ersparnis_vs_benzin, 2),
+            # #331: die real angefallene Tankrechnung des Verbrenner-Anteils —
+            # als eigene Position, damit die Fläche sie BENENNEN kann statt sie
+            # in der Ersparnis verschwinden zu lassen. 0 bei einem BEV.
+            'fossile_kosten_euro': round(fossile_kosten, 2),
+            'km_elektrisch': round(eauto_result.km_elektrisch, 0),
+            'km_verbrenner': round(eauto_result.km_verbrenner, 0),
+            'phev_anteil_quelle': eauto_result.anteil_quelle,
             # Wallbox-Ersparnis (durch Heimladen statt extern)
             'wallbox_ersparnis_euro': round(wallbox_ersparnis, 2),
             # Gesamt-Ersparnis
@@ -548,11 +648,13 @@ async def get_eauto_dashboard(
         # Pool-Anteil hat — sonst Rohzeile unverändert.
         monatsdaten_response = []
         for md in monatsdaten:
-            d = dict(md.verbrauch_daten or {})
+            # F-16: dieselbe Zeile wie die Kacheln oben — die Tabelle zeigt die
+            # PV-/Netz-Spalten, sie darf nicht ungeteilt daneben stehen.
+            d = dict(_emob_daten_von(eauto, md))
             if pool_attr.use_wb_pool and not dienstlich:
                 ms = attribute_month_share(
                     wb_pool_by_month.get((md.jahr, md.monat)),
-                    (md.verbrauch_daten or {}).get('km_gefahren', 0) or 0,
+                    d.get('km_gefahren', 0) or 0,
                     eauto_km_by_month.get((md.jahr, md.monat), 0),
                 )
                 if ms.pv_kwh + ms.netz_kwh > 0:
@@ -1289,24 +1391,37 @@ async def get_wallbox_dashboard(
     # der unten kWh, PV-Anteil und `ersparnis_vs_extern` entstehen.
     eauto_id_set = {e.id for e in eautos if not ist_dienstlich(e)}
     wallbox_id_set = {w.id for w in wallboxen if not ist_dienstlich(w)}
+    # F-16: die Zeilen laufen erst durch die Ableitung des PV-Anteils, dann in
+    # den Pool. Dieser Hub liest die IMD direkt (P10-Restschuld) und zeigte
+    # deshalb `pv_anteil_prozent` = 0, während Cockpit und Auswertungen für
+    # dieselbe Heimladung einen abgeleiteten Anteil nannten.
+    _wb_zeilen = [
+        (inv_id, md)
+        for inv_id, md_list in md_by_inv.items()
+        for md in md_list
+        if not _nicht_aktiv_im_monat(inv_id, md.jahr, md.monat)
+        and inv_id in (eauto_id_set | wallbox_id_set)
+    ]
+    _wb_daten = await reichere_monatszeilen_an(
+        db,
+        anlage_id,
+        [
+            ((md.jahr, md.monat), inv_id in wallbox_id_set, md.verbrauch_daten or {})
+            for inv_id, md in _wb_zeilen
+        ],
+    )
     eauto_imd_data: list[dict] = []
     wb_imd_data: list[dict] = []
-    for inv_id, md_list in md_by_inv.items():
-        for md in md_list:
-            if _nicht_aktiv_im_monat(inv_id, md.jahr, md.monat):
-                continue
-            d = md.verbrauch_daten or {}
-            if inv_id in eauto_id_set:
-                eauto_imd_data.append(d)
-            elif inv_id in wallbox_id_set:
-                wb_imd_data.append(d)
-            else:
-                # Dienstwagen / dienstliche Wallbox: die Zeile öffnet auch
-                # keinen Periodenmonat. Sonst verlängert sie `anzahl_monate`,
-                # drückt `ladevorgaenge_pro_monat` und zieht einen Monat ohne
-                # private Ladung in den gewichteten Tarif-Ø (P8).
-                continue
-            monate_set.add((md.jahr, md.monat))
+    for (inv_id, md), d in zip(_wb_zeilen, _wb_daten):
+        # Dienstwagen / dienstliche Wallbox sind oben schon heraus: ihre Zeile
+        # öffnet auch keinen Periodenmonat. Sonst verlängert sie `anzahl_monate`,
+        # drückt `ladevorgaenge_pro_monat` und zieht einen Monat ohne private
+        # Ladung in den gewichteten Tarif-Ø (P8).
+        if inv_id in eauto_id_set:
+            eauto_imd_data.append(d)
+        else:
+            wb_imd_data.append(d)
+        monate_set.add((md.jahr, md.monat))
 
     emob_pool = get_emob_heimladung_canonical(
         eauto_imd_data=eauto_imd_data,
