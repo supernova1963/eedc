@@ -35,9 +35,10 @@ import ImportErgebnis from '../components/import/ImportErgebnis'
 import { anlagenApi } from '../api/anlagen'
 import { cloudImportApi } from '../api/cloudImport'
 import { portalImportApi } from '../api/portalImport'
+import { investitionenApi } from '../api/investitionen'
 import type { CloudProviderInfo, CloudTestResult, CloudPreviewResult } from '../api/cloudImport'
 import type { ApplyResult } from '../api/portalImport'
-import type { Anlage } from '../types'
+import type { Anlage, Investition } from '../types'
 import { MONAT_NAMEN } from '../lib/constants'
 
 export default function CloudImportWizard() {
@@ -68,10 +69,19 @@ export default function CloudImportWizard() {
   // Step 3: Vorschau & Import
   const [anlagen, setAnlagen] = useState<Anlage[]>([])
   const [selectedAnlageId, setSelectedAnlageId] = useState<number | null>(null)
+  // F-22 (#349): Ziel-Erzeuger. Leer = die Quelle beschreibt die ganze Anlage
+  // (bisheriges Verhalten). Gesetzt = sie misst genau diesen Wechselrichter,
+  // dann bleiben die Hauszähler-Werte unberührt und eine zweite Quelle kann
+  // dieselben Monate liefern, ohne die erste zu verdrängen.
+  const [zielInvestitionId, setZielInvestitionId] = useState<number | null>(null)
+  const [zielKandidaten, setZielKandidaten] = useState<Investition[]>([])
   const [selectedMonths, setSelectedMonths] = useState<Set<string>>(new Set())
   const [ueberschreiben, setUeberschreiben] = useState(false)
   const [isImporting, setIsImporting] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
+  // Rückmeldung des Speicherns — sie nennt das Gerät und die Zahl der Quellen,
+  // damit sichtbar ist, dass die zweite die erste NICHT verdrängt hat (N-229).
+  const [gespeichert, setGespeichert] = useState<string | null>(null)
   const [result, setResult] = useState<ApplyResult | null>(null)
 
   // Load providers and anlagen
@@ -82,6 +92,22 @@ export default function CloudImportWizard() {
       if (list.length === 1) setSelectedAnlageId(list[0].id)
     }).catch(() => {})
   }, [])
+
+  // Ziel-Kandidaten der gewählten Anlage: die Geräte, unter denen PV-Module
+  // bzw. Speicher hängen dürfen — dieselbe Menge wie `ZIEL_ERLAUBTE_TYPEN` im
+  // Backend (Parent-SoT `models/investition.py::ERLAUBTE_PARENT_TYPEN`).
+  useEffect(() => {
+    setZielInvestitionId(null)
+    if (!selectedAnlageId) {
+      setZielKandidaten([])
+      return
+    }
+    investitionenApi.list(selectedAnlageId)
+      .then((list) => setZielKandidaten(
+        list.filter((i) => i.typ === 'wechselrichter' || i.typ === 'balkonkraftwerk')
+      ))
+      .catch(() => setZielKandidaten([]))
+  }, [selectedAnlageId])
 
   const selectedProvider = providers.find((p) => p.id === selectedProviderId)
 
@@ -179,7 +205,8 @@ export default function CloudImportWizard() {
     try {
       const monate = preview.monate.filter((m) => selectedMonths.has(`${m.jahr}-${m.monat}`))
       const importResult = await portalImportApi.apply(
-        selectedAnlageId, monate, ueberschreiben, 'cloud_import'
+        selectedAnlageId, monate, ueberschreiben, 'cloud_import',
+        undefined, zielInvestitionId
       )
       setResult(importResult)
       setCurrentStep(3)
@@ -188,19 +215,25 @@ export default function CloudImportWizard() {
     } finally {
       setIsImporting(false)
     }
-  }, [preview, selectedAnlageId, selectedMonths, ueberschreiben])
+  }, [preview, selectedAnlageId, selectedMonths, ueberschreiben, zielInvestitionId])
 
   const handleSaveCredentials = useCallback(async () => {
     if (!selectedAnlageId || !selectedProviderId) return
     setIsSaving(true)
     try {
-      await cloudImportApi.saveCredentials(selectedAnlageId, selectedProviderId, credentials)
+      // Das Ziel wird mitgespeichert (N-229): nur so liegen die Konten zweier
+      // Wechselrichter nebeneinander, statt sich gegenseitig zu verdrängen —
+      // und der Monatsabschluss weiß, welcher Wert zu welchem Gerät gehört.
+      const antwort = await cloudImportApi.saveCredentials(
+        selectedAnlageId, selectedProviderId, credentials, zielInvestitionId
+      )
+      setGespeichert(antwort.message)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Speichern fehlgeschlagen')
     } finally {
       setIsSaving(false)
     }
-  }, [selectedAnlageId, selectedProviderId, credentials])
+  }, [selectedAnlageId, selectedProviderId, credentials, zielInvestitionId])
 
   // W3: Abbrechen — im Overlay Dirty-geschützt schließen, sonst zurück navigieren.
   const handleAbbrechen = useCallback(() => {
@@ -231,6 +264,14 @@ export default function CloudImportWizard() {
     value: String(a.id),
     label: `${a.anlagenname} (${a.leistung_kwp} kWp)`,
   }))
+
+  const zielOptions = [
+    { value: '', label: 'Die ganze Anlage (Gesamtwerte)' },
+    ...zielKandidaten.map((i) => ({
+      value: String(i.id),
+      label: i.bezeichnung || i.typ,
+    })),
+  ]
 
   return (
     <div className="max-w-4xl mx-auto">
@@ -496,6 +537,16 @@ export default function CloudImportWizard() {
                     placeholder="Anlage wählen…"
                   />
                 </div>
+                {zielKandidaten.length > 0 && (
+                  <div className="flex-1 min-w-[200px]">
+                    <Select
+                      label="Diese Quelle misst"
+                      value={zielInvestitionId != null ? String(zielInvestitionId) : ''}
+                      onChange={(e) => setZielInvestitionId(Number(e.target.value) || null)}
+                      options={zielOptions}
+                    />
+                  </div>
+                )}
                 <div className="pb-2">
                   <Checkbox
                     label="Bestehende Monate überschreiben"
@@ -504,6 +555,14 @@ export default function CloudImportWizard() {
                   />
                 </div>
               </div>
+              {zielInvestitionId != null && (
+                <Alert type="info" className="mt-4">
+                  Die Werte gehen an die PV-Module (und den Speicher) dieses Geräts.
+                  Netzbezug, Einspeisung und Eigenverbrauch bleiben unberührt — die
+                  gelten für das ganze Haus. So kann eine zweite Quelle dieselben
+                  Monate liefern, ohne diese hier zu verdrängen.
+                </Alert>
+              )}
             </div>
           </Card>
 
@@ -614,6 +673,13 @@ export default function CloudImportWizard() {
                 <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                   Zugangsdaten für spätere Imports speichern?
                 </h3>
+                {zielInvestitionId != null && (
+                  <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">
+                    Sie werden dem gewählten Gerät zugeordnet. Hast du mehrere Geräte
+                    mit eigenem Cloud-Konto, speicherst du jedes einzeln — sie
+                    verdrängen sich nicht.
+                  </p>
+                )}
                 <div className="flex items-center gap-3">
                   <Button
                     variant="secondary"
@@ -625,6 +691,9 @@ export default function CloudImportWizard() {
                     {isSaving ? 'Speichere…' : 'Credentials speichern'}
                   </Button>
                 </div>
+                {gespeichert && (
+                  <Alert type="success" className="mt-3">{gespeichert}</Alert>
+                )}
               </div>
             </Card>
           ) : undefined}

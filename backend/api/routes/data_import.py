@@ -29,6 +29,7 @@ from backend.api.routes.import_export.helpers import (
     _distribute_legacy_battery_to_storages,
 )
 from backend.services.activity_service import log_activity
+from backend.services.erzeuger_ziel import ZielFehler, loese_ziel
 from backend.services.provenance import write_with_provenance
 from backend.services.pv_orientation import get_pv_kwp
 from backend.utils.investition_value import get_inv_value
@@ -106,6 +107,18 @@ class InvestitionsZuordnung(BaseModel):
 class ApplyRequest(BaseModel):
     monate: list[ApplyMonthInput]
     zuordnung: Optional[InvestitionsZuordnung] = None
+    # N-229 (#349, OliS2811): Eine Cloud-Station misst EIN Gerät, keine Anlage —
+    # Solarman führt je Wechselrichter eine eigene „Station". Ohne Ziel schreibt
+    # der Apply die anlagenweiten Hauszähler-Felder; bei zwei Stationen an einem
+    # Hausanschluss überschreibt die zweite Einfuhr damit die erste.
+    #
+    # Mit Ziel gilt: die Werte gehören diesem Erzeuger. Geschrieben wird
+    # ausschließlich seine `InvestitionMonatsdaten`-Zeile, `Monatsdaten` bleibt
+    # unberührt — P7-konform, denn gemessene Pro-Modul-Werte schlagen das
+    # Aggregat ohnehin (`core/berechnungen/pv_verteilung.py`), und ein Aggregat
+    # aus EINER von zwei Stationen wäre genau die Teilsumme, die ADR-002/P7
+    # verbietet. `None` = bisheriges Verhalten, unverändert.
+    ziel_investition_id: Optional[int] = None
 
 
 class ApplyResponse(BaseModel):
@@ -307,6 +320,25 @@ async def apply_import(
     speicher = [i for i in investitionen if i.typ == "speicher"]
     wallboxen = [i for i in investitionen if i.typ == "wallbox"]
 
+    # ── Ziel-Erzeuger auflösen (N-229) ───────────────────────────────────────
+    # Das Ziel ist der Wechselrichter bzw. das Balkonkraftwerk, an dem die
+    # Quelle hängt; die Werte gehen an SEINE Kinder. Auflösung im SoT
+    # `services/erzeuger_ziel.py` — der Monatsabschluss-Cloudabruf braucht
+    # dieselbe, und zwei Kopien wären die klassische Drift.
+    ziel: Optional[Investition] = None
+    ziel_pv_module: list[Investition] = []
+    ziel_speicher: list[Investition] = []
+    if data.ziel_investition_id is not None:
+        try:
+            empfaenger = loese_ziel(
+                data.ziel_investition_id, investitionen, anlage_id=anlage_id
+            )
+        except ZielFehler as e:
+            raise HTTPException(e.status_code, str(e))
+        ziel = empfaenger.ziel
+        ziel_pv_module = empfaenger.pv_module
+        ziel_speicher = empfaenger.speicher
+
     importiert = 0
     uebersprungen = 0
     fehler: list[str] = []
@@ -350,6 +382,55 @@ async def apply_import(
 
             if monat < 1 or monat > 12:
                 fehler.append(f"{jahr}/{monat:02d}: Ungültiger Monat")
+                continue
+
+            # ── Gerätegebundener Weg (F-22) ──────────────────────────────────
+            # Weder Monatsdaten-Zeile noch Monats-Skip: die Geräte-Zeile eines
+            # zweiten Erzeugers darf nicht daran scheitern, dass der erste den
+            # Monat bereits angelegt hat (#349 — genau das machte die zweite
+            # Solarman-Station unimportierbar). Über Ergänzen vs. Ersetzen
+            # entscheidet weiterhin `ueberschreiben`, aber je Sub-Key im
+            # Import-Writer statt für die ganze Monatszeile.
+            if ziel is not None:
+                etwas_geschrieben = False
+
+                if (monat_input.pv_erzeugung_kwh or 0) > 0:
+                    w = await _distribute_legacy_pv_to_modules(
+                        db, monat_input.pv_erzeugung_kwh, ziel_pv_module,
+                        jahr, monat, ueberschreiben,
+                        source=_PROVENANCE_SOURCE, writer=_PROVENANCE_WRITER,
+                        on_upsert=_record_upsert,
+                    )
+                    # Bei genau einem Empfänger ist nichts verteilt worden —
+                    # die Verteil-Warnung wäre dort schlicht unwahr.
+                    if len(ziel_pv_module) > 1 and importiert == 0:
+                        warnungen.extend(w)
+                    etwas_geschrieben = True
+
+                bat_lad = monat_input.batterie_ladung_kwh or 0
+                bat_ent = monat_input.batterie_entladung_kwh or 0
+                if bat_lad > 0 or bat_ent > 0:
+                    if ziel_speicher:
+                        w = await _distribute_legacy_battery_to_storages(
+                            db, bat_lad, bat_ent, ziel_speicher,
+                            jahr, monat, ueberschreiben,
+                            source=_PROVENANCE_SOURCE, writer=_PROVENANCE_WRITER,
+                            on_upsert=_record_upsert,
+                        )
+                        if len(ziel_speicher) > 1 and importiert == 0:
+                            warnungen.extend(w)
+                        etwas_geschrieben = True
+                    elif importiert == 0:
+                        warnungen.append(
+                            f"Die Quelle liefert Speicherwerte, aber an "
+                            f"'{ziel.bezeichnung or ziel.typ}' hängt kein Speicher — "
+                            f"sie wurden nicht übernommen."
+                        )
+
+                if etwas_geschrieben:
+                    importiert += 1
+                else:
+                    uebersprungen += 1
                 continue
 
             # Bestehende Monatsdaten prüfen
@@ -529,6 +610,23 @@ async def apply_import(
             fehler.append(f"{monat_input.jahr}/{monat_input.monat:02d}: {str(e)}")
 
     await db.flush()
+
+    # F-22: Sagen, was bewusst NICHT übernommen wurde. Eine Station liefert auch
+    # Netzbezug/Einspeisung/Eigenverbrauch, aber das sind Größen des Hauses —
+    # bei zwei Erzeugern am selben Netzanschluss wären sie doppelt gezählt oder
+    # nur ein Teilwert. Schweigen wäre hier die stille Variante des Fehlers.
+    if ziel is not None and any(
+        (m.einspeisung_kwh is not None
+         or m.netzbezug_kwh is not None
+         or m.eigenverbrauch_kwh is not None)
+        for m in data.monate
+    ):
+        warnungen.insert(0, (
+            f"Die Werte wurden '{ziel.bezeichnung or ziel.typ}' zugeordnet. "
+            "Netzbezug, Einspeisung und Eigenverbrauch der Quelle wurden NICHT "
+            "übernommen — das sind Größen des ganzen Hauses, die nur einmal je "
+            "Netzanschluss gelten."
+        ))
 
     # Etappe 3d Päckchen 2: Wizard-Hinweis bei aktivierter Quellen-Hierarchie.
     if geschuetzt_count > 0:

@@ -19,7 +19,11 @@ from pydantic import BaseModel
 from backend.core.exceptions import bad_request, not_found
 from backend.api.deps import get_db
 from backend.models.anlage import Anlage
-from backend.models.investition import Investition, InvestitionMonatsdaten
+from backend.models.investition import (
+    ERTRAGSFELD_TYPEN,
+    Investition,
+    InvestitionMonatsdaten,
+)
 from backend.utils.investition_filter import aktiv_jetzt, aktiv_im_zeitraum
 from backend.services.prognose_auswahl import lade_aktive_prognose
 from backend.models.strompreis import Strompreis
@@ -32,9 +36,11 @@ from backend.api.routes.strompreise import (
 from backend.core.berechnungen import (
     DienstlicheLadungZeile,
     FinanzMonatsZeile,
+    annahme_dauer_text,
     berechne_amortisations_fortschritt,
     berechne_dienstliche_ladekosten,
     berechne_finanz_aggregat,
+    kapitaleinsatz_euro,
     relevante_kosten_aus_investitionen,
     alter_wirkungsgrad,
     berechne_wp_alternativkosten_ersparnis,
@@ -42,6 +48,7 @@ from backend.core.berechnungen import (
     einspeise_erloes_euro,
     gas_kosten_altanlage,
     spezifischer_ertrag_kwh_kwp,
+    verteile_nach_gewichten,
 )
 from backend.services.finanz_zeilen import baue_finanz_zeile
 from backend.services.monats_fakten import finanz_zeile_eingabe, lade_monats_fakten
@@ -80,7 +87,6 @@ from backend.core.investition_parameter import (
     PARAM_WAERMEPUMPE_DEFAULTS,
     ist_dienstlich,
 )
-from backend.utils.sonstige_positionen import berechne_sonstige_netto
 from backend.services.wetter.open_meteo import fetch_open_meteo_forecast
 from backend.services.wetter.utils import wetter_symbol_aus_tag
 from backend.services.wetter.pvgis import get_pvgis_tmy_defaults
@@ -236,6 +242,19 @@ class KomponentenBeitragSchema(BaseModel):
     beschreibung: str
 
 
+class ErtragJeInvestitionSchema(BaseModel):
+    """Der kumulierte, GEMESSENE Netto-Ertrag einer ROI-Zeile (Bauschritt 5).
+
+    ``investition_id`` ist die **Zeilen**-ID der ROI-Sicht: beim PV-System der
+    Wechselrichter, sonst die Investition selbst. Der Betrag darf negativ sein
+    — eine Komponente, deren Betriebskosten ihre Erträge übersteigen, soll das
+    sagen dürfen, statt auf 0 geschönt zu werden.
+    """
+
+    investition_id: int
+    bisherige_ertraege_euro: float
+
+
 class FinanzPrognoseResponse(BaseModel):
     """Response für Finanzprognose."""
     anlage_id: int
@@ -287,11 +306,33 @@ class FinanzPrognoseResponse(BaseModel):
     investition_eauto_mehrkosten_euro: float = 0  # E-Auto minus Verbrenner
     investition_sonstige_euro: float = 0  # Andere Investitionen
     investition_gesamt_euro: float  # Relevante Kosten (inkl. Mehrkosten-Ansatz)
+    # F-19: der tatsächliche Nenner des Amortisations-Fortschritts — relevante
+    # Kosten plus die kumulierten sonstigen AUSGABEN. Er steht in der Response,
+    # damit die Zahl nachvollziehbar bleibt UND der Symmetrie-Wächter sie
+    # direkt vergleichen kann, statt sie aus Prozentwerten zurückzurechnen.
+    kapitaleinsatz_euro: float = 0.0
     bisherige_ertraege_euro: float  # Kumulierte Erträge seit Inbetriebnahme
     amortisations_fortschritt_prozent: float  # Wie viel % bereits amortisiert (kumuliert)
     amortisation_erreicht: bool
     amortisation_prognose_jahr: Optional[int]  # Geschätztes Jahr der Amortisation
     restlaufzeit_bis_amortisation_monate: Optional[int]
+    #: Konzept §5/§8-6 — die Annahme hinter **diesen beiden** Feldern.
+    #: ⚠ Der Fortschritt selbst (`amortisations_fortschritt_prozent`) ist eine
+    #: Messung und unterstellt nichts (§4). Restlaufzeit und Prognosejahr sind
+    #: es nicht: sie rechnen den offenen Rest mit `jahres_netto_ertrag_euro`
+    #: hoch und sind damit **Dauer-Aussagen** — also fällt genau dieses Paar
+    #: unter §5 und trägt denselben Satz wie das ROI-Dashboard.
+    amortisation_annahme: Optional[str] = None
+    # Bauschritt 5 (§8): derselbe Zähler, auf die ROI-Zeilen zerlegt. Der
+    # NENNER kommt je Zeile aus dem ROI-Dashboard (`kapitaleinsatz`) — genau
+    # wie bei der anlagenweiten Kachel, die schon heute ihren Zähler von hier
+    # und ihren Nenner von dort bezieht.
+    ertraege_je_investition: List[ErtragJeInvestitionSchema] = []
+    #: Was zu keiner Zeile gehören KANN — anlagenweite Monatspositionen (sie
+    #: haben keine Investition, §8/4) und die dienstlichen Ladekosten. Steht
+    #: ausdrücklich in der Response: ein wachsender Rest ist ein Befund, kein
+    #: Rundungsfehler.
+    ertraege_nicht_zurechenbar_euro: float = 0.0
 
     # Monatswerte
     monatswerte: List[FinanzPrognoseMonatSchema]
@@ -1285,7 +1326,37 @@ async def get_finanz_prognose(
     # =====================================================================
     # BISHERIGE ERTRÄGE BERECHNEN (inkl. Alternativkosten!)
     # =====================================================================
-    betriebskosten_ges = sum(i.betriebskosten_jahr or 0 for i in alle_investitionen)
+    # N-228: nur **heute aktive** Komponenten — dieser Wert geht ausschließlich
+    # in ZUKUNFTS-Größen (Jahres-Netto-Ertrag, Amortisationsdauer, USt-
+    # Bemessung). Eine 2023 stillgelegte Wärmepumpe verursacht keine
+    # Versicherung mehr; sie verlängerte die Amortisation trotzdem dauerhaft.
+    # Der RÜCKBLICK ist davon unberührt — er rechnet weiter unten mit
+    # `betriebskosten_hist_je_inv` über die tatsächliche Laufzeit.
+    # `ha_export.py` filtert an derselben Stelle seit jeher (`aktiv_jetzt()`),
+    # die vier Sichten waren darüber uneins.
+    _heute_bk = date.today()
+    betriebskosten_ges = sum(
+        i.betriebskosten_jahr or 0
+        for i in alle_investitionen
+        if i.ist_aktiv_im_monat(_heute_bk.year, _heute_bk.month)
+    )
+    # §8/2 des Wirtschaftlichkeits-Konzepts: das Gegenstück zu den
+    # Betriebskosten auf der Ertragsseite. Ein Jahresbetrag an der Investition
+    # ist per FORM wiederkehrend (§2/1) und wirkt deshalb auch in der Prognose;
+    # bis 2026-08-10 kannte diese Sicht das Feld nicht (0 Treffer).
+    #
+    # ⚠ Zwei Einschränkungen gegenüber `betriebskosten_ges`, beide bewusst:
+    # (a) nur die Typen, an denen das Feld überhaupt pflegbar und gelesen wird
+    #     (`ERTRAGSFELD_TYPEN`) — sonst stünde ein Wert an einer PV-Zeile hier
+    #     im Zähler, während *Auswertungen → ROI* ihn ignoriert;
+    # (b) nur **heute aktive** Investitionen — eine stillgelegte Komponente
+    #     bringt keinen künftigen Ertrag. Der Rückblick oben ist davon
+    #     unberührt, er rechnet aus gemessenen Monatswerten.
+    ertrag_jahr_ges = sum(
+        i.einsparung_prognose_jahr or 0
+        for i in alle_investitionen
+        if i.typ in ERTRAGSFELD_TYPEN and i.ist_aktiv_an(_heute)
+    )
     bisherige_ertraege = 0.0
     bisherige_eauto_ersparnis = 0.0
 
@@ -1473,12 +1544,33 @@ async def get_finanz_prognose(
     # BKW-Ersparnis: kommt aus `berechne_finanz_aggregat` (bkw_eigenverbrauch_kwh
     # in den Finanz-Zeilen oben) — kein eigener Loop mehr.
 
-    # Sonstige Positionen für ALLE Investitionstypen (Wallbox-Erstattungen, THG-Quote, BHKW etc.)
-    bisherige_sonstige_netto = 0.0
-    for inv in alle_investitionen:
-        for (inv_id, jahr, monat), daten in historische_inv_daten.items():
-            if inv_id == inv.id and inv.ist_aktiv_im_monat(jahr, monat):
-                bisherige_sonstige_netto += berechne_sonstige_netto(daten)
+    # Sonstige Positionen — **aus den Monats-Fakten** (Bauschritt 4 des
+    # Wirtschaftlichkeits-Konzepts §8, zugleich eine P10-Bereinigung).
+    #
+    # ⚑ Bis 2026-08-10 lief hier eine eigene Schleife über
+    # `historische_inv_daten` — also ausschließlich über
+    # `InvestitionMonatsdaten`. Damit fehlte genau der Erfassungsort, den das
+    # Handbuch für „mehrere Komponenten" vorsieht: die Positionen auf der
+    # **Monatsdaten-Zeile** (G19-1). Gemessen am 10.08.: eine anlagenweite
+    # Ausgabe von 3.000 € bewegte den Kapitaleinsatz dieser Route um **0 €**,
+    # während der HA-Sensor sie voll trug (18.000 gegen 15.000) — und eine
+    # anlagenweite Förderung war im Fortschritt schlicht unsichtbar.
+    #
+    # `f.sonstiges` fasst beide Orte zusammen (IMD **typ-unabhängig**, #310,
+    # plus die Basis-Positionen der Monatsdaten-Zeile) und bringt den
+    # Laufzeit-Filter (#236) bereits mit — die Schleife hatte ihn von Hand
+    # nachgebaut.
+    #
+    # F-19 + Bauschritt 7: beide Seiten daneben getrennt — sie gehen in den
+    # Kapitaleinsatz (Ausgaben erhöhend, Erträge mindernd). Die dienstlichen
+    # Ladekosten unten sind laufender Aufwand und gehören ausdrücklich nicht in
+    # den Nenner (SoT `berechnungen/kapitalrechnung.py`).
+    bisherige_sonstige_netto = sum(f.sonstiges.netto_euro for f in fakten)
+    # Konzept §9 Weg 2: gepflegte Erlöse von Erzeugern mit eigenem
+    # Einspeisetarif. Eigener Summand — er bewertet nicht den Anlagenzähler.
+    bisherige_erzeuger_erloes = sum(f.sonstiges.einspeise_erloes_euro for f in fakten)
+    bisherige_sonstige_ausgaben = sum(f.sonstiges.ausgaben_euro for f in fakten)
+    bisherige_sonstige_ertraege = sum(f.sonstiges.ertraege_euro for f in fakten)
 
     # Dienstliche E-Auto/Wallbox-Ladekosten abziehen — Mengen aus den
     # Monats-Fakten (P10: Dienstwagen-Filter, Laufzeit-Fenster und PV/Netz-Split
@@ -1502,15 +1594,41 @@ async def get_finanz_prognose(
     # Finanz-Aggregat (Einspeise-Erlös §51 + EV- + BKW-Ersparnis + Sonstige)
     # + aussichten-spezifische Alternativkosten-Ersparnisse (WP, E-Auto).
     _finanz = berechne_finanz_aggregat(
-        finanz_zeilen, sonstige_netto_euro=bisherige_sonstige_netto
+        finanz_zeilen, sonstige_netto_euro=bisherige_sonstige_netto,
+        erzeuger_erloes_euro=bisherige_erzeuger_erloes
     )
     bisherige_bkw_ersparnis = _finanz.bkw_ersparnis_euro
     bisherige_ertraege = (
         _finanz.netto_ertrag_euro + bisherige_wp_ersparnis + bisherige_eauto_ersparnis
     )
 
-    # Anteilige Betriebskosten für den historischen Zeitraum abziehen
-    betriebskosten_hist = betriebskosten_ges * anzahl_monate_hist / 12 if anzahl_monate_hist > 0 else 0
+    # Anteilige Betriebskosten für den historischen Zeitraum abziehen — je
+    # Komponente über IHRE Laufzeit (N-228).
+    #
+    # ⚑ Bis 2026-08-10 stand hier `betriebskosten_ges × Monate / 12`: die
+    # anlagenweite Jahressumme über den GANZEN Beobachtungszeitraum, also auch
+    # über Monate, in denen eine Komponente noch nicht angeschafft oder bereits
+    # stillgelegt war. Eine 2024 gekaufte Wärmepumpe zahlte damit Versicherung
+    # ab 2023. **Am Dev-Bestand gemessen: 1.291,67 € statt 725,00 € — 566,67 €
+    # zu viel**, allein aus zwei Komponenten mit gepflegten Betriebskosten.
+    #
+    # Die Größe wird **einmal** gebildet und zweimal benutzt: hier als Summe und
+    # unten in der Zerlegung je Zeile (Bauschritt 5). Genau deshalb ließ sich
+    # N-228 nicht abtrennen — mit dem alten Abzug trug der Rest der Zerlegung
+    # die Differenz systematisch, und ein Rest, der eine bekannte Ursache hat,
+    # ist keine Restgröße mehr, sondern ein verstecktes Vorzeichen.
+    _monate_beobachtet = {(f.jahr, f.monat) for f in fakten}
+    betriebskosten_hist_je_inv: dict[int, float] = {}
+    for _inv in alle_investitionen:
+        _bk = _inv.betriebskosten_jahr or 0
+        if not _bk:
+            continue
+        _aktive = sum(
+            1 for (_j, _m) in _monate_beobachtet if _inv.ist_aktiv_im_monat(_j, _m)
+        )
+        if _aktive:
+            betriebskosten_hist_je_inv[_inv.id] = _bk * _aktive / 12
+    betriebskosten_hist = sum(betriebskosten_hist_je_inv.values())
     bisherige_ertraege -= betriebskosten_hist
 
     # USt auf Eigenverbrauch bei Regelbesteuerung — auch RÜCKBLICKEND. Sie stand
@@ -1527,7 +1645,11 @@ async def get_finanz_prognose(
     _pv_je_jahr: dict[int, float] = defaultdict(float)
     for (_j, _m), _pv in pv_pro_monat.items():
         _pv_je_jahr[_j] += _pv
-    bisherige_ertraege -= ust_eigenverbrauch_fuer_anlage(
+    # Bauschritt 5: als eigene Größe, weil die Zerlegung sie braucht — die USt
+    # hängt am Eigenverbrauch und damit an der ERZEUGUNGS-Seite, sie muss also
+    # denselben Weg gehen wie Einspeise-Erlös und EV-Ersparnis. Vorher stand
+    # hier ein direktes `-=`; der Betrag war danach nicht mehr greifbar.
+    bisherige_ust_eigenverbrauch = ust_eigenverbrauch_fuer_anlage(
         anlage,
         jahresanteile=[
             UstJahresanteil(
@@ -1543,6 +1665,7 @@ async def get_finanz_prognose(
         bemessungsgrundlage_euro=bemessungsgrundlage_aus_investitionen(alle_investitionen),
         betriebskosten_jahr_euro=betriebskosten_ges,
     )
+    bisherige_ertraege -= bisherige_ust_eigenverbrauch
 
     # =====================================================================
     # MONATSPROGNOSEN ERSTELLEN
@@ -1768,13 +1891,36 @@ async def get_finanz_prognose(
     if balkonkraftwerke and anzahl_monate_hist > 0 and bisherige_bkw_ersparnis > 0:
         jahres_bkw_ersparnis = bisherige_bkw_ersparnis / anzahl_monate_hist * 12
 
-    # Sonstige Jahres-Netto (aus historischem Durchschnitt hochgerechnet, alle Investitionstypen)
+    # F-19: die sonstigen AUSGABEN werden nicht mehr in die Zukunft
+    # hochgerechnet. Das war die unangenehmste der vier Rechenstellen — eine
+    # einmalige Reparatur belastete hier **jedes künftige Prognosejahr**, und
+    # zwar dauerhaft: der historische Schnitt trug sie für immer weiter. Sie
+    # gehört einmalig in den Kapitaleinsatz, nicht jährlich in den Ertrag.
+    #
+    # §8/3 (2026-08-10): jetzt gilt dasselbe für die sonstigen **Erträge**.
+    # Eine Position im Monatsabschluss ist per FORM einmal geflossen (§2/2) —
+    # sie in die Zukunft zu verlängern unterstellt eine Wiederholung, die
+    # niemand behauptet hat. Der Ort für einen *wiederkehrenden* Ertrag ist
+    # seit §8/1 das Feld „Ertrag/Jahr" an der Investition (`ertrag_jahr_ges`
+    # oben); vor diesem Schritt gab es ihn nicht, und deshalb musste er in
+    # dieser Reihenfolge gefahren werden.
+    #
+    # ⚠ Was hier bleibt: **nur** die dienstlichen Ladekosten. Sie stecken als
+    # Abzug in `bisherige_sonstige_netto`, sind aber keine gepflegte Position,
+    # sondern laufender Aufwand, den der Code selbst rechnet — er fällt jeden
+    # Monat wieder an. Ein Nullsetzen der ganzen Zeile hätte ihn still aus der
+    # Prognose entfernt.
+    #
+    # ⚑ Der **Fortschritt** (Messung, §4) trägt die Erträge unverändert weiter:
+    # er rechnet aus `bisherige_ertraege`, nicht aus dieser Projektion.
     jahres_sonstige_netto = 0.0
-    if anzahl_monate_hist > 0 and bisherige_sonstige_netto != 0:
-        jahres_sonstige_netto = bisherige_sonstige_netto / anzahl_monate_hist * 12
+    _sonstige_laufend = -bisherige_dienstlich_ladekosten
+    if anzahl_monate_hist > 0 and _sonstige_laufend != 0:
+        jahres_sonstige_netto = _sonstige_laufend / anzahl_monate_hist * 12
 
-    # Gesamter Jahres-Netto-Ertrag inkl. Alternativkosten, BKW, Sonstige und Betriebskosten
-    jahres_netto_ertrag = jahres_einspeise_erloes + jahres_ev_ersparnis + jahres_wp_ersparnis + jahres_eauto_km_ersparnis + jahres_bkw_ersparnis + jahres_sonstige_netto - betriebskosten_ges
+    # Gesamter Jahres-Netto-Ertrag inkl. Alternativkosten, BKW, Sonstige,
+    # Betriebskosten und dem Jahres-Ertrag an der Investition (§8/2).
+    jahres_netto_ertrag = jahres_einspeise_erloes + jahres_ev_ersparnis + jahres_wp_ersparnis + jahres_eauto_km_ersparnis + jahres_bkw_ersparnis + jahres_sonstige_netto + ertrag_jahr_ges - betriebskosten_ges
 
     # USt auf Eigenverbrauch bei Regelbesteuerung.
     # N-130 greift hier NICHT: `jahres_*` sind auf zwölf Monate hochgerechnete
@@ -1977,9 +2123,33 @@ async def get_finanz_prognose(
     # Formel speist seit N-137 die Kachel „Amortisations-Fortschritt" in
     # Auswertungen → ROI. Der Fortschritt ist reine MESSUNG (kumulierte Erträge
     # ÷ relevante Kosten); `jahres_netto_ertrag` geht nur in die Restlaufzeit ein.
-    _amort = berechne_amortisations_fortschritt(
+    # F-19: Nenner ist der Kapitaleinsatz — relevante Kosten plus die
+    # kumulierten sonstigen Netto-Kosten. Damit rechnet der Fortschritt gegen
+    # dieselbe Größe wie ROI-Dashboard und HA-Sensoren; `investition_gesamt`
+    # selbst bleibt die Mehrkosten-Größe (N-137, zugleich USt-Grundlage).
+    kapitaleinsatz = kapitaleinsatz_euro(
         relevante_kosten_euro=investition_gesamt,
-        bisherige_ertraege_euro=bisherige_ertraege,
+        sonstige_ausgaben_euro=bisherige_sonstige_ausgaben,
+        sonstige_ertraege_euro=bisherige_sonstige_ertraege,
+    )
+    # ⚠ Und der Zähler **ohne beide Seiten** der sonstigen Positionen — sonst
+    # stünde dieselbe Reparatur (bzw. dieselbe Förderung) zweimal in derselben
+    # Formel. Die Ausgaben werden wieder aufgeschlagen, weil sie im Netto
+    # abgezogen waren; die Erträge werden abgezogen, weil sie darin enthalten
+    # sind (Bauschritt 7).
+    #
+    # Das ausgewiesene Feld `bisherige_ertraege_euro` bleibt davon
+    # **unberührt**: es ist die Zeitraum-Bilanz und deckungsgleich mit dem
+    # Cockpit-Netto-Ertrag (`test_aussichten_finanz_aggregat_symmetrie.py`).
+    # Ein erster Bau zog den Betrag dort ab und brach genau diese Zusicherung —
+    # die Trennlinie verläuft zwischen ANGEZEIGTER Bilanz und Kapitalrechnung,
+    # nicht zwischen zwei Rechenwegen.
+    ertraege_fuer_kapitalrechnung = (
+        bisherige_ertraege + bisherige_sonstige_ausgaben - bisherige_sonstige_ertraege
+    )
+    _amort = berechne_amortisations_fortschritt(
+        relevante_kosten_euro=kapitaleinsatz,
+        bisherige_ertraege_euro=ertraege_fuer_kapitalrechnung,
         jahres_netto_ertrag_euro=jahres_netto_ertrag,
         aktuelles_jahr=heute.year,
     )
@@ -1987,6 +2157,122 @@ async def get_finanz_prognose(
     amortisation_erreicht = _amort.erreicht
     amortisation_prognose_jahr = _amort.prognose_jahr
     restlaufzeit_monate = _amort.rest_monate
+
+    # =====================================================================
+    # FORTSCHRITT JE INVESTITION — Bauschritt 5 des Konzepts (§8)
+    # =====================================================================
+    # ⚑ **Zerlegung, keine zweite Rechnung.** Der Zähler oben wird auf die
+    # ROI-Zeilen VERTEILT; niemand rechnet eine Komponenten-Ersparnis ein
+    # zweites Mal. Damit gilt `Σ Zeilen + Rest == gesamt` per Konstruktion —
+    # die Zusicherung kann nicht auseinanderlaufen, und was sich nicht
+    # zurechnen lässt, steht als Rest da statt still auf den Zeilen zu landen
+    # (die N-220-Lehre: eine Zusicherung, die nur an einer Fixture hängt,
+    # trägt nicht).
+    #
+    # Der Schlüssel der Erzeugungsseite ist die **gemessene Erzeugung** je
+    # Zeile (Entscheid Maintainer 2026-08-10), nicht die Nennleistung: kWp
+    # sagt, was ein Modul könnte, kWh sagt, was es beigetragen hat.
+    from backend.api.routes.investitionen.crud import _gruppiere_investitionen
+    from backend.core.berechnungen.ertrag_zerlegung import zerlege_kumulierten_ertrag
+
+    _pv_systeme, _, _orphan_module = _gruppiere_investitionen(alle_investitionen)
+    # Modul -> ROI-Zeile. Ein Modul mit gültigem Parent zählt auf den
+    # Wechselrichter (dort steht die Zeile), ein Orphan-Modul auf sich selbst.
+    _modul_zu_zeile: dict[int, int] = {
+        m.id: wr_id for wr_id, sys in _pv_systeme.items() for m in sys["pv_module"]
+    }
+
+    _erz_gewichte: dict[int, float] = {}
+    _bkw_gewichte: dict[int, float] = {}
+    for _f in fakten:
+        for _mod_id, _wert in (_f.erzeugung.pv_je_modul or {}).items():
+            _zeile = _modul_zu_zeile.get(_mod_id, _mod_id)
+            _erz_gewichte[_zeile] = (
+                _erz_gewichte.get(_zeile, 0.0) + _wert.pv_erzeugung_kwh
+            )
+        for _bkw_id, _kwh in (_f.bkw.erzeugung_je_investition or {}).items():
+            _bkw_gewichte[_bkw_id] = _bkw_gewichte.get(_bkw_id, 0.0) + (_kwh or 0.0)
+    # Das BKW erzeugt hinter demselben Zähler und trägt deshalb auch die
+    # Erlösseite mit — es hat aber zusätzlich seinen eigenen Ersparnis-Posten
+    # (P9), der unten direkt zugeordnet wird.
+    for _bkw_id, _kwh in _bkw_gewichte.items():
+        _erz_gewichte[_bkw_id] = _erz_gewichte.get(_bkw_id, 0.0) + _kwh
+
+    # Was am Zähler entsteht: Einspeise-Erlös + EV-Ersparnis, abzüglich der USt
+    # auf den Eigenverbrauch — sie hängt an derselben Menge und geht deshalb
+    # denselben Weg.
+    _erzeugungs_erloes = (
+        _finanz.einspeise_erloes_euro
+        + _finanz.ev_ersparnis_euro
+        - bisherige_ust_eigenverbrauch
+    )
+
+    _direkt: dict[int, float] = {}
+    _abzug: dict[int, float] = {}
+
+    # Wärmepumpe je Gerät — derselbe Layer-SoT, nur je WP gerufen.
+    # ⚠ Bei MEHREREN WPs mit unterschiedlicher Monatsabdeckung ist die Summe
+    # der Einzelaufrufe nicht bitgleich zum Gesamtaufruf: der anteilige
+    # Zusatzkosten-Term rechnet dort mit der VEREINIGUNG der Monate. Die
+    # Differenz landet sichtbar im Rest, statt eine Zeile zu verfälschen.
+    for _wp in waermepumpen:
+        _direkt[_wp.id] = _direkt.get(_wp.id, 0.0) + berechne_wp_alternativkosten_ersparnis(
+            [_wp],
+            historische_inv_daten,
+            gaspreis_by_periode,
+            wp_preis_by_periode,
+            wp_netzbezug_preis,
+        )
+
+    # E-Auto je Fahrzeug — liegt bereits je Investition vor.
+    for _ea_id, _agg in eauto_aggregate.items():
+        _direkt[_ea_id] = _direkt.get(_ea_id, 0.0) + (_agg.get("bisherige_ersparnis") or 0.0)
+
+    # BKW-Ersparnis (P9) auf die Balkonkraftwerke, nach ihrer Erzeugung.
+    for _bkw_id, _betrag in verteile_nach_gewichten(
+        _finanz.bkw_ersparnis_euro, _bkw_gewichte
+    ).items():
+        _direkt[_bkw_id] = _direkt.get(_bkw_id, 0.0) + _betrag
+
+    # Erzeuger-Erlös je Gerät (§9 Weg 2, Bauschritt 9) — er liegt
+    # komponentenscharf vor und wird deshalb **direkt zugeordnet**, nicht
+    # verteilt. Bis zu dieser Stelle landete er im nicht zurechenbaren Rest,
+    # obwohl seine Zeile bekannt ist: die Bauschritt-5-Regel lautet „alles
+    # komponentenscharf Vorliegende direkt".
+    for _f in fakten:
+        for _inv_id, _g in (_f.sonstiges.je_geraet or {}).items():
+            if _g.einspeise_erloes_euro:
+                _direkt[_inv_id] = _direkt.get(_inv_id, 0.0) + _g.einspeise_erloes_euro
+
+    # ⚑ **Gepflegte Monatspositionen tauchen hier seit Bauschritt 7 auf KEINER
+    # Seite mehr auf** — weder als Zuschlag (Ertrag) noch als Abzug (Ausgabe).
+    # Beide stehen im NENNER der Zeile (`kapitaleinsatz` im ROI-Dashboard, das
+    # den Nenner je Zeile liefert). Sie zusätzlich in den Zähler zu verteilen
+    # hieße, dieselbe Position zweimal zu verrechnen — bis 2026-08-10 tat der
+    # Block hier genau das mit der Ertragsseite, weil sie damals noch im Zähler
+    # stand.
+
+    # Betriebskosten je Komponente — **dieselbe** Größe, die oben in Summe vom
+    # Zähler abgezogen wurde (N-228). Sie hier ein zweites Mal zu bilden wäre
+    # genau die Drift, die diese Zerlegung vermeiden soll.
+    for _inv_id, _betrag in betriebskosten_hist_je_inv.items():
+        _zeile = _modul_zu_zeile.get(_inv_id, _inv_id)
+        _abzug[_zeile] = _abzug.get(_zeile, 0.0) + _betrag
+
+    _zerlegung = zerlege_kumulierten_ertrag(
+        gesamt_euro=ertraege_fuer_kapitalrechnung,
+        erzeugungs_erloes_euro=_erzeugungs_erloes,
+        erzeugungs_gewichte=_erz_gewichte,
+        direkt_je_investition=_direkt,
+        abzug_je_investition=_abzug,
+    )
+    fortschritt_je_investition = [
+        ErtragJeInvestitionSchema(
+            investition_id=_inv_id,
+            bisherige_ertraege_euro=round(_betrag, 2),
+        )
+        for _inv_id, _betrag in sorted(_zerlegung.je_investition.items())
+    ]
 
     # =====================================================================
     # RESPONSE
@@ -2054,11 +2340,20 @@ async def get_finanz_prognose(
         investition_eauto_mehrkosten_euro=round(investition_eauto_mehrkosten, 2),
         investition_sonstige_euro=round(investition_sonstige, 2),
         investition_gesamt_euro=round(investition_gesamt, 2),  # PV + Mehrkosten + Sonstige
+        kapitaleinsatz_euro=round(kapitaleinsatz, 2),
         bisherige_ertraege_euro=round(bisherige_ertraege, 2),
         amortisations_fortschritt_prozent=round(roi_fortschritt, 1),
         amortisation_erreicht=amortisation_erreicht,
         amortisation_prognose_jahr=amortisation_prognose_jahr,
         restlaufzeit_bis_amortisation_monate=restlaufzeit_monate,
+        # `betriebskosten_ges` ist genau der Betrag, der oben in
+        # `jahres_netto_ertrag` abgezogen wurde — die Restlaufzeit rechnet mit
+        # dieser Zahl, also beschreibt der Satz ihre eigene Grundlage.
+        amortisation_annahme=annahme_dauer_text(
+            betriebskosten_jahr_euro=betriebskosten_ges,
+        ),
+        ertraege_je_investition=fortschritt_je_investition,
+        ertraege_nicht_zurechenbar_euro=_zerlegung.nicht_zurechenbar_euro,
         monatswerte=monatswerte,
         datenquellen=datenquellen,
     )
