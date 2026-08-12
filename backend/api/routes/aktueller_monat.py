@@ -18,7 +18,6 @@ from sqlalchemy.orm import selectinload
 
 from backend.core.exceptions import not_found
 from backend.api.deps import get_db
-from backend.core.config import HA_INTEGRATION_AVAILABLE
 from backend.models.anlage import Anlage
 from backend.models.investition import Investition, InvestitionMonatsdaten
 from backend.models.monatsdaten import Monatsdaten
@@ -335,14 +334,16 @@ async def _collect_ha_statistics_data(anlage: Anlage, jahr: int, monat: int) -> 
     Liest MAX(state) - MIN(state) pro Sensor aus der HA statistics-Tabelle.
     Funktioniert für total_increasing UND measurement Sensoren (Fallback).
     """
-    if not HA_INTEGRATION_AVAILABLE:
-        return {}
-
-    from backend.services.ha_statistics_service import get_ha_statistics_service
-    ha_stats = get_ha_statistics_service()
-    if not ha_stats.is_available:
-        return {}
-
+    # N-156/F-26: das frühere Gate auf `HA_INTEGRATION_AVAILABLE`
+    # (= SUPERVISOR_TOKEN) stand unmittelbar vor der Frage, die es beantworten
+    # sollte — `ha_stats.is_available` prüft die Erreichbarkeit selbst, und zwar
+    # per Recorder-DB **oder** WebSocket. Im Docker-Betrieb mit Long-Lived-Token
+    # sperrte es damit die Langzeitstatistik aus, obwohl sie erreichbar war.
+    #
+    # ⚠ Die Erreichbarkeitsfrage steht bewusst **hinter** der Sensor-Liste:
+    # `is_available` baut im Zweifel eine Verbindung auf und zahlt bei nicht
+    # erreichbarer HA einen vollen Timeout. Eine Anlage ohne einen einzigen
+    # Sensor-Feld-Eintrag hat hier nichts zu holen — die darf das nicht kosten.
     mapping = anlage.sensor_mapping or {}
     basis = mapping.get("basis", {})
     inv_mapping = mapping.get("investitionen", {})
@@ -367,6 +368,11 @@ async def _collect_ha_statistics_data(anlage: Anlage, jahr: int, monat: int) -> 
                 sensor_to_feld[feld_config["sensor_id"]] = f"inv_{inv_id_str}_{feld_key}"
 
     if not sensor_to_feld:
+        return {}
+
+    from backend.services.ha_statistics_service import get_ha_statistics_service
+    ha_stats = get_ha_statistics_service()
+    if not ha_stats.is_available:
         return {}
 
     # Synchronen SQLite-Zugriff in Thread auslagern
@@ -1543,7 +1549,16 @@ async def get_aktueller_monat(
     speicher_auslastung = None
     speicher_ersparnis = None
 
-    speicher_invs = [i for i in investitionen if i.typ == "speicher"]
+    # F-24: nur die Speicher, die es in DIESEM Monat gab. `investitionen` ist
+    # oben nur über den `aktiv`-Haken gefiltert — ein ersetztes Gerät trägt
+    # aber ein **Stilllegungsdatum** und bleibt `aktiv` (sonst verschwände es
+    # auch aus der Historie). Ohne diesen Filter summierte die Kachel unten
+    # altes **und** neues Gerät: an einer Kopie des Dev-Bestands 15,4 + 30,8 =
+    # 46,2 statt 30,8 kWh, und damit auch Vollzyklen und Auslastung daneben.
+    speicher_invs = [
+        i for i in investitionen
+        if i.typ == "speicher" and i.ist_aktiv_im_monat(jahr, monat)
+    ]
     speicher_soc_drift_flag = False
     # F-22: worauf der ausgewiesene η beruht — `soc_korrigiert` · `fenster_lang`
     # · `fenster-zu-kurz` · `keine-ladung` · `nicht-ermittelbar`. Trägt den
