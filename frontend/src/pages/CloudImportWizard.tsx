@@ -40,6 +40,7 @@ import type { CloudProviderInfo, CloudTestResult, CloudPreviewResult } from '../
 import type { ApplyResult } from '../api/portalImport'
 import type { Anlage, Investition } from '../types'
 import { MONAT_NAMEN } from '../lib/constants'
+import { ManuelleWerteHinweis } from '../components/import/ManuelleWerteHinweis'
 
 export default function CloudImportWizard() {
   const navigate = useNavigate()
@@ -553,14 +554,23 @@ export default function CloudImportWizard() {
                     checked={ueberschreiben}
                     onChange={(e) => setUeberschreiben(e.target.checked)}
                   />
+                  <ManuelleWerteHinweis
+                    anlageId={selectedAnlageId}
+                    perioden={[...selectedMonths].map((k) => {
+                      const [j, m] = k.split('-')
+                      return `${j}-${String(Number(m)).padStart(2, '0')}`
+                    })}
+                    aktiv={ueberschreiben}
+                  />
                 </div>
               </div>
               {zielInvestitionId != null && (
                 <Alert type="info" className="mt-4">
-                  Die Werte gehen an die PV-Module (und den Speicher) dieses Geräts.
-                  Netzbezug, Einspeisung und Eigenverbrauch bleiben unberührt — die
-                  gelten für das ganze Haus. So kann eine zweite Quelle dieselben
-                  Monate liefern, ohne diese hier zu verdrängen.
+                  Erzeugung und Speicherwerte gehen an die PV-Module und den Speicher
+                  dieses Geräts. Einspeisung und Netzbezug misst kein Wechselrichter
+                  selbst — sie kommen vom Zähler am Hausanschluss und gelten deshalb
+                  für die ganze Anlage: sie werden einmal in den Monat übernommen,
+                  eine zweite Quelle addiert sie nicht dazu.
                 </Alert>
               )}
             </div>

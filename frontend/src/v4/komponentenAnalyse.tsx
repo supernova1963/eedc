@@ -22,6 +22,8 @@ import { ExternalLink } from 'lucide-react'
 import { Parkbar } from '../components/park'
 import { PVStringVergleich } from '../components/pv'
 import { SpeicherVerlaufIST, SpeicherVergleichIST } from './SpeicherVerlaufIST'
+import { SpeicherPotentialIST } from './SpeicherPotentialIST'
+import { SpeicherSizingIST } from './SpeicherSizingIST'
 import { WaermepumpeVerlaufIST, WaermepumpeVergleichIST, WaermepumpeWirtschaftlichkeitIST } from './WaermepumpeHubBloecke'
 import { EAutoVerlaufIST, EAutoVergleichIST, EAutoWirtschaftlichkeitIST } from './EAutoHubBloecke'
 import { BkwVerlaufIST, BkwVergleichIST } from './BkwHubBloecke'
@@ -44,6 +46,12 @@ export interface KompAnalyse {
   /** Block „Wirtschaftlichkeit" — Kostenvergleich/ROI/Amortisation (eigene Heimat
    *  im Hub statt Parken in Auswertungen; WP=vs Gas, Wallbox=ROI, E-Auto=vs Benzin). */
   wirtschaftlichkeit?: (anlageId: number, inv?: Investition, melde?: MeldeFn) => ReactNode
+  /** Block „Dimensionierung" — was-wäre-wenn zur Gerätegröße (Speicher: #358
+   *  Phase 3). **Eigener Slot statt Anbau an `wirtschaftlichkeit`:** dort steht
+   *  beim Speicher schon die Frage „hätte mehr Kapazität überhaupt geholfen?"
+   *  (Phase 2); „wie viel und zu welchem Preis?" ist die andere Hälfte und würde
+   *  hinter der ersten verschwinden. */
+  dimensionierung?: (anlageId: number, inv?: Investition, melde?: MeldeFn) => ReactNode
 }
 
 export const KOMPONENTEN_ANALYSE: Record<string, KompAnalyse> = {
@@ -68,10 +76,15 @@ export const KOMPONENTEN_ANALYSE: Record<string, KompAnalyse> = {
     ),
   },
   // Speicher: IST-Zeitreihen (η-12M-Degradation, Vollzyklen, Arbitrage-Stapel)
-  // im Verlauf; ⑤ = Jahres-Energiebilanz (Ladung-Herkunft ⟷ Entladung+Verlust).
+  // im Verlauf; ⑤ = Jahres-Energiebilanz (Ladung-Herkunft ⟷ Entladung+Verlust);
+  // Wirtschaftlichkeit = „hätte mehr Kapazität geholfen?" (#358 Phase 2),
+  // Dimensionierung = „wie viel, und lohnt sie sich?" (#358 Phase 3). Beide gehen
+  // über die Lebensdauer und gehören damit in den Hub — aber in getrennte Blöcke.
   speicher: {
     verlauf: (anlageId, inv, melde) => <SpeicherVerlaufIST anlageId={anlageId} inv={inv} melde={melde} />,
     vergleich: (anlageId, inv, melde) => <SpeicherVergleichIST anlageId={anlageId} inv={inv} melde={melde} />,
+    wirtschaftlichkeit: (anlageId, inv, melde) => <SpeicherPotentialIST anlageId={anlageId} inv={inv} melde={melde} />,
+    dimensionierung: (anlageId, inv, melde) => <SpeicherSizingIST anlageId={anlageId} inv={inv} melde={melde} />,
   },
   // Wärmepumpe: ④ Wärme/Monat+Tabelle · ⑤ Monats-/Saisonvergleich (JAZ⇄Strom) ·
   // Wirtschaftlichkeit = Kostenvergleich vs. Gas/Öl.

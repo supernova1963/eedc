@@ -1441,6 +1441,18 @@ def test_p7_baseline_ausnahmen_sind_noch_belegt():
 #   aussichten.py             — Hochrechnung + ausgewiesener Tarif der
 #                               Response; die Historie läuft über
 #                               `_tarife_fuer_stichtag`.
+#   speicher_sizing_service.py — Der Sizing-Simulator (#358 Phase 3) bewertet
+#                               keinen vergangenen Monat, sondern einen
+#                               **Zukauf**: „lohnt sich mehr Kapazität?" Bezahlt
+#                               wird er zum künftigen Preis, nicht zu dem des
+#                               ausgewerteten Zeitraums — mit dem Monats-Stichtag
+#                               stünde in der Kaufberatung der Tarif von vor
+#                               einem Jahr. Die Antwort weist `bezug_preis_cent`
+#                               und `einspeise_verg_cent` aus, damit die Annahme
+#                               sichtbar bleibt. Die **historische** Speicher-
+#                               Bewertung („was hat er gebracht?") liegt
+#                               unverändert in Cockpit → Jahr und läuft dort
+#                               über den Monats-Stichtag.
 P8_BASELINE_AUSNAHMEN: frozenset[str] = frozenset({
     "backend/api/routes/strompreise.py",
     "backend/api/routes/datenquellen.py",
@@ -1450,6 +1462,7 @@ P8_BASELINE_AUSNAHMEN: frozenset[str] = frozenset({
     "backend/api/routes/ha_export.py",
     "backend/api/routes/cockpit/uebersicht.py",
     "backend/api/routes/aussichten.py",
+    "backend/services/speicher_sizing_service.py",
 })
 
 _P8_TARIF_LADER = "lade_tarife_fuer_anlage"
@@ -1730,6 +1743,13 @@ P10_SCHREIBEN_IMPORT_CHECKER: frozenset[str] = frozenset({
     "backend/api/routes/monatsabschluss/wizard.py::save_monatsabschluss",
     "backend/api/routes/monatsdaten.py::_save_investitionen_monatsdaten",
     "backend/services/import_writer.py::upsert_investition_monatsdaten_with_provenance",
+    # Zählt, wie viele Werte der Überschreiben-Haken ersetzen würde (12.08.,
+    # #349). Der Gegenstand ist die **Provenance** der Zeilen, nicht ihr
+    # Inhalt: die Funktion liest ausschließlich `source_provenance` und gibt
+    # eine Anzahl aus. Sie leitet keine Monatsgröße ab — durch die Schicht
+    # geführt käme sie an die Herkunft gar nicht heran, weil `MonatsFakt`
+    # bewusst nur Mengen trägt.
+    "backend/services/import_writer.py::zaehle_manuelle_werte",
     # Import / Export / Migration.
     "backend/api/routes/ha_statistics.py::get_import_vorschau",
     "backend/api/routes/ha_statistics.py::import_ha_statistics",
