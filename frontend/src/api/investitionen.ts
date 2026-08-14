@@ -148,6 +148,19 @@ export interface CO2AmortisationResponse {
   posten: GraueLastPosten[]
 }
 
+/**
+ * Antwort auf „warum steht dieser Hub-Reiter ohne Zahlen da?" (N-247).
+ * `leer=false` ⇒ das Gerät hat Monatswerte, die Sicht zeigt nichts an.
+ */
+export interface HubLeerGrundResponse {
+  leer: boolean
+  art?: string | null
+  meldung?: string | null
+  details?: string | null
+  link?: string | null
+  link_label?: string | null
+}
+
 // Investitions-Dashboard Types
 export interface InvestitionMonatsdaten {
   id: number
@@ -241,7 +254,14 @@ export interface WaermepumpeDashboardResponse {
   }
 }
 
-/** Ein Monat der Speicher-Potentialanalyse (#358 Phase 2). */
+/**
+ * Ein Monat der Speicher-Potentialanalyse (#358 Phase 2) — eine Spalte der Grafik.
+ *
+ * ⚠ **`soc_bins` ist entfallen.** Die Sicht malte daraus eine Heatmap, deren
+ * Deckkraft **global** über alle Monate normiert war: ein Winter-Extremwert im
+ * untersten Bin bestimmte die Skala, benachbarte Monate wurden ununterscheidbar
+ * (Rainer, 13.08.). `soc_p10/p50/p90` je Monat kennen die anderen Monate nicht.
+ */
 export interface MonatsPotential {
   jahr: number
   monat: number
@@ -250,8 +270,20 @@ export interface MonatsPotential {
   stunden_voll: number
   zyklen_gesamt: number
   zyklen_leergelaufen: number
-  /** Stunden je SoC-Zehntel (Index 0 = 0–10 %, Index 9 = 90–100 %). */
-  soc_bins: number[]
+  /** Stunden mit gemessenem Ladestand — Nenner der beiden Anteile. */
+  stunden_mit_soc: number
+  soc_p10: number | null
+  soc_p50: number | null
+  soc_p90: number | null
+  /** Anteil der Stunden am oberen bzw. unteren Anschlag. `null` ohne Messung. */
+  anteil_voll_prozent: number | null
+  anteil_leer_prozent: number | null
+  /** Durchsatz als Vollzyklen-Äquivalent — derselbe Kanon wie Cockpit/HA/PDF. */
+  vollzyklen: number | null
+  ladung_kwh: number
+  /** Teil der Ladung, der **höchstens** aus dem Netz kam. Obergrenze, keine Messung. */
+  netz_ladung_kwh: number
+  netz_ladung_anteil_prozent: number | null
 }
 
 /**
@@ -276,6 +308,8 @@ export interface SpeicherPotentialResponse {
   /** Ab 2 ist der Ladestand ein anlagenweiter Mischwert, keine Geräteaussage. */
   anzahl_speicher: number
   kapazitaet_kwh: number | null
+  /** Brutto — der Nenner der Vollzyklen. `null` = keine Kapazität gepflegt. */
+  kapazitaet_brutto_kwh: number | null
   soc_voll_prozent: number
   soc_leer_prozent: number
 }
@@ -567,6 +601,16 @@ export const investitionenApi = {
    */
   async getCO2Amortisation(anlageId: number): Promise<CO2AmortisationResponse> {
     return api.get<CO2AmortisationResponse>(`/investitionen/co2-amortisation/${anlageId}`)
+  },
+
+  /**
+   * Warum ein Gerät im Komponenten-Hub keine Monatswerte zeigt (N-247).
+   * Der Grund kommt aus dem Backend — keine Client-Ableitung.
+   */
+  async getHubLeerGrund(anlageId: number, investitionId: number): Promise<HubLeerGrundResponse> {
+    return api.get<HubLeerGrundResponse>(
+      `/investitionen/hub-leer-grund/${anlageId}/${investitionId}`,
+    )
   },
 
   /**

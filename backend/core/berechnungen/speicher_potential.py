@@ -1,7 +1,7 @@
 """Hätte ein größerer Speicher etwas gebracht? — die gedeckelte Antwort.
 
 **Warum diese Datei existiert (#358 Phase 2, gemessen 2026-08-12):**
-`docs/KONZEPT-SPEICHER-AUSWERTUNG.md` §2 schlug dafür vor::
+`docs/archive/KONZEPT-SPEICHER-AUSWERTUNG.md` §2 schlug dafür vor::
 
     ungenutztes_potential_kwh = Σ (einspeisung an Tagen mit SoC_max ≥ 95 %)
 
@@ -106,11 +106,18 @@ class PotentialErgebnis:
         return self.nutzbares_zusatzpotential_kwh < self.ueberschuss_gesamt_kwh
 
 
-def _ist_voll(soc: Optional[float]) -> bool:
+def ist_voll(soc: Optional[float]) -> bool:
+    """Zählt diese Stunde als „Speicher voll"? ``None`` belegt nichts.
+
+    Öffentlich, weil die Monats-Aufschlüsselung (`speicher_potential_service`)
+    denselben Schwellenbegriff braucht — ein zweiter Vergleich gegen
+    `SOC_VOLL_PROZENT` daneben wäre dieselbe Regel an zwei Orten.
+    """
     return soc is not None and soc >= SOC_VOLL_PROZENT
 
 
-def _ist_leer(soc: Optional[float]) -> bool:
+def ist_leer(soc: Optional[float]) -> bool:
+    """Gegenstück zu `ist_voll` — und aus demselben Grund öffentlich."""
     return soc is not None and soc <= SOC_LEER_PROZENT
 
 
@@ -135,7 +142,7 @@ def berechne_zusatzpotential(
     vorige_war_ueberschuss = False
 
     for stunde in stunden:
-        voll = _ist_voll(stunde.soc_prozent)
+        voll = ist_voll(stunde.soc_prozent)
         if voll:
             ergebnis.stunden_voll += 1
 
@@ -165,7 +172,7 @@ def berechne_zusatzpotential(
             # Speicher am Anfang der Reihe belegt keine verpasste Ladung.
             continue
 
-        if _ist_leer(stunde.soc_prozent):
+        if ist_leer(stunde.soc_prozent):
             if not leer_erreicht:
                 leer_erreicht = True
                 aktueller.lief_leer = True

@@ -1,11 +1,104 @@
 # Was ist neu
 
-> **Stand:** August 2026 (v4.0.14)
+> **Stand:** August 2026 (v4.0.15)
 > **Diese Seite** zeigt pro Version, was sich für dich als Anwender geändert hat — kürzer als der technische [CHANGELOG](https://github.com/supernova1963/eedc-homeassistant/blob/main/CHANGELOG.md), ausführlicher als die Schnellübersicht-Tabelle in der [Übersicht](BENUTZERHANDBUCH.md#was-ist-neu-seit-v316).
 >
 > **Kein Banner, kein Pop-up:** eedc zeigt diese Liste nicht ungefragt an. HA-App-Nutzer sehen den Changelog ohnehin schon im Add-on-Store, GitHub-Releases haben einen eigenen. Wer wissen will, was neu ist, schaut hier rein — Pull statt Push.
 >
 > **Lesehinweis:** Die jüngsten Versionen stehen oben. Jeder Punkt verlinkt entweder auf die zuständige Hilfe-Sektion oder direkt auf die App-Funktion (sofern erreichbar). Anker-URLs (`?doc=was-ist-neu`) sind teilbar.
+
+---
+
+## v4.0.15 — Kein stummes Nichts (August 2026)
+
+> Drei Anzeigen zeigten etwas, ohne etwas zu sagen: lauter Nullen bei einem neuen Gerät, eine Grafik, die man nicht entschlüsseln konnte, und ein Hinweis, der eine Handlung forderte, die gar nicht wirken konnte. Dazu zwei Zahlen, die an der falschen Bezugsgröße hingen.
+
+### Ein neues Gerät sagt jetzt, warum unter „Komponenten" noch nichts steht
+
+**Betrifft dich das?** Wenn du eine **Komponente neu eingetragen** hast und im Reiter *Komponenten* nur Nullen siehst.
+
+Bisher war das ein stummer Zustand: Vollzyklen 0, Wirkungsgrad 0 %, Ersparnis 0 € — ohne jeden Hinweis. Ob das Gerät nur noch keine Historie hat oder ob bei der Einrichtung etwas schiefgegangen ist, war von außen nicht zu unterscheiden.
+
+Über den Blöcken steht jetzt der Grund. Der häufigste ist dieser: Der Reiter *Komponenten* ist die **Lebenslauf-Sicht** eines Geräts — er rechnet Dinge wie Zyklen, Wirtschaftlichkeit und Amortisation über **abgeschlossene** Monate. Solange dein Gerät jünger ist als der erste Monatsabschluss, gibt es dort nichts zu rechnen.
+
+> **Wo du dein Gerät trotzdem schon siehst:** in *Cockpit → Tag* und *Cockpit → Monat*. Diese Sichten rechnen aus den laufenden Sensorwerten und brauchen keinen Monatsabschluss. Der Knopf im Hinweis führt genau dorthin — **nicht** zum Monatsabschluss, denn es gibt noch keinen Monat, den du abschließen könntest.
+
+Liegen dagegen bereits abgeschlossene Monate vor, für die nichts erfasst wurde, verweist derselbe Hinweis auf den **Monatsabschluss**. Stillgelegte und auf inaktiv gesetzte Geräte bekommen ihre eigene Erklärung.
+
+An deinen **Zahlen ändert sich nichts** — die Sicht sagt nur, was sie vorher verschwiegen hat.
+
+### „Hätte mehr Kapazität geholfen?" ist jetzt lesbar — und zeigt zwei Dinge mehr
+
+**Betrifft dich das?** Wenn du einen **Speicher** hast und dir im Komponenten-Hub die Frage nach mehr Kapazität ansiehst.
+
+Die farbige Tabelle Monat × Ladestand aus dem letzten Update war schwer zu entschlüsseln. Der Grund war kein Geschmack: Die Helligkeit **aller** Zellen richtete sich nach dem größten Wert im ganzen Bild. Ein einziger Extremmonat — im November steht der Speicher hunderte Stunden fast leer — bestimmte damit die Skala für alles andere, und benachbarte Monate wurden ununterscheidbar grau.
+
+Jetzt steht dort **ein Balken je Monat**. Er zeigt, wo dein Ladestand in **acht von zehn Stunden** lag; die Linie darin ist der typische Wert. Die kurzen Striche oben und unten sind die **Anschläge**: wie oft der Speicher voll (≥ 95 %) und wie oft er leer (≤ 5 %) war.
+
+> **So liest du die Grafik:** Erst wenn im selben Monat **beide** Striche breit sind, ist mehr Kapazität eine ernsthafte Überlegung. Oben angeschlagen heißt „Überschuss ging ins Netz", unten angeschlagen „die Nacht musstest du zukaufen". Nur eines von beidem reicht nicht.
+
+Zwei Spuren sind neu:
+
+- **Durchsatz je Monat** in Vollzyklen. Ohne sie sieht ein Speicher, der dreimal am Tag durchfährt, aus wie einer, der stillsteht — der Ladestand zeigt Zustände, keine Umsätze. Werte über 100 % der Kapazität sind normal und jetzt auch sichtbar.
+- **Ladung aus dem Netz**, sofern es sie gab. Netzladung füllt den Speicher **ohne Sonne**; in solchen Monaten sagt der Ladestand weniger über die Frage nach mehr Kapazität aus. Der Anteil ist eine Obergrenze — innerhalb einer Stunde trennt kein Zähler, was ins Haus und was in den Akku ging.
+
+**Warum keine Ampelfarben?** Das war der naheliegende Wunsch, und er wird bewusst nicht erfüllt: Ein voller Speicher ist nicht „gut" und ein leerer nicht „schlecht". Grün für „immer voll" würde ausgerechnet den Zustand belohnen, in dem du Überschuss verschenkst.
+
+An den **Zahlen ändert sich nichts** — der Durchsatz ist derselbe Vollzyklen-Wert, den auch Cockpit, HA-Sensor und Jahresbericht nennen.
+
+### Das Balkonkraftwerk zählt jetzt auch im laufenden Monat zur PV-Erzeugung
+
+**Betrifft dich das?** Wenn du neben deinen PV-Modulen ein **Balkonkraftwerk** erfasst hast und dir *Cockpit → Monat* für den **laufenden** Monat ansiehst.
+
+Die große Kennzahl „PV-Erzeugung" und die Zeile in der Energie-Bilanz zählten dort nur deine **Module** — das Balkonkraftwerk fehlte. Unten im Block „Kategorien" stand es trotzdem korrekt mit seiner eigenen Menge. Bei dem Melder, der es gefunden hat, waren das 679 kWh oben gegen 679 + 45 kWh unten.
+
+Weil die PV-Erzeugung zu klein war, stimmten im laufenden Monat auch **Autarkie und Eigenverbrauchsquote** nicht ganz.
+
+> **Warum das so schwer zu bemerken war:** eedc holt die Zahlen eines **laufenden** Monats aus deinen Sensoren, die eines **abgeschlossenen** aus den gespeicherten Werten — und nur der erste Weg ließ das Balkonkraftwerk aus. Derselbe Monat zeigte also vor und nach dem Monatsabschluss zwei verschiedene Zahlen. Beide Wege rechnen jetzt gleich.
+
+**Was sich nicht ändert:** Abgeschlossene Monate waren nie betroffen, ebenso wenig Anlagen ohne Balkonkraftwerk. In der Wirtschaftlichkeit behält das Balkonkraftwerk seine **eigene Zeile** — es wird nicht doppelt gezählt. Und wer einen Gesamt-Erzeugungssensor für die ganze Anlage zugeordnet hat, war nie betroffen: Der misst beides ohnehin schon, und eedc addiert dann nichts hinzu.
+
+### Ein E-Auto von 2017 verlangt keine Stromzähler-Werte ab 2017
+
+**Betrifft dich das?** Wenn du eine Komponente eingetragen hast, die **älter ist als deine PV-Anlage** — ein Auto, eine Wallbox, eine Heizung.
+
+eedc hat den Zeitraum, für den es Monatsdaten erwartet, bisher am **ältesten Gerät** festgemacht. Wer sein E-Auto korrekt mit dem Anschaffungsdatum 2017 eingetragen hatte, bekam deshalb Einspeisung und Netzbezug ab 2017 abverlangt — für Jahre, in denen es die Anlage noch gar nicht gab. Der Sprung „Nächster offener Monat" landete entsprechend weit in der Vergangenheit.
+
+Maßgeblich ist jetzt das **Installationsdatum deiner Anlage**. Ist es nicht gepflegt, gilt das älteste Anschaffungsdatum deiner **Erzeuger** (PV-Module, Balkonkraftwerk); erst danach die erste vorhandene Datenzeile. Andere Komponenten ziehen den Bereich nicht mehr zurück.
+
+> **Wichtig, falls du dir bisher anders beholfen hast:** Manche haben ihr Fahrzeug auf ein späteres Datum umdatiert, damit die Forderung verschwindet. Das ist jetzt nicht mehr nötig — und du kannst das echte Anschaffungsdatum wieder eintragen. **Datiere Komponenten nie um, nur damit eine Anzeige ruhig wird:** Das Anschaffungsdatum entscheidet, ab wann ein Gerät in Wirtschaftlichkeit und Amortisation mitrechnet.
+
+Neu ist außerdem eine Prüfung im Daten-Checker: Ist ein **Erzeuger** älter als das Installationsdatum der Anlage, wird das gemeldet — dann wurde Strom erzeugt, bevor die Anlage laut Stammdaten existierte, und eines der beiden Daten stimmt nicht. Bei allen anderen Komponenten erscheint bewusst **keine** Meldung, weil ein früheres Datum dort der Normalfall ist.
+
+### „Bitte jeden Monat öffnen und speichern" — wenn das nichts ändern kann, sagt eedc jetzt warum
+
+**Betrifft dich das?** Wenn du Monatsdaten aus der Zeit **vor** dem Anschaffungsdatum deiner Komponenten gepflegt hast.
+
+Der Hinweis „Legacy-Daten gefunden" forderte bisher ausnahmslos dazu auf, jeden betroffenen Monat einmal zu öffnen und zu speichern. Bei einer Bestandsanlage, deren Komponenten mit einem späteren Anschaffungsdatum eingetragen sind, konnte das nie wirken: eedc ordnet einen PV-Gesamtwert nur Modulen zu, die es in dem Monat auch schon gab — sonst würde eine spätere Erweiterung rückwirkend Strom erzeugen. Es gibt dann schlicht kein Gerät, das den Wert übernehmen könnte, und die Meldung blieb nach jedem Speichern stehen.
+
+Jetzt prüft der Hinweis das vorher und nennt in diesem Fall den **Grund** statt einer Handlung, samt Weg zu den Komponenten. Sobald das Anschaffungsdatum auf den tatsächlichen Zeitpunkt zurückgezogen ist, lösen sich die Monate von selbst auf — die Zuordnung wird bei jedem Aufruf gerechnet, nicht einmalig gespeichert.
+
+> Für den echten Migrationsfall bleibt alles wie es war: Steht ein passendes Gerät bereit, ist „öffnen und speichern" weiterhin der richtige Weg.
+
+### Beim Öffnen von *Cockpit → Live* springt nichts mehr
+
+**Betrifft dich das?** Wenn du dir den **Börsenpreis** anzeigen lässt und *Cockpit → Live* öffnest — besonders in Edge und Chrome.
+
+Für etwa eine Sekunde stand der Börsenpreis-Verlauf ganz oben und allein auf der Seite, dann erschien der Energiefluss darüber und schob ihn weit nach unten. Es sah aus, als würde der Block überschrieben.
+
+Überschrieben wurde nichts. Die Börsenpreise sind **öffentliche Marktdaten** und brauchen keinen Sensor-Abruf — sie waren deshalb schneller da als deine Live-Werte und standen kurz allein neben einem kleinen Ladebalken. Sobald der Rest ankam, rutschte der Block um mehrere hundert Pixel nach unten. Er wartet jetzt, bis feststeht, was auf der Seite angezeigt wird.
+
+> **Was sich nicht ändert:** Der Börsenpreis-Block bleibt auch dann sichtbar, wenn du **noch keine** Leistungssensoren zugeordnet hast. Er funktioniert ohne jede Einrichtung, und das soll so bleiben.
+
+*(Gemeldet von rapahl.)*
+
+### In den Import-Vorschauen stehen die Zahlen wieder deutsch
+
+**Betrifft dich das?** Wenn du Daten aus der **Cloud**, aus einer **eigenen Datei** oder aus einem **Portal** importierst.
+
+In der Monatsübersicht vor dem Import stand „1234.5" statt „1.234,5" — Punkt statt Komma, kein Tausenderpunkt. Betroffen waren PV-Erzeugung, Einspeisung, Netzbezug und beide Speicher-Größen in allen drei Import-Assistenten, dazu die Prozentangaben bei der Verteilung auf mehrere Komponenten. Im Daten-Checker nannte außerdem eine Fehlermeldung das Datum roh („Reparatur für 2026-08-13 fehlgeschlagen").
+
+Die **importierten Werte waren immer richtig** — es ging allein um die Anzeige der Vorschau.
 
 ---
 
@@ -101,6 +194,8 @@ Dazu:
 
 - **Nächte mit leerem Speicher** — die eigentliche Begrenzung. Läuft dein Speicher nie leer, bringt mehr Kapazität nichts, egal wie viel Sonne du einspeist.
 - **Heatmap Monat × Ladestand** — eine dunkle Zeile ganz oben heißt „lief oft voll", eine dunkle ganz unten „lief oft leer". Interessant wird es erst, wenn beides im selben Monat auftritt.
+
+  > ⚠ **Nachträglich richtiggestellt (August 2026):** Diese Heatmap gibt es nicht mehr. Sie war schwer zu lesen, weil die Helligkeit **aller** Zellen gemeinsam über alle Monate normiert wurde — ein einzelner Extremmonat drückte alles übrige in einen schmalen Graubereich. An ihre Stelle ist **ein Spannen-Balken je Monat** getreten, mit eigener Skala je Monat und Anschlägen für „voll" und „leer". Die Aussage ist dieselbe geblieben, nur lesbar.
 
 > Bei mehreren Speichern erfasst eedc den Ladestand für die Anlage als Ganzes — die Auswertung gilt dann für alle zusammen, nicht je Gerät. Das steht auch so in der Sicht.
 
