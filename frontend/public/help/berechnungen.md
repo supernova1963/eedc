@@ -562,6 +562,48 @@ Ein Speicher trägt zwei Kapazitäten, beide im Formular. Die Trennlinie läuft 
 > **daneben** aus und trennt die zwei Ursachen einer Lücke (Ladegrenze ⟷ Ladeverlust) über den
 > tatsächlich genutzten Ladestands-Bereich (`messe_soc_nutzung`).
 
+> ⚑ **Seit #379 (2026-08-15) trägt das Netto-Feld eine dritte Aussage: die Entlade-Untergrenze.**
+> Aus dem Verhältnis beider Kapazitäten leitet `core/berechnungen/speicher_potential.py::
+> leer_schwelle_prozent` ab, ab welchem Ladestand *dieser* Speicher nichts mehr abgibt —
+> `(1 − netto ÷ brutto) × 100`, bei 24 von 30 kWh also 20 %. Vorher stand dort die feste Zahl
+> **5 %**, und das war ein Fehler mit Folgen: Wer eine eigene Untergrenze fährt, dessen Speicher
+> erreicht 5 % **nie**, also lief er nie „leer", also war das *Nutzbare Zusatzpotential*
+> **strukturell 0** — die Sicht behauptete „ein größerer Speicher hätte nichts gebracht", obwohl
+> sie es gar nicht messen konnte.
+>
+> Drei Festlegungen gehören dazu, jede aus einer Messung:
+>
+> * **Aufschlag von 3 Prozentpunkten** (`SOC_LEER_TOLERANZ_PP`). Der Melder hat 20 % eingestellt,
+>   seine Kurve dreht bei **21 %** — Wechselrichter schalten mit Puffer ab, der SoC kommt in ganzen
+>   Prozent, und diese Auswertung liest Stundenmittel. Ohne Aufschlag träfe die neue Schwelle so
+>   zuverlässig daneben wie die alte.
+> * **Deckel bei 50 %** (`SOC_LEER_MAX_PROZENT`) gegen die N-235-Klasse: „1 kWh nutzbar von 30"
+>   ergäbe sonst 96,7 % und ließe den Speicher fast immer als leer gelten — die Kennzahl fiele zu
+>   **hoch** aus, also in die Gegenrichtung der Deckelung.
+> * **Die Reserve sitzt unten.** Bei Heimspeichern der Normalfall; die Oberseite deckt
+>   `SOC_VOLL_PROZENT` ab, und eine gewollte *Lade*-Grenze erkennt `messe_soc_nutzung` an den Daten.
+>
+> ⚠ **Wer nichts pflegt, sieht keine geänderte Zahl** — Rückfall auf 5 %, Abnahmekriterium des Baus.
+> Umgekehrt heißt das: Die Korrektur erreicht nur Anlagen mit gepflegter nutzbarer Kapazität.
+>
+> ⚑ **Und die Umkehrung gehört dazu (N-254):** Ohne gepflegte nutzbare Kapazität ist „der Speicher
+> wurde nie leer" **zweideutig** — er kann groß genug sein (dann hätte mehr Kapazität nichts
+> gebracht) oder an einer Untergrenze hängen (dann hätte sie geholfen). Zwei Ursachen,
+> **entgegengesetzte** Antworten, und eedc kann sie ohne die Pflege nicht trennen.
+> `boden_nie_erreicht(soc_min, schwelle, schwelle_ist_abgeleitet)` erkennt genau diesen Zustand;
+> die Sicht sagt dann „nicht beurteilbar" und die Kachel zeigt **„—" statt 0** — dieselbe Doktrin
+> wie „nicht gemessen statt 0".
+>
+> ⚠ **Die Regel hängt an der Pflege, nicht am Abstand allein** — sonst verlöre auch der Fall seine
+> Aussage, für den die Kennzahl gebaut wurde (Dev-Anlage, nie unter 31 %). Ist die Schwelle
+> abgeleitet, kennt eedc die Untergrenze, und ein Speicher, der sie nicht erreicht, war wirklich
+> groß genug. Wer seinen Boden real berührt (Winter, 6 %), bekommt die klare Aussage ebenfalls.
+>
+> ⚠ **Die Schwelle gilt im ganzen Speicher-Hub, nicht nur in Phase 2.** `speicher_sizing.py`
+> definierte `95.0`/`5.0` bis dahin **selbst** — mit dem Kommentar „dieselben Schwellen wie in
+> `speicher_potential.py`". Die Absicht war formuliert, die Kopplung fehlte; ein `==`-Test hätte
+> nie angeschlagen, weil beide Werte gleich waren. Jetzt Import statt Kopie, geprüft an der Quelle.
+
 **SoT netto (seit A31-2):** `core/investition_kennwerte.py::get_speicher_nutzbare_kapazitaet_kwh` —
 netto, sonst brutto, sonst `None`. Der Brutto-Fallback ist **still** (Entscheidung **E17**): kein
 Hinweis, keine Kennzeichnung, **kein P4-Fall**. Der Brutto-Wert ist nicht *unvollständig*, er ist die
@@ -926,7 +968,7 @@ CO2-Einsparung        = CO2_alt - CO2_WP
 >
 > **Strom-Direktheizung:** η = 1,0. Eine Widerstandsheizung (Nachtspeicher, Infrarot) setzt Strom verlustfrei in Wärme um; ihr einen Kesselverlust anzurechnen, würde die WP-Ersparnis überhöhen. Die η-Wahl lag vorher an vier Stellen dupliziert vor und kannte diesen Fall nirgends.
 
-> **Split-Klimaanlagen (`wp_art = luft_luft`) durchlaufen diese Rechnung gar nicht.** Ein Luft-Luft-Gerät ersetzt in aller Regel keine Heizung und hat keinen Warmwasserkreis — die gesamte Formel oben hätte damit keinen Gegenstand. Bis v4.0.6 lief sie trotzdem, und weil `Heizwärmebedarf`/`Warmwasserbedarf` Defaults haben (12.000/3.000 kWh, Tabelle unten), kam sie nie ohne Ergebnis heraus: bei den übrigen Standardwerten rund **1.100 €/Jahr** und **2.210 kg CO₂/Jahr** Ersparnis gegen eine Gasheizung, die es nie gab — inklusive Beitrag zu den Anlagen-Summen des ROI-Dashboards. Die ROI-Sicht war damit die einzige, die einen fehlenden Wert konstruierte; alle **gemessenen** Pfade (`services/wp_wirtschaftlichkeit.py`, `co2_wp_ersparnis_kg`, Aussichten, JAZ/COP) haben denselben `wp_waerme_kwh <= 0`-Wächter und liefern 0 bzw. „—". Heute gilt: für `luft_luft` wird **weder Ersparnis noch CO₂-Ersparnis** konstruiert, die ROI-Zeile trägt den Leerwert „—" und `nicht_bewertet`; die Bedarfsfelder werden im Formular nicht mehr angeboten. Die Unterscheidung kommt aus dem SoT-Helper `ist_luft_luft_waermepumpe` — eine Wärmepumpe **ohne** `wp_art` zählt weiter als klassische.
+> **Diese Rechnung braucht zwei gepflegte Angaben — sonst läuft sie nicht.** ⚠ **Bis 2026-08-16 stand hier das Gegenteil:** „Split-Klimaanlagen (`wp_art = luft_luft`) durchlaufen diese Rechnung gar nicht … ein Luft-Luft-Gerät ersetzt in aller Regel keine Heizung." **Diese Prämisse ist gefallen** — eine Luft-Luft-Wärmepumpe kann sehr wohl eine Gasheizung ersetzen, und viele Anwender heizen damit. Der echte Defekt war nie die Bauart, sondern eine **erfundene Eingabe**: Weil `Heizwärmebedarf`/`Warmwasserbedarf` Defaults hatten (12.000/3.000 kWh), kam die Formel nie ohne Ergebnis heraus — bei den übrigen Standardwerten rund **1.100 €/Jahr** und **2.210 kg CO₂/Jahr** Ersparnis gegen eine Gasheizung, die es nie gab, inklusive Beitrag zu den Anlagen-Summen. **Heute gilt stattdessen:** (1) Ist beim **ersetzten Energieträger** „Nichts ersetzt (Neubau)" gewählt, wird **weder Ersparnis noch CO₂-Ersparnis** konstruiert — für **jede** Wärmepumpenart, nicht nur für Klimaanlagen; das war der Neubau-Fall, der bis dahin still eine Gaskessel-Ersparnis bekam. (2) Ist **kein Wärmebedarf gepflegt**, gibt es keinen Default mehr; die ROI-Zeile trägt „—" und `nicht_bewertet` samt Begründung. Eine halb gepflegte Angabe zählt entsprechend halb (nur Warmwasser gepflegt ⇒ Heizwärme 0). (3) **Bestandsschutz ohne Migration:** Steht an einer Luft-Luft-WP noch **exakt** die alte Vorbelegung 12.000/3.000, zählt sie als offene Frage statt als Antwort — sie war seit v4.0.6 unsichtbar und damit nicht korrigierbar. Bei klassischen Wärmepumpen bleibt sie eine Schätzung und wird gerechnet. Die **gemessenen** Pfade (`services/wp_wirtschaftlichkeit.py`, `co2_wp_ersparnis_kg`, Aussichten, JAZ/COP) haben zusätzlich weiterhin ihren `wp_waerme_kwh <= 0`-Wächter. SoT der Unterscheidung: `core/berechnungen/alternativkosten.py::ersetzt_keine_heizung`; die Bauart-Unterscheidung `ist_luft_luft_waermepumpe` trägt nur noch den Bestandsschutz aus (3).
 
 > **Alternativ-Zusatzkosten (v3.21.0, #141):** `alternativ_zusatzkosten_jahr` (€/Jahr) deckt laufende Fixkosten der Alt-Heizung (Schornsteinfeger, Wartung, Gaszähler-Grundpreis) ab. Wird in **fünf** Berechnungs-Pfaden berücksichtigt: Aussichten historisch + Prognose, HA-Sensor-Export inkl. WP-Sensor, PDF-Jahresbericht, Investitions-Vorschau. In historischen Aggregaten anteilig pro erfasstem Monat (`alternativ_zusatzkosten_jahr / 12`).
 
@@ -940,8 +982,8 @@ CO2-Einsparung        = CO2_alt - CO2_WP
 | SCOP Warmwasser | `scop_warmwasser` | 3.2 |
 | COP Heizung | `cop_heizung` | 3.9 |
 | COP Warmwasser | `cop_warmwasser` | 3.0 |
-| Heizwärmebedarf | `heizwaermebedarf_kwh` | 12000 (bei `luft_luft` **nicht** abgefragt und nicht vorbelegt) |
-| Warmwasserbedarf | `warmwasserbedarf_kwh` | 3000 (bei `luft_luft` **nicht** abgefragt und nicht vorbelegt) |
+| Heizwärmebedarf | `heizwaermebedarf_kwh` | **kein Default mehr** in der ROI-Rechnung; im Formular Vorbelegung 12000, bei `luft_luft` **nicht** vorbelegt (Feld seit 2026-08-16 wieder angeboten) |
+| Warmwasserbedarf | `warmwasserbedarf_kwh` | **kein Default mehr** in der ROI-Rechnung; im Formular Vorbelegung 3000, bei `luft_luft` **nicht** vorbelegt (Feld seit 2026-08-16 wieder angeboten) |
 | PV-Anteil | `pv_anteil_prozent` | 30 |
 | Alter Energieträger | `alter_energietraeger` | `gas` |
 | Alter Preis | `alter_preis_cent_kwh` | 12 (Fallback wenn `Monatsdaten.gaspreis_cent_kwh` leer) |

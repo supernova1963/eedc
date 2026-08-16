@@ -21,6 +21,8 @@ from backend.api.deps import get_db
 from backend.core.berechnungen.speicher_potential import (
     SOC_LEER_PROZENT,
     SOC_VOLL_PROZENT,
+    boden_nie_erreicht,
+    leer_schwelle_prozent,
 )
 from backend.core.investition_kennwerte import (
     get_speicher_kapazitaet_kwh,
@@ -60,7 +62,12 @@ class MonatsPotentialResponse(BaseModel):
         default=None, description=f"Anteil der Stunden ≥ {SOC_VOLL_PROZENT} % Ladestand"
     )
     anteil_leer_prozent: Optional[float] = Field(
-        default=None, description=f"Anteil der Stunden ≤ {SOC_LEER_PROZENT} % Ladestand"
+        default=None,
+        description=(
+            "Anteil der Stunden ≤ der Leer-Schwelle dieser Anlage — der Wert steht "
+            "als `soc_leer_prozent` in der Antwort. Bewusst **nicht** als feste Zahl "
+            "hier: seit #379 hängt sie an der gepflegten nutzbaren Kapazität."
+        ),
     )
     vollzyklen: Optional[float] = Field(
         default=None,
@@ -109,7 +116,24 @@ class SpeicherPotentialResponse(BaseModel):
     #: kann, statt beide als leere Spur zu zeigen.
     kapazitaet_brutto_kwh: Optional[float]
     soc_voll_prozent: float
+    #: Ab diesem Ladestand gilt der Speicher als leer — **anlagenspezifisch**
+    #: seit #379, abgeleitet aus dem Verhältnis nutzbarer zu Brutto-Kapazität.
+    #: Bis dahin lieferte das Feld konstant 5,0 und die Sicht schrieb die Zahl
+    #: als feste Legende hin.
     soc_leer_prozent: float
+    #: Kleinster gemessener Ladestand des Zeitraums. `None` ohne SoC-Messung.
+    soc_min_prozent: Optional[float] = None
+    #: True = „mehr Kapazität hätte nichts gebracht" ist hier **unbelegt** (N-254):
+    #: Der Speicher wurde nie leer, kam dem Boden aber auch nie nahe, und ohne
+    #: gepflegte nutzbare Kapazität lässt sich „groß genug" nicht von „eigene
+    #: Entlade-Untergrenze" trennen. Die Sicht muss dann die Lücke benennen
+    #: statt eine der beiden gegensätzlichen Antworten zu behaupten.
+    boden_nie_erreicht: bool = False
+    #: True = die Schwelle stammt aus der gepflegten nutzbaren Kapazität,
+    #: False = Rückfall auf 5 %. Die Sicht braucht die Unterscheidung, um „gilt
+    #: für deinen Speicher" von „Standardannahme" zu trennen — ohne sie müsste
+    #: sie den Wert gegen die Konstante vergleichen und die Regel nachbauen.
+    soc_leer_ist_abgeleitet: bool = False
 
 
 @router.get("/speicher-potential/{anlage_id}", response_model=SpeicherPotentialResponse)
@@ -150,8 +174,19 @@ async def get_speicher_potential(
         summe_brutto = sum(get_speicher_kapazitaet_kwh(s) or 0 for s in speicher)
         kapazitaet_brutto = round(summe_brutto, 1) if summe_brutto else None
 
+    # Die Untergrenze, ab der dieser Speicher nichts mehr abgibt (#379). Beide
+    # Kapazitäten liegen hier ohnehin schon vor — die Ableitung braucht keine
+    # zusätzliche Abfrage und kein neues Eingabefeld.
+    leer_schwelle = leer_schwelle_prozent(kapazitaet_brutto, kapazitaet)
+    abgeleitet = leer_schwelle > SOC_LEER_PROZENT
+
     auswertung = await lade_potential_auswertung(
-        db, anlage_id, von=von, bis=bis, kapazitaet_brutto_kwh=kapazitaet_brutto
+        db,
+        anlage_id,
+        von=von,
+        bis=bis,
+        kapazitaet_brutto_kwh=kapazitaet_brutto,
+        leer_schwelle_prozent=leer_schwelle,
     )
 
     return SpeicherPotentialResponse(
@@ -195,5 +230,19 @@ async def get_speicher_potential(
         kapazitaet_kwh=kapazitaet,
         kapazitaet_brutto_kwh=kapazitaet_brutto,
         soc_voll_prozent=SOC_VOLL_PROZENT,
-        soc_leer_prozent=SOC_LEER_PROZENT,
+        soc_leer_prozent=round(leer_schwelle, 1),
+        soc_leer_ist_abgeleitet=abgeleitet,
+        soc_min_prozent=(
+            round(auswertung.gesamt.soc_min_prozent, 1)
+            if auswertung.gesamt.soc_min_prozent is not None else None
+        ),
+        # Die Regel steht vollständig in der Layer-Funktion. Hier stand zuerst
+        # zusätzlich `and zyklen_leergelaufen == 0` — das ist **logisch
+        # impliziert**: Liegt das Minimum über der Schwelle, war keine Stunde je
+        # „leer". Der Sprengsatz-Test blieb deshalb stumm, und genau daran ist es
+        # aufgefallen. Eine Bedingung, die kein Prüfer widerlegen kann, ist keine
+        # Absicherung, sondern eine zweite halbe Regel neben der ersten.
+        boden_nie_erreicht=boden_nie_erreicht(
+            auswertung.gesamt.soc_min_prozent, leer_schwelle, abgeleitet
+        ),
     )

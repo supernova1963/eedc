@@ -8,7 +8,7 @@ Monatsdaten zu einer Echtzeit-Übersicht des laufenden Monats.
 import asyncio
 import logging
 from datetime import date, datetime
-from typing import Optional
+from typing import NamedTuple, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -25,6 +25,7 @@ from backend.services.prognose_auswahl import lade_aktive_monatsprognosen
 from backend.api.routes.strompreise import lade_tarife_fuer_anlage, resolve_netzbezug_preis_cent
 from backend.api.routes.connector import _calc_month_delta
 from backend.core.berechnungen import (
+    sonstiges_richtung,
     Monatsfenster,
     anteilig,
     auslastung_prozent,
@@ -302,6 +303,16 @@ class AktuellerMonatResponse(BaseModel):
     soll_pv_kwh: Optional[float] = None
     soll_pv_tage: Optional[int] = None
     soll_pv_tage_gesamt: Optional[int] = None
+    # Dasselbe SOLL **ungekürzt** — die Prognose für den ganzen Monat.
+    # Melder dietmar1968 (T89667 #155, 14.08.2026): der Fortschritt gegen die
+    # volle Monatsprognose war ihm wichtig und ist mit N-69 aus der Anzeige
+    # verschwunden. Die Größe steht hier, statt im Client aus `soll_pv_kwh`
+    # zurückgerechnet zu werden: die Kürzung ist zwar linear und damit exakt
+    # umkehrbar, der gelieferte Wert ist aber auf **eine Stelle gerundet**, und
+    # die Umkehrung multipliziert diesen Rest mit `tage_gesamt ÷ tage` — am
+    # Monatsersten das 28- bis 31-Fache (gemessen: 1388,0 statt 1387,9 am 4.).
+    # Im abgeschlossenen Monat ist der Wert identisch mit `soll_pv_kwh`.
+    soll_pv_kwh_monat: Optional[float] = None
 
     # Grundlast (Nacht-Sockel; R12-1 ersetzt PVGIS-SOLL/IST). `grundlast_kwh` ist
     # additiv → Cockpit/Jahr summiert die Monate (analog soll_pv_kwh).
@@ -815,9 +826,27 @@ async def _load_vorjahr(anlage_id: int, investitionen: list[Investition], jahr: 
     return result
 
 
+class SollPv(NamedTuple):
+    """Das PVGIS-SOLL eines Monats in seinen zwei Lesarten.
+
+    ``anteilig`` ist die Zahl, gegen die die Erfüllungsquote rechnet (N-69:
+    Nenner auf die abgelaufenen Tage gekürzt). ``monat`` ist dieselbe Prognose
+    **ungekürzt** — der Fortschritts-Bezug, den dietmar1968 vermisst hat
+    (T89667 #155). Beide kommen aus **einem** Datenbank-Zugriff; der volle Wert
+    wird bewusst nicht im Client zurückgerechnet, weil ``anteilig`` gerundet
+    ausgeliefert wird und die Umkehrung den Rundungsrest mit
+    ``tage_gesamt ÷ tage`` multipliziert.
+
+    Im abgeschlossenen Monat sind beide gleich.
+    """
+
+    anteilig: Optional[float]
+    monat: Optional[float]
+
+
 async def _load_soll_pv(
     anlage_id: int, jahr: int, monat: int, db: AsyncSession, fenster: Monatsfenster,
-) -> Optional[float]:
+) -> SollPv:
     """Lädt PVGIS SOLL-Wert für den Monat — aus der AKTIVEN Prognose (P5).
 
     Vorher stand hier ein `JOIN` auf `ist_aktiv` **ohne `limit`** und ein `sum()`
@@ -836,10 +865,13 @@ async def _load_soll_pv(
     """
     prognosen = await lade_aktive_monatsprognosen(db, anlage_id, monat=monat)
     if not prognosen:
-        return None
+        return SollPv(None, None)
     voll = sum(p.ertrag_kwh for p in prognosen)
     gekuerzt = anteilig(voll, fenster)
-    return round(gekuerzt, 1) if gekuerzt is not None else None
+    return SollPv(
+        anteilig=round(gekuerzt, 1) if gekuerzt is not None else None,
+        monat=round(voll, 1),
+    )
 
 
 async def _load_grundlast_nacht_kw(
@@ -1808,7 +1840,21 @@ async def get_aktueller_monat(
             g = mf_sonstiges.je_geraet.get(inv.id)
             if g is None:
                 continue
-            kat = (inv.parameter or {}).get("kategorie", "erzeuger")
+            # N-250: Richtung ohne gepflegte Kategorie aus dem WERT, nicht aus
+            # einem Default. Hier stand `.get("kategorie", "erzeuger")` — als
+            # einzige von vier Stellen im Baum: die beiden Tages-Schreibpfade
+            # (`snapshot/komponenten_beitraege`, `live_sensor_config`) und der
+            # Tages-Layer (`core/berechnungen/energie.sonstiges_kwh_je_richtung`)
+            # lesen eine leere Kategorie als *Verbraucher*, und `monats_fakten`
+            # nimmt ohne sie **beide** Felder mit. Ein ungepflegtes Gerät fiel
+            # deshalb in den Erzeuger-Zweig, scheiterte dort an `erzeugung > 0`
+            # und war unsichtbar — während seine Zahlen in den Summen darüber
+            # mitliefen. Gemeldet an einem Gerät mit Verbrauch (rapahl, 08/2026).
+            # Ein *gepflegtes* Gerät ändert sich durch diese Zeile nicht.
+            kat = sonstiges_richtung(
+                (inv.parameter or {}).get("kategorie"),
+                hat_erzeugung=g.erzeugung_kwh > 0,
+            )
             if kat == "verbraucher":
                 if g.verbrauch_kwh > 0 or g.bezug_pv_kwh > 0 or g.bezug_netz_kwh > 0:
                     sonstiges_geraete.append(SonstigesGeraet(
@@ -2184,9 +2230,10 @@ async def get_aktueller_monat(
         zaehlergebuehr_euro_jahr=zaehlergebuehr_jahr,
         # Vergleiche
         vorjahr=vorjahr,
-        soll_pv_kwh=soll_pv,
-        soll_pv_tage=fenster.tage if soll_pv is not None else None,
-        soll_pv_tage_gesamt=fenster.tage_gesamt if soll_pv is not None else None,
+        soll_pv_kwh=soll_pv.anteilig,
+        soll_pv_tage=fenster.tage if soll_pv.anteilig is not None else None,
+        soll_pv_tage_gesamt=fenster.tage_gesamt if soll_pv.anteilig is not None else None,
+        soll_pv_kwh_monat=soll_pv.monat,
         grundlast_kw=grundlast.grundlast_kw,
         grundlast_kwh=grundlast.grundlast_kwh,
         grundlast_anteil_prozent=grundlast.grundlast_anteil_prozent,

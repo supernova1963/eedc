@@ -332,10 +332,16 @@ class TagWerteResponse(BaseModel):
     pv_anlage: float = 0.0
     bkw: float = 0.0
     eigenverbrauch: Optional[float] = None
-    einspeisung: float = 0.0
-    netzbezug: float = 0.0
-    gesamtverbrauch: float = 0.0
-    direktverbrauch: float = 0.0
+    # Ebenfalls `None`, wenn die jeweilige Achse an keiner Stunde des Tages
+    # einen Wert trug (Träger `TagesBilanz.einspeisung_erfasst` /
+    # `netzbezug_erfasst` / `verbrauch_erfasst`). Bis 15.08.2026 waren diese
+    # vier `float = 0.0` und konnten „nicht gemessen" gar nicht ausdrücken —
+    # neben einem korrekten „—" der PV-Spalte stand dann „0 kWh Netzbezug"
+    # (Striker, T89667 #162). `direktverbrauch` braucht beide Achsen.
+    einspeisung: Optional[float] = None
+    netzbezug: Optional[float] = None
+    gesamtverbrauch: Optional[float] = None
+    direktverbrauch: Optional[float] = None
     # Quoten (%)
     autarkie: Optional[float] = None
     evQuote: Optional[float] = None
@@ -344,6 +350,12 @@ class TagWerteResponse(BaseModel):
     speicher_ladung: Optional[float] = None
     speicher_entladung: Optional[float] = None
     speicher_effizienz: Optional[float] = None
+    # Worauf der η beruht — dasselbe Vokabular wie im Monat
+    # (`soc_korrigiert` · `roh-unkorrigiert` · `keine-ladung` ·
+    # `nicht-ermittelbar`, Layer-SoT `core/berechnungen/speicher_wirkungsgrad`).
+    # Ohne dieses Feld stand der Tageswert ohne jede Einordnung da, und ein Tag
+    # ist — anders als ein Monat — kein geschlossenes System (T89667 #163).
+    speicher_effizienz_quelle: Optional[str] = None
     # Vollzyklen des Tages = Entladung ÷ Kapazität (Kanon, Layer-SoT
     # `core/berechnungen/speicher.vollzyklen`). Bis 2026-07-28 zeigte die
     # Tages-Kachel stattdessen `batterie_vollzyklen` (ΔSoC ÷ 200) — eine
@@ -352,12 +364,25 @@ class TagWerteResponse(BaseModel):
     speicher_vollzyklen: Optional[float] = None
     # Wärmepumpe (nur Strom je Tag ableitbar; Wärme/COP bleiben monat-only)
     wp_strom: Optional[float] = None
-    # Finanzen (€) — einfaches lineares Modell wie createMonatsZeitreihe
+    # Sonstiges (BHKW, Heizstab, Pool …) — Richtung aus der gepflegten
+    # Kategorie, Menge als Betrag (Layer-SoT `sonstiges_kwh_je_richtung`).
+    # ⚠ Andere Quelle als im Monat: hier zählt nur, was einen **eigenen
+    # Sensor/Zähler** hat (Komponenten-JSON des Tages). Ein Gerät, das nur
+    # monatlich von Hand gepflegt wird, hat keine Tageszahl — die Spalte bleibt
+    # dann leer, während die Monatsspalte danebensteht. `None` heißt deshalb
+    # „für diesen Tag nicht gemessen", nicht 0.
+    sonstiges_erzeugung: Optional[float] = None
+    sonstiges_verbrauch: Optional[float] = None
+    # Finanzen (€) — einfaches lineares Modell wie createMonatsZeitreihe.
+    # `None`, wenn die Menge fehlt, auf der der Betrag steht: `ev_ersparnis`
+    # ohne erfassten Eigenverbrauch, `netzbezug_kosten` ohne erfassten
+    # Netzbezug, und die beiden Summen erben die Lücke ihres Summanden. Der
+    # Einspeise-Erlös steht dagegen auf einer gemessenen Menge und bleibt.
     einspeise_erloes: float = 0.0
-    ev_ersparnis: float = 0.0
-    netzbezug_kosten: float = 0.0
-    netto_ertrag: float = 0.0
-    netto_bilanz: float = 0.0
+    ev_ersparnis: Optional[float] = None
+    netzbezug_kosten: Optional[float] = None
+    netto_ertrag: Optional[float] = None
+    netto_bilanz: Optional[float] = None
     # CO₂ — der **PV-Anteil** der kanonischen Bilanz (`berechne_co2_bilanz`,
     # ADR-001/DI-2): Eigenverbrauch × Strommix-Faktor. WP-Wärme und
     # E-Mobilitäts-Kilometer sind Monatsgrößen (`InvestitionMonatsdaten`) und auf

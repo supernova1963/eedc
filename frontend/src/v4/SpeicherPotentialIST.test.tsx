@@ -119,6 +119,49 @@ describe('SpeicherPotentialIST', () => {
     await waitFor(() => expect(melde).toHaveBeenCalled())
     expect(melde).toHaveBeenLastCalledWith([])
   })
+
+  // Bis 2026-08-15 lag EINE Parkbar um den ganzen Block: Befund, drei Kacheln,
+  // Spuren-Grafik und Hinweis ließen sich nur gemeinsam parken, und beim
+  // Rechtsklick verdunkelte sich alles statt der angefassten Kachel. Die
+  // gemeldeten IDs sind der beobachtbare Vertrag mit dem Block (`alleGeparkt`)
+  // — eine einzige ID hieße wieder ein Bündel.
+  it('meldet jede Teil-Anzeige einzeln, nicht das Bündel', async () => {
+    vi.spyOn(investitionenApi, 'getSpeicherPotential').mockResolvedValue(
+      ANTWORT({ anzahl_speicher: 2 }),
+    )
+    const melde = vi.fn()
+
+    render(<SpeicherPotentialIST anlageId={1} melde={melde} />)
+
+    // Der erste Lauf meldet `[]` (noch am Laden) — gewartet wird auf die Meldung
+    // MIT Daten, sonst prüft die Probe den Ladezustand.
+    await waitFor(() => expect(melde.mock.calls.at(-1)![0]).not.toHaveLength(0))
+    const ids = melde.mock.calls.at(-1)![0] as string[]
+    expect(ids).toContain('speicher:potential-befund')
+    expect(ids).toContain('speicher:potential-kpi-zusatz')
+    expect(ids).toContain('speicher:potential-kpi-ueberschuss')
+    expect(ids).toContain('speicher:potential-kpi-leer')
+    expect(ids).toContain('speicher:potential-spuren')
+    expect(ids).toContain('speicher:potential-hinweis')
+    expect(new Set(ids).size).toBe(ids.length)
+  })
+
+  it('meldet nur, was auch gerendert wird', async () => {
+    // Ein Speicher, keine Monate ⇒ weder Spuren-Grafik noch Mehrgeräte-Hinweis.
+    // Stünden sie trotzdem in der Liste, ließe sich der Block nie ganz parken.
+    vi.spyOn(investitionenApi, 'getSpeicherPotential').mockResolvedValue(
+      ANTWORT({ anzahl_speicher: 1, monate: [] }),
+    )
+    const melde = vi.fn()
+
+    render(<SpeicherPotentialIST anlageId={1} melde={melde} />)
+
+    await waitFor(() => expect(melde.mock.calls.at(-1)![0]).not.toHaveLength(0))
+    const ids = melde.mock.calls.at(-1)![0] as string[]
+    expect(ids).not.toContain('speicher:potential-spuren')
+    expect(ids).not.toContain('speicher:potential-hinweis')
+    expect(ids).toContain('speicher:potential-befund')
+  })
 })
 
 describe('SpeicherPotentialIST — Spannen-Grafik statt Heatmap', () => {
@@ -204,6 +247,78 @@ describe('SpeicherPotentialIST — Spannen-Grafik statt Heatmap', () => {
 
     await waitFor(() => expect(screen.getByText(/Ladestand über den Monat/)).toBeInTheDocument())
     expect(screen.queryByText(/Ladung aus dem Netz/)).not.toBeInTheDocument()
+  })
+
+  // -------------------------------------------------------------------------
+  // #379 — die Leer-Schwelle gehört der Anlage, und die Sicht sagt das
+  // -------------------------------------------------------------------------
+
+  it('nennt die eigene Entladegrenze statt der Standardannahme', async () => {
+    // Glens Speicher: 20 % Untergrenze, abgeleitet aus 24 von 30 kWh nutzbar.
+    vi.spyOn(investitionenApi, 'getSpeicherPotential').mockResolvedValue(ANTWORT({
+      soc_leer_prozent: 23,
+      soc_leer_ist_abgeleitet: true,
+    }))
+
+    render(<SpeicherPotentialIST anlageId={1} />)
+
+    expect(await screen.findByText(/leer = Ladestand ≤ 23 % \(deine Entladegrenze\)/))
+      .toBeInTheDocument()
+    expect(screen.getByText(/nicht 0 %/)).toBeInTheDocument()
+  })
+
+  it('erklärt die Grenze nicht weg, wo sie die Standardannahme ist', async () => {
+    // Ohne gepflegte nutzbare Kapazität bleibt es beim alten Text — sonst
+    // behauptet die Sicht eine Einstellung, die der Anwender nie gemacht hat.
+    vi.spyOn(investitionenApi, 'getSpeicherPotential').mockResolvedValue(ANTWORT())
+
+    render(<SpeicherPotentialIST anlageId={1} />)
+
+    expect(await screen.findByText(/leer = Ladestand ≤ 5 %/)).toBeInTheDocument()
+    expect(screen.queryByText(/deine Entladegrenze/)).not.toBeInTheDocument()
+  })
+
+  // -------------------------------------------------------------------------
+  // N-254 — „nie leer" belegt ohne gepflegte Grenze gar nichts
+  // -------------------------------------------------------------------------
+
+  it('behauptet nichts, wo der Speicher dem Boden nie nahe kam', async () => {
+    vi.spyOn(investitionenApi, 'getSpeicherPotential').mockResolvedValue(ANTWORT({
+      boden_nie_erreicht: true,
+      soc_min_prozent: 31,
+    }))
+
+    render(<SpeicherPotentialIST anlageId={1} />)
+
+    expect(await screen.findByText(/lässt sich hier nicht beurteilen/)).toBeInTheDocument()
+    expect(screen.getByText(/tiefster Ladestand war 31 %/)).toBeInTheDocument()
+    expect(screen.getByText(/nutzbare Kapazität/)).toBeInTheDocument()
+    // Der alte Satz darf hier NICHT stehen — er ist die falsche Tatsache.
+    expect(screen.queryByText(/hätte hier nichts gebracht/)).not.toBeInTheDocument()
+  })
+
+  it('zeigt die Kachel als „—" statt als 0 kWh, wo nichts beurteilbar ist', async () => {
+    // „0" wäre auch hier eine Aussage, die niemand gemessen hat.
+    vi.spyOn(investitionenApi, 'getSpeicherPotential').mockResolvedValue(ANTWORT({
+      boden_nie_erreicht: true,
+      soc_min_prozent: 31,
+    }))
+
+    render(<SpeicherPotentialIST anlageId={1} />)
+
+    expect(await screen.findByText(/nicht beurteilbar — siehe Hinweis oben/)).toBeInTheDocument()
+  })
+
+  it('sagt weiter klar „hätte nichts gebracht", wo die Aussage belegt ist', async () => {
+    // Der Fall, für den der Block gebaut wurde — er darf nicht verlorengehen.
+    vi.spyOn(investitionenApi, 'getSpeicherPotential').mockResolvedValue(ANTWORT({
+      boden_nie_erreicht: false,
+    }))
+
+    render(<SpeicherPotentialIST anlageId={1} />)
+
+    expect(await screen.findByText(/hätte hier nichts gebracht/)).toBeInTheDocument()
+    expect(screen.queryByText(/nicht beurteilen/)).not.toBeInTheDocument()
   })
 
   it('sagt bei einem Monat ohne Ladestand, dass nichts gemessen wurde', async () => {

@@ -91,10 +91,14 @@ export interface TagWerte {
   pv_anlage: number
   bkw: number
   eigenverbrauch: number | null
-  einspeisung: number
-  netzbezug: number
-  gesamtverbrauch: number
-  direktverbrauch: number
+  // Ebenso `null`, wenn die Achse an keiner Stunde des Tages einen Wert trug.
+  // Vorher standen hier `0`-Werte neben einem korrekten „—" der PV-Spalte
+  // derselben Zeile (Striker, T89667 #162). `direktverbrauch` braucht PV und
+  // Verbrauch.
+  einspeisung: number | null
+  netzbezug: number | null
+  gesamtverbrauch: number | null
+  direktverbrauch: number | null
   // Quoten (%)
   autarkie: number | null
   evQuote: number | null
@@ -105,14 +109,34 @@ export interface TagWerte {
   /** Vollzyklen des Tages = Entladung ÷ Kapazität (Backend-SoT). */
   speicher_vollzyklen: number | null
   speicher_effizienz: number | null
+  /**
+   * Worauf der η des Tages beruht — gleiches Vokabular wie im Monat
+   * (`soc_korrigiert` · `roh-unkorrigiert` · `keine-ladung` ·
+   * `nicht-ermittelbar`). Ein Tag ist kein geschlossenes System: wer voll
+   * beginnt und leer endet, entnimmt mehr, als er lädt. Ohne Ladestand am
+   * Rand bleibt der Wert deshalb leer statt über 100 % zu stehen
+   * (Melder Knallfrosch, Forum T89667 #163).
+   */
+  speicher_effizienz_quelle: string | null
   // Wärmepumpe (nur Strom je Tag)
   wp_strom: number | null
+  /**
+   * Sonstiges je Richtung (BHKW, Heizstab, Pool …). ⚠ Andere Quelle als im
+   * Monat: der Tag kennt nur Geräte mit **eigenem Sensor/Zähler**. Wer sein
+   * Sonstiges nur monatlich pflegt, sieht die Monatsspalte gefüllt und die
+   * Tagesspalte leer — `null` heißt „für den Tag nicht gemessen", nicht 0.
+   */
+  sonstiges_erzeugung: number | null
+  sonstiges_verbrauch: number | null
   // Finanzen (€)
   einspeise_erloes: number
-  ev_ersparnis: number
-  netzbezug_kosten: number
-  netto_ertrag: number
-  netto_bilanz: number
+  // `null`, wenn die zugrunde liegende Menge nicht erfasst ist — ein Betrag auf
+  // einer Menge, die es nicht gibt, ist keine 0. Die beiden Summen erben die
+  // Lücke ihres Summanden.
+  ev_ersparnis: number | null
+  netzbezug_kosten: number | null
+  netto_ertrag: number | null
+  netto_bilanz: number | null
   // CO₂
   /** `null`, wenn der Eigenverbrauch nicht erfasst ist — ohne ihn keine CO₂-Aussage. */
   co2_einsparung: number | null

@@ -43,10 +43,91 @@ from typing import Iterable, Optional, Sequence
 #: Speicher praktisch nie exakt 100 % meldet.
 SOC_VOLL_PROZENT = 95.0
 
-#: Ab hier gilt er als leer. Symmetrisch gedacht, aber aus einem anderen Grund:
-#: unterhalb der Entladetiefe-Reserve gibt das Gerät nichts mehr ab, der
-#: gemeldete Rest-SoC ist für das Haus nicht verfügbar.
+#: Ab hier gilt er als leer, **wenn nichts Genaueres bekannt ist**. Symmetrisch
+#: gedacht, aber aus einem anderen Grund: unterhalb der Entladetiefe-Reserve gibt
+#: das Gerät nichts mehr ab, der gemeldete Rest-SoC ist für das Haus nicht
+#: verfügbar.
+#:
+#: ⚠ **Als feste Zahl war das ein Fehler** (#379, kingcap1/Glen, gemessen
+#: 2026-08-15). Wer eine eigene Entlade-Untergrenze fährt — bei ihm 20 % —, dessen
+#: Speicher erreicht diese 5 % **nie**. Dann bleibt `lief_leer` False, die
+#: Fehlmenge bleibt 0, und `nutzbar_kwh = min(überschuss, 0)` ist **strukturell**
+#: 0: Die Sicht behauptet „ein größerer Speicher hätte nichts gebracht", obwohl
+#: sie es gar nicht messen konnte. Sein Beleg: 4.974 kWh Überschuss bei vollem
+#: Speicher, 0/207 Nächte „leer", während seine SoC-Kurve nachts auf 21 %
+#: läuft und dort dreht — der Speicher **war** aufgebraucht.
+#:
+#: Deshalb ist dieser Wert nur noch der **Rückfall**; die tatsächliche Schwelle
+#: kommt aus `leer_schwelle_prozent()`.
 SOC_LEER_PROZENT = 5.0
+
+#: Obergrenze der abgeleiteten Schwelle. Eine „Reserve", die mehr als die Hälfte
+#: der Brutto-Kapazität beansprucht, ist keine Reserve mehr, sondern mit hoher
+#: Wahrscheinlichkeit ein Pflegefehler (die N-235-Klasse: Wh gegen kWh, gleicher
+#: Zahlenwert). Ohne diesen Deckel würde ein einziger vertippter Wert den halben
+#: Ladestandsbereich als „leer" gelten lassen und die Kennzahl in die
+#: **Gegenrichtung** verfälschen — zu hoch statt zu niedrig.
+SOC_LEER_MAX_PROZENT = 50.0
+
+#: Aufschlag auf die **abgeleitete** Schwelle, in Prozentpunkten.
+#:
+#: ⚠ **Beim Bau gemessen, nicht angenommen:** Glens Speicher ist auf 20 %
+#: Untergrenze eingestellt, seine SoC-Kurve dreht bei **21 %**. Eine harte
+#: `<= 20`-Grenze trifft ihn damit **nie** — der Fehler aus #379 wiederholte sich
+#: eine Etage tiefer, nur mit einer anderen Zahl. Drei Gründe, alle systematisch
+#: in dieselbe Richtung: Wechselrichter schalten mit Puffer ab, der SoC wird in
+#: ganzen Prozent gemeldet, und diese Auswertung liest **Stundenmittel** — der
+#: tatsächliche Tiefpunkt liegt zwischen zwei Stundenwerten.
+#:
+#: **Gilt ausdrücklich nur für die abgeleitete Schwelle, nie für den Rückfall.**
+#: Auf 5 % addiert würde er Bestandszahlen bewegen, und „wer nichts pflegt, sieht
+#: das Verhalten von vorher" ist Abnahmekriterium dieses Baus. Der Rückfall ist
+#: ohnehin schon ein großzügiges „praktisch leer" — kein Gerät entlädt auf 0 —,
+#: während die abgeleitete Grenze ein exakter Sollwert ist, den das Gerät mit
+#: Puffer einhält.
+SOC_LEER_TOLERANZ_PP = 3.0
+
+
+def leer_schwelle_prozent(
+    kapazitaet_brutto_kwh: Optional[float],
+    nutzbare_kapazitaet_kwh: Optional[float],
+) -> float:
+    """Ab welchem Ladestand gibt **dieser** Speicher nichts mehr ab?
+
+    Leitet die Schwelle aus dem Verhältnis der beiden gepflegten Kapazitäten ab:
+    ``(1 − nutzbar ÷ brutto) × 100``. Bei 24 von 30 kWh sind das 20 % — genau die
+    Untergrenze, die der Anwender eingestellt hat.
+
+    **Warum kein eigenes Eingabefeld** (Entscheid Gernot 2026-08-15): Das Feld
+    `nutzbare_kapazitaet_kwh` gibt es seit v4.0.2, es steht im Speicher-Formular
+    und trägt genau diese Aussage. Ein zweites Feld „Entladegrenze %" wäre
+    dieselbe Information ein zweites Mal — und damit die Drift-Klasse, gegen die
+    hier gerade gebaut wird.
+
+    **Die Annahme, und sie ist bewusst:** die Reserve sitzt **unten**. Bei
+    Heimspeichern ist das der Normalfall; die Oberseite deckt bereits
+    `SOC_VOLL_PROZENT` ab (Balancing), und eine gewollte *Lade*-Grenze erkennt
+    `speicher_sizing.SocNutzung.laedt_planmaessig_voll` an den Daten selbst.
+    Sitzt die Reserve im Einzelfall doch oben, fällt die Schwelle zu hoch aus —
+    die Kennzahl wird dann konservativer, nicht großzügiger, und bleibt damit auf
+    der Seite, auf der eine Kaufentscheidung sie verträgt.
+
+    Gibt den Rückfall `SOC_LEER_PROZENT` zurück, wenn nichts Genaueres bekannt
+    ist: keine der beiden Kapazitäten gepflegt, unplausible Werte (≤ 0), oder
+    ``nutzbar >= brutto`` (dann gibt es keine Reserve). **Wer nichts pflegt, sieht
+    exakt das Verhalten von vorher** — das ist Abnahmekriterium, keine Nebenfolge.
+    """
+    if not kapazitaet_brutto_kwh or kapazitaet_brutto_kwh <= 0:
+        return SOC_LEER_PROZENT
+    if not nutzbare_kapazitaet_kwh or nutzbare_kapazitaet_kwh <= 0:
+        return SOC_LEER_PROZENT
+    if nutzbare_kapazitaet_kwh >= kapazitaet_brutto_kwh:
+        return SOC_LEER_PROZENT
+
+    abgeleitet = (1.0 - nutzbare_kapazitaet_kwh / kapazitaet_brutto_kwh) * 100.0
+    if abgeleitet <= SOC_LEER_PROZENT:
+        return SOC_LEER_PROZENT
+    return min(abgeleitet + SOC_LEER_TOLERANZ_PP, SOC_LEER_MAX_PROZENT)
 
 
 @dataclass(frozen=True)
@@ -95,6 +176,9 @@ class PotentialErgebnis:
     #: Zyklen mit Überschuss insgesamt.
     zyklen_gesamt: int = 0
     zyklen: list[ZyklusBefund] = field(default_factory=list)
+    #: Kleinster gemessener Ladestand des Zeitraums. `None`, wenn keine Stunde
+    #: einen SoC trägt — Grundlage von `boden_nie_erreicht` (N-254).
+    soc_min_prozent: Optional[float] = None
 
     @property
     def deckelung_greift(self) -> bool:
@@ -104,6 +188,47 @@ class PotentialErgebnis:
         es sagen können, statt zwei Zahlen kommentarlos nebeneinanderzustellen.
         """
         return self.nutzbares_zusatzpotential_kwh < self.ueberschuss_gesamt_kwh
+
+
+def boden_nie_erreicht(
+    soc_min_prozent: Optional[float],
+    leer_schwelle: Optional[float],
+    schwelle_ist_abgeleitet: bool,
+) -> bool:
+    """Ist die Aussage „mehr Kapazität hätte nichts gebracht" **unbelegt**? (N-254)
+
+    **Der Kern:** Ein Speicher, der nie leer wird, hat dafür genau zwei mögliche
+    Gründe, und sie führen zu **entgegengesetzten** Antworten:
+
+    * Er ist **groß genug** ⇒ zusätzliche Kapazität hätte wirklich nichts
+      gebracht. Das ist der Fall, für den diese Datei gebaut wurde (Dev-Anlage:
+      nie unter 31 %).
+    * Der Anwender fährt eine **Entlade-Untergrenze** ⇒ er *war* aufgebraucht,
+      und mehr Kapazität hätte sehr wohl geholfen. Das ist Glens Fall (#379).
+
+    Ohne die gepflegte nutzbare Kapazität kann eedc die beiden **nicht
+    unterscheiden** — und darf deshalb keinen der beiden Sätze als Tatsache
+    hinschreiben. Dieselbe Doktrin wie „nicht gemessen statt 0": lieber die
+    Lücke benennen als eine Zahl behaupten, die auf einer ungeprüften Annahme
+    steht.
+
+    **Ist die Schwelle abgeleitet, ist die Aussage belastbar** — dann kennt eedc
+    die Untergrenze, und ein Speicher, der sie nicht erreicht, war wirklich groß
+    genug. Deshalb hängt diese Funktion an `schwelle_ist_abgeleitet` und nicht
+    nur am Abstand: Sie beschränkt den Aussageverlust auf die Fälle, in denen er
+    unvermeidlich ist.
+
+    Der Abstand ist `SOC_LEER_TOLERANZ_PP` — dieselbe Spanne, in der ein
+    Speicher als „praktisch am Boden" gilt. Wer im Winter auf 6 % kommt, hat
+    seinen Boden erreicht; wer über zwei Jahre nie unter 21 % fällt, hat ihn
+    nicht einmal berührt.
+    """
+    if soc_min_prozent is None:
+        return False
+    if schwelle_ist_abgeleitet:
+        return False
+    grenze = (SOC_LEER_PROZENT if leer_schwelle is None else leer_schwelle)
+    return soc_min_prozent > grenze + SOC_LEER_TOLERANZ_PP
 
 
 def ist_voll(soc: Optional[float]) -> bool:
@@ -116,13 +241,22 @@ def ist_voll(soc: Optional[float]) -> bool:
     return soc is not None and soc >= SOC_VOLL_PROZENT
 
 
-def ist_leer(soc: Optional[float]) -> bool:
-    """Gegenstück zu `ist_voll` — und aus demselben Grund öffentlich."""
-    return soc is not None and soc <= SOC_LEER_PROZENT
+def ist_leer(soc: Optional[float], schwelle: Optional[float] = None) -> bool:
+    """Gegenstück zu `ist_voll` — und aus demselben Grund öffentlich.
+
+    ``schwelle`` ist die anlagenspezifische Untergrenze aus
+    `leer_schwelle_prozent()`. Ohne Angabe gilt der Rückfall `SOC_LEER_PROZENT`;
+    der Default steht hier, damit Bestandsaufrufer unverändert weiterlaufen —
+    nicht, damit man ihn weglassen darf, wo die Kapazität bekannt ist (#379).
+    """
+    if soc is None:
+        return False
+    return soc <= (SOC_LEER_PROZENT if schwelle is None else schwelle)
 
 
 def berechne_zusatzpotential(
     stunden: Sequence[SpeicherStunde] | Iterable[SpeicherStunde],
+    leer_schwelle: Optional[float] = None,
 ) -> PotentialErgebnis:
     """Wertet eine **durchgehende** Stundenreihe aus (chronologisch, lückenlos).
 
@@ -135,6 +269,11 @@ def berechne_zusatzpotential(
     Bewusst über die Reihe statt je Kalendertag: die Nacht liegt über
     Mitternacht, und ein tagweiser Schnitt würde jede zweite Fehlmenge
     zerschneiden.
+
+    ``leer_schwelle`` kommt aus `leer_schwelle_prozent()` und entscheidet, ab
+    wann die Nacht als „aufgebraucht" zählt. Wird sie weggelassen, gilt der
+    Rückfall — und für jeden Anwender mit eigener Entlade-Untergrenze ist das
+    Ergebnis dann strukturell 0 (#379).
     """
     ergebnis = PotentialErgebnis()
     aktueller: Optional[ZyklusBefund] = None
@@ -142,6 +281,13 @@ def berechne_zusatzpotential(
     vorige_war_ueberschuss = False
 
     for stunde in stunden:
+        # N-254: der Tiefpunkt entscheidet, ob „nie leer" überhaupt etwas belegt.
+        if stunde.soc_prozent is not None and (
+            ergebnis.soc_min_prozent is None
+            or stunde.soc_prozent < ergebnis.soc_min_prozent
+        ):
+            ergebnis.soc_min_prozent = stunde.soc_prozent
+
         voll = ist_voll(stunde.soc_prozent)
         if voll:
             ergebnis.stunden_voll += 1
@@ -172,7 +318,7 @@ def berechne_zusatzpotential(
             # Speicher am Anfang der Reihe belegt keine verpasste Ladung.
             continue
 
-        if ist_leer(stunde.soc_prozent):
+        if ist_leer(stunde.soc_prozent, leer_schwelle):
             if not leer_erreicht:
                 leer_erreicht = True
                 aktueller.lief_leer = True

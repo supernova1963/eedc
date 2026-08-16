@@ -17,12 +17,22 @@
 import { useEffect, useState } from 'react'
 import { BatteryCharging, Sun, TrendingUp } from 'lucide-react'
 import { Parkbar } from '../components/park'
-import { KPICard, ScrollSchatten } from '../components/ui'
+import { KpiStrip } from '../components/blocks'
+import { ScrollSchatten } from '../components/ui'
 import { investitionenApi, type MonatsPotential, type SpeicherPotentialResponse } from '../api/investitionen'
 import { COLORS, LADEQUELLEN_FARBEN } from '../lib/colors'
 import { fmtZahl } from '../lib/einheiten'
 import type { MeldeFn } from './komponentenAnalyse'
 import type { Investition } from '../types'
+
+/** Park-IDs der drei Kacheln — an EINER Stelle, weil sie zweimal gebraucht
+ *  werden: beim Rendern und in der Meldung an den Block (`alleGeparkt`). Zwei
+ *  Listen wären die nächste Drift-Quelle. */
+const PARK_IDS_KPI = [
+  'speicher:potential-kpi-zusatz',
+  'speicher:potential-kpi-ueberschuss',
+  'speicher:potential-kpi-leer',
+] as const
 
 const MONAT_KURZ = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez']
 
@@ -54,12 +64,30 @@ function useSpeicherPotential(anlageId: number) {
 }
 
 /** Der Satz, der die Zahl einordnet — ohne ihn ist „0 kWh" nicht von „keine Daten" zu unterscheiden. */
-function Befund({ d }: { d: SpeicherPotentialResponse }) {
+function PotentialBefund({ d }: { d: SpeicherPotentialResponse }) {
   if (d.zyklen_gesamt === 0) {
     return (
       <p className="text-sm text-gray-600 dark:text-gray-300">
         Im ausgewerteten Zeitraum war der Speicher nie voll, während gleichzeitig eingespeist wurde —
         die Frage nach mehr Kapazität stellt sich hier nicht.
+      </p>
+    )
+  }
+  // N-254: „nie leer" hat zwei mögliche Gründe mit **entgegengesetzten** Antworten
+  // — groß genug, oder eine eigene Entlade-Untergrenze. Ohne gepflegte nutzbare
+  // Kapazität kann eedc sie nicht trennen und darf keinen davon behaupten.
+  if (d.boden_nie_erreicht) {
+    return (
+      <p className="text-sm text-gray-600 dark:text-gray-300">
+        <strong>Das lässt sich hier nicht beurteilen.</strong> Strom ging ins Netz, während der
+        Speicher voll war ({fmtZahl(d.ueberschuss_kwh, 0)} kWh) — aber er kam in keiner Nacht
+        auch nur in die Nähe von leer
+        {d.soc_min_prozent != null && <>; sein tiefster Ladestand war {fmtZahl(d.soc_min_prozent, 0)} %</>}.
+        Dafür gibt es zwei Erklärungen mit gegensätzlichen Folgen: Entweder ist dein Speicher
+        schon groß genug — dann hätte mehr Kapazität wirklich nichts gebracht. Oder du fährst
+        eine <strong>Entlade-Untergrenze</strong>, dann war er sehr wohl aufgebraucht und mehr
+        Kapazität hätte geholfen. Unterscheiden kann eedc das nur, wenn beim Speicher die{' '}
+        <strong>nutzbare Kapazität</strong> gepflegt ist (<em>Einstellungen → Investitionen</em>).
       </p>
     )
   }
@@ -154,7 +182,7 @@ function SpannenSpalte({ m, soll }: { m: MonatsPotential; soll: SpeicherPotentia
  * Die Datenrolle „Speicher" hat genau eine Farbe; die Netzladung ist eine
  * **andere** Rolle und trägt deshalb das Netzbezugs-Rot.
  */
-function Spuren({ d }: { d: SpeicherPotentialResponse }) {
+function MonatsSpuren({ d }: { d: SpeicherPotentialResponse }) {
   const spalten = {
     display: 'grid',
     gridTemplateColumns: `repeat(${d.monate.length}, minmax(${SPALTE_MIN_PX}px, 1fr))`,
@@ -286,6 +314,12 @@ function Spuren({ d }: { d: SpeicherPotentialResponse }) {
         (≤ {fmtZahl(d.soc_leer_prozent, 0)} %) war. <strong>Erst beides zusammen macht mehr
         Kapazität sinnvoll</strong> — oben angeschlagen heißt „Überschuss ging ins Netz", unten
         angeschlagen „die Nacht wurde zugekauft".
+        {d.soc_leer_ist_abgeleitet && (
+          <> „Leer" heißt hier <strong>deine</strong> Entladegrenze von{' '}
+          {fmtZahl(d.soc_leer_prozent, 0)} %, nicht 0 % — sie ergibt sich aus der nutzbaren
+          Kapazität, die du beim Speicher gepflegt hast. Darunter gibt das Gerät nichts mehr
+          ab, die Nacht ist damit aufgebraucht.</>
+        )}
         {hatNetzladung && (
           <> Wo Ladung aus dem Netz kam, füllt sich der Speicher ohne Sonne; solche Monate
           beantworten die Frage nach mehr Kapazität nur eingeschränkt. Der Anteil ist eine
@@ -301,9 +335,20 @@ export function SpeicherPotentialIST({ anlageId, melde }: { anlageId: number; in
   const { daten, laedt } = useSpeicherPotential(anlageId)
   const leer = laedt || !daten || daten.tage_mit_daten === 0
 
+  // Jede Teil-Anzeige meldet ihre eigene ID hoch — der Block verschwindet erst,
+  // wenn ALLE geparkt sind (`alleGeparkt`). Bis 2026-08-15 stand hier eine
+  // einzige ID über dem ganzen Bündel; siehe Kommentar am Rumpf.
+  const mehrereSpeicher = !leer && (daten?.anzahl_speicher ?? 0) > 1
+  const hatSpuren = !leer && (daten?.monate.length ?? 0) > 0
   useEffect(() => {
-    melde?.(leer ? [] : ['speicher:potential'])
-  }, [leer, melde])
+    if (leer) { melde?.([]); return }
+    melde?.([
+      'speicher:potential-befund',
+      ...PARK_IDS_KPI,
+      ...(hatSpuren ? ['speicher:potential-spuren'] : []),
+      ...(mehrereSpeicher ? ['speicher:potential-hinweis'] : []),
+    ])
+  }, [leer, hatSpuren, mehrereSpeicher, melde])
 
   if (laedt) return <p className="text-sm text-gray-400 dark:text-gray-500">Lade…</p>
   if (!daten || daten.tage_mit_daten === 0) {
@@ -314,54 +359,77 @@ export function SpeicherPotentialIST({ anlageId, melde }: { anlageId: number; in
     )
   }
 
+  // Jede Anzeige ihre eigene Parkbar (Park-Doktrin: EINE Parkbar = GENAU EINE
+  // atomare Anzeige). Bis 2026-08-15 lag hier **eine** Parkbar um das ganze
+  // Bündel — Befund, drei Kacheln, Spuren-Grafik und Mehrgeräte-Hinweis ließen
+  // sich nur gemeinsam parken, und beim Rechtsklick verdunkelte sich der ganze
+  // Block statt der angefassten Kachel (gemeldet von Gernot am Bild).
+  // `check:parkbar` konnte das nicht sehen: sein Tripwire greift bei benannten
+  // Komponenten, hier stand ein generisches `<div>` dahinter — die im Prüfer
+  // selbst dokumentierte Grenze.
   return (
-    <Parkbar id="speicher:potential" titel="Hätte mehr Kapazität geholfen?">
-      <div className="space-y-4">
-        <Befund d={daten} />
+    <div className="space-y-4">
+      <Parkbar id="speicher:potential-befund" titel="Hätte mehr Kapazität geholfen?">
+        <PotentialBefund d={daten} />
+      </Parkbar>
 
-        <div className="grid gap-3 sm:grid-cols-3">
-          <KPICard
-            title="Nutzbares Zusatzpotential"
-            value={fmtZahl(daten.nutzbares_zusatzpotential_kwh, 0)}
-            unit="kWh"
-            icon={TrendingUp}
-            color="blue"      /* Datenrolle Speicher-Entladung */
-            subtitle={`${daten.tage_mit_daten} Tage ausgewertet`}
-            formel="min(Einspeisung bei vollem Speicher, Netzbezug nach dem Leerlaufen)"
-            berechnung="je Lade-Entlade-Zyklus einzeln, danach summiert"
-            sicht="Was ein größerer Speicher zusätzlich durchgesetzt hätte"
-          />
-          <KPICard
-            title="Überschuss bei vollem Speicher"
-            value={fmtZahl(daten.ueberschuss_kwh, 0)}
-            unit="kWh"
-            icon={Sun}
-            color="orange"    /* Datenrolle Speicher-Ladung */
-            subtitle="Obergrenze, nicht Ertrag"
-            formel="Σ Einspeisung in Stunden mit Ladestand ≥ 95 %"
-            sicht="Wie viel ein beliebig großer Speicher höchstens hätte aufnehmen können"
-          />
-          <KPICard
-            title="Nächte mit leerem Speicher"
-            value={`${daten.zyklen_leergelaufen} / ${daten.zyklen_gesamt}`}
-            icon={BatteryCharging}
-            color="cyan"      /* Datenrolle Speicher-Effizienz */
-            subtitle={`leer = Ladestand ≤ ${fmtZahl(daten.soc_leer_prozent, 0)} %`}
-            sicht="Nur wenn er leer wird, kann zusätzliche Kapazität etwas abgeben"
-          />
-        </div>
+      <KpiStrip kpis={[
+        {
+          parkId: PARK_IDS_KPI[0],
+          title: 'Nutzbares Zusatzpotential',
+          // N-254: „0" wäre hier eine Aussage, die nicht gemessen ist — der
+          // Speicher kam dem Boden nie nahe, also ist der Wert unbekannt.
+          value: daten.boden_nie_erreicht ? '—' : fmtZahl(daten.nutzbares_zusatzpotential_kwh, 0),
+          unit: daten.boden_nie_erreicht ? undefined : 'kWh',
+          icon: TrendingUp,
+          color: 'blue',      /* Datenrolle Speicher-Entladung */
+          subtitle: daten.boden_nie_erreicht
+            ? 'nicht beurteilbar — siehe Hinweis oben'
+            : `${daten.tage_mit_daten} Tage ausgewertet`,
+          formel: 'min(Einspeisung bei vollem Speicher, Netzbezug nach dem Leerlaufen)',
+          berechnung: 'je Lade-Entlade-Zyklus einzeln, danach summiert',
+          sicht: 'Was ein größerer Speicher zusätzlich durchgesetzt hätte',
+        },
+        {
+          parkId: PARK_IDS_KPI[1],
+          title: 'Überschuss bei vollem Speicher',
+          value: fmtZahl(daten.ueberschuss_kwh, 0),
+          unit: 'kWh',
+          icon: Sun,
+          color: 'orange',    /* Datenrolle Speicher-Ladung */
+          subtitle: 'Obergrenze, nicht Ertrag',
+          formel: `Σ Einspeisung in Stunden mit Ladestand ≥ ${fmtZahl(daten.soc_voll_prozent, 0)} %`,
+          sicht: 'Wie viel ein beliebig großer Speicher höchstens hätte aufnehmen können',
+        },
+        {
+          parkId: PARK_IDS_KPI[2],
+          title: 'Nächte mit leerem Speicher',
+          value: `${daten.zyklen_leergelaufen} / ${daten.zyklen_gesamt}`,
+          icon: BatteryCharging,
+          color: 'cyan',      /* Datenrolle Speicher-Effizienz */
+          subtitle: daten.soc_leer_ist_abgeleitet
+            ? `leer = Ladestand ≤ ${fmtZahl(daten.soc_leer_prozent, 0)} % (deine Entladegrenze)`
+            : `leer = Ladestand ≤ ${fmtZahl(daten.soc_leer_prozent, 0)} %`,
+          sicht: 'Nur wenn er leer wird, kann zusätzliche Kapazität etwas abgeben',
+        },
+      ]} />
 
-        {daten.monate.length > 0 && <Spuren d={daten} />}
+      {daten.monate.length > 0 && (
+        <Parkbar id="speicher:potential-spuren" titel="Ladestand, Durchsatz und Netzladung">
+          <MonatsSpuren d={daten} />
+        </Parkbar>
+      )}
 
-        {daten.anzahl_speicher > 1 && (
+      {daten.anzahl_speicher > 1 && (
+        <Parkbar id="speicher:potential-hinweis" titel="Hinweis: mehrere Speicher">
           <p className="text-xs text-gray-500 dark:text-gray-400">
             Diese Anlage hat {daten.anzahl_speicher} Speicher. Der Ladestand ist der
             <strong> kapazitätsgewichtete</strong> Wert aller Geräte — die Aussage gilt damit für
             die Anlage als Ganzes. Die Ladestände je Gerät stehen im Block „Größerer Speicher?".
           </p>
-        )}
-      </div>
-    </Parkbar>
+        </Parkbar>
+      )}
+    </div>
   )
 }
 

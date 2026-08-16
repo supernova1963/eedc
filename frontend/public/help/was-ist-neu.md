@@ -1,11 +1,260 @@
 # Was ist neu
 
-> **Stand:** August 2026 (v4.0.15)
+> **Stand:** August 2026 (v4.0.16)
 > **Diese Seite** zeigt pro Version, was sich für dich als Anwender geändert hat — kürzer als der technische [CHANGELOG](https://github.com/supernova1963/eedc-homeassistant/blob/main/CHANGELOG.md), ausführlicher als die Schnellübersicht-Tabelle in der [Übersicht](BENUTZERHANDBUCH.md#was-ist-neu-seit-v316).
 >
 > **Kein Banner, kein Pop-up:** eedc zeigt diese Liste nicht ungefragt an. HA-App-Nutzer sehen den Changelog ohnehin schon im Add-on-Store, GitHub-Releases haben einen eigenen. Wer wissen will, was neu ist, schaut hier rein — Pull statt Push.
 >
 > **Lesehinweis:** Die jüngsten Versionen stehen oben. Jeder Punkt verlinkt entweder auf die zuständige Hilfe-Sektion oder direkt auf die App-Funktion (sofern erreichbar). Anker-URLs (`?doc=was-ist-neu`) sind teilbar.
+
+---
+
+## v4.0.16 — Gepflegt statt geraten
+
+> Diesmal ging es fast durchweg darum, dass zwei Angaben auf demselben Bildschirm einander widersprachen — ein Wirkungsgrad ohne Einordnung, zwei Beträge mit einem Cent Abstand, eine Δ-Spalte, die nicht zu ihren Nachbarn passte, und eine Null, hinter der nichts gemessen war. Gefunden haben das durchweg Anwender beim genauen Hinsehen.
+
+### Neu: „Nichts ersetzt (Neubau)" — und Klimaanlagen, die heizen, werden endlich bewertet
+
+**Betrifft dich das?** Wenn deine Wärmepumpe **keine** frühere Heizung ersetzt hat (Neubau), oder wenn du eine **Split-Klimaanlage** hast, oder wenn bei deiner Wärmepumpe **kein Wärmebedarf** gepflegt ist.
+
+Beim *alten Energieträger* konntest du bisher nur Erdgas, Heizöl oder Strom wählen — Erdgas war die Vorgabe. Dass es gar keine Vorgängerheizung gab, ließ sich nicht sagen. Also hat eedc auch einer Wärmepumpe im Neubau eine Ersparnis gegenüber einer Gasheizung angerechnet, die es nie gab: in der ROI-Tabelle, in den Aussichten, im Wärmepumpen-Dashboard, im Jahresbericht und im HA-Sensor.
+
+**Neu ist die Option „Nichts ersetzt (Neubau)".** Wer sie wählt, sieht an diesen Stellen **„nicht bewertet"** statt einer Zahl. Stromverbrauch, PV-Anteil, Kosten und der CO₂-Wert des Geräts selbst bleiben unverändert — es entfällt nur der Vergleich mit einer Heizung, die es nicht gibt.
+
+**Für Split-Klimaanlagen ist das zugleich eine Korrektur in die andere Richtung.** eedc hat bei der Wärmepumpenart *Luft-Luft* die Wirtschaftlichkeit bisher **grundsätzlich** unterdrückt, mit der Begründung, so ein Gerät ersetze keine Heizung. Das stimmt nicht: Eine Luft-Luft-Wärmepumpe kann sehr wohl eine Gasheizung ersetzen, und viele heizen damit. Heizt du mit deiner Klimaanlage, trag den **Heizwärmebedarf** ein — die beiden Felder werden dafür wieder angezeigt —, und du bekommst deine Wirtschaftlichkeit wie bei jeder anderen Wärmepumpe. Kühlst du nur, wähle „Nichts ersetzt".
+
+⚠ **An deinen bestehenden Klimaanlagen ändert sich zunächst nichts.** Wo noch die alte Vorbelegung von 12.000 kWh Heizwärme und 3.000 kWh Warmwasser steht — Werte, die eedc selbst eingesetzt hat und die seit v4.0.6 unsichtbar waren —, bleibt die Zeile „nicht bewertet" und sagt dir genau das. Erst dein eigener Wert schaltet die Bewertung frei. **Es wird nichts automatisch umgeschrieben.**
+
+### Ohne gepflegten Wärmebedarf erfindet eedc keinen mehr
+
+**Betrifft dich das?** Wenn bei deiner Wärmepumpe kein Heizwärme- und Warmwasserbedarf eingetragen ist — typisch bei Geräten, die über einen Import oder den Setup-Assistenten angelegt wurden.
+
+Fehlte der Bedarf, sprang bisher ein Standardwert von 12.000 + 3.000 kWh ein, und daraus entstand eine Ersparnis. Diese Zahl hattest du nie eingegeben. Jetzt steht dort **„nicht bewertet"** mit der Bitte, den Bedarf einzutragen (aus dem Energieausweis oder geschätzt).
+
+⚠ **Das ist eine sichtbare Änderung nach unten** — aber die alte Zahl war keine Schätzung von dir, sondern eine Behauptung von eedc.
+
+⚠ **Hast du den Bedarf gepflegt, siehst du keinen Unterschied.** Und auch die halbe Pflege wird jetzt ehrlich gerechnet: Wer nur den Warmwasserbedarf einträgt, bekommt für die Heizwärme **0** statt der erfundenen 12.000 kWh.
+
+### Deine Klimaanlage wird nicht mehr nach einem Wärmemengenzähler gefragt
+
+**Betrifft dich das?** Nur, wenn du ein Gerät mit der Wärmepumpenart **Luft-Luft (Klimaanlage)** führst.
+
+In *Einstellungen → Datenquellen* stand bei diesem Gerät das Feld **Heizwärme** rot markiert, mit aufgeklapptem Hinweis, und wurde unten als offener Punkt mitgezählt. Eine Split-Klimaanlage hat aber üblicherweise gar keinen Wärmemengenzähler — es gab also nichts zuzuordnen, und der rote Punkt ließ sich durch keine Eingabe abstellen.
+
+Dass das so ist, weiß eedc an anderer Stelle längst: Der Daten-Checker verlangt die Heizwärme bei einer Klimaanlage seit v3.30.3 ausdrücklich nicht. Zwei Ansichten sagten damit über dasselbe Gerät das Gegenteil.
+
+**Was sich für dich ändert:** Das Feld ist bei dieser Wärmepumpenart jetzt **optional** — grau, leise, kein offener Punkt. Dasselbe gilt in der MQTT-Themenliste.
+
+⚠ **Der Stromverbrauch bleibt Pflicht.** Bei einer Klimaanlage ist er die Größe, um die es geht.
+
+⚠ **Hast du doch einen Wärmemengenzähler an deiner Klimaanlage, ordne ihn weiter zu.** Das Feld verschwindet nicht, es fordert nur nichts mehr ein.
+
+⚠ **Für klassische Wärmepumpen ändert sich nichts** — bei Luft-Wasser und Sole-Wasser bleibt die Heizwärme Pflicht. Ebenso bei Altgeräten, bei denen keine Wärmepumpenart gepflegt ist: Eine fehlende Angabe schaltet diese Erwartung nicht stillschweigend ab.
+
+### Fehlende Zählerwerte stehen jetzt als Fehler in der Liste, nicht als Warnung
+
+**Betrifft dich das?** Nur, wenn im Daten-Checker ohnehin schon „MM/JJJJ fehlt" steht oder dein **Inbetriebnahme-Datum** der Anlage nicht gepflegt ist. Wer vollständige Daten hat, merkt von dieser Änderung nichts.
+
+Einspeisung und Netzbezug sind die Basis, auf der eedc überhaupt rechnet. Fehlen sie für einen Monat, weiß eedc nicht, woher der Strom eines Geräts kam — **und rechnet trotzdem weiter**. Und zwar so: Der Direktverbrauch ergibt sich als *Erzeugung minus Einspeisung minus Speicherladung*. Fehlt die Einspeisung, liest diese Rechnung sie als **0** — also gilt deine ganze Erzeugung als Eigenverbrauch, und Eigenverbrauch wird mit dem **Strompreis** bewertet statt mit der Einspeisevergütung.
+
+Was das ausmacht, haben wir an einem echten Monat nachgerechnet: **622 € statt 282 €**. Und ein Hausverbrauch von **1.838 kWh statt 520**. Die Zahl war also nicht ein bisschen ungenau — sie war systematisch **zu gut**. Deshalb ist ein fehlender Monat ab jetzt ein Fehler.
+
+**Was sich für dich ändert:** derselbe Befund an derselben Stelle, mit demselben „Beheben"-Link direkt in den betreffenden Monat — nur rot statt amber, und die Statusleiste unten zählt ihn als Fehler. **An keiner gerechneten Zahl ändert sich etwas.**
+
+Dasselbe gilt für ein fehlendes **Inbetriebnahme-Datum der Anlage**: Ohne dieses Datum weiß eedc nicht, ab wann es überhaupt Zählerwerte erwarten darf. Es weicht dann auf deine Erzeuger aus und zuletzt auf den ersten Monat, den es findet — womit der Anfang aus der Lücke abgeleitet wird und eine fehlende Zeile ganz am Beginn deiner Historie niemandem mehr auffällt.
+
+**Neue Anlagen** lassen sich deshalb im Setup nicht mehr ohne dieses Datum anlegen. **Beim Bearbeiten einer bestehenden Anlage bleibt es freiwillig** — wer dort etwas ändert, will meist etwas ganz anderes tun und soll daran nicht hängenbleiben; es steht dann nur ein Hinweis am Feld.
+
+### Ein Gerät darf älter sein als deine Anlage — eedc sagt jetzt, was das bedeutet
+
+**Betrifft dich das?** Wenn du ein E-Auto, eine Wallbox, eine Wärmepumpe oder ein anderes Gerät hast, das du **vor** der PV-Anlage angeschafft hast.
+
+Das ist der Regelfall, und das Anschaffungsdatum gehört auch auf das echte Datum. Bisher stand dazu nirgends etwas. Jetzt gibt es im Daten-Checker unter *Stammdaten* einen **Hinweis** — ausdrücklich kein Fehler und keine Warnung: „Gerät älter als die Anlage: „Passat GTE" seit 12.03.2017".
+
+Was er sagt: Für die Monate vor deiner Anlage gibt es keine Einspeisungs- und Netzbezugswerte. Ohne die kann eedc für diese Zeit nicht sagen, ob der Strom gekauft oder selbst erzeugt war.
+
+**Was du tun kannst — und was nicht:** Hast du Zählerwerte aus dieser Zeit, trag sie nach. Stimmt umgekehrt das Inbetriebnahme-Datum der **Anlage** nicht, korrigiere dieses. Sonst ist nichts zu tun, und der Hinweis bleibt als Auskunft stehen.
+
+⚠ **Datiere das Gerät nicht um.** Genau das hat jemand getan, um eine ältere Meldung loszuwerden — danach war die echte Anschaffungshistorie seines Fahrzeugs weg. Diese neue Zeile ist kein Mangel, den du abstellen sollst.
+
+### „Einspeisung und Netzbezug sind beide 0" sagt jetzt, was gilt, wenn du nichts tust
+
+**Betrifft dich das?** Wenn dir dieser Hinweis im Daten-Checker begegnet ist.
+
+Als Begründung stand dort nur „Wahrscheinlich fehlende Daten". Für eine Anlage **ohne Netzanschluss** (Inselbetrieb) oder einen Monat **außer Betrieb** — Umzug, Defekt — ist die 0 aber richtig, und der Hinweis ließ sich durch keine Eingabe abstellen.
+
+Das soll es in eedc nicht geben: Ein Befund, den du nicht auflösen kannst, ist ein Fehler bei uns und keine Aufgabe für dich. Der Text nennt jetzt zuerst den Regelfall — Werte nachtragen, der Link führt direkt in den Monat — und sagt danach, dass 0 richtig sein kann und dann nichts zu tun ist.
+
+### Im Setup-Assistenten gibt es fürs Balkonkraftwerk jetzt alle neun Ausrichtungen
+
+**Betrifft dich das?** Wenn du ein Balkonkraftwerk über den Setup-Assistenten anlegst und es nach **Nordost, Nord oder Nordwest** zeigt.
+
+Diese drei Richtungen fehlten dort — es gab nur sechs zur Auswahl. Legtest du dasselbe Gerät stattdessen unter *Einstellungen → Investitionen* an, bekamst du alle neun. Welche Ausrichtungen zur Wahl standen, hing also davon ab, über welchen Weg du das Gerät angelegt hast; für ein Fassaden-Balkonkraftwerk nach Nordosten war der eine Weg schlicht versperrt.
+
+Jetzt gilt **eine** Liste für Assistent und Formular, für PV-Module wie fürs Balkonkraftwerk.
+
+⚠ **Bereits gepflegte Ausrichtungen bleiben unverändert** — es kommen nur Auswahlmöglichkeiten dazu.
+
+### „Ein größerer Speicher hätte nichts gebracht" — das stimmte nicht für jeden
+
+**Betrifft dich das?** Wenn du deinen Speicher **nicht bis ganz unten** leerfährst, also eine eigene Entlade-Untergrenze eingestellt hast (10 %, 20 % — was die Zellen schont). Und wenn du beim Speicher die **nutzbare Kapazität** gepflegt hast.
+
+Im Speicher-Hub steht der Block *Hätte mehr Kapazität geholfen?*. Er ist bewusst streng: Mehr Kapazität bringt nur dann etwas, wenn dein Speicher nachts auch wirklich **leer** wird — sonst hätte die zusätzlich gespeicherte Energie am nächsten Morgen niemand abgenommen, sie wäre nur teurer Ballast.
+
+Nur hieß „leer" bisher fest: **Ladestand unter 5 %**. Wenn dein Speicher bei 20 % abschaltet, erreicht er diese 5 % nie. Für eedc lief er damit in **keiner einzigen Nacht** leer — und das Ergebnis konnte gar nichts anderes sein als **0 kWh**. Darüber stand dann der Satz „Ein größerer Speicher hätte hier nichts gebracht", als sei das gemessen worden.
+
+Im gemeldeten Fall sah das so aus: **4.974 kWh** gingen ins Netz, während der Speicher voll war. Nächte mit leerem Speicher: **0 von 207**. Gleichzeitig zeigt die Ladestandskurve, wie der Speicher jede Nacht bis auf 21 % heruntergeht und dort dreht — er **war** aufgebraucht, nur eben an *seiner* Grenze.
+
+Jetzt nimmt eedc deine eigene Grenze. Sie ergibt sich aus der **nutzbaren Kapazität**, die du beim Speicher gepflegt hast: Stehen dort 24 von 30 kWh, sind 20 % Reserve, und ab dort gilt er als leer. Die Kachel sagt es auch: „leer = Ladestand ≤ 23 % (deine Entladegrenze)".
+
+**Warum 23 und nicht 20?** Weil dein Speicher seine Grenze mit etwas Puffer einhält — im Beispiel dreht er bei 21 %, nicht bei 20 %. Dazu kommt, dass der Ladestand in ganzen Prozent gemeldet wird und diese Auswertung mit Stundenmitteln rechnet. Deshalb zählt eedc drei Prozentpunkte über deiner Grenze schon als leer. Ohne diesen Aufschlag hätte die neue Grenze denselben Fehler gemacht wie die alte, nur mit einer anderen Zahl.
+
+**Hast du die nutzbare Kapazität nicht gepflegt, ändert sich für dich nichts** — dann bleibt es bei den 5 %. Wenn du eine Untergrenze fährst, lohnt sich das Nachtragen: *Einstellungen → Investitionen → dein Speicher → nutzbare Kapazität*. Erst dann kann dir dieser Block eine belastbare Antwort geben.
+
+**Und wo eedc es nicht wissen kann, sagt es das jetzt auch.** Der alte Satz stand nämlich auch dann da, wenn dein Speicher dem Boden nie nahe kam **und** du die nutzbare Kapazität nicht gepflegt hast. Dann gibt es zwei Erklärungen, die zu genau gegenteiligen Antworten führen: Entweder ist dein Speicher groß genug — oder du fährst eine Untergrenze, von der eedc nichts weiß. Statt zu raten steht dort jetzt **„Das lässt sich hier nicht beurteilen"**, dazu dein tiefster gemessener Ladestand und der Hinweis, welches Feld die Frage klärt. Die Kachel *Nutzbares Zusatzpotential* zeigt in diesem Fall **„—"** statt **0 kWh**; eine Null wäre auch dort eine Behauptung.
+
+**Wo die Antwort belegt ist, bleibt sie klar.** Hast du die nutzbare Kapazität gepflegt und dein Speicher blieb trotzdem über seiner Grenze, war er wirklich groß genug — dann steht der eindeutige Satz weiterhin da. Und wer seinen Speicher real leerfährt, im Winter etwa auf 3 %, bekommt ebenfalls die klare Aussage. An den gemessenen Mengen daneben ändert sich nie etwas.
+
+**Auch nebenan wirkt es:** Der Block „Größerer Speicher?" zählt „Tage leergelaufen" jetzt nach derselben Grenze — vorher standen im selben Hub zwei Definitionen von „leer" nebeneinander.
+
+*(Gemeldet von kingcap1.)*
+
+### „Sonstiges" lässt sich jetzt als Spalte einblenden — im Monat und am Tag
+
+**Betrifft dich das?** Wenn du ein Gerät unter **Sonstiges** führst — ein Mini-BHKW, einen Heizstab, eine Poolpumpe.
+
+Bisher gab es in *Auswertungen → Tabelle* keine Möglichkeit, dessen Werte anzusehen: Der Spalten-Wähler kannte die Gruppe schlicht nicht. Damit ließ sich auch nicht prüfen, ob die gepflegten Werte überhaupt ankommen.
+
+Unter „Spalten" steht jetzt die Gruppe **Sonstiges** mit zwei Einträgen:
+
+- **Sonstiges Erzeugung (kWh)** — die Summe deiner Geräte mit der Kategorie *Erzeuger*
+- **Sonstiges Verbrauch (kWh)** — die Summe deiner Geräte mit der Kategorie *Verbraucher*
+
+Welche Richtung ein Gerät hat, entscheidet die **Kategorie**, die du bei ihm gepflegt hast (*Komponenten → Sonstiges → bearbeiten*). Beide Spalten sind **nicht** vorausgewählt — du blendest sie ein, wenn du sie brauchst; deine gewohnte Tabelle ändert sich von allein nicht.
+
+> **Warum im Monat manchmal eine Zahl steht und am selben Tag „—":** Die Monatsspalte zeigt, was beim Gerät **erfasst** ist — aus dem Monatsabschluss, einem Import oder einem Sensor. Die Tagesspalte kann nur zeigen, was ein **eigener Sensor oder Zähler** an diesem Tag gemessen hat. Pflegst du dein Gerät nur monatlich, ist das kein Fehler, sondern genau die Auskunft: für den Tag wurde nichts gemessen. Aus demselben Grund ergibt die Summe der Tageszeilen hier nicht zwangsläufig den Monatswert.
+
+Ein Gerät mit der Kategorie *Speicher* bleibt in der **Tagesansicht** außen vor: Dort gibt es je Gerät nur eine Zahl, und die ist bei einem Speicher ein Saldo aus Laden und Entladen — sie ließe sich weder der Erzeugung noch dem Verbrauch zuschlagen.
+
+> **Gas, Öl und Wasser sind nicht dabei** — die bringen eine Menge in m³ oder Litern ohne kWh-Bezug. Deshalb tragen die beiden Spalten ihre Einheit im Namen: Die Zähler aus [#377](https://github.com/supernova1963/eedc-homeassistant/issues/377) bekommen später eigene Spalten in derselben Gruppe, statt diese zu überschreiben.
+
+> **Auch in der Monatsdaten-Liste** (*Einstellungen → Daten*) stehen die beiden Spalten jetzt zur Wahl — sie hat einen eigenen Spalten-Wähler, und die Gerätegruppe fehlte dort genauso.
+
+*(Gemeldet von rapahl.)*
+
+### Der Speicher-Block „Hätte mehr Kapazität geholfen?" lässt sich stückweise wegräumen
+
+**Betrifft dich das?** Wenn du in *Komponenten → Speicher* Anzeigen parkst, die du nicht brauchst.
+
+Über diesem Block lag bisher **eine** Park-Umhüllung: Befundsatz, die drei Kacheln, die Monats-Grafik und der Hinweis bei mehreren Speichern ließen sich nur gemeinsam wegräumen. Und ein Rechtsklick auf eine einzelne Kachel verdunkelte den ganzen Block statt der Kachel — es sah aus, als sei das Parken kaputt.
+
+Jetzt ist jede der Anzeigen einzeln parkbar, so wie überall sonst. Der Block selbst verschwindet erst, wenn du die letzte davon geparkt hast.
+
+> **Falls du diesen Block schon geparkt hattest:** Er ist nach dem Update wieder da. Die alte Sammel-Kennung gibt es nicht mehr — park einfach neu, was du nicht sehen willst. An den Zahlen und der Grafik ändert sich nichts.
+
+> **Dasselbe galt für den Block „Kategorien"** in *Cockpit → Monat*: Erzeugungs- und Verbrauchs-Balken ließen sich nur gemeinsam wegräumen. Auch sie sind jetzt einzeln parkbar — und auch hier ist eine frühere Parkung dieses Blocks nach dem Update aufgehoben.
+>
+> Beide Stellen kamen aus einer Durchsicht **aller** park-fähigen Anzeigen. Übrig bleibt eine einzige, die bewusst zusammenbleibt: Beim Regler „Größerer Speicher?" gehören Schieberegler, Ergebnis und Methoden-Hinweis zusammen — ein Regler ohne seine Anzeige wäre sinnlos.
+
+*(Gemeldet von Gernot am Bild.)*
+
+### Der Fortschritt gegen die volle Monatsprognose ist wieder da
+
+**Betrifft dich das?** Wenn du in *Cockpit → Monat* wissen willst, wie weit der laufende Monat gegen die Jahresprognose steht.
+
+In der Energie-Bilanz steht jetzt die Kachel **„Monatsprognose (PVGIS)"**: wie viel der für den **ganzen** Monat prognostizierten Erzeugung bisher erreicht ist — mit Balken und der Zeile „264 von 1.388 kWh · ganzer Monat (Tag 4 von 31)". Wie jede Anzeige ist sie **einzeln parkbar**.
+
+> **Zwei Prozentzahlen, zwei Fragen — sie widersprechen sich nicht.** Die Kachel daneben („IST/SOLL") beantwortet *liefert meine Anlage, was sie bis heute liefern sollte?* und rechnet gegen die abgelaufenen Tage; am 4. eines Monats bedeutet 148 % dort: du liegst vorn. Die neue Kachel beantwortet *wie weit ist der Monat?* — am selben Tag also 19 %. Beide nennen ihr Fenster im Untertitel.
+
+Sie erscheint nur im **laufenden** Monat; ist er vorbei, sagen beide Kacheln dasselbe. Und sie erscheint auch dann, wenn daneben die **Grundlast** steht — bei einer Anlage mit Stundenprofilen gäbe es sonst gar keine Einordnung des laufenden Monats mehr.
+
+> **Was vorher war:** Mit v4.0.10 wurde der SOLL-Vergleich im laufenden Monat auf die abgelaufenen Tage gekürzt — vorher maß er das Datum statt die Anlage (am 4. August „19 %" für eine Anlage, die übers Jahr auf 119 % kam). Diese Korrektur bleibt. Dabei ist aber der Bezug auf die ganze Monatsprognose verschwunden, und der war als Fortschrittsanzeige nützlich. Jetzt stehen beide da.
+
+*(Gemeldet von dietmar1968, Forum-Thread zu eedc.)*
+
+### Fehlt der Strompreis für einen Monat, ist das jetzt ein Fehler
+
+**Betrifft dich das?** Wenn du Monate importiert und den Strompreis erst danach angelegt hast.
+
+Das ist der übliche Weg — und die Falle dabei: Das Tarif-Formular schlägt **heute** als „Gültig ab" vor. Alle älteren Monate fallen damit hinter den Tarif und rechnen mit einer Vorbelegung: **30 ct/kWh** Netzbezug und **8,2 ct/kWh** Einspeisung.
+
+eedc muss mit irgendetwas rechnen, sonst gäbe es für diese Monate gar keine Finanzzahl. Aber das Ergebnis ist ein **geratener Preis auf gemessenen Mengen** — Netto-Ertrag, ROI und Jahresbericht dieser Monate tragen dann eine Zahl, die nicht aus deinen Daten stammt. Der Daten-Checker weist das deshalb ab sofort als **Fehler** aus statt als Warnung.
+
+> **Aufgelöst ist er in einem Schritt:** Beim ältesten Tarif das „Gültig ab" auf den Beginn deiner Daten zurückziehen. Die Auswertungen rechnen sofort neu.
+
+### Ein Gerät unter „Sonstiges" ohne Kategorie war unsichtbar
+
+**Betrifft dich das?** Wenn du ein Gerät unter *Sonstiges* führst, bei dem *Erzeuger* oder *Verbraucher* nicht gepflegt ist — typisch bei Altbestand oder nach einem Import.
+
+In *Cockpit → Monat* zeigte der Block „Sonstige Geräte" es nicht an: Ohne die Angabe galt es stillschweigend als **Erzeuger**, und dort erscheint nur, was auch erzeugt hat. Sein Verbrauch lief in den Summen darüber trotzdem mit — die Zahl war also da, das Gerät dazu nicht.
+
+Ist keine Kategorie gepflegt, entscheidet jetzt der **Wert**, in welcher Richtung das Gerät steht. Hast du die Kategorie gepflegt, gilt unverändert sie.
+
+> **Es ändert sich keine Zahl** — das Gerät wird nur dort sichtbar, wo es hingehört. Die Kategorie nachzupflegen bleibt trotzdem der bessere Weg: Sie ist die einzige Angabe, die auch dann trägt, wenn ein Gerät in einem Monat gar nichts geliefert hat.
+
+### Die beiden Prognose-Tabellen stehen wieder spaltengleich untereinander
+
+**Betrifft dich das?** Wenn du in *Auswertungen → Prognose* den Block **Tages-/Stundenprofil** liest.
+
+Dort folgt der **7-Tage-Vergleich** direkt auf den **Stundenvergleich heute**, und beide zeigen dieselben Quellen in derselben Reihenfolge: OpenMeteo, eedc, Solcast und IST — dazu SFML, wenn du sie als Quelle gewählt hast. Genau deshalb liest man sie untereinander.
+
+Nur begannen die Spalten der oberen Tabelle rund **110 Pixel weiter links** als die der unteren: Der 7-Tage-Vergleich führt vor dem Datum noch das Wetter-Symbol, der Stundenvergleich hatte diese Spalte nicht. Die rechte Hälfte deckte sich dadurch, die erste Quelle nicht — beim Vergleichen musste man den Blick versetzen.
+
+Der Stundenvergleich führt diese Spalte jetzt mit. Sie bleibt leer, hält aber den Aufbau beider Tabellen deckungsgleich.
+
+> **Es ändert sich keine Zahl**, und es verschwindet keine Spalte. Die Werte stehen nur dort, wo man sie beim Untereinanderlesen sucht.
+
+*(Gemeldet von rapahl.)*
+
+### Ein Wirkungsgrad über 100 % steht am Tag nicht mehr kommentarlos da
+
+**Betrifft dich das?** Wenn du einen Speicher hast und in *Cockpit → Tag* die Kachel **Wirkungsgrad** liest.
+
+Dort stand der rohe Quotient „Entladung ÷ Ladung" — und der kann an einem einzelnen Tag über 100 % liegen, ohne dass an deinem Speicher etwas kaputt wäre: Beginnst du morgens mit vollem Speicher und endest abends leer, hast du an diesem Tag mehr entnommen, als du geladen hast. Über einen Monat gleicht sich das aus, über einen Tag nicht.
+
+*Cockpit → Monat* rechnet diesen Übertrag längst heraus und schreibt dazu, worauf der Wert beruht. Die Tagesansicht tat beides nicht — sie zeigte einfach 100,5 %. Jetzt gilt derselbe Maßstab:
+
+- **Ist dein Ladestand gemessen** (SoC-Sensor), wird der Übertrag herausgerechnet: „Ladestand am Rand herausgerechnet".
+- **Ist er nicht gemessen** und der Wert bleibt unter 100 %, steht er weiterhin da — mit dem Zusatz „ohne Ladestand gerechnet — ungenau".
+- **Ist er nicht gemessen** und der Wert läge über 100 %, steht dort „—" **mit Begründung** statt einer Zahl, die es nicht geben kann.
+
+> **An deinen Lade- und Entlademengen ändert sich nichts** — nur an der einen Prozentzahl daneben.
+
+*(Gemeldet von Knallfrosch; die richtige Erklärung kam von rapahl im selben Faden.)*
+
+### Zwei Beträge auf der Tagesseite unterschieden sich um einen Cent
+
+**Betrifft dich das?** Wenn du in *Cockpit → Tag* die Kachel **Netto-Ertrag** mit der Finanz-Bilanz darunter vergleichst — oder die Kachel **Ø-Preis Netz** liest.
+
+Die Kachel zeigte 16,05 €, die Tabelle summierte dieselben zwei Posten zu 16,04 €. Beides war für sich richtig: Einmal wurde die Summe gerundet, einmal wurden die Summanden gerundet und dann addiert.
+
+Dieselbe Ursache traf den **Ø-Preis Netz**. Er wurde aus zwei bereits gerundeten Zahlen zurückgerechnet und kam an einem Tag mit nur 0,19 kWh Netzbezug auf **31,6 ct/kWh** — obwohl dieselbe Seite mit rund 29,5 ct rechnete.
+
+Die Tageswerte werden jetzt ungerundet weitergereicht und erst bei der Anzeige gerundet, so wie es die Monatsansicht immer schon tat. Der Ø-Preis nennt außerdem den **hinterlegten Tarif deines Tages**, statt ihn zu rekonstruieren.
+
+> **Nebenwirkung, die du magst:** Auch die Summenzeile der Werte-Tabelle rechnet dadurch exakt, statt gerundete Tageswerte zu addieren.
+
+### Die Δ-Spalte passt jetzt zu den zwei Spalten daneben
+
+**Betrifft dich das?** Wenn du in einer Werte-Tabelle den **Vergleich** einschaltest (Vorperiode, Vorjahr oder Periode im Jahr).
+
+In einer Tageszeile stand: **Aktuell 0 · Vorperiode 12 · Δ ▼ 11 (−97,6 %)**. Zwölf minus null ist aber nicht elf. Ein paar Zeilen tiefer standen zweimal **0** nebeneinander — und dazwischen ein **▼ 0 (−73,3 %)**.
+
+Beides kam daher, dass die zwei Wert-Spalten gerundet anzeigen, die Δ-Spalte aber mit den ungerundeten Werten dahinter weiterrechnete. Die Δ-Spalte rechnet jetzt mit genau den Zahlen, die daneben stehen — sie erklärt, was du siehst.
+
+> **Was das für sehr kleine Werte heißt:** Ein Unterschied, den die Spalte gar nicht anzeigen kann, gilt jetzt als kein Unterschied — dort steht „=" statt einer Prozentzahl, für die es keine sichtbare Grundlage gibt. Brauchst du die Feinheit, hilft der **CSV-Export**: Er enthält unverändert die vollen Werte.
+
+### „0 kWh" steht nur noch da, wo wirklich gemessen wurde
+
+**Betrifft dich das?** Wenn für einzelne Zeiträume nur ein Teil deiner Zähler Daten hat — typisch nach einem Import aus der Home-Assistant-Historie, in der ein Sensor weiter zurückreicht als die anderen.
+
+In einer Tageszeile für den Januar stand: **PV „—" · Einspeisung 106 kWh · Netzbezug 0 · Gesamtverbrauch 0**. Die Einspeisung war echt gemessen, für PV und Netzbezug gab es in diesen Monaten überhaupt keinen Zähler — die Null war also die einzige Zahl der Zeile, hinter der nichts stand. Die PV-Spalte sagte das schon richtig; der Netzbezug konnte es bisher gar nicht sagen.
+
+Jetzt sagen es alle: Einspeisung, Netzbezug, Gesamtverbrauch und Direktverbrauch stehen auf **„—"**, wenn an dem Tag nichts erfasst wurde.
+
+> **Eine gemessene Null bleibt eine Null.** Wenn dein Haus einen Tag lang nichts aus dem Netz zieht, siehst du weiterhin eine 0 — das ist eine Aussage über deine Anlage und keine Lücke. Maßgeblich ist, ob ein Wert erfasst ist, nicht ob er größer als null ist.
+
+> **Und das Geld folgt der Menge.** Wo der Netzbezug fehlt, stehen **Netzbezug-Kosten**, **Eigenverbrauchs-Ersparnis**, **Netto-Ertrag** und **Netto-Bilanz** dieses Tages ebenfalls auf „—" statt auf „0,00 €". Der **Einspeise-Erlös** beruht auf einer gemessenen Menge und bleibt stehen. In der Monatsgrafik zeigen solche Tage eine Lücke statt eines Balkens auf Null.
 
 ---
 

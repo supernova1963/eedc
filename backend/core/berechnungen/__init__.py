@@ -39,6 +39,9 @@ Geplant (step-by-step, wenn Konsumenten angefasst werden):
 from backend.core.berechnungen.alternativkosten import (
     berechne_wp_alternativkosten_ersparnis,
     alter_wirkungsgrad,
+    alle_ersetzen_nichts,
+    ersetzt_keine_heizung,
+    ERSETZT_NICHTS,
     gas_kosten_altanlage,
 )
 from backend.core.berechnungen.co2_amortisation import (
@@ -129,11 +132,15 @@ from backend.core.berechnungen.kennzahlen import (
 from backend.core.berechnungen.energie import (
     BATTERIE_KOMPONENTEN_PREFIXE,
     PV_KOMPONENTEN_PREFIXE,
+    SONSTIGES_KOMPONENTEN_PREFIX,
     WAERMEPUMPE_KOMPONENTEN_PREFIXE,
     WALLBOX_KOMPONENTEN_PREFIXE,
+    SonstigesTagesSummen,
     batterie_kw_spalte,
     erzeuger_kwh_je_investition,
     erzeugung_hinter_zaehler_kwh,
+    sonstiges_kwh_je_richtung,
+    sonstiges_richtung,
     summe_batterie_netto_kwh,
     summe_bkw_kwh,
     summe_pv_anlage_kwh,
@@ -218,6 +225,12 @@ from backend.core.berechnungen.speicher_simulation import (
     StundenBilanz,
     simuliere_speicher_tag,
 )
+from backend.core.berechnungen.speicher_wirkungsgrad import (
+    MINDEST_LADUNG_KWH,
+    SpeicherWirkungsgrad,
+    delta_soc_kwh,
+    speicher_wirkungsgrad,
+)
 from backend.core.berechnungen.speicher_wirtschaftlichkeit import (
     ETA_DEGRADATION_SCHWELLE_PROZENTPUNKTE,
     SOC_DRIFT_SCHWELLE_PROZENTPUNKTE,
@@ -260,6 +273,9 @@ __all__ = [
     "bilanz_aus_stundenrows",
     "berechne_wp_alternativkosten_ersparnis",
     "alter_wirkungsgrad",
+    "alle_ersetzen_nichts",
+    "ersetzt_keine_heizung",
+    "ERSETZT_NICHTS",
     "gas_kosten_altanlage",
     "QUELLE_OVERRIDE",
     "QUELLE_DEFAULT",
@@ -328,6 +344,10 @@ __all__ = [
     "summe_bkw_kwh",
     "erzeuger_kwh_je_investition",
     "erzeugung_hinter_zaehler_kwh",
+    "SONSTIGES_KOMPONENTEN_PREFIX",
+    "SonstigesTagesSummen",
+    "sonstiges_kwh_je_richtung",
+    "sonstiges_richtung",
     "summe_waermepumpe_kwh",
     "summe_wallbox_eauto_kwh",
     "batterie_kw_spalte",
@@ -374,6 +394,10 @@ __all__ = [
     "soc_spanne",
     "speicher_effizienz_prozent",
     "vollzyklen",
+    "MINDEST_LADUNG_KWH",
+    "SpeicherWirkungsgrad",
+    "delta_soc_kwh",
+    "speicher_wirkungsgrad",
     "SPEICHER_IST_MIN_MONATE",
     "SOC_DRIFT_SCHWELLE_PROZENTPUNKTE",
     "ETA_DEGRADATION_SCHWELLE_PROZENTPUNKTE",
