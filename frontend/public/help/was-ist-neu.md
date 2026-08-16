@@ -1,11 +1,71 @@
 # Was ist neu
 
-> **Stand:** August 2026 (v4.0.16)
+> **Stand:** August 2026 (v4.0.17)
 > **Diese Seite** zeigt pro Version, was sich für dich als Anwender geändert hat — kürzer als der technische [CHANGELOG](https://github.com/supernova1963/eedc-homeassistant/blob/main/CHANGELOG.md), ausführlicher als die Schnellübersicht-Tabelle in der [Übersicht](BENUTZERHANDBUCH.md#was-ist-neu-seit-v316).
 >
 > **Kein Banner, kein Pop-up:** eedc zeigt diese Liste nicht ungefragt an. HA-App-Nutzer sehen den Changelog ohnehin schon im Add-on-Store, GitHub-Releases haben einen eigenen. Wer wissen will, was neu ist, schaut hier rein — Pull statt Push.
 >
 > **Lesehinweis:** Die jüngsten Versionen stehen oben. Jeder Punkt verlinkt entweder auf die zuständige Hilfe-Sektion oder direkt auf die App-Funktion (sofern erreichbar). Anker-URLs (`?doc=was-ist-neu`) sind teilbar.
+
+---
+
+## v4.0.17 — Nicht bewertet heißt keine Zahl
+
+> Ein Nachtrag zu v4.0.16, gefunden beim Durchspielen der neuen Fälle: Die Zeilen, die seit gestern „nicht bewertet" sagen können, zeigten in einer Spalte trotzdem eine Zahl.
+
+### Eine „nicht bewertete" Zeile zeigt keine Jahres-Einsparung mehr
+
+**Betrifft dich das?** Wenn du in *Auswertungen → ROI* eine Zeile mit dem Zusatz **„nicht bewertet"** hast — also eine Wärmepumpe mit „Nichts ersetzt (Neubau)" oder ohne gepflegten Wärmebedarf, oder einen **Speicher ohne gepflegte Kapazität**.
+
+Bei diesen Zeilen stand in der Spalte *Jahres-Einsparung* trotzdem ein Betrag, zum Beispiel **−200,00 €**. Das war die Höhe der bei diesem Gerät gepflegten **Betriebskosten** — abgezogen von einer Ersparnis, die es gar nicht gibt. Die Gesamt-Einsparung deiner Anlage fiel dadurch um 1.555 € statt um die 1.355 €, die mit der Bewertung entfallen.
+
+Dort steht jetzt **„—"**, wie in allen anderen Spalten dieser Zeile auch.
+
+⚠ **Deine Betriebskosten sind nicht verschwunden.** Sie fallen real an und zählen weiterhin dort, wo sie hingehören: in der Amortisationsdauer und in dem Satz darunter, der sie ausdrücklich nennt („inkl. 200,00 €/Jahr Betriebskosten"). Was wegfällt, ist nur die Behauptung, ein Gerät habe **minus** 200 € *gespart*.
+
+⚠ **Wer gepflegte Daten hat, sieht keinen Unterschied.**
+
+### Eine Wartungsrechnung schaltet die Bewertung nicht mehr frei
+
+**Betrifft dich das?** Wenn du an einem solchen Gerät **sonstige Erträge oder Ausgaben** erfasst hast — eine Wartungsrechnung, eine Förderung. Das dürfte auf die meisten Wärmepumpen zutreffen.
+
+Sobald dort ein Betrag gepflegt war, verschwand der Zusatz „nicht bewertet" an der Zeile, und die Zahl aus dem Punkt oben wurde **sichtbar** angezeigt. Der Gedanke dahinter war gut gemeint: Hast du selbst einen Betrag gepflegt, soll deine Zahl dastehen statt eines Strichs.
+
+**Nur zeigt diese Spalte deinen Betrag gar nicht.** Nachgemessen: Eine gepflegte **Förderung von 180 €** ließ die Zeile „0,00 €" anzeigen — also „spart nichts", obwohl nichts bewertet war. Dein Betrag wirkt an der Stelle, an der er hingehört: im **Kapitaleinsatz** dieser Zeile (im Beispiel 8.000 € → 7.820 €) und in der Detail-Aufschlüsselung darunter. Dort ist er unverändert.
+
+⚠ **An bewerteten Zeilen ändert sich nichts** — sie waren davon nie betroffen.
+
+### Die Prognose-Seite hat wieder eine Spaltenflucht
+
+**Betrifft dich das?** Wenn du *Auswertungen → Prognose* von oben nach unten liest.
+
+OpenMeteo, eedc, Solcast und IST tauchen dort in **vier** Tabellen auf — Quellen-Genauigkeit, Stundenvergleich, 7-Tage-Vergleich und Genauigkeits-Tracking. Jede hat ihre Spalten bisher selbst festgelegt, und keine zwei begannen an derselben Stelle. Für dieselbe Quelle musste man den Blick jedes Mal versetzen.
+
+Mit v4.0.16 waren zwei davon zur Deckung gebracht worden. Gemeldet war aber das Gesamtbild — zu Recht: Es waren vier verschiedene Raster.
+
+Jetzt kommt der Spaltenplan aus **einer** Stelle. Alle vier Tabellen benutzen ihn, und eine künftige fünfte erbt ihn.
+
+> **Zwei Dinge sehen dadurch anders aus.** Tabellen ohne eigene Abweichungs-Spalte tragen an deren Stelle eine **leere** Spalte — das ist der Preis dafür, dass die Quellen fluchten. Und das **Genauigkeits-Tracking blendet die Solcast-Spalten aus, wenn du Solcast nicht eingerichtet hast**; vorher standen dort drei Striche.
+
+⚠ **Es ändert sich keine Zahl.**
+
+*(Gemeldet von rapahl.)*
+
+### Heizstab, Poolpumpe & Co. haben wieder Tageswerte
+
+**Betrifft dich das?** Wenn du ein Gerät unter *Sonstiges* mit der Kategorie **Verbraucher** führst und ihm einen eigenen kWh-Zähler zugeordnet hast.
+
+Sein Verbrauch stand im **Monat** korrekt da — auf **Tagesebene** aber nirgends: keine Spalte in *Auswertungen → Tabelle*, kein Anteil im Stundenverlauf, kein Gerätebeitrag im Tagesdetail. Es sah aus, als wäre der Sensor nicht zugeordnet.
+
+Dahinter steckte ein Feldname, der an zwei Stellen verschieden hieß. Die Zuordnung speichert das Feld als `verbrauch_sonstig_kwh` und eedc veröffentlicht sein MQTT-Topic unter demselben Namen — der Auswerte-Pfad suchte aber nach `verbrauch_kwh`, einem Namen, den es für diesen Gerätetyp gar nicht gibt. eedc hat also ein Topic **selbst veröffentlicht und beim Einlesen wieder weggeworfen**.
+
+> **Ein *Erzeuger* unter Sonstiges war nie betroffen** — ein Mini-BHKW etwa. Dort heißen beide Seiten gleich, und genau deshalb ist es so lange niemandem aufgefallen.
+
+⚠ **Es war keine Zahl falsch.** Der Tagesverbrauch wird aus Erzeugung, Netzbezug, Einspeisung und Speicher gebildet und nicht aus der Summe der einzelnen Geräte. Gefehlt hat die **Aufschlüsselung**, nicht die Menge — Autarkie, Kosten und CO₂ waren unberührt.
+
+⚠ **Und die vergangenen Tage?** Wenn dein Zähler ein **Home-Assistant-Sensor** ist, hol sie dir über *Einstellungen → Daten → Tag neu berechnen*: Dort wird die Langzeitstatistik aus HA neu gelesen, und der Sensor wird jetzt gefunden. Lieferst du die Werte **per MQTT**, gibt es Tageswerte **ab jetzt** — die Messwerte von damals sind nie gespeichert worden, und eedc erfindet sie nicht.
+
+*(Gemeldet von rapahl.)*
 
 ---
 
@@ -136,7 +196,7 @@ Welche Richtung ein Gerät hat, entscheidet die **Kategorie**, die du bei ihm ge
 
 Ein Gerät mit der Kategorie *Speicher* bleibt in der **Tagesansicht** außen vor: Dort gibt es je Gerät nur eine Zahl, und die ist bei einem Speicher ein Saldo aus Laden und Entladen — sie ließe sich weder der Erzeugung noch dem Verbrauch zuschlagen.
 
-> **Gas, Öl und Wasser sind nicht dabei** — die bringen eine Menge in m³ oder Litern ohne kWh-Bezug. Deshalb tragen die beiden Spalten ihre Einheit im Namen: Die Zähler aus [#377](https://github.com/supernova1963/eedc-homeassistant/issues/377) bekommen später eigene Spalten in derselben Gruppe, statt diese zu überschreiben.
+> **Gas, Öl und Wasser sind nicht dabei** — die bringen eine Menge in m³ oder Litern ohne kWh-Bezug. Deshalb tragen die beiden Spalten ihre Einheit im Namen: Eine Litermenge unter der Beschriftung „kWh" wäre schlicht falsch. Was aus [#377](https://github.com/supernova1963/eedc-homeassistant/issues/377) wird, ist offen — käme es, dann in eigenen Spalten mit eigener Einheit und nicht durch Überschreiben dieser beiden.
 
 > **Auch in der Monatsdaten-Liste** (*Einstellungen → Daten*) stehen die beiden Spalten jetzt zur Wahl — sie hat einen eigenen Spalten-Wähler, und die Gerätegruppe fehlte dort genauso.
 
