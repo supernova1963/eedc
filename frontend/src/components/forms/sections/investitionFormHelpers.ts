@@ -67,15 +67,48 @@ export const AUSRICHTUNG_OPTIONEN: SelectItem[] = [
 // `crud.py::get_parent_options`); nur diese kannte das Balkonkraftwerk.
 // Wer die Regel braucht, importiert `parentTypenFuer` — nicht die Konstante,
 // damit die Array-/Einzelwert-Fallunterscheidung nur EINMAL existiert.
+// N-266: `pv-module` darf auch unter ein Balkonkraftwerk. Ein BKW trägt EINE
+// Ausrichtung und EINE Neigung — zwei Module über Eck waren damit nicht
+// abbildbar, und der Ausweg über *Einstellungen → PV-Module* war gesperrt, weil
+// ein BKW kein erlaubter Parent war (Melder: Discussion #366, Forum T89667 #172).
 export const PARENT_MAPPING: Partial<Record<InvestitionTyp, InvestitionTyp | InvestitionTyp[]>> = {
-  'pv-module': 'wechselrichter',                           // Pflicht
-  'speicher': ['wechselrichter', 'balkonkraftwerk'],       // Optional — Hybrid-WR (DC) oder BKW mit Akku (AC)
+  'pv-module': ['wechselrichter', 'balkonkraftwerk'],      // Pflicht — BKW seit N-266
+  'speicher': ['wechselrichter', 'balkonkraftwerk'],       // Optional — Hybrid-WR oder BKW-Akku (beide DC, s. N-268)
 }
 export const PARENT_REQUIRED: InvestitionTyp[] = ['pv-module']
 
 export const PARENT_TYPE_LABELS: Record<string, string> = {
   'wechselrichter': 'Wechselrichter',
   'balkonkraftwerk': 'Balkonkraftwerk',
+}
+
+/**
+ * Nennleistung eines Balkonkraftwerks in kWp aus Anzahl × Wp — Client-SoT (F-32).
+ *
+ * **Warum das hier steht und nicht in drei Formularen.** Die Spalte
+ * `Investition.leistung_kwp` ist beim BKW ein **abgeleiteter** Wert: gepflegt
+ * werden „Leistung pro Modul (Wp)" und „Anzahl Module" im `parameter`. Wer die
+ * Spalte nicht mitschreibt, erzeugt genau F-32 — der Einrichtungsassistent tat
+ * das, und die Prognose einer reinen BKW-Anlage fiel auf HTTP 400. Die Formel
+ * stand danach an drei Stellen; Regel 0a verlangt die Zentrale statt der
+ * vierten Kopie.
+ *
+ * **Rückgabe `null` heißt „Feld leeren", nicht „0".** Wird eine der beiden
+ * Eingaben geleert, gibt es keine abgeleitete Nennleistung mehr — ein
+ * stehengebliebener Altwert wäre eine Leistung, die niemand gepflegt hat
+ * (dieselbe Falle wie die nicht lösbare Wechselrichter-Zuordnung, JayJay
+ * v4.0.0). `null` ist die Nutzlast-Sprache von {@link InvestitionUpdate};
+ * Schreibpfade, die nur `undefined` senden können, behalten den Altwert still.
+ * Eine 0 wäre die 0-Werte-Falle: sie sieht wie eine Messung aus.
+ */
+export function bkwLeistungKwp(
+  anzahl: number | string | undefined,
+  leistungWp: number | string | undefined,
+): number | null {
+  const n = typeof anzahl === 'number' ? anzahl : parseInt(String(anzahl ?? ''), 10)
+  const wp = typeof leistungWp === 'number' ? leistungWp : parseInt(String(leistungWp ?? ''), 10)
+  if (!Number.isFinite(n) || !Number.isFinite(wp) || n <= 0 || wp <= 0) return null
+  return (n * wp) / 1000
 }
 
 /** Erlaubte Parent-Typen eines Investitions-Typs — immer als Liste. */

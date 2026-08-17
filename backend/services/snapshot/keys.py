@@ -13,7 +13,11 @@ from __future__ import annotations
 
 from typing import Optional
 
-from backend.core.field_definitions import kumulative_zaehler_felder_je_typ
+from backend.core.field_definitions import (
+    SONSTIGES_KATEGORIE_UNGEPFLEGT,
+    SONSTIGES_VERBRAUCH_FELDER,
+    kumulative_zaehler_felder_je_typ,
+)
 
 
 # Felder die kumulative kWh-Zählerstände enthalten, pro Investitionstyp.
@@ -308,14 +312,18 @@ def _categorize_counter(
     if inv_typ == "e-auto" and feld in ("verbrauch_kwh", "ladung_kwh"):
         return "verbrauch_eauto"
     if inv_typ == "sonstiges":
-        kategorie = (parameter or {}).get("kategorie", "verbraucher") if isinstance(parameter, dict) else "verbraucher"
+        kategorie = (
+            parameter.get("kategorie", SONSTIGES_KATEGORIE_UNGEPFLEGT)
+            if isinstance(parameter, dict)
+            else SONSTIGES_KATEGORIE_UNGEPFLEGT
+        )
         # `verbrauch_sonstig_kwh` ist der kanonische Registry-Name (N-259),
         # `verbrauch_kwh` der Legacy-Zwilling — dieselbe Präzedenz wie in
         # `get_sonstiges_verbrauch_kwh`. Bis 16.08.2026 stand hier NUR der
         # Legacy-Name, und damit fiel jeder Sonstiges-Verbraucher aus der
         # Stunden-Kategorisierung: das Feld, das die Zuordnungsfläche
         # tatsächlich schreibt, traf keinen einzigen Zweig.
-        verbrauch_felder = ("verbrauch_sonstig_kwh", "verbrauch_kwh")
+        verbrauch_felder = SONSTIGES_VERBRAUCH_FELDER
         if feld == "erzeugung_kwh" or (feld in verbrauch_felder and kategorie == "erzeuger"):
             return "erzeugung_sonstiges"
         if feld in verbrauch_felder:

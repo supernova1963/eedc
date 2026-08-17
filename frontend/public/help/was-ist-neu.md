@@ -1,11 +1,186 @@
 # Was ist neu
 
-> **Stand:** August 2026 (v4.0.17)
+> **Stand:** August 2026 (v4.0.18)
 > **Diese Seite** zeigt pro Version, was sich für dich als Anwender geändert hat — kürzer als der technische [CHANGELOG](https://github.com/supernova1963/eedc-homeassistant/blob/main/CHANGELOG.md), ausführlicher als die Schnellübersicht-Tabelle in der [Übersicht](BENUTZERHANDBUCH.md#was-ist-neu-seit-v316).
 >
 > **Kein Banner, kein Pop-up:** eedc zeigt diese Liste nicht ungefragt an. HA-App-Nutzer sehen den Changelog ohnehin schon im Add-on-Store, GitHub-Releases haben einen eigenen. Wer wissen will, was neu ist, schaut hier rein — Pull statt Push.
 >
 > **Lesehinweis:** Die jüngsten Versionen stehen oben. Jeder Punkt verlinkt entweder auf die zuständige Hilfe-Sektion oder direkt auf die App-Funktion (sofern erreichbar). Anker-URLs (`?doc=was-ist-neu`) sind teilbar.
+
+---
+
+## v4.0.18 — Einrichtung, die nicht gegen dich arbeitet
+
+### Balkonkraftwerk: mehrere Ausrichtungen über zugeordnete PV-Module
+
+Ein Balkonkraftwerk hat in eedc **ein** Feld für die Ausrichtung und **eines** für die Neigung. Wer
+seine Module über Eck hängt — Balkon nach Ost, Terrasse nach West —, konnte das bisher nicht
+abbilden. Und der naheliegende Weg über *Einstellungen → PV-Module* ging nicht: Ein PV-Modul musste
+einem **Wechselrichter** zugeordnet werden, und ein Balkonkraftwerk war keiner. Dabei ist ein
+Balkonkraftwerk Erzeuger und Wechselrichter in einem, und einen Akku durfte es längst tragen.
+
+Jetzt kannst du **PV-Module einem Balkonkraftwerk zuordnen** — im Formular unter *Einstellungen →
+Investitionen* und auch im **Einrichtungsassistenten**. Jedes Modul trägt dann seine eigene
+Ausrichtung und Neigung, und die Prognose rechnet jede Richtung getrennt.
+
+Zwei Dinge, die dabei wichtig sind:
+
+- **Nennleistung, Ausrichtung und Neigung kommen ab dann von den Modulen.** Das Balkonkraftwerk
+  zeigt als Leistung die Summe seiner Module; seine eigenen Felder beschreiben nur noch das Gerät.
+  Das Formular schreibt es an der Stelle dazu.
+- **Die *Wechselrichter-Leistung* gilt weiter.** Die 800 W gehören dem Gerät und begrenzen die
+  **Summe** aller Module — sie ergeben sich nicht aus ihnen. Bitte weiter pflegen, sonst rechnet die
+  Prognose mit der vollen Modulleistung.
+
+Beim **Monatsabschluss** ändert sich für dich nichts: Der Wert *Erzeugung* am Balkonkraftwerk bleibt
+nutzbar — bei einem Set ist der Wechselrichter meist der einzige Zähler. Er gilt dann als
+Gesamtsumme der Module: Hat ein Modul einen eigenen Messwert, gewinnt der; die übrigen bekommen den
+Rest nach Leistungsanteil. Doppelt gezählt wird nichts.
+
+**Wer keine Module zuordnet, sieht keine veränderte Zahl.**
+
+### Balkonkraftwerk aus dem Einrichtungsassistenten: Prognose war leer
+
+Wer sein Balkonkraftwerk über den **Einrichtungsassistenten** angelegt hat, sah in *Cockpit → Live*
+und *Cockpit → Aussicht* **keine Solarprognose** — obwohl Leistung pro Modul, Anzahl, Ausrichtung
+und Neigung gepflegt waren.
+
+Der Grund: Beim Balkonkraftwerk entsteht die Nennleistung aus „Anzahl × Leistung pro Modul". Der
+Assistent hat nur diese beiden Angaben hinterlegt, das Investitionsformular zusätzlich den daraus
+berechneten Wert — und drei Stellen im Prognose-Pfad lasen ausschließlich den berechneten. Sie
+fanden dort **0 kW** und verwarfen das Gerät als „ohne Leistung". Bei einer Anlage, die **nur** aus
+einem Balkonkraftwerk besteht, blieb damit nichts übrig, worüber sich etwas rechnen ließe.
+
+Beide Hälften sind behoben — die Lesestellen fragen die Leistung jetzt so ab, wie sie beim
+Balkonkraftwerk zustande kommt, und der Assistent hinterlegt sie zusätzlich berechnet.
+
+- **Es wirkt ohne Zutun und rückwirkend**, auch für Anlagen aus einem **Backup**: Die Prognose ist
+  ab dem nächsten Aufruf da. Nichts nachpflegen, nichts neu anlegen.
+- **Betroffen war mehr als die Anzeige:** Der nächtliche Vorablauf, der die Prognosegenauigkeit
+  mitschreibt und daraus den Lernfaktor bildet, brach bei diesen Anlagen ebenfalls ab. Er bekam nur
+  an Tagen einen Messpunkt, an denen jemand *Cockpit → Live* geöffnet hat.
+- **Wer sein Balkonkraftwerk über das Formular angelegt hat, war nie betroffen.**
+
+### Kein alter Hinweis mehr über gefüllten Blöcken
+
+Der Reiter *Komponenten* erklärt bei einem leeren Gerät, **warum** dort nichts steht. Diese
+Erklärung wurde zwischengespeichert — und stand deshalb nach dem Erfassen von Monatswerten beim
+Zurückwechseln noch einen Moment über den nun gefüllten Blöcken. Sie wird jetzt jedes Mal frisch
+geholt und erscheint erst, wenn sie zutrifft. Beim Laden zeigt der Bereich wie bisher nichts an.
+
+### „Anlage nicht gefunden" nach dem Löschen der letzten Anlage
+
+eedc merkt sich, welche Anlage du zuletzt ausgewählt hattest. Diese Merkung wurde beim Löschen nie
+geräumt — und die Prüfung, ob es die gemerkte Anlage noch gibt, lief ausgerechnet dann nicht, wenn
+**gar keine** Anlage mehr da war.
+
+Die Folge: Wer seine einzige Anlage löschte und danach eine Komponente anlegen wollte, füllte das
+Formular aus, klickte auf Speichern — und bekam **„Anlage nicht gefunden"**, für eine Anlage, die er
+selbst gelöscht hatte. Im Einrichtungsassistenten dasselbe: Er merkte beim Start, dass die Anlage
+weg ist, und behielt die Merkung trotzdem.
+
+Beides ist behoben. Die Merkung wird geräumt, sobald feststeht, dass keine Anlage existiert, und der
+Assistent kehrt dann zum Schritt *Anlage* zurück. Ein kurzer **Verbindungsabbruch räumt nichts** —
+sonst wäre die Auswahl bei jedem Aussetzer weg. Wer eine Anlage hat, merkt von alledem nichts.
+
+### Geräte unter „Sonstiges" zeigen ihren Verbrauch richtig
+
+Ein Heizstab, eine Poolpumpe oder eine Klimasteckdose stand in *Cockpit → Tag* mit **negativen**
+Stundenwerten — in der Summenzeile etwa „−5,59 kWh". Das kam aus dem Diagramm darüber: Dort werden
+Quellen nach oben und Verbraucher nach unten gezeichnet, und dafür bekommt jeder Verbraucher ein
+Minus. In einer **Tabelle** bedeutet dasselbe Minus aber etwas völlig anderes.
+
+In Tabelle, Summenzeile und CSV-Export steht jetzt der Betrag. Die **Batterie behält ihr
+Vorzeichen** — dort sagt die Richtung, ob geladen oder entladen wurde. Es wurde nichts
+umgerechnet: **Auch alle zurückliegenden Tage sind sofort richtig**, du musst nichts neu berechnen.
+Energiebilanz, Hausverbrauch und Monatswerte waren nie betroffen.
+
+### Und sie rechnen jetzt mit deinem Zähler statt mit einer Schätzung
+
+Hast du so einem Gerät einen **kWh-Zähler** zugeordnet, nimmt eedc jetzt dessen Werte. Bisher
+entstanden die Stundenwerte aus dem Mittelwert des **Leistungssensors** — bei einem Heizstab, der
+mit 6 kW an- und wieder ausschaltet, wird das schnell ungenau: gemeldet wurden 5,59 kWh für einen
+Tag, an dem der Energiezähler 3,0 kWh zeigte. Wärmepumpe, Wallbox und PV machen das längst so.
+
+Die **Kurvenform** im Diagramm kommt weiter vom Leistungssensor — nur die Menge stammt jetzt vom
+Zähler. Hast du nur einen Leistungssensor, ändert sich nichts; genauer geht es dort nicht.
+Zurückliegende Tage holst du dir über *Einstellungen → Daten → **Tag neu berechnen***.
+
+*Beides ist an einem Screenshot von rapahl sichtbar geworden — die Ursache der zweiten Sache hat
+er selbst richtig vermutet.*
+
+### Dein erster Stromtarif deckt jetzt seinen ganzen Monat ab
+
+Legst du deinen **ersten** Tarif an, schlägt eedc als „Gültig ab" das Inbetriebnahme-Datum deiner
+Anlage vor. Das ist sinnvoll — sonst fallen importierte Altmonate hinter den Tarif. Nur: eedc
+rechnet einen Monat immer mit **einem** Preis und fragt dafür am **Monatsersten** nach dem
+gültigen Tarif. Stand dort der 3. August, war der August nicht abgedeckt, und der ganze Monat
+rechnete mit den Standardwerten — obwohl sichtbar ein Tarif gepflegt war.
+
+Der Vorschlag springt jetzt auf den **Monatsanfang**. An deiner Rechnung ändert das nichts: Die
+Regel „ein Monat, ein Preis" bleibt, ein späterer Tarifwechsel wirkt weiterhin erst im
+Folgemonat. Und ab dem **zweiten** Tarif bleibt „heute" der Vorschlag — ein Wechsel soll nicht
+rückwirkend gelten.
+
+**Bestehende Tarife rührt das Update nicht an.** Ob es dich betrifft, sagt dir der Daten-Checker:
+Er meldet als Fehler, wenn Monate mit Daten vor deinem ersten Tarif liegen. Dort kannst du das
+Datum von Hand auf den Monatsanfang ziehen.
+
+*Gefunden hat es Knallfrosch im Forum — er hat nachgerechnet und kam auf 14,27 € statt der
+angezeigten 16,05 €.*
+
+### Ein „Sonstiges"-Gerät ohne Kategorie zeigt dir jetzt alle passenden Felder
+
+**Betrifft dich das?** Wenn du ein Gerät unter *Sonstiges* führst, bei dem das Feld **Kategorie**
+leer ist. Das kommt bei Geräten aus einem alten Backup oder aus einem Import vor — beim Anlegen
+von Hand ist immer eine gesetzt.
+
+Bisher hat eedc bei so einem Gerät stillschweigend **Erzeuger** angenommen und dir nur dessen vier
+Felder angeboten: Erzeugung, Eigenverbrauch, Einspeisung, Einspeise-Erlös. Ist das Gerät in
+Wirklichkeit ein **Verbraucher**, waren das genau die falschen vier — seinen Verbrauch, den
+PV-Anteil und den Netzbezug konntest du in *Einstellungen → Datenquellen* und im Monatsabschluss
+gar nicht erst zuordnen oder eintragen. Und die Auswertung sucht für dasselbe Gerät genau diese
+drei: eedc bot dir also ausschließlich Felder an, die es bei diesem Gerät nirgends liest.
+
+Ohne gepflegte Kategorie stehen jetzt **alle sieben** Felder bereit — du trägst ein, was das Gerät
+hat. Dasselbe im **Komponenten-Hub**: Dort stand bei so einem Verbraucher überall **0,00**, obwohl
+gepflegte Werte da waren. Jetzt entscheidet der Bestand: Wo Erzeugung erfasst ist, wird als
+Erzeuger ausgewertet, sonst als Verbraucher.
+
+**Hast du eine Kategorie gepflegt, ändert sich für dich nichts.** Es verschwindet auch nichts —
+die Erzeugungs-Felder bleiben sichtbar, bereits gepflegte Werte stehen unverändert da. Der saubere
+Weg bleibt trotzdem, die Kategorie zu setzen (*Einstellungen → Investitionen*): Dann ist deine
+Erfassungsmaske wieder kurz.
+
+### Kein Speicher-Wirkungsgrad über 100 % mehr
+
+Ein Speicher kann nicht mehr abgeben, als er aufgenommen hat. Trotzdem stand bei manchen Anlagen
+ein Wert wie **104 %** da — in *Cockpit → Jahr*, in *Auswertungen → Komponenten* und *→ Tabelle*,
+im Speicher-Dashboard, beim Balkonkraftwerk und im HA-Sensor *Speicher-Effizienz*. In *Cockpit →
+Jahr* stand unter der Zahl sogar noch „über das ganze Fenster gerechnet" — als wäre sie damit
+abgesichert.
+
+Die Regel dagegen gab es seit v4.0.16 schon, sie galt bisher nur für *Cockpit → Tag* und
+*→ Monat*. Jetzt rechnen **alle** Sichten nach derselben Regel: Statt einer unmöglichen Zahl steht
+dort „—", und daneben der Grund.
+
+**Was so ein Wert dir sagt:** nichts über deinen Speicher, aber viel über die erfassten Mengen.
+Fast immer steckt eine „Ladung" dahinter, in der nur die **PV-Ladung** steht, während die
+**Netzladung** als zweiter Posten daneben gepflegt ist — in das Feld *Ladung* gehört die
+**gesamte** Ladung. Der Daten-Checker sagt dir das, samt betroffenem Feld.
+
+Zwei Stellen — das **Speicher-Dashboard** und die Liste in *Auswertungen → ROI* — haben so einen
+Wert bisher still auf **glatt 100,0 %** gerundet. Das war die unangenehmere Variante: Die Zahl sah
+plausibel aus, und du konntest ihr nicht ansehen, dass gemessen etwas ganz anderes dasteht. Auch
+sie rechnen jetzt nach derselben Regel. Für die **Wirtschaftlichkeits-Prognose** ändert sich
+nichts an der Systematik: Wo sich kein Wirkungsgrad ermitteln lässt, rechnet eedc weiter mit dem
+**gepflegten** Wert aus den Speicher-Parametern — so wie bisher schon bei zu kurzem Zeitraum, und
+weiterhin gekennzeichnet.
+
+**Hast du plausible Werte, ändert sich für dich nichts** — unter 100 % steht dieselbe Zahl wie
+bisher. **Ein Hinweis für Home Assistant:** In diesem Fall liefert der Sensor *Speicher-Effizienz*
+jetzt gar keinen Wert mehr (`unknown`) statt eines falschen. In der Langzeitstatistik entsteht
+dadurch eine Lücke — genau an den Tagen, an denen dort bisher eine unmögliche Zahl stand.
 
 ---
 

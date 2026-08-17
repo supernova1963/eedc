@@ -3,9 +3,11 @@ import { Trash2, ChevronDown, ChevronRight } from 'lucide-react'
 import { Button, Input, Select, Alert, DatumFeld } from '../../ui'
 import { SchalterZeile } from '../../forms/sections/SchalterZeile'
 import type { Investition } from '../../../types'
+import type { InvestitionUpdate } from '../../../api/investitionen'
 import {
   PARENT_REQUIRED,
   PARENT_TYPE_LABELS,
+  bkwLeistungKwp,
   parentTypenFuer,
 } from '../../forms/sections/investitionFormHelpers'
 import { TYP_LABELS as INVESTITION_TYP_LABELS } from '../../../lib/constants'
@@ -36,7 +38,13 @@ export function SetupInvestitionForm({
 }: {
   investition: Investition
   allInvestitionen: Investition[]
-  onUpdate: (data: Partial<Investition>) => void
+  // F-32: die **Nutzlast** `InvestitionUpdate`, nicht `Partial<Investition>`.
+  // Was hier durchgeht, landet in `investitionenApi.update` — und dort heißt
+  // `null` dokumentiert „Feld leeren" (`exclude_unset` behält sonst den
+  // Altwert). Der Entity-Typ `Investition.leistung_kwp` bleibt bewusst
+  // `number | undefined`: er beschreibt einen gelesenen Wert, und 37
+  // Anzeigestellen müssten sonst eine Nutzlast-Semantik mittragen.
+  onUpdate: (data: InvestitionUpdate) => void
   onDelete: () => void
   isNew?: boolean
 }) {
@@ -52,11 +60,40 @@ export function SetupInvestitionForm({
   const possibleParents = parentTypen.length
     ? allInvestitionen.filter(i => parentTypen.includes(i.typ) && i.id !== investition.id)
     : []
+  // N-266: Die Meldungen unten nannten hart „Wechselrichter". Seit ein
+  // Balkonkraftwerk Modul-Parent sein darf, wäre das für Daniels Anlage (BKW,
+  // kein Wechselrichter) eine Anleitung ins Leere — sie kommen jetzt aus
+  // `parentLabel`, also aus dem SoT `parentTypenFuer`.
+  const typLabelPlural = INVESTITION_TYP_LABELS[investition.typ]
+  // Hängen an DIESEM Gerät PV-Module? Dann tragen sie Leistung und Ausrichtung.
+  const modulKinder = allInvestitionen.filter(
+    i => i.typ === 'pv-module' && i.parent_investition_id === investition.id
+  ).length
 
   const getParam = (key: string) => investition.parameter?.[key] as number | string | undefined
   const getBoolParam = (key: string) => investition.parameter?.[key] === true
   const updateParam = (key: string, value: unknown) => {
     onUpdate({ parameter: { ...investition.parameter, [key]: value } })
+  }
+  /**
+   * Balkonkraftwerk: Anzahl/Wp pflegen **und** die abgeleitete Spalte
+   * `leistung_kwp` mitschreiben (F-32).
+   *
+   * Der Assistent schrieb bis dahin ausschließlich ins `parameter`. Das
+   * Investitionsformular schreibt die Spalte — deshalb traf der Fehler genau
+   * den Erstnutzer mit Balkonkraftwerk: `/api/solar-prognose` antwortete mit
+   * HTTP 400, der Prefetch brach mit `keine_strings` ab. Formel aus dem
+   * Client-SoT; `null` leert die Spalte, wenn eine der Eingaben verschwindet.
+   */
+  const updateBkwParam = (key: string, value: unknown) => {
+    const parameter = { ...investition.parameter, [key]: value }
+    onUpdate({
+      parameter,
+      leistung_kwp: bkwLeistungKwp(
+        parameter[PARAM_BALKONKRAFTWERK.ANZAHL] as number | string | undefined,
+        parameter[PARAM_BALKONKRAFTWERK.LEISTUNG_WP] as number | string | undefined,
+      ),
+    })
   }
   const num = (v: string): number | undefined => parseFloat(v) || undefined
 
@@ -142,12 +179,12 @@ export function SetupInvestitionForm({
                     ? `${p.bezeichnung} (${INVESTITION_TYP_LABELS[p.typ]})`
                     : p.bezeichnung,
                 }))}
-                error={missingParent ? 'PV-Module müssen einem Wechselrichter zugeordnet werden' : undefined}
+                error={missingParent ? `${typLabelPlural} müssen zugeordnet werden (${parentLabel})` : undefined}
               />
             ) : (
               <Alert type="warning">
                 {isRequired ? (
-                  <>Bitte legen Sie zuerst einen <strong>Wechselrichter</strong> an, bevor Sie PV-Module zuordnen können.</>
+                  <>Bitte legen Sie zuerst <strong>{parentLabel}</strong> an, bevor Sie {typLabelPlural} zuordnen können.</>
                 ) : (
                   <>Kein {parentLabel} vorhanden. Zuordnung ist optional.</>
                 )}
@@ -288,19 +325,41 @@ export function SetupInvestitionForm({
 
           {investition.typ === 'balkonkraftwerk' && (
             <div className="space-y-4">
+              {/* N-266: der Weg zu mehreren Ausrichtungen — genau die Frage, mit
+                  der zwei Melder kamen (Discussion #366, Forum T89667 #172). Ein
+                  Balkonkraftwerk trägt EIN Ausrichtungsfeld; wer Module über Eck
+                  hat, legt sie als PV-Module an und ordnet sie hier zu. */}
+              <Alert type="info">
+                {modulKinder > 0 ? (
+                  <>
+                    Diesem Balkonkraftwerk {modulKinder === 1 ? 'ist ' : 'sind '}
+                    <strong>{modulKinder} PV-Modul{modulKinder === 1 ? '' : 'e'}</strong> zugeordnet:
+                    Leistung, Ausrichtung und Neigung kommen von dort. Die Felder hier beschreiben
+                    nur noch das Gerät — die <em>Wechselrichter-Leistung</em> gilt weiter.
+                  </>
+                ) : (
+                  <>
+                    Zeigen deine Module in <strong>verschiedene Richtungen</strong> (z. B. Balkon und
+                    Terrasse, Ost und West)? Dann lege sie als <strong>PV-Module</strong> an und wähle
+                    unter <em>Gehört zu</em> dieses Balkonkraftwerk — jedes Modul trägt dann seine
+                    eigene Ausrichtung, und die Prognose rechnet sie getrennt. Bei einer einzigen
+                    Ausrichtung genügen die Felder hier.
+                  </>
+                )}
+              </Alert>
               <div className="grid md:grid-cols-2 gap-4 items-start">
                 <Input
                   label="Leistung pro Modul (Wp)" required
                   type="number" min="0" step="any"
                   value={getParam(PARAM_BALKONKRAFTWERK.LEISTUNG_WP) ?? ''}
-                  onChange={(e) => updateParam(PARAM_BALKONKRAFTWERK.LEISTUNG_WP, num(e.target.value))}
+                  onChange={(e) => updateBkwParam(PARAM_BALKONKRAFTWERK.LEISTUNG_WP, num(e.target.value))}
                   placeholder="z.B. 400"
                 />
                 <Input
                   label="Anzahl Module" required
                   type="number" min="1" step="1"
                   value={getParam(PARAM_BALKONKRAFTWERK.ANZAHL) ?? ''}
-                  onChange={(e) => updateParam(PARAM_BALKONKRAFTWERK.ANZAHL, parseInt(e.target.value) || undefined)}
+                  onChange={(e) => updateBkwParam(PARAM_BALKONKRAFTWERK.ANZAHL, parseInt(e.target.value) || undefined)}
                   placeholder="z.B. 2"
                 />
                 <Select

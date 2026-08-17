@@ -26,7 +26,8 @@ import httpx
 
 from backend.core.config import settings
 from backend.core.exceptions import not_found
-from backend.core.investition_kennwerte import get_erzeuger_kwp, get_pv_kwp
+from backend.core.investition_kennwerte import get_erzeuger_kwp
+from backend.core.berechnungen.erzeuger_traeger import erzeuger_traeger
 from backend.core.berechnungen.wr_kappung import zuordne_grenzen
 from backend.api.deps import get_db
 from backend.models.anlage import Anlage
@@ -441,7 +442,13 @@ async def get_pvgis_prognose(
         .where(Investition.typ.in_(PVGIS_ERZEUGER_TYPEN))
         .where(aktiv_jetzt())
     )
-    pv_module = result.scalars().all()
+    # N-266: `alle_erzeuger` ist die UNGEFILTERTE Menge und geht so in
+    # `zuordne_grenzen` — nur dort findet ein Modul-Kind die AC-Grenze seines
+    # Balkonkraftwerks. `pv_module` ist die gefilterte: ein BKW mit Kindern hat
+    # kWp und Ausrichtung abgetreten und bekommt keine eigene PVGIS-Abfrage
+    # mehr, sonst stünde sein Ertrag zweimal im Anlagen-SOLL.
+    alle_erzeuger = list(result.scalars().all())
+    pv_module = erzeuger_traeger(alle_erzeuger)
 
     if not pv_module:
         raise HTTPException(
@@ -464,7 +471,7 @@ async def get_pvgis_prognose(
         .where(Investition.anlage_id == anlage_id)
         .where(Investition.typ == InvestitionTyp.SPEICHER.value)
     )).scalars().all()
-    grenzen = zuordne_grenzen(pv_module, wechselrichter, speicher)
+    grenzen = zuordne_grenzen(alle_erzeuger, wechselrichter, speicher)
 
     # Prognose für jedes Modul abrufen
     module_prognosen: list[PVModulPrognose] = []
@@ -986,10 +993,13 @@ async def get_aktive_prognose(
         for inv_id_str, monatsdaten in prognose.module_monatswerte.items():
             inv_id = int(inv_id_str)
             inv = inv_by_id.get(inv_id)
-            # kWp über den SoT-Helper (ADR-002/P3-a): sonst zeigt die
+            # kWp über den Typ-DISPATCHER (ADR-002/P3-a): sonst zeigt die
             # gespeicherte Prognose für ein nur im `parameter` gepflegtes
-            # Modul (#229) „0,0 kWp".
-            leistung_kwp = get_pv_kwp(inv) if inv else 0.0
+            # Modul (#229) „0,0 kWp" — und für ein Balkonkraftwerk aus dem
+            # Einrichtungsassistenten ebenso (F-32). `get_pv_kwp` allein kennt
+            # die BKW-Form (Anzahl × Wp) nicht; der Kommentar behauptete bis
+            # F-32 „den SoT-Helper" und nannte den engeren.
+            leistung_kwp = get_erzeuger_kwp(inv) if inv else 0.0
             neigung = float(inv.neigung_grad) if inv and inv.neigung_grad is not None else 0.0
             ausrichtung_str = (inv.ausrichtung if inv and inv.ausrichtung else "Süd")
             jahres_kwh = sum(float(m.get("e_m", 0) or 0) for m in monatsdaten)

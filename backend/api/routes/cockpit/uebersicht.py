@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel
 
 from backend.core.exceptions import not_found
+from backend.core.berechnungen.erzeuger_traeger import erzeuger_traeger
 from backend.core.investition_kennwerte import get_erzeuger_kwp, get_speicher_kapazitaet_kwh
 from backend.api.deps import get_db
 from backend.models.anlage import Anlage
@@ -28,6 +29,7 @@ from backend.core.berechnungen import (
     eauto_effizienz_100km,
     erzeugung_hinter_zaehler_kwh,
     monatsgewichte_aus_pvgis,
+    speicher_wirkungsgrad,
     vollzyklen as berechne_vollzyklen,
 )
 from backend.core.berechnungen import relevante_kosten_aus_investitionen
@@ -75,6 +77,10 @@ class CockpitUebersichtResponse(BaseModel):
     speicher_ladung_kwh: float
     speicher_entladung_kwh: float
     speicher_effizienz_prozent: Optional[float]
+    # Herkunft der η-Aussage (`fenster_lang` · `nicht-ermittelbar` · …). Der Wert
+    # allein sagt nicht, ob „kein Wert" heißt „kein Speicher" oder „die Mengen
+    # widersprechen sich" — genau dafür trägt der SoT die Quelle mit.
+    speicher_effizienz_quelle: Optional[str] = None
     speicher_vollzyklen: Optional[float]
     speicher_kapazitaet_kwh: float
     hat_speicher: bool
@@ -355,16 +361,20 @@ async def get_cockpit_uebersicht(
     # Anlagenleistung aus Investitionen (nur aktive — stillgelegte nicht mitzählen)
     today = date.today()
     anlagenleistung_kwp = 0.0
-    for inv in investitionen:
-        if not inv.ist_aktiv_an(today):
-            continue
-        # kWp über den SoT-Dispatcher (ADR-002/P3-a): er kennt für PV-Module
-        # Spalte → `parameter` (#229) und für BKW zusätzlich
-        # `leistung_wp × anzahl`. Die frühere Handschrift hier las bei
-        # `leistung_wp: null` `None * anzahl` und warf einen TypeError — ein
-        # 500er in der Cockpit-Übersicht (N-H).
-        if inv.typ in ("pv-module", "balkonkraftwerk"):
-            anlagenleistung_kwp += get_erzeuger_kwp(inv)
+    # kWp über den SoT-Dispatcher (ADR-002/P3-a): er kennt für PV-Module
+    # Spalte → `parameter` (#229) und für BKW zusätzlich `leistung_wp × anzahl`.
+    # Die frühere Handschrift hier las bei `leistung_wp: null` `None * anzahl`
+    # und warf einen TypeError — ein 500er in der Cockpit-Übersicht (N-H).
+    #
+    # N-266: `erzeuger_traeger` NACH dem `ist_aktiv_an`-Filter — ein
+    # Balkonkraftwerk mit Modul-Kindern hat seine kWp abgetreten und wies die
+    # Anlagenleistung sonst doppelt aus.
+    heute_pv = [
+        inv for inv in investitionen
+        if inv.typ in ("pv-module", "balkonkraftwerk") and inv.ist_aktiv_an(today)
+    ]
+    for inv in erzeuger_traeger(heute_pv):
+        anlagenleistung_kwp += get_erzeuger_kwp(inv)
 
     if anlagenleistung_kwp == 0 and anlage.leistung_kwp:
         anlagenleistung_kwp = anlage.leistung_kwp
@@ -414,7 +424,15 @@ async def get_cockpit_uebersicht(
     speicher_kapazitaet = sum(
         get_speicher_kapazitaet_kwh(i) or 0 for i in speicher_invs
     )
-    speicher_effizienz = (speicher_entladung / speicher_ladung * 100) if speicher_ladung > 0 else None
+    # η über den Layer-SoT statt als eigene Division (N-252). Der Zeitraum ist
+    # hier ein ganzes Jahr — lang genug, dass sich der SoC-Übertrag der
+    # Monatsgrenzen ausmittelt, deshalb das Etikett `fenster_lang`. Die
+    # Obergrenze gilt trotzdem: über 100 % ist keine Aussage über den Speicher,
+    # sondern über die Pflege der beiden Mengen (s. Docstring des SoT).
+    _eta_speicher = speicher_wirkungsgrad(
+        speicher_ladung, speicher_entladung, None, langes_fenster_quelle="fenster_lang"
+    )
+    speicher_effizienz = _eta_speicher.prozent
     # Vollzyklen = ENTLADUNG ÷ Kapazität über den Layer-SoT. Hier stand bis zum
     # 04.08. die LADUNG — die eine Route, die der Kanon-Sweep vom 2026-07-28
     # (Entscheid Gernot, Rainer-PN 89768) übersehen hat. Die beiden Zahlen
@@ -738,7 +756,10 @@ async def get_cockpit_uebersicht(
         anlagenleistung_kwp=round(anlagenleistung_kwp, 2),
         speicher_ladung_kwh=round(speicher_ladung, 1),
         speicher_entladung_kwh=round(speicher_entladung, 1),
-        speicher_effizienz_prozent=round(speicher_effizienz, 1) if speicher_effizienz else None,
+        # `is not None`, nicht `if speicher_effizienz`: ein η von exakt 0,0 ist
+        # eine Messung (geladen, nichts entnommen), keine fehlende Angabe.
+        speicher_effizienz_prozent=round(speicher_effizienz, 1) if speicher_effizienz is not None else None,
+        speicher_effizienz_quelle=_eta_speicher.quelle,
         speicher_vollzyklen=round(speicher_vollzyklen, 1) if speicher_vollzyklen else None,
         speicher_kapazitaet_kwh=round(speicher_kapazitaet, 1),
         hat_speicher=hat_speicher,

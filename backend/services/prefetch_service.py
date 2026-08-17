@@ -20,6 +20,7 @@ from sqlalchemy import select
 from backend.core.config import settings
 from backend.core.database import get_session
 from backend.models.anlage import Anlage
+from backend.core.berechnungen.erzeuger_traeger import erzeuger_traeger
 from backend.models.investition import Investition
 from backend.utils.investition_filter import aktiv_jetzt
 from backend.services.prognose_auswahl import lade_aktive_prognose
@@ -88,18 +89,28 @@ async def _prefetch_for_anlage(anlage: Anlage, db) -> dict:
             aktiv_jetzt(),
         )
     )
-    alle_pv = inv_result.scalars().all()
+    # N-266: `erzeuger_traeger` — ein Balkonkraftwerk mit Modul-Kindern hat kWp
+    # UND Ausrichtung abgetreten; es brächte hier eine zusätzliche String-Zeile
+    # mit seiner alten Einzel-Ausrichtung mit.
+    alle_pv = erzeuger_traeger(inv_result.scalars().all())
 
     if not alle_pv:
         return {"status": "keine_pv"}
 
     # String-Konfigurationen erstellen
+    # F-32: `get_erzeuger_kwp` (Typ-Dispatcher, ADR-002/P3-a) statt `get_pv_kwp`.
+    # Bei einem im Einrichtungsassistenten angelegten Balkonkraftwerk ist die
+    # Spalte `leistung_kwp` NULL (Leistung nur im `parameter`) ⇒ `get_pv_kwp`
+    # gab 0,0, `strings` blieb leer und der Prefetch brach mit
+    # `keine_strings` ab. Folge: `_speichere_prognose` lief nie, und
+    # Genauigkeits-Tracking wie Lernfaktor bekamen nur an Tagen einen
+    # Datenpunkt, an denen jemand *Cockpit → Live* öffnete.
     from backend.services.pv_orientation import (
-        get_pv_kwp, get_pv_neigung, get_pv_azimut,
+        get_erzeuger_kwp, get_pv_neigung, get_pv_azimut,
     )
     strings = []
     for pv in alle_pv:
-        kwp = get_pv_kwp(pv)
+        kwp = get_erzeuger_kwp(pv)
         if kwp <= 0:
             continue
         strings.append(PVStringConfig(

@@ -50,7 +50,7 @@ Feld-Attribute:
                   ([[feedback_reparatur_statt_loesch_features]]).
 """
 
-from typing import Optional
+from typing import Final, Optional
 
 from backend.core.investition_parameter import ist_luft_luft_waermepumpe
 
@@ -317,13 +317,30 @@ INVESTITION_FELDER: dict = {
         },
     ],
 
+    # N-266: Hängen `pv-module` unter dem Balkonkraftwerk (seit 2026-08-17
+    # möglich, damit zwei Module über Eck zwei Ausrichtungen tragen können),
+    # dann wird `pv_erzeugung_kwh` zum **Aggregat seiner Kinder** — genau die
+    # Rolle, die `Monatsdaten.pv_erzeugung_kwh` für die ganze Anlage hat: die
+    # gemessenen Modulwerte gewinnen, das Aggregat füllt nur deren Lücken
+    # (ADR-002/**P7**, aufgelöst in `services/pv_monatswerte.py`).
+    #
+    # ⛔ **Bewusst NICHT das `nur_manuell`-Muster des BKW-Akkus zwei Felder
+    # weiter unten**, obwohl der Auftrag es als Blaupause vorsah. Beim Akku ist
+    # der Kind-Weg strikt reicher (Live-Leistung, SoC, Energiefluss, Zählerpfad)
+    # — das eigene Feld kennt nur einen Monatswert, es zu sperren verliert
+    # nichts. Hier ist es umgekehrt: der Wechselrichter des BKW ist oft der
+    # **einzige** Zähler, den es gibt, und die Module darunter haben gar keinen
+    # eigenen Sensor. Das Feld zu sperren hätte dem Melder-Fall (ein Set, zwei
+    # Ausrichtungen, ein Sensor) jede Erfassung genommen. Also bleibt es
+    # vollständig zuordenbar; die Doppelzählung verhindert die **Leserichtung**,
+    # nicht ein Erfassungsverbot.
     "balkonkraftwerk": [
         {
             "feld": "pv_erzeugung_kwh", "label": "Erzeugung", "einheit": "kWh",
             "csv_suffix": "Erzeugung_kWh",
             "csv_suffix_alt": "kWh",  # Rückwärtskompatibilität
             "aggregiert_in": "pv_erzeugung_sum",
-            "hinweis": "Kumulativer kWh-Zähler (oder Tagessensor) der BKW-Erzeugung vom Wechselrichter. Immer ≥ 0.",
+            "hinweis": "Kumulativer kWh-Zähler (oder Tagessensor) der BKW-Erzeugung vom Wechselrichter. Immer ≥ 0. Sind dem Balkonkraftwerk PV-Module zugeordnet, gilt dieser Wert als deren Gesamtsumme: eigene Modulwerte haben Vorrang, dieser hier füllt die Lücken.",
         },
         {
             "feld": "eigenverbrauch_kwh", "label": "Eigenverbrauch", "einheit": "kWh",
@@ -820,9 +837,9 @@ def get_felder_fuer_investition(
     alle_felder = INVESTITION_FELDER.get(typ, [])
 
     if isinstance(alle_felder, dict):
-        # Sonstiges — Kategorie-abhängig
-        kategorie = params.get("kategorie", "erzeuger")
-        return get_felder_fuer_sonstiges(kategorie)
+        # Sonstiges — Kategorie-abhängig. Ohne gepflegte Kategorie wird hier
+        # NICHT geraten (N-244); die Entscheidung liegt im SoT darunter.
+        return get_felder_fuer_sonstiges(params.get("kategorie"))
 
     # Anlage-Kontext vorberechnen (einmalig, nicht pro Feld)
     anlage_typen: set[str] = set()
@@ -907,10 +924,10 @@ def get_alle_felder_fuer_investition(typ: str, parameter: Optional[dict] = None)
     alle_felder = INVESTITION_FELDER.get(typ, [])
 
     if isinstance(alle_felder, dict):
-        # Sonstiges — Kategorie-abhängig
+        # Sonstiges — Kategorie-abhängig. Ohne gepflegte Kategorie wird hier
+        # NICHT geraten (N-244); die Entscheidung liegt im SoT darunter.
         params = parameter or {}
-        kategorie = params.get("kategorie", "erzeuger")
-        return list(get_felder_fuer_sonstiges(kategorie))
+        return list(get_felder_fuer_sonstiges(params.get("kategorie")))
 
     # Kopie je Feld: die Dicts sind Modul-Konstanten, ein direktes Setzen des
     # Labels würde die Definition für alle folgenden Aufrufe umschreiben.
@@ -962,18 +979,98 @@ ALLE_MONATSDATEN_FELDNAMEN: set[str] = {
 }
 
 
-def get_felder_fuer_sonstiges(kategorie: str) -> list[dict]:
+# Die Richtung, als die ein *Sonstiges*-Gerät **ohne gepflegte** `kategorie`
+# gelesen wird — die eine benannte Stelle für eine Annahme, die am 17.08.2026
+# an sechs Stellen als String-Literal `"verbraucher"` und an drei weiteren als
+# `"erzeuger"` stand (N-244).
+#
+# **Warum ausgerechnet Verbraucher?** Weil beide Tages-Schreibpfade den Wert
+# unter dieser Annahme überhaupt erst erzeugen (`live_sensor_config` ·
+# `snapshot/komponenten_beitraege`) — wer ihn danach anders liest, liest an
+# seiner eigenen Schreibweise vorbei. Begründung im Volltext:
+# `berechnungen.energie.sonstiges_kwh_je_richtung`.
+#
+# ⚠ **Kein Ersatz für `energie.sonstiges_richtung`.** Diese Konstante gilt, wenn
+# **kein Wert** vorliegt (Feldauswahl, Schlüsselbildung, Serienaufbau). Liegt
+# einer vor, entscheidet er — das ist eine andere Frage und hat ihre eigene
+# Funktion (N-250).
+SONSTIGES_KATEGORIE_UNGEPFLEGT: Final[str] = "verbraucher"
+
+
+def ist_gepflegte_sonstiges_kategorie(kategorie: Optional[str]) -> bool:
+    """Ist ``kategorie`` eine **gepflegte** Kategorie eines *Sonstiges*-Geräts?
+
+    Abgeleitet aus der Registry, damit eine vierte Kategorie nicht an einer
+    handgeschriebenen Aufzählung vorbeiläuft. Gegenstück zu
+    ``berechnungen.energie.sonstiges_richtung``: die dort getroffene
+    Entscheidung kennt nur die zwei **Richtungen**, diese Frage kennt alle
+    Kategorien — auch ``speicher``, der keine Richtung hat.
+    """
+    return kategorie in INVESTITION_FELDER.get("sonstiges", {})
+
+
+def _sonstiges_felder_ungepflegt() -> list[dict]:
+    """Alle Richtungen eines *Sonstiges*-Geräts, dedupliziert — **abgeleitet**.
+
+    Verbraucher-Felder zuerst: das ist die Richtung, die jeder wertführende Pfad
+    ohne gepflegte Kategorie annimmt (`SONSTIGES_KATEGORIE_UNGEPFLEGT`), also
+    die wahrscheinlichere Eingabe. `speicher` bringt keinen eigenen Feldnamen
+    mit und steht deshalb nicht extra in der Liste — die Ableitung nimmt ihn
+    trotzdem mit, damit eine künftige Erweiterung der Kategorie nicht still
+    danebenfällt.
+
+    **Abgeleitet statt geschrieben, aus demselben Grund wie N-259:** eine
+    handgepflegte vierte Feldliste wäre wieder die Wette darauf, dass jemand
+    sie beim nächsten neuen Feld mitzieht.
+    """
+    sonstiges = INVESTITION_FELDER.get("sonstiges", {})
+    reihenfolge = [SONSTIGES_KATEGORIE_UNGEPFLEGT] + [
+        k for k in sonstiges if k != SONSTIGES_KATEGORIE_UNGEPFLEGT
+    ]
+    gesehen: set[str] = set()
+    out: list[dict] = []
+    for kat in reihenfolge:
+        for feld in sonstiges.get(kat, []):
+            if feld["feld"] in gesehen:
+                continue
+            gesehen.add(feld["feld"])
+            out.append(feld)
+    return out
+
+
+def get_felder_fuer_sonstiges(kategorie: Optional[str]) -> list[dict]:
     """
     Gibt Felder für eine Sonstiges-Investition nach Kategorie zurück.
 
     Args:
-        kategorie: "erzeuger", "verbraucher" oder "speicher"
+        kategorie: "erzeuger", "verbraucher", "speicher" — oder ``None``/leer/
+                   unbekannt für ein Gerät **ohne gepflegte Kategorie**.
 
     Returns:
-        Liste von Feld-Dicts
+        Liste von Feld-Dicts. Ohne gepflegte Kategorie **alle Richtungen**
+        (`SONSTIGES_FELDER_UNGEPFLEGT`), nicht eine geratene.
+
+    **Warum hier nicht mehr geraten wird (N-244).** Bis 17.08.2026 stand hier
+    ``sonstiges.get(kategorie, sonstiges.get("erzeuger", []))`` — ein Gerät ohne
+    gepflegte Kategorie bekam also **Erzeuger**-Felder angeboten
+    (``erzeugung_kwh`` · ``eigenverbrauch_kwh`` · ``einspeisung_kwh`` ·
+    ``einspeise_erloes_euro``), während **jeder** wertführende Pfad denselben
+    Zustand als *Verbraucher* liest und ``verbrauch_sonstig_kwh`` ·
+    ``bezug_pv_kwh`` · ``bezug_netz_kwh`` erwartet (`sonstiges_feld_reihenfolge`
+    28 Zeilen weiter unten, die beiden Tages-Schreibpfade,
+    `berechnungen.energie.sonstiges_kwh_je_richtung`). Die **Schnittmenge beider
+    Feldlisten ist leer** — die Zuordnungsfläche bot damit ausschließlich Felder
+    an, die der Snapshot-Pfad für dieses Gerät nie sucht. Das ist die
+    **N-259-Klasse**: nicht „Wert fehlt", sondern „Feld wird nirgends gefunden".
     """
-    sonstiges = INVESTITION_FELDER.get("sonstiges", {})
-    return sonstiges.get(kategorie, sonstiges.get("erzeuger", []))
+    if ist_gepflegte_sonstiges_kategorie(kategorie):
+        return INVESTITION_FELDER["sonstiges"][kategorie]
+    return SONSTIGES_FELDER_UNGEPFLEGT
+
+
+# Modul-Konstante statt Aufruf je Leser: die Ableitung ist rein und die
+# Feld-Dicts sind ohnehin geteilte Modul-Objekte (wie in `INVESTITION_FELDER`).
+SONSTIGES_FELDER_UNGEPFLEGT: Final[list[dict]] = _sonstiges_felder_ungepflegt()
 
 
 def resolve_legacy_key(key: str) -> str:
@@ -1391,13 +1488,49 @@ def get_emob_pv_netz_kwh(data: dict, total_kwh: float | None = None) -> tuple[fl
     return (pv, max(0.0, total_kwh - pv))
 
 
+# Die Verbrauchs-Felder eines *Sonstiges*-Geräts, in Präzedenz-Reihenfolge:
+# `verbrauch_sonstig_kwh` ist der **kanonische** Registry-Name — so heißt der
+# `sensor_mapping`-Key, und unter diesem Namen publiziert eedc auch sein
+# MQTT-Topic. `verbrauch_kwh` ist der Legacy-Zwilling und bleibt nur lesbar
+# (Altbestand im Mapping); er darf nie zusätzlich zählen, beide gehören
+# derselben Either-Or-Gruppe an.
+SONSTIGES_VERBRAUCH_FELDER: tuple[str, ...] = ("verbrauch_sonstig_kwh", "verbrauch_kwh")
+
+
+def sonstiges_feld_reihenfolge(kategorie: str | None) -> tuple[str, ...]:
+    """Energie-Felder eines *Sonstiges*-Geräts in **Präzedenz-Reihenfolge**.
+
+    Ein solches Gerät hat entweder eine Erzeugung oder einen Verbrauch, nie
+    beides — die gepflegte ``kategorie`` sagt, welches Feld führt. Wer keine
+    gepflegt hat, wird als Verbraucher gelesen (dieselbe Lesart wie in den
+    Schreibpfaden, siehe ``berechnungen.energie.sonstiges_richtung``).
+
+    **Warum das eine Funktion ist (N-259).** Dieselbe Reihenfolge stand am
+    16.08.2026 an **drei** Stellen handgeschrieben — und ein einziger
+    abweichender Name hat gereicht, damit eedc ein MQTT-Topic **selbst
+    publizierte und beim Einlesen wieder verwarf**: Der Snapshot suchte
+    ``verbrauch_kwh``, die Zuordnungsfläche schrieb ``verbrauch_sonstig_kwh``.
+    Der Monat kam trotzdem an (dieser Getter liest beide), der Tageswert nicht —
+    es sah nach „Wert fehlt" aus statt nach „Feld wird nirgends gefunden".
+    Eine vierte Kopie wäre dieselbe Wette noch einmal.
+    """
+    if kategorie == "erzeuger":
+        return ("erzeugung_kwh", *SONSTIGES_VERBRAUCH_FELDER)
+    return (*SONSTIGES_VERBRAUCH_FELDER, "erzeugung_kwh")
+
+
 def get_sonstiges_verbrauch_kwh(data: dict) -> float:
     """Sonstiges-Verbraucher-Energie. Liest `verbrauch_sonstig_kwh` (kanonisch),
-    Legacy-Fallback `verbrauch_kwh`.
+    Legacy-Fallback `verbrauch_kwh` — Reihenfolge aus
+    `SONSTIGES_VERBRAUCH_FELDER`, damit sie nicht neben dem SoT driftet.
     """
     if not data:
         return 0.0
-    return float(data.get("verbrauch_sonstig_kwh") or data.get("verbrauch_kwh") or 0)
+    for feld in SONSTIGES_VERBRAUCH_FELDER:
+        wert = data.get(feld)
+        if wert:
+            return float(wert)
+    return 0.0
 
 
 def get_wp_strom_kwh(data: dict, params: dict | None = None) -> float:

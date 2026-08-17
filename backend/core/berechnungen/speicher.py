@@ -22,6 +22,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
+# Kein Zirkel: `speicher_wirkungsgrad` importiert nichts aus diesem Modul.
+from backend.core.berechnungen.speicher_wirkungsgrad import speicher_wirkungsgrad
+
 # Fensterbreite, ab der entladung/ladung als belastbare Round-Trip-Effizienz
 # gilt (darunter dominiert der SoC-Übertrag).
 EFFIZIENZ_FENSTER_MONATE: int = 12
@@ -40,13 +43,23 @@ class MonatsEffizienz:
 def speicher_effizienz_prozent(
     ladung_kwh: float, entladung_kwh: float
 ) -> Optional[float]:
-    """Round-Trip-Effizienz in % über ein Fenster: entladung / ladung × 100.
+    """Round-Trip-Effizienz in % — **Diagnose-Helper, keine Anzeige-Größe.**
 
-    Nur belastbar über ein Fenster mit ΔSoC ≈ 0 (langes Fenster). Über eine
-    einzelne Monatsgrenze ist der Wert durch den SoC-Übertrag verzerrt und
-    kann 100 % überschreiten — dann KEINE Pro-Monats-Effizienz exponieren,
-    sondern `gleitende_effizienz()` nutzen. Die Funktion klemmt bewusst NICHT
-    (Diagnose statt stillem Cap).
+    Die Funktion klemmt bewusst NICHT: Sie existiert, damit ein Überschuss
+    *sichtbar* wird, statt auf 100 % gerundet zu verschwinden.
+
+    ⚠ **Wer einen Wert für eine Anzeige, einen Sensor oder eine Rechnung
+    braucht, nimmt `speicher_wirkungsgrad` aus
+    `core/berechnungen/speicher_wirkungsgrad.py`** — dort gilt die Obergrenze,
+    und der Rückgabewert trägt seine Herkunft mit. Diese Trennung ist seit
+    N-252/N-264 verbindlich und gewächtert
+    (`test_n252_speicher_wirkungsgrad_deckung.py`).
+
+    **Einziger Verwender ist deshalb der Daten-Checker** (`daten_checker/
+    stammdaten.py`), der den Überschuss meldet und ihn dafür ungekappt
+    braucht. Zwischen N-252 und N-264 hatte die Funktion **gar keinen**
+    Verwender mehr und stand als zweite, wartende Definition im Baum — genau
+    die Ausgangslage, aus der N-252 entstanden war.
 
     Gibt `None` zurück, wenn keine Ladung vorliegt.
     """
@@ -237,6 +250,14 @@ def gleitende_effizienz(
     (inklusive dem Monat selbst); bei kürzerer Historie kumulativ ab Start.
     So mittelt sich der SoC-Übertrag aus — die Reihe zappelt nicht über
     100 %, wie es eine naive Pro-Monats-Effizienz täte.
+
+    ⚠ **„Mittelt sich aus" ist nicht „kann nicht über 100 %"** (N-252): Sind
+    die Mengen selbst falsch gepflegt (Klassiker #281 — „Ladung" enthält nur
+    die PV-Ladung, die Netzladung steht als zweiter Posten daneben), dann
+    liegt auch das 12-Monats-Fenster darüber. Deshalb läuft der Wert seit dem
+    17.08.2026 über den Layer-SoT ``speicher_wirkungsgrad``: Er kappt und
+    liefert ``None``, statt eine unmögliche Zahl in die Verlaufskurve zu
+    schreiben — die sonst neben einer bereits geheilten Kachel stünde.
     """
     ergebnis: list[MonatsEffizienz] = []
     for i, (jahr, monat, _, _) in enumerate(monats_reihe):
@@ -248,9 +269,10 @@ def gleitende_effizienz(
             MonatsEffizienz(
                 jahr=jahr,
                 monat=monat,
-                effizienz_prozent=speicher_effizienz_prozent(
-                    sum_ladung, sum_entladung
-                ),
+                effizienz_prozent=speicher_wirkungsgrad(
+                    sum_ladung, sum_entladung, None,
+                    langes_fenster_quelle="fenster_lang",
+                ).prozent,
                 fenster_monate=len(fenster_rows),
             )
         )

@@ -13,11 +13,13 @@
  */
 
 import { useState, useCallback, useEffect, useRef } from 'react'
+import { ApiError } from '../api/client'
 import { anlagenApi } from '../api/anlagen'
 import { strompreiseApi } from '../api/strompreise'
-import { investitionenApi, type InvestitionCreate } from '../api/investitionen'
+import { investitionenApi, type InvestitionCreate, type InvestitionUpdate } from '../api/investitionen'
 import { pvgisApi, type GespeichertePrognose } from '../api/pvgis'
 import { TYP_LABELS } from '../lib/constants'
+import { monatsersterVon } from '../lib/datum'
 import type { Anlage, Strompreis, Investition, InvestitionTyp } from '../types'
 
 // Wizard-Schritte (v1.0: ohne HA)
@@ -146,7 +148,7 @@ interface UseSetupWizardReturn {
   useDefaultStrompreise: () => Promise<void>
 
   // Investitionen bearbeiten
-  updateInvestition: (id: number, data: Partial<Investition>) => Promise<void>
+  updateInvestition: (id: number, data: InvestitionUpdate) => Promise<void>
   deleteInvestition: (id: number) => Promise<void>
   addInvestition: (typ: InvestitionTyp) => Promise<Investition>
   createDefaultPVSystem: () => Promise<void>
@@ -195,7 +197,7 @@ export function useSetupWizard(): UseSetupWizardReturn {
   const [pvgisError, setPvgisError] = useState<string | null>(null)
 
   // Pending updates für Debouncing (verhindert Race Conditions)
-  const pendingUpdatesRef = useRef<Map<number, { data: Partial<Investition>; timer: ReturnType<typeof setTimeout> }>>(new Map())
+  const pendingUpdatesRef = useRef<Map<number, { data: InvestitionUpdate; timer: ReturnType<typeof setTimeout> }>>(new Map())
 
   // State in LocalStorage speichern
   useEffect(() => {
@@ -206,10 +208,38 @@ export function useSetupWizard(): UseSetupWizardReturn {
   }, [wizardState, step])
 
   // Anlage laden wenn ID vorhanden
+  //
+  // ⚠ N-265: Der Fehler wurde hier bis 17.08.2026 mit `.catch(() => {})`
+  // verschluckt. Genau an dieser Stelle ERFÄHRT eedc, dass die gespeicherte
+  // Anlage nicht mehr existiert — und warf die Auskunft weg. Die tote ID blieb
+  // im Wizard-State, ist als Zahl `truthy` und kam damit durch jeden
+  // `if (!wizardState.anlageId)`-Wächter darunter; sichtbar wurde sie erst beim
+  // Speichern, als roher Backend-404 „Anlage nicht gefunden".
   useEffect(() => {
-    if (wizardState.anlageId && !anlage) {
-      anlagenApi.get(wizardState.anlageId).then(setAnlage).catch(() => {})
-    }
+    if (!wizardState.anlageId || anlage) return
+
+    let abgebrochen = false
+    anlagenApi.get(wizardState.anlageId)
+      .then(geladen => { if (!abgebrochen) setAnlage(geladen) })
+      .catch((e: unknown) => {
+        if (abgebrochen) return
+        // NUR der 404 ist eine Aussage über die Anlage. Ein Netz- oder
+        // Neustart-Fehler darf den Wizard-Fortschritt nicht wegwerfen.
+        if (!(e instanceof ApiError) || e.status !== 404) return
+        // Mit der Anlage sind Tarif und Investitionen kaskadiert mitgelöscht
+        // (`models/anlage.py:150-155`) — die gemerkten IDs zeigen ebenfalls ins
+        // Leere. Zurück auf den Schritt, der eine Anlage anlegt: jeder spätere
+        // kann ohne sie nur scheitern.
+        setWizardState(prev => ({
+          ...prev,
+          anlageId: null,
+          strompreisId: null,
+          createdInvestitionen: [],
+        }))
+        setStep('anlage')
+      })
+
+    return () => { abgebrochen = true }
   }, [wizardState.anlageId, anlage])
 
   // Investitionen laden
@@ -346,19 +376,30 @@ export function useSetupWizard(): UseSetupWizardReturn {
       netzbezug_arbeitspreis_cent_kwh: DEFAULT_STROMPREISE.netzbezug_arbeitspreis_cent_kwh,
       einspeiseverguetung_cent_kwh: DEFAULT_STROMPREISE.einspeiseverguetung_cent_kwh,
       grundpreis_euro_monat: DEFAULT_STROMPREISE.grundpreis_euro_monat,
-      gueltig_ab: anlage.installationsdatum || new Date().toISOString().split('T')[0],
+      // N-257: siehe `monatsersterVon` — der Inbetriebnahme-Tag ist selten der
+      // Monatserste, und der Stichtag der Monatsrechnung ist es immer.
+      gueltig_ab: monatsersterVon(anlage.installationsdatum) || new Date().toISOString().split('T')[0],
       tarifname: 'Standard-Tarif',
     })
   }, [wizardState.anlageId, anlage, createStrompreis])
 
   // Investition aktualisieren mit Debouncing
-  const updateInvestition = useCallback(async (id: number, data: Partial<Investition>) => {
+  // F-32: die Nutzlast ist `InvestitionUpdate`, nicht `Partial<Investition>` —
+  // sie geht unverändert an `investitionenApi.update`, und dort heißt `null`
+  // „Feld leeren" (ohne das behält `exclude_unset` den Altwert). Der
+  // optimistische State bleibt der Entity-Typ; `null` wird beim Einsetzen zu
+  // `undefined` normalisiert, damit „geleert" lokal wie „nicht gepflegt"
+  // aussieht — genau das liefert der Server beim nächsten Laden.
+  const updateInvestition = useCallback(async (id: number, data: InvestitionUpdate) => {
     // 1. Sofort lokalen State optimistisch aktualisieren (für UI-Reaktivität)
     setInvestitionen(prev => prev.map(inv => {
       if (inv.id !== id) return inv
+      const lokal = Object.fromEntries(
+        Object.entries(data).map(([k, v]) => [k, v === null ? undefined : v]),
+      ) as Partial<Investition>
       return {
         ...inv,
-        ...data,
+        ...lokal,
         // Parameter speziell mergen
         parameter: data.parameter
           ? { ...(inv.parameter || {}), ...data.parameter }
