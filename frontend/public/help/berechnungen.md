@@ -252,6 +252,26 @@ Die Felder derselben Antwort:
 >
 > **Ein Balkonkraftwerk ohne zugeordnete Module rechnet unverändert wie bisher.**
 > SoT: `core/berechnungen/erzeuger_traeger.py`. Melder: Discussion #366, Forum T89667 #172.
+>
+> #### Dieselbe Abtretung gilt für die Wirtschaftlichkeit (ab v4.0.19, F-33/#381)
+>
+> Die ROI-Sicht fasst einen **Wechselrichter mit seinen Modulen und seinem DC-Speicher** seit jeher
+> zu **einer** Systemzeile zusammen: die drei Positionen teilen sich eine Energiemenge, und ihre
+> Ersparnisse sind deshalb **nicht addierbar**. Für ein Balkonkraftwerk als Träger galt das nicht —
+> dort bekam jede Ebene ihre eigene Zeile, und die Gesamtzeile addierte sie. An einer gemeldeten
+> Anlage (BKW + Modul-Kind + Speicher-Kind) standen so **1.079 €/Jahr** statt der gemessenen
+> **606 €**, und die Gesamt-Amortisation bei **1,9 statt 3,3 Jahren**. Das Modul-Kind trug zusätzlich
+> die Aufforderung „(ohne WR) — bitte zuordnen", obwohl es zugeordnet **war**.
+>
+> Seither ist **Trägergerät** die Rolle, nicht der Typ: ein Balkonkraftwerk mit Kindern ist
+> Systemkopf wie ein Wechselrichter. Es tritt seine Ersparnis genauso an die Module ab, wie es
+> oben seine Erzeugung abtritt — hat es **keine** Modul-Kinder (nur einen Speicher), trägt es sie
+> weiterhin selbst und steuert sie der Systemzeile bei. Die Zeile trägt Name und Typ ihres Kopfes,
+> damit ein Balkonkraftwerk nicht als „PV-System" mit fremdem Namen erscheint.
+>
+> ⚠ **Die pauschale BKW-Schätzung ist davon unberührt und bleibt eine Schätzung** (0,9 kWh/Wp,
+> 80 % Eigenverbrauch). Sie greift nur noch für ein Balkonkraftwerk ohne Modul-Kinder — dort, wo
+> keine gemessenen Modulwerte existieren. Melder: Issue #381 (azywietz-web).
 
 **Auch die PDF-Berichte rechnen so.** Der Jahresbericht leitete Eigenverbrauch, Autarkie und
 EV-Quote bis v4.0.0 allein aus der PV-Erzeugung ab, während der Einspeise-Zähler daneben die Summe
@@ -1447,6 +1467,33 @@ Speicher-Auslastung zählen ihre Tage dort, statt jede für sich). Die Jahres-Si
 Monatswerte und erbt die Kürzung ohne eigene Rechnung; die Oberfläche weist das Fenster aus
 („anteilig · 4 von 31 Tagen").
 
+**Der Anschaffungsmonat zählt ebenso anteilig (ab v4.0.19, F-34):**
+Dieselbe Schieflage gibt es am **anderen** Ende — nur kommt die Kante dort nicht aus dem Kalender,
+sondern aus den Stammdaten. Eine Anlage, die am 19.03. ans Netz ging, bekam den **vollen**
+PVGIS-März gegenübergestellt: 175,1 kWh SOLL gegen 60,8 gemessene, Performance Ratio **0,347** —
+während dieselbe Anlage in jedem vollen Monat über 1,0 lag (April 1,039 · Juli 1,139). Nicht die
+Anlage war schwach, der Vergleich war schief; das Jahres-PR fiel dadurch von ~1,08 auf 0,973.
+
+```
+Tage      = Tage des Monats zwischen Anschaffungs- und Stilllegungsdatum (beide inklusive)
+SOLL_kWh  = PVGIS-Monatswert × Tage ÷ Tage im Monat
+```
+
+Gekürzt wird wieder der **Nenner**, aus demselben Grund. Der Stilllegungsmonat ist die
+Spiegelkante und wird genauso behandelt.
+
+> ⚠ **Zwei Datums-Ebenen, zwei Formeln — bewusst nicht zusammengelegt.**
+> `monatsfenster` beantwortet *„wie viel des Monats ist am Stichtag vergangen"* (Kalender),
+> `monatsfenster_investition` *„wie lange gab es dieses Gerät in diesem Monat"* (Stammdaten). Wer
+> beide braucht, ruft beide und nimmt das kleinere Fenster. Das ist dieselbe Trennung, die
+> [ARCHITEKTUR §4](ARCHITEKTUR.md) für `anschaffungsdatum` gegen `Anlage.installationsdatum`
+> zieht — ihre Vertauschung hat schon zweimal zu Abstürzen geführt.
+
+Die **saisonale** Zeile der Laufzeit-Sicht kürzt bewusst **nicht**: sie stellt einen IST-Durchschnitt
+über mehrere Jahre einem Klimamittel gegenüber und fragt „wie fällt der Mai typischerweise aus".
+Ein einzelner angebrochener Anschaffungsmonat verzerrt dort bereits den IST-Durchschnitt; beide
+Seiten zu kürzen hieße, ihn doppelt zu bestrafen. Melder: Discussion #366 (azywietz-web).
+
 **SOLL im Monatsbericht:** derselbe Grundsatz — der Monatswert kommt aus den Monatszeilen **genau der
 aktiven** Prognose. Vor v4.0.1 stand dort eine Summe über *alle* aktiven Prognosen; bei einem
 Bestand mit zwei aktiven war der SOLL-PV-Wert verdoppelt, und mit ihm die SOLL/IST-Abweichung und die
@@ -1803,6 +1850,33 @@ Das verwendete Wettermodell ist pro Anlage konfigurierbar (`Anlage.wettermodell`
 Bei einem spezifischen Modell versucht eedc zuerst dieses Modell. Schlägt der Abruf fehl oder liefert es keine Daten für den Standort, fällt es auf `best_match` zurück (Kaskade). Die verwendete Quelle pro Tag wird im Response als `datenquelle`-Kürzel (MS/D2/EU/EC/BM) mitgeliefert.
 
 **Geltungsbereich (seit v4.0.2, A30):** Die Modellwahl wirkt auf **alle** Prognose-Pfade, weil der Prognose-Kanon (`services/prognose_kanon.py`) `Anlage.wetter_modell` an `get_solar_prognose` durchreicht — also auch auf die eedc-korrigierte Tagesprognose, die Stundenprofile, die Live-/Persistenz-Werte und den HA-/MQTT-Export (`services/ha_export_prognose.py`). Bis v4.0.1 rechnete dieser Pfad unabhängig von der Einstellung mit `best_match`, während Live-Wetter, 14-Tage-Wettertabelle und die OpenMeteo-Spalte von `/solar-prognose` das Modell bereits nutzten — dieselbe Seite zeigte damit zwei Modelle nebeneinander.
+
+**Am Rand der Modell-Reichweite entscheidet die Abdeckung, nicht die Existenz (seit v4.0.19, F-36).**
+Jedes Modell hat eine Reichweite (Spalte oben, hinterlegt in `WETTER_MODELLE`), und am **letzten
+Tag innerhalb** dieser Reichweite liefert Open-Meteo häufig nur noch die Stunden bis zum Ende des
+Modelllaufs. Gemessen am 2026-08-18: `icon_d2` (2 Tage) endete um **08:00** — die 15 Stunden
+danach, also der gesamte Ertragszeitraum, trugen `null`. Die Kaskade holt für solche Fälle
+ohnehin zusätzlich `best_match`, verwarf diesen Tag aber, sobald das gewählte Modell für ihn
+**irgendetwas** geliefert hatte:
+
+```
+falsch:  Primary gewinnt, wenn der Tag in seiner Antwort VORKOMMT
+richtig: Primary gewinnt, wenn er den Tag mindestens so weit ABDECKT wie best_match
+```
+
+Gezählt werden Stunden mit einem GTI-**Wert**, nicht mit Ertrag — nachts ist GTI `0.0` und damit
+vorhanden; ein vollständiger Tag hat 24. **Bei Gleichstand behält das gewählte Modell den
+Vorrang**, sonst nähme der Fix stillschweigend die Modellwahl weg. Deckt auch `best_match` den
+Tag nur teilweise ab, bleibt er teilweise — die fehlenden Felder bleiben leer, statt zu 0 zu
+werden (ADR-002/**P4**). SoT: `solar_forecast_service._gti_abdeckung_je_tag` und
+`_merge_nach_abdeckung`; der Ein-Abruf-Zweig (`tage ≤ Reichweite`) holt `best_match` in diesem
+Fall nach, sonst wäre die Regel dort blind.
+
+> ⚠ **Diese Lücke war seit dem 2026-07-28 bekannt und wurde zunächst nur umgangen.** Die
+> Snapshot-Begrenzung auf den Modellhorizont (`wetter/cache.snapshot_days`, Auflage E15-a) nimmt
+> der Kaskade die **ganz leeren** Tage jenseits der Reichweite — den **angeschnittenen** Tag am
+> Rand lässt sie stehen, denn der liegt ja im Fenster. Die Begrenzung bleibt richtig (sie spart
+> Abrufe und hält den Cache-Kanon), sie ist nur nicht das, was den Fehler verhindert.
 
 **„Keine Daten" schließt die leere Antwort ein.** Open-Meteo kann für ein Modell mit HTTP 200 antworten und trotzdem für jede Stunde `null` liefern; `_hat_nutzbares_gti` behandelt das wie einen Fehlschlag, damit die `best_match`-Kaskade greift statt einen 0-kWh-Tag zu bauen. **Am 2026-07-28 gemessen betrifft das drei der acht wählbaren Werte:** `ecmwf_ifs04` (HTTP 200, 0 von 72 Stundenwerten gesetzt — das Modell läuft nicht mehr, der Name wird noch akzeptiert) sowie `ecmwf_seamless` und `meteoswiss_seamless` (keine gültigen Modellnamen mehr, HTTP-Fehler). Für diese drei rechnet eedc faktisch mit `best_match`; die Bereinigung der Auswahlliste steht aus.
 

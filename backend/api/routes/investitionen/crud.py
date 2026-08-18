@@ -16,12 +16,16 @@ from datetime import date
 
 from backend.core.exceptions import not_found
 from backend.core.investition_kennwerte import (
+    get_bkw_kwp,
     get_erzeuger_kwp,
     get_pv_kwp,
     get_speicher_kapazitaet_kwh,
     get_speicher_kopplung,
     get_speicher_kopplung_gepflegt,
     get_speicher_nutzbare_kapazitaet_kwh,
+)
+from backend.core.berechnungen.erzeuger_traeger import (
+    traegt_erzeugungsgroessen_selbst,
 )
 from backend.api.deps import get_db
 from backend.models.investition import (
@@ -251,49 +255,88 @@ def _gruppiere_investitionen(
     Reine Zwei-Pass-Zuordnung (keine DB-I/O, keine Berechnung, keine
     Anzeige-Strings) der bereits geladenen Investitions-Liste:
 
-    - **PV-Systeme** — Wechselrichter mit zugeordneten PV-Modulen und
-      DC-gekoppelten Speichern (Parent = WR). ROI nur auf System-Ebene
-      sinnvoll.
-    - **Standalone** — AC-gekoppelte Speicher (ohne gültigen WR-Parent) und
-      alle übrigen Typen (E-Auto, Wärmepumpe, Wallbox, Balkonkraftwerk,
-      Sonstiges).
-    - **Orphan-PV-Module** — PV-Module ohne (gültige)
-      Wechselrichter-Zuordnung (Altdaten).
+    - **PV-Systeme** — ein **Trägergerät** mit zugeordneten PV-Modulen und
+      DC-gekoppelten Speichern. ROI nur auf System-Ebene sinnvoll.
+    - **Standalone** — AC-gekoppelte Speicher (ohne gültigen Träger-Parent)
+      und alle übrigen Typen (E-Auto, Wärmepumpe, Wallbox, Balkonkraftwerk
+      **ohne Kinder**, Sonstiges).
+    - **Orphan-PV-Module** — PV-Module ohne (gültige) Träger-Zuordnung
+      (Altdaten).
 
-    Zwei-Pass-Ansatz: erst alle Wechselrichter registrieren, damit
+    **Trägergerät ist nicht nur der Wechselrichter (F-33, #381).** Bis
+    v4.0.18 stand hier ausschließlich `wechselrichter`. Seither erlaubt
+    `ERLAUBTE_PARENT_TYPEN` einem **Balkonkraftwerk** beide Kind-Typen
+    (Speicher seit v4.0.5, PV-Module seit N-266) — die Gruppierung wusste es
+    nur nicht. Folge an der Anlage des Melders: BKW, Modul-Kind und
+    Speicher-Kind bekamen **drei** ROI-Zeilen, deren Einsparungen aus
+    **derselben** Energie stammen und trotzdem addiert wurden (1.079 € statt
+    606 €/Jahr ⇒ Amortisation 1,9 statt 3,3 Jahre). Das Modul-Kind stand
+    zusätzlich als „(ohne WR)" mit der Aufforderung da, etwas zuzuordnen, was
+    der Nutzer zugeordnet **hatte**.
+
+    Ein BKW wird deshalb genau dann Systemkopf, wenn **Kinder an ihm
+    hängen**; ohne Kinder bleibt es standalone und alles ist bitgleich. Das
+    ist dieselbe Doktrin, die `get_bkw_kwp` seit N-266 für die **Nennleistung**
+    anwendet („hängen Module am BKW, ist deren Summe die Nennleistung des
+    Geräts") und die die Monats-Fakten über `abgetretene_bkw_ids` für die
+    **Erzeugung** anwenden — hier nur auf die **Einsparung** angewandt. Die
+    Sperre gegen Doppelzählung saß bisher allein auf der Erzeugungsseite
+    (`pv_module_kwh` schließt die BKW-Erzeugung aus); die neue Struktur ist
+    an der **Struktur**-Seite daran vorbeigelaufen.
+
+    Zwei-Pass-Ansatz: erst alle Trägergeräte registrieren, damit
     `parent_investition_id` unabhängig von der Sortierung aufgelöst werden
     kann.
 
     Returns:
         (pv_systeme, standalone, orphan_pv_module) — `pv_systeme` als
-        ``wr_id -> {"wr": Investition, "pv_module": [...], "speicher": [...]}``.
+        ``traeger_id -> {"wr": Investition, "pv_module": [...], "speicher": [...]}``.
+        Der Schlüssel `"wr"` heißt aus Bestandsgründen so und trägt seit F-33
+        auch ein Balkonkraftwerk.
     """
     pv_systeme: dict[int, dict] = {}
     standalone: list[Investition] = []
     orphan_pv_module: list[Investition] = []
 
-    for inv in investitionen:
-        if inv.typ == InvestitionTyp.WECHSELRICHTER.value:
-            pv_systeme[inv.id] = {"wr": inv, "pv_module": [], "speicher": []}
+    # F-33: welche Investitionen werden überhaupt als Parent benannt? Nur ein
+    # BKW MIT Kindern wird Systemkopf — eines ohne bleibt standalone und
+    # behält seine bisherige Zeile unverändert. `ERLAUBTE_PARENT_TYPEN` ist
+    # der SoT dafür, welche Kind-Typen es geben kann; hier zählt allein, ob
+    # eines tatsächlich zeigt.
+    benannte_parents = {
+        inv.parent_investition_id
+        for inv in investitionen
+        if inv.parent_investition_id is not None
+        and inv.typ in (InvestitionTyp.PV_MODULE.value, InvestitionTyp.SPEICHER.value)
+    }
 
     for inv in investitionen:
         if inv.typ == InvestitionTyp.WECHSELRICHTER.value:
-            continue  # bereits im ersten Pass registriert
+            pv_systeme[inv.id] = {"wr": inv, "pv_module": [], "speicher": []}
+        elif (
+            inv.typ == InvestitionTyp.BALKONKRAFTWERK.value
+            and inv.id in benannte_parents
+        ):
+            pv_systeme[inv.id] = {"wr": inv, "pv_module": [], "speicher": []}
+
+    for inv in investitionen:
+        if inv.id in pv_systeme:
+            continue  # Trägergerät, bereits im ersten Pass registriert
         elif inv.typ == InvestitionTyp.PV_MODULE.value:
             if inv.parent_investition_id and inv.parent_investition_id in pv_systeme:
                 pv_systeme[inv.parent_investition_id]["pv_module"].append(inv)
             else:
-                # PV-Modul ohne Wechselrichter-Zuordnung
+                # PV-Modul ohne Träger-Zuordnung
                 orphan_pv_module.append(inv)
         elif inv.typ == InvestitionTyp.SPEICHER.value:
             if inv.parent_investition_id and inv.parent_investition_id in pv_systeme:
-                # DC-gekoppelter Speicher am Hybrid-WR
+                # DC-gekoppelter Speicher am Hybrid-WR oder am BKW
                 pv_systeme[inv.parent_investition_id]["speicher"].append(inv)
             else:
                 # AC-gekoppelter Speicher - eigenständig
                 standalone.append(inv)
         else:
-            # E-Auto, Wärmepumpe, Wallbox, Balkonkraftwerk, Sonstiges
+            # E-Auto, Wärmepumpe, Wallbox, BKW ohne Kinder, Sonstiges
             standalone.append(inv)
 
     return pv_systeme, standalone, orphan_pv_module
@@ -669,6 +712,64 @@ class ROIBerechnung(BaseModel):
     co2_einsparung_kg: Optional[float]
     detail_berechnung: dict[str, Any]
     komponenten: Optional[list[ROIKomponente]] = None  # Für PV-Systeme
+
+
+def _bkw_pauschal_beitrag(
+    inv: Any,
+    *,
+    strompreis_cent: float,
+    einspeiseverguetung_cent: float,
+) -> tuple[float, float, float]:
+    """Die pauschale Jahres-Schätzung eines Balkonkraftwerks.
+
+    Liefert ``(jahres_ertrag_kwh, jahres_einsparung_euro, co2_kg)``.
+
+    **Warum es diesen Helper gibt (F-33, #381).** Die Formel stand allein im
+    standalone-Zweig der ROI-Typkette. Seit ein BKW Systemkopf sein kann,
+    braucht sie einen **zweiten** Aufrufer — und eine zweite Kopie wäre genau
+    die Klasse, gegen die der vierte ADR-001-Nachtrag geschrieben ist: eine
+    Formel ist nicht durchgesetzt, solange eine Kopie danebensteht.
+
+    **Die Nennleistung kommt über den SoT-Helper (F-35, ADR-002/P3-a).** Hier
+    stand ``params.get('leistung_wp', 800)`` — die Leistung **eines** Moduls,
+    ohne ``anzahl``. Ein Balkonkraftwerk mit 4 × 500 Wp rechnete damit mit
+    500 Wp statt 2.000 und meldete **ein Viertel** seiner Ersparnis. Genau so
+    entstehen die 115 €, die in der Tabelle aus #381 unter dem Balkonkraftwerk
+    stehen (500 × 0,9 × 0,8 × 0,3195 = 115,02 €) — der Melder hat den Fehler
+    also mitgeliefert, ohne ihn zu kennen. Dieselbe Klasse wie #229: eine
+    Größe, die je nach Herkunft an zwei Orten liegt, roh gelesen.
+    ``get_bkw_kwp`` ist der Ort, an dem beide Formen zusammenlaufen.
+
+    ⚠ **Der 800-Wp-Default bleibt vorerst** — er greift jetzt nur noch, wenn
+    ``get_bkw_kwp`` **gar nichts** findet (weder Spalte noch ``kwp`` noch
+    ``leistung_wp``). Genau genommen ist er dieselbe Sorte Annahme, die N127
+    beim Speicher entfernt hat („keine Kapazität ⇒ keine Rechnung, sondern ein
+    Hinweis"), und ADR-002 ist gegen Defaults geschrieben, die wie eine
+    Messung aussehen. Das ist ein **eigener** Befund (Register N-273), keine
+    stille Mitnahme: ihn zu ziehen ändert die Zeile für Altbestand ohne
+    gepflegte Leistung von einer Zahl auf „—".
+    """
+    # kWp → Wp: der Helper liefert kWp (Spalte, `parameter`-JSON oder
+    # `leistung_wp × anzahl`), die Pauschale rechnet historisch in Wp.
+    kwp = get_bkw_kwp(inv)
+    leistung_wp = kwp * 1000 if kwp else 800
+    # Vereinfachte Berechnung: ca. 0.9 kWh/Wp/Jahr in Deutschland
+    jahres_ertrag = leistung_wp * 0.9
+    # 80% Eigenverbrauch typisch bei Balkonkraftwerk
+    eigenverbrauch = jahres_ertrag * 0.8
+    einspeisung = jahres_ertrag * 0.2
+
+    # §51-Erlös über SoT (ADR-001, M3); neg_preis_kwh = None bei dieser
+    # synthetischen BKW-Schätzung → volle Einspeisung (verhaltensneutral).
+    einspeise_erloes = einspeise_erloes_euro(
+        einspeisung, None, einspeiseverguetung_cent
+    ).erloes_euro
+    ev_ersparnis = eigenverbrauch * strompreis_cent / 100
+    return (
+        jahres_ertrag,
+        einspeise_erloes + ev_ersparnis,
+        jahres_ertrag * CO2_FAKTOR_STROM_KG_KWH,
+    )
 
 
 class ROIDashboardResponse(BaseModel):
@@ -1322,10 +1423,22 @@ async def get_roi_dashboard(
         wr = system["wr"]
         pv_module = system["pv_module"]
         dc_speicher = system["speicher"]
+        # F-33: der Systemkopf ist seit #381 nicht mehr zwingend ein
+        # Wechselrichter. Ein Balkonkraftwerk trägt — anders als ein WR — eine
+        # **eigene** Erzeugung, solange keine Module an ihm hängen; dann muss
+        # sein Beitrag in die Systemzeile, sonst verlöre ein BKW mit reinem
+        # Speicher-Kind (Kanon seit v4.0.5) seine Einsparung ganz.
+        kopf_ist_bkw = wr.typ == InvestitionTyp.BALKONKRAFTWERK.value
+        # `traegt_erzeugungsgroessen_selbst` ist der SoT der Abtretung (N-266):
+        # False heißt, die Modul-Kinder tragen die Erzeugung — dann darf der
+        # Kopf nichts mehr beisteuern, sonst ist die Doppelzählung zurück.
+        kopf_traegt_selbst = kopf_ist_bkw and traegt_erzeugungsgroessen_selbst(
+            wr, investitionen
+        )
 
         # Nur Systeme mit PV-Modulen anzeigen
         if not pv_module and not dc_speicher:
-            # Wechselrichter ohne zugeordnete Komponenten - als Hinweis zeigen
+            # Trägergerät ohne zugeordnete Komponenten - als Hinweis zeigen
             standalone.append(wr)
             continue
 
@@ -1340,9 +1453,18 @@ async def get_roi_dashboard(
 
         komponenten: list[ROIKomponente] = []
 
-        # Wechselrichter als Komponente
+        # Trägergerät als Komponente
         wr_kosten = wr.anschaffungskosten_gesamt or 0
         wr_alternativ = wr.anschaffungskosten_alternativ or 0
+        # F-33: der Hinweis nennt den Grund, aus dem der Kopf keine eigene Zahl
+        # trägt — und der ist je Typ ein anderer. Ein WR erzeugt nie selbst;
+        # ein BKW mit Modul-Kindern hat abgetreten.
+        if not kopf_ist_bkw:
+            kopf_hinweis = 'Wechselrichter - Einsparung über PV-Module'
+        elif kopf_traegt_selbst:
+            kopf_hinweis = 'Balkonkraftwerk - eigene Erzeugung, Einsparung in der Systemzeile'
+        else:
+            kopf_hinweis = 'Balkonkraftwerk - Einsparung über die zugeordneten PV-Module'
         komponenten.append(ROIKomponente(
             investition_id=wr.id,
             bezeichnung=wr.bezeichnung,
@@ -1350,15 +1472,33 @@ async def get_roi_dashboard(
             kosten=wr_kosten,
             kosten_alternativ=wr_alternativ,
             relevante_kosten=_relevante_kosten(wr),
-            einsparung=None,  # WR hat keine eigene Einsparung
+            einsparung=None,  # der Kopf trägt keine eigene Zeilen-Zahl
             co2_einsparung_kg=None,
-            detail={'hinweis': 'Wechselrichter - Einsparung über PV-Module'}
+            detail={'hinweis': kopf_hinweis}
         ))
 
         # PV-Module Einsparung proportional nach kWp verteilen
         system_kwp = sum(get_pv_kwp(inv) for inv in pv_module)
         system_einsparung = 0.0
         system_co2 = 0.0
+
+        # F-33: BKW-Kopf ohne Modul-Kinder — seine eigene (pauschale)
+        # Erzeugungs-Ersparnis geht in die Systemzeile. Bewusst DIESELBE
+        # Formel wie im standalone-Zweig, damit sich für diesen Fall die
+        # **Summe** nicht bewegt: repariert ist die Struktur (eine Zeile statt
+        # zwei addierten), nicht die Pauschale. Dass die 80-%-Annahme einen
+        # Speicher gar nicht kennt und deshalb neben dessen Mehr-Eigenverbrauch
+        # zu hoch stehen kann, ist ein eigener Befund (Register N-272) und
+        # ausdrücklich NICHT Teil von #381.
+        if kopf_traegt_selbst:
+            kopf_ertrag_kwh, kopf_einsparung, kopf_co2 = _bkw_pauschal_beitrag(
+                wr,
+                strompreis_cent=strompreis_cent,
+                einspeiseverguetung_cent=einspeiseverguetung_cent,
+            )
+            system_einsparung += kopf_einsparung
+            system_co2 += kopf_co2
+            system_kwp += get_bkw_kwp(wr)
 
         for inv in pv_module:
             inv_kosten = inv.anschaffungskosten_gesamt or 0
@@ -1545,10 +1685,20 @@ async def get_roi_dashboard(
         roi_result = berechne_roi(system_kapitaleinsatz, system_einsparung, 0, system_betriebskosten)
         gesamt_betriebskosten += system_betriebskosten
 
+        # F-33: die Zeile trägt den Typ ihres KOPFES, nicht pauschal
+        # "pv-system". Ein Balkonkraftwerk als „PV-System Toni" mit
+        # Sonnen-Icon zu beschriften, hieße dem Melder aus #381 sein Gerät
+        # umzubenennen — und es verstieße gegen Regel 0a (eine Datenrolle =
+        # eine Farbe): ein BKW hat im Farb-SoT seine eigene. Dass die Zeile
+        # ein System ist, macht die Komponenten-Liste darunter sichtbar.
         berechnungen.append(ROIBerechnung(
-            investition_id=wr.id,  # WR-ID als System-ID
-            investition_bezeichnung=f"PV-System {wr.bezeichnung}",
-            investition_typ="pv-system",
+            investition_id=wr.id,  # Kopf-ID als System-ID
+            investition_bezeichnung=(
+                wr.bezeichnung if kopf_ist_bkw else f"PV-System {wr.bezeichnung}"
+            ),
+            investition_typ=(
+                InvestitionTyp.BALKONKRAFTWERK.value if kopf_ist_bkw else "pv-system"
+            ),
             anschaffungskosten=system_kosten,
             anschaffungskosten_alternativ=system_alternativ,
             relevante_kosten=system_relevante,
@@ -1959,22 +2109,22 @@ async def get_roi_dashboard(
             }
 
         elif inv.typ == InvestitionTyp.BALKONKRAFTWERK.value:
-            # Balkonkraftwerk hat eigenen Mikro-WR integriert
-            leistung_wp = params.get('leistung_wp', 800)
-            # Vereinfachte Berechnung: ca. 0.9 kWh/Wp/Jahr in Deutschland
-            jahres_ertrag = leistung_wp * 0.9
-            # 80% Eigenverbrauch typisch bei Balkonkraftwerk
+            # Balkonkraftwerk hat eigenen Mikro-WR integriert.
+            # F-33: dieselbe Formel wie beim BKW-Systemkopf — sie liegt seit
+            # #381 in `_bkw_pauschal_beitrag`, damit es nicht zwei Kopien gibt.
+            # Hierher kommt nur noch ein BKW OHNE Kinder; mit Kindern ist es
+            # Systemkopf und diese Zeile entsteht gar nicht.
+            # F-35: die Anzeige nennt dieselbe Leistung, mit der gerechnet
+            # wurde — sonst stünde im Hinweis „500 Wp" neben einer Zahl aus
+            # 2.000 Wp.
+            _bkw_kwp = get_bkw_kwp(inv)
+            leistung_wp = _bkw_kwp * 1000 if _bkw_kwp else 800
+            jahres_ertrag, jahres_einsparung, co2_einsparung = _bkw_pauschal_beitrag(
+                inv,
+                strompreis_cent=strompreis_cent,
+                einspeiseverguetung_cent=einspeiseverguetung_cent,
+            )
             eigenverbrauch = jahres_ertrag * 0.8
-            einspeisung = jahres_ertrag * 0.2
-
-            # §51-Erlös über SoT (ADR-001, M3); neg_preis_kwh = None bei dieser
-            # synthetischen BKW-Schätzung → volle Einspeisung (verhaltensneutral).
-            einspeise_erloes = einspeise_erloes_euro(
-                einspeisung, None, einspeiseverguetung_cent
-            ).erloes_euro
-            ev_ersparnis = eigenverbrauch * strompreis_cent / 100
-            jahres_einsparung = einspeise_erloes + ev_ersparnis
-            co2_einsparung = jahres_ertrag * CO2_FAKTOR_STROM_KG_KWH
 
             detail = {
                 'leistung_wp': leistung_wp,
