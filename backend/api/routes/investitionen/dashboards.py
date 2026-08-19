@@ -82,9 +82,15 @@ from backend.core.field_definitions import (
     get_emob_pv_netz_kwh,
     get_sonstiges_verbrauch_kwh,
     get_speicher_netzladung_kwh,
+    get_wp_strom_kwh,
     ist_gepflegte_sonstiges_kategorie,
 )
+from backend.core.betriebsmodus import HEIZEN as BM_HEIZEN
+from backend.core.betriebsmodus import KUEHLEN as BM_KUEHLEN
+from backend.core.betriebsmodus import MODUS_ABDECKUNG_FELD, MODUS_STROM_FELD
 from backend.core.berechnungen import (
+    heiz_effizienz_gepflegt,
+    heizwaerme_ist_abgeleitet,
     bkw_eigenverbrauch_anteil,
     imd_typ_beitrag,
     sonstiges_richtung,
@@ -808,11 +814,37 @@ async def get_waermepumpe_dashboard(
 
         gesamt_heizung_getrennt = 0.0  # Heizung nur für Monate mit getrennter Strommessung
         gesamt_warmwasser_getrennt = 0.0  # Warmwasser nur für Monate mit getrennter Strommessung
+        # #263 K-2 (Konzept §3.5): Wärme, die aus `Strom × JAZ` abgeleitet
+        # wurde, darf in keine JAZ/COP eingehen — heraus käme exakt die
+        # gepflegte JAZ. Dieser Endpoint liest die IMD-Zeilen direkt und wertet
+        # die Herkunft deshalb selbst aus (die Fakten-Schicht trägt sie sonst
+        # als `WpFakten.waerme_abgeleitet_kwh`).
+        waerme_abgeleitet = False
+        # #263 K-2 (S4): der Modus-Split. Teilmengen von `gesamt_strom` — sie
+        # werden ausgewiesen, nie addiert (Konzept §3.1).
+        gesamt_modus_heizen = 0.0
+        gesamt_modus_kuehlen = 0.0
+        gesamt_modus_abdeckung_h = 0.0
+        gesamt_modus_bezug = 0.0
         for md in monatsdaten:
             d = md.verbrauch_daten or {}
+            gesamt_modus_heizen += d.get(MODUS_STROM_FELD[BM_HEIZEN], 0) or 0
+            gesamt_modus_kuehlen += d.get(MODUS_STROM_FELD[BM_KUEHLEN], 0) or 0
+            _m_abdeckung = d.get(MODUS_ABDECKUNG_FELD, 0) or 0
+            gesamt_modus_abdeckung_h += _m_abdeckung
+            if _m_abdeckung > 0:
+                gesamt_modus_bezug += get_wp_strom_kwh(d, wp.parameter)
             gesamt_strom += d.get('stromverbrauch_kwh', 0)
             gesamt_heizung += d.get('heizenergie_kwh', 0)
             gesamt_warmwasser += d.get('warmwasser_kwh', 0)
+            waerme_abgeleitet = waerme_abgeleitet or heizwaerme_ist_abgeleitet(
+                md.source_provenance
+            )
+            # ⚠ `strom_heizen_kwh` heißt hier **getrennte Strommessung** (zwei
+            # physische Zähler), NICHT der Modus-Split von #263 K-2. Der trägt
+            # eigene Feldnamen (`modus_strom_*`, Entscheid E-G) — genau damit
+            # diese Anwesenheitsprüfung nicht mitkippt und die Klimaanlage
+            # unten kein `cop_heizen` aus abgeleiteter Wärme bekommt.
             if 'strom_heizen_kwh' in d:
                 hat_getrennte_strom = True
                 gesamt_strom_heizen += d.get('strom_heizen_kwh', 0)
@@ -821,7 +853,10 @@ async def get_waermepumpe_dashboard(
                 gesamt_warmwasser_getrennt += d.get('warmwasser_kwh', 0)
 
         gesamt_waerme = gesamt_heizung + gesamt_warmwasser
-        durchschnitt_cop = gesamt_waerme / gesamt_strom if gesamt_strom > 0 else 0
+        durchschnitt_cop = (
+            gesamt_waerme / gesamt_strom
+            if gesamt_strom > 0 and not waerme_abgeleitet else 0
+        )
 
         # Drift-Audit Domäne A1 / Issue #178: vorher las dieser Endpoint
         # `gas_kwh_preis_cent` (toter Key, Form schreibt `alter_preis_cent_kwh`)
@@ -836,6 +871,23 @@ async def get_waermepumpe_dashboard(
         # wie in `aussichten.py` je Monat gezogen.
         wp_kosten = 0.0
         alte_heizung_kosten = 0.0
+        # F-42: Die Ersparnis kommt aus dem Layer-SoT (ADR-001), statt hier als
+        # Differenz `alte_heizung_kosten - wp_kosten` nachgebaut zu werden. Bei
+        # bewertbaren Wärmepumpen sind beide Wege zahlengleich — der Helper ist
+        # linear —, es bewegt sich also keine bestehende Zahl.
+        #
+        # ⚑ **Gemessen, nicht behauptet:** Diese Umstellung allein ist NICHT der
+        # Schutz. Der Sprengsatz „Differenz statt SoT-Summe" blieb stumm, weil
+        # die `bewertbar`-Sperre unten den Wert ohnehin auf `None` zieht. Rot
+        # wird erst die Kombination *Differenz **und** keine Sperre* — dann
+        # stünde für eine Klimaanlage `0 € Gas − 1.312 € Strom` als **negative
+        # Ersparnis** im Hub. Wer eine der beiden Hälften entfernt, muss die
+        # andere prüfen; der Prüfer dafür ist
+        # `test_f42_route_ersparnis_wird_nie_negativ`.
+        ersparnis = 0.0
+        # Trägt mindestens ein Monat einen echten Vergleich? Sonst gibt es
+        # keine Ersparnis-, Alt-Kosten- und CO₂-Zahl, die etwas behauptet.
+        bewertbar = False
         for md in monatsdaten:
             d = md.verbrauch_daten or {}
             m_waerme = (d.get('heizenergie_kwh', 0) or 0) + (d.get('warmwasser_kwh', 0) or 0)
@@ -857,10 +909,14 @@ async def get_waermepumpe_dashboard(
                 monats_gaspreis_cent=(
                     m_anlage_md.gaspreis_cent_kwh if m_anlage_md else None
                 ),
+                # E-B: Kühlen ersetzt keine Heizung — sein Strom gehört nicht
+                # in den Vergleich (sonst: gemessene −45,04 € Ersparnis).
+                strom_kuehlen_kwh=d.get(MODUS_STROM_FELD[BM_KUEHLEN], 0) or 0,
             )
             wp_kosten += m_ergebnis.wp_kosten_euro
             alte_heizung_kosten += m_ergebnis.alte_heizung_kosten_euro
-        ersparnis = alte_heizung_kosten - wp_kosten
+            ersparnis += m_ergebnis.ersparnis_euro
+            bewertbar = bewertbar or m_ergebnis.bewertbar
 
         # CO2-Ersparnis: kanonischer Helfer (ADR-001, DI-1/DI-2-A). Vorher rechnete
         # dieser Endpoint `wärme × f_gas − strom × f_strom` OHNE den Gas-Kessel-
@@ -873,6 +929,8 @@ async def get_waermepumpe_dashboard(
         co2_ersparnis = co2_wp_ersparnis_kg(
             gesamt_waerme, gesamt_strom,
             (wp.parameter or {}).get(PARAM_WAERMEPUMPE["ALTER_ENERGIETRAEGER"]),
+            # E-B: Kühlen ersetzt keine Heizung (#263 K-2).
+            strom_kuehlen_kwh=gesamt_modus_kuehlen,
         )
 
         # Kompressor-Starts: Σ Lebensdauer kommt direkt aus dem Hersteller-
@@ -937,11 +995,26 @@ async def get_waermepumpe_dashboard(
             'gesamt_heizenergie_kwh': round(gesamt_heizung, 1),
             'gesamt_warmwasser_kwh': round(gesamt_warmwasser, 1),
             'gesamt_waerme_kwh': round(gesamt_waerme, 1),
-            'durchschnitt_cop': round(durchschnitt_cop, 2),
+            # F-42: „nicht bewertet heißt keine Zahl" (N-258-Klasse). Ohne
+            # gemessene Wärme ist die JAZ keine 0, sondern unbekannt; ohne
+            # ersetzte Heizung gibt es weder Alt-Kosten noch Ersparnis noch
+            # vermiedenes CO₂. Vorher stand hier für eine Klimaanlage mit
+            # 4.375 kWh Verbrauch viermal „0,00" — während dieselbe Anlage in
+            # Cockpit → Jahr „—" und in Auswertungen → ROI „nicht bewertet"
+            # sagte. `None` statt 0 heilt alle drei Anzeigen auf einmal
+            # (Komponenten-Hub, Cockpit → Aussicht, Kostenvergleich), weil die
+            # Format-Kette im Client `null` bereits als „—" trägt.
+            #
+            # `wp_kosten_euro` bleibt eine Zahl: Strom × Preis ist immer
+            # bestimmt und die einzige Aussage, die hier ohne Vergleich gilt.
+            'durchschnitt_cop': (
+                round(durchschnitt_cop, 2)
+                if gesamt_waerme > 0 and not waerme_abgeleitet else None
+            ),
             'wp_kosten_euro': round(wp_kosten, 2),
-            'alte_heizung_kosten_euro': round(alte_heizung_kosten, 2),
-            'ersparnis_euro': round(ersparnis, 2),
-            'co2_ersparnis_kg': round(co2_ersparnis, 1),
+            'alte_heizung_kosten_euro': round(alte_heizung_kosten, 2) if bewertbar else None,
+            'ersparnis_euro': round(ersparnis, 2) if bewertbar else None,
+            'co2_ersparnis_kg': round(co2_ersparnis, 1) if bewertbar else None,
             'anzahl_monate': len(monatsdaten),
             # _summe_erfasst = seit Anschaffung von eedc erfasst (Kachel-Hauptwert);
             # _gesamt = roher Lebensdauer-Zählerstand (Kachel-Tooltip/Info, #238/#290).
@@ -958,7 +1031,37 @@ async def get_waermepumpe_dashboard(
             'starts_pro_betriebsstunde': starts_pro_betriebsstunde,
         }
 
-        # Getrennte COP-Werte wenn separate Strommessung vorhanden
+        # ── Modus-Split (#263 K-2, S4 · Konzept §4) ─────────────────────────
+        # Alles oder nichts: ohne eine einzige erfasste Stunde gibt es keine
+        # Aufteilung — und dann steht dort **keine 0**, sondern gar nichts.
+        # Eine 0 hieße „hat nicht geheizt"; das weiß eedc ohne Modus-Signal
+        # nicht (ADR-002/P4, die N-258-Klasse).
+        if gesamt_modus_abdeckung_h > 0:
+            zusammenfassung['modus_strom_heizen_kwh'] = round(gesamt_modus_heizen, 1)
+            zusammenfassung['modus_strom_kuehlen_kwh'] = round(gesamt_modus_kuehlen, 1)
+            # „nicht aufgeteilt" wird NIE gespeichert, sondern immer gerechnet
+            # (Konzept §3.1, Folge 2) — damit ist es für Altmonate, Ausfälle
+            # und Handpflege gleichermaßen vollständig. Auf 0 geklemmt: die
+            # Invariante hält das schon im Schreibpfad, aber eine negative
+            # Restmenge wäre auf jeder Fläche Unsinn.
+            # Bezug ist der Strom der Monate MIT Split — nicht der Gesamtstrom
+            # des Geräts über alle Monate. Sonst zählte ein Monat vor der
+            # Sensor-Zuordnung als „nicht aufgeteilt" (dieselbe Klasse wie der
+            # anlagenweite Bezug in `WpFakten.modus_nicht_aufgeteilt_kwh`).
+            zusammenfassung['modus_nicht_aufgeteilt_kwh'] = round(
+                max(0.0, gesamt_modus_bezug - gesamt_modus_heizen - gesamt_modus_kuehlen), 1
+            )
+            zusammenfassung['modus_abdeckung_h'] = round(gesamt_modus_abdeckung_h, 1)
+        # Die Kennzeichnung der Wärme steht unabhängig davon: sie gilt auch für
+        # Monate, deren Split später verworfen wurde.
+        zusammenfassung['waerme_abgeleitet'] = waerme_abgeleitet
+        zusammenfassung['waerme_abgeleitet_faktor'] = (
+            heiz_effizienz_gepflegt(wp.parameter) if waerme_abgeleitet else None
+        )
+
+        # Getrennte COP-Werte wenn separate Strommessung vorhanden.
+        # ⚠ Auch hier gilt die JAZ-Sperre (#263 K-2, §3.5): ist die Heizwärme
+        # abgeleitet, ist `cop_heizen` die gepflegte JAZ und kein Messwert.
         if hat_getrennte_strom:
             zusammenfassung['gesamt_strom_heizen_kwh'] = round(gesamt_strom_heizen, 1)
             zusammenfassung['gesamt_strom_warmwasser_kwh'] = round(gesamt_strom_warmwasser, 1)
@@ -966,10 +1069,10 @@ async def get_waermepumpe_dashboard(
             zusammenfassung['gesamt_warmwasser_getrennt_kwh'] = round(gesamt_warmwasser_getrennt, 1)
             zusammenfassung['cop_heizen'] = round(
                 gesamt_heizung_getrennt / gesamt_strom_heizen, 2
-            ) if gesamt_strom_heizen > 0 else 0
+            ) if gesamt_strom_heizen > 0 and not waerme_abgeleitet else 0
             zusammenfassung['cop_warmwasser'] = round(
                 gesamt_warmwasser_getrennt / gesamt_strom_warmwasser, 2
-            ) if gesamt_strom_warmwasser > 0 else 0
+            ) if gesamt_strom_warmwasser > 0 and not waerme_abgeleitet else 0
 
         dashboards.append(WaermepumpeDashboardResponse(
             investition=wp,

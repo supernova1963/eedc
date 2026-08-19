@@ -27,6 +27,7 @@
    11. [Geräte-Connector ohne Monatswert](#411-geraete-connector-ohne-monatswert)
    12. [Zeitzone – Abweichung zu Home Assistant](#412-zeitzone--abweichung-zu-home-assistant)
    13. [Sonstige Positionen – der Erfassungsort](#413-sonstige-positionen--der-erfassungsort)
+   14. [Klimaanlage – Betriebsmodus](#414-klimaanlage--betriebsmodus)
 5. [Behebungs-Workflows](#5-behebungs-workflows)
 6. [Beziehung zu anderen Werkzeugen](#6-beziehung-zu-anderen-werkzeugen)
 
@@ -161,7 +162,7 @@ Im **Standalone-Betrieb** kommen die Werte über MQTT (`eedc/<anlage>/…`-Topic
 | **Kein Ladetarif hinterlegt** | ℹ️ INFO | Aktives E-Auto oder aktive Wallbox vorhanden, aber kein Tarif mit Verwendung *wallbox*. Ohne ihn rechnet eedc die Ladung mit dem allgemeinen Tarif. *(Der Hinweis fragte bis v4.0.4 nach einer Verwendung „e-auto", die es nie gab — er war damit unerfüllbar.)* | Nur bei separatem Ladetarif: Strompreis mit Verwendung *Wallbox* anlegen — das ist die Verwendung, die beide Dashboards lesen. Sonst nichts zu tun. |
 | **Arbeitspreis ungewöhnlich: X,X ct/kWh (Tarifname)** | ⚠️ WARNING | Wert liegt außerhalb des erwarteten Bereichs 5–80 ct/kWh — typischerweise Eingabefehler (Komma vs. Punkt, ct vs. €/kWh). | Einstellungen → Stammdaten → Strompreise → Tarif öffnen, Arbeitspreis prüfen. |
 | **Einspeisevergütung ungewöhnlich: X,X ct/kWh (Tarifname)** | ⚠️ WARNING | Wert außerhalb 0–30 ct/kWh. Negative Werte oder zweistellige Vergütungen sind seit den 2010er Jahren untypisch. | Einstellungen → Stammdaten → Strompreise → Tarif öffnen, Vergütung prüfen. Bei dynamischen Vergütungsmodellen (Direktvermarktung) eine sinnvolle Schätzung eintragen. |
-| **N Tarif(e) ohne Einspeisevergütung, obwohl Einspeisung erfasst ist** | ⚠️ WARNING | Mindestens ein Tarif trägt **0 ct/kWh**, und in seinem Gültigkeitszeitraum ist Einspeisung erfasst — der Einspeise-Erlös dieser Monate bleibt damit 0 € (Cockpit, ROI, Jahresbericht). Der Fall entsteht regelmäßig, weil ein neuer Tarif seit v4.0.10 mit 0 startet: eedc rät den EEG-Satz bewusst nicht. | Einstellungen → Stammdaten → Strompreise → Tarif öffnen, Satz aus dem Vergütungsbescheid eintragen; bei gestaffelter Vergütung den nach kWp gewichteten **Mischsatz** (eedc rechnet flat, siehe [Einstellungen §2.2](HANDBUCH_EINSTELLUNGEN.md#22-strompreise)). **Ist deine Einspeisung tatsächlich unvergütet** (Volleinspeisung ohne Vergütung, ausgelaufene EEG-Förderung), **ist 0 richtig und nichts zu tun** — der Hinweis bleibt dann als Auskunft stehen und sagt, womit eedc rechnet (wie die Spezialtarif-Hinweise, siehe Kasten oben). |
+| **N Tarif(e) rechnen die Einspeisung mit 0 ct/kWh** | ℹ️ INFO | Mindestens ein Tarif trägt **0 ct/kWh**, und in seinem Gültigkeitszeitraum ist Einspeisung erfasst — der Einspeise-Erlös dieser Monate bleibt damit 0 € (Cockpit, ROI, Jahresbericht). Der Fall entsteht regelmäßig, weil ein neuer Tarif seit v4.0.10 mit 0 startet: eedc rät den EEG-Satz bewusst nicht. **Die Zeile fordert nichts** — sie sagt, womit gerechnet wird; was du einträgst, wird gerechnet. **Ab 50 kWh/Jahr** erfasster Einspeisung; darunter (Nulleinspeisungs-Systeme mit reiner Regelungstoleranz) schweigt sie ganz. | Wer eine Vergütung bekommt: Einstellungen → Stammdaten → Strompreise → Tarif öffnen, Satz aus dem Vergütungsbescheid eintragen; bei gestaffelter Vergütung den nach kWp gewichteten **Mischsatz** (eedc rechnet flat, siehe [Einstellungen §2.2](HANDBUCH_EINSTELLUNGEN.md#22-strompreise)). **Ist deine Einspeisung tatsächlich unvergütet** (Nulleinspeisung, Volleinspeisung ohne Vergütung, ausgelaufene EEG-Förderung), **ist 0 richtig und nichts zu tun**. |
 | **N Strompreis-Tarif(e) vorhanden** | ✅ OK | Mindestens ein allgemeiner Tarif vorhanden — Anzahl ist informativ. | – |
 
 ---
@@ -250,7 +251,12 @@ Im **Standalone-Betrieb** kommen die Werte über MQTT (`eedc/<anlage>/…`-Topic
 
 > **Split-Klimaanlagen sind ausgenommen.** Ist die Wärmepumpenart **Luft-Luft (Klimaanlage)** eingetragen, verlangt der Checker weder die monatliche Heizwärme noch die Tages-Zusatzzähler aus §4.6: beides setzt einen Wärmemengenzähler voraus, den solche Geräte praktisch nie haben, und einen Warmwasserkreis gibt es dort gar nicht. Der **Stromverbrauch** bleibt Pflicht, die Stromauswertung funktioniert vollständig; JAZ/COP zeigen „—" statt einer Scheinzahl. Eine Wärmepumpe **ohne** eingetragene Art gilt als klassische Wärmepumpe — eine fehlende Angabe schaltet die Erwartung nicht ab.
 >
-> **Ebenfalls ausgenommen: die drei Hinweise zum Gas-/Öl-Vergleich** — *Alternativkosten (Gas-/Ölheizung) fehlen*, *Alter Energiepreis nicht gesetzt* und *Heizwärmebedarf nicht gesetzt*. Sie versorgen ausschließlich die Ersparnis-Rechnung gegenüber einer ersetzten Heizung. Für Klimaanlagen bleiben sie aus, weil die meisten solcher Geräte nur kühlen — dort wäre es ein Dauer-Befund ohne Gegenstand. ⚠ **Seit 2026-08-16 heißt das aber nicht mehr, dass eine Klimaanlage grundsätzlich unbewertet bleibt:** Heizt du mit dem Gerät, trag den Heizwärmebedarf im Komponenten-Formular ein — das Feld wird dort wieder angeboten —, und die Wirtschaftlichkeit wird wie bei jeder anderen Wärmepumpe gerechnet. Solange du das nicht getan hast, sagt dir die Zeile in *Auswertungen → ROI* selbst, was ihr fehlt; der Checker meldet es bewusst **nicht** zusätzlich.
+> **Die drei Hinweise zum Gas-/Öl-Vergleich hängen an der Pflege, nicht an der Bauart** (geändert 2026-08-18). Sie verteilen sich auf **zwei verschiedene Fragen**:
+>
+> * *Alter Energiepreis nicht gesetzt* und *Heizwärmebedarf nicht gesetzt* versorgen die Ersparnis-Rechnung gegenüber einer **ersetzten Heizung**. Sie bleiben aus, sobald bei *Vergleich mit alter Heizung (ROI)* die Option **„Nichts ersetzt (Neubau)"** gewählt ist — bei jeder Wärmepumpe, unabhängig von der Bauart. Heizt du mit deiner Klimaanlage tatsächlich, wähle den ersetzten Energieträger; dann erscheinen sie, und die Wirtschaftlichkeit wird wie bei jeder anderen Wärmepumpe gerechnet.
+> * *Alternativkosten (Gas-/Ölheizung) fehlen* ist eine **dritte Frage** und gilt für jede Wärmepumpe: Was hättest du **stattdessen kaufen** müssen? Der Betrag mindert die Anschaffungskosten, nur die Differenz muss sich amortisieren. Ein Neubau ersetzt keine Heizung, hat aber trotzdem keinen Gaskessel gekauft — deshalb hängt dieser Hinweis an keiner der beiden Achsen. Gab es keine Alternative, trag **0** ein: Das ist eine gültige Antwort und lässt den Hinweis verschwinden.
+>
+> ⚠ **Hier stand bis 2026-08-18:** *„Ebenfalls ausgenommen: die drei Hinweise zum Gas-/Öl-Vergleich … Sie versorgen ausschließlich die Ersparnis-Rechnung … Für Klimaanlagen bleiben sie aus."* **Beide Aussagen waren falsch** (gemeldet als [#383](https://github.com/supernova1963/eedc-homeassistant/issues/383)): Die Alternativkosten versorgen nicht die Ersparnis-Rechnung, sondern die Amortisation — und die Ausnahme lag auf der falschen Achse. Wer im **Neubau** baute, bekam die Hinweise trotzdem und konnte sie nicht auflösen; wer mit einer Klimaanlage **heizte**, bekam sie nie zu sehen.
 
 #### 4.3.8 Allgemein (alle Komponententypen)
 
@@ -366,7 +372,7 @@ Ein Monat besteht in eedc aus zwei Teilen: der **Zählerzeile** der Anlage (Eins
 | Meldung | Severity | Bedeutung | Behebung |
 |---------|----------|-----------|----------|
 | **Kein Basis-Zähler für: \[Einspeisung, Netzbezug\]** | ⚠️ WARNING | In der Datenquellen-Zuordnung fehlt der Basis-Zähler für Einspeisung und/oder Netzbezug. Ohne diesen bleibt der bilanzielle Hausverbrauch im Energieprofil leer. | Einstellungen → Datenquellen öffnen, im Block *Anlage / Zähler* den kumulativen kWh-Zähler zuordnen. **Wichtig:** den kWh-Zähler wählen, nicht den `*_leistung_w`-Sensor. |
-| **N von M Komponenten ohne vollständige kWh-Zähler-Abdeckung** | ⚠️ WARNING | Mindestens eine aktive Komponente hat nicht alle erwarteten kWh-Zähler zugeordnet. Details listen die betroffenen Komponenten und fehlenden Felder. Folgen für diese Komponenten: Prognose-IST, Lernfaktor und Monatsauswertungen bleiben leer. | Einstellungen → Datenquellen öffnen, pro Komponente die fehlenden Zähler zuordnen. Bei Speichern: beide Felder (`ladung_kwh` + `entladung_kwh`) sind nötig. |
+| **N von M Komponenten ohne vollständige kWh-Zähler-Abdeckung** | ⚠️ WARNING | Mindestens eine aktive Komponente hat nicht alle erwarteten kWh-Zähler zugeordnet. Details listen die betroffenen Komponenten und fehlenden Felder. Folgen für diese Komponenten: Prognose-IST, Lernfaktor und Monatsauswertungen bleiben leer. **Nicht gemeldet wird ein Balkonkraftwerk, an dem PV-Module hängen** — dann tragen die Module die Erzeugung, gemessen wird am Modul, und der Checker sagt das mit einer eigenen OK-Zeile („N Balkonkraftwerk(e) über die zugeordneten PV-Module gedeckt“). Ein BKW **ohne** Modul-Kinder braucht weiterhin seinen eigenen Zähler. | Einstellungen → Datenquellen öffnen, pro Komponente die fehlenden Zähler zuordnen. Bei Speichern: beide Felder (`ladung_kwh` + `entladung_kwh`) sind nötig. |
 | **N Komponente(n) ohne Zusatz-Zähler für Tageswerte** | ℹ️ INFO | Betrifft **zusätzliche** Messstellen, nicht die Abdeckung oben: Wärmepumpe `heizenergie_kwh` / `warmwasser_kwh` (Wärmemengenzähler) sowie `ladung_pv_kwh` an Wallbox bzw. E-Auto. Ohne sie bleiben genau diese Werte in *Cockpit → Tag* auf „—"; die **Monats**auswertungen sind nicht betroffen, dort lassen sich die Werte von Hand pflegen. Bewusst INFO — solche Zähler hat längst nicht jede Anlage. | Wenn vorhanden: Einstellungen → Datenquellen → das jeweilige kWh-Feld zuordnen. Sonst nichts zu tun. |
 
 > **Wer hier ausgenommen ist** — damit der Befund nicht etwas verlangt, das es bei dir nicht geben kann: **Split-Klimaanlagen** (Wärmepumpenart *Luft-Luft*) werden gar nicht gefragt, sie haben weder Wärmemengenzähler noch Warmwasserkreis. Das **E-Auto** wird übersprungen, wenn eine **Wallbox** existiert (dort wird die Heimladung geführt) oder wenn es als **Dienstwagen** markiert ist. Stillgelegte und inaktive Komponenten zählen ohnehin nicht mit.
@@ -524,6 +530,48 @@ Der Sensor-Picker in den Datenquellen zeigt alle Sensoren ohne harten Filter —
 > **Das Feld „Ertrag/Jahr" gibt es nur bei *Wallbox* und *Sonstiges*.** Bei allen anderen Komponenten rechnet eedc die Jahres-Einsparung selbst; dort meldet der Checker auf der Ertragsseite bewusst nichts, statt auf ein Feld zu verweisen, das im Formular nicht steht.
 
 Hintergrund und die verworfenen Alternativen: [Berechnungen §3.6](BERECHNUNGEN.md#36-roi--amortisation) und [Bedienung → Auswertungen → ROI](HANDBUCH_BEDIENUNG.md#42-roi).
+
+---
+
+### 4.14 Klimaanlage – Betriebsmodus <a name="414-klimaanlage--betriebsmodus"></a>
+
+**Was wird geprüft:** Ist bei einer Split-Klimaanlage (Wärmepumpenart *Luft-Luft*) der Betriebsmodus-Sensor zugeordnet?
+
+**Warum das zählt:** Deine Klimaanlage heizt im Winter und kühlt im Sommer — über **denselben** Stromzähler. eedc sieht deshalb nur eine Zahl „Stromverbrauch" und kann nicht sagen, welcher Teil davon ins Heizen ging und welcher ins Kühlen. Aus den vorhandenen Werten lässt sich das auch nicht nachrechnen: Es gibt kein Feld, aus dem die Aufteilung ableitbar wäre. Sie entsteht nur, wenn eedc **zur Messzeit mitschreibt**, in welchem Modus das Gerät gerade läuft.
+
+#### Befunde
+
+| Meldung | Severity | Bedeutung | Behebung |
+|---------|----------|-----------|----------|
+| **„\[Gerät\]": Betriebsmodus nicht zugeordnet — Heiz- und Kühlstrom bleiben zusammen** | ℹ️ INFO | Für dieses Gerät ist keine Modus-Quelle hinterlegt. Der Stromverbrauch zählt vollständig und richtig; es fehlt nur die Aufteilung. | *Einstellungen → Datenquellen*, beim Gerät das Feld **Betriebsmodus** zuordnen. In Home Assistant ist das die **climate-Entität** deines Geräts (meist `climate.…`) — sie zeigt Heizen/Kühlen/Aus. |
+| **Betriebsmodus ist bei N Klimaanlage(n) zugeordnet** | ✅ OK | eedc schreibt stündlich mit, ob geheizt oder gekühlt wurde. | — |
+
+> ⚠ **Die Aufteilung lässt sich nicht rückwirkend nachtragen — das ist der wichtigste Satz hier.** Home Assistant bewahrt Zustände wie „Heizen"/„Kühlen" nur wenige Tage auf (die Langzeit-Statistik gibt es nur für Zahlen-Sensoren). Wer den Sensor heute zuordnet, bekommt die Aufteilung **ab heute**; die Vergangenheit bleibt ungeteilt, und ein längerer eedc-Ausfall reißt eine Lücke, die bleibt. Deshalb lohnt sich die Zuordnung auch dann, wenn man die Auswertung noch nicht braucht.
+
+> **Der Hinweis erscheint nur bei Wärmepumpenart *Luft-Luft*.** Ob ein Gerät überhaupt kühlen kann, hängt an seiner Bauart — eine Luft-Wasser-Wärmepumpe bekäme sonst einen Hinweis auf eine Aufteilung, die es bei ihr nicht gibt. **Das Feld selbst bietet eedc trotzdem jeder Wärmepumpe an**: Es gibt Luft-Wasser-Geräte mit Kühlfunktion, und wer eines hat, findet den Betriebsmodus auf der Datenquellen-Fläche.
+
+> **Der Betriebsmodus ist nur als HA-Sensor zuordenbar, nicht über MQTT.** Er ist ein Zustand, kein Messwert — der MQTT-Weg von eedc nimmt ausschließlich Zahlen entgegen. Die Fläche blendet die MQTT-Optionen für dieses eine Feld deshalb aus, statt eine Quelle anzubieten, die nichts liefern könnte.
+
+
+> **Was du nach der Zuordnung siehst** (seit 2026-08-19): Unter *Komponenten → Wärme/Klima* steht
+> ein Block **„Aufteilung Heizen/Kühlen"** mit den beiden Strommengen, der Zeile *nicht aufgeteilt*
+> und der Zahl der Stunden, in denen eedc mitlesen konnte. Dieselbe Aufteilung erscheint in
+> *Cockpit → Monat* und *Cockpit → Jahr*, dazu zwei Sensoren in Home Assistant. Die Aufteilung
+> entsteht beim **Monatsabschluss**; für den laufenden Monat wird sie direkt aus den Tageswerten
+> gelesen.
+
+#### Zweiter Befund dieser Kategorie: Aufteilung größer als der Gesamtverbrauch
+
+| Meldung | Severity | Bedeutung | Behebung |
+|---------|----------|-----------|----------|
+| **„\[Gerät\]": Heiz- und Kühlstrom zusammen größer als der Gesamtverbrauch (Monate)** | ⚠️ WARNING | Die Aufteilung ist ein **Teil** des Gesamtverbrauchs — zusammen können beide ihn nicht übersteigen. Das entsteht, wenn der Gesamtwert nachträglich kleiner eingetragen wurde als die bereits erfasste Aufteilung. | Zwei Wege: Prüfe den **Stromverbrauch** dieser Monate im Monatsabschluss — oder schließe den Monat **erneut ab**, dann rechnet eedc die Aufteilung neu und verwirft sie, falls sie nicht passt. |
+
+> **eedc biegt hier nichts zurecht.** Es wäre einfach, die Aufteilung stillschweigend auf den
+> Gesamtwert zu kürzen — dann stünde da eine Zahl, die plausibel aussieht und trotzdem falsch ist.
+> Stattdessen bleibt der Widerspruch sichtbar, bis du entschieden hast, welche der beiden Angaben
+> stimmt. ⚠ **Deine Energiebilanz ist davon nicht betroffen:** dort zählt immer der Gesamtwert.
+
+Hintergrund: [Issue #263](https://github.com/supernova1963/eedc-homeassistant/issues/263).
 
 ---
 

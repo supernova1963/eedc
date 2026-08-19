@@ -6,6 +6,7 @@
 import { useEffect, useState } from 'react'
 import {
   WaermepumpeMonatsverlauf, WaermepumpeMonatsTabelle, WaermepumpeVergleich, WaermepumpeKostenvergleich,
+  WaermepumpeModusSplit, hatModusSplit, wpHatVergleich,
 } from '../components/waermepumpe'
 import { Parkbar } from '../components/park'
 import { investitionenApi, type WaermepumpeDashboardResponse } from '../api/investitionen'
@@ -14,6 +15,7 @@ import type { Investition } from '../types'
 
 const KEINE: string[] = []
 const VERLAUF_IDS = ['chart:wp-waerme', 'tabelle:wp-monate']
+const VERLAUF_IDS_MIT_SPLIT = [...VERLAUF_IDS, 'block:wp-modus-split']
 const VERGLEICH_IDS = ['chart:wp-vergleich']
 const WIRT_IDS = ['chart:wp-kostenvergleich']
 
@@ -39,11 +41,21 @@ const Leer = ({ text }: { text: string }) => <p className="text-sm text-gray-500
 export function WaermepumpeVerlaufIST({ anlageId, inv, melde }: { anlageId: number; inv?: Investition; melde?: MeldeFn }) {
   const { ds, loading } = useWpGeraet(anlageId, inv)
   const leer = loading || !ds || ds.monatsdaten.length === 0
-  useEffect(() => { melde?.(leer ? KEINE : VERLAUF_IDS) }, [leer, melde])
+  const zeigtSplit = !leer && hatModusSplit(ds?.zusammenfassung)
+  useEffect(() => {
+    melde?.(leer ? KEINE : (zeigtSplit ? VERLAUF_IDS_MIT_SPLIT : VERLAUF_IDS))
+  }, [leer, zeigtSplit, melde])
   if (loading) return <Lade />
   if (!ds || ds.monatsdaten.length === 0) return <Leer text="Keine Verlaufsdaten erfasst." />
   return (
     <div className="space-y-4">
+      {/* #263 K-2 (S4): nur mit erfasstem Modus — ohne ihn fehlt der Block
+          ganz, statt mit Nullen dazustehen (Konzept §4). */}
+      {zeigtSplit && (
+        <Parkbar id="block:wp-modus-split" titel="Aufteilung Heizen/Kühlen">
+          <WaermepumpeModusSplit zusammenfassung={ds.zusammenfassung} />
+        </Parkbar>
+      )}
       <Parkbar id="chart:wp-waerme" titel="Wärmeerzeugung pro Monat"><WaermepumpeMonatsverlauf monatsdaten={ds.monatsdaten} /></Parkbar>
       <Parkbar id="tabelle:wp-monate" titel="Monatsdaten-Tabelle">
         <details className="border-t border-gray-100 dark:border-gray-800 pt-3">
@@ -74,5 +86,8 @@ export function WaermepumpeWirtschaftlichkeitIST({ anlageId, inv, melde }: { anl
   useEffect(() => { melde?.(leer ? KEINE : WIRT_IDS) }, [leer, melde])
   if (loading) return <Lade />
   if (!ds) return <Leer text="Keine Wirtschaftlichkeitsdaten erfasst." />
-  return <Parkbar id="chart:wp-kostenvergleich" titel="Kostenvergleich WP vs. Gas/Öl"><WaermepumpeKostenvergleich zusammenfassung={ds.zusammenfassung} /></Parkbar>
+  // F-42: Der Titel darf nichts versprechen, was der Block nicht zeigt — ohne
+  // ersetzte Heizung gibt es keinen Vergleich, sondern nur die Stromkosten.
+  const titel = wpHatVergleich(ds.zusammenfassung) ? 'Kostenvergleich WP vs. Gas/Öl' : 'Stromkosten'
+  return <Parkbar id="chart:wp-kostenvergleich" titel={titel}><WaermepumpeKostenvergleich zusammenfassung={ds.zusammenfassung} /></Parkbar>
 }

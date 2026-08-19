@@ -224,11 +224,15 @@ export interface WaermepumpeDashboardResponse {
     gesamt_heizenergie_kwh: number
     gesamt_warmwasser_kwh: number
     gesamt_waerme_kwh: number
-    durchschnitt_cop: number
+    /** F-42: `null` = nicht bewertet, nicht „0". `durchschnitt_cop` ohne
+     *  gemessene Wärme, die drei Vergleichsgrößen ohne ersetzte Heizung —
+     *  eine Klimaanlage im Neubau hat weder JAZ noch Gaskessel-Ersparnis.
+     *  `wp_kosten_euro` bleibt immer eine Zahl (Strom × Preis). */
+    durchschnitt_cop: number | null
     wp_kosten_euro: number
-    alte_heizung_kosten_euro: number
-    ersparnis_euro: number
-    co2_ersparnis_kg: number
+    alte_heizung_kosten_euro: number | null
+    ersparnis_euro: number | null
+    co2_ersparnis_kg: number | null
     anzahl_monate: number
     // Getrennte Strommessung (optional)
     gesamt_strom_heizen_kwh?: number
@@ -237,6 +241,18 @@ export interface WaermepumpeDashboardResponse {
     gesamt_warmwasser_getrennt_kwh?: number
     cop_heizen?: number
     cop_warmwasser?: number
+    // Modus-Split (#263 K-2) — **Teilmengen** von `gesamt_stromverbrauch_kwh`,
+    // nie Summanden. Alle vier fehlen gemeinsam, wenn kein Modus erfasst ist:
+    // eine 0 hieße „hat nicht geheizt", und das weiß eedc ohne Sensor nicht.
+    modus_strom_heizen_kwh?: number
+    modus_strom_kuehlen_kwh?: number
+    modus_nicht_aufgeteilt_kwh?: number
+    modus_abdeckung_h?: number
+    /** Ist `gesamt_heizenergie_kwh` aus `Strom × JAZ` gerechnet statt gemessen?
+     *  Dann bleibt `durchschnitt_cop` null (Konzept §3.5) und die Anzeige
+     *  kennzeichnet die Wärme — wie „geschätzt (kWp-Anteil)" bei der PV. */
+    waerme_abgeleitet?: boolean
+    waerme_abgeleitet_faktor?: number | null
     // Kompressor-Starts (#238/#290): _summe_erfasst = seit Anschaffung von eedc
     // erfasst (Kachel-Hauptwert), _gesamt = roher Lebensdauer-Zählerstand aus
     // dem Hersteller-Sensor (Kachel-Tooltip/Info), Max/Tag aus Tagesinkrementen.

@@ -1,11 +1,146 @@
 # Was ist neu
 
-> **Stand:** August 2026 (v4.0.20)
+> **Stand:** August 2026 (v4.0.21)
 > **Diese Seite** zeigt pro Version, was sich für dich als Anwender geändert hat — kürzer als der technische [CHANGELOG](https://github.com/supernova1963/eedc-homeassistant/blob/main/CHANGELOG.md), ausführlicher als die Schnellübersicht-Tabelle in der [Übersicht](BENUTZERHANDBUCH.md#was-ist-neu-seit-v316).
 >
 > **Kein Banner, kein Pop-up:** eedc zeigt diese Liste nicht ungefragt an. HA-App-Nutzer sehen den Changelog ohnehin schon im Add-on-Store, GitHub-Releases haben einen eigenen. Wer wissen will, was neu ist, schaut hier rein — Pull statt Push.
 >
 > **Lesehinweis:** Die jüngsten Versionen stehen oben. Jeder Punkt verlinkt entweder auf die zuständige Hilfe-Sektion oder direkt auf die App-Funktion (sofern erreichbar). Anker-URLs (`?doc=was-ist-neu`) sind teilbar.
+
+---
+
+## v4.0.21 — Heizen und Kühlen getrennt
+
+Drei Meldungen des Daten-Checkers standen bei manchen Anlagen dauerhaft da, **ohne dass sich
+etwas dagegen tun ließ** — alle drei gemeldet von azywietz-web. Keine davon hat je eine Zahl
+verändert; es ging darum, was eedc über deine Anlage behauptet.
+
+- **Einspeisevergütung bei Nulleinspeisung** *(#382)*: Wer sein Balkonkraftwerk auf Nulleinspeisung
+  fährt, speist trotzdem eine kleine Regelungstoleranz ein — und bekam deshalb dauerhaft den
+  Hinweis, die Vergütung fehle. Abstellen ließ er sich nur mit einem **falschen** Satz. Jetzt
+  meldet sich eedc erst ab **50 kWh im Jahr**, und die Zeile fordert nichts mehr: Sie sagt, dass
+  mit **0 ct/kWh** gerechnet wird — so, wie es in deinem Tarif steht. Was du einträgst, wird
+  gerechnet.
+- **Zähler am Balkonkraftwerk, obwohl das Modul misst** *(#384)*: Hängen PV-Module an einem
+  Balkonkraftwerk, wird am Modul gemessen. Der Daten-Checker forderte trotzdem einen eigenen
+  Zähler am Balkonkraftwerk. Jetzt erkennt er die Zuordnung und sagt dir, dass alles versorgt ist.
+- **„Doppelerfassung" nach einem Verbindungsausfall** *(#385)*: Nach einer Unterbrechung liefert
+  ein kumulativer Zähler den Zuwachs nach, Home Assistant bucht ihn in eine Stunde — der Tag sieht
+  unmöglich hoch aus. eedc hielt das für doppelte Erfassung und nannte sogar eine Ursache, die
+  niemand geprüft hatte. Solche Tage kennt eedc längst als „Counter-Spike"; jetzt zählen sie nicht
+  mehr als Beleg für eine Doppelerfassung. Bleibt danach nichts Auffälliges übrig, sagt eedc dir
+  das. Bleibt etwas übrig, kommt der Verdacht weiterhin — dann mit **mehreren möglichen Ursachen**
+  statt einer Behauptung. ⚠ Es werden **keine Werte verändert, gekappt oder ausgeblendet.**
+
+Dazu **zwei Zahlen, die eedc gar nicht wissen konnte** — und trotzdem angezeigt hat.
+
+- **In Österreich und der Schweiz kam das Wetter vom deutschen Wetterdienst** *(#386, gruaGit)*:
+  Die Quelle „Automatisch" soll Bright Sky (DWD) nur in Deutschland nehmen — entschieden wurde es
+  aber über ein grobes Koordinaten-Rechteck, in dem Salzburg, Innsbruck, Linz, Bregenz, Zürich und
+  Basel mit drinliegen. Dein eingestelltes **Land** wurde dabei nie gelesen. Folge: Wo keine
+  deutsche Wetterstation in Reichweite ist, kam **gar keine Strahlung** zurück, und eedc bot dir
+  beim Monatsabschluss **0,0 kWh/m²** an, statt die zweite Quelle zu fragen. Am Standort des
+  Melders waren es in Wirklichkeit 206,5. ⚠ **Was du merkst:** Steht bei dir Österreich, Schweiz
+  oder Italien, kommt das Wetter ab jetzt von Open-Meteo. Steht dort Deutschland — oder gar
+  nichts, wie bei den meisten —, ändert sich **nichts**. Auch deutsche Standorte ohne
+  Strahlungsstation in der Nähe (Sylt zum Beispiel) bekommen jetzt einen echten Wert.
+  Nebenbei: Beim Eintragen der Adresse **erkennt eedc das Land jetzt selbst**, und die gespeicherte
+  Wetterquelle wirkt endlich — sie wurde bisher gespeichert, angezeigt und beim Abruf ignoriert.
+  Was eedc außerhalb Deutschlands kann und was bewusst nicht, steht jetzt zusammenhängend im
+  [Handbuch](HANDBUCH_EINSTELLUNGEN.md#21a-eedc-außerhalb-deutschlands).
+- **Der Jahresbericht erfand einer Klimaanlage drei Wärmemengen**: Im PDF standen *Wärmeenergie
+  gesamt 0 kWh · davon Heizung 0 kWh · davon Warmwasser 0 kWh* — für ein Gerät, das gar keinen
+  Wärmemengenzähler hat. Die Jahresarbeitszahl daneben sagte korrekt „–". Eine Null behauptet
+  „gemessen, war nichts"; richtig ist „nicht gemessen". Jetzt steht auch dort „–". Dein
+  **Stromverbrauch bleibt** eine Zahl — der ist gemessen.
+
+Dazu zwei Punkte rund um **Wärmepumpen und Klimaanlagen** — beide drehen sich um dieselbe Frage:
+*Wovon hängt es ab, ob eedc etwas bewerten kann?*
+
+- **Der Daten-Check fragt jetzt die Pflege statt die Bauart** *(#383, azywietz-web)*: Seit v4.0.18
+  kannst du bei einer Wärmepumpe **„Nichts ersetzt (Neubau)"** eintragen, und die Rechnung nimmt
+  das ernst. Der Daten-Check wusste davon nichts — er ging nach der Gerätebauart und lag damit an
+  beiden Enden daneben: Wer im **Neubau** baut, las weiter „Alter Energiepreis nicht gesetzt" und
+  „Heizwärmebedarf nicht gesetzt", obwohl es keine alte Heizung gibt. Und wer mit seiner
+  **Klimaanlage wirklich heizt**, bekam die beiden nie zu sehen, obwohl seine Ersparnis daran
+  hängt. ⚠ **Was du merkst:** Bei „Nichts ersetzt" verschwinden zwei Hinweise. Bei einer
+  **Klimaanlage, in der noch der Vorgabewert „Gas" steht**, erscheinen sie neu — dann aber mit
+  einem Weg heraus: Trag „Nichts ersetzt (Neubau)" ein, wenn du nur kühlst. **Es wird nichts still
+  geändert und nichts migriert.**
+- **„Alternativkosten fehlen" sagt jetzt, dass 0 eine Antwort ist**: Die Frage dahinter ist nicht
+  „welche Heizung hast du ersetzt", sondern „**was hättest du stattdessen kaufen müssen**" — der
+  Betrag mindert deine Anschaffungskosten, nur die Differenz muss sich amortisieren. Gab es keine
+  Alternative, trag **0** ein; der Hinweis verschwindet. Vorher stand das nirgends.
+- **Eine Klimaanlage zeigt „—" statt vier Nullen**: Unter *Komponenten → Wärme/Klima* stand für ein
+  Gerät mit 4.375 kWh Verbrauch viermal `0,00` — JAZ, Stromkosten, Gas/Öl und Ersparnis —, dazu ein
+  CO₂-Block und ein Kostenvergleich ohne Gegenstand. Dieselbe Anlage sagte in *Cockpit → Jahr* „—"
+  und in *Auswertungen → ROI* „nicht bewertet". Jetzt sagen alle drei dasselbe. ⚠ **Eine Zahl kommt
+  neu hinzu:** deine **Stromkosten**. Sie hängen an Verbrauch und Tarif und gelten auch ohne
+  ersetzte Heizung. ⚠ Wärmepumpen mit gemessener Wärme und gepflegtem Energieträger sehen **keine
+  veränderte Zahl**; und wo eine Wärmemenge gemessen ist, bleibt die JAZ stehen.
+
+**Und das neue Feld, das die Aufteilung überhaupt erst möglich macht.**
+
+- **Betriebsmodus deiner Klimaanlage** *(#263)*: Eine Split-Klimaanlage ist technisch eine
+  Wärmepumpe — sie heizt im Winter und kühlt im Sommer, über **denselben** Stromzähler. eedc sieht
+  deshalb nur eine Zahl und kann nicht sagen, welcher Teil ins Heizen ging. Nachrechnen lässt sich
+  das nicht; es geht nur, wenn eedc **mitschreibt**, während das Gerät läuft. Genau dafür gibt es
+  unter *Einstellungen → Datenquellen* jetzt bei jeder Wärmepumpe das freiwillige Feld
+  **Betriebsmodus**: Du ordnest dort die `climate`-Entität deines Geräts zu — in Home Assistant
+  meist `climate.…`, die Kachel, auf der Heizen/Kühlen/Aus steht.
+  - **Und was du davon siehst:** die Aufteilung selbst — siehe direkt darunter.
+  - ⚠ **Warum das Feld trotzdem jetzt da ist:** Die Aufteilung lässt sich **nicht nachträglich**
+    erzeugen. Home Assistant hebt Zustände wie „Heizen"/„Kühlen" nur wenige Tage auf. Wer heute
+    zuordnet, hat die Aufteilung ab heute — wer wartet, verliert die Zeit dazwischen dauerhaft. Der Daten-Check erinnert dich bei Klimaanlagen daran.
+  - ⚠ **Wer nichts zuordnet, merkt nichts:** Der Stromverbrauch zählt unverändert vollständig.
+  - ⚠ **Es braucht eine laufende Verbindung zu Home Assistant.** Wer seine Klimaanlage über den
+    Monatsabschluss, den Statistik-Import oder CSV pflegt, bekommt die Aufteilung nicht — dort gibt
+    es keinen Moment, in dem ein Modus mitgeschrieben werden könnte. Über MQTT geht es ebenfalls
+    nicht: dieser Weg nimmt nur Zahlen entgegen, keine Zustände.
+  - ⚠ **Offen gesagt:** Für diesen Schritt stand **kein Testgerät** zur Verfügung — er ist gegen
+    nachgebaute Daten abgesichert, nicht an einer echten Klimaanlage. Deshalb ist das Feld
+    freiwillig und fasst nichts Bestehendes an. Wenn es bei dir nicht tut, was es soll: bitte in
+    [#263](https://github.com/supernova1963/eedc-homeassistant/issues/263) melden.
+  - **Klarer beschriftet:** Beim Feld **Wärmepumpenart** stand „Wird für den fairen JAZ-Vergleich
+    in der Community verwendet". Das ist die Nebenwirkung — die Hauptwirkung stand nirgends: Die
+    Art entscheidet, **welche Messwerte eedc von deinem Gerät erwartet**. Eine Klimaanlage wird
+    zum Beispiel nicht nach Heizwärme gefragt.
+
+**Und die Auswertung dazu — Heizen und Kühlen getrennt.**
+
+- **Aufteilung Heizen/Kühlen** *(#263)*: Hat dein Gerät einen zugeordneten Betriebsmodus, steht
+  unter *Komponenten → Wärme/Klima* jetzt ein neuer Block: wie viel Strom ins **Heizen** ging, wie
+  viel ins **Kühlen**, was **nicht aufgeteilt** blieb — und über wie viele Stunden des Monats eedc
+  überhaupt mitlesen konnte. Dieselbe Aufteilung findest du in *Cockpit → Monat* und
+  *Cockpit → Jahr*; zwei neue Sensoren tragen sie nach Home Assistant.
+  - **„Nicht aufgeteilt" ist eine ehrliche Zeile.** Darin steckt Standby und alles, was weder
+    Heizen noch Kühlen war (Lüften, Entfeuchten, Automatik ohne Rückmeldung) — **und** die Zeit,
+    in der eedc nicht mitlesen konnte. Die Stundenzahl daneben trennt beides: hohe Abdeckung und
+    trotzdem ein Rest heißt „dein Gerät lief anders"; niedrige Abdeckung heißt „eedc hat nicht
+    hingesehen".
+  - ⚠ **Deine Bilanz ändert sich dadurch nicht.** Heizen und Kühlen sind **Teile** deines
+    Gesamtverbrauchs, keine zusätzlichen Posten — sie werden nirgends dazugezählt. Autarkie,
+    Eigenverbrauchsquote und Energiebilanz bleiben, wie sie waren.
+  - **Ohne Wärmemengenzähler rechnet eedc die Heizwärme jetzt aus dem Heiz-Strom und deiner
+    JAZ** — und schreibt dazu, dass sie abgeleitet ist. Damit zählt deine Klimaanlage in
+    Kostenvergleich, CO₂-Bilanz und Monatsbericht wie jede andere Wärmepumpe. ⚠ **Die JAZ selbst
+    bleibt in diesem Fall „—"**, mit Absicht: Wärme durch Strom zu teilen, wenn die Wärme aus
+    genau diesem Strom gerechnet wurde, ergibt wieder nur deine eingetragene JAZ — eine Zahl, die
+    nichts misst. ⚠ **Ohne gepflegte JAZ wird nichts abgeleitet**, auch nicht aus einem
+    Vorgabewert. ⚠ **Ein Wärmemengenzähler oder ein von Hand gepflegter Wert gewinnt immer.**
+  - ⚠ **Eine später korrigierte JAZ heilt alte Monate nicht.** Jeder Monat behält den Faktor, der
+    beim Abschluss galt — wie ein Tarif den Preis seines Monats behält. Das hält deine Historie
+    stabil, heißt aber auch: Nachträgliches Richtigstellen wirkt nur nach vorn.
+  - ⚠ **Kühlen spart nichts, es kostet.** Die Ersparnis gegenüber deiner alten Heizung wird nur
+    aus der **Heizhälfte** gerechnet. Ohne diese Trennung stand für eine überwiegend kühlende
+    Klimaanlage eine **negative** Ersparnis und eine **negative** CO₂-Bilanz, obwohl sie im Winter
+    sauber geheizt hat — im Testfall −45,04 € und −52 kg statt +2,48 € und +8,2 kg.
+  - ⚠ **Widersprüche werden nicht zurechtgebogen.** Trägst du den Monatsverbrauch nachträglich
+    kleiner ein als die schon erfasste Aufteilung, verwirft eedc die Aufteilung, statt sie passend
+    zu kürzen — und der Daten-Check sagt dir, welche Monate betroffen sind.
+  - ⚠ **Auch hier offen gesagt: kein Testgerät.** Abgesichert gegen nachgebaute Daten und eine
+    eigene Testinstanz, nicht an einer echten Klimaanlage. Rückmeldungen bitte in
+    [#263](https://github.com/supernova1963/eedc-homeassistant/issues/263).
 
 ---
 
