@@ -129,6 +129,14 @@ async def share_to_community(
                         anlage.community_hash = anlage_hash
                         await db.commit()
 
+                # #387 Schritt 3: Ein Voll-Submit über den Knopf ist dasselbe
+                # wie der automatische Nachsende-Lauf — beide schicken den
+                # kompletten Verlauf im neuen Format. Wer hier gedrückt hat,
+                # braucht den Hinweis nicht mehr.
+                from backend.services.community_nachsenden import merke_gesendet
+
+                await merke_gesendet(db, anlage_id)
+
                 await log_activity(
                     kategorie="community",
                     aktion="Community-Daten geteilt",
@@ -226,6 +234,25 @@ async def get_community_status():
             "url": COMMUNITY_SERVER_URL,
             "error": str(e),
         }
+
+
+@router.get("/nachsende-status")
+async def get_nachsende_status(db: AsyncSession = Depends(get_db)):
+    """Wer muss seinen Datensatz einmal neu teilen? (#387 Schritt 3)
+
+    Mit v4.0.22 gehen vier Felder erstmals mit — der PVGIS-Maßstab je Monat und
+    je Jahr, die CO₂-Zahl nach eedcs Kanon und der gemessene Eigenverbrauch. Der
+    Community-Server stellt seine Rangliste am **01.09.2026** darauf um.
+
+    Anlagen mit ``community_auto_share`` senden einmalig von selbst nach
+    (``services/community_nachsenden.py``, beim nächsten Start). Alle anderen
+    stehen hier unter ``offen`` — für sie ist der Hinweis samt vorhandenem
+    Teilen-Knopf gedacht, **kein** stiller Versand: sie haben dem automatischen
+    Teilen nie zugestimmt.
+    """
+    from backend.services.community_nachsenden import nachsende_status
+
+    return await nachsende_status(db)
 
 
 @router.delete("/delete/{anlage_id}", response_model=DeleteResponse)

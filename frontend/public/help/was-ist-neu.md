@@ -1,11 +1,107 @@
 # Was ist neu
 
-> **Stand:** August 2026 (v4.0.21)
+> **Stand:** August 2026 (v4.0.22)
 > **Diese Seite** zeigt pro Version, was sich für dich als Anwender geändert hat — kürzer als der technische [CHANGELOG](https://github.com/supernova1963/eedc-homeassistant/blob/main/CHANGELOG.md), ausführlicher als die Schnellübersicht-Tabelle in der [Übersicht](BENUTZERHANDBUCH.md#was-ist-neu-seit-v316).
 >
 > **Kein Banner, kein Pop-up:** eedc zeigt diese Liste nicht ungefragt an. HA-App-Nutzer sehen den Changelog ohnehin schon im Add-on-Store, GitHub-Releases haben einen eigenen. Wer wissen will, was neu ist, schaut hier rein — Pull statt Push.
 >
 > **Lesehinweis:** Die jüngsten Versionen stehen oben. Jeder Punkt verlinkt entweder auf die zuständige Hilfe-Sektion oder direkt auf die App-Funktion (sofern erreichbar). Anker-URLs (`?doc=was-ist-neu`) sind teilbar.
+
+---
+
+## v4.0.22 — Nur sagen, was man weiß
+
+**azywietz-web hat einen Fehler gemeldet und ihn gleich selbst vorgerechnet**
+([#387](https://github.com/supernova1963/eedc-homeassistant/issues/387)):
+Seine 2-kWp-Anlage läuft seit dem 19. März. Sechs Monate, alle mit Sonne — und im
+Community-Ranking stand sie auf **Rang 3 von 112**, in NRW sogar auf **Rang 1**.
+
+Der Grund war eine Hochrechnung mit dem Holzhammer: Der Community-Server hat aus den
+vorhandenen Monaten einen Mittelwert gebildet und ihn mit zwölf multipliziert. Aus
+**636,8 kWh/kWp** wurden so **1.273,6**. Wer im Frühjahr startet, hat aber genau die Monate
+im Datensatz, in denen die Sonne scheint — und wer ein ganzes Jahr gemessen hat, schleppt
+Dezember und Januar mit. Die Rangliste hat damit nicht gemessen, wer am meisten erzeugt,
+sondern **wer die wenigsten schwachen Monate hat**.
+
+### Was sich ändert — und wann
+
+Ein Teiljahr wird **weiter hochgerechnet**, aber nicht mehr flach. Statt „mal zwölf" gilt
+künftig die **Ertragserwartung deines eigenen Standorts** als Maßstab: Ein Frühling zählt
+als Frühling. Für die Anlage des Melders ergibt das rund **980** statt 1.273,6 kWh/kWp —
+nah an den etwa 940, die er selbst erwartet hatte.
+
+> ⚠ **Die Umstellung passiert am 1. September 2026, nicht mit diesem Update.**
+> Sie braucht eine Angabe, die erst diese Version mitschickt — und die muss erst bei
+> genügend Anlagen angekommen sein. Deshalb ändert sich die Rangliste an **einem Tag**
+> und nicht schleichend über Wochen. Bis dahin siehst du die alten Zahlen.
+
+**Was du dafür tun kannst:** einmal teilen. Wer *„Monatsdaten nach Abschluss automatisch
+senden"* aktiviert hat, muss gar nichts tun — eedc schickt den neuen Maßstab nach dem
+Update von selbst einmal nach. Alle anderen finden unter *Community* einen Hinweis mit
+Knopf.
+
+**Und du brauchst dafür kein zweites Update:** Ab dem 1. September weist eedc einen
+hochgerechneten Wert als solchen aus — *„hochgerechnet aus 5 von 12 Monaten"* steht dann
+unter der Zahl. Diese Version kann das bereits; sie zeigt es, sobald der Server umgestellt
+ist.
+
+### Drei weitere Korrekturen am selben Ort
+
+**Dein angefangener Monat bleibt zu Hause.** Bisher ging auch der laufende, halb volle
+Monat in den Gemeinschaftsdatensatz. Am 19. August wies die Community deshalb für den
+August **46,3 kWh/kWp aus fünf Anlagen** aus — kein August, sondern fünf halbe. Genau diese
+Zahl benutzt eedc als monatlichen Vergleichswert; wer sich damit verglich, sah sich weit
+über dem Schnitt. Ab jetzt gilt ein Monat erst als teilbar, wenn er **im Kalender** vorbei
+ist — unabhängig davon, wann du ihn abschließt.
+
+**Die CO₂-Zahl der Community war zu niedrig.** Der Server hat sie selbst gerechnet, aus dem
+Eigenverbrauch mal einem festen Faktor — **ohne Wärmepumpe und E-Mobilität**. Bei
+ausgewiesenen 318,9 Tonnen fehlten allein durch die Wärmepumpen rund **22 %**. Künftig steht
+dort dieselbe Zahl, die dein Cockpit zeigt.
+
+**Zwei Durchschnitte für dieselbe Größe.** Im Add-on stand **662 kWh/kWp**, auf der
+Community-Seite **840** — im selben Moment. Beide Seiten rechnen künftig über dieselbe
+Vergleichsgruppe.
+
+### Die Live-Ansicht zeigte zu viel PV für heute
+
+**Mathek hat es gemeldet** ([#388](https://github.com/supernova1963/eedc-homeassistant/issues/388))
+und mit drei Bildern belegt: In der Kachel *Heute* standen **10,0 kWh**, sein eigener Zähler
+in Home Assistant zeigte zeitgleich **7,65** — rund 31 % zu viel. In der Tagesansicht stand
+wieder etwas anderes.
+
+Der Grund: eedc hat für diese **eine** Kachel die Leistung hochgerechnet, statt den
+Zählerstand zu lesen — obwohl der Zähler zugeordnet war und Einspeisung und Netzbezug direkt
+daneben genau daraus kamen. Betroffen war, wer seine PV über den **anlagenweiten** Zähler
+erfasst und keine Messung je Modulgruppe hat; das ist der Normalfall. Tages- und
+Monatsansicht waren nie betroffen — das erklärt, warum dieselbe Anlage zwei Zahlen zeigte.
+
+### Zwei Hinweise, die dich im Kreis geschickt haben
+
+**gruaGit hat beide gemeldet** — und bei beiden hatte der Hinweis mehr behauptet, als er wusste.
+
+**Der erste:** Wer die Datenquelle eines Feldes auf **Keine** stellt, weil der Wert schon von
+einer anderen Komponente kommt, bekam es trotzdem dauerhaft als „MQTT-Topic erwartet, nie
+empfangen" gemeldet ([#389](https://github.com/supernova1963/eedc-homeassistant/issues/389)).
+Bei ihm vier Stück, die sich nicht abstellen ließen. Der Grund: Die Liste der erwarteten
+Topics entstand aus den Feldern, die deine Anlage kennt — sie hat nie nachgesehen, welche
+Quelle du dem einzelnen Feld zugewiesen hast. Dasselbe galt für Felder an einem **HA-Sensor**;
+dort kann über MQTT ohnehin nie etwas ankommen. **Beides ist weg.** Was bleibt: Felder ohne
+zugewiesene Quelle — dafür ist die Warnung da — und Felder über ein **MQTT-Gateway**, denn
+dessen Werte laufen durch denselben Kanal.
+
+Und weil „leistung_w" an jedem Gerät existiert, nennt die Warnung jetzt den **vollen
+Topic-Pfad**. Genau daran war seine Fehlersuche hängengeblieben.
+
+**Der zweite:** Fehlten dem Geräte-Connector die Zählerstände für den laufenden Monat, sagte
+eedc „Der tägliche Abruf ist ausgeschaltet"
+([Diskussion #390](https://github.com/supernova1963/eedc-homeassistant/discussions/390)).
+**Das stimmte nie.** Der Abruf läuft bei jedem eingerichteten Connector täglich um 3:30 Uhr,
+und einen Schalter dafür gab es gar nicht — der Satz beschrieb einen Zustand, den es nicht
+gibt. Der Knopf *Beheben* führte dazu auf eine Seite, auf der sich nichts daran ändern ließ.
+Jetzt nennt der Hinweis die Uhrzeit und den letzten Abruf und führt zum **Geräte-Connector**
+mit dem Knopf *Jetzt ablesen*. Scheitert ein Abruf, steht der Grund dort und im
+Aktivitätsprotokoll.
 
 ---
 
@@ -2262,6 +2358,14 @@ Zählerstand *im* neuen Monat naturgemäß, bis der Abruf einmal durch ist.
 
 **Muss ich etwas tun?** Nein — außer der Daten-Checker meldet den Connector; dann lohnt der
 Blick, ob der **tägliche Abruf** eingeschaltet und das Gerät erreichbar ist.
+
+> ⚠ **Nachträglich richtiggestellt (August 2026):** Der Satz oben stimmt nicht — einen Schalter
+> für den täglichen Abruf gibt es nicht, und es gab ihn nie. Der Abruf läuft bei **jedem**
+> eingerichteten Geräte-Connector um 3:30 Uhr. Zu prüfen ist deshalb nur, ob das Gerät
+> erreichbar ist; von Hand auslösen lässt sich ein Abruf unter *Einstellungen → Integration →
+> Import-Assistenten → Geräte-Connector* mit **Jetzt ablesen**. Der Daten-Checker hat denselben
+> Satz damals selbst angezeigt — dass er auf nichts verwies, fiel erst auf, als jemand danach
+> suchte.
 
 ---
 

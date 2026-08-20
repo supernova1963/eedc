@@ -81,14 +81,33 @@ export interface PreviewResponse {
   bereits_geteilt: boolean
 }
 
+/**
+ * Vergleichsdaten der eigenen Anlage.
+ *
+ * ⚠ Die Ertragsfelder duerfen `null` sein (Community-Server seit eedc #387):
+ * Ein spezifischer Jahresertrag entsteht nur aus **zwoelf lueckenlosen
+ * Kalendermonaten**. Vorher rechnete der Server Teiljahre auf zwoelf hoch und
+ * stellte sie neben echte Jahreswerte — eine Anlage mit sechs Sommermonaten
+ * stand damit vor Anlagen mit vollem Jahr. Wer das Fenster nicht hat, bekommt
+ * jetzt **keinen Wert und keinen Rang**; `basis_monate` sagt, wie weit er ist.
+ */
 export interface BenchmarkData {
-  spez_ertrag_anlage: number
-  spez_ertrag_durchschnitt: number
-  spez_ertrag_region: number
-  rang_gesamt: number
+  spez_ertrag_anlage: number | null
+  spez_ertrag_durchschnitt: number | null
+  spez_ertrag_region: number | null
+  rang_gesamt: number | null
   anzahl_anlagen_gesamt: number
-  rang_region: number
+  rang_region: number | null
   anzahl_anlagen_region: number
+  /** Lueckenlose Monate ab dem juengsten abgeschlossenen Monat rueckwaerts. */
+  basis_monate?: number
+  /** Laenge des Vergleichsfensters (12). */
+  fenster_monate?: number
+  /** Ende des Fensters — zum Beschriften („Stand 07/2026"). */
+  basis_bis_jahr?: number | null
+  basis_bis_monat?: number | null
+  /** Juengster Monat liegt mehr als ein Jahr zurueck. */
+  basis_veraltet?: boolean
 }
 
 export interface ShareResponse {
@@ -127,7 +146,8 @@ export interface KPIVergleich {
 }
 
 export interface PVBenchmark {
-  spez_ertrag: KPIVergleich
+  /** `null`, solange die Anlage kein volles 12-Monats-Fenster hat (#387). */
+  spez_ertrag?: KPIVergleich | null
 }
 
 export interface SpeicherBenchmark {
@@ -166,7 +186,8 @@ export interface BKWBenchmark {
 }
 
 export interface ErweiterteBenchmarkData {
-  pv: PVBenchmark
+  /** `null` ohne volles 12-Monats-Fenster (#387) — nur die Monatsvergleiche bleiben. */
+  pv?: PVBenchmark | null
   speicher?: SpeicherBenchmark | null
   waermepumpe?: WaermepumpeBenchmark | null
   eauto?: EAutoBenchmark | null
@@ -437,6 +458,14 @@ export interface MonatsVergleich {
 // API Client
 // =============================================================================
 
+/** Antwort von `GET /community/nachsende-status` (#387 Schritt 3). */
+export interface NachsendeStatus {
+  /** Lief der automatische Nachsende-Lauf für den aktuellen Stand schon durch? */
+  erledigt: boolean
+  /** Anlagen, die geteilt haben, aber nicht automatisch nachsenden. */
+  offen: { anlage_id: number; anlagenname: string }[]
+}
+
 export const communityApi = {
   /**
    * Prüft ob der Community-Server erreichbar ist
@@ -457,6 +486,19 @@ export const communityApi = {
    */
   async share(anlageId: number): Promise<ShareResponse> {
     return api.post<ShareResponse>(`/community/share/${anlageId}`)
+  },
+
+  /**
+   * Wer muss seinen Datensatz einmal neu teilen? (#387 Schritt 3)
+   *
+   * Seit v4.0.22 gehen vier Felder mit, die der Community-Server für die neue
+   * Hochrechnung braucht — der PVGIS-Maßstab je Monat und je Jahr, die CO₂-Zahl
+   * nach eedcs Kanon und der gemessene Eigenverbrauch. Anlagen mit
+   * `community_auto_share` senden einmalig von selbst nach; alle anderen stehen
+   * in `offen` und bekommen den Hinweis samt vorhandenem Teilen-Knopf.
+   */
+  async getNachsendeStatus(): Promise<NachsendeStatus> {
+    return api.get<NachsendeStatus>('/community/nachsende-status')
   },
 
   /**
