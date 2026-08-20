@@ -1,11 +1,134 @@
 # Was ist neu
 
-> **Stand:** August 2026 (v4.0.22)
+> **Stand:** August 2026 (v4.0.23)
 > **Diese Seite** zeigt pro Version, was sich für dich als Anwender geändert hat — kürzer als der technische [CHANGELOG](https://github.com/supernova1963/eedc-homeassistant/blob/main/CHANGELOG.md), ausführlicher als die Schnellübersicht-Tabelle in der [Übersicht](BENUTZERHANDBUCH.md#was-ist-neu-seit-v316).
 >
 > **Kein Banner, kein Pop-up:** eedc zeigt diese Liste nicht ungefragt an. HA-App-Nutzer sehen den Changelog ohnehin schon im Add-on-Store, GitHub-Releases haben einen eigenen. Wer wissen will, was neu ist, schaut hier rein — Pull statt Push.
 >
 > **Lesehinweis:** Die jüngsten Versionen stehen oben. Jeder Punkt verlinkt entweder auf die zuständige Hilfe-Sektion oder direkt auf die App-Funktion (sofern erreichbar). Anker-URLs (`?doc=was-ist-neu`) sind teilbar.
+
+---
+
+## v4.0.23 — Was zählt, und was nicht
+
+**Gas, Wasser, Heizöl: Zähler mitführen — ohne dass eedc sie bewertet**
+([#377](https://github.com/supernova1963/eedc-homeassistant/issues/377))
+
+Neben dem Strom laufen im Haus noch andere Zähler. Ab jetzt kannst du sie in eedc
+mitführen: Unter *Einstellungen → Komponenten → Sonstiges* gibt es die neue
+Kategorie **Verbrauchszähler** — für Gas, Wasser, Heizöl, Flüssiggas oder
+Pellets.
+
+eedc merkt sich dabei den **Zählerstand**, also genau die Zahl, die auf dem
+Zähler steht. Die einzige Rechnung darauf ist die Differenz zwischen Anfang und
+Ende des Zeitraums, den du gerade ansiehst. Du siehst das an vier Stellen:
+
+- **Live → Auf einen Blick:** der aktuelle Stand und was sich heute bewegt hat.
+- **Cockpit → Tag / Monat / Jahr:** ein Block *Zählerstände* mit Stand am Anfang,
+  Stand am Ende, der Differenz und dem Verlauf.
+- **Komponenten → Sonstiges:** Stand und Verbrauch über den Gesamtzeitraum.
+- **Auswertungen → Tabelle:** eine Spalte je Zähler, über den Spalten-Wähler
+  unter „Zählerstände". Sie ist nicht vorausgewählt — wer drei Zähler pflegt,
+  bekommt nicht ungefragt drei Spalten dazu.
+
+Den Stand kannst du **von Hand** im Monatsabschluss eintragen (das Feld heißt
+*Zählerstand*) oder aus einem **Sensor** kommen lassen: unter *Datenquellen*
+zuordnen, dann schreibt eedc ihn stündlich mit und schlägt ihn im
+Monatsabschluss vor. Beim Anlegen wählst du außerdem, was gezählt wird und in
+welcher Einheit — beides ist reine Anzeige, **eedc rechnet nichts um**.
+
+⛔ **Und jetzt der wichtigste Teil: eedc bewertet diese Zahlen nicht.** Sie gehen
+in **keine** Energiebilanz, in **keine** Autarkie- oder Eigenverbrauchsquote, in
+**keine** Wirtschaftlichkeit, in **keine** CO₂-Bilanz und **nicht** in die
+Gemeinschaftsdaten. Das ist Absicht: Gas- und Wasserkosten sind Haushaltskosten
+und gehören nicht in die Rechnung deiner PV-Anlage — dort würden sie die Zahlen
+unbrauchbar machen. Bei der Wirtschaftlichkeit eines Zählers steht deshalb
+ausdrücklich „nicht bewertet" und nicht eine Reihe von Nullen.
+
+✅ **Wer keinen Zähler anlegt, merkt von alldem nichts.** Es bewegt sich keine
+einzige bestehende Zahl.
+
+⚠ **Wenn dein Zähler getauscht wird:** Setz beim alten Gerät ein
+**Stilllegungsdatum** und leg ein neues an — und lass den Haken *aktiv* beim
+alten dabei **stehen**. Dann bleibt die bisherige Ablesehistorie erhalten, und
+der Verbrauch über den Wechsel hinweg stimmt (er ist die Summe aus beiden). Den
+Haken *aktiv* zu entfernen heißt in eedc „wie gelöscht" — dann wären die alten
+Ablesungen auch rückwirkend verschwunden.
+
+⚑ **Was eedc dafür ausdrücklich nicht kann:** einen Effizienzvergleich vor und
+nach einer Heizungsmodernisierung. Dafür bräuchte eedc die Heizung als eigene
+Komponente mit Wirkungsgrad und Wärmemenge — sonst stünden Kubikmeter gegen
+Kilowattstunden.
+
+**Klimaanlage: die Aufteilung Heizen/Kühlen ist sofort da**
+([#263](https://github.com/supernova1963/eedc-homeassistant/issues/263), gemeldet von kingcap1)
+
+Wer den **Betriebsmodus** seiner Klimaanlage zuordnet, bekam bisher nirgendwo ein
+Ergebnis zu sehen — weder im Komponenten-Hub noch in *Cockpit → Monat* und *→ Jahr*,
+und die beiden Home-Assistant-Sensoren blieben leer. Der Melder hat zugeordnet und
+gefragt, ob „erst ein Tag durchlaufen" müsse.
+
+Es lag weder an einem Tag noch an einer falschen Zahl: Die Aufteilung stand nur in der
+**Monatszeile**, und die entsteht erst beim Monatsabschluss — den startest du von Hand,
+und für den laufenden Monat gibt es ihn nie. Wer heute zuordnete, hätte also bis Anfang
+des nächsten Monats nichts gesehen.
+
+**Jetzt rechnet eedc die Aufteilung aus den mitgeschriebenen Stunden, solange kein
+Abschluss vorliegt.** Dieselbe Rechnung, dieselben Zahlen — nur schon während des
+Monats, und in **allen vier** Anzeigen samt den beiden Home-Assistant-Sensoren. Wo du
+einen Monat bereits abgeschlossen hast, bleibt dessen Ergebnis stehen; ein fertiger
+Monat wird nicht rückwirkend umgeschrieben und nichts doppelt gezählt.
+
+⚠ Unverändert: Der Modus wird **ab der Zuordnung** mitgeschrieben, nicht rückwirkend.
+Home Assistant bewahrt Zustände wie „Heizen"/„Kühlen" nur wenige Tage auf.
+
+**Und der zugeordnete Betriebsmodus zeigt endlich seinen Wert**
+
+Unter *Einstellungen → Datenquellen* stand neben dem Feld ein Strich, obwohl Home
+Assistant sauber „cool" meldete — die Zeile konnte nur Zahlen anzeigen, und ein
+Betriebsmodus ist keine. Eine funktionierende Zuordnung sah damit aus wie ein Ausfall.
+
+Jetzt steht dort **„Kühlen (cool)"** — der Klartext mit dem Rohwert daneben. Kennt eedc
+eine Schreibweise nicht, heißt sie ausdrücklich **„Unbestimmt"**; dann weißt du, dass
+diese Zeit später unter *nicht aufgeteilt* landet, statt still einer Seite zugeschlagen
+zu werden. Ein echter Ausfall zeigt weiterhin „–".
+
+✅ **Wichtig, falls du diesen Strich gesehen hast: deine Zeit ist nicht verloren.**
+Kaputt war allein die **Anzeige** — eedc liest den Betriebsmodus über einen anderen Weg
+aus Home Assistant aus als diese Zeile. Wo eine Zuordnung stand, wurde die ganze Zeit
+mitgeschrieben, auch während dort ein Strich zu sehen war. Die Aufteilung ist also ab
+dem Tag deiner Zuordnung vorhanden und taucht mit diesem Update auf.
+
+**Wer aus einem Hersteller-Portal importiert, wird nicht mehr zu einem Gerät geschickt,
+das er nie eingerichtet hat**
+([#390](https://github.com/supernova1963/eedc-homeassistant/discussions/390), gemeldet von gruaGit)
+
+In eedc gibt es zwei verschiedene Wege, Daten direkt vom Wechselrichter zu holen — sie
+stehen nebeneinander unter *Einstellungen → Integration → Import-Assistenten*:
+
+- der **Geräte-Connector** spricht dein Gerät **im eigenen Netz** an,
+- ein **Cloud-Import** holt die Daten vom **Portal des Herstellers** (Fronius Solar.web,
+  SolarEdge, Growatt, EcoFlow und weitere).
+
+Wer nur den zweiten Weg nutzt, bekam trotzdem den ersten angezeigt: eine Karte
+*„Connector aktiv"* ohne Gerät, ohne Adresse und ohne einen einzigen Zählerstand — und
+dazu im Daten-Checker die Meldung *„Connector „Connector" liefert für 08/2026 keinen
+Wert"*. Der Melder ist ihr gefolgt, hat *Jetzt ablesen* gedrückt und bekam
+*„Unbekannter Connector: None"*. **Es gab dort nichts zu reparieren**, weil es das Gerät
+nie gab. Genau so etwas soll der Daten-Checker nie melden.
+
+**Jetzt gilt:** Beides bleibt sauber getrennt. Ohne eingerichteten Geräte-Connector
+zeigt die Fläche wieder den Einrichtungsschritt, und der Daten-Checker schweigt.
+
+⚠ **Der wichtigste Teil ist einer, den kaum jemand bemerkt hätte:** Neben dem
+Phantom-Gerät stand ein Knopf **Entfernen** — und der hätte deine **Zugangsdaten zum
+Hersteller-Portal gelöscht**, weil beide in derselben Ablage liegen. Auch das ist
+behoben. **Wer den Knopf nicht gedrückt hat, verliert nichts**, und es gibt nichts
+nachzutragen.
+
+✅ **Deine Daten waren nie in Gefahr, solange du nichts gelöscht hast.** Der nächtliche
+Abruf und die Weitergabe an Home Assistant haben von jeher richtig unterschieden —
+betroffen war nur, was du auf dem Bildschirm gesehen hast.
 
 ---
 
