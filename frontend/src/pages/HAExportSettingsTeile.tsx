@@ -68,6 +68,7 @@ import {
 import { haApi, anlagenApi } from '../api'
 import { Button, Input, SegmentControl, Switch, EmptyState } from '../components/ui'
 import { VERBINDUNG_GEAENDERT_EVENT } from '../api/datenquellen'
+import { useCopyFeedback } from '../hooks'
 
 const MDI_ICON_MAP: Record<string, string> = {
   'mdi:solar-power': mdiSolarPower,
@@ -156,7 +157,7 @@ export function MqttExportVerwaltung({ anlageId, anlage, kopfZusatz, onAnlageUpd
   // UI State
   const [activeTab, setActiveTab] = useState<'rest' | 'mqtt'>('mqtt')
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set(['energie', 'finanzen']))
-  const [copiedYaml, setCopiedYaml] = useState(false)
+  const { istKopiert, kopiere } = useCopyFeedback()
 
   // Daten laden
   const loadData = async () => {
@@ -314,24 +315,11 @@ export function MqttExportVerwaltung({ anlageId, anlage, kopfZusatz, onAnlageUpd
     }
   }
 
-  // YAML kopieren
-  const copyYaml = async () => {
+  // YAML kopieren — Logik inkl. `execCommand`-Fallback liegt seit 2026-08-20 im
+  // SoT `hooks/useCopyFeedback` (vorher hier und in `ProtokolleTeile` inline).
+  const copyYaml = () => {
     if (!yamlSnippet) return
-    try {
-      await navigator.clipboard.writeText(yamlSnippet.yaml)
-      setCopiedYaml(true)
-      setTimeout(() => setCopiedYaml(false), 2000)
-    } catch {
-      // Fallback für ältere Browser
-      const textarea = document.createElement('textarea')
-      textarea.value = yamlSnippet.yaml
-      document.body.appendChild(textarea)
-      textarea.select()
-      document.execCommand('copy')
-      document.body.removeChild(textarea)
-      setCopiedYaml(true)
-      setTimeout(() => setCopiedYaml(false), 2000)
-    }
+    kopiere(yamlSnippet.yaml)
   }
 
   // YAML downloaden
@@ -484,6 +472,14 @@ export function MqttExportVerwaltung({ anlageId, anlage, kopfZusatz, onAnlageUpd
             <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
               Eine Stunde gilt als „günstig", wenn ihr Börsenpreis mindestens diesen Prozentsatz
               unter dem Tagesdurchschnitt (ohne die 3 teuersten Stunden) liegt. Standard: 10&nbsp;%.
+              {/* Zusage an Rainer (PN 2026-08-20): Was 0 % bedeutet, stand bis
+                  hierher nur in einem Hinweis, der erst erscheint, wenn die 0
+                  schon im Feld steht — also nach der Entscheidung. Wer die
+                  Schwelle „abschalten" will, tippt 0 und bekommt MEHR günstige
+                  Stunden statt keine. Der Satz gehört deshalb in die
+                  Beschreibung, nicht in eine Reaktion. */}
+              {' '}<strong>0&nbsp;% schaltet nichts ab</strong> — die Schwelle liegt dann genau
+              auf dem Durchschnitt, und günstig ist jede Stunde darunter.
             </p>
             {/* 0 ist ein gültiger, aber folgenreicher Wert: der Schwellen-Faktor
                 wird 1,0 — die Schwelle liegt damit genau auf dem optimierten Ø.
@@ -750,7 +746,7 @@ export function MqttExportVerwaltung({ anlageId, anlage, kopfZusatz, onAnlageUpd
               </h2>
               <div className="flex gap-2">
                 <Button type="button" variant="secondary" size="sm" onClick={copyYaml}>
-                  {copiedYaml ? (
+                  {istKopiert() ? (
                     <>
                       <CheckCircle className="w-4 h-4 mr-1 text-green-500" />
                       Kopiert!

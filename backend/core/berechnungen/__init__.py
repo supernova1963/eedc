@@ -123,6 +123,11 @@ from backend.core.berechnungen.imd_monatsaggregat import (
     ImdTypBeitrag,
     imd_typ_beitrag,
 )
+from backend.core.berechnungen.betriebsart_gemessen import (
+    betriebsart_nutzenergie_kwh,
+    betriebsart_strom_kwh,
+    hat_gemessene_betriebsart,
+)
 from backend.core.berechnungen.modus_split import (
     ModusSplit,
     ModusStunde,
@@ -157,6 +162,7 @@ from backend.core.berechnungen.energie import (
     summe_bkw_kwh,
     summe_pv_anlage_kwh,
     summe_pv_bkw_kwh,
+    geraete_spalte_kw,
     summe_waermepumpe_kwh,
     waermepumpe_kwh_je_investition,
     summe_wallbox_eauto_kwh,
@@ -348,6 +354,9 @@ __all__ = [
     "ust_eigenverbrauch_fuer_anlage",
     "ImdTypBeitrag",
     "ModusSplit",
+    "betriebsart_nutzenergie_kwh",
+    "betriebsart_strom_kwh",
+    "hat_gemessene_betriebsart",
     "REGEL_JAZ_MODUS_SPLIT",
     "abgeleitete_heizwaerme_kwh",
     "heizwaerme_ist_abgeleitet",
@@ -380,6 +389,7 @@ __all__ = [
     "SonstigesTagesSummen",
     "sonstiges_kwh_je_richtung",
     "sonstiges_richtung",
+    "geraete_spalte_kw",
     "summe_waermepumpe_kwh",
     "waermepumpe_kwh_je_investition",
     "summe_wallbox_eauto_kwh",

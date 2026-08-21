@@ -1,11 +1,165 @@
 # Was ist neu
 
-> **Stand:** August 2026 (v4.0.23)
+> **Stand:** August 2026 (v4.0.24)
 > **Diese Seite** zeigt pro Version, was sich für dich als Anwender geändert hat — kürzer als der technische [CHANGELOG](https://github.com/supernova1963/eedc-homeassistant/blob/main/CHANGELOG.md), ausführlicher als die Schnellübersicht-Tabelle in der [Übersicht](BENUTZERHANDBUCH.md#was-ist-neu-seit-v316).
 >
 > **Kein Banner, kein Pop-up:** eedc zeigt diese Liste nicht ungefragt an. HA-App-Nutzer sehen den Changelog ohnehin schon im Add-on-Store, GitHub-Releases haben einen eigenen. Wer wissen will, was neu ist, schaut hier rein — Pull statt Push.
 >
 > **Lesehinweis:** Die jüngsten Versionen stehen oben. Jeder Punkt verlinkt entweder auf die zuständige Hilfe-Sektion oder direkt auf die App-Funktion (sofern erreichbar). Anker-URLs (`?doc=was-ist-neu`) sind teilbar.
+
+---
+
+## v4.0.24 — Was das Gerät wirklich tut
+
+**Klimaanlage: messen statt schätzen — und jedes Innengerät einzeln**
+([#263](https://github.com/supernova1963/eedc-homeassistant/issues/263))
+
+Bisher konnte eedc nur *ableiten*, welcher Teil des Stroms ins Heizen und
+welcher ins Kühlen ging: aus dem zugeordneten Betriebsmodus und den Stunden, in
+denen er galt. Wenn du die Anteile **messen** kannst, trägst du sie jetzt direkt
+ein — für **Heizen, Kühlen, Lüften und Entfeuchten**. Was gemessen ist, hat
+Vorrang vor dem, was eedc rechnet.
+
+Hast du mehrere Innengeräte an einem Außengerät, legst du sie beim Gerät unter
+*Innengeräte* an — einfach mit ihrem Namen, „Büro", „Wohnzimmer". Danach hat
+jedes seine **eigenen** Felder: Verbrauch je Betriebsart, Leistung, Soll- und
+Raumtemperatur. Zuordnen wie alles andere, unter *Einstellungen → Datenquellen*.
+Im Live-Bild stehen sie unter *Auf einen Blick → Innengeräte*.
+
+**Alles davon ist freiwillig.** Legst du keine Innengeräte an und ordnest keine
+neuen Sensoren zu, ändert sich für dich **nichts** — eedc rechnet weiter genau
+wie bisher. Eine Luft-Wasser-Wärmepumpe bekommt die neuen Felder gar nicht erst
+angeboten.
+
+> **Ein Punkt, den du wissen solltest:** An einem Multisplit hängt **ein**
+> Außengerät an mehreren Innengeräten. Was eine Hersteller-App als „Verbrauch"
+> eines Innengeräts anzeigt, ist in Wahrheit der Anteil des Außengeräts —
+> zugerechnet auf das Gerät, das gerade anfordert. Und das wechselt, je nachdem
+> welches du zuerst einschaltest. Der Hersteller sagt das selbst. eedc nimmt die
+> Zahl entgegen und schreibt an jedes Feld dazu, was sie bedeutet — die
+> verlässliche Menge ist ein eigener Zähler am Außengerät.
+
+**Woher bekommst du vier getrennte Zähler?** Aus Home Assistant, ohne
+Zusatzsoftware: ein **Utility Meter** mit je einem Tarif für Heizen, Kühlen,
+Lüften und Entfeuchten, umgeschaltet von einer Automatisierung am Zustand deiner
+Klimaanlage. Die Schritt-für-Schritt-Anleitung steht in der
+[Sensor-Referenz](SENSOR-REFERENZ.md).
+
+*Danke an kingcap1, Klausnn und OB73-gif — ihre Messungen an drei verschiedenen
+Anlagen haben aus einer Rechenregel eine Messung gemacht.*
+
+---
+
+**Klimaanlage: der laufende Betrieb kam in der Aufteilung nicht an**
+([#263](https://github.com/supernova1963/eedc-homeassistant/issues/263))
+
+**Betrifft dich das?** Nur, wenn deine Wärmepumpe oder Klimaanlage ihren
+*laufenden* Betrieb meldet — das tun Panasonic, Daikin und die meisten
+Luft-Wasser-Wärmepumpen. Bei ihnen landete die **gesamte** Aufteilung
+Heizen/Kühlen unter „nicht aufgeteilt", statt auf die beiden Seiten zu gehen.
+Geräte ohne dieses Signal (etwa Mitsubishi über MELCloud) waren nie betroffen —
+ausgerechnet das bessere Signal führte zum schlechteren Ergebnis.
+
+**Was du tun kannst:** Die Aufteilung repariert sich für alle Tage, die du über
+*Einstellungen → Daten → Energieprofil* neu berechnen lässt — soweit die
+Historie in Home Assistant noch reicht. Bei der Standardeinstellung sind das
+etwa 10 Tage, mit erhöhter Aufbewahrungsdauer entsprechend mehr. Ältere Monate
+lassen sich nicht nachtragen: Home Assistant hält Gerätezustände nicht dauerhaft
+vor.
+
+Keine Zahl der Energiebilanz war betroffen — der Stromverbrauch stimmte immer,
+falsch war nur seine Aufteilung.
+
+---
+
+**Cockpit → Tag: leere Gerätespalte, und ein zu hoher Hausverbrauch**
+
+**Betrifft dich das?** Ja, wenn du eine Wärmepumpe oder Wallbox über einen
+**Leistungssensor** erfasst und keinen kWh-Zähler zugeordnet hast — bei
+Split-Klimaanlagen ist das der Normalfall. In *Cockpit → Tag* blieb die Spalte
+„Wärmepumpe" dann leer, obwohl derselbe Wert in der gerätebenannten Spalte
+danebenstand und die Monatsansicht korrekt damit rechnete.
+
+**Der wichtigere Teil steckte daneben:** Der **Hausverbrauch** derselben Tabelle
+zieht Wärmepumpe und Wallbox vom Gesamtverbrauch ab. Fehlte der Zähler, wurde
+**nichts** abgezogen — der Hausverbrauch stand um den Verbrauch dieser Geräte zu
+hoch. Diese Zahl stimmt jetzt.
+
+PV-Erzeugung und Gesamtverbrauch bleiben unangetastet: Das sind Bilanzgrößen,
+an denen Performance Ratio sowie Überschuss und Defizit hängen.
+
+---
+
+**Die Aufteilung Heizen/Kühlen gibt es jetzt auch für einen einzelnen Tag**
+
+Bisher stand sie nur je Monat. In *Cockpit → Tag* erscheint der Block
+**„Aufteilung Heizen/Kühlen"** jetzt im Wärmepumpen-Abschnitt — mit denselben
+drei Größen wie im Monat. Es ist dieselbe Rechnung, keine zweite: Was der Tag
+zeigt, steckt unverändert in der Monatssumme.
+
+Ohne zugeordneten Betriebsmodus erscheint der Block gar nicht — statt mit drei
+Nullen dazustehen. Eine 0 hieße „hat nicht geheizt"; das weiß eedc ohne Sensor
+nicht.
+
+*Alle drei Punkte gemeldet von OB73-gif, Klausnn und kingcap1.*
+
+---
+
+**Alle MQTT-Topics auf einen Blick**
+
+**Betrifft dich das?** Ja, wenn du deine Werte aus ioBroker, FHEM oder einem
+eigenen Skript per MQTT schickst. Am Ende von *Einstellungen → Datenquellen*
+steht jetzt ein zugeklappter Block **MQTT-Topics**: nach Gerät gruppiert, je
+Zeile das vollständige Topic mit Feldname und Einheit, mit Kopier-Knopf — und
+einem „Alle kopieren" für die ganze Liste. Das Zusammensuchen aus der
+Sensor-Referenz entfällt.
+
+Gezeigt werden nur die Topics **vorhandener** Geräte, denn nur die sind wirksam.
+Zuordnen musst du vorher nichts: Ein Feld stellt sich beim ersten empfangenen
+Wert selbst auf *Inbound*.
+
+---
+
+**Börsenpreise: Höchst, Tiefst und der Monatsschnitt**
+
+Der Börsenpreis-Block sagte dir, wie teuer die aktuelle Stunde gegenüber dem
+heutigen Tag ist — aber nicht, ob heute überhaupt ein teurer Tag war. Jetzt
+stehen vorne der **Höchst-** und der **Tiefstpreis des Tages** (jeweils mit der
+Uhrzeit) und der **Monatsdurchschnitt**. Die Optimierer-Zahlen kommen dahinter.
+
+Dazu eine kleine Klarstellung an der **Günstig-Schwelle**: „0 %" schaltet sie
+**nicht ab** — die Schwelle liegt dann genau auf dem Tagesdurchschnitt, und
+günstig ist jede Stunde darunter. Das steht jetzt direkt am Feld, statt erst
+aufzutauchen, wenn man die 0 schon eingetippt hat.
+
+*Beides angeregt von rapahl.*
+
+---
+
+**Die CSV-Vorlage passt wieder zum eigenen Import**
+
+Wenn du dir unter *Einstellungen → Daten* die **personalisierte CSV-Vorlage**
+holst, sie ausfüllst und wieder importierst, meldete eedc „Import erfolgreich" —
+und **drei Werte fehlten danach**, ohne einen Hinweis: die **Netzladung** eines
+Speichers mit Arbitrage, der **Einspeise-Erlös** eines Erzeugers unter
+*Sonstiges*, und der **Zählerstand** eines Verbrauchszählers. Beim Zähler ist
+das der einzige Wert überhaupt — über die Vorlage war er noch nie importierbar.
+
+Die Vorlage schrieb für diese drei Spalten andere Überschriften, als der Import
+erwartete. Jetzt kommen beide aus derselben Quelle, und eine neue Prüfung fährt
+bei jedem Bau den ganzen Weg ab: Vorlage erzeugen, ausfüllen, importieren,
+jeden Wert wiederfinden.
+
+**Was du tun kannst, wenn es dich getroffen hat:** Lade die Vorlage **neu**
+herunter — die alte trägt die falschen Überschriften. Trage die fehlenden Werte
+ein und importiere sie mit gesetztem Haken *Bestehende Monate überschreiben*.
+Alles andere aus deiner alten Datei ist angekommen.
+
+Und noch eine Kleinigkeit: Steht bei dir eine **Wallbox**, bot die Vorlage am
+E-Auto zusätzlich *PV-Ladung* und *Netz-Ladung* an, obwohl der Monatsabschluss
+diese Felder dort ausblendet — die Wallbox misst die Heimladung. Diese Spalten
+sind aus der Vorlage verschwunden. Was du früher eingetragen hast, bleibt
+stehen; der Import nimmt sie weiterhin an.
 
 ---
 
