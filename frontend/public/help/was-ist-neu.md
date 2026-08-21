@@ -1,11 +1,50 @@
 # Was ist neu
 
-> **Stand:** August 2026 (v4.0.24)
+> **Stand:** August 2026 (v4.0.25)
 > **Diese Seite** zeigt pro Version, was sich für dich als Anwender geändert hat — kürzer als der technische [CHANGELOG](https://github.com/supernova1963/eedc-homeassistant/blob/main/CHANGELOG.md), ausführlicher als die Schnellübersicht-Tabelle in der [Übersicht](BENUTZERHANDBUCH.md#was-ist-neu-seit-v316).
 >
 > **Kein Banner, kein Pop-up:** eedc zeigt diese Liste nicht ungefragt an. HA-App-Nutzer sehen den Changelog ohnehin schon im Add-on-Store, GitHub-Releases haben einen eigenen. Wer wissen will, was neu ist, schaut hier rein — Pull statt Push.
 >
 > **Lesehinweis:** Die jüngsten Versionen stehen oben. Jeder Punkt verlinkt entweder auf die zuständige Hilfe-Sektion oder direkt auf die App-Funktion (sofern erreichbar). Anker-URLs (`?doc=was-ist-neu`) sind teilbar.
+
+---
+
+## v4.0.25 — Ablesen, nicht aufsummieren
+
+**Dein Gaszähler zeigt jetzt die Zahl, die auf dem Zähler steht**
+
+Wenn du unter *Sonstiges* einen **Verbrauchszähler** (Gas, Wasser, Heizöl …)
+angelegt und ihm einen Sensor zugeordnet hast, stand dort bisher eine andere
+Zahl als in Home Assistant. Ein Melder hatte **47,360 m³** auf seinem
+Wasserzähler und **90** in eedc.
+
+Der Grund: Home Assistant führt zu jedem Zähler zwei Zahlen — den abgelesenen
+**Stand** und die **Verbrauchssumme**, die es selbst seit Beginn der
+Aufzeichnung mitrechnet. eedc hat die Summe genommen. Für einen Stromzähler ist
+das richtig (ein Tageszähler springt um Mitternacht auf null, nur die Summe
+läuft durch) — für einen Zählerstand ist es die falsche Größe.
+
+**Deine Verbrauchszahlen waren davon nicht betroffen.** Die einzige Rechnung auf
+einem Zählerstand ist Ende minus Anfang, und die bleibt gleich, egal ob die
+Reihe bei 90 oder bei 47 beginnt. Falsch war nur die angezeigte Zahl selbst.
+
+An der Stelle, wo die alte auf die neue Zahl trifft, siehst du **keinen**
+Verbrauch, sondern den Hinweis *„Der Stand ist gefallen — die Reihe hat einen
+Bruch"*. Ein Zählerstand läuft nicht rückwärts; eedc erfindet dort lieber nichts.
+Wer die Vergangenheit sauber haben will, lässt sie über *Einstellungen → Daten →
+Tag neu berechnen* nachziehen — so weit Home Assistant seine Statistik noch hat.
+
+**Klimaanlage: die Aufteilung Heizen/Kühlen kommt jetzt auch in Home Assistant an**
+
+Wer die neuen Betriebsart-Zähler aus 4.0.24 zugeordnet hat, sah die Aufteilung
+in eedc — die eedc-Sensoren in Home Assistant blieben dabei leer. Das ist
+behoben, für REST **und** MQTT.
+
+**Kein Warmwasser mehr bei der Split-Klimaanlage**
+
+Ein Luft-Luft-Gerät macht kein Warmwasser. Das Feld verschwindet deshalb aus
+dem Monatsabschluss. Die **Heizwärme** bleibt — gerade bei Luft-Luft steckt
+darin die ganze Gas- und CO₂-Ersparnis.
 
 ---
 
