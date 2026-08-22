@@ -28,6 +28,12 @@ const SRC = join(ROOT, 'src')
 const SOT = new Set([
   'src/context/ThemeContext.tsx', // eedc-theme
   'src/components/blocks/BlockShell.tsx', // eedc-bloecke:<sichtKey> (Auf/Zu + Reihenfolge)
+  // eedc-sperre-nachweis — der einzige Ort, an dem der Entsperr-Nachweis der
+  // Einstellungs-Sperre liegt (2026-08-22, #391/#393). Bewusst `sessionStorage`:
+  // „entsperrt bis zum Schließen des Browsers" ist damit die Ablage selbst und keine
+  // selbst verwaltete Frist. Alle Leser gehen über dieses Modul — `api/client.ts`
+  // und `api/fetchApi.ts` importieren `sperrHeader()`, niemand liest den Key direkt.
+  'src/lib/sperreSpeicher.ts',
 ])
 
 /** Eingefrorener Bestand (Datei → max. erlaubte `localStorage`-Treffer, Stand 2026-07-03). */
@@ -37,7 +43,6 @@ const BESTAND = new Map([
   ['src/components/live/EnergieFluss.tsx', 4],
   ['src/components/live/WetterWidget.tsx', 3],
   ['src/components/park/ParkContext.tsx', 4],
-  ['src/components/preview/IASkeleton.tsx', 4],
   ['src/components/tag/TagWerteTabelle.tsx', 4],
   ['src/components/ui/CollapsibleSection.tsx', 3], // LEGACY V3 (Persistenz-SoT-Doppel → Cap-Entscheid 2026-06-01)
   ['src/components/ui/SortableSection.tsx', 4], // LEGACY V3 (dito)

@@ -801,50 +801,6 @@ class MonatsdatenChecks:
             for imd in inv.monatsdaten
         }
 
-        # #263 K-2 (S3, Entscheid E-H): Die Aufteilung nach Betriebsmodus ist
-        # eine **Teilmenge** des Gesamtstroms. Beim Schreiben wird das geprüft —
-        # aber der Gesamtwert kann danach von Hand kleiner gepflegt werden, und
-        # dann steht ein Widerspruch in der Zeile.
-        #
-        # Auflösbar, und der Weg steht dabei (P-6): entweder der Monatswert ist
-        # zu klein, oder ein erneuter Monatsabschluss rechnet die Aufteilung neu.
-        # Der Checker kappt nichts — eine stille Kappung machte aus einem
-        # Widerspruch eine plausibel aussehende Zahl.
-        widerspruch_monate: list[str] = []
-        for (jahr, monat), daten in sorted(imd_map.items()):
-            teilmengen = sum(
-                daten.get(feld, 0) or 0 for feld in MODUS_STROM_FELD.values()
-            )
-            if teilmengen <= 0:
-                continue
-            gesamt = get_wp_strom_kwh(daten, param)
-            if teilmengen > gesamt + 0.5:
-                widerspruch_monate.append(f"{monat:02d}/{jahr}")
-        if widerspruch_monate:
-            monate_str = ", ".join(widerspruch_monate[:6])
-            if len(widerspruch_monate) > 6:
-                monate_str += f" … (+{len(widerspruch_monate) - 6})"
-            ergebnisse.append(CheckErgebnis(
-                kategorie=kat, schwere=CheckSeverity.WARNING,
-                meldung=(
-                    f"{name}: Heiz- und Kühlstrom zusammen größer als der "
-                    f"Gesamtverbrauch ({monate_str})"
-                ),
-                details=(
-                    "Die Aufteilung nach Heizen und Kühlen ist ein Teil des "
-                    "Gesamtverbrauchs — zusammen können beide ihn nicht "
-                    "übersteigen. Das passiert, wenn der Gesamtwert nachträglich "
-                    "kleiner eingetragen wurde als die bereits erfasste "
-                    "Aufteilung. Zwei Wege: Prüfe den Stromverbrauch dieser "
-                    "Monate im Monatsabschluss — oder schließe den Monat erneut "
-                    "ab, dann rechnet eedc die Aufteilung neu und verwirft sie, "
-                    "falls sie nicht passt. Die Energiebilanz ist nicht "
-                    "betroffen: dort zählt immer der Gesamtwert."
-                ),
-                link="/monatsabschluss",
-                investition_id=inv.id,
-            ))
-
         fehlend: list[str] = []
         for (jahr, monat) in erwartete:
             daten = imd_map.get((jahr, monat), {})
@@ -923,6 +879,55 @@ class MonatsdatenChecks:
             for imd in inv.monatsdaten
         }
 
+        # #263 K-2 (S3, Entscheid E-H): Die Aufteilung nach Betriebsmodus ist
+        # eine **Teilmenge** des Gesamtstroms. Beim Schreiben wird das geprüft —
+        # aber der Gesamtwert kann danach von Hand kleiner gepflegt werden, und
+        # dann steht ein Widerspruch in der Zeile.
+        #
+        # Auflösbar, und der Weg steht dabei (P-6): entweder der Monatswert ist
+        # zu klein, oder ein erneuter Monatsabschluss rechnet die Aufteilung neu.
+        # Der Checker kappt nichts — eine stille Kappung machte aus einem
+        # Widerspruch eine plausibel aussehende Zahl.
+        #
+        # Stand bis 22.08. in `_check_investition_monatsdaten`, wo nie eine
+        # Wärmepumpe ankommt (nur BKW/Speicher/E-Auto/Wallbox) — und wo `param`
+        # nicht existiert: der Befund konnte nie erscheinen, ein Modus-Wert
+        # hätte die ganze Checker-Antwort in einen NameError laufen lassen.
+        widerspruch_monate: list[str] = []
+        for (jahr, monat), daten in sorted(imd_map.items()):
+            teilmengen = sum(
+                daten.get(feld, 0) or 0 for feld in MODUS_STROM_FELD.values()
+            )
+            if teilmengen <= 0:
+                continue
+            gesamt = get_wp_strom_kwh(daten, param)
+            if teilmengen > gesamt + 0.5:
+                widerspruch_monate.append(f"{monat:02d}/{jahr}")
+        if widerspruch_monate:
+            monate_str = ", ".join(widerspruch_monate[:6])
+            if len(widerspruch_monate) > 6:
+                monate_str += f" … (+{len(widerspruch_monate) - 6})"
+            ergebnisse.append(CheckErgebnis(
+                kategorie=kat, schwere=CheckSeverity.WARNING,
+                meldung=(
+                    f"{name}: Heiz- und Kühlstrom zusammen größer als der "
+                    f"Gesamtverbrauch ({monate_str})"
+                ),
+                details=(
+                    "Die Aufteilung nach Heizen und Kühlen ist ein Teil des "
+                    "Gesamtverbrauchs — zusammen können beide ihn nicht "
+                    "übersteigen. Das passiert, wenn der Gesamtwert nachträglich "
+                    "kleiner eingetragen wurde als die bereits erfasste "
+                    "Aufteilung. Zwei Wege: Prüfe den Stromverbrauch dieser "
+                    "Monate im Monatsabschluss — oder schließe den Monat erneut "
+                    "ab, dann rechnet eedc die Aufteilung neu und verwirft sie, "
+                    "falls sie nicht passt. Die Energiebilanz ist nicht "
+                    "betroffen: dort zählt immer der Gesamtwert."
+                ),
+                link="/monatsabschluss",
+                investition_id=inv.id,
+            ))
+
         fehlend_strom: list[str] = []
         fehlend_heiz: list[str] = []
 
@@ -931,7 +936,15 @@ class MonatsdatenChecks:
             label = f"{monat:02d}/{jahr}"
 
             if getrennte_strommessung:
-                if daten.get("strom_heizen_kwh") is None and daten.get("strom_warmwasser_kwh") is None:
+                # B5 — an einer Split-Klimaanlage gibt es die Warmwasser-Seite
+                # der Achse nicht (`strom_warmwasser_kwh` trägt seit dem
+                # N-304-Nachzug `!luft_luft`). Sie hier weiter abzufragen hieße,
+                # ein Feld zu erwarten, das der Monatsabschluss gar nicht mehr
+                # anbietet — die Klasse, an der N-86 schon einmal hing:
+                # dieselbe Anlage, zwei Flächen, gegenteilige Aussage.
+                if daten.get("strom_heizen_kwh") is None and (
+                    ist_klima or daten.get("strom_warmwasser_kwh") is None
+                ):
                     fehlend_strom.append(label)
             else:
                 if daten.get("stromverbrauch_kwh") is None:
@@ -944,7 +957,12 @@ class MonatsdatenChecks:
             monate_str = ", ".join(fehlend_strom[:6])
             if len(fehlend_strom) > 6:
                 monate_str += f" (+{len(fehlend_strom) - 6} weitere)"
-            strom_label = "Strom Heizen/Warmwasser" if getrennte_strommessung else "Stromverbrauch"
+            if not getrennte_strommessung:
+                strom_label = "Stromverbrauch"
+            elif ist_klima:
+                strom_label = "Strom Heizen"   # B5: keine Warmwasser-Seite
+            else:
+                strom_label = "Strom Heizen/Warmwasser"
             ergebnisse.append(CheckErgebnis(
                 kategorie=kat, schwere=CheckSeverity.WARNING,
                 meldung=f"{name}: {strom_label} fehlt in {len(fehlend_strom)} Monat(en)",

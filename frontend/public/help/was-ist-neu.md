@@ -1,11 +1,50 @@
 # Was ist neu
 
-> **Stand:** August 2026 (v4.0.25)
+> **Stand:** August 2026 (v4.0.26)
 > **Diese Seite** zeigt pro Version, was sich für dich als Anwender geändert hat — kürzer als der technische [CHANGELOG](https://github.com/supernova1963/eedc-homeassistant/blob/main/CHANGELOG.md), ausführlicher als die Schnellübersicht-Tabelle in der [Übersicht](BENUTZERHANDBUCH.md#was-ist-neu-seit-v316).
 >
 > **Kein Banner, kein Pop-up:** eedc zeigt diese Liste nicht ungefragt an. HA-App-Nutzer sehen den Changelog ohnehin schon im Add-on-Store, GitHub-Releases haben einen eigenen. Wer wissen will, was neu ist, schaut hier rein — Pull statt Push.
 >
 > **Lesehinweis:** Die jüngsten Versionen stehen oben. Jeder Punkt verlinkt entweder auf die zuständige Hilfe-Sektion oder direkt auf die App-Funktion (sofern erreichbar). Anker-URLs (`?doc=was-ist-neu`) sind teilbar.
+
+---
+
+## v4.0.26 — Ein weiterer Benutzerwunsch
+
+**eedc erscheint jetzt bei allen Home-Assistant-Benutzern**
+
+Bisher stand eedc nur bei Benutzern mit Administratorrechten in der
+Seitenleiste. Wer für sein Wandtablet einen eigenen HA-Benutzer ohne
+Adminrechte angelegt hatte, fand eedc dort nicht. Das ist behoben — der
+Eintrag erscheint für jeden angemeldeten Benutzer.
+
+**Und du kannst die Einstellungen mit einer PIN schützen**
+
+Das gehört zusammen: Wenn mehr Leute im Haus auf eedc schauen können, willst
+du vielleicht nicht, dass jemand versehentlich etwas verstellt. Unter
+*Einstellungen → Anlage* kannst du deshalb eine **PIN** setzen.
+
+- **Ansehen bleibt immer frei.** Alle Auswertungen, alle Diagramme, alle
+  Zahlen — dafür braucht niemand die PIN.
+- **Zum Ändern** wird sie einmal je Browser-Sitzung abgefragt: Stammdaten,
+  Strompreise, Monatsabschluss, Import, Reparaturen.
+- **Hell/dunkel bleibt frei**, das ist keine Einstellung im Sinne der Sperre.
+- **Ohne PIN ändert sich nichts.** Wer sie nicht einschaltet, merkt von der
+  ganzen Sache nichts — so wird sie auch ausgeliefert.
+
+Es ist bewusst eine **PIN** und kein Benutzerkonto: eedc weiß nicht, wer
+davorsitzt, es gibt genau einen Schlüssel. Das reicht gegen versehentliches
+Verstellen durch Familie und Besucher — mehr soll es nicht sein und mehr kann
+es nicht sein.
+
+**PIN vergessen?** Dann brauchst du Zugriff auf die Maschine: Im Add-on
+schaltest du in der Konfiguration `einstellungen_pin_zuruecksetzen` ein und
+startest eedc neu (danach wieder ausschalten). Im Standalone-Betrieb setzt du
+`EEDC_PIN_RESET=1`. Absichtlich kein Knopf und keine Adresse in der Oberfläche
+— die wäre für jeden erreichbar, den die PIN aussperren soll.
+
+Mehr dazu in der Hilfe unter
+[Einstellungen → Anlage](HANDBUCH_EINSTELLUNGEN.md#21b-einstellungen-mit-einer-pin-schützen).
 
 ---
 

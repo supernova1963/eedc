@@ -82,6 +82,25 @@ Bei fester Modellwahl versucht eedc zuerst das gewählte Modell und fällt bei f
 - **Keine USt-Auswirkung** (Standard): für Anlagen ab 2023 mit Nullsteuersatz (≤ 30 kWp) oder Kleinunternehmer.
 - **Regelbesteuerung**: USt auf Eigenverbrauch wird als Kostenfaktor berechnet (Pre-2023, > 30 kWp, AT/CH). Der USt-Satz ist editierbar (DE 19 %, AT 20 %, CH 8,1 %) und passt sich bei Land-Wechsel automatisch an.
 
+### 2.1b Einstellungen mit einer PIN schützen
+
+**Standardmäßig aus.** Wer sie nicht einschaltet, merkt von diesem Abschnitt nichts.
+
+Die Sperre ist für Haushalte gedacht, in denen mehrere Personen auf eedc schauen: Familie und Besucher sollen die Auswertungen ansehen können, aber nichts verstellen. Du findest sie unter *Einstellungen → Anlage*, unterhalb der Anlagen-Tabelle.
+
+**Was sie tut:** Ist eine PIN gesetzt, wird sie **einmal je Browser-Sitzung** abgefragt, sobald du etwas ändern willst. Das gilt für alles Schreibende — Stammdaten, Strompreise, Monatsabschluss, Import, Reparaturen. **Ansehen ist nie gesperrt**, und auch die Umschaltung zwischen heller und dunkler Darstellung bleibt immer frei.
+
+**Was sie nicht ist:** kein Benutzerkonto, keine Rollen, kein Login. eedc weiß nicht, wer davorsitzt — es gibt genau einen Schlüssel. Das Wort „PIN" ist bewusst gewählt: eine Hürde gegen versehentliches oder neugieriges Verstellen, keine Absicherung gegen jemanden, der es darauf anlegt.
+
+**Sie gilt für die ganze eedc-Installation**, nicht nur für die Anlage, in deren Stammdaten du sie einschaltest. Wer mehrere Anlagen führt, hat trotzdem nur eine PIN.
+
+> **PIN vergessen?** Der Rückweg verlangt Zugriff auf die Maschine — absichtlich, denn eine Adresse, die jeder aufrufen kann, wäre keine Sperre.
+>
+> - **Home-Assistant-App:** Add-on-Konfiguration öffnen, `einstellungen_pin_zuruecksetzen` auf `true`, Add-on neu starten, Option wieder auf `false`.
+> - **Standalone:** Container mit `EEDC_PIN_RESET=1` starten.
+
+**Zusammenhang mit der Seitenleiste in Home Assistant:** Seit derselben Version erscheint eedc auch bei Benutzern **ohne** Administratorrechte in der HA-Seitenleiste — etwa auf Wandtablets. Vorher war der Eintrag Administratoren vorbehalten, was für reine Anzeige-Benutzer unpraktisch war. Beides gehört zusammen: der Eintrag macht eedc erreichbar, die PIN entscheidet, wer ändern darf.
+
 ### 2.1a eedc außerhalb Deutschlands
 
 eedc lässt sich in **Deutschland, Österreich, der Schweiz und Italien** betreiben — das Land wählst du in den Stammdaten. Was dabei trägt und was nicht, steht hier bewusst offen, damit du es vor der Einrichtung weißt und nicht danach.
@@ -117,6 +136,14 @@ Verwalte deine Stromtarife als Tabelle mit Gültigkeitszeiträumen — die Basis
 > **Dynamischer Strompreis (Tibber/aWATTar/EPEX):** Den zugehörigen Sensor ordnest du nicht mehr hier, sondern unter **Einstellungen → Datenquellen** dem Feld „Strompreis" zu (siehe [§7](#7-datenquellen--feld-zentrische-zuordnung)). Ohne eigenen Sensor blendet eedc automatisch den EPEX-Börsenpreis (DE/AT via aWATTar) als Overlay im Live-Tagesverlauf ein.
 
 > **Einspeisevergütung: eedc rechnet flat mit dem eingetragenen Satz.** Der Einspeise-Erlös ist schlicht *eingespeiste Menge × dein Satz* ([Berechnungsreferenz 3.2](BERECHNUNGEN.md#32-finanzen-cockpit)) — es wird nichts im Hintergrund umgerechnet und nichts aus der Anlagengröße abgeleitet.
+>
+> **Wechselt deine Vergütung monatlich** (z. B. der OeMAG-Marktpreis in Österreich), setze im
+> Tarif das Häkchen **„Einspeisevergütung wechselt monatlich“**. Der Monatsabschluss bietet dann
+> das Feld **„Einspeisevergütung (Monat)“** an: der dort gepflegte Satz gilt für genau diesen
+> Monat und schlägt den Stammwert aus dem Tarif — auch eine **0** ist ein gültiger Wert. Monate
+> ohne Eintrag rechnen mit dem Stammwert; die Prognose nach vorn nimmt immer den Stammwert, denn
+> künftige Monate haben noch keinen Satz. eedc holt die Monatswerte nicht automatisch ab — du
+> trägst sie ein oder importierst sie per CSV (Spalte `Einspeiseverguetung_Cent`).
 >
 > Die EEG-Vergütung ist nach **installierter Leistung** gestaffelt (z. B. ein Satz bis 10 kWp, ein niedrigerer darüber) — nicht nach eingespeister Menge. Für die Gesamtanlage gilt deshalb der nach kWp **gewichtete Mischsatz**, und genau der gehört in dieses Feld. Rechenbeispiel mit **erfundenen** Sätzen — die für dich gültigen stehen in deinem Vergütungsbescheid: 12,5 kWp, davon 10,0 kWp zu 8,20 ct und 2,5 kWp zu 7,10 ct ⇒ (10,0 × 8,20 + 2,5 × 7,10) ÷ 12,5 = **7,98 ct/kWh**. Das ist keine Näherung, sondern exakt der Satz, den der Netzbetreiber im Mittel zahlt.
 >

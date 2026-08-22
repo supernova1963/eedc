@@ -6,7 +6,6 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "build:preview": "vite build --config vite.preview.config.ts && node -e \"require('fs').renameSync('preview-dist/preview.html','preview-dist/index.html')\"",
     "preview": "vite preview",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "test": "vitest run",
@@ -36,7 +35,8 @@
     "check:parkbar-vollstaendig": "node scripts/check-parkbar-vollstaendig.mjs",
     "check:park-leertest": "node scripts/park-leertest.mjs",
     "check:charts": "node scripts/check-charts.mjs",
-    "check:chart-audit": "node scripts/chart-audit.mjs"
+    "check:chart-audit": "node scripts/chart-audit.mjs",
+    "check:sperre-fetch": "node scripts/check-sperre-fetch.mjs"
   },
   "dependencies": {
     "@mdi/js": "^7.4.47",

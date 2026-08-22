@@ -14,6 +14,7 @@ from backend.models.anlage import Anlage
 
 from .kategorien import (
     CheckErgebnis, CheckKategorie, CheckSeverity, LINK_DATENQUELLEN,
+    LINK_INTEGRATION,
 )
 
 
@@ -62,11 +63,11 @@ class SensorChecks:
                 details=(
                     "Möglicherweise konnte beim letzten Start keine Verbindung "
                     "zum Broker aufgebaut werden. Prüfe Broker-Adresse und "
-                    "Zugangsdaten unter Daten → Einrichtung → MQTT-Inbound, "
-                    "oder deaktiviere MQTT-Inbound dort, wenn du keine "
+                    "Zugangsdaten unter Einstellungen → Integration, oder "
+                    "schalte dort „Daten über MQTT empfangen“ ab, wenn du keine "
                     "Live-Daten via MQTT brauchst."
                 ),
-                link="/einstellungen/mqtt-inbound",
+                link=LINK_INTEGRATION,
             ))
             return ergebnisse
 
@@ -160,11 +161,11 @@ class SensorChecks:
                     "(HA-Automation, ioBroker, Node-RED) noch nicht eingerichtet, "
                     "oder Investitions-IDs nach Re-Import nicht in der Automation "
                     "nachgezogen. Wenn du keine Live-Daten via MQTT brauchst, "
-                    "kannst du MQTT-Inbound unter Daten → Einrichtung → "
-                    "MQTT-Inbound deaktivieren. "
+                    "kannst du „Daten über MQTT empfangen“ unter "
+                    "Einstellungen → Integration abschalten. "
                     f"Betroffen: {beispiele}"
                 ),
-                link="/einstellungen/mqtt-inbound",
+                link=LINK_INTEGRATION,
             ))
 
         if veraltet:
@@ -181,11 +182,11 @@ class SensorChecks:
                     "10 min aktualisiert werden. Mögliche Ursache: "
                     "Publisher-Automation läuft nicht oder hat ihre Quelle "
                     "verloren. Wenn du keine Live-Daten via MQTT brauchst, "
-                    "kannst du MQTT-Inbound unter Daten → Einrichtung → "
-                    "MQTT-Inbound deaktivieren. "
+                    "kannst du „Daten über MQTT empfangen“ unter "
+                    "Einstellungen → Integration abschalten. "
                     f"Betroffen: {beispiele}"
                 ),
-                link="/einstellungen/mqtt-inbound",
+                link=LINK_INTEGRATION,
             ))
 
         if not nie_empfangen and not veraltet:
@@ -213,10 +214,33 @@ class SensorChecks:
         - **kWh-Feld + nicht in LTS** → WARNING (Korrektur-Werkzeuge wirken nicht)
         - **Counter-Feld + nicht in LTS** → WARNING (Korrektur-Werkzeuge wirken nicht;
           jeder Aussetzer permanent verloren, einzelne Stunden können fehlen)
+        - **Stand-Feld + nicht in LTS** → WARNING (eigener Text, s. u.)
         - **kWh-/Counter-Feld + in LTS, aber OHNE Summen-Spalte** → WARNING
           (`state_class: measurement` statt `total_increasing`; die Aggregation
           kann daraus keine Deltas bilden — s. u.)
+        - **Stand-Feld ohne Summen-Spalte** → **kein Befund**, s. u.
         - **kWh-Feld + LTS-Eintrag mit Summen-Spalte** → OK
+
+        ⚑ **Der Stand-Zweig ist seit D3 (22.08.2026) getrennt — und er nimmt dem
+        Counter-Zweig einen Fall WEG, den dieser falsch beantwortet hat.**
+        `zaehlerstand` steht in `KUMULATIVE_COUNTER_FELDER` (`snapshot/keys.py`)
+        und lief deshalb durch den **Counter**-Zweig. Der verlangt eine
+        Summen-Spalte — ein **Stand** braucht sie nicht: `get_value_at`
+        liest ihn mit `als_stand=True` ausschließlich aus `state` und nie aus
+        `sum` (F-58, `ha_statistics_service._value_at_wert`). Ein Gas- oder
+        Wasserzähler mit `state_class: measurement` funktioniert vollständig
+        und bekam trotzdem *„Counter-Sensor ohne Summen-Spalte — Korrektur-
+        Werkzeuge wirken nicht"*, samt eines Rats (Verbrauchszähler-Helfer
+        anlegen), der für einen Zählerstand die **falsche** Empfehlung ist: Der
+        Helfer zählt eine Menge, der Anwender will die Zahl auf seinem Zähler.
+        Dieselbe Klasse wie F-60 — eine Meldung, die für ihre eigene Zielgruppe
+        nicht stimmt.
+
+        **Was bleibt:** „nicht in LTS" gilt für einen Stand genauso. Ohne
+        `statistics_meta`-Zeile liefert `get_value_at` gar nichts
+        (`get_metadata` → `None`), und der Zähler bekommt überhaupt keinen
+        mitgeschriebenen Stand — der „zweite, stille Fall" aus dem
+        v4.0.25-CHANGELOG.
 
         Geprüft werden nur **Energie-Felder** (Einheit kWh/Wh/MWh) und die
         reinen Counter. Preis-, km-, Anzahl- und Temperatur-Slots sind hier
@@ -232,7 +256,8 @@ class SensorChecks:
         Forum simon42 #89667/44.
         """
         from backend.core.field_definitions import (
-            FELD_EINHEITEN, FELD_LABELS, einheit_klasse,
+            FELD_EINHEITEN, FELD_LABELS, basis_feld_key, einheit_klasse,
+            ist_stand_feld,
         )
         from backend.services.ha_statistics_service import get_ha_statistics_service
         from backend.services.sensor_snapshot_service import KUMULATIVE_COUNTER_FELDER
@@ -250,6 +275,7 @@ class SensorChecks:
         counter_fields = {f for fs in KUMULATIVE_COUNTER_FELDER.values() for f in fs}
         kwh_sensors: list[tuple[str, str]] = []      # (sensor_id, label)
         counter_sensors: list[tuple[str, str]] = []
+        stand_sensors: list[tuple[str, str]] = []    # Zählerstände (#377/F-58)
 
         basis = mapping.get("basis") or {}
         # Nur kumulative kWh-Counter prüfen. `strompreis` ist ct/kWh bzw. €/kWh
@@ -297,13 +323,30 @@ class SensorChecks:
                 sid = m.get("sensor_id")
                 if not sid:
                     continue
+                # N-310 — **der Feld-Key kann eine Innengeräte-Adresse tragen**
+                # (`betriebsart_strom_kuehlen_kwh-3`, #263). Jede Namens-Tabelle
+                # hier führt ihn nur unter dem Basis-Namen; ohne Auflösung
+                # liefert `FELD_EINHEITEN` `None`, der Sensor fällt aus dem
+                # Energie-Filter und wird **nie** auf `has_sum` geprüft — still,
+                # mit einem Label, das den Rohschlüssel zeigt. Wortgleiche
+                # Warnung steht seit #263 an `snapshot/keys._is_kumulativ_feld`;
+                # `field_definitions` nennt `FELD_EINHEITEN` dort namentlich als
+                # Leser, der auflösen muss. Dieser hier tat es als einziger nicht.
+                basis = basis_feld_key(feld)
                 lbl = (
                     f"{inv_label.get(str(inv_id), f'Inv. {inv_id}')}: "
-                    f"{FELD_LABELS.get(feld, feld)}"
+                    f"{FELD_LABELS.get(basis, feld)}"
                 )
-                if feld in counter_fields:
+                if ist_stand_feld(basis):
+                    # **VOR dem Counter-Zweig**, denn `zaehlerstand` steht in
+                    # beiden Mengen — und der Counter-Zweig beantwortet den Fall
+                    # falsch (s. Docstring). Über den SoT-Helfer statt über eine
+                    # eigene Namensliste: eine zweite handgepflegte Feldliste war
+                    # N-259.
+                    stand_sensors.append((sid, lbl))
+                elif basis in counter_fields:
                     counter_sensors.append((sid, lbl))
-                elif einheit_klasse(FELD_EINHEITEN.get(feld)) == "energie":
+                elif einheit_klasse(FELD_EINHEITEN.get(basis)) == "energie":
                     kwh_sensors.append((sid, lbl))
                 # sonst: kein Energie-Feld — dieser Check ist nicht zuständig.
                 # Die Basis-Ebene zieht diese Grenze seit 2026-05-04 per Whitelist
@@ -322,7 +365,7 @@ class SensorChecks:
                 # Wächter gegen fehlende `FELD_EINHEITEN`-Einträge:
                 # test_daten_checker_lts_summen_spalte.py::test_alle_zaehlerfelder_bleiben_gedeckt
 
-        if not kwh_sensors and not counter_sensors:
+        if not kwh_sensors and not counter_sensors and not stand_sensors:
             return []
 
         ha_service = get_ha_statistics_service()
@@ -338,7 +381,11 @@ class SensorChecks:
         # `has_sum` — `get_hourly_kwh_deltas_for_day` überspringt ihn dann
         # vollständig. Vorher meldete dieser Check dafür OK, während Cockpit/Tag
         # auf 0 stand (Forum simon42 #89667/44).
-        all_sids = list({s for s, _ in kwh_sensors} | {s for s, _ in counter_sensors})
+        all_sids = list(
+            {s for s, _ in kwh_sensors}
+            | {s for s, _ in counter_sensors}
+            | {s for s, _ in stand_sensors}
+        )
         _mit_sum, ohne_sum_sids, missing_sids = await asyncio.to_thread(
             ha_service.filter_summen_faehige_sensor_ids, all_sids
         )
@@ -349,6 +396,12 @@ class SensorChecks:
         counter_missing = [(sid, lbl) for sid, lbl in counter_sensors if sid in missing]
         kwh_ohne_sum = [(sid, lbl) for sid, lbl in kwh_sensors if sid in ohne_sum]
         counter_ohne_sum = [(sid, lbl) for sid, lbl in counter_sensors if sid in ohne_sum]
+        stand_missing = [(sid, lbl) for sid, lbl in stand_sensors if sid in missing]
+        # ⛔ **Ein `stand_ohne_sum` gibt es bewusst NICHT.** Ein Stand kommt aus
+        # `state`; die Summen-Spalte ist für ihn ohne Bedeutung. Diese Zeile
+        # nachzutragen hieße, die Falschmeldung wieder einzubauen, die D3
+        # entfernt hat.
+
 
         if kwh_missing:
             beispiele = "; ".join(f"{lbl} ({sid})" for sid, lbl in kwh_missing[:5])
@@ -473,6 +526,52 @@ class SensorChecks:
                 link=LINK_DATENQUELLEN,
             ))
 
+        if stand_missing:
+            beispiele = "; ".join(f"{lbl} ({sid})" for sid, lbl in stand_missing[:5])
+            if len(stand_missing) > 5:
+                beispiele += f" (+{len(stand_missing) - 5} weitere)"
+            ergebnisse.append(CheckErgebnis(
+                kategorie=kat, schwere=CheckSeverity.WARNING,
+                meldung=(
+                    f"{len(stand_missing)} Zählerstand-Sensor(en) nicht in "
+                    "HA-Long-Term-Statistics"
+                ),
+                details=(
+                    "Für diese Sensoren führt Home Assistant keine "
+                    "Langzeitstatistik — meist fehlt `state_class`. eedc liest "
+                    "den Zählerstand stündlich genau dort, deshalb wird für "
+                    "diese Zähler **gar kein Stand** mitgeschrieben: Anfang, "
+                    "Ende und Verbrauch des Zeitraums bleiben leer, und zwar "
+                    "ohne dass sonst etwas darauf hinweist. "
+                    "Lösung: in Home Assistant unter Einstellungen → Geräte & "
+                    "Dienste → Helfer für diesen Sensor `state_class` ergänzen "
+                    "(z. B. per `customize`), oder einen Sensor wählen, der sie "
+                    "mitbringt. "
+                    "Ein Zählerstand ist eine Bestandsgröße — eedc liest ihn aus "
+                    "dem Sensor-Zustand und rechnet ihn nicht um. **`total_"
+                    "increasing` oder ein Verbrauchszähler-Helfer sind dafür "
+                    "nicht nötig**; `measurement` genügt. Vergangenes sammelt "
+                    "Home Assistant nicht nach: die Reihe beginnt ab der "
+                    "Umstellung. "
+                    f"Betroffen: {beispiele}"
+                ),
+                link=LINK_DATENQUELLEN,
+            ))
+
+        if stand_sensors and not stand_missing:
+            ergebnisse.append(CheckErgebnis(
+                kategorie=kat, schwere=CheckSeverity.OK,
+                meldung=(
+                    f"Alle {len(stand_sensors)} Zählerstand-Sensor(en) in "
+                    "HA-Long-Term-Statistics verfügbar"
+                ),
+                details=(
+                    "Eine Summen-Spalte wird hier bewusst nicht verlangt — ein "
+                    "Zählerstand kommt aus dem Sensor-Zustand, nicht aus einer "
+                    "Verbrauchssumme."
+                ),
+            ))
+
         if kwh_sensors and not kwh_missing and not kwh_ohne_sum:
             ergebnisse.append(CheckErgebnis(
                 kategorie=kat, schwere=CheckSeverity.OK,
@@ -506,7 +605,7 @@ class SensorChecks:
         Live-Werte).
         """
         from backend.core.field_definitions import (
-            FELD_EINHEITEN, FELD_LABELS, einheit_klasse as _klasse,
+            FELD_EINHEITEN, FELD_LABELS, basis_feld_key, einheit_klasse as _klasse,
         )
         from backend.services.live_sensor_config import extract_live_config
 
@@ -520,18 +619,30 @@ class SensorChecks:
         slots: list[tuple[str, str, str]] = []
 
         def _add(eid: Optional[str], schluessel: str, label: str) -> None:
-            erwartet = _klasse(FELD_EINHEITEN.get(schluessel))
+            # N-310 — Basis-Key-Auflösung, siehe die ausführliche Begründung in
+            # `_check_sensor_mapping_lts`. Hier wiegt sie schwerer als dort: zu
+            # den acht kWh-Feldern je Innengerät kommt `leistung_w`, und damit
+            # fiel der **#674-ERROR** (kWh-Zähler im Leistungs-Slot ⇒ der live
+            # als Residual gerechnete Hausverbrauch klemmt auf 0) für jedes
+            # Innengerät aus der Prüfung.
+            #
+            # ⚠ Gegengeprüft, dass das keinen Fehlalarm baut: `betriebsmodus-3`
+            # löst zu `betriebsmodus` auf, dessen Einheit `''` ist ⇒ `_klasse`
+            # liefert `None` ⇒ der Zustands-Slot bleibt draußen. Das war vorher
+            # nur ZUFÄLLIG richtig (der rohe Key stand gar nicht in der Tabelle);
+            # jetzt ist es die Regel aus `ZUSTAND_LIVE_FELDER`, die es trägt.
+            erwartet = _klasse(FELD_EINHEITEN.get(basis_feld_key(schluessel)))
             if eid and erwartet:
                 slots.append((eid, label, erwartet))
 
         # Live-Slots (basis + investitionen)
         basis_live, inv_live_map, _, _ = extract_live_config(anlage)
         for key, eid in basis_live.items():
-            _add(eid, key, f"{FELD_LABELS.get(key, key)} (Live)")
+            _add(eid, key, f"{FELD_LABELS.get(basis_feld_key(key), key)} (Live)")
         for inv_id, live in inv_live_map.items():
             name = inv_label.get(str(inv_id), f"Inv. {inv_id}")
             for key, eid in live.items():
-                _add(eid, key, f"{name}: {FELD_LABELS.get(key, key)} (Live)")
+                _add(eid, key, f"{name}: {FELD_LABELS.get(basis_feld_key(key), key)} (Live)")
 
         # Basis-Zähler (mapping["basis"][mapping_key] = {strategie, sensor_id})
         for mk, m in (mapping.get("basis") or {}).items():
@@ -545,7 +656,8 @@ class SensorChecks:
             name = inv_label.get(str(inv_id), f"Inv. {inv_id}")
             for feld, m in (inv_data.get("felder") or {}).items():
                 if isinstance(m, dict) and m.get("strategie") == "sensor" and m.get("sensor_id"):
-                    _add(m["sensor_id"], feld, f"{name}: {FELD_LABELS.get(feld, feld)}")
+                    _add(m["sensor_id"], feld,
+                         f"{name}: {FELD_LABELS.get(basis_feld_key(feld), feld)}")
 
         if not slots:
             return []

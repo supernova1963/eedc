@@ -69,6 +69,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.api.routes.strompreise import (
     lade_tarife_fuer_anlage,
+    resolve_einspeise_preis_cent,
     resolve_netzbezug_preis_cent,
     resolve_strompreis_for_komponente,
 )
@@ -851,6 +852,31 @@ async def ist_pv_ladeanteil_prozent(
     ⚠ **Ein gepflegter Parameter schlägt diesen Wert** — die Entscheidung trifft
     der Aufrufer, nicht diese Funktion. Sie sagt nur, was das IST hergibt.
 
+    ⚠ **Woher die Obergrenze kommt — sie steht NICHT in dieser Funktion.**
+    Der Wert ist ein Rechen-**Eingang**: fehlt am Fahrzeug der gepflegte
+    Handwert, zieht ``investitionen/crud.py`` ihn als ``pv_anteil_prozent`` in
+    die E-Auto-Wirtschaftlichkeit, und ``core/calculations.py`` bildet daraus
+    ``netz_anteil = 1 − pv_anteil/100``. Über 100 % würde dieser Faktor negativ
+    und das Laden *verdiente* Geld. Dass das nicht passieren kann, ist eine
+    **geerbte** Garantie, keine hiesige: ``summiere_emob_quelle`` konstruiert
+    ``ladung_kwh`` als ``pv + netz`` (statt das Feld zu lesen), und
+    ``get_emob_pv_netz_kwh`` klemmt den abgeleiteten Netz-Anteil mit
+    ``max(0, total − pv)``. Damit gilt ``ladung_kwh ≥ pv`` strukturell — auch
+    wenn eine erfasste Zeile ``ladung_pv_kwh > ladung_kwh`` trägt (an Anlage 1
+    real vorhanden, 2026-06: 100,5 kWh PV bei 86,0 kWh Gesamt). Das war der
+    #262-Befund und ist dort gelöst.
+
+    ⚠ **Hier deshalb bewusst KEIN eigener Deckel** (N-314, am Code widerlegt):
+    er würde einen Zustand abfangen, den die Schicht darunter nicht mehr
+    zulässt, und dabei die echte Garantie verdecken — bräche jemand
+    ``get_emob_pv_netz_kwh``, bliebe der Fehler unter dem Deckel unsichtbar.
+    Gewächtert wird die Garantie stattdessen dort, wo sie entsteht:
+    ``test_n314_pv_ladeanteil_spanne.py``.
+
+    ⚠ **Was davon NICHT gedeckt ist:** dass die widersprüchliche Zeile selbst
+    niemandem gemeldet wird. Das ist ein eigener offener Fund (**N-201**,
+    fehlende Plausibilitätsregel im Daten-Checker).
+
     Returns:
         ``0…100``, oder ``None``, wenn im Zeitraum keine Heimladung stattfand —
         „keine Aussage", nicht 0 %.
@@ -1437,10 +1463,13 @@ async def _lade_tarif(
         # Flex-Ø des Monats vor dem Stammdaten-Arbeitspreis (P8, zweite Form).
         netzbezug_preis_cent=resolve_netzbezug_preis_cent(monatsdaten, stammpreis),
         netzbezug_stammpreis_cent=stammpreis,
-        einspeiseverguetung_cent=(
+        # #392: der Monatswert der variablen Vergütung schlägt den Stammwert —
+        # dieselbe zweite P8-Form wie beim Netzbezug eine Zeile darüber.
+        einspeiseverguetung_cent=resolve_einspeise_preis_cent(
+            monatsdaten,
             allgemein.einspeiseverguetung_cent_kwh
             if allgemein
-            else EINSPEISEVERGUETUNG_DEFAULT_CENT
+            else EINSPEISEVERGUETUNG_DEFAULT_CENT,
         ),
         grundpreis_euro_monat=(allgemein.grundpreis_euro_monat or 0.0) if allgemein else 0.0,
         wp_preis_cent=resolve_strompreis_for_komponente(

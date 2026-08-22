@@ -21,8 +21,14 @@ Gewächterte Muster:
   P6 — stille Null bei JSON-Key-Zugriff. Ein falscher Schlüssel auf einem
        JSON-Feld liefert still `0`, und `0` sieht aus wie „keine Daten". So
        lebte der PVGIS-Bug (N38, `e_month_kwh` statt `e_m`) jahrelang, und so
-       liest `api/routes/data_import.py:174` bis heute `parameter["leistung_kwp"]`
-       — ein Schlüssel, den es in keinem Regime gibt (N59, Abfluss A17).
+       las `api/routes/data_import.py` lange `parameter["leistung_kwp"]` — ein
+       Schlüssel, den es in keinem Regime gibt (N59, Abfluss A17). **Diese
+       Stelle ist seit A20 korrigiert** und trägt heute den Gegenkommentar;
+       hier stand bis 2026-08-22 „bis heute" samt Zeilennummer `:174`, wo
+       inzwischen etwas ganz anderes steht (N-177, Inventur Runde B). Der
+       *Befund* bleibt gültig, nur sein Zeiger war tot — ein Wächter-Docstring,
+       der eine geheilte Stelle als lebend führt, kostet die nächste Erhebung
+       eine Suche ins Leere.
        Hier gewächtert: `InvestitionMonatsdaten.verbrauch_daten` /
        `Monatsdaten.verbrauch_daten` gegen die Feld-SoT `core/field_definitions`
        — seit A25 in allen drei Zugriffsformen (`.get()`, Subscript **lesend
@@ -1727,6 +1733,19 @@ def test_p9_durchreicher_sind_noch_belegt():
 # `test_co2_autarkie_sichten_symmetrie` und `test_monats_fakten_schicht` —, und
 # die Lücke schrumpft mit jedem Migrationsschritt, weil sie an die Liste unten
 # gebunden ist.
+#
+# **Zweite dokumentierte Blindstelle (Prüfbericht Daten-Checker 2026-08-22/B8):**
+# `services/daten_checker/` faltet `InvestitionMonatsdaten` an ≥9 Stellen über
+# die eager geladene Relationship `Investition.monatsdaten` — der Lader unten
+# erkennt nur `select(...)`, Relationship-Zugriff ist für ihn unsichtbar. Das
+# ist KEIN Verstoß: Checker-Pfade sind per Definition der ersten Kategorie
+# (SCHREIBEN_IMPORT_CHECKER) legitim — sie prüfen Zeilen, sie leiten keine
+# Auswertungsgröße ab. Die Einordnung steht hier statt als vorsorglicher
+# Allowlist-Eintrag, weil ein Eintrag ohne heutigen Treffer eine Allowlist-
+# Leiche wäre (Sitzung-36-Lehre: sie stellt eine künftige Stelle still frei).
+# Stellt jemand eine Checker-Funktion auf `select(InvestitionMonatsdaten)` um,
+# SOLL der Wächter anschlagen — der Eintrag wird dann bewusst und mit dieser
+# Begründung in P10_SCHREIBEN_IMPORT_CHECKER aufgenommen.
 
 _P10_SCHICHT = "backend/services/monats_fakten.py"
 
@@ -1783,6 +1802,17 @@ P10_SCHREIBEN_IMPORT_CHECKER: frozenset[str] = frozenset({
     "backend/services/monat_loeschen.py::_geraetewerte_des_monats",
     # Daten-Checker / Vorschläge: lesen EINEN Feldwert, um ihn zu prüfen.
     "backend/services/vorschlag_service.py::_get_feld_wert",
+    # F-60: fragt, OB überhaupt irgendeine Zeile der Klimaanlagen einen
+    # gemessenen Betriebsart-Strom mitbringt — eine Ja/Nein-Auskunft über die
+    # Datenlage, keine Monatsgröße. Es wird nichts summiert, nichts über die
+    # Zeit gefaltet und nichts angezeigt; das Ergebnis entscheidet allein, ob
+    # ein Hinweis erscheint. Ein Weg über die Schicht wäre hier sogar falsch:
+    # sie filtert (aktiv · Anschaffung · Stilllegung) und rechnet die Zeile in
+    # `MonatsFakt`-Mengen um — die Frage lautet aber „hat jemand je einen
+    # solchen Zähler gepflegt?", und dafür zählt auch ein Monat vor der
+    # Anschaffung oder nach der Stilllegung. Gelesen wird über den SoT-Helfer
+    # `hat_gemessene_betriebsart`, nicht über eine eigene Feldliste.
+    "backend/services/daten_checker/datenquelle.py::_check_klima_modus_sensor",
     # Zählt Zeilen für die DB-Statistik.
     "backend/main.py::get_database_stats",
     # Reicht die Zeilen EINES Monats unverändert an das Frontend durch.

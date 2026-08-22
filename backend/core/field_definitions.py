@@ -82,9 +82,13 @@ BASIS_FELDER = [
 # angezeigt wenn eine Anlage-Bedingung erfüllt ist.
 #
 # bedingung_basis:
-#   "dynamischer_tarif" — Anlage hat einen dynamischen Stromtarif
-#   "hat_eauto"         — Anlage hat mindestens eine aktive E-Auto-Investition
-#   "hat_waermepumpe"   — Anlage hat mindestens eine aktive Wärmepumpe
+#   "dynamischer_tarif"    — Anlage hat einen dynamischen Stromtarif
+#   "variable_einspeisung" — der Tarif trägt „Einspeisevergütung wechselt
+#                            monatlich" (#392) — bewusst eine EIGENE Bedingung,
+#                            nicht `dynamischer_tarif`: gruaGits Fall ist fixer
+#                            Bezug + variable Einspeisung
+#   "hat_eauto"            — Anlage hat mindestens eine aktive E-Auto-Investition
+#   "hat_waermepumpe"      — Anlage hat mindestens eine aktive Wärmepumpe
 # =============================================================================
 
 BEDINGTE_BASIS_FELDER = [
@@ -96,6 +100,14 @@ BEDINGTE_BASIS_FELDER = [
         "mapping_key": "strompreis",
         "gruppe": "preise",
         "hinweis": "Verbrauchsgewichteter Ø-Arbeitspreis des Monats (ct/kWh). Bei dynamischem Tarif sonst automatisch aus dem Strompreis-Sensor (Tibber/aWATTar/EPEX) berechnet.",
+    },
+    {
+        "feld": "einspeise_durchschnittspreis_cent",
+        "label": "Einspeisevergütung (Monat)",
+        "einheit": "ct/kWh",
+        "bedingung_basis": "variable_einspeisung",
+        "gruppe": "preise",
+        "hinweis": "Vergütungssatz dieses Monats (ct/kWh), z. B. der OeMAG-Marktpreis. Schlägt den Stammwert des Tarifs; ohne Eintrag rechnet der Monat mit dem Stammwert. eedc holt den Satz nicht automatisch ab.",
     },
     {
         "feld": "kraftstoffpreis_euro",
@@ -324,7 +336,25 @@ INVESTITION_FELDER: dict = {
         },
         {
             "feld": "strom_warmwasser_kwh", "label": "Strom Warmwasser", "einheit": "kWh",
-            "bedingung": "getrennte_strommessung",
+            # B5 (Entscheid Gernot 2026-08-22) — **die zweite Hälfte von N-304.**
+            # Dort bekam `warmwasser_kwh` sein `!luft_luft`, weil eine
+            # Split-Klimaanlage keinen Warmwasserkreis hat. Für den zugehörigen
+            # STROM galt derselbe Satz und stand trotzdem nicht da: das Feld
+            # wurde einer Klimaanlage mit getrennter Strommessung weiter
+            # angeboten, und der Daten-Checker verlangte es unter dem Label
+            # „Strom Heizen/Warmwasser".
+            #
+            # ⚠ **Zwei Bedingungen, nicht eine** — deshalb die Liste (UND, siehe
+            # `bedingung_erfuellt`): `getrennte_strommessung` sagt, ob die Achse
+            # überhaupt getrennt erfasst wird, `!luft_luft`, ob es die zweite
+            # Seite der Achse an diesem Gerät gibt. Vorher konnte die Auswertung
+            # nur eine Bedingung tragen — genau daran ist N-304 hier hängen
+            # geblieben.
+            #
+            # `strom_heizen_kwh` bleibt bewusst OHNE `!luft_luft`: die
+            # Heiz-Achse existiert an einer Klimaanlage sehr wohl (dieselbe
+            # Trennlinie wie bei `heizenergie_kwh` in N-304).
+            "bedingung": ["getrennte_strommessung", "!luft_luft"],
             "csv_suffix": "Strom_Warmwasser_kWh",
             "hinweis": "Elektrische Energie für die Warmwasserbereitung (kWh, kumulativ oder Tagessensor). Nur bei getrennter Strommessung.",
         },
@@ -1208,6 +1238,38 @@ def _bedingungs_werte(parameter: Optional[dict]) -> dict[str, bool]:
     }
 
 
+def bedingung_erfuellt(bedingung, bedingungs_werte: dict[str, bool]) -> bool:
+    """Ist die `bedingung` eines Feldes erfüllt? — **der eine Auswerter**.
+
+    Eine Bedingung ist ein Schlüssel aus `_bedingungs_werte`, optional mit `!`
+    negiert. **Mehrere Bedingungen stehen als Liste und gelten alle zusammen
+    (UND)** — genau das braucht `strom_warmwasser_kwh` (B5/N-304): getrennte
+    Strommessung ja, Split-Klimaanlage nein. Vorher war die Auswertung eine
+    Kette aus `elif bedingung == "…"`; sie konnte eine Bedingung ausdrücken und
+    keine zwei, und jeder neue Schlüssel kostete dort einen Zweig.
+
+    ⚠ **Ein unbekannter Schlüssel zeigt das Feld** (fail-open) — bitgleich zum
+    früheren Verhalten, wo eine unbekannte Zeichenkette durch alle `elif` fiel.
+    Die Gegenrichtung wäre schlimmer: ein Tippfehler ließe ein **zugeordnetes**
+    Feld unsichtbar verschwinden, und damit unlöschbar zurückbleiben (dieselbe
+    Falle, vor der `get_alle_felder_fuer_investition` warnt). Ein Auswerter, der
+    stattdessen wirft, wäre die F-59-Klasse: ein latenter 500er im Lesepfad.
+    Gegen den Tippfehler steht deshalb ein Wächter, kein Laufzeitfehler —
+    `test_263_betriebsart_felder.py::test_jede_bedingung_ist_ein_bekannter_schluessel`.
+    """
+    if not bedingung:
+        return True
+    tokens = (bedingung,) if isinstance(bedingung, str) else tuple(bedingung)
+    for token in tokens:
+        negiert = token.startswith("!")
+        schluessel = token[1:] if negiert else token
+        if schluessel not in bedingungs_werte:
+            continue  # unbekannt → nicht filtern, s. Kasten oben
+        if bedingungs_werte[schluessel] == negiert:
+            return False
+    return True
+
+
 def _label_aufgeloest(feld: dict, bedingungs_werte: dict[str, bool]) -> str:
     """#281: konditionelles Label — nutzt dieselben Bedingungs-Keys wie `bedingung`."""
     for cond_key, alt_label in (feld.get("label_wenn") or {}).items():
@@ -1254,12 +1316,6 @@ def get_felder_fuer_investition(
 
     result = []
     bedingungs_werte = _bedingungs_werte(params)
-    getrennte_strommessung = bedingungs_werte["getrennte_strommessung"]
-    arbitrage_faehig = bedingungs_werte["arbitrage_faehig"]
-    laedt_aus_netz = bedingungs_werte["laedt_aus_netz"]
-    v2h_faehig = bedingungs_werte["v2h_faehig"]
-    hat_speicher = bedingungs_werte["hat_speicher"]
-    luft_luft = bedingungs_werte["luft_luft"]
 
     # Steuer-Schlüssel — hier ausgewertet bzw. nur für die Zuordnungs-Fläche
     # relevant, gehören nicht in die Eingabe-Antwort.
@@ -1283,23 +1339,7 @@ def get_felder_fuer_investition(
                 continue  # Feld ausblenden: Wallbox ist kanonische Heimladungs-Quelle
 
         # ── Investment-Parameter-Bedingung ───────────────────────────────────
-        if bedingung is None:
-            pass  # immer zeigen
-        elif bedingung == "getrennte_strommessung" and not getrennte_strommessung:
-            continue
-        elif bedingung == "!getrennte_strommessung" and getrennte_strommessung:
-            continue
-        elif bedingung == "arbitrage_faehig" and not arbitrage_faehig:
-            continue
-        elif bedingung == "laedt_aus_netz" and not laedt_aus_netz:
-            continue
-        elif bedingung == "v2h_faehig" and not v2h_faehig:
-            continue
-        elif bedingung == "hat_speicher" and not hat_speicher:
-            continue
-        elif bedingung == "luft_luft" and not luft_luft:
-            continue
-        elif bedingung == "!luft_luft" and luft_luft:
+        if not bedingung_erfuellt(bedingung, bedingungs_werte):
             continue
 
         aufgeloest = dict(feld)
@@ -1376,6 +1416,7 @@ def get_alle_felder_fuer_investition(typ: str, parameter: Optional[dict] = None)
 def get_basis_felder(
     hat_dynamischen_tarif: bool = False,
     aktive_inv_typen: Optional[set[str]] = None,
+    hat_variable_einspeisung: bool = False,
 ) -> list[dict]:
     """
     Gibt alle Basis-Felder für eine Anlage zurück (inkl. aufgelöster bedingter Felder).
@@ -1386,6 +1427,8 @@ def get_basis_felder(
     Args:
         hat_dynamischen_tarif: True wenn die Anlage einen dynamischen Stromtarif hat
         aktive_inv_typen: Set der aktiven Investitionstypen (z.B. {"pv-module", "e-auto"})
+        hat_variable_einspeisung: True wenn der (zum Stichtag gültige) allgemeine
+            Tarif „Einspeisevergütung wechselt monatlich" trägt (#392)
 
     Returns:
         Liste von Feld-Dicts (ohne bedingung_basis-Key)
@@ -1396,6 +1439,8 @@ def get_basis_felder(
     for feld in BEDINGTE_BASIS_FELDER:
         bedingung = feld.get("bedingung_basis")
         if bedingung == "dynamischer_tarif" and not hat_dynamischen_tarif:
+            continue
+        if bedingung == "variable_einspeisung" and not hat_variable_einspeisung:
             continue
         if bedingung == "hat_eauto" and "e-auto" not in typen:
             continue

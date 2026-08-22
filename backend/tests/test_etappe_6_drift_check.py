@@ -27,6 +27,8 @@ import traceback
 from datetime import date, timedelta
 from pathlib import Path
 from types import SimpleNamespace
+
+from backend.models.investition import Investition
 from unittest.mock import patch, MagicMock, AsyncMock
 
 _BACKEND_ROOT = Path(__file__).resolve().parents[2]
@@ -51,8 +53,22 @@ def _make_anlage():
     })
 
 
-def _make_inv(inv_id=3, typ="pv-module"):
-    return SimpleNamespace(id=inv_id, anlage_id=1, typ=typ, parameter={})
+def _make_inv(inv_id=3, typ="pv-module", aktiv=True,
+              anschaffungsdatum=None, stilllegungsdatum=None):
+    """Echtes Model-Objekt (nicht persistiert) — der Check ruft `ist_aktiv_an`.
+
+    ⚑ **Seit N-64 (D3, 22.08.2026)** zieht `_check_datenquelle_drift` die
+    Aktiv-Grenze pro Tag, wie sein Zwilling `_check_leere_tage_trotz_zaehler`
+    seit N-57. Ein `SimpleNamespace` kennt die Methode nicht; ein Double mit
+    **eigener** Aktiv-Logik wäre die zweite Definition, gegen die beide Funde
+    antreten. Wortgleiche Begründung steht in
+    `test_daten_checker_leere_tage_trotz_zaehler.py`.
+    """
+    return Investition(
+        id=inv_id, anlage_id=1, typ=typ, parameter={},
+        aktiv=aktiv, anschaffungsdatum=anschaffungsdatum,
+        stilllegungsdatum=stilllegungsdatum,
+    )
 
 
 def _build_checker(tz_list, invs_list, ha_tageskwh_func, ha_available=True):
@@ -315,41 +331,3 @@ async def test_311_lts_nur_nicht_pv_keys_kein_drift():
 
     assert len(result) == 1
     assert result[0].schwere == "ok"
-
-
-_TESTS = [
-    test_keine_drift_ok_meldung,
-    test_drift_unter_schwelle_kein_eintrag,
-    test_drift_ueber_schwelle_eintrag_mit_action,
-    test_sortierung_nach_delta_desc,
-    test_max_20_eintraege_plus_rest_hinweis,
-    test_ha_lts_nicht_verfuegbar_leer,
-    test_keine_tagesdaten_leer,
-    test_eedc_und_ha_beide_null_kein_eintrag,
-    test_311_lts_ohne_pv_key_kein_phantom_drift,
-    test_311_lts_nur_nicht_pv_keys_kein_drift,
-]
-
-
-def _run_all() -> int:
-    failures = 0
-    for test in _TESTS:
-        try:
-            asyncio.run(test())
-            print(f"OK   {test.__name__}")
-        except AssertionError as e:
-            failures += 1
-            print(f"FAIL {test.__name__}\n     {e}")
-        except Exception:
-            failures += 1
-            print(f"ERR  {test.__name__}")
-            traceback.print_exc()
-    return failures
-
-
-if __name__ == "__main__":
-    failures = _run_all()
-    if failures:
-        print(f"\n{failures} von {len(_TESTS)} Tests fehlgeschlagen.")
-        sys.exit(1)
-    print(f"\nAlle {len(_TESTS)} Tests grün.")
