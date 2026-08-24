@@ -60,6 +60,8 @@ und zum Verständnis der Datenflüsse.
 > Die Migration läuft sichtweise (`KONZEPT-MONATS-FAKTEN.md` §10): umgehängt sind **Aussichten**, **Jahresbericht-PDF** und der **Investitions-ROI** (S2). Der baumweite Wächter wird mit S5 scharf gestellt.
 
 > **Achtung, ein Name für zwei Größen:** `pv_erzeugung_kwh` bezeichnet **drei verschiedene Dinge**, je nachdem, wo es steht — die **DB-Spalte** `Monatsdaten.pv_erzeugung_kwh` (manuelles Gesamt-Aggregat, s. o.), den **Schlüssel in `InvestitionMonatsdaten.verbrauch_daten`** (Erzeugung *dieses einen* Moduls) und das **Response-Feld** von `/monatsdaten/aggregiert` (PV-Module **+** Balkonkraftwerk). Der Identifier bleibt bewusst unverändert — er ist zugleich MQTT-Topic-Segment, CSV-Spaltenname und Backup-Feld. Siehe [Glossar](GLOSSAR.md#energie--bilanzen).
+>
+> ⛔ **Und eine vierte Stelle, die es NICHT gibt: der Wechselrichter.** Er ist kein PV-Erzeuger — `PV_ERZEUGER_TYPEN = ("pv-module", "balkonkraftwerk")`, baumweit. Bis 2026-08-24 bot die Eingabe-Registry trotzdem ein `wechselrichter/pv_erzeugung_kwh` an; **gelesen wurde es von niemandem** (gemessen: 900 kWh dort ⇒ 0,0 kWh Anlagen-PV), und weil es der Alternativ-Gruppe `pv_energie` angehörte, setzte ein dort zugeordneter Zähler den Anlagen-Zähler **und** das Modul-Feld auf „bereits an anderer Stelle zugeordnet". Ergebnis: drei PV-Quellen inaktiv, keine wirksam, und die Live-Kachel fiel auf die Hochrechnung aus der Leistung zurück (#388, rund 31 % zu hoch). Das Feld trägt seither `nur_bestand` — es erscheint nur noch, solange eine alte Zuordnung daran hängt, und der Daten-Checker sagt, wohin sie gehört. **Wer die Gruppe erweitern will, liest zuerst den Wächter** `test_wechselrichter_kein_pv_erzeuger.py::test_es_gibt_genau_drei_pv_energie_quellen`: er hält Eingabe-Registry und Rechen-Kern gegeneinander und meldet rot, sobald sie auseinanderlaufen.
 
 ### Schicht 2: Berechnungslogik
 
@@ -486,7 +488,7 @@ Investition_gesamt   = PV-System + WP-Mehrkosten + E-Auto-Mehrkosten + Sonstige
 |------|--------|
 | `kapazitaet_kwh` | `get_speicher_nutzbare_kapazitaet_kwh(inv)` — **netto**, still auf brutto zurückfallend (A31-2/E17, s. u.). Greift nur im Prognose-Modus; mit gemessener Entladung übernimmt der Spread-Service und liest gar keine Kapazität. |
 | `wirkungsgrad_prozent` | `Investition.parameter["wirkungsgrad_prozent"]` (Default: 95) |
-| `nutzt_arbitrage` | `Investition.parameter["nutzt_arbitrage"]` (Default: false) |
+| `arbitrage_faehig` | `Investition.parameter["arbitrage_faehig"]` (Default: false) — der Kanon; `nutzt_arbitrage` war der Name vor v3.25.0 |
 | `lade_preis_cent` | `Investition.parameter["lade_durchschnittspreis_cent"]` (Default: 12) |
 | `entlade_preis_cent` | `Investition.parameter["entlade_vermiedener_preis_cent"]` (Default: 35) |
 
@@ -777,16 +779,16 @@ Zwei Pfade, in dieser Reihenfolge:
 #### Formeln
 
 ```
-km_elektrisch        = km_jahr                        (BEV — Normalfall)
-                     = km_jahr * Fahranteil / 100     (Plug-in-Hybrid, s. u.)
-km_verbrenner        = km_jahr - km_elektrisch
+km_elektrisch        = jahresfahrleistung_km                    (BEV — Normalfall)
+                     = jahresfahrleistung_km * Fahranteil / 100 (Plug-in-Hybrid, s. u.)
+km_verbrenner        = jahresfahrleistung_km - km_elektrisch
 
 Strom_Bedarf         = km_elektrisch * Verbrauch_kWh_100km / 100
 PV_Anteil            = pv_ladeanteil_prozent / 100
 Netz_Anteil          = 1 - PV_Anteil
 
 Strom_Kosten         = Strom_Bedarf * Netz_Anteil * Strompreis / 100
-Benzin_Verbrauch     = km_jahr * Vergleich_L_100km / 100      ← ALLE Kilometer
+Benzin_Verbrauch     = jahresfahrleistung_km * Vergleich_L_100km / 100   ← ALLE Kilometer
 Benzin_Kosten        = Benzin_Verbrauch * Benzinpreis_EUR
 Fossile_Kosten       = km_verbrenner / 100 * Eigener_L_100km * Benzinpreis_EUR
 
@@ -847,7 +849,7 @@ Für Jahresprognose:
                        ∨ Investition.parameter.benzinpreis_euro  (Fallback)
 ```
 
-**Datenquelle:** EU Weekly Oil Bulletin (Euro-Super 95, inkl. Steuern, wöchentlich, History seit 2005). Befüllung via Backfill-Endpoint oder wöchentlichem Scheduler-Job (Dienstags 06:00).
+**Datenquelle:** EU Weekly Oil Bulletin (Euro-Super 95, inkl. Steuern, wöchentlich, History seit 2005). Befüllung durch den Scheduler-Job (**täglich 06:00 + Startlauf**), den Reparatur-Pfad „Kraftstoffpreise nachpflegen" oder den Backfill-Endpoint. Fehlt der Monatswert, rechnet die Kette mit dem Investitions-Parameter bzw. 1,65 €/L weiter — der Daten-Checker meldet offene Monate deshalb als eigene Kategorie.
 
 **Betroffen:** Aussichten (`aussichten.py`), HA-Sensor-Export (`ha_export.py`), PDF-Finanzbericht (`pdf_operations.py`).
 

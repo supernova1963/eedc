@@ -15,7 +15,9 @@ from backend.core.berechnungen.spez_ertrag import PV_ERZEUGER_TYPEN
 from backend.core.investition_kennwerte import get_speicher_kapazitaet_kwh
 from backend.core.investition_parameter import (
     BKW_EINSPEISEGRENZE_W_TYPISCH,
+    PARAM_E_AUTO,
     PARAM_PV_MODULE,
+    PARAM_SPEICHER,
     PARAM_WAERMEPUMPE,
     ist_dienstlich,
 )
@@ -52,6 +54,21 @@ DC_AC_MELDESCHWELLE = 2.0
 # gleichzeitig weit unter jeder Anlage, bei der ein vergessener Vergütungssatz
 # Geld kostet: 50 kWh sind bei üblichen 8 ct rund 4 € im Jahr.
 EINSPEISUNG_MELDESCHWELLE_KWH_JAHR = 50.0
+
+# Ab dieser Abweichung meldet der Checker, dass die gepflegte Anlagenleistung
+# nicht zur Summe der Erzeuger-Investitionen passt (F-58, NoahPaulick T89667
+# #188). 0,1 kWp ist dieselbe Toleranz, die die Modul-Detail-Rechenprobe
+# darunter benutzt — sie fängt Rundung, nicht Pflege.
+#
+# ⚠ Verglichen wird gegen ZWEI Summen: mit und ohne Balkonkraftwerk. Passt der
+# gepflegte Wert zu einer von beiden, schweigt der Checker. Grund: fachlich ist
+# ein BKW eine eigene Anlage und gehört nicht in die kWp der Hauptanlage
+# (N-76 Stufe 1, Entscheid Gernot 2026-08-04) — wer es trotzdem eingerechnet
+# hat, hat aber nichts Falsches gemessen, sondern eine andere Konvention
+# gewählt. Nur eine Zahl, die zu KEINER der beiden passt, ist ein Pflegefehler.
+# Ohne diese Zweiseitigkeit bekäme jeder BKW-Anwender wieder die Meldung, die
+# Stufe 1 gerade abgeschafft hat ([[feedback_daten_checker_kein_akzeptiert]]).
+ANLAGENLEISTUNG_TOLERANZ_KWP = 0.1
 
 
 def _ist_zaehler(inv) -> bool:
@@ -275,14 +292,19 @@ class StammdatenChecks:
                 ),
             ))
 
+            ergebnisse.extend(
+                self._check_anlagenleistung_gegen_module(anlage, summe_kwp, heute)
+            )
+
             ergebnisse.extend(self._check_dc_ac_verhaeltnis(anlage, pv_module, heute))
 
             # Ursache benennen statt nur die Summe (R22-2b, PN 89782 Rainer):
-            # die Regel oben sagt „Summe passt nicht zur Anlage" und lässt den
-            # Nutzer alle Strings durchsuchen. Wo Modul-Details gepflegt sind,
-            # ist die Rechenprobe eindeutig — sie zeigt den verursachenden
-            # String. Ergänzung, kein Ersatz: ohne Modul-Details (optionale
-            # Felder) bleibt die Summenregel die einzige Prüfung.
+            # die Summenregel oben sagt „Anlagenleistung passt nicht zu den
+            # Modulen" und lässt den Nutzer alle Strings durchsuchen. Wo
+            # Modul-Details gepflegt sind, ist die Rechenprobe eindeutig — sie
+            # zeigt den verursachenden String. Ergänzung, kein Ersatz: ohne
+            # Modul-Details (optionale Felder) bleibt die Summenregel die
+            # einzige Prüfung.
             for modul in pv_module:
                 params = modul.parameter or {}
                 anzahl = params.get(PARAM_PV_MODULE["ANZAHL_MODULE"])
@@ -334,6 +356,75 @@ class StammdatenChecks:
 
         return ergebnisse
 
+    def _check_anlagenleistung_gegen_module(
+        self, anlage: Anlage, summe_pv_kwp: float, heute: date,
+    ) -> list[CheckErgebnis]:
+        """Passt die gepflegte Anlagenleistung zur Summe der Erzeuger? (F-58)
+
+        **Warum es diese Prüfung wieder gibt.** `Anlage.leistung_kwp` ist der
+        Nenner jeder spezifischen Kennzahl — spezifischer Ertrag, Performance
+        Ratio, Auslastung, Doppelerfassungs-Verdacht. Bis zum 04.08. hielt ein
+        Summenvergleich ihn gegen die Investitionen; mit N-76 Stufe 1 ist er
+        entfallen, und danach hielt ihn **nichts** mehr. Der Setup-Wizard
+        erzeugt die PV-Module *aus* diesem Feld — sie stimmen also anfangs
+        überein und laufen erst auseinander, wenn jemand die Investitionen
+        korrigiert.
+
+        Genau das ist NoahPaulick passiert (T89667 #188, v4.0.26): Er hat eine
+        ursprünglich gemeinsam erfasste Anlage getrennt und die PV-Module
+        korrigiert. Der Referenzwert blieb stehen, und der Daten-Checker meldete
+        ihm vier Tage „PV-Doppelerfassung" bei einem spezifischen Ertrag, der um
+        den Faktor 2 danebenlag — während derselbe Checker die abweichende
+        Anlagenleistung eine Zeile darüber als „OK" bestätigte.
+
+        **Der Anwender behält seine Eingabe** (Entscheid Gernot 2026-08-24):
+        eedc leitet den Wert nicht ab und überschreibt ihn nicht, es sagt nur,
+        dass zwei seiner Angaben nicht zusammenpassen — und welche.
+
+        Zur Zweiseitigkeit des Vergleichs siehe `ANLAGENLEISTUNG_TOLERANZ_KWP`.
+        """
+        from backend.core.berechnungen.anlagen_kwp import summe_erzeuger_kwp
+
+        gepflegt = anlage.leistung_kwp or 0
+        if gepflegt <= 0:
+            return []  # der ERROR eine Prüfung darüber deckt das schon ab
+
+        # Beide zulässigen Konventionen. `summe_pv_kwp` kommt vom Aufrufer und
+        # ist bereits ohne BKW gerechnet — die zweite Summe holt es dazu.
+        mit_bkw = summe_erzeuger_kwp(anlage.investitionen, heute, mit_bkw=True)
+        if summe_pv_kwp <= 0 and mit_bkw <= 0:
+            return []  # keine gepflegten Erzeuger — nichts zu vergleichen
+
+        for summe in (summe_pv_kwp, mit_bkw):
+            if summe > 0 and abs(gepflegt - summe) <= ANLAGENLEISTUNG_TOLERANZ_KWP:
+                return []
+
+        bkw_zusatz = (
+            f" (mit Balkonkraftwerk {mit_bkw:.2f} kWp)"
+            if mit_bkw > summe_pv_kwp + ANLAGENLEISTUNG_TOLERANZ_KWP else ""
+        )
+        return [CheckErgebnis(
+            kategorie=CheckKategorie.STAMMDATEN.value,
+            schwere=CheckSeverity.WARNING,
+            meldung=(
+                f"Anlagenleistung {gepflegt:.2f} kWp passt nicht zu den "
+                f"Modulen ({summe_pv_kwp:.2f} kWp)"
+            ),
+            details=(
+                f"Unter „Anlage“ stehen {gepflegt:.2f} kWp, die Summe der "
+                f"angelegten PV-Module ergibt {summe_pv_kwp:.2f} kWp"
+                f"{bkw_zusatz}. eedc rechnet den spezifischen Ertrag, die "
+                "Performance Ratio und die Plausibilitätsprüfungen mit der "
+                "Modulsumme — die Anlagenleistung geht dagegen an den "
+                "Community-Vergleich. Solange beide auseinanderlaufen, "
+                "vergleichst du dich dort mit einer anderen Anlagengröße als "
+                "der, die du auswertest. Korrigiere den Wert, der nicht stimmt: "
+                "die Anlagenleistung unter „Einstellungen → Anlage“ oder die "
+                "Leistung der einzelnen Module unter „Investitionen“."
+            ),
+            link="/einstellungen/anlage",
+        )]
+
     def _check_dc_ac_verhaeltnis(
         self, anlage: Anlage, pv_module: list, heute: date,
     ) -> list[CheckErgebnis]:
@@ -351,9 +442,16 @@ class StammdatenChecks:
         Pflegefehler: die Wechselrichter-Leistung steht im kWp-Feld des Strings
         (genau der Fall aus #354) oder umgekehrt.
 
-        Die Prüfung ersetzt den früheren Abgleich „Σ Module ≠ Anlagenleistung",
-        der Überbelegung gar nicht kannte und beim Balkonkraftwerk zusätzlich
-        falsch-positiv meldete (N-76).
+        Die Prüfung trat 2026-08-04 an die Stelle des früheren Abgleichs
+        „Σ Module ≠ Anlagenleistung", der Überbelegung gar nicht kannte und beim
+        Balkonkraftwerk zusätzlich falsch-positiv meldete (N-76).
+
+        ⚠ Sie ersetzt ihn **nicht** — das war der Fehler. DC/AC misst Module
+        gegen Wechselrichter; niemand hielt danach die Anlagenleistung noch
+        gegen irgendetwas, obwohl sie der Nenner jeder spezifischen Kennzahl
+        ist. Den Abgleich selbst führt seit F-58 wieder
+        {@link _check_anlagenleistung_gegen_module}, jetzt beidseitig (mit und
+        ohne BKW) statt einseitig.
         """
         ergebnisse: list[CheckErgebnis] = []
         kat = CheckKategorie.STAMMDATEN
@@ -751,6 +849,81 @@ class StammdatenChecks:
         ))
         return ergebnisse
 
+    def _check_wechselrichter_pv_altbestand(
+        self, inv, name: str, sensor_mapping: dict,
+    ) -> list[CheckErgebnis]:
+        """Eine alte PV-Zuordnung am Wechselrichter — und wohin sie gehoert.
+
+        Der Wechselrichter ist **kein PV-Erzeuger** (Entscheid 24.08.2026,
+        Begruendung in `core/field_definitions.py`). Sein `pv_erzeugung_kwh`
+        traegt seither `nur_bestand`: nicht mehr pflegbar, nur noch sichtbar,
+        solange eine Zuordnung daran haengt.
+
+        ⚠ **Warum WARNING und nicht INFO** — anders als beim BKW-Akku
+        (`_check_bkw_akku_erfassungsweg`, dort INFO): Dort liegen die Werte
+        vor und werden angezeigt, nur eben monatlich. Hier wird der Sensor
+        **von niemandem gelesen**, und schlimmer: solange er hing, meldete die
+        Zuordnungs-Flaeche die PV als abgedeckt (er besetzte die Gruppe
+        `pv_energie`). Die Live-Kachel fiel dadurch auf die Hochrechnung aus der
+        Leistung zurueck — beim Melder von #388 rund 31 % zu hoch. Das ist ein
+        Defekt in seinen Zahlen, keine Auskunft.
+
+        Gemeldet wird beides, was es geben kann: eine **Sensor-Zuordnung** und
+        ein von Hand gepflegter **Monatswert**. Nichts wird angefasst
+        ([[feedback_kein_grosser_heiler_knopf]]); der Text nennt die Handlung.
+        """
+        ergebnisse: list[CheckErgebnis] = []
+        kat = CheckKategorie.INVESTITIONEN
+
+        inv_map = ((sensor_mapping or {}).get("investitionen") or {})
+        eintrag = inv_map.get(str(inv.id)) or inv_map.get(inv.id) or {}
+        felder = (eintrag.get("felder") or {}) if isinstance(eintrag, dict) else {}
+        zuordnung = felder.get("pv_erzeugung_kwh")
+        hat_zuordnung = bool(
+            zuordnung.get("entity_id") if isinstance(zuordnung, dict) else zuordnung
+        )
+
+        monate = sorted(
+            (imd.jahr, imd.monat)
+            for imd in (inv.monatsdaten or [])
+            if (imd.verbrauch_daten or {}).get("pv_erzeugung_kwh") is not None
+        )
+        if not hat_zuordnung and not monate:
+            return ergebnisse
+
+        teile: list[str] = []
+        if hat_zuordnung:
+            teile.append(
+                "Am Wechselrichter haengt ein PV-Zaehler. Er wird nicht "
+                "ausgewertet: eedc fuehrt die PV-Erzeugung an den PV-Modulen "
+                "und -- fuer die ganze Anlage -- unter Anlage (Basis) als "
+                "PV-Erzeugung Zaehlerstand."
+            )
+        if monate:
+            von = f"{monate[0][1]:02d}/{monate[0][0]}"
+            bis = f"{monate[-1][1]:02d}/{monate[-1][0]}"
+            zeitraum = von if len(monate) == 1 else f"{von} bis {bis}"
+            teile.append(
+                f"Fuer {len(monate)} Monate ({zeitraum}) ist hier ausserdem ein "
+                "PV-Monatswert von Hand gepflegt. Auch er zaehlt nirgends mit."
+            )
+        teile.append(
+            "So gehoert es zugeordnet: Misst du je String, dann am jeweiligen "
+            "PV-Modul. Hast du nur einen Zaehler fuer die ganze Anlage, dann "
+            "unter Einstellungen -> Datenquellen in der Gruppe Anlage (Basis) "
+            "bei PV-Erzeugung Zaehlerstand -- eedc verteilt die Menge dann "
+            "nach kWp auf deine Module. "
+            "Die alte Zuordnung kannst du danach entfernen; sie bleibt so "
+            "lange sichtbar, bis du sie loeschst."
+        )
+        ergebnisse.append(CheckErgebnis(
+            kategorie=kat, schwere=CheckSeverity.WARNING,
+            meldung=f"{name}: PV-Zuordnung am Wechselrichter wird nicht ausgewertet",
+            details=" ".join(teile),
+            link="/einstellungen/datenquellen",
+        ))
+        return ergebnisse
+
     def _check_bkw_akku_erfassungsweg(self, inv, name: str, alle_invs) -> list[CheckErgebnis]:
         """Weist Weg-B-Altbestand auf den Kanon hin — mit benannter Handlung.
 
@@ -920,7 +1093,12 @@ class StammdatenChecks:
                         inv, name, kap, anlage.investitionen
                     )
                 )
-                if param.get("nutzt_arbitrage"):
+                # Kanon seit v3.25.0: `arbitrage_faehig`. Bis 2026-08-23 stand
+                # hier `nutzt_arbitrage` — der Name VOR der Umbenennung. Damit
+                # war die Bedingung dauerhaft falsch und dieser Prüfer hat nie
+                # gemeldet; ein Speicher mit aktivierter Arbitrage und fehlendem
+                # Ø Ladepreis blieb unbeanstandet.
+                if param.get(PARAM_SPEICHER["ARBITRAGE_FAEHIG"]):
                     if not param.get("lade_durchschnittspreis_cent"):
                         ergebnisse.append(CheckErgebnis(
                             kategorie=kat, schwere=CheckSeverity.WARNING,
@@ -1015,7 +1193,15 @@ class StammdatenChecks:
                 # Dienstwagen: keine PV-Ladungs-/ROI-Checks (kein PV-Bezug, kein Invest)
                 if ist_dienstlich(param):
                     continue
-                if not param.get("km_jahr") and not param.get("verbrauch_kwh_100km"):
+                # Kanon seit v3.25.0: `jahresfahrleistung_km`. Bis 2026-08-23
+                # stand hier `km_jahr` — der Vor-Umbenennungs-Name. Die linke
+                # Hälfte der Bedingung war damit immer wahr, der Prüfer hing
+                # allein am Verbrauch: Wer den Verbrauch gepflegt hatte, aber
+                # keine Fahrleistung, bekam nie einen Hinweis.
+                if (
+                    not param.get(PARAM_E_AUTO["JAHRESFAHRLEISTUNG_KM"])
+                    and not param.get(PARAM_E_AUTO["VERBRAUCH_KWH_100KM"])
+                ):
                     ergebnisse.append(CheckErgebnis(
                         kategorie=kat, schwere=CheckSeverity.INFO,
                         meldung=f"{name}: Fahrleistung/Verbrauch fehlt",
@@ -1029,7 +1215,14 @@ class StammdatenChecks:
                         details="Werden für ROI-Berechnung benötigt (Vergleich mit Verbrenner-Alternative)",
                         link="/einstellungen/investitionen",
                     ))
-                if param.get("nutzt_v2h") and not param.get("v2h_entlade_preis_cent"):
+                # Kanon seit v3.25.0: `v2h_faehig` (im Code selbst als „Bug #1
+                # v3.25.0" vermerkt, s. `live_komponenten_builder.py`). Bis
+                # 2026-08-23 stand hier `nutzt_v2h` — dieser Prüfer hat damit
+                # nie gemeldet.
+                if (
+                    param.get(PARAM_E_AUTO["V2H_FAEHIG"])
+                    and not param.get(PARAM_E_AUTO["V2H_ENTLADE_PREIS_CENT"])
+                ):
                     ergebnisse.append(CheckErgebnis(
                         kategorie=kat, schwere=CheckSeverity.INFO,
                         meldung=f"{name}: V2H aktiv, aber Entladepreis fehlt",
@@ -1058,6 +1251,9 @@ class StammdatenChecks:
                         meldung=f"{name}: Leistung (kW) fehlt",
                         link="/einstellungen/investitionen",
                     ))
+                ergebnisse.extend(self._check_wechselrichter_pv_altbestand(
+                    inv, name, anlage.sensor_mapping or {},
+                ))
 
             elif inv.typ == "waermepumpe":
                 # F-41 (#383 azywietz-web, 18.08.): Bis v4.0.20 hingen DREI

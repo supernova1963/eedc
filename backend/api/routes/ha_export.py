@@ -1178,6 +1178,8 @@ async def calculate_anlage_sensors(
                 value = prognose["heute_kwh"]
                 if prognose.get("stundenprofil_heute"):
                     zusatz = {"stundenprofil_kwh": prognose["stundenprofil_heute"]}
+            elif sensor.key == "eedc_prognose_heute_rollend_kwh":
+                value = prognose["heute_rollend_kwh"]
             elif sensor.key == "eedc_prognose_rest_today_kwh":
                 value = prognose["rest_today_kwh"]
             elif sensor.key == "eedc_prognose_day_plus_1_kwh":
@@ -1216,6 +1218,24 @@ async def calculate_anlage_sensors(
                 # Rang-Profil keine eigene Schwelle rechenbar (#335/N-105).
                 if preis.get("optimierter_durchschnitt_cent") is not None:
                     zusatz["optimierter_durchschnitt_cent"] = preis["optimierter_durchschnitt_cent"]
+                # Der Kalendertag des Profils (N-104). Ohne ihn ist ein
+                # stehengebliebenes Profil nach Mitternacht nicht von einem
+                # aktuellen zu unterscheiden.
+                if preis.get("datum"):
+                    zusatz["datum"] = preis["datum"]
+                # Morgen — sobald die Day-Ahead-Auktion veröffentlicht hat
+                # (N-104, Melder rapahl). `morgen_verfuegbar` ist immer gesetzt,
+                # damit eine Automation „noch nicht da" von „gibt es nicht"
+                # unterscheiden kann, statt auf ein fehlendes Attribut zu prüfen.
+                zusatz["morgen_verfuegbar"] = bool(preis.get("morgen_verfuegbar"))
+                for schluessel in (
+                    "datum_morgen",
+                    "rang_profil_morgen",
+                    "guenstig_schwelle_cent_morgen",
+                    "optimierter_durchschnitt_cent_morgen",
+                ):
+                    if preis.get(schluessel) is not None:
+                        zusatz[schluessel] = preis[schluessel]
             elif sensor.key == "eedc_preis_guenstige_stunden_anzahl":
                 value = preis["guenstige_stunden_anzahl"]
             elif sensor.key == "eedc_preis_guenstige_stunden_tag":
@@ -1224,6 +1244,8 @@ async def calculate_anlage_sensors(
                 value = preis["guenstige_stunden_nacht"]
             elif sensor.key == "eedc_preis_aktuell_cent":
                 value = preis["preis_aktuell_cent"]
+            elif sensor.key == "eedc_preis_tages_durchschnitt_cent":
+                value = preis["tages_durchschnitt_cent"]
             elif sensor.key == "eedc_preis_optimierter_durchschnitt_cent":
                 value = preis["optimierter_durchschnitt_cent"]
             elif sensor.key == "eedc_preis_abstand_prozent":

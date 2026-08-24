@@ -404,9 +404,18 @@ eedc **exportiert** zusätzlich die eigene PV-Prognose als Sensoren (immer die *
 |---|---|
 | `eedc_prognose_heute_kwh` | **PV-Tagesprognose heute** — voller Tageswert (kanonisch, rollt mit OpenMeteo, == Anzeige). |
 | `eedc_prognose_rest_today_kwh` | **Rest heute** — Prognose der verbleibenden Stunden, laufende Stunde anteilig nach Restminuten (#339); aus demselben Kanon → rollt synchron mit „heute". |
+| `eedc_prognose_heute_rollend_kwh` | **Heute (nachgeführt)** — was heute bereits erzeugt wurde **plus** die Prognose der Reststunden. Folgt dem IST; `…_heute_kwh` folgt dagegen OpenMeteo. Beide stehen bewusst nebeneinander (rapahl-PN 2026-08-23). |
 | `eedc_prognose_day_plus_1/2/3_kwh` | Tagesprognose morgen / übermorgen / in 3 Tagen. Attribut `stundenprofil_kwh` = 24 Backward-Slots (kWh); Sensor-State == Σ Slots. |
 | `eedc_speicher_voll_um` | Uhrzeit „Speicher voll" aus der SoC-Simulation ab aktuellem Speicherstand — **inkl. Ladeverluste**: gerechnet mit dem gepflegten Wirkungsgrad des Speichers. Vorher lief die Rechnung verlustfrei und meldete deshalb zu früh. |
 
+> ⚠ **Welchen der drei nehme ich?** `…_heute_kwh` beantwortet *was sagt die Vorhersage für
+> diesen Tag* — er ist die Zahl, die App, MQTT und Persistenz gemeinsam tragen, und er ändert
+> sich nur, wenn OpenMeteo einen neuen Modelllauf liefert. `…_heute_rollend_kwh` beantwortet
+> *worauf läuft der Tag tatsächlich hinaus* — er zieht die schon gemessenen Stunden heran und
+> reagiert damit auf einen Tag, der besser oder schlechter läuft als vorhergesagt.
+> `…_rest_today_kwh` ist der reine Rest. **Ihre Differenz ist keine sinnvolle Größe:**
+> `…_heute_kwh` enthält für die vergangenen Stunden die *Vorhersage*, nicht die Messung.
+>
 > **Hinweis:** Bis v3.45.5 war `eedc_prognose_heute_kwh` „IST bisher + Rest" und wich damit von der App-Anzeige ab. Seit dem Prognose-Kanon trägt der Sensor den **vollen kanonischen Tageswert** (== Anzeige); „Rest heute" ist der reine Rest. Automationen, die auf den alten „IST+Rest"-Wert gebaut haben, sollten auf `…_rest_today_kwh` umgestellt werden, wenn sie den Rest brauchen.
 
 ---
@@ -556,14 +565,21 @@ Grundlage ist der **Day-Ahead-Börsenpreis** (nicht der Anbieter-Endpreis — de
 
 | Sensor | Bedeutung |
 |---|---|
-| `eedc_preis_rang` | Rang der **aktuellen** Stunde: 1–5 = eine der fünf billigsten ihres Fensters **und** unter der Schwelle, 99 = teuer/Rest. Attribute: `rang_profil` (alle 24 Stunden, s. u.), `guenstig_schwelle_cent` und `optimierter_durchschnitt_cent` (beide ct/kWh). |
+| `eedc_preis_rang` | Rang der **aktuellen** Stunde: 1–5 = eine der fünf billigsten ihres Fensters **und** unter der Schwelle, 99 = teuer/Rest. Attribute: `rang_profil` (alle 24 Stunden, s. u.), `guenstig_schwelle_cent` und `optimierter_durchschnitt_cent` (beide ct/kWh), `datum` (Kalendertag des Profils) sowie der **Morgen-Satz** `morgen_verfuegbar` · `datum_morgen` · `rang_profil_morgen` · `guenstig_schwelle_cent_morgen` · `optimierter_durchschnitt_cent_morgen` (s. u.). |
 | `eedc_preis_guenstige_stunden_anzahl` | Anzahl Stunden heute unter der Schwelle (Tag + Nacht) — **ungedeckelt** |
 | `eedc_preis_guenstige_stunden_tag` / `_nacht` | dieselbe Zahl je Fenster |
 | `eedc_preis_aktuell_cent` | Day-Ahead-Börsenpreis der laufenden Stunde |
+| `eedc_preis_tages_durchschnitt_cent` | Ø **aller** heutigen Preis-Stunden, ohne jeden Ausschluss — was der Strom heute im Mittel kostet. **Nicht** die Bezugsgröße der Günstig-Schwelle |
 | `eedc_preis_optimierter_durchschnitt_cent` | Ø der heutigen Preise **ohne** die 3 teuersten Stunden — die Bezugsgröße der Schwelle |
 | `eedc_preis_abstand_prozent` | Abstand des aktuellen Preises zu diesem Ø. **Negativ = billiger als der Ø**, positiv = teurer. Bezugsgröße ist der Betrag des Ø, damit das Vorzeichen auch bei negativen Börsenpreisen stimmt. |
 | `eedc_preis_abstand_cent` | **Derselbe Abstand in ct/kWh** — die Größe, die sich auf den eigenen Endpreis übertragen lässt (s. u.). Negativ = billiger. |
 
+> ⚠ **Zwei Durchschnitte, zwei Fragen — nicht verwechseln.** `eedc_preis_tages_durchschnitt_cent`
+> sagt, was der Strom heute im Mittel kostet; `eedc_preis_optimierter_durchschnitt_cent` sagt,
+> ab wann sich das Laden lohnt. Die Günstig-Schwelle und **beide** Abstands-Größen beziehen
+> sich auf den **zweiten**, nie auf den ersten. Wer in einer Automation den Tagesschnitt
+> meint, nimmt den ersten (rapahl-PN 2026-08-23).
+>
 > **Die vier letzten sind für eigene Preis-Regeln da** (v4.0.10, Wunsch aus der Tester-Runde): „nur entladen, wenn der Strom gerade teurer ist als der Tagesschnitt" ist damit eine Bedingung auf `eedc_preis_abstand_prozent > 0` — ohne Template und ohne dass eedc eine Lade-/Entlade-Strategie vorgibt.
 
 > ### Prozent oder Cent? Beide, und sie sagen Verschiedenes
@@ -577,6 +593,32 @@ Grundlage ist der **Day-Ahead-Börsenpreis** (nicht der Anbieter-Endpreis — de
 > **Faustregel:** Schwellen für Automationen (`< -5` ct) und alles, was mit deinem Tarif zu tun hat → **ct**. Tagesübergreifende Vergleiche → **Prozent**. „Eine der günstigsten Stunden" → **Rang**.
 
 **Das Rang-Profil als Attribut** trägt je Stunde fünf Angaben: `stunde`, `rang`, `preis_cent`, `unter_schwelle` und `abstand_cent`. `preis_cent`/`unter_schwelle` gibt es ab v4.0.10, `abstand_cent` seit dem ct-Sensor — vorher stand dort nur der Rang, und damit ließ sich in HA weder eine eigene Schwelle noch ein eigenes Zeitfenster auswerten.
+
+> ### Morgen steht daneben, sobald es ihn gibt
+>
+> Die Day-Ahead-Auktion veröffentlicht die Preise des Folgetages gegen **13 Uhr**. Ab dann tragen
+> die Attribute von `eedc_preis_rang` einen **zweiten Satz** für morgen — dieselbe Gestalt wie
+> heute, damit eine Automation beide mit demselben Code liest:
+>
+> | Attribut | Bedeutung |
+> |---|---|
+> | `morgen_verfuegbar` | `true`/`false` — **immer vorhanden**. Vor der Auktion `false`; du musst also nicht auf ein fehlendes Attribut prüfen |
+> | `datum_morgen` | Kalendertag, für den der Morgen-Satz gilt |
+> | `rang_profil_morgen` | 24 Stunden in derselben Form wie `rang_profil` |
+> | `guenstig_schwelle_cent_morgen` | die Günstig-Schwelle **des Folgetages** |
+> | `optimierter_durchschnitt_cent_morgen` | dessen Bezugsgröße |
+>
+> ⚠ **Jeder Tag hat seine eigene Schwelle**, und das ist Absicht: Day-Ahead ist ein Tagesprodukt.
+> Ein gemeinsamer Durchschnitt über 48 Stunden würde an einem teuren Tag *keine* günstige Stunde
+> ausweisen und am billigen fast alle. Wer das Morgen-Profil auswertet, nimmt deshalb
+> `guenstig_schwelle_cent_morgen` — nicht die von heute.
+>
+> **Warum `datum` und `datum_morgen` dabeistehen:** ein Profil ohne seinen Kalendertag ist nach
+> Mitternacht nicht von einem stehengebliebenen zu unterscheiden. Eine Automation, die dann auf
+> „morgen" plant, plant auf gestern.
+>
+> **Vor 13 Uhr fragt eedc gar nicht an.** Das ist keine Sparmaßnahme, sondern der Marktrhythmus:
+> vor der Auktion gibt es die Zahlen nicht.
 
 > **Eigene Kriterien:** Wer eine andere Schwelle bevorzugt, stellt den Prozentsatz auf der Export-Seite um — oder rechnet in HA per Template direkt auf den Attributen (`rang_profil` mit den Stundenpreisen, `optimierter_durchschnitt_cent`). eedc liefert bewusst nur die **Trigger-Werte**; die Lade-/Entlade-Strategie baut jeder selbst in seinen Automationen.
 

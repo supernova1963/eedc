@@ -140,6 +140,7 @@ class BoersenpreisTag(BaseModel):
     stunden: list[BoersenpreisStunde] = []
     schwelle_cent: Optional[float] = None             # Günstig-Schwelle DIESES Tages
     optimierter_durchschnitt_cent: Optional[float] = None  # Ø ohne die 3 Peaks
+    tages_durchschnitt_cent: Optional[float] = None   # schlichter Ø ALLER Stunden (rapahl-PN 23.08.)
 
 
 class BoersenpreisResponse(BaseModel):
@@ -426,10 +427,12 @@ async def get_tagesverlauf(
 
 # ── Börsenpreis-Endpoint (#335) ──────────────────────────────────────────────
 
-# Die Day-Ahead-Auktion veröffentlicht die Preise des Folgetages gegen 13 Uhr
-# (EPEX Spot, Marktzeit). Vor diesem Zeitpunkt gibt es sie nicht — das ist keine
-# Störung, sondern der Marktrhythmus, und der Block sagt es entsprechend.
-DAY_AHEAD_VEROEFFENTLICHUNG_STUNDE = 13
+# Die Veröffentlichungsstunde der Day-Ahead-Auktion steht im SoT der Preis-Schicht
+# (`services/preis_tag.py`) — der HA-Export braucht sie seit N-104 ebenso, und eine
+# Konstante in zwei Modulen ist genau die Drift, gegen die diese Schicht gebaut ist.
+from backend.services.preis_tag import (  # noqa: E402
+    DAY_AHEAD_VEROEFFENTLICHUNG_STUNDE,
+)
 
 
 @router.get("/{anlage_id}/boersenpreise", response_model=BoersenpreisResponse)
@@ -498,6 +501,7 @@ async def get_boersenpreise(
             ],
             "schwelle_cent": tag.schwelle_cent,
             "optimierter_durchschnitt_cent": tag.optimierter_durchschnitt_cent,
+            "tages_durchschnitt_cent": tag.tages_durchschnitt_cent,
         })
 
     geladene = {t["datum"] for t in tage}

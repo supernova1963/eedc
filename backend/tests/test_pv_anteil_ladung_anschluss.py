@@ -42,15 +42,13 @@ from backend.services.provenance import (
     ABGELEITET_EINSPEISE_DECKUNG,
     ABGELEITET_EINSPEISE_DECKUNG_TEILWEISE,
 )
+from backend.tests import factories
 
 ANSCHAFFUNG = date(2024, 1, 1)
 
 
 async def _anlage(db) -> Anlage:
-    anlage = Anlage(anlagenname="Ladeanteil", leistung_kwp=10.0)
-    db.add(anlage)
-    await db.flush()
-    return anlage
+    return await factories.anlage(db, anlagenname="Ladeanteil")
 
 
 async def _inv(db, anlage, typ, bezeichnung, **kwargs) -> Investition:
@@ -64,9 +62,7 @@ async def _inv(db, anlage, typ, bezeichnung, **kwargs) -> Investition:
 
 
 def _imd(inv, jahr, monat, daten) -> InvestitionMonatsdaten:
-    return InvestitionMonatsdaten(
-        investition_id=inv.id, jahr=jahr, monat=monat, verbrauch_daten=daten
-    )
+    return factories.mach_imd(inv.id, jahr, monat, daten)
 
 
 def _tag(anlage, tag: date, *, pv: float | None, netz: float | None):
@@ -195,11 +191,24 @@ async def test_gepflegte_null_ist_eine_aussage_keine_luecke(db):
 
 
 @pytest.mark.asyncio
-async def test_pflege_auf_der_anderen_quelle_zaehlt_auch(db):
-    """Der Pool wählt die Wallbox, gepflegt ist der Anteil am Fahrzeug.
+async def test_pflege_auf_der_anderen_quelle_zaehlt_NICHT(db):
+    """Der Pool waehlt die Wallbox — dann entscheidet allein IHRE Pflege.
 
-    Die Quellenwahl ist eine Frage der **Menge**, nicht der **Pflege** — wer den
-    Anteil irgendwo erfasst hat, bekommt keine Schätzung.
+    ⛔ **Diese Probe hiess bis 2026-08-24** ``..._zaehlt_auch`` **und behauptete
+    das Gegenteil.** Ihre Begruendung lautete: *„Die Quellenwahl ist eine Frage
+    der Menge, nicht der Pflege."* Das war schon damals nicht mehr wahr —
+    ``get_emob_heimladung_canonical`` waehlt seit Phase 2a ausdruecklich
+    **strukturell** und nennt die alte Mengen-Heuristik in seinem eigenen
+    Docstring als abgeschafft (sie kippte bei verirrten Streudaten, #262).
+    Die Probe hielt damit einen Widerspruch zwischen zwei unserer Regeln fest,
+    keine abgenommene Entscheidung.
+
+    **Was sie beschuetzte, Ende zu Ende:** ``PV=0 / Netz=200`` — der Anwender
+    sah **0 % Sonne** auf seiner Heimladung, obwohl die Tagesebene 90 % kannte.
+    Nicht eine falsche Zahl, sondern gar keine.
+
+    Der Altwert am Fahrzeug (80/40) bleibt unangetastet; er zaehlt nur nicht
+    mehr gegen eine Quelle, die er nicht ist. Entscheid Gernots vom 24.08.
     """
     anlage = await _anlage(db)
     auto = await _inv(db, anlage, "e-auto", "Auto")
@@ -212,7 +221,12 @@ async def test_pflege_auf_der_anderen_quelle_zaehlt_auch(db):
     emob = _fakt(await lade_monats_fakten(db, anlage.id), 2025, 5).emob
 
     assert emob.quelle == "wallbox"
-    assert emob.ladung_anteil_abgeleitet is False
+    assert emob.ladung_anteil_abgeleitet is True
+    assert emob.ladung_pv_kwh == pytest.approx(180.0)
+    assert emob.ladung_netz_kwh == pytest.approx(20.0)
+    assert emob.ladung_pv_kwh + emob.ladung_netz_kwh == pytest.approx(
+        emob.ladung_kwh
+    ), "die Trias bleibt geschlossen (#262)"
 
 
 # ═══════════════════════════════════════════════════════════════════════

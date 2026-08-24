@@ -24,10 +24,6 @@ Diese Datei ergänzt die andere Hälfte:
   - get_value_at  (Off-by-one-Periodenlogik v3.25.9, has_sum/state/short_term)
   - get_hourly_sensor_data  (W→kW, kWh-Skip)
 
-Self-contained Standalone-Script:
-
-    eedc/backend/venv/bin/python eedc/backend/tests/test_ha_lts_monatswerte_lookup.py
-
 Tricky: Seeding via time.mktime(naive_local) und Query via
 datetime(start_ts,'unixepoch','localtime') interpretieren die Wanduhrzeit
 konsistent — die Tests sind damit TZ-unabhängig (gleiches Muster wie die
@@ -36,18 +32,11 @@ bestehenden test_ha_lts_*-Fixtures).
 
 from __future__ import annotations
 
-import sys
-import traceback
-import time as time_module
 from datetime import date, datetime, timedelta
-from pathlib import Path
 
-_BACKEND_ROOT = Path(__file__).resolve().parents[2]  # eedc/
-sys.path.insert(0, str(_BACKEND_ROOT))
 
-from sqlalchemy import create_engine, text  # noqa: E402
-
-from backend.services.ha_statistics_service import HAStatisticsService  # noqa: E402
+from backend.services.ha_statistics_service import HAStatisticsService
+from backend.tests import ha_lts_helfer
 
 
 # ---------------------------------------------------------------------------
@@ -55,60 +44,18 @@ from backend.services.ha_statistics_service import HAStatisticsService  # noqa: 
 # ---------------------------------------------------------------------------
 
 def _make_service_with_mock_db() -> HAStatisticsService:
-    """HAStatisticsService mit In-Memory-SQLite + HA-konformem Schema
-    (statistics_meta, statistics, statistics_short_term). Umgeht _init_engine."""
-    svc = HAStatisticsService()  # regulärer Konstruktor: setzt alle Felder (u. a.
-    # den Metadaten-Cache) und macht kein I/O — `_init_engine` wird erst
-    # beim ersten Zugriff gerufen und hier durch `_initialized` übersprungen.
-    svc._engine = create_engine("sqlite:///:memory:")
-    svc._is_mysql = False
-    svc._initialized = True
-    with svc._engine.begin() as conn:
-        conn.execute(text("""
-            CREATE TABLE statistics_meta (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                statistic_id TEXT,
-                unit_of_measurement TEXT,
-                has_sum INTEGER,
-                has_mean INTEGER
-            )
-        """))
-        for tbl in ("statistics", "statistics_short_term"):
-            conn.execute(text(f"""
-                CREATE TABLE {tbl} (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    metadata_id INTEGER,
-                    start_ts REAL,
-                    state REAL,
-                    sum REAL,
-                    mean REAL,
-                    min REAL,
-                    max REAL
-                )
-            """))
-    return svc
+    """Service auf In-Memory-SQLite mit HA-Schema — SoT: `ha_lts_helfer`."""
+    return ha_lts_helfer.mach_service()
 
 
 def _seed_sensor(svc, entity_id: str, unit: str, has_sum: bool = True) -> int:
-    with svc._engine.begin() as conn:
-        result = conn.execute(
-            text("INSERT INTO statistics_meta (statistic_id, unit_of_measurement, has_sum, has_mean) "
-                 "VALUES (:sid, :unit, :hs, :hm)"),
-            {"sid": entity_id, "unit": unit, "hs": 1 if has_sum else 0,
-             "hm": 0 if has_sum else 1},
-        )
-        return result.lastrowid
+    return ha_lts_helfer.sensor(svc, entity_id, unit, has_sum=has_sum)
 
 
 def _seed_row(svc, mid: int, when: datetime, *, state=None, sum_val=None,
               mean=None, table: str = "statistics") -> None:
-    ts = time_module.mktime(when.timetuple())
-    with svc._engine.begin() as conn:
-        conn.execute(
-            text(f"INSERT INTO {table} (metadata_id, start_ts, state, sum, mean) "
-                 "VALUES (:mid, :ts, :state, :sum, :mean)"),
-            {"mid": mid, "ts": ts, "state": state, "sum": sum_val, "mean": mean},
-        )
+    ha_lts_helfer.zeile(svc, mid, when, state=state, sum_wert=sum_val,
+                        mean=mean, tabelle=table)
 
 
 # ---------------------------------------------------------------------------
@@ -434,22 +381,3 @@ def test_hourly_sensor_data_kwh_counter_uebersprungen():
     _seed_row(svc, mid, datetime(2026, 5, 15, 9, 0), mean=5.0)
     result = svc.get_hourly_sensor_data(["sensor.pv_kwh"], date(2026, 5, 15), date(2026, 5, 15))
     assert result == {}  # Energie-Zähler ist kein Leistungssensor
-
-
-# ---------------------------------------------------------------------------
-# Standalone-Runner (Haus-Stil der test_ha_lts_*-Dateien)
-# ---------------------------------------------------------------------------
-
-if __name__ == "__main__":
-    tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
-    fehler = 0
-    for t in tests:
-        try:
-            t()
-            print(f"  ✓ {t.__name__}")
-        except Exception:
-            fehler += 1
-            print(f"  ✗ {t.__name__}")
-            traceback.print_exc()
-    print(f"\n{len(tests) - fehler}/{len(tests)} grün")
-    sys.exit(1 if fehler else 0)
