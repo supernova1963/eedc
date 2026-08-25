@@ -1,11 +1,110 @@
 # Was ist neu
 
-> **Stand:** August 2026 (v4.0.27)
+> **Stand:** August 2026 (v4.0.28)
 > **Diese Seite** zeigt pro Version, was sich für dich als Anwender geändert hat — kürzer als der technische [CHANGELOG](https://github.com/supernova1963/eedc-homeassistant/blob/main/CHANGELOG.md), ausführlicher als die Schnellübersicht-Tabelle in der [Übersicht](BENUTZERHANDBUCH.md#was-ist-neu-seit-v316).
 >
 > **Kein Banner, kein Pop-up:** eedc zeigt diese Liste nicht ungefragt an. HA-App-Nutzer sehen den Changelog ohnehin schon im Add-on-Store, GitHub-Releases haben einen eigenen. Wer wissen will, was neu ist, schaut hier rein — Pull statt Push.
 >
 > **Lesehinweis:** Die jüngsten Versionen stehen oben. Jeder Punkt verlinkt entweder auf die zuständige Hilfe-Sektion oder direkt auf die App-Funktion (sofern erreichbar). Anker-URLs (`?doc=was-ist-neu`) sind teilbar.
+
+---
+
+## v4.0.28 — Anzeigen ist nicht mitschreiben
+
+**Sechs Home-Assistant-Sensoren schreiben wieder mit**
+
+Wer den Home-Assistant-Export nutzt, hatte sechs Sensoren, die ihren Wert zwar
+anzeigten, aber nichts davon behielten: die fünf PV-Prognose-Sensoren und die
+Jahresersparnis in Euro. Home Assistant hatte sie **von der Langzeitstatistik
+ausgeschlossen** — ein Verlaufsdiagramm für einen davon blieb leer, eine
+Auswertung über Tage oder Monate gab es nicht.
+
+Der Grund war eine technische Angabe, die eedc beim Anmelden der Sensoren
+mitschickte. Sie sagt Home Assistant „das ist ein Zähler". Eine Tagesprognose
+ist aber keiner — sie springt jeden Tag zurück, und zwei Prognosen zusammenzählen
+ergibt nichts. Dasselbe bei der Jahresersparnis: Sie ist eine Rate, kein Betrag,
+der sich aufsummieren lässt.
+
+Diese Angabe entfällt jetzt. Die Sensoren tragen ihre Einheit weiterhin, und Home
+Assistant führt wieder Statistik für sie. In deinem HA-Protokoll verschwinden
+damit auch die zugehörigen Warnungen.
+
+**Rückwirkend entsteht dabei nichts.** Home Assistant legt Statistik erst ab dem
+Moment an, ab dem ein Sensor sie führen darf. Die Verläufe beginnen also mit dem
+Update — davor bleibt es leer. An deinen Daten in eedc ändert sich nichts.
+
+**Betrifft dich das?** Ja, wenn du den Home-Assistant-Export aktiviert hast.
+**Was du tun musst:** nichts.
+
+**Der Daten-Check verlangt den PV-Anteil deiner Ladung nur noch dort, wo du ihn
+eintragen kannst**
+
+Wer eine **Wallbox** hat, dessen Heimladung führt eedc dort — und bietet die
+Aufteilung in Sonne und Netz am Fahrzeug deshalb gar nicht mehr an. Sonst stünde
+sie zweimal in den Daten.
+
+Der Daten-Check kannte diese Regel als einziger nicht. Er meldete weiterhin
+„Ladung PV fehlt" am E-Auto, und diese Meldung war nicht abstellbar: Ihr
+*Beheben*-Knopf führte in ein Formular, in dem es dieses Feld nicht gibt. Wer den
+Wert von Hand beschafft und doch eingetragen hätte, hätte genau die
+Doppelzählung erzeugt, die die Regel verhindern soll.
+
+Ab jetzt fragt der Daten-Check das Feld nur noch bei Fahrzeugen **ohne** Wallbox.
+Die Meldung verschwindet, deine Daten bleiben unverändert, und die PV-Anteile
+deiner Ladung werden weiter ausgewiesen wie bisher.
+
+**Betrifft dich das?** Ja, wenn du Wallbox und E-Auto angelegt hast.
+**Was du tun musst:** nichts.
+
+**„Nicht aufgeteilt" sagt jetzt, warum**
+
+Unter *Cockpit → Tag* steht im Block *Wärme/Klima*, wie viel Strom ins Heizen und
+wie viel ins Kühlen ging. Was übrig bleibt, stand dort als „Nicht aufgeteilt" —
+ohne ein Wort dazu. Bei einem Gerät, das an dem Tag überwiegend aus war, sind das
+schnell 100 %, und das sieht aus wie ein Defekt.
+
+Es ist keiner. Dort steht der Strom, der weder ins Heizen noch ins Kühlen ging:
+Standby, Lüften, Entfeuchten, Automatik ohne Rückmeldung — dazu die Zeit, in der
+eedc keine Betriebsart mitlesen konnte.
+
+Ab jetzt steht im Cockpit dieselbe Erklärung, die der Komponenten-Hub schon
+länger zeigt, und daneben die Angabe, in **wie vielen Stunden** eedc an diesem
+Tag eine Betriebsart mitlesen konnte. Kommt die Aufteilung aus zugeordneten
+Betriebsart-Zählern, steht dort „gemessen" statt einer Stundenzahl. Damit lässt
+sich der Anteil selbst einordnen, statt ihn schätzen zu müssen.
+
+**Es ändert sich keine Zahl** — nur die Erklärung daneben kommt dazu.
+
+**Betrifft dich das?** Ja, wenn du eine Klimaanlage oder Wärmepumpe angelegt hast,
+für die eedc den Betriebsmodus mitschreibt.
+**Was du tun musst:** nichts.
+
+**Die Börsenpreis-Kurve ist höher**
+
+Der Block *Börsenpreis heute & morgen* unter *Cockpit → Live* ist durch die
+Kennzahlen daneben ohnehin höher, als die Kurve genutzt hat — darunter blieb Platz
+leer, während der Verlauf flach gedrückt wirkte. Die Kurve nutzt diesen Platz jetzt.
+Es kommt nichts hinzu und es verschwindet nichts; derselbe Verlauf ist nur besser
+abzulesen. Die **Legende darunter** ist eine Spur größer — sie war die einzige in
+der App, die auf der kleinsten Schriftgröße stand. Danke an **rapahl**, der auch
+nach der letzten Änderung noch einmal hingeschaut hat.
+
+**Was du wirklich zahlst, steht jetzt neben dem Börsenpreis**
+
+Der Block *Börsenpreis heute & morgen* zeigte bisher nur Börsenpreise — netto, ohne
+Netzentgelte, Steuern und Abgaben. Das ist die richtige Größe, um zu entscheiden,
+*wann* geladen wird, aber nicht die, die auf deiner Rechnung steht.
+
+Neu ist die Kachel **„Endpreis jetzt"** direkt daneben: der Preis der laufenden
+Stunde mit allem, was dazugehört. Beide nebeneinander zeigen dir den Aufschlag,
+ohne dass du rechnen musst.
+
+**Betrifft dich das?** Ja, wenn du unter *Einstellungen → Datenquellen* einen
+**Strompreis-Sensor** zugeordnet hast (Tibber, aWATTar oder einen anderen
+Endpreis-Sensor). **Ohne ihn erscheint die Kachel nicht** — eedc setzt bewusst nicht
+ersatzweise den Arbeitspreis aus deinem Tarif ein, weil das bei einem dynamischen
+Tarif nur ein Mittelwert wäre und keine Aussage über diese eine Stunde.
+**Was du tun musst:** nichts, außer den Sensor zuzuordnen, falls du ihn hast.
 
 ---
 
