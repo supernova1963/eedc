@@ -239,15 +239,44 @@ export interface WaermepumpeDashboardResponse {
     gesamt_strom_warmwasser_kwh?: number
     gesamt_heizung_getrennt_kwh?: number
     gesamt_warmwasser_getrennt_kwh?: number
-    cop_heizen?: number
-    cop_warmwasser?: number
+    /** W-4 (SOLL §4.1): Arbeitszahl je Funktion — `null`, wo es sie nicht gibt,
+     *  dann sagt `*_grund` warum. ⚠ Hieß bis 26.08.2026 `cop_heizen` /
+     *  `cop_warmwasser`; das Projekt führt Perioden-Kennzahlen durchgängig als
+     *  **JAZ** und behält COP technischen Backend-Berechnungen vor (Glossar,
+     *  v3.23.4/#167). Der Anzeigename war schon vorher „JAZ …". */
+    /** W-15: Warum es die Gesamt-Arbeitszahl nicht gibt — `null`, wenn es sie
+     *  gibt. Kommt seit dem 26.08.2026 aus dem Layer statt aus einer eigenen
+     *  Division im Endpoint; vorher lieferte der Hub weder Grund noch Hinweis. */
+    durchschnitt_cop_grund?: string | null
+    /** W-6/W-15: Der Heizstab-Satz unterhalb einer Arbeitszahl von 2 — er stand
+     *  bis zum 26.08.2026 nur im Cockpit, obwohl die Melder-Antwort ihn für den
+     *  Komponenten-Hub zusagt. */
+    durchschnitt_cop_hinweis?: string | null
+    jaz_heizen?: number | null
+    jaz_heizen_grund?: string | null
+    jaz_warmwasser?: number | null
+    jaz_warmwasser_grund?: string | null
+    /** W-5: Arbeitszahl Kühlen. Hängt an den Betriebsart-Zählern, NICHT an der
+     *  getrennten Strommessung — eine Klimaanlage hat oft genau diese Zähler. */
+    jaz_kuehlen?: number | null
+    jaz_kuehlen_grund?: string | null
+    gesamt_kaelte_kwh?: number
     // Modus-Split (#263 K-2) — **Teilmengen** von `gesamt_stromverbrauch_kwh`,
     // nie Summanden. Alle vier fehlen gemeinsam, wenn kein Modus erfasst ist:
     // eine 0 hieße „hat nicht geheizt", und das weiß eedc ohne Sensor nicht.
     modus_strom_heizen_kwh?: number
     modus_strom_kuehlen_kwh?: number
+    /** E4 (Konzept §2.3): nur aus **gemessenen** Betriebsart-Zählern. */
+    modus_strom_lueften_kwh?: number
+    modus_strom_entfeuchten_kwh?: number
     modus_nicht_aufgeteilt_kwh?: number
     modus_abdeckung_h?: number
+    /** **W-17b** — die Grundmenge, auf die sich die Aufteilung bezieht.
+     *  Bewusst **nicht** der WP-Gesamtstrom: dort steckt auch der Strom von
+     *  Geräten ohne Modus-Signal. Ohne dieses Feld stand der Balken stumm unter
+     *  einer Kachel mit größerer Zahl (dietmar1968, T89667 #210: 30 kWh unter
+     *  284 kWh). Nicht nachrechnen — der Bezug entscheidet die Faltung. */
+    modus_strom_bezug_kwh?: number
     modus_gemessen?: boolean
     /** Ist `gesamt_heizenergie_kwh` aus `Strom × JAZ` gerechnet statt gemessen?
      *  Dann bleibt `durchschnitt_cop` null (Konzept §3.5) und die Anzeige

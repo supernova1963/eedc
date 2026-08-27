@@ -460,6 +460,23 @@ class TagDetailResponse(BaseModel):
     # Ermöglicht Tages-JAZ (= Wärme ÷ Strom) und Wärme-Aufteilung.
     wp_heizung_kwh: Optional[float] = None
     wp_warmwasser_kwh: Optional[float] = None
+    # ── Wärme gesamt + Arbeitszahl, beide aus dem Layer (W-9 · W-3) ─────────
+    #
+    # ⛔ **Beides rechnete bis 2026-08-26 der Client.** `wp_waerme_kwh` als
+    # `heizung + warmwasser` (`v4/TagKomponenten.tsx`, seit der ersten Fassung
+    # der Datei) und die JAZ als Quotient **ohne** die Belastbarkeits-Sperre.
+    # Zwei Regeln des Layers, im Client nachgebaut — ADR-001/S1.
+    #
+    # Der Tag hat keine gepflegte Gesamtwärme, also ist die Summe hier der
+    # einzige Zweig des Kanons. Er wird trotzdem über den SoT gebildet
+    # (`waermepumpe_kennzahl.waerme_gesamt_kwh`): Eine Regel, die an zwei
+    # Stellen steht, driftet — auch wenn eine davon nur die halbe Regel kennt.
+    wp_waerme_kwh: Optional[float] = None
+    wp_jaz: Optional[float] = None
+    #: Warum es keine Arbeitszahl gibt — nie ein „—" ohne Grund (S3).
+    wp_jaz_grund: Optional[str] = None
+    #: Fall H-B: die Zahl ist richtig und erklärungsbedürftig (Heizstab).
+    wp_jaz_hinweis: Optional[str] = None
     # Speicher-Netzladung (Arbitrage) — Tages-Boundary-Diff.
     speicher_ladung_netz_kwh: Optional[float] = None
     # Speicher effektiver Netz-Ladepreis (stundengewichtet, Tagesspanne).
@@ -479,8 +496,19 @@ class TagDetailResponse(BaseModel):
     # Leistungspfads). Zwei Stellen, die denselben Rest rechnen, driften.
     wp_modus_strom_heizen_kwh: Optional[float] = None
     wp_modus_strom_kuehlen_kwh: Optional[float] = None
+    #: E4 (Konzept §2.3): nur aus **gemessenen** Betriebsart-Zählern — der
+    #: abgeleitete Split kann sie nicht. Dieselben Felder wie in der
+    #: Monatssicht, damit dieselbe Blockfabrik beide Sichten bedienen kann.
+    wp_modus_strom_lueften_kwh: Optional[float] = None
+    wp_modus_strom_entfeuchten_kwh: Optional[float] = None
     wp_modus_nicht_aufgeteilt_kwh: Optional[float] = None
     wp_modus_abdeckung_h: Optional[float] = None
+    #: **W-17b** — die Grundmenge, auf die sich die Aufteilung bezieht.
+    #: Bewusst **nicht** `wp_strom_kwh`: dort steckt auch der Strom von Geraeten
+    #: ohne Modus-Signal. Der Balken steht sonst unter einer Kachel mit einer
+    #: groesseren Zahl, ohne dass die Differenz irgendwo benannt waere
+    #: (dietmar1968, T89667 #210: Balken 30 kWh unter Kachel 284 kWh).
+    wp_modus_strom_bezug_kwh: Optional[float] = None
     #: Herkunft der Aufteilung: `True` = aus **gemessenen** Betriebsart-Zählern,
     #: `False` = aus dem Betriebsmodus abgeleitet. Spiegelt `wp_modus_gemessen`
     #: der Monatssicht (`aktueller_monat.py`) — dieselbe Blockfabrik im Frontend
@@ -489,6 +517,15 @@ class TagDetailResponse(BaseModel):
     #: Bei einem Betriebsart-Zähler gibt es keine „Stunden mit Signal";
     #: `wp_modus_abdeckung_h` ist dann 0, ohne dass etwas fehlt.
     wp_modus_gemessen: Optional[bool] = None
+    #: **W-18** — warum die Tages-Wärme fehlt, als fertiger Satz. Nur gesetzt,
+    #: wenn `wp_waerme_kwh` `None` ist; nie beides zugleich.
+    #:
+    #: ⛔ Er ersetzt einen fest verdrahteten Client-Satz, der **einen** von drei
+    #: Zuständen beschrieb und dietmar1968 aufforderte, einen Sensor zuzuordnen,
+    #: den er zugeordnet hatte (T89667 #210).
+    wp_waerme_grund: Optional[str] = None
+    #: **W-18**, dieselbe Klasse an der E-Mobilität.
+    emob_ladung_pv_grund: Optional[str] = None
     # PV Tages-SOLL = OM-Tagesprognose × eedc-Lernfaktor (wie Genauigkeits-Tracking).
     soll_pv_kwh: Optional[float] = None
     # Tages-Tarif (Monatstarif je Tag) — für Wirkungsverluste € + Tarif-Zeile.

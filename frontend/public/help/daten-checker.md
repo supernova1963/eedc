@@ -4,7 +4,7 @@
 **Version 4.0** | Stand: 2026-08-22
 
 > Dieses Handbuch ist Teil der eedc-Dokumentation.
-> Siehe auch: [Teil I: Installation & Einrichtung](HANDBUCH_INSTALLATION.md) | [Teil II: Bedienung](HANDBUCH_BEDIENUNG.md) | [Teil III: Einstellungen](HANDBUCH_EINSTELLUNGEN.md) | [Infothek](HANDBUCH_INFOTHEK.md) | [Glossar](GLOSSAR.md)
+> Siehe auch: [Teil I: Installation & Einrichtung](HANDBUCH_INSTALLATION.md) | [Teil II: Bedienung](HANDBUCH_BEDIENUNG.md) | [Teil III: Einstellungen](HANDBUCH_EINSTELLUNGEN.md) | [Infothek](HANDBUCH_INFOTHEK.md) | [Wärme & Klima](HANDBUCH_WAERME_KLIMA.md) | [Glossar](GLOSSAR.md)
 
 ---
 
@@ -233,9 +233,18 @@ Im **Standalone-Betrieb** kommen die Werte über MQTT (`eedc/<anlage>/…`-Topic
 |---------|----------|-----------|----------|
 | **\[Name\]: Kapazität (kWh) fehlt** | ⚠️ WARNING | `kapazitaet_kwh` ist Bezugsgröße für Vollzyklen, Wirkungsgrad-Berechnung und Live-SoC-Skalierung. | Komponente öffnen, Brutto-Kapazität in kWh eintragen. |
 | **\[Name\]: Kapazität vermutlich in Wh statt kWh eingetragen** | ⚠️ WARNING | Das Balkonkraftwerk darüber nennt seine Akku-Kapazität in **Wh**, dieser Speicher seine in **kWh** — und beide tragen **denselben Zahlenwert**. Dann ist die Kapazität tausendfach zu groß, und Vollzyklen, Auslastung und Wirtschaftlichkeit rechnen gegen einen Nenner, den es nicht gibt. Geprüft wird der Widerspruch der beiden Felder, **keine Obergrenze** — ein großer Speicher wird nicht angemeckert. | Komponente öffnen, die Kapazität in kWh eintragen (5.376 Wh sind 5,376 kWh). Die Meldung nennt die Zahl. |
-| **\[Name\]: Arbitrage aktiv, aber Ø Ladepreis fehlt** | ⚠️ WARNING | `arbitrage_faehig` ist gesetzt, aber `lade_durchschnittspreis_cent` fehlt. Arbitrage-Einsparung kann nicht berechnet werden. | Komponente öffnen, durchschnittlichen Ladepreis (z. B. negative Börsenpreise) eintragen. |
-| **\[Name\]: Arbitrage aktiv, aber Ø Entladepreis fehlt** | ⚠️ WARNING | Analog zum Ladepreis: ohne `entlade_vermiedener_preis_cent` kein Arbitrage-Erlös berechenbar. | Vermiedenen Entladepreis (z. B. Endkundentarif zur Spitzenlastzeit) eintragen. |
+| **\[Name\]: Arbitrage aktiv, aber Ø Ladepreis fehlt** | ⚠️ WARNING | `arbitrage_faehig` ist gesetzt, aber `lade_durchschnittspreis_cent` fehlt. Arbitrage-Einsparung kann nicht berechnet werden. | Komponente öffnen → **Netzladung & Arbitrage** aufklappen → Ø Ladepreis eintragen (der Preis im Niedrigtarif-Fenster, z. B. bei negativen Börsenpreisen). Ohne Angabe rechnet eedc mit 12 ct/kWh. |
+| **\[Name\]: Arbitrage aktiv, aber Ø Entladepreis fehlt** | ⚠️ WARNING | Analog zum Ladepreis: ohne `entlade_vermiedener_preis_cent` kein Arbitrage-Erlös berechenbar. | Komponente öffnen → **Netzladung & Arbitrage** → Ø Entladepreis eintragen (der vermiedene Preis zur Spitzenlastzeit). Ohne Angabe rechnet eedc mit 35 ct/kWh. |
 | **\[Name\]: Speicher-Ladung fehlt in N Monat(en)** | ⚠️ WARNING | `ladung_kwh` fehlt in den genannten Monaten — Vollzyklen und Wirkungsgrad lassen sich für diese Monate nicht berechnen. | Monatsdaten nachtragen. |
+
+> ⚠ **Die beiden Arbitrage-Preisfelder gab es lange in keinem Formular** — der Hinweis war damit
+> nicht abstellbar (Issue #397, MeinerB). Sie stehen jetzt beim Speicher unter *Netzladung &
+> Arbitrage*, sobald der Schalter an ist.
+>
+> **Warum eedc hier überhaupt eine Anwender-Angabe braucht:** Arbitrage lebt davon, dass dieselbe
+> Kilowattstunde zu **verschiedenen Uhrzeiten** verschieden viel kostet — und ein eedc-Tarif kennt
+> keine Uhrzeit. Wer einen dynamischen Tarif (Tibber/aWATTar/EPEX) angebunden hat, braucht die
+> Felder nicht: dort zieht eedc den stundengenauen Preis vor.
 
 #### 4.3.4 E-Auto (privat)
 
@@ -245,7 +254,6 @@ Im **Standalone-Betrieb** kommen die Werte über MQTT (`eedc/<anlage>/…`-Topic
 |---------|----------|-----------|----------|
 | **\[Name\]: Fahrleistung/Verbrauch fehlt** | ℹ️ INFO | Weder `jahresfahrleistung_km` noch `verbrauch_kwh_100km` gesetzt. Einsparungs-Berechnung gegenüber Verbrenner ist nicht möglich. | Komponente öffnen, Jahres-Fahrleistung und/oder Verbrauch eintragen. |
 | **\[Name\]: Alternativkosten (Verbrenner) fehlen** | ⚠️ WARNING | `anschaffungskosten_alternativ` fehlt. ROI gegenüber Verbrenner-Alternative wird ohne diesen Wert nicht berechnet. | Komponente öffnen, geschätzte Anschaffungskosten eines vergleichbaren Verbrenners eintragen. |
-| **\[Name\]: V2H aktiv, aber Entladepreis fehlt** | ℹ️ INFO | `v2h_faehig` ist gesetzt, aber `v2h_entlade_preis_cent` fehlt. V2H-Einsparung wird nicht berechnet. | Vermiedenen Entladepreis eintragen (analog Speicher-Arbitrage). |
 | **\[Name\]: Ladung PV fehlt in N Monat(en)** | ℹ️ INFO | `ladung_pv_kwh` fehlt — Anteil PV-Ladung am Gesamt-Ladestrom unbekannt. Geringere Severity als andere Pflichtfelder, weil V2H/Wallbox-Aufschlüsselung optional ist. **Nur bei Fahrzeugen ohne Wallbox:** Mit Wallbox liegt die Heimladung kanonisch dort, das Feld am E-Auto wird gar nicht erst angeboten — dieser Hinweis erscheint dann nicht (bis v4.0.27 erschien er trotzdem und war nicht abstellbar). Dienstwagen sind ebenfalls ausgenommen. | Monatsdaten nachtragen. Wer eine Wallbox hat, erfasst dort (Loadpoint-Sensor), nicht am E-Auto. |
 
 #### 4.3.5 Wallbox
@@ -401,6 +409,38 @@ Ein Monat besteht in eedc aus zwei Teilen: der **Zählerzeile** der Anlage (Eins
 | **Kein Basis-Zähler für: \[Einspeisung, Netzbezug\]** | ⚠️ WARNING | In der Datenquellen-Zuordnung fehlt der Basis-Zähler für Einspeisung und/oder Netzbezug. Ohne diesen bleibt der bilanzielle Hausverbrauch im Energieprofil leer. | Einstellungen → Datenquellen öffnen, im Block *Anlage / Zähler* den kumulativen kWh-Zähler zuordnen. **Wichtig:** den kWh-Zähler wählen, nicht den `*_leistung_w`-Sensor. |
 | **N von M Komponenten ohne vollständige kWh-Zähler-Abdeckung** | ⚠️ WARNING | Mindestens eine aktive Komponente hat nicht alle erwarteten kWh-Zähler zugeordnet. Details listen die betroffenen Komponenten und fehlenden Felder. Folgen für diese Komponenten: Prognose-IST, Lernfaktor und Monatsauswertungen bleiben leer. **Nicht gemeldet wird ein Balkonkraftwerk, an dem PV-Module hängen** — dann tragen die Module die Erzeugung, gemessen wird am Modul, und der Checker sagt das mit einer eigenen OK-Zeile („N Balkonkraftwerk(e) über die zugeordneten PV-Module gedeckt“). Ein BKW **ohne** Modul-Kinder braucht weiterhin seinen eigenen Zähler. | Einstellungen → Datenquellen öffnen, pro Komponente die fehlenden Zähler zuordnen. Bei Speichern: beide Felder (`ladung_kwh` + `entladung_kwh`) sind nötig. |
 | **N Komponente(n) ohne Zusatz-Zähler für Tageswerte** | ℹ️ INFO | Betrifft **zusätzliche** Messstellen, nicht die Abdeckung oben: Wärmepumpe `heizenergie_kwh` / `warmwasser_kwh` (Wärmemengenzähler) sowie `ladung_pv_kwh` an Wallbox bzw. E-Auto. Ohne sie bleiben genau diese Werte in *Cockpit → Tag* auf „—"; die **Monats**auswertungen sind nicht betroffen, dort lassen sich die Werte von Hand pflegen. Bewusst INFO — solche Zähler hat längst nicht jede Anlage. | Wenn vorhanden: Einstellungen → Datenquellen → das jeweilige kWh-Feld zuordnen. Sonst nichts zu tun. |
+
+> ### ⭐ Was hier „zugeordnet" heißt — seit v4.0.29 auch MQTT
+>
+> Alle drei Befunde oben stellen dieselbe Frage: *Trägt dieses Feld einen
+> kumulativen Zähler?* Bis v4.0.28 hieß die Antwort darauf **„gibt es dafür
+> einen Home-Assistant-Sensor?"** — und wer seine Werte per **MQTT** schickt,
+> hat gar keinen Sensor zuzuordnen. Er bekam alle drei Meldungen zu Unrecht,
+> ohne sie abstellen zu können: Der „Beheben"-Knopf führte in ein Formular, in
+> dem das Feld nicht vorkommt.
+>
+> **Seit v4.0.29 trägt ein Feld einen Zähler, wenn**
+>
+> 1. ihm ein **Home-Assistant-Sensor** zugeordnet ist, **oder**
+> 2. dafür **Zählerstände per MQTT ankommen**.
+>
+> Hast du für ein Feld ausdrücklich **„Keine"** gewählt, bleibt das deine
+> Absage — sie schlägt beides.
+>
+> ⚠ **Entscheidend ist der Messwert, nicht der Eintrag.** Ein Feld, das auf
+> *MQTT-Inbound* steht, weil eedc das beim Einrichten als Grundeinstellung
+> gesetzt hat, gilt **nicht** automatisch als versorgt — sonst würde diese
+> Prüfung bei jeder Anlage schweigen, auch bei der, die gar nichts misst. eedc
+> sieht nach, ob auf dem Topic tatsächlich etwas angekommen ist.
+>
+> ⚠ **Das Fenster ist eine Woche.** Bleibt einer der Befunde stehen, obwohl du
+> per MQTT publizierst, heißt das: **Auf diesem Topic kam seit über sieben
+> Tagen nichts an.** Dann ist die Meldung richtig und einen Blick wert — prüfe
+> deinen Publisher, nicht die Zuordnung.
+
+> **Ein „—" in *Cockpit → Tag* sagt seit v4.0.29 selbst, woran es liegt** — und das ist mehr als dieser Befund abdeckt. Drei Lagen führen dorthin, und nur die erste ist eine Aufgabe für dich: *Kein Zähler zugeordnet* · *Zähler zugeordnet, aber für diesen Tag liegen keine Zählerstände vor* · *Der Zähler ist an diesem Tag zurückgesprungen*. Der Grund steht sichtbar unter der Zahl.
+>
+> ⚠ **Der mittlere Fall ist der Regelfall kurz nach einer Zuordnung und keine Fehlfunktion:** Der **Monats**wert steht da, weil er aus der Langzeitstatistik von Home Assistant kommt — **Tages**werte entstehen erst ab dem Zeitpunkt der Zuordnung. Frühere Tage lassen sich über die Reparatur-Werkbank nachrechnen. Bis v4.0.28 stand an dieser Stelle unterschiedslos *„Sensor zuordnen"*, auch wenn er zugeordnet war; ein Melder hat daraufhin zu Recht gefragt, was die Anzeige ihm sagen will.
 
 > **Wer hier ausgenommen ist** — damit der Befund nicht etwas verlangt, das es bei dir nicht geben kann: **Split-Klimaanlagen** (Wärmepumpenart *Luft-Luft*) werden gar nicht gefragt, sie haben weder Wärmemengenzähler noch Warmwasserkreis. Das **E-Auto** wird übersprungen, wenn eine **Wallbox** existiert (dort wird die Heimladung geführt) oder wenn es als **Dienstwagen** markiert ist. Stillgelegte und inaktive Komponenten zählen ohnehin nicht mit.
 | **Basis-Zähler (Einspeisung + Netzbezug) gemappt** | ✅ OK | Beide Basis-Zähler zugeordnet. | – |

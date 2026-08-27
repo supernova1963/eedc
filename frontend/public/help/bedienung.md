@@ -4,7 +4,7 @@
 **Version 4.0** | Stand: 2026-07-25
 
 > Dieses Handbuch ist Teil der eedc-Dokumentation.
-> Siehe auch: [Teil I: Installation & Einrichtung](HANDBUCH_INSTALLATION.md) | [Teil III: Einstellungen](HANDBUCH_EINSTELLUNGEN.md) | [Glossar](GLOSSAR.md)
+> Siehe auch: [Teil I: Installation & Einrichtung](HANDBUCH_INSTALLATION.md) | [Teil III: Einstellungen](HANDBUCH_EINSTELLUNGEN.md) | [Wärme & Klima](HANDBUCH_WAERME_KLIMA.md) | [Glossar](GLOSSAR.md)
 
 ---
 
@@ -538,7 +538,7 @@ Kennzahl-Reihenfolge (durchgängig gleich über Cockpit, diesen Reiter und die A
 3. **Strom** (kWh) — verbrauchter Strom der Wärmepumpe (gelb)
 4. **Ersparnis** (€) — gegenüber der Alternative (Gas/Öl) (grün)
 
-Zusätzlich: JAZ-Heizen / JAZ-Warmwasser getrennt, Saison-/Monatsvergleich, Detailtabellen mit JAZ pro Monat sowie — optional pro Wärmepumpe — die **Kompressor-Starts** (über einen kumulativen Zähler-Sensor).
+Zusätzlich: **JAZ Heizen / JAZ Warmwasser getrennt** (nur wenn du Strom je Funktion getrennt misst — sonst steht dort der Grund statt einer Zahl), Saison-/Monatsvergleich, Detailtabellen mit JAZ pro Monat sowie — optional pro Wärmepumpe — die **Kompressor-Starts** (über einen kumulativen Zähler-Sensor).
 
 > **JAZ vs. COP:** Für Perioden-Kennzahlen nutzt eedc durchgängig **JAZ** (ggf. periodenanteilig). **COP** bleibt technischen Backend-Berechnungen vorbehalten.
 

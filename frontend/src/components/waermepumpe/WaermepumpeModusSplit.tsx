@@ -20,8 +20,16 @@ export interface ModusSplitDaten {
   gesamt_stromverbrauch_kwh: number
   modus_strom_heizen_kwh?: number
   modus_strom_kuehlen_kwh?: number
+  /** E4 (Konzept §2.3): nur aus **gemessenen** Betriebsart-Zählern. Ohne
+   *  solchen Zähler 0 — dann stecken sie weiterhin in `nicht_aufgeteilt`. */
+  modus_strom_lueften_kwh?: number
+  modus_strom_entfeuchten_kwh?: number
   modus_nicht_aufgeteilt_kwh?: number
   modus_abdeckung_h?: number
+  /** **W-17b** — die Grundmenge der Aufteilung: der Strom der Monate MIT
+   *  Split, nicht der Gesamtstrom des Geräts. Fehlt sie (Altbestand), gilt
+   *  weiterhin `gesamt_stromverbrauch_kwh` als Bezug. */
+  modus_strom_bezug_kwh?: number
   /** #263: Aufteilung ist GEMESSEN (Betriebsart-Zähler) statt abgeleitet. */
   modus_gemessen?: boolean
   gesamt_heizenergie_kwh?: number
@@ -48,18 +56,40 @@ function anteil(teil: number | undefined, gesamt: number): string {
 }
 
 export function WaermepumpeModusSplit({ zusammenfassung: z }: { zusammenfassung: ModusSplitDaten }) {
-  const gesamt = z.gesamt_stromverbrauch_kwh || 0
+  // W-17b: **Der Nenner der Prozente ist die Grundmenge, nicht der
+  // Gesamtstrom.** Die Teilmengen entstehen nur aus Monaten mit Split; gegen
+  // den Gesamtstrom gerechnet summierten sich „Heizen + Kühlen + nicht
+  // aufgeteilt" deshalb auf weniger als 100 % — sichtbar falsch, ohne dass
+  // irgendwo stand, worauf sich die Zahlen beziehen.
+  //
+  // ⚠ Fallback auf den Gesamtstrom, wenn die Grundmenge fehlt: eine ältere
+  // Antwort ohne das Feld verhält sich damit wie bisher (bitgleich), statt
+  // durch 0 zu teilen.
+  const bezug = z.modus_strom_bezug_kwh
+  const gesamt = (bezug != null && bezug > 0 ? bezug : z.gesamt_stromverbrauch_kwh) || 0
   const heizen = z.modus_strom_heizen_kwh
   const kuehlen = z.modus_strom_kuehlen_kwh
+  const lueften = z.modus_strom_lueften_kwh
+  const entfeuchten = z.modus_strom_entfeuchten_kwh
   const rest = z.modus_nicht_aufgeteilt_kwh
+
+  // E4: Lüften und Entfeuchten erscheinen **nur, wenn gemessen**. Ein Segment
+  // mit 0 kWh an jeder Wärmepumpe wäre eine Zeile, die für fast jeden Anwender
+  // nichts sagt — und der SOLL-Satz endet ausdrücklich mit „Wer sie nicht
+  // erfasst, sieht sie nicht."
+  const segmente = [
+    { label: 'Heizen', wert: heizen ?? 0, farbe: ROLLEN_BG.heizung },
+    { label: 'Kühlen', wert: kuehlen ?? 0, farbe: ROLLEN_BG.kuehlung },
+    ...(lueften ? [{ label: 'Lüften', wert: lueften, farbe: ROLLEN_BG.lueftung }] : []),
+    ...(entfeuchten
+      ? [{ label: 'Entfeuchten', wert: entfeuchten, farbe: ROLLEN_BG.entfeuchtung }]
+      : []),
+    { label: 'Nicht aufgeteilt', wert: rest ?? 0, farbe: ROLLEN_BG.nicht_aufgeteilt },
+  ]
 
   return (
     <div className="space-y-3">
-      <VerteilungsBalken segmente={[
-        { label: 'Heizen', wert: heizen ?? 0, farbe: ROLLEN_BG.heizung },
-        { label: 'Kühlen', wert: kuehlen ?? 0, farbe: ROLLEN_BG.kuehlung },
-        { label: 'Nicht aufgeteilt', wert: rest ?? 0, farbe: ROLLEN_BG.nicht_aufgeteilt },
-      ]} />
+      <VerteilungsBalken segmente={segmente} />
 
       <dl className="text-sm space-y-1">
         <div className="flex justify-between">
@@ -74,6 +104,18 @@ export function WaermepumpeModusSplit({ zusammenfassung: z }: { zusammenfassung:
           <dt className="text-gray-600 dark:text-gray-400">davon Kühlen</dt>
           <dd>{fmt(kuehlen)} kWh{anteil(kuehlen, gesamt)}</dd>
         </div>
+        {lueften ? (
+          <div className="flex justify-between">
+            <dt className="text-gray-600 dark:text-gray-400">davon Lüften</dt>
+            <dd>{fmt(lueften)} kWh{anteil(lueften, gesamt)}</dd>
+          </div>
+        ) : null}
+        {entfeuchten ? (
+          <div className="flex justify-between">
+            <dt className="text-gray-600 dark:text-gray-400">davon Entfeuchten</dt>
+            <dd>{fmt(entfeuchten)} kWh{anteil(entfeuchten, gesamt)}</dd>
+          </div>
+        ) : null}
         <div className="flex justify-between">
           <dt className="text-gray-600 dark:text-gray-400">nicht aufgeteilt</dt>
           <dd>{fmt(rest)} kWh{anteil(rest, gesamt)}</dd>
@@ -87,6 +129,16 @@ export function WaermepumpeModusSplit({ zusammenfassung: z }: { zusammenfassung:
           </dt>
           <dd>{z.modus_gemessen ? 'gemessen' : `${fmt(z.modus_abdeckung_h, 0)} Stunden`}</dd>
         </div>
+        {/* W-17b: Die Aufteilung nennt ihre Grundmenge, sobald sie vom
+            Gesamtstrom abweicht — sonst stünde sie stumm unter einer größeren
+            Zahl. Stimmen beide überein, sagt die Zeile nichts Neues und
+            entfällt. */}
+        {bezug != null && Math.abs(bezug - (z.gesamt_stromverbrauch_kwh || 0)) > 0.05 ? (
+          <div className="flex justify-between">
+            <dt className="text-gray-600 dark:text-gray-400">aufgeteilte Menge</dt>
+            <dd>{fmt(bezug)} von {fmt(z.gesamt_stromverbrauch_kwh)} kWh</dd>
+          </div>
+        ) : null}
       </dl>
 
       {/* Die Wärme steht hier nur, wenn sie abgeleitet ist — als Wert MIT
@@ -136,10 +188,14 @@ export function WaermepumpeModusSplit({ zusammenfassung: z }: { zusammenfassung:
 export function ModusSplitErklaerung() {
   return (
     <p className="text-xs text-gray-500 dark:text-gray-400">
-      „Nicht aufgeteilt" ist Standby und alles, was weder Heizen noch Kühlen war
-      (Lüften, Entfeuchten, Automatik ohne Rückmeldung) — dazu die Zeit, in der
-      eedc keinen Modus mitlesen konnte. Die Aufteilung entsteht nur für Zeiten
-      mit laufender Datenanbindung; rückwirkend gibt es sie nicht.
+      „Nicht aufgeteilt" ist Standby und alles, was keiner erfassten Betriebsart
+      zugeordnet werden konnte (Automatik ohne Rückmeldung) — dazu die Zeit, in
+      der eedc keinen Modus mitlesen konnte. <strong>Lüften und Entfeuchten</strong>{' '}
+      erscheinen als eigene Zeile, sobald du dafür einen Zähler zugeordnet hast;
+      ohne Zähler stecken sie hier mit drin. Sie bekommen bewusst keine
+      Arbeitszahl: Sie erzeugen keine Wärme, die sich messen ließe. Die
+      Aufteilung entsteht nur für Zeiten mit laufender Datenanbindung;
+      rückwirkend gibt es sie nicht.
     </p>
   )
 }

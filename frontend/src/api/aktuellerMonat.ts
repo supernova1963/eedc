@@ -104,6 +104,19 @@ export interface AktuellerMonatResponse {
   wp_waerme_kwh: number | null
   wp_heizung_kwh: number | null
   wp_warmwasser_kwh: number | null
+  /** Arbeitszahl — **fertig aus dem Layer**, nicht hier gerechnet (R2/W-3).
+   *  `null` heißt: es gibt sie nicht, und `wp_jaz_grund` sagt warum. Der
+   *  Client bildete den Quotienten bis 26.08.2026 selbst und **konnte** die
+   *  Belastbarkeits-Sperre nicht kennen — dieselbe Anlage zeigte im
+   *  Komponenten-Hub „—" und im Cockpit eine Zahl (ADR-001). */
+  wp_jaz?: number | null
+  /** Warum es keine Arbeitszahl gibt — nie ein „—" ohne Grund (SOLL S3). */
+  wp_jaz_grund?: string | null
+  /** Fall H-B: die Zahl ist richtig und erklärungsbedürftig (Heizstab).
+   *  Der Wortlaut kommt aus dem Layer, damit er nicht je Sicht abweicht. */
+  wp_jaz_hinweis?: string | null
+  /** Ist ein Teil der Wärme aus `Strom × JAZ` gerechnet statt gemessen? */
+  wp_waerme_abgeleitet?: boolean | null
   // #191: Strom-Aufteilung Heizung/Warmwasser. Nur befüllt wenn mindestens
   // eine WP-Investition `getrennte_strommessung=true` hat.
   wp_strom_heizen_kwh: number | null
@@ -111,10 +124,38 @@ export interface AktuellerMonatResponse {
   // nie Summanden. Alle vier fehlen gemeinsam ohne erfassten Modus.
   wp_modus_strom_heizen_kwh?: number | null
   wp_modus_strom_kuehlen_kwh?: number | null
+  /** E4 (Konzept §2.3): nur aus **gemessenen** Betriebsart-Zählern — der aus
+   *  dem Modus-Signal abgeleitete Split kann sie nicht. Ohne Zähler 0, dann
+   *  stecken sie weiterhin in `wp_modus_nicht_aufgeteilt_kwh`. */
+  /** W-4 (SOLL §4.1): Arbeitszahl je Funktion. `null` heißt „gibt es nicht" —
+   *  dann sagt `*_grund` warum (S3: nie ein „—" ohne Grund). */
+  wp_jaz_heizen?: number | null
+  wp_jaz_heizen_grund?: string | null
+  wp_jaz_warmwasser?: number | null
+  wp_jaz_warmwasser_grund?: string | null
+  /** W-5: Arbeitszahl **Kühlen** (Kältemenge ÷ Kühlstrom). Bewusst nicht
+   *  „SEER" — das ist eine genormte Prüfstandsgröße, dies ein gemessener
+   *  Quotient über einen Zeitraum. */
+  wp_jaz_kuehlen?: number | null
+  wp_jaz_kuehlen_grund?: string | null
+  wp_modus_strom_lueften_kwh?: number | null
+  wp_modus_strom_entfeuchten_kwh?: number | null
   wp_modus_nicht_aufgeteilt_kwh?: number | null
   wp_modus_abdeckung_h?: number | null
+  /** **W-17b** — die Grundmenge, auf die sich die Aufteilung bezieht.
+   *  Bewusst **nicht** der WP-Gesamtstrom: dort steckt auch der Strom von
+   *  Geräten ohne Modus-Signal. Ohne dieses Feld stand der Balken stumm unter
+   *  einer Kachel mit größerer Zahl (dietmar1968, T89667 #210: 30 kWh unter
+   *  284 kWh). Nicht nachrechnen — der Bezug entscheidet die Faltung. */
+  wp_modus_strom_bezug_kwh?: number | null
   /** #263: Aufteilung GEMESSEN statt aus dem Betriebsmodus abgeleitet. */
   wp_modus_gemessen?: boolean | null
+  /** **W-18** — warum die **Tages**-Wärme fehlt, als fertiger Satz aus dem
+   *  Backend. Auf Monat/Jahr immer `null`: dort heisst „—" fehlende
+   *  Monatsdaten, ein anderer Sachverhalt mit eigenem Pfad. */
+  wp_waerme_grund?: string | null
+  /** **W-18**, dieselbe Klasse am PV-Anteil der Ladung (nur Tag). */
+  emob_ladung_pv_grund?: string | null
   wp_strom_warmwasser_kwh: number | null
   // Issue #169: Kompressor-Starts (aus TagesZusammenfassung über die Tage des Monats)
   wp_starts_max_tag: number | null

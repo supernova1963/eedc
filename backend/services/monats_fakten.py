@@ -76,6 +76,7 @@ from backend.api.routes.strompreise import (
 from backend.core.berechnungen import (
     PvModulWert,
     VerbrauchsKennzahlen,
+    abdeckung_ueber_geraete,
     abgetretene_bkw_ids,
     berechne_verbrauchs_kennzahlen,
     bkw_finanz_beitrag,
@@ -353,6 +354,19 @@ class WpFakten:
     #: (Präzedenz: ``ladung_pv_kwh`` bei der Wallbox, Konzept §3.1).
     modus_strom_heizen_kwh: float = 0.0
     modus_strom_kuehlen_kwh: float = 0.0
+    #: E4 (Konzept §2.3, gebaut 26.08.): *erfassbar, aber keine bewertete
+    #: Funktion.* Nur aus **gemessenen** Betriebsart-Zählern — der aus dem
+    #: Modus-Signal abgeleitete Split kann sie nicht (``AUFGETEILTE_MODI``,
+    #: D11) und lässt sie bei 0. **Das ist die Aussage, keine Lücke.**
+    #: Vorher fielen sie stumm unter „nicht aufgeteilt", obwohl die Registry
+    #: die Felder anbietet.
+    modus_strom_lueften_kwh: float = 0.0
+    modus_strom_entfeuchten_kwh: float = 0.0
+    #: W-5 (SOLL §4.1): abgegebene **Kälte**menge im Kühlbetrieb — der Zähler
+    #: der Arbeitszahl Kühlen. **Nur gemessen**: einen Weg, sie abzuleiten, gibt
+    #: es nicht, und eine geschätzte Kältemenge wäre eine Zahl, die genauer
+    #: aussieht als sie ist.
+    nutzenergie_kuehlen_kwh: float = 0.0
     #: Stunden mit gültigem Modus-Signal — das Qualitätsmaß neben den Mengen.
     modus_abdeckung_h: float = 0.0
     #: #263 — die Aufteilung ist **gemessen** (Betriebsart-Zähler) statt aus
@@ -368,6 +382,50 @@ class WpFakten:
     #: siehe {@link jaz_belastbar}.
     waerme_abgeleitet_kwh: float = 0.0
 
+    # ── R2/Gerät: dieselbe Abgrenzung im Zähler wie im Nenner? ──────────────
+    #: Wie viele Wärmepumpen des Monats haben **Strom** beigetragen …
+    geraete_mit_strom: int = 0
+    #: … und wie viele davon auch **Wärme**? Sind das weniger, mischt der Block
+    #: den Strom mehrerer Geräte mit der Wärme von weniger Geräten.
+    geraete_mit_waerme: int = 0
+
+    #: **R2/W-7 + R2/F12** — die vom Anwender gemeldete Abgrenzungs-Störung:
+    #: ``"fremdstrom"`` (Heizstab-Strom auf dem WP-Zähler, seine Wärme fehlt),
+    #: ``"fremdwaerme"`` (bivalent: zweiter Erzeuger am selben Kreis) oder
+    #: ``None``.
+    #:
+    #: ⭐ **Warum eine Anwender-Angabe und keine Erkennung.** Von den vier Lagen
+    #: des SOLL §4.2 erkennt eedc genau eine aus den Daten selbst
+    #: ({@link waerme_deckt_nicht_alle_geraete}). Ob ein Heizstab auf demselben
+    #: Zähler liegt oder ein Gaskessel denselben Kreis speist, steht in **keiner**
+    #: Messreihe — es gibt keinen Wert, aus dem es folgen könnte.
+    #:
+    #: ⛔ **`None` heißt „keine bekannte Abweichung", nicht „geprüft".**
+    abgrenzung_stoerung: Optional[str] = None
+
+    @property
+    def waerme_deckt_nicht_alle_geraete(self) -> bool:
+        """Trägt der Block Strom von Geräten, deren Wärme fehlt? (**R2**)
+
+        SOLL §4.2 Fall 1: *„Wenn der Zähler mehr enthält als das Gerät."* Die
+        anlagenweite Arbeitszahl ist dann systematisch zu niedrig — im Nenner
+        steht der Strom von n Geräten, im Zähler die Wärme von weniger.
+
+        **Melder dietmar1968**, sein eigener Screenshot nennt die Ursache:
+        *„Aggregiert aus: Wärmepumpe · Klimaanlage"* bei einer JAZ von 0,92.
+        ⚠ Ob genau diese Vermischung **seine** Zahl erzeugt, ist damit **nicht**
+        bewiesen — der Heizstab ist die sparsamere Erklärung (SOLL §2.2.1/H-B,
+        beides ungemessen, §7/A2). Die Regel steht unabhängig davon: Ein
+        Quotient aus zwei verschieden abgegrenzten Mengen ist keine Kennzahl,
+        egal welche Erklärung im Einzelfall zutrifft.
+
+        ⭐ **Von den vier Lagen des §4.2 ist das die einzige, die eedc aus den
+        Daten selbst erkennt.** Heizstab am Zähler, bivalenter Zweiterzeuger und
+        Zeitraum-Versatz sind von außen unsichtbar und brauchen eine Angabe des
+        Anwenders — die es noch nicht gibt.
+        """
+        return self.geraete_mit_waerme < self.geraete_mit_strom
+
     @property
     def jaz_belastbar(self) -> bool:
         """Darf aus diesen Zahlen eine JAZ/COP gebildet werden? (Konzept §3.5)
@@ -381,7 +439,7 @@ class WpFakten:
 
     @property
     def modus_nicht_aufgeteilt_kwh(self) -> float:
-        """``Gesamt − Σ Teilmengen`` — Standby, Lüften, Entfeuchten, Unbestimmt.
+        """``Gesamt − Σ Teilmengen`` — Standby, Unbestimmt, und was nicht gemessen ist.
 
         **Wird nie gespeichert** (Konzept §3.1, Folge 2) und ist deshalb immer
         vollständig: für Altmonate, Ausfälle, Importe und manuelle Pflege
@@ -393,12 +451,45 @@ class WpFakten:
         anlagenweit trägt letzteres auch Wärmepumpen ohne Modus-Sensor, deren
         Verbrauch dann als „nicht aufgeteilt" der Klimaanlage erschiene
         (an einer Instanz gemessen: 96,4 statt 6,4 kWh).
+
+        ⭐ **E4 (26.08.): Lüften und Entfeuchten werden abgezogen, sobald sie
+        GEMESSEN sind.** Bis dahin nannte dieser Docstring sie ausdrücklich als
+        Inhalt der Restmenge — richtig, solange es für sie keine eigene Zeile
+        gab. Jetzt gilt beides nebeneinander, und genau das ist die Aussage:
+        **Wer einen Lüftungs-Zähler zugeordnet hat, sieht seine Kilowattstunden
+        als eigene Zeile; wer keinen hat, findet sie weiterhin hier.** Ohne den
+        Abzug stünde dieselbe Menge zweimal — die Doppelzählungs-Klasse.
         """
         return max(
             0.0,
             self.modus_strom_bezug_kwh
             - self.modus_strom_heizen_kwh
-            - self.modus_strom_kuehlen_kwh,
+            - self.modus_strom_kuehlen_kwh
+            - self.modus_strom_lueften_kwh
+            - self.modus_strom_entfeuchten_kwh,
+        )
+
+    @property
+    def modus_strom_funktionsfremd_kwh(self) -> float:
+        """Strom in Funktionen **ohne bewertete Nutzenergie** — der JAZ-Nenner-Abzug.
+
+        Kühlen (**W-14**) plus Lüften und Entfeuchten (**E4**). Alle drei
+        erzeugen keine Wärme, die in einem Wärmemengenzähler landet; stünde ihr
+        Strom im Nenner, drückte er die Arbeitszahl aus demselben Grund.
+
+        ⭐ **Die anlagenweite Entsprechung zu**
+        {@link ModusStromZeile.funktionsfremd_kwh} — dieselbe Definition, eine
+        Ebene höher. Sie steht hier, damit die vier ``arbeitszahl``-Aufrufer
+        **eine** Größe lesen statt drei zu addieren: Genau so ist W-14
+        entstanden, als der Kühlstrom an einer von drei Größen nicht nachgezogen
+        wurde.
+
+        ⚠ **Abgezogen, nicht gesperrt** — die Mengen bleiben in jeder Bilanz.
+        """
+        return (
+            self.modus_strom_kuehlen_kwh
+            + self.modus_strom_lueften_kwh
+            + self.modus_strom_entfeuchten_kwh
         )
 
     @property
@@ -826,7 +917,12 @@ async def _ergaenze_modus_split_ohne_abschluss(
             r = roh.setdefault(schluessel, _RohMonat())
             r.wp_modus_strom_heizen += split.heizen_kwh
             r.wp_modus_strom_kuehlen += split.kuehlen_kwh
-            r.wp_modus_abdeckung_h += split.abdeckung_h
+            # W-17: Stunden werden ueber GERAETE nicht addiert (SoT-Helfer).
+            # Die Schleife laeuft ueber `je_inv` — jeder Durchlauf ist ein
+            # weiteres Geraet DESSELBEN Monats. Mengen ja, Zeitraum nein.
+            r.wp_modus_abdeckung_h = abdeckung_ueber_geraete(
+                r.wp_modus_abdeckung_h, split.abdeckung_h,
+            )
             r.wp_modus_strom_bezug += split.bezug_kwh
 
 
@@ -990,11 +1086,37 @@ class _RohMonat:
         self.wp_hat_split = False
         self.wp_modus_strom_heizen = 0.0
         self.wp_modus_strom_kuehlen = 0.0
+        #: E4 — nur aus gemessenen Zaehlern; der abgeleitete Split kann sie nicht.
+        self.wp_modus_strom_lueften = 0.0
+        self.wp_modus_strom_entfeuchten = 0.0
+        #: W-5 — die Kältemenge, nur gemessen.
+        self.wp_nutzenergie_kuehlen = 0.0
         self.wp_modus_abdeckung_h = 0.0
         #: #263 — mindestens ein Gerät bringt die Aufteilung GEMESSEN mit.
         self.wp_modus_gemessen = False
         self.wp_modus_strom_bezug = 0.0
         self.wp_waerme_abgeleitet = 0.0
+        # ── R2/Gerät: Zählt der Block Geräte, die keine Wärme melden? ───────
+        #
+        # SOLL §4.2 Fall 1: *„Wenn der Zähler mehr enthält als das Gerät."*
+        # Der Block *Wärme/Klima* aggregiert **alle** Wärmepumpen der Anlage —
+        # bei dietmar1968 ausweislich seines eigenen Screenshots „Aggregiert
+        # aus: Wärmepumpe · Klimaanlage". Meldet nur eines der beiden Geräte
+        # Wärme, steht im Nenner der Strom von zwei Geräten und im Zähler die
+        # Wärme von einem. Die Arbeitszahl ist dann systematisch zu niedrig.
+        #
+        # ⭐ **Das ist die einzige der vier §4.2-Lagen, die eedc aus den Daten
+        # SELBST erkennen kann** — sie braucht keine Angabe des Anwenders. Die
+        # übrigen drei (Heizstab am Zähler, bivalenter Zweiterzeuger,
+        # Zeitraum-Versatz) sind von außen nicht sichtbar.
+        self.wp_geraete_mit_strom = 0
+        self.wp_geraete_mit_waerme = 0
+        #: R2/W-7 + R2/F12: die Abgrenzungs-Störung des Blocks. **Sobald EIN
+        #: Gerät gestört ist, ist der Block gestört** — dieselbe Faltung wie
+        #: `wp_hat_split`. Ein Block, der Strom eines Geräts mit Heizstab am
+        #: Zähler trägt, hat keine belastbare Gesamt-Arbeitszahl, auch wenn das
+        #: zweite Gerät sauber misst.
+        self.wp_abgrenzung: Optional[str] = None
         self.eauto_ladedaten: list[dict] = []
         self.wallbox_ladedaten: list[dict] = []
         self.eauto_km = 0.0
@@ -1133,10 +1255,29 @@ class _RohMonat:
             self.wp_hat_split = self.wp_hat_split or b.wp_hat_split
             self.wp_modus_strom_heizen += b.wp_modus_strom_heizen
             self.wp_modus_strom_kuehlen += b.wp_modus_strom_kuehlen
-            self.wp_modus_abdeckung_h += b.wp_modus_abdeckung_h
+            self.wp_modus_strom_lueften += b.wp_modus_strom_lueften
+            self.wp_modus_strom_entfeuchten += b.wp_modus_strom_entfeuchten
+            self.wp_nutzenergie_kuehlen += b.wp_nutzenergie_kuehlen
+            # W-17: derselbe Grund wie im abgeleiteten Zweig oben — `b` ist der
+            # Beitrag EINES Geraets zu diesem Monat. Beide Zweige schreiben in
+            # dasselbe `_RohMonat`; das Maximum ueber beide ist deshalb das
+            # Maximum ueber alle Geraete des Monats, egal auf welchem Weg sie
+            # hereinkommen.
+            self.wp_modus_abdeckung_h = abdeckung_ueber_geraete(
+                self.wp_modus_abdeckung_h, b.wp_modus_abdeckung_h,
+            )
             self.wp_modus_gemessen = self.wp_modus_gemessen or b.wp_modus_gemessen
             self.wp_modus_strom_bezug += b.wp_modus_strom_bezug
             self.wp_waerme_abgeleitet += b.wp_waerme_abgeleitet
+            if b.wp_strom > 0:
+                self.wp_geraete_mit_strom += 1
+            if b.wp_waerme > 0:
+                self.wp_geraete_mit_waerme += 1
+            # Erste gemeldete Störung gewinnt. Zwei verschiedene Störungen an
+            # zwei Geräten wären beide richtig — die Kachel trägt aber nur einen
+            # Grund, und beide führen zu derselben Folge (keine Kennzahl).
+            if self.wp_abgrenzung is None and b.wp_abgrenzung:
+                self.wp_abgrenzung = b.wp_abgrenzung
 
         elif inv.typ in ("e-auto", "wallbox"):
             if ist_dienstlich(inv):
@@ -1381,10 +1522,16 @@ async def _baue_fakt(
             hat_split=roh.wp_hat_split,
             modus_strom_heizen_kwh=roh.wp_modus_strom_heizen,
             modus_strom_kuehlen_kwh=roh.wp_modus_strom_kuehlen,
+            modus_strom_lueften_kwh=roh.wp_modus_strom_lueften,
+            modus_strom_entfeuchten_kwh=roh.wp_modus_strom_entfeuchten,
+            nutzenergie_kuehlen_kwh=roh.wp_nutzenergie_kuehlen,
             modus_abdeckung_h=roh.wp_modus_abdeckung_h,
             modus_gemessen=roh.wp_modus_gemessen,
             modus_strom_bezug_kwh=roh.wp_modus_strom_bezug,
             waerme_abgeleitet_kwh=roh.wp_waerme_abgeleitet,
+            geraete_mit_strom=roh.wp_geraete_mit_strom,
+            geraete_mit_waerme=roh.wp_geraete_mit_waerme,
+            abgrenzung_stoerung=roh.wp_abgrenzung,
         ),
         sonstiges=SonstigesFakten(
             erzeugung_kwh=roh.sonstiges_erzeugung,

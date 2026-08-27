@@ -16,20 +16,24 @@ Slot-Konvention seit Etappe 3c P2 (KONZEPT-ENERGIEPROFIL-3C.md):
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Optional
 
-from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.models.mqtt_energy_snapshot import MqttEnergySnapshot
-
+from backend.core.tageswert_grund import (
+    GRUND_KEINE_ZAEHLERSTAENDE,
+    GRUND_NICHT_ZUGEORDNET,
+    GRUND_RANG,
+    GRUND_ZAEHLER_RUECKSPRUNG,
+)
 from backend.services.snapshot.boundary_range import BoundaryRange
 from backend.services.snapshot.keys import (
     KUMULATIVE_COUNTER_FELDER,
     FLOAT_COUNTER_FELDER,
-    _mqtt_key_to_sensor_key,
     extract_quellen_energy,
+    feld_hat_zaehler,
 )
 from backend.services.snapshot.komponenten_beitraege import (
     basis_beitraege,
@@ -45,9 +49,109 @@ from backend.services.snapshot.plausibility import (
     cap_pv_einspeisung_stunde,
     schwelle_pv_einspeisung_stunde_kwh,
 )
-from backend.services.snapshot.reader import get_snapshot
+from backend.services.snapshot.reader import (
+    MQTT_AKTIV_TAGE,
+    get_snapshot,
+    mqtt_zaehler_keys,
+    zaehler_faellt_im_fenster,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _investitionen_mit_mapping(sensor_mapping: dict, investitionen_by_id: dict):
+    """Jede Investition der Anlage — samt ihrem *womöglich fehlenden* Mapping-Eintrag.
+
+    ⛔ **Warum nicht über `sensor_mapping["investitionen"]` aufzählen** (so lief
+    es bis 2026-08-27, in fünf Schleifen dieses Moduls): Auf einer reinen
+    MQTT-Anlage steht dort für das Gerät **gar kein Eintrag**.
+    `datenquellen_mapping_sync._inv_eintrag` legt den Teilbaum ausdrücklich nur
+    bei einer HA-Wahl an (`anlegen=ist_ha`) — eine Inbound-, Gateway- oder
+    „keine"-Wahl hinterlässt bewusst kein leeres Gerüst.
+
+    Die Folge war nicht „falsch geprüft", sondern **unsichtbar**: Wärme,
+    getrennte Strommessung, Speicher-Netzladung, E-Mob-Anteile und
+    Kompressor-Starts blieben in *Cockpit → Tag* leer, obwohl ihre Snapshots
+    geschrieben wurden (`writer.py`, `SnapshotSource.MQTT_INBOUND`) — N-328b,
+    gemeldet als #396 (gruaGit).
+
+    Die Investitionsliste ist die vollständige Menge und dabei die *bessere*
+    Grenze: Sie trägt die Zeitfilterung des Aufrufers (`aktiv_am_tag`), die das
+    `sensor_mapping` gar nicht kennt.
+
+    Yields:
+        ``(inv_id_str, investition, inv_data)`` — `inv_data` ist ``{}``, wenn
+        die Investition keinen Mapping-Eintrag hat.
+    """
+    investitionen_map = sensor_mapping.get("investitionen", {}) or {}
+    for inv_id_str, inv in investitionen_by_id.items():
+        if inv is None:
+            continue
+        inv_data = investitionen_map.get(str(inv_id_str))
+        yield str(inv_id_str), inv, inv_data if isinstance(inv_data, dict) else {}
+
+
+async def _tageswert_aus_raendern(
+    db: AsyncSession,
+    anlage_id: int,
+    sensor_key: str,
+    s0: float,
+    s1: float,
+    ts_start: datetime,
+    ts_ende: datetime,
+    datum: date,
+) -> Optional[float]:
+    """Tageswert eines kumulativen Zählers aus seinen zwei Randständen — oder
+    ``None``, wenn der Zähler im Fenster **zurückgesetzt** wurde (SOLL §3.1).
+
+    **Der eine Ort für die Tagesfenster-Regel.** Es gibt zwei Aufrufer, und sie
+    hatten die Regel bis 2026-08-26 doppelt: `get_komponenten_tageskwh` (Bilanz)
+    und `_tagesdetail_boundary_diff` (Detailzeilen). Genau die F-56-Klasse — und
+    an diesem Feld ist sie schon einmal gedriftet.
+
+    ⛔ **Hier stand bis 2026-08-26 `return max(0.0, s1)` für den erkannten
+    Reset.** Das war eine **Behauptung ohne Wissen**: Springt der Zähler über
+    das Tagesfenster zurück, ist der Tageswert **unbekannt** — nicht der
+    Reststand danach. Die Funktion reklamierte im eigenen Docstring „P4: keine
+    Aussage statt einer 0" und schrieb dann eine.
+
+    ⚠ **Die Stunden-Variante (`get_hourly_kwh_by_category`) bleibt unberührt und
+    hat recht.** Dort geht es um den **Slot über Mitternacht**: s0 ist der
+    Tagesendwert, s1 die Energie seit dem Reset — eine sinnvolle Zahl für
+    *diese Stunde*. Über den **ganzen Tag** kann dieselbe Rechnung nichts
+    retten, weil das Fenster zwischen zwei Resets liegt. Gleiche Formel,
+    verschiedene Fenster, verschiedene Wahrheit.
+
+    ⭐ **Zwei Erkennungswege, weil ein Reset drei verschiedene Spuren
+    hinterlässt:**
+
+    1. **Randdifferenz negativ** — der Rücksprung liegt zwischen den Rändern und
+       ist an ihnen selbst ablesbar.
+    2. **Monotonie der Zwischenstände verletzt** (`zaehler_faellt_im_fenster`) —
+       ein Zwischenstand liegt über dem End- oder unter dem Startstand.
+
+    Weg 2 läuft **immer**, nicht nur bei verdächtig kleinem Delta. Der Grund ist
+    der dritte Fall: Werden **beide** Ränder eines Tagesreset-Zählers vor dem
+    Reset abgetastet, ist ``d = heutiger Tagesstand − gestriger Tagesstand`` —
+    **positiv, plausibel und still falsch**. Weg 1 sieht davon nichts, und ein
+    „nur bei d ≈ 0 nachsehen" hätte ihn ebenfalls durchgelassen.
+    """
+    d = s1 - s0
+    if d < -0.01:
+        logger.info(
+            f"Zähler-Rücksprung über das Tagesfenster für anlage={anlage_id} "
+            f"key={sensor_key} ({datum}): {d:.3f} → keine Tagesaussage"
+        )
+        return None
+    if await zaehler_faellt_im_fenster(
+        db, anlage_id, sensor_key, ts_start, ts_ende, s0, s1
+    ):
+        logger.info(
+            f"Zähler fällt innerhalb des Tages für anlage={anlage_id} "
+            f"key={sensor_key} ({datum}) → Tagesreset-Zähler, keine Tagesaussage"
+        )
+        return None
+    return max(0.0, d)
 
 
 def _fill_gaps_linear(snaps_per_hour: dict[int, Optional[float]]) -> None:
@@ -120,22 +224,10 @@ async def get_hourly_kwh_by_category(
     # MQTT) hätte sonst Aggregat UND Einzelzähler in derselben Bilanz — die
     # #290/#298-Doppelzähl-Klasse. Nur geholt, nicht verarbeitet: die
     # Vorrang-Reihenfolge (HA schlägt MQTT über `seen_keys`) bleibt unverändert.
-    cutoff = datetime.now() - timedelta(days=7)
-    mqtt_keys_result = await db.execute(
-        select(MqttEnergySnapshot.energy_key)
-        .where(
-            and_(
-                MqttEnergySnapshot.anlage_id == anlage.id,
-                MqttEnergySnapshot.timestamp >= cutoff,
-            )
-        )
-        .distinct()
+    cutoff = datetime.now() - timedelta(days=MQTT_AKTIV_TAGE)
+    mqtt_sks_alle: list[str] = sorted(
+        await mqtt_zaehler_keys(db, anlage.id, seit=cutoff)
     )
-    mqtt_sks_alle: list[str] = []
-    for (mqtt_key,) in mqtt_keys_result.all():
-        sk = _mqtt_key_to_sensor_key(mqtt_key)
-        if sk:
-            mqtt_sks_alle.append(sk)
     pv_extern = pv_je_investition_in_sensor_keys(mqtt_sks_alle)
 
     # 1a. HA-gemappte Zähler aus sensor_mapping — Feld-Auswahl (Whitelist +
@@ -360,30 +452,29 @@ async def get_daily_counter_deltas_by_inv(
         Counter werden weggelassen.
     """
     sensor_mapping = anlage.sensor_mapping or {}
-    investitionen_map = sensor_mapping.get("investitionen", {}) or {}
     quellen_energy = extract_quellen_energy(anlage)  # C2b-Read-Through
+    # N-328b: MQTT-gespeiste Zähler mitzählen. `seit=None` — ein Tag im Frühjahr
+    # darf nicht daran scheitern, dass das Topic heute schweigt.
+    mqtt_keys = await mqtt_zaehler_keys(db, anlage.id)
 
     tag_start = datetime.combine(datum, datetime.min.time())
     tag_ende = tag_start + timedelta(days=1)
 
     result: dict[str, dict[str, float]] = {}
 
-    for inv_id_str, inv_data in investitionen_map.items():
-        if not isinstance(inv_data, dict):
-            continue
-        inv = investitionen_by_id.get(inv_id_str) or investitionen_by_id.get(str(inv_id_str))
-        if inv is None:
-            continue
+    for inv_id_str, inv, inv_data in _investitionen_mit_mapping(
+        sensor_mapping, investitionen_by_id
+    ):
         counter_felder = KUMULATIVE_COUNTER_FELDER.get(inv.typ, ())
         if not counter_felder:
             continue
         felder = inv_data.get("felder", {}) or {}
         for feld in counter_felder:
             config = felder.get(feld)
-            if not isinstance(config, dict) or config.get("strategie") != "sensor":
-                continue
-            sensor_id = config.get("sensor_id")
             sensor_key = f"inv:{inv_id_str}:{feld}"
+            if not feld_hat_zaehler(config, sensor_key, quellen_energy, mqtt_keys):
+                continue
+            sensor_id = config.get("sensor_id") if isinstance(config, dict) else None
             snap_start = await get_snapshot(
                 db, anlage.id, sensor_key, sensor_id, tag_start,
                 quellen_energy=quellen_energy,
@@ -452,6 +543,7 @@ async def get_komponenten_tageskwh(
     """
     sensor_mapping = anlage.sensor_mapping or {}
     quellen_energy = extract_quellen_energy(anlage)  # C2b-Read-Through
+    mqtt_keys = await mqtt_zaehler_keys(db, anlage.id)  # N-328b
     rng = BoundaryRange.for_day_total(datum)
     start_off, end_off = rng.boundary_offsets  # (0, 24)
     ts_start = rng.boundary_at(start_off)
@@ -468,23 +560,18 @@ async def get_komponenten_tageskwh(
         )
         if s0 is None or s1 is None:
             return None
-        d = s1 - s0
-        if d < -0.01:
-            # Tagesreset-Zähler (HA utility_meter daily): s0 ≈ Tagesendwert,
-            # s1 ≈ 0 nach Mitternachts-Reset → s1 ist die Energie seit Reset
-            # (analog zum Hourly-Pfad in get_hourly_kwh_by_category).
-            if s1 < 0.5 and s0 > 0.5:
-                return max(0.0, s1)
-            logger.warning(
-                f"Negatives Tagesgesamt-Delta für anlage={anlage.id} "
-                f"key={sensor_key} ({datum}): {d:.3f} → ignoriert"
-            )
-            return None
-        return max(0.0, d)
+        return await _tageswert_aus_raendern(
+            db, anlage.id, sensor_key, s0, s1, ts_start, ts_ende, datum,
+        )
+
+    def _cfg_for(feld: str, mapping_quelle: dict):
+        return (
+            (mapping_quelle.get("felder", {}) or {}).get(feld)
+            if "felder" in mapping_quelle else mapping_quelle.get(feld)
+        )
 
     def _sensor_id_for(beitrag, mapping_quelle: dict) -> Optional[str]:
-        cfg = (mapping_quelle.get("felder", {}) or {}).get(beitrag.feld) \
-            if "felder" in mapping_quelle else mapping_quelle.get(beitrag.feld)
+        cfg = _cfg_for(beitrag.feld, mapping_quelle)
         return cfg.get("sensor_id") if isinstance(cfg, dict) else None
 
     async def _apply_beitraege(beitraege, sensor_key_fn, mapping_quelle, result):
@@ -494,9 +581,13 @@ async def get_komponenten_tageskwh(
             # Either-Or: pro Gruppe nur den ersten Beitrag mit verfügbarem Delta nehmen
             if b.fallback_gruppe and b.fallback_gruppe in gruppe_genommen:
                 continue
+            # ⛔ Hier stand bis 2026-08-27 `if not sid: continue` — die Stelle,
+            # die einen MQTT-Zähler aus der Tagesbilanz warf (N-328b). Die
+            # Verfügbarkeit entscheidet jetzt DAS PRÄDIKAT beim Bau der
+            # Beiträge; `sensor_id` ist danach nur noch der HA-Self-Heal-Weg
+            # und darf None sein (`get_snapshot` fällt dann über den
+            # `sensor_key` auf MQTT zurück).
             sid = _sensor_id_for(b, mapping_quelle)
-            if not sid:
-                continue
             d = await _diff(sensor_key_fn(b.feld), sid)
             if d is None:
                 continue
@@ -507,33 +598,46 @@ async def get_komponenten_tageskwh(
     result: dict[str, float] = {}
 
     # 1. Basis: einspeisung + netzbezug + PV gesamt (letzteres nur, wenn kein
-    #    Erzeuger einen eigenen Zähler trägt — s. `basis_beitraege`). Anders als
-    #    der Hourly-Pfad braucht diese Funktion KEINE MQTT-Gegenprobe: sie liest
-    #    ausschließlich über `_sensor_id_for` aus dem Mapping und überspringt
-    #    jedes Feld ohne `sensor_id` (`if not sid: continue`). Ein rein per MQTT
-    #    gespeister Zähler je Erzeuger existiert hier also gar nicht und kann
-    #    nichts verdrängen.
+    #    Erzeuger einen eigenen Zähler trägt — s. `basis_beitraege`).
+    #
+    # ⛔ **Hier stand bis 2026-08-27 das Gegenteil**: „Anders als der Hourly-Pfad
+    # braucht diese Funktion KEINE MQTT-Gegenprobe … ein rein per MQTT gespeister
+    # Zähler je Erzeuger existiert hier also gar nicht." Der Satz beschrieb den
+    # **Defekt** und begründete ihn: Weil MQTT hier nicht existierte, blieb die
+    # Tagesbilanz einer Standalone-Anlage leer, während der Stundenpfad daneben
+    # gefüllt war (N-328b/#396). Existiert MQTT aber, dann **muss** auch die
+    # Alles-oder-nichts-Regel für `pv_gesamt` beide Quellen kennen — sonst stünde
+    # das Anlagen-Aggregat neben seinen eigenen Summanden (#290/#298).
     basis_map = sensor_mapping.get("basis", {}) or {}
+    pv_extern = pv_je_investition_in_sensor_keys(mqtt_keys)
     await _apply_beitraege(
-        basis_beitraege(sensor_mapping),
+        basis_beitraege(
+            sensor_mapping,
+            pv_je_investition_extern=pv_extern,
+            ist_verfuegbar=lambda feld: feld_hat_zaehler(
+                basis_map.get(feld), f"basis:{feld}", quellen_energy, mqtt_keys,
+            ),
+        ),
         lambda feld: f"basis:{feld}",
         basis_map,
         result,
     )
 
     # 2. Investitionen — Per-Typ-Auswahl im Helper
-    investitionen_map = sensor_mapping.get("investitionen", {}) or {}
     # N-196: strukturelle Quellen-Regel der E-Mob-Fläche, einmal je Lauf —
     # dieselbe Regel, die der Leistungspfad seit #356 kennt.
     _wb_deckt = wallbox_deckt_ladung_ab(investitionen_by_id.values(), sensor_mapping)
-    for inv_id_str, inv_data in investitionen_map.items():
-        if not isinstance(inv_data, dict):
-            continue
-        inv = investitionen_by_id.get(inv_id_str) or investitionen_by_id.get(str(inv_id_str))
-        if inv is None:
-            continue
+    for inv_id_str, inv, inv_data in _investitionen_mit_mapping(
+        sensor_mapping, investitionen_by_id
+    ):
+        felder = inv_data.get("felder", {}) or {}
         await _apply_beitraege(
-            investition_beitraege(inv, inv_data, wallbox_deckt_ladung=_wb_deckt),
+            investition_beitraege(
+                inv, inv_data, wallbox_deckt_ladung=_wb_deckt,
+                ist_verfuegbar=lambda feld, _id=inv_id_str, _f=felder: feld_hat_zaehler(
+                    _f.get(feld), f"inv:{_id}:{feld}", quellen_energy, mqtt_keys,
+                ),
+            ),
             lambda feld, _id=inv_id_str: f"inv:{_id}:{feld}",
             inv_data,
             result,
@@ -542,7 +646,7 @@ async def get_komponenten_tageskwh(
     return result
 
 
-async def _tagesdetail_boundary_diff(
+async def _tagesdetail_boundary_diff_mit_grund(
     db: AsyncSession,
     anlage,
     quellen_energy,
@@ -551,7 +655,7 @@ async def _tagesdetail_boundary_diff(
     ts_start: datetime,
     ts_ende: datetime,
     datum: date,
-) -> Optional[float]:
+) -> tuple[Optional[float], Optional[str]]:
     """Boundary-Diff eines kumulativen kWh-Zählers über das HA-Tagesfenster.
 
     **Warum als Modul-Funktion und nicht als Closure** (#263): Sie hat zwei
@@ -570,17 +674,39 @@ async def _tagesdetail_boundary_diff(
         quellen_energy=quellen_energy,
     )
     if s0 is None or s1 is None:
-        return None
-    d = s1 - s0
-    if d < -0.01:
-        if s1 < 0.5 and s0 > 0.5:  # Tagesreset-Zähler (HA utility_meter daily)
-            return max(0.0, s1)
-        logger.warning(
-            f"Negatives Tagesdetail-Delta für anlage={anlage.id} "
-            f"key={sensor_key} ({datum}): {d:.3f} → ignoriert"
-        )
-        return None
-    return max(0.0, d)
+        return None, GRUND_KEINE_ZAEHLERSTAENDE
+    wert = await _tageswert_aus_raendern(
+        db, anlage.id, sensor_key, s0, s1, ts_start, ts_ende, datum,
+    )
+    # W-18: `_tageswert_aus_raendern` gibt bei einem Rücksprung bewusst `None`
+    # zurück und schreibt eine Logzeile — die kein Anwender sieht. Hier bekommt
+    # derselbe Zustand einen Namen, damit die Oberfläche ihn aussprechen kann.
+    if wert is None:
+        return None, GRUND_ZAEHLER_RUECKSPRUNG
+    return wert, None
+
+
+async def _tagesdetail_boundary_diff(
+    db: AsyncSession,
+    anlage,
+    quellen_energy,
+    sensor_key: str,
+    sensor_id: Optional[str],
+    ts_start: datetime,
+    ts_ende: datetime,
+    datum: date,
+) -> Optional[float]:
+    """Nur der Wert — für Aufrufer, die den Grund nicht brauchen.
+
+    ⚠ **Kein zweiter Rechenweg**: ein Durchreicher auf
+    {@link _tagesdetail_boundary_diff_mit_grund}. Die Tagesreset-Behandlung
+    steht weiterhin genau einmal im Baum (F-56).
+    """
+    wert, _grund = await _tagesdetail_boundary_diff_mit_grund(
+        db, anlage, quellen_energy, sensor_key, sensor_id,
+        ts_start, ts_ende, datum,
+    )
+    return wert
 
 
 async def get_betriebsart_strom_tageswerte(
@@ -616,30 +742,38 @@ async def get_betriebsart_strom_tageswerte(
     from backend.core.betriebsmodus import ist_betriebsart_strom_feld
 
     sensor_mapping = anlage.sensor_mapping or {}
-    investitionen_map = sensor_mapping.get("investitionen", {}) or {}
     quellen_energy = extract_quellen_energy(anlage)  # C2b-Read-Through
+    mqtt_keys = await mqtt_zaehler_keys(db, anlage.id)  # N-328b
     rng = BoundaryRange.for_day_total(datum)
     start_off, end_off = rng.boundary_offsets  # (0, 24)
     ts_start = rng.boundary_at(start_off)
     ts_ende = rng.boundary_at(end_off)
 
     ergebnis: dict[str, dict[str, float]] = {}
-    for inv_id_str, inv_data in investitionen_map.items():
-        if not isinstance(inv_data, dict):
-            continue
-        inv = investitionen_by_id.get(inv_id_str) or investitionen_by_id.get(str(inv_id_str))
-        if inv is None or getattr(inv, "typ", None) != "waermepumpe":
+    for inv_id_str, inv, inv_data in _investitionen_mit_mapping(
+        sensor_mapping, investitionen_by_id
+    ):
+        if getattr(inv, "typ", None) != "waermepumpe":
             continue
         felder = inv_data.get("felder", {}) or {}
+        # N-328b: Die Feldnamen kommen aus BEIDEN Ablagen. Ein per MQTT
+        # gespeister Betriebsart-Zähler steht nicht in `felder` — sein
+        # `sensor_key` steht in `mqtt_keys`, und nur dort. Wer allein über
+        # `felder` iteriert, sieht ihn nie.
+        praefix = f"inv:{inv_id_str}:"
+        kandidaten = set(felder) | {
+            sk[len(praefix):] for sk in mqtt_keys if sk.startswith(praefix)
+        }
         je_inv: dict[str, float] = {}
-        for feld, cfg in felder.items():
+        for feld in sorted(kandidaten):
             if not ist_betriebsart_strom_feld(feld):
                 continue
-            if not isinstance(cfg, dict) or cfg.get("strategie") != "sensor":
+            cfg = felder.get(feld)
+            if not feld_hat_zaehler(cfg, praefix + feld, quellen_energy, mqtt_keys):
                 continue
             d = await _tagesdetail_boundary_diff(
                 db, anlage, quellen_energy,
-                f"inv:{inv_id_str}:{feld}", cfg.get("sensor_id"),
+                praefix + feld, cfg.get("sensor_id") if isinstance(cfg, dict) else None,
                 ts_start, ts_ende, datum,
             )
             if d is None:
@@ -650,12 +784,29 @@ async def get_betriebsart_strom_tageswerte(
     return ergebnis
 
 
+@dataclass(frozen=True)
+class TagesDetail:
+    """Die Tages-Detailwerte **und warum die fehlenden fehlen** (W-18).
+
+    ⛔ **Warum das ein Rückgabetyp ist und kein zweiter Aufruf.** Der Grund
+    entsteht aus derselben Zuordnung, denselben Snapshots und derselben
+    Tagesreset-Behandlung wie der Wert. Eine zweite Funktion, die dieselben
+    Regeln noch einmal abläuft, wäre die F-56-Klasse — und sie würde
+    zuverlässig genau dann driften, wenn eine der drei Regeln sich ändert.
+    """
+
+    #: ``{ausgabe_key: Σ_kwh}`` — wie bisher, nur Felder mit Wert.
+    werte: dict[str, float]
+    #: ``{ausgabe_key: grund}`` für Keys **ohne** Wert. Nie beides zugleich.
+    grund_je_feld: dict[str, str]
+
+
 async def get_tagesdetail_kwh(
     db: AsyncSession,
     anlage,
     investitionen_by_id: dict,
     datum: date,
-) -> dict[str, float]:
+) -> "TagesDetail":
     """Tages-kWh für Felder, die `get_komponenten_tageskwh` bewusst NICHT separat
     ausweist, die aber Cockpit/Tag für die Detailzeilen braucht (D1 „maximal
     erheben", SPEC-COCKPIT-TAG-JAHR Abschnitt F):
@@ -670,17 +821,26 @@ async def get_tagesdetail_kwh(
     über alle aktiven Investitionen des Typs. Liefert `{feld: Σ_kwh}` nur für
     tatsächlich als Sensor gemappte Felder mit Snapshot-Daten — fehlt das
     Mapping/der Snapshot, fehlt das Feld (Aufrufer lässt es weg, kein „—"-Clutter).
+
+    ⛔ **Seit W-18 liefert sie zusätzlich den GRUND** ({@link TagesDetail}).
+    „Fehlt das Feld, fehlt es eben" war die Bauform, die dietmar1968 einen
+    falschen Ratschlag gezeigt hat: Der Client hängte an jedes „—" denselben
+    fest verdrahteten Satz *„Sensor zuordnen"* — auch dem Anwender, der
+    zugeordnet hatte. Die Erhebung **weiß**, welcher der drei Zustände vorliegt;
+    sie hat es bisher nur nicht gesagt.
     """
     sensor_mapping = anlage.sensor_mapping or {}
-    investitionen_map = sensor_mapping.get("investitionen", {}) or {}
     quellen_energy = extract_quellen_energy(anlage)  # C2b-Read-Through
+    mqtt_keys = await mqtt_zaehler_keys(db, anlage.id)  # N-328b
     rng = BoundaryRange.for_day_total(datum)
     start_off, end_off = rng.boundary_offsets  # (0, 24)
     ts_start = rng.boundary_at(start_off)
     ts_ende = rng.boundary_at(end_off)
 
-    async def _diff(sensor_key: str, sensor_id: Optional[str]) -> Optional[float]:
-        return await _tagesdetail_boundary_diff(
+    async def _diff(
+        sensor_key: str, sensor_id: Optional[str],
+    ) -> tuple[Optional[float], Optional[str]]:
+        return await _tagesdetail_boundary_diff_mit_grund(
             db, anlage, quellen_energy, sensor_key, sensor_id,
             ts_start, ts_ende, datum,
         )
@@ -703,12 +863,26 @@ async def get_tagesdetail_kwh(
         ("e-auto", "ladung_netz_kwh"): "emob_ladung_netz_kwh",
     }
     summen: dict[str, float] = {}
-    for inv_id_str, inv_data in investitionen_map.items():
-        if not isinstance(inv_data, dict):
-            continue
-        inv = investitionen_by_id.get(inv_id_str) or investitionen_by_id.get(str(inv_id_str))
-        if inv is None:
-            continue
+    # W-18: Warum ein Ausgabe-Key FEHLT — je Key der Zustand, der ihn verhindert
+    # hat. Er entsteht in **derselben** Schleife wie der Wert; eine zweite
+    # Schleife mit denselben Regeln wäre die F-56-Klasse.
+    #
+    # ⚠ **Der schwächste Grund gewinnt, und das ist Absicht.** Ein Ausgabe-Key
+    # kann mehrere Geräte tragen (`emob_ladung_pv_kwh` = Wallbox + E-Auto).
+    # Liefert eines davon einen Wert, ist die Zahl da und es gibt nichts zu
+    # erklären; nur wenn KEIN Gerät geliefert hat, wird ein Grund genannt — und
+    # dann der aussagekräftigste: „zugeordnet, aber leer" schlägt „nicht
+    # zugeordnet", denn das ist der Fall, den der Anwender nicht selbst sieht.
+    grund_kandidat: dict[str, str] = {}
+
+    def _merke_grund(out_key: str, grund: str) -> None:
+        vorher = grund_kandidat.get(out_key)
+        if vorher is None or GRUND_RANG[grund] > GRUND_RANG[vorher]:
+            grund_kandidat[out_key] = grund
+
+    for inv_id_str, inv, inv_data in _investitionen_mit_mapping(
+        sensor_mapping, investitionen_by_id
+    ):
         typ = getattr(inv, "typ", None)
         # E-Auto mit parent (Wallbox misst die Ladung) → Skip, sonst Doppelzählung
         # (spiegelt investition_beitraege/Live-Pfad).
@@ -719,14 +893,30 @@ async def get_tagesdetail_kwh(
             if t != typ:
                 continue
             cfg = felder.get(feld)
-            if not isinstance(cfg, dict) or cfg.get("strategie") != "sensor":
+            sensor_key = f"inv:{inv_id_str}:{feld}"
+            # ⛔ N-328b: Hier entschied bis 2026-08-27 `strategie == "sensor"`,
+            # ob das Feld überhaupt erhoben wird — und wer per MQTT misst, bekam
+            # von W-18 den Grund „Kein Zähler zugeordnet" zu lesen, obwohl seine
+            # Zählerstände in der Datenbank standen. Der Grund war damit nicht
+            # nur nutzlos, sondern **falsch**: Er riet zu einer Zuordnung, die
+            # es gar nicht braucht.
+            if not feld_hat_zaehler(cfg, sensor_key, quellen_energy, mqtt_keys):
+                _merke_grund(out_key, GRUND_NICHT_ZUGEORDNET)
                 continue
-            d = await _diff(f"inv:{inv_id_str}:{feld}", cfg.get("sensor_id"))
+            d, grund = await _diff(
+                sensor_key, cfg.get("sensor_id") if isinstance(cfg, dict) else None,
+            )
             if d is None:
+                _merke_grund(out_key, grund or GRUND_KEINE_ZAEHLERSTAENDE)
                 continue
             summen[out_key] = summen.get(out_key, 0.0) + d
 
-    return summen
+    return TagesDetail(
+        werte=summen,
+        # Ein Key mit Wert braucht keine Erklärung — und ein Grund neben einer
+        # vorhandenen Zahl wäre ein Widerspruch auf der Fläche.
+        grund_je_feld={k: g for k, g in grund_kandidat.items() if k not in summen},
+    )
 
 
 async def get_hourly_counter_sum_by_feld(
@@ -760,24 +950,23 @@ async def get_hourly_counter_sum_by_feld(
         (kein Mapping), wird ein leeres Dict zurückgegeben.
     """
     sensor_mapping = anlage.sensor_mapping or {}
-    investitionen_map = sensor_mapping.get("investitionen", {}) or {}
     quellen_energy = extract_quellen_energy(anlage)  # C2b-Read-Through
+    mqtt_keys = await mqtt_zaehler_keys(db, anlage.id)  # N-328b
 
     relevant_invs: list[tuple[str, Optional[str]]] = []  # (sensor_key, sensor_id)
-    for inv_id_str, inv_data in investitionen_map.items():
-        if not isinstance(inv_data, dict):
-            continue
-        inv = investitionen_by_id.get(inv_id_str) or investitionen_by_id.get(str(inv_id_str))
-        if inv is None:
-            continue
+    for inv_id_str, inv, inv_data in _investitionen_mit_mapping(
+        sensor_mapping, investitionen_by_id
+    ):
         if feld not in KUMULATIVE_COUNTER_FELDER.get(inv.typ, ()):
             continue
         felder = inv_data.get("felder", {}) or {}
         config = felder.get(feld)
-        if not isinstance(config, dict) or config.get("strategie") != "sensor":
-            continue
         sensor_key = f"inv:{inv_id_str}:{feld}"
-        relevant_invs.append((sensor_key, config.get("sensor_id")))
+        if not feld_hat_zaehler(config, sensor_key, quellen_energy, mqtt_keys):
+            continue
+        relevant_invs.append(
+            (sensor_key, config.get("sensor_id") if isinstance(config, dict) else None)
+        )
 
     if not relevant_invs:
         return {}

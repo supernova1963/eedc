@@ -30,9 +30,14 @@ D1-Entscheid (2026-06-14): WP-Heizung/Wärme werden hier **kanonisch** gelesen
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Optional
 
-from backend.core.berechnungen.betriebsart_gemessen import modus_strom_zeile
+from backend.core.berechnungen.betriebsart_gemessen import (
+    betriebsart_nutzenergie_kwh,
+    modus_strom_zeile,
+)
 from backend.core.berechnungen.modus_split import heizwaerme_ist_abgeleitet
+from backend.core.berechnungen.waermepumpe_kennzahl import waerme_gesamt_kwh
 from backend.core.betriebsmodus import MODUS_ABDECKUNG_FELD, MODUS_STROM_FELD
 from backend.core.betriebsmodus import HEIZEN as _HEIZEN
 from backend.core.betriebsmodus import KUEHLEN as _KUEHLEN
@@ -45,6 +50,7 @@ from backend.core.field_definitions import (
     get_wp_heizenergie_kwh,
     get_wp_strom_kwh,
 )
+from backend.core.investition_parameter import abgrenzung_stoerung
 
 
 @dataclass(frozen=True)
@@ -88,6 +94,24 @@ class ImdTypBeitrag:
     # Genau diese Zweideutigkeit war der Grund für eigene Feldnamen (E-G).
     wp_modus_strom_heizen: float = 0.0
     wp_modus_strom_kuehlen: float = 0.0
+    #: E4 (Konzept §2.3): **nur aus gemessenen Zählern.** Der abgeleitete Split
+    #: kann sie nicht (``AUFGETEILTE_MODI``, D11) und lässt sie bei 0 — das ist
+    #: die Aussage, keine Lücke. Sie sind *erfassbar, aber keine bewertete
+    #: Funktion*: sie erscheinen in der Aufteilung und fallen über
+    #: ``ModusStromZeile.funktionsfremd_kwh`` aus dem Nenner der Arbeitszahl.
+    wp_modus_strom_lueften: float = 0.0
+    wp_modus_strom_entfeuchten: float = 0.0
+    #: W-5 (SOLL §4.1): die **Kältemenge** — abgegebene Nutzenergie im
+    #: Kühlbetrieb. Bewusst nicht „waerme": im Kühlbetrieb ist die Nutzenergie
+    #: Kälte, und ein Feldname, der etwas anderes behauptet als er trägt, ist
+    #: die Klasse, an der `heizenergie_kwh` schon einmal missverstanden wurde
+    #: (#120). **Nur gemessen** — es gibt keinen Weg, sie abzuleiten.
+    #:
+    #: ⚠ **Nur Kühlen von den vier Betriebsarten.** Heizen wäre redundant zu
+    #: `heizenergie_kwh` (Wärmemengenzähler), Lüften und Entfeuchten sind nach
+    #: E4 ausdrücklich **nicht bewertet** — für sie gibt es keine Kennzahl, für
+    #: die man eine Nutzenergie bräuchte.
+    wp_nutzenergie_kuehlen: float = 0.0
     wp_modus_abdeckung_h: float = 0.0
     #: #263 — die Aufteilung dieser Zeile ist **gemessen**, nicht abgeleitet.
     #: Trägt zwei Folgen: der aus dem Betriebsmodus gerechnete Split darf hier
@@ -111,6 +135,15 @@ class ImdTypBeitrag:
     # lesen, und die erste, die es vergisst, zeigt die gepflegte JAZ als
     # gemessene an.
     wp_waerme_abgeleitet: float = 0.0
+    # R2/W-7 + R2/F12 (SOLL Wärme/Klima §3.2b): Die vom Anwender gemeldete
+    # Abgrenzungs-Störung dieses Geräts — `"fremdstrom"`, `"fremdwaerme"` oder
+    # `None`. Sie hängt am **Gerät**, nicht an der Monatszeile: ein Heizstab am
+    # WP-Zähler bleibt es auch im nächsten Monat.
+    #
+    # ⚠ Sie ändert **keine Menge**. Sie sagt nur, dass Zähler und Nutzen dieses
+    # Geräts für verschiedene Dinge stehen — die Mengen bleiben, die Kennzahl
+    # entfällt (SOLL §4.2: „die Mengen und den Grund, nie den Quotienten").
+    wp_abgrenzung: Optional[str] = None
 
     # E-Mobilität (Skalar-Summen; Heimladungs-Pool bleibt separat)
     eauto_km: float = 0.0
@@ -189,7 +222,9 @@ def imd_typ_beitrag(
         heizung = get_wp_heizenergie_kwh(data)
         warmwasser = _f(data, "warmwasser_kwh")
         # D1: waerme_kwh hat Vorrang, sonst Heizung + Warmwasser (kanonisch).
-        waerme = _f(data, "waerme_kwh") or (heizung + warmwasser)
+        # Seit 2026-08-26 im Layer-SoT `waermepumpe_kennzahl.waerme_gesamt_kwh`
+        # — der Client hatte dieselbe Regel als zweite Stelle (Befund W-9).
+        waerme = waerme_gesamt_kwh(_f(data, "waerme_kwh"), heizung, warmwasser)
         # F-56: die Weiche liegt im Layer-SoT `modus_strom_zeile` — sie stand
         # bis dahin hier inline und war im HA-Export daneben nachgebaut, ohne
         # den Gemessen-Zweig. Eine Regel, zwei Codestellen, eine Drift.
@@ -223,6 +258,11 @@ def imd_typ_beitrag(
             # dasselbe, statt sich je nach Fläche zu unterscheiden.
             wp_modus_strom_heizen=_modus.heizen_kwh,
             wp_modus_strom_kuehlen=_modus.kuehlen_kwh,
+            wp_modus_strom_lueften=_modus.lueften_kwh,
+            wp_modus_strom_entfeuchten=_modus.entfeuchten_kwh,
+            wp_nutzenergie_kuehlen=(
+                betriebsart_nutzenergie_kwh(data, _KUEHLEN) or 0.0
+            ),
             wp_modus_abdeckung_h=_f(data, MODUS_ABDECKUNG_FELD),
             wp_modus_gemessen=_gemessen,
             wp_modus_strom_bezug=(
@@ -234,6 +274,7 @@ def imd_typ_beitrag(
             wp_waerme_abgeleitet=(
                 heizung if heizwaerme_ist_abgeleitet(source_provenance) else 0.0
             ),
+            wp_abgrenzung=abgrenzung_stoerung(params),
         )
 
     if typ == "e-auto":

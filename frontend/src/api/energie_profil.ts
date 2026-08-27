@@ -205,6 +205,24 @@ export interface TagDetail {
   wp_strom_warmwasser_kwh: number | null
   wp_heizung_kwh: number | null
   wp_warmwasser_kwh: number | null
+  /** Wärme gesamt des Tages — **aus dem Backend**, nicht als Client-Summe.
+   *  Der Kanon „Gesamtwert vor Summanden" steht im Layer
+   *  (`waermepumpe_kennzahl.waerme_gesamt_kwh`); hier stand bis 26.08.2026
+   *  seine zweite Hälfte als eigene Rechnung (W-9, ADR-001/S1). */
+  wp_waerme_kwh: number | null
+  /** Tages-Arbeitszahl samt Begründung — identisch zur Monatssicht (S1). */
+  wp_jaz: number | null
+  wp_jaz_grund: string | null
+  wp_jaz_hinweis: string | null
+  /** **W-18** — warum die Tages-Wärme fehlt, als fertiger Satz aus dem Backend.
+   *  Nur gesetzt, wenn `wp_waerme_kwh` `null` ist. **Nicht im Client
+   *  formulieren**: Der frühere fest verdrahtete Satz beschrieb einen von drei
+   *  Zuständen und forderte dietmar1968 auf, einen Sensor zuzuordnen, den er
+   *  zugeordnet hatte (T89667 #210). Der Wortlaut lebt in
+   *  `core/tageswert_grund.py` — bewusst ohne TS-Spiegel. */
+  wp_waerme_grund?: string | null
+  /** **W-18**, dieselbe Klasse am PV-Anteil der Ladung. */
+  emob_ladung_pv_grund?: string | null
   speicher_ladung_netz_kwh: number | null
   speicher_effektiver_ladepreis_cent: number | null
   speicher_effektiver_ladepreis_quelle: string | null
@@ -217,8 +235,17 @@ export interface TagDetail {
    *  entscheidet die Faltung. */
   wp_modus_strom_heizen_kwh: number | null
   wp_modus_strom_kuehlen_kwh: number | null
+  /** E4 (Konzept §2.3): nur aus **gemessenen** Betriebsart-Zählern. */
+  wp_modus_strom_lueften_kwh?: number | null
+  wp_modus_strom_entfeuchten_kwh?: number | null
   wp_modus_nicht_aufgeteilt_kwh: number | null
   wp_modus_abdeckung_h: number | null
+  /** **W-17b** — die Grundmenge, auf die sich die Aufteilung bezieht.
+   *  Bewusst **nicht** der WP-Gesamtstrom: dort steckt auch der Strom von
+   *  Geräten ohne Modus-Signal. Ohne dieses Feld stand der Balken stumm unter
+   *  einer Kachel mit größerer Zahl (dietmar1968, T89667 #210: 30 kWh unter
+   *  284 kWh). Nicht nachrechnen — der Bezug entscheidet die Faltung. */
+  wp_modus_strom_bezug_kwh?: number | null
   /** Herkunft der Aufteilung: `true` = aus gemessenen Betriebsart-Zählern,
    *  `false` = aus dem Betriebsmodus abgeleitet. Spiegelt das gleichnamige
    *  Feld der Monatssicht — die Blockfabrik liest beide, und ohne dieses

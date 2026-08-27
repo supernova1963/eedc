@@ -29,6 +29,9 @@ from backend.api.routes.strompreise import (
 )
 from backend.api.routes.connector import _calc_month_delta
 from backend.core.berechnungen.anlagen_kwp import anlagen_kwp
+from backend.core.berechnungen.waermepumpe_kennzahl import (
+    abgrenzungs_grund, arbeitszahl, arbeitszahl_je_funktion, arbeitszahl_kuehlen,
+)
 from backend.core.berechnungen import (
     sonstiges_richtung,
     Monatsfenster,
@@ -214,6 +217,26 @@ class AktuellerMonatResponse(BaseModel):
     wp_waerme_kwh: Optional[float] = None
     wp_heizung_kwh: Optional[float] = None
     wp_warmwasser_kwh: Optional[float] = None
+    # ── Arbeitszahl: die Zahl UND ihre Begründung (R2, Befund W-3) ──────────
+    #
+    # ⛔ **Bis 2026-08-26 lieferte diese Response nur `wp_waerme_kwh` und
+    # `wp_strom_kwh`, und der Client bildete den Quotienten selbst.** Er
+    # **konnte** die Sperre nicht kennen, die der Komponenten-Hub und die
+    # Cockpit-Übersicht anwenden — Folge: dieselbe Anlage zeigte im Hub „—"
+    # und im Cockpit eine Zahl. Zwei Sichten, zwei Antworten auf dieselbe
+    # Frage (ADR-001, SOLL §3.3/S1).
+    #
+    # SoT ist `core/berechnungen/waermepumpe_kennzahl.arbeitszahl`.
+    wp_jaz: Optional[float] = None
+    #: Warum es **keine** Arbeitszahl gibt — nie ein „—" ohne Grund (S3).
+    wp_jaz_grund: Optional[str] = None
+    #: Die Zahl existiert, ist aber erklärungsbedürftig (Fall H-B: ein großer
+    #: Teil der Wärme kam direkt elektrisch). **Kein Fehler, keine Bewertung.**
+    wp_jaz_hinweis: Optional[str] = None
+    #: Ist ein Teil der Wärme aus `Strom × JAZ` gerechnet statt gemessen?
+    #: Gleicher Name wie im Komponenten-Hub (`KomponentenMonat`), damit dieselbe
+    #: Größe in beiden Sichten gleich heißt (S1).
+    wp_waerme_abgeleitet: bool = False
     # #191: Strom-Aufteilung Heizung/Warmwasser. Nur gesetzt wenn mindestens
     # eine WP-Investition `getrennte_strommessung=true` hat. Sonst None →
     # Frontend zeigt nur den Gesamtstromverbrauch.
@@ -224,8 +247,32 @@ class AktuellerMonatResponse(BaseModel):
     # Modus erfasst ist (eine 0 hieße „hat nicht geheizt", ADR-002/P4).
     wp_modus_strom_heizen_kwh: Optional[float] = None
     wp_modus_strom_kuehlen_kwh: Optional[float] = None
+    #: E4 (Konzept §2.3): eigene Segmente statt stummer Restmenge. Nur aus
+    #: **gemessenen** Betriebsart-Zählern — der abgeleitete Split kann sie
+    #: nicht und lässt sie bei 0. Sie bekommen keine Kennzahl (*erfassen ja,
+    #: bewerten nein*) und fallen aus dem Nenner der Arbeitszahl.
+    #: W-4 (SOLL §4.1): Arbeitszahl je Funktion — mit ihrem Grund, wenn es sie
+    #: nicht gibt. Erscheint nur bei getrennter Strommessung; ohne sie liegt E
+    #: je Funktion nicht vor und beide tragen denselben Grund.
+    wp_jaz_heizen: Optional[float] = None
+    wp_jaz_heizen_grund: Optional[str] = None
+    wp_jaz_warmwasser: Optional[float] = None
+    wp_jaz_warmwasser_grund: Optional[str] = None
+    #: W-5: Arbeitszahl **Kühlen** (Kältemenge ÷ Kühlstrom). Bewusst nicht
+    #: „SEER" — das ist eine genormte Prüfstandsgröße, dies ein gemessener
+    #: Quotient über einen Zeitraum.
+    wp_jaz_kuehlen: Optional[float] = None
+    wp_jaz_kuehlen_grund: Optional[str] = None
+    wp_modus_strom_lueften_kwh: Optional[float] = None
+    wp_modus_strom_entfeuchten_kwh: Optional[float] = None
     wp_modus_nicht_aufgeteilt_kwh: Optional[float] = None
     wp_modus_abdeckung_h: Optional[float] = None
+    #: **W-17b** — die Grundmenge, auf die sich die Aufteilung bezieht.
+    #: Bewusst **nicht** `wp_strom_kwh`: dort steckt auch der Strom von Geraeten
+    #: ohne Modus-Signal. Der Balken steht sonst unter einer Kachel mit einer
+    #: groesseren Zahl, ohne dass die Differenz irgendwo benannt waere
+    #: (dietmar1968, T89667 #210: Balken 30 kWh unter Kachel 284 kWh).
+    wp_modus_strom_bezug_kwh: Optional[float] = None
     #: #263 — die Aufteilung ist GEMESSEN (Betriebsart-Zähler) statt aus dem
     #: Betriebsmodus abgeleitet. Dann ist `wp_modus_abdeckung_h` 0, ohne dass
     #: etwas fehlt — ein Zähler zählt kWh, keine Stunden mit Signal.
@@ -1530,6 +1577,70 @@ async def get_aktueller_monat(
 
     wp_waerme = get_val("wp_waerme_kwh")
     wp_strom = get_val("wp_strom_kwh")
+
+    # ── Arbeitszahl aus dem Layer, nicht aus dem Client (R2/W-3) ────────────
+    #
+    # ⚠ **Der abgeleitete Anteil kommt IMMER aus den Monats-Fakten**, auch wenn
+    # die Mengen oben aus einer anderen Quelle gewonnen wurden. Er beschreibt
+    # die **Herkunft der IMD-Zeilen** dieses Monats, und die ändert sich nicht
+    # dadurch, dass eine Menge über HA-Statistik statt aus der Datenbank kam.
+    # Im Zweifel sperrt er — „unbekannt" ist besser als „falsch" (P4).
+    wp_waerme_abgeleitet_kwh = (
+        monats_fakt.wp.waerme_abgeleitet_kwh if monats_fakt is not None else 0.0
+    )
+    # ── R2: alle drei erkennbaren Lagen, über die eine Layer-Stelle ─────────
+    #
+    # **Gerät:** Trägt der Block Strom von Geräten, deren Wärme fehlt? Der Block
+    # *Wärme/Klima* aggregiert alle Wärmepumpen der Anlage — bei dietmar1968
+    # „Wärmepumpe · Klimaanlage" — und nur eines meldete Wärme.
+    #
+    # **Anwender-Angabe:** Heizstab-Strom auf dem WP-Zähler (Fall H-C) oder ein
+    # bivalenter Zweiterzeuger am selben Kreis. Beides ist aus keiner Messreihe
+    # ableitbar; die Reihenfolge (Angabe schlägt Erkennung) steht im Layer.
+    #
+    # **Zeitraum (SOLL §4.2 Fall 3):** ⭐ Diese Sicht ist die **einzige** mit
+    # Vier-Quellen-Auflösung — und `teilzeitraum` weist genau die Felder aus,
+    # deren Endwert nur einen Ausschnitt des Monats misst (#361, coolxmad #353:
+    # ein frisch eingerichteter Connector, der erst mitten im Monat zu zählen
+    # begann). Steht **genau eine** der beiden Seiten darin, tragen Q und E
+    # verschieden lange Zeiträume und der Quotient wäre einer aus zwei
+    # Wirklichkeiten.
+    #
+    # ⛔ **Bewusst kein Zählen von Tagen mit Wert.** Der naheliegende Weg —
+    # „an wie vielen Tagen des Monats gab es überhaupt eine Zahl?" — kann
+    # *„kein Wert, weil das Gerät stand"* nicht von *„kein Wert, weil der Sensor
+    # fehlte"* unterscheiden. Bei einer Wärmepumpe im Juli ist Ersteres der
+    # Normalfall; ein Wächter darauf meldete jeden Sommer bei jeder Anlage.
+    # Genau die Fehlalarm-Klasse, die §2i-6 schon einmal eingefangen hat.
+    _wp_seiten_teilzeitraum = sum(
+        1 for f in ("wp_waerme_kwh", "wp_strom_kwh") if f in teilzeitraum
+    )
+    wp_abgrenzung_verletzt = abgrenzungs_grund(
+        abgrenzung_stoerung=(
+            monats_fakt.wp.abgrenzung_stoerung if monats_fakt is not None else None
+        ),
+        geraete_ohne_waerme=(
+            monats_fakt is not None
+            and monats_fakt.wp.waerme_deckt_nicht_alle_geraete
+        ),
+        zeitraum_versetzt=_wp_seiten_teilzeitraum == 1,
+    )
+    # W-14 + E4: Der funktionsfremde Strom (Kühlen · Lüften · Entfeuchten) kommt
+    # — wie der abgeleitete Anteil darüber — IMMER aus den Monats-Fakten. Er
+    # beschreibt die Aufteilung der IMD-Zeilen dieses Monats, und die ändert sich
+    # nicht dadurch, dass eine Menge über HA-Statistik statt aus der Datenbank
+    # kam. Eine Größe statt drei Summanden: die Aufzählung an vier Aufrufern war
+    # die Bauform, an der W-14 entstanden ist.
+    wp_strom_funktionsfremd_kwh = (
+        monats_fakt.wp.modus_strom_funktionsfremd_kwh if monats_fakt is not None else 0.0
+    )
+    wp_arbeitszahl = arbeitszahl(
+        wp_waerme, wp_strom,
+        waerme_abgeleitet_kwh=wp_waerme_abgeleitet_kwh,
+        strom_funktionsfremd_kwh=wp_strom_funktionsfremd_kwh,
+        abgrenzung_verletzt=wp_abgrenzung_verletzt,
+    )
+
     if wp_waerme is not None and wp_strom is not None and allgemein_tarif:
         wp_tarif = tarife.get("waermepumpe")
         wp_preis_cent = (
@@ -1820,9 +1931,12 @@ async def get_aktueller_monat(
     wp_strom_warmwasser = None
     wp_modus_heizen = None
     wp_modus_kuehlen = None
+    wp_modus_lueften = None
+    wp_modus_entfeuchten = None
     wp_modus_rest = None
     wp_modus_abdeckung = None
     wp_modus_gemessen = None
+    wp_modus_bezug = None
     if mf_wp is not None:
         if mf_wp.heizung_kwh > 0:
             wp_heizung = round(mf_wp.heizung_kwh, 2)
@@ -1833,14 +1947,43 @@ async def get_aktueller_monat(
             # vs. "gar nicht getrennt erfasst" unterscheiden kann.
             wp_strom_heizen = round(mf_wp.strom_heizen_kwh, 2)
             wp_strom_warmwasser = round(mf_wp.strom_warmwasser_kwh, 2)
+
         # #263 K-2: derselbe Alles-oder-nichts-Grundsatz für den Modus-Split —
         # ohne erfasste Stunde gibt es keine Aufteilung statt einer 0.
         if mf_wp.hat_modus_split:
             wp_modus_heizen = round(mf_wp.modus_strom_heizen_kwh, 2)
             wp_modus_kuehlen = round(mf_wp.modus_strom_kuehlen_kwh, 2)
+            wp_modus_lueften = round(mf_wp.modus_strom_lueften_kwh, 2)
+            wp_modus_entfeuchten = round(mf_wp.modus_strom_entfeuchten_kwh, 2)
             wp_modus_rest = round(mf_wp.modus_nicht_aufgeteilt_kwh, 2)
             wp_modus_abdeckung = round(mf_wp.modus_abdeckung_h, 1)
             wp_modus_gemessen = mf_wp.modus_gemessen
+            # W-17b: die Grundmenge des Balkens, damit er nicht stumm unter
+            # einer groesseren Kachel steht.
+            wp_modus_bezug = round(mf_wp.modus_strom_bezug_kwh, 2)
+
+    # W-4 (SOLL §4.1): je Funktion eine eigene Zahl. Sie beantwortet, was die
+    # Gesamtzahl nicht kann — *warum* eine Anlage dasteht, wie sie dasteht.
+    # Warmwasser liegt bauartbedingt niedriger (höhere Zieltemperatur); wer viel
+    # Warmwasser macht, hat deshalb eine niedrigere Gesamtzahl, **ohne schlechter
+    # zu sein**. Dieselben R2-Sperren, weil dieselbe Layer-Funktion gerufen wird.
+    # W-5 (SOLL §4.1): Kältemenge ÷ Kühlstrom. Beide Größen nur gemessen — es
+    # gibt keinen Weg, eine Kältemenge abzuleiten. Heißt bewusst NICHT „SEER"
+    # (genormte Prüfstandsgröße), sondern „Arbeitszahl Kühlen".
+    wp_az_kuehlen = arbeitszahl_kuehlen(
+        mf_wp.nutzenergie_kuehlen_kwh if mf_wp is not None else None,
+        mf_wp.modus_strom_kuehlen_kwh if mf_wp is not None else None,
+        abgrenzung_verletzt=wp_abgrenzung_verletzt,
+    )
+    wp_az_funktion = arbeitszahl_je_funktion(
+        heizung_kwh=wp_heizung,
+        strom_heizen_kwh=wp_strom_heizen,
+        warmwasser_kwh=wp_warmwasser,
+        strom_warmwasser_kwh=wp_strom_warmwasser,
+        hat_split=bool(mf_wp is not None and mf_wp.hat_split),
+        waerme_abgeleitet_kwh=wp_waerme_abgeleitet_kwh,
+        abgrenzung_verletzt=wp_abgrenzung_verletzt,
+    )
 
     # E-Mobilität: PV/Netz/Extern-Split + V2H
     emob_pv = get_val("emob_pv_ladung_kwh")
@@ -2255,12 +2398,25 @@ async def get_aktueller_monat(
         wp_waerme_kwh=get_val("wp_waerme_kwh"),
         wp_heizung_kwh=wp_heizung,
         wp_warmwasser_kwh=wp_warmwasser,
+        wp_jaz=wp_arbeitszahl.wert,
+        wp_jaz_grund=wp_arbeitszahl.grund,
+        wp_jaz_hinweis=wp_arbeitszahl.hinweis,
+        wp_waerme_abgeleitet=wp_waerme_abgeleitet_kwh > 0,
         wp_strom_heizen_kwh=wp_strom_heizen,
         wp_strom_warmwasser_kwh=wp_strom_warmwasser,
         wp_modus_strom_heizen_kwh=wp_modus_heizen,
         wp_modus_strom_kuehlen_kwh=wp_modus_kuehlen,
+        wp_jaz_heizen=wp_az_funktion.heizen.wert,
+        wp_jaz_heizen_grund=wp_az_funktion.heizen.grund,
+        wp_jaz_warmwasser=wp_az_funktion.warmwasser.wert,
+        wp_jaz_warmwasser_grund=wp_az_funktion.warmwasser.grund,
+        wp_jaz_kuehlen=wp_az_kuehlen.wert,
+        wp_jaz_kuehlen_grund=wp_az_kuehlen.grund,
+        wp_modus_strom_lueften_kwh=wp_modus_lueften,
+        wp_modus_strom_entfeuchten_kwh=wp_modus_entfeuchten,
         wp_modus_nicht_aufgeteilt_kwh=wp_modus_rest,
         wp_modus_abdeckung_h=wp_modus_abdeckung,
+        wp_modus_strom_bezug_kwh=wp_modus_bezug,
         wp_modus_gemessen=wp_modus_gemessen,
         wp_starts_max_tag=wp_starts_max_tag,
         wp_starts_summe_monat=wp_starts_summe_monat,

@@ -2,6 +2,8 @@
 
 **Version 4.0** | Stand: 2026-07-25 — Referenz für UI-Beschreibungen in der Datenquellen-Zuordnung und im MQTT-Setup
 
+> Siehe auch: [Wärme & Klima](HANDBUCH_WAERME_KLIMA.md) — welcher der Wärmepumpen-Zähler unten welche Kennzahl möglich macht, und was ohne ihn passiert.
+
 > **Single Source of Truth:** Die Feld-Hilfetexte (Spalte „Beschreibung") werden im Code als `hinweis`-Attribut in `backend/core/field_definitions.py` gepflegt und über `GET /api/monatsdaten/feld-hinweise` an die Datenquellen-Zuordnung ausgeliefert. Diese Referenz und die `hinweis`-Texte konsistent halten. Die Export-Sensoren (§8a, §11) spiegeln `backend/services/ha_sensors_export.py` bzw. `GET /api/ha/export/definitions`.
 
 ## Legende
@@ -190,6 +192,7 @@ eigene Speicher-Investition erfasst und publiziert unter deren ID auf
 | `leistung_w` | Leistung | W | Momentan | Aktuelle elektrische Leistungsaufnahme der WP. Muss ≥ 0 sein. Alternativ: getrennte Sensoren (s.u.). |
 | `leistung_heizen_w` | Leistung Heizen | W | Momentan | Nur bei getrennter Messung: Leistungsaufnahme Heizbetrieb. Optional. |
 | `leistung_warmwasser_w` | Leistung Warmwasser | W | Momentan | Nur bei getrennter Messung: Leistungsaufnahme Warmwasser. Optional. |
+| `leistung_kuehlen_w` | Leistung Kühlen | W | Momentan | Nur bei getrennter Messung: Leistungsaufnahme Kühlbetrieb. Optional, reine Anzeige — die Mengen kommen aus dem kWh-Zähler. |
 | `warmwasser_temperatur_c` | Warmwassertemperatur | °C | Momentan | Aktuelle Warmwassertemperatur. Optional, wird als Gauge angezeigt. |
 
 ### MQTT Energy Topics
@@ -201,14 +204,32 @@ eigene Speicher-Investition erfasst und publiziert unter deren ID auf
 | `eedc/.../energy/inv/{inv_id}_{name}/warmwasser_kwh` | `warmwasser_kwh` | |
 | ⚠️ `strom_heizen_kwh` / `strom_warmwasser_kwh` | — | **Kein MQTT-Topic** — nur via HA-Sensor |
 
-### 4a. Split-Klimaanlage: Verbrauch je Betriebsart und je Innengerät
+### 4a. Verbrauch je Betriebsart und je Innengerät
 
-> Gilt nur für Wärmepumpen mit **Wärmepumpenart „Luft-Luft (Klimaanlage)"**.
+> **Bei einer Klimaanlage stehen diese Felder gleich mit da.** An jeder anderen
+> Wärmepumpenart findest du sie unter *Einstellungen → Datenquellen* beim Gerät
+> hinter **„Weitere Größen erfassen"** — sie sind dort seltener, aber genauso
+> zuordenbar. Wer einen getrennten Kühlzähler an seiner
+> Luft-Wasser- oder Sole-Wasser-Wärmepumpe hat, trägt ihn dort ein; sobald ein
+> Sensor zugeordnet ist, steht das Feld oben bei den anderen.
+>
 > Alle Felder sind **optional**: kein Sensor, keine Anzeige.
 
-Eine Klimaanlage heizt, kühlt, lüftet und entfeuchtet über **denselben** Zähler.
-Wer die vier Anteile getrennt messen kann, trägt sie hier ein — sie sind
-**Teilmengen** des Gesamtverbrauchs und werden nie dazuaddiert.
+Ein Gerät, das heizt, kühlt, lüftet und entfeuchtet, tut das oft über
+**denselben** Zähler. Wer die Anteile getrennt messen kann, trägt sie hier ein —
+sie sind **Teilmengen** des Gesamtverbrauchs und werden nie dazuaddiert.
+
+⚠️ **Kühlen, Lüften und Entfeuchten zählen nicht in die Arbeitszahl.** Sie
+erzeugen keine Wärme, die sich messen ließe; läge ihr Strom im Nenner, sähe eine
+Anlage, die im Sommer kühlt oder viel lüftet, wie eine schlechte Heizung aus.
+Für Wirtschaftlichkeit und CO₂ gilt beim Kühlen dasselbe schon länger. Ist der
+ganze Verbrauch eines Zeitraums Kühlbetrieb, steht statt der Arbeitszahl der
+Grund dafür.
+
+**Lüften und Entfeuchten bekommen eine eigene Zeile in der Aufteilung, sobald du
+einen Zähler dafür zugeordnet hast** — vorher stecken sie in „nicht aufgeteilt".
+Eine Kennzahl bekommen sie bewusst nicht: Es gibt keine Nutzenergie, gegen die
+man sie rechnen könnte.
 
 | Feld | Label | Einheit | Sensortyp |
 |------|-------|---------|-----------|
@@ -218,6 +239,14 @@ Wer die vier Anteile getrennt messen kann, trägt sie hier ein — sie sind
 | `betriebsart_strom_entfeuchten_kwh` | Strom Entfeuchtungsbetrieb | kWh | Kumulativ oder Tagessensor |
 | `betriebsart_nutzenergie_*_kwh` | Nutzenergie je Betriebsart | kWh | Kumulativ, **thermisch** |
 | `soll_temperatur_c` / `ist_temperatur_c` | Soll-/Raumtemperatur | °C | Momentan, reine Anzeige |
+
+> **`betriebsart_nutzenergie_kuehlen_kwh` ist die Kältemenge — und der einzige
+> Zähler, der die *Arbeitszahl Kühlen* möglich macht** (Kältemenge ÷ Kühlstrom).
+> Ohne ihn steht dort der Grund statt einer Zahl; geschätzt wird nichts, weil aus
+> einem angenommenen Wirkungsgrad genau der Faktor zurückkäme, mit dem gerechnet
+> wurde. **Sie heißt bewusst nicht „SEER"** — das ist eine genormte
+> Prüfstandsgröße, dies hier ist der Quotient deiner beiden Zähler. Ausführlich:
+> [Wärme & Klima §3](HANDBUCH_WAERME_KLIMA.md#3-was-eedc-bewusst-nicht-sagt).
 
 **Mehrere Innengeräte (Multisplit):** Trag sie beim Gerät unter *Innengeräte*
 ein (Bezeichnung, z. B. „Büro"). Danach gibt es **jedes** der Felder oben

@@ -17,6 +17,9 @@ from backend.core.berechnungen import (
     einspeise_erloes_euro,
     speicher_wirkungsgrad,
 )
+from backend.core.berechnungen.waermepumpe_kennzahl import (
+    abgrenzungs_grund, arbeitszahl,
+)
 from backend.api.routes.cockpit._shared import MONATSNAMEN
 from backend.services.monats_fakten import MonatsFakt, lade_monats_fakten
 from backend.services.wp_wirtschaftlichkeit import berechne_wp_ersparnis
@@ -75,6 +78,12 @@ class KomponentenMonat(BaseModel):
     wp_modus_strom_kuehlen_kwh: Optional[float] = None
     wp_modus_nicht_aufgeteilt_kwh: Optional[float] = None
     wp_modus_abdeckung_h: Optional[float] = None
+    #: **W-17b** — die Grundmenge, auf die sich die Aufteilung bezieht.
+    #: Bewusst **nicht** `wp_strom_kwh`: dort steckt auch der Strom von Geraeten
+    #: ohne Modus-Signal. Der Balken steht sonst unter einer Kachel mit einer
+    #: groesseren Zahl, ohne dass die Differenz irgendwo benannt waere
+    #: (dietmar1968, T89667 #210: Balken 30 kWh unter Kachel 284 kWh).
+    wp_modus_strom_bezug_kwh: Optional[float] = None
     #: Ist die Heizwärme aus `Strom × JAZ` abgeleitet statt gemessen? Der Client
     #: kennzeichnet sie damit — dieselbe Trennung wie „geschätzt (kWp-Anteil)"
     #: bei der PV-Verteilung.
@@ -210,12 +219,27 @@ async def get_komponenten_zeitreihe(
         # Mengengewichteter Ø Ladepreis (nur Zeilen mit gepflegtem Preis).
         speicher_arbitrage_preis = speicher.netzladung_preis_cent
 
-        # JAZ/COP nur wenn beide Seiten **gemessen** sind (siehe uebersicht.py
-        # für die Erklärung — kein Wärmemengenzähler, oder die Wärme ist aus
-        # `Strom × JAZ` abgeleitet; #263 K-2, Konzept §3.5).
-        wp_cop = (
-            wp.waerme_kwh / wp.strom_kwh
-        ) if wp.strom_kwh > 0 and wp.waerme_kwh > 0 and wp.jaz_belastbar else None
+        # JAZ/COP nur wenn beide Seiten **gemessen** sind — die Sperre (R2)
+        # steht seit 2026-08-26 im Layer (`berechnungen.waermepumpe_kennzahl`),
+        # nicht mehr an drei Stellen nebeneinander.
+        wp_cop = arbeitszahl(
+            wp.waerme_kwh, wp.strom_kwh,
+            waerme_abgeleitet_kwh=wp.waerme_abgeleitet_kwh,
+            # W-14 + E4: Strom in Funktionen ohne bewertete Nutzenergie gehört
+            # nicht in den Nenner einer Wärme-Kennzahl — dieselbe Abgrenzung, die
+            # Ersparnis und CO₂ seit v4.0.5 ziehen (E-B). Kühlen, Lüften und
+            # Entfeuchten stehen dafür in EINER Größe: die Aufzählung an vier
+            # Aufrufern war die Bauform, an der W-14 entstanden ist.
+            strom_funktionsfremd_kwh=wp.modus_strom_funktionsfremd_kwh,
+            # R2: alle erkennbaren Lagen über die eine Layer-Stelle. Der
+            # Zeitraum-Versatz gehört nicht dazu — der Hub liest EINE Quelle
+            # (die Monats-Fakten), die Vier-Quellen-Auflösung gibt es nur in
+            # `aktueller_monat`.
+            abgrenzung_verletzt=abgrenzungs_grund(
+                abgrenzung_stoerung=wp.abgrenzung_stoerung,
+                geraete_ohne_waerme=wp.waerme_deckt_nicht_alle_geraete,
+            ),
+        ).wert
 
         emob_pv_anteil = (
             emob.ladung_pv_kwh / emob.ladung_kwh * 100
@@ -293,6 +317,11 @@ async def get_komponenten_zeitreihe(
             ),
             wp_modus_abdeckung_h=(
                 round(wp.modus_abdeckung_h, 1) if wp.hat_modus_split else None
+            ),
+            # W-17b: dieselbe Grundmenge wie in Monat und Tag — der Balken
+            # nennt sie in jeder Sicht oder in keiner.
+            wp_modus_strom_bezug_kwh=(
+                round(wp.modus_strom_bezug_kwh, 1) if wp.hat_modus_split else None
             ),
             wp_waerme_abgeleitet=not wp.jaz_belastbar,
             wp_ersparnis_euro=round(m_wp_ersparnis, 2),

@@ -1,0 +1,725 @@
+"""SOLL Wärme/Klima — **nachgestellte Anlagen**: kommt die Kennzahl bis zur Route an?
+
+## Warum diese Datei neben den sechs SOLL-Wächtern steht
+
+Die Wächter `test_soll_waerme_klima_achse*` und `…_w4/_w5/_e4` prüfen **Regeln
+und Formeln**: Sie rufen `arbeitszahl(...)` bzw. bauen `WpFakten(...)` und
+fragen, ob der Layer richtig rechnet. Gemessen am 2026-08-26: keine der drei
+zuletzt gebauten Dateien (E4 · W-4 · W-5) enthält auch nur einen Treffer für
+`Anlage(`, `InvestitionMonatsdaten(`, `client.get` oder `AsyncSession`.
+
+**Hier steht die andere Frage:** Kommt die Zahl bei einer *echten Datenlage* auf
+der *echten Fläche* an — vom Feld in `verbrauch_daten` über die Monats-Fakten
+bis in die Antwort der Route?
+
+⭐ **Warum das auf dieser Fläche mehr wiegt als anderswo.** Bei jeder anderen
+Größe ist der Maintainer die letzte Instanz: Er sieht seine Anlage und merkt,
+wenn eine Zahl nicht stimmt. Hier nicht — er besitzt weder Wärmepumpe noch
+Klimaanlage noch Heizstab. **Diese nachgestellten Anlagen sind der Ersatz für
+den fehlenden Gegenprüfer**, nicht eine zusätzliche Bequemlichkeit.
+
+## Die belegte Lücke, die diese Datei schließt
+
+| Größe | Layer geprüft | Route geprüft (vorher) |
+| --- | --- | --- |
+| **E4** Lüften/Entfeuchten in der Aufteilung | ✓ | ✓ `test_263_innengeraete_varianten` |
+| **E4** dieselben fallen aus dem **Nenner** | ✓ | ✗ |
+| **W-4** `jaz_heizen` / `jaz_warmwasser` | ✓ | ✗ — **kein einziger Backend-Treffer** |
+| **W-5** `jaz_kuehlen` | ✓ | ✗ |
+
+## Die vier Anlagen — jede bildet eine reale Bauform ab
+
+Sie sind **nicht erfunden**: A1–A3 stammen aus dem Forum-Thread 89667 vom
+25./26.08.2026, A4 ist der Fall, für den W-5 überhaupt gebaut wurde.
+
+| | Bauform | Was sie beweisen muss |
+| --- | --- | --- |
+| **A1** | Luft-Wasser-WP **+** Luft-Luft-Klimaanlage; nur die WP meldet Wärme | Die anlagenweite Arbeitszahl **fällt weg** und wird durch den Grund ersetzt — das **einzelne** Gerät behält seine Zahl |
+| **A2** | drei getrennte Zähler (Heizung · Warmwasser · Kühlen), Strom je Funktion | `jaz_heizen` und `jaz_warmwasser` erscheinen **getrennt**; der Kühlstrom steht in **keinem** der Nenner |
+| **A3** | eine WP, kühlt ohne getrennte Messung | Keine Aufteilung, keine Kühl-Kennzahl — und die Gesamtzahl bleibt **unverfälscht** |
+| **A4** | WP mit **Kältemengenzähler** | `jaz_kuehlen` erscheint; ohne den Zähler steht dort ein **Grund** statt einer Zahl |
+
+⛔ **Die Erwartungen sind von Hand gerechnet und stehen als Formel im Kommentar,
+nicht als eingefrorener Messwert.** Eine Probe, die den heutigen Ausgabewert
+festschreibt, bestätigt jeden Fehler, den er schon enthält — genau der Fehler,
+der am 26.08. an der ersten W-5-Probe gefunden wurde (sie baute `WpFakten`
+direkt und blieb bei der Gegenprobe grün).
+
+## Was diese Datei gefunden hat
+
+Beim ersten Lauf waren zwei Proben rot — und beide Male hatte die **Probe** recht.
+Die drei Befunde stehen im Flächen-Register `~/.claude/plans/ist-waerme-klima.md` §6
+als **W-15** (Hub rechnet selbst · 2,31 gegen 3,00 · weder Grund noch Heizstab-Hinweis),
+**W-16** (Kühlstrom fehlt im WP-Verbrauch) und **W-16b** (derselbe Strom zweimal
+abgezogen). Die betroffenen Proben tragen sie als OFFEN und melden sich beim Bau.
+
+Schwesterdateien: `test_soll_waerme_klima_w4_arbeitszahl_je_funktion.py` ·
+`test_soll_waerme_klima_w5_arbeitszahl_kuehlen.py` ·
+`test_soll_waerme_klima_e4_lueften_entfeuchten.py` ·
+`test_263_innengeraete_varianten.py` (dasselbe Matrix-Muster, andere Achse).
+"""
+
+from __future__ import annotations
+
+from datetime import date, datetime, timedelta
+
+import pytest
+
+from backend.core.berechnungen.waermepumpe_kennzahl import (
+    GRUND_GERAETE_OHNE_WAERME,
+)
+from backend.models import Anlage, Investition  # noqa: F401  (Base.metadata)
+from backend.models.investition import InvestitionMonatsdaten  # noqa: F401
+from backend.models.mqtt_gateway_mapping import MqttGatewayMapping  # noqa: F401
+from backend.models.tages_energie_profil import (  # noqa: F401
+    TagesEnergieProfil,
+    TagesZusammenfassung,
+)
+
+JAHR, MONAT = 2025, 7
+
+
+# ─── Fixture-Bau ────────────────────────────────────────────────────────────
+
+async def _anlage(db, name: str) -> Anlage:
+    a = Anlage(anlagenname=name, leistung_kwp=10.0,
+               installationsdatum=date(2025, 1, 1))
+    db.add(a)
+    await db.flush()
+    return a
+
+
+async def _geraet(db, anlage, bezeichnung: str, parameter: dict, daten: dict):
+    inv = Investition(
+        anlage_id=anlage.id, typ="waermepumpe", bezeichnung=bezeichnung,
+        anschaffungsdatum=date(2025, 1, 1), anschaffungskosten_gesamt=12000.0,
+        parameter=parameter,
+    )
+    db.add(inv)
+    await db.flush()
+    db.add(InvestitionMonatsdaten(
+        investition_id=inv.id, jahr=JAHR, monat=MONAT, verbrauch_daten=daten,
+    ))
+    return inv
+
+
+async def _hub(db, anlage_id):
+    from backend.api.routes.investitionen.dashboards import get_waermepumpe_dashboard
+    return await get_waermepumpe_dashboard(anlage_id, strompreis_cent=30.0, db=db)
+
+
+async def _monat(db, anlage_id):
+    from backend.api.routes.aktueller_monat import get_aktueller_monat
+    return await get_aktueller_monat(anlage_id, jahr=JAHR, monat=MONAT, db=db)
+
+
+# ═══ A1 — dietmar1968: WP meldet Wärme, Klimaanlage nicht ═══════════════════
+#
+# Forum 89667 #201: „Ist es nicht sinnvoller die Luft Wasser Wärmepumpe von der
+# Luft Luft Klimaanlage komplett zu trennen und jenes nicht zu vermischen."
+#
+# Zahlen: WP 3000 kWh Wärme auf 800 kWh Strom · Klimaanlage 200 kWh Strom, keine
+# Wärme. Anlagenweit stünden 3000 ÷ 1000 = 3,0 — eine Zahl, die es nicht geben
+# darf, weil im Nenner der Strom von zwei Geräten und im Zähler die Wärme von
+# einem steht.
+
+async def _baue_a1(db):
+    a = await _anlage(db, "A1 dietmar")
+    wp = await _geraet(db, a, "Wärmepumpe",
+                       {"wp_art": "luft_wasser", "effizienz_modus": "gesamt_jaz"},
+                       {"stromverbrauch_kwh": 800.0, "heizenergie_kwh": 3000.0})
+    await _geraet(db, a, "Klimaanlage",
+                  {"wp_art": "luft_luft", "effizienz_modus": "gesamt_jaz"},
+                  {"stromverbrauch_kwh": 200.0})
+    await db.commit()
+    return a, wp
+
+
+async def test_a1_anlagenweite_arbeitszahl_faellt_weg_mit_grund(db):
+    """Die vermischte Zahl darf NICHT erscheinen — der Grund tritt an ihre Stelle."""
+    a, _wp = await _baue_a1(db)
+    antwort = await _monat(db, a.id)
+
+    assert antwort.wp_jaz is None, (
+        "3000 ÷ 1000 = 3,0 wurde gebildet, obwohl die Klimaanlage keine Wärme "
+        "meldet — genau die Vermischung, die dietmar1968 gemeldet hat")
+    assert antwort.wp_jaz_grund == GRUND_GERAETE_OHNE_WAERME
+
+
+async def test_a1_die_mengen_bleiben_unveraendert(db):
+    """Gesperrt wird die Kennzahl, nicht die Messung (SOLL §3.2b)."""
+    a, _wp = await _baue_a1(db)
+    antwort = await _monat(db, a.id)
+
+    assert antwort.wp_strom_kwh == pytest.approx(1000.0), "800 + 200"
+    assert antwort.wp_waerme_kwh == pytest.approx(3000.0)
+
+
+async def test_a1_das_einzelne_geraet_behaelt_seine_zahl(db):
+    """⭐ Die anlagenweite Sperre ist am EINZELNEN Gerät gegenstandslos.
+
+    Diese Probe hält die Zusage fest, die dem Melder gegeben wird: Unter
+    *Komponenten → Wärmepumpe* steht jedes Gerät einzeln — und dort ist die
+    Wärmepumpe für sich sauber abgegrenzt (3000 ÷ 800 = 3,75).
+    """
+    a, _wp = await _baue_a1(db)
+    blocks = await _hub(db, a.id)
+
+    wp_block = next(b for b in blocks if b.investition.bezeichnung == "Wärmepumpe")
+    # ⚠ Der Schlüssel heißt im Hub `durchschnitt_cop` — der alte Name, den W-4
+    # bei den Funktions-Kennzahlen gerade abgelöst hat (`cop_*` → `jaz_*`).
+    # Die Gesamt-Kennzahl trägt ihn weiter; s. W-15.
+    assert wp_block.zusammenfassung.get("durchschnitt_cop") == pytest.approx(3.75), (
+        "3000 ÷ 800 — die Klimaanlage gehört nicht in diese Rechnung")
+
+
+# ═══ A2 — MartyBr: drei getrennte Zähler ═══════════════════════════════════
+#
+# Forum 89667 #200: „Ich habe getrennte Zähler für Heizung, Warmwassererwärmung
+# … und seit dem Sommer auch für den Kühlbetrieb."
+#
+# Zahlen: Heizen 3000 kWh Wärme auf 750 kWh Strom (JAZ 4,0) · Warmwasser
+# 600 kWh auf 200 kWh (JAZ 3,0) · Kühlen 100 kWh Strom ohne Kältemenge.
+# Gesamtstrom 1050 kWh. Die Gesamt-Arbeitszahl rechnet 3600 ÷ (1050 − 100).
+
+_A2_DATEN = {
+    "stromverbrauch_kwh": 1050.0,
+    "heizenergie_kwh": 3000.0,
+    "strom_heizen_kwh": 750.0,
+    "warmwasser_kwh": 600.0,
+    "strom_warmwasser_kwh": 200.0,
+    "betriebsart_strom_heizen_kwh": 950.0,
+    "betriebsart_strom_kuehlen_kwh": 100.0,
+}
+
+
+async def _baue_a2(db):
+    a = await _anlage(db, "A2 MartyBr")
+    wp = await _geraet(db, a, "Wärmepumpe",
+                       {"wp_art": "luft_wasser", "effizienz_modus": "gesamt_jaz",
+                        "getrennte_strommessung": True},
+                       dict(_A2_DATEN))
+    await db.commit()
+    return a, wp
+
+
+async def test_a2_jaz_je_funktion_erscheint_im_hub(db):
+    """W-4: zwei getrennte Zahlen, nicht eine gemittelte."""
+    a, _wp = await _baue_a2(db)
+    z = (await _hub(db, a.id))[0].zusammenfassung
+
+    assert z.get("jaz_heizen") == pytest.approx(4.0), "3000 ÷ 750"
+    assert z.get("jaz_warmwasser") == pytest.approx(3.0), "600 ÷ 200"
+
+
+async def test_a2_jaz_je_funktion_erscheint_auch_im_cockpit(db):
+    """W-4: dieselbe Anlage darf auf zwei Flächen nicht zwei Aussagen tragen.
+
+    Bis zum 26.08. gab es die getrennten Zahlen **nur** im Hub — im Cockpit
+    fehlten sie ganz, obwohl dieselben Daten dort vorliegen.
+    """
+    a, _wp = await _baue_a2(db)
+    antwort = await _monat(db, a.id)
+
+    assert antwort.wp_jaz_heizen == pytest.approx(4.0)
+    assert antwort.wp_jaz_warmwasser == pytest.approx(3.0)
+
+
+async def test_a2_kuehlstrom_steht_in_keinem_nenner(db):
+    """✅ **W-16b gebaut (26.08.): der Kühlstrom wird genau EINMAL abgezogen.**
+
+    **3600 ÷ 950 = 3,789.** Der Nenner ist der Strom für Heizen und Warmwasser;
+    der Kühlstrom (100 kWh) gehört nicht hinein — aber auch nicht zweimal weg.
+
+    **Vorher: 3600 ÷ 850 = 4,235** — die Anlage sah **12 % besser** aus, als
+    sie ist.
+
+    **Ursache, am Code gemessen:** Bei ``getrennte_strommessung=True`` bildet
+    ``get_wp_strom_kwh`` (``field_definitions.py:2467``) den Gesamtstrom aus
+    ``strom_heizen_kwh + strom_warmwasser_kwh`` = 950 und **ignoriert**
+    ``stromverbrauch_kwh`` bewusst (#183). Der Kühlstrom ist darin also nie
+    enthalten — ``arbeitszahl(...)`` zieht ihn über
+    ``strom_funktionsfremd_kwh`` trotzdem ab.
+
+    ⭐ **Genau davor warnt der Docstring von ``arbeitszahl_je_funktion``**
+    („Ihn hier abzuziehen zöge dieselbe Menge zweimal ab") — für die
+    Funktions-Kennzahlen wurde die Falle gesehen, für die Gesamtzahl nicht.
+
+    ⚠ **Der Abzug ist nicht generell falsch:** Ohne getrennte Strommessung
+    kommt der Nenner aus ``stromverbrauch_kwh`` und enthält den Kühlstrom
+    sehr wohl — dort ist der Abzug richtig (A4 belegt das). Die Bedingung
+    fehlt, nicht der Abzug.
+
+    ⭐ **Diese Probe hat den Befund gefunden.** Sie stand zuerst auf der
+    Soll-Zeile, wurde rot — und beim Nachmessen hatte sie recht, nicht der
+    Code. Der Gegenbeweis steht in `test_a4_der_kuehlstrom_bleibt_aus_der_heiz_kennzahl`:
+    **ohne** getrennte Strommessung ist derselbe Abzug richtig.
+    """
+    a, _wp = await _baue_a2(db)
+    antwort = await _monat(db, a.id)
+
+    assert antwort.wp_jaz == pytest.approx(3600.0 / 950.0, rel=1e-3)
+    assert antwort.wp_jaz != pytest.approx(3600.0 / 850.0, rel=1e-3), (
+        "der doppelte Abzug ist zurück")
+
+
+async def test_a2_der_wp_stromverbrauch_verliert_den_kuehlstrom(db):
+    """✅ **W-16 gebaut (26.08.): der Kühlstrom zählt im WP-Verbrauch mit.**
+
+    Dieselbe Ursache wie W-16b, aber eine Ebene früher und mit größerer Reichweite:
+    ``get_wp_strom_kwh`` summiert bei getrennter Strommessung nur Heizen und
+    Warmwasser. Wer **zusätzlich** einen Kühlzähler führt — die Bauform, die
+    R1/W-2 gerade erst an jeder Wärmepumpe möglich gemacht hat —, dessen
+    Kühlstrom taucht im WP-Stromverbrauch **gar nicht** auf.
+
+    **1050 kWh** = 750 (Heizen) + 200 (Warmwasser) + 100 (Kühlen). Vorher
+    standen dort 950 kWh — und das trug in alles weiter, was auf dem
+    WP-Stromverbrauch aufsetzt: Kosten, CO₂, Anteil an der Verbrauchsseite.
+
+    ⚠ **Addiert wird nur ein GEMESSENER Betriebsart-Split.** Ein abgeleiteter
+    verteilt den vorhandenen Gesamtstrom und ist in den 950 bereits enthalten;
+    ihn zu addieren wäre dieselbe Doppelzählung, nur andersherum.
+    """
+    a, _wp = await _baue_a2(db)
+    antwort = await _monat(db, a.id)
+
+    assert antwort.wp_strom_kwh == pytest.approx(1050.0)
+
+
+async def test_a2_der_hub_traegt_grund_und_heizstab_hinweis(db):
+    """✅ **W-15/W-6: Der Hub liefert jetzt auch Grund und Hinweis.**
+
+    ⭐ **Diese Probe deckt eine Melder-Zusage.** Die Antwort an dietmar1968
+    sagt wörtlich: *„Schaust du unter Komponenten → Wärmepumpe auf das einzelne
+    Gerät, gibt es dort eine Arbeitszahl — und die trägt dann genau diesen
+    Heizstab-Satz."* Bis zum 26.08. gab es `wp_jaz_hinweis` **nur** im Cockpit;
+    im Hub kein einziges Vorkommen. Die Zusage war ungedeckt.
+
+    Geprüft wird die **Anwesenheit der Schlüssel**, nicht ein Textinhalt — der
+    Wortlaut gehört dem Layer (`HEIZSTAB_HINWEIS`), und ihn hier zu wiederholen
+    wäre eine zweite Wahrheit.
+    """
+    a, _wp = await _baue_a2(db)
+    z = (await _hub(db, a.id))[0].zusammenfassung
+
+    assert "durchschnitt_cop_grund" in z
+    assert "durchschnitt_cop_hinweis" in z
+
+
+# ═══ A3 — rapahl: kühlt, misst es aber nicht getrennt ══════════════════════
+#
+# Forum 89667 #202: „Kühlen über die Wärmepumpe erfasse ich nicht getrennt. …
+# Ich weiß aber gar nicht, was ich mit diesen Informationen sollte."
+#
+# Die Zusage an ihn lautet: Wer nicht getrennt misst, verliert nichts — der
+# Kühlstrom steckt im Gesamtverbrauch. Diese Probe hält fest, dass eedc dann
+# auch keine Aufteilung und keine Kühl-Kennzahl erfindet.
+
+async def _baue_a3(db):
+    a = await _anlage(db, "A3 rapahl")
+    wp = await _geraet(db, a, "Wärmepumpe",
+                       {"wp_art": "luft_wasser", "effizienz_modus": "gesamt_jaz"},
+                       {"stromverbrauch_kwh": 1000.0, "heizenergie_kwh": 3500.0})
+    await db.commit()
+    return a, wp
+
+
+async def test_a3_ohne_getrennte_messung_keine_erfundene_aufteilung(db):
+    a, _wp = await _baue_a3(db)
+    antwort = await _monat(db, a.id)
+
+    assert antwort.wp_modus_strom_kuehlen_kwh is None
+    assert antwort.wp_jaz_kuehlen is None, (
+        "eine Kühl-Kennzahl ohne jede Kühl-Messung wäre erfunden")
+
+
+async def test_a3_die_gesamtzahl_bleibt_unverfaelscht(db):
+    """3500 ÷ 1000 = 3,5 — nichts wird abgezogen, was nicht gemessen ist."""
+    a, _wp = await _baue_a3(db)
+    antwort = await _monat(db, a.id)
+
+    assert antwort.wp_jaz == pytest.approx(3.5)
+
+
+# ═══ A4 — Kältemengenzähler: der Fall, für den W-5 gebaut wurde ════════════
+#
+# Zahlen: 900 kWh abgeführte Kälte auf 300 kWh Kühlstrom ⇒ Arbeitszahl 3,0.
+
+_A4_DATEN = {
+    "stromverbrauch_kwh": 1300.0,
+    "heizenergie_kwh": 3000.0,
+    "betriebsart_strom_heizen_kwh": 1000.0,
+    "betriebsart_strom_kuehlen_kwh": 300.0,
+    "betriebsart_nutzenergie_kuehlen_kwh": 900.0,
+}
+
+
+async def _baue_a4(db, mit_kaeltemenge: bool):
+    daten = dict(_A4_DATEN)
+    if not mit_kaeltemenge:
+        daten.pop("betriebsart_nutzenergie_kuehlen_kwh")
+    a = await _anlage(db, "A4 Kaeltemenge")
+    wp = await _geraet(db, a, "Wärmepumpe",
+                       {"wp_art": "luft_wasser", "effizienz_modus": "gesamt_jaz"},
+                       daten)
+    await db.commit()
+    return a, wp
+
+
+async def test_a4_arbeitszahl_kuehlen_erscheint_im_hub(db):
+    """W-5: 900 ÷ 300 = 3,0 — der Quotient zweier Zähler, kein Schätzwert."""
+    a, _wp = await _baue_a4(db, mit_kaeltemenge=True)
+    z = (await _hub(db, a.id))[0].zusammenfassung
+
+    assert z.get("jaz_kuehlen") == pytest.approx(3.0)
+
+
+async def test_a4_arbeitszahl_kuehlen_erscheint_auch_im_cockpit(db):
+    a, _wp = await _baue_a4(db, mit_kaeltemenge=True)
+    antwort = await _monat(db, a.id)
+
+    assert antwort.wp_jaz_kuehlen == pytest.approx(3.0)
+
+
+async def test_a4_ohne_kaeltemengenzaehler_steht_dort_ein_grund(db):
+    """⭐ Kein geschätzter Wert und keine 0 — beides wäre eine Falschaussage.
+
+    Eine 0 hieße „Arbeitszahl null" statt „unbekannt" (ADR-002/P4), und ein
+    aus einem angenommenen Wirkungsgrad gerechneter Wert gäbe genau den
+    Faktor zurück, mit dem gerechnet wurde.
+    """
+    a, _wp = await _baue_a4(db, mit_kaeltemenge=False)
+    antwort = await _monat(db, a.id)
+
+    assert antwort.wp_jaz_kuehlen is None
+    assert antwort.wp_jaz_kuehlen_grund, (
+        "ohne Zahl muss der Grund dastehen, sonst ist die Lücke stumm")
+
+
+async def test_a4_hub_und_cockpit_nennen_dieselbe_arbeitszahl(db):
+    """✅ **W-15 gebaut (26.08.): beide Flächen nennen dieselbe Zahl.**
+
+    **3,00 auf beiden** (3000 ÷ 1000). Vorher sagte der Komponenten-Hub
+    **2,31** (3000 ÷ 1300, Kühlstrom im Nenner) — dieselbe Anlage, derselbe
+    Monat, zwei Aussagen.
+
+    **Ursache:** ``dashboards.py:893`` rechnet
+    ``durchschnitt_cop = gesamt_waerme / gesamt_strom`` **selbst**, statt
+    ``arbeitszahl(...)`` zu rufen. Damit fehlen dort **alle** R2-Sperren außer
+    der abgeleiteten Wärme: kein Abzug des funktionsfremden Stroms, keine
+    Anwender-Angabe „Fremdanteil auf den Zählern", kein Zeitraum-Versatz.
+
+    ⭐ **Das ist wortgleich die Mängelliste von W-4** — nur an der
+    Gesamt-Kennzahl statt an den Funktions-Kennzahlen. W-4 hat ``cop_heizen``
+    und ``cop_warmwasser`` auf den Layer gehoben und ``durchschnitt_cop``
+    daneben stehen lassen. Der Widerspruch ist dadurch **sichtbarer** geworden:
+    Im selben Block steht jetzt „JAZ Kühlen 3,0" (Layer, richtig) neben
+    „JAZ 2,31" (selbst gerechnet, falsch).
+
+    ⭐ **Die Probe prüft die Gleichheit, nicht zwei Einzelwerte.** Eine
+    Kennzahl, die auf zwei Flächen aus derselben Quelle kommt, darf nie wieder
+    auseinanderlaufen — auch nicht auf einen anderen, ebenfalls plausiblen Wert.
+    """
+    a, _wp = await _baue_a4(db, mit_kaeltemenge=True)
+    z = (await _hub(db, a.id))[0].zusammenfassung
+    antwort = await _monat(db, a.id)
+
+    assert antwort.wp_jaz == pytest.approx(3.0), "3000 ÷ 1000"
+    assert z.get("durchschnitt_cop") == pytest.approx(antwort.wp_jaz), (
+        "Hub und Cockpit nennen wieder verschiedene Arbeitszahlen")
+
+
+async def test_a4_der_kuehlstrom_bleibt_aus_der_heiz_kennzahl(db):
+    """Auch MIT Kältemengenzähler: 3000 ÷ (1300 − 300), nicht ÷ 1300.
+
+    Die Kälte ist eine eigene Nutzenergie mit eigener Kennzahl — sie in den
+    Nenner der Wärme-Kennzahl zu ziehen wäre der Kategorienfehler, nur
+    andersherum.
+    """
+    a, _wp = await _baue_a4(db, mit_kaeltemenge=True)
+    antwort = await _monat(db, a.id)
+
+    assert antwort.wp_jaz == pytest.approx(3.0), "3000 ÷ 1000"
+
+
+# ═══ A5 — dietmar1968, seine TATSÄCHLICHE Bauform (W-17 · W-17b) ════════════
+#
+# Forum 89667 **#210** (26.08.2026), drei Bilder: Zuordnung, Cockpit → Monat,
+# Cockpit → Tag. Sein Block trägt „Aggregiert aus: Wärmepumpe · Klimaanlage".
+#
+# ⛔ **Der Register-Eintrag zu W-17b behauptete zunächst, nur die Klimaanlage
+# melde einen Modus.** Das ist widerlegt, und sein eigenes Tagesbild ist der
+# Beweis: Dort standen **36 Stunden**. `falte_modus_split_tag` zählt **eine**
+# Stunde je Stundenzeile je Gerät, und `betriebsmodus_je_wp` hat je Investition
+# genau **einen** Eintrag pro Stunde — ein einzelnes Gerät kann an einem Tag
+# also nie über 24 kommen. **36 Stunden beweisen zwei meldende Geräte.** Seine
+# Zuordnung zeigt es auch: Die Wärmepumpe trägt `sensor.boiler_compressor_
+# activity` als Betriebsmodus, die Bosch-Klimaanlage ihren eigenen.
+# ⭐ *Ein Bild ist eine Messung, wenn man es zu Ende liest.*
+#
+# Zahlen (gerundet nach seinen Bildern, Verhältnisse erhalten):
+#   Wärmepumpe    getrennte Strommessung 800 + 400 kWh · Wärme 2400 + 1000 kWh
+#                 · Modus 18 h · Split 30 Heizen / 0 Kühlen
+#   Klimaanlage   200 kWh Strom, KEINE Wärme · Modus 18 h · Split 0 / 60 Kühlen
+#
+# Anlagenweit: Strom 1400 kWh — Modus-Abdeckung **18 h, nicht 36**.
+
+_A5_WP = {
+    "strom_heizen_kwh": 800.0,
+    "strom_warmwasser_kwh": 400.0,
+    "heizenergie_kwh": 2400.0,
+    "warmwasser_kwh": 1000.0,
+    "modus_abdeckung_h": 18.0,
+    "modus_strom_heizen_kwh": 30.0,
+    "modus_strom_kuehlen_kwh": 0.0,
+}
+_A5_KLIMA = {
+    "stromverbrauch_kwh": 200.0,
+    "modus_abdeckung_h": 18.0,
+    "modus_strom_heizen_kwh": 0.0,
+    "modus_strom_kuehlen_kwh": 60.0,
+}
+
+
+async def _baue_a5(db):
+    a = await _anlage(db, "A5 dietmar zwei Melder")
+    wp = await _geraet(db, a, "Wärmepumpe",
+                       # ⚠ `getrennte_strommessung` ist Pflicht, sonst liest
+                       # `get_wp_strom_kwh` das leere `stromverbrauch_kwh` und
+                       # das Gerät trägt 0 kWh bei. Erster Entwurf dieser
+                       # Fixture hatte es nicht — und die Probe meldete rot,
+                       # zu Recht: nicht der Fix war falsch, die nachgestellte
+                       # Anlage war es.
+                       {"wp_art": "luft_wasser", "effizienz_modus": "gesamt_jaz",
+                        "getrennte_strommessung": True},
+                       dict(_A5_WP))
+    klima = await _geraet(db, a, "Klimaanlage",
+                          {"wp_art": "luft_luft", "effizienz_modus": "gesamt_jaz"},
+                          dict(_A5_KLIMA))
+    await db.commit()
+    return a, wp, klima
+
+
+async def test_a5_ein_tag_hat_keine_36_stunden(db):
+    """**W-17** — der Befund, den dietmars Tagesbild sichtbar gemacht hat.
+
+    ⭐ **Eine Menge ist additiv, ein Zeitraum nicht** (SOLL §2.3). Zwei Geräte
+    mit je 18 erfassten Stunden ergeben **nicht 36 Stunden Erkenntnis**.
+
+    ⚠ **Warum die Probe auf dem MONAT sitzt und trotzdem W-17 misst:** Der
+    Fehler ist derselbe, nur die Obergrenze ist im Monat unauffällig — dort
+    standen bei ihm 372 von 624 möglichen Stunden, plausibel genug für Wochen.
+    *Eine Kennzahl ohne erkennbare Obergrenze verbirgt ihren eigenen
+    Kategorienfehler.* Deshalb prüft die Probe die **Regel** (Maximum statt
+    Summe), nicht die Tagesgrenze.
+    """
+    a, _wp, _klima = await _baue_a5(db)
+    antwort = await _monat(db, a.id)
+
+    assert antwort.wp_modus_abdeckung_h == pytest.approx(18.0), (
+        "die Abdeckung wurde über die Geräte summiert — 18 + 18 = 36")
+
+
+async def test_a5_die_mengen_werden_weiterhin_addiert(db):
+    """⛔ **Die Gegenrichtung, und sie ist der eigentliche Prüfstein.**
+
+    Das Maximum gilt für die **Zeit** und nur für sie. Wer den Fix zu breit
+    anwendet, bekommt eine Aufteilung, die die Kilowattstunden des zweiten
+    Geräts verliert — ein stiller Datenverlust, der genauso plausibel aussieht
+    wie der Fehler, den er ersetzt hat.
+    """
+    a, _wp, _klima = await _baue_a5(db)
+    antwort = await _monat(db, a.id)
+
+    assert antwort.wp_modus_strom_heizen_kwh == pytest.approx(30.0)
+    assert antwort.wp_modus_strom_kuehlen_kwh == pytest.approx(60.0)
+    assert antwort.wp_strom_kwh == pytest.approx(1400.0), "800 + 400 + 200"
+
+
+async def test_a5_der_balken_nennt_seine_grundmenge(db):
+    """**W-17b** — der Balken beschreibt weniger als die Kachel über ihm.
+
+    Bei dietmar standen 30 kWh Balkensumme unter einer Kachel mit 284 kWh, ohne
+    dass die Differenz irgendwo benannt war. Hier ist die Grundmenge **90 kWh**
+    (30 Heizen + 60 Kühlen, beide Geräte tragen einen Split bei) gegen
+    **1400 kWh** Gesamtstrom.
+
+    ⭐ **Die Zahl war nie falsch — sie hat nur nicht gesagt, worüber sie
+    spricht.** Der schmalere Bezug ist eine bewusste Entscheidung mit gemessener
+    Begründung (`WpFakten.modus_nicht_aufgeteilt_kwh`: an einer Instanz 96,4
+    statt 6,4 kWh). Genau deshalb ist der Fix eine **Benennung** und keine
+    Umrechnung.
+    """
+    a, _wp, _klima = await _baue_a5(db)
+    antwort = await _monat(db, a.id)
+
+    assert antwort.wp_modus_strom_bezug_kwh is not None, (
+        "ohne Grundmenge steht der Balken stumm unter einer größeren Kachel")
+    assert antwort.wp_modus_strom_bezug_kwh == pytest.approx(1400.0)
+    assert antwort.wp_modus_strom_bezug_kwh <= antwort.wp_strom_kwh + 0.01
+
+
+async def test_a5_die_anlagenweite_arbeitszahl_bleibt_gesperrt(db):
+    """R2 gilt unverändert — ein Gerät meldet Wärme, das andere nicht.
+
+    Diese Probe steht hier, damit der W-17-Fix die **bereits gebaute** Sperre
+    nicht beschädigt: Bei ihm stand „JAZ 0,64", weil im Nenner der Strom beider
+    Geräte und im Zähler die Wärme von einem lag (3400 ÷ 1400 = 2,43 wäre hier
+    die verlockende Falschaussage).
+    """
+    a, _wp, _klima = await _baue_a5(db)
+    antwort = await _monat(db, a.id)
+
+    assert antwort.wp_jaz is None, "die vermischte Zahl darf es nicht geben"
+    assert antwort.wp_jaz_grund == GRUND_GERAETE_OHNE_WAERME
+
+
+# ═══ A6 — der Tag sagt, WARUM die Wärme fehlt (W-18) ════════════════════════
+#
+# Forum 89667 **#210**: *„Ich verstehe beim Vorhandensein folgender Sensoren
+# jene Anzeige nicht."* — dazu ein Bild, auf dem *Heizwärme* und *Warmwasser*
+# als HA-Sensoren zugeordnet sind (9125,59 und 3927,94 kWh), und ein zweites,
+# auf dem *Wärme erzeugt* am Tag „—" zeigt.
+#
+# ⛔ **Der Tooltip dahinter sagte ihm: „Sensor zuordnen".** Er hatte zugeordnet.
+# ⭐ *Eine falsche Ursache ist schlimmer als keine* — ohne Hinweis sucht der
+# Anwender, mit einem falschen sucht er an der falschen Stelle und meldet
+# danach einen Fehler, den es nicht gibt.
+#
+# Drei Zustände führen zu demselben „—", und der Erhebungspfad kann sie
+# auseinanderhalten (`core/tageswert_grund.py`):
+#
+#   1. kein Zähler zugeordnet
+#   2. zugeordnet, aber für DIESEN Tag keine Zählerstände  ← dietmars Lage
+#   3. zugeordnet, Zähler im Tagesfenster zurückgesprungen ← war nur eine Logzeile
+
+_A6_DATUM = date(2025, 6, 15)
+
+
+async def _baue_a6(db, *, zuordnen: bool, snapshots: str):
+    """Eine Wärmepumpe am Tag — `snapshots`: ``"voll"`` · ``"keine"`` · ``"reset"``."""
+    from backend.models.sensor_snapshot import SensorSnapshot
+
+    anlage = Anlage(anlagenname="A6 dietmar Tag", leistung_kwp=10.0,
+                    installationsdatum=date(2025, 1, 1))
+    db.add(anlage)
+    await db.flush()
+    inv = Investition(
+        anlage_id=anlage.id, typ="waermepumpe", bezeichnung="Wärmepumpe",
+        anschaffungsdatum=date(2025, 1, 1), anschaffungskosten_gesamt=12000.0,
+        parameter={"wp_art": "luft_wasser", "effizienz_modus": "gesamt_jaz"},
+    )
+    db.add(inv)
+    await db.flush()
+
+    felder: dict = {}
+    t0 = datetime.combine(_A6_DATUM, datetime.min.time())
+    for feld, sensor in (("heizenergie_kwh", "sensor.boiler_energy_heating"),
+                         ("warmwasser_kwh", "sensor.boiler_dhw_energy")):
+        if not zuordnen:
+            continue
+        felder[feld] = {"strategie": "sensor", "sensor_id": sensor}
+        key = f"inv:{inv.id}:{feld}"
+        if snapshots == "keine":
+            continue
+        # „reset": der Zähler springt im Fenster zurück — der Endstand liegt
+        # UNTER dem Startstand, genau die Lage, die `_tageswert_aus_raendern`
+        # als Tagesreset erkennt und bewusst nicht beziffert.
+        ende = 100.0 - 40.0 if snapshots == "reset" else 100.0 + 40.0
+        db.add(SensorSnapshot(anlage_id=anlage.id, sensor_key=key,
+                              zeitpunkt=t0, wert_kwh=100.0, quelle="ha_statistics"))
+        db.add(SensorSnapshot(anlage_id=anlage.id, sensor_key=key,
+                              zeitpunkt=t0 + timedelta(days=1),
+                              wert_kwh=ende, quelle="ha_statistics"))
+
+    anlage.sensor_mapping = {"investitionen": {str(inv.id): {"felder": felder}}}
+    db.add(TagesZusammenfassung(
+        anlage_id=anlage.id, datum=_A6_DATUM,
+        komponenten_kwh={f"waermepumpe_{inv.id}": 20.0},
+    ))
+    await db.commit()
+    return anlage, inv
+
+
+async def _tag(db, anlage_id):
+    from backend.api.routes.energie_profil.views import get_tag_detail
+    return await get_tag_detail(anlage_id, datum=_A6_DATUM, db=db)
+
+
+async def test_a6_ohne_zuordnung_nennt_den_zaehler_und_den_weg(db):
+    """Zustand 1 — der einzige Fall, den der alte Satz beschrieb. Er bleibt richtig."""
+    a, _inv = await _baue_a6(db, zuordnen=False, snapshots="keine")
+    antwort = await _tag(db, a.id)
+
+    assert antwort.wp_waerme_kwh is None
+    assert antwort.wp_waerme_grund, "ohne Zahl muss der Grund dastehen"
+    assert "Kein Zähler zugeordnet" in antwort.wp_waerme_grund
+    assert "Datenquellen" in antwort.wp_waerme_grund, (
+        "der Grund sagt, was IST — und bei diesem einen Zustand auch, was zu TUN ist")
+
+
+async def test_a6_zugeordnet_aber_leer_fordert_keine_zuordnung_mehr(db):
+    """⭐ **Zustand 2 — dietmars Lage, und der Kern von W-18.**
+
+    Der Zähler ist zugeordnet, für diesen Tag gibt es nur keine Zählerstände.
+    Genau hier stand vorher *„Sensor zuordnen"* — eine Aufforderung an jemanden,
+    der sie längst befolgt hatte.
+
+    ⚠ **Die Probe prüft die ABWESENHEIT der falschen Auskunft mit**, nicht nur
+    die Anwesenheit der richtigen. Ein Grund, der beides sagt, ist keine
+    Verbesserung.
+    """
+    a, _inv = await _baue_a6(db, zuordnen=True, snapshots="keine")
+    antwort = await _tag(db, a.id)
+
+    assert antwort.wp_waerme_kwh is None
+    assert antwort.wp_waerme_grund
+    assert "keine Zählerstände" in antwort.wp_waerme_grund
+    assert "zuordnen" not in antwort.wp_waerme_grund, (
+        "eedc fordert eine Zuordnung, die es längst gibt — der Melder-Fall selbst")
+
+
+async def test_a6_zaehlerruecksprung_war_bisher_nur_eine_logzeile(db):
+    """Zustand 3 — erkannt, protokolliert und dem Anwender nie gesagt.
+
+    ``_tageswert_aus_raendern`` erkennt den Rücksprung und gibt bewusst ``None``
+    zurück (ADR-002/P4: keine Aussage statt einer falschen). Den Grund schrieb
+    es bis zum 26.08.2026 ausschließlich ins Log.
+    """
+    a, _inv = await _baue_a6(db, zuordnen=True, snapshots="reset")
+    antwort = await _tag(db, a.id)
+
+    assert antwort.wp_waerme_kwh is None
+    assert antwort.wp_waerme_grund
+    assert "zurückgesprungen" in antwort.wp_waerme_grund
+
+
+async def test_a6_die_gesperrte_arbeitszahl_nennt_denselben_grund(db):
+    """⛔ **Dieselbe Falschaussage saß eine Ebene tiefer — sichtbar.**
+
+    ``arbeitszahl`` sperrt sich bei fehlender Wärme mit *„kein
+    Wärmemengenzähler zugeordnet"*, und dieser Satz steht seit S3 als
+    **sichtbarer** Untertitel unter der JAZ-Kachel. Bei dietmar war er falsch.
+
+    ⭐ *Der Layer sieht nur eine Zahl, die nicht da ist — er kann den Grund
+    nicht kennen und darf ihn deshalb nicht behaupten.*
+    """
+    a, _inv = await _baue_a6(db, zuordnen=True, snapshots="keine")
+    antwort = await _tag(db, a.id)
+
+    assert antwort.wp_jaz is None
+    assert antwort.wp_jaz_grund == "für diesen Tag keine Zählerstände"
+
+
+async def test_a6_mit_zaehlerstaenden_steht_eine_zahl_und_kein_grund(db):
+    """Die Gegenrichtung: **wo ein Wert steht, steht kein Grund.**
+
+    Beides nebeneinander wäre ein Widerspruch auf der Fläche — und die
+    naheliegende Bauform, wenn man den Grund unabhängig vom Wert befüllt.
+    """
+    a, _inv = await _baue_a6(db, zuordnen=True, snapshots="voll")
+    antwort = await _tag(db, a.id)
+
+    assert antwort.wp_waerme_kwh == pytest.approx(80.0), "40 Heizwärme + 40 Warmwasser"
+    assert antwort.wp_waerme_grund is None
+    assert antwort.wp_jaz == pytest.approx(4.0), "80 ÷ 20"

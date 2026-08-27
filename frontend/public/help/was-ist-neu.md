@@ -1,11 +1,259 @@
 # Was ist neu
 
-> **Stand:** August 2026 (v4.0.28)
+> **Stand:** August 2026 (v4.0.29)
 > **Diese Seite** zeigt pro Version, was sich für dich als Anwender geändert hat — kürzer als der technische [CHANGELOG](https://github.com/supernova1963/eedc-homeassistant/blob/main/CHANGELOG.md), ausführlicher als die Schnellübersicht-Tabelle in der [Übersicht](BENUTZERHANDBUCH.md#was-ist-neu-seit-v316).
 >
 > **Kein Banner, kein Pop-up:** eedc zeigt diese Liste nicht ungefragt an. HA-App-Nutzer sehen den Changelog ohnehin schon im Add-on-Store, GitHub-Releases haben einen eigenen. Wer wissen will, was neu ist, schaut hier rein — Pull statt Push.
 >
 > **Lesehinweis:** Die jüngsten Versionen stehen oben. Jeder Punkt verlinkt entweder auf die zuständige Hilfe-Sektion oder direkt auf die App-Funktion (sofern erreichbar). Anker-URLs (`?doc=was-ist-neu`) sind teilbar.
+
+---
+
+## v4.0.29 — Der Zähler entscheidet, nicht die Bauart
+
+**Ein neues Handbuch: „Wärme & Klima"**
+
+Diese Fläche hat in den letzten Wochen am meisten Rückfragen ausgelöst — fast
+alle liefen auf dieselbe Frage hinaus: **„Warum steht da ein Strich?"**
+
+Es gibt jetzt ein eigenes Handbuch dafür, erreichbar über *Hilfe* in der App und
+auf der Website. Es beantwortet der Reihe nach: was zur Fläche gehört, **welcher
+Zähler welche Kennzahl möglich macht**, was eedc bewusst **nicht** sagt, was
+jeder einzelne Grund bedeutet, wie du deine Sensoren zuordnest — und es rechnet
+**sechs Beispiel-Anlagen** vor, von der einfachen Wärmepumpe bis zur Kombination
+aus Wärmepumpe und Klimaanlage.
+
+**Wer einen Kühlzähler hat, kann ihn jetzt zuordnen**
+
+Bisher gab es die Kühl-Achse nur an Geräten mit der Wärmepumpenart
+„Luft-Luft (Klimaanlage)". Wer an einer Luft-Wasser- oder Sole-Wasser-Wärmepumpe
+einen getrennten Zähler für den Kühlbetrieb hatte, konnte ihn **nirgends**
+eintragen — gemeldet von zwei Testern im Forum.
+
+Ab jetzt entscheidet der Zähler, nicht die Bauart. Unter *Einstellungen →
+Datenquellen* steht bei jedem Gerät ein neuer, zugeklappter Abschnitt
+**„Weitere Größen erfassen"**. Darin liegen die Größen, die es an diesem
+Gerätetyp selten gibt. Ordnest du dort einen Sensor zu, rückt das Feld nach oben
+zu den anderen. Die Liste bleibt also so kurz wie bisher — und trotzdem ist kein
+Fall mehr ausgeschlossen.
+
+Neu dazu: **Leistung Kühlen (W)** als Live-Wert und die **Brauchwasser-Wärmepumpe**
+als eigene Bauart, die nur noch nach Warmwasser fragt.
+
+**Deine Arbeitszahl kann steigen, wenn du kühlst**
+
+Wer mit derselben Anlage heizt und kühlt, hatte den Kühlstrom im Nenner seiner
+Arbeitszahl — die abgeführte Wärme steht dort aber in keinem Zähler. Eine Anlage,
+die im Sommer kühlt, sah dadurch aus wie eine schlechte Heizung. Für
+Wirtschaftlichkeit und CO₂ rechnet eedc das seit v4.0.5 heraus; bei der
+Arbeitszahl fehlte derselbe Schritt.
+
+**Das ist eine Korrektur, keine Schönung** — die Zahl beschreibt jetzt das, was
+sie behauptet: wie viel Wärme aus wie viel Strom wurde. Ist ein ganzer Zeitraum
+reiner Kühlbetrieb, steht statt der Zahl der Grund dafür.
+
+**Zwei Angaben, die eedc nicht sehen kann**
+
+Beim Gerät stehen zwei neue Felder. **„Fremdanteil auf den Zählern"** ist für
+zwei Lagen, die man den Zahlen nicht ansieht: Der Heizstab hängt am Stromzähler
+der Wärmepumpe, seine Wärme läuft aber nicht über den Wärmemengenzähler — oder
+umgekehrt speist ein Gaskessel denselben Heizkreis, den der Wärmemengenzähler
+misst. In beiden Fällen passen Zähler und Nutzen nicht zusammen.
+
+**Beides ändert keine deiner Mengen.** eedc lässt nur die Arbeitszahl weg und
+schreibt den Grund daneben — statt einer Zahl, die es so nicht gibt.
+
+**„Kühlung: aktiv oder passiv"** betrifft den Community-Vergleich: Passiv
+gekühlte Anlagen (nur Umwälzpumpen) erreichen ein Vielfaches der Effizienz. Ihre
+eigenen Zahlen bleiben, sie werden nur nicht mehr gegen aktiv gekühlte gestellt.
+
+**Der Kühlbetrieb bekommt eine eigene Kennzahl**
+
+Wenn du einen Kältemengenzähler hast, konntest du die gemessene Kältemenge schon
+länger eintragen — **zu sehen bekamst du sie nirgends.** Es gab keine Kennzahl,
+die sie benutzt hätte.
+
+Jetzt gibt es die **Arbeitszahl Kühlen**: Kältemenge geteilt durch Kühlstrom, im
+Komponenten-Hub und im Cockpit unter *Monat*, neben Heizen und Warmwasser.
+
+**Warum sie nicht „SEER" heißt:** SEER ist eine genormte Größe, die auf einem
+Prüfstand unter festgelegten Bedingungen ermittelt wird. Was eedc bilden kann,
+ist das Verhältnis deiner beiden Zähler über einen Zeitraum. Sie „SEER" zu nennen
+würde eine Vergleichbarkeit mit dem Datenblatt behaupten, die sie nicht hat.
+
+Hast du keinen Kältemengenzähler — das ist der Normalfall —, steht dort der Grund
+statt einer Zahl. **Geschätzt wird nichts.**
+
+**Arbeitszahl für Heizen und Warmwasser getrennt — jetzt auch im Cockpit**
+
+Wenn du den Strom für Heizung und Warmwasser getrennt misst, rechnet eedc für
+beide eine eigene Arbeitszahl. Bisher standen sie nur im Komponenten-Hub; im
+Cockpit unter *Monat* gab es sie nicht, obwohl die Daten dort vorliegen.
+
+**An den Zahlen selbst ändert sich etwas Wichtigeres.** Sie wurden an einer
+eigenen Stelle gerechnet und kannten deshalb die Prüfungen nicht, die für die
+Gesamt-Arbeitszahl längst gelten. Hast du zum Beispiel angegeben, dass ein
+Heizstab auf dem Wärmepumpen-Zähler liegt, verschwand die Gesamtzahl mit
+Begründung — „JAZ Heizen" stand unbeeindruckt daneben. Jetzt rechnet **eine**
+Stelle für alle drei Zahlen, und was für die eine gilt, gilt für alle.
+
+Wo eine Zahl nicht gebildet werden darf, stand bisher eine **0**. Das heißt
+„Arbeitszahl null" und nicht „weiß ich nicht" — dort steht jetzt ein „—" mit dem
+Grund daneben.
+
+**Wozu die getrennten Zahlen gut sind:** Warmwasser liegt bauartbedingt
+niedriger als Heizen, weil es auf eine höhere Temperatur gebracht werden muss.
+Wer viel Warmwasser macht, hat deshalb eine niedrigere Gesamtzahl — **ohne dass
+seine Anlage schlechter wäre**. Genau das zeigen erst die getrennten Zahlen.
+
+**Wer per MQTT misst, hat jetzt auch Zähler**
+
+Ein Tester meldete: Der Daten-Check verlangte einen Zähler für die PV-Ladung
+seiner Wallbox — obwohl über genau dieses Feld **1.286 kWh** gelaufen waren.
+
+**Für eedc hieß „Zähler zugeordnet" bis jetzt „Home-Assistant-Sensor
+zugeordnet".** Wer seine Werte per MQTT schickt — der Normalfall im
+Standalone-Betrieb ohne Home Assistant — hat gar keinen Sensor zuzuordnen. Genau
+das war die Lücke, und sie hatte zwei Seiten:
+
+Der **Daten-Check** vermisste Zähler, die längst lieferten — bis hin zu „Kein
+Basis-Zähler für: Einspeisung, Netzbezug" bei Anlagen, die vollständig messen.
+Abstellen ließ sich der Hinweis nicht: Der „Beheben"-Knopf führte in ein
+Formular, in dem es das Feld gar nicht gibt.
+
+Und was **niemand gemeldet hatte**: In *Cockpit → Tag* blieben dieselben Werte
+**wirklich leer** — Wärmemenge, getrennter Heiz- und Warmwasserstrom, Netzladung
+des Speichers, PV-Anteil der Ladung, Kompressor-Starts. Die Zählerstände standen
+in der Datenbank und wurden nie gelesen.
+
+**Ab jetzt zählt der Messwert, nicht die Zuordnungsform.** Ein Feld trägt einen
+Zähler, wenn ihm ein Home-Assistant-Sensor zugeordnet ist **oder** wenn dafür
+Werte per MQTT ankommen. Hast du irgendwo „Keine" gewählt, bleibt das deine
+Absage — daran ändert sich nichts.
+
+**Was du siehst:** Die Hinweise verschwinden, und *Cockpit → Tag* füllt sich mit
+Zahlen, die vorher auf „—" standen. **Bleibt ein Hinweis stehen, ist er ab jetzt
+echt** — dann kommt auf diesem Topic seit über einer Woche nichts mehr an, und
+das ist einen Blick wert.
+
+**Ein Tag hat wieder 24 Stunden**
+
+Unter *Cockpit → Tag* stand bei einem Tester **„Modus erfasst: 36 Stunden"**.
+Wer mehrere Wärmepumpen oder Klimaanlagen hat, deren Betriebsart eedc mitliest,
+bekam die erfassten Stunden **aller Geräte zusammengezählt** — zwei Geräte, die
+dieselben 18 Stunden liefen, ergaben 36.
+
+Kilowattstunden darf man über Geräte addieren, Stunden nicht: Sie beschreiben
+denselben Zeitraum. **Deine Mengen ändern sich dadurch nicht**, nur die
+Stunden-Angabe zeigt jetzt, wie lange eedc tatsächlich mitgelesen hat.
+
+**Der Aufteilungs-Balken sagt jetzt, worüber er spricht**
+
+Beim selben Tester stand über dem Balken *„Strom verbraucht: 284 kWh"*, der
+Balken selbst summierte sich auf 30. **Beide Zahlen waren richtig** — die
+Aufteilung nach Betriebsart entsteht nur für Geräte und Zeiträume, in denen eedc
+die Betriebsart mitlesen konnte, die Kachel darüber zählt alle Geräte. Gesagt hat
+das bisher niemand.
+
+Jetzt steht unter dem Balken **„Aufgeteilte Menge: 30 von 284 kWh"** — und nur
+dann, wenn beide Zahlen auseinandergehen. Im Komponenten-Hub stimmen damit auch
+die Prozente wieder: Sie wurden dort gegen den Gesamtstrom gerechnet und
+summierten sich deshalb auf weniger als 100 %.
+
+**eedc sagt jetzt, warum ein Tageswert fehlt — und nichts Falsches mehr**
+
+Der dritte Punkt aus derselben Meldung, und der ärgerlichste. Unter
+*Cockpit → Tag* stand bei *Wärme erzeugt* ein „—", und die Erklärung lautete
+*„Tageswert braucht einen Wärmemengenzähler am Gerät (Sensor zuordnen)"*.
+**Der Melder hatte zwei zugeordnet.**
+
+Der Satz war fest eingebaut und beschrieb nur einen von drei möglichen Gründen.
+eedc unterscheidet sie jetzt:
+
+- *Kein Zähler zugeordnet* — mit dem Weg, wo er einzutragen ist.
+- *Zähler zugeordnet, aber für diesen Tag liegen keine Zählerstände vor.*
+  **Das ist der Regelfall kurz nach einer Zuordnung:** Der Monatswert steht da,
+  weil er aus der Langzeitstatistik von Home Assistant kommt — Tageswerte
+  entstehen erst ab der Zuordnung. Frühere Tage kannst du in der
+  Reparatur-Werkbank nachrechnen lassen.
+- *Der Zähler ist an diesem Tag zurückgesprungen.* Diesen Fall hat eedc schon
+  immer erkannt und die Tagesaussage bewusst weggelassen — gesagt hat er es dir
+  nur nie.
+
+Der Grund steht jetzt **sichtbar unter der Zahl** statt in einem Tooltip: Auf dem
+Telefon ist ein Tooltip keine Auskunft. Das gilt für *Wärme erzeugt*,
+*Ersparnis vs. Gas*, die Arbeitszahl und den PV-Anteil der Ladung.
+
+**Eine falsche Ursache ist schlimmer als keine** — ohne Hinweis sucht man selbst,
+mit einem falschen sucht man an der falschen Stelle.
+
+**Lüften und Entfeuchten sind nicht mehr unsichtbar**
+
+Wer für diese beiden Betriebsarten einen eigenen Zähler zugeordnet hatte, sah
+seine Kilowattstunden bisher **nirgends**. eedc bot die Felder an, nahm den Wert
+entgegen — und zeigte ihn dann als Teil von „nicht aufgeteilt".
+
+Jetzt bekommen beide ein eigenes Segment im Balken und eine eigene Zeile
+darunter, in *Cockpit → Tag*, *Monat*, *Jahr* und im Komponenten-Hub. **Hast du
+keinen solchen Zähler, ändert sich für dich nichts** — ohne Messung stecken sie
+weiterhin in der Restmenge. Zwei leere Zeilen an jeder Wärmepumpe wären keine
+Auskunft, sondern nur mehr Text.
+
+Eine Arbeitszahl bekommen sie bewusst **nicht**: Lüften erzeugt keine Wärme, die
+sich messen ließe. Aus demselben Grund fällt ihr Strom jetzt auch aus dem Nenner
+der Arbeitszahl — genauso wie der Kühlstrom. **Deine Arbeitszahl kann dadurch
+steigen**, wenn du getrennt misst. An deinen Mengen ändert sich nichts.
+
+**Ein Hinweis, den man nicht abstellen konnte — und einer, den es nicht hätte
+geben dürfen**
+
+Wer bei einem Speicher „Arbitrage-fähig" eingeschaltet hatte, wurde vom
+Daten-Checker nach Ø Lade- und Ø Entladepreis gefragt. Diese beiden Felder gab
+es aber in **keinem** Formular. Der „Beheben"-Knopf führte genau dorthin, wo sie
+fehlten — gemeldet von einem Tester, der sie gesucht und nicht gefunden hat.
+
+Beide stehen jetzt unter *Netzladung & Arbitrage*, sobald der Schalter an ist.
+Sie sind absichtlich leer und nicht vorbelegt: Ein hineingeschriebener Richtwert
+würde beim ersten Speichern zu einer Zahl, die aussieht, als hättest du sie
+bestätigt. Womit eedc ohne deine Angabe rechnet, steht als Hinweis unter dem
+Feld.
+
+Warum eedc hier überhaupt fragt: Arbitrage lebt davon, dass dieselbe
+Kilowattstunde zu verschiedenen **Uhrzeiten** verschieden viel kostet — und ein
+eedc-Tarif kennt keine Uhrzeit. Wer einen dynamischen Tarif angebunden hat
+(Tibber, aWATTar, EPEX), braucht die Felder nicht: Dort nimmt eedc den
+stundengenauen Preis.
+
+**Beim E-Auto ist der ganz ähnlich aussehende Hinweis dagegen verschwunden**
+(„V2H aktiv, aber Entladepreis fehlt"). Er war schlicht falsch: eedc braucht den
+Wert nicht. Ohne ihn rechnet es mit dem Abstand zwischen deinem Bezugspreis und
+deiner Einspeisevergütung — also mit deinen echten Zahlen. Wer dem Hinweis
+gefolgt ist und etwas eingetragen hat, hat seine Rechnung ungewollt
+verschlechtert.
+
+### Zwei Korrekturen an der Wärmepumpe, die deine Zahlen verschieben können
+
+**Die Arbeitszahl stand an zwei Stellen verschieden da.** Wer heizt *und* kühlt,
+sah unter *Komponenten → Wärmepumpe* eine zu niedrige Arbeitszahl, während
+*Cockpit → Monat* für denselben Monat richtig rechnete. Der Grund: Die eine
+Fläche rechnete auf eigene Faust und ließ dabei den Kühlstrom im Nenner stehen —
+also Strom für eine Aufgabe, bei der gar keine Wärme entsteht.
+
+**Beide Flächen nennen jetzt dieselbe Zahl.** Und zwei Dinge kommen dort neu
+hinzu: Wo eedc keine Arbeitszahl bilden darf, steht ab jetzt **der Grund** statt
+einer leeren Kachel. Liegt sie unter 2, steht der **Heizstab-Hinweis** daneben —
+den gab es bisher nur im Cockpit.
+
+**Und wenn du Heizung, Warmwasser und Kühlung getrennt misst:** Dein Kühlstrom
+fehlte bisher im Stromverbrauch der Wärmepumpe. eedc summierte nur „Strom
+Heizen" und „Strom Warmwasser" — eine Rechnung aus der Zeit, als eine
+Wärmepumpe nichts anderes tun konnte. An einer Beispielanlage fehlten dadurch
+100 von 1050 kWh, und das wirkte sich auf Kosten und CO₂ aus.
+
+⚠ **Was du nach dem Update siehst:** Der Stromverbrauch deiner Wärmepumpe steigt
+um den Kühlanteil, und die Arbeitszahl sinkt auf ihren richtigen Wert. Beides
+sind keine neuen Messwerte — es ist dieselbe Anlage, nur endlich vollständig
+gerechnet.
 
 ---
 

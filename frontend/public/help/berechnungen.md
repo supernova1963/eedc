@@ -6,6 +6,8 @@ Dieses Dokument beschreibt alle Berechnungsketten im eedc-System: von den Eingab
 über die Berechnungslogik bis zur Anzeige im Frontend. Es dient als Referenz zur Fehlersuche
 und zum Verständnis der Datenflüsse.
 
+> **Fachliche Fassung für Anwender:** Die Wärmepumpen-, Klimaanlagen- und Heizstab-Formeln aus §3.5 sind in [Wärme & Klima](HANDBUCH_WAERME_KLIMA.md) ohne Formelzeichen beschrieben — samt der Frage, warum eine Arbeitszahl verschwindet.
+
 ---
 
 ## Inhaltsverzeichnis
@@ -793,6 +795,8 @@ Benzin_Kosten        = Benzin_Verbrauch * Benzinpreis_EUR
 Fossile_Kosten       = km_verbrenner / 100 * Eigener_L_100km * Benzinpreis_EUR
 
 V2H_Einsparung       = V2H_Entladung_kWh * V2H_Preis / 100    (wenn V2H aktiv)
+    V2H_Preis        = v2h_entlade_preis_cent                 (Override, optional)
+                     = Bezugspreis - Einspeisevergütung       (Normalfall, aus den gepflegten Tarifen)
 
 Jahres-Einsparung    = Benzin_Kosten - Strom_Kosten - Fossile_Kosten + V2H_Einsparung
 
@@ -1066,11 +1070,15 @@ je Tag d, je Gerät i:
   faktor_d    = zaehler_kwh_d / Σ_h roh_h                 # nur wenn Zählersumme vorhanden
   kwh[modus] += roh_h × faktor_d                          # Stunden OHNE Modus: nur in den Nenner
 
-je Monat:
+je Monat (ein Gerät):
   modus_strom_heizen_kwh  = Σ_d kwh[heizen]
   modus_strom_kuehlen_kwh = Σ_d kwh[kuehlen]
   modus_abdeckung_h       = Σ_d Stunden mit Modus-Signal
   nicht_aufgeteilt        = Bezug − heizen − kuehlen      # NIE gespeichert
+
+anlagenweit (mehrere Geräte, gleicher Zeitraum):
+  modus_strom_*_kwh       = Σ_i  je Gerät                 # Mengen: addieren
+  modus_abdeckung_h       = max_i je Gerät                # Zeit: NICHT addieren
 ```
 
 SoT: `core/berechnungen/modus_split.py` (rein) · `services/energie_profil/modus_split_monat.py`
@@ -1094,6 +1102,21 @@ SoT: `core/berechnungen/modus_split.py` (rein) · `services/energie_profil/modus
 > **Der Bezug von „nicht aufgeteilt" ist nicht der Gesamtstrom.** Anlagenweit trägt `strom_kwh`
 > auch Wärmepumpen **ohne** Modus-Sensor; ihr Verbrauch erschiene sonst als unbeobachtete Zeit der
 > Klimaanlage. Bezug ist `WpFakten.modus_strom_bezug_kwh` — der Strom nur der Geräte mit Split.
+>
+> ⭐ **Und genau deshalb nennt die Anzeige diesen Bezug seit v4.0.29 (W-17b).** Die Kachel „Strom
+> verbraucht" zeigt `strom_kwh`, der Balken darunter beschreibt `modus_strom_bezug_kwh` — bei
+> einem Melder 30 gegen 284 kWh. Beide Zahlen waren richtig, nur stand nirgends, dass es zwei
+> verschiedene Grundmengen sind. Die Zeile „Aufgeteilte Menge" erscheint, sobald sie abweichen.
+
+> **Eine Menge ist additiv, ein Zeitraum nicht (W-17).** `modus_abdeckung_h` wird über **Tage**
+> summiert und über **Geräte** maximiert. Zwei Wärmepumpen, die dieselben 18 Stunden liefen,
+> ergeben 18 Stunden Beobachtung, nicht 36 — im Tag sofort sichtbar, im Monat jahrelang plausibel.
+> SoT der Regel: `core/berechnungen/modus_split.py::abdeckung_ueber_geraete`.
+>
+> ⚠ **Das Maximum ist eine Untergrenze der exakten Vereinigung**, die aus verdichteten Summen
+> nicht mehr rekonstruierbar ist (`abdeckung_h` ist eine Anzahl, keine Stundenliste). Zwischen
+> einer Zahl, die zu klein sein kann, und einer, die einen Tag mit 36 Stunden behauptet, ist die
+> Wahl keine Geschmacksfrage.
 
 #### 3.5c Abgeleitete Heizwärme und die JAZ-Sperre (#263 K-2, Konzept §3.4/§3.5)
 
@@ -1131,7 +1154,74 @@ sieben Formeln).
 > `wp_kosten_euro` und werden als `kuehl_kosten_euro` eigens ausgewiesen. Ohne diese Trennung
 > gemessen: **−45,04 €** Ersparnis und **−52 kg** CO₂ für eine Klimaanlage, die im Winter geheizt
 > und im Sommer gekühlt hat (nachher +2,48 € / +8,2 kg). Default 0.0 ⇒ ohne Split unverändert.
+>
+> ⭐ **Dieselbe Abgrenzung gilt für die Arbeitszahl — seit W-14 (26.08.2026).** Bis dahin nannte
+> dieser Kasten nur Ersparnis und CO₂, und das war keine Unvollständigkeit im Text, sondern im
+> Code: **Die Arbeitszahl war die einzige der drei Größen, an der niemand nachgezogen hatte.** Ein
+> Gerät, das im Sommer kühlt, sah dadurch aus wie eine schlechte Heizung.
+>
+> ⭐ **Und sie gilt für alle Funktionen ohne bewertete Nutzenergie — seit E4 (26.08.2026).**
+> `arbeitszahl(..., strom_funktionsfremd_kwh=…)` bekommt heute **Kühlen + Lüften + Entfeuchten**
+> aus einer einzigen Größe: `WpFakten.modus_strom_funktionsfremd_kwh` bzw.
+> `ModusStromZeile.funktionsfremd_kwh`. *Eine Größe statt drei Summanden an vier Aufrufern — die
+> Aufzählung war die Bauform, an der W-14 entstanden ist.* **Abgezogen, nicht gesperrt:** die
+> Mengen bleiben in jeder Bilanz, es ändert sich allein der Nenner.
+>
+> ⬜ **Offen und bewusst nicht mitgebaut:** Der **Community-Server** kennt nur den Kühlstrom
+> (Feld `wp_strom_kuehlen_kwh`). Wer Lüften oder Entfeuchten getrennt misst *und* am Vergleich
+> teilnimmt, sieht dort eine etwas niedrigere Arbeitszahl als im eigenen Cockpit. Es braucht ein
+> neues Feld samt Migration im zweiten Repo; der Vermerk steht an der Stelle in
+> `services/community_service.py`.
 
+
+#### 3.5d Arbeitszahl je Funktion und die Arbeitszahl Kühlen (W-4 · W-5)
+
+⛔ **Dieser Abschnitt fehlte bis zum 27.08.2026 vollständig** — beide Größen waren gebaut und in
+keiner Referenz beschrieben. Aufgefallen beim Prüfauftrag „§3.5c gegen W-4/W-5 halten": Der
+Kasten darüber war richtig, aber er beschreibt eine *dritte* Regel. *Ein Dokument, das niemand
+gegen den Code hält, produziert beides — vergessene Arbeit und erfundene Arbeit.*
+
+**Alle vier Arbeitszahlen kommen aus derselben Funktion** (`core/berechnungen/waermepumpe_kennzahl.py`),
+und das ist der Punkt: Was für eine gilt, gilt für alle.
+
+```text
+Arbeitszahl gesamt     = waerme_kwh              ÷ (strom_kwh − funktionsfremd_kwh)
+Arbeitszahl Heizen     = heizenergie_kwh         ÷ strom_heizen_kwh
+Arbeitszahl Warmwasser = warmwasser_kwh          ÷ strom_warmwasser_kwh
+Arbeitszahl Kühlen     = nutzenergie_kuehlen_kwh ÷ betriebsart_strom_kuehlen_kwh
+```
+
+| | Voraussetzung | Grund, wenn sie fehlt |
+|---|---|---|
+| **je Funktion** (W-4) | `getrennte_strommessung` **und** die zugehörige Wärmemenge | `GRUND_STROM_NICHT_JE_FUNKTION` |
+| **Kühlen** (W-5) | Kühlstrom **und** Kältemengenzähler | `GRUND_KEINE_KAELTEMENGE` · `"kein Kühlbetrieb in diesem Zeitraum"` |
+
+⚠ **Die R2-Sperren gelten für alle vier** — Anwender-Angabe `abgrenzung`, abgeleitete Wärme,
+Geräte ohne Wärme, Zeitraum-Versatz. **Genau daran ist W-4 entstanden:** Die Funktions-Kennzahlen
+wurden an einer eigenen Stelle gerechnet und kannten die Sperren nicht. Ein Heizstab auf dem
+WP-Zähler ließ die Gesamtzahl mit Begründung verschwinden, während „JAZ Heizen" unbeeindruckt
+danebenstand — *dieselbe Anlage, zwei Aussagen*. Dazu stand dort eine **0**, wo „unbekannt"
+gemeint war (ADR-002/P4).
+
+> **Warum die Arbeitszahl Kühlen nicht „SEER" heißt** (Entscheid, 26.08.2026): SEER ist eine
+> genormte Größe aus definierten Prüfstandsbedingungen. Was eedc bildet, ist der Quotient zweier
+> Zähler über einen Zeitraum. Sie „SEER" zu nennen behauptete eine Vergleichbarkeit mit
+> Datenblatt-Werten, die sie nicht hat. Anwender-Fassung:
+> [Wärme & Klima §3](HANDBUCH_WAERME_KLIMA.md#3-was-eedc-bewusst-nicht-sagt).
+
+> **Warum keine geschätzte Kältemenge:** Aus einem angenommenen Wirkungsgrad käme genau der
+> Faktor zurück, mit dem gerechnet wurde — dieselbe Zirkularität, die §3.5c für die abgeleitete
+> Heizwärme beschreibt, nur auf der Kälte-Achse.
+
+#### 3.5e Anzeige-Regeln der Betriebsart-Aufteilung (W-17 · W-17b · W-18)
+
+Drei Regeln, die keine Formel sind und trotzdem in jede Sicht gehören:
+
+| Regel | Kurz |
+|---|---|
+| **Zeit ist nicht additiv** (W-17) | `modus_abdeckung_h` wird über **Tage** summiert, über **Geräte** maximiert (`abdeckung_ueber_geraete`). Zwei Geräte mit je 18 h ergeben 18, nicht 36. |
+| **Eine Aufteilung nennt ihre Grundmenge** (W-17b) | Der Balken bezieht sich auf `modus_strom_bezug_kwh`, die Kachel darüber auf `strom_kwh`. Weichen sie ab, steht die Zeile *„Aufgeteilte Menge"* darunter. |
+| **Ein fehlender Wert nennt seinen Grund** (W-18) | Drei unterscheidbare Zustände (`core/tageswert_grund.py`): kein Zähler · zugeordnet, aber für diesen Tag ohne Zählerstände · Zählerrücksprung. **Der Grund wird hergeleitet, nie behauptet** — `arbeitszahl(waerme_fehlt_grund=…)` nimmt ihn entgegen, weil der Layer ihn nicht kennen kann. |
 
 ### 3.6 ROI & Amortisation
 
