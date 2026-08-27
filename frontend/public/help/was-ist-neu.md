@@ -1,11 +1,101 @@
 # Was ist neu
 
-> **Stand:** August 2026 (v4.0.29)
+> **Stand:** August 2026 (v4.0.30)
 > **Diese Seite** zeigt pro Version, was sich für dich als Anwender geändert hat — kürzer als der technische [CHANGELOG](https://github.com/supernova1963/eedc-homeassistant/blob/main/CHANGELOG.md), ausführlicher als die Schnellübersicht-Tabelle in der [Übersicht](BENUTZERHANDBUCH.md#was-ist-neu-seit-v316).
 >
 > **Kein Banner, kein Pop-up:** eedc zeigt diese Liste nicht ungefragt an. HA-App-Nutzer sehen den Changelog ohnehin schon im Add-on-Store, GitHub-Releases haben einen eigenen. Wer wissen will, was neu ist, schaut hier rein — Pull statt Push.
 >
 > **Lesehinweis:** Die jüngsten Versionen stehen oben. Jeder Punkt verlinkt entweder auf die zuständige Hilfe-Sektion oder direkt auf die App-Funktion (sofern erreichbar). Anker-URLs (`?doc=was-ist-neu`) sind teilbar.
+
+---
+
+## v4.0.30 — 27. August 2026
+
+**Deine Wärmepumpe sagt jetzt, was sie gerade tut**
+
+MartyBr hat im Forum gefragt, ob das Symbol umschaltet, wenn seine Wärmepumpe
+kühlt. Beim Nachsehen kam heraus: eedc **weiß** seit v4.0.21, ob dein Gerät
+heizt oder kühlt — es schreibt den Betriebsmodus jede Stunde mit und teilt den
+Stromverbrauch danach auf. Nur **gezeigt** hat es ihn nirgends.
+
+Das ist jetzt an drei Stellen anders:
+
+* **Im Energiefluss** (*Cockpit → Live*) wechselt das Symbol: Flamme beim
+  Heizen, **Schneeflocke beim Kühlen**, dazu Lüften und Entfeuchten.
+* **Darunter steht der Modus im Klartext** — auf dem Handy sichtbar, ohne dass
+  du irgendwo hovern musst.
+* **Als Sensor in Home Assistant**, damit du ihn in einer Automation abfragen
+  kannst. Diesen Zustand gibt es so nur von eedc: über die Stunde stabilisiert
+  und auf einheitliche Begriffe gebracht.
+
+Wenn du keine `climate`-Quelle zugeordnet hast, ändert sich nichts — eedc
+behauptet keinen Modus, den es nicht kennt. Die Zuordnung machst du unter
+*Einstellungen → Datenquellen* beim Feld **Betriebsmodus**.
+
+**Geräte-Sensoren erscheinen jetzt auch über MQTT**
+
+Dabei ist eine Lücke aufgefallen, die schon länger bestand: Sensoren, die zu
+einem **einzelnen Gerät** gehören — Arbeitszahl der Wärmepumpe, PV-Anteil des
+E-Autos, Betriebsstunden — wurden nie über MQTT verschickt. Wer sein Add-on über
+MQTT angebunden hat, hatte sie deshalb nicht.
+
+Sie kommen jetzt mit. **Das heißt: in Home Assistant tauchen neue Geräte und
+Entitäten auf.** Es geht nichts verloren und nichts wird umbenannt — es kommt
+etwas dazu, das schon immer dazugehören sollte.
+
+**Zwei neue Zahlen für Automationen** (Wunsch von OB73-gif)
+
+* **PV-Prognose Vormittag/Nachmittag** — je für heute und morgen. Damit lässt
+  sich abends entscheiden, ob du nachts nachlädst oder auf die Sonne wartest.
+  Getrennt wird am **Sonnenhöchststand**, genauso wie in der Anzeige; die genaue
+  Uhrzeit steht als Attribut am Sensor.
+* **Grundlast** — der gemessene Nacht-Sockel deines Hauses, dieselbe Zahl wie in
+  *Cockpit → Monat*.
+
+**Eine Klarstellung: „Grundlast" gab es zweimal**
+
+In *Cockpit → Live* stand bisher „Grundlast" für einen Wert aus dem
+Verbrauchsprofil — bei Anlagen ohne eigene Messhistorie ist das ein
+Standard-Lastprofil, also eine Schätzung. In *Cockpit → Monat* steht die
+**gemessene** Grundlast. Zwei verschiedene Zahlen unter einem Namen, und wer sie
+verglich, musste eine für falsch halten.
+
+Die Live-Anzeige heißt jetzt **„Grundlast (Prognose)"**. **An den Zahlen ändert
+sich nichts** — sie dürfen verschieden sein, sie sollten nur nicht gleich heißen.
+
+**„Weitere Größen erfassen" ging nicht auf**
+
+Der zugeklappte Abschnitt unter *Einstellungen → Datenquellen*, mit dem seit
+v4.0.29 ein Kühl-, Lüftungs- oder Heizzähler an jedem Gerät hinterlegbar ist,
+reagierte nicht auf den Klick. pipp086 hat es am Tag der Auslieferung gemeldet.
+Er geht jetzt auf. Die Neuerung war bis dahin praktisch nicht erreichbar —
+falls du sie ausprobieren wolltest und nichts passiert ist: Es lag nicht an dir.
+
+**Wer per MQTT liefert: aus dem Zählerstand wird wieder eine Monatsmenge**
+
+Ein eedc-MQTT-Topic trägt einen **Zählerstand** — genau so steht es in der
+Topic-Liste. eedc hat ihn an zwei Stellen als *Monatswert* gelesen, und das
+hat August (gruaGit) bemerkt, der eedc ohne Home Assistant betreibt und alles
+per MQTT schickt.
+
+Im **Monatsabschluss** stand deshalb neben elf Feldern „weicht ab": der
+Lebenszählerstand neben dem Monatswert — 6675,3 gegen 552,75 kWh, beim Auto der
+Tachostand neben den Monatskilometern. Daneben der Knopf „Sensorwert
+übernehmen": **ein Klick hätte den Zählerstand als Monatswert gespeichert.**
+
+In *Cockpit → Monat* war es kein Vorschlag, sondern die angezeigte Zahl — im
+laufenden Monat verdrängte der Zählerstand deinen gespeicherten Monatswert.
+
+**eedc bildet jetzt die Differenz über den Monat**, aus den Ständen, die es
+ohnehin stündlich mitschreibt. Fehlt der Anfangsstand oder ist der Zähler
+zurückgesprungen, gibt es **keinen** Vorschlag — lieber keine Aussage als eine
+falsche —, und dein gespeicherter Wert bleibt stehen.
+
+> **Was du merkst:** Wo bisher ein Zählerstand stand, steht die Monatsmenge, und
+> die falschen „weicht ab"-Markierungen sind weg. Für *gefahrene Kilometer* und
+> *Ladevorgänge* gibt es über MQTT keinen Vorschlag mehr — für sie schreibt eedc
+> keine Zählerreihe mit, und ohne die lässt sich keine Monatsmenge bilden. Du
+> trägst sie wie bisher von Hand ein.
 
 ---
 
