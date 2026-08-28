@@ -299,13 +299,17 @@ async def get_tag_detail(
     from backend.core.berechnungen.waermepumpe_kennzahl import (
         abgrenzungs_grund, arbeitszahl, waerme_gesamt_kwh,
     )
-    from backend.core.betriebsmodus import HEIZEN, KUEHLEN
-    from backend.core.investition_parameter import abgrenzung_stoerung
+    from backend.core.betriebsmodus import HEIZEN, KUEHLEN, WARMWASSER
+    from backend.core.investition_parameter import (
+        abgrenzung_stoerung, ist_luft_luft_waermepumpe,
+    )
     from backend.core.tageswert_grund import tageswert_grund_text
     from backend.services.energie_profil import lade_modus_split_tag
     from backend.services.snapshot.aggregator import get_betriebsart_strom_tageswerte
 
     heizen_tag = kuehlen_tag = rest_tag = abdeckung_tag = 0.0
+    # N-336: nur der abgeleitete Zweig fuellt sie — s. `ModusStromZeile`.
+    warmwasser_tag = 0.0
     # W-17b: die Grundmenge, auf die sich der Balken bezieht — die Σ der
     # Bezugsmengen der Geraete, die eine Aufteilung beigesteuert haben. Sie ist
     # bewusst NICHT `wp_strom_tag`: dort steckt auch der Strom von Geraeten
@@ -407,10 +411,12 @@ async def get_tag_detail(
         bezug_tag += float(split.bezug_kwh or 0.0)
         heizen_tag += split.teilmenge_kwh(HEIZEN)
         kuehlen_tag += split.teilmenge_kwh(KUEHLEN)
+        warmwasser_tag += split.teilmenge_kwh(WARMWASSER)
         rest_tag += max(
             0.0,
             float(split.bezug_kwh or 0.0)
-            - split.teilmenge_kwh(HEIZEN) - split.teilmenge_kwh(KUEHLEN),
+            - split.teilmenge_kwh(HEIZEN) - split.teilmenge_kwh(KUEHLEN)
+            - split.teilmenge_kwh(WARMWASSER),
         )
         # W-17: Die Schleife laeuft ueber die GERAETE des Tages. Zwei
         # Waermepumpen mit je 18 erfassten Stunden ergeben nicht 36 Stunden
@@ -447,6 +453,19 @@ async def get_tag_detail(
     # ⚠ Gefragt werden nur die Geräte, die **an diesem Tag** Strom beigetragen
     # haben. Ein stillgelegtes oder stillstehendes Gerät mit gemeldeter Störung
     # darf die Zahl eines Tages nicht sperren, an dem es gar nicht lief.
+    # R2/Bauart (SOLL §5): Trägt der Tag Luft-Wasser **und** Luft-Luft?
+    #
+    # ⚠ **Hier wird gezählt statt `WpFakten` gefragt, und das ist kein zweiter
+    # Rechenweg:** Die Monats-Fakten gibt es für einen einzelnen Tag nicht — der
+    # Tag faltet Snapshots, nicht IMD-Zeilen. Die **Regel** steht trotzdem nur
+    # einmal (`abgrenzungs_grund` + `GRUND_BAUARTEN_GEMISCHT`); hier entsteht
+    # allein ihr Eingang, mit derselben Bedingung wie die Störung darunter:
+    # **nur Geräte, die an diesem Tag Strom beigetragen haben.**
+    _bauarten_tag = {
+        ist_luft_luft_waermepumpe(investitionen_by_id.get(inv_id_str))
+        for inv_id_str, kwh in wp_strom_je_inv.items()
+        if kwh and investitionen_by_id.get(inv_id_str) is not None
+    }
     wp_abgrenzung_tag = abgrenzungs_grund(
         abgrenzung_stoerung=next(
             (
@@ -460,6 +479,7 @@ async def get_tag_detail(
             ),
             None,
         ),
+        bauarten_gemischt=len(_bauarten_tag) > 1,
     )
     wp_jaz_tag = arbeitszahl(
         wp_waerme_tag, wp_strom_tag,
@@ -480,10 +500,22 @@ async def get_tag_detail(
         ),
     )
 
+    # ── Aktive Geräte je Typ (Namen) für die „aggregiert aus …"-Hinweise ──
+    #
+    # Wortgleich zur Monatssicht (`aktueller_monat.py`), nur mit der feineren
+    # Grenze: der Tag fragt `ist_aktiv_an`, nicht `ist_aktiv_im_monat`. Ein am
+    # 20. angeschafftes Gerät gehört in den Hinweis des 21., nicht in den des 3.
+    komponenten_geraete: dict[str, list[str]] = {}
+    for _inv in investitionen_by_id.values():
+        if _inv.ist_aktiv_an(datum):
+            komponenten_geraete.setdefault(_inv.typ, []).append(_inv.bezeichnung)
+
     return TagDetailResponse(
         datum=datum,
+        komponenten_geraete=komponenten_geraete,
         wp_modus_strom_heizen_kwh=round(heizen_tag, 2) if hat_split else None,
         wp_modus_strom_kuehlen_kwh=round(kuehlen_tag, 2) if hat_split else None,
+        wp_modus_strom_warmwasser_kwh=round(warmwasser_tag, 2) if hat_split else None,
         wp_modus_strom_lueften_kwh=round(lueften_tag, 2) if hat_split else None,
         wp_modus_strom_entfeuchten_kwh=round(entfeuchten_tag, 2) if hat_split else None,
         wp_modus_nicht_aufgeteilt_kwh=round(rest_tag, 2) if hat_split else None,

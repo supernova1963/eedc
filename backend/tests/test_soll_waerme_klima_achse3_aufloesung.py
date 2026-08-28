@@ -459,3 +459,96 @@ def test_handbuch_waerme_klima_zitiert_die_gruende_woertlich():
         "Das Handbuch zitiert diese Gründe nicht mehr wörtlich — im Code steht "
         f"jetzt etwas anderes: {fehlend}"
     )
+
+
+def test_handbuch_nennt_jeden_lesbaren_betriebsmodus_wert():
+    """Die Werte-Tabelle im Handbuch muss den Kanon-Eingang abdecken (F-65-Klasse).
+
+    **Anlass: MartyBr, Forum T89667 #230, am Tag der v4.0.30-Auslieferung.** Sein
+    Viessmann-Sensor liefert den Modus als **Rohwert** (`hk1_mode_raw` = ``1``);
+    eedc zeigte „Unbestimmt". Das Verhalten ist richtig — eedc rät nicht, was
+    ``1`` bedeutet. **Falsch war die Doku:** Das Handbuch sagte nur „ein Sensor,
+    der sagt, was das Gerät gerade tut (`heizen` / `kuehlen` / …)", und die drei
+    Punkte waren die ganze Auskunft. Die akzeptierten Werte standen in **keinem**
+    Anwenderdokument — nur im Code und in einem internen Konzept.
+
+    ⭐ **Die Lehre ist die des Nachbar-Tests darüber, eine Ebene tiefer:** Dort
+    zitiert das Handbuch Sperr-**Gründe**, hier eine **Eingabe-Erwartung**. Beide
+    Male ist der Text eine Behauptung über den Code, und beide Male merkt es
+    niemand, wenn er driftet — außer dem Anwender, der nachschlägt, weil er
+    nicht weiterweiß.
+
+    ⚠ **Geprüft wird nur die Richtung „Code → Handbuch"**: Jeder Wert, den
+    ``normalisiere_betriebsmodus`` versteht, muss in der Tabelle stehen. Ein
+    Wert **im** Handbuch, den der Code nicht kennt, fängt der Test nicht — dafür
+    steht die Gegenrichtung im Nachbar-Test, und beide zusammen sind hier nicht
+    nötig: Ein zu großzügiges Handbuch führt niemanden in die Irre, ein zu
+    knappes schon.
+    """
+    from pathlib import Path
+
+    from backend.core.betriebsmodus import _ZUSTAND_ZU_KANON
+
+    doc = Path(__file__).resolve().parents[3] / "docs" / "HANDBUCH_WAERME_KLIMA.md"
+    if not doc.exists():  # eedc-Standalone-Spiegel trägt `docs/` nicht mit
+        import pytest
+        pytest.skip("docs/ liegt nur im Source-of-Truth-Repo")
+    text = doc.read_text(encoding="utf-8")
+
+    fehlend = [wert for wert in _ZUSTAND_ZU_KANON if f"`{wert}`" not in text]
+    assert not fehlend, (
+        "Diese Betriebsmodus-Werte versteht eedc, das Handbuch nennt sie aber "
+        f"nicht: {fehlend}. Wer den Kanon erweitert, erweitert die Tabelle in "
+        "§Schritt 4 mit — sonst probiert der nächste Anwender einen Wert aus, "
+        "den es gibt, und findet ihn nirgends beschrieben."
+    )
+
+
+# ═══ Die zwei #263-Kapitel muessen sagen, dass sie Kapitel sind ═════════════
+
+def test_die_263_konzepte_verweisen_auf_den_geltenden_sot_und_das_handbuch():
+    """Ein Bauform-Kapitel, das sich fuer das Flaechen-Konzept haelt, wird falsch gelesen.
+
+    ⛔ **Genau das ist mehrfach passiert, und zwar mir selbst** (Gernot,
+    27.08.: *„Das ist nicht das erste Mal, dass du diese Dateien als erstes
+    gelesen hast"*). Die beiden ``KONZEPT-263-*`` beschreiben **Bauformen** —
+    Split-Klimaanlage und Multisplit-Innengeraete. Fuer die gilt darin alles.
+    Als Aussage ueber **jede** Waermepumpe gelesen, fuehren sie in die Irre:
+
+    * **N-336** — der Modus-Kanon kannte kein ``warmwasser``, belegt durch
+      ``D11``: einen Satz ueber *drei Melder mit Klimaanlagen*. Eine
+      Split-Klimaanlage hat keinen Warmwasserkreis; fuer sie war D11 richtig.
+    * **K-1/SEER** — im Massnahmen-Register jahrelang ``⬜ offen``, obwohl die
+      Groesse seit dem 26.08. als ``arbeitszahl_kuehlen`` gebaut ist und der
+      Name **bewusst verworfen** wurde.
+
+    ⭐ **Deshalb prueft diese Probe keinen Inhalt, sondern einen WEG:** Steht in
+    beiden Dokumenten, wo das geltende Flaechen-Konzept liegt und wo die
+    Anwendersicht? Wer den Zeiger entfernt, bekommt es hier gesagt.
+
+    ⚠ **Was sie NICHT kann:** pruefen, ob der Rest der Dokumente stimmt. Dafuer
+    gibt es keinen maschinellen Weg — die Korrekturliste im Kopf ist Lesearbeit.
+    """
+    from pathlib import Path
+
+    import pytest
+
+    wurzel = Path(__file__).resolve().parents[3] / "docs"
+    if not wurzel.exists():  # eedc-Standalone-Spiegel traegt `docs/` nicht mit
+        pytest.skip("docs/ liegt nur im Source-of-Truth-Repo")
+
+    pflicht = {
+        "soll-waerme-klima.md": "der geltende SoT der Flaeche",
+        "HANDBUCH_WAERME_KLIMA.md": "die Anwendersicht",
+    }
+    for name in ("KONZEPT-263-klima-split.md", "KONZEPT-263-INNENGERAETE.md"):
+        doc = wurzel / name
+        assert doc.exists(), f"{name} fehlt — wurde es verschoben? Dann diese Probe mit."
+        text = doc.read_text(encoding="utf-8")
+        fehlend = [f"{z} ({wozu})" for z, wozu in pflicht.items() if z not in text]
+        assert not fehlend, (
+            f"{name} nennt nicht, wo weiterzulesen ist: {fehlend}. "
+            "Dieses Dokument beschreibt EINE Bauform. Ohne den Zeiger auf das "
+            "Flaechen-Konzept liest es der Naechste als Regel ueber alle "
+            "Waermepumpen — so ist N-336 entstanden."
+        )

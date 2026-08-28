@@ -85,7 +85,7 @@ from backend.core.berechnungen import (
     imd_typ_beitrag,
 )
 from backend.core.betriebsmodus import MODUS_ABDECKUNG_FELD
-from backend.core.investition_parameter import ist_dienstlich
+from backend.core.investition_parameter import ist_dienstlich, ist_luft_luft_waermepumpe
 from backend.core.wirtschaftlichkeit_defaults import (
     EINSPEISEVERGUETUNG_DEFAULT_CENT,
     NETZBEZUG_DEFAULT_CENT,
@@ -354,6 +354,12 @@ class WpFakten:
     #: (Präzedenz: ``ladung_pv_kwh`` bei der Wallbox, Konzept §3.1).
     modus_strom_heizen_kwh: float = 0.0
     modus_strom_kuehlen_kwh: float = 0.0
+    #: N-336 (27.08.): Nur aus dem **abgeleiteten** Split — für Warmwasser gibt
+    #: es keinen Betriebsart-Zähler (Begründung bei ``MESSBARE_MODI``). Die
+    #: Gegenrichtung zu ``modus_strom_lueften_kwh`` darunter.
+    #: ⛔ Zählt **nicht** in {@link modus_strom_funktionsfremd_kwh}: Warmwasser
+    #: hat eine bewertete Nutzenergie, die im Zähler desselben Quotienten steht.
+    modus_strom_warmwasser_kwh: float = 0.0
     #: E4 (Konzept §2.3, gebaut 26.08.): *erfassbar, aber keine bewertete
     #: Funktion.* Nur aus **gemessenen** Betriebsart-Zählern — der aus dem
     #: Modus-Signal abgeleitete Split kann sie nicht (``AUFGETEILTE_MODI``,
@@ -389,14 +395,24 @@ class WpFakten:
     #: den Strom mehrerer Geräte mit der Wärme von weniger Geräten.
     geraete_mit_waerme: int = 0
 
+    # ── R2/Bauart: dieselbe Geräteart im Zähler wie im Nenner? ──────────────
+    #: Wie viele der stromtragenden Geräte sind **Split-Klimaanlagen**
+    #: (`wp_art="luft_luft"`) …
+    geraete_luft_luft: int = 0
+    #: … und wie viele **klassische Wärmepumpen**? Beide > 0 heißt: der Block
+    #: trägt zwei Bauarten, und dann gibt es keine gemeinsame Kennzahl
+    #: ({@link bauarten_gemischt}).
+    geraete_luft_wasser: int = 0
+
     #: **R2/W-7 + R2/F12** — die vom Anwender gemeldete Abgrenzungs-Störung:
     #: ``"fremdstrom"`` (Heizstab-Strom auf dem WP-Zähler, seine Wärme fehlt),
     #: ``"fremdwaerme"`` (bivalent: zweiter Erzeuger am selben Kreis) oder
     #: ``None``.
     #:
-    #: ⭐ **Warum eine Anwender-Angabe und keine Erkennung.** Von den vier Lagen
-    #: des SOLL §4.2 erkennt eedc genau eine aus den Daten selbst
-    #: ({@link waerme_deckt_nicht_alle_geraete}). Ob ein Heizstab auf demselben
+    #: ⭐ **Warum eine Anwender-Angabe und keine Erkennung.** Von den Lagen des
+    #: SOLL §4.2/§5 erkennt eedc **zwei** aus eigener Kenntnis
+    #: ({@link waerme_deckt_nicht_alle_geraete} aus den Daten,
+    #: {@link bauarten_gemischt} aus den Stammdaten). Ob ein Heizstab auf demselben
     #: Zähler liegt oder ein Gaskessel denselben Kreis speist, steht in **keiner**
     #: Messreihe — es gibt keinen Wert, aus dem es folgen könnte.
     #:
@@ -419,12 +435,51 @@ class WpFakten:
         Quotient aus zwei verschieden abgegrenzten Mengen ist keine Kennzahl,
         egal welche Erklärung im Einzelfall zutrifft.
 
-        ⭐ **Von den vier Lagen des §4.2 ist das die einzige, die eedc aus den
-        Daten selbst erkennt.** Heizstab am Zähler, bivalenter Zweiterzeuger und
-        Zeitraum-Versatz sind von außen unsichtbar und brauchen eine Angabe des
-        Anwenders — die es noch nicht gibt.
+        ⛔ **Hier stand bis zum 28.08.2026: „Von den vier Lagen des §4.2 ist das
+        die einzige, die eedc aus den Daten selbst erkennt."** Das gilt nicht
+        mehr — {@link bauarten_gemischt} erkennt eine zweite, und zwar aus den
+        **Stammdaten** statt aus einer Messreihe. Heizstab am Zähler und
+        bivalenter Zweiterzeuger bleiben von außen unsichtbar und brauchen die
+        Angabe des Anwenders (`abgrenzung_stoerung`); der Zeitraum-Versatz ist
+        nur dort erkennbar, wo die Herkunft je Größe bekannt ist.
         """
         return self.geraete_mit_waerme < self.geraete_mit_strom
+
+    @property
+    def bauarten_gemischt(self) -> bool:
+        """Trägt der Block **zwei Bauarten** in einer Zahl? (**R2**, SOLL §5)
+
+        *„Geräte verschiedener Bauart werden nicht zu einer Kennzahl
+        zusammengefasst. Eine Luft-Wasser-WP und eine Split-Klimaanlage haben
+        verschiedene Funktionen, verschiedene Nutzenergie und verschiedene
+        Vergleichsmaßstäbe. Mengen dürfen nebeneinander stehen, eine
+        gemeinsame JAZ nicht."* — so steht es im Konzept, und bis zum
+        28.08.2026 hielt sich der Code nicht daran.
+
+        ⭐ **Die zweite Lage, die eedc aus den Daten selbst erkennt.** Bis
+        hierher galt {@link waerme_deckt_nicht_alle_geraete} als *„die einzige"*
+        — das stimmt seit dieser Eigenschaft nicht mehr, und der Unterschied ist
+        keine Feinheit: Die Bauart steht in den **Stammdaten**, nicht in einer
+        Messreihe. Sie ist deshalb auch dann bekannt, wenn noch gar nichts
+        gemessen wurde.
+
+        ⚠ **Warum das nicht dasselbe ist wie „nicht alle Geräte melden Wärme".**
+        Beide treffen bei dietmar1968 zu, aber sie sagen Verschiedenes: Der
+        allgemeinere Satz beschreibt einen **behebbaren** Zustand („ordne einen
+        Wärmemengenzähler zu"). Eine Split-Klimaanlage hat bauartbedingt keinen
+        — das Investitionsformular sagt dem Anwender ausdrücklich zu, es genüge
+        der Stromverbrauchs-Sensor. Ihr Strom stünde damit **dauerhaft** im
+        Nenner ohne Aussicht auf einen Zähler, und der Rat wäre einer ins Leere.
+        Genau diese Klasse Fehlberatung hat ihn schon einmal getroffen
+        (Forum #89667/87, behoben mit `ist_luft_luft_waermepumpe`).
+
+        ⭐ **Und sie beantwortet eine Frage, die er selbst gestellt hat**
+        (T89667 #201): *„Ist es nicht sinnvoller, die Luft-Wasser-Wärmepumpe
+        von der Luft-Luft-Klimaanlage komplett zu trennen?"* Für die Kennzahl:
+        ja, zwingend. Für die **Mengen** nicht — die Balken bleiben gemeinsam,
+        sie nennen jetzt nur ihre Geräte (`komponenten_geraete`, auch im Tag).
+        """
+        return self.geraete_luft_luft > 0 and self.geraete_luft_wasser > 0
 
     @property
     def jaz_belastbar(self) -> bool:
@@ -465,6 +520,7 @@ class WpFakten:
             self.modus_strom_bezug_kwh
             - self.modus_strom_heizen_kwh
             - self.modus_strom_kuehlen_kwh
+            - self.modus_strom_warmwasser_kwh
             - self.modus_strom_lueften_kwh
             - self.modus_strom_entfeuchten_kwh,
         )
@@ -917,6 +973,7 @@ async def _ergaenze_modus_split_ohne_abschluss(
             r = roh.setdefault(schluessel, _RohMonat())
             r.wp_modus_strom_heizen += split.heizen_kwh
             r.wp_modus_strom_kuehlen += split.kuehlen_kwh
+            r.wp_modus_strom_warmwasser += split.warmwasser_kwh
             # W-17: Stunden werden ueber GERAETE nicht addiert (SoT-Helfer).
             # Die Schleife laeuft ueber `je_inv` — jeder Durchlauf ist ein
             # weiteres Geraet DESSELBEN Monats. Mengen ja, Zeitraum nein.
@@ -1086,6 +1143,8 @@ class _RohMonat:
         self.wp_hat_split = False
         self.wp_modus_strom_heizen = 0.0
         self.wp_modus_strom_kuehlen = 0.0
+        #: N-336 — nur aus dem abgeleiteten Split; die Gegenrichtung zu E4.
+        self.wp_modus_strom_warmwasser = 0.0
         #: E4 — nur aus gemessenen Zaehlern; der abgeleitete Split kann sie nicht.
         self.wp_modus_strom_lueften = 0.0
         self.wp_modus_strom_entfeuchten = 0.0
@@ -1111,6 +1170,11 @@ class _RohMonat:
         # Zeitraum-Versatz) sind von außen nicht sichtbar.
         self.wp_geraete_mit_strom = 0
         self.wp_geraete_mit_waerme = 0
+        # R2/Bauart (SOLL §5): Wie viele der stromtragenden Geräte sind
+        # Split-Klimaanlagen (Luft-Luft), wie viele klassische Wärmepumpen?
+        # Stehen BEIDE im Block, gibt es keine gemeinsame Kennzahl.
+        self.wp_geraete_luft_luft = 0
+        self.wp_geraete_luft_wasser = 0
         #: R2/W-7 + R2/F12: die Abgrenzungs-Störung des Blocks. **Sobald EIN
         #: Gerät gestört ist, ist der Block gestört** — dieselbe Faltung wie
         #: `wp_hat_split`. Ein Block, der Strom eines Geräts mit Heizstab am
@@ -1255,6 +1319,7 @@ class _RohMonat:
             self.wp_hat_split = self.wp_hat_split or b.wp_hat_split
             self.wp_modus_strom_heizen += b.wp_modus_strom_heizen
             self.wp_modus_strom_kuehlen += b.wp_modus_strom_kuehlen
+            self.wp_modus_strom_warmwasser += b.wp_modus_strom_warmwasser
             self.wp_modus_strom_lueften += b.wp_modus_strom_lueften
             self.wp_modus_strom_entfeuchten += b.wp_modus_strom_entfeuchten
             self.wp_nutzenergie_kuehlen += b.wp_nutzenergie_kuehlen
@@ -1271,6 +1336,14 @@ class _RohMonat:
             self.wp_waerme_abgeleitet += b.wp_waerme_abgeleitet
             if b.wp_strom > 0:
                 self.wp_geraete_mit_strom += 1
+                # R2/Bauart: nur Geräte, die auch **Strom** beitragen — ein
+                # stillstehendes Zweitgerät soll die Kennzahl des laufenden
+                # nicht sperren. Dieselbe Zusicherung wie beim Tages-Zweig der
+                # Abgrenzungs-Störung, wo genau das schon einmal nötig war.
+                if ist_luft_luft_waermepumpe(inv):
+                    self.wp_geraete_luft_luft += 1
+                else:
+                    self.wp_geraete_luft_wasser += 1
             if b.wp_waerme > 0:
                 self.wp_geraete_mit_waerme += 1
             # Erste gemeldete Störung gewinnt. Zwei verschiedene Störungen an
@@ -1522,6 +1595,7 @@ async def _baue_fakt(
             hat_split=roh.wp_hat_split,
             modus_strom_heizen_kwh=roh.wp_modus_strom_heizen,
             modus_strom_kuehlen_kwh=roh.wp_modus_strom_kuehlen,
+            modus_strom_warmwasser_kwh=roh.wp_modus_strom_warmwasser,
             modus_strom_lueften_kwh=roh.wp_modus_strom_lueften,
             modus_strom_entfeuchten_kwh=roh.wp_modus_strom_entfeuchten,
             nutzenergie_kuehlen_kwh=roh.wp_nutzenergie_kuehlen,
@@ -1531,6 +1605,8 @@ async def _baue_fakt(
             waerme_abgeleitet_kwh=roh.wp_waerme_abgeleitet,
             geraete_mit_strom=roh.wp_geraete_mit_strom,
             geraete_mit_waerme=roh.wp_geraete_mit_waerme,
+            geraete_luft_luft=roh.wp_geraete_luft_luft,
+            geraete_luft_wasser=roh.wp_geraete_luft_wasser,
             abgrenzung_stoerung=roh.wp_abgrenzung,
         ),
         sonstiges=SonstigesFakten(

@@ -235,6 +235,8 @@ export interface TagDetail {
    *  entscheidet die Faltung. */
   wp_modus_strom_heizen_kwh: number | null
   wp_modus_strom_kuehlen_kwh: number | null
+  /** N-336: nur aus dem **abgeleiteten** Split. */
+  wp_modus_strom_warmwasser_kwh?: number | null
   /** E4 (Konzept §2.3): nur aus **gemessenen** Betriebsart-Zählern. */
   wp_modus_strom_lueften_kwh?: number | null
   wp_modus_strom_entfeuchten_kwh?: number | null
@@ -254,6 +256,15 @@ export interface TagDetail {
   soll_pv_kwh: number | null
   einspeise_preis_cent: number | null
   netzbezug_preis_cent: number | null
+  /** Welche **Geräte** hinter den anlagenweiten Tagessummen stecken, je Typ.
+   *  Speist den `GeraeteHinweis` („Aggregiert aus: …"), der ab zwei Geräten
+   *  erscheint — dieselbe Form wie in Monat und Jahr.
+   *
+   *  ⛔ Bis 28.08.2026 lieferte der Tag das Feld **nicht**, und damit blieb der
+   *  Hinweis dort als einzige der drei Sichten stumm. dietmar1968 verglich
+   *  deshalb einen Balken über Wärmepumpe **und** Klimaanlage mit dem Zähler
+   *  nur einer der beiden (T89667 #221/#237). */
+  komponenten_geraete?: Record<string, string[]>
 }
 
 export interface HeatmapZelle {

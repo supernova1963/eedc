@@ -110,6 +110,7 @@ export function baueTagAlsMonat(
     // einer Client-Subtraktion.
     wp_modus_strom_heizen_kwh: tagDetail?.wp_modus_strom_heizen_kwh ?? null,
     wp_modus_strom_kuehlen_kwh: tagDetail?.wp_modus_strom_kuehlen_kwh ?? null,
+    wp_modus_strom_warmwasser_kwh: tagDetail?.wp_modus_strom_warmwasser_kwh ?? null,
     // E4: dieselben Segmente wie im Monat — die Blockfabrik ist geteilt.
     wp_modus_strom_lueften_kwh: tagDetail?.wp_modus_strom_lueften_kwh ?? null,
     wp_modus_strom_entfeuchten_kwh: tagDetail?.wp_modus_strom_entfeuchten_kwh ?? null,
@@ -144,6 +145,23 @@ export function baueTagAlsMonat(
     netzbezug_kosten_euro: tag.netzbezug_kosten,
     einspeise_preis_cent: tagDetail?.einspeise_preis_cent ?? null,
     netzbezug_preis_cent: tagDetail?.netzbezug_preis_cent ?? null,
+    // ⭐ Die Geräte hinter den Tagessummen — Futter für den `GeraeteHinweis`
+    // („Aggregiert aus: …"), den die geteilte Blockfabrik ab zwei Geräten
+    // zeigt. **Kein neues Element und keine zweite Komponente:** das Element
+    // gibt es für Wärmepumpe, Speicher und E-Mobilität längst, es bekam im Tag
+    // nur nie etwas zu lesen.
+    //
+    // ⛔ **Warum das kein Schönheitsfehler war.** Monat und Jahr füllten das
+    // Feld, der Tag als einzige Sicht nicht — und ein fehlender Hinweis sieht
+    // nicht aus wie eine Lücke, sondern wie „hier steckt ein Gerät drin".
+    // dietmar1968 betreibt eine Luft-Wasser-Wärmepumpe und eine Split-
+    // Klimaanlage; beide sind `typ="waermepumpe"` und stehen deshalb in
+    // denselben Balken. Er verglich diesen Balken (11 kWh) mit dem Zähler
+    // seiner Klimaanlage (8,71 kWh) und schrieb: *„er vermengt die Anlagen"*
+    // (T89667 #221/#226/#237). Er hatte recht — nur war die Vermengung
+    // gewollt (SOLL §5: Mengen dürfen nebeneinander stehen) und nirgends
+    // gesagt. Genau das sagt der Hinweis jetzt auch im Tag.
+    komponenten_geraete: tagDetail?.komponenten_geraete ?? {},
   } as unknown as AktuellerMonatResponse
 }
 

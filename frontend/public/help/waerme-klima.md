@@ -124,6 +124,7 @@ Das ist die unangenehmste Eigenschaft dieser Fläche und zugleich ihre wichtigst
 | **kein Wärmemengenzähler zugeordnet** | Es gibt keine gemessene Wärme. | Zähler zuordnen — oder die gepflegte Arbeitszahl nutzen (dann ist die Wärme *abgeleitet*) |
 | **Wärme ist gerechnet, nicht gemessen** | Die Wärme kam aus *Strom × Arbeitszahl*. Sie durch denselben Strom zu teilen gäbe genau die Arbeitszahl zurück, mit der gerechnet wurde. | nichts — die Zahl wäre zirkulär |
 | **nur Kühlbetrieb in diesem Zeitraum** | Der Zähler lief, aber nicht fürs Heizen. „Kein Stromverbrauch" wäre hier die falsche Auskunft. | nichts, das ist die Wahrheit über einen Sommermonat |
+| **Wärmepumpe und Klimaanlage in einer Zahl** | Der Block fasst eine klassische Wärmepumpe und eine Split-Klimaanlage zusammen. Beide heizen, aber sie sind nicht vergleichbar: andere Nutzenergie, anderer Maßstab. Eine gemeinsame Arbeitszahl wäre ein Quotient aus zwei Welten. | jedes Gerät einzeln im Komponenten-Hub ansehen — dort hat jedes seine eigene Zahl |
 | **nicht alle Geräte melden Wärme** | Der Block fasst mehrere Geräte zusammen; im Nenner steht der Strom von allen, im Zähler die Wärme von einem. | einzelnes Gerät im Komponenten-Hub ansehen |
 | **Heizstab-Strom auf dem WP-Zähler** | Deine eigene Angabe im Feld *Fremdanteil auf den Zählern*. Der Stromwert ist zu groß. | Angabe korrigieren, wenn sie nicht mehr stimmt |
 | **zweiter Erzeuger am Wärmezähler** | Dieselbe Angabe, andere Richtung: Ein Gas- oder Ölkessel speist denselben Heizkreis. Der Wärmewert ist zu groß. | dito |
@@ -191,9 +192,153 @@ Es gibt **zwei Wege**, und **gemessen schlägt abgeleitet**:
 
 **Weg A — Betriebsart-Zähler (genauer).** Du ordnest *Strom Heizbetrieb*, *Strom Kühlbetrieb*, *Strom Lüftbetrieb*, *Strom Entfeuchtungsbetrieb* zu, soweit vorhanden. eedc rechnet nichts, es liest ab.
 
-**Weg B — Betriebsmodus-Sensor (bequemer).** Du ordnest einen Sensor zu, der sagt, *was das Gerät gerade tut* (`heizen` / `kuehlen` / …). eedc schreibt ihn stündlich mit und teilt den Verbrauch danach auf.
+> ⚑ **Für Warmwasser gibt es hier bewusst kein Feld.** Wer seinen Warmwasser-Strom getrennt misst, trägt ihn unter *Strom Warmwasser* ein (Schritt 2) und bekommt daraus seine *Arbeitszahl · Warmwasser*. Ein zweites Feld für dieselbe Zahl wäre nur eine Gelegenheit, beide versehentlich zu addieren.
 
+**Weg B — Betriebsmodus-Sensor (bequemer).** Du ordnest einen Sensor zu, der sagt, *was das Gerät gerade tut*. eedc schreibt ihn stündlich mit und teilt den Verbrauch danach auf.
+
+> ### Welchen Sensor eedc lesen kann
+>
+> Am besten die **`climate`-Entität** deines Geräts — die meldet den Modus von sich aus richtig.
+>
+> Ein gewöhnlicher `sensor.` geht genauso, er muss aber einen dieser **Texte** liefern:
+>
+> | Home-Assistant-Schreibweise | deutsch | eedc versteht es als |
+> |---|---|---|
+> | `heat` | `heizen` | Heizen |
+> | `dhw` · `hot_water` · `water_heating` | `warmwasser` · `brauchwasser` · `trinkwasser` | Warmwasser |
+> | `cool` | `kuehlen` · `kühlen` | Kühlen |
+> | `dry` | `entfeuchten` | Entfeuchten |
+> | `fan_only` | `lueften` · `lüften` | Lüften |
+> | `off` | `aus` | Aus |
+> | `auto` · `heat_cool` | `automatik` | *unbestimmt* — das Gerät lief, die Seite ist nicht zuordenbar |
+>
+> Groß-/Kleinschreibung ist egal.
+>
+> ⚑ **Warmwasser kennt Home Assistant nicht als Betriebsmodus** — es führt die Trinkwassererwärmung in einer eigenen Gerätegruppe. Eine `climate`-Entität allein sagt dir also meist nur *heizen/kühlen*. Wenn deine Wärmepumpe Warmwasser macht, ist der Template-Sensor unten der Weg dorthin.
+>
+> ⛔ **Eine Zahl reicht nicht.** Manche Integrationen liefern den Modus als **Rohwert** — Viessmann zum Beispiel als `sensor.…_hk1_mode_raw` mit dem Wert `1`. Was `1` bedeutet, weiß nur dein Gerät; eedc rät es nicht und zeigt deshalb **„Unbestimmt"**. Dasselbe gilt für jeden anderen Text, den die Tabelle nicht kennt.
+>
+> **Der Ausweg ist ein Template-Sensor in Home Assistant**, der aus dem, was du hast, einen der Texte oben macht. Hast du **Leistungssensoren je Funktion**, brauchst du die Codierung deines Geräts gar nicht:
+>
+> ```yaml
+> template:
+>   - sensor:
+>       - name: "Wärmepumpe Betriebsmodus (eedc)"
+>         state: >
+>           {% set kuehl = states('sensor.DEIN_KUEHL_LEISTUNG')|float(0) %}
+>           {% set heiz  = states('sensor.DEIN_HEIZ_LEISTUNG')|float(0) %}
+>           {% set ww    = states('sensor.DEIN_WARMWASSER_LEISTUNG')|float(0) %}
+>           {% if kuehl > 20 %}kuehlen
+>           {% elif ww > 20 %}warmwasser
+>           {% elif heiz > 20 %}heizen
+>           {% else %}aus{% endif %}
+> ```
+>
+> Die 20 W sind eine Schwelle gegen Standby-Rauschen — nimm einen Wert, der zu deinem Gerät passt.
+>
+> ⚠ **Die Reihenfolge im Template ist nicht beliebig.** Läuft die Wärmepumpe für Warmwasser, kann dabei auch der Heiz-Leistungssensor Werte zeigen; deshalb wird Warmwasser **vor** Heizen geprüft. Wer es umdreht, bucht seine Warmwasserstunden aufs Heizen.
+>
+> ⚑ **Was du davon siehst:** *Strom-Aufteilung nach Betriebsart* unter deiner Wärmepumpe bekommt eine eigene Zeile **Warmwasser** — in Cockpit → Tag, Monat und Jahr, im Komponenten-Hub und als Sensor *Strom Warmwasserbetrieb* in Home Assistant.
+>
+> ⚠ **Das ist etwas anderes als das Feld *Strom Warmwasser***, auch wenn beide dieselbe Energie meinen können. *Strom Warmwasser* ist ein **eigener Zähler** und ein Summand: Heizen + Warmwasser ergeben zusammen deinen Gesamtverbrauch. Die Zeile im Balken ist eine **Teilmenge** des Gesamtverbrauchs, aus mitgeschriebenen Stunden. **Addiere sie nie.**
+>
 > ⚠ **Weg B wirkt nur ab jetzt.** Die Aufteilung entsteht aus mitgeschriebenen Stunden — **rückwirkend gibt es sie nicht**. Deshalb steht unter dem Balken, wie viele Stunden eedc tatsächlich mitgelesen hat.
+
+> ### Mehrere Innengeräte — eedc braucht **eine** Aussage über die Anlage
+>
+> Dein Stromzähler ist **einer** (meist eine Messsteckdose am Außengerät). Für die Aufteilung
+> braucht eedc deshalb genau **eine** Aussage darüber, was die **Anlage** gerade tut — nicht drei
+> Aussagen über drei Innengeräte.
+>
+> **Der einfache Weg, und für die meisten der richtige:** Ordne bei **allen** Innengeräten
+> **dieselbe** `climate`-Entität zu. Bei einer Anlage mit einem Kältekreis gibt ohnehin das
+> Außengerät die Richtung vor — das zuerst eingeschaltete Innengerät bestimmt sie, die anderen
+> können dann nur dasselbe. Mehrere Zuordnungen auf dieselbe Entität zählt eedc als **eine**
+> Quelle; deine Aufteilung funktioniert wie gewohnt.
+>
+> ⛔ **Zeigen die Zuordnungen auf *verschiedene* Entitäten, teilt eedc nicht auf** und sagt es im
+> Daten-Checker. Der Grund ist nicht Bequemlichkeit: Aus mehreren Innengeräte-Zuständen einen
+> Anlagen-Zustand zu bilden, hängt an **deiner** Anlage — ob ein Innengerät lüften kann, während
+> ein anderes heizt; ob dein Außengerät beim Enteisen etwas meldet; ob „Entfeuchten" bei dir
+> kühlseitig läuft. **Das weißt du, eedc weiß es nicht — und eedc rät nicht.**
+>
+> **Der zweite Weg: du schreibst die Regel selbst.** Ein Template-Sensor fasst deine Innengeräte
+> zu einer Anlagen-Aussage zusammen; **dessen** Ergebnis ordnest du dann als Betriebsmodus zu:
+>
+> ```yaml
+> template:
+>   - sensor:
+>       - name: "Klimaanlage Betriebsmodus Anlage (eedc)"
+>         state: >
+>           {% set g = [states('climate.INNEN_1'),
+>                       states('climate.INNEN_2'),
+>                       states('climate.INNEN_3')] %}
+>           {% if 'heat' in g %}heizen
+>           {% elif 'cool' in g %}kuehlen
+>           {% elif 'dry'  in g %}entfeuchten
+>           {% elif 'fan_only' in g %}lueften
+>           {% elif g | reject('eq','off') | list | count == 0 %}aus
+>           {% else %}automatik{% endif %}
+> ```
+>
+> ⚠ **Die Reihenfolge ist auch hier nicht beliebig, und sie ist deine Entscheidung.** Sie sagt:
+> *ein Innengerät, das eine Richtung nennt, gewinnt gegen eines, das nur lüftet oder aus ist* —
+> denn den Löwenanteil verbraucht der Verdichter, und der arbeitet für die Richtung. Passt das
+> nicht zu deiner Anlage, dreh sie um.
+>
+> ⛔ **`aus` erst, wenn wirklich alle aus sind — und auch dann mit Vorsicht.** „Alle Innengeräte
+> aus" heißt **nicht** „die Anlage ist aus": Das Außengerät kann enteisen oder nachlaufen und
+> dabei kräftig Strom ziehen. Wenn du dafür eine eigene Quelle hast, nimm sie; wenn nicht, ist
+> `automatik` (⇒ *unbestimmt*) die ehrlichere Antwort als `aus`.
+
+> ### Wenn deine Anlage taktet: „Leerlauf" behält deinen Modus
+>
+> Meldet deine Integration zusätzlich den **Ist-Betrieb** (`Aktuelle Aktion` in Home Assistant),
+> liest eedc ihn mit — er sagt genauer als der eingestellte Modus, was gerade läuft. Nennt er
+> eine **Richtung** (Heizen, Kühlen, Entfeuchten, Lüften), gilt sie.
+>
+> Steht dort **Leerlauf**, weil die Solltemperatur erreicht ist, **bleibt dein eingestellter
+> Modus stehen.** Eine Anlage, die auf *Kühlen* steht und gerade pausiert, kühlt weiterhin —
+> Home Assistant schreibt es genauso auf die Kachel: „Leerlauf (Kühlbetrieb)". Die Stunde zählt
+> deshalb zum Kühlen.
+>
+> ⛔ **Bis v4.0.30 war das anders**, und das war ein Fehler: Leerlauf verwarf den Modus, die
+> Stunde fiel unter *nicht aufgeteilt*. **Bei einem gut ausgelegten Inverter-Gerät ist das der
+> größte Teil der Zeit** — die Aufteilung war damit praktisch wirkungslos. Gemeldet von einem
+> Anwender mit einer taktenden Multisplit-Anlage.
+>
+> **Was weiterhin *nicht aufgeteilt* bleibt:** Leerlauf, während **keine** Richtung eingestellt
+> ist — also bei *Automatik* (`heat_cool`) oder wenn dein Gerät gar keinen Modus meldet. Dann
+> gibt es nichts, worauf eedc zurückfallen könnte, und geraten wird nicht.
+
+> ### Zähler schlagen den Betriebsmodus
+>
+> Hast du **Zähler je Betriebsart** (Schritt 4, Weg A), brauchst du den Betriebsmodus für die
+> Aufteilung **nicht** — er wird dann gar nicht dafür herangezogen. Der Modus ist der Weg für
+> alle, die **nur einen** Zähler haben. Beides zuzuordnen schadet nicht (der Modus trägt weiter
+> Icon und Klartext in der Live-Sicht), bringt für die Aufteilung aber nichts dazu.
+>
+> ⛔ **Und das gilt schon ab dem ersten Zähler.** Ordnest du auch nur **einen** Betriebsart-Zähler
+> zu, gilt für dieses Gerät **nur noch** der gemessene Weg — die übrigen Betriebsarten erscheinen
+> dann unter *nicht aufgeteilt*, statt aus dem Modus abgeleitet zu werden. Ordne deshalb entweder
+> alle zu, die du hast, oder verlass dich auf den Modus.
+
+> ### Was dein Anlagenzähler erfassen muss
+>
+> eedc setzt voraus, dass der Zähler dieses Geräts **den ganzen Verbrauch** erfasst — Außengerät
+> **und** Innengeräte. Alle Werte, die du je Innengerät pflegst, versteht eedc als
+> **Aufschlüsselung** dieses Gesamtwerts, nie als etwas, das dazukommt.
+>
+> ⛔ **Werden deine Innengeräte über eigene Steckdosen versorgt und dort gemessen, passt das
+> nicht** — dann fehlt ihr Verbrauch in deiner Bilanz, nicht nur in der Aufteilung. eedc kann
+> das heute nicht abbilden. Melde dich, wenn deine Anlage so gebaut ist; die Frage ist
+> beschrieben und wartet auf einen echten Fall.
+>
+> ⚑ **Übersteigen deine Betriebsart-Zähler den Anlagenzähler**, sagt eedc es und weist **keine**
+> Aufteilung aus. Zwei Ursachen sind möglich und von außen nicht unterscheidbar: der
+> Anlagenzähler erfasst nicht alles (siehe oben) — oder die Zähler sind herstellerseitig
+> **gerechnete Anteile** statt Messungen. **Falsche Eingangswerte erzeugen falsche Ergebnisse;
+> eedc korrigiert sie nicht, es nennt sie.**
 
 **Beide Wege ganz oder gar nicht je Gerät.** Wer Betriebsart-Zähler hat, für den gelten sie; der abgeleitete Weg wird dort nicht zusätzlich angewendet. Eine Aufteilung, deren eine Hälfte aus einem Zähler und deren andere aus einer Rechnung stammt, trüge ein halbwahres Etikett.
 
@@ -225,7 +370,7 @@ WP: 3000 kWh Wärme auf 800 kWh Strom. Klimaanlage: 200 kWh Strom, keine Wärme.
 
 | Sicht | Ergebnis |
 |-------|----------|
-| **Cockpit** (beide zusammen) | Arbeitszahl **„—"**, Grund: *nicht alle Geräte melden Wärme* |
+| **Cockpit** (beide zusammen) | Arbeitszahl **„—"**, Grund: *Wärmepumpe und Klimaanlage in einer Zahl* |
 | **Komponenten → Wärmepumpe** | **3,75** (3000 ÷ 800) — sauber abgegrenzt |
 
 ⭐ **Die Mengen bleiben in beiden Sichten vollständig.** Weg ist nur die Zahl, die 3000 ÷ 1000 gerechnet hätte — Wärme von einem Gerät, Strom von zweien.
@@ -266,9 +411,14 @@ Wärmepumpe mit getrennter Strommessung (800 + 400 kWh) und Wärmemengenzählern
 | Strom verbraucht | **1400 kWh** (alle drei Zähler) |
 | Modus erfasst | **18 Stunden** — nicht 36 |
 | Aufgeteilte Menge | wird genannt, sobald sie vom Gesamtstrom abweicht |
-| Arbeitszahl | „—", *nicht alle Geräte melden Wärme* |
+| Aggregiert aus | **Wärmepumpe · Klimaanlage** — die Namen stehen unter dem Block |
+| Arbeitszahl | „—", *Wärmepumpe und Klimaanlage in einer Zahl* |
 
 ⭐ **Kilowattstunden darf man über Geräte addieren, Stunden nicht.** Zwei Geräte, die dieselben 18 Stunden liefen, ergeben 18 Stunden Beobachtung. Bis v4.0.28 stand dort 36 — an einem Tag.
+
+⭐ **Der Block nennt seine Geräte — und seit v4.0.31 auch unter *Cockpit → Tag*.** Solange dort niemand sagte, dass zwei Geräte in einer Summe stecken, war die Zahl nicht nachvollziehbar: Wer den Balken mit dem Zähler **einer** seiner Anlagen verglich, fand eine Differenz, für die es keine Erklärung gab. Monat und Jahr nannten die Namen längst, der Tag als einzige Sicht nicht.
+
+**Die Mengen bleiben zusammen, und das ist Absicht.** Kilowattstunden über Geräte zu addieren ist richtig — was fehlte, war die Auskunft darüber. Wer die Geräte einzeln sehen will, öffnet *Komponenten → Wärmepumpe*; dort steht jedes für sich, mit eigener Arbeitszahl.
 
 ### F — Brauchwasser-Wärmepumpe
 

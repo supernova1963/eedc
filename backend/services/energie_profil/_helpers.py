@@ -345,7 +345,7 @@ async def _get_betriebsmodus_history(
         `core.betriebsmodus`. Stunden ohne Signal fehlen; Geräte ohne
         zugeordneten Sensor fehlen.
     """
-    from backend.core.betriebsmodus import normalisiere_betriebsmodus
+    from backend.core.betriebsmodus import modus_quelle, normalisiere_betriebsmodus
     from backend.models.investition import Investition
 
     inv_result = await db.execute(
@@ -367,8 +367,18 @@ async def _get_betriebsmodus_history(
     for key, val in (sensor_mapping or {}).get("investitionen", {}).items():
         if str(key) not in wp_ids:
             continue
-        if isinstance(val, dict) and (val.get("live") or {}).get("betriebsmodus"):
-            entity_zu_inv.setdefault(val["live"]["betriebsmodus"], []).append(int(key))
+        if not isinstance(val, dict):
+            continue
+        # ⚠ **Nicht `live["betriebsmodus"]` allein** (N-340): Mit einer
+        # Innengeräte-Liste heißt der Key `betriebsmodus-3`. Hier stand der
+        # nackte Name — als EINZIGE der vier Lesestellen, die anderen drei
+        # (Live, Daten-Checker, Snapshot-Keys) lösen ihn längst auf. Folge:
+        # Wer den Modus je Innengerät zuordnete, bekam **keine Aufteilung**,
+        # während der Daten-Checker „zugeordnet" meldete. `modus_quelle`
+        # trägt zugleich die Eindeutigkeits-Regel — Begründung dort.
+        quelle = modus_quelle(val.get("live"))
+        if quelle:
+            entity_zu_inv.setdefault(quelle, []).append(int(key))
 
     modus_entities = list(entity_zu_inv)
     if not modus_entities:
@@ -401,9 +411,10 @@ async def _get_betriebsmodus_history(
 
                 # Zustand zu Beginn der Stunde = letzter Punkt davor.
                 # ⚠ Zustand UND Aktion wandern als Paar mit: `hvac_action` ist
-                # der Ist-Betrieb und schlägt den eingestellten Modus — aber
-                # nur, wenn sie `normalisiere_betriebsmodus` als **zweites**
-                # Argument erreicht. Wer sie vorher in den Zustand faltet,
+                # der Ist-Betrieb und verfeinert den eingestellten Modus (sie
+                # schlägt ihn, wo sie eine Richtung nennt; `idle` nicht, #399)
+                # — aber nur, wenn sie `normalisiere_betriebsmodus` als
+                # **zweites** Argument erreicht. Wer sie vorher in den Zustand faltet,
                 # verliert sie (s. `get_zustand_history`).
                 laufend: Optional[tuple[str, Optional[str]]] = None
                 for ts, roh, akt in punkte:

@@ -66,11 +66,17 @@ from datetime import date, datetime, timedelta
 import pytest
 
 from backend.core.berechnungen.waermepumpe_kennzahl import (
+    GRUND_BAUARTEN_GEMISCHT,
     GRUND_GERAETE_OHNE_WAERME,
 )
 from backend.models import Anlage, Investition  # noqa: F401  (Base.metadata)
 from backend.models.investition import InvestitionMonatsdaten  # noqa: F401
 from backend.models.mqtt_gateway_mapping import MqttGatewayMapping  # noqa: F401
+# N-337: der Hub liest `sensor_snapshots` (wp_starts_anzahl). Ohne diesen Import
+# steht das Modell nicht in `Base.metadata`, wenn diese Datei ALLEIN laeuft — im
+# Gesamtlauf bringt es eine andere Datei mit. Wer hier baut, faehrt genau diese
+# Datei einzeln und saehe sonst Rot, das ihm nicht gehoert.
+from backend.models.sensor_snapshot import SensorSnapshot  # noqa: F401
 from backend.models.tages_energie_profil import (  # noqa: F401
     TagesEnergieProfil,
     TagesZusammenfassung,
@@ -136,14 +142,28 @@ async def _baue_a1(db):
 
 
 async def test_a1_anlagenweite_arbeitszahl_faellt_weg_mit_grund(db):
-    """Die vermischte Zahl darf NICHT erscheinen — der Grund tritt an ihre Stelle."""
+    """Die vermischte Zahl darf NICHT erscheinen — der Grund tritt an ihre Stelle.
+
+    ⚠ **Der erwartete Grund hat am 28.08.2026 gewechselt, die Aussage nicht.**
+    Bis dahin stand hier `GRUND_GERAETE_OHNE_WAERME` („nicht alle Geräte melden
+    Wärme"). Gesperrt war die Zahl also schon; **falsch war nur die Auskunft.**
+    Der allgemeinere Satz beschreibt einen behebbaren Zustand und riet damit zu
+    einer Zuordnung, die es hier nicht geben kann — eine Split-Klimaanlage hat
+    bauartbedingt keinen Wärmemengenzähler, und das Investitionsformular sagt
+    dem Anwender ausdrücklich zu, es genüge der Stromverbrauchs-Sensor.
+
+    ⛔ **Die Probe wurde deshalb umgestellt, nicht zurückgedreht:** Ihr
+    Gegenstand — *die vermischte Zahl darf es nicht geben* — gilt unverändert
+    und wird eine Zeile höher weiter geprüft. Nur der Grund ist jetzt der
+    konkretere, und der konkretere Grund ist die bessere Auskunft (SOLL §3.3/S3).
+    """
     a, _wp = await _baue_a1(db)
     antwort = await _monat(db, a.id)
 
     assert antwort.wp_jaz is None, (
         "3000 ÷ 1000 = 3,0 wurde gebildet, obwohl die Klimaanlage keine Wärme "
         "meldet — genau die Vermischung, die dietmar1968 gemeldet hat")
-    assert antwort.wp_jaz_grund == GRUND_GERAETE_OHNE_WAERME
+    assert antwort.wp_jaz_grund == GRUND_BAUARTEN_GEMISCHT
 
 
 async def test_a1_die_mengen_bleiben_unveraendert(db):
@@ -571,7 +591,11 @@ async def test_a5_die_anlagenweite_arbeitszahl_bleibt_gesperrt(db):
     antwort = await _monat(db, a.id)
 
     assert antwort.wp_jaz is None, "die vermischte Zahl darf es nicht geben"
-    assert antwort.wp_jaz_grund == GRUND_GERAETE_OHNE_WAERME
+    # Grund-Wechsel 28.08.2026, wie bei A1 und aus demselben Grund: dieselbe
+    # Bauform (Luft-Wasser + Luft-Luft), dieselbe Sperre, konkretere Auskunft.
+    # Die Aussage dieser Probe — kein Quotient — steht unveraendert eine Zeile
+    # hoeher; nur der Text daneben ist jetzt der, der dem Melder auch hilft.
+    assert antwort.wp_jaz_grund == GRUND_BAUARTEN_GEMISCHT
 
 
 # ═══ A6 — der Tag sagt, WARUM die Wärme fehlt (W-18) ════════════════════════
@@ -723,3 +747,239 @@ async def test_a6_mit_zaehlerstaenden_steht_eine_zahl_und_kein_grund(db):
     assert antwort.wp_waerme_kwh == pytest.approx(80.0), "40 Heizwärme + 40 Warmwasser"
     assert antwort.wp_waerme_grund is None
     assert antwort.wp_jaz == pytest.approx(4.0), "80 ÷ 20"
+
+
+# ═══ A7 — MartyBr: die Wärmepumpe heizt, macht Warmwasser oder kühlt ════════
+#
+# Forum 89667 #230 (MartyBr, 27.08.2026): *„Wie @rapahl auch sagte, die WP
+# heizt, macht WW oder kühlt."* Einen Beitrag davor hat dietmar1968 es begründet
+# (#225): Eine konventionelle Wärmepumpe hat **einen** Kältekreis mit **einem**
+# Verdichter und ein Umschaltventil — die drei Betriebsformen schließen sich
+# gegenseitig aus.
+#
+# ⛔ **Bis N-336 kannte der Betriebsmodus-Kanon nur Heizen und Kühlen.** Sein
+# Warmwasser-Strom fiel in „nicht aufgeteilt" — denselben Topf wie Standby und
+# Sensorausfall.
+#
+# Zahlen (Vitocal-Bauform, ohne getrennte Strommessung): 1000 kWh Strom,
+# davon per Modus 600 Heizen · 250 Warmwasser · 100 Kühlen; 2400 kWh Heizwärme
+# und 600 kWh Warmwasser-Wärme.
+
+_A7_SPLIT = {
+    "modus_strom_heizen_kwh": 600.0,
+    "modus_strom_warmwasser_kwh": 250.0,
+    "modus_strom_kuehlen_kwh": 100.0,
+    "modus_abdeckung_h": 700.0,
+}
+
+_A7_BASIS = {
+    "stromverbrauch_kwh": 1000.0,
+    "heizenergie_kwh": 2400.0,
+    "warmwasser_kwh": 600.0,
+}
+
+
+async def _baue_a7(db, *, mit_warmwasser_split: bool = True):
+    a = await _anlage(db, "A7 MartyBr Modus")
+    split = dict(_A7_SPLIT)
+    if not mit_warmwasser_split:
+        # Der Zustand VOR N-336: dieselbe Anlage, dieselben Stunden — nur dass
+        # eedc die Warmwasser-Stunden nicht benennen konnte.
+        split.pop("modus_strom_warmwasser_kwh")
+    wp = await _geraet(db, a, "Vitocal 333-G",
+                       {"wp_art": "luft_wasser", "effizienz_modus": "gesamt_jaz"},
+                       {**_A7_BASIS, **split})
+    await db.commit()
+    return a, wp
+
+
+async def test_a7_warmwasser_bekommt_eine_eigene_zeile(db):
+    """N-336: der gemessene Warmwasser-Strom heißt Warmwasser, nicht „Rest"."""
+    a, _wp = await _baue_a7(db)
+    antwort = await _monat(db, a.id)
+
+    assert antwort.wp_modus_strom_heizen_kwh == pytest.approx(600.0)
+    assert antwort.wp_modus_strom_warmwasser_kwh == pytest.approx(250.0)
+    assert antwort.wp_modus_strom_kuehlen_kwh == pytest.approx(100.0)
+
+
+async def test_a7_die_restmenge_traegt_das_warmwasser_nicht_mehr(db):
+    """1000 − 600 − 250 − 100 = 50 — und **nicht** 300.
+
+    ⛔ Die 300 wären die Zahl vor N-336: 250 kWh gemessener Warmwasser-Strom,
+    ununterscheidbar von Standby und Sensorausfall. Genau das hat MartyBr
+    gesehen.
+    """
+    a, _wp = await _baue_a7(db)
+    antwort = await _monat(db, a.id)
+
+    assert antwort.wp_modus_nicht_aufgeteilt_kwh == pytest.approx(50.0)
+
+
+async def test_a7_die_arbeitszahl_aendert_sich_durch_den_split_NICHT(db):
+    """⭐ **Die Falle dieses Baus — und der Grund, warum es diese Probe gibt.**
+
+    Warmwasser sieht in der Aufteilung aus wie Kühlen, Lüften und Entfeuchten:
+    eine Betriebsart neben dem Heizen. Es ist aber die einzige davon, die eine
+    **bewertete Nutzenergie** erzeugt — 600 kWh Warmwasser-Wärme, die über
+    ``waerme_gesamt_kwh`` im **Zähler** desselben Quotienten stehen.
+
+    Zöge man den Warmwasser-Strom wie „funktionsfremd" aus dem Nenner, stünde
+    die Wärme oben und ihr Strom nirgends:
+
+    * richtig:  3000 ÷ (1000 − 100) = **3,333**
+    * falsch:   3000 ÷ (1000 − 100 − 250) = **4,615** — **+38 %** geschenkt
+
+    Diese Probe fährt **dieselbe Anlage zweimal**: einmal mit und einmal ohne
+    den Warmwasser-Split. Beide müssen dieselbe Arbeitszahl liefern — denn an
+    der gemessenen Energie hat sich nichts geändert, nur an ihrer Beschriftung.
+    """
+    a_neu, _ = await _baue_a7(db, mit_warmwasser_split=True)
+    a_alt, _ = await _baue_a7(db, mit_warmwasser_split=False)
+
+    jaz_neu = (await _monat(db, a_neu.id)).wp_jaz
+    jaz_alt = (await _monat(db, a_alt.id)).wp_jaz
+
+    assert jaz_neu == pytest.approx(3000.0 / 900.0), (
+        "Wärme 2400 + 600 = 3000; Nenner 1000 − 100 Kühlstrom. Der "
+        "Warmwasser-Strom gehört NICHT abgezogen."
+    )
+    assert jaz_neu == pytest.approx(jaz_alt), (
+        "Eine Beschriftung darf keine Kennzahl bewegen — sonst hätte jede "
+        "Brauchwasser-Wärmepumpe mit N-336 eine bessere JAZ bekommen, ohne "
+        "dass ein einziger Messwert anders wäre"
+    )
+
+
+async def test_a7_die_mengen_summieren_sich_auf_den_bezug(db):
+    """K1: die Gesamtmenge bleibt die Wahrheit, die Aufteilung steht daneben."""
+    a, _wp = await _baue_a7(db)
+    antwort = await _monat(db, a.id)
+
+    teilmengen = (
+        antwort.wp_modus_strom_heizen_kwh
+        + antwort.wp_modus_strom_warmwasser_kwh
+        + antwort.wp_modus_strom_kuehlen_kwh
+        + antwort.wp_modus_nicht_aufgeteilt_kwh
+    )
+    assert teilmengen == pytest.approx(antwort.wp_modus_strom_bezug_kwh)
+    assert antwort.wp_strom_kwh == pytest.approx(1000.0), (
+        "die Bilanzgröße ist von der Aufteilung unberührt"
+    )
+
+
+# ═══ A8 — dietmar1968, die Bauart-Sperre (R2/§5, gebaut 28.08.2026) ══════════
+#
+# Forum 89667 **#221/#226/#237**, seine eigene Beschreibung der Anlage:
+# *„Ich habe eine konventionelle Bosch Wärmepumpe und eine Bosch Klimaanlage mit
+# 3 Innengeräten. Ich kühle nicht mit der Wärmepumpe. Er vermengt vermutlich die
+# Anlagen miteinander."*
+#
+# ⭐ **Warum A1 und A5 diesen Fall NICHT schon abdecken — das ist der ganze
+# Punkt dieser Sektion.** Dort meldet die Klimaanlage **keine** Wärme, und damit
+# greift bereits `waerme_deckt_nicht_alle_geraete` (Geräte mit Wärme < Geräte
+# mit Strom). Die Sperre war also da; **nur ihre Begründung war die falsche.**
+#
+# Hier steht die Lage, die die alte Sperre **gar nicht** sieht: Beide Geräte
+# melden Wärme. `geraete_mit_waerme == geraete_mit_strom` ⇒ kein Grund, und die
+# vermischte Zahl erschiene. Möglich ist das, seit eine Klimaanlage ihre
+# Nutzenergie erfassen kann (v4.0.24 / W-5) — die Erfassung hat den Fall
+# geschaffen, den die Kennzahl-Sperre noch nicht kannte.
+#
+# Zahlen: WP 3000 kWh Wärme auf 800 kWh Strom (JAZ 3,75) · Klimaanlage 400 kWh
+# Wärme auf 200 kWh Strom. Anlagenweit stünden 3400 ÷ 1000 = 3,4 — ein Quotient
+# aus zwei Vergleichsmaßstäben, den SOLL §5 ausdrücklich verbietet.
+
+async def _baue_a8(db):
+    a = await _anlage(db, "A8 dietmar Bauarten")
+    wp = await _geraet(db, a, "Bosch Wärmepumpe",
+                       {"wp_art": "luft_wasser", "effizienz_modus": "gesamt_jaz"},
+                       {"stromverbrauch_kwh": 800.0, "heizenergie_kwh": 3000.0})
+    await _geraet(db, a, "Bosch Klimaanlage",
+                  {"wp_art": "luft_luft", "effizienz_modus": "gesamt_jaz"},
+                  {"stromverbrauch_kwh": 200.0, "heizenergie_kwh": 400.0})
+    await db.commit()
+    return a, wp
+
+
+async def test_a8_zwei_bauarten_ergeben_keine_gemeinsame_kennzahl(db):
+    """**SOLL §5** — *„Mengen dürfen nebeneinander stehen, eine gemeinsame JAZ nicht."*
+
+    ⛔ **Die Probe, die den Bau trägt.** Ohne die Bauart-Sperre stünde hier
+    3400 ÷ 1000 = 3,4, und **keine** der vier bis dahin gebauten §4.2-Lagen
+    hätte sie verhindert: Beide Geräte melden Wärme, keiner meldet eine
+    Störung, es gibt keinen Zeitraum-Versatz und nichts ist abgeleitet.
+    """
+    a, _wp = await _baue_a8(db)
+    antwort = await _monat(db, a.id)
+
+    assert antwort.wp_jaz is None, (
+        "3400 ÷ 1000 = 3,4 — eine Luft-Wasser-Wärmepumpe und eine "
+        "Split-Klimaanlage in einer Kennzahl, genau die Vermengung, nach der "
+        "dietmar1968 in #201 gefragt hat"
+    )
+    assert antwort.wp_jaz_grund == GRUND_BAUARTEN_GEMISCHT
+
+
+async def test_a8_die_mengen_stehen_weiter_nebeneinander(db):
+    """Gesperrt wird die **Kennzahl**, nicht die Messung — §5 erlaubt die Summen.
+
+    ⚠ Das ist die Grenze des Baus, und sie ist Absicht: Der Balken und die
+    Kacheln bleiben gemeinsam. Was fehlte, war nicht die Trennung der Mengen,
+    sondern die Auskunft, **welche Geräte** darin stecken — die trägt
+    `komponenten_geraete`, seit dem 28.08. auch in der Tagessicht.
+    """
+    a, _wp = await _baue_a8(db)
+    antwort = await _monat(db, a.id)
+
+    assert antwort.wp_strom_kwh == pytest.approx(1000.0), "800 + 200"
+    assert antwort.wp_waerme_kwh == pytest.approx(3400.0), "3000 + 400"
+    assert "waermepumpe" in (antwort.komponenten_geraete or {}), (
+        "der Balken muss seine Geräte nennen können"
+    )
+    assert sorted(antwort.komponenten_geraete["waermepumpe"]) == [
+        "Bosch Klimaanlage", "Bosch Wärmepumpe",
+    ]
+
+
+async def test_a8_das_einzelne_geraet_behaelt_seine_zahl(db):
+    """Die anlagenweite Sperre ist am EINZELNEN Gerät gegenstandslos.
+
+    Dieselbe Zusage wie bei A1: Unter *Komponenten → Wärmepumpe* steht jedes
+    Gerät für sich, und dort ist die Abgrenzung sauber (3000 ÷ 800 = 3,75).
+    **Ohne diese Probe wäre die Sperre eine Verschlechterung** — sie nähme dem
+    Melder eine Zahl, die er zu Recht sehen darf.
+    """
+    a, _wp = await _baue_a8(db)
+    blocks = await _hub(db, a.id)
+
+    wp_block = next(b for b in blocks
+                    if b.investition.bezeichnung == "Bosch Wärmepumpe")
+    assert wp_block.zusammenfassung.get("durchschnitt_cop") == pytest.approx(3.75)
+
+
+async def test_a8_gegenprobe_eine_bauart_bleibt_unberuehrt(db):
+    """**Die Sperre muss diskriminieren** — zwei Luft-Wasser-Geräte sind kein Mix.
+
+    ⛔ Ohne diese Gegenprobe wäre nicht gezeigt, dass die neue Lage die
+    **Bauart** prüft und nicht bloß „mehr als ein Gerät". Eine Sperre, die bei
+    jeder Zweitanlage zuschlägt, hätte jede Kaskade aus zwei baugleichen
+    Wärmepumpen um ihre Kennzahl gebracht.
+
+    ⚠ Und sie zeigt die **Reihenfolge**: Hier meldet das zweite Gerät keine
+    Wärme, also gilt weiterhin der allgemeinere Grund — er ist nicht
+    verschwunden, er ist nur nachrangig geworden.
+    """
+    a = await _anlage(db, "A8b zwei Waermepumpen")
+    await _geraet(db, a, "Wärmepumpe Haus",
+                  {"wp_art": "luft_wasser", "effizienz_modus": "gesamt_jaz"},
+                  {"stromverbrauch_kwh": 800.0, "heizenergie_kwh": 3000.0})
+    await _geraet(db, a, "Wärmepumpe Werkstatt",
+                  {"wp_art": "luft_wasser", "effizienz_modus": "gesamt_jaz"},
+                  {"stromverbrauch_kwh": 200.0})
+    await db.commit()
+    antwort = await _monat(db, a.id)
+
+    assert antwort.wp_jaz_grund == GRUND_GERAETE_OHNE_WAERME, (
+        "zwei Geräte DERSELBEN Bauart — hier gilt die alte, allgemeinere Lage"
+    )
