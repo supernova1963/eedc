@@ -12,7 +12,7 @@
 |--------|-----------|
 | **Momentan** | Aktueller Messwert zum Zeitpunkt der Abfrage (z.B. aktuelle Leistung in W) |
 | **Kumulativ** | Zählerstand der stetig steigt (z.B. Stromzähler in kWh). Delta wird berechnet. |
-| **Tagessensor** | Kumulativer Sensor der täglich um 0:00 auf 0 zurückgesetzt wird (HA Utility Meter). Wird unterstützt — Monatswechsel-Reset wird automatisch erkannt. |
+| **Tagessensor** | Kumulativer Sensor der täglich um 0:00 auf 0 zurückgesetzt wird (HA Utility Meter). ⛔ **Als Zählerquelle nicht geeignet:** eedc erkennt den Rücksprung und liefert für Tag wie Monat **keinen Wert**, statt zwei Stände abzuziehen, die zu verschiedenen Zählerläufen gehören. Hochgerechnet wird bewusst nicht — der Fehlbetrag ginge immer nach unten und sähe im Monatsabschluss aus wie eine Messung. **Nimm den fortlaufenden Stand** (`utility_meter` mit Zurücksetzen „nie"). ⚠ Über HA ist das folgenlos, dort kommt der reset-bereinigte `sum`-Wert; es betrifft **rohe MQTT-Stände**. |
 | **Counter** | Kumulativer Anzahl-Zähler (Total-Increasing, kein kWh). Wird strikt von kWh-Feldern getrennt — siehe „Counter vs. kWh" unten. |
 | **Bidirektional** | Positiv/negativ kodiert die Richtung (z.B. +Ladung/−Entladung) |
 | **`state_class`** | HA-Attribut. `total_increasing`/`total` markieren kumulative Sensoren — von HA in Long-Term Statistics persistiert. Sensoren ohne `state_class` haben **keine** LTS-Einträge → für kWh-Felder ungeeignet (siehe „LTS-Verfügbarkeit"). |
@@ -527,6 +527,8 @@ Live-Zuordnungen (`leistung_w`, `soc`) werden nicht geprüft — sie lesen `stat
 ## 11. Export-Sensoren (eedc → HA)
 
 Die bisherigen Abschnitte beschreiben Sensoren, die eedc **aus HA liest**. Dieser Abschnitt beschreibt die umgekehrte Richtung: berechnete eedc-Werte, die als **HA-Entitäten** bereitgestellt werden — per MQTT Discovery (empfohlen) oder REST. Einrichtung: [Einstellungen → Integration → MQTT-Export](HANDBUCH_EINSTELLUNGEN.md#63-mqtt-export).
+
+> **Nicht alles muss kommen.** Jeder Sensor dieser Liste lässt sich in eedc **abwählen** — Häkchen weg in der Sensorliste unter [Einstellungen → Integration → MQTT-Export](HANDBUCH_EINSTELLUNGEN.md#63-mqtt-export), einzeln oder kategorieweise. Voreingestellt sind **alle an**; abgewählt wird bewusst, und eedc fragt vorher nach, weil die bisherigen Daten des Sensors in HA und auf dem Broker damit verloren sind. Der Grund für diese Voreinstellung: Ein Sensor, den es nicht gibt, zeichnet nichts auf — und Home Assistant kennt keine Zeitmaschine. Wer einen Wert später braucht, bekäme ihn erst ab dem Einschalten.
 
 > **Zeithorizont:** Sofern nicht anders angegeben, beziehen sich die Werte auf die **Gesamtlaufzeit** (alle erfassten Monate, jeweils ab Anschaffungsdatum der Komponenten). Der laufende Monat fließt erst nach dem Monatsabschluss ein. Einzige Ausnahme: der **Spezifische Ertrag** ist aufs Jahr normiert (siehe unten).
 
