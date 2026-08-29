@@ -69,10 +69,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.api.routes.strompreise import (
     lade_tarife_fuer_anlage,
+    resolve_tarif_for_komponente,
     resolve_einspeise_preis_cent,
     resolve_netzbezug_preis_cent,
     resolve_strompreis_for_komponente,
 )
+from backend.services.strompreis_aggregator import wirksamer_arbeitspreis_cent
 from backend.core.berechnungen import (
     PvModulWert,
     VerbrauchsKennzahlen,
@@ -81,11 +83,16 @@ from backend.core.berechnungen import (
     berechne_verbrauchs_kennzahlen,
     bkw_finanz_beitrag,
     erzeugung_hinter_zaehler_kwh,
+    ersetzt_keine_heizung,
     hat_gemessene_betriebsart,
     imd_typ_beitrag,
 )
 from backend.core.betriebsmodus import MODUS_ABDECKUNG_FELD
-from backend.core.investition_parameter import ist_dienstlich, ist_luft_luft_waermepumpe
+from backend.core.investition_parameter import (
+    PARAM_WAERMEPUMPE,
+    ist_dienstlich,
+    ist_luft_luft_waermepumpe,
+)
 from backend.core.wirtschaftlichkeit_defaults import (
     EINSPEISEVERGUETUNG_DEFAULT_CENT,
     NETZBEZUG_DEFAULT_CENT,
@@ -342,6 +349,25 @@ class WpFakten:
 
     strom_kwh: float = 0.0
     waerme_kwh: float = 0.0
+    #: **Teilmengen** von ``strom_kwh``/``waerme_kwh`` — nur die Geräte, die laut
+    #: Pflege eine Heizung **ersetzt** haben (N-256). Sie sind die Grundmenge
+    #: jedes **fossilen Vergleichs**: was hätte diese Wärme mit Gas/Öl gekostet,
+    #: und wieviel CO₂ hätte sie verursacht?
+    #:
+    #: ⭐ **Warum zwei Summen und keine Aufteilung je Gerät.** Eine Split-Klima\
+    #: anlage neben einer Wärmepumpe ist der Normalfall, nicht die Ausnahme —
+    #: und sie trägt typischerweise „nichts ersetzt". Ohne diese Trennung wurde
+    #: **ihre** Wärme als vermiedenes Gas gebucht: eine Ersparnis, die es nie
+    #: gab. Eine Zuordnung je Gerät wäre der falsche Weg dorthin (Entscheid
+    #: 27.08.: die gemeinsame Kennzahl wird nicht umgebaut) und auch gar nicht
+    #: nötig — für eine **Menge** genügt die Teilsumme. Kennzahlen trennen wir
+    #: je Bauart, Mengen summieren wir (Konzept Wärme/Klima, E1).
+    #:
+    #: ⚠ **Nie zu ``strom_kwh``/``waerme_kwh`` addieren** — dieselbe Zusicherung
+    #: wie bei ``modus_strom_*`` weiter unten. Die Anlage verbraucht und liefert
+    #: weiterhin die vollen Mengen; nur der Vergleich hat eine kleinere Basis.
+    strom_mit_ersatz_kwh: float = 0.0
+    waerme_mit_ersatz_kwh: float = 0.0
     heizung_kwh: float = 0.0
     warmwasser_kwh: float = 0.0
     strom_heizen_kwh: float = 0.0
@@ -922,6 +948,8 @@ async def lade_monats_fakten(
 
     if tarif_cache is None:
         tarif_cache = {}
+    # N-267: eigener Cache je Aufruf — begruendet im Block ueber `_komponenten_preis`.
+    zeittarif_cache: dict = {}
     fakten: list[MonatsFakt] = []
     for schluessel in sorted(k for k in kandidaten if _im_fenster(k, von, bis)):
         fakten.append(
@@ -936,6 +964,7 @@ async def lade_monats_fakten(
                 investitionen=investitionen,
                 neg_preis_kwh=(neg_preis_je_monat or {}).get(schluessel),
                 tarif_cache=tarif_cache,
+                zeittarif_cache=zeittarif_cache,
                 tages_summe=tages_summen.get(schluessel),
             )
         )
@@ -1093,6 +1122,65 @@ def kennzahlen_aus_fakten(fakten: Iterable[MonatsFakt]) -> VerbrauchsKennzahlen:
     )
 
 
+def pv_unvollstaendig_monate(fakten: Iterable[MonatsFakt]) -> list[MonatsSchluessel]:
+    """Die Monate, deren PV-Achse eine **Teilsumme** ist — chronologisch.
+
+    ``pv_vollstaendig is False`` heißt: mindestens ein im Monat aktives Modul
+    hat keinen Wert und es gibt kein Anlagen-Aggregat, das die Lücke füllt
+    (``pv_summe_je_monat`` → ``None``). ``ErzeugungFakten.pv_kwh`` trägt dann
+    nur, was messbar war — bei einer Anlage mit Balkonkraftwerk also dessen
+    Erzeugung allein.
+    """
+    return [
+        (f.jahr, f.monat) for f in fakten if not f.erzeugung.pv_vollstaendig
+    ]
+
+
+def pv_unvollstaendig_hinweis(fakten: Iterable[MonatsFakt]) -> Optional[str]:
+    """**Der eine Satz**, mit dem eine Sicht eine PV-Teilsumme beschriftet.
+
+    ``None`` heißt „vollständig" — die Sicht rendert dann nichts.
+
+    Warum es diese Funktion gibt und nicht je Route einen eigenen Satz: Das
+    Flag ``ErzeugungFakten.pv_vollstaendig`` wurde gesetzt, getestet — und von
+    **keiner** Route gelesen (0 Treffer in ``backend/api``, gemessen 29.08.2026).
+    Genau das nennt ``docs/KONZEPT-UNVOLLSTAENDIGE-WERTE.md`` §2.4 den
+    schärfsten Einzelbefund der Inventur: *ein Provenance-Flag ohne Leser ist
+    kein Provenance.* §3 Regel 2 verlangt deshalb: wer eines einführt, liefert
+    es im selben Schritt aus.
+
+    **Beschriften, nicht unterdrücken** — ``pv_kwh`` ist eine **additive Summe**
+    und damit richtungssicher zu niedrig (§3). Der Nutzer weiß, in welche
+    Richtung er korrigieren muss; eine Unterdrückung nähme ihm eine brauchbare
+    Zahl. Die Gegenprobe steht eine Ebene tiefer: ``tagesbilanz`` unterdrückt
+    ``eigenverbrauch``, weil das eine **Differenz** ist.
+
+    ⛔ **Ausdrücklich KEIN zweiter Melder.** Dass PV-Werte fehlen, meldet der
+    Daten-Checker längst (``daten_checker/energieprofil.py::_check_pv_erzeugung``
+    → WARNING „PV-Erzeugung unvollständig in N Monat(en)", ERROR „PV-Erzeugung
+    fehlt"), samt Link auf den Monatsabschluss. Diese Funktion baut daneben
+    keine zweite Befundliste auf, sondern beantwortet die andere Frage: der
+    Checker sagt *„was musst du nachtragen?"* (anlagenweit, mit Reparaturweg),
+    die Beschriftung sagt *„worauf beruht **diese** Zahl?"* (genau der gezeigte
+    Zeitraum, am Wert). Das ist die Zuständigkeitsgrenze aus §4 des Konzepts —
+    und die Trennung, die beim Rückbau von N-346 gerissen war: dort stand eine
+    **zweite Kategorie** über einem schon gemeldeten Sachverhalt.
+    """
+    monate = pv_unvollstaendig_monate(fakten)
+    if not monate:
+        return None
+    namen = ", ".join(f"{m:02d}/{j}" for j, m in monate[:6])
+    if len(monate) > 6:
+        namen += f" (+{len(monate) - 6} weitere)"
+    return (
+        f"Die PV-Erzeugung ist in {len(monate)} Monat(en) unvollständig erfasst "
+        f"({namen}): dort fehlt mindestens einem Modul der Wert und es gibt "
+        "keinen Gesamtwert zum Verteilen. Erzeugung, spezifischer Ertrag und "
+        "der daraus gerechnete Ertrag sind deshalb eine Teilsumme und zu "
+        "niedrig — nicht falsch gemessen, sondern unvollständig."
+    )
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Interna
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1136,6 +1224,8 @@ class _RohMonat:
         self.speicher_preis_gewicht = 0.0
         self.wp_strom = 0.0
         self.wp_waerme = 0.0
+        self.wp_strom_mit_ersatz = 0.0
+        self.wp_waerme_mit_ersatz = 0.0
         self.wp_heizung = 0.0
         self.wp_warmwasser = 0.0
         self.wp_strom_heizen = 0.0
@@ -1312,6 +1402,16 @@ class _RohMonat:
         elif inv.typ == "waermepumpe":
             self.wp_strom += b.wp_strom
             self.wp_waerme += b.wp_waerme
+            # N-256: dieselben Mengen noch einmal, aber nur über die Geräte, die
+            # überhaupt eine Heizung ersetzt haben. KEINE Aufteilung je Gerät —
+            # zwei zusätzliche Summen, additiv neben den bestehenden. Sie sind
+            # die Grundmenge des **fossilen Vergleichs**; `wp_waerme`/`wp_strom`
+            # bleiben die Mengen der Anlage und werden von niemandem umgedeutet.
+            if not ersetzt_keine_heizung(
+                (inv.parameter or {}).get(PARAM_WAERMEPUMPE["ALTER_ENERGIETRAEGER"])
+            ):
+                self.wp_strom_mit_ersatz += b.wp_strom
+                self.wp_waerme_mit_ersatz += b.wp_waerme
             self.wp_heizung += b.wp_heizung
             self.wp_warmwasser += b.wp_warmwasser
             self.wp_strom_heizen += b.wp_strom_heizen
@@ -1432,6 +1532,7 @@ async def _baue_fakt(
     investitionen: list[Investition],
     neg_preis_kwh: Optional[float],
     tarif_cache: dict[date, dict],
+    zeittarif_cache: dict,
     tages_summe: Optional[TagesMonatsSumme] = None,
 ) -> MonatsFakt:
     jahr, monat = schluessel
@@ -1541,7 +1642,9 @@ async def _baue_fakt(
     ertraege = roh.ertraege_euro + (md_summen["ertraege_euro"] if md_summen else 0.0)
     ausgaben = roh.ausgaben_euro + (md_summen["ausgaben_euro"] if md_summen else 0.0)
 
-    tarif = await _lade_tarif(db, anlage_id, schluessel, monatsdaten, tarif_cache)
+    tarif = await _lade_tarif(
+        db, anlage_id, schluessel, monatsdaten, tarif_cache, zeittarif_cache
+    )
 
     speicher = SpeicherFakten(
         ladung_kwh=roh.speicher_ladung,
@@ -1587,6 +1690,8 @@ async def _baue_fakt(
         emob=emob,
         wp=WpFakten(
             strom_kwh=roh.wp_strom,
+            strom_mit_ersatz_kwh=roh.wp_strom_mit_ersatz,
+            waerme_mit_ersatz_kwh=roh.wp_waerme_mit_ersatz,
             waerme_kwh=roh.wp_waerme,
             heizung_kwh=roh.wp_heizung,
             warmwasser_kwh=roh.wp_warmwasser,
@@ -1661,12 +1766,61 @@ async def _baue_fakt(
     )
 
 
+# ⛔ Der Zeittarif-Cache reist NICHT im `tarif_cache` mit — erster Entwurf am
+# 2026-08-29, von `test_geteilter_tarif_cache_laedt_jeden_stichtag_einmal`
+# kassiert, und zu Recht: `tarif_cache` ist `dict[date, dict]`, ein
+# String-Schluessel darin macht ihn heterogen und schon ein `sorted()` bricht ab.
+#
+# Stattdessen haelt jede Bildungsstelle ihren EIGENEN Cache je Aufruf. Damit kann
+# derselbe Monat zweimal an der Stundentabelle landen — einmal aus
+# `lade_monats_fakten`, einmal aus `baue_finanz_zeile`. Das ist bewusst in Kauf
+# genommen:
+#   · Es ist eine **Performance**-Frage, keine Drift-Frage. Die Warnung der Probe
+#     („zwei Aufloesungen aus zwei Caches sind eine Drift-Gelegenheit") gilt der
+#     TARIF-Aufloesung — welche Zeile gilt —, und die bleibt geteilt. Der Preis
+#     entsteht daraus rein und deterministisch: dieselbe Tarifzeile und dieselben
+#     unveraenderlichen Stundenzeilen ergeben denselben Wert.
+#   · Und sie faellt nur bei Anlagen MIT Zeitfenstern an: ohne Fenster fragt
+#     `wirksamer_arbeitspreis_cent` die Datenbank gar nicht erst.
+# Wer das aendern will, gibt den Cache als eigenen Parameter durch — nicht als
+# Fremdschluessel in einem fremden Dict.
+
+
+async def _komponenten_preis(
+    db: AsyncSession,
+    anlage_id: int,
+    schluessel: MonatsSchluessel,
+    tarife: dict,
+    komponente: str,
+    stammpreis: float,
+    zeittarif_cache: dict,
+) -> float:
+    """Komponenten-Tarif ueber die SoT-Kaskade, mit Zeitfenstern (N-267).
+
+    ⚠ **Gewichtet wird mit dem Netzbezug des HAUSES, auch beim Waermepumpen-
+    oder Wallbox-Tarif** — und das ist eine Festlegung, keine Nachlaessigkeit:
+    eedc misst je Geraet den **Verbrauch**, nicht den **Netzbezug**. Wieviel
+    einer Geraetestunde aus dem Netz kam und wieviel aus der PV, ist ohne eine
+    Zuteilungsannahme nicht bekannt — eine zweite Gewichtungsbasis waere also
+    keine groessere Genauigkeit, sondern eine erfundene. Wer einen
+    Zeittarif-Waermepumpentarif genauer abrechnen will, traegt den Monats-Ø ein;
+    dieses Feld schlaegt den Wert hier ohnehin.
+    """
+    tarif = resolve_tarif_for_komponente(tarife, komponente)
+    if tarif is None:
+        return stammpreis
+    return await wirksamer_arbeitspreis_cent(
+        db, anlage_id, schluessel[0], schluessel[1], tarif, cache=zeittarif_cache
+    )
+
+
 async def _lade_tarif(
     db: AsyncSession,
     anlage_id: int,
     schluessel: MonatsSchluessel,
     monatsdaten: Optional[Monatsdaten],
     cache: dict[date, dict],
+    zeittarif_cache: dict,
 ) -> TarifFakten:
     """Tarif zum Monatsersten (P8) — ein Cache-Eintrag je Stichtag pro Anfrage."""
     stichtag = date(schluessel[0], schluessel[1], 1)
@@ -1675,13 +1829,20 @@ async def _lade_tarif(
     tarife = cache[stichtag]
 
     allgemein = tarife.get("allgemein")
-    stammpreis = (
-        allgemein.netzbezug_arbeitspreis_cent_kwh if allgemein else NETZBEZUG_DEFAULT_CENT
+    # N-267: Traegt der Tarif Zeitfenster (HT/NT), ist der Stammpreis des Monats
+    # der ueber den GEMESSENEN Netzbezug gewichtete Arbeitspreis statt der
+    # Spalte. Ohne Fenster liefert der Helfer die Spalte unveraendert zurueck —
+    # dieselbe Bauform wie `aufgeloester_strompreis_cent` auf der E-Mob-Achse
+    # (F-18): eine Anlage ohne den neuen Fall bewegt keine Zahl.
+    stammpreis = await wirksamer_arbeitspreis_cent(
+        db, anlage_id, schluessel[0], schluessel[1], allgemein, cache=zeittarif_cache
     )
     # Komponenten-Tarif über die SoT-Kaskade (Komponente → allgemein → Default)
     # statt handschriftlich: ein Spezialtarif-Datensatz OHNE Arbeitspreis fiel
     # in der Handschrift auf `None` durch, statt auf den allgemeinen Tarif.
-    wallbox_cent = resolve_strompreis_for_komponente(tarife, "wallbox", fallback=stammpreis)
+    wallbox_cent = await _komponenten_preis(
+        db, anlage_id, schluessel, tarife, "wallbox", stammpreis, cache
+    )
     return TarifFakten(
         # Flex-Ø des Monats vor dem Stammdaten-Arbeitspreis (P8, zweite Form).
         netzbezug_preis_cent=resolve_netzbezug_preis_cent(monatsdaten, stammpreis),
@@ -1695,8 +1856,8 @@ async def _lade_tarif(
             else EINSPEISEVERGUETUNG_DEFAULT_CENT,
         ),
         grundpreis_euro_monat=(allgemein.grundpreis_euro_monat or 0.0) if allgemein else 0.0,
-        wp_preis_cent=resolve_strompreis_for_komponente(
-            tarife, "waermepumpe", fallback=stammpreis
+        wp_preis_cent=await _komponenten_preis(
+            db, anlage_id, schluessel, tarife, "waermepumpe", stammpreis, cache
         ),
         wallbox_preis_cent=wallbox_cent,
         # Der Flex-Ø gilt für den ganzen Zähler — auch für die Wallbox.

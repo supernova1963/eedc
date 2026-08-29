@@ -22,6 +22,10 @@ from typing import Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.core.berechnungen.stundenbilanz import (
+    berechne_batterie_netto_kwh,
+    stunden_verbrauch_kwh,
+)
 from backend.core.tageswert_grund import (
     GRUND_KEINE_ZAEHLERSTAENDE,
     GRUND_NICHT_ZUGEORDNET,
@@ -222,9 +226,10 @@ async def get_hourly_kwh_by_category(
     Returns:
         {h: {"pv": 4.2, "einspeisung": 3.1, ..., "verbrauch": 2.1}}
         Werte können None sein (kein Zähler gemappt oder Lücke).
-        "verbrauch" wird bilanziell berechnet:
+        "verbrauch" wird bilanziell berechnet (SoT:
+        `core/berechnungen/stundenbilanz.py`):
             verbrauch = pv + netzbezug - einspeisung - (ladung - entladung)
-        nur wenn pv, einspeisung, netzbezug alle verfügbar sind.
+        nur wenn pv, einspeisung und netzbezug verfügbar sind.
     """
     sensor_mapping = anlage.sensor_mapping or {}
     quellen_energy = extract_quellen_energy(anlage)  # C2b-Read-Through
@@ -418,16 +423,21 @@ async def get_hourly_kwh_by_category(
             anlage_id=anlage.id, datum=datum, stunde=h, kategorie="einspeisung",
         )
 
-        # Batterie netto (positiv = Ladung, negativ = Entladung)
-        batt_netto = None
-        if ladung_batt is not None or entladung_batt is not None:
-            batt_netto = (ladung_batt or 0.0) - (entladung_batt or 0.0)
-
-        # Bilanz-Verbrauch: PV + Netzbezug − Einspeisung − Batterie-Nettoladung
-        verbrauch = None
-        if pv_total is not None and einsp is not None and bez is not None:
-            v = pv_total + bez - einsp - (batt_netto or 0.0)
-            verbrauch = max(0.0, v)
+        # Batterie netto (positiv = Ladung, negativ = Entladung) und der
+        # Bilanz-Verbrauch kommen aus dem Layer-SoT (ADR-001) — die Formel stand
+        # bis 29.08.2026 hier UND im LTS-Pfad wortgleich. Verhaltensneutral;
+        # dass ein fehlender Batterie-Beitrag als 0 zählt, ist dort als offener
+        # Punkt beschrieben.
+        batt_netto = berechne_batterie_netto_kwh(
+            ladung_kwh=ladung_batt,
+            entladung_kwh=entladung_batt,
+        )
+        verbrauch = stunden_verbrauch_kwh(
+            pv_kwh=pv_total,
+            netzbezug_kwh=bez,
+            einspeisung_kwh=einsp,
+            batterie_netto_kwh=batt_netto,
+        )
 
         final[h] = {
             "pv": pv_total,

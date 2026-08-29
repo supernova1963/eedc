@@ -39,7 +39,6 @@ Geplant (step-by-step, wenn Konsumenten angefasst werden):
 from backend.core.berechnungen.alternativkosten import (
     berechne_wp_alternativkosten_ersparnis,
     alter_wirkungsgrad,
-    alle_ersetzen_nichts,
     ersetzt_keine_heizung,
     ERSETZT_NICHTS,
     gas_kosten_altanlage,
@@ -286,6 +285,10 @@ from backend.core.berechnungen.grundlast import (
     GrundlastKennzahlen,
     berechne_grundlast,
 )
+from backend.core.berechnungen.stundenbilanz import (
+    berechne_batterie_netto_kwh,
+    stunden_verbrauch_kwh,
+)
 from backend.core.berechnungen.monatsfenster import (
     Monatsfenster,
     anteilig,
@@ -296,6 +299,8 @@ from backend.core.berechnungen.monatsfenster import (
 __all__ = [
     "GrundlastKennzahlen",
     "berechne_grundlast",
+    "berechne_batterie_netto_kwh",
+    "stunden_verbrauch_kwh",
     "Monatsfenster",
     "anteilig",
     "monatsfenster",
@@ -304,7 +309,6 @@ __all__ = [
     "bilanz_aus_stundenrows",
     "berechne_wp_alternativkosten_ersparnis",
     "alter_wirkungsgrad",
-    "alle_ersetzen_nichts",
     "ersetzt_keine_heizung",
     "ERSETZT_NICHTS",
     "gas_kosten_altanlage",

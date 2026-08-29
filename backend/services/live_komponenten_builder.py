@@ -66,6 +66,19 @@ def build_komponenten(
     # Netzpunkt-Bilanz (Autarkie/EV), aber NICHT in pv_total_w (PV-Leistungs-%
     # bleibt rein). Konzept Sonstiger Erzeuger 2026-06-22.
     sonstige_erzeugung_w = 0.0
+    # Die Schlüssel der Komponenten, die eine Batterie-Rolle spielen: Speicher
+    # UND das V2H-fähige E-Auto (`ist_bidirektional` unten). Nur sie dürfen in
+    # `bat_ladung_kw`/`bat_entladung_kw` der Netzpunkt-Bilanz einfließen.
+    #
+    # ⚠ Das Set ist der SoT dieser Frage — sie wird NICHT aus dem Schlüssel
+    # abgeleitet (F-69): Der Filter stand auf dem Präfix `v2h_`, den niemand
+    # erzeugt und nie erzeugt hat (`git log --all -S` über die ganze Historie:
+    # leer). Ein V2H-Auto heißt `eauto_<id>` — und `eauto_` taugt seinerseits
+    # NICHT als Filter, weil ein gewöhnliches, nicht-V2H-Auto denselben
+    # Schlüssel trägt (`LIVE_KEY_PREFIX` kennt nur `wallbox`). Die
+    # Unterscheidung ist der `v2h_faehig`-Parameter der Investition, nicht der
+    # Name; hier weiß der Builder sie ohnehin schon.
+    bidirektionale_keys: set[str] = set()
 
     # Wallbox-Keys sammeln für E-Auto → Wallbox Zuordnung
     wallbox_keys: list[str] = []
@@ -202,7 +215,27 @@ def build_komponenten(
         ist_v2h = (typ == "e-auto"
                    and isinstance(inv.parameter, dict)
                    and inv.parameter.get(PARAM_E_AUTO["V2H_FAEHIG"]))
-        ist_bidirektional = typ in BIDIREKTIONAL_TYPEN or ist_v2h
+        # Ein Gerät unter „Sonstiges" mit der Kategorie **Speicher** ist
+        # ebenfalls bidirektional — so sehen es die beiden Schwesterpfade seit
+        # jeher (`live_sensor_config.baue_investitions_serien` und
+        # `live_tagesverlauf_service`, je „elif kat == 'speicher'").
+        #
+        # ⚠ Hier fehlte er (F-70): Er fiel in den `else`-Zweig, und der kennt
+        # nur `verbrauch_kw`. Eine ENTLADUNG wurde damit als Verbrauch gebucht
+        # statt als Erzeugung — dieselbe 19-Punkte-Lücke wie F-69 (Autarkie
+        # 67 % statt 86 % bei 2 kW Entladung), nur mit dem anderen Gerät.
+        #
+        # ⭐ Der Schlüssel ändert sich dadurch NICHT: `TAGESVERLAUF_KATEGORIE`
+        # bildet `sonstiges` auf `"sonstige"` ab, die Komponente heißt weiter
+        # `sonstige_<id>`. Es wechselt allein die Seite der Bilanz.
+        ist_sonstiger_speicher = (
+            typ == "sonstiges"
+            and isinstance(inv.parameter, dict)
+            and inv.parameter.get("kategorie") == "speicher"
+        )
+        ist_bidirektional = (
+            typ in BIDIREKTIONAL_TYPEN or ist_v2h or ist_sonstiger_speicher
+        )
 
         ist_sonstiger_erzeuger = (
             typ == "sonstiges"
@@ -248,6 +281,7 @@ def build_komponenten(
             kw = abs(val_w) / 1000
             ist_ladung = val_w > 0
             kategorie = TAGESVERLAUF_KATEGORIE.get(typ, "batterie")
+            bidirektionale_keys.add(f"{kategorie}_{inv_id}")
             komponenten.append({
                 "key": f"{kategorie}_{inv_id}",
                 "label": inv.bezeichnung,
@@ -419,11 +453,11 @@ def build_komponenten(
         erzeugung_kw = erzeugung_w / 1000
         bat_ladung_kw = sum(
             k.get("verbrauch_kw") or 0 for k in komponenten
-            if k["key"].startswith("batterie_") or k["key"].startswith("v2h_")
+            if k["key"] in bidirektionale_keys
         )
         bat_entladung_kw = sum(
             k.get("erzeugung_kw") or 0 for k in komponenten
-            if k["key"].startswith("batterie_") or k["key"].startswith("v2h_")
+            if k["key"] in bidirektionale_keys
         )
         direktverbrauch_kw = max(0, erzeugung_kw - (einspeisung_w or 0) / 1000 - bat_ladung_kw)
         eigenverbrauch_kw = direktverbrauch_kw + bat_entladung_kw

@@ -33,6 +33,7 @@ from .kategorien import (
     DatenCheckResult,
 )
 from ._helpers import _CheckHelpers
+from backend.models.tages_energie_profil import TagesEnergieProfil
 from .stammdaten import StammdatenChecks
 from .monatsdaten import ErfassungsortChecks, MonatsdatenChecks
 from .energieprofil import EnergieprofilChecks
@@ -102,7 +103,17 @@ class DatenChecker(
         # Alle Prüfungen durchführen
         ergebnisse: list[CheckErgebnis] = []
         ergebnisse.extend(self._check_stammdaten(anlage, pvgis_prognose, pr, pr_count))
-        ergebnisse.extend(self._check_strompreise(anlage, monatsdaten))
+        # N-267: Gibt es ueberhaupt Stundenwerte? Ein Zeittarif wird ueber sie
+        # gewichtet; ohne sie rechnet eedc mit dem Hochtarif. EINE Abfrage, vom
+        # async Aufrufer erhoben — `_check_strompreise` bleibt synchron.
+        hat_stundenwerte = bool((await self.db.execute(
+            select(TagesEnergieProfil.id)
+            .where(TagesEnergieProfil.anlage_id == anlage.id)
+            .limit(1)
+        )).first())
+        ergebnisse.extend(self._check_strompreise(
+            anlage, monatsdaten, hat_stundenwerte=hat_stundenwerte
+        ))
         ergebnisse.extend(self._check_investitionen(anlage, monatsdaten))
         ergebnisse.extend(self._check_monatsdaten_vollstaendigkeit(anlage, monatsdaten))
         ergebnisse.extend(self._check_geraetewerte_ohne_monatszeile(anlage, monatsdaten))
@@ -135,6 +146,7 @@ class DatenChecker(
         ergebnisse.extend(await self._check_leere_tage_trotz_zaehler(anlage))
         ergebnisse.extend(await self._check_pv_ueber_erfassung(anlage))
         ergebnisse.extend(self._check_emob_pool_pflege(anlage))
+        ergebnisse.extend(self._check_emob_pv_ueber_gesamt(anlage))
         ergebnisse.extend(self._check_phev_anteil_unbestimmt(anlage))
         ergebnisse.extend(self._check_emob_sensor_doppelmapping(anlage))
         ergebnisse.extend(await self._check_emob_doppelzaehlung_tage(anlage))

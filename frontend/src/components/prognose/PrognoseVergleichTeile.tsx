@@ -17,10 +17,11 @@
  */
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { Sun, CloudSun, Cloud, CloudRain, CloudSnow, CloudLightning, BarChart3 } from 'lucide-react'
-import { Button, Card, ChartLegende, Checkbox, SegmentControl, buttonClasses, Table, TableHead, TableBody, TableFoot } from '../ui'
+import { Button, Card, ChartLegende, Checkbox, SegmentControl, buttonClasses, Table, TableHead, TableBody, TableFoot, MobilKarte, MobilKarten, TabelleAbSm } from '../ui'
 import { ZELLE, KOPF_ZELLE } from '../ui/tabelleMasse'
 import { SimpleTooltip } from '../ui/FormelTooltip'
 import { useLegendenToggle } from '../../hooks'
+import { alsAngezeigt } from '../../lib/werte'
 import { Parkbar } from '../park'
 import {
   aussichtenApi, PrognosenVergleich, GenauigkeitsResponse, AsymmetrieEintrag, Tageshaelfte,
@@ -394,63 +395,20 @@ function WetterIcon({ symbol, className = 'h-5 w-5' }: { symbol: string; classNa
 function formatDatum(datum: string): string {
   return new Date(datum).toLocaleDateString('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit' })
 }
-/**
- * Tabelle ab `sm` — darunter übernimmt die Kartenliste daneben (N-127).
+/*
+ * ⭐ N-149: `TabelleAbSm` / `MobilKarten` / `MobilKarte` standen bis zum
+ * 2026-08-29 HIER als lokale Komponenten — und waren damit der einzige Ort im
+ * Baum, an dem das Muster überhaupt eine Komponente war; drei weitere Stellen
+ * bauten es von Hand nach. Sie sind jetzt der SoT `components/ui/MobilKarte`
+ * (Regel 0a Fall 2) und werden oben importiert.
  *
- * Vorher stand hier `DatendichtFallback`: unter `sm` ersetzte er die Tabelle
- * durch einen Hinweiskasten („bitte Gerät ins Querformat drehen oder Desktop
- * verwenden"), und im Querformat durch „Auflösung zu gering". Der Inhalt war
- * auf dem Handy also **gar nicht** erreichbar — und genau das ist die Regel
- * (Gernot, 2026-05-31): **nichts wird auf Mobile unerreichbar, nur
- * de-priorisiert.** Kein Wrapper, der Inhalt wegblendet.
- * Das Muster dafür gab es im Baum längst — eine Datenliste, zwei Render-Pfade
- * (`PVStringVergleich`, `KomponentenFinanzTabelle`, `TKonto`).
+ * Die Regel dahinter bleibt unverändert: Vorher stand an dieser Stelle
+ * `DatendichtFallback` — unter `sm` ersetzte er die Tabelle durch einen
+ * Hinweiskasten („bitte Gerät ins Querformat drehen oder Desktop verwenden"),
+ * im Querformat durch „Auflösung zu gering". Der Inhalt war auf dem Handy also
+ * **gar nicht** erreichbar — und genau das schließt M1 aus (Gernot,
+ * 2026-05-31): **nichts wird auf Mobile unerreichbar, nur de-priorisiert.**
  */
-function TabelleAbSm({ children }: { children: React.ReactNode }) {
-  return <div className="hidden sm:block">{children}</div>
-}
-
-/** Kartenliste unter `sm` — die mobile Hälfte derselben Datenliste. */
-function MobilKarten({ children }: { children: React.ReactNode }) {
-  return <div className="sm:hidden space-y-2">{children}</div>
-}
-
-interface KartenZeile {
-  label: React.ReactNode
-  wert: React.ReactNode
-  /** Farbklasse der Quelle — dieselbe wie ihre Tabellenspalte. */
-  klasse?: string
-  /** Zusatz unter dem Wert (Δ, VM/NM, Band) — klein und grau. */
-  zusatz?: React.ReactNode
-}
-
-/** Eine Karte = eine Tabellenzeile der Breitansicht, hochkant gelesen. */
-function MobilKarte({ titel, kopfWert, zeilen, rahmenKlasse = '' }: {
-  titel: React.ReactNode
-  kopfWert?: React.ReactNode
-  zeilen: KartenZeile[]
-  rahmenKlasse?: string
-}) {
-  return (
-    <div className={`rounded-lg border border-gray-200 dark:border-gray-700 p-3 ${rahmenKlasse}`}>
-      <div className="flex items-center justify-between gap-2">
-        <span className="font-medium text-gray-900 dark:text-white">{titel}</span>
-        {kopfWert}
-      </div>
-      <dl className="mt-2 space-y-1 text-sm">
-        {zeilen.map((z, i) => (
-          <div key={i} className="flex items-baseline justify-between gap-3">
-            <dt className={`shrink-0 ${z.klasse || 'text-gray-500 dark:text-gray-400'}`}>{z.label}</dt>
-            <dd className="text-right tabular-nums text-gray-700 dark:text-gray-300">
-              {z.wert}
-              {z.zusatz && <span className="ml-1.5">{z.zusatz}</span>}
-            </dd>
-          </div>
-        ))}
-      </dl>
-    </div>
-  )
-}
 function IstUnvollstaendigPopover({ fehlendeStunden, anlageId, onReloaded }: { fehlendeStunden: number[]; anlageId: number; onReloaded: () => void }) {
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -585,8 +543,12 @@ const ABW_GELB_AB_PROZENT = 10
 const ABW_ROT_AB_PROZENT = 30
 /** Unter dieser Referenz ist jede Prozentzahl erfunden — dann nur der absolute Wert. */
 const ABW_REF_MIN_KWH = 0.05
-/** Was betragsmäßig darunter liegt, rundet auf 0,0 und bekommt kein Richtungs-Symbol. */
-const ABW_NULL_KWH = 0.05
+// ⛔ `ABW_NULL_KWH = 0.05` stand hier bis 2026-08-29 mit der Begründung „was
+//   betragsmäßig darunter liegt, rundet auf 0,0 und bekommt kein Richtungs-Symbol".
+//   Die Absicht war richtig, die Schwelle hat sie nur GESCHÄTZT: bei 12,34 gegen
+//   12,25 kWh sind es 0,09 — über der Schwelle, also „▲ 0,1" neben zweimal „12,3".
+//   Seit `Abweichung` mit den angezeigten Zahlen rechnet, ist die Bedingung exakt
+//   („Differenz der angezeigten Zahlen ist 0") und braucht keine Konstante mehr.
 /** Ohne gemessene Referenz gilt ein Δ darunter als Rauschen und wird unterdrückt. */
 const ABW_RAUSCHEN_KWH = 0.03
 
@@ -616,20 +578,35 @@ function abweichungsStufe(pct: number): keyof typeof STATUS_TEXT_CLASS {
  * Mittel der Prognosen — bleibt die Unterdrückung: dort ist ein „0,0" keine
  * Aussage über die Wirklichkeit.
  */
-function Abweichung({ prognose, ist, gemessen = false }: { prognose: number; ist: number; gemessen?: boolean }) {
-  const diff = prognose - ist
+function Abweichung({ prognose, ist, gemessen = false, stellen = 1 }: { prognose: number; ist: number; gemessen?: boolean; stellen?: number }) {
+  // ── Ob überhaupt etwas dasteht, entscheiden die ROHwerte ───────────────────
+  // Das sind Aussagen über die Messung („gibt es eine tragfähige Referenz?",
+  // „ist das nur Rauschen?") und keine Aussagen über die Anzeige — deshalb
+  // unverändert auf `prognose`/`ist`.
   if (!gemessen) {
     if (ist < ABW_REF_MIN_KWH && prognose < ABW_REF_MIN_KWH) return null
-    if (Math.abs(diff) < ABW_RAUSCHEN_KWH) return null
+    if (Math.abs(prognose - ist) < ABW_RAUSCHEN_KWH) return null
   }
-  const refTraegt = ist > ABW_REF_MIN_KWH
-  const pct = refTraegt ? Math.abs(diff / ist) * 100 : (prognose > ABW_REF_MIN_KWH ? 100 : 0)
-  // Was auf 0,0 rundet, bekommt kein Richtungs-Symbol — ein „▼ 0,0" behauptet
+  // ── WAS dasteht, kommt aus den ANGEZEIGTEN Zahlen ──────────────────────────
+  // Die Annotation erklärt die Prognose-Zahl links von ihr und das IST darüber;
+  // beide stehen mit `stellen` Nachkommastellen da. Aus den Rohwerten gerechnet
+  // widersprach sie ihnen: 12,34 gegen 12,25 kWh ergab „▲ 0,1" neben zweimal
+  // „12,3" (gemessen 29.08.2026, dieselbe Klasse wie Strikers Δ-Spalte in
+  // T89667 #162). `alsAngezeigt` ist dafür der SoT.
+  const gezeigtPrognose = alsAngezeigt(prognose, stellen)
+  const gezeigtIst = alsAngezeigt(ist, stellen)
+  const diff = gezeigtPrognose - gezeigtIst
+  // `gezeigtIst !== 0` gehört dazu: sonst teilte eine gröbere Stellenzahl durch
+  // eine angezeigte Null. Bei `stellen = 1` ändert es nichts (ist > 0,05 zeigt
+  // mindestens 0,1) — es hält die Regel für jede andere Stellenzahl.
+  const refTraegt = ist > ABW_REF_MIN_KWH && gezeigtIst !== 0
+  const pct = refTraegt ? Math.abs(diff / gezeigtIst) * 100 : (prognose > ABW_REF_MIN_KWH ? 100 : 0)
+  // Sehen beide Zahlen gleich aus, gibt es keine Richtung — ein „▼ 0,0" behauptet
   // eine Unterschreitung, die die angezeigte Zahl gar nicht hergibt.
-  const arrow = Math.abs(diff) < ABW_NULL_KWH ? '±' : diff > 0 ? '▲' : '▼'
+  const arrow = diff === 0 ? '±' : diff > 0 ? '▲' : '▼'
   return (
     <span className={`text-[10px] ${STATUS_TEXT_CLASS[abweichungsStufe(pct)]}`}>
-      {arrow} {fmtZahl(Math.abs(diff), 1)}{refTraegt && ` (${prozentText(pct)})`}
+      {arrow} {fmtZahl(Math.abs(diff), stellen)}{refTraegt && ` (${prozentText(pct)})`}
     </span>
   )
 }
@@ -1119,7 +1096,7 @@ export function PvgGenauigkeitsTracking({ vm }: { vm: PrognoseVergleichVM }) {
                 klasse: q.klasse,
                 wert: q.wert !== null ? fmtZahl(q.wert, 1) : '—',
                 zusatz: q.wert !== null && tag.ist_kwh !== null
-                  ? <Abweichung prognose={q.wert} ist={tag.ist_kwh} gemessen />
+                  ? <Abweichung prognose={q.wert} ist={tag.ist_kwh} gemessen stellen={1} />
                   : null,
               }))}
             />
@@ -1237,7 +1214,7 @@ function PvgPrognoseZelle({ wert, ist, klasse = '', stellen = 2, leerGedimmt = f
         {wert !== null && extra}
       </td>
       <td className={`${ZELLE} text-right font-mono ${klasse}`}>
-        {wert !== null && ist !== null && <Abweichung prognose={wert} ist={ist} gemessen={gemessen} />}
+        {wert !== null && ist !== null && <Abweichung prognose={wert} ist={ist} gemessen={gemessen} stellen={stellen} />}
       </td>
     </>
   )
@@ -1405,7 +1382,7 @@ export function Pvg7TageTabelle({ vm }: { vm: PrognoseVergleichVM }) {
                 klasse: q.klasse,
                 wert: <>{q.wert !== null ? fmtZahl(q.wert, 1) : '—'}{q.extra}</>,
                 zusatz: q.bewertet && q.wert !== null && devRef !== null
-                  ? <Abweichung prognose={q.wert} ist={devRef} gemessen={devGemessen} />
+                  ? <Abweichung prognose={q.wert} ist={devRef} gemessen={devGemessen} stellen={1} />
                   : null,
               }))}
             />

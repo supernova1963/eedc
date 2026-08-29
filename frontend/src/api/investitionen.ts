@@ -523,6 +523,13 @@ export interface WallboxDashboardResponse {
     heim_kosten_euro: number
     heim_als_extern_kosten_euro: number
     ersparnis_vs_extern_euro: number
+    // Amortisation — kommt aus dem Backend-SoT (Kapitalrechnung), NICHT aus
+    // Anschaffung ÷ Ersparnis im Client (N-230). `null` heißt „nicht
+    // bewertbar" und ist nicht 0.
+    kapitaleinsatz_euro: number
+    jahres_ersparnis_euro: number
+    amortisation_jahre: number | null
+    amortisation_annahme: string
     // Wallbox-Info
     leistung_kw: number
     gesamt_ladevorgaenge: number
@@ -739,10 +746,23 @@ export const investitionenApi = {
    * Die vollständige Kurve (50 %–200 %) kommt in EINER Antwort; der Slider in
    * der Sicht liest daraus und fragt nicht bei jedem Schritt nach.
    */
-  async getSpeicherSizing(anlageId: number, von?: string, bis?: string): Promise<SpeicherSizingResponse> {
+  async getSpeicherSizing(
+    anlageId: number,
+    von?: string,
+    bis?: string,
+    /**
+     * Eigener Nachrüstpreis je kWh (N-274). `undefined` = Richtwert des Backends.
+     * Bewusst NICHT gespeichert — der Wert gehört zur Frage, nicht zum Gerät.
+     */
+    richtpreisEurJeKwh?: number,
+  ): Promise<SpeicherSizingResponse> {
     const params = new URLSearchParams()
     if (von) params.append('von', von)
     if (bis) params.append('bis', bis)
+    // ⚠ `if (x)` waere hier falsch: 0 ist zwar kein gueltiger Preis (die Route
+    // verlangt > 0), aber die Pruefung soll die GUELTIGKEIT abfragen, nicht die
+    // Wahrheitswertigkeit — sonst steht hier die naechste 0-Werte-Falle.
+    if (richtpreisEurJeKwh != null) params.append('richtpreis_eur_je_kwh', String(richtpreisEurJeKwh))
     const query = params.toString()
     return api.get<SpeicherSizingResponse>(`/investitionen/speicher-sizing/${anlageId}${query ? '?' + query : ''}`)
   },

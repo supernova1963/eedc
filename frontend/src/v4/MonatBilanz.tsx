@@ -17,10 +17,12 @@
  */
 import { Gauge } from 'lucide-react'
 import { fmtCalc } from '../components/ui'
+import { angezeigtesDelta } from '../lib/werte'
 import { Table, TableHead, TableBody } from '../components/ui/Table'
 import { ZELLE, KOPF_ZELLE } from '../components/ui/tabelleMasse'
 import { SimpleTooltip } from '../components/ui/FormelTooltip'
-import { VerteilungsBalken, GeraeteHinweis, GrundlastSollIstKachel, MonatsprognoseKachel } from '../components/blocks'
+import { VerteilungsBalken, GeraeteHinweis, GrundlastSollIstKachel, MonatsprognoseKachel, HerkunftZeile } from '../components/blocks'
+import { unvollstaendigHerkunft } from '../lib/prognoseHinweise'
 import { zeigeMonatsprognose } from '../lib/sollErfuellung'
 import { Parkbar } from '../components/park'
 import { DATENROLLE, NETZLADUNG_PREIS_HERKUNFT, VERGLEICH_BADGE } from '../lib'
@@ -184,18 +186,25 @@ export function baueNetzKostenKpis(d: AktuellerMonatResponse): KpiStripItem[] {
   return kpis
 }
 
-export function Delta({ a, b, inv = false, besser }: { a: number | null | undefined; b: number | null | undefined; inv?: boolean; besser?: boolean }) {
-  if (a == null || b == null || b === 0) return null
-  const pct = ((a - b) / Math.abs(b)) * 100
+export function Delta({ a, b, dec, inv = false, besser }: { a: number | null | undefined; b: number | null | undefined; dec: number; inv?: boolean; besser?: boolean }) {
+  if (a == null || b == null) return null
+  // `dec` ist die Stellenzahl, mit der die beiden Zahlen NEBEN diesem Badge stehen.
+  // Der Prozentwert kommt aus genau diesen angezeigten Zahlen (`angezeigtesDelta`,
+  // W1-SoT) — sonst widerspricht das Badge seinen Nachbarn: gemessen stand bei
+  // 151,4 / 150,6 kWh und `dec = 0` dort „151 · 151 · ▲ 1 %".
+  const delta = angezeigtesDelta(a, b, dec)
+  if (delta == null) return null
   // `besser` (z. B. Autarkie-Richtung für Eigenverbrauch, #337) übersteuert die reine
   // Wert-Richtung; sonst Standard: inv = „niedriger ist besser". Der ▲▼-Pfeil zeigt
-  // weiter die absolute Änderung, die Farbe folgt `besser`.
-  const positive = besser != null ? besser : (inv ? pct <= 0 : pct >= 0)
+  // weiter die absolute Änderung, die Farbe folgt `besser`. Sehen beide Zahlen gleich
+  // aus, gibt es keine Richtung — dann steht „=" und der neutrale Ton.
+  const positive = besser != null ? besser : (inv ? delta.pct <= 0 : delta.pct >= 0)
+  const ton = delta.pfeil === '='
+    ? VERGLEICH_BADGE.unveraendert
+    : (positive ? VERGLEICH_BADGE.besser : VERGLEICH_BADGE.schlechter)
   return (
-    <span className={`text-xs font-medium px-1 py-0.5 rounded-full ${
-      positive ? VERGLEICH_BADGE.besser : VERGLEICH_BADGE.schlechter
-    }`}>
-      {pct >= 0 ? '▲' : '▼'} {fmtCalc(Math.abs(pct), 0)} %
+    <span className={`text-xs font-medium px-1 py-0.5 rounded-full ${ton}`}>
+      {delta.pfeil} {fmtCalc(Math.abs(delta.pct), 0)} %
     </span>
   )
 }
@@ -208,21 +217,25 @@ export function VglChip({ prefix, lang, ist, val, unit, dec, inv, besser }: {
   ist: number | null | undefined; val: number | null | undefined
   unit: string; dec: number; inv?: boolean; besser?: boolean
 }) {
-  if (ist == null || val == null || val === 0) {
+  // Dieselbe Rechnung wie in `Delta`: aus den angezeigten Zahlen, nicht aus den
+  // Rohwerten. Der Vergleichswert steht hier im Tooltip — in derselben Rundung
+  // `dec`, also gilt der Widerspruch genauso.
+  const delta = ist != null && val != null ? angezeigtesDelta(ist, val, dec) : null
+  if (delta == null) {
     return (
-      <span className="inline-flex items-center gap-1 text-[11px] font-medium px-1.5 py-0.5 rounded-full bg-gray-50 text-gray-400 dark:bg-gray-700/50 dark:text-gray-500">
+      <span className={`inline-flex items-center gap-1 text-[11px] font-medium px-1.5 py-0.5 rounded-full ${VERGLEICH_BADGE.unveraendert}`}>
         {prefix} —
       </span>
     )
   }
-  const pct = ((ist - val) / Math.abs(val)) * 100
-  const positive = besser != null ? besser : (inv ? pct <= 0 : pct >= 0)
+  const positive = besser != null ? besser : (inv ? delta.pct <= 0 : delta.pct >= 0)
+  const ton = delta.pfeil === '='
+    ? VERGLEICH_BADGE.unveraendert
+    : (positive ? VERGLEICH_BADGE.besser : VERGLEICH_BADGE.schlechter)
   return (
     <SimpleTooltip text={`${lang}: ${fmt(val, dec)} ${unit}`}>
-      <span className={`inline-flex items-center gap-1 text-[11px] font-medium px-1.5 py-0.5 rounded-full ${
-        positive ? VERGLEICH_BADGE.besser : VERGLEICH_BADGE.schlechter
-      }`}>
-        {prefix} {pct >= 0 ? '▲' : '▼'} {fmtCalc(Math.abs(pct), 0)} %
+      <span className={`inline-flex items-center gap-1 text-[11px] font-medium px-1.5 py-0.5 rounded-full ${ton}`}>
+        {prefix} {delta.pfeil} {fmtCalc(Math.abs(delta.pct), 0)} %
       </span>
     </SimpleTooltip>
   )
@@ -281,7 +294,7 @@ export function MonatBilanz({
         {val != null ? fmt(val, dec(row)) : dash}
       </td>
       <td className={`${ZELLE} text-right tabular-nums`}>
-        {val != null ? <Delta a={row.ist} b={val} inv={row.inv} besser={besser} /> : dash}
+        {val != null ? <Delta a={row.ist} b={val} dec={dec(row)} inv={row.inv} besser={besser} /> : dash}
       </td>
     </>
   )
@@ -292,10 +305,17 @@ export function MonatBilanz({
     ...(d.komponenten_geraete?.['wechselrichter'] ?? []),
   ]
 
+  // P4/§3: eine PV-Teilsumme bleibt stehen und wird BESCHRIFTET (additive Summe
+  // ⇒ richtungssicher zu niedrig). Text kommt aus dem Backend-SoT
+  // (`monats_fakten.pv_unvollstaendig_hinweis`) — hier wird er nur gerendert,
+  // über dieselbe Zeile wie „nach kWp gerechnet" im Komponenten-Hub (Regel 0a).
+  const pvHerkunft = unvollstaendigHerkunft(d.hinweise, 'PV-Erzeugung')
+
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
       {/* IST/VM/VJ/Ø-Vergleich (B10) — eigene Parkbar (Doktrin: jede Anzeige einzeln). */}
       <Parkbar id="el:bilanz-vergleich" titel="Vergleich (IST/VM/VJ)" className="lg:col-span-2">
+        {pvHerkunft && <HerkunftZeile herkunft={pvHerkunft} className="mb-2" />}
         {/* Mobil (< sm): gestapelte Kennzahl-Karten statt Tabelle — keine Spalten/
             Header, die verrutschen können; Vergleiche als umbruch-sichere Chips,
             Absolutwerte im Tooltip. */}
