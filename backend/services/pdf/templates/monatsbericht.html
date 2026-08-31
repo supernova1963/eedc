@@ -1,0 +1,181 @@
+{# Monatsbericht (#395 Punkt 4) — die PDF-Hälfte.
+
+   ⛔ Dieses Template formatiert KEINE Zahl. Jede Zelle kommt fertig aus
+   `builders/monatsbericht.py`; der Markdown-Renderer liest dieselben Objekte.
+   Wer hier `|fmt_...` einsetzt, baut die zweite Bildungsstelle, gegen die der
+   Bericht gebaut ist (N-7). Die Formatierer sind trotzdem in der Umgebung
+   (N-234) — für Templates, die ihre Werte selbst legen.
+
+   Erbt bewusst NICHT von `base.html`: der Bericht führt eine Kopfzeile mit
+   Monat und Anlage, die `base.html` nicht kennt. Die CI-Datei ist dieselbe. #}
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>Monatsbericht {{ zeitraum.label }}{% if anlage.name %} — {{ anlage.name }}{% endif %}</title>
+<link rel="stylesheet" href="{{ static_dir }}/styles.css">
+<link rel="stylesheet" href="{{ static_dir }}/print.css">
+<style>
+  /* Kopfblock — Monat groß, Anlage klein darunter. */
+  .kopf-meta { color: var(--color-muted); font-size: 9.5pt; margin: 0 0 6mm 0; }
+  .kopf-meta span + span::before { content: " · "; }
+
+  /* Hinweiskasten (ADR-002/P4): steht VOR den Zahlen, nicht darunter. */
+  .hinweise {
+    background: var(--color-bg-soft);
+    border-left: 3px solid #ffa726;
+    padding: 2mm 3mm;
+    margin: 0 0 5mm 0;
+    font-size: 9.5pt;
+  }
+  .hinweise ul { margin: 1mm 0 0 0; padding-left: 5mm; }
+
+  /* Werte-Tabelle: Label links, Wert rechts — wie die Detail-Listen der
+     Monatsansicht. `avoid` hält Überschrift und Tabelle zusammen. */
+  table.werte { table-layout: fixed; }
+  table.werte td.label { width: 55%; }
+  table.werte td.wert { text-align: right; font-variant-numeric: tabular-nums; }
+  table.werte td .zeilen-hinweis {
+    display: block;
+    color: var(--color-muted);
+    font-size: 8.5pt;
+    font-weight: normal;
+  }
+  section.abschnitt { break-inside: avoid; }
+  p.abschnitt-hinweis { color: var(--color-muted); font-size: 8.5pt; margin-top: -1mm; }
+  p.fuss { color: var(--color-muted); font-size: 8.5pt; margin-top: 8mm; }
+
+  /* Kopf: Logo links, Titel rechts daneben. */
+  .kopf { display: flex; align-items: flex-start; gap: 5mm; }
+  .kopf img { width: 16mm; height: auto; }
+  .kopf h1 { margin: 0; }
+
+  /* KPI-Kacheln — der Strip der Monatsansicht. `inline-block` statt Grid:
+     WeasyPrint bricht Flex-Zeilen nicht über Seiten, und die Reihe soll
+     umbrechen dürfen. */
+  ul.kacheln { list-style: none; margin: 0 0 4mm 0; padding: 0; }
+  ul.kacheln li {
+    display: inline-block;
+    width: 30%;
+    margin: 0 2% 3mm 0;
+    padding: 2mm 2.5mm;
+    background: var(--color-bg-soft);
+    border-left: 2px solid var(--color-primary);
+    vertical-align: top;
+  }
+  ul.kacheln .k-label { display: block; font-size: 8pt; color: var(--color-muted); }
+  ul.kacheln .k-wert  { display: block; font-size: 13pt; font-variant-numeric: tabular-nums; }
+  ul.kacheln .k-hinweis { display: block; font-size: 7.5pt; color: var(--color-muted); }
+
+  /* Anteils-Leiste — dieselbe Sprache wie `VerteilungsBalken` auf dem Schirm. */
+  .leiste { display: block; width: 100%; height: 5mm; margin: 1mm 0 2mm 0; }
+  .leiste span { display: inline-block; height: 5mm; vertical-align: top; }
+  ul.leiste-legende { list-style: none; margin: 0 0 3mm 0; padding: 0; font-size: 8.5pt; }
+  ul.leiste-legende li { display: inline-block; margin-right: 5mm; }
+  ul.leiste-legende i {
+    display: inline-block; width: 3mm; height: 3mm; margin-right: 1.2mm;
+    border-radius: 1px; vertical-align: -0.3mm;
+  }
+
+  img.chart { width: 100%; max-width: 170mm; margin: 1mm 0 2mm 0; }
+</style>
+</head>
+<body>
+<div class="page-stripe"></div>
+
+<div class="kopf">
+  {% if logo %}<img src="{{ logo }}" alt="eedc">{% endif %}
+  <h1 class="doc-title">Monatsbericht {{ zeitraum.label }}</h1>
+</div>
+<p class="kopf-meta">
+  {% if anlage.name %}<span>{{ anlage.name }}</span>{% endif %}
+  {% if anlage.standort %}<span>{{ anlage.standort }}</span>{% endif %}
+  <span>{{ anlage.leistung_kwp }}</span>
+  <span>erstellt {{ erzeugt_am }}</span>
+</p>
+
+{% if hinweise %}
+<div class="hinweise">
+  <strong>Hinweise zu den Werten</strong>
+  <ul>
+    {% for h in hinweise %}<li>{{ h }}</li>{% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+{% if leer %}
+{# F-43-Klasse: keine Nullen, wo nichts gemessen wurde — der Grund statt der Zahl. #}
+<p>Für diesen Monat liegen zu den gewählten Themen keine Werte vor.</p>
+{% else %}
+{% for abschnitt in abschnitte %}
+<section class="abschnitt">
+  <h2>{{ abschnitt.titel }}</h2>
+
+  {# Kachelreihe statt Tabelle — der KPI-Strip der Monatsansicht. Die Werte sind
+     dieselben Zeilen; der Markdown-Zwilling schreibt sie als Tabelle. #}
+  {% if abschnitt.darstellung == 'kacheln' %}
+  <ul class="kacheln">
+    {% for zeile in abschnitt.zeilen %}
+    <li>
+      <span class="k-label">{{ zeile.label }}</span>
+      <span class="k-wert">{{ zeile.wert }}</span>
+      {% if zeile.hinweis %}<span class="k-hinweis">{{ zeile.hinweis }}</span>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+
+  {# Anteils-Leiste: zeichnet genau die Zeilen darunter, keine eigene Groesse. #}
+  {% if abschnitt.balken %}
+  <span class="leiste">
+    {% for b in abschnitt.balken %}<span style="width: {{ '%.2f'|format(b.anteil) }}%; background: {{ b.farbe }};"></span>{% endfor %}
+  </span>
+  <ul class="leiste-legende">
+    {#- Nur das Label: den Wert trägt die Tabelle darunter. Stünde er hier
+        ebenfalls, nennte das PDF jede dieser Zahlen ZWEIMAL und der
+        Markdown-Zwilling einmal — `test_beide_formate_nennen_dieselben_zahlen`
+        hat genau das gemeldet. Die Leiste ist ein Bild, keine zweite Tabelle. -#}
+    {% for b in abschnitt.balken %}<li><i style="background: {{ b.farbe }};"></i>{{ b.label }}</li>{% endfor %}
+  </ul>
+  {% endif %}
+
+  {# Chart: fertiges SVG aus dem Builder. Das Template rechnet nichts (N-7). #}
+  {% if abschnitt.chart %}<img class="chart" src="{{ abschnitt.chart }}" alt="{{ abschnitt.titel }}">{% endif %}
+
+  <table class="werte">
+    <tbody>
+      {% for zeile in abschnitt.zeilen %}
+      <tr>
+        <td class="label">
+          {{ zeile.label }}
+          {% if zeile.hinweis and not zeile.wert %}<span class="zeilen-hinweis">{{ zeile.hinweis }}</span>{% endif %}
+        </td>
+        <td class="wert">
+          {{ zeile.wert }}
+          {% if zeile.hinweis and zeile.wert %}<span class="zeilen-hinweis">{{ zeile.hinweis }}</span>{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+
+  {% if abschnitt.hinweis %}<p class="abschnitt-hinweis">{{ abschnitt.hinweis }}</p>{% endif %}
+</section>
+{% endfor %}
+{% endif %}
+
+{% if weggelassen %}
+{# Der Park-Zustand lebt im Browser des Erzeugers. Wer den Bericht später
+   liest, muss sehen, dass etwas fehlt — sonst hält er ihn für vollständig. #}
+<p class="fuss">Weggelassen (in der Monatsansicht geparkt):
+  {{ weggelassen | join(', ') }}.</p>
+{% endif %}
+
+{# Die Adresse steht als SICHTBARER Text, nicht nur im href: ein Papierausdruck
+   hat keinen Link, und der Markdown-Zwilling trägt sie ebenfalls sichtbar —
+   sonst verglichen die Proben zwei Fußzeilen mit verschiedenen Zahlen. #}
+<p class="fuss">Erstellt mit eedc — github.com/supernova1963/eedc-homeassistant</p>
+
+</body>
+</html>

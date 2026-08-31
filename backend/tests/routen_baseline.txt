@@ -31,6 +31,7 @@ GET /api/anlagen/{anlage_id}/sensors
 GET /api/aussichten/finanzen/{anlage_id}
 GET /api/aussichten/kurzfristig/{anlage_id}
 GET /api/aussichten/langfristig/{anlage_id}
+GET /api/aussichten/prognose-quellen/status
 GET /api/aussichten/prognosen/{anlage_id}
 GET /api/aussichten/prognosen/{anlage_id}/genauigkeit
 GET /api/aussichten/trend/{anlage_id}
@@ -73,6 +74,7 @@ GET /api/docs
 GET /api/dokumentation/_selftest
 GET /api/dokumentation/anlagendokumentation/{anlage_id}
 GET /api/dokumentation/finanzbericht/{anlage_id}
+GET /api/dokumentation/monatsbericht/{anlage_id}
 GET /api/energie-profil/{anlage_id}/achse2-drift
 GET /api/energie-profil/{anlage_id}/debug-rohdaten
 GET /api/energie-profil/{anlage_id}/komponenten-serien

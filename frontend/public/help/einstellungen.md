@@ -448,13 +448,69 @@ Die Infothek ist deine anlagengebundene Wissensbasis (Verträge, Datenblätter, 
 
 ### 4.2 Berichte & Dokumente
 
-Die Kachel **Berichte & Dokumente** öffnet den Dokumente-Dialog der Anlage. Er erzeugt anlagengebundene PDFs — einzeln oder als ZIP, mit Jahr-Auswahl:
+Die Kachel **Berichte & Dokumente** öffnet den Dokumente-Dialog der Anlage. Jede Karte lädt ihr PDF mit einem Klick; **die Einstellungen eines Dokuments stehen in seiner Karte** (Zeitraum beim Jahresbericht, Monat und Themen beim Monatsbericht). Für mehrere Berichte auf einmal gibt es oben rechts **„Mehrere als ZIP"** — dann wählen dieselben Karten aus, statt zu laden.
 
 - **Jahresbericht** (alle KPIs: Energie, Autarkie, Finanzen, CO₂; Diagramme; Monatstabellen; PV-String SOLL/IST).
 - **Anlagendokumentation** (Stammdaten, Versorger, Tarif, Komponenten mit Parametern + verknüpften Infothek-Einträgen).
 - **Finanzbericht** und **Infothek-Dossier**.
+- **Monatsbericht** — die Zahlen **eines** Monats im Stil der Cockpit-Monatsansicht, mit Kennzahl-Kacheln, Anteils-Leisten und Diagrammen.
 
 > **HA-Companion:** PDF-, CSV- und Backup-Downloads laufen über `fetch + Blob` — damit funktionieren sie in der iOS-HA-Companion-App ohne 401-/Ingress-Probleme.
+
+#### Der Monatsbericht
+
+Er ist der einzige Bericht mit eigenen Einstellungen — sie stehen direkt unter den Karten:
+
+| Einstellung | Was sie bewirkt |
+| --- | --- |
+| **Monat** | Genau ein Monat, voreingestellt der neueste erfasste. Eine Spanne über mehrere Monate ist der Jahresbericht darüber. |
+| **Themen** (Energie · Komponenten · Finanzen · CO₂ · Community) | Bestimmen, *was für ein* Bericht entsteht. Voreingestellt sind alle an. |
+| **Wie in meiner Monatsansicht** | Lässt die Anzeigen weg, die du unter *Cockpit → Monat* geparkt hast. Erscheint nur, wenn dort überhaupt etwas geparkt ist; voreingestellt an. |
+
+Anlagenname und Standort stehen immer im Dokument, wie in jedem anderen Bericht dieser Anlage.
+
+**Was der Bericht grafisch aufbereitet:**
+
+- **Kennzahl-Kacheln** oben — PV-Erzeugung, Eigenverbrauch, Einspeisung, Netzbezug,
+  Gesamtverbrauch, Autarkie und die Quoten, wie im Kopf der Monatsansicht.
+- **Anteils-Leisten** für die PV-Verteilung und für Erzeugung bzw. Verbrauch nach Kategorie.
+- **Verlauf** — ein Balken je Tag des Monats. ⚠ **Tage ohne gemessene Erzeugung bekommen keinen
+  Balken**, auch keinen der Höhe null: Eine Null-Säule neben echten Werten würde behaupten, an
+  diesem Tag sei nichts erzeugt worden. Wie viele Tage gemessen wurden, steht als Zeile darunter.
+- **Typisches Tagesprofil** — die Ø-Leistung je Stunde über den Monat, PV und Verbrauch.
+- **Spitzenstunden** für Netzbezug und Einspeisung, je die fünf höchsten.
+
+> **Jede Aussage steht auch als Zahl.** Was ein Diagramm zeigt — bester Tag, schwächster Tag,
+> Durchschnitt —, steht als Zeile daneben; das Bild ist die Veranschaulichung, nicht die einzige
+> Quelle.
+
+#### Der Community-Vergleich im Bericht
+
+Mit dem Thema **Community** stellt der Bericht deine Werte dem **Median** aller Anlagen
+gegenüber, die ihre Zahlen für **denselben Monat** geteilt haben — spezifischer Ertrag,
+Autarkie, Eigenverbrauchsquote, Einspeisung und Netzbezug. Dabei steht, gegen **wie viele
+Anlagen** verglichen wurde: Ein Median aus drei Anlagen sagt etwas anderes als einer aus
+dreihundert.
+
+> **Ist der Community-Server gerade nicht erreichbar, entfällt allein dieser Abschnitt** —
+> der übrige Bericht entsteht vollständig und unverändert. Es erscheinen dort keine
+> Gedankenstriche und keine Fehlermeldung: Ein Vergleich, den es nicht gibt, wird nicht
+> behauptet.
+
+> **Der Vergleich ist an *diesen* Monat gebunden, nicht an den Tag der Erstellung.** Der Median
+> kann sich später noch leicht verschieben, wenn weitere Anlagen ihre Werte für den Monat
+> nachreichen — die verglichene Größe bleibt dieselbe.
+
+> **Es gibt bewusst kein „anonymisiert".** Ein PV-Monatsbericht ist über Ertragsprofil,
+> Standort und Tarif praktisch eindeutig; die Zusage wäre nicht zu halten. Über die
+> Themenschalter entscheidest du, was drinsteht — und siehst das Ergebnis. Wer wirklich
+> anonym vergleichen will, nutzt den **Community-Vergleich**: der arbeitet mit einer
+> Kennung statt mit deinem Namen.
+
+> **Der Park-Zustand gehört zu diesem Browser.** Wer am Tablet Anzeigen parkt und am PC den
+> Bericht zieht, bekommt dort den vollständigen Bericht — die geparkte Auswahl liegt nicht
+> in der Anlage, sondern im Browser, in dem du geparkt hast. Was der Bericht weggelassen
+> hat, steht am Ende des Dokuments.
 
 ---
 
