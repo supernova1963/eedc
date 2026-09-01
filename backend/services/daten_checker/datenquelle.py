@@ -28,7 +28,7 @@ from backend.core.berechnungen import (
 
 from .kategorien import (
     CheckErgebnis, CheckKategorie, CheckSeverity, LINK_DATENQUELLEN,
-    LINK_INTEGRATION, _quelle_label,
+    LINK_ENERGIEPROFIL, LINK_INTEGRATION, _quelle_label,
 )
 
 logger = logging.getLogger(__name__)
@@ -266,7 +266,7 @@ class DatenquelleChecks:
                     "werden (nächster Monatsabschluss oder Tag-Reparatur), "
                     "gilt HA-LTS als Source-of-Truth."
                 ),
-                link="/einstellungen/energieprofil",
+                link=LINK_ENERGIEPROFIL,
             )]
         # HA-LTS nicht verfügbar → Standalone-Modus (Docker ohne HA-Verbindung
         # oder fehlende HA-Recorder-URL)
@@ -536,7 +536,7 @@ class DatenquelleChecks:
                     f"(Δ {delta_signed:+.1f} kWh, {rel_signed:+.1f}%)"
                 ),
                 details=details,
-                link=f"/einstellungen/energieprofil?datum={datum_.isoformat()}",
+                link=LINK_ENERGIEPROFIL,
                 action_kind="reaggregate_day",
                 action_params={"anlage_id": anlage.id, "datum": datum_.isoformat()},
                 action_label="Tag reparieren",
@@ -577,7 +577,7 @@ class DatenquelleChecks:
                     f"auf einmal: Einstellungen → Daten → Energieprofil → "
                     f"Reparatur-Werkbank."
                 ),
-                link=f"/einstellungen/energieprofil?datum={datum_.isoformat()}",
+                link=LINK_ENERGIEPROFIL,
                 action_kind="reaggregate_day",
                 action_params={"anlage_id": anlage.id, "datum": datum_.isoformat()},
                 action_label="Tag reparieren",
@@ -888,7 +888,7 @@ class DatenquelleChecks:
             ),
             details=summen_details,
             link=(
-                "/einstellungen/energieprofil" if reparatur_moeglich
+                LINK_ENERGIEPROFIL if reparatur_moeglich
                 else LINK_DATENQUELLEN
             ),
             action_kind="reaggregate_range" if reparatur_moeglich else None,
@@ -917,7 +917,7 @@ class DatenquelleChecks:
                     "Einzelnen Tag aus HA-Statistics nachaggregieren — schreibt "
                     "Tages- und Stundenwerte, nicht die Monatswerte."
                 ),
-                link=f"/einstellungen/energieprofil?datum={datum_.isoformat()}",
+                link=LINK_ENERGIEPROFIL,
                 action_kind="reaggregate_day",
                 action_params={"anlage_id": anlage.id, "datum": datum_.isoformat()},
                 action_label="Tag reparieren",
@@ -1180,7 +1180,24 @@ class DatenquelleChecks:
             )
             .distinct()
         )
-        alt_tage = sorted(alt_result.scalars().all())
+        # N-313-Klasse, fuenfte Stelle (Radiocarbonat, simon42 T89667 #273).
+        # Die Menge `mit_soc` ist die HEUTIGE Ausstattung; ein Tag braucht die,
+        # die an IHM aktiv war. Ohne diesen Filter meldet jeder Speicher-Tausch
+        # nach der dokumentierten Anleitung (HANDBUCH_EINSTELLUNGEN §3.2, Weg B:
+        # altes Geraet stilllegen, neues mit Gesamtkapazitaet anlegen) die ganze
+        # Zeit VOR dem Wechsel als defekt — beim Melder 114 Tage, an denen es
+        # tatsaechlich nur einen Speicher gab.
+        # ⚠ Stilllegung setzt `stilllegungsdatum`, NICHT `aktiv=False` (die
+        # Anleitung verbietet den Haken ausdruecklich) — ein reiner Aktiv-Filter
+        # wie bei N-313 greift hier also nicht, es braucht die Tages-Ebene.
+        # ⛔ Es ist die P-6-Falle aus N-313 im Wortlaut: „Zeitraum neu
+        # aggregieren" kann den zweiten Ladestand nicht erzeugen, den es nie gab
+        # — der Lauf laeuft und die Meldung bleibt stehen.
+        # `ist_aktiv_an` wortgleich zu :401 und :1027 (dort steht die Begruendung).
+        alt_tage = sorted(
+            d for d in alt_result.scalars().all()
+            if sum(1 for s in mit_soc if s.ist_aktiv_an(d)) >= 2
+        )
 
         if not alt_tage:
             return [CheckErgebnis(
@@ -1193,7 +1210,9 @@ class DatenquelleChecks:
                     "Der gespeicherte Anlagen-Ladestand ist das kapazitätsgewichtete "
                     "Mittel über alle Speicher; die Aufschlüsselung je Gerät steht "
                     "daneben. Tage, die vor dieser Umstellung aggregiert wurden, "
-                    "würden hier auftauchen."
+                    "würden hier auftauchen — Tage vor einem Geräte-Wechsel "
+                    "dagegen nicht: An ihnen war nur ein Speicher aktiv, ein "
+                    "zweiter Ladestand konnte gar nicht entstehen."
                 ),
             )]
 
@@ -1260,6 +1279,7 @@ class DatenquelleChecks:
         heute zuordnet, bekommt die Aufteilung ab heute. Ein Hinweis auf die
         Vergangenheit wäre unauflösbar.
         """
+        from datetime import date
         from backend.core.investition_parameter import ist_luft_luft_waermepumpe
         from backend.models.investition import Investition as _Inv
 
@@ -1271,9 +1291,17 @@ class DatenquelleChecks:
                 _Inv.typ == "waermepumpe",
             )
         )
+        # ⚠ `aktiv` allein reicht nicht: Ein ERSETZTES Geraet wird per
+        # `stilllegungsdatum` beendet, nicht per Haken — die Anleitung zum
+        # Geraetetausch (HANDBUCH_EINSTELLUNGEN §3.2) verbietet den Haken sogar
+        # ausdruecklich. Ohne die Tages-Ebene fordert dieser Check an einem
+        # laengst ersetzten Geraet weiter einen Betriebsmodus-Sensor ein — ein
+        # Hinweis, den niemand mehr aufloesen kann (P-6-Falle, dieselbe Klasse
+        # wie N-313 und der SoC-Check oben).
+        heute = date.today()
         klimas = [
             i for i in inv_result.scalars().all()
-            if i.aktiv and ist_luft_luft_waermepumpe(i)
+            if i.ist_aktiv_an(heute) and ist_luft_luft_waermepumpe(i)
         ]
         if not klimas:
             return []

@@ -36,6 +36,7 @@ from backend.core.berechnungen import (
 
 from .kategorien import (
     CheckErgebnis, CheckKategorie, CheckSeverity, LINK_DATENQUELLEN,
+    LINK_ENERGIEPROFIL, LINK_MONATSDATEN, link_monat_erfassen,
 )
 
 
@@ -98,6 +99,15 @@ class EnergieprofilChecks:
         für die betroffenen Kategorien leer (strikte NULL-Semantik). Der Check
         zeigt, welche Zähler fehlen und welche Energieprofil-Bereiche dadurch
         nicht funktionieren (Prognosen-IST, Heatmap, Lernfaktor, Monatsberichte).
+
+        ⭐ **Die Meldungstexte nennen seit N-346 (31.08.2026) die teuerste Folge
+        mit:** Fehlt der Zähler an einem **Speicher** oder einer **PV-Erzeugung**,
+        bleibt der bilanzielle Hausverbrauch nicht leer, sondern wird **zu
+        niedrig** — ``stundenbilanz.stunden_verbrauch_kwh`` zählt einen fehlenden
+        Batterie-Beitrag als 0 —, und mit ihm die Grundlast (Median der
+        Nachtstunden, ``_load_grundlast_nacht_kw``) samt HA-Sensor
+        ``eedc_grundlast_kw``. ⛔ Wärmepumpe, Wallbox und E-Auto stehen **nicht**
+        in dieser Formel; der Satz nennt deshalb ausdrücklich nur die zwei Typen.
 
         Achse B (project_datenchecker_konsistenz): Wer seine Monatsdaten per
         Custom-/CSV-/JSON-Import oder manuell pflegt, braucht keinen Sensor-
@@ -187,8 +197,10 @@ class EnergieprofilChecks:
                 meldung=f"Kein Basis-Zähler für: {', '.join(fehlende_basis)}",
                 details=(
                     "Ohne kumulative kWh-Zähler bleibt der bilanzielle Verbrauch im "
-                    "Energieprofil leer. Bitte unter Einstellungen → Datenquellen "
-                    "die kWh-Zeilen belegen (nicht nur die Watt-Zeilen)."
+                    "Energieprofil leer — und damit auch die Grundlast, die als "
+                    "Median der Nachtstunden daraus gebildet wird. Bitte unter "
+                    "Einstellungen → Datenquellen die kWh-Zeilen belegen (nicht "
+                    "nur die Watt-Zeilen)."
                 ),
                 link=LINK_DATENQUELLEN,
             ))
@@ -416,7 +428,15 @@ class EnergieprofilChecks:
                 details=(
                     "Ohne kumulative Zähler bleibt das Energieprofil für diese "
                     "Komponenten leer. Betroffen sind Prognosen-IST, Heatmap, "
-                    "Lernfaktor und Monatsberichte. Zuzuordnen unter "
+                    "Lernfaktor und Monatsberichte. Bei einem Speicher oder "
+                    "einer PV-Erzeugung kommt die teuerste Folge hinzu: Der "
+                    "bilanzielle Hausverbrauch je Stunde (PV + Netzbezug − "
+                    "Einspeisung − Speicher) rechnet den fehlenden Anteil als 0 "
+                    "und fällt damit zu niedrig aus — und mit ihm die Grundlast, "
+                    "die als Median der Nachtstunden daraus gebildet wird "
+                    "(Cockpit → Monat, Monatsbericht, HA-Sensor "
+                    "eedc_grundlast_kw). Diese Zahl sieht nicht falsch aus, "
+                    "sondern plausibel. Zuzuordnen unter "
                     "Einstellungen → Datenquellen (die kWh-Zeilen, nicht nur die "
                     "Watt-Zeilen). Liefert ein Gerät nur Leistung (W), baut Home "
                     "Assistant unter Helfer → „Integral-Sensor“ (Riemannsche "
@@ -662,7 +682,7 @@ class EnergieprofilChecks:
                     f"Behebung: 'Tag neu aggregieren' für genau diesen Tag (Reload-Symbol "
                     f"in der Tagesliste) — repariert SensorSnapshots + Aggregate in einem Schritt."
                 ),
-                link=f"/einstellungen/energieprofil?datum={datum_spike.isoformat()}",
+                link=LINK_ENERGIEPROFIL,
             ))
 
         return ergebnisse
@@ -781,7 +801,7 @@ class EnergieprofilChecks:
                     "beide schreiben die Werte je Modul. Ohne zugeordneten "
                     "Sensor müssen die Werte von Hand nachgetragen werden."
                 ),
-                link="/einstellungen/monatsdaten",
+                link=link_monat_erfassen(fehlt[0]),
             ))
         if teil_luecke:
             ergebnisse.append(CheckErgebnis(
@@ -791,7 +811,7 @@ class EnergieprofilChecks:
                     "Nur ein Teil der Strings erfasst und kein Gesamtwert zum "
                     f"Verteilen hinterlegt: {_monate(teil_luecke)}"
                 ),
-                link="/einstellungen/monatsdaten",
+                link=link_monat_erfassen(teil_luecke[0]),
             ))
         if verteilt:
             ergebnisse.append(CheckErgebnis(
@@ -801,7 +821,10 @@ class EnergieprofilChecks:
                     "Gesamtwert wird anteilig nach kWp auf die Strings verteilt — "
                     f"Pro-String-Genauigkeit eingeschränkt: {_monate(verteilt)}"
                 ),
-                link="/einstellungen/monatsdaten",
+                # Kein `?erfassen=`: hier fehlt nichts, der Gesamtwert wird nur
+                # verteilt. Der Block genügt, ein geöffnetes Formular wäre eine
+                # Handlungsaufforderung, die die Meldung gar nicht stellt.
+                link=LINK_MONATSDATEN,
             ))
         if not fehlt and not teil_luecke and not verteilt and ok_count:
             ergebnisse.append(CheckErgebnis(

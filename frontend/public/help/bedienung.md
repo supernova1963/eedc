@@ -277,7 +277,9 @@ Die **Erfassung** eines Monats (Zählerstände, Monatsabschluss) läuft über da
 
 ### 2.4 Jahr/Gesamt
 
-Die **Jahr/Gesamt**-Sicht fasst die Anlage über ein ganzes Jahr bzw. über die gesamte Laufzeit zusammen (Summe der Monate). Über den Selektor wählst du ein Jahr oder „Gesamt".
+Die **Jahr/Gesamt**-Sicht fasst die Anlage über ein ganzes Jahr zusammen (Summe der Monate). Über den Selektor an der Seite — mobil über die Jahres-Leiste — wählst du das Jahr; die Kennzahlen tragen einen Trend-Pfeil zum Vorjahr.
+
+> **„Gesamt" ist heute kein eigener Zeitraum, sondern steckt in einzelnen Kennzahlen.** Wo eine Zahl über die volle Laufzeit gilt, sagt sie es selbst — die Kachel **CO₂ kumuliert** trägt den Vermerk „gesamte Historie — nicht jahresgebunden" und bleibt beim Jahreswechsel stehen. Eine Selektor-Stellung, die die **ganze Seite** auf die Gesamtlaufzeit umschaltet, gibt es nicht; sie steht auf der Roadmap.
 
 **Hero-Kennzahlen** — die drei wichtigsten Werte prominent, je mit Trend-Pfeil zum Vorjahr:
 
@@ -285,20 +287,17 @@ Die **Jahr/Gesamt**-Sicht fasst die Anlage über ein ganzes Jahr bzw. über die 
 
 > Der **Netto-Ertrag** hier ist die **PV-Anlagen-Größe** (Einspeise-Erlös + Eigenverbrauchs-Ersparnis) — nicht der komponenten-übergreifende **Finanz-Block-Saldo** (siehe [§2.3](#23-monat), „Zwei Netto-Größen nicht verwechseln"). Der Finanzen-Block als Komponenten-Finanz-Tabelle erscheint auch in Jahr/Gesamt, dann über alle Monate summiert.
 
-**Energiefluss (zwei Balken):**
+**PV-Verteilung** — ein Balken, der zeigt, wohin der erzeugte Strom geflossen ist (Direktverbrauch / Speicher / Einspeisung). Daneben stehen die Kachel **Grundlast SOLL/IST** und der Hinweis, aus welchen Geräten die PV-Erzeugung stammt.
 
-- **PV-Verteilung** — wohin fließt der erzeugte Strom? (Direktverbrauch / Speicher / Einspeisung)
-- **Haus-Versorgung** — woher kommt der Strom im Haus? (PV direkt / Speicher / Netzbezug)
-
-**Energiebilanz** — PV-Erzeugung, Direktverbrauch, Einspeisung, Netzbezug, plus eine **Sparkline** der Monatserträge über den Gesamtzeitraum.
+**Energiebilanz** — PV-Erzeugung, Direktverbrauch, Einspeisung, Netzbezug, dazu der Block **Vergleich (IST/VJ/Ø)**: jede Kennzahl neben ihrem Vorjahreswert und dem Mittel der übrigen Jahre, jeweils mit Differenz.
 
 > **Warum weicht der Gesamtverbrauch von meinem Herstellerportal ab?** eedc bilanziert den Verbrauch aus deinen Werten: `Erzeugung − Einspeisung − Speicher-Ladung + Speicher-Entladung + Netzbezug`. Viele Hybrid-Wechselrichter (z. B. E3DC) messen PV und Speicher **DC-seitig**, Einspeisung und Netzbezug aber **AC-seitig** — dann enthält der Gesamtverbrauch die Wandlungsverluste und liegt rund **3–5 % der Erzeugung** über dem „Hausverbrauch" im Portal, das seine Verluste herausrechnet. Beide Werte stimmen: eedc zeigt, was deine Anlage liefern musste (die richtige Basis für Autarkie und Wirtschaftlichkeit — bezahlt werden muss auch der Verlust), das Portal, was die Verbraucher gezogen haben. Details und ein Rechenrezept zum Nachprüfen stehen in der [Berechnungsreferenz 3.1](BERECHNUNGEN.md#31-energie-bilanz-monatskennzahlen).
 
-> **Welche Monate die Jahreszahl umfasst.** Ein Monat zählt zum Jahr, sobald er **Daten trägt** — nicht erst, wenn du ihn im Monatsabschluss abgeschlossen hast. Das ist ein Unterschied: die Zählerstände eines Monats trägst du oft erst Wochen später nach, die Messwerte deiner Komponenten liegen längst vor. Bis dahin fehlte dieser Monat der Jahreszahl vollständig. Der Kopf des Kennzahlen-Blocks nennt das Fenster, sobald es kein volles Jahr ist (`Jan–Aug · 5 Energie-Kennzahlen …`); **auch mehrere offene Monate** werden so gefunden, ebenso eine Lücke mitten im Jahr.
+> **Welche Monate die Jahreszahl umfasst.** Ein Monat zählt zum Jahr, sobald er **Daten trägt** — nicht erst, wenn du ihn im Monatsabschluss abgeschlossen hast. Das ist ein Unterschied: die Zählerstände eines Monats trägst du oft erst Wochen später nach, die Messwerte deiner Komponenten liegen längst vor. Bis dahin fehlte dieser Monat der Jahreszahl vollständig. Der Kopf des Kennzahlen-Blocks nennt sein Fenster genau dann, wenn die Kacheln **mehr Monate** zählen als die Vergleichstabelle darunter (`Jan–Aug (bis heute) · 5 Energie-Kennzahlen …`); **auch mehrere offene Monate** werden so gefunden, ebenso eine Lücke mitten im Jahr. Decken sich beide, steht dort nichts — dann gibt es auch nichts zu unterscheiden.
 >
 > **Womit sich das Jahr vergleicht — und über welche Monate.** Die Energiebilanz stellt dem **IST** zwei Vergleichsspalten gegenüber: das **Vorjahr** und den **Ø der übrigen Jahre**. Verglichen wird über die **abgeschlossenen** Monate, und zwar auf **allen** Spalten gleich — der laufende Monat bleibt außen vor. Sonst stünden zwei Augusttage gegen einen vollen August des Vorjahrs. Auch das Vergleichsjahr wird beschnitten: im laufenden Jahr stünden sonst die bisher gelaufenen Monate gegen ein volles Vorjahr — im Juli sechs gegen zwölf, und die PV-Erzeugung sähe um fast die Hälfte eingebrochen aus, obwohl nichts passiert ist. Eine **Lücke mitten im Jahr** wirkt genauso: verglichen werden immer *dieselben* Monate, nicht „die ersten N".
 >
-> **Deshalb sind Kachel und Tabelle nicht dieselbe Zahl** — die Kachel zählt das Jahr **bis heute**, die Tabelle bis zum letzten abgeschlossenen Monat. Beide sagen, worauf sie sich beziehen: der Block-Kopf über den Kacheln (`Jan–Aug`), der Kopf der IST-Spalte und der Bilanz-Block-Kopf (`Jan–Jul`), dazu ein Satz unter der Tabelle („… · Kennzahlen oben: Jan–Aug").
+> **Deshalb sind Kachel und Tabelle nicht dieselbe Zahl** — die Kachel zählt das Jahr **bis heute**, die Tabelle bis zum letzten abgeschlossenen Monat. Dass dabei die größere Zahl direkt über der kleineren steht, ist richtig und kein Widerspruch. Beide Blöcke sagen nicht nur, *welchen* Zeitraum sie meinen, sondern auch *warum* er sich unterscheidet: der Block-Kopf über den Kacheln (`Jan–Aug (bis heute)`), der Kopf der IST-Spalte und der Bilanz-Block-Kopf (`Jan–Jul (abgeschlossen)`), dazu der ausgeschriebene Satz unter der Tabelle. Der Zusatz in Klammern erscheint nur, solange die beiden Zeiträume auseinanderfallen — bei einem abgeschlossenen Jahr fällt er weg.
 >
 > **Steht dort weniger als ein volles Jahr, sagt die Anzeige es** — am Spaltenkopf, an den Kennzahl-Kacheln (`VJ (Jan–Jul): 5.146 kWh`) und als Satz unter der Tabelle („Vergleich beschnitten auf die gemeinsamen Monate: Jan–Jul"). In den **Ø der übrigen Jahre** geht nur ein Jahr ein, das dieses Fenster **ganz** abdeckt: Ist deine Anlage im Juni 2023 in Betrieb gegangen, trüge 2023 zu einem Vergleich über Jan–Jun nur einen einzigen Monat bei — dann bleibt das Jahr draußen, und die Zeile darunter zählt entsprechend („Ø aus 2 Jahren" statt 3). Hat das Vorjahr **gar keinen** gemeinsamen Monat, entfällt die Vergleichsspalte („—"), statt 0 zu zeigen. Bei einem abgeschlossenen Jahr mit vollständigen Daten ändert sich nichts.
 >
@@ -706,6 +705,19 @@ Jeder Wert trägt einen **„Sicht"-Tooltip** (pro Investition vs. gesamt, Mehrk
 
 Tabelle je Komponente: **Investition** (Kaufpreis + Installation, bei WP/E-Auto der Mehrkosten-Ansatz) · **Jährliche Einsparung** · **ROI** (Jahres-%) · **Amortisation** (Jahre bis Break-Even).
 
+> **Wo eedc nichts bewertet, steht „—" statt einer Null.** Für *Wallbox* und *Sonstiges* rechnet
+> eedc keine Einsparung selbst — dort zählt allein das gepflegte Feld **„Ertrag/Jahr (€)"**. Ist es
+> leer, bleiben Einsparung, ROI, Amortisation und CO₂ dieser Zeile leer, und der Grund steht im
+> Tooltip. **Die Anschaffungskosten zählen weiter** — unbewertet heißt nicht unsichtbar, und die
+> Zeile senkt die Anlagensumme nicht. Eine gepflegte **0** ist dagegen deine Aussage („bringt
+> nichts") und wird als bewertete Zeile behandelt.
+>
+> **Die Wallbox bekommt bewusst keine eigene Einsparung.** Was das Laden zuhause gegenüber der
+> öffentlichen Säule spart, steht im **Komponenten-Hub** der Wallbox. In die Wirtschaftlichkeit der
+> Anlage geht es nicht zusätzlich ein: Dort ist der Vorteil bereits in der **E-Auto**-Zeile
+> enthalten, die Benzin gegen den zuhause geladenen Strom rechnet. Beides zu addieren würde
+> dieselbe Kilowattstunde zweimal gutschreiben.
+
 **Realisierungsquote** — historische Erträge vs. konfigurierte Prognose: ≥ 90 % (grün), ≥ 70 % (gelb), < 70 % (rot).
 
 **PV-System-Aggregation** — Wechselrichter + Module + DC-Speicher werden als ein „PV-System" gerechnet; Einzelkomponenten in aufklappbaren Unterzeilen, Einsparungen proportional nach kWp verteilt.
@@ -757,6 +769,23 @@ Der interaktive Überblick über alle Monatswerte in einer sortierbaren Tabelle 
 > Die **Summenzeile** hält sich an dieselbe Regel: Sie vergleicht nur, wenn **jede** angezeigte Zeile ein Gegenstück hat. Bei „Alle Jahre" ist das nicht der Fall — die ersten Monate deiner Aufzeichnung haben kein Vorjahr —, dort bleibt die Vergleichs-Spalte des Fußes leer, während die Δ-Werte der einzelnen Zeilen vollständig darüber stehen. Andernfalls stünde dort z. B. die Summe aus 37 Monaten neben der aus 25: eine Prozentzahl, die sich wie eine Aussage über deine Anlage liest und keine ist. Die „aktuell"-Zelle bleibt immer die Summe der Spalte darüber. **Warum sie schweigt, steht unter der Tabelle** — mit der Anzahl der Monate bzw. Tage, die kein Gegenstück haben; derselbe Satz erscheint als Hinweis, wenn du auf die leere Zelle zeigst.
 >
 > *Bis Version 4.0.5 wurden über mehrjährige Zeiträume alle Jahrgänge desselben Monats verwechselt: jede Zeile verglich sich mit dem jüngsten davon, im Extremfall mit sich selbst (identische Zahlen, Δ 0,0 %). Wenn deine Vorjahresspalte vorher gespiegelte Werte zeigte, ist das die Korrektur.*
+
+> **Grundlast je Nacht (Tagesansicht).** Der Spalten-Picker führt unter den Tages-Spalten
+> **„Grundlast"** — den Nacht-Sockel *dieser einen* Nacht in kW: den **Median der
+> Nachtstunden 0–5 Uhr**, dieselbe Rechnung wie in *Cockpit → Monat*, nur über einen Tag. Damit lässt sich ablesen, was ein über Nacht abgeschaltetes Gerät wirklich
+> ausmacht: Im Tagesverbrauch geht so etwas unter (50 Watt über acht Stunden sind 0,4 kWh neben
+> vielleicht 20 kWh), im Nacht-Sockel steht es direkt nebeneinander. Die Spalte ist **nicht
+> voreingestellt** und lässt sich wie jede andere exportieren.
+>
+> ⚠ **Sie hat bewusst keine Summen- oder Durchschnittszeile.** Ein Median lässt sich nicht
+> addieren, und der Durchschnitt mehrerer Nächte wäre **nicht** die Grundlast, die
+> [Cockpit → Monat](#23-monat) nennt: die bildet ihren Median über *alle* Nachtstunden des Monats.
+> Beide Zahlen stimmen und beantworten verschiedene Fragen — deshalb steht die eine je Nacht und
+> die andere je Monat, statt dass eine dritte daneben entsteht.
+>
+> ⚠ **Wo für eine Nacht gar nichts gemessen wurde, steht „—"** und keine 0 — eine Null hieße
+> „gemessen, und es lief nichts". Wurde nur ein Teil der Nachtstunden erfasst, steht der Wert
+> aus dem erfassten Teil; er wird nicht unterdrückt.
 
 > **Erträge je PV-String und je Balkonkraftwerk (Tagesansicht).** Im Block **Energieprofile** führt
 > der Spalten-Picker die Gruppe **„Je Erzeuger"**: je Gerät eine Spalte mit seinem Tagesertrag —
