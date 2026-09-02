@@ -62,7 +62,7 @@ export function WaermepumpeVerlaufIST({ anlageId, inv, melde }: { anlageId: numb
           <summary className="cursor-pointer text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white">
             Monatsdaten anzeigen ({ds.monatsdaten.length})
           </summary>
-          <div className="mt-3"><WaermepumpeMonatsTabelle monatsdaten={ds.monatsdaten} /></div>
+          <div className="mt-3"><WaermepumpeMonatsTabelle monatsdaten={ds.monatsdaten} jazJeMonat={ds.zusammenfassung.jaz_je_monat} /></div>
         </details>
       </Parkbar>
     </div>
@@ -76,7 +76,7 @@ export function WaermepumpeVergleichIST({ anlageId, inv, melde }: { anlageId: nu
   useEffect(() => { melde?.(leer ? KEINE : VERGLEICH_IDS) }, [leer, melde])
   if (loading) return <Lade />
   if (!ds || ds.monatsdaten.length === 0) return <Leer text="Keine Vergleichsdaten erfasst." />
-  return <Parkbar id="chart:wp-vergleich" titel="Monats-/Saisonvergleich"><WaermepumpeVergleich monatsdaten={ds.monatsdaten} hatGetrennteStrom={ds.zusammenfassung.gesamt_strom_heizen_kwh !== undefined} /></Parkbar>
+  return <Parkbar id="chart:wp-vergleich" titel="Monats-/Saisonvergleich"><WaermepumpeVergleich monatsdaten={ds.monatsdaten} jazJeMonat={ds.zusammenfassung.jaz_je_monat} hatGetrennteStrom={ds.zusammenfassung.gesamt_strom_heizen_kwh !== undefined} /></Parkbar>
 }
 
 /** Wirtschaftlichkeit: Kostenvergleich WP vs. Gas/Öl + Ersparnis. */

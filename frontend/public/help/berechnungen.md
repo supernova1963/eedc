@@ -166,10 +166,23 @@ Spez. Ertrag        = PV_Erzeugung / Leistung_kWp              (kWh/kWp, NUR PV;
 Einspeise-Erlös (EUR)    = (Einspeisung - Einspeisung_neg_Preis) * Einspeisevergütung / 100
 Netzbezug-Kosten (EUR)   = Netzbezug * Netzbezug_Preis / 100 + Grundpreis
 Arbeitspreis-Kosten (EUR)= Netzbezug * Netzbezug_Preis / 100            (ohne Grundpreis, reiner Ausweis)
-EV-Ersparnis (EUR)       = Eigenverbrauch * Netzbezug_Preis / 100
+EV-Ersparnis (EUR)       = PV_Eigenverbrauch * Netzbezug_Preis / 100   (s. Hinweis)
 Netto-Ertrag (EUR)       = Einspeise-Erlös + EV-Ersparnis
 CO2-Einsparung (kg)      = PV_Erzeugung * 0.38               (VERALTET — s. Kasten)
 ```
+
+> **Hinweis „PV_Eigenverbrauch".** Der Eigenverbrauch, der zu **Geld** wird, ist der aus PV-Modulen
+> und Balkonkraftwerk. Ein Erzeuger unter *Sonstiges* — BHKW, Windrad, Wasserkraft — zählt in die
+> **Mengen**-Bilanz (Eigenverbrauch, Autarkie, EV-Quote), weil der Zähler am einen Netzanschluss die
+> Summe aller Erzeuger dahinter misst; seinen **finanziellen** Nutzen bewertet eedc dagegen nicht
+> selbst, sondern nimmt ihn aus dem gepflegten Feld `Investition.einsparung_prognose_jahr`
+> („Ertrag/Jahr"). Beide Größen liegen in **derselben** Summe (`aussichten.py::jahres_netto_ertrag`)
+> — würde die Menge zusätzlich monetarisiert, stünde derselbe Nutzen zweimal darin.
+>
+> ⚠ **Folge für die Anzeige:** Bei einer Anlage mit sonstigem Erzeuger geht
+> `Eigenverbrauch × Preis = EV-Ersparnis` **nicht** auf. Das T-Konto beschriftet die Zeile dann als
+> *PV-Eigenverbrauch-Ersparnis* und zeigt die Multiplikation nicht an, statt eine Herleitung zu
+> behaupten, die sich nicht nachrechnen lässt (N-131).
 
 > **⚠ Die CO₂-Zeile dieser Funktion ist NICHT der Kanon.** `berechne_monatskennzahlen`
 > trägt noch die vor DI-2 gültige Formel (Erzeugung statt Eigenverbrauch, ohne WP und
@@ -344,7 +357,7 @@ Die Cockpit-Übersicht aggregiert alle Monatsdaten für ein Jahr (oder alle Jahr
 
 ```
 Einspeise-Erlös     = Σ(Einspeisung) * Einspeisevergütung / 100
-EV-Ersparnis        = Σ(Eigenverbrauch) * Netzbezug_Preis / 100
+EV-Ersparnis        = Σ(PV_Eigenverbrauch) * Netzbezug_Preis / 100  (s. Hinweis)
 Netto-Ertrag        = Einspeise-Erlös + EV-Ersparnis [- USt_Eigenverbrauch]
 BKW-Ersparnis       = Σ(BKW_Eigenverbrauch) * Netzbezug_Preis / 100
 Sonstige-Netto      = Σ(sonstige_ertraege) - Σ(sonstige_ausgaben)
@@ -2585,6 +2598,24 @@ Ein Slot ohne jede Stichprobe fehlt im Ergebnis-Dict. Der Konsument
 (`api/routes/live_wetter.py::_berechne_verbrauchsprofil`) erkennt das und setzt seine
 Standard-Grundlast ein, statt still 0 kW anzunehmen — die lokale Ausprägung von
 [ADR-002/P4](ADR-002-WURZELMUSTER.md).
+
+#### Wie viele Stunden das Profil wirklich trägt
+
+Das individuelle Profil wird ab **zwei Tagen** je Klasse (Werktag/Wochenende) verwendet — und ein
+„Tag" entsteht bereits durch eine **einzige** gemessene Stunde. Zwei solcher Tage ergeben deshalb ein
+Profil, dessen übrige Slots aus der Standard-Grundlast kommen. Das ist der oben beschriebene,
+vorgesehene Rückfall und **kein Fehler**: Ein dünnes eigenes Profil ist besser als gar keines, und
+eine schärfere Schwelle würde einer frisch eingerichteten Anlage ihr individuelles Profil wieder
+wegnehmen.
+
+Sichtbar war davon bis v4.0.37 nur die **Tageszahl** — „2 Tage" liest sich aber wie eine Aussage über
+die Güte des Profils. Deshalb liefert das Ergebnis je Klasse zusätzlich die **gemessene
+Slot-Abdeckung** (`slots_werktag` / `slots_wochenende`, die Route reicht sie als `profil_slots`
+durch), und beide Anzeigen — die Legende in *Cockpit → Live* und der Verbrauchs-Tooltip der
+3-Tage-Aussicht — nennen sie samt ihrer Folge, z. B. *„Werktag, 2 Tage, 1 von 24 Stunden gemessen —
+die übrigen 23 aus der Standard-Grundlast"*. Bei voller Abdeckung entfällt der Zusatz; liefert das
+Backend keine Abdeckung, bleibt es bei der Tageszahl, statt eine zu erfinden. Wortlaut-SoT beider
+Anzeigen ist `lib/verbrauchsprofilHerkunft.ts`.
 
 ### Stündliche Berechnung (aggregate_day)
 

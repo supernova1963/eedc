@@ -61,7 +61,7 @@ Diese Tabelle ist der Kern dieses Handbuchs. Sie beantwortet die Frage, die fast
 | Was du sehen willst | Was du dafür brauchst | Ohne das … |
 |---------------------|------------------------|------------|
 | **Stromverbrauch** der Anlage | *Stromverbrauch* (kWh) — **oder** *Strom Heizen* + *Strom Warmwasser* bei getrennter Messung | keine Auswertung, das Gerät fehlt in der Verbrauchsseite |
-| **Wärme erzeugt** | Wärmemengenzähler: *Heizwärme* (kWh) und/oder *Warmwasser* (kWh) | eedc **rechnet** sie aus Strom × gepflegter Arbeitszahl — und kennzeichnet sie als abgeleitet |
+| **Wärme erzeugt** | Wärmemengenzähler: *Heizwärme* (kWh) und/oder *Warmwasser-Wärme* (kWh) | eedc **rechnet** sie aus Strom × gepflegter Arbeitszahl — und kennzeichnet sie als abgeleitet |
 | **Arbeitszahl (JAZ)** | beides: Strom **und** gemessene Wärme | „—" mit Grund |
 | **Arbeitszahl Heizen / Warmwasser getrennt** | getrennte Strommessung **und** getrennte Wärmemengen | „—" mit Grund *„Strom nicht getrennt je Funktion gemessen"* |
 | **Arbeitszahl Kühlen** | *Strom Kühlbetrieb* **und** *Nutzenergie Kühlbetrieb* (Kältemengenzähler) | „—" mit Grund *„kein Kältemengenzähler zugeordnet"* |
@@ -99,6 +99,8 @@ Dieser Abschnitt ist so wichtig wie die Tabelle darüber. **Mehrere Dinge fehlen
 **Keine geschätzte Kältemenge.** Ohne Kältemengenzähler gibt es keine Arbeitszahl Kühlen. Man könnte sie aus einem angenommenen Wirkungsgrad rechnen — dann käme genau der Faktor zurück, mit dem gerechnet wurde. Das wäre keine Messung, sondern eine Rückgabe der eigenen Annahme.
 
 **Keine Bewertung von Lüften und Entfeuchten.** Beide Betriebsarten **erscheinen** in der Aufteilung, wenn du dafür Zähler hast. Eine Kennzahl bekommen sie nicht: Sie erzeugen keine Nutzenergie, die sich messen ließe. Ihr Strom fällt deshalb auch **aus dem Nenner der Arbeitszahl** — sonst drückte er eine Zahl, mit der er nichts zu tun hat.
+
+> ⚑ **Die Kachel zeigt, womit sie gerechnet hat.** Wer auf die Arbeitszahl zeigt (auf dem Telefon: antippen), sieht neben der Formel die beiden eingesetzten Zahlen — *„210,0 kWh Wärme ÷ 313,6 kWh Strom"*. Damit lässt sich eine unplausible Zahl sofort einordnen: Passt eine der beiden nicht zu dem, was dein Gerät meldet, liegt es an der Zuordnung, nicht an der Rechnung. ⚠ **Der Nenner ist nicht immer der volle Stromverbrauch** — Kühlen, Lüften und Entfeuchten sind abgezogen, wenn du den Betriebsmodus erfasst (sonst stünde Kühlstrom im Nenner, ohne dass die Kältemenge im Zähler steht). ⭐ **Dasselbe gilt in der Monatstabelle** unter *Komponenten → Wärmepumpe*: Wo die Arbeitszahl eines Monats mit anderen Zahlen gebildet wurde als in seiner Zeile stehen, steht die Rechnung klein darunter — „210 ÷ 96 kWh“. Wo Zähler und Nenner die Spalten daneben sind, geht die Zeile ohne Zusatz auf, und es steht nichts da.
 
 **Keine Note für deine Anlage.** eedc rechnet mit deinen Zahlen, es bewertet dich nicht. Eine Arbeitszahl von 1,8 ist kein Mangel, sondern die Beschreibung einer Anlage, die viel direkt elektrisch heizt. Steht sie unter 2, schreibt eedc genau das daneben:
 
@@ -190,7 +192,18 @@ Am Gerät gibt es den Schalter **„Getrennte Strommessung"**.
 
 ### Schritt 3 — Die Wärme zuordnen (oder bewusst darauf verzichten)
 
-*Heizwärme* und *Warmwasser* sind **thermische** Größen in kWh — die abgegebene Wärme, **nicht** der Strom. Das ist die häufigste Verwechslung überhaupt.
+*Heizwärme* und *Warmwasser-Wärme* sind **thermische** Größen in kWh — die abgegebene Wärme, **nicht** der Strom. Das ist die häufigste Verwechslung überhaupt, und beide Felder tragen sie deshalb im Namen.
+
+> ⚠ **Besonders beim Import aus einer eigenen Datei.** Viele Hersteller-Exporte führen die abgegebene Wärme in **zwei** Spalten nebeneinander — einmal die vom Gerät erzeugte Wärme, einmal die aus der Umwelt entnommene *Umgebungswärme*. Für eedc zählt die **erzeugte** Wärme; wird die Umgebungswärme mit zugeordnet oder die bereits addierte Summe genommen, steht die Wärmemenge um ein Vielfaches zu hoch.
+>
+> **Woran du es merkst — und in welche Richtung:**
+>
+> | Was die Arbeitszahl zeigt | Was das heißt |
+> | --- | --- |
+> | **auffällig hoch** (deutlich über dem, was das Gerät leisten kann) | Der **Zähler** ist zu groß — typisch die mit zugeordnete Umgebungswärme |
+> | **unter 1** | Der **Nenner** ist zu groß oder der Zähler unvollständig: mehrere Geräte auf einem Stromzähler, ein Heizstab auf demselben Zähler, oder es meldet nicht jedes Gerät seine Wärme |
+>
+> Eine Wärmepumpe kann nicht weniger Wärme abgeben, als sie Strom aufnimmt — deshalb ist eine Zahl unter 1 immer ein Hinweis auf die **Strom**seite, nie auf zu viel Wärme.
 
 Ohne Wärmemengenzähler rechnet eedc die Heizwärme aus *Strom × gepflegter Arbeitszahl* und **kennzeichnet sie als abgeleitet**. Die Mengen sind dann eine Modellrechnung, die Arbeitszahl fällt weg (sie wäre zirkulär). Das ist ein legitimer Betriebszustand, kein Mangel.
 
