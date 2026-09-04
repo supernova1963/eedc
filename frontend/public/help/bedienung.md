@@ -208,6 +208,20 @@ Die **Tag**-Sicht bringt den feingranularen Stunden-Tag ins Cockpit: ein ausgew�
 > Tages-Historie je Gerät über einen längeren Zeitraum liegt in
 > [Auswertungen → Tabelle](#45-tabelle-werte-werkbank).
 
+> **Performance Ratio — wogegen sie gemessen wird.** Die Kachel teilt deinen Tagesertrag durch das,
+> was bei der Sonne dieses Tages physikalisch möglich gewesen wäre. Die Bezugsgröße dafür ist die
+> Einstrahlung **auf deine Modulfläche** — nicht die waagerechte Globalstrahlung, die an einer
+> Wetterstation gemessen wird. Der Unterschied ist erheblich: Bei steilen Modulen und tiefer
+> Wintersonne trifft die schräge Fläche ein Mehrfaches dessen, was auf dem Boden ankommt. Deshalb
+> steht die Zahl seit v4.0.39 mit dem Zusatz **„auf der Modulfläche"** dabei — vorher stand dort
+> die waagerechte Strahlung, und wer nachrechnete, kam zwangsläufig auf einen anderen Wert.
+>
+> Bei mehreren Dachflächen ist es das nach Nennleistung gewichtete Mittel über alle Ausrichtungen,
+> passend zur Ertragssumme derselben Zeile. Für Tage, die vor dieser Änderung liegen, steht keine
+> Bezugsgröße dabei — sie wurde damals nicht mitgeschrieben; über **„Mehrere Tage neu
+> aggregieren"** in der Reparatur-Werkbank unter
+> [Einstellungen → Daten](HANDBUCH_EINSTELLUNGEN.md) holst du sie für einen Zeitraum nach.
+
 Die Datenbasis sind kumulative Zähler-Snapshots (stündlich); die Tages-Werte folgen der Backward-Slot-Konvention (Slot N = Energie aus dem Intervall [N−1, N), Industriestandard). Fehlen Snapshots (z. B. durch eine HA-Statistik-Latenz oder einen Add-on-Neustart), weist eedc darauf hin und bietet eine Nachberechnung an — die Pflege dazu liegt unter [Einstellungen → Daten → Energieprofil-Pflege](HANDBUCH_EINSTELLUNGEN.md).
 
 ### 2.3 Monat
@@ -259,7 +273,7 @@ Aus dem feingranularen Stunden-Bestand des Monats zeigt die Sicht zusätzlich:
 
 > **Aus der alten „Energieprofil (Beta)"-Sicht bewusst nicht übernommen:** die Tag×Stunde-Heatmap (kommt später neu gestaltet zurück) und der Wochentag-Wochenvergleich (entfällt — der Ø-gleiche-Wochentag-Rückblick in der Tag-Sicht deckt den Kern).
 
-**Finanzen-Block** — der Monat (und analog [Jahr/Gesamt](#24-jahrgesamt)) trägt einen eigenen Finanzen-Block als **Komponenten-Finanz-Tabelle**: eine Zeile je Komponente (PV-Anlage, Speicher, Wärmepumpe, E-Auto …) mit den Spalten **Erträge** (tatsächliche Zahlungsflüsse), **Einsparungen** (kalkulatorisch — vermiedene Kosten), **Aufwand** und **Saldo**. Die **Summenzeile ist die Block-Kopf-Kennzahl** (Kopf == sichtbare Summe). Spaltenköpfe und Zeilen zeigen ihre Herleitung im **Tooltip** (Hover/Tipp). Netzbezug-Kosten und Grundgebühr stehen **nachrichtlich** darunter, nicht im Saldo verrechnet. Eine zusätzliche Zeile **„Ergebnis nach Stromrechnung"** (= Saldo − Netzbezug-Kosten) zeigt als **zweite Perspektive** das Haushaltsergebnis; der Komponenten-Saldo bleibt davon unberührt und ist weiterhin die Kopf-Kennzahl. Die **volle Finanzrechnung** (T-Konto je Investition, zeitraum-fähig) und die Finanz-Prognose liegen in [Auswertungen → Finanzen](#41-finanzen); der Block verlinkt direkt dorthin.
+**Finanzen-Block** — der Monat (und analog [Jahr/Gesamt](#24-jahrgesamt)) trägt einen eigenen Finanzen-Block als **Komponenten-Finanz-Tabelle**: eine Zeile je Komponente (PV-Anlage, Speicher, Wärmepumpe, E-Auto …) mit den Spalten **Erträge** (tatsächliche Zahlungsflüsse), **Einsparungen** (kalkulatorisch — vermiedene Kosten), **Aufwand** und **Saldo**. Die **Summenzeile ist die Block-Kopf-Kennzahl** (Kopf == sichtbare Summe). ⚑ **Die Zeile „PV-Anlage" trägt dabei nur ihren eigenen Anteil an der Eigenverbrauchs-Ersparnis:** Was Speicher, Balkonkraftwerk und die PV-Ladung der Wallbox beitragen, steht in deren eigenen Zeilen und ist oben abgezogen — sonst stünde dieselbe Kilowattstunde zweimal in der Summe. Wo etwas abgezogen wurde, sagt die Zeile es („ohne Anteil der Komponenten unten"), und die Summe stimmt dann mit dem T-Konto in *Auswertungen → Finanzen* überein. Spaltenköpfe und Zeilen zeigen ihre Herleitung im **Tooltip** (Hover/Tipp). Netzbezug-Kosten und Grundgebühr stehen **nachrichtlich** darunter, nicht im Saldo verrechnet. Eine zusätzliche Zeile **„Ergebnis nach Stromrechnung"** (= Saldo − Netzbezug-Kosten) zeigt als **zweite Perspektive** das Haushaltsergebnis; der Komponenten-Saldo bleibt davon unberührt und ist weiterhin die Kopf-Kennzahl. Die **volle Finanzrechnung** (T-Konto je Investition, zeitraum-fähig) und die Finanz-Prognose liegen in [Auswertungen → Finanzen](#41-finanzen); der Block verlinkt direkt dorthin.
 
 > **Die Kachel „Ø-Preis Netz" zeigt unter dem Preis die Arbeitspreis-Kosten** (`Netzbezug ×
 > Ø-Preis`) — nicht die Gesamtsumme der Stromrechnung. So geht die Division auf: kWh und €
@@ -269,7 +283,7 @@ Aus dem feingranularen Stunden-Bestand des Monats zeigt die Sicht zusätzlich:
 > verbrauchsgewichtete Monatsdurchschnitt; mit ihm rechnen dann auch Kosten und
 > Eigenverbrauchs-Ersparnis dieses Monats.
 
-> **Zwei Netto-Größen nicht verwechseln:** Die Hero-Kennzahl **„Netto-Ertrag"** (z. B. in Jahr/Gesamt) beziffert die **PV-Anlage** allein (Einspeise-Erlös + Eigenverbrauchs-Ersparnis) und ist bewusst **nicht** identisch mit dem **Finanz-Block-Saldo**, der **alle Komponenten** (Wärmepumpe-, E-Auto-, Speicher-Beiträge und Sonstige Positionen) attribuiert zusammenfasst. Beide Zahlen sind korrekt — sie beantworten verschiedene Fragen (reine PV-Wirtschaftlichkeit vs. Gesamt-Saldo aller Komponenten). Die volle Herleitung steht in [Berechnungen §3.2](BERECHNUNGEN.md#32-finanzen-cockpit).
+> **Zwei Netto-Größen nicht verwechseln:** Die Hero-Kennzahl **„Netto-Ertrag"** (z. B. in Jahr/Gesamt) ist **Einspeise-Erlös + Eigenverbrauchs-Ersparnis** — die Erzeugungs-Seite deiner Anlage — und ist bewusst **nicht** identisch mit dem **Finanz-Block-Saldo**, der **alle Komponenten** (Wärmepumpe-, E-Auto-, Speicher-Beiträge und Sonstige Positionen) attribuiert zusammenfasst. Beide Zahlen sind korrekt — sie beantworten verschiedene Fragen (was deine Erzeugung einbringt vs. Gesamt-Saldo aller Komponenten). ⚑ **Hast du einen Erzeuger unter *Sonstiges*** (BHKW, Windrad, Wasserkraft), **zählt sein Strom in dieser Zahl mit** — er speist hinter denselben Hauszähler, und was er einspeist oder ersetzt, ist in Erlös und Ersparnis deiner Anlage enthalten. Bewertet wird dabei das **Gerät** nicht (siehe [§3.8](#38-sonstiges)). Die volle Herleitung steht in [Berechnungen §3.2](BERECHNUNGEN.md#32-finanzen-cockpit).
 
 Die **Erfassung** eines Monats (Zählerstände, Monatsabschluss) läuft über das Formular unter [Einstellungen → Daten → Monatsdaten](HANDBUCH_EINSTELLUNGEN.md); ein offener Monatsabschluss wird zusätzlich in der Status-Fußzeile angezeigt.
 
@@ -285,7 +299,7 @@ Die **Jahr/Gesamt**-Sicht fasst die Anlage über ein ganzes Jahr zusammen (Summe
 
 - **Autarkie** (%), **Spezifischer Ertrag** (kWh/kWp), **Netto-Ertrag** (€)
 
-> Der **Netto-Ertrag** hier ist die **PV-Anlagen-Größe** (Einspeise-Erlös + Eigenverbrauchs-Ersparnis) — nicht der komponenten-übergreifende **Finanz-Block-Saldo** (siehe [§2.3](#23-monat), „Zwei Netto-Größen nicht verwechseln"). Der Finanzen-Block als Komponenten-Finanz-Tabelle erscheint auch in Jahr/Gesamt, dann über alle Monate summiert.
+> Der **Netto-Ertrag** hier ist die **Erzeugungs-Größe** (Einspeise-Erlös + Eigenverbrauchs-Ersparnis) — nicht der komponenten-übergreifende **Finanz-Block-Saldo** (siehe [§2.3](#23-monat), „Zwei Netto-Größen nicht verwechseln"). Der Finanzen-Block als Komponenten-Finanz-Tabelle erscheint auch in Jahr/Gesamt, dann über alle Monate summiert.
 
 **PV-Verteilung** — ein Balken, der zeigt, wohin der erzeugte Strom geflossen ist (Direktverbrauch / Speicher / Einspeisung). Daneben stehen die Kachel **Grundlast SOLL/IST** und der Hinweis, aus welchen Geräten die PV-Erzeugung stammt.
 
@@ -479,7 +493,7 @@ Typische Abweichungen: ±5 % normal (Wetter), ±10–15 % prüfen (Verschattung?
 - **Vollzyklen** = entladene Energie ÷ Kapazität — dieselbe Zahl in Tag, Monat, Jahr, PDF und HA-Sensor. Gezählt wird die *entnommene* Energie (darauf zielen Hersteller-Garantien), geteilt durch die **Brutto**-Kapazität. Wer eine „nutzbare Kapazität" gepflegt hat, findet sie beim Wirkungsgrad wieder, nicht hier ([Berechnungen §3.3](BERECHNUNGEN.md#33-speicher-einsparung)).
 - **SoC-Hübe** (Energieprofil-Tagestabelle, optionale Spalte) — die zweite, andere Zahl: sie summiert die tatsächlichen Ladestands-Bewegungen (ein voller Hub 0→100→0 = 1). Wer den Speicher zwischen 10 und 90 % fährt, sieht hier 0,8 pro Hub. Sie braucht einen SoC-Sensor und ist ausschließlich aus dem **stationären** Speicher-SoC gebildet; E-Auto-SoC ist zuverlässig ausgeschlossen.
 - **Effizienz** = Entladung / Ladung × 100 % (durchgängig cyan)
-- **Degradation** (Kapazitätsverlust über die Zeit)
+- **Wirkungsgrad-Hinweis** — liegt der gemessene Wirkungsgrad mehr als 5 Prozentpunkte unter dem gepflegten Wert, sagt der Speicher-Block das. **Das ist nicht automatisch Alterung.** Bei einem **AC-gekoppelten** Speicher enthält die Messung die Wandlung des Batterie-Wechselrichters, sofern Ladung und Entladung hausseitig gezählt werden — dann beschreibt der Wert die Messstelle und nicht den Speicher (siehe [Typ-spezifische Parameter](HANDBUCH_EINSTELLUNGEN.md#34-typ-spezifische-parameter)). Sonst kommen als Ursache Speicher-Alterung oder die erfassten Mengen in Frage. ⚠ **In *Auswertungen → ROI* steht dieser Hinweis bewusst nicht**: dort rechnet eedc mit der Messung, sobald es eine gibt — der gepflegte Wert geht in diese Sicht gar nicht ein. Er zählt für die Tages-Vorschau „Speicher voll um", für *Größerer Speicher?* und für die HA-Sensoren.
 - **Arbitrage-Analyse** (wenn aktiviert): Netzladung zu günstigem Strom, Entladung bei hohem Preis, Arbitrage-Gewinn
 - **„Hätte mehr Kapazität geholfen?"** (Block *Wirtschaftlichkeit*) — die Sizing-Frage, beantwortet aus deinen Stundenwerten. Siehe unten.
 - **„Größerer Speicher?"** (eigener Block) — die Anschlussfrage *wie viel* und *zu welchem Preis*, mit Schieberegler. Siehe unten.
@@ -575,7 +589,21 @@ Für sonstige **Erzeuger** — ein BHKW, ein Windrad, eine kleine Wasserkraftanl
 
 **Finanziell bewertet eedc ihn nicht selbst — du sagst seinen Ertrag an.** Am Gerät gibt es dafür das Feld **„Ertrag/Jahr (€)"**, daneben die Betriebskosten; beides fließt in ROI und Amortisation. Solange du nichts einträgst, steht dort **„nicht bewertet"** statt einer Null. ⚑ Der Grund ist nicht, dass eedc zu wenig über dein Gerät wüsste, sondern dass es sonst **zweimal** zählen würde: der Ertrag, den du angibst, und eine zusätzlich gerechnete Eigenverbrauchs-Ersparnis wären derselbe Nutzen. Deshalb gibt es genau **eine** Stelle dafür.
 
-⚠ **Sichtbar wird das an der Eigenverbrauchs-Ersparnis:** Sobald ein sonstiger Erzeuger mitliefert, heißt sie **„PV-Eigenverbrauch-Ersparnis"**, und der Tooltip sagt dazu, dass der Anteil aus *Sonstiges* dort nicht bewertet ist. Die Kilowattstunden-Zahl daneben enthält ihn — die beiden lassen sich dann bewusst nicht ineinander umrechnen, und eedc zeigt deshalb auch keine Multiplikation an, die nicht aufginge.
+⚠ **Sichtbar wird das an der Eigenverbrauchs-Ersparnis:** Sobald ein sonstiger Erzeuger mitliefert, heißt sie im T-Konto **„PV-Eigenverbrauch-Ersparnis"**, und der Tooltip sagt dazu, dass sein Eigenverbrauch **darin enthalten** ist — deshalb bekommt das Gerät daneben keine zweite Zeile. Die beiden Zahlen lassen sich dann bewusst nicht ineinander umrechnen (der Betrag ist um die Anteile von Speicher und Balkonkraftwerk gekürzt, die eigene Zeilen haben), und eedc zeigt deshalb auch keine Multiplikation an, die nicht aufginge.
+
+> ### ⛔ Was eedc bei Abgabe an Dritte nicht kann
+>
+> **Gibst du Strom an andere ab** — Mieterstrom, Allgemeinstrom, ein Nachbarhaus —, dann hat eedc dafür **kein Modell**, und wir wollen keines vortäuschen. Hinter deinem Hausanschluss kennt die Bilanz für eine Kilowattstunde genau **zwei** Wege: Du verbrauchst sie selbst, oder du speist sie ins Netz ein. Einen **dritten Empfänger** gibt es nicht.
+>
+> Trägst du bei einem solchen Gerät eine **Erzeugung** ein, rechnet eedc sie deshalb deinem Haus zu — was du abgegeben hast, erscheint als dein **Eigenverbrauch** und hebt Autarkie, Eigenverbrauchsquote und die Eigenverbrauchs-Ersparnis zu hoch an. Das Feld **„Einspeise-Erlös (€)"** ist davon nicht betroffen: Der Betrag ist deine Zahl, eedc rechnet ihn nicht nach.
+>
+> ⚑ **Eine zweite Anlage ist nur dann der richtige Weg, wenn der Erzeuger einen wirklich getrennten Zählpunkt hat** und deinen Haushalt gar nicht versorgt. Versorgt dieselbe Anlage beides — der Normalfall bei Mieterstrom —, lässt sich der **Anteil** so nicht abbilden; und welcher Anteil überhaupt wo zählt, entscheidet dein Messkonzept, nicht eedc.
+>
+> **Was helfen würde und heute fehlt:** eine gemessene Größe **„Abgabe an Dritte (kWh)"**, die eedc vom Eigenverbrauch abzieht. Wer einen Zähler an der Übergabestelle hat, könnte sie liefern. Ob wir sie bauen, ist offen — **es gibt dafür keine Zusage und keinen Termin.**
+
+> **Was „nicht bewertet" heißt und was nicht.** Nicht bewertet wird das **Gerät**: keine eigene Ertrags-Zeile, keine Wirtschaftlichkeit, kein CO₂-Urteil — dafür gibt es *„Ertrag/Jahr"*. Sein **Strom** dagegen zählt in der Bilanz deiner **Anlage** voll mit, und zwar auf beiden Seiten: als Menge (Eigenverbrauch, Autarkie, EV-Quote) **und** als Geld (Eigenverbrauchs-Ersparnis, Einspeise-Erlös). Das ist kein Widerspruch — die Kilowattstunde hat Netzbezug ersetzt oder wurde vergütet, unabhängig davon, ob eedc beurteilen kann, ob sich das Gerät gelohnt hat.
+
+> **Ein Erzeuger mit eigenem Vergütungssatz** — etwa eine Erweiterung mit einem neuen EEG-Satz — trägt sein Geld über das Feld **„Einspeise-Erlös (€)"** bei *Sonstiges/Erzeuger* (siehe [Einstellungen](HANDBUCH_EINSTELLUNGEN.md#5-investitionen--komponenten)). Dieser Betrag steht so im T-Konto, wie du ihn gepflegt hast; eedc rechnet ihn **nicht** nach, denn der Satz deiner Anlage ist ein anderer. Ohne gepflegten Betrag erscheint keine eigene Zeile — die eingespeisten Kilowattstunden sind dann bereits im Einspeise-Erlös der Anlage bewertet.
 
 ⚑ **CO₂** bleibt beim sonstigen Erzeuger ebenfalls ohne Bewertung: Ein Verbrenner emittiert, statt einzusparen, und für eine Anlage ohne Brennstoff fehlt der belastbare Vergleichswert.
 
@@ -605,7 +633,7 @@ Beim Öffnen landest du auf **Finanzen**.
 Die Finanz-Sicht ist der Ort für **Erlöse, Einsparungen, Kosten und die Amortisation** — hierher ist auch der monatliche **Finanz-Abschluss** (T-Konto) aus dem alten Monatsbericht gezogen, jetzt zeitraum-fähig, sowie die frühere Finanz-Prognose.
 
 - **Einspeiseerlös** = **vergütete** Einspeisung × Einspeisevergütung. Bei Anlagen mit aktivem §51-Schalter sind die in Negativpreis-Stunden eingespeisten kWh **abgezogen** — auch im Kennwert und in der Werte-Tabelle, nicht nur im T-Konto darunter (bis v4.0.0 stand derselbe Erlös mit zwei Zahlen auf einer Seite).
-- **Eingesparte Stromkosten** = Eigenverbrauch × Bezugspreis. **Aus PV und Balkonkraftwerk** — ein Erzeuger unter „Sonstiges" mit Brennstoff (Mini-BHKW) zählt hier bewusst **nicht** mit: er erscheint voll in der Energiebilanz (Eigenverbrauch, Autarkie, EV-Quote), seine Wirtschaftlichkeit gilt aber als „nicht bewertet", weil der Brennstoff Geld kostet. Die Mengen-Spalte „Eigenverbrauch" ist deshalb bei einem solchen Erzeuger größer als die Menge hinter dieser Ersparnis.
+- **Eingesparte Stromkosten** = Eigenverbrauch × Bezugspreis — über **alle** Erzeuger hinter deinem Hauszähler: PV, Balkonkraftwerk und ein Erzeuger unter „Sonstiges" (BHKW, Windrad, Wasserkraft). Was er selbst verbraucht, hat Netzbezug ersetzt und steht deshalb in derselben Zahl wie die Kilowattstunden daneben — Menge und Betrag passen zusammen. ⚑ **Bewertet wird trotzdem nicht das Gerät:** Die Wirtschaftlichkeit eines sonstigen Erzeugers steht weiterhin auf „nicht bewertet", und sein Ertrag wird am Gerät als *„Ertrag/Jahr"* gepflegt (siehe [§3.8](#38-sonstiges)). eedc kennt seinen Brennstoff nicht und trifft über ihn kein Urteil.
 - **USt auf Eigenverbrauch** — nur bei **Regelbesteuerung** (Stammdaten). Sie ist im „Netto-Ertrag (PV)" bereits **abgezogen** und in der Werte-Tabelle über den Spalten-Wähler als eigene Spalte einblendbar. Als Jahresgröße (Selbstkosten je kWh aus Investitionssumme und Jahresertrag) hat sie **kein Tages-Pendant** — die Summe der Tageszeilen ergibt beim Netto-Ertrag dann nicht exakt den Monatswert.
 - **Sonstige Positionen** — frei erfassbare Kosten und Erlöse je Monat (Reparaturen, Wartung, sonstige Erträge); sie fließen als eigene T-Konto-Zeilen in die Summen ein
 - **Grund- und Zählergebühren** — separat ausgewiesen

@@ -17,14 +17,25 @@ import type { InvestitionMonatsdaten, WaermepumpeDashboardResponse } from '../..
 
 type Zusammenfassung = WaermepumpeDashboardResponse['zusammenfassung']
 
-/** Wärmeerzeugung pro Monat (Heizung + Warmwasser gestapelt). */
-export function WaermepumpeMonatsverlauf({ monatsdaten }: { monatsdaten: InvestitionMonatsdaten[] }) {
+/** Wärmeerzeugung pro Monat (Heizung + Warmwasser gestapelt).
+ *
+ * N-379 / SOLL §3.3/S2: `hatWarmwasserAchse=false` nimmt die zweite Fläche samt
+ * Legendeneintrag heraus — eine Split-Klimaanlage hat keinen Warmwasserkreis
+ * (N-304), und genau dieser Chart zeigte dietmar1968 eine blaue Warmwasser-Fläche
+ * über seine ganze Kühlsaison (T89667 #295). Default `true`: ohne die Angabe
+ * bleibt alles, wie es war.
+ */
+export function WaermepumpeMonatsverlauf(
+  { monatsdaten, hatWarmwasserAchse = true }: {
+    monatsdaten: InvestitionMonatsdaten[]; hatWarmwasserAchse?: boolean
+  },
+) {
   const schmal = useSchmaleAchse()
   const legende = useLegendenToggle()
   const data = monatsdaten.map((md) => ({
     name: `${MONAT_KURZ[md.monat]} ${md.jahr.toString().slice(2)}`,
     heizung: md.verbrauch_daten.heizenergie_kwh || 0,
-    warmwasser: md.verbrauch_daten.warmwasser_kwh || 0,
+    warmwasser: hatWarmwasserAchse ? (md.verbrauch_daten.warmwasser_kwh || 0) : 0,
   }))
   return (
     <div className="h-64">
@@ -36,7 +47,9 @@ export function WaermepumpeMonatsverlauf({ monatsdaten }: { monatsdaten: Investi
           <Tooltip cursor={CHART_HOVER_CURSOR} content={<ChartTooltip unit="kWh" />} />
           <Legend content={<ChartLegende onItemClick={legende.onItemClick} />} />
           <Area type="monotone" dataKey="heizung" stackId="1" fill={CHART_COLORS.wpWaerme} stroke={CHART_COLORS.wpWaerme} name="Heizung" hide={legende.istVersteckt('heizung')} />
-          <Area type="monotone" dataKey="warmwasser" stackId="1" fill={CHART_COLORS.wpWarmwasser} stroke={CHART_COLORS.wpWarmwasser} name="Warmwasser" hide={legende.istVersteckt('warmwasser')} />
+          {hatWarmwasserAchse && (
+            <Area type="monotone" dataKey="warmwasser" stackId="1" fill={CHART_COLORS.wpWarmwasser} stroke={CHART_COLORS.wpWarmwasser} name="Warmwasser" hide={legende.istVersteckt('warmwasser')} />
+          )}
         </AreaChart>
       </ResponsiveContainer>
     </div>
@@ -152,7 +165,15 @@ const rundKwh = (x: number) => Math.round(x)
  * Hub für einen Monat nicht mehr zwei verschiedene Arbeitszahlen (die **W-15**-Klasse).
  */
 export function WaermepumpeMonatsTabelle(
-  { monatsdaten, jazJeMonat }: { monatsdaten: InvestitionMonatsdaten[]; jazJeMonat?: JazMonat[] },
+  { monatsdaten, jazJeMonat, hatWarmwasserAchse = true }: {
+    monatsdaten: InvestitionMonatsdaten[]
+    jazJeMonat?: JazMonat[]
+    /** N-379 / SOLL §3.3/S2: Hat das Gerät die Warmwasser-Achse überhaupt? Eine
+     *  Split-Klimaanlage hat keinen Warmwasserkreis (N-304) — dietmar1968 sah
+     *  dort eine Spalte „Warmwasser (kWh)" mit 889 (T89667 #295). Default `true`,
+     *  damit jeder Aufrufer ohne die Angabe das Bisherige zeigt. */
+    hatWarmwasserAchse?: boolean
+  },
 ) {
   // Nachschlagen je (Jahr, Monat) — die Listen sind unabhängig sortiert.
   const jazKey = (j: number, m: number) => j * 100 + m
@@ -164,7 +185,9 @@ export function WaermepumpeMonatsTabelle(
   const zeilen = monatsdaten.map((md) => {
     const strom = md.verbrauch_daten.stromverbrauch_kwh || 0
     const heiz = md.verbrauch_daten.heizenergie_kwh || 0
-    const ww = md.verbrauch_daten.warmwasser_kwh || 0
+    // N-379: an einem Gerät ohne Warmwasserkreis liest auch die Zeile nichts —
+    // sonst stünde die Zahl in der Herleitungsprobe darunter wieder im Zähler.
+    const ww = hatWarmwasserAchse ? (md.verbrauch_daten.warmwasser_kwh || 0) : 0
     // N-369: gelesen, nicht gerechnet. Fehlt der Eintrag (älterer Monat
     // ohne Layer-Antwort), steht „—" — nie eine erfundene Zahl.
     const jaz = jazMap.get(jazKey(md.jahr, md.monat))
@@ -195,6 +218,14 @@ export function WaermepumpeMonatsTabelle(
     return { md, strom, heiz, ww, jaz, herleitung }
   })
   const zeigtHerleitung = zeilen.some((z) => z.herleitung !== null)
+  // N-374: die Gründe zu einem gesperrten „—", SICHTBAR statt nur im `title=`.
+  // Dieselbe Bauform wie die Herleitung darunter und aus demselben Grund — „ein
+  // Tooltip ist auf dem Telefon keine Auskunft" (`waermepumpe_kennzahl.
+  // Arbeitszahl.grund`). Einmal unter der Tabelle statt in jeder Zeile: über zwölf
+  // Monate steht meist derselbe Grund, weil er aus der Anlagenkonfiguration folgt.
+  const sperrGruende = [...new Set(
+    zeilen.map((z) => (z.jaz?.wert == null ? z.jaz?.grund : null)).filter((g): g is string => !!g),
+  )]
 
   return (
     <>
@@ -204,7 +235,9 @@ export function WaermepumpeMonatsTabelle(
           <th className={`${KOPF_ZELLE} text-left`}>Monat</th>
           <th className={`${KOPF_ZELLE} text-right`}>Strom (kWh)</th>
           <th className={`${KOPF_ZELLE} text-right`}>Heizung (kWh)</th>
-          <th className={`${KOPF_ZELLE} text-right`}>Warmwasser (kWh)</th>
+          {hatWarmwasserAchse && (
+            <th className={`${KOPF_ZELLE} text-right`}>Warmwasser (kWh)</th>
+          )}
           <th className={`${KOPF_ZELLE} text-right`}>JAZ</th>
         </tr>
       </TableHead>
@@ -215,7 +248,9 @@ export function WaermepumpeMonatsTabelle(
             <td className={`${ZELLE} text-right`}>{fmtZahl(strom, 0)}</td>
             {/* Heizung = WP-Rot, Warmwasser = blau (= CHART_COLORS.wpWaerme/wpWarmwasser; Gernot 2026-06-25 nach detLAN). */}
             <td className={`${ZELLE} text-right text-red-600`}>{fmtZahl(heiz, 0)}</td>
-            <td className={`${ZELLE} text-right text-blue-600`}>{fmtZahl(ww, 0)}</td>
+            {hatWarmwasserAchse && (
+              <td className={`${ZELLE} text-right text-blue-600`}>{fmtZahl(ww, 0)}</td>
+            )}
             <td className={`${ZELLE} text-right text-orange-600`} title={jaz?.grund ?? undefined}>
               {jaz?.wert != null ? fmtZahl(jaz.wert, 2) : '—'}
               {herleitung && (
@@ -234,6 +269,11 @@ export function WaermepumpeMonatsTabelle(
         Anteil ist der Regelfall, aber bei getrennter Strommessung liest die
         Strom-Spalte ein anderes Feld als der Layer (`get_wp_strom_kwh`) — ein Satz,
         der die Abweichung fest einer Ursache zuordnet, wäre dort eine Behauptung. */}
+    {sperrGruende.length > 0 && (
+      <ul className="mt-2 text-xs text-gray-500 dark:text-gray-400 space-y-0.5">
+        {sperrGruende.map((g) => <li key={g}>Arbeitszahl nicht gebildet — {g}</li>)}
+      </ul>
+    )}
     {zeigtHerleitung && (
       <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
         Die Arbeitszahl wird mit dem Strom gebildet, der zur gemessenen Wärme gehört.

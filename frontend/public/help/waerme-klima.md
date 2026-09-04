@@ -106,7 +106,7 @@ Dieser Abschnitt ist so wichtig wie die Tabelle darüber. **Mehrere Dinge fehlen
 
 > *„Eine Arbeitszahl nahe 1 entsteht, wenn ein großer Teil der Wärme direkt elektrisch erzeugt wurde (Heizstab, Zusatz- oder Notheizung). Die Zahl beschreibt die Anlage in diesem Zeitraum, sie ist kein Fehler."*
 
-**Keine 0, wo „unbekannt" gemeint ist.** Eine 0 heißt „gemessen und es war null". Wo eedc etwas nicht weiß, steht „—" **mit dem Grund daneben** — nie eine Null, die wie eine Messung aussieht.
+**Keine 0, wo „unbekannt" gemeint ist.** Eine 0 heißt „gemessen und es war null". Wo eedc etwas nicht weiß, steht „—" **mit dem Grund daneben** — nie eine Null, die wie eine Messung aussieht. ⚑ **In den Tabellen steht dieser Grund sichtbar unter der Tabelle**, einmal je Grund statt in jeder Zeile — er folgt meist aus deiner Anlagenkonfiguration und wiederholt sich sonst über alle Monate. Ein Hinweis, den man erst suchen muss, ist keine Auskunft: Niemand tippt auf eine leere Zelle, um dort eine Erklärung zu vermuten.
 
 **Kein Vergleich von passiv gegen aktiv gekühlt.** Passive Kühlung läuft nur über Umwälzpumpen und erreicht ein Vielfaches der Effizienz einer aktiv gekühlten Anlage. Beide Zahlen sind für sich richtig; sie gegeneinander zu stellen wäre die Falschaussage. Deshalb gibt es am Gerät das Feld **„Kühlung: aktiv oder passiv"** — es ändert **keine** deiner Zahlen, es hält dich nur aus dem falschen Vergleich heraus.
 
@@ -179,7 +179,9 @@ Alles läuft über **Einstellungen → Datenquellen**. Dort steht je Gerät eine
 | **Luft-Luft (Klimaanlage)** | Stromverbrauch, Betriebsart-Zähler | Warmwasser — den Kreis gibt es dort nicht |
 | **Brauchwasser (nur Warmwasser)** | Stromverbrauch, Warmwasser | Heizwärme, Strom Heizen |
 
-> **„Nicht angeboten" heißt nicht „gesperrt".** Alles Übrige liegt unter **„Weitere Größen erfassen"** und rückt nach oben, sobald du dort einen Sensor einträgst. Die einzige echte Ausnahme ist **Warmwasser an einer Luft-Luft-Klimaanlage**: Ein gefüllter Wert erzeugt dort eine Ersparnis, die es nicht gibt.
+> **„Nicht angeboten" heißt nicht „gesperrt".** Alles Übrige liegt unter **„Weitere Größen erfassen"** und rückt nach oben, sobald du dort einen Sensor einträgst. Die einzige echte Ausnahme ist **Warmwasser an einer Luft-Luft-Klimaanlage**: Den Kreis gibt es dort nicht.
+>
+> ⚑ **Hast du dort früher einmal einen Wert gepflegt, ist er nicht verloren — er zählt nur nicht mehr als Wärme des Geräts.** Bis 2026 floss ein solcher Altwert in *Wärme erzeugt*, in die Arbeitszahl und in die Ersparnis gegenüber der alten Heizung; das war eine Ersparnis für Wärme, die eine Klimaanlage nicht abgibt. Der **Daten-Checker** nennt dir jeden betroffenen Monat. Stammt der Wert aus dem **Kühlbetrieb**, gehört er unter *Nutzenergie Kuehlbetrieb* — daraus rechnet eedc deine **Arbeitszahl Kühlen**. **eedc verschiebt und löscht nichts von allein**, der gespeicherte Wert bleibt stehen, bis du ihn umträgst.
 
 ### Schritt 2 — Entscheiden: ein Zähler oder getrennte?
 

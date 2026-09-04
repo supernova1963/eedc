@@ -19,6 +19,81 @@ Alle vier (OpenMeteo, Solcast, IST-Snapshot, IST-LTS) müssen ein und dasselbe
 physische Intervall in denselben Slot legen — Symmetrie-Test
 ``tests/test_slot_konvention_quellen.py``.
 
+✅ **Die FÜNFTE Bahn — der Leistungspfad — liegt seit 2026-09-04 backward**
+(N-382, gemeldet als #405 von BMeyendriesch). Er speist
+``TagesEnergieProfil.komponenten``: ``live_tagesverlauf_service`` beschriftet
+jeden Punkt mit dem **Slot-BEGINN** (``{h_start.hour}:{h_start.minute}``, Raster
+``h_start <= p < h_end``), ein Punkt „05:00" deckt also ``[05:00, 06:00)``.
+``energie_profil/aggregator.py`` bucketet ihn deshalb in **Slot 6**.
+
+⛔ **Bis dahin bucketete er nach dem rohen Stundenlabel.** Zeile ``h`` trug damit
+im JSON ``[h, h+1)`` — während die Spalte ``pv_kw`` derselben Zeile aus dem
+Zählerpfad kommt und ``[h-1, h)`` meint. **Eine Zeile, zwei verschiedene
+Stunden.** Über 24 Slots hebt sich das auf (Tagessummen, Monat, ROI blieben
+unauffällig), pro Stunde nicht: ``TagVerlaufChart`` subtrahierte quer über den
+Versatz und zeichnete daraus ein Phantom-Band „PV (übrige)" bzw. — auf
+steigender Kurve — einen Quellenstapel **über** der Erzeugung. An einer echten
+Anlage mit genau EINEM PV-Erzeuger gemessen: 5,09 kWh Überhang an einem Tag,
+in einer Stunde 130 %.
+
+**Zwei Kanten gehören zur Umstellung:**
+
+* **Slot 0** trägt ``[Vortag 23:00, 00:00)`` und kann deshalb nicht aus dem
+  eigenen Tag kommen. ``get_tagesverlauf(mit_vortagsrand=True)`` macht dafür das
+  bestehende Abruf-Fenster eine Stunde weiter auf — **kein zweiter Tagesabruf**,
+  der Scheduler-Job ``energie_profil_heute`` läuft alle 15 Minuten. Die Punkte
+  kommen **getrennt** unter ``"vortagsrand"`` zurück: ein Punkt trägt nur seine
+  Uhrzeit, „23:00" von gestern und von heute wären in einer Liste nicht mehr
+  unterscheidbar. Fehlt der Rand (erster Tag, HA-Historie zu kurz), wird die
+  Zeile trotzdem geschrieben — nur ohne ``komponenten``, damit sie nicht auch
+  ihre Zähler-, Wetter- und Preiswerte verliert.
+* **Bucket 23** des Tages gehört in Slot 0 des **Folgetags** und fällt im
+  eigenen Tag weg.
+
+Gepinnt in ``tests/test_slot_konvention_leistungspfad.py`` (vier Proben: der
+gemeinsame Slot, der Vortagsrand, die letzte Stunde, die Zeile 0 ohne Rand).
+
+----------------------------------------------------------------------------
+⚠️  DREI Bahnen derselben Zeile liegen WEITERHIN forward — N-387
+----------------------------------------------------------------------------
+Bei der Inventur zu N-382 (2026-09-04) über **alle** Größen der
+``TagesEnergieProfil``-Zeile gemessen. Backward und damit richtig liegen: der
+Zählerpfad (alle ``*_kw``-Spalten), ``wp_starts_anzahl`` /
+``wp_betriebsstunden`` (``get_hourly_counter_sum_by_feld``), das Wetter
+(OpenMeteo preceding-hour, s. unten) und — seit N-382 —
+``komponenten`` und ``betriebsmodus_je_wp``. **Forward liegen noch:**
+
+* ``soc_prozent`` / ``soc_je_speicher`` — ``ha_statistics_service
+  .get_hourly_sensor_data`` nimmt ``datetime.fromtimestamp(start_ts).hour``,
+  also den Perioden-BEGINN; der History-Fallback in
+  ``energie_profil/_helpers.py`` bucketet ``h_start <= p < h_end``.
+* ``strompreis_cent`` — ``get_hourly_mean_for_day`` (derselbe ``start_ts``)
+  bzw. derselbe History-Fallback.
+* ``boersenpreis_cent`` — ``strompreis_markt_service`` nimmt
+  ``lokal.hour`` aus dem ``start_timestamp`` der aWATTar-Antwort.
+
+**Wen das trifft, gemessen:** ``speicher_sizing_service`` und
+``speicher_potential_service`` stellen den SoC neben die Backward-Spalten
+derselben Zeile; ``speicher_wirtschaftlichkeit`` multipliziert die
+**Netz-Ladung** einer Stunde (backward) mit dem **Preis** derselben Zeile
+(forward) — der effektive Ladepreis eines Speichers rechnet damit auf einem
+dynamischen Tarif mit dem Preis der Nachbarstunde.
+
+⛔ **Sie sind bewusst NICHT mit N-382 gebaut worden.** Ein Paket, das fünf
+Bahnen gleichzeitig verschiebt, hat keine saubere Abnahme, und jede der drei
+trägt eine eigene Sachfrage: ein Preis ist keine Energiemenge, ein Ladestand ist
+ein Zustand und keine Menge. ``betriebsmodus_je_wp`` musste dagegen **mit** —
+``energie_profil/modus_split_monat.py`` paart ihn mit ``komponenten``
+**derselben Zeile**, ein Alleingang des Leistungspfads hätte die Aufteilung
+Heizen/Kühlen/Warmwasser neu falsch gemacht statt alt richtig zu lassen.
+
+⚑ **Warum das hier steht und nicht nur im Fundregister:** Der Absatz darunter
+zieht aus demselben Vorfall die Lehre *„jeden Parallelpfad pinnen"* — und genau
+dieser Parallelpfad war beim Bau von ``c71b0f08`` nicht mitgenommen worden. Eine
+Lehre, die den nächsten Fall nicht fängt, gehört an die Stelle, an der er
+entsteht. **Deshalb stehen die drei offenen Bahnen hier namentlich:** N-382
+wurde gefunden, weil jemand EINE Bahn nannte — nicht, weil jemand alle zählte.
+
 ⚠️ Historie: der LTS-Pfad labelte bis v3.3x FORWARD (Slot ``h = [h, h+1)``),
 während alle anderen backward waren → IST erschien im Stundenvergleich
 1 h zu früh (Rainer/Gernot, 2026-06-04). Der Symmetrie-Test deckte damals nur
@@ -121,3 +196,26 @@ def backward_slot_aus_period_end(period_end: datetime) -> tuple[date, int]:
     else:
         marker = period_end.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
     return marker.date(), marker.hour
+
+
+def leistungspfad_slot(punkt_stunde: int) -> int | None:
+    """Punkt-Label des Leistungspfads (Slot-BEGINN) → Backward-Slot.
+
+    ``live_tagesverlauf_service`` beschriftet jeden Punkt mit dem **Beginn**
+    seines Rasters (``h_start <= p < h_end``); ein Punkt „05:00" deckt also
+    ``[05:00, 06:00)`` und gehört nach der Backward-Konvention in Slot **6**.
+
+    ``None`` für ``23`` und höher: Bucket 23 des Tages ist ``[23:00, 24:00)``
+    und damit Slot 0 des **Folgetags** — im eigenen Tag fällt er weg (er kommt
+    dort über ``vortagsrand`` an).
+
+    ⚑ **Warum das eine benannte Funktion ist:** Die Regel entstand mit N-382
+    inline in ``energie_profil/aggregator.py``. Seit dem Archiv-Nachzug (N-388)
+    hat sie einen **zweiten** Leser — dessen Vorflug muss die Stundenzahl einer
+    Kurve vorher genauso zählen, wie der Aggregator sie nachher schreibt
+    (``TagesZusammenfassung.stunden_verfuegbar``). Zwei Nachbauten derselben
+    Bucket-Regel wären genau die Klasse, die N-382 überhaupt erst erzeugt hat.
+    """
+    if punkt_stunde >= 23:
+        return None
+    return punkt_stunde + 1

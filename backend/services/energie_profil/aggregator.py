@@ -21,6 +21,7 @@ from sqlalchemy import and_, delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.berechnungen.anlagen_kwp import anlagen_kwp
+from backend.core.berechnungen.slot_konvention import leistungspfad_slot
 from backend.core.berechnungen.speicher import anlagen_soc_prozent
 from backend.core.investition_kennwerte import get_speicher_nutzbare_kapazitaet_kwh
 from backend.core.source_priority import SOURCE_LABELS
@@ -165,6 +166,7 @@ async def aggregate_day(
         try:
             tv_data = await service.get_tagesverlauf(
                 anlage, db, tage_zurueck=_tage_zurueck(datum),
+                mit_vortagsrand=True,
             )
         except Exception as e:
             logger.warning(f"Anlage {anlage.id}, {datum}: Tagesverlauf-Fehler: {type(e).__name__}: {e}")
@@ -172,6 +174,10 @@ async def aggregate_day(
 
     serien = tv_data.get("serien", [])
     punkte_raw = tv_data.get("punkte", [])
+    # [Vortag 23:00, 00:00) — das physische Intervall des Backward-Slots 0.
+    # Getrennte Liste, weil ein Punkt nur seine Uhrzeit trägt, nicht sein Datum
+    # (s. `get_tagesverlauf`). Der Vollbackfill reicht sie ebenso durch.
+    vortagsrand_raw = tv_data.get("vortagsrand", [])
 
     # Wenn keine leistung_w-Daten vorliegen aber MQTT-Energy da ist → synthetisches
     # punkte-Array mit leeren werte-Dicts, damit die Stunden-Schleife 24x läuft
@@ -181,15 +187,57 @@ async def aggregate_day(
     # `is None`-Prüfung short-circuited davor.)
     if not punkte_raw and prefetched_tagesverlauf is None and has_mqtt_energy:
         punkte_raw = [{"zeit": f"{h:02d}:00", "werte": {}} for h in range(24)]
+        vortagsrand_raw = []
+        synthetische_slots = True
     elif not punkte_raw:
         logger.debug(f"Anlage {anlage.id}, {datum}: Keine Tagesverlauf-Daten")
         return None
+    else:
+        synthetische_slots = False
 
-    # Sub-stündliche Punkte (z.B. 10-Min) auf Stundenmittelwerte aggregieren
+    # ── Sub-stündliche Punkte auf BACKWARD-Slots bucketen (N-382) ─────────
+    #
+    # SoT: `core/berechnungen/slot_konvention.py` — **Slot h = Energie
+    # [h-1, h)**, Slot 0 = [Vortag 23:00, 00:00). Der Leistungspfad
+    # beschriftet seine Punkte mit dem Slot-BEGINN (`live_tagesverlauf_service`
+    # nennt das Raster wörtlich `h_start <= p < h_end`), ein Punkt „05:00"
+    # deckt also [05:00, 06:00) und gehört damit in **Slot 6**.
+    #
+    # ⛔ Bis 2026-09-04 landete er in Slot 5 — dieselbe Zeile trug damit im
+    # JSON `[h, h+1)` und in ihren Spalten (Zählerpfad) `[h-1, h)`, also zwei
+    # verschiedene Stunden. Über 24 Slots hebt sich das auf, weshalb
+    # Tagessummen, Monat und ROI unauffällig blieben; pro Stunde nicht:
+    # `TagVerlaufChart` subtrahierte quer über den Versatz und zeichnete daraus
+    # ein Phantom-Band „PV (übrige)" bzw. — auf steigender Kurve — einen
+    # Quellenstapel ÜBER der Erzeugung (BMeyendriesch, #405). An einer echten
+    # Anlage mit EINEM PV-Erzeuger gemessen: 5,09 kWh Überhang an einem Tag.
+    #
+    # Zwei Kanten gehören dazu:
+    #  • Slot 0 kommt aus dem VORTAG (`vortagsrand_raw`). Fehlt er, bleibt der
+    #    Slot ohne `komponenten` — die Zeile wird trotzdem geschrieben, sonst
+    #    verlöre sie auch ihre Zähler- und Wetterwerte.
+    #  • Bucket 23 des Tages ([23:00, 24:00)) gehört in Slot 0 des FOLGETAGS
+    #    und fällt hier weg — er kommt dort über dessen `vortagsrand` an.
     stunden_buckets: dict[int, list[dict]] = {}
-    for p in punkte_raw:
-        h = int(p["zeit"].split(":")[0])
-        stunden_buckets.setdefault(h, []).append(p)
+    if synthetische_slots:
+        # MQTT-Energie ohne Leistungskurve: 24 leere Slots, damit die Schleife
+        # 24× läuft und die Zähler-Werte ihre Zeile bekommen. Hier wird nichts
+        # verschoben — es gibt keine Leistungspunkte, die eine Stunde meinen.
+        stunden_buckets = {h: [] for h in range(24)}
+    else:
+        for p in vortagsrand_raw:
+            stunden_buckets.setdefault(0, []).append(p)
+        for p in punkte_raw:
+            slot = leistungspfad_slot(int(p["zeit"].split(":")[0]))
+            if slot is None:
+                continue          # gehört in Slot 0 des Folgetags
+            stunden_buckets.setdefault(slot, []).append(p)
+        # Slot 0 existiert auch ohne Vortagsrand — als leerer Bucket. Ohne ihn
+        # schriebe die Schleife die Zeile 0 gar nicht, und mit ihr fielen
+        # `pv_kw`, Wetter und Preis dieser Stunde aus (sie kommen NICHT aus dem
+        # Leistungspfad und wären unschuldig mitbetroffen).
+        if stunden_buckets and 0 not in stunden_buckets:
+            stunden_buckets[0] = []
 
     punkte = []
     for h in sorted(stunden_buckets):
@@ -739,6 +787,11 @@ async def aggregate_day(
     # Schutz für die seltene Konstellation "HA-LTS weg + Snapshots korrupt"
     # bleibt über die preserve-Logik unten (greift wenn boundary leer).
     boundary_kwh: dict[str, float] = {}
+    # #406: die Herkunfts-Marken der PV-Auflösung. Ein Erzeuger ohne eigenen
+    # Tageswert bekommt seinen kWp-Anteil am Aggregat — der Wert ist dann eine
+    # ZERLEGUNG, keine Messung, und muss das in `source_provenance` sagen
+    # (dieselbe Marke wie im Monatspfad, #352).
+    pv_marken: dict[str, str] = {}
     if datum > date.today():
         logger.debug(
             f"Anlage {anlage.id}, {datum}: Boundary-Diff übersprungen für "
@@ -748,7 +801,7 @@ async def aggregate_day(
         try:
             from backend.services.snapshot.lts_aggregator import get_komponenten_tageskwh_lts
             boundary_kwh = await get_komponenten_tageskwh_lts(
-                anlage, invs_by_id, datum,
+                anlage, invs_by_id, datum, marken_out=pv_marken,
             )
         except Exception as e:
             logger.warning(
@@ -759,7 +812,7 @@ async def aggregate_day(
         try:
             from backend.services.snapshot.aggregator import get_komponenten_tageskwh
             boundary_kwh = await get_komponenten_tageskwh(
-                db, anlage, invs_by_id, datum,
+                db, anlage, invs_by_id, datum, marken_out=pv_marken,
             )
         except Exception as e:
             logger.warning(
@@ -817,6 +870,11 @@ async def aggregate_day(
         temperatur_min_c=round(min(temp_values), 1) if temp_values else None,
         temperatur_max_c=round(max(temp_values), 1) if temp_values else None,
         strahlung_summe_wh_m2=round(strahlung_summe, 0) if strahlung_summe > 0 else None,
+        # N-384: der NENNER der Performance Ratio, damit sie nachrechenbar wird. Er
+        # wurde hier schon immer gebildet (s. `gti_summe` oben) — nur nie gespeichert,
+        # während daneben die horizontale `strahlung_summe` angezeigt wurde. `None`
+        # statt 0, wenn es keine gab: 0 wäre eine Behauptung, NULL ist eine Lücke.
+        gti_summe_wh_m2=round(gti_summe, 0) if gti_summe > 0 else None,
         performance_ratio=performance_ratio,
         stunden_verfuegbar=stunden_count,
         datenquelle=source.to_db_string(),
@@ -850,13 +908,25 @@ async def aggregate_day(
         # das v3.33.0-Snapshot-Self-Healing den Schutz überflüssig macht —
         # ERGEBNIS: nein. Die Self-Healing-Kaskade in `reader.get_snapshot`
         # (DB → HA-Statistics → MQTT) heilt Stufe 2 NUR bei `ha_svc.is_available`;
-        # in genau der geschützten Konstellation (HA unerreichbar) fällt sie aus,
-        # und für historische Tage läuft der Scheduler nie nach → ohne Preserve
-        # permanenter komponenten_kwh-Verlust eines Alttags. Bekannte Grenze:
-        # der Schutz ist partiell (nur komponenten_kwh/_starts, nicht
-        # ueberschuss/defizit/Peaks). Sauberere Lösung wäre, dass die Werkbank
-        # quellenlose Tage überspringt statt zu überschreiben — eigener Schnitt,
-        # bewusst nicht hier.
+        # in genau der geschützten Konstellation (HA unerreichbar) fällt sie aus
+        # → ohne Preserve permanenter komponenten_kwh-Verlust eines Alttags.
+        # Bekannte Grenze: der Schutz ist partiell (nur komponenten_kwh/_starts,
+        # nicht ueberschuss/defizit/Peaks). Sauberere Lösung wäre, dass die
+        # Werkbank quellenlose Tage überspringt statt zu überschreiben — eigener
+        # Schnitt, bewusst nicht hier.
+        #
+        # ⛔ Hier stand bis 2026-09-04 zusätzlich „und für historische Tage läuft
+        # der Scheduler nie nach". **Das gilt seit N-388 nicht mehr:**
+        # `services/energie_profil/archiv_nachzug.py` lässt den Scheduler
+        # nächtlich genau EINEN historischen Tag neu aggregieren — den, der die
+        # Wetter-Archiv-Grenze gerade passiert hat. Der Satz war die Begründung
+        # dafür, dass der Scheduler hier ungeschützt bleibt; er trägt sie nicht
+        # mehr. Ersetzt ist er **nicht** durch ein Preserve für den Scheduler
+        # (ein legitim leerer Tag soll weiterhin nicht ewig die alte Wahrheit
+        # weitertragen), sondern durch den **Vorflug** dort: der Nachzug
+        # überspringt einen Tag, dessen HA-Historie inzwischen weniger Stunden
+        # deckt als die gespeicherte `stunden_verfuegbar`. Wer diesen
+        # Preserve-Zweig ändert, liest den Vorflug mit.
         komponenten_kwh=(
             {k: round(v, 2) for k, v in komponenten_summen.items()}
             if komponenten_summen
@@ -911,6 +981,9 @@ async def aggregate_day(
         writer=auto_writer,
         source=tz_source_label,
         abgeleitet_je_feld=abgeleitet_marken or None,
+        # #406: je `komponenten_kwh`-Sub-Key, wo der Wert aus dem Anlagen-
+        # Aggregat zerlegt wurde statt gemessen zu sein.
+        abgeleitet_je_subkey=pv_marken or None,
     )
 
     # Gerettete extern-befüllte Felder wiederherstellen (Prognose + Kraftstoffpreis).

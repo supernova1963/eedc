@@ -846,7 +846,24 @@ async def lade_monats_fakten(
     # seiner Kinder) und darf deshalb nicht zusätzlich als `bkw_erzeugung`
     # gezählt werden. Ohne Modul-Kinder ist die Menge leer und alles bleibt
     # bitgleich zu vorher.
-    abgetretene_bkw = abgetretene_bkw_ids(investitionen)
+    #
+    # ⛔ **Je MONAT, nicht einmal für die Anlage** (N-386, ADR-002/P11 nennt die
+    # Reihenfolge Zeitfilter → Selektor ausdrücklich als Teil der Regel). Bis
+    # 2026-09-04 stand hier ein einziger Aufruf über die ganze Menge: Wer seinem
+    # bestehenden Balkonkraftwerk Module zuordnete, verlor dessen Erzeugung
+    # damit **rückwirkend** in jedem Monat davor — in dem das BKW der einzige
+    # Erzeuger war und die Module noch gar nicht existierten. Unauffällig, weil
+    # alle Sichten denselben zu kleinen Wert nannten.
+    _abgetretene_cache: dict[MonatsSchluessel, frozenset] = {}
+
+    def abgetretene_bkw_im_monat(jahr: int, monat: int) -> frozenset:
+        """Welche BKW haben in DIESEM Monat abgetreten? (Zeitfilter → Selektor)"""
+        schluessel = (jahr, monat)
+        if schluessel not in _abgetretene_cache:
+            _abgetretene_cache[schluessel] = abgetretene_bkw_ids([
+                i for i in investitionen if i.ist_aktiv_im_monat(jahr, monat)
+            ])
+        return _abgetretene_cache[schluessel]
 
     neg_preis_je_monat = await get_neg_preis_einspeisung_je_monat(db, anlage_id)
 
@@ -867,7 +884,7 @@ async def lade_monats_fakten(
         daten = imd.verbrauch_daten or {}
         roh.setdefault((imd.jahr, imd.monat), _RohMonat()).falte(
             inv, daten,
-            abgetretene_bkw=abgetretene_bkw,
+            abgetretene_bkw=abgetretene_bkw_im_monat(imd.jahr, imd.monat),
             source_provenance=imd.source_provenance,
         )
         if inv.typ == "waermepumpe":
@@ -1079,18 +1096,59 @@ def finanz_zeile_eingabe(fakt: MonatsFakt) -> FinanzZeileEingabe:
 
     Zwei Punkte, an denen die Übersetzung nicht beliebig ist:
 
-    - ``pv_erzeugung_kwh`` ist ``erzeugung.pv_kwh`` — Module **und** BKW, weil der
-      Aggregat-Helfer daraus den Eigenverbrauch ableitet (P9).
+    - ``pv_erzeugung_kwh`` ist ``erzeugung.hinter_zaehler_kwh`` — Module, BKW
+      **und** die sonstigen Erzeuger, weil der Aggregat-Helfer daraus den
+      Eigenverbrauch ableitet (P9) und der Zähler am EINEN Netzanschluss die
+      Summe aller dahinter liegenden Erzeuger misst.
+
+      ⛔ **Hier stand bis 2026-09-03 ``erzeugung.pv_kwh`` (ohne Sonstiges).** Das
+      war eine **Entscheidung** (v3.45.4: „ein Erdgas-BHKW verdrängt Netzbezug,
+      aber nicht kostenlos"), gewächtert von zwei Proben und der F-1-Regel.
+      ⚑ **Ihre Begründung deckte die Kategorie nie ab** — ein Windrad und eine
+      Wasserkraftanlage haben keinen Brennstoff; dort schloss die Regel eine
+      tatsächlich kostenlose Kilowattstunde ohne Grund aus dem Geldwert aus.
+      Der Entscheid ist —
+      **abgelöst am 2026-09-03 durch den Maintainer**, wörtlich: *„Sonstige
+      Erzeuger werden nicht wirtschaftlich ausgewertet, und deren produzierter
+      Strom geht vollständig in der EV-Ersparnis und Einspeisung auf."* Nicht
+      wirtschaftlich ausgewertet heißt: **als Komponente** (keine eigene Zeile,
+      Wirtschaftlichkeit „nicht bewertet", Ertrag über „Ertrag/Jahr"); sein Strom
+      zählt in der **Anlagen**-Bilanz voll — auf beiden Achsen, Menge wie Geld.
+
+      ⚑ **Die Umsetzung war zusätzlich in sich falsch, und das hat den Anlass
+      gegeben:** Der
+      Subtrahend derselben Formel ist ``zaehler.einspeisung_kwh`` — der
+      **Hauszähler**, der die Einspeisung *aller* Erzeuger misst. Die
+      beabsichtigte Abgrenzung (PV-rein) kam damit nur heraus, solange der
+      sonstige Erzeuger **nichts einspeiste** — genau der Fall beider damaliger
+      Proben. Sobald er einspeist, wurde seine **ganze Erzeugung** von der PV
+      abgezogen, nicht etwa sein Eigenverbrauch. An einer Probe-Anlage gemessen (PV 1000, BHKW 200
+      davon 150 eingespeist, Hauszähler-Einspeisung 750): Diese Sicht lieferte
+      **250 kWh / 75,00 €**, während sie die Menge **450,0 kWh** in derselben
+      Zeile auswies — und Cockpit und T-Konto 135,00 € nannten. Weder 450 noch
+      400 (Bilanz minus BHKW-Eigenverbrauch), sondern 250: **kein Entscheid
+      ergibt diese Zahl.**
+
+      ⚑ **Der geltende Vertrag** (Maintainer, 2026-09-03): *Ein sonstiger
+      Erzeuger wird nicht wirtschaftlich ausgewertet — als **Komponente** —, aber
+      sein erzeugter Strom geht **vollständig** in der EV-Ersparnis und der
+      Einspeisung der **Anlage** auf.* Die Einspeise-Seite tat das schon (sie
+      liest den Hauszähler); die Eigenverbrauchs-Seite zieht damit nach.
+      ⭐ Und sie liest jetzt dasselbe Feld wie ``kennzahlen_aus_fakten`` weiter
+      unten: Menge und Geldwert stimmen **konstruktionsbedingt** überein, nicht
+      durch Nachrechnen. Genau das war der Gegenstand von **N-131** und **N-375**.
     - ``bkw_eigenverbrauch_kwh`` ist der **Rest**-Eigenverbrauch aus
       ``bkw_finanz_beitrag``, nie der gemessene Rohwert — sonst zählt derselbe
-      Fluss zweimal.
+      Fluss zweimal. ⚠ Unberührt: ``hinter_zaehler_kwh`` ist ``pv_kwh`` **plus**
+      ``sonstiges_erzeugung``; das BKW steckt in beiden gleichermaßen, die
+      P9-Mechanik ändert sich nicht.
     """
     return FinanzZeileEingabe(
         jahr=fakt.jahr,
         monat=fakt.monat,
         einspeisung_kwh=fakt.zaehler.einspeisung_kwh,
         netzbezug_kwh=fakt.zaehler.netzbezug_kwh,
-        pv_erzeugung_kwh=fakt.erzeugung.pv_kwh,
+        pv_erzeugung_kwh=fakt.erzeugung.hinter_zaehler_kwh,
         speicher_ladung_kwh=fakt.speicher.ladung_kwh,
         speicher_entladung_kwh=fakt.speicher.entladung_kwh,
         v2h_entladung_kwh=fakt.emob.v2h_entladung_kwh,

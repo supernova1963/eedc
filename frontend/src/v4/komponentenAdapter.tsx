@@ -432,8 +432,26 @@ export const KOMPONENTEN_ADAPTER: Record<string, KompAdapter> = {
       if (z.eta_degradation_alarm) wirkungsgradKpi.color = 'red'
       // ① Alarme (IST-getreu): Degradation + Durchsatz-Invariante.
       const hinweise: NonNullable<KompGeraet['hinweise']> = []
+      // ⚠ Der Satz nennt NICHT mehr genau eine Ursache (Radiocarbonat, T89667 #294:
+      // „Das ich bei ca. 80 % liege, hat nach meiner Meinung mit der reinen
+      // AC-Kopplung zu tun ... Das könnte man zusätzlich im Hinweis aufnehmen").
+      // Er hatte recht, und eedc weiß es sogar: die Kopplung ist ein erhobenes Feld
+      // (#351), und ihr eigener Hint im Formular sagt, dass sie festlegt, WO Ladung
+      // und Entladung gemessen werden. Bei AC-Kopplung liegt zwischen beiden Zählern
+      // eine Wandlung mehr, sofern hausseitig gezählt wird — dann beschreibt ein
+      // niedriger Wert die Messstelle, nicht den Speicher (so auch
+      // HANDBUCH_EINSTELLUNGEN „Kopplung — AC oder DC?" und SENSOR-REFERENZ zu
+      // `entladung_kwh`). ⛔ Bewusst KEIN zusätzlicher Hinweis und kein Feld-Hint:
+      // derselbe eine Satz, nur ohne die falsche Ausschließlichkeit.
+      // ⛔ Und bewusst KEINE Ableitung „AC ⇒ Parameter senken": eedc weiß nicht, wo
+      // die Zähler des Anwenders sitzen (F-11 — „das kann kein Code beantworten").
       if (z.eta_degradation_alarm && z.ist_wirkungsgrad_prozent != null && z.param_wirkungsgrad_prozent != null) {
-        hinweise.push({ ton: 'warning', text: `Gemessener Wirkungsgrad (${n1(z.ist_wirkungsgrad_prozent)} %) liegt mehr als 5 Prozentpunkte unter dem Parameter-Wert (${n1(z.param_wirkungsgrad_prozent)} %) — möglicher Hinweis auf Speicher-Degradation. Wert prüfen, ggf. Parameter anpassen.` })
+        const acGekoppelt = aufgeloesteSpeicherKopplung(inv.parameter, inv.parent_investition_id != null) === 'ac'
+        const kopf = `Gemessener Wirkungsgrad (${n1(z.ist_wirkungsgrad_prozent)} %) liegt mehr als 5 Prozentpunkte unter dem gepflegten Wert (${n1(z.param_wirkungsgrad_prozent)} %).`
+        const ursachen = acGekoppelt
+          ? 'Bei AC-Kopplung enthält die Messung die Wandlung des Batterie-Wechselrichters, sofern Ladung und Entladung hausseitig gezählt werden; sonst kommt die Abweichung von Speicher-Alterung oder von den erfassten Mengen.'
+          : 'Möglich sind Speicher-Alterung, die erfassten Mengen oder eine Ladung und Entladung, die von verschiedenen Messstellen kommen.'
+        hinweise.push({ ton: 'warning', text: `${kopf} ${ursachen} Wert prüfen, ggf. Parameter anpassen.` })
       }
       if (z.durchsatz_inkonsistent) {
         hinweise.push({ ton: 'warning', text: 'Die kumulierte Entladung übersteigt die kumulierte Ladung — über die gesamte Historie physikalisch unmöglich. Bitte die erfassten Lade- und Entlade-Werte prüfen (beim Datenübertrag leicht vertauscht).' })
@@ -623,25 +641,52 @@ export const KOMPONENTEN_ADAPTER: Record<string, KompAdapter> = {
         kennzahlen: z.co2_ersparnis_kg != null ? {
           titel: 'Umwelt', kpis: [k('CO₂-Ersparnis', n0(z.co2_ersparnis_kg), 'kg', 'green', Leaf, { subtitle: 'vs. fossile Heizung' })],
         } : undefined,
+        // N-379 / SOLL §3.3/S2 — „Ein Balken sagt, was er zeigt."
+        // Aufteilung, Verlauf-Legende und Jahresvergleich standen als FESTES
+        // Paar Heizung/Warmwasser da, unabhängig vom Gerät. An einer
+        // Split-Klimaanlage gibt es keinen Warmwasserkreis (N-304) — dietmar1968
+        // sah dort „Warmwasser 889 kWh · 100 %" (T89667 #295); an einer
+        // Wärmepumpe ohne Warmwasser-Zähler stand eine Dauer-Null (8ear, #404).
+        //
+        // ⚠ **Die Achse fällt weg, die Menge nicht.** Das Backend liest
+        // `warmwasser_kwh` an so einem Gerät gar nicht erst (`get_wp_warmwasser_kwh`),
+        // deshalb sind die Summen hier bereits ohne sie — hier fällt nur noch die
+        // leere Beschriftung. ⛔ Kein „fehlt"-Hinweis: Abdeckung ist Sache des
+        // Daten-Checkers, nicht dieses Blocks.
+        //
+        // `!== false` statt `=== true`: eine ältere Antwort ohne das Feld zeigt
+        // unverändert beide Achsen.
         aufteilung: (z.gesamt_heizenergie_kwh > 0 || z.gesamt_warmwasser_kwh > 0) ? {
           titel: 'Wärme nach Zweck', segmente: [
             { label: 'Heizung', wert: z.gesamt_heizenergie_kwh, farbe: SEG.heizung },
-            { label: 'Warmwasser', wert: z.gesamt_warmwasser_kwh, farbe: SEG.warmwasser },
+            ...(z.hat_warmwasser_achse !== false
+              ? [{ label: 'Warmwasser', wert: z.gesamt_warmwasser_kwh, farbe: SEG.warmwasser }]
+              : []),
           ],
         } : undefined,
         verlauf: md.length ? {
           bars: [
             { key: 'heizung', label: 'Heizung', farbe: CHART_COLORS.wpWaerme },
-            { key: 'warmwasser', label: 'Warmwasser', farbe: CHART_COLORS.wpWarmwasser },
+            ...(z.hat_warmwasser_achse !== false
+              ? [{ key: 'warmwasser', label: 'Warmwasser', farbe: CHART_COLORS.wpWarmwasser }]
+              : []),
           ],
+          // ⚠ `vd` ist hier ausgeschrieben: Ein Spread im Array-Literal nimmt
+          // dem zweiten Eintrag die kontextuelle Typisierung aus `rowsAusMd`
+          // (TS7006) — ohne die Annotation wäre er implizit `any`.
           rows: rowsAusMd(md, [
-            { key: 'heizung', wert: (vd) => vd.heizenergie_kwh },
-            { key: 'warmwasser', wert: (vd) => vd.warmwasser_kwh },
+            { key: 'heizung', wert: (vd: Record<string, number>) => vd.heizenergie_kwh },
+            ...(z.hat_warmwasser_achse !== false
+              ? [{ key: 'warmwasser', wert: (vd: Record<string, number>) => vd.warmwasser_kwh }]
+              : []),
           ]),
         } : undefined,
         vergleich: md.length ? {
           label: 'Wärme', einheit: 'kWh', farbe: CHART_COLORS.wpWaerme,
-          jahre: jahresSummen(md, (vd) => (vd.heizenergie_kwh ?? 0) + (vd.warmwasser_kwh ?? 0)),
+          jahre: jahresSummen(md, (vd) => (
+            (vd.heizenergie_kwh ?? 0)
+            + (z.hat_warmwasser_achse !== false ? (vd.warmwasser_kwh ?? 0) : 0)
+          )),
         } : undefined,
       }
       })

@@ -1,11 +1,310 @@
 # Was ist neu
 
-> **Stand:** September 2026 (v4.0.38)
+> **Stand:** September 2026 (v4.0.39)
 > **Diese Seite** zeigt pro Version, was sich für dich als Anwender geändert hat — kürzer als der technische [CHANGELOG](https://github.com/supernova1963/eedc-homeassistant/blob/main/CHANGELOG.md), ausführlicher als die Schnellübersicht-Tabelle in der [Übersicht](BENUTZERHANDBUCH.md#was-ist-neu-seit-v316).
 >
 > **Kein Banner, kein Pop-up:** eedc zeigt diese Liste nicht ungefragt an. HA-App-Nutzer sehen den Changelog ohnehin schon im Add-on-Store, GitHub-Releases haben einen eigenen. Wer wissen will, was neu ist, schaut hier rein — Pull statt Push.
 >
 > **Lesehinweis:** Die jüngsten Versionen stehen oben. Jeder Punkt verlinkt entweder auf die zuständige Hilfe-Sektion oder direkt auf die App-Funktion (sofern erreichbar). Anker-URLs (`?doc=was-ist-neu`) sind teilbar.
+
+---
+
+## v4.0.39 — 4. September 2026
+
+**Lesen und Parken kommen sich auf dem Telefon nicht mehr in die Quere**
+
+Im **Energiefluss** kannst du einen Knoten antippen und bekommst die Erklärung dazu — beim Haus
+sind das sieben Zeilen. Bisher verschwand sie in dem Moment, in dem du den Finger gehoben hast.
+Wer den Finger liegen ließ, um zu Ende zu lesen, bekam nach einer halben Sekunde die
+**Parkplatz-Auswahl** über die Fläche gelegt: Langes Drücken ist die Geste, mit der du eine Anzeige
+parkst. Man wollte lesen und musste einen Modus wegtippen, den man nie wollte.
+
+**Jetzt bleibt ein Hinweis stehen**, bis du woanders hintippst oder weiterscrollst. Und die
+Park-Geste greift auf dem Telefon nur noch **oben am Kopf** einer Anzeige. Am Rechner bleibt alles
+wie es war — dort parkst du per Rechtsklick, und der stört keinen Hinweis.
+
+**Wo eine Zahl fehlt, steht jetzt sichtbar warum — auch auf dem Telefon**
+
+Manche Kennzahlen bildet eedc bewusst nicht. Die **Arbeitszahl** zum Beispiel entfällt, wenn
+Wärme und Strom nicht dasselbe Gerät und denselben Zweck beschreiben — eine Zahl daraus wäre
+keine Auskunft, sondern eine Falschaussage. An ihrer Stelle stand ein „—", und der Grund dazu
+erschien nur, wenn du mit der Maus darauf gezeigt hast.
+
+**Nur wies dich nichts darauf hin.** Ein nackter Strich sieht aus, als hättest du etwas zu pflegen
+vergessen — niemand tippt auf eine leere Zelle, um dort eine Erklärung zu vermuten. Jetzt steht der
+Grund als **sichtbarer Satz unter der Tabelle** — einmal je Grund, nicht in jeder Zeile: in *Auswertungen → Tabelle*, in der
+Monatstabelle unter *Komponenten → Wärme/Klima* und in der Detailübersicht unter
+*Auswertungen → ROI*, dort mit dem Namen des Geräts dazu.
+
+**Es ändert sich keine Zahl** — nur, ob du erfährst, warum eine fehlt.
+
+**Modul-Zuordnung am Balkonkraftwerk kostet keine Vergangenheit mehr**
+
+Seit Version 4.0.18 kannst du deinem Balkonkraftwerk eigene PV-Module zuordnen — praktisch,
+wenn deine Module in zwei Richtungen hängen. Tatest du das an einem **bestehenden** Gerät,
+verschwand seine Erzeugung danach aus allen **früheren** Monaten: eedc rechnete sie ab dann den
+Modulen zu, und die gab es damals noch nicht.
+
+Das war schwer zu bemerken, weil jede Sicht dieselbe zu kleine Zahl zeigte. **Jetzt entscheidet
+eedc das für jeden Monat einzeln:** Solange die Module noch nicht da waren, gehört die Erzeugung
+dem Balkonkraftwerk. **Deine Werte kommen von selbst zurück** — sie waren nie weg, sie wurden
+nur falsch zugeordnet.
+
+**Das Balkonkraftwerk zählt überall mit**
+
+Wenn du ein **Balkonkraftwerk ohne zugeordnete PV-Module** führst — so wurde es bis Version
+4.0.18 erfasst —, ließen zwei Stellen seine Erzeugung weg: der **Daten-Check** und die
+Kennzahlen eines einzelnen Monats. *Auswertungen → Tabelle* und das Cockpit haben immer schon
+richtig gerechnet, und genau das war das Verwirrende: Der Daten-Check nannte eine
+PV-Erzeugung, die anderswo nirgends stand — und meldete daraufhin manchmal *„Einspeisung
+größer als PV-Erzeugung"* an einer Anlage, an der nichts falsch war.
+
+**Was du siehst:** Bei betroffenen Anlagen steigen **Direktverbrauch** und **Eigenverbrauch**
+des Monats, **Autarkie** und **Eigenverbrauchsquote** ziehen nach. Der **spezifische Ertrag**
+setzt jetzt die Erzeugung beider Erzeuger ins Verhältnis zur Leistung beider. Eine
+Fehlermeldung im Daten-Check, die nur daran hing, verschwindet.
+
+**Wer sein Balkonkraftwerk mit zugeordneten Modulen führt, sieht keine Änderung** — dort war
+alles von Anfang an richtig. Ebenso Anlagen ohne Balkonkraftwerk.
+
+**Die Einstrahlung der letzten Tage wird nachgezogen**
+
+Die **Performance Ratio** sagt, wie viel deine Anlage aus dem gemacht hat, was an Sonne da war.
+Wie viel da war, holt eedc beim Wetterdienst. Für Tage, die weiter als fünf Tage zurückliegen,
+kommt dieser Wert aus dem endgültigen Messarchiv — für die Tage davor gibt es das Archiv noch
+nicht, dort nimmt eedc den Modellwert. Bisher blieb dieser vorläufige Wert für immer stehen.
+
+Im Mittel ist er gut. An **bewölkten** Tagen kann er aber deutlich zu klein sein — an einer echten
+Anlage nachgemessen an einzelnen Tagen um ein Vielfaches. Und ein zu kleiner Sonnenwert lässt die
+Performance Ratio nach oben schießen, ohne dass an deiner Anlage etwas falsch wäre. Wer daraufhin
+die Meldung *„Verdacht auf PV-Doppelerfassung"* bekam, suchte den Fehler bei sich — und fand keinen.
+
+**Jetzt holt eedc den endgültigen Wert nach.** Nachts rechnet es den einen Tag neu, der gerade alt
+genug geworden ist, und ersetzt dabei Einstrahlung, Bewölkung und Wetterlage durch die gemessenen
+Werte.
+
+**Was du siehst:** Die Performance Ratio zurückliegender Tage kann sich ändern — sie steht dann auf
+gemessenen statt vorhergesagten Werten. Dasselbe gilt für die Spalte *Einstrahlung* unter
+*Auswertungen → Tabelle*. Ein Doppelerfassungs-Verdacht, der nur an solchen Tagen hing, verschwindet
+binnen weniger Tage von allein.
+
+**Für die letzten fünf Tage bleibt der Wert vorläufig** — das lässt sich nicht abkürzen, das
+Messarchiv des Wetterdienstes hat diese Tage noch nicht. Und **Tage, die vor dieser Änderung
+entstanden sind, behalten ihren Wert**; wer sie berichtigen möchte, nimmt *Einstellungen → Daten*
+und dort in der Reparatur-Werkbank **„Mehrere Tage neu aggregieren"**.
+
+**Der Anlagen-Zählerstand trägt den Tag wieder**
+
+Wenn dein Wechselrichter eine Gesamtsumme liefert und du **zusätzlich** einzelnen Strings eigene
+kWh-Zähler zuordnest, war der Anlagen-Zählerstand für Tag und Stunde bisher abgeschaltet — sobald
+**ein** Erzeuger selbst maß, galt nur noch das Gemessene. Zwei Dinge gingen dabei schief: Wer die
+Zuordnung am Abend anlegte, verlor die **gemessene Erzeugung der Stunden davor** (der Sensor
+liefert ja erst ab dem Anlegen). Und wer nur einen Teil seiner Strings bezählte, hatte eine
+**dauerhaft zu kleine Tagessumme**.
+
+Jetzt entscheidet nicht mehr die Zuordnung, sondern die Datenlage — und zwar für jeden Tag neu:
+Liefern **alle** deine Erzeuger den ganzen Tag über eigene Werte, gelten diese. Sonst trägt der
+**Anlagen-Zählerstand** den Tag, und eedc rechnet aus, wie viel auf die einzelnen Erzeuger
+entfällt: Wer selbst gemessen hat, behält seinen Wert; die übrigen bekommen den Rest im Verhältnis
+ihrer Nennleistung. Solche abgeleiteten Werte sind als abgeleitet gekennzeichnet. Genauso hält es
+eedc bei den Monatswerten schon immer.
+
+**Was du siehst:** Wenn dich das betrifft, steigen Tages- und Stundenwerte, Performance Ratio, CO₂
+und die Finanzen auf den Wert, den dein Anlagenzähler die ganze Zeit gemessen hat. Wenn deine
+Erzeuger vollständig messen, ändert sich nichts. **Zurückliegende Tage** holst du dir mit
+*Einstellungen → Daten → Reparatur-Werkbank* und **„Mehrere Tage neu aggregieren"** zurück — die
+stündlichen Zählerstände sind gespeichert. Der laufende Tag korrigiert sich von selbst.
+
+Der Hinweis an der Datenquellen-Zeile, dass dann *alle* Erzeuger einen eigenen Zähler brauchen,
+ist damit hinfällig und entfällt. Im Stundendiagramm bleibt es dabei, dass nicht verteilt wird:
+Was sich dort keinem einzelnen Erzeuger zuordnen lässt, steht als *„PV (übrige)"* — eine nach
+Nennleistung verteilte Stundenkurve gäbe einem Ost- und einem Westdach denselben Tagesverlauf, und
+den haben sie nicht.
+
+Gemeldet von **Mathek** auf GitHub ([#406](https://github.com/supernova1963/eedc-homeassistant/issues/406)).
+
+**Der Stundenverlauf im Tag geht wieder auf**
+
+Wer seine PV-Strings einzeln misst, sah unter *Cockpit → Tag* im Stundendiagramm manchmal mehr
+Erzeugung im Stapel stehen, als die Erzeugungslinie daneben auswies — oben lag also Strom, der
+unten nirgends ankam. In anderen Stunden erschien umgekehrt ein Band *„PV (übrige)"*, obwohl jedes
+Modul seinen eigenen Sensor hat.
+
+Beides hatte dieselbe Ursache: Eine Stundenzeile entsteht aus zwei Quellen — den **Zählerwerten**
+und der **Leistungskurve** —, und die beiden meinten verschiedene Stunden. Die Zeile „10 Uhr" trug
+den Zählerwert von 9 bis 10 Uhr und die Leistungswerte von 10 bis 11 Uhr. **Jetzt beschreiben
+beide Hälften dieselbe Stunde.**
+
+Sichtbar ist das im Stundenverlauf: Die Aufschlüsselung nach Modulen deckt sich wieder mit der
+Erzeugungslinie, und die Aufteilung *Heizen/Kühlen* einer Wärmepumpe steht in der Stunde, in der
+sie gemessen wurde. **Deine Tages-, Monats- und Jahreswerte sind unberührt** — über einen ganzen
+Tag hob sich der Versatz auf.
+
+**Zurückliegende Tage behalten ihre bisherige Zuordnung.** Wenn du sie mit der neuen Einteilung
+sehen willst, lässt du den Zeitraum in der **Reparatur-Werkbank** unter *Einstellungen → Daten*
+neu rechnen — Aktion **„Mehrere Tage neu aggregieren"**. eedc schreibt Vergangenes nicht von
+allein um.
+
+Gemeldet von **BMeyendriesch**.
+
+**Die Performance Ratio sagt jetzt, wogegen sie misst**
+
+Unter *Cockpit → Tag* teilt die **Performance Ratio** deinen Tagesertrag durch das, was bei der
+Sonne dieses Tages möglich gewesen wäre. Daneben stand bisher eine Einstrahlungszahl — und das
+war die **waagerechte** Globalstrahlung, also der Wert, wie ihn eine Wetterstation auf dem Boden
+misst. Gerechnet hat eedc aber schon immer mit der Einstrahlung **auf deine Modulfläche**, und
+die ist bei geneigten Modulen deutlich höher.
+
+Wer nachrechnete, kam damit zwangsläufig auf einen anderen Wert als den angezeigten — und konnte
+den Unterschied nicht aufklären, weil die richtige Zahl nirgends stand. **Jetzt steht sie dabei**,
+mit dem Zusatz *„auf der Modulfläche"*.
+
+Für Tage, die vor dieser Änderung liegen, bleibt die Stelle leer: Die Zahl wurde damals nicht
+mitgeschrieben, und stattdessen wieder die waagerechte zu zeigen wäre derselbe Fehler mit neuem
+Etikett. Über **„Mehrere Tage neu aggregieren"** in der Reparatur-Werkbank unter
+*Einstellungen → Daten* holst du sie für einen
+Zeitraum nach. **An der Kennzahl selbst ändert sich nichts.**
+
+**Der Parkplatz blitzt beim Öffnen nicht mehr auf**
+
+Wer Anzeigen geparkt hat, sah den Streifen *„Parkplatz (n)"* beim Öffnen einer Cockpit-Ansicht
+kurz allein neben dem Ladezeichen stehen — dann rutschte er an seinen Platz. Der Grund ist
+harmlos: Was du geparkt hast, weiß eedc sofort, der Rest der Seite muss erst geladen werden.
+**Jetzt wartet der Streifen, bis die Ansicht steht.**
+
+**Deine Klimaanlage zeigt keine Wärme mehr, die sie nicht abgeben kann**
+
+Eine **Split-Klimaanlage** hat keinen Warmwasserkreis, und eedc fragt sie seit einiger Zeit
+auch nicht mehr danach. Wer den Wert früher einmal eingetragen hatte, hatte ihn aber
+weiterhin gespeichert — und **gelesen wurde er überall**: Unter *Komponenten → Wärme/Klima*
+stand er als **„Wärme erzeugt"**, füllte die Aufteilung *Wärme nach Zweck* zu 100 % mit
+**Warmwasser**, ging in die **Arbeitszahl** ein und erzeugte eine **Ersparnis gegenüber
+deiner alten Heizung** samt CO₂-Zahl — für Wärme, die das Gerät nie erzeugt hat.
+
+Jetzt zählt dieser Wert an einer Klimaanlage nirgends mehr als Wärme, und die
+Warmwasser-Achse verschwindet dort aus Balken, Spalte und Legende. Wo dadurch keine
+Arbeitszahl mehr übrig bleibt, steht „—" mit dem Grund daneben.
+
+**Dein Wert bleibt stehen** — eedc löscht und verschiebt nichts von allein. Der
+**Daten-Checker** nennt dir jeden betroffenen Monat. Stammt der Wert aus dem **Kühlbetrieb**,
+trag ihn unter *Nutzenergie Kuehlbetrieb* ein: Daraus rechnet eedc deine **Arbeitszahl
+Kühlen**.
+
+Bei betroffenen Geräten fallen „Wärme erzeugt", Arbeitszahl, Gas-Ersparnis und CO₂-Ersparnis
+sichtbar weg — sie standen dort zu Unrecht. **Dein Stromverbrauch und seine Kosten bleiben
+vollständig**, der Strom ist ja geflossen. Wärmepumpen mit Warmwasserkreis sehen keine
+Änderung.
+
+**Eine Wärmepumpe zeigt nur die Achsen, die es an ihr gibt**
+
+Macht dein Warmwasser ein zweites Gerät — eine Brauchwasser-Wärmepumpe zum Beispiel —, stand
+unter *Komponenten → Wärme/Klima* trotzdem überall eine Warmwasser-Spalte mit einer Dauer-Null
+darin. Die Anzeige richtet sich jetzt danach, was dein Gerät liefern kann.
+
+Ob dir irgendwo ein Zähler fehlt, sagt dir weiterhin der Daten-Checker — dieser Block trifft
+darüber keine Aussage.
+
+**Dein zweiter Erzeuger bringt sein Geld wieder mit**
+
+Hast du unter *Sonstiges* einen Erzeuger mit **eigenem Vergütungssatz** — eine Erweiterung
+mit neuem EEG-Satz, oder Strom, den du direkt weitergibst —, trägst du seinen Erlös im
+Monatsabschluss als **„Einspeise-Erlös (€)"** ein. Im **SOLL/HABEN-T-Konto** stand statt
+deiner Zahl bisher das Ergebnis einer eigenen Rechnung mit dem Satz **deiner Anlage**. Ist
+der 0 ct, verschwand die Zeile ganz.
+
+Jetzt steht dort dein Betrag, so wie du ihn gepflegt hast. eedc rechnet ihn nicht nach —
+der Satz deiner Anlage ist ja ein anderer.
+
+**Cockpit und Auswertungen nennen wieder dieselbe Zahl**
+
+Der Finanzen-Block unter *Cockpit → Monat* schrieb der Zeile **„PV-Anlage"** die **ganze**
+Eigenverbrauchs-Ersparnis zu — obwohl Speicher und Balkonkraftwerk ihren Anteil daran eine
+Zeile tiefer noch einmal führen. Die Summe zählte ihn dadurch zweimal, und das T-Konto
+unter *Auswertungen → Finanzen* kam für denselben Monat auf einen anderen Betrag.
+
+Die PV-Zeile trägt jetzt ihren eigenen Anteil, und die Kachel sagt es dazu. Deine
+Zuordnung bleibt vollständig: Der Speicher behält seinen Beitrag, das Balkonkraftwerk
+seinen — die PV-Zeile beansprucht beides nur nicht mehr zusätzlich.
+
+⚠ **Hast du Speicher oder Balkonkraftwerk, fällt der Saldo im Cockpit sichtbar niedriger
+aus.** Er stimmt jetzt mit dem T-Konto überein.
+
+**Betriebskosten beginnen mit dem Kaufdatum**
+
+Die anteiligen Jahres-Betriebskosten einer Komponente standen in **jedem** Monat im
+T-Konto — auch lange bevor du sie gekauft hast. Ein im August angeschafftes Fahrzeug
+tauchte so noch im September des Vorjahres mit Kosten auf, während die Ersparnis daneben
+zu Recht leer blieb.
+
+Jetzt gilt für die Kosten dieselbe Grenze wie für alles andere: vom Anschaffungs- bis zum
+Stilllegungsdatum. Vergangene Monate sehen dadurch günstiger aus — und das ist der
+richtige Wert.
+
+**Dein zweiter Erzeuger zählt jetzt überall gleich**
+
+Hast du unter *Sonstiges* einen Erzeuger — ein Blockheizkraftwerk, ein Windrad, eine kleine
+Wasserkraftanlage —, dann speist er hinter denselben Hauszähler wie deine PV-Anlage. In der
+**Energiebilanz** zählte sein Strom immer voll mit: Eigenverbrauch, Autarkie,
+Eigenverbrauchsquote. In der **Eigenverbrauchs-Ersparnis** dagegen nicht.
+
+Unter *Auswertungen → Finanzen* stand deshalb eine Kilowattstunden-Zahl neben einem Betrag,
+der zu einer ganz anderen Menge gehörte — und *Cockpit → Monat* nannte für denselben Monat
+noch einen dritten Wert. Jetzt liegt beides auf derselben Erzeugung, und *Menge × Preis*
+geht wieder auf.
+
+⚠ **Hast du einen solchen Erzeuger, steigen Eigenverbrauchs-Ersparnis, Netto-Ertrag und
+ROI-Fortschritt dadurch sichtbar.** Es ist die Zahl, die Cockpit und T-Konto längst gezeigt
+haben. Ohne einen Erzeuger unter *Sonstiges* ändert sich für dich nichts.
+
+Am **Gerät** ändert sich ebenfalls nichts: Seine Wirtschaftlichkeit steht weiter auf „nicht
+bewertet", und was er dir einbringt, sagst du wie bisher über *„Ertrag/Jahr"* an. Bei einem
+verbrennenden Erzeuger kennt eedc den Brennstoff nicht, bei einem emissionsfreien den
+Vergleichsmaßstab — beurteilen kann es das Gerät deshalb nicht. Sein **Strom** ist davon
+unberührt: Die Kilowattstunde hat Netzbezug ersetzt, unabhängig davon.
+
+**Ein zweiter Erzeuger wird einmal bewertet, nicht zweimal**
+
+Ein sonstiger Erzeuger speist hinter denselben Hauszähler wie deine PV-Anlage. Was er
+selbst verbraucht, steckt deshalb schon in der Eigenverbrauchs-Ersparnis deiner Anlage —
+im T-Konto stand daneben trotzdem noch eine eigene Zeile für dasselbe. Die entfällt, und
+der Hinweis an der Eigenverbrauchs-Ersparnis sagt jetzt, dass der Anteil dort enthalten
+ist. Am **„Ertrag/Jahr"**, den du am Gerät angibst, ändert sich nichts.
+
+Alle vier Punkte gehen auf einen Fehlerbericht von **rilmor-mhrs** zurück
+([#402](https://github.com/supernova1963/eedc-homeassistant/issues/402)).
+
+**Zwei Speicher, zwei Wirkungsgrade — und jeder trägt seinen Namen**
+
+Wer seinen Speicher **erweitert** und den alten dabei stillgelegt hat, hat zwei Speicher an
+einem PV-System. Die Zeile unter *Auswertungen → ROI* nennt auch beide. Klappst du sie auf,
+stand darunter trotzdem nur **ein** Wirkungsgrad — ohne dazuzusagen, zu welchem der beiden
+er gehört. Es war immer der des **ältesten** Geräts, nach einer Erweiterung also der des
+**stillgelegten**. Wer dort einen auffällig niedrigen Wert las, suchte den Fehler beim
+falschen Speicher.
+
+Jetzt steht jeder Speicher mit seinem eigenen Wirkungsgrad und seinem Namen da. Der
+**effektive Ladepreis** bleibt bewusst eine einzige Zeile: Er ist eine Größe deiner
+**Anlage** und nicht am einzelnen Gerät gemessen — bei mehreren Speichern steht das jetzt
+auch dran. **Wer einen Speicher hat, sieht unverändert das Gewohnte.**
+
+**Ein niedriger Wirkungsgrad heißt nicht automatisch, dass dein Speicher altert**
+
+Liegt der gemessene Wirkungsgrad deutlich unter dem Wert, den du gepflegt hast, sagt eedc
+das im Speicher-Block. Dort stand bisher nur *„möglicher Hinweis auf Speicher-Degradation"*.
+Bei einem **AC-gekoppelten** Speicher ist das oft die falsche Fährte: Zwischen deinen beiden
+Zählern liegt dann die Wandlung des Batterie-Wechselrichters, sofern hausseitig gezählt
+wird. Der Wert beschreibt dann die **Messstelle** und nicht den Speicher. eedc kennt die
+Kopplung deines Speichers und sagt es jetzt dazu — es ist derselbe eine Hinweis, nur ohne
+die falsche Ausschließlichkeit. Die ausführliche Erklärung steht wie bisher im
+[Handbuch](HANDBUCH_BEDIENUNG.md#33-speicher).
+
+Unter *Auswertungen → ROI* steht dieser Hinweis dafür **nicht mehr** — er gehört dorthin
+nicht. In dieser Sicht rechnet eedc mit dem **gemessenen** Wirkungsgrad, sobald es einen
+gibt; der gepflegte Wert, über den der Hinweis spricht, geht dort gar nicht ein. Er zählt
+für die Tages-Vorschau *„Speicher voll um"*, für *Größerer Speicher?* und für die
+Home-Assistant-Sensoren — und dort steht der Hinweis weiterhin.
+
+Beide Punkte gehen auf eine Beobachtung von **Radiocarbonat** im simon42-Forum zurück.
 
 ---
 

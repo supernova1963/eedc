@@ -171,11 +171,17 @@ Netto-Ertrag (EUR)       = Einspeise-Erlös + EV-Ersparnis
 CO2-Einsparung (kg)      = PV_Erzeugung * 0.38               (VERALTET — s. Kasten)
 ```
 
-> **Hinweis „PV_Eigenverbrauch".** Der Eigenverbrauch, der zu **Geld** wird, ist der aus PV-Modulen
-> und Balkonkraftwerk. Ein Erzeuger unter *Sonstiges* — BHKW, Windrad, Wasserkraft — zählt in die
-> **Mengen**-Bilanz (Eigenverbrauch, Autarkie, EV-Quote), weil der Zähler am einen Netzanschluss die
-> Summe aller Erzeuger dahinter misst; seinen **finanziellen** Nutzen bewertet eedc dagegen nicht
-> selbst, sondern nimmt ihn aus dem gepflegten Feld `Investition.einsparung_prognose_jahr`
+> **Hinweis „Eigenverbrauch".** Der Eigenverbrauch, der zu **Geld** wird, ist derselbe wie der in
+> der Mengen-Bilanz: die Erzeugung **hinter dem Zähler** — PV-Module, Balkonkraftwerk **und** ein
+> Erzeuger unter *Sonstiges* (BHKW, Windrad, Wasserkraft). Der Zähler am einen Netzanschluss misst
+> die Summe aller Erzeuger dahinter; was davon nicht eingespeist wurde, hat Netzbezug ersetzt.
+> Menge und Betrag meinen deshalb dieselbe Kilowattstunde.
+>
+> ⚑ **Nicht bewertet wird das GERÄT, nicht sein Strom.** Ein sonstiger Erzeuger bekommt keine eigene
+> Ertrags-Zeile und keine Wirtschaftlichkeit — sein Ertrag wird am Gerät als
+> `Investition.einsparung_prognose_jahr` („Ertrag/Jahr") gepflegt, weil eedc seinen Brennstoff nicht
+> kennt. **Geändert am 2026-09-03** (Maintainer-Entscheid, löst v3.45.4 ab); bis dahin nahm die
+> Finanz-Zeile die PV-Achse, und Menge und Betrag zählten verschiedene Erzeuger.
 > („Ertrag/Jahr"). Beide Größen liegen in **derselben** Summe (`aussichten.py::jahres_netto_ertrag`)
 > — würde die Menge zusätzlich monetarisiert, stünde derselbe Nutzen zweimal darin.
 >
@@ -309,10 +315,14 @@ aus, weil dieselbe Kennzahl im Community-Vergleich steht.
 **Achsen-Trennung (bewusst):** PV-**eigene** Kennzahlen (spez. Ertrag, Performance-
 Ratio, SOLL/IST, kWp) nutzen **nur** `PV_Erzeugung`, nicht `Erzeugung_gesamt` — ein
 sonstiger Erzeuger ist energetisch Erzeuger, aber kein PV-Modul. Ebenso bleibt
-**CO₂/Wirtschaftlichkeit quellenspezifisch**: ein brennstoffbasierter Erzeuger (BHKW)
-spart kein CO₂, sondern emittiert, und hat Brennstoffkosten — er bekommt daher keine
-PV-artige CO₂-Ersparnis (bewertet als „nicht bewertet", bis ein eigenes BHKW-Modell
-existiert). **Insel-Anlagen** (kein Netzanschluss, kein Bezug/keine Einspeisung)
+**CO₂ und Geräte-Wirtschaftlichkeit quellenspezifisch**: Ein Erzeuger unter *Sonstiges*
+bekommt **keine** PV-artige CO₂-Gutschrift und keine eigene Wirtschaftlichkeit. Der Grund
+gilt für die ganze Kategorie, nicht nur fürs BHKW: **eedc kennt den Vergleichswert nicht.**
+Ein verbrennender Erzeuger emittiert, statt einzusparen; bei einem Windrad oder einer
+Wasserkraftanlage fehlt umgekehrt jede belastbare Grundlage für Anschaffung, Wartung und
+Lebensdauer. Beides steht als „nicht bewertet" da, und der Ertrag wird am Gerät gepflegt.
+⚑ **Sein Strom ist davon unberührt** — er zählt in Menge *und* Geldwert der Anlage voll mit
+(seit 2026-09-03, s. §3.2). **Insel-Anlagen** (kein Netzanschluss, kein Bezug/keine Einspeisung)
 fallen nicht unter diese Bilanz — das ist ein Anlagen-Merkmal (eigenes KZ, geplant).
 
 **Messpunkt der Sensoren (DC vs. AC):** Die Bilanz rechnet mit den Werten, die die Geräte
@@ -1471,11 +1481,17 @@ Auswertungen bereits, während der Client dort ohne ihn rechnete.
 > gegen eine Ein-Jahres-Abschreibung, die USt fiel um den Faktor der Jahresanzahl zu
 > niedrig aus. Beides ist mit dem Layer-SoT aufgelöst.
 >
-> ⚠ **Was weiterhin auseinandergeht:** *welche Menge* als Eigenverbrauch eingeht.
-> Cockpit und HA-Export setzen den **Netzpunkt**-Eigenverbrauch ein (inklusive eines
-> Brennstoff-Erzeugers), Jahresbericht, Aussichten und die Monatszeile den
-> **Finanz**-Eigenverbrauch (PV allein). Bei einer Anlage mit Mini-BHKW nennen die
-> beiden Gruppen deshalb verschiedene USt-Beträge. Register **N-131**.
+> ✅ **Seit 2026-09-03 geht hier nichts mehr auseinander.** Bis dahin setzten Cockpit und
+> HA-Export den **Netzpunkt**-Eigenverbrauch ein (inklusive eines sonstigen Erzeugers),
+> Jahresbericht, Aussichten und die Monatszeile dagegen den **Finanz**-Eigenverbrauch
+> (PV allein) — bei einer Anlage mit Mini-BHKW nannten die beiden Gruppen deshalb
+> verschiedene USt-Beträge. Mit der Umstellung von `finanz_zeile_eingabe` auf
+> `erzeugung.hinter_zaehler_kwh` liegen **alle** auf dem Netzpunkt-Eigenverbrauch.
+> Register **N-131** / **N-375**.
+>
+> ⚠ **Was dagegen offen bleibt** (Register **N-376**): Die Selbstkosten je kWh teilen die
+> Kosten **aller** Investitionen durch die Erzeugung der **PV allein** — Zähler und Nenner
+> zählen verschiedene Grundgesamtheiten.
 
 ### 3.8 CO2-Bilanz
 
@@ -1548,8 +1564,10 @@ CO2_gesamt = CO2_PV + max(0, CO2_WP) + max(0, CO2_E-Mob)
 > „CO₂ Einsparung", WP-Dashboard und der PDF-Jahresbericht** rufen dieselben Helfer auf und zeigen daher
 > **denselben Wert** (vorher rechneten einzelne Pfade `pv_erzeugung × f_strom` bzw. eigene WP-Formeln →
 > Drift). Die WP- und E-Mob-Komponente werden für die Summe bei 0 geklammert (negative Einzelwerte
-> kürzen die Gesamtbilanz nicht). **Brennstoff-Erzeuger** (BHKW/„sonstiges") erzeugen bewusst **keine**
-> CO₂-Gutschrift — sie zählen zwar in EV/Autarkie (hinter dem Zähler), aber nicht als vermiedenes CO₂.
+> kürzen die Gesamtbilanz nicht). Erzeuger unter **„Sonstiges"** (BHKW, Windrad, Wasserkraft) erzeugen bewusst **keine**
+> CO₂-Gutschrift — sie zählen in EV/Autarkie und im Geldwert (hinter dem Zähler), aber nicht als
+> vermiedenes CO₂: eedc kennt weder die Emissionen eines verbrennenden Erzeugers noch den
+> Vergleichsmaßstab eines emissionsfreien.
 
 #### Äquivalente
 
@@ -1863,13 +1881,17 @@ Der Zuordnungs-Schritt des Import-Wizards schlägt die Anteile ebenfalls **nach 
 
 #### IST je Erzeuger auf **Tagesebene** (ab v4.0.9, #350)
 
-Die Präzedenz oben gilt für **Monatswerte**. Auf der Tagesebene gibt es sie nicht — dort wird
-**nicht verteilt**:
+⛔ **Hier stand bis 2026-09-04: „Die Präzedenz oben gilt für Monatswerte. Auf der Tagesebene gibt
+es sie nicht — dort wird nicht verteilt."** Mit #406 gibt es sie auch dort (Abschnitt
+*Der Anlagen-Zählerstand* weiter unten). Der Unterschied liegt nicht mehr in der Regel, sondern
+in ihrer **Bedingung**: verteilt wird nur, wenn ein **Anlagen-Zählerstand** vorliegt und die
+Einzelzähler den Tag nicht vollständig tragen.
 
 ```
 erzeuger_kwh[inv_id] = Σ komponenten_kwh[pv_<id> | bkw_<id>]      (Boundary-Rollup)
                      ∨ Σ TagesEnergieProfil.komponenten je Stunde  (Fallback, kein Rollup)
-kein eigener Sensor  ⇒ kein Eintrag (kein 0, kein kWp-Anteil)
+kein eigener Sensor, kein Anlagen-Zählerstand ⇒ kein Eintrag (kein 0, kein kWp-Anteil)
+kein eigener Sensor, Anlagen-Zählerstand da    ⇒ kWp-Anteil am Rest, als abgeleitet markiert
 ```
 
 SoT der Formel: `core/berechnungen/energie.py::erzeuger_kwh_je_investition`, ausgeliefert als
@@ -1881,12 +1903,17 @@ sind dabei nicht optional:
   (`snapshot/komponenten_beitraege._TYP_PREFIX` gegen `live_komponenten_builder`). Je Roh-Key
   gruppiert bekäme ein Gerät zwei Spalten, deren Belegung vom Schreibpfad des jeweiligen Tages
   abhängt — dieselbe Mismatch-Klasse wie der BKW-Doppelzählungs-Bug vom 2026-05-19.
-- **Keine kWp-Verteilung.** Der Monatspfad füllt Lücken nach Nennleistung und **kennzeichnet** das;
-  eine so gefüllte Tageszahl unter der Überschrift „Dach Süd" wäre von einer Messung nicht mehr zu
-  unterscheiden (die Klasse aus #352). Fehlt der Sensor, nennt die Oberfläche das Gerät und den
-  Weg zur Zuordnung, statt eine Spalte zu zeigen.
+- **Eine kWp-Verteilung nur MIT Kennzeichnung — und nur je Tag.** Der Einwand dieses Absatzes
+  lautete bis #406 „keine kWp-Verteilung": eine so gefüllte Tageszahl unter der Überschrift
+  „Dach Süd" wäre von einer Messung nicht zu unterscheiden (die Klasse aus #352). Der Einwand galt
+  der **fehlenden Kennzeichnung**, nicht der Verteilung — der Monatspfad verteilt seit jeher und
+  kennzeichnet es. Genau das tut jetzt auch der Tagespfad: `source_provenance` trägt je
+  `komponenten_kwh`-Sub-Key die Marke `ABGELEITET_KWP_ANTEIL`. ⚠ **Auf der Stundenebene bleibt es
+  bei „keine Verteilung"** — dort trüge der kWp-Schlüssel eine Form, die die Stunde nicht hat
+  (Ost und West wären um 8 Uhr formgleich). Ohne Anlagen-Zählerstand bleibt es überall bei
+  „kein Eintrag": die Oberfläche nennt das Gerät und den Weg zur Zuordnung.
 
-##### Der Anlagen-Zählerstand: Summe ja, Aufschlüsselung nein (ab 2026-08-07)
+##### Der Anlagen-Zählerstand: Summe immer, Aufschlüsselung aufgelöst (ab 2026-09-04)
 
 Das Feld *Anlage (Basis) → PV-Erzeugung Zählerstand (kWh)* landet über `basis["pv_gesamt"]` in
 `Monatsdaten.pv_erzeugung_kwh` und ist damit **Eingang der Monats-Auflösung** (P7). Seit
@@ -1902,24 +1929,40 @@ ist allein die Aufschlüsselung je Erzeuger (obenstehende Formel liefert für ih
 > zusammengelegte Anlage bekäme einen systematisch falschen Tagesgang im gesamten
 > Prognose-Kanon inklusive HA-Prognose-Sensoren und PVGIS-SOLL.
 
-**Die Regel ist alles-oder-nichts, nicht anteilig.** Der Anlagen-Zählerstand zählt auf der
-Tagesebene nur mit, solange **kein** Erzeuger einen eigenen kWh-Zähler trägt — genau wie im
-Live-Pfad (`not has_individual_pv`). Sobald einer misst, gilt für Tag und Stunde nur noch, was je
-Erzeuger gemessen ist. Zwei Gründe:
+**Die Regel ist die Präzedenz je Tag (ab 2026-09-04, #406).** Sie ist die Entsprechung der
+Monatsregel `resolve_pv_je_modul`, auf den Tag übertragen — SoT
+`core/berechnungen/pv_tages_praezedenz.py`:
 
-- **Nebeneinander ginge nicht.** `komponenten_kwh` hat einen flachen Keyspace, und die Tages-PV
-  ist die Summe aller `pv_`/`bkw_`-Schlüssel (`summe_pv_bkw_kwh`). Stünde `pv_gesamt` neben
-  `pv_7`, wäre die Anlagensumme neben ihrem eigenen Summanden gebucht — Doppelzählung.
-- **Der Rest ließe sich nur raten.** Die Differenz „Anlagensumme minus gemessene Erzeuger" auf die
-  übrigen zu verteilen, wäre eine kWp-Schätzung mit dem Aussehen einer Messung — dieselbe Klasse,
-  die der Absatz „Keine kWp-Verteilung" oben ausschließt.
+1. Liefern **alle** am Tag aktiven Erzeuger über den ganzen Tag einen eigenen Zählerwert, gilt
+   ihre Summe. Der Anlagen-Zählerstand zählt dann nicht mit.
+2. Sonst trägt der **Anlagen-Zählerstand** den Tag — und auf der Tagesebene wird er über
+   `resolve_pv_je_modul` in die Erzeuger **aufgelöst**: gemessene behalten ihren Wert, die übrigen
+   bekommen den kWp-gewichteten Anteil am Rest und tragen in `source_provenance` die Marke
+   „abgeleitet".
+3. Gibt es keinen Anlagen-Zählerstand, bleibt es bei den gemessenen Erzeugern.
 
-**Folge für die Praxis:** ein *halber* Umbau macht die Tageswerte schlechter, nicht besser. Wer
-einem von drei Strings einen eigenen Zähler zuordnet, verliert die anderen beiden auf der
-Tagesebene. Die Zuordnungs-Fläche und der Daten-Checker sagen das an der Zeile
-(`datenquellen_validierung.finde_aggregat_teilweise_verdraengt`, WARNING nur in dieser
-Teilbelegung — nicht, wenn der Summenzähler die ganze Anlage trägt). **Die Monatswerte sind in
-allen drei Lagen vollständig.**
+⚠ **Auf der Stundenebene wird NICHT verteilt** — dort wählt die Präzedenz nur die Summe. Über
+einen Tag mittelt sich der Ost/West-Unterschied der kWp-Gewichtung weitgehend aus, über eine
+Stunde nicht: Ost und West bekämen um 8 Uhr formgleiche Kurven. Was sich stündlich nicht zuordnen
+lässt, steht im Tagesverlauf als **„PV (übrige)"**.
+
+⛔ **Was unverändert gilt: nie beides zusammen.** `komponenten_kwh` hat einen flachen Keyspace, und
+die Tages-PV ist die Summe aller `pv_`/`bkw_`-Schlüssel (`summe_pv_bkw_kwh`). Stünde `pv_gesamt`
+neben `pv_7`, wäre die Anlagensumme neben ihrem eigenen Summanden gebucht — Doppelzählung. Der
+Unterschied zur alten Regel ist *auflösen* statt *verdrängen*, nicht *addieren*.
+
+> ⛔ **Hier stand vom 2026-08-07 bis 2026-09-04 „alles-oder-nichts":** der Anlagen-Zählerstand
+> zähle nur mit, solange **kein** Erzeuger einen eigenen kWh-Zähler *trage*; ein halber Umbau
+> mache die Tageswerte schlechter, und die Zuordnungs-Fläche warne davor. **Die Bedingung fragte
+> die Zuordnung statt die Daten**, und daran brachen zwei Lagen: Wer Zähler zuordnet, die für die
+> früheren Stunden nichts liefern, verlor deren gemessene PV (der gemeldete Fall #406 — 21 Stunden
+> an einem Tag); und wer nur einen Teil seiner Erzeuger bezählte, bekam eine dauerhaft zu kleine
+> Anlagensumme. Die damalige Warnung
+> (`datenquellen_validierung.finde_aggregat_teilweise_verdraengt`) ist mit dem Fix **ersatzlos
+> entfallen** — sie meldete einen Zustand, den es nicht mehr gibt, und den gemeldeten Fall hat sie
+> ohnehin nicht erreicht (dort trugen **alle** Strings einen Zähler).
+
+**Die Monatswerte sind in allen Lagen vollständig** — dort galt die Auflösung schon immer.
 
 Bleibt gar kein kumulativer PV-Zähler übrig — weder je Erzeuger noch für die Anlage —, sagt die
 Tagessicht das, statt zu rechnen: `TagesBilanz.pv_erfasst` trennt
@@ -2684,6 +2727,31 @@ Performance_Ratio = PV_Ertrag_kWh / Theoretisch_kWh
 ```
 
 Bei Multi-String-Anlagen werden GTI-Werte pro Orientierungsgruppe parallel abgerufen und kWp-gewichtet kombiniert (analog Live-Wetter-Pfad). Ohne gemappte PV-Module bleibt PR bewusst `None` statt einen verzerrten GHI-Wert zu melden.
+
+> ⭐ **Der Nenner steht seit v4.0.39 auch in der Zeile — vorher nur in der Rechnung.** Die Aufstellung
+> der Tages-Aggregate oben führt `GTI_Summe_Wh_m2` seit v3.20.0, **gespeichert wurde die Größe aber
+> nie**: `aggregate_day` bildete sie, teilte durch sie und verwarf sie wieder. Angezeigt wurde
+> daneben `Strahlung_Summe_Wh_m2`, also die **horizontale** Globalstrahlung — unter der Formel
+> „Ertrag ÷ (Einstrahlung × kWp)", in der sie nicht vorkommt. Wer die Kennzahl nachrechnete,
+> bekam damit zwangsläufig eine andere Zahl, und der Widerspruch war nicht auflösbar.
+> Seit v4.0.39 trägt `TagesZusammenfassung` die Spalte `gti_summe_wh_m2`, und *Cockpit → Tag*
+> nennt sie beim Namen („bei X kWh/m² auf der Modulfläche").
+>
+> ⚠ **Rückwärts bleibt sie leer.** Für Tage vor der Spalte steht dort `NULL` — „nicht erhoben",
+> nicht 0. Die Anzeige lässt die Bezugsgröße dann weg; die horizontale Summe ersatzweise
+> einzusetzen wäre derselbe Fehler mit neuem Etikett. Wer sie für ältere Tage haben will, löst in
+> der Reparatur-Werkbank (*Einstellungen → Daten*) „Mehrere Tage neu aggregieren" für den
+> Zeitraum aus.
+
+> ⭐ **Der Nenner ist an den jüngsten Tagen vorläufig — und wird seit v4.0.39 nachgezogen.** Die
+> Einstrahlung der letzten fünf Tage kommt vom **Forecast**-Endpunkt: das Reanalyse-Archiv (ERA5)
+> hinkt der Echtzeit zwei bis fünf Tage nach. Der Forecast-Wert ist im Mittel gut (Median-Faktor
+> 1,00 über 91 Tage gemessen), an **bewölkten** Tagen aber deutlich zu klein — gemessen bis Faktor
+> **8,7**. Eine zu kleine Einstrahlung macht den Nenner zu klein und die PR zu groß; genau daraus
+> entstand ein „PV-Doppelerfassungs"-Verdacht ohne Doppelerfassung. Seit v4.0.39 aggregiert eedc
+> nachts den einen Tag neu, der die Archiv-Grenze gerade passiert hat, und ersetzt den vorläufigen
+> Wert dabei durch den endgültigen. **Für die letzten fünf Tage bleibt er vorläufig** — das lässt
+> sich nicht abkürzen, das Archiv hat diese Tage noch nicht.
 
 > **Validation Winterborn 2025-12-28:** GHI 1317 Wh/m² vs. GTI Süd35° 3358 Wh/m² (Faktor 2.55×). PR vorher 2.16 (physikalisch unmöglich), nachher 0.85 (plausibel für einen kalten Wintertag). Betrifft historische `TagesZusammenfassung.performance_ratio`, `MonatsAuswertungResponse.performance_ratio_avg` und die PR-Spalte im PDF-Jahresbericht — **nach Update einmalig „Verlauf nachberechnen + überschreiben" auslösen**. PV-kWh-Werte selbst bleiben unverändert.
 

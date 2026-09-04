@@ -36,10 +36,24 @@ export interface WerteZeile {
    * Warum eine Metrik **keinen** Wert hat (S3: „nicht ‚—', sondern der Grund").
    *
    * Optional und pro Metrik: Nur wo der Layer eine Kennzahl bewusst verweigert,
-   * steht hier ein Satz — heute die Arbeitszahl (R2/ADR-002/P12). Die Tabelle
-   * haengt ihn als Tooltip an die Zelle; eine sichtbare Zeile hat eine
-   * Tabellenzelle nicht, und ein leeres „—" ist die haeufigste Beschwerde
-   * dieser Flaeche.
+   * steht hier ein Satz — heute die Arbeitszahl (R2/ADR-002/P12).
+   *
+   * ⛔ Hier stand bis 2026-09-04: „Die Tabelle haengt ihn als Tooltip an die
+   * Zelle; eine sichtbare Zeile hat eine Tabellenzelle nicht." Der zweite
+   * Halbsatz war eine Behauptung, kein Befund (**N-374**): Die Zelle hat keine
+   * sichtbare Zeile, die *Tabelle* sehr wohl — `WerteTabelle` traegt den
+   * Fuss-Grund seit jeher genau so darunter. Der Grund steht deshalb jetzt
+   * sichtbar unter der Tabelle; der Tooltip an der Zelle bleibt als Zugabe fuer
+   * den Desktop. Warum das noetig war: ein Tooltip verlangt, dass man ihn SUCHT
+   * — auf dem Telefon zeigt nichts darauf hin, dass hinter dem „—" etwas steht
+   * (das Info-Icon von `FormelTooltip` traegt `hidden sm:`). Ein Grund neben der
+   * Zahl verlangt das nicht, und ein nacktes „—" ist die haeufigste Beschwerde
+   * dieser Flaeche (S3).
+   * ⛔ Hier stand bis 2026-09-04 als erster Grund: „ein natives `title=` hat auf
+   * dem Telefon keine Entsprechung". **Das war falsch** (**N-390**, gemessen):
+   * `App.tsx` ruft `useTouchTitleTooltip` auf — einen app-globalen Touch-Ersatz
+   * fuer `title=`/`data-title`. Ich hatte eine Abwesenheit behauptet, statt sie
+   * zu messen. Der Bau bleibt richtig, seine Begruendung ist es jetzt auch.
    */
   grund?: (key: string) => string | null
 }

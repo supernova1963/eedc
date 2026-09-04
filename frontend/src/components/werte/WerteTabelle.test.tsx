@@ -47,7 +47,7 @@ function tw(datum: string, over: Partial<TagWerte> = {}): TagWerte {
     peak_netzbezug_kw: 1.1, peak_einspeisung_kw: 4.0, grundlast_kw: 0.38,
     performance_ratio: 0.85, batterie_vollzyklen: 0.4,
     temperatur_min_c: 10, temperatur_max_c: 22,
-    strahlung_summe_wh_m2: 5000, boersenpreis_avg_cent: 9.5,
+    strahlung_summe_wh_m2: 5000, gti_summe_wh_m2: null, boersenpreis_avg_cent: 9.5,
     boersenpreis_min_cent: -1, negative_preis_stunden: 1,
     einspeisung_neg_preis_kwh: 0,
     ...over,
@@ -384,5 +384,67 @@ describe('WerteTabelle', () => {
       expect(csvFuss[2]).toBe(100)
       expect(csvFuss[3]).toBe(200)
     })
+  })
+})
+
+/**
+ * N-374 — der Grund zu einer gesperrten Kennzahl steht SICHTBAR unter der Tabelle.
+ *
+ * ⚑ Was diese Probe misst, und warum die Zusicherung auf die HÖHE zielt statt auf
+ * eine Symmetrie: Bis zum 2026-09-04 trug die Zelle den Grund allein in einem
+ * nativen `title=`. Der Wert war damit korrekt beim Anwender „angekommen" — im
+ * Sinne des DOM. Erreichbar war er trotzdem nur, wenn man auf den Gedanken kam,
+ * die Zelle anzufassen: nichts wies darauf hin, dass hinter dem „—" etwas steht
+ * (das Info-Icon der Haus-Tooltips trägt `hidden sm:`, `ui/FormelTooltip.tsx:92`).
+ * Eine Probe, die nur geprüft hätte, DASS der Grund irgendwo im Markup vorkommt,
+ * wäre über beide Zustände grün gewesen — deshalb prüft diese hier ausdrücklich
+ * einen **Textknoten** (`getByText` sieht Attribute nicht) und zusätzlich, dass
+ * die Zelle selbst weiterhin nur das „—" trägt.
+ *
+ * ⛔ **Berichtigung 2026-09-04 (N-390):** Hier stand „Auf dem Telefon gibt es für
+ * `title=` keine Entsprechung." Das ist falsch — `App.tsx` ruft
+ * `useTouchTitleTooltip` auf, einen app-globalen Touch-Ersatz. Der Befund oben
+ * hält ohne diesen Satz; er beruhte nie auf ihm, sondern auf der Auffindbarkeit.
+ *
+ * Gegenprobe in derselben Datei: eine Zeile mit gebildeter Kennzahl darf den
+ * Satz NICHT erzeugen, sonst erklärt die Tabelle etwas, das gar nicht eintritt.
+ */
+describe('WerteTabelle — gesperrte Kennzahl nennt ihren Grund sichtbar (N-374)', () => {
+  beforeEach(() => localStorage.clear())
+
+  function mitCopSpalte(rows: ReturnType<typeof monatsZeile>[]) {
+    render(<WerteTabelle rows={rows} granularitaet="monat" />)
+    fireEvent.click(screen.getByRole('button', { name: /Spalten/ }))
+    const label = screen.getByText('WP COP').closest('label')!
+    fireEvent.click(within(label).getByRole('checkbox'))
+  }
+
+  const GRUND = 'kein Wärmemengenzähler zugeordnet'
+
+  it('nennt den Grund als sichtbaren Text unter der Tabelle', () => {
+    mitCopSpalte([
+      mz(1, 2025, { wp_cop: null, wp_cop_grund: GRUND }),
+      mz(2, 2025, { wp_cop: null, wp_cop_grund: GRUND }),
+    ].map(monatsZeile))
+
+    // Sichtbarer Textknoten — ein `title=` würde hier NICHT gefunden.
+    const zeile = screen.getByText(`WP COP: ${GRUND}`)
+    expect(zeile).toBeInTheDocument()
+    // Und er steht genau EINMAL, obwohl beide Monate ihn tragen: derselbe Satz
+    // je Zeile wäre Rauschen statt Auskunft.
+    expect(screen.getAllByText(`WP COP: ${GRUND}`)).toHaveLength(1)
+  })
+
+  it('lässt die Zelle selbst beim „—" — der Grund ersetzt den Wert nicht', () => {
+    mitCopSpalte([mz(1, 2025, { wp_cop: null, wp_cop_grund: GRUND })].map(monatsZeile))
+    const zellen = Array.from(document.querySelectorAll('tbody td')).map((td) => td.textContent?.trim())
+    expect(zellen).toContain('—')
+    // Der lange Grundtext gehört NICHT in die Zelle (Spaltenbreite).
+    expect(zellen.some((t) => t?.includes(GRUND))).toBe(false)
+  })
+
+  it('Gegenprobe: eine gebildete Kennzahl erzeugt keinen Grund-Satz', () => {
+    mitCopSpalte([mz(1, 2025, { wp_cop: 3.4, wp_cop_grund: GRUND })].map(monatsZeile))
+    expect(screen.queryByText(new RegExp(GRUND))).not.toBeInTheDocument()
   })
 })
