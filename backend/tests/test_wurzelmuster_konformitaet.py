@@ -2015,6 +2015,10 @@ P10_SCHREIBEN_IMPORT_CHECKER: frozenset[str] = frozenset({
     "backend/api/routes/monatsabschluss/views.py::get_monatsabschluss",
     "backend/api/routes/monatsabschluss/wizard.py::save_monatsabschluss",
     "backend/api/routes/monatsdaten.py::_save_investitionen_monatsdaten",
+    # N-393 (05.09.2026): LÖSCHPFAD. Entfernt einen Sub-Key aus `verbrauch_daten`
+    # in Monaten, in denen das Gerät die Größe nicht führt — liest die Zeilen nur,
+    # um zu wissen, WO der Schlüssel steht; keine Monatsgröße wird gebildet.
+    "backend/api/routes/monatsdaten.py::delete_feldwert_nicht_gefuehrt",
     "backend/services/import_writer.py::upsert_investition_monatsdaten_with_provenance",
     # Zählt, wie viele Werte der Überschreiben-Haken ersetzen würde (12.08.,
     # #349). Der Gegenstand ist die **Provenance** der Zeilen, nicht ihr
@@ -2042,6 +2046,11 @@ P10_SCHREIBEN_IMPORT_CHECKER: frozenset[str] = frozenset({
     "backend/services/monat_loeschen.py::_geraetewerte_des_monats",
     # Daten-Checker / Vorschläge: lesen EINEN Feldwert, um ihn zu prüfen.
     "backend/services/vorschlag_service.py::_get_feld_wert",
+    # B1 (05.09.2026): derselbe Erfassungspfad, dieselbe Zeile — liest die
+    # `verbrauch_daten` EINES Geräts für EINEN Monat, um die Strom-Basis des
+    # Wärme-Vorschlags zu bestimmen (welche Ströme sind belegt?). Bildet keine
+    # Monatsgröße; die Regel dazu sitzt im Layer (`waerme_vorschlag.py`).
+    "backend/services/vorschlag_service.py::_get_imd_daten",
     # F-60: fragt, OB überhaupt irgendeine Zeile der Klimaanlagen einen
     # gemessenen Betriebsart-Strom mitbringt — eine Ja/Nein-Auskunft über die
     # Datenlage, keine Monatsgröße. Es wird nichts summiert, nichts über die
@@ -2469,6 +2478,12 @@ P11_AUSNAHMEN: frozenset[str] = frozenset({
     # UNGEFILTERTE Menge, sonst finden die Modul-Kinder die AC-Grenze ihres
     # Balkonkraftwerks nicht mehr (s. dortiger Docstring).
     "backend/api/routes/live_wetter.py::get_live_wetter",
+    # Dieselbe Bauform wie `get_live_wetter` (05.09.2026, #395 / N-388): laden
+    # die Menge und reichen sie an `_get_pv_orientierungsgruppen` weiter —
+    # der Export-Sensor für die Verbrauchsprognose und der Wetter-Nachzug des
+    # Altbestands. `orientierungs_gruppen` trägt den Selektor.
+    "backend/services/verbrauchsprognose_heute.py::verbrauchsprognose_heute",
+    "backend/services/energie_profil/archiv_nachzug.py::wetter_nachziehen_bereich",
     "backend/api/routes/energie_profil/views.py::get_tagesprognose",
     "backend/services/prognose_kanon.py::pv_invs_im_horizont",
     # ⭐ N-386 (2026-09-04): dieselbe Kategorie, aber aus dem ZEITGRUND, den
@@ -2774,3 +2789,198 @@ def test_p12_arbeitszahl_nur_im_layer():
         "Ein Quotient, der KEINE Arbeitszahl ist, gehört mit Klartext-"
         "Begründung in P12_BASELINE_AUSNAHMEN."
     )
+
+
+# ============================================================================
+# P13 — Die Bauart einer Wärmepumpe entscheidet keine Größe (SOLL Wärme/Klima R1)
+# ============================================================================
+#
+# **Die Regel** (`plans/soll-waerme-klima.md` §3.2a, R1, 26.08.2026): *Angeboten
+# wird jede Größe, die das Gerät liefern kann — und was es liefern kann, sagt der
+# zugeordnete Zähler, nicht seine Bauart.* Es gibt **keine** bauartabhängige
+# Feldliste. Die Bauart (`wp_art`) darf drei Dinge: **vorschlagen** (Vorbelegung,
+# Beschriftung, weiche Herabstufung — „die Bauart schlägt nur vor", `cf3b0a16`),
+# eine **Kennzahl abgrenzen** (zwei Bauarten ergeben keine gemeinsame Arbeitszahl,
+# E1/§5/R2) und als **Stammdatum** reisen. Sie darf nie entscheiden, welche Größe
+# gemessen, gefordert oder gezeigt wird — das ist die Bauform, an der W-1, W-2,
+# W-12 und N-304/N-379 gescheitert sind, jedes Mal mit demselben Muster:
+# *dieselbe Anlage, zwei Flächen, gegenteilige Aussage.*
+#
+# **Warum ein Wächter und keine Regression.** Zwischen 20.08. und 05.09.2026 kamen
+# **sechs** neue Bauart-Leser dazu, im Schnitt einer alle drei Tage. Der vom
+# 03.09. (`b9807ac4`) entschied die Warmwasser-**Achse** nach Bauart — zwei Tage
+# später (`67ddcc54`, #404) wurde genau das auf Beleglage umgebaut, weil der
+# Maintainer fragte „passt das ins Konzept?". Zwei Regressionen auf benannte
+# Stellen (`test_i5c_…`, `test_klima_die_bauart_unterdrueckt_die_hinweise_NICHT_mehr`)
+# haben ihn nicht gefangen; sie fangen die Stelle nicht, die es heute noch nicht
+# gibt. Dieser Wächter stellt die Frage als roten Test: **jede Funktion, die die
+# Bauart liest, steht klassifiziert in `P13_AUSNAHMEN` — mit ihrer Gruppe.**
+#
+# **Was er erkennt** (`_p13_bauart_leser`): Aufrufe von `ist_luft_luft_waermepumpe`
+# / `ist_brauchwasser_waermepumpe`, den Zugriff `PARAM_WAERMEPUMPE["WP_ART"]`,
+# das Attribut bzw. Keyword `bauarten_gemischt` und die Literale `"wp_art"`,
+# `"luft_luft"`, `"luft_wasser"`, `"brauchwasser"`. Funktions-granular wie P10/P11.
+#
+# **Was er NICHT sieht** (gehört in die „gesichert durch"-Spalte von ADR-002):
+# Semantik. Ob ein neuer Leser Gruppe 2 oder ein R1-Verstoß ist, entscheidet, wer
+# ihn einträgt — der Wächter erzwingt nur, dass die Frage gestellt wird. Und einen
+# Leser über einen Alias (`params.get(art_key)`) — dieselbe Grenze wie P3-a/`getattr`.
+#
+# ⚠ **Gruppe 4 (`P13_NOCH_NICHT_GEMESSEN`) ist der offene Rest:** vier
+# Daten-Checker-Stellen, die nach Bauart **fordern oder schweigen**, statt den
+# Zähler zu fragen. Sie werden im Matrix-Durchgang (Vorlage B, Paket Daten-
+# Checker) einzeln gemessen — Konformitätsfehler oder erlaubte Herabstufung. Die
+# Liste hat eine Obergrenze und wird danach leer gehalten (das P10-Vorgehen).
+
+_P13_HELFER: frozenset[str] = frozenset({
+    "ist_luft_luft_waermepumpe",
+    "ist_brauchwasser_waermepumpe",
+})
+_P13_ATTRIBUTE: frozenset[str] = frozenset({"bauarten_gemischt"})
+_P13_LITERALE: frozenset[str] = frozenset({
+    "wp_art", "luft_luft", "luft_wasser", "brauchwasser",
+})
+
+#: Klassifizierte Leser, Form `modul.py::funktion` (Modulebene: `<modul>`).
+P13_AUSNAHMEN: frozenset[str] = frozenset({
+    # ── 0. Definition / Registry — hier ENTSTEHT die Bauart bzw. ihre Bedingung ─
+    "backend/core/investition_parameter.py::<modul>",             # Default luft_wasser
+    "backend/core/investition_parameter.py::ist_luft_luft_waermepumpe",
+    "backend/core/investition_parameter.py::ist_brauchwasser_waermepumpe",
+    "backend/core/field_definitions.py::<modul>",                 # `bedingung`-Literale (N-304, B5)
+    "backend/core/field_definitions.py::_bedingungs_werte",       # der EINE Auswerter
+    "backend/core/field_definitions.py::_betriebsart_felder",     # weiche Bedingung je Innengerät
+    "backend/core/betriebsmodus.py::<modul>",                     # Modus-Wort „brauchwasser" → Funktion Warmwasser
+
+    # ── 1. Kennzahl-Abgrenzung (E1 · §5 · R2): zwei Bauarten, keine gemeinsame Zahl ─
+    # Die Bauart bestimmt hier die ABGRENZUNG einer Kennzahl, nicht das
+    # Feldangebot. `bauarten_gemischt` kommt aus den Stammdaten (monats_fakten)
+    # und wird an `abgrenzungs_grund` gereicht — P12 hält, dass daraus nie eine
+    # rohe Division wird.
+    "backend/services/monats_fakten.py::falte",                   # zählt luft_luft/luft_wasser je Block
+    "backend/api/routes/energie_profil/views.py::get_tag_detail", # dieselbe Frage je Tag
+    "backend/api/routes/aktueller_monat.py::get_aktueller_monat",
+    "backend/api/routes/cockpit/komponenten.py::get_komponenten_zeitreihe",
+    "backend/api/routes/cockpit/uebersicht.py::get_cockpit_uebersicht",
+    "backend/api/routes/monatsdaten.py::list_monatsdaten_aggregiert",
+    "backend/services/pdf/builders/jahresbericht.py::build_jahresbericht_context",
+    "backend/services/community_service.py::_monatswert",         # Flag im Payload (N-367)
+
+    # ── 2. Vorschlag: Vorbelegung · Beschriftung · weiche Herabstufung ────────
+    "backend/core/field_definitions.py::get_feld_bedarf",         # Pflicht → optional, nie weg (N-86)
+    "backend/api/routes/investitionen/crud.py::_wp_nicht_bewertbar",  # Default-Bedarfe nicht vorbelegt (N-88/F2b)
+
+    # ── 3. Stammdatum: die Bauart reist als Eigenschaft ──────────────────────
+    "backend/services/community_service.py::prepare_community_data",
+
+    # ── 2b. Hinweis-Auswahl: die Bauart schlägt vor, die Beleglage ergänzt ────
+    # B2 (05.09.2026): `_check_klima_modus_sensor` bietet den Modus-Hinweis an
+    # Geräten an, die heizen UND kühlen — an einer Split-Klimaanlage ist das der
+    # Regelfall (Bauart als VORSCHLAG, keine Forderung: INFO, freiwillig), und
+    # zusätzlich an jedem Gerät mit zugeordneter oder gepflegter Kühl-Spur
+    # (Beleglage, bauartblind). Die Bauart entscheidet hier kein Feld und keine
+    # Erwartung, nur ob ein Angebot gezeigt wird.
+    "backend/services/daten_checker/datenquelle.py::_check_klima_modus_sensor",
+})
+
+#: Gruppe 4 — nach Bauart FORDERN oder SCHWEIGEN, statt den Zähler zu fragen.
+#: R1-Verdacht, einzeln zu messen (Vorlage B, Paket Daten-Checker). Die Liste
+#: darf nur schrumpfen; `P13_NOCH_NICHT_GEMESSEN_MAX` ist ihr heutiger Stand.
+P13_NOCH_NICHT_GEMESSEN: frozenset[str] = frozenset()
+# ✅ Geleert mit B2 (05.09.2026, Matrix-Durchgang Paket Daten-Checker): Die vier
+# Stellen fragen jetzt die REGISTRY (`feld_urteil` · `feld_herabgestuft` ·
+# `pflicht_felder_am_geraet` · `get_feld_bedarf` · `groesse_gibt_es_am_geraet`)
+# statt der Bauart — Erwartung, Schweigen und Label kommen damit aus derselben
+# Quelle wie die Zuordnungs-Fläche und der Monatsabschluss. Der Modus-Hinweis
+# (`_check_klima_modus_sensor`) liest die Bauart weiter, als VORSCHLAG neben der
+# Kühl-Beleglage — klassifiziert in Gruppe 2b. Die Liste bleibt leer; die
+# Obergrenze steht auf 0 und hält sie leer (das P10-Vorgehen).
+P13_NOCH_NICHT_GEMESSEN_MAX = 0
+
+
+def _p13_bauart_leser() -> dict[str, set[str]]:
+    """`modul.py::funktion` → Formen, in denen die Bauart dort gelesen wird."""
+    treffer: dict[str, set[str]] = {}
+    for pfad, baum in _quelldateien():
+        modul = f"backend/{pfad.relative_to(_BACKEND).as_posix()}"
+        stapel: list[str] = []
+
+        def form(knoten: ast.AST) -> Optional[str]:
+            if isinstance(knoten, ast.Call) and getattr(knoten.func, "id", None) in _P13_HELFER:
+                return f"aufruf:{knoten.func.id}"
+            if isinstance(knoten, ast.Attribute) and knoten.attr in _P13_ATTRIBUTE:
+                return f"attribut:{knoten.attr}"
+            if isinstance(knoten, ast.keyword) and knoten.arg in _P13_ATTRIBUTE:
+                return f"keyword:{knoten.arg}"
+            if (
+                isinstance(knoten, ast.Subscript)
+                and isinstance(knoten.value, ast.Name)
+                and knoten.value.id == "PARAM_WAERMEPUMPE"
+                and isinstance(knoten.slice, ast.Constant)
+                and knoten.slice.value == "WP_ART"
+            ):
+                return "param:WP_ART"
+            if isinstance(knoten, ast.Constant) and knoten.value in _P13_LITERALE:
+                return f"literal:{knoten.value}"
+            return None
+
+        def besuche(knoten: ast.AST) -> None:
+            if isinstance(knoten, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                stapel.append(knoten.name)
+                for kind in ast.iter_child_nodes(knoten):
+                    besuche(kind)
+                stapel.pop()
+                return
+            f = form(knoten)
+            if f:
+                schluessel = f"{modul}::{stapel[-1] if stapel else '<modul>'}"
+                treffer.setdefault(schluessel, set()).add(f)
+            for kind in ast.iter_child_nodes(knoten):
+                besuche(kind)
+
+        besuche(baum)
+    return treffer
+
+
+def test_p13_bauart_leser_sind_klassifiziert():
+    """Baumweit: kein neuer Leser der Bauart ohne Gruppe (R1)."""
+    leser = _p13_bauart_leser()
+    offen = sorted(
+        f"{schluessel} ({', '.join(sorted(formen))})"
+        for schluessel, formen in leser.items()
+        if schluessel not in P13_AUSNAHMEN and schluessel not in P13_NOCH_NICHT_GEMESSEN
+    )
+    assert offen == [], (
+        f"{len(offen)} Funktionen lesen die Bauart einer Wärmepumpe ohne Klassifikation: {offen}\n"
+        "SOLL Wärme/Klima §3.2a, R1: was ein Gerät liefern kann, sagt der zugeordnete "
+        "Zähler, nicht seine Bauart. Die Bauart darf VORSCHLAGEN (Vorbelegung, "
+        "Beschriftung, weiche Herabstufung — Gruppe 2), eine KENNZAHL ABGRENZEN "
+        "(zwei Bauarten, keine gemeinsame Zahl — Gruppe 1) oder als STAMMDATUM "
+        "reisen (Gruppe 3). Sie entscheidet nie, welche Größe gemessen, gefordert "
+        "oder gezeigt wird — dafür gibt es die Beleglage (#404: ein Wert ODER ein "
+        "zugeordneter Zähler). Eintragen in P13_AUSNAHMEN mit Gruppe und Grund; "
+        "wer nach Bauart fordert oder schweigt, gehört mit Fund-ID nach "
+        "P13_NOCH_NICHT_GEMESSEN — und die Liste darf nur schrumpfen."
+    )
+
+
+def test_p13_ausnahmen_sind_alle_erreichbar():
+    """Kein Eintrag zeigt auf eine Stelle, die die Bauart nicht mehr liest.
+
+    Sonst deckt die Liste eines Tages Code, den niemand geprüft hat
+    (dieselbe Probe wie bei P11).
+    """
+    vorhanden = set(_p13_bauart_leser())
+    tot = sorted((P13_AUSNAHMEN | P13_NOCH_NICHT_GEMESSEN) - vorhanden)
+    assert tot == [], (
+        f"P13 nennt Stellen, die die Bauart nicht mehr lesen: {tot} — Eintrag löschen."
+    )
+
+
+def test_p13_offener_rest_schrumpft_nur():
+    """Gruppe 4 hat eine Obergrenze und wächst nicht — der Matrix-Durchgang leert sie."""
+    assert len(P13_NOCH_NICHT_GEMESSEN) <= P13_NOCH_NICHT_GEMESSEN_MAX, (
+        "Ein neuer Leser, der nach Bauart fordert oder schweigt, ist kein Fall für "
+        "diese Liste, sondern ein R1-Verstoß — an die Beleglage hängen (#404)."
+    )
+    assert not (P13_NOCH_NICHT_GEMESSEN & P13_AUSNAHMEN), "eine Stelle, eine Gruppe"

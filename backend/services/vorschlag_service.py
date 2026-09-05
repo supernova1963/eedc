@@ -19,6 +19,12 @@ from sqlalchemy import select, and_
 
 from backend.models.monatsdaten import Monatsdaten
 from backend.models.investition import Investition, InvestitionMonatsdaten
+from backend.core.field_definitions import ist_stand_feld
+from backend.core.berechnungen.modus_split import REGEL_JAZ_VORSCHLAG
+from backend.core.berechnungen.waerme_vorschlag import (
+    WAERME_FELDER,
+    strom_basis_fuer_waerme_vorschlag,
+)
 
 
 class VorschlagQuelle(str, Enum):
@@ -99,41 +105,49 @@ class VorschlagService:
         """
         vorschlaege: list[Vorschlag] = []
 
-        # 1. Vormonat
-        vormonat = await self._get_vormonat_wert(
-            anlage_id, feld, jahr, monat, investition_id
-        )
-        if vormonat is not None:
-            vorschlaege.append(Vorschlag(
-                wert=vormonat,
-                quelle=VorschlagQuelle.VORMONAT,
-                konfidenz=80,
-                beschreibung=f"Wert vom Vormonat",
-            ))
+        # ⛔ Ein STAND hat keine Schätzung aus der Historie (#377 Zählerstand,
+        # #407 Tachostand): der Vormonat ist sein ANFANG, nicht sein Wert, ein
+        # Vorjahr sagt nichts, ein Mittelwert ist Unsinn. Bis 05.09.2026 stand
+        # der Vormonats-Stand hier als Vorschlag mit Konfidenz 80 — im Formular
+        # vorbelegt, hätte ein Klick eine Differenz von 0 gespeichert. Für einen
+        # Stand gibt es genau zwei Quellen: den mitgeschriebenen Sensorstand
+        # (`views.py`, Quelle ZAEHLERSTAND) und die Hand.
+        if not ist_stand_feld(feld):
+            # 1. Vormonat
+            vormonat = await self._get_vormonat_wert(
+                anlage_id, feld, jahr, monat, investition_id
+            )
+            if vormonat is not None:
+                vorschlaege.append(Vorschlag(
+                    wert=vormonat,
+                    quelle=VorschlagQuelle.VORMONAT,
+                    konfidenz=80,
+                    beschreibung=f"Wert vom Vormonat",
+                ))
 
-        # 2. Vorjahr gleicher Monat
-        vorjahr = await self._get_vorjahr_wert(
-            anlage_id, feld, jahr, monat, investition_id
-        )
-        if vorjahr is not None:
-            vorschlaege.append(Vorschlag(
-                wert=vorjahr,
-                quelle=VorschlagQuelle.VORJAHR,
-                konfidenz=70,
-                beschreibung=f"Wert vom {monat:02d}/{jahr-1}",
-            ))
+            # 2. Vorjahr gleicher Monat
+            vorjahr = await self._get_vorjahr_wert(
+                anlage_id, feld, jahr, monat, investition_id
+            )
+            if vorjahr is not None:
+                vorschlaege.append(Vorschlag(
+                    wert=vorjahr,
+                    quelle=VorschlagQuelle.VORJAHR,
+                    konfidenz=70,
+                    beschreibung=f"Wert vom {monat:02d}/{jahr-1}",
+                ))
 
-        # 3. Durchschnitt letzte 12 Monate
-        durchschnitt = await self._get_durchschnitt(
-            anlage_id, feld, jahr, monat, investition_id
-        )
-        if durchschnitt is not None:
-            vorschlaege.append(Vorschlag(
-                wert=durchschnitt,
-                quelle=VorschlagQuelle.DURCHSCHNITT,
-                konfidenz=50,
-                beschreibung="Ø letzte 12 Monate",
-            ))
+            # 3. Durchschnitt letzte 12 Monate
+            durchschnitt = await self._get_durchschnitt(
+                anlage_id, feld, jahr, monat, investition_id
+            )
+            if durchschnitt is not None:
+                vorschlaege.append(Vorschlag(
+                    wert=durchschnitt,
+                    quelle=VorschlagQuelle.DURCHSCHNITT,
+                    konfidenz=50,
+                    beschreibung="Ø letzte 12 Monate",
+                ))
 
         # 4. Berechnungen für spezielle Felder
         if investition_id:
@@ -146,6 +160,22 @@ class VorschlagService:
         vorschlaege.sort(key=lambda v: v.konfidenz, reverse=True)
 
         return vorschlaege
+
+    async def vormonat_wert(
+        self,
+        anlage_id: int,
+        feld: str,
+        jahr: int,
+        monat: int,
+        investition_id: Optional[int],
+    ) -> Optional[float]:
+        """Der gespeicherte Wert des Vormonats — für ein Stand-Feld sein ANFANG.
+
+        Öffentlich, weil der Monatsabschluss-Status ihn je Stand-Feld mitliefert
+        (`FeldStatus.stand_vormonat`, #407): der Client zeigt daraus die Differenz
+        live, während der Anwender den Stand tippt.
+        """
+        return await self._get_vormonat_wert(anlage_id, feld, jahr, monat, investition_id)
 
     async def _get_vormonat_wert(
         self,
@@ -210,6 +240,26 @@ class VorschlagService:
             return round(sum(werte) / len(werte), 2)
         return None
 
+    async def _get_imd_daten(
+        self, jahr: int, monat: int, investition_id: int,
+    ) -> dict:
+        """Die `verbrauch_daten` eines Geräts für diesen Monat — oder ``{}``.
+
+        Der Wärme-Vorschlag braucht die ganze Zeile (welche Ströme sind belegt?),
+        nicht einen einzelnen Wert; `_get_feld_wert` einmal je Kandidat zu rufen
+        wäre fünf Abfragen für eine Frage.
+        """
+        result = await self.db.execute(
+            select(InvestitionMonatsdaten)
+            .where(and_(
+                InvestitionMonatsdaten.investition_id == investition_id,
+                InvestitionMonatsdaten.jahr == jahr,
+                InvestitionMonatsdaten.monat == monat,
+            ))
+        )
+        imd = result.scalar_one_or_none()
+        return dict(imd.verbrauch_daten or {}) if imd else {}
+
     async def _get_feld_wert(
         self,
         anlage_id: int,
@@ -269,22 +319,20 @@ class VorschlagService:
 
         params = inv.parameter or {}
 
-        # Wärmepumpe: Heiz-/Warmwasserenergie aus COP berechnen
-        if inv.typ == "waermepumpe" and feld in ["heizenergie_kwh", "warmwasser_kwh"]:
-            getrennte_messung = params.get("getrennte_strommessung", False)
+        # Wärmepumpe: Heiz-/Warmwasserwärme als SCHÄTZUNG aus Strom × JAZ.
+        #
+        # B1 (05.09.2026, SOLL Wärme/Klima §6 F2–F5): Die Basis kommt aus dem
+        # Layer (`core/berechnungen/waerme_vorschlag.py`) — Strom DERSELBEN
+        # Funktion, sonst kein Vorschlag —, und der Vorschlag trägt die Marke
+        # `REGEL_JAZ_VORSCHLAG`, die der Client beim Übernehmen zurückmeldet.
+        # Bis dahin: beide Felder aus dem Gesamtstrom (Doppelzählung an F2),
+        # Kühlstrom als Heizwärme (dietmar1968, 889 kWh), keine Marke (die
+        # Arbeitszahl gab die gepflegte JAZ zurück).
+        if inv.typ == "waermepumpe" and feld in WAERME_FELDER:
+            daten = await self._get_imd_daten(jahr, monat, investition_id)
+            basis = strom_basis_fuer_waerme_vorschlag(feld, daten, params)
 
-            # Bei getrennter Strommessung: spezifischen Strom-Wert verwenden
-            if getrennte_messung:
-                strom_feld = "strom_heizen_kwh" if feld == "heizenergie_kwh" else "strom_warmwasser_kwh"
-                strom = await self._get_feld_wert(
-                    anlage_id, strom_feld, jahr, monat, investition_id
-                )
-            else:
-                strom = await self._get_feld_wert(
-                    anlage_id, "stromverbrauch_kwh", jahr, monat, investition_id
-                )
-
-            if strom is not None:
+            if basis is not None:
                 # Effizienz-Modus prüfen
                 modus = params.get("effizienz_modus", "gesamt_jaz")
 
@@ -303,15 +351,20 @@ class VorschlagService:
                         cop = params.get("cop_warmwasser")
 
                 if cop:
-                    berechneter_wert = round(strom * cop, 1)
-                    strom_label = "Strom Heizen" if getrennte_messung and feld == "heizenergie_kwh" else \
-                                  "Strom WW" if getrennte_messung else "Strom"
+                    berechneter_wert = round(basis.strom_kwh * cop, 1)
                     vorschlaege.append(Vorschlag(
                         wert=berechneter_wert,
                         quelle=VorschlagQuelle.BERECHNUNG,
                         konfidenz=60,
-                        beschreibung=f"Berechnet: {strom:.0f} kWh ({strom_label}) × COP {cop}",
-                        details={"stromverbrauch": strom, "cop": cop}
+                        beschreibung=(
+                            f"Geschätzt: {basis.strom_kwh:.0f} kWh ({basis.label}) "
+                            f"× JAZ {cop} — keine Messung"
+                        ),
+                        details={
+                            "stromverbrauch": basis.strom_kwh, "cop": cop,
+                            "basis": basis.label, "sprosse": basis.sprosse,
+                        },
+                        abgeleitet=REGEL_JAZ_VORSCHLAG,
                     ))
 
         # Wärmepumpe: Gesamtstrom als Summe der getrennten Werte
@@ -359,6 +412,27 @@ class VorschlagService:
             except Exception:  # noqa: BLE001 — Vorschlag ist optional, Wizard darf nie daran sterben
                 pass
 
+        # #407 (8ear): gefahrene km aus dem TACHOSTAND — Ende − Anfang, das
+        # Zählerstand-Modell aus #377. Nur wenn beide Stände da sind und der
+        # Zähler nicht rückwärts lief: sonst KEIN Vorschlag statt eines falschen
+        # (dieselbe Regel wie die MQTT-Reihe, #396). Konfidenz 95 — der Wert ist
+        # eine Rechnung auf zwei abgelesenen Zahlen, keine Schätzung.
+        if inv.typ == "e-auto" and feld == "km_gefahren":
+            stand = await self._get_feld_wert(
+                anlage_id, "km_stand", jahr, monat, investition_id
+            )
+            anfang = await self._get_vormonat_wert(
+                anlage_id, "km_stand", jahr, monat, investition_id
+            )
+            if stand is not None and anfang is not None and stand >= anfang:
+                vorschlaege.append(Vorschlag(
+                    wert=round(stand - anfang, 0),
+                    quelle=VorschlagQuelle.BERECHNUNG,
+                    konfidenz=95,
+                    beschreibung=f"Aus Tachostand: {stand:.0f} − {anfang:.0f} km (Vormonat)",
+                    details={"km_stand": stand, "km_stand_vormonat": anfang},
+                ))
+
         # E-Auto: km aus Jahresfahrleistung
         if inv.typ == "e-auto" and feld == "km_gefahren":
             jahresfahrleistung = params.get("jahresfahrleistung_km")
@@ -398,6 +472,25 @@ class VorschlagService:
             Liste von Warnungen
         """
         warnungen: list[PlausibilitaetsWarnung] = []
+
+        # 0. Ein STAND (#377/#407) hat genau eine Plausibilität: er läuft nicht
+        # rückwärts. Die Mengen-Prüfungen darunter (Vorjahr ±, Null-Wert) sind
+        # für ihn sinnlos — ein Tachostand liegt IMMER über dem Vorjahr.
+        if ist_stand_feld(feld):
+            anfang = await self._get_vormonat_wert(
+                anlage_id, feld, jahr, monat, investition_id
+            )
+            if anfang is not None and wert < anfang:
+                warnungen.append(PlausibilitaetsWarnung(
+                    typ="zu_niedrig",
+                    schwere="warning",
+                    meldung=(
+                        f"Stand liegt unter dem des Vormonats ({anfang:.0f}) — ein Zähler "
+                        "läuft nicht rückwärts. Ist das Gerät gewechselt, beginnt die Reihe hier neu."
+                    ),
+                    details={"vormonat_wert": anfang},
+                ))
+            return warnungen
 
         # 1. Negativwert prüfen (für Energiezähler)
         if wert < 0 and feld.endswith("_kwh"):

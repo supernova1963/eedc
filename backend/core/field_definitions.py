@@ -507,6 +507,36 @@ INVESTITION_FELDER: dict = {
             "csv_suffix": "km",
             "hinweis": "Gefahrene Kilometer im Monat — kumulativer km-Zähler (Auto-Integration/OBD) oder Tagessensor, sonst manuell.",
         },
+        # #407 (8ear): der TACHOSTAND als Handeingabe — das Zählerstand-Modell
+        # aus #377 auf das Auto übertragen: eedc führt den Stand, die einzige
+        # Rechnung darauf ist Ende − Anfang, und die landet als Vorschlag auf
+        # „Gefahrene km" (`vorschlag_service._get_berechnete_werte`). Das Feld
+        # darüber bleibt unverändert die MENGE — alle Leser (Effizienz, Benzin-
+        # Vergleich, HA-Export, Community) lesen weiter nur `km_gefahren`.
+        #
+        # `stand: True` — eine Bestandsgröße, keine Menge (kein Vormonats-/
+        # Durchschnitts-Vorschlag: ein Tachostand hat keinen Mittelwert, s.
+        # `ist_stand_feld`). `nur_manuell` — der SENSOR-Weg existiert schon:
+        # ein Kilometerstand-Sensor gehört auf `km_gefahren`, dort bildet die
+        # HA-Statistik bzw. die MQTT-Reihe (#396) die Differenz selbst. Ein
+        # zweiter Sensor-Slot für denselben Stand wäre Doppelerfassung.
+        # ⛔ Kein Parameter „Kilometerstand bei Anschaffung": der erste Monat
+        # hat keinen Anfang, und das Modell weist eine fehlende Anfangsmessung
+        # aus (`anfang_vollstaendig`), statt sie zu erfinden.
+        {
+            "feld": "km_stand", "label": "Tachostand", "einheit": "km",
+            "placeholder": "z.B. 45230",
+            "csv_suffix": "Tachostand",
+            "stand": True,
+            "nur_manuell": True,
+            "hinweis": (
+                "Kilometerstand am Monatsende, wie er im Auto steht. eedc rechnet "
+                "daraus die gefahrenen Kilometer (Stand dieses Monats minus Stand des "
+                "Vormonats) und schlägt sie oben vor. Nur für die Handeingabe — ein "
+                "Kilometerstand-Sensor gehört auf „Gefahrene km“, dort bildet eedc die "
+                "Differenz selbst."
+            ),
+        },
         {
             "feld": "verbrauch_kwh", "label": "Verbrauch", "einheit": "kWh",
             "placeholder": "z.B. 216",
@@ -1033,6 +1063,8 @@ FELD_BEDARF: dict[tuple[str, str], tuple[str, Optional[str]]] = {
     # Die Heimladungs-Felder sind bei vorhandener Wallbox verdrängt
     # (`bedingung_anlage: keine_wallbox`) — das wertet die Fläche selbst aus.
     ("e-auto", "km_gefahren"): ("pflicht", None),
+    # #407: der Stand ist Hilfe, nicht Pflicht — wer die Menge kennt, trägt sie ein.
+    ("e-auto", "km_stand"): ("optional", None),
     ("e-auto", "verbrauch_kwh"): ("optional", None),
     ("e-auto", "ladung_pv_kwh"): ("optional", None),
     ("e-auto", "ladung_netz_kwh"): ("optional", None),
@@ -1089,7 +1121,97 @@ def get_feld_bedarf(
     bedarf = FELD_BEDARF.get((typ, feld), FELD_BEDARF_DEFAULT)
     if (typ, feld) in KLIMA_OHNE_WAERMEMENGE and ist_luft_luft_waermepumpe(parameter):
         return ("optional", bedarf[1])
+    # B2 (05.09.2026, R1): **Ein erweitertes Feld ist nie Pflicht.** Die weiche
+    # Bedingung sagt „an diesem Gerät untypisch, aber möglich" — wer es
+    # gepflegt hat, meint es so; wer nicht, dem fehlt nichts. Bis dahin galt
+    # `strom_heizen_kwh` an einer Brauchwasser-Wärmepumpe als Pflicht, obwohl
+    # dieselbe Registry es hinter „Weitere Größen erfassen" stellte: dieselbe
+    # Anlage, zwei Aussagen. Die Regel steht HIER, damit jeder Frager (Checker,
+    # Topic-Registry, Zuordnungs-Fläche) dieselbe Antwort bekommt.
+    if parameter is not None and feld_urteil(typ, feld, parameter) == URTEIL_ERWEITERT:
+        return ("optional", bedarf[1])
     return bedarf
+
+
+def feld_urteil(typ: str, feld: str, parameter: Optional[dict]) -> str:
+    """Gilt das Feld an diesem Gerät, ist es **erweitert**, oder gibt es die Größe nicht?
+
+    Öffentliche Lesetür auf `bedingungs_urteil` für Frager außerhalb der
+    Registry (B2, 05.09.2026). ⭐ **Sie ist die eine Antwort auf die Frage, die
+    bis dahin vier Daten-Checker-Stellen selbst mit `ist_luft_luft_waermepumpe`
+    beantworteten** — jede ein wenig anders (Erwartung nach Bauart, Schweigen
+    nach Bauart, Label nach Bauart). SOLL Wärme/Klima R1: *was ein Gerät liefern
+    kann, sagt der zugeordnete Zähler, nicht seine Bauart* — und was die Bauart
+    **vorschlagen** darf, steht genau einmal, in den `bedingung`/`weich`-Einträgen
+    dieser Registry. Wer fragt, fragt hier; die Bauart selbst liest er nicht mehr
+    (ADR-002/P13 hält das baumweit).
+
+    Fail-open wie `groesse_gibt_es_am_geraet`: unbekannter Typ oder unbekanntes
+    Feld ⇒ ``URTEIL_GILT``.
+    """
+    feld = basis_feld_key(feld)
+    for eintrag in INVESTITION_FELDER.get(typ) or ():
+        if not isinstance(eintrag, dict) or eintrag.get("feld") != feld:
+            continue
+        return bedingungs_urteil(
+            eintrag.get("bedingung"), eintrag.get("weich"), _bedingungs_werte(parameter),
+        )
+    return URTEIL_GILT
+
+
+def feld_herabgestuft(typ: str, feld: str, parameter: Optional[dict]) -> bool:
+    """Hat die Registry dieses Feld **für dieses Gerät** zurückgenommen?
+
+    ``True``, wenn die Größe am Gerät nicht existiert (``URTEIL_NEIN``),
+    erweitert ist (``URTEIL_ERWEITERT``) oder ihr Bedarf gegenüber dem Typ-
+    Default herabgesetzt wurde (`KLIMA_OHNE_WAERMEMENGE`: Heizwärme an einer
+    Split-Klimaanlage ist optional statt Pflicht). Das ist die Frage, die ein
+    Hinweis stellen muss, bevor er eine Zusatz-Messstelle anmahnt: **Erwartet
+    eedc diese Größe an diesem Gerät überhaupt?** — und die Antwort kommt aus
+    der Registry, nicht aus der Bauart (B2, R1).
+    """
+    feld = basis_feld_key(feld)
+    if feld_urteil(typ, feld, parameter) != URTEIL_GILT:
+        return True
+    return get_feld_bedarf(typ, feld, parameter)[0] != get_feld_bedarf(typ, feld, None)[0]
+
+
+def pflicht_felder_am_geraet(
+    typ: str, parameter: Optional[dict], gruppe: Optional[str] = None,
+) -> list[str]:
+    """Die Felder, die dieses Gerät **liefern muss** — Pflicht UND am Gerät geltend.
+
+    ``gruppe`` schränkt auf eine Alternativ-Gruppe der `FELD_BEDARF`-Tabelle ein
+    (z. B. ``"wp_strom"`` — die Zählerfelder, die die Energieprofil-Abdeckung
+    prüft). Ohne sie kommen alle Pflichtfelder, also auch die Heizwärme, die
+    keine Zählerfrage ist.
+
+    Registry-Antwort auf „welche Zähler erwartet der Daten-Checker?" (B2). Ein
+    Feld zählt, wenn sein Bedarf `pflicht` ist und sein Urteil ``URTEIL_GILT``
+    (weder erweitert noch nicht vorhanden). Für die Wärmepumpe ergibt das je nach
+    Parametern: ohne getrennte Strommessung ``stromverbrauch_kwh``; mit ihr
+    ``strom_heizen_kwh`` + ``strom_warmwasser_kwh``; an einer Split-Klimaanlage
+    entfällt die Warmwasser-Seite (kein Warmwasserkreis, N-304/B5), an einer
+    Brauchwasser-Wärmepumpe die Heiz-Seite (erweitert, A6). **Kein `if wp_art`
+    im Frager** — die Ausnahmen stehen in der Registry, einmal.
+    """
+    felder = INVESTITION_FELDER.get(typ)
+    if not isinstance(felder, list):
+        return []
+    out: list[str] = []
+    for eintrag in felder:
+        if not isinstance(eintrag, dict) or eintrag.get("nur_bestand"):
+            continue
+        feld = eintrag["feld"]
+        bedarf, bedarf_gruppe = get_feld_bedarf(typ, feld, parameter)
+        if bedarf != "pflicht":
+            continue
+        if gruppe is not None and bedarf_gruppe != gruppe:
+            continue
+        if feld_urteil(typ, feld, parameter) != URTEIL_GILT:
+            continue
+        out.append(feld)
+    return out
 
 
 # Typen mit SoC-Live-Sensor (aus LIVE_FELDER_INV abgeleitet)
@@ -2496,6 +2618,45 @@ def get_wp_warmwasser_kwh(data: dict, params: Optional[dict] = None) -> float:
     ):
         return 0.0
     return float(data.get("warmwasser_kwh") or 0)
+
+
+def hat_wp_warmwasser_wert(data: dict, params: Optional[dict] = None) -> bool:
+    """Trägt diese Monatszeile überhaupt einen Warmwasser-Wert? — **Anwesenheit,
+    nicht Menge.**
+
+    Schwester von `get_wp_warmwasser_kwh` mit derselben Geräte-Bedingung, aber
+    der anderen Frage. Die Lesetür liefert `float` und macht aus einem fehlenden
+    Wert eine 0 (`data.get(...) or 0`) — für eine Summe ist das richtig, für die
+    Frage *„wurde hier je etwas gemessen?"* nicht: Eine **gepflegte** 0 ist eine
+    Messung, ein fehlender Eintrag ist eine Leerstelle, und beide kämen als
+    `0.0` zurück. Das ist die `is not None`-Regel aus `CLAUDE.md`, hier als
+    eigene Tür statt als Rohzugriff daneben.
+
+    ⭐ **Wofür sie gebraucht wird (8ear, #404):** SOLL Wärme/Klima §3.2a **R1**
+    sagt *„was ein Gerät liefern kann, sagt der zugeordnete Zähler, nicht seine
+    Bauart — wer keinen zuordnet, sieht die Achse nicht."* Die Warmwasser-Achse
+    im Komponenten-Hub hing bis dahin allein an der Bauart
+    (`groesse_gibt_es_am_geraet`) und stand deshalb an **jeder** Luft-Wasser-WP,
+    auch an einer, die nachweislich nie Warmwasser gemessen hat — dauerhaft auf
+    Null, samt Balken, Spalte und Legendeneintrag.
+
+    ⛔ **Sie ersetzt `groesse_gibt_es_am_geraet` NICHT, sie ergänzt es.** Die
+    Bauart-Frage bleibt die härtere: Eine Split-Klimaanlage hat keinen
+    Warmwasserkreis, dort zählt ein gespeicherter Wert auch dann nicht, wenn er
+    dasteht (N-379). Diese Funktion trägt die weichere Hälfte und darf nur
+    **zusätzlich** geprüft werden, nie an ihrer Stelle.
+
+    ⚠ **Und sie entscheidet nur über die ANZEIGE einer Achse, nie über eine
+    Kennzahl je Monatszeile.** Eine Arbeitszahl fragt, ob das Gerät die Größe
+    hat — nicht, ob ein anderer Monat sie trug.
+    """
+    if not data:
+        return False
+    if params is not None and not groesse_gibt_es_am_geraet(
+        "waermepumpe", "warmwasser_kwh", params
+    ):
+        return False
+    return data.get("warmwasser_kwh") is not None
 
 
 def get_eauto_ladung_kwh(data: dict) -> float:

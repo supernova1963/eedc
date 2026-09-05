@@ -19,10 +19,12 @@ export interface Vorschlag {
   beschreibung: string
   details?: Record<string, unknown>
   /** #352: gesetzt, wenn der Wert die **Zerlegung** eines Anlagen-Gesamtwerts
-   *  ist (`kwp_anteil` / `kapazitaet_anteil`) und keine Gerätemessung. Wer den
-   *  Vorschlag übernimmt, schickt die Marke beim Speichern zurück — sonst
-   *  gilt der gerechnete Wert in der Provenance als gemessen und die
-   *  String-Sichten ranken ihn gegen echte Messungen. */
+   *  ist (`kwp_anteil` / `kapazitaet_anteil`) und keine Gerätemessung — oder
+   *  seit B1 (05.09.2026) eine **Wärme-Schätzung** `Strom × JAZ` (`jaz_vorschlag`).
+   *  Wer den Vorschlag übernimmt, schickt die Marke beim Speichern zurück —
+   *  sonst gilt der gerechnete Wert in der Provenance als gemessen: die
+   *  String-Sichten ranken ihn gegen echte Messungen, und die Arbeitszahl gäbe
+   *  die eingetragene JAZ zurück. */
   abgeleitet?: string | null
 }
 
@@ -50,6 +52,10 @@ export interface FeldStatus {
    *  `sensor` = Vorschlagswert zum Zeitpunkt der Bestätigung, `wert` = der
    *  behaltene gespeicherte Wert. Gilt nur, solange beide noch stimmen. */
   geprueft_gegen?: BehalteneAbweichung | null
+  /** #407: bei einem Stand-Feld (Tachostand, Zählerstand) der gespeicherte Stand
+   *  des Vormonats — sein Anfang. Daraus zeigt das Formular die Differenz live.
+   *  Bei Mengen-Feldern null. */
+  stand_vormonat?: number | null
 }
 
 /** Bewusst behaltene Sensor-Abweichung (PN 90128) — Situation, nicht Häkchen. */
