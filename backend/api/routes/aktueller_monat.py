@@ -59,7 +59,11 @@ from backend.core.berechnungen import (
     vollzyklen as berechne_vollzyklen,
 )
 from backend.services.einspeise_erloes_service import get_neg_preis_einspeisung_monat
-from backend.services.wp_wirtschaftlichkeit import berechne_wp_ersparnis
+from backend.services.wp_wirtschaftlichkeit import (
+    WP_ERSPARNIS_FORMEL,
+    berechne_wp_ersparnis,
+    wp_ersparnis_berechnung,
+)
 from backend.services.eauto_wirtschaftlichkeit import (
     attribute_emob_pool_by_km,
     berechne_eauto_ersparnis,
@@ -76,6 +80,7 @@ from backend.core.wirtschaftlichkeit_defaults import (
     EINSPEISEVERGUETUNG_DEFAULT_CENT,
     NETZBEZUG_DEFAULT_CENT,
 )
+from backend.core.berechnungen.betriebsart_gemessen import modus_strom_zeile
 from backend.core.betriebsmodus import KUEHLEN as BM_KUEHLEN
 from backend.core.betriebsmodus import MODUS_STROM_FELD
 from backend.core.field_definitions import (
@@ -181,7 +186,10 @@ class SonstigesGeraet(BaseModel):
     Darstellung im Cockpit: zwei Blöcke (Erzeuger/Verbraucher), darin pro Gerät
     eine eigene Werte-Zeile mit Bezeichnung."""
     bezeichnung: str
-    kategorie: str  # "erzeuger" | "verbraucher"
+    kategorie: str  # "erzeuger" | "verbraucher" | "abgabe" (§9.2)
+    # Abgabe an Dritte (§9.2)
+    abgabe_kwh: Optional[float] = None
+    erloes_euro: Optional[float] = None
     # Erzeuger
     erzeugung_kwh: Optional[float] = None
     eigenverbrauch_kwh: Optional[float] = None
@@ -300,6 +308,15 @@ class AktuellerMonatResponse(BaseModel):
     #: Gleicher Name wie im Komponenten-Hub (`KomponentenMonat`), damit dieselbe
     #: Größe in beiden Sichten gleich heißt (S1).
     wp_waerme_abgeleitet: bool = False
+    # B4 (05.09.2026, C-2): Herkunft der Wärme und Vorbehalt an Ersparnis/CO₂,
+    # fertig formuliert aus dem Layer (`waermepumpe_kennzahl.waerme_herkunft` /
+    # `ersparnis_vorbehalt`) — dieselben Worte wie im Komponenten-Hub (B3).
+    # SOLL §6 (05.09.): eine geschätzte Wärme erscheint als geschätzt.
+    wp_waerme_herkunft: Optional[str] = None
+    wp_ersparnis_vorbehalt: Optional[str] = None
+    # B6/Y-3: die Rechnung hinter der Zahl, aus dem Layer-Ergebnis — der Client
+    # baut keinen Formeltext mehr selbst (A6, ADR-002/P12).
+    wp_ersparnis_berechnung: Optional[str] = None
     # #191: Strom-Aufteilung Heizung/Warmwasser. Nur gesetzt wenn mindestens
     # eine WP-Investition `getrennte_strommessung=true` hat. Sonst None →
     # Frontend zeigt nur den Gesamtstromverbrauch.
@@ -373,6 +390,9 @@ class AktuellerMonatResponse(BaseModel):
 
     # Komponenten — Sonstiges
     sonstiges_erzeugung_kwh: Optional[float] = None    # Erzeuger-Typ
+    # §9.2 — Abgabe an Dritte: der dritte Weg der Verwendung (nicht im
+    # Eigenverbrauch, nicht in der Netz-Einspeisung).
+    abgabe_dritte_kwh: Optional[float] = None
     sonstiges_eigenverbrauch_kwh: Optional[float] = None
     sonstiges_einspeisung_kwh: Optional[float] = None
     sonstiges_verbrauch_kwh: Optional[float] = None    # Verbraucher-Typ
@@ -660,6 +680,8 @@ def _collect_saved_data(
         ("bkw_eigenverbrauch_kwh", fakt.bkw.eigenverbrauch_gemessen_kwh),
         # Sonstiger Erzeuger (BHKW) speist hinter den Hauszähler.
         ("sonstiges_erzeugung_kwh", fakt.sonstiges.erzeugung_kwh),
+        # §9.2: Abgabe an Dritte — wird in der Bilanz unten vom Eigenverbrauch abgezogen.
+        ("sonstiges_abgabe_kwh", fakt.sonstiges.abgabe_kwh),
     ):
         if wert > 0:
             resolved[feld] = (wert, quelle)
@@ -963,6 +985,9 @@ async def _load_vorjahr(anlage_id: int, investitionen: list[Investition], jahr: 
                     wp_strompreis_cent=wp_p_vj,
                     wp_parameter=wp_invs_vj[0].parameter if wp_invs_vj else None,
                     monats_gaspreis_cent=monats_gaspreis_vj,
+                    # B5/X-5: E-B auch im Vorjahr — der laufende Monat zog den
+                    # Kühlstrom ab, sein Vergleichswert ein Jahr davor nicht.
+                    strom_kuehlen_kwh=fakt.wp.modus_strom_kuehlen_kwh,
                 )
                 wp_ersparnis_vj = round(wp_r_vj.ersparnis_euro, 2)
 
@@ -1203,15 +1228,20 @@ def _baue_investition_financial(
                 wp_parameter=inv.parameter,
                 monats_gaspreis_cent=monats_gaspreis,
                 # E-B: Kühlen ersetzt keine Heizung (#263 K-2).
-                strom_kuehlen_kwh=data.get(MODUS_STROM_FELD[BM_KUEHLEN], 0) or 0,
+                # B5/X-5c: über den SoT der Betriebsart-Weiche (F-56) — das
+                # Rohfeld kennt nur den abgeleiteten Split; bei gemessenen
+                # Betriebsart-Zählern stand hier 0 und der Kühlstrom blieb im
+                # Vergleich (dieselbe Klasse wie im Hub am 26.08.).
+                strom_kuehlen_kwh=modus_strom_zeile(data).kuehlen_kwh,
             )
             inv_ersparnis = round(wp_result.ersparnis_euro, 2)
             inv_label = "Ersparnis vs. Gas"
-            inv_formel = "(Wärme ÷ Wirkungsgrad × Gaspreis) − Strom × WP-Strompreis"
-            inv_berechnung = (
-                f"{waerme_total:.1f} kWh / {wp_result.verwendeter_wirkungsgrad:.2f} "
-                f"× {wp_result.verwendeter_gaspreis_cent:.1f} ct − "
-                f"{strom:.1f} kWh × {wp_p:.2f} ct"
+            # B6/Y-3: Formel und Rechnung beschreiben, was der Layer rechnet —
+            # mit Zusatzkosten der Altheizung und ohne den Kühlstrom (E-B). Bis
+            # hierher stand ein Text, der bei F8 10 € ergab, neben dem Wert 100 €.
+            inv_formel = WP_ERSPARNIS_FORMEL
+            inv_berechnung = wp_ersparnis_berechnung(
+                wp_result, waerme_total, strom, wp_p, inv.parameter,
             )
 
     elif inv.typ in ("e-auto", "wallbox") and not ist_dienstlich(inv):
@@ -1595,6 +1625,7 @@ async def get_aktueller_monat(
     # `_collect_saved_data` aktiv-/anschaffungsdatum-gefiltert aggregiert
     # ([[feedback_anschaffungsdatum_grenze]]).
     sonstiges_erz_bilanz = get_val("sonstiges_erzeugung_kwh") or 0
+    abgabe_dritte = get_val("sonstiges_abgabe_kwh") or 0
     erzeugung_bilanz = erzeugung_hinter_zaehler_kwh(pv, sonstiges_erz_bilanz)
 
     # ── Berechnete Werte ──
@@ -1608,7 +1639,8 @@ async def get_aktueller_monat(
         ladung = speicher_ladung or 0
         entladung = speicher_entladung or 0
         direktverbrauch = round(max(0, erzeugung_bilanz - einspeisung - ladung), 2)
-        eigenverbrauch = round(direktverbrauch + entladung, 2)
+        # §9.2: dieselbe Formel wie der Layer — Abgabe an Dritte ist kein Eigenverbrauch.
+        eigenverbrauch = round(max(0, direktverbrauch + entladung - abgabe_dritte), 2)
 
         if netzbezug is not None:
             gesamtverbrauch = round(eigenverbrauch + netzbezug, 2)
@@ -1738,6 +1770,7 @@ async def get_aktueller_monat(
 
     # ── Komponenten-Ersparnis ──
     wp_ersparnis = None
+    wp_ersparnis_berechnung_text: Optional[str] = None
     emob_ersparnis = None
 
     # Monats-Gaspreis (für WP-Ersparnis hier + Per-Investition-Block unten) wird
@@ -1813,6 +1846,24 @@ async def get_aktueller_monat(
         strom_funktionsfremd_kwh=wp_strom_funktionsfremd_kwh,
         abgrenzung_verletzt=wp_abgrenzung_verletzt,
     )
+    # B4 (C-2): Herkunft und Vorbehalt — der Faktor nur bei EINER Wärmepumpe
+    # (bei mehreren gibt es keinen einen Faktor, der Text nennt dann die Regel).
+    from backend.core.berechnungen.modus_split import heiz_effizienz_gepflegt
+    from backend.core.berechnungen.waermepumpe_kennzahl import (
+        ersparnis_vorbehalt as _ersparnis_vorbehalt,
+        waerme_herkunft as _waerme_herkunft,
+    )
+    _wp_invs_alle = [i for i in investitionen if i.typ == "waermepumpe"]
+    _wp_abgeleitet = wp_waerme_abgeleitet_kwh > 0
+    wp_waerme_herkunft = _waerme_herkunft(
+        _wp_abgeleitet,
+        heiz_effizienz_gepflegt(_wp_invs_alle[0].parameter)
+        if (_wp_abgeleitet and len(_wp_invs_alle) == 1) else None,
+    )
+    wp_ersparnis_vorbehalt = _ersparnis_vorbehalt(
+        waerme_abgeleitet=_wp_abgeleitet,
+        abgrenzung=monats_fakt.wp.abgrenzung_stoerung if monats_fakt is not None else None,
+    )
 
     if wp_waerme is not None and wp_strom is not None and allgemein_tarif:
         # Ohne eigenen WP-Tarif gilt der allgemeine Bezugspreis — bei flexiblem
@@ -1836,6 +1887,9 @@ async def get_aktueller_monat(
             strom_kuehlen_kwh=get_val("wp_modus_kuehlen_kwh") or 0.0,
         )
         wp_ersparnis = round(wp_ersparnis_result.ersparnis_euro, 2)
+        wp_ersparnis_berechnung_text = wp_ersparnis_berechnung(
+            wp_ersparnis_result, wp_waerme, wp_strom, wp_preis_cent, wp_ref_parameter,
+        )
 
     # G20-2 (Gernot 2026-07-20): Die eMob-Ersparnis-Aggregation folgt weiter unten
     # als **Summe der Per-Fahrzeug-Ersparnisse** (dieselben Werte wie die
@@ -2234,7 +2288,14 @@ async def get_aktueller_monat(
                 (inv.parameter or {}).get("kategorie"),
                 hat_erzeugung=g.erzeugung_kwh > 0,
             )
-            if kat == "verbraucher":
+            if kat == "abgabe":
+                if g.abgabe_kwh > 0 or g.einspeise_erloes_euro > 0:
+                    sonstiges_geraete.append(SonstigesGeraet(
+                        bezeichnung=inv.bezeichnung, kategorie="abgabe",
+                        abgabe_kwh=_v(g.abgabe_kwh),
+                        erloes_euro=_v(g.einspeise_erloes_euro),
+                    ))
+            elif kat == "verbraucher":
                 if g.verbrauch_kwh > 0 or g.bezug_pv_kwh > 0 or g.bezug_netz_kwh > 0:
                     sonstiges_geraete.append(SonstigesGeraet(
                         bezeichnung=inv.bezeichnung, kategorie="verbraucher",
@@ -2603,6 +2664,9 @@ async def get_aktueller_monat(
         wp_jaz_zaehler_kwh=wp_arbeitszahl.zaehler_kwh,
         wp_jaz_nenner_kwh=wp_arbeitszahl.nenner_kwh,
         wp_waerme_abgeleitet=wp_waerme_abgeleitet_kwh > 0,
+        wp_waerme_herkunft=wp_waerme_herkunft,
+        wp_ersparnis_vorbehalt=wp_ersparnis_vorbehalt,
+        wp_ersparnis_berechnung=wp_ersparnis_berechnung_text,
         wp_strom_heizen_kwh=wp_strom_heizen,
         wp_strom_warmwasser_kwh=wp_strom_warmwasser,
         wp_modus_strom_heizen_kwh=wp_modus_heizen,
@@ -2641,6 +2705,7 @@ async def get_aktueller_monat(
         hat_balkonkraftwerk=hat_balkonkraftwerk,
         # Komponenten — Sonstiges
         sonstiges_erzeugung_kwh=sonstiges_erzeugung,
+        abgabe_dritte_kwh=round(abgabe_dritte, 2) if abgabe_dritte > 0 else None,
         sonstiges_eigenverbrauch_kwh=sonstiges_eigenverbrauch,
         sonstiges_einspeisung_kwh=sonstiges_einspeisung,
         sonstiges_verbrauch_kwh=sonstiges_verbrauch,

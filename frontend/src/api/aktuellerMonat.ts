@@ -42,6 +42,9 @@ export interface SonstigesGeraet {
   verbrauch_kwh?: number | null
   bezug_pv_kwh?: number | null
   bezug_netz_kwh?: number | null
+  /** §9.2 — Abgabe an Dritte (kategorie 'abgabe'). */
+  abgabe_kwh?: number | null
+  erloes_euro?: number | null
 }
 
 export interface AktuellerMonatResponse {
@@ -131,6 +134,12 @@ export interface AktuellerMonatResponse {
   wp_jaz_nenner_kwh?: number | null
   /** Ist ein Teil der Wärme aus `Strom × JAZ` gerechnet statt gemessen? */
   wp_waerme_abgeleitet?: boolean | null
+  /** B4 (C-2): Herkunft der Wärme („gemessen" | „geschätzt: Strom × JAZ 3,5") und der
+   *  Vorbehalt an Ersparnis/CO₂ — fertig aus dem Layer, dieselben Worte wie im Hub. */
+  wp_waerme_herkunft?: string | null
+  wp_ersparnis_vorbehalt?: string | null
+  /** B6/Y-3: der Rechenweg hinter der Ersparnis, aus dem Layer-Ergebnis. */
+  wp_ersparnis_berechnung?: string | null
   // #191: Strom-Aufteilung Heizung/Warmwasser. Nur befüllt wenn mindestens
   // eine WP-Investition `getrennte_strommessung=true` hat.
   wp_strom_heizen_kwh: number | null
@@ -201,6 +210,8 @@ export interface AktuellerMonatResponse {
 
   // Komponenten — Sonstiges
   sonstiges_erzeugung_kwh: number | null
+  /** §9.2 — an Dritte abgegebene kWh (dritter Weg der Verwendung). */
+  abgabe_dritte_kwh?: number | null
   sonstiges_eigenverbrauch_kwh: number | null
   sonstiges_einspeisung_kwh: number | null
   sonstiges_verbrauch_kwh: number | null

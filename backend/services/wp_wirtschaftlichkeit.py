@@ -88,6 +88,52 @@ def _wp_alter_wirkungsgrad(wp_parameter: Optional[dict]) -> float:
     )
 
 
+#: B6/Y-3 (05.09.2026): der Formeltext, der die Rechnung von
+#: `berechne_wp_ersparnis` beschreibt — und nur die. Bis dahin stand an drei
+#: Stellen (Cockpit-Detailblock, T-Konto-Fallback im Client, PDF) ein Text ohne
+#: Zusatzkosten und ohne den Kühlstrom-Abzug: bei einer Klimaanlage ergab der
+#: gedruckte Rechenweg 10 €, während daneben 100 € standen (Style-Guide A6).
+WP_ERSPARNIS_FORMEL = (
+    "(Wärme ÷ Wirkungsgrad × Gaspreis + Zusatzkosten ÷ 12) "
+    "− (Strom − Kühlstrom) × WP-Strompreis"
+)
+
+
+def wp_ersparnis_berechnung(
+    ergebnis: "WPErsparnisErgebnis",
+    waerme_kwh: float,
+    strom_kwh: float,
+    strompreis_cent: float,
+    wp_parameter: Optional[dict],
+) -> str:
+    """Die Rechnung hinter einer Ersparnis-Zahl, mit den Zahlen dieses Monats.
+
+    Nennt Zusatzkosten und Kühlstrom nur, wenn sie größer 0 sind — sonst liest
+    sich die Zeile wie früher: ``3500 kWh / 0,90 × 12,0 ct − 1000 kWh × 30,00 ct``.
+    """
+    zusatz = _wp_zusatzkosten_jahr(wp_parameter) / 12
+    alt = f"{waerme_kwh:.1f} kWh / {ergebnis.verwendeter_wirkungsgrad:.2f} × {ergebnis.verwendeter_gaspreis_cent:.1f} ct"
+    if zusatz > 0:
+        alt += f" + {zusatz:.2f} € Zusatzkosten"
+    kuehl_kwh = (
+        ergebnis.kuehl_kosten_euro * 100 / strompreis_cent if strompreis_cent else 0.0
+    )
+    if kuehl_kwh > 0:
+        wp = f"({strom_kwh:.1f} − {kuehl_kwh:.1f} Kühlstrom) kWh × {strompreis_cent:.2f} ct"
+    else:
+        wp = f"{strom_kwh:.1f} kWh × {strompreis_cent:.2f} ct"
+    return f"{alt} − {wp}"
+
+
+def _wp_zusatzkosten_jahr(wp_parameter: Optional[dict]) -> float:
+    """Fixe Zusatzkosten der Altheizung je Jahr (€), 0 ohne Pflege."""
+    if not wp_parameter:
+        return 0.0
+    return float(
+        wp_parameter.get(PARAM_WAERMEPUMPE["ALTERNATIV_ZUSATZKOSTEN_JAHR"], 0) or 0
+    )
+
+
 def _wp_alter_preis_cent(wp_parameter: Optional[dict]) -> float:
     """Liest Gaspreis-Default aus WP-Parametern, sonst kanon. Default."""
     if wp_parameter is None:
@@ -175,7 +221,21 @@ def berechne_wp_ersparnis(
     else:
         gaspreis_cent = _wp_alter_preis_cent(wp_parameter)
 
-    alte_heizung_kosten = gas_kosten_altanlage(wp_waerme_kwh, wirkungsgrad, gaspreis_cent)
+    # B5/X-4 (05.09.2026): die fixen Zusatzkosten der Altheizung
+    # (Schornsteinfeger, Wartung, Grundpreis — `alternativ_zusatzkosten_jahr`,
+    # #141) gehören zu den vermiedenen Kosten, anteilig 1/12 je Monat.
+    # ⛔ Bis hierher kannte diese Funktion sie nicht — die anlagenweite
+    # Alternativkosten-Formel (`core/berechnungen/alternativkosten.py`), der
+    # HA-Export-Sensor je Wärmepumpe und BERECHNUNGEN.md führten sie seit
+    # v3.21.0. Gemessen an einem Monat mit 120 €/Jahr: Hub und Cockpit
+    # 166,67 €, Export und Aussichten 176,67 € — dieselbe Wärmepumpe, zwei
+    # Ersparnisse (SOLL §3.3 S1). Der Anteil steht NACH den beiden Wächtern
+    # oben: ohne ersetzte Heizung gibt es auch keine Zusatzkosten einer
+    # Anlage, die es nie gab (N-88).
+    alte_heizung_kosten = (
+        gas_kosten_altanlage(wp_waerme_kwh, wirkungsgrad, gaspreis_cent)
+        + _wp_zusatzkosten_jahr(wp_parameter) / 12
+    )
     wp_kosten = wp_strom_kwh * wp_strompreis_cent / 100
     # E-B: Verglichen wird die **Heizhälfte** — der Kühlstrom hat auf der
     # anderen Seite der Gleichung kein Gegenstück.

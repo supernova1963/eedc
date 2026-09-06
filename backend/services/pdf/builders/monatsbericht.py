@@ -246,6 +246,9 @@ def _abschnitte_energie(d: Any) -> list[Abschnitt]:
         _z("PV-Erzeugung", fmt_kwh(d.pv_erzeugung_kwh)),
         _z("Eigenverbrauch", fmt_kwh(d.eigenverbrauch_kwh)),
         _z("Einspeisung", fmt_kwh(d.einspeisung_kwh)),
+        # §9.2: der dritte Weg — nur, wenn es ihn in diesem Monat gab.
+        *([_z("Abgabe an Dritte", fmt_kwh(d.abgabe_dritte_kwh))]
+          if getattr(d, "abgabe_dritte_kwh", None) else []),
         _z("Netzbezug", fmt_kwh(d.netzbezug_kwh)),
         _z("Gesamtverbrauch", fmt_kwh(d.gesamtverbrauch_kwh)),
         _z("Autarkie", fmt_pct(d.autarkie_prozent)),
@@ -376,11 +379,16 @@ def _abschnitte_komponenten(d: Any) -> list[Abschnitt]:
     if d.hat_waermepumpe:
         wp = [
             _z("Stromverbrauch", fmt_kwh(d.wp_strom_kwh)),
+            # B6/Y-1 (05.09.2026): Herkunft und Vorbehalt kommen fertig aus dem
+            # Layer (`wp_waerme_herkunft`, `wp_ersparnis_vorbehalt`, B4) — dieselben
+            # Worte wie Hub und Cockpit. Hier stand ein eigener Text („teilweise
+            # abgeleitet"), und die Ersparnis trug keinen Vorbehalt (N-402-Klasse).
             _z("Wärmemenge", fmt_kwh(d.wp_waerme_kwh),
-               hinweis="teilweise abgeleitet" if d.wp_waerme_abgeleitet else None),
+               hinweis=(d.wp_waerme_herkunft or "teilweise abgeleitet")
+               if d.wp_waerme_abgeleitet else None),
             _z("Arbeitszahl", fmt_zahl(d.wp_jaz, 2),
                hinweis=d.wp_jaz_grund or d.wp_jaz_hinweis),
-            _z("Ersparnis", fmt_euro(d.wp_ersparnis_euro)),
+            _z("Ersparnis", fmt_euro(d.wp_ersparnis_euro), hinweis=d.wp_ersparnis_vorbehalt),
         ]
         if _hat(wp) or d.wp_jaz_grund:
             aus.append(Abschnitt("waermepumpe", "Wärmepumpe", "komponenten", wp))

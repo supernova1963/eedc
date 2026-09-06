@@ -57,6 +57,8 @@ export const WERTE_METRIKEN: WerteMetrik[] = [
   { key: 'netzbezug',          label: 'Netzbezug',         unit: 'kWh',     gruppe: 'basis',       decimals: 0, aggregation: 'sum', defaultVisible: true,  granular: MONAT_TAG, higherIsBetter: false },
   { key: 'gesamtverbrauch',    label: 'Gesamtverbrauch',   unit: 'kWh',     gruppe: 'basis',       decimals: 0, aggregation: 'sum', defaultVisible: false, granular: MONAT_TAG, higherIsBetter: undefined },
   { key: 'direktverbrauch',    label: 'Direktverbrauch',   unit: 'kWh',     gruppe: 'basis',       decimals: 0, aggregation: 'sum', defaultVisible: false, granular: MONAT_TAG, higherIsBetter: true },
+  // §9.2 — der dritte Weg der Verwendung; nur mit Zähler an der Übergabestelle.
+  { key: 'abgabe_dritte',      label: 'Abgabe an Dritte',  unit: 'kWh',     gruppe: 'basis',       decimals: 0, aggregation: 'sum', defaultVisible: false, granular: NUR_MONAT, higherIsBetter: undefined },
   // Quoten
   { key: 'autarkie',           label: 'Autarkie',          unit: '%',       gruppe: 'quoten',      decimals: 1, aggregation: 'avg', defaultVisible: true,  granular: MONAT_TAG, higherIsBetter: true },
   { key: 'evQuote',            label: 'EV-Quote',          unit: '%',       gruppe: 'quoten',      decimals: 1, aggregation: 'avg', defaultVisible: true,  granular: MONAT_TAG, higherIsBetter: true },
@@ -81,7 +83,7 @@ export const WERTE_METRIKEN: WerteMetrik[] = [
   // Jahresarbeitszahl derselben Zeilen (Sigma Waerme / Sigma Strom) **2,66** ist —
   // zwei Wahrheiten in einer Tabelle. Dieselbe Entscheidung wie bei der
   // Grundlast-Spalte (01.09.), aus demselben Grund.
-  { key: 'wp_cop',             label: 'WP COP',            unit: '',        gruppe: 'waermepumpe', decimals: 1, aggregation: 'none', defaultVisible: false, granular: NUR_MONAT, higherIsBetter: true },
+  { key: 'wp_cop',             label: 'WP JAZ',            unit: '',        gruppe: 'waermepumpe', decimals: 1, aggregation: 'none', defaultVisible: false, granular: NUR_MONAT, higherIsBetter: true },
   // E-Auto — kein sauberer Tages-Wert (km/Lade-Split) → monat-only
   { key: 'eauto_km',           label: 'E-Auto',            unit: 'km',      gruppe: 'eauto',       decimals: 0, aggregation: 'sum', defaultVisible: false, granular: NUR_MONAT, higherIsBetter: undefined },
   { key: 'eauto_ladung',       label: 'E-Auto Ladung',     unit: 'kWh',     gruppe: 'eauto',       decimals: 0, aggregation: 'sum', defaultVisible: false, granular: NUR_MONAT, higherIsBetter: undefined },

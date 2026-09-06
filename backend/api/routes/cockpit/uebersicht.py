@@ -37,12 +37,9 @@ from backend.core.berechnungen.ust_eigenverbrauch import (
     UstJahresanteil,
     ust_eigenverbrauch_fuer_anlage,
 )
-from backend.core.berechnungen.waermepumpe_kennzahl import (
-    abgrenzungs_grund,
-    arbeitszahl,
-)
 from backend.core.calculations import berechne_co2_bilanz
 from backend.services.finanz_zeilen import baue_finanz_zeile
+from backend.services.waermepumpe_jahreskennzahlen import waermepumpe_jahreskennzahlen
 from backend.services.monats_fakten import (
     finanz_zeile_eingabe,
     lade_monats_fakten,
@@ -103,6 +100,35 @@ class CockpitUebersichtResponse(BaseModel):
     wp_cop_grund: Optional[str]
     wp_ersparnis_euro: float
     hat_waermepumpe: bool
+    # B4 (05.09.2026, C-1): Das Jahr baute seinen Wärme/Klima-Block im Client aus
+    # den Monatsantworten und verlor dabei 16 von 33 WP-Feldern — JAZ ohne Grund,
+    # je-Funktion-Zeilen ersatzlos weg, Restmenge ohne E4. Diese Route rechnete
+    # die Jahres-JAZ längst aus den Fakten; jetzt liefert sie den ganzen
+    # Kennzahl-Satz, und der Jahr-Client liest ihn (SOLL §3.3: Kennzahlen im
+    # Jahr **neu gerechnet**, nie gemittelt — und nie im Client, ADR-002/P12).
+    wp_cop_hinweis: Optional[str] = None
+    wp_jaz_zaehler_kwh: Optional[float] = None
+    wp_jaz_nenner_kwh: Optional[float] = None
+    wp_waerme_abgeleitet: bool = False
+    wp_waerme_herkunft: Optional[str] = None
+    wp_ersparnis_vorbehalt: Optional[str] = None
+    wp_strom_heizen_kwh: Optional[float] = None
+    wp_strom_warmwasser_kwh: Optional[float] = None
+    wp_jaz_heizen: Optional[float] = None
+    wp_jaz_heizen_grund: Optional[str] = None
+    wp_jaz_warmwasser: Optional[float] = None
+    wp_jaz_warmwasser_grund: Optional[str] = None
+    wp_jaz_kuehlen: Optional[float] = None
+    wp_jaz_kuehlen_grund: Optional[str] = None
+    wp_modus_strom_heizen_kwh: Optional[float] = None
+    wp_modus_strom_kuehlen_kwh: Optional[float] = None
+    wp_modus_strom_warmwasser_kwh: Optional[float] = None
+    wp_modus_strom_lueften_kwh: Optional[float] = None
+    wp_modus_strom_entfeuchten_kwh: Optional[float] = None
+    wp_modus_nicht_aufgeteilt_kwh: Optional[float] = None
+    wp_modus_abdeckung_h: Optional[float] = None
+    wp_modus_strom_bezug_kwh: Optional[float] = None
+    wp_modus_gemessen: Optional[bool] = None
 
     # E-Mobilität aggregiert (E-Auto + Wallbox)
     emob_km: float
@@ -369,6 +395,7 @@ async def get_cockpit_uebersicht(
         speicher_ladung_kwh=speicher_ladung,
         speicher_entladung_kwh=speicher_entladung,
         v2h_entladung_kwh=v2h_entladung,
+        abgabe_dritte_kwh=sum(f.sonstiges.abgabe_kwh for f in fakten),
     )
     direktverbrauch = _kz.direktverbrauch_kwh
     eigenverbrauch = _kz.eigenverbrauch_kwh
@@ -474,29 +501,37 @@ async def get_cockpit_uebersicht(
     # mehrere Geräte mit nur einer Wärmequelle — fehlten hier vollständig; die
     # Jahressicht zeigte deshalb eine Zahl, die der Hub daneben schon
     # verweigerte. Dieselbe Klasse wie W-3, eine Sicht weiter.
-    wp_abgrenzung = abgrenzungs_grund(
-        abgrenzung_stoerung=next(
-            (f.wp.abgrenzung_stoerung for f in fakten if f.wp.abgrenzung_stoerung),
-            None,
-        ),
-        # R2/Bauart (SOLL §5): Sobald EIN Monat des Jahres beide Bauarten
-        # trägt, ist die Jahreszahl derselbe Mischquotient — dieselbe Faltung
-        # wie bei der Störung darüber und bei `geraete_ohne_waerme` darunter.
-        bauarten_gemischt=any(f.wp.bauarten_gemischt for f in fakten),
-        geraete_ohne_waerme=any(
-            f.wp.waerme_deckt_nicht_alle_geraete for f in fakten
-        ),
-    )
-    _wp_az = arbeitszahl(
-        wp_waerme, wp_strom, waerme_abgeleitet_kwh=wp_waerme_abgeleitet,
-        # W-14 + E4: wie bei der Ersparnis darunter — Kühlen, Lüften und
-        # Entfeuchten ersetzen keine Heizung und gehören in keine Wärme-Kennzahl.
-        strom_funktionsfremd_kwh=sum(
-            f.wp.modus_strom_funktionsfremd_kwh for f in fakten
-        ),
-        abgrenzung_verletzt=wp_abgrenzung,
-    )
+    # ── B4 (C-1) → B6/Y-2: der ganze Kennzahl-Satz für Cockpit → Jahr kommt aus
+    # EINER Service-Funktion, die auch der PDF-Jahresbericht liest
+    # (`services/waermepumpe_jahreskennzahlen.py`, dort die Regeln). Bis zum
+    # 05.09.2026 stand die Faltung hier, und der Bericht rechnete daneben eine
+    # eigene Arbeitszahl ohne Grund. Die Namen darunter bleiben, damit die
+    # Antwort-Zuordnung unten unverändert lesbar ist.
+    _wpk = waermepumpe_jahreskennzahlen(fakten, wp_invs)
+    wp_abgrenzung = _wpk.abgrenzung
+    _wp_az = _wpk.arbeitszahl
     wp_cop = _wp_az.wert
+    _wp_stoerung = _wpk.abgrenzung_stoerung
+    _wp_hat_split = _wpk.hat_split
+    _wp_strom_heizen = _wpk.strom_heizen_kwh
+    _wp_strom_ww = _wpk.strom_warmwasser_kwh
+    _wp_az_funktion = _wpk.je_funktion
+    _wp_az_k = _wpk.kuehlen
+    _wp_hat_modus = _wpk.hat_modus
+    _wp_modus = {
+        "heizen": _wpk.betriebsarten.heizen_kwh,
+        "kuehlen": _wpk.betriebsarten.kuehlen_kwh,
+        "warmwasser": _wpk.betriebsarten.warmwasser_kwh,
+        "lueften": _wpk.betriebsarten.lueften_kwh,
+        "entfeuchten": _wpk.betriebsarten.entfeuchten_kwh,
+        "rest": _wpk.betriebsarten.nicht_aufgeteilt_kwh,
+        "abdeckung": _wpk.betriebsarten.abdeckung_h,
+        "bezug": _wpk.betriebsarten.bezug_kwh,
+        "gemessen": _wpk.betriebsarten.gemessen,
+    }
+    _wp_abgeleitet = _wpk.abgeleitet
+    _wp_herkunft = _wpk.herkunft
+    _wp_vorbehalt = _wpk.vorbehalt
     # Multi-WP: erste WP als Parameter-Referenz (Wirkungsgrad/Gas-Default).
     # Drift-Audit Domäne A1 / Issue #178: vorher 10ct hartcodiert + ignorierte
     # User-Param `alter_preis_cent_kwh`.
@@ -698,6 +733,7 @@ async def get_cockpit_uebersicht(
             speicher_ladung_kwh=sum(f.speicher.ladung_kwh for f in _f_jahr),
             speicher_entladung_kwh=sum(f.speicher.entladung_kwh for f in _f_jahr),
             v2h_entladung_kwh=sum(f.emob.v2h_entladung_kwh for f in _f_jahr),
+            abgabe_dritte_kwh=sum(f.sonstiges.abgabe_kwh for f in _f_jahr),
         )
         ust_jahresanteile.append(UstJahresanteil(
             jahr=_jahr,
@@ -829,6 +865,34 @@ async def get_cockpit_uebersicht(
         wp_cop_grund=_wp_az.grund,
         wp_ersparnis_euro=round(wp_ersparnis, 2),
         hat_waermepumpe=hat_waermepumpe,
+        wp_cop_hinweis=_wp_az.hinweis,
+        wp_jaz_zaehler_kwh=_wp_az.zaehler_kwh,
+        wp_jaz_nenner_kwh=_wp_az.nenner_kwh,
+        wp_waerme_abgeleitet=_wp_abgeleitet,
+        wp_waerme_herkunft=_wp_herkunft,
+        wp_ersparnis_vorbehalt=_wp_vorbehalt,
+        wp_strom_heizen_kwh=round(_wp_strom_heizen, 1) if _wp_hat_split else None,
+        wp_strom_warmwasser_kwh=round(_wp_strom_ww, 1) if _wp_hat_split else None,
+        wp_jaz_heizen=(
+            round(_wp_az_funktion.heizen.wert, 2) if _wp_az_funktion.heizen.wert is not None else None
+        ),
+        wp_jaz_heizen_grund=_wp_az_funktion.heizen.grund,
+        wp_jaz_warmwasser=(
+            round(_wp_az_funktion.warmwasser.wert, 2)
+            if _wp_az_funktion.warmwasser.wert is not None else None
+        ),
+        wp_jaz_warmwasser_grund=_wp_az_funktion.warmwasser.grund,
+        wp_jaz_kuehlen=round(_wp_az_k.wert, 2) if _wp_az_k.wert is not None else None,
+        wp_jaz_kuehlen_grund=_wp_az_k.grund,
+        wp_modus_strom_heizen_kwh=round(_wp_modus["heizen"], 1) if _wp_hat_modus else None,
+        wp_modus_strom_kuehlen_kwh=round(_wp_modus["kuehlen"], 1) if _wp_hat_modus else None,
+        wp_modus_strom_warmwasser_kwh=round(_wp_modus["warmwasser"], 1) if _wp_hat_modus else None,
+        wp_modus_strom_lueften_kwh=round(_wp_modus["lueften"], 1) if _wp_hat_modus else None,
+        wp_modus_strom_entfeuchten_kwh=round(_wp_modus["entfeuchten"], 1) if _wp_hat_modus else None,
+        wp_modus_nicht_aufgeteilt_kwh=round(_wp_modus["rest"], 1) if _wp_hat_modus else None,
+        wp_modus_abdeckung_h=round(_wp_modus["abdeckung"], 1) if _wp_hat_modus else None,
+        wp_modus_strom_bezug_kwh=round(_wp_modus["bezug"], 1) if _wp_hat_modus else None,
+        wp_modus_gemessen=_wp_modus["gemessen"] if _wp_hat_modus else None,
         emob_km=round(emob_km, 0),
         emob_ladung_kwh=round(emob_ladung, 1),
         emob_pv_anteil_prozent=round(emob_pv_anteil, 1) if emob_pv_anteil else None,
