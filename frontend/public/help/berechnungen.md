@@ -185,6 +185,28 @@ CO2-Einsparung (kg)      = PV_Erzeugung * 0.38               (VERALTET — s. Ka
 > („Ertrag/Jahr"). Beide Größen liegen in **derselben** Summe (`aussichten.py::jahres_netto_ertrag`)
 > — würde die Menge zusätzlich monetarisiert, stünde derselbe Nutzen zweimal darin.
 >
+> ⭐ **Ausnahme seit 2026-09-06 — die Kategorie *Abgabe an Dritte* (§9.2 Geldseite).** Dort ist der
+> Ertrag **gemessen**, nicht geschätzt: Das Gerät führt je Monat ein Feld „Erlös (€)". Der
+> Jahres-Ertrag der ROI-Zeile ist deshalb `Σ Monatserlöse ÷ Monate mit Wert × 12` — hochgerechnet
+> **mit der eigenen Monatszahl** (F-20), nicht durch zwölf geteilt. **Vorrang: gemessen vor
+> geschätzt** — liegt auch nur ein Monatswert vor, schweigt „Ertrag/Jahr" und wird *nicht* addiert
+> (Bauform wie ADR-002/P7). Eine gepflegte **0** ist dabei eine Aussage („unentgeltlich abgegeben")
+> und macht die Zeile bewertet; ohne beides bleibt sie „nicht bewertet" — nie 0 € (N-87/N-258).
+> **Die eine Quelle ist `core/berechnungen/investitions_jahresertrag.py`**, gelesen von
+> ROI-Dashboard, Aussichten-Prognose und HA-Export.
+>
+> ⛔ **Die drei lesen sie mit VERSCHIEDENEN Laufzeit-Filtern, und das ist Absicht:** Das
+> ROI-Dashboard ohne Jahresfilter behält stillgelegte Geräte (#123 — „spätere Stilllegung darf
+> Vergangenheit nicht löschen"), Aussichten und HA-Export filtern auf *heute aktiv*, weil sie
+> Prognosen sind. Zwei Fragen, zwei Umfänge; Wächter ist
+> `test_abgabe_geldseite_drei_sichten.py::test_die_zwei_umfaenge_bleiben_verschieden`.
+>
+> ⚠ **Und eine Asymmetrie zwischen den beiden Prognosen, gemessen am 06.09.2026:** Im **HA-Export**
+> steckt der gemessene Erlös bereits in der Anlagenbilanz (`netto_ertrag_euro`); dort zählt nur der
+> *geschätzte* Posten zusätzlich, sonst stünde er doppelt — beim ersten Lauf meldete der Sensor
+> `jahres_ersparnis_euro` **960 € statt 480 €**. In den **Aussichten** ist er in keiner anderen
+> Prognose-Größe enthalten und wird deshalb voll addiert.
+
 > ⚠ **Folge für die Anzeige:** Bei einer Anlage mit sonstigem Erzeuger geht
 > `Eigenverbrauch × Preis = EV-Ersparnis` **nicht** auf. Das T-Konto beschriftet die Zeile dann als
 > *PV-Eigenverbrauch-Ersparnis* und zeigt die Multiplikation nicht an, statt eine Herleitung zu
@@ -368,7 +390,8 @@ Die Cockpit-Übersicht aggregiert alle Monatsdaten für ein Jahr (oder alle Jahr
 ```
 Einspeise-Erlös     = Σ(Einspeisung) * Einspeisevergütung / 100
 EV-Ersparnis        = Σ(PV_Eigenverbrauch) * Netzbezug_Preis / 100  (s. Hinweis)
-Netto-Ertrag        = Einspeise-Erlös + EV-Ersparnis [- USt_Eigenverbrauch]
+Netto-Ertrag        = Einspeise-Erlös + EV-Ersparnis + Erlös_eigener_Satz
+                      [- USt_Eigenverbrauch]
 BKW-Ersparnis       = Σ(BKW_Eigenverbrauch) * Netzbezug_Preis / 100
 Sonstige-Netto      = Σ(sonstige_ertraege) - Σ(sonstige_ausgaben)
 
@@ -410,6 +433,14 @@ Jahres-Rendite (%)  = Kumulative_Ersparnis / Investition_gesamt * 100
 > Monats-Preis und EV/Netzbezug-Split sonst auseinander (#326). Der **naive** `netto_ertrag_euro`
 > = Einspeise-Erlös + EV-Ersparnis + BKW-Ersparnis + Sonstige-Netto; Sites mit Zusatzlogik (Cockpit
 > zieht `USt_Eigenverbrauch` ab) bauen den Netto-Ertrag aus den Einzel-Komponenten selbst zusammen.
+
+> **Der fünfte Summand — Erlös mit eigenem Vergütungssatz (§9.2 Geldseite, 06.09.2026):** Ein
+> Gerät der Kategorie *Abgabe an Dritte* oder ein *Sonstiges/Erzeuger* mit eigenem Einspeisetarif
+> trägt einen **gepflegten** Monatsbetrag (`einspeise_erloes_euro`). Er ist Teil des Netto-Ertrags
+> (`finanz_aggregat.erzeuger_erloes_euro`) und steht **neben** `Einspeise-Erlös`, nicht darin: Jener
+> bewertet den **Anlagenzähler** mit dem EINEN Satz der Anlage, dieser trägt einen Satz, den eedc
+> nicht kennt und **nicht nachrechnet**. Alle Sichten führen ihn — Cockpit → Monat/Jahr,
+> Auswertungen → Finanzen, HA-Sensor `netto_ertrag_euro`, Jahresbericht-PDF und Aussichten.
 
 > **G19-1 — Sonstige Positionen auf Anlage-Ebene (ab v4.0):** `Sonstige-Netto` umfasst jetzt **auch**
 > die auf **Anlage-Ebene** (nicht nur pro Komponente) erfassten Positionen — siehe [§3.10](#310-sonstige-positionen).
