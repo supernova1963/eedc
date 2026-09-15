@@ -32,14 +32,16 @@ import { fmtCalc, FehlerZustand, ChartDatenTabelle } from '../components/ui'
 import { AnlageLeer, DatenLeer } from './OnboardingLeer'
 import { BlockShell, BlockStackSkeleton, KpiStrip, type Block, type KpiStripItem } from '../components/blocks'
 import { ParkProvider, ParkFuss, Parkbar, usePark } from '../components/park'
-import ZaehlerstaendeBlock, { useZaehlerstaende, zaehlerParkIds } from '../components/zaehler/ZaehlerstaendeBlock'
+import ZaehlerstaendeBlock, { useZaehlerstaende, zaehlerstaendeFuer, zaehlerParkIds } from '../components/zaehler/ZaehlerstaendeBlock'
 import { useApiData, useScrollErhalt } from '../hooks'
-import { BLOCK_IDENTITAET, formatCo2 } from '../lib'
+import { BLOCK_IDENTITAET, formatCo2, MONAT_KURZ } from '../lib'
 import { baueJahrKpis, JahrBilanz } from './JahrBilanz'
 import { monatBilanzParkIds } from './bilanzParkIds'
 import { baueKomponentenBloecke } from './KomponentenSektionen'
 import { finanzTeaserBlock } from './MonatRahmen'
 import { JahrVerlaufChart, baueJahrChartDaten } from './JahrVerlaufChart'
+import { punkteAusMonatsantworten, type WaermeVerlaufPunkt } from './waermeVerlauf'
+import { energieProfilApi } from '../api/energie_profil'
 import { JahrCo2Chart, baueJahrCo2ChartDaten, co2JahresSumme, CO2_TABELLEN_SPALTEN } from './JahrCo2Chart'
 import { JahrSpeicherTabelle, baueSpeicherZeilen, jahrSpeicherParkIds } from './JahrSpeicherTabelle'
 import { verlaufTabellenSpalten } from './verlaufVergleich'
@@ -66,6 +68,9 @@ const SICHT_KEY = 'v4-cockpit-jahr'
  * Jahr sind beide dasselbe Objekt.
  */
 interface JahrLadung {
+  /** Das Jahr, zu dem diese Zahlen gehören — die Nutzlast sagt es selbst, damit
+   *  die Sicht es nicht aus der Auswahl erraten muss (Style-Guide A3a). */
+  jahr: number
   d: AktuellerMonatResponse
   dVgl: AktuellerMonatResponse
   monate: number[]
@@ -154,7 +159,7 @@ function CockpitJahrInner({ anlageId }: { anlageId: number | undefined }) {
     const dVgl = vergleichsMonate.length === monate.length
       ? d
       : baueJahrAlsMonat(antworten.filter((m) => vergleichsMonate.includes(m.monat)), j)
-    return { d, dVgl, monate, vergleichsMonate, antworten }
+    return { jahr: j, d, dVgl, monate, vergleichsMonate, antworten }
   }, [alleMonate])
 
   // keepPreviousData: Jahreswechsel aktualisiert den Block-Stack in-place statt
@@ -178,11 +183,21 @@ function CockpitJahrInner({ anlageId }: { anlageId: number | undefined }) {
     { enabled: !!anlageId, swrKey: `v4-jahr-co2:${anlageId}` },
   )
   const co2Monate = useMemo(() => co2Q.data?.monatswerte ?? [], [co2Q.data])
+  // ── Die Sicht zeigt EINE Periode ────────────────────────────────────────────
+  // `jahr` ist die **Auswahl** (Rail/Stepper, wirkt sofort), `angezeigtesJahr` das
+  // Jahr, zu dem die **Zahlen im Bild** gehören. ⚠ Hier hängt die Mischung nicht
+  // an einer zweiten Abfrage: CO₂-Reihe, Monatsbalken, Vorjahres- und Ø-Vergleich
+  // entstehen aus einer Liste, die **immer** geladen ist — sie sprangen deshalb
+  // OHNE jede Ladezeit auf das neue Jahr, während die Kacheln daneben noch das
+  // alte zeigten. Alles, was Zahlen beschriftet oder ergänzt, hängt jetzt am
+  // angezeigten Jahr (Style-Guide A3a).
+  const angezeigtesJahr = jahrQ.data?.jahr ?? jahr
+  const laedtJahr = jahr != null && angezeigtesJahr !== jahr ? jahr : null
   // JAHRESGEBUNDEN: die Chart-Zeilen — der Filter greift auf die ganze Zeile, nicht
   // auf einzelne Serien (die halb greifende Variante war der Befund N-10).
   const co2Punkte = useMemo(
-    () => (jahr == null ? [] : baueJahrCo2ChartDaten(co2Monate, jahr)),
-    [co2Monate, jahr],
+    () => (angezeigtesJahr == null ? [] : baueJahrCo2ChartDaten(co2Monate, angezeigtesJahr)),
+    [co2Monate, angezeigtesJahr],
   )
   // NICHT JAHRESGEBUNDEN: `co2_kumuliert_kg` ist eine Lebensdauer-Zahl. Deshalb der
   // letzte Wert der GESAMTEN Historie (Backend liefert nach (jahr, monat) aufsteigend),
@@ -195,6 +210,43 @@ function CockpitJahrInner({ anlageId }: { anlageId: number | undefined }) {
   const jahrVglData = jahrQ.data?.dVgl ?? null
   // #358: die Monats-Antworten des Jahres für den Speicher-Block.
   const jahrAntworten = useMemo(() => jahrQ.data?.antworten ?? [], [jahrQ.data])
+  // Wärme/Klima-Verlauf (Konzept §8): x = Monate des Jahres. Die Reihe kommt aus
+  // DENSELBEN Monats-Antworten, aus denen `d` gefaltet ist — kein zusätzlicher
+  // Abruf und keine zweite Wahrheit, wie schon bei der Speicher-Monatstabelle.
+  const wpVerlauf = useMemo<WaermeVerlaufPunkt[]>(
+    () => {
+      // Die Temperatur kommt aus der aggregierten Monatsliste (`monateQ`), die
+      // Mengen aus den Monats-Antworten — zwei Quellen, aber kein zusätzlicher
+      // Abruf: Beide liegen für diese Sicht ohnehin geladen vor.
+      const tempJeMonat = new Map(
+        alleMonate.filter((m) => m.jahr === angezeigtesJahr)
+          .map((m) => [m.monat, m.durchschnittstemperatur_c ?? null]),
+      )
+      // Eine reine Funktion (`waermeVerlauf.ts`) — dort ist eine vergessene
+      // Durchreichung prüfbar (Bauschnitt 6b brachte `wp_kaelte_kwh`).
+      return punkteAusMonatsantworten(jahrAntworten, tempJeMonat, (monat) => MONAT_KURZ[monat])
+    },
+    [jahrAntworten, alleMonate, angezeigtesJahr],
+  )
+  // WK-16c: Verteilung & Verlauf des Jahres (Perioden = Monate). Eine eigene
+  // Abfrage — die Monats-Antworten tragen die Aufteilung je **Anlage**, nicht je
+  // Gerät und Funktion (E1: Mengen je Gerät gibt es nur dort, wo sie je Gerät
+  // gebildet werden). Sie lädt neben der Sicht: bleibt sie aus, fehlt genau
+  // dieser Blockteil.
+  const verteilungQ = useApiData(
+    async () => ({
+      jahr: jahr!,
+      v: await energieProfilApi.getWaermeVerteilung(anlageId!, { sicht: 'jahr', jahr: jahr! }),
+    }),
+    [anlageId, jahr],
+    {
+      enabled: !!anlageId && jahr != null,
+      swrKey: `v4-jahr-waermeverteilung:${anlageId}:${jahr}`, /* de-de-allow: Cache-Key, keine Anzeige */
+      keepPreviousData: true,
+    },
+  )
+  // A3a — eine Sicht zeigt EINE Periode: gezeigt wird nur, was zu diesem Jahr gehört.
+  const wpVerteilung = verteilungQ.data?.jahr === angezeigtesJahr ? verteilungQ.data.v : null
   const speicherZeilen = useMemo(() => baueSpeicherZeilen(jahrAntworten), [jahrAntworten])
   const loading = monateQ.loading || (jahr != null && jahrQ.loading)
   const reloading = jahrQ.reloading
@@ -218,12 +270,13 @@ function CockpitJahrInner({ anlageId }: { anlageId: number | undefined }) {
     return entries
   }, [alleMonate])
 
-  const istLaufend = jahr != null && jahr === new Date().getFullYear()
+  // „läuft/abgeschlossen" beschreibt die Zahlen im Bild, nicht die Auswahl.
+  const istLaufend = angezeigtesJahr != null && angezeigtesJahr === new Date().getFullYear()
 
   // Verlauf-Monatsbalken + Vergleiche aus der Monatsreihe.
   const monatsZeilen = useMemo(
-    () => (jahr == null ? [] : alleMonate.filter((m) => m.jahr === jahr)),
-    [alleMonate, jahr],
+    () => (angezeigtesJahr == null ? [] : alleMonate.filter((m) => m.jahr === angezeigtesJahr)),
+    [alleMonate, angezeigtesJahr],
   )
   // Grundgesamtheit des Jahresvergleichs (Fund N-37): die Monate, für die das
   // ANGEZEIGTE Jahr Daten hat — ohne den laufenden. Ohne sie standen im laufenden
@@ -243,30 +296,35 @@ function CockpitJahrInner({ anlageId }: { anlageId: number | undefined }) {
   // Fenster der IST-Spalte der Vergleichstabelle = die Grundgesamtheit selbst.
   const istFenster = useMemo(() => monatsFensterAus(vergleichsMonate), [vergleichsMonate])
   const vorjahr = useMemo<JahrVergleich | null>(() => {
-    if (jahr == null) return null
-    const vj = jahrVergleichAus(alleMonate, jahr - 1, vergleichsMonate)
+    if (angezeigtesJahr == null) return null
+    const vj = jahrVergleichAus(alleMonate, angezeigtesJahr - 1, vergleichsMonate)
     // Keine Überschneidung (Anlage erst im angezeigten Jahr in Betrieb) ⇒ KEIN
     // Vergleich, nicht eine Spalte aus lauter 0.
     return vj.monate.length > 0 ? vj : null
-  }, [alleMonate, jahr, vergleichsMonate])
+  }, [alleMonate, angezeigtesJahr, vergleichsMonate])
   const oeJahr = useMemo(() => {
-    if (jahr == null) return null
-    const andere = [...new Set(alleMonate.map((m) => m.jahr))].filter((j) => j !== jahr)
+    if (angezeigtesJahr == null) return null
+    const andere = [...new Set(alleMonate.map((m) => m.jahr))].filter((j) => j !== angezeigtesJahr)
     // In den Ø geht nur ein Jahr ein, das die Grundgesamtheit GANZ abdeckt —
     // sonst mischte sich eine Ein-Monats-Summe (Anlage lief 2023 erst ab Juni) in
     // einen Sechs-Monats-Ø. `count` fällt entsprechend.
     return mittelJahre(andere.map((j) => jahrVergleichAus(alleMonate, j, vergleichsMonate)), vergleichsMonate)
-  }, [alleMonate, jahr, vergleichsMonate])
+  }, [alleMonate, angezeigtesJahr, vergleichsMonate])
   // Das Fenster, auf das sich die Vergleichszahl bezieht — `null` bei einem vollen
   // Jahr (dann ist nichts zu beschriften).
   const vjFenster = useMemo(() => monatsFenster(vorjahr), [vorjahr])
   const ojFenster = useMemo(() => monatsFenster(oeJahr), [oeJahr])
 
-  // #377 — Verbrauchszähler dieses Jahres.
-  const zaehlerstaende = useZaehlerstaende(anlageId, 'jahr', { jahr: jahr ?? undefined })
+  // #377 — Verbrauchszähler dieses Jahres. Geholt für die **Auswahl**, gezeigt nur
+  // zum **angezeigten** Jahr (Paarung, Style-Guide A3a) — der Hook hält seine
+  // Vordaten, sonst stünden die Stände eines anderen Jahres unter diesen Mengen.
+  const zaehlerQ = useZaehlerstaende(anlageId, 'jahr', { jahr: jahr ?? undefined })
+  const zaehlerstaende = zaehlerstaendeFuer(zaehlerQ, {
+    zeitraum: 'jahr', jahr: angezeigtesJahr ?? undefined,
+  })
 
   const bloecke = useMemo<Block[]>(() => {
-    if (jahr == null) return []
+    if (angezeigtesJahr == null) return []
     const d = jahrData
     // P-12/N-65: die Kopfzeile eines Blocks trägt sein Zeitfenster, sobald das
     // Jahr nicht deckungsgleich ist. Sie hat mehr Platz als die Kachel-Zweitzeile,
@@ -353,10 +411,10 @@ function CockpitJahrInner({ anlageId }: { anlageId: number | undefined }) {
       {
         title: 'CO₂ eingespart', value: fcJahr.wert, unit: fcJahr.einheit,
         color: 'green', icon: Leaf, parkId: 'kpi:co2-jahr',
-        subtitle: `${jahr} · PV + Wärmepumpe + E-Mobilität`,
+        subtitle: `${angezeigtesJahr} · PV + Wärmepumpe + E-Mobilität`,
         formel: 'Σ der Monatswerte des gewählten Jahres',
         berechnung: `${co2Punkte.length} Monate mit Daten`, ergebnis: `= ${fcJahr.text}`,
-        sicht: `Jahr ${jahr}`,
+        sicht: `Jahr ${angezeigtesJahr}`,
       },
       {
         title: 'CO₂ kumuliert', value: fcKum.wert, unit: fcKum.einheit,
@@ -403,7 +461,7 @@ function CockpitJahrInner({ anlageId }: { anlageId: number | undefined }) {
                 xKey="monat"
                 spalten={CO2_TABELLEN_SPALTEN}
                 daten={co2Punkte}
-                csvDateiname={`co2_${jahr}.csv`}
+                csvDateiname={`co2_${angezeigtesJahr}.csv`}
               />
             ),
           }
@@ -438,12 +496,12 @@ function CockpitJahrInner({ anlageId }: { anlageId: number | undefined }) {
             xKey="monat"
             spalten={verlaufTabellenSpalten(true)}
             daten={baueJahrChartDaten(monatsZeilen)}
-            csvDateiname={`verlauf_${jahr}.csv`}
+            csvDateiname={`verlauf_${angezeigtesJahr}.csv`}
           />
         ),
       }]),
       ...(co2Block ? [co2Block] : []),
-      ...(d ? baueKomponentenBloecke(d, park, 'jahr') : []),
+      ...(d ? baueKomponentenBloecke(d, park, 'jahr', null, wpVerlauf, null, wpVerteilung) : []),
       // #358 Phase 1 — die Tiefe unter dem Speicher-Abschnitt: Monatstabelle
       // (Vollzyklen · Solar-Anteil · Auslastung · Netto-Nutzen) + Saison-
       // Vergleich. Nur wenn überhaupt ein Speicher Bewegung hatte; die Zeilen
@@ -470,8 +528,8 @@ function CockpitJahrInner({ anlageId }: { anlageId: number | undefined }) {
       }] : []),
       ...(finanzBlock ? [finanzBlock] : []),
     ]
-  }, [jahr, jahrData, jahrVglData, vorjahr, oeJahr, vjFenster, ojFenster, istFenster,
-      kennzahlenFenster, monatsZeilen, park, jahrAntworten, speicherZeilen,
+  }, [angezeigtesJahr, jahrData, jahrVglData, vorjahr, oeJahr, vjFenster, ojFenster, istFenster,
+      kennzahlenFenster, monatsZeilen, park, jahrAntworten, wpVerlauf, wpVerteilung, speicherZeilen,
       co2Punkte, co2Monate.length, co2Kumuliert, co2Fehler, co2Reload, zaehlerstaende,
       co2Q.data])
 
@@ -495,7 +553,7 @@ function CockpitJahrInner({ anlageId }: { anlageId: number | undefined }) {
         </div>
 
         <div className="flex-1 min-w-0 space-y-4">
-          <JahrHeader jahr={jahr ?? 0} laufend={istLaufend} d={jahrData} onReload={reload} reloading={reloading} />
+          <JahrHeader jahr={angezeigtesJahr ?? 0} laedtJahr={laedtJahr} laufend={istLaufend} d={jahrData} onReload={reload} reloading={reloading} />
 
           {error ? (
             // B8-Fehler-Baustein (S15). Retry nur wenn reload greifen kann (Jahr gewählt);

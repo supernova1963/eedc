@@ -1,8 +1,6 @@
 
 # eedc Handbuch — Prognosen
 
-**Version 4.0** | Stand: 2026-07-25
-
 > Dieses Handbuch ist Teil der eedc-Dokumentation.
 > Siehe auch: [Energieprofil](HANDBUCH_ENERGIEPROFIL.md) | [Teil III: Einstellungen & Datenquellen](HANDBUCH_EINSTELLUNGEN.md) | [Daten-Checker](HANDBUCH_DATEN_CHECKER.md) | [Berechnungen & Kennzahlen](BERECHNUNGEN.md) | [Sensor-Referenz](SENSOR-REFERENZ.md) | [Glossar](GLOSSAR.md)
 

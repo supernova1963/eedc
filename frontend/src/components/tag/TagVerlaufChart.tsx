@@ -13,8 +13,8 @@ import {
   Tooltip, Legend, ResponsiveContainer, ReferenceLine,
 } from 'recharts'
 import { ChartLegende, eedcTooltipProps } from '../ui'
-import { EXTRA_SERIEN_FARBEN, PV_MODUL_FARBEN, KATEGORIE_FARBEN, CHART_LABELS, HILFSLINIE_DASH, AREA_FILL_OPACITY, xAchse, yAchse, achsenEinheit, achsenTick, ACHSEN_MARGIN_TOP, fmtZahl } from '../../lib'
-import { pvRestKw } from '../../lib/erzeugerSpalten'
+import { EXTRA_SERIEN_FARBEN, PV_MODUL_FARBEN, KATEGORIE_FARBEN, CHART_COLORS, CHART_LABELS, HILFSLINIE_DASH, AREA_FILL_OPACITY, xAchse, yAchse, achsenEinheit, achsenTick, ACHSEN_MARGIN_TOP, fmtZahl } from '../../lib'
+import { pvRestKw, pvSplitKw, wpRestKw, wpSplitKw } from '../../lib/erzeugerSpalten'
 import { useChartTheme } from '../../context/ThemeContext'
 import { useLegendenToggle } from '../../hooks'
 import { erfassteSenken, type SenkenKey } from './TagWerteTabelle'
@@ -27,8 +27,14 @@ function round2(v: number): number {
 interface ChartSerie { dataKey: string; label: string; farbe: string; stackId: 'quellen' | 'senken'; hideLabel?: boolean }
 
 /** Rest-Serie „PV (übrige)" erst ab dieser Stundenleistung — darunter ist der
- *  Rest Rundung, und eine Legenden-Zeile für 0,01 kW verwirrt mehr als sie sagt. */
+ *  Rest Rundung, und eine Legenden-Zeile für 0,01 kW verwirrt mehr als sie sagt.
+ *  Dieselbe Schwelle gilt für „Wärmepumpe (übrige)" auf der Senkenseite. */
 const PV_REST_SCHWELLE_KW = 0.05
+
+/** Ab wie vielen Funktions-Serien die WP-Fläche aufgeschlüsselt wird. Bei einer
+ *  einzigen wäre die Funktionsreihe die WP-Reihe unter anderem Namen — dieselbe
+ *  Grenze wie `ERZEUGER_MIN_ANZAHL` auf der Quellenseite. */
+const WP_SPLIT_MIN_SERIEN = 2
 
 /**
  * Die Serienliste des Butterfly-Charts — **rein**, damit die Regel prüfbar ist.
@@ -44,6 +50,7 @@ const PV_REST_SCHWELLE_KW = 0.05
  */
 export function baueChartSerien({
   pvAufgeschluesselt, zeigePvRest, erzeugerSerien, extraErzeuger, extraVerbraucher, senkenErfasst,
+  wpAufgeschluesselt = false, zeigeWpRest = false, wpSerien = [],
 }: {
   pvAufgeschluesselt: boolean
   zeigePvRest: boolean
@@ -51,6 +58,9 @@ export function baueChartSerien({
   extraErzeuger: SerieInfo[]
   extraVerbraucher: SerieInfo[]
   senkenErfasst: Set<SenkenKey>
+  wpAufgeschluesselt?: boolean
+  zeigeWpRest?: boolean
+  wpSerien?: SerieInfo[]
 }): ChartSerie[] {
   const r: ChartSerie[] = []
   if (pvAufgeschluesselt) {
@@ -73,8 +83,45 @@ export function baueChartSerien({
   // JayJayX (simon42 T89667 #309): die beiden **dedizierten** Gerätesenken sind
   // die einzigen, die bis hierher unbedingt im Stapel standen — bei ihm zwei
   // Flächen für Geräte, die er nicht besitzt.
-  if (senkenErfasst.has('waermepumpe_kw'))
-    r.push({ dataKey: 'wp', label: 'W\u00e4rmepumpe', farbe: KATEGORIE_FARBEN.waermepumpe, stackId: 'senken' })
+  if (senkenErfasst.has('waermepumpe_kw')) {
+    if (wpAufgeschluesselt) {
+      // Funktions-Split (WK-09 B1): dieselben zwei Flächen, die Cockpit → Live
+      // schon zeichnet — sie **ersetzen** die WP-Fläche, statt obendrauf zu
+      // liegen (die `erzeugerSerien`-Regel, eine Senke statt einer Quelle).
+      // Farben aus der Rolle, nicht aus der Serienreihenfolge: Heizen = rot,
+      // Warmwasser = blau, Kühlen = sky, identisch mit dem Live-Chart
+      // (Regel 0a, „eine Datenrolle, eine Farbe").
+      //
+      // ⭐ Kühlen kam am 13.09.2026 dazu (N-439). Ohne die Zeile fiele ein
+      // `_kuehlen`-Key in den Heizen-Zweig und die Kühlfläche stünde **rot**
+      // neben dem Heizen-Segment. `modusKuehlen` ist die Rollenfarbe des
+      // Kühl-STROMS (= `ROLLEN_BG.kuehlung`); die gemessene Kälte-MENGE trägt
+      // dagegen `kaelteGemessen` (teal, N-437) — zwei Größen, zwei Töne.
+      wpSerien.forEach((ws) => r.push({
+        dataKey: ws.key,
+        label: ws.label,
+        farbe: ws.key.endsWith('_warmwasser')
+          ? CHART_COLORS.wpWarmwasser
+          : ws.key.endsWith('_kuehlen')
+            ? CHART_COLORS.modusKuehlen
+            : CHART_COLORS.wpWaerme,
+        stackId: 'senken',
+      }))
+      // ⚠ **Nicht `KATEGORIE_FARBEN.waermepumpe`** — gemessen 12.09.2026 trägt die
+      // Kategorie-Farbe der Wärmepumpe denselben Hexwert wie
+      // `CHART_COLORS.wpWaerme` (Heizen, red-500), stünde also BITGLEICH neben
+      // dem Heizen-Segment im selben Stapel; zwei Legendenzeilen, eine Farbe.
+      // Die Rolle „Anteil, der keiner Funktion zugeordnet ist" hat bereits eine
+      // Farbe (`modusNichtAufgeteilt`, = `ROLLEN_BG.nicht_aufgeteilt`), und die
+      // gilt hier (Regel 0a Stufe 1: SoT existiert ⇒ anwenden).
+      if (zeigeWpRest) r.push({
+        dataKey: 'wp_rest', label: 'W\u00e4rmepumpe (\u00fcbrige)',
+        farbe: CHART_COLORS.modusNichtAufgeteilt, stackId: 'senken',
+      })
+    } else {
+      r.push({ dataKey: 'wp', label: 'W\u00e4rmepumpe', farbe: KATEGORIE_FARBEN.waermepumpe, stackId: 'senken' })
+    }
+  }
   if (senkenErfasst.has('wallbox_kw'))
     r.push({ dataKey: 'wb', label: 'Wallbox', farbe: KATEGORIE_FARBEN.wallbox, stackId: 'senken' })
   extraVerbraucher.forEach((es, i) =>
@@ -82,7 +129,110 @@ export function baueChartSerien({
   return r
 }
 
-export function TagVerlaufChart({ daten, extraSerien, erzeugerSerien = [] }: {
+/**
+ * Wird die WP-Fläche dieses Tages nach Funktion aufgeschlüsselt? — die **eine**
+ * Bedingung, damit Serienliste und Punktbauer nicht auseinanderlaufen können.
+ *
+ * ⚠ Sie hängt AN der erfassten Senke (N-424): ohne `waermepumpe_kw` gibt es gar
+ * keine WP-Fläche und damit auch keine, die man aufteilen könnte — die
+ * JayJayX-Regel (#309) bleibt die äußere. Ab {@link WP_SPLIT_MIN_SERIEN}
+ * Funktions-Serien, weil eine einzelne die WP-Reihe unter anderem Namen wäre.
+ */
+export function wpIstAufgeschluesselt(senkenErfasst: Set<SenkenKey>, wpSerien: SerieInfo[]): boolean {
+  return senkenErfasst.has('waermepumpe_kw') && wpSerien.length >= WP_SPLIT_MIN_SERIEN
+}
+
+/** Trägt der Tag einen ungedeckten WP-Rest über der Schwelle? Rein, damit die
+ *  Schwelle prüfbar ist — sonst stünde eine Legendenzeile für 0,01 kW da. */
+export function zeigtWpRest(daten: StundenWert[], wpKeys: string[]): boolean {
+  return daten.some((s) => wpRestKw(s.waermepumpe_kw, s.komponenten, wpKeys) > PV_REST_SCHWELLE_KW)
+}
+
+/**
+ * Die 24 Chart-Punkte des Butterfly-Charts — **rein**, aus demselben Grund wie
+ * {@link baueChartSerien}: Recharts zeichnet in jsdom nichts, eine Probe am
+ * gerenderten Chart wäre grün, ohne je etwas gemessen zu haben. Ausgelagert am
+ * 12.09.2026 (WK-09 B1), damit die K1-Wache prüfbar wird — *Σ der Senkenflächen
+ * einer Stunde bleibt beim Aufschlüsseln bitgleich*.
+ */
+export function baueChartDaten({
+  daten, extraErzeuger, extraVerbraucher, erzeugerSerien, pvAufgeschluesselt, zeigePvRest,
+  wpSerien = [], wpAufgeschluesselt = false, zeigeWpRest = false,
+}: {
+  daten: StundenWert[]
+  extraErzeuger: SerieInfo[]
+  extraVerbraucher: SerieInfo[]
+  erzeugerSerien: SerieInfo[]
+  pvAufgeschluesselt: boolean
+  zeigePvRest: boolean
+  wpSerien?: SerieInfo[]
+  wpAufgeschluesselt?: boolean
+  zeigeWpRest?: boolean
+}): Record<string, number | string>[] {
+  const erzeugerKeys = erzeugerSerien.map((es) => es.key)
+  const wpKeys = wpSerien.map((ws) => ws.key)
+  return Array.from({ length: 24 }, (_, h) => {
+    const s   = daten.find(d => d.stunde === h)
+    const bat = s?.batterie_kw ?? 0
+    const ntz = (s?.netzbezug_kw ?? 0) - (s?.einspeisung_kw ?? 0)
+    const vbrSons = extraVerbraucher.reduce((a, es) => a + Math.abs(Math.min(0, s?.komponenten?.[es.key] ?? 0)), 0)
+    const erzSons = extraErzeuger.reduce((a, es) => a + Math.max(0, s?.komponenten?.[es.key] ?? 0), 0)
+    // `hausverbrauch` ist dieselbe Differenz wie in der Stundenwerte-Tabelle,
+    // hier aber bewusst **ohne** die Unterdrückungs-Regel aus §3 des Konzepts
+    // (`berechneHausverbrauch`): `Math.max(0, …)` klemmt den Ausdruck bei
+    // fehlendem `verbrauch_kw` algebraisch auf 0 (alle Subtrahenden ≥ 0), der
+    // Tooltip blendet Werte < 0,001 ohnehin aus — es entsteht also **keine**
+    // falsche Zahl, nur ein Strich auf der Nulllinie. Ein `null` an dieser
+    // Stelle ginge in eine **gestapelte** Fläche; dafür gibt es im Baum keine
+    // Präzedenz und jsdom kann es nicht nachweisen. Wer die Serie anfasst,
+    // zieht die Regel mit — s. `TagWerteTabelle.berechneHausverbrauch`.
+    const punkt: Record<string, number | string> = {
+      stunde:       `${h}:00`,
+      pv:           s?.pv_kw ?? 0,
+      bat_pos:      Math.max(0, bat),
+      bat_neg:      Math.min(0, bat),
+      netz_pos:     Math.max(0, ntz),
+      netz_neg:     Math.min(0, ntz),
+      hausverbrauch: -Math.max(0, (s?.verbrauch_kw ?? 0) - (s?.waermepumpe_kw ?? 0) - (s?.wallbox_kw ?? 0) - vbrSons),
+      wb:           -(s?.wallbox_kw ?? 0),
+      gesamterzeugung: round2((s?.pv_kw ?? 0) + Math.max(0, bat) + erzSons),
+    }
+    // ⭐ **K1: die Aufschlüsselung ersetzt die WP-Fläche, sie liegt nicht darauf.**
+    // `hausverbrauch` oben bleibt **unverändert** auf `waermepumpe_kw` — es ist
+    // dieselbe Menge, und eine zweite Subtraktionsformel wäre die F-56-Klasse.
+    //
+    // ⛔ **Und die Höhe hält in BEIDE Richtungen** (N-449): `wpSplitKw` deckelt
+    // die Funktions-Flächen auf den Zähler, wo Σ Split größer ist (Zähler =
+    // Menge, Leistungspfad = Form), `wpRestKw` füllt auf, wo er kleiner ist.
+    // Σ Funktionsflächen + Rest ist damit exakt `waermepumpe_kw`.
+    if (wpAufgeschluesselt) {
+      const wpWerte = wpSplitKw(s?.waermepumpe_kw, s?.komponenten, wpKeys)
+      for (const key of wpKeys) punkt[key] = wpWerte[key]
+      if (zeigeWpRest) punkt.wp_rest = -round2(wpRestKw(s?.waermepumpe_kw, s?.komponenten, wpKeys))
+    } else {
+      punkt.wp = -(s?.waermepumpe_kw ?? 0)
+    }
+    for (const es of extraErzeuger)    punkt[es.key] = Math.max(0, s?.komponenten?.[es.key] ?? 0)
+    for (const es of extraVerbraucher) punkt[es.key] = Math.min(0, s?.komponenten?.[es.key] ?? 0)
+    if (pvAufgeschluesselt) {
+      // `gesamterzeugung` oben bleibt auf `pv_kw` — die Aufschlüsselung ändert
+      // die Darstellung, nicht die Bilanz.
+      //
+      // ⛔ **Und die Höhe hält in BEIDE Richtungen** (N-455, dieselbe Regel wie
+      // acht Zeilen höher für die Senkenseite): `pvSplitKw` deckelt die
+      // String-Flächen auf `pv_kw`, wo ihre Summe größer ist (Zähler = Menge,
+      // Leistungspfad = Form), `pvRestKw` füllt auf, wo sie kleiner ist.
+      // Σ Stringflächen + Rest ist damit exakt `pv_kw` — vorher konnte der
+      // Quellen-Stapel über die PV-Gesamtlinie hinauswachsen.
+      const pvWerte = pvSplitKw(s?.pv_kw, s?.komponenten, erzeugerKeys)
+      for (const es of erzeugerSerien) punkt[es.key] = pvWerte[es.key]
+      if (zeigePvRest) punkt.pv_rest = round2(pvRestKw(s?.pv_kw, s?.komponenten, erzeugerKeys))
+    }
+    return punkt
+  })
+}
+
+export function TagVerlaufChart({ daten, extraSerien, erzeugerSerien = [], wpSerien = [] }: {
   daten: StundenWert[]
   extraSerien: SerieInfo[]
   /** PV-Strings/BKW mit eigenem Sensor (#350, Rainer). Sie **ersetzen** den
@@ -91,6 +241,12 @@ export function TagVerlaufChart({ daten, extraSerien, erzeugerSerien = [] }: {
    *  addiert sich zu `pv`). Was die Strings nicht abdecken, bleibt als
    *  „PV (übrige)" stehen; die Stapelhöhe ist damit unverändert die Erzeugung. */
   erzeugerSerien?: SerieInfo[]
+  /** Wärmepumpen-Serien je Funktion (`…_heizen`/`…_warmwasser`, WK-09 B1).
+   *  Dieselbe Bauform auf der Senkenseite: sie **ersetzen** die `wp`-Fläche,
+   *  der Rest heißt „Wärmepumpe (übrige)". Sie entstehen im Leistungspfad nur,
+   *  wenn KEINE „Leistung gesamt" zugeordnet ist
+   *  (`live_sensor_config.py::baue_investitions_serien`). */
+  wpSerien?: SerieInfo[]
 }) {
   const achsen = useChartTheme()
   // B7-Legenden-Toggle; Paar-Mapping: bidirektionale _pos/_neg-Serien (Batterie/Netz)
@@ -128,53 +284,35 @@ export function TagVerlaufChart({ daten, extraSerien, erzeugerSerien = [] }: {
     [pvAufgeschluesselt, daten, pvRest],
   )
 
+  // WP je Funktion: dieselbe Frage wie oben, eine Zeile tiefer im Stapel.
+  // ⚠ Die Aufschlüsselung hängt AN der erfassten Senke (N-424): ohne
+  // `waermepumpe_kw` gibt es gar keine WP-Fläche, und dann auch keine, die man
+  // aufteilen könnte — die JayJayX-Regel (#309) bleibt die äußere.
+  const wpAufgeschluesselt = wpIstAufgeschluesselt(senkenErfasst, wpSerien)
+  const zeigeWpRest = useMemo(
+    () => wpAufgeschluesselt && zeigtWpRest(daten, wpSerien.map((ws) => ws.key)),
+    [wpAufgeschluesselt, daten, wpSerien],
+  )
+
   // Chart-Serien analog Live-TagesverlaufChart: bidirektionale in _pos/_neg aufgespalten.
   const chartSerien = useMemo<ChartSerie[]>(
     () => baueChartSerien({
       pvAufgeschluesselt, zeigePvRest, erzeugerSerien,
       extraErzeuger, extraVerbraucher, senkenErfasst,
+      wpAufgeschluesselt, zeigeWpRest, wpSerien,
     }),
-    [extraErzeuger, extraVerbraucher, erzeugerSerien, pvAufgeschluesselt, zeigePvRest, senkenErfasst],
+    [extraErzeuger, extraVerbraucher, erzeugerSerien, pvAufgeschluesselt, zeigePvRest, senkenErfasst,
+      wpAufgeschluesselt, zeigeWpRest, wpSerien],
   )
 
-  const chartDaten = useMemo(() =>
-    Array.from({ length: 24 }, (_, h) => {
-      const s   = daten.find(d => d.stunde === h)
-      const bat = s?.batterie_kw ?? 0
-      const ntz = (s?.netzbezug_kw ?? 0) - (s?.einspeisung_kw ?? 0)
-      const vbrSons = extraVerbraucher.reduce((a, es) => a + Math.abs(Math.min(0, s?.komponenten?.[es.key] ?? 0)), 0)
-      const erzSons = extraErzeuger.reduce((a, es) => a + Math.max(0, s?.komponenten?.[es.key] ?? 0), 0)
-      // `hausverbrauch` ist dieselbe Differenz wie in der Stundenwerte-Tabelle,
-      // hier aber bewusst **ohne** die Unterdrückungs-Regel aus §3 des Konzepts
-      // (`berechneHausverbrauch`): `Math.max(0, …)` klemmt den Ausdruck bei
-      // fehlendem `verbrauch_kw` algebraisch auf 0 (alle Subtrahenden ≥ 0), der
-      // Tooltip blendet Werte < 0,001 ohnehin aus — es entsteht also **keine**
-      // falsche Zahl, nur ein Strich auf der Nulllinie. Ein `null` an dieser
-      // Stelle ginge in eine **gestapelte** Fläche; dafür gibt es im Baum keine
-      // Präzedenz und jsdom kann es nicht nachweisen. Wer die Serie anfasst,
-      // zieht die Regel mit — s. `TagWerteTabelle.berechneHausverbrauch`.
-      const punkt: Record<string, number | string> = {
-        stunde:       `${h}:00`,
-        pv:           s?.pv_kw ?? 0,
-        bat_pos:      Math.max(0, bat),
-        bat_neg:      Math.min(0, bat),
-        netz_pos:     Math.max(0, ntz),
-        netz_neg:     Math.min(0, ntz),
-        hausverbrauch: -Math.max(0, (s?.verbrauch_kw ?? 0) - (s?.waermepumpe_kw ?? 0) - (s?.wallbox_kw ?? 0) - vbrSons),
-        wp:           -(s?.waermepumpe_kw ?? 0),
-        wb:           -(s?.wallbox_kw ?? 0),
-        gesamterzeugung: round2((s?.pv_kw ?? 0) + Math.max(0, bat) + erzSons),
-      }
-      for (const es of extraErzeuger)    punkt[es.key] = Math.max(0, s?.komponenten?.[es.key] ?? 0)
-      for (const es of extraVerbraucher) punkt[es.key] = Math.min(0, s?.komponenten?.[es.key] ?? 0)
-      if (pvAufgeschluesselt) {
-        // `gesamterzeugung` oben bleibt auf `pv_kw` — die Aufschlüsselung ändert
-        // die Darstellung, nicht die Bilanz.
-        for (const es of erzeugerSerien) punkt[es.key] = Math.max(0, s?.komponenten?.[es.key] ?? 0)
-        if (zeigePvRest) punkt.pv_rest = round2(pvRest(s))
-      }
-      return punkt
-    }), [daten, extraErzeuger, extraVerbraucher, erzeugerSerien, pvAufgeschluesselt, zeigePvRest, pvRest])
+  const chartDaten = useMemo(
+    () => baueChartDaten({
+      daten, extraErzeuger, extraVerbraucher, erzeugerSerien, pvAufgeschluesselt, zeigePvRest,
+      wpSerien, wpAufgeschluesselt, zeigeWpRest,
+    }),
+    [daten, extraErzeuger, extraVerbraucher, erzeugerSerien, pvAufgeschluesselt, zeigePvRest,
+      wpSerien, wpAufgeschluesselt, zeigeWpRest],
+  )
 
   return (
     // D18-3 (detlan #210): KEINE eigene <Card> mehr um den Chart — die

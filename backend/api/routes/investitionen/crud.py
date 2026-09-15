@@ -43,7 +43,7 @@ from backend.core.berechnungen.investitions_jahresertrag import (
     BEZEICHNUNG_ABGABE,
     jahresertrag_posten,
 )
-from backend.core.field_definitions import ist_abgabe_kategorie
+from backend.core.field_definitions import URTEIL_GILT, feld_urteil, ist_abgabe_kategorie
 from backend.models.anlage import Anlage
 from backend.models.monatsdaten import Monatsdaten
 from backend.api.routes.strompreise import (
@@ -58,7 +58,6 @@ from backend.core.investition_parameter import (
     PARAM_WAERMEPUMPE,
     PARAM_WAERMEPUMPE_DEFAULTS,
     SPEICHER_KOPPLUNG_DC,
-    ist_luft_luft_waermepumpe,
     lade_innengeraete,
 )
 from backend.core.wirtschaftlichkeit_defaults import EINSPEISEVERGUETUNG_DEFAULT_CENT
@@ -1001,19 +1000,43 @@ class ROIDashboardResponse(BaseModel):
     benzinpreis_hinweis_euro: Optional[float] = None
 
 
+def _achse_gilt(params: dict, feld: str) -> bool:
+    """Gilt diese Wärme-Achse am Gerät? — **die Registry antwortet, nie die Bauart.**
+
+    WK-15c/R1 (ADR-002/P13). ``feld`` ist ``"heizenergie_kwh"`` (Heiz-Achse) oder
+    ``"warmwasser_kwh"`` (Warmwasser-Achse); `URTEIL_GILT` heißt *uneingeschränkt
+    vorhanden*. Eine **Brauchwasser**-WP hat keine Heiz-Achse (`!brauchwasser`,
+    weich), eine **Split-Klimaanlage** keinen Warmwasserkreis (`!luft_luft`,
+    hart — N-304).
+
+    ⚠ **`feld_urteil` und nicht `groesse_gibt_es_am_geraet`** — das liefert an der
+    Brauchwasser-WP `True`, weil die Bedingung dort weich ist („untypisch, nicht
+    unmöglich": wer doch einen kleinen Heizkreis hat, darf seinen Zähler
+    behalten). Für den **Lesepfad** einer gemessenen Menge ist das richtig; für
+    die Frage, ob eine **geschätzte** Achse eine Geldzahl tragen darf, ist es zu
+    weit. Dieselbe Trennlinie wie in `daten_checker/stammdaten.py` (WK-15b).
+    """
+    return feld_urteil("waermepumpe", feld, params) == URTEIL_GILT
+
+
 def _wp_nicht_bewertbar(params: dict) -> Optional[str]:
     """Warum lässt sich diese Wärmepumpe nicht gegen eine Altanlage rechnen?
 
     Gibt den Anzeige-Hinweis zurück (truthy) oder ``None``, wenn die Bewertung
-    laufen darf. Zwei Gründe, beide **gepflegt statt geraten** (N-88/F2b):
+    laufen darf. **Drei** Gründe, alle **gepflegt statt geraten** (N-88/F2b):
 
     1. **Es wurde nichts ersetzt.** Dann gibt es keinen Vergleichsgegenstand —
        unabhängig von der Bauart. Ein Neubau ohne Vorgängerheizung, eine
        Klimaanlage, die nur kühlt.
-    2. **Es ist kein Wärmebedarf gepflegt.** Die ROI-Zeile ist eine *Prognose*
+    2. **An den Achsen dieses Geräts steht nur die alte Vorbelegung**
+       (12.000/3.000). Sie beschreibt ein Haus mit Heizung *und* Warmwasser;
+       fehlt dem Gerät eine der beiden Achsen, ist sie keine Antwort, sondern
+       eine offene Frage (WK-15c — der Absatz im Rumpf nennt die Messung).
+    3. **Es ist kein Wärmebedarf gepflegt.** Die ROI-Zeile ist eine *Prognose*
        aus Bedarf × JAZ/COP, nicht die gemessene Ersparnis. Ohne Bedarf gäbe es
        nichts zu rechnen — bis 2026-08-16 sprang hier ein Default von 12.000 +
-       3.000 kWh ein und erfand damit die Eingabe, die fehlte.
+       3.000 kWh ein und erfand damit die Eingabe, die fehlte. **Ein Bedarf auf
+       einer Achse, die es am Gerät nicht gibt, zählt dabei nicht mit.**
 
     ⚠ **Sichtbare Folge für Bestandsanlagen:** Eine Wärmepumpe, die nie über das
     Investitionsformular gespeichert wurde (Import, Setup-Wizard), trug bisher
@@ -1043,28 +1066,89 @@ def _wp_nicht_bewertbar(params: dict) -> Optional[str]:
     # Bewertung; wer nur kühlt, wählt „nichts ersetzt". Für klassische
     # Wärmepumpen bleibt die Vorbelegung eine brauchbare Schätzung und wird
     # unverändert gerechnet — dort war sie immer sichtbar und änderbar.
-    if ist_luft_luft_waermepumpe(params) and (
-        params.get(PARAM_WAERMEPUMPE["HEIZWAERMEBEDARF_KWH"])
-        == PARAM_WAERMEPUMPE_DEFAULTS["heizwaermebedarf_kwh"]
-        and params.get(PARAM_WAERMEPUMPE["WARMWASSERBEDARF_KWH"])
-        == PARAM_WAERMEPUMPE_DEFAULTS["warmwasserbedarf_kwh"]
-    ):
+    # ⭐ **WK-15c: dieselbe Sperre, an der Achse statt an der Bauart.** Sie galt
+    # bis zum 14.09.2026 nur für `luft_luft` — und ließ damit genau den Fall
+    # durch, der sie ausgelöst hat: Das Formular belegt `heizwaermebedarf_kwh`
+    # auch an einer **Brauchwasser**-WP mit 12.000 vor (die Ausnahme in
+    # `investitionFormHelpers.ts` kannte nur `luft_luft`), und daraus wurden
+    # **714,29 €/Jahr und 1.721 kg CO₂** — gemessen; mit `heiz = 0` sind es
+    # 142,86 € und 344 kg. **571 € erfundene Ersparnis** für Heizwärme, die das
+    # Gerät nie abgibt. Exakt die K-0b-Bauform, nur eine Bauart weiter.
+    #
+    # Die Verallgemeinerung fragt die **Achsen**: Die Vorbelegung 12.000/3.000
+    # beschreibt ein Haus mit Heizung **und** Warmwasser. Fehlt dem Gerät eine
+    # der beiden Achsen, passt das Paar als Ganzes nicht — dann zählt es als
+    # offene Frage, nicht als Antwort. Wo **beide** Achsen gelten (klassische
+    # Wärmepumpe), bleibt es unverändert eine brauchbare Schätzung und wird
+    # gerechnet; dort war die Zahl immer sichtbar und änderbar.
+    #
+    # ⚠ **Die Bedingung ist ein Oberbegriff der alten, nicht ihr Ersatz:** Jedes
+    # Gerät, das bisher gesperrt war, bleibt gesperrt (`luft_luft` mit beiden
+    # Defaults erfüllt sie weiter). Neu gesperrt ist, wessen **geltende** Achse
+    # nur die Vorbelegung trägt — an einer Klimaanlage also auch dann, wenn
+    # jemand daneben einen Warmwasserbedarf gepflegt hat: Der zählt an einem
+    # Gerät ohne Warmwasserkreis ohnehin nicht mehr mit (N-304), und übrig
+    # bliebe allein die vorbelegte Heizwärme.
+    #
+    # ⛔ Ein gepflegter **Gesamtbedarf** (`waermebedarf_kwh`, nur über Importe
+    # erreichbar) ist eine echte Antwort und hebt die Sperre auf.
+    heiz_gilt = _achse_gilt(params, "heizenergie_kwh")
+    ww_gilt = _achse_gilt(params, "warmwasser_kwh")
+    nur_vorbelegung = (
+        not (heiz_gilt and ww_gilt)
+        and not params.get(PARAM_WAERMEPUMPE["WAERMEBEDARF_KWH"])
+        and (
+            not heiz_gilt
+            or params.get(PARAM_WAERMEPUMPE["HEIZWAERMEBEDARF_KWH"])
+            == PARAM_WAERMEPUMPE_DEFAULTS["heizwaermebedarf_kwh"]
+        )
+        and (
+            not ww_gilt
+            or params.get(PARAM_WAERMEPUMPE["WARMWASSERBEDARF_KWH"])
+            == PARAM_WAERMEPUMPE_DEFAULTS["warmwasserbedarf_kwh"]
+        )
+    )
+    if nur_vorbelegung:
+        # Der Weg heraus hängt daran, welche Achse das Gerät hat — ein Rat, der
+        # auf eine nicht vorhandene Achse zeigt, wäre so wenig auflösbar wie der
+        # Hinweis, den WK-15b abgeschafft hat.
+        weg = (
+            'Heizt du mit dem Gerät, trag deinen tatsächlichen Bedarf ein; '
+            'kühlst du nur, wähle beim ersetzten Energieträger „nichts ersetzt".'
+            if heiz_gilt else
+            'Trag deinen tatsächlichen Warmwasserbedarf ein; hat das Gerät keine '
+            'frühere Anlage ersetzt, wähle beim ersetzten Energieträger '
+            '„nichts ersetzt".'
+        )
         return (
             'Nicht bewertet: Bei diesem Gerät steht noch die alte Vorbelegung von '
             '12.000 kWh Heizwärme und 3.000 kWh Warmwasser — Werte, die eedc früher '
-            'selbst eingesetzt hat. Heizt du mit dem Gerät, trag deinen tatsächlichen '
-            'Bedarf ein; kühlst du nur, wähle beim ersetzten Energieträger „nichts '
-            'ersetzt". Stromverbrauch, PV-Anteil und Kosten werden unverändert '
-            'ausgewertet.'
+            f'selbst eingesetzt hat. {weg} Stromverbrauch, PV-Anteil und Kosten '
+            'werden unverändert ausgewertet.'
         )
-    hat_bedarf = any(
-        params.get(PARAM_WAERMEPUMPE[k])
-        for k in ("WAERMEBEDARF_KWH", "HEIZWAERMEBEDARF_KWH", "WARMWASSERBEDARF_KWH")
+    # ⚠ **Ein Bedarf auf einer Achse, die es am Gerät nicht gibt, ist kein
+    # Bedarf** (WK-15c). Sonst liefe der Rechenzweig unten an — und lieferte,
+    # weil er dieselbe Achse auf 0 setzt, eine **0-€-Zeile** statt der
+    # ehrlichen Auskunft „nicht bewertet": eine Null, die wie ein Messergebnis
+    # aussieht, ist die schlechtere Falschaussage (dieselbe Unterscheidung wie
+    # beim AC-Speicher ohne Kapazität).
+    hat_bedarf = bool(
+        params.get(PARAM_WAERMEPUMPE["WAERMEBEDARF_KWH"])
+        or (heiz_gilt and params.get(PARAM_WAERMEPUMPE["HEIZWAERMEBEDARF_KWH"]))
+        or (ww_gilt and params.get(PARAM_WAERMEPUMPE["WARMWASSERBEDARF_KWH"]))
     )
     if not hat_bedarf:
+        # Der Rat nennt nur Achsen, die es am Gerät gibt (WK-15c) — eine
+        # Brauchwasser-WP nach dem Heizwärmebedarf zu fragen, ist genau der
+        # Hinweis, den WK-15b im Daten-Checker abgeschafft hat.
+        felder = (
+            'den Heizwärme- und Warmwasserbedarf' if heiz_gilt and ww_gilt
+            else 'deinen Warmwasserbedarf' if ww_gilt
+            else 'deinen Heizwärmebedarf'
+        )
         return (
             'Nicht bewertet: Für dieses Gerät ist kein Wärmebedarf gepflegt. '
-            'Trag den Heizwärme- und Warmwasserbedarf pro Jahr ein (Energieausweis '
+            f'Trag {felder} pro Jahr ein (Energieausweis '
             'oder Schätzung), oder wähle beim ersetzten Energieträger „nichts '
             'ersetzt", wenn es keine Vorgängerheizung gab. Stromverbrauch, '
             'PV-Anteil und Kosten werden unverändert ausgewertet.'
@@ -2241,7 +2325,15 @@ async def get_roi_dashboard(
         elif inv.typ == InvestitionTyp.WAERMEPUMPE.value:
             # Modus-Auswahl: gesamt_jaz (Standard), scop (EU-Label) oder getrennte_cops
             effizienz_modus = params.get(PARAM_WAERMEPUMPE["EFFIZIENZ_MODUS"], PARAM_WAERMEPUMPE_DEFAULTS["effizienz_modus"])
-            pv_anteil = params.get(PARAM_WAERMEPUMPE["PV_ANTEIL_PROZENT"], PARAM_WAERMEPUMPE_DEFAULTS["pv_anteil_prozent"])
+            # ⛔ Hier stand bis 2026-09-13 `pv_anteil = params.get(…PV_ANTEIL_PROZENT…)`
+            # und ging als `pv_anteil_prozent` in die Formel: diese Zeile war die
+            # EINZIGE Sicht, in der das Formularfeld eine Geldzahl bewegte, und
+            # sie widersprach den drei anderen Ersparnis-Zahlen derselben
+            # Wärmepumpe. Sie ist entfallen (SOLL Wärme/Klima S1b, N-459) — der
+            # WP-Strom wird voll belastet, sein PV-Anteil steht auf der PV-Seite.
+            # Nebenwirkung: `pv_anteil_prozent: null` im Parameter-JSON legte
+            # diese ganze Route mit einem TypeError lahm; mit dem Leser fällt
+            # auch der Absturz weg.
             alter_energietraeger = params.get(PARAM_WAERMEPUMPE["ALTER_ENERGIETRAEGER"], PARAM_WAERMEPUMPE_DEFAULTS["alter_energietraeger"])
             alter_preis = params.get(PARAM_WAERMEPUMPE["ALTER_PREIS_CENT_KWH"], PARAM_WAERMEPUMPE_DEFAULTS["alter_preis_cent_kwh"])
             alternativ_zusatzkosten = params.get(PARAM_WAERMEPUMPE["ALTERNATIV_ZUSATZKOSTEN_JAHR"], 0) or 0
@@ -2251,6 +2343,25 @@ async def get_roi_dashboard(
             # hinter dem K-0b-Phantomwert.
             heizwaermebedarf = params.get(PARAM_WAERMEPUMPE["HEIZWAERMEBEDARF_KWH"]) or 0
             warmwasserbedarf = params.get(PARAM_WAERMEPUMPE["WARMWASSERBEDARF_KWH"]) or 0
+            # ⭐ **WK-15c: Eine Achse, die es am Gerät nicht gibt, trägt keine
+            # Zahl.** Gemessen an einer Brauchwasser-WP mit der Formular-
+            # Vorbelegung 12.000/3.000: **714,29 €/Jahr und 1.721 kg CO₂**
+            # gegenüber 142,86 € und 344 kg mit `heiz = 0` — **571 € Ersparnis
+            # für Heizwärme, die das Gerät nie abgibt**. Spiegelbildlich an
+            # einer Split-Klimaanlage der Warmwasserbedarf (N-304: kein
+            # Warmwasserkreis; ein dort gepflegter Wert erzeugte eine Ersparnis
+            # für Wärme, die nie erzeugt wurde — dieselbe Klasse, die für die
+            # **gemessene** Menge schon abgeräumt ist).
+            #
+            # ⛔ **Die Layer-Formel bleibt registry-frei** (ADR-001): Sie rechnet,
+            # was man ihr gibt; *welche* Achse dieses Gerät hat, ist eine Frage
+            # an die Registry und gehört zum Aufrufer. `calculations.py` behält
+            # deshalb auch seine Defaults 12.000/3.000 — sie greifen nur, wenn
+            # ein Aufrufer `None` durchreicht, und das tut hier keiner (`or 0`).
+            if not _achse_gilt(params, "heizenergie_kwh"):
+                heizwaermebedarf = 0
+            if not _achse_gilt(params, "warmwasser_kwh"):
+                warmwasserbedarf = 0
 
             if effizienz_modus == 'getrennte_cops':
                 # Getrennte COPs für Heizung und Warmwasser
@@ -2264,7 +2375,6 @@ async def get_roi_dashboard(
                     cop_warmwasser=cop_warmwasser,
                     effizienz_modus='getrennte_cops',
                     strompreis_cent=wp_strompreis,
-                    pv_anteil_prozent=pv_anteil,
                     alter_energietraeger=alter_energietraeger,
                     alter_preis_cent_kwh=alter_preis,
                     alternativ_zusatzkosten_jahr=alternativ_zusatzkosten,
@@ -2284,7 +2394,6 @@ async def get_roi_dashboard(
                     scop_warmwasser=scop_warmwasser,
                     effizienz_modus='scop',
                     strompreis_cent=wp_strompreis,
-                    pv_anteil_prozent=pv_anteil,
                     alter_energietraeger=alter_energietraeger,
                     alter_preis_cent_kwh=alter_preis,
                     alternativ_zusatzkosten_jahr=alternativ_zusatzkosten,
@@ -2304,7 +2413,6 @@ async def get_roi_dashboard(
                     jaz=jaz,
                     effizienz_modus='gesamt_jaz',
                     strompreis_cent=wp_strompreis,
-                    pv_anteil_prozent=pv_anteil,
                     alter_energietraeger=alter_energietraeger,
                     alter_preis_cent_kwh=alter_preis,
                     alternativ_zusatzkosten_jahr=alternativ_zusatzkosten,

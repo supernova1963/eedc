@@ -198,18 +198,25 @@ async def test_eauto_mit_parent_wallbox_skipped():
 
 @pytest.mark.asyncio
 async def test_wp_getrennte_strommessung_summiert_heiz_plus_ww():
+    """Zwei Achsen, ein Ziel-Key: 4,8 + 2,4 = 7,2 — **eine** Summe, nicht zwei.
+
+    ⛔ **Bis zum 14.09.2026 stand hier zusätzlich ein zugeordneter
+    ``stromverbrauch_kwh`` mit 99,0 („darf nicht zählen").** Die Substanz war
+    und ist: In ``waermepumpe_7`` darf **eine** Seite landen, sonst wird
+    derselbe Strom doppelt gezählt. Seit WK-16d gewinnt der Gesamtzähler (K1);
+    die 99,0 stehen jetzt in der Probe darunter, wo sie die **erwartete** Zahl
+    sind. Hier bleibt die Achsen-Summe ohne Gesamtzähler.
+    """
     sm = {"basis": {}, "investitionen": {
         "7": {"felder": {
             "strom_heizen_kwh": _sensor("sensor.h"),
             "strom_warmwasser_kwh": _sensor("sensor.ww"),
-            "stromverbrauch_kwh": _sensor("sensor.gesamt"),  # ignoriert
         }},
     }}
     datum = date(2026, 5, 22)
     snaps = {
         "inv:7:strom_heizen_kwh": 4.8,
         "inv:7:strom_warmwasser_kwh": 2.4,
-        "inv:7:stromverbrauch_kwh": 99.0,  # darf nicht zählen
     }
     with patch("backend.services.snapshot.aggregator.get_snapshot",
                side_effect=_snap_for_sums(snaps, datum)):
@@ -222,6 +229,42 @@ async def test_wp_getrennte_strommessung_summiert_heiz_plus_ww():
             datum=datum,
         )
     assert abs(result["waermepumpe_7"] - 7.2) < 0.001
+
+
+@pytest.mark.asyncio
+async def test_wp_gesamtzaehler_traegt_auch_neben_beiden_achsen():
+    """K1/WK-16d am **Tageswert**: 9,0 — nicht 7,2 und erst recht nicht 16,2.
+
+    ⭐ **Die Zahl ist bewusst größer als die Summe der Achsen** (9,0 gegen 4,8 +
+    2,4): Genau diese 1,8 kWh — Standby, Steuerung, Umwälzpumpen — fielen bis
+    zum 14.09.2026 aus der Tagesbilanz, weil die vollständige feine Achse den
+    Gesamtzähler verwarf. **16,2 wäre die Doppelzählung**, gegen die jene Regel
+    einmal gebaut wurde; sie entsteht beim Addieren, nicht beim Ersetzen.
+    """
+    sm = {"basis": {}, "investitionen": {
+        "7": {"felder": {
+            "strom_heizen_kwh": _sensor("sensor.h"),
+            "strom_warmwasser_kwh": _sensor("sensor.ww"),
+            "stromverbrauch_kwh": _sensor("sensor.gesamt"),
+        }},
+    }}
+    datum = date(2026, 5, 22)
+    snaps = {
+        "inv:7:strom_heizen_kwh": 4.8,
+        "inv:7:strom_warmwasser_kwh": 2.4,
+        "inv:7:stromverbrauch_kwh": 9.0,
+    }
+    with patch("backend.services.snapshot.aggregator.get_snapshot",
+               side_effect=_snap_for_sums(snaps, datum)):
+        result = await get_komponenten_tageskwh(
+            db=DbOhneZwischenstaende(), anlage=_make_anlage(sm),
+            investitionen_by_id={
+                "7": _make_inv(7, "waermepumpe",
+                               parameter={"getrennte_strommessung": True}),
+            },
+            datum=datum,
+        )
+    assert abs(result["waermepumpe_7"] - 9.0) < 0.001
 
 
 @pytest.mark.asyncio

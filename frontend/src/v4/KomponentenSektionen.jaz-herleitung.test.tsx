@@ -89,16 +89,23 @@ describe('A6 — die Arbeitszahl zeigt ihre eingesetzten Werte', () => {
     // Sperrfall eine Rechnung ohne Ergebnis erschiene. Präzedenz für die
     // Haltung ist `MonatBilanz.tsx:156` — „0 kWh × — ct/kWh wäre keine
     // Rechnung, sondern Rauschen."
+    // ⭐ **Fixture umgestellt, Gegenstand gehalten (D-Sicht, 14.09.2026):** Mit
+    // einem **Ausstattungs**-Grund entfällt die JAZ-Kachel ganz (der Grund steht
+    // im Kasten) — die Probe zeigte dann auf ein „—" der Nachbarkachel und
+    // maß nichts mehr. *Ein Prüfer muss aufs richtige Objekt zeigen.* Deshalb
+    // hier ein **Zeitraum**-Grund: Die Kachel bleibt mit „—" stehen, und genau
+    // an ihr wird gemessen, dass keine Rechnung daneben erscheint.
+    // Dass der Grund sichtbar bleibt, prüft die Schwesterdatei
+    // (`KomponentenSektionen.soll-waerme-klima.test.tsx`, S3).
     zeigeJazTooltip({
       wp_strom_kwh: 313.6,
-      wp_waerme_kwh: null,
+      wp_waerme_kwh: 0,
       wp_jaz: null,
-      wp_jaz_grund: 'kein Wärmemengenzähler zugeordnet',
+      wp_jaz_grund: 'kein Heizbetrieb in diesem Zeitraum',
       wp_jaz_zaehler_kwh: null,
       wp_jaz_nenner_kwh: null,
     }, '—')
 
-    expect(screen.getAllByText(/kein Wärmemengenzähler zugeordnet/).length).toBeGreaterThan(0)
     expect(screen.queryByText(/kWh Wärme ÷/)).toBeNull()
   })
 

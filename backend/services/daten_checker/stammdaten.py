@@ -28,6 +28,8 @@ from backend.core.berechnungen import (
 from backend.core.berechnungen.alternativkosten import ersetzt_keine_heizung
 from backend.core.wirtschaftlichkeit_defaults import NETZBEZUG_DEFAULT_CENT
 from backend.core.field_definitions import (
+    URTEIL_GILT,
+    feld_urteil,
     get_speicher_netzladung_kwh,
     ist_zaehler_kategorie,
 )
@@ -56,6 +58,55 @@ DC_AC_MELDESCHWELLE = 2.0
 # gleichzeitig weit unter jeder Anlage, bei der ein vergessener Vergütungssatz
 # Geld kostet: 50 kWh sind bei üblichen 8 ct rund 4 € im Jahr.
 EINSPEISUNG_MELDESCHWELLE_KWH_JAHR = 50.0
+
+
+def _effizienz_achsen_hinweis(
+    param: dict, praefix: str, kennzahl: str, modus_text: str,
+    heiz_gilt: bool, ww_gilt: bool,
+) -> Optional[tuple[str, str]]:
+    """Fehlt ein Effizienz-Wert auf einer Achse, die es am Gerät **gibt**?
+
+    Gibt ``(meldung, details)`` ohne den Gerätenamen zurück — oder ``None``,
+    wenn nichts zu melden ist.
+
+    ⭐ **WK-15c (14.09.2026), Fund N-1 aus WK-15b.** Bis dahin verlangten beide
+    Hinweise **beide** Werte, ohne zu fragen, ob das Gerät die Achsen hat:
+    Eine **Brauchwasser**-Wärmepumpe wurde nach `scop_heizung`/`cop_heizung`
+    gefragt (sie gibt keine Heizwärme ab), eine **Split-Klimaanlage** nach
+    `scop_warmwasser`/`cop_warmwasser` (sie hat keinen Warmwasserkreis, N-304).
+    Beides **WARNING** und nur durch eine erfundene Zahl abstellbar — genau der
+    Fehler, den Handbuch §5/Schritt 7 uns zuschreibt, eine Stufe lauter als der
+    Bedarfs-Hinweis, den WK-15b abgeräumt hat. Die Zahl bewegt an der fehlenden
+    Achse ohnehin nichts: `berechne_waermepumpe_einsparung` multipliziert sie
+    dort mit einer Menge, die seit WK-15c **0** ist.
+
+    ⚠ **Der Wortlaut bleibt, wo beide Achsen gelten** — an einer klassischen
+    Wärmepumpe steht dieselbe Meldung wie immer, auch wenn nur einer der beiden
+    Werte fehlt (Bestand, bitgleich). Nur wo das Gerät **eine** Achse hat, nennt
+    die Meldung sie: sonst hieße „SCOP-Werte fehlen" dort *ein* Wert, und der
+    Anwender suchte den zweiten.
+    """
+    achsen = (
+        ("Heizung", f"{praefix}_heizung", heiz_gilt, "Heiz-Achse"),
+        ("Warmwasser", f"{praefix}_warmwasser", ww_gilt, "Warmwasser-Achse"),
+    )
+    fehlend = [a for a in achsen if a[2] and param.get(a[1]) is None]
+    if not fehlend:
+        return None
+    if heiz_gilt and ww_gilt:
+        return (
+            f"{kennzahl}-Werte fehlen (Modus: {modus_text})",
+            f"{kennzahl} Heizung und {kennzahl} Warmwasser werden für "
+            f"Einsparungs-Berechnung benötigt",
+        )
+    label, _key, _gilt, _achse = fehlend[0]
+    fehlende_achse = next(a for a in achsen if not a[2])
+    return (
+        f"{kennzahl} {label} fehlt (Modus: {modus_text})",
+        f"{kennzahl} {label} wird für die Einsparungs-Berechnung benötigt. "
+        f"Nach {kennzahl} {fehlende_achse[0]} fragt eedc an diesem Gerät nicht "
+        f"— es hat keine {fehlende_achse[3]}.",
+    )
 
 # Ab dieser Abweichung meldet der Checker, dass die gepflegte Anlagenleistung
 # nicht zur Summe der Erzeuger-Investitionen passt (F-58, NoahPaulick T89667
@@ -739,6 +790,24 @@ class StammdatenChecks:
                 ),
                 link="/einstellungen/strompreise",
             ))
+
+        # ⛔ **Hier stand am 11.09.2026 zwischenzeitlich ein Hinweis
+        # „Strompreis-Sensor zugeordnet, Tarif nicht als dynamisch geführt".
+        # Er ist zurückgenommen, und der Grund gehört hierher, damit ihn
+        # niemand erneut baut:**
+        #
+        # Der Zuordnungs-Slot für diesen Sensor ist selbst nur bei
+        # `vertragsart == "dynamisch"` sichtbar (`datenquellen.py`, begründet
+        # mit Forum #89667/54). Der gemeldete Zustand entsteht deshalb fast nur
+        # nach einem **Tarifwechsel** dynamisch → fest, bei dem das Mapping
+        # stehen bleibt — also nach einer **bewussten** Handlung des Anwenders.
+        # Ihm dann zu melden, seine Vertragsart stehe nicht auf dynamisch, ist
+        # eine Meldung über einen Zustand **ohne Folge**: eedc rechnet seit
+        # #412 ohnehin mit den gemessenen Stundenpreisen, wo es welche gibt.
+        #
+        # ⚑ Dieselbe Linie wie beim Wärmestrom-Hinweis weiter unten
+        # (dietmar1968, #89667/87): Ein Hinweis, den keine Eingabe abstellt und
+        # der nichts bewirkt, ist Rauschen.
 
         # Spezialtarife prüfen (WP / E-Auto)
         verwendungen = {s.verwendung for s in anlage.strompreise}
@@ -1457,6 +1526,20 @@ class StammdatenChecks:
                         link="/einstellungen/investitionen",
                     ))
 
+                # Welche Wärme-Achsen hat dieses Gerät? — **die Registry
+                # antwortet, nie die Bauart** (ADR-002/P13, SOLL Wärme/Klima R1).
+                # Beide Fragen stehen hier oben, weil zwei Prüfungen darunter sie
+                # brauchen: die Effizienz-Werte (WK-15c/N-1) und der Bedarf
+                # (WK-15b/F-1). **Warum `feld_urteil`** und nicht
+                # `groesse_gibt_es_am_geraet` oder `feld_herabgestuft`: siehe den
+                # Kommentar am Bedarf weiter unten — dort steht die Messung.
+                heiz_achse_gilt = feld_urteil(
+                    "waermepumpe", "heizenergie_kwh", param,
+                ) == URTEIL_GILT
+                ww_achse_gilt = feld_urteil(
+                    "waermepumpe", "warmwasser_kwh", param,
+                ) == URTEIL_GILT
+
                 # Effizienz-Parameter je nach Berechnungsmodus prüfen
                 effizienz_modus = param.get("effizienz_modus", "gesamt_jaz")
                 if effizienz_modus == "gesamt_jaz":
@@ -1475,24 +1558,22 @@ class StammdatenChecks:
                             details="Typischer Bereich: 1,5–7,0 (Luft-WP ca. 2,5–4,5, Sole-WP ca. 3,5–5,5)",
                             link="/einstellungen/investitionen",
                         ))
-                elif effizienz_modus == "scop":
-                    scop_h = param.get("scop_heizung")
-                    scop_ww = param.get("scop_warmwasser")
-                    if scop_h is None or scop_ww is None:
+                elif effizienz_modus in ("scop", "getrennte_cops"):
+                    # WK-15c/N-1: gefragt wird nur nach Achsen, die es am Gerät
+                    # gibt — die Registry entscheidet das, nicht die Bauart.
+                    hinweis = _effizienz_achsen_hinweis(
+                        param,
+                        *(("scop", "SCOP", "EU-Label SCOP")
+                          if effizienz_modus == "scop"
+                          else ("cop", "COP", "Getrennte COPs")),
+                        heiz_gilt=heiz_achse_gilt, ww_gilt=ww_achse_gilt,
+                    )
+                    if hinweis:
+                        meldung, details = hinweis
                         ergebnisse.append(CheckErgebnis(
                             kategorie=kat, schwere=CheckSeverity.WARNING,
-                            meldung=f"{name}: SCOP-Werte fehlen (Modus: EU-Label SCOP)",
-                            details="SCOP Heizung und SCOP Warmwasser werden für Einsparungs-Berechnung benötigt",
-                            link="/einstellungen/investitionen",
-                        ))
-                elif effizienz_modus == "getrennte_cops":
-                    cop_h = param.get("cop_heizung")
-                    cop_ww = param.get("cop_warmwasser")
-                    if cop_h is None or cop_ww is None:
-                        ergebnisse.append(CheckErgebnis(
-                            kategorie=kat, schwere=CheckSeverity.WARNING,
-                            meldung=f"{name}: COP-Werte fehlen (Modus: Getrennte COPs)",
-                            details="COP Heizung und COP Warmwasser werden für Einsparungs-Berechnung benötigt",
+                            meldung=f"{name}: {meldung}",
+                            details=details,
                             link="/einstellungen/investitionen",
                         ))
 
@@ -1511,13 +1592,83 @@ class StammdatenChecks:
                     ))
 
                 # Wärmebedarf für Jahres-Einsparungsschätzung
-                if not param.get("heizwaermebedarf_kwh") and not ersetzt_nichts:
-                    ergebnisse.append(CheckErgebnis(
-                        kategorie=kat, schwere=CheckSeverity.INFO,
-                        meldung=f"{name}: Heizwärmebedarf nicht gesetzt",
-                        details="Wird für Jahres-Einsparungsschätzung verwendet (kWh/Jahr)",
-                        link="/einstellungen/investitionen",
-                    ))
+                #
+                # ⚠ **Zwei Fragen, nicht eine** — die zweite fehlte bis zum
+                # 14.09.2026 (WK-15/F-1). `ersetzt_nichts` oben beantwortet die
+                # **Bewertbarkeit** („gibt es eine Altanlage?"); unbeantwortet
+                # blieb die **Messbarkeit**: *Hat dieses Gerät die Größe
+                # überhaupt?* Eine Brauchwasser-Wärmepumpe gibt keine Heizwärme
+                # ab — die Registry sagt das seit A6 (`heizenergie_kwh` trägt
+                # `!brauchwasser`), und der Monats-Checker fragt sie seit B2
+                # (`_check_wp_monatsdaten`). Dieser Block fragte gar nichts.
+                #
+                # Gemessen am „Stiebel Eltron WWK 300" (Prüfstand-Lage F, Demo-DB
+                # r28 **und** HAOS-Lab): INFO „Heizwärmebedarf nicht gesetzt",
+                # obwohl `docs/HANDBUCH_WAERME_KLIMA.md` §6/F wörtlich zusagt
+                # *„… die Heiz-Achse wird weder angeboten noch erwartet, und der
+                # Daten-Checker verlangt sie nicht."* Abstellen konnte der
+                # Anwender den Hinweis nur, indem er eine Zahl **erfindet** —
+                # genau das nennt Handbuch §5/Schritt 7 einen Fehler bei uns
+                # ([[feedback_daten_checker_kein_akzeptiert]]).
+                # **Klasse N-86/N-304:** eine Regel gilt auf einer Fläche und auf
+                # der zweiten nicht.
+                #
+                # ⛔ Deshalb steht hier die **Registry** und keine `wp_art`-Frage
+                # (ADR-002/P13, SOLL Wärme/Klima R1: die Bauart entscheidet keine
+                # Größe). ⚠ Und zwar `feld_urteil`, **nicht**
+                # `groesse_gibt_es_am_geraet`: das liefert für `heizenergie_kwh`
+                # an einer Brauchwasser-WP `True` (gemessen), denn die Bedingung
+                # ist dort **weich** — „untypisch, nicht unmöglich", wer doch
+                # einen kleinen Heizkreis hat, trägt ihn unter *Weitere Größen
+                # erfassen* ein. Für den Lesepfad ist das richtig, für diese
+                # Frage zu weit. ⚠ Ebenso wenig `feld_herabgestuft`: das ist auch
+                # an der **Klimaanlage** wahr (kein Wärmemengenzähler möglich),
+                # und die soll den Hinweis behalten — wer mit ihr heizt, braucht
+                # den Bedarf für seine Ersparnis (N-88/F2b).
+                if not ersetzt_nichts:
+                    if heiz_achse_gilt:
+                        # N-2 (WK-15c): auch ein gepflegter **Gesamtbedarf**
+                        # beantwortet die Frage — die JAZ-Rechnung liest ihn vor
+                        # der Summe aus Heiz- und Warmwasserbedarf. Die
+                        # Warmwasser-INFO darunter kannte ihn seit WK-15b, diese
+                        # hier nicht; zwei Hinweise, eine Frage, eine Antwort.
+                        if not param.get("heizwaermebedarf_kwh") and not param.get("waermebedarf_kwh"):
+                            ergebnisse.append(CheckErgebnis(
+                                kategorie=kat, schwere=CheckSeverity.INFO,
+                                meldung=f"{name}: Heizwärmebedarf nicht gesetzt",
+                                details="Wird für Jahres-Einsparungsschätzung verwendet (kWh/Jahr)",
+                                link="/einstellungen/investitionen",
+                            ))
+                    # Ohne Heiz-Achse **fällt die Frage nicht weg, sie wechselt
+                    # die Achse.** Dieselbe Schätzung läuft für ein solches Gerät
+                    # über den Warmwasserbedarf: `_wp_nicht_bewertbar`
+                    # (`investitionen/crud.py`) lässt die ROI-Zeile nur mit
+                    # **einem** gepflegten Bedarf überhaupt rechnen und schreibt
+                    # sonst „Nicht bewertet: kein Wärmebedarf gepflegt" — ohne
+                    # diesen Zweig stünde der Anwender vor genau dieser Zeile,
+                    # und kein Hinweis sagte ihm mehr, welches Feld sie meint.
+                    # Es bleibt bei **einem** Hinweis je Gerät; er nennt nur die
+                    # Achse, die dieses Gerät hat.
+                    #
+                    # `waermebedarf_kwh` (Gesamtbedarf, kein Formularfeld, kommt
+                    # aus Importen) zählt mit — die JAZ-Rechnung dort liest ihn
+                    # **vor** der Summe aus Heiz- und Warmwasserbedarf; wer ihn
+                    # gepflegt hat, dem fehlt nichts.
+                    elif (
+                        ww_achse_gilt
+                        and not param.get("warmwasserbedarf_kwh")
+                        and not param.get("waermebedarf_kwh")
+                    ):
+                        ergebnisse.append(CheckErgebnis(
+                            kategorie=kat, schwere=CheckSeverity.INFO,
+                            meldung=f"{name}: Warmwasserbedarf nicht gesetzt",
+                            details=(
+                                "Wird für Jahres-Einsparungsschätzung verwendet "
+                                "(kWh/Jahr). Nach dem Heizwärmebedarf fragt eedc "
+                                "an diesem Gerät nicht — es hat keine Heiz-Achse."
+                            ),
+                            link="/einstellungen/investitionen",
+                        ))
 
                 # Monatsdaten-Vollständigkeit der WP prüfen
                 ergebnisse.extend(

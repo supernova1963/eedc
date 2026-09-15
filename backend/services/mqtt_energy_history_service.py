@@ -10,16 +10,21 @@ Retention: 31 Tage.
 """
 
 import logging
+from dataclasses import replace
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from sqlalchemy import delete, func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.berechnungen import summe_pv_bkw_kwh
 from backend.core.database import get_session
 from backend.models.anlage import Anlage
 from backend.models.mqtt_energy_snapshot import MqttEnergySnapshot
 from backend.services.mqtt_inbound_service import get_mqtt_inbound_service
+
+if TYPE_CHECKING:  # pragma: no cover — nur für die Signatur, kein Laufzeit-Import
+    from backend.services.snapshot.reader import MengeSeit
 
 logger = logging.getLogger(__name__)
 
@@ -128,7 +133,7 @@ async def cleanup_old_snapshots(retention_days: int = 31) -> int:
 
 
 async def get_tages_kwh(
-    anlage_id: int, tage_zurueck: int = 0,
+    anlage_id: int, db: AsyncSession, tage_zurueck: int = 0,
     inv_types: dict[str, str] | None = None,
 ) -> dict[str, Optional[float]]:
     """
@@ -138,7 +143,28 @@ async def get_tages_kwh(
       heute (0):   current_cache_value - snapshot_midnight_today
       gestern (1): snapshot_midnight_today - snapshot_midnight_yesterday
 
+    ⛔ **`db` ist Pflicht — dieser Weg liegt auf dem Anfragepfad** (N-400, 13.09.2026).
+    Bis dahin öffneten diese Funktion und ihre zwei Snapshot-Helfer je eine eigene
+    Sitzung über ``get_session()``, obwohl der einzige Aufrufer
+    (``live_history_service.safe_get_tages_kwh``) seine Sitzung von ``Depends(get_db)``
+    bis hierher durchreicht — Cockpit → Live, zweimal je Abruf (heute + gestern).
+    Das ist Wort für Wort die Lage, die nach v4.0.40 den Tests-Workflow rot gemacht
+    hat (**N-399**, ``cb216e8a``): eine zweite Verbindung auf die *App*-Datenbank,
+    lokal grün, weil ``data/eedc.db`` die Tabelle hat, und auf dem CI-Runner
+    ``no such table: mqtt_energy_snapshots``.
+
+    ⚠ **Kein optionales ``db=None`` mit stillem Rückfall auf ``get_session()``** —
+    genau dieser Rückfall wäre die Drift-Quelle, die N-399 benennt: er sieht an jeder
+    Aufrufstelle richtig aus und öffnet doch wieder die zweite Verbindung, sobald
+    jemand das Argument vergisst. Wer keine Sitzung hat, hat hier nichts zu suchen.
+
+    ⚠ ``snapshot_energy_cache`` und ``cleanup_old_snapshots`` in derselben Datei
+    öffnen weiterhin ihre eigene Sitzung — **richtig so**: sie laufen als
+    Scheduler-Jobs ohne Sitzung von außen (die 26 von 29 Stellen aus der
+    N-399-Erhebung).
+
     Args:
+        db: Async-Session (der Aufrufer hält sie bereits).
         inv_types: {inv_id: typ} für Key-Translation (inv/14/... → pv_14 etc.)
 
     Returns:
@@ -156,10 +182,10 @@ async def get_tages_kwh(
         current = mqtt_svc.cache.get_energy_data(anlage_id)
         if not current:
             return {}
-        midnight_snap = await _get_closest_snapshot(anlage_id, today_midnight)
+        midnight_snap = await _get_closest_snapshot(anlage_id, db, today_midnight)
         if not midnight_snap:
             # Fallback: frühester Snapshot von heute (erster Tag nach Einrichtung)
-            midnight_snap = await _get_earliest_snapshot_after(anlage_id, today_midnight)
+            midnight_snap = await _get_earliest_snapshot_after(anlage_id, db, today_midnight)
         if not midnight_snap:
             return {}
         return _compute_deltas(current, midnight_snap, inv_types)
@@ -168,92 +194,93 @@ async def get_tages_kwh(
         # Gestern (oder weiter zurück)
         target_midnight = today_midnight - timedelta(days=tage_zurueck - 1)
         prev_midnight = target_midnight - timedelta(days=1)
-        end_snap = await _get_closest_snapshot(anlage_id, target_midnight)
-        start_snap = await _get_closest_snapshot(anlage_id, prev_midnight)
+        end_snap = await _get_closest_snapshot(anlage_id, db, target_midnight)
+        start_snap = await _get_closest_snapshot(anlage_id, db, prev_midnight)
         if not end_snap or not start_snap:
             return {}
         return _compute_deltas(end_snap, start_snap, inv_types)
 
 
 async def _get_closest_snapshot(
-    anlage_id: int, target: datetime, window_minutes: int = 10
+    anlage_id: int, db: AsyncSession, target: datetime, window_minutes: int = 10
 ) -> Optional[dict[str, float]]:
     """
     Findet den Snapshot am nächsten zum Zielzeitpunkt.
 
     Sucht in einem ±window_minutes Fenster um target.
+    Liest über die **übergebene** Sitzung — Begründung im Docstring von
+    ``get_tages_kwh`` (N-400).
     Returns: {energy_key: value_kwh} oder None.
     """
     window_start = target - timedelta(minutes=window_minutes)
     window_end = target + timedelta(minutes=window_minutes)
 
-    async with get_session() as session:
-        # Finde den Timestamp am nächsten zum Ziel
-        ts_result = await session.execute(
-            select(MqttEnergySnapshot.timestamp)
-            .where(
-                MqttEnergySnapshot.anlage_id == anlage_id,
-                MqttEnergySnapshot.timestamp >= window_start,
-                MqttEnergySnapshot.timestamp <= window_end,
-            )
-            .order_by(
-                func.abs(
-                    func.julianday(MqttEnergySnapshot.timestamp)
-                    - func.julianday(target)
-                )
-            )
-            .limit(1)
+    # Finde den Timestamp am nächsten zum Ziel
+    ts_result = await db.execute(
+        select(MqttEnergySnapshot.timestamp)
+        .where(
+            MqttEnergySnapshot.anlage_id == anlage_id,
+            MqttEnergySnapshot.timestamp >= window_start,
+            MqttEnergySnapshot.timestamp <= window_end,
         )
-        closest_ts = ts_result.scalar_one_or_none()
-        if closest_ts is None:
-            return None
+        .order_by(
+            func.abs(
+                func.julianday(MqttEnergySnapshot.timestamp)
+                - func.julianday(target)
+            )
+        )
+        .limit(1)
+    )
+    closest_ts = ts_result.scalar_one_or_none()
+    if closest_ts is None:
+        return None
 
-        # Alle Keys für diesen Timestamp holen
-        rows = await session.execute(
-            select(
-                MqttEnergySnapshot.energy_key,
-                MqttEnergySnapshot.value_kwh,
-            ).where(
-                MqttEnergySnapshot.anlage_id == anlage_id,
-                MqttEnergySnapshot.timestamp == closest_ts,
-            )
+    # Alle Keys für diesen Timestamp holen
+    rows = await db.execute(
+        select(
+            MqttEnergySnapshot.energy_key,
+            MqttEnergySnapshot.value_kwh,
+        ).where(
+            MqttEnergySnapshot.anlage_id == anlage_id,
+            MqttEnergySnapshot.timestamp == closest_ts,
         )
-        return {row[0]: row[1] for row in rows.all()}
+    )
+    return {row[0]: row[1] for row in rows.all()}
 
 
 async def _get_earliest_snapshot_after(
-    anlage_id: int, after: datetime
+    anlage_id: int, db: AsyncSession, after: datetime
 ) -> Optional[dict[str, float]]:
     """
     Findet den frühesten Snapshot nach einem Zeitpunkt.
 
     Fallback für den ersten Tag nach Einrichtung, wenn kein
-    Mitternacht-Snapshot existiert.
+    Mitternacht-Snapshot existiert. Liest über die **übergebene** Sitzung —
+    Begründung im Docstring von ``get_tages_kwh`` (N-400).
     """
-    async with get_session() as session:
-        ts_result = await session.execute(
-            select(MqttEnergySnapshot.timestamp)
-            .where(
-                MqttEnergySnapshot.anlage_id == anlage_id,
-                MqttEnergySnapshot.timestamp >= after,
-            )
-            .order_by(MqttEnergySnapshot.timestamp.asc())
-            .limit(1)
+    ts_result = await db.execute(
+        select(MqttEnergySnapshot.timestamp)
+        .where(
+            MqttEnergySnapshot.anlage_id == anlage_id,
+            MqttEnergySnapshot.timestamp >= after,
         )
-        earliest_ts = ts_result.scalar_one_or_none()
-        if earliest_ts is None:
-            return None
+        .order_by(MqttEnergySnapshot.timestamp.asc())
+        .limit(1)
+    )
+    earliest_ts = ts_result.scalar_one_or_none()
+    if earliest_ts is None:
+        return None
 
-        rows = await session.execute(
-            select(
-                MqttEnergySnapshot.energy_key,
-                MqttEnergySnapshot.value_kwh,
-            ).where(
-                MqttEnergySnapshot.anlage_id == anlage_id,
-                MqttEnergySnapshot.timestamp == earliest_ts,
-            )
+    rows = await db.execute(
+        select(
+            MqttEnergySnapshot.energy_key,
+            MqttEnergySnapshot.value_kwh,
+        ).where(
+            MqttEnergySnapshot.anlage_id == anlage_id,
+            MqttEnergySnapshot.timestamp == earliest_ts,
         )
-        return {row[0]: row[1] for row in rows.all()}
+    )
+    return {row[0]: row[1] for row in rows.all()}
 
 
 def _compute_deltas(
@@ -409,6 +436,11 @@ async def mqtt_monats_deltas(
 ) -> dict[str, float]:
     """Monatsmengen je MQTT-Energy-Key aus den mitgeschriebenen Ständen.
 
+    **Nur die Menge, ohne Rückfall** — die schmale Tür für jeden Leser, der
+    einen echten *Monatswert* braucht (Monatsabschluss-Vorschlag). Wer den
+    gemessenen Zeitraum mitbekommen und einen Teilmonat zeigen will, ruft
+    {@link mqtt_monats_mengen}.
+
     Args:
         db: Async-Session (der Aufrufer hält sie bereits).
         anlage_id: Anlage.
@@ -434,8 +466,47 @@ async def mqtt_monats_deltas(
         keine *hochgerechnete* Menge bekommt, ist ein eigener Entscheid über
         Datenqualität; er steht bei `reader.delta`.
     """
+    mengen = await mqtt_monats_mengen(
+        db, anlage_id, jahr, monat, energy_keys,
+        quellen_energy=quellen_energy, bis=bis,
+    )
+    return {k: v.menge_kwh for k, v in mengen.items()}
+
+
+async def mqtt_monats_mengen(
+    db,
+    anlage_id: int,
+    jahr: int,
+    monat: int,
+    energy_keys: list[str],
+    quellen_energy: Optional[dict] = None,
+    bis: Optional[datetime] = None,
+    rueckfall_erster_stand: bool = False,
+) -> dict[str, "MengeSeit"]:
+    """Dieselben Monatsmengen — **mit** dem Zeitraum, den sie wirklich messen.
+
+    ⭐ **Der Rückfall (N-472).** Mit ``rueckfall_erster_stand=True`` gilt: fehlt
+    der Stand am Monatsersten, ist der linke Rand der **erste Stand des
+    Monats**. Die Menge ist dann die seit *diesem* Zeitpunkt, und
+    ``MengeSeit.ab_fenster_beginn`` ist ``False`` — der Aufrufer **muss** das
+    ausweisen, sonst steht eine Teilmonatsmenge unbeschriftet da (P4).
+
+    Gemessener Anlass: Wer eedc am 14. einrichtet, hat am Monatsersten keinen
+    Stand. Bis dahin lieferte diese Tür für **jeden** seiner Zähler nichts, und
+    *Cockpit → Monat* blieb bis zum 1. des Folgemonats leer — ohne einen Grund
+    daneben (F-4 aus WK-15, Befund 1).
+
+    ⛔ **Ohne den Schalter ändert sich nichts.** Der Default ist ``False``, und
+    ``mqtt_monats_deltas`` ruft ohne ihn — der Monatsabschluss-Vorschlag darf
+    keinen Teilmonat als Monatsmenge anbieten (F-66).
+
+    Returns:
+        ``{energy_key: MengeSeit}``. Keys ohne Zählerreihe, ohne beidseitigen
+        Rand (auch nach dem Rückfall) oder mit Zählerrücksprung fehlen — wie
+        oben heißt Abwesenheit „keine Aussage", nicht „null".
+    """
     from backend.services.snapshot.keys import _mqtt_key_to_sensor_key
-    from backend.services.snapshot.reader import delta as snapshot_delta
+    from backend.services.snapshot.reader import delta_mit_rand
 
     von = datetime(jahr, monat, 1)
     if bis is None:
@@ -453,7 +524,7 @@ async def mqtt_monats_deltas(
         # messen, und eine Null wäre eine Aussage.
         return {}
 
-    ergebnis: dict[str, float] = {}
+    ergebnis: dict[str, "MengeSeit"] = {}
     for mqtt_key in energy_keys:
         sensor_key = _mqtt_key_to_sensor_key(mqtt_key)
         if not sensor_key:
@@ -461,12 +532,13 @@ async def mqtt_monats_deltas(
             # es nichts zu differenzieren und deshalb auch nichts zu behaupten.
             continue
         try:
-            menge = await snapshot_delta(
+            menge = await delta_mit_rand(
                 db, anlage_id, sensor_key,
                 # MQTT-only: es gibt keine HA-Entity, und `get_snapshot`
                 # verlangt das ausdrücklich nicht („None bei MQTT-only").
                 None, von, bis,
                 quellen_energy=quellen_energy,
+                rueckfall_erster_stand=rueckfall_erster_stand,
             )
         except Exception:  # pragma: no cover — ein Vorschlag kippt nie die Seite
             logger.exception(
@@ -474,6 +546,6 @@ async def mqtt_monats_deltas(
                 anlage_id, mqtt_key,
             )
             continue
-        if menge is not None and menge > 0:
-            ergebnis[mqtt_key] = round(menge, 1)
+        if menge is not None and menge.menge_kwh > 0:
+            ergebnis[mqtt_key] = replace(menge, menge_kwh=round(menge.menge_kwh, 1))
     return ergebnis

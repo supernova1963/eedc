@@ -91,7 +91,15 @@ const X_ROTATED = /xAchse\(|angle=\{\s*-?45\s*\}/
 // horizontale Balken/Scatter tragen die Magnitude waagerecht) und versteckte
 // Sparklines (`hide`, keine Labels). Alles andere ist eine Zeit-/Kategorie-Achse
 // und MUSS −45° tragen.
-const X_HORIZONTAL_OK = /type=["']number["']|\bhide\b/
+//
+// ⭐ **Und ein Custom-Renderer** (`tick={(…) => …}`, seit WK-16c): Er zeichnet den
+// Tick selbst und **regelt die Ausrichtung selbst** — dieselbe Begründung, mit der
+// `TICK_10` ihn schon von der 10-px-Pflicht ausnimmt. Anlass war die
+// **Wettersymbol-Achse** des Wärme/Klima-Verlaufs: Sie trägt gar keinen Text,
+// sondern je Periode ein Icon. `angle={-45}` wäre dort eine Angabe ohne Wirkung —
+// eine Zeile, die nur den Prüfer zufriedenstellt, ist schlechter als eine Regel,
+// die die Form kennt.
+const X_HORIZONTAL_OK = /type=["']number["']|\bhide\b|tick=\{\(/
 
 for (const file of tsxFiles(SRC)) {
   const src = readFileSync(file, 'utf8')

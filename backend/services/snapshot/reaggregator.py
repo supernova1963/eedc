@@ -29,7 +29,11 @@ from backend.services.snapshot.keys import (
     ist_stand_sensor_key,
     resolve_energy_ha_eid,
 )
-from backend.services.snapshot.reader import MQTT_AKTIV_TAGE, mqtt_zaehler_keys
+from backend.services.snapshot.reader import (
+    MQTT_AKTIV_TAGE,
+    TAGESRESET_TOLERANZ_KWH,
+    mqtt_zaehler_keys,
+)
 from backend.services.snapshot.komponenten_beitraege import (
     basis_hourly_eintraege,
     investition_hourly_eintraege,
@@ -245,9 +249,9 @@ async def get_reaggregate_preview(
             a1 = snap_alt[sensor_key].get(h)
             if a0 is not None and a1 is not None:
                 d = a1 - a0
-                if d < -0.01 and a1 < 0.5 and a0 > 0.5:
+                if d < -TAGESRESET_TOLERANZ_KWH and a1 < 0.5 and a0 > 0.5:
                     d = max(0.0, a1)  # Tagesreset-Schutz analog get_hourly_kwh_by_category
-                if d >= -0.01:
+                if d >= -TAGESRESET_TOLERANZ_KWH:
                     d = max(0.0, d)
                     per_kat_alt[kat] = (per_kat_alt.get(kat) or 0.0) + d
         for sensor_key, _eid, kat, _grp in eintraege_neu:
@@ -255,9 +259,9 @@ async def get_reaggregate_preview(
             n1 = snap_neu[sensor_key].get(h)
             if n0 is not None and n1 is not None:
                 d = n1 - n0
-                if d < -0.01 and n1 < 0.5 and n0 > 0.5:
+                if d < -TAGESRESET_TOLERANZ_KWH and n1 < 0.5 and n0 > 0.5:
                     d = max(0.0, n1)
-                if d >= -0.01:
+                if d >= -TAGESRESET_TOLERANZ_KWH:
                     d = max(0.0, d)
                     per_kat_neu[kat] = (per_kat_neu.get(kat) or 0.0) + d
         for kat in alle_kategorien:

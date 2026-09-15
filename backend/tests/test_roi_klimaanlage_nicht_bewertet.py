@@ -148,15 +148,21 @@ async def test_anlagen_summen_tragen_den_phantomwert_nicht_mehr(db):
 async def test_klassische_waermepumpe_rechnet_unveraendert(db):
     """Luft-Wasser-WP: die bisherigen Zahlen bleiben exakt stehen.
 
-    Die Werte sind die des Default-Satzes (15.000 kWh / JAZ 3,5 / 30 % PV /
-    Gas 12 ct) — sie belegen, dass der Klima-Zweig die klassische WP nicht
-    streift.
+    Die Werte sind die des Default-Satzes (15.000 kWh / JAZ 3,5 / Gas 12 ct)
+    — sie belegen, dass der Klima-Zweig die klassische WP nicht streift.
+
+    ⛔ Bis 2026-09-13 lautete die CO₂-Zahl 2.210,0 kg; die Rechnung zog damals
+    30 % des WP-Stroms als PV ab. Mit SOLL Wärme/Klima S1b trägt der ganze
+    Strom: 4.285,7 kWh × 0,3 × 0,38 kg = 488,6 kg weniger Einsparung
+    ⇒ 1.721,4 kg. Damit nennt die ROI-Zeile dieselbe Regel wie der gemessene
+    Pfad `co2_wp_ersparnis_kg` (ADR-001/DI-1), der nie einen Anteil kannte.
+    Geprüft wird hier weiterhin „die klassische WP wird überhaupt gerechnet".
     """
     anlage_id = await _seed_wp(db, wp_art="luft_wasser")
     zeile = _wp_zeile(await _roi(db, anlage_id))
 
     assert zeile.jahres_einsparung > 0
-    assert zeile.co2_einsparung_kg == pytest.approx(2210.0)
+    assert zeile.co2_einsparung_kg == pytest.approx(1721.4)
     assert zeile.detail_berechnung.get("nicht_bewertet") is not True
 
 
@@ -510,3 +516,124 @@ async def test_speicher_ohne_kapazitaet_faellt_unter_dieselbe_regel(db):
     assert zeile.detail_berechnung["nicht_bewertet"] is True
     assert zeile.jahres_einsparung == 0          # vor dem Fix: −50,0
     assert result.gesamt_jahres_einsparung == 0  # vor dem Fix: −50,0
+
+
+# ============================================================================
+# WK-15c — eine Achse, die es am Gerät nicht gibt, trägt keine Zahl
+#
+# Der Fund hinter diesem Block ist derselbe wie ganz oben, nur eine Bauart
+# weiter: Das Investitionsformular belegt `heizwaermebedarf_kwh` auch an einer
+# **Brauchwasser**-Wärmepumpe mit 12.000 vor (die N-87-Ausnahme kannte nur
+# `luft_luft`), und `berechne_waermepumpe_einsparung` rechnet, was man ihr gibt.
+# **Gemessen** (JAZ 3,5 · Gas 12 ct, die Parameter-Defaults): 12.000/3.000 ⇒
+# **714,29 €/Jahr** und **1.721,4 kg CO₂**; mit `heiz = 0` ⇒ **142,86 €** und
+# **344,3 kg**. *571 €/Jahr Ersparnis für Heizwärme, die das Gerät nie abgibt.*
+#
+# Gefragt wird die **Registry** (`feld_urteil`), nie die Bauart — ADR-002/P13.
+# Die Zahlen unten sind **von Hand** gerechnet, nicht aus der Formel gespiegelt:
+# Ein Gaskessel muss `Wärme ÷ 0,9` verfeuern, der Preis ist 12 ct/kWh Brennstoff.
+# ============================================================================
+
+WK15C_BASIS = {
+    "jaz": 3.5, "effizienz_modus": "gesamt_jaz",
+    "alter_energietraeger": "gas", "alter_preis_cent_kwh": 12,
+}
+
+
+async def test_wk15c_brauchwasser_mit_vorbelegung_ist_nicht_bewertet(db):
+    """Der K-0b-Bestandsfall, eine Bauart weiter: 12.000/3.000 an einer Brauchwasser-WP.
+
+    Die Vorbelegung beschreibt ein Haus mit Heizung **und** Warmwasser. An einem
+    Gerät ohne Heiz-Achse passt das Paar als Ganzes nicht — also offene Frage
+    statt Antwort, wie an der Klimaanlage seit N-88/F2b.
+    """
+    anlage_id = await _seed_wp(db, wp_art="brauchwasser")
+    zeile = _wp_zeile(await _roi(db, anlage_id))
+
+    assert zeile.detail_berechnung["nicht_bewertet"] is True
+    assert zeile.jahres_einsparung == 0
+    assert zeile.co2_einsparung_kg is None
+    # Der Weg heraus nennt die Achse, die das Gerät HAT.
+    hinweis = zeile.detail_berechnung["hinweis"]
+    assert "Warmwasserbedarf" in hinweis
+    assert "Heizt du mit dem Gerät" not in hinweis
+
+
+async def test_wk15c_brauchwasser_rechnet_nur_mit_seinem_warmwasser(db):
+    """Ein gespeicherter Heizwärmebedarf zählt an diesem Gerät nicht mehr mit.
+
+    Handrechnung: 2.500 kWh Warmwasser-Wärme ÷ 0,9 × 0,12 €/kWh = **333,33 €**
+    Altanlagen-Kosten. Mit den 12.000 kWh, die danebenstehen, wären es 1.933,33 €
+    — der Unterschied ist genau die erfundene Heiz-Ersparnis.
+    """
+    anlage_id = await _seed_wp(db, wp_art="brauchwasser", parameter={
+        **WK15C_BASIS, "heizwaermebedarf_kwh": 12000, "warmwasserbedarf_kwh": 2500,
+    })
+    zeile = _wp_zeile(await _roi(db, anlage_id))
+
+    assert zeile.detail_berechnung.get("nicht_bewertet") is not True
+    assert zeile.detail_berechnung["alte_heizung_kosten_euro"] == pytest.approx(333.33, abs=0.01)
+
+
+async def test_wk15c_luft_wasser_bleibt_bitgleich(db):
+    """Gegenprobe (Bestand): an einer klassischen Wärmepumpe zählen beide Achsen.
+
+    Handrechnung: (12.000 + 3.000) ÷ 0,9 × 0,12 = **2.000,00 €**.
+    """
+    anlage_id = await _seed_wp(db, wp_art="luft_wasser")
+    zeile = _wp_zeile(await _roi(db, anlage_id))
+
+    assert zeile.detail_berechnung.get("nicht_bewertet") is not True
+    assert zeile.detail_berechnung["alte_heizung_kosten_euro"] == pytest.approx(2000.00, abs=0.01)
+
+
+async def test_wk15c_klimaanlage_rechnet_ohne_warmwasser(db):
+    """Die Gegenrichtung: eine Split-Klimaanlage hat keinen Warmwasserkreis (N-304).
+
+    Ein dort gepflegter Warmwasserbedarf erzeugte eine Ersparnis für Wärme, die
+    das Gerät nie liefert — für die **gemessene** Menge ist das seit N-304
+    abgeräumt, für die **geschätzte** erst hier.
+    Handrechnung: 7.400 ÷ 0,9 × 0,12 = **986,67 €** (die 1.800 zählen nicht mit).
+    """
+    anlage_id = await _seed_wp(db, wp_art="luft_luft", parameter={
+        **WK15C_BASIS, "heizwaermebedarf_kwh": 7400, "warmwasserbedarf_kwh": 1800,
+    })
+    zeile = _wp_zeile(await _roi(db, anlage_id))
+
+    assert zeile.detail_berechnung.get("nicht_bewertet") is not True
+    assert zeile.detail_berechnung["alte_heizung_kosten_euro"] == pytest.approx(986.67, abs=0.01)
+
+
+async def test_wk15c_bedarf_auf_einer_fehlenden_achse_ist_kein_bedarf(db):
+    """Sonst stünde dort eine **0 €**, und die sieht aus wie ein Messergebnis.
+
+    Ein Heizwärmebedarf an einer Brauchwasser-WP lässt den Rechenzweig sonst
+    anlaufen, obwohl der Schritt davor dieselbe Achse auf 0 setzt.
+    """
+    anlage_id = await _seed_wp(db, wp_art="brauchwasser", parameter={
+        **WK15C_BASIS, "heizwaermebedarf_kwh": 5000,
+    })
+    zeile = _wp_zeile(await _roi(db, anlage_id))
+
+    assert zeile.detail_berechnung["nicht_bewertet"] is True
+    # ⚠ Beide Aussagen gehören dazu: „Trag den Heizwärme- und Warmwasserbedarf
+    # ein" enthält das Wort ebenfalls — erst die zweite Zeile trennt den Rat,
+    # der die Achse nennt, von dem, der beide aufzählt.
+    hinweis = zeile.detail_berechnung["hinweis"]
+    assert "Warmwasserbedarf" in hinweis
+    assert "Heizwärme" not in hinweis
+
+
+async def test_wk15c_gesamtbedarf_ist_eine_echte_antwort(db):
+    """`waermebedarf_kwh` (nur über Importe erreichbar) hebt die Sperre auf.
+
+    Handrechnung wie oben: 2.500 ÷ 0,9 × 0,12 = **333,33 €**.
+    """
+    anlage_id = await _seed_wp(db, wp_art="brauchwasser", parameter={
+        **WK15C_BASIS, "heizwaermebedarf_kwh": 12000, "warmwasserbedarf_kwh": 3000,
+        "waermebedarf_kwh": 2500,
+    })
+    zeile = _wp_zeile(await _roi(db, anlage_id))
+
+    assert zeile.detail_berechnung.get("nicht_bewertet") is not True
+    assert zeile.detail_berechnung["alte_heizung_kosten_euro"] == pytest.approx(333.33, abs=0.01)

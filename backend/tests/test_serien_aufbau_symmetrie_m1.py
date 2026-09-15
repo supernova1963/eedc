@@ -170,3 +170,225 @@ def test_kein_paralleler_pool_dedup_mehr():
     for pfad in (_LTS_TV, _LIVE_TV, _BACKFILL):
         src = pfad.read_text(encoding="utf-8")
         assert "_serie_priority" not in src, f"{pfad.name} hat wieder eigenen Pool-Dedup"
+
+
+# ─── Die Serien-Keys überleben den Rückweg (WK-09 B1) ───────────────────────
+#
+# `baue_investitions_serien` **erzeugt** die Keys, `_key_to_serie_info` **löst
+# sie wieder auf** — dazwischen liegen `TagesEnergieProfil.komponenten` und die
+# Route `/energie-profil/{id}/stunden`. Erst der Rückweg macht aus dem Split
+# eine Anzeige: Ohne den Suffix im Label hieße im Tag-Stundenverlauf jede der
+# beiden Flächen gleich, und ohne die Kategorie `waermepumpe` fiele sie in
+# `extraSerien` und läge ZUSÄTZLICH zur WP-Fläche im Stapel.
+#
+# Gemessen am Schreibpfad (12.09.2026): `aggregate_day` legt bei einer WP mit
+# `leistung_heizen_w`/`leistung_warmwasser_w` genau diese zwei Keys in
+# `TagesEnergieProfil.komponenten` ab (−2,0 / −1,0 kW), und die Route liefert
+# daraus „Winterborn WP Heizen"/„… Warmwasser" plus `waermepumpe_kw = 3,0`.
+
+def test_split_keys_loesen_zurueck_auf_label_und_kategorie():
+    from backend.api.routes.energie_profil._shared import _key_to_serie_info
+
+    inv = _inv(7, "waermepumpe", bezeichnung="Winterborn WP")
+    serien, _ = baue_investitions_serien(
+        {"7": {"leistung_heizen_w": "sensor.h", "leistung_warmwasser_w": "sensor.w"}},
+        {"7": inv},
+    )
+    aufgeloest = [_key_to_serie_info(s.key, {7: inv}) for s in serien]
+    assert [i and i["label"] for i in aufgeloest] == [
+        "Winterborn WP Heizen", "Winterborn WP Warmwasser",
+    ]
+    # ⛔ Kategorie bleibt `waermepumpe` — sie ist die Adresse des Stapelplatzes.
+    assert {i["kategorie"] for i in aufgeloest} == {"waermepumpe"}
+    assert {i["seite"] for i in aufgeloest} == {"senke"}
+
+
+def test_gerät_ohne_split_behaelt_seinen_blanken_namen():
+    """Gegenprobe: ohne Suffix kein Zusatz — sonst hieße jede WP „… Heizen"."""
+    from backend.api.routes.energie_profil._shared import _key_to_serie_info
+
+    inv = _inv(7, "waermepumpe", bezeichnung="Winterborn WP")
+    info = _key_to_serie_info("waermepumpe_7", {7: inv})
+    assert info["label"] == "Winterborn WP"
+    assert info["kategorie"] == "waermepumpe"
+
+
+# ─── N-447: „Nicht dargestellt" gilt für BEIDE Pfade und meint dasselbe ─────
+#
+# Der Satz *„Nicht dargestellt (kein HA-Leistungssensor): «Gerät»"*
+# (`components/live/TagesverlaufChart.tsx`) behauptet zwei Dinge: das Gerät ist
+# nicht gezeichnet, **und** der Grund ist eine fehlende Leistungsquelle. Bis
+# 12.09.2026 prüfte der HA-Pfad nur `leistung_w` (⇒ die gezeichnete Split-WP
+# stand darunter) und der MQTT-Pfad schloss jede Wärmepumpe pauschal aus (⇒ eine
+# WP ganz ohne Quelle verschwand wortlos). Jetzt beantwortet EINE Funktion die
+# Frage; die Pfade liefern nur ihre Eingänge.
+
+def _ha_uebersprungen(inv_live_map, investitionen) -> list[str]:
+    from backend.services.live_sensor_config import (
+        LEISTUNGS_FELDER, inv_ids_mit_serie, uebersprungene_investitionen,
+    )
+    serien, _ = baue_investitions_serien(inv_live_map, investitionen)
+    return uebersprungene_investitionen(
+        investitionen, inv_ids_mit_serie(serien),
+        lambda i: any((inv_live_map.get(i) or {}).get(f) for f in LEISTUNGS_FELDER),
+    )
+
+
+def _mqtt_uebersprungen(available_keys, investitionen, mit_serie) -> list[str]:
+    from backend.services.live_sensor_config import (
+        LEISTUNGS_FELDER, uebersprungene_investitionen,
+    )
+    return uebersprungene_investitionen(
+        investitionen, mit_serie,
+        lambda i: any(f"inv:{i}:{f}" in available_keys for f in LEISTUNGS_FELDER),
+    )
+
+
+def test_gezeichnete_split_wp_steht_nicht_unter_nicht_dargestellt():
+    """Der Fund selbst: zwei Flächen im Chart und daneben „fehlt"."""
+    inv_live = {"7": {"leistung_heizen_w": "sensor.h", "leistung_warmwasser_w": "sensor.w"}}
+    investitionen = {"7": _inv("7", "waermepumpe", bezeichnung="Winterborn WP")}
+    serien, _ = baue_investitions_serien(inv_live, investitionen)
+    assert len(serien) == 2, "Voraussetzung: sie WIRD gezeichnet"
+    assert _ha_uebersprungen(inv_live, investitionen) == []
+
+
+def test_wp_ganz_ohne_leistungsquelle_wird_genannt():
+    """Gegenprobe — sonst belegte die Probe darüber nur, dass die Liste leer ist.
+    Sie ist zugleich die MQTT-Hälfte des Funds: dort verschwand dieser Fall."""
+    investitionen = {"7": _inv("7", "waermepumpe", bezeichnung="Winterborn WP")}
+    assert _ha_uebersprungen({"7": {}}, investitionen) == ["Winterborn WP"]
+    assert _mqtt_uebersprungen(set(), investitionen, set()) == ["Winterborn WP"]
+
+
+def test_beide_pfade_antworten_gleich():
+    """Dieselbe Anlage, dieselbe Zuordnungslage, zwei Pfade — eine Antwort.
+    Genau diese Symmetrie fehlte: HA meldete die Split-WP, MQTT verschwieg sie."""
+    investitionen = {
+        "7": _inv("7", "waermepumpe", bezeichnung="Winterborn WP"),
+        "8": _inv("8", "wallbox", bezeichnung="Wallbox Garage"),
+    }
+    # Lage: WP getrennt gemessen (⇒ Serie), Wallbox gar nicht zugeordnet.
+    ha = _ha_uebersprungen(
+        {"7": {"leistung_heizen_w": "sensor.h", "leistung_warmwasser_w": "sensor.w"}},
+        investitionen,
+    )
+    mqtt = _mqtt_uebersprungen(
+        {"inv:7:leistung_heizen_w", "inv:7:leistung_warmwasser_w"},
+        investitionen, {"7"},
+    )
+    assert ha == mqtt == ["Wallbox Garage"]
+
+
+def test_ein_gemessenes_geraet_ohne_eigene_serie_wird_nicht_als_fehlend_gemeldet():
+    """Die Abgrenzung, die den Satz wahr hält: `baue_investitions_serien` lässt
+    Geräte auch aus **anderen** Gründen weg als „kein Sensor".
+
+    Drei belegte Fälle, alle mit Leistungssensor: das E-Auto an einer Wallbox
+    (die es mitmisst, #356), zwei Investitionen an derselben Entity
+    (Pool-Dedup #227) und ein Zähler unter *Sonstiges* (#377, hat keine Seite).
+    Keiner von ihnen stand bisher in der Liste — und darf es nicht anfangen.
+    """
+    # (a) E-Auto mit Parent-Wallbox
+    inv_live = {"1": {"leistung_w": "sensor.ea"}}
+    investitionen = {"1": _inv("1", "e-auto", parent_investition_id=2, bezeichnung="Zoe")}
+    serien, _ = baue_investitions_serien(inv_live, investitionen)
+    assert serien == [], "Voraussetzung: keine Serie"
+    assert _ha_uebersprungen(inv_live, investitionen) == []
+
+    # (b) Pool-Dedup: beide an derselben Entity, nur die Wallbox überlebt
+    inv_live = {"1": {"leistung_w": "sensor.shared"}, "2": {"leistung_w": "sensor.shared"}}
+    investitionen = {
+        "1": _inv("1", "e-auto", bezeichnung="Zoe"),
+        "2": _inv("2", "wallbox", bezeichnung="Wallbox"),
+    }
+    assert _ha_uebersprungen(inv_live, investitionen) == []
+
+    # (c) Zähler unter Sonstiges (#377)
+    inv_live = {"5": {"leistung_w": "sensor.wasser"}}
+    investitionen = {
+        "5": _inv("5", "sonstiges", parameter={"kategorie": "zaehler"},
+                  bezeichnung="Wasserzähler"),
+    }
+    serien, _ = baue_investitions_serien(inv_live, investitionen)
+    assert serien == [], "Voraussetzung: ein Zähler bekommt keine Serie"
+    assert _ha_uebersprungen(inv_live, investitionen) == []
+
+
+def test_getrennte_leistungsfelder_zaehlen_als_leistungsquelle():
+    """Die **zweite** Klausel für sich, mit einer Serie, die es nicht gibt.
+
+    ⚑ Befund über die Probe (12.09.2026): Ein Sprengsatz, der
+    ``LEISTUNGS_FELDER`` auf ``("leistung_w",)`` kürzt, blieb an allen Proben
+    darüber **still** — weil jedes Gerät mit einem Split-Feld ohnehin eine Serie
+    bekommt und schon an der ersten Klausel hängen bleibt. Die Regel ist damit
+    doppelt gesichert, ihre zweite Hälfte aber ungeprüft. Der Fall, in dem sie
+    allein trägt, ist der Pool-Dedup (#227): Teilt eine Split-Wärmepumpe ihre
+    Entity mit einem anderen Gerät, verliert eine der beiden ihre Serie — und
+    hat trotzdem einen Leistungssensor. Hier steht er nachgestellt.
+    """
+    from backend.services.live_sensor_config import (
+        LEISTUNGS_FELDER, uebersprungene_investitionen,
+    )
+
+    investitionen = {"7": _inv("7", "waermepumpe", bezeichnung="Winterborn WP")}
+    inv_live = {"7": {"leistung_heizen_w": "sensor.h", "leistung_warmwasser_w": "sensor.w"}}
+    ohne_serie: set[str] = set()          # der Serien-Bauer hat sie fallen lassen
+    assert uebersprungene_investitionen(
+        investitionen, ohne_serie,
+        lambda i: any((inv_live.get(i) or {}).get(f) for f in LEISTUNGS_FELDER),
+    ) == []
+    # Gegenprobe: ohne jede Zuordnung wird dieselbe Lage gemeldet.
+    assert uebersprungene_investitionen(
+        investitionen, ohne_serie,
+        lambda i: any(({}).get(f) for f in LEISTUNGS_FELDER),
+    ) == ["Winterborn WP"]
+    # ⛔ Und die Feldliste selbst ist der Vertrag — sie steht im Anwendersatz
+    # („kein HA-Leistungssensor"), nicht nur im Code.
+    # ⭐ `leistung_kuehlen_w` kam am 13.09.2026 dazu (N-439): Seit es eine
+    # eigene Verlaufs-Reihe erzeugt, muss es hier stehen — sonst meldete der
+    # Satz eine Wärmepumpe als „nicht dargestellt", die gezeichnet wird.
+    assert set(LEISTUNGS_FELDER) == {
+        "leistung_w", "leistung_heizen_w", "leistung_warmwasser_w",
+        "leistung_kuehlen_w",
+    }
+
+
+def test_keine_serie_traegt_die_meldung_auch_ohne_die_zweite_klausel():
+    """Die **erste** Klausel für sich — das Spiegelbild der Probe darüber.
+
+    ⚑ Befund über die Proben (12.09.2026, Master): Ein Sprengsatz, der
+    ``if inv_id in inv_ids_mit_serie: continue`` **entfernt**, blieb an allen
+    übrigen Proben still — weil jedes Gerät mit einer Serie per Konstruktion
+    auch eine Leistungsquelle hat und die zweite Klausel es mitfängt. Umgekehrt
+    blieb der Sprengsatz an ``LEISTUNGS_FELDER`` still, weil die erste Klausel
+    ihn deckte. **Beide Hälften decken sich gegenseitig — und waren damit
+    einzeln ungeprüft.** Hier steht die erste allein, mit gestellter zweiter.
+
+    ⭐ **Warum die Klausel trotz der Implikation dasteht:** Der Anwendersatz
+    behauptet **zwei** Dinge — das Gerät ist nicht gezeichnet **und** ihm fehlt
+    ein Leistungssensor. Die Bedingung prüft beide, statt sich auf eine
+    Kopplung zu verlassen, die heute gilt und morgen fallen kann: Sobald
+    ``baue_investitions_serien`` eine Serie aus einer anderen Quelle bildet
+    (oder ein Feld dazukommt, das ``LEISTUNGS_FELDER`` nicht kennt), trägt die
+    erste Klausel allein.
+    """
+    from backend.services.live_sensor_config import uebersprungene_investitionen
+
+    investitionen = {"7": _inv("7", "waermepumpe", bezeichnung="Winterborn WP")}
+    # Serie geliefert, aber „hat Leistungsquelle" sagt nein: nicht melden.
+    assert uebersprungene_investitionen(investitionen, {"7"}, lambda _i: False) == []
+    # Gegenprobe, gleiche Lage ohne Serie — sonst belegte die Zeile nur, dass
+    # die Liste leer sein kann.
+    assert uebersprungene_investitionen(investitionen, set(), lambda _i: False) == [
+        "Winterborn WP",
+    ]
+
+
+def test_kein_pfad_baut_die_bedingung_selbst():
+    """Wächter gegen Re-Divergenz: der Live-Pfad ruft die geteilte Bedingung und
+    hält keine eigene Liste mehr (der N-447-Drift, den dieses Paket schließt)."""
+    src = _LIVE_TV.read_text(encoding="utf-8")
+    assert src.count("uebersprungene_investitionen(") == 2, "beide Pfade rufen sie"
+    assert 'if typ != "waermepumpe":' not in src, "die pauschale WP-Ausnahme ist zurück"
+    assert "uebersprungen.append(" not in src, "ein Pfad sammelt wieder selbst"

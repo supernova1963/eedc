@@ -3,6 +3,7 @@ import { FormSection, Input, Select, Alert, RadioGroup, Button } from '../../../
 import { SchalterZeile } from '../SchalterZeile'
 import type { Innengeraet } from '../../../../lib/investitionParameter'
 import { istLuftLuft } from '../../../../lib/investitionParameter'
+import { hatHeizAchse } from '../../../../lib/fieldDefinitions'
 import type { TypFelderProps } from './types'
 
 /**
@@ -107,6 +108,16 @@ const WP_ART_OPTIONEN = [
 // (T89667 #249), gegen eine Auskunft, die genau in diese Lage riet.
 // ⚠ Wer hier „aufräumt", nimmt einem Anwender die Wiedererkennung:
 // `test_soll_waerme_klima_achse3_aufloesung.py` meldet es.
+//
+// ⭐ **`fremdstrom` nennt seit dem 13.09.2026 die KLASSE, nicht das Beispiel
+// (N-371).** Bis dahin hieß die Option „Heizstab-Strom liegt mit auf dem
+// Stromzähler" — wer eine **Klimaanlage** oder einen Pool-Heizer auf demselben
+// Zähler hat, suchte unter „Heizstab" und fand seinen Fall nicht. Es ist die
+// einzige Angabe, mit der ein Anwender eedc sagen kann, dass sein WP-Zähler
+// mehr misst als die Wärmepumpe; sie muss deshalb jede Lage benennen, nicht
+// die häufigste. Der gespeicherte Wert bleibt `fremdstrom` — eine Beschriftung
+// braucht keine Migration —, und der Heizstab bleibt als **Beispiel** darin
+// stehen, weil der Prüfer oben genau das hält (beide Lagen nennen ihn).
 const ABGRENZUNG_OPTIONEN = [
   {
     value: '',
@@ -115,7 +126,7 @@ const ABGRENZUNG_OPTIONEN = [
   },
   {
     value: 'fremdstrom',
-    label: 'Heizstab-Strom liegt mit auf dem Stromzähler',
+    label: 'Ein weiterer Verbraucher liegt mit auf dem Stromzähler (z. B. Heizstab)',
     description: 'Seine Wärme läuft NICHT über den Wärmemengenzähler. Der Stromwert enthält dann '
       + 'mehr, als die gemessene Wärme abdeckt — die Mengen bleiben richtig, die Arbeitszahl entfällt.',
   },
@@ -369,16 +380,33 @@ export function WaermepumpeFelder({ paramData, onInputChange, setParam, zeige, m
                 einem Typwechsel im offenen Formular übernommene Vorbelegung ist
                 jetzt SICHTBAR und damit korrigierbar, statt unbemerkt
                 mitgespeichert zu werden. */}
-            <Input
-              label="Heizwärmebedarf (kWh/Jahr)"
-              name="param_heizwaermebedarf_kwh"
-              type="number" step="any" min="0"
-              value={paramData.heizwaermebedarf_kwh as string}
-              onChange={onInputChange}
-              hint={istLuftLuft(paramData)
-                ? 'Nur wenn du mit dem Gerät heizt — sonst leer lassen'
-                : 'Aus Energieausweis oder Schätzung'}
-            />
+            {/* WK-15c (14.09.2026): An einem Gerät **ohne Heiz-Achse** —
+                einer Brauchwasser-Wärmepumpe — wird das Feld nicht angeboten.
+                Handbuch WAERME_KLIMA §6/F sagt genau das zu: „die Heiz-Achse
+                wird weder angeboten noch erwartet". Der Daten-Checker fragt
+                seit WK-15b nicht mehr danach; hier stand das Feld weiter, mit
+                12.000 kWh vorbelegt — und daraus wurden 571 €/Jahr Ersparnis
+                für Heizwärme, die das Gerät nie abgibt.
+
+                ⚠ Die **Klimaanlage** behält es (N-88/F2b): Sie hat eine
+                Heiz-Achse, viele heizen mit ihr, und ihre Ersparnis hängt an
+                genau dieser Zahl. Nur vorbelegt wird sie dort nicht.
+
+                ⛔ Gefragt wird die Registry-Spiegelung, nicht `wp_art`
+                (ADR-002/P13) — Backend-Gegenstück: `feld_urteil(…,
+                'heizenergie_kwh', …) == URTEIL_GILT`. */}
+            {hatHeizAchse(paramData) && (
+              <Input
+                label="Heizwärmebedarf (kWh/Jahr)"
+                name="param_heizwaermebedarf_kwh"
+                type="number" step="any" min="0"
+                value={paramData.heizwaermebedarf_kwh as string}
+                onChange={onInputChange}
+                hint={istLuftLuft(paramData)
+                  ? 'Nur wenn du mit dem Gerät heizt — sonst leer lassen'
+                  : 'Aus Energieausweis oder Schätzung'}
+              />
+            )}
             <Input
               label="Warmwasserbedarf (kWh/Jahr)"
               name="param_warmwasserbedarf_kwh"
@@ -423,7 +451,7 @@ export function WaermepumpeFelder({ paramData, onInputChange, setParam, zeige, m
             type="number" step="1" min="0" max="100"
             value={paramData.pv_anteil_prozent as string}
             onChange={onInputChange}
-            hint="Anteil des WP-Stroms aus PV"
+            hint="Anteil des WP-Stroms aus PV — dient der Zuordnung des Eigenverbrauchs, senkt die Stromkosten der Wärmepumpe nicht"
           />
           <Input
             label="Zusatzkosten Alt-Heizung (€/Jahr)"

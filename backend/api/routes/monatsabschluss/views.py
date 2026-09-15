@@ -385,10 +385,45 @@ async def get_monatsabschluss(
     # braucht der Anwender den Weg, seinen abgerechneten Ø einzutragen.
     # ⛔ KEIN eigenes Feld und KEIN geschaetzter NT-Anteil: ein Feld, das zum
     # Falschausfuellen einlaedt, ist schlechter als kein Feld (#392-Lehre).
+    # ⭐ **Und STUNDENPREISE IN DIESEM MONAT schalten es ebenfalls frei**
+    # (#412, OB73-gif). Wo eedc den Bezugspreis aus mitgeschriebenen
+    # Stundenpreisen bildet, muss der Anwender seinen **abgerechneten** Ø
+    # danebenstellen können — sonst rechnet eedc mit einer Messung, die der
+    # Anwender nicht durch die Abrechnung ersetzen kann.
+    #
+    # ⛔ **Hier stand am 11.09.2026 zwischenzeitlich „ein zugeordneter
+    # Strompreis-Sensor genügt". Das war falsch und ist zurückgenommen.** Der
+    # Zuordnungs-Slot für diesen Sensor ist selbst nur bei `vertragsart ==
+    # "dynamisch"` sichtbar (`datenquellen.py`, begründet mit Forum #89667/54).
+    # Der Zustand „Sensor zugeordnet, Vertragsart nicht dynamisch" entsteht
+    # deshalb im Wesentlichen auf **einem** Weg: einem Tarifwechsel
+    # dynamisch → fest, bei dem das Mapping stehen bleibt. Und genau dort
+    # richtete die Sensor-Bedingung Schaden an: Sie ist **stichtagslos**,
+    # während diese Route stichtagsgenau arbeitet (P8) — das Feld wäre danach
+    # in **jedem** Monat erschienen, auch in reinen Festpreis-Monaten, wo es
+    # keinen Ø einzutragen gibt. Wörtlich die #392-Lehre vier Zeilen darüber.
+    #
+    # ⭐ **Positive Evidenz statt einer Negativ-Prüfung auf ein optionales
+    # Dropdown** — dieselbe Bauform und dieselbe Begründung wie in
+    # `speicher_wirtschaftlichkeit.berechne_effektiver_ladepreis`: „das Feld
+    # ist ein optionales Dropdown, leer ist der Normalfall." Stundenpreise
+    # **dieses** Monats kann es nicht fälschlich geben.
+    #
+    # ⚠ Gefragt wird der SoT-Aggregator, nicht eine eigene Query: Er entscheidet
+    # auch in der Preis-Kaskade, ob eine Messung vorliegt. Zwei Antworten auf
+    # dieselbe Frage wären die F-56-Klasse.
     from backend.core.berechnungen.zeittarif import hat_zeitfenster
+    from backend.services.strompreis_aggregator import (
+        berechne_monats_durchschnittspreis,
+    )
+    _messung = await berechne_monats_durchschnittspreis(anlage_id, jahr, monat, db)
+    hat_gemessene_preise = bool(_messung and _messung.gewichtet_cent is not None)
     hat_dynamischen_tarif = bool(
-        allgemein_tarif
-        and (allgemein_tarif.vertragsart == "dynamisch" or hat_zeitfenster(allgemein_tarif))
+        hat_gemessene_preise
+        or (
+            allgemein_tarif
+            and (allgemein_tarif.vertragsart == "dynamisch" or hat_zeitfenster(allgemein_tarif))
+        )
     )
     # #392: dieselbe Stichtags-Logik für die variable Einspeisevergütung —
     # entscheidend ist der Tarif des abzuschließenden Monats, nicht der heutige.

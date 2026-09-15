@@ -87,7 +87,8 @@ async def test_gesperrte_arbeitszahl_steht_mit_grund_im_bericht(db):
 
     a = await _anlage(db, "F11_fremdstrom")
     html = render_html("jahresbericht.html", await build_jahresbericht_context(db, a.id, JAHR))
-    assert "Heizstab-Strom auf dem WP-Zähler" in html
+    from backend.core.berechnungen.waermepumpe_kennzahl import GRUND_FREMDSTROM
+    assert GRUND_FREMDSTROM in html  # N-371: der Wortlaut kommt aus dem Layer
 
     a7 = await _anlage(db, "F7_wmz_je_funktion")
     html7 = render_html("jahresbericht.html", await build_jahresbericht_context(db, a7.id, JAHR))

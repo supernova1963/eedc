@@ -26,10 +26,11 @@ import { Card, FehlerZustand } from '../components/ui'
 import { AnlageLeer } from './OnboardingLeer'
 import { BlockShell, BlockStackSkeleton, KpiStrip, type Block } from '../components/blocks'
 import { ParkProvider, ParkFuss, Parkbar, usePark } from '../components/park'
-import ZaehlerstaendeBlock, { useZaehlerstaende, zaehlerParkIds } from '../components/zaehler/ZaehlerstaendeBlock'
+import ZaehlerstaendeBlock, { useZaehlerstaende, zaehlerstaendeFuer, zaehlerParkIds } from '../components/zaehler/ZaehlerstaendeBlock'
 import { useApiData, useScrollErhalt } from '../hooks'
 import { BLOCK_IDENTITAET, DEDIZIERTE_KATEGORIEN, fmtZahl, WT_LANG, heuteIso, verschiebeIsoTage } from '../lib'
 import { TagVerlaufChart, TagWerteTabelle } from '../components/tag'
+import { wpSplitSerien } from '../lib/erzeugerSpalten'
 import { baueTagKpis, TagBilanz, type GleicheWochentagStats } from './TagBilanz'
 import { tagBilanzParkIds } from './bilanzParkIds'
 import { baueTagKomponentenUndFinanz } from './TagKomponenten'
@@ -166,6 +167,11 @@ function CockpitTagInner({ anlageId }: { anlageId: number | undefined }) {
       ])
       const vortagISO = tagVerschieben(datum, -1)
       return {
+        // Der Tag, zu dem diese Zahlen gehören. Die Nutzlast sagt es selbst —
+        // die Sicht darf ihn nicht aus der Auswahl erraten, denn beim Blättern
+        // steht die Auswahl schon auf dem neuen Tag, während hier noch die
+        // Vordaten des alten liegen (`keepPreviousData`).
+        datum,
         stunden: stundenAntwort.stunden,
         serien: stundenAntwort.serien,
         tagDetail: detail,
@@ -176,6 +182,36 @@ function CockpitTagInner({ anlageId }: { anlageId: number | undefined }) {
     },
     [anlageId, datum],
     { enabled: !!anlageId, swrKey: `v4-tag:${anlageId}:${datum}`, keepPreviousData: true }, /* de-de-allow: Cache-Key, keine Anzeige */
+  )
+  // Wärme/Klima-Verlauf je Stunde (Konzept §8, Bauschnitt 5) — eigene Route,
+  // geladen NEBEN der Sicht wie im Monat: bleibt sie aus, fehlt nur der Verlauf,
+  // nicht der ganze Wärmepumpen-Block (`tag-detail` wird mit `.catch` geladen).
+  //
+  // ⭐ **Dieselbe Regel wie für die Tages-Abfrage darüber** — beide halten ihre
+  // Vordaten, und beide sagen in der Nutzlast, zu WELCHEM Tag sie gehören.
+  //
+  // ⛔ Hier stand bis 13.09.2026 „bewusst OHNE `keepPreviousData`", begründet
+  // mit der Mischung aus zwei Tagen in einem Block. **Gemessen** (Probe
+  // `CockpitTagEinTag.test.tsx`, DOM): Der Verzicht verhindert die Mischung
+  // nicht, er dreht sie um. Sobald der Verlauf zuerst antwortet — er ist EIN
+  // Abruf, die Tages-Abfrage ein `Promise.all` aus dreien —, stand der Verlauf
+  // des NEUEN Tages unter den Kacheln des alten. Was die Mischung wirklich
+  // ausschließt, ist die Paarung weiter unten: gezeigt wird ein Verlauf nur zu
+  // SEINEN Kacheln.
+  const wpVerlaufQ = useApiData(
+    async () => ({ datum, verlauf: await energieProfilApi.getWaermeVerlaufStunden(anlageId!, datum) }),
+    [anlageId, datum],
+    { enabled: !!anlageId, swrKey: `v4-tag-waermeverlauf:${anlageId}:${datum}`, keepPreviousData: true }, /* de-de-allow: Cache-Key, keine Anzeige */
+  )
+  // WK-16c: Verteilung & Verlauf — **dieselbe Bauform wie der Verlauf darüber**,
+  // inklusive Paarung: gezeigt wird die Verteilung nur zu IHREN Kacheln (A3a).
+  const wpVerteilungQ = useApiData(
+    async () => ({
+      datum,
+      v: await energieProfilApi.getWaermeVerteilung(anlageId!, { sicht: 'tag', datum }),
+    }),
+    [anlageId, datum],
+    { enabled: !!anlageId, swrKey: `v4-tag-waermeverteilung:${anlageId}:${datum}`, keepPreviousData: true }, /* de-de-allow: Cache-Key, keine Anzeige */
   )
   const stunden = useMemo<StundenWert[]>(() => tagQ.data?.stunden ?? [], [tagQ.data])
   const serien = useMemo<SerieInfo[]>(() => tagQ.data?.serien ?? [], [tagQ.data]) // volle Serien (Komponenten-Klassifikation)
@@ -188,6 +224,23 @@ function CockpitTagInner({ anlageId }: { anlageId: number | undefined }) {
   const error = tagQ.data == null ? tagQ.error : null
   const laden = tagQ.refetch
 
+  // ── Die Sicht zeigt EINEN Tag ───────────────────────────────────────────────
+  // `datum` ist die **Auswahl** (Rail/Stepper, wirkt sofort), `angezeigterTag`
+  // der Tag, zu dem die **Zahlen im Bild** gehören. Für die Dauer eines
+  // Ladevorgangs fallen beide auseinander — die Vordaten bleiben stehen, damit
+  // der Block-Stack nicht springt. Alles, was diese Zahlen beschriftet (Kopf,
+  // Wochentag, Tabellen-Datum, Reparatur-Ziel), hängt deshalb am **angezeigten**
+  // Tag; die Auswahl steht im Kopf als Lade-Marker daneben (Style-Guide A3:
+  // `…` = in Berechnung). Vorher trug der Kopf die Auswahl über den Zahlen des
+  // Vortages — dasselbe „zwei Tage in einer Anzeige" eine Ebene höher.
+  const angezeigterTag = tagQ.data?.datum ?? datum
+  const laedtTag = angezeigterTag !== datum ? datum : null
+  // **Paarung** — der Verlauf gehört zu DIESEN Kacheln, oder er wird nicht
+  // gezeigt. Das ist die Klausel, die zwei Tage in einem Block ausschließt,
+  // egal welche der beiden Abfragen zuerst antwortet.
+  const wpVerlaufStunden = wpVerlaufQ.data?.datum === angezeigterTag ? wpVerlaufQ.data.verlauf : null
+  const wpVerteilung = wpVerteilungQ.data?.datum === angezeigterTag ? wpVerteilungQ.data.v : null
+
   // B1: Scroll-Position beim Tageswechsel halten (siehe CockpitMonatV4).
   const rootRef = useRef<HTMLDivElement>(null)
   const merkeScroll = useScrollErhalt(rootRef, loading)
@@ -198,7 +251,14 @@ function CockpitTagInner({ anlageId }: { anlageId: number | undefined }) {
 
   // #377 — Verbrauchszähler dieses Tages. Eigener Abruf statt Anhängsel an die
   // Tages-Antwort: ein Zählerstand ist keine Energiegröße.
-  const zaehlerstaende = useZaehlerstaende(anlageId, 'tag', { datum })
+  //
+  // Geholt wird für die **Auswahl** (der Abruf soll nicht auf die Tages-Werte
+  // warten), gezeigt wird nur, was zum **angezeigten** Tag gehört: Der Hook hält
+  // seine Vordaten, also stünden sonst die Stände des einen Tages unter den
+  // Mengen eines anderen. Ohne Paarung ist `null` = „noch nichts geladen", und
+  // der Block entfällt — die bestehende Bauform, kein neuer Ladezustand.
+  const zaehlerQ = useZaehlerstaende(anlageId, 'tag', { datum })
+  const zaehlerstaende = zaehlerstaendeFuer(zaehlerQ, { zeitraum: 'tag', datum: angezeigterTag })
 
   const bloecke = useMemo<Block[]>(() => {
     const list: Block[] = []
@@ -211,7 +271,13 @@ function CockpitTagInner({ anlageId }: { anlageId: number | undefined }) {
     const erzeugerSerien = serien.filter((s) => s.kategorie === 'pv' && s.typ !== 'virtual')
     // Extra-Serien (nicht-dedizierte) für Chart/Tabelle — wie IST-„Tagesdetail".
     const extraSerien = serien.filter((s) => !DEDIZIERTE_KATEGORIEN.has(s.kategorie))
-    const wochentag = WT_LANG[wochentagOf(datum)]
+    // Wärmepumpen-Serien je Funktion (WK-09 B1, Konzept Wärme/Klima §4 ⑤). Sie
+    // sind Kategorie `waermepumpe` und fallen deshalb — wie die PV-Strings —
+    // aus `extraSerien` heraus. ⛔ `DEDIZIERTE_KATEGORIEN` bleibt unangetastet:
+    // dort stünden sie ZUSÄTZLICH zur `wp`-Fläche im Stapel, also dieselbe
+    // Energie zweimal. Als eigene Prop ersetzen sie die Fläche.
+    const wpSerien = wpSplitSerien(serien)
+    const wochentag = WT_LANG[wochentagOf(angezeigterTag)]
     if (tag) {
       // Kennzahlen-Kacheln parkbar (SLICE 1): stabile parkId je Titel; geparkte
       // werden im Strip ausgeblendet, sind ALLE geparkt → Block-Hülle weglassen
@@ -252,7 +318,7 @@ function CockpitTagInner({ anlageId }: { anlageId: number | undefined }) {
         id: 'kpi', title: 'Kennzahlen', ...BLOCK_IDENTITAET.kennzahlen,
         summary: 'keine Daten für diesen Tag', defaultOpen: true,
         render: () => (
-          <TagLeerGrund anlageId={anlageId!} datum={datum} onRepariert={laden} />
+          <TagLeerGrund anlageId={anlageId!} datum={angezeigterTag} onRepariert={laden} />
         ),
       })
     }
@@ -261,19 +327,19 @@ function CockpitTagInner({ anlageId }: { anlageId: number | undefined }) {
         id: 'verlauf', title: 'Stundenverlauf', ...BLOCK_IDENTITAET.verlauf,
         summary: 'Stundenmittel: Quellen ▲ / Senken ▼',
         defaultOpen: false,
-        render: () => <Parkbar id="el:stundenverlauf" titel="Stundenverlauf"><TagVerlaufChart daten={stunden} extraSerien={extraSerien} erzeugerSerien={erzeugerSerien} /></Parkbar>,
+        render: () => <Parkbar id="el:stundenverlauf" titel="Stundenverlauf"><TagVerlaufChart daten={stunden} extraSerien={extraSerien} erzeugerSerien={erzeugerSerien} wpSerien={wpSerien} /></Parkbar>,
       })
       if (!park.istGeparkt('el:stundenwerte')) list.push({
         id: 'stundenwerte', title: 'Stundenwerte', ...BLOCK_IDENTITAET.werte,
         summary: 'Stundenwerte in kW · Σ-Zeile = kWh/Tag',
         defaultOpen: false,
-        render: () => <Parkbar id="el:stundenwerte" titel="Stundenwerte"><TagWerteTabelle daten={stunden} extraSerien={extraSerien} erzeugerSerien={erzeugerSerien} datum={datum} /></Parkbar>,
+        render: () => <Parkbar id="el:stundenwerte" titel="Stundenwerte"><TagWerteTabelle daten={stunden} extraSerien={extraSerien} erzeugerSerien={erzeugerSerien} datum={angezeigterTag} /></Parkbar>,
       })
     }
     // Komponenten-Detailblöcke (aktiv-gegated) + Finanz-Teaser — dieselben Bauer
     // wie Cockpit/Monat (period='tag'). `tagDetail` füttert die tagesgenauen
     // Zusatzwerte (WP-Strom-Split, Speicher-Netzladung/Ladepreis).
-    if (tag) list.push(...baueTagKomponentenUndFinanz(tag, stunden, serien, park, tagDetail))
+    if (tag) list.push(...baueTagKomponentenUndFinanz(tag, stunden, serien, park, tagDetail, wpVerlaufStunden, wpVerteilung))
     // #377: nur wenn wirklich ein Zähler gepflegt IST — ein leerer Block wäre
     // eine Anzeige über eine Funktion, die dieser Anwender nicht benutzt.
     if (zaehlerstaende && zaehlerstaende.length > 0 && !zaehlerParkIds(zaehlerstaende).every((id) => park.istGeparkt(id))) list.push({
@@ -285,7 +351,7 @@ function CockpitTagInner({ anlageId }: { anlageId: number | undefined }) {
       ),
     })
     return list
-  }, [tag, vortag, wtStats, stunden, serien, datum, tagDetail, park, anlageId, laden, zaehlerstaende])
+  }, [tag, vortag, wtStats, stunden, serien, angezeigterTag, tagDetail, park, anlageId, laden, zaehlerstaende, wpVerlaufStunden, wpVerteilung])
 
   if (!anlageId) {
     return (
@@ -295,7 +361,9 @@ function CockpitTagInner({ anlageId }: { anlageId: number | undefined }) {
     )
   }
 
-  const istHeute = datum >= heuteISO()
+  // Der Badge „heute/abgeschlossen" beschreibt die Zahlen im Bild, nicht die
+  // Auswahl — sonst stünde „heute" über den Zahlen von gestern.
+  const istHeute = angezeigterTag >= heuteISO()
 
   return (
     <div ref={rootRef} className="p-3 sm:p-6 max-w-[1920px] mx-auto">
@@ -310,7 +378,7 @@ function CockpitTagInner({ anlageId }: { anlageId: number | undefined }) {
         </div>
 
         <div className="flex-1 min-w-0 space-y-4">
-          <TagHeader datum={datum} laufend={istHeute} tag={tag} onReload={laden} reloading={reloading} />
+          <TagHeader datum={angezeigterTag} laedtTag={laedtTag} laufend={istHeute} tag={tag} onReload={laden} reloading={reloading} />
 
           {error ? (
             // B8-Fehler-Baustein (S15): refetch räumt error ab + refetcht alle Quellen.

@@ -24,12 +24,19 @@ haben und trotzdem einen Wärmemengenzähler an der falschen Stelle. Die zwei
 Meldungen können nebeneinander stehen, ohne dasselbe zu sagen.
 """
 
-from backend.core.berechnungen.betriebsart_gemessen import modus_strom_zeile
-from backend.core.berechnungen.waermepumpe_kennzahl import arbeitszahl
+from backend.core.berechnungen.betriebsart_gemessen import (
+    funktionsfremd_abzug_kwh,
+    modus_strom_zeile,
+)
+from backend.core.berechnungen.waermepumpe_kennzahl import (
+    arbeitszahl,
+    heizwaerme_kwh,
+    waerme_gesamt_kwh,
+)
 from backend.core.field_definitions import (
-    get_wp_heizenergie_kwh,
     get_wp_strom_kwh,
     get_wp_warmwasser_kwh,
+    nenner_ist_feine_summe,
 )
 from backend.models.anlage import Anlage
 
@@ -71,6 +78,28 @@ class WaermepumpeChecks:
         Kühlbetrieb) rechnete der Checker **3,5** und schwieg, während die
         Kachel **107,0** zeigte — eine Zahl, die keine Wärmepumpe leisten kann.
         *Der Docstring darüber war schon richtig; die Umsetzung war es nicht.*
+
+        ⭐ **Dieselbe Lehre, zweite Runde (N-450, 12.09.2026): auch die
+        Lesetüren brauchen ihre ``params``.** ``get_wp_strom_kwh(daten)`` ohne
+        das Parameter-Wörterbuch nimmt **immer** den nicht-getrennten Zweig und
+        liest ``stromverbrauch_kwh``. An einer Anlage mit **getrennter
+        Strommessung** steht dort nichts — der Strom liegt in
+        ``strom_heizen_kwh`` und ``strom_warmwasser_kwh``. Rückgabe **0**,
+        ``if not strom: continue``, und die Plausibilitätsprüfung sah
+        **ausgerechnet die sorgfältigst eingerichteten Anlagen nie**. Dasselbe
+        galt für ``get_wp_warmwasser_kwh(daten)``: Ohne ``params`` fehlt der
+        Geräte-Filter aus N-379, und ein an einer Luft-Luft-Anlage gepflegter
+        Warmwasser-Wert hätte hier mitgezählt. Der Docstring der Lesetür sagt
+        es wörtlich — *„die Lage der Aufrufer, die keine Investition zur Hand
+        haben (Import-/Schreibpfade)"* —; ein Checker hat sie zur Hand.
+
+        ⭐ **Und der Abzug ist seit SOLL-§9-E7/Option A nicht die Menge**
+        (12.09.2026): Bei getrennter Strommessung mit nur **abgeleiteter**
+        Aufteilung darf der funktionsfremde Anteil den Nenner nicht kürzen. Er
+        kommt deshalb aus ``funktionsfremd_abzug_kwh`` — derselben Stelle, aus
+        der die Anzeige ihn holt. Ein Checker, der weiter die Rohmenge abzöge,
+        rechnete an genau den Anlagen zu niedrig, die er seit N-450 überhaupt
+        erst sieht.
         """
         kat = CheckKategorie.MONATSDATEN_PLAUSIBILITAET.value
         ergebnisse: list[CheckErgebnis] = []
@@ -82,20 +111,43 @@ class WaermepumpeChecks:
             name = inv.bezeichnung or f"#{inv.id}"
             for imd in inv.monatsdaten:
                 daten = imd.verbrauch_daten or {}
-                strom = get_wp_strom_kwh(daten)
-                waerme_h = get_wp_heizenergie_kwh(daten)
-                waerme_w = get_wp_warmwasser_kwh(daten)
+                # N-450: **mit `params`** — sonst nimmt die Lesetür den
+                # nicht-getrennten Zweig und liefert an jeder F5-Anlage 0.
+                params = inv.parameter or {}
+                strom = get_wp_strom_kwh(daten, params)
+                # R-3/N-488: **dieselbe Weiche wie die Anzeige** (D1-Stufe 3).
+                # Die alte Lesetür `get_wp_heizenergie_kwh` kennt die gemessene
+                # Nutzenergie Heizbetrieb nicht; an einem Gerät, das sie pflegt,
+                # prüfte der Checker damit eine andere Heizwärme als Hub und
+                # Cockpit zeigen — die N-450-Klasse mit Ansage (Konzept 11.5:
+                # der Prüfer liest dieselben Eingänge wie die Anzeige).
+                waerme_h = heizwaerme_kwh(daten) or 0.0
+                waerme_w = get_wp_warmwasser_kwh(daten, params)
                 if not strom:
                     continue
-                waerme = (waerme_h or 0) + (waerme_w or 0)
+                # N-391: **kanonisch wie die Anzeige** (D1) — sonst sähe der
+                # Prüfer an einer Wärmepumpe mit gemeinsamem Wärmemengenzähler
+                # gar keine Wärme und schwiege zu jeder Auffälligkeit, während
+                # Hub und Cockpit die Zahl längst zeigen.
+                waerme = waerme_gesamt_kwh(
+                    daten.get("waerme_kwh"), waerme_h, waerme_w,
+                )
                 if waerme <= 0:
                     continue
-                # Derselbe Nenner-Abzug wie in der Anzeige — `funktionsfremd_kwh`
-                # ist die eine Stelle, die sagt, was funktionsfremd heißt, und
-                # `modus_strom_zeile` liefert ihn aus beiden Aufteilungswegen.
+                # Derselbe Nenner-Abzug wie in der Anzeige — und zwar der
+                # **Abzug** (SOLL-§9-E7/Option A), nicht die Menge:
+                # `funktionsfremd_abzug_kwh` entscheidet je Gerät, ob der
+                # Anteil überhaupt im Nenner steht.
                 az = arbeitszahl(
                     waerme, strom,
-                    strom_funktionsfremd_kwh=modus_strom_zeile(daten).funktionsfremd_kwh,
+                    strom_funktionsfremd_kwh=funktionsfremd_abzug_kwh(
+                        modus_strom_zeile(daten),
+                        # N-462: die **Stufe** dieser Zeile, nicht das
+                        # Kennzeichen — sonst prüft der Prüfer eine andere Zahl
+                        # als die Anzeige (er ist genau dafür da, dass beide
+                        # dieselbe nennen).
+                        hat_split=nenner_ist_feine_summe(daten, params),
+                    ),
                 )
                 if az.wert is None:
                     continue

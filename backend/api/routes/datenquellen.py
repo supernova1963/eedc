@@ -34,6 +34,7 @@ from backend.services.datenquellen_historie import (
     vermerk_lesen,
 )
 from backend.core.betriebsmodus import betriebsmodus_klartext
+from backend.core.feld_auswertungen import sichten_fuer
 from backend.core.field_definitions import ist_zustand_feld
 from backend.services.datenquellen_resolver import resolve_effektive_quelle
 from backend.services.live_sensor_config import extract_live_config
@@ -958,6 +959,7 @@ async def get_datenquellen_felder(anlage_id: int, db: AsyncSession = Depends(get
     from backend.services.datenquellen_validierung import (
         einheit_problem, state_class_problem,
         finde_redundante_aggregate, finde_doppelmappings, stufe_bedarf_ein,
+        finde_gesamtleistung_verdraengt,
     )
     feld_einheit = {_feld_id(e["match_key"]): e.get("einheit", "") for e in eintraege}
     feld_feld = {_feld_id(e["match_key"]): e.get("feld", "") for e in eintraege}
@@ -1022,6 +1024,32 @@ async def get_datenquellen_felder(anlage_id: int, db: AsyncSession = Depends(get
     ]
     for fid, p in finde_redundante_aggregate(felder_belegt).items():
         _add_problem(fid, p)
+    # Bauschnitt 7 (12.09.2026): „Leistung gesamt" verdrängt an derselben
+    # Wärmepumpe die Verlaufs-Aufteilung nach Heizen/Warmwasser.
+    #
+    # ⭐ **Maßgeblich ist die HA-`live`-Map**, nicht `belegt` und nicht
+    # `hat_wert` — sie ist genau die Menge, die die Verdrängung bewirkt
+    # (`live_sensor_config.extract_live_config` → `has_leistung`). Ein
+    # `mqtt_inbound_standard`-Stempel der B8-Materialisierung steht zwar in
+    # `quellen` (also „belegt"), erreicht diese Map aber nie und verdrängt
+    # nichts; eine tote HA-Entity steht darin und verdrängt sehr wohl.
+    # Beide Fälle sind gemessen, beide haben je einen Regel-Entwurf gekippt.
+    inv_live_felder = [
+        {
+            "id": _feld_id(e["match_key"]),
+            "feld": e.get("feld", ""),
+            "typ": e.get("typ", "basis"),
+            "inv_id": e["match_key"][1],
+            # Roher Schlüssel: `leistung_w-<gid>` (Innengerät) ist NICHT das
+            # Gerätefeld und verdrängt nicht — kein `basis_feld_key` hier.
+            "in_ha_live": e["match_key"][2] in (
+                inv_live_map.get(str(e["match_key"][1])) or {}
+            ),
+        }
+        for e in eintraege if e["match_key"][0] == "inv_live"
+    ]
+    for fid, p in finde_gesamtleistung_verdraengt(inv_live_felder).items():
+        _add_problem(fid, p)
     # ⛔ Hier stand bis #406 eine dritte Lage: das Aggregat sei „für Tag und
     # Stunde durch einzelne Erzeuger-Zähler verdrängt, die Tagessumme still zu
     # niedrig" (F-7 Stufe 1, Forum T89667 #109). Diese Warnung ist ERSATZLOS
@@ -1037,6 +1065,29 @@ async def get_datenquellen_felder(anlage_id: int, db: AsyncSession = Depends(get
     # §2i-6 — Bedarfs-Einstufung: ist ein LEERES Feld überhaupt eine Lücke?
     # Ohne sie zählte der Rollup Aggregat-, Alternativ- und Optional-Felder als
     # „ohne Quelle" und meldete auf einer korrekt eingerichteten Anlage Fehlalarm.
+    #
+    # ⛔ **`inv_id` und `pflicht_am_geraet` sind seit N-456 Teil der Eingabe.**
+    # Ohne sie war die Belegung anlagenweit: An einer Anlage mit ZWEI
+    # Wärmepumpen schaltete ein zugeordnetes Feld an Gerät A die leeren Felder
+    # an Gerät B auf „hier ist nichts einzutragen" — das zweite Gerät konnte gar
+    # nicht als offen erscheinen. Und bei getrennter Strommessung erklärte diese
+    # Fläche das zweite Stromfeld für inaktiv, während der Abdeckungs-Check
+    # daneben (`_check_energieprofil_abdeckung`) dafür warnte: zwei Flächen,
+    # eine Anlage, gegenteilige Aussage (N-86-Klasse).
+    #
+    # Die Investitions-ID steckt im `match_key` (`("inv_energy", <id>, <feld>)`)
+    # — NICHT in der Feld-ID selbst: die entsteht als `"_".join(match_key)`, und
+    # ein Feldname mit Unterstrichen ließe sich daraus nicht sicher zurücklesen.
+    _feld_inv_id = {
+        _feld_id(e["match_key"]): (
+            str(e["match_key"][1])
+            if str(e["match_key"][0]).startswith("inv_") else None
+        )
+        for e in eintraege
+    }
+    _feld_pflicht_am_geraet = {
+        _feld_id(e["match_key"]): bool(e.get("pflicht_am_geraet")) for e in eintraege
+    }
     _bedarf_eingabe = [
         {"id": fid,
          "feld": feld_feld[fid],
@@ -1044,7 +1095,9 @@ async def get_datenquellen_felder(anlage_id: int, db: AsyncSession = Depends(get
          "belegt": (effektiv.get(fid, {}).get("quelle", QUELLE_KEINE) != QUELLE_KEINE),
          "bedarf": feld_bedarf.get(fid, "optional"),
          "bedarf_gruppe": feld_bedarf_gruppe.get(fid),
-         "bedingung_anlage": feld_bedingung_anlage.get(fid)}
+         "bedingung_anlage": feld_bedingung_anlage.get(fid),
+         "inv_id": _feld_inv_id.get(fid),
+         "pflicht_am_geraet": _feld_pflicht_am_geraet.get(fid, False)}
         for fid in feld_feld
     ]
     bedarf_je_feld = stufe_bedarf_ein(_bedarf_eingabe, vorhandene_inv_typen)
@@ -1145,6 +1198,23 @@ async def get_datenquellen_felder(anlage_id: int, db: AsyncSession = Depends(get
             "bedarf": bedarf_je_feld.get(fid, {}).get("bedarf", "optional"),
             "bedarf_grund": bedarf_je_feld.get(fid, {}).get("grund"),
             "bedarf_text": bedarf_je_feld.get(fid, {}).get("text"),
+            # **R-A (WK-16f, Prinzip F-7): wo dieser Wert erscheint.**
+            # Eine Zuordnung ist ein Versprechen; die Fläche sagt jetzt, wo es
+            # eingelöst wird — *„ausgewertet in: Cockpit → Monat · Komponenten
+            # → Wärmepumpe"*. Die Liste kommt aus `core/feld_auswertungen.py`
+            # und **nur** von dort: eine zweite Tabelle im Client wäre genau
+            # die Drift-Bauform, an der `FeldProblem.art` schon einmal
+            # auseinandergelaufen ist (N-35/N-40).
+            #
+            # ⚠ **Der Typ des EINTRAGS, nicht der der Gruppe.** Heute sind beide
+            # deckungsgleich — die Gruppe erbt ihren Typ vom ersten Eintrag —,
+            # und genau deshalb steht hier der Eintrag: Er ist die Quelle, die
+            # Gruppe nur eine Zusammenfassung davon. Ein Sprengsatz auf die
+            # Gruppenform blieb am 14.09.2026 **still**; das war der Beleg, dass
+            # die Unterscheidung heute nichts trägt, und kein Grund, sie als
+            # Begründung stehen zu lassen. Bei den Anlagen-Feldern steht dort
+            # `basis` — so heißt der Schlüssel in der Tabelle (`TYP_ANLAGE`).
+            "ausgewertet_in": sichten_fuer(e.get("typ", ""), e.get("feld", "")),
         })
 
     # B8-2: aufgelöste positive Evidenz additiv festschreiben (guarded — nur bei

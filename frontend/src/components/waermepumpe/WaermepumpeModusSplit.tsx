@@ -28,6 +28,13 @@ export interface ModusSplitDaten {
    *  solchen Zähler 0 — dann stecken sie weiterhin in `nicht_aufgeteilt`. */
   modus_strom_lueften_kwh?: number
   modus_strom_entfeuchten_kwh?: number
+  /** **R-C (WK-16f, N-398): die abgegebene Nutzenergie** derselben zwei
+   *  Betriebsarten. **Menge, keine Kennzahl** — E4 bleibt unverändert: Lüften
+   *  und Entfeuchten erzeugen keine Nutzenergie, die eedc bewerten könnte.
+   *  Die Zeile steht nur mit Zahl da; bis zum 14.09.2026 las diese zwei
+   *  Registry-Felder überhaupt niemand. */
+  modus_nutzenergie_lueften_kwh?: number
+  modus_nutzenergie_entfeuchten_kwh?: number
   modus_nicht_aufgeteilt_kwh?: number
   modus_abdeckung_h?: number
   /** **W-17b** — die Grundmenge der Aufteilung: der Strom der Monate MIT
@@ -77,6 +84,12 @@ export function WaermepumpeModusSplit({ zusammenfassung: z }: { zusammenfassung:
   const lueften = z.modus_strom_lueften_kwh
   const entfeuchten = z.modus_strom_entfeuchten_kwh
   const rest = z.modus_nicht_aufgeteilt_kwh
+  // R-C: die Mengen ohne Kennzahl. Sie gehen in **kein** Segment des Balkens —
+  // der teilt den STROM auf, und eine thermische Menge daneben zu stapeln wäre
+  // dieselbe Zweideutigkeit zweier Familien, an der ein Tester schon einmal
+  // zwei Felder addiert hat (#89667/62).
+  const nutzLueften = z.modus_nutzenergie_lueften_kwh
+  const nutzEntfeuchten = z.modus_nutzenergie_entfeuchten_kwh
 
   // E4: Lüften und Entfeuchten erscheinen **nur, wenn gemessen**. Ein Segment
   // mit 0 kWh an jeder Wärmepumpe wäre eine Zeile, die für fast jeden Anwender
@@ -132,6 +145,20 @@ export function WaermepumpeModusSplit({ zusammenfassung: z }: { zusammenfassung:
           <div className="flex justify-between">
             <dt className="text-gray-600 dark:text-gray-400">davon Entfeuchten</dt>
             <dd>{fmt(entfeuchten)} kWh{anteil(entfeuchten, gesamt)}</dd>
+          </div>
+        ) : null}
+        {/* R-C: die abgegebene Menge neben dem Strom — **ohne** Prozentanteil,
+            denn sie ist kein Teil der Stromsumme darüber. */}
+        {nutzLueften ? (
+          <div className="flex justify-between">
+            <dt className="text-gray-600 dark:text-gray-400">Nutzenergie Lüften</dt>
+            <dd>{fmt(nutzLueften)} kWh</dd>
+          </div>
+        ) : null}
+        {nutzEntfeuchten ? (
+          <div className="flex justify-between">
+            <dt className="text-gray-600 dark:text-gray-400">Nutzenergie Entfeuchten</dt>
+            <dd>{fmt(nutzEntfeuchten)} kWh</dd>
           </div>
         ) : null}
         <div className="flex justify-between">

@@ -76,6 +76,17 @@ export interface DatenquelleFeld {
    * für dieselbe Regel.
    */
   erweitert?: boolean
+  /**
+   * **R-A (WK-16f, Prinzip F-7): wo dieser Wert erscheint** — als fertige
+   * Wegbeschreibungen („Cockpit → Monat", „Komponenten → Wärmepumpe").
+   *
+   * ⚠ **Der Client hält keine eigene Tabelle.** Die Sätze kommen aus
+   * `core/feld_auswertungen.py`; sie hier nachzubauen wäre die Drift, die bei
+   * `FeldProblem.art` schon einmal passiert ist (N-35/N-40). Leer heißt
+   * „dieses Feld hat heute keine Auswertung" — dann steht auch nichts da,
+   * statt eines Satzes, der nichts nennt.
+   */
+  ausgewertet_in?: string[]
 }
 
 /** Diagnostisches Zuordnungs-Problem (§2i) — rein informativ, keine Sperre. */
@@ -96,7 +107,13 @@ export interface FeldProblem {
     | 'doppelmapping'
     | 'takt'
     | 'teilweise_verdraengt'
-  schwere: 'error' | 'warning'
+    /** Bauschnitt 7: „Leistung gesamt" verdrängt an derselben Wärmepumpe die
+     *  Verlaufs-Aufteilung nach Heizen/Warmwasser. **Bewusst nicht `redundant`** —
+     *  dessen Inline-Knopf „auf keine setzen" würde hier das Feld der Zeile
+     *  leeren, also die Aufteilung statt der Gesamtleistung. */
+    | 'gesamtleistung_verdraengt'
+  /** `info`: kein Fehler, nur eine Folge der Zuordnung (Bauschnitt 7). */
+  schwere: 'error' | 'warning' | 'info'
   text: string
   /**
    * `redundant`: die wirksamen Komponenten-Felder.

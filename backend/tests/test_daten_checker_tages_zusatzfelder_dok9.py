@@ -175,3 +175,81 @@ async def test_anlage_ohne_solche_komponenten_bleibt_still(db):
     anlage = await _anlage(db, [("pv-module", "Dach Süd", {})])
 
     assert not _treffer(anlage, db)
+
+
+# ═══ N-451b (14.09.2026): die Gruppe zählt, nicht das eine Feld ═════════════
+#
+# ⛔ **Der Befund, gemessen über `_check_tages_zusatzfelder`.** Seit WK-14b gibt
+# es *Wärme gesamt* (`waerme_kwh`) — EIN Wärmemengenzähler für die ganze
+# Wärmeabgabe, Alternative zu *Heizwärme* in derselben Bedarfs-Gruppe
+# `wp_waerme`. Diese INFO kannte die Gruppe nicht und mahnte einen Zähler an,
+# den der vorhandene ersetzt: *„Offen: Vitocal: Heizwärme, Warmwasser"*. Das ist
+# die **N-86-Klasse** — dieselbe Anlage, zwei Flächen, gegenteilige Aussage: Die
+# Zuordnungs-Fläche zählt *Heizwärme* längst als gedeckt (`pflicht_am_geraet`
+# ist dort für ALTERNATIV-Gruppen ausgeschaltet), der Checker nicht.
+#
+# Der Monats-Checker hat dieselbe Frage mit WK-14b gelernt
+# (`daten_checker/monatsdaten.py`); dieser hier blieb stehen.
+
+
+async def test_waerme_gesamt_deckt_die_heizwaerme_ab(db):
+    """EIN gemeinsamer Wärmemengenzähler ⇒ **kein** „Offen: … Heizwärme" mehr.
+
+    ⚠ *Warmwasser* bleibt genannt, und das ist keine Lücke der Regel, sondern
+    ihre Grenze: `warmwasser_kwh` steht **nicht** in der Gruppe `wp_waerme`
+    (gemessen: `get_feld_bedarf` liefert `('optional', None)`). Ein Gesamtzähler
+    liefert die Wärmemenge, aber nicht ihre Aufteilung — wer die Warmwasser-Linie
+    im Tag sehen will, braucht dafür weiterhin einen eigenen Zähler (K1: die
+    Aufteilung steht neben der Gesamtmenge, nie an ihrer Stelle).
+    """
+    anlage = await _anlage(
+        db,
+        [("waermepumpe", "Vitocal", {})],
+        mapping_felder={"Vitocal": {"waerme_kwh": _sensor("sensor.wmz_gesamt")}},
+    )
+
+    treffer = _treffer(anlage, db)
+
+    assert len(treffer) == 1
+    assert "Heizwärme" not in treffer[0].details, treffer[0].details
+    assert "Vitocal: Warmwasser" in treffer[0].details
+
+
+async def test_waerme_gesamt_und_warmwasser_schweigen_ganz(db):
+    """Gesamtzähler + Warmwasser-Zähler ⇒ gar kein Befund.
+
+    Die Gegenprobe zur Klausel darüber: Es ist wirklich nur die Warmwasser-Seite
+    offen geblieben, nicht ein Rest der alten Feld-Frage.
+    """
+    anlage = await _anlage(
+        db,
+        [("waermepumpe", "Vitocal", {})],
+        mapping_felder={"Vitocal": {
+            "waerme_kwh": _sensor("sensor.wmz_gesamt"),
+            "warmwasser_kwh": _sensor("sensor.wmz_ww"),
+        }},
+    )
+
+    assert not _treffer(anlage, db)
+
+
+async def test_summanden_gruppe_deckt_nichts_ab(db):
+    """⛔ **Eine Gruppe ist nicht automatisch eine Alternative** (N-456).
+
+    `wp_strom` führt `stromverbrauch_kwh`, `strom_heizen_kwh` und
+    `strom_warmwasser_kwh` — dort sind es **Summanden**, keiner deckt den
+    anderen ab. Die Unterscheidung hängt an `BEDARF_GRUPPEN_ALTERNATIV`; wer sie
+    beim Lesen weglässt, baut aus einem behobenen Fehlalarm ein verschwiegenes
+    Loch. Die Klausel prüft den Leser direkt, weil die Strom-Felder in dieser
+    INFO gar nicht vorkommen — und genau deshalb würde es hier niemand merken.
+    """
+    from backend.services.daten_checker.energieprofil import _alternativ_geschwister
+
+    param = {"wp_art": "luft_wasser", "getrennte_strommessung": True}
+    assert _alternativ_geschwister("waermepumpe", "strom_heizen_kwh", param) == [
+        "strom_heizen_kwh"
+    ]
+    assert _alternativ_geschwister("wallbox", "ladung_pv_kwh", {}) == ["ladung_pv_kwh"]
+    assert set(_alternativ_geschwister("waermepumpe", "heizenergie_kwh", param)) == {
+        "heizenergie_kwh", "waerme_kwh",
+    }

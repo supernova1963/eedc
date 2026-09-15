@@ -169,8 +169,12 @@ describe('Komponenten-Detail (E-Gegencheck)', () => {
     expect(screen.getByText('Kompressor-Starts')).toBeInTheDocument()
     expect(screen.getByText('120')).toBeInTheDocument()
     expect(screen.getByText('Betriebsstunden')).toBeInTheDocument()
-    expect(screen.getByText('Stromverbrauch · davon Heizung')).toBeInTheDocument()
-    expect(screen.getByText('Stromverbrauch · davon Warmwasser')).toBeInTheDocument()
+    // Bauschnitt 8: die getrennten Strommengen stehen je Funktion, unter den
+    // Namen des Formulars (vorher „Stromverbrauch · davon Heizung/Warmwasser").
+    expect(screen.getByText('Strom Heizen')).toBeInTheDocument()
+    expect(screen.getByText('200 kWh')).toBeInTheDocument()
+    expect(screen.getByText('Strom Warmwasser')).toBeInTheDocument()
+    expect(screen.getByText('130 kWh')).toBeInTheDocument()
   })
 
   // N-327 (Klausnn #263 + dietmar1968 T89667, beide 24.08.2026): Die Aufteilung

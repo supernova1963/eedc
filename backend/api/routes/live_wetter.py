@@ -22,6 +22,7 @@ from backend.core.exceptions import not_found
 from backend.api.deps import get_db
 from backend.core.config import settings
 from backend.core.berechnungen.energie import summe_pv_bkw_kwh
+from backend.core.berechnungen.heizgradtage import HEIZGRENZE_C
 from backend.models.anlage import Anlage
 from backend.models.investition import Investition
 from backend.utils.investition_filter import aktiv_jetzt
@@ -185,7 +186,12 @@ def _format_solar_noon(longitude: Optional[float]) -> Optional[str]:
     m = int((noon - h) * 60)
     return f"{h:02d}:{m:02d}"
 TEMP_COEFFICIENT = 0.004  # -0.4%/°C über 25°C (typisch Silizium)
-HEIZGRENZE = 15.0  # °C — unterhalb wird geheizt (Standard Deutschland)
+
+# Die Heizgrenze stand bis zum 12.09.2026 hier als zweite, modul-lokale Zahl.
+# Sie ist dieselbe wie die des wetternormierten Vergleichs im Komponenten-Hub
+# und lebt seither **einmal** im Layer (`core/berechnungen/heizgradtage.py`,
+# SOLL Wärme/Klima §4.1). Gewächtert von
+# `test_berechnungs_layer_konformitaet.py::test_heizgrenze_nur_im_layer`.
 
 # Die lokale Ausrichtungs-Text→Azimut-Tabelle stand hier bis A20 als zweite
 # Kopie neben `pv_orientation.AUSRICHTUNG_MAP`; ihre drei englischen Schlüssel
@@ -319,8 +325,8 @@ def _berechne_verbrauchsprofil(
             if wp_profil and referenz_temp_c is not None:
                 temp = s.get("temperatur_c")
                 if temp is not None:
-                    hdd_ref = max(0.0, HEIZGRENZE - referenz_temp_c)
-                    hdd_fc = max(0.0, HEIZGRENZE - temp)
+                    hdd_ref = max(0.0, HEIZGRENZE_C - referenz_temp_c)
+                    hdd_fc = max(0.0, HEIZGRENZE_C - temp)
                     if hdd_ref >= 1.0:
                         # Normaler Heizbetrieb in Referenzperiode → proportional
                         faktor = hdd_fc / hdd_ref

@@ -1,8 +1,6 @@
 
 # eedc Handbuch — Teil I: Installation & Einrichtung
 
-**Version 4.0** | Stand: 2026-07-25
-
 > Dieses Handbuch ist Teil der eedc-Dokumentation.
 > Siehe auch: [Teil II: Bedienung](HANDBUCH_BEDIENUNG.md) | [Teil III: Einstellungen](HANDBUCH_EINSTELLUNGEN.md) | [Glossar](GLOSSAR.md)
 

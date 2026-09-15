@@ -22,6 +22,10 @@ Ergebnis war 0,0 statt 206,5 kWh/m².
 muss weiter DWD bekommen, und eine Altanlage OHNE gepflegtes Land darf ihre
 Quelle nicht verlieren — sonst hätte der Fix die Mehrheit der Installationen
 umgestellt, um einer Minderheit zu helfen.
+
+Schwesterdatei: ``test_wetter_monatstemperatur_n426.py`` — dieselbe Route
+(`GET /api/wetter/monat/…`), die andere Hälfte ihrer Antwort: welcher Provider
+die **Strahlung** liefern darf steht hier, woher die **Ø-Temperatur** kommt dort.
 """
 
 from __future__ import annotations

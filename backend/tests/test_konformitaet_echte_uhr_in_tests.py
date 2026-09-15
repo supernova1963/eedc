@@ -102,6 +102,16 @@ _BASELINE: dict[str, int] = {
     "test_live_pv_zaehler_f49.py": 3,
     "test_migrate_v3_33_0_lts_komponenten_kwh.py": 1,
     "test_monats_luecken_symmetrie.py": 1,
+    # N-439 (13.09.), NEU in dieser Liste — Grund wie bei
+    # `test_prognose_vergleich_bestand_je_tag.py` darunter: Beide
+    # Tagesverlauf-Pfade verankern ihr Fenster SELBST an `datetime.now()`
+    # (`get_tagesverlauf`/`_get_tagesverlauf_mqtt` rechnen `start` aus `now` und
+    # `tage_zurueck`). Ein festes Datum in der Fixture fiele aus diesem Fenster,
+    # die Antwort waere leer und die Probe prueft dann nichts mehr. Deshalb
+    # GENAU EINE Ablesung, in der geteilten Konstanten `_JETZT`; die
+    # kWh-Probe derselben Datei kommt mit einem festen Datum aus. Begruendung
+    # steht auch im Modul-Docstring der Probe.
+    "test_n439_leistung_kuehlen_anzeige.py": 1,
     "test_multi_string_forecast_robustness_306.py": 4,
     "test_prognose_kanon.py": 11,
     # N-317 (29.08.), NEU in dieser Liste — die einzige erlaubte Richtung ist

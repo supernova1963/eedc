@@ -210,7 +210,8 @@ def test_ii2b_zwei_geraete_ein_zaehler_nur_eines_meldet_waerme():
 
     # Zwei Geräte tragen Strom, nur eines meldet Wärme.
     wp = _wp(strom_kwh=337.0, waerme_kwh=309.0,
-             geraete_mit_strom=2, geraete_mit_waerme=1)
+             geraete_mit_strom=frozenset({1, 2}),
+             geraete_mit_waerme=frozenset({1}))
     assert wp.waerme_deckt_nicht_alle_geraete is True
 
     gesperrt = arbeitszahl(
@@ -234,13 +235,15 @@ def test_ii2c_jedes_geraet_meldet_waerme_die_kennzahl_bleibt():
     from backend.core.berechnungen.waermepumpe_kennzahl import arbeitszahl
 
     beide = _wp(strom_kwh=500.0, waerme_kwh=2000.0,
-                geraete_mit_strom=2, geraete_mit_waerme=2)
+                geraete_mit_strom=frozenset({1, 2}),
+                geraete_mit_waerme=frozenset({1, 2}))
     assert beide.waerme_deckt_nicht_alle_geraete is False
     assert arbeitszahl(beide.waerme_kwh, beide.strom_kwh).wert == 4.0
 
     # Ein drittes Gerät stand still — es trägt zu keiner der beiden Seiten bei.
     stillstand = _wp(strom_kwh=500.0, waerme_kwh=2000.0,
-                     geraete_mit_strom=2, geraete_mit_waerme=2)
+                     geraete_mit_strom=frozenset({1, 2}),
+                     geraete_mit_waerme=frozenset({1, 2}))
     assert stillstand.waerme_deckt_nicht_alle_geraete is False
 
 

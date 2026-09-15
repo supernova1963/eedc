@@ -294,6 +294,54 @@ def test_inline_netzbezug_kosten_nur_im_layer():
     )
 
 
+# Pattern: die Heizgrenze — als zweite Konstante (`HEIZGRENZE = …`) ODER als
+# ausgeschriebene Gradtag-Formel (`max(0, 15 - t)`). Beide Formen, weil genau
+# der Wechsel zwischen ihnen die Drift wäre: Die Zahl 15 lebte bis zum
+# 12.09.2026 modul-lokal in `api/routes/live_wetter.py` und wurde beim Bau der
+# Wetternormierung (SOLL Wärme/Klima §4.1) in den Layer gehoben — dieselbe
+# Heizgrenze trägt seither Verbrauchsprognose und wetternormierten Vergleich.
+# Eine zweite Definition irgendwo hieße: derselbe Anwender sieht dieselbe
+# Größe mit zwei verschiedenen Grenzen gerechnet.
+_INLINE_HEIZGRENZE = re.compile(
+    r"(HEIZGRENZE\s*=|max\(\s*0(?:\.0)?\s*,\s*15(?:\.0)?\s*-)"
+)
+
+ALLOWED_HEIZGRENZE_FILES = {
+    "core/berechnungen/heizgradtage.py",  # HEIZGRENZE_C + heizgradtage_tag (SoT)
+}
+
+
+def test_heizgrenze_nur_im_layer():
+    """Die Heizgrenze (15 °C) und die Gradtag-Formel `max(0; 15 − T)` dürfen
+    nur in `core/berechnungen/heizgradtage.py` stehen.
+
+    ⚠ **Zwei Formen, ein Wächter.** Eine zweite Konstante fängt die erste
+    Klausel, eine ausgeschriebene Formel ohne Konstante die zweite — und die
+    zweite ist die gefährlichere, weil sie keinen Namen trägt, unter dem man
+    sie suchen würde.
+    """
+    verstoesse: list[tuple[str, int, str]] = []
+    for path, rel in _iter_py_files():
+        if rel in ALLOWED_HEIZGRENZE_FILES:
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue
+        for line_no, line in enumerate(text.splitlines(), start=1):
+            if _INLINE_HEIZGRENZE.search(line):
+                verstoesse.append((rel, line_no, line.strip()))
+
+    assert not verstoesse, _format_verstoesse_meldung(
+        verstoesse,
+        regel="Zweite Heizgrenzen-Definition außerhalb von core/berechnungen/heizgradtage.py",
+    ) + (
+        "\n\nSoT-Migration:\n"
+        "  from backend.core.berechnungen import HEIZGRENZE_C, heizgradtage_tag\n"
+        "  kd = heizgradtage_tag(tagesmittel_c)   # max(0; HEIZGRENZE_C - T)"
+    )
+
+
 # Pattern: Inline-Eigenverbrauchsquote `eigenverbrauch… / (pv|erzeugung)… * 100`
 # (Schläfer-Block 3). Nach der Konsolidierung lebt sie nur noch im Helper
 # `eigenverbrauchsquote_prozent` (gecappt auf 100 %, Maintainer-Entscheid).

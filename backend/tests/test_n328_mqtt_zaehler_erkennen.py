@@ -113,6 +113,18 @@ async def _mqtt_anlage(db, *, mit_werten: bool = True):
         #     `mqtt_energy_history_service.snapshot_energy_cache` sie schreibt.
         #     Anfangs- und Endstand des Tagesfensters, dazu die Stunde davor,
         #     damit der Writer beide Ränder findet.
+        #
+        # ⛔ **Vier Ränder statt zwei (N-444, 13.09.2026).** Die Wallbox-Zähler
+        # werden seit N-444 im Fenster ihres Bezugs gelesen — [Vortag 23:00,
+        # Heute 23:00), weil die Stundenzeile seit N-382 rückwärts liegt. Diese
+        # Probe kannte nur die Ränder 00:00 und 24:00 und lieferte danach
+        # keinen Wert mehr; **nicht, weil die MQTT-Erkennung kaputt wäre**,
+        # sondern weil ihr nachgestellter Tag Ränder hatte, die es in
+        # Produktion so nie gibt: Der Stunden-Job schreibt zu JEDER vollen
+        # Stunde (`services/scheduler.py`, `CronTrigger(minute=5)`), also auch
+        # um 23:00. Der Tageszuwachs bleibt derselbe (die Randstunden sind
+        # leer), damit die Probe weiterhin genau die 12,0 kWh des Melders misst
+        # und **beide** Fenster deckt.
         staende = {
             "einspeisung_kwh": (1000.0, 1012.0),
             "netzbezug_kwh": (2000.0, 2008.0),
@@ -120,21 +132,23 @@ async def _mqtt_anlage(db, *, mit_werten: bool = True):
             f"inv/{wb.id}/ladung_kwh": (300.0, 318.0),
             f"inv/{wb.id}/ladung_pv_kwh": (1286.62, 1298.62),
         }
+        mitternacht = datetime.combine(TAG, datetime.min.time())
+        raender = (
+            (mitternacht - timedelta(hours=1), "start"),   # Vortag 23:00
+            (mitternacht, "start"),                        # Heute 00:00
+            (mitternacht + timedelta(hours=23), "ende"),   # Heute 23:00
+            (mitternacht + timedelta(days=1), "ende"),     # Folgetag 00:00
+        )
         for key, (start, ende) in staende.items():
-            for ts, wert in (
-                (datetime.combine(TAG, datetime.min.time()), start),
-                (datetime.combine(TAG, datetime.min.time()) + timedelta(days=1), ende),
-            ):
+            for ts, welcher in raender:
                 db.add(MqttEnergySnapshot(
-                    anlage_id=anlage.id, timestamp=ts, energy_key=key, value_kwh=wert,
+                    anlage_id=anlage.id, timestamp=ts, energy_key=key,
+                    value_kwh=start if welcher == "start" else ende,
                 ))
         await db.commit()
 
         # (3) Echter Weg zu den SensorSnapshots: der Produktions-Writer.
-        for ts in (
-            datetime.combine(TAG, datetime.min.time()),
-            datetime.combine(TAG, datetime.min.time()) + timedelta(days=1),
-        ):
+        for ts, _ in raender:
             await snapshot_anlage(db, anlage, zeitpunkt=ts)
         await db.commit()
 

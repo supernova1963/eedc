@@ -107,17 +107,32 @@ describe('Achse IV — die Zahl sagt, was sie ist', () => {
     expect(screen.queryByText(/Heizstab|Elektroheizung/i)).toBeNull()
   })
 
-  it('ERFÜLLT (S3): fehlt die Arbeitszahl, steht der Grund daneben', () => {
+  it('ERFÜLLT (S3): fehlt die Arbeitszahl, steht der Grund SICHTBAR im Block', () => {
     // Der Unterschied zwischen „—" und einer Auskunft. Der Grund entsteht dort,
     // wo die Sperre entscheidet — im Layer —, nicht als Client-Vermutung.
+    //
+    // ⭐ **Wortlaut umgestellt, Substanz gehalten (D-Sicht, 14.09.2026).**
+    // Geprüft war: *„der Grund steht sichtbar, nicht im Tooltip"*. Das gilt
+    // unverändert — er steht nur nicht mehr **unter der Kachel**, sondern
+    // **einmal** im Kasten „Was noch möglich wäre", mit dem Handgriff daneben.
+    // Der Kasten ist vorbelegt offen, genau damit diese Zusage hält.
     rendereWpBlock({
       wp_strom_kwh: 337, wp_waerme_kwh: null, wp_jaz: null,
       wp_jaz_grund: 'kein Wärmemengenzähler zugeordnet',
+      wp_moeglich: [{
+        groessen: ['Arbeitszahl'], groesse: 'Arbeitszahl',
+        grund: 'kein Wärmemengenzähler zugeordnet',
+        handgriff: 'Wärmemengenzähler zuordnen',
+        link: '#/einstellungen/datenquellen',
+      }],
     })
 
-    // Sichtbar unter der Zahl, nicht im Hover-Tooltip: S3 verlangt eine
-    // Auskunft, und ein Tooltip ist auf dem Telefon keine.
     expect(screen.getByText('kein Wärmemengenzähler zugeordnet')).toBeTruthy()
+    // ⭐ **Und der Handgriff dazu** — das ist der Gewinn der Umstellung: Bis
+    // hierher stand der Grund da und der Weg nicht.
+    expect(screen.getByText('Wärmemengenzähler zuordnen')).toBeTruthy()
+    // ⛔ **Genau EINMAL.** Vier Kacheln mit demselben Satz waren der Anlass.
+    expect(screen.getAllByText('kein Wärmemengenzähler zugeordnet')).toHaveLength(1)
   })
 })
 
@@ -132,12 +147,19 @@ describe('Achse III-3 — ein Balken sagt, was er zeigt', () => {
       wp_heizung_kwh: 0, wp_warmwasser_kwh: 309,
     })
 
-    expect(screen.getByText('Heizung')).toBeTruthy()
+    // ⚑ **Bauschnitt 8 / E1 (b), 11.09.2026:** Der Balken „Wärme-Aufteilung"
+    // ist entfallen, seine Zahlen stehen in der Liste je Funktion. Die Substanz
+    // dieser Probe bleibt — die Wärme-kWh sagen, dass sie Wärme sind —, nur der
+    // Ort ist ein anderer: Die Zeile heißt „Warmwasser-Wärme" (Formular-Name).
+    // Heizung 0 kWh bekommt keine Überschrift „Heizen" — eine Funktion ohne
+    // Menge wird nicht behauptet (G7).
     expect(screen.getByText('Warmwasser')).toBeTruthy()
+    expect(screen.getByText('Warmwasser-Wärme')).toBeTruthy()
+    expect(screen.getByText('309 kWh')).toBeTruthy()
     // S2: „Wechselt der Inhalt je nach Datenlage, wechselt auch die
-    // Beschriftung." Der Element-Titel existierte schon — er ging bis
-    // 26.08.2026 nur an den Park-Chip und war in der Anzeige unsichtbar.
-    expect(screen.getByText('Wärme-Aufteilung')).toBeTruthy()
+    // Beschriftung." Der Element-Titel steht in der Anzeige.
+    expect(screen.getByText('Je Funktion')).toBeTruthy()
+    expect(screen.queryByText('Wärme-Aufteilung')).toBeNull()
   })
 
   it('ERFÜLLT (S2/W-8): die Strom-Aufteilung nennt ihre Größe erst recht', () => {
@@ -151,7 +173,10 @@ describe('Achse III-3 — ein Balken sagt, was er zeigt', () => {
     })
 
     expect(screen.getByText('Heizen')).toBeTruthy()
-    expect(screen.getByText('Kühlen')).toBeTruthy()
+    // Seit Bauschnitt 8 zweimal: als Segment des Balkens UND als Überschrift der
+    // Gruppe Kühlen (3 kWh Kühlstrom — Betriebsart = Funktion, dieselbe Menge).
+    expect(screen.getAllByText('Kühlen')).toHaveLength(2)
+    expect(screen.getByText('Strom Kühlen')).toBeTruthy()
     expect(screen.getByText('Nicht aufgeteilt')).toBeTruthy()
     // Der Titel nennt die Größe: „Aufteilung Heizen/Kühlen" allein sagte
     // nicht, dass hier STROM steht — direkt darüber kann die Wärme-Aufteilung
@@ -185,7 +210,9 @@ describe('Achse III-3 — ein Balken sagt, was er zeigt', () => {
     // dass Warmwasser verschwindet — das ist richtig, es gibt im August keine
     // gepflegte Wärme-Aufteilung —, sondern dass der Platz jetzt sagt, welche
     // Größe er gerade zeigt. Das Verschwinden ist damit erklärt statt rätselhaft.
-    expect(cJuli.textContent).toContain('Wärme-Aufteilung')
+    // Bauschnitt 8 / E1 (b): die Juli-Wärme steht in der Liste je Funktion.
+    expect(cJuli.textContent).toContain('Warmwasser-Wärme')
+    expect(cJuli.textContent).not.toContain('Wärme-Aufteilung')
     expect(cAug.textContent).toContain('Strom-Aufteilung Heizen/Kühlen')
     expect(cJuli.textContent).not.toContain('Strom-Aufteilung')
   })
@@ -331,17 +358,43 @@ describe('Achse III — der Tag sagt, warum die Wärme fehlt (W-18)', () => {
     // ⭐ *Ein Prüfer muss aufs richtige Objekt zeigen; ein Teilstring über einen
     // ganzen Block tut das nicht.* Deshalb hier der **exakte** Text: Die
     // Ersparnis trägt ihn mit Präfix und wird davon nicht mehr getroffen.
-    rendereTag({ wp_strom_kwh: 5, wp_waerme_kwh: null, wp_waerme_grund: GRUND })
+    // ⭐ **Wortlaut umgestellt, Substanz gehalten (D-Sicht, 14.09.2026).** Der
+    // Grund steht weiter sichtbar im Block — als Zeile des Kastens, in der
+    // **Kurzform**, die der Kasten trägt. Die Langform bleibt die des Backends;
+    // welche davon wohin geht, entscheidet die Route, nicht der Client.
+    const KURZ = 'für diesen Tag keine Zählerstände'
+    rendereTag({
+      wp_strom_kwh: 5, wp_waerme_kwh: null, wp_waerme_grund: GRUND,
+      wp_moeglich: [{
+        groessen: ['Wärme erzeugt'], groesse: 'Wärme erzeugt', grund: KURZ,
+        handgriff: 'Den Tag in der Reparatur-Werkbank nachrechnen (Einstellungen → Daten)',
+        link: '#/einstellungen/daten',
+      }],
+    })
 
-    expect(screen.getByText(GRUND)).toBeTruthy()
+    expect(screen.getByText(KURZ)).toBeTruthy()
+    // ⛔ **Und NICHT mehr unter der Kachel** — das ist die andere Hälfte der
+    // D-Sicht: eine Kachel ohne Zahl trägt keinen Satz.
+    expect(screen.queryByText(GRUND)).toBeNull()
   })
 
-  it('ERFÜLLT: die Ersparnis verweist auf die Wärme, statt den Grund zu wiederholen', () => {
-    // Zwei Formulierungen derselben Ursache nebeneinander lesen sich wie zwei
-    // Ursachen. Der Verweis hält beide zusammen.
-    rendereTag({ wp_strom_kwh: 5, wp_waerme_kwh: null, wp_waerme_grund: GRUND })
+  it('ERFÜLLT: die Ersparnis wiederholt den Grund NICHT — er steht einmal', () => {
+    // ⭐ **Substanz gehalten, Wortlaut umgestellt.** Geprüft war: *„zwei
+    // Formulierungen derselben Ursache nebeneinander lesen sich wie zwei
+    // Ursachen — der Verweis hält beide zusammen."* Die D-Sicht geht denselben
+    // Weg zu Ende: Statt eines Verweises auf die Nachbarkachel gibt es **eine**
+    // Stelle, an der die Ursache steht. Die Ersparnis-Kachel entfällt mit der
+    // Wärme-Kachel, weil sie ohne Betrag und ohne Grund nichts zu sagen hat.
+    const KURZ = 'für diesen Tag keine Zählerstände'
+    rendereTag({
+      wp_strom_kwh: 5, wp_waerme_kwh: null, wp_waerme_grund: GRUND,
+      wp_moeglich: [{
+        groessen: ['Wärme erzeugt'], groesse: 'Wärme erzeugt', grund: KURZ,
+      }],
+    })
 
-    expect(screen.getByText(`Folgt aus der Tages-Wärme — ${GRUND}`)).toBeTruthy()
+    expect(screen.queryByText(`Folgt aus der Tages-Wärme — ${GRUND}`)).toBeNull()
+    expect(screen.getAllByText(KURZ)).toHaveLength(1)
   })
 
   it('ERFÜLLT: der falsche fest verdrahtete Satz erscheint nicht mehr', () => {
@@ -366,5 +419,40 @@ describe('Achse III — der Tag sagt, warum die Wärme fehlt (W-18)', () => {
 
     expect(screen.getByText('20')).toBeTruthy()
     expect(screen.queryByText(/keine Zählerstände/)).toBeNull()
+  })
+})
+
+// ══ R-C · Nutzenergie Lüften/Entfeuchten im Cockpit-Block (WK-16f, N-398) ═══
+
+describe('R-C — Menge ja, Kennzahl nein (E4 bleibt)', () => {
+  const MIT_ZAEHLER = {
+    wp_strom_kwh: 400,
+    wp_modus_gemessen: true,
+    wp_modus_strom_heizen_kwh: 250,
+    wp_modus_strom_kuehlen_kwh: 50,
+    wp_modus_strom_lueften_kwh: 60,
+    wp_modus_strom_entfeuchten_kwh: 40,
+    wp_modus_strom_bezug_kwh: 400,
+    wp_modus_nicht_aufgeteilt_kwh: 0,
+  }
+
+  it('zeigt die abgegebene Menge neben ihrem Strom', () => {
+    rendereWpBlock({
+      ...MIT_ZAEHLER,
+      wp_modus_nutzenergie_lueften_kwh: 150,
+      wp_modus_nutzenergie_entfeuchten_kwh: 90,
+    })
+
+    expect(screen.getByText('Nutzenergie Lüften')).toBeInTheDocument()
+    expect(screen.getByText('Nutzenergie Entfeuchten')).toBeInTheDocument()
+  })
+
+  it('DIE GEGENPROBE: ohne Zähler steht die Zeile nicht da', () => {
+    // D-Sicht: nur mit Zahl. Ohne diese Zeile hielte die Probe darüber nur
+    // fest, dass irgendein Text existiert.
+    rendereWpBlock(MIT_ZAEHLER)
+
+    expect(screen.queryByText('Nutzenergie Lüften')).toBeNull()
+    expect(screen.queryByText('Nutzenergie Entfeuchten')).toBeNull()
   })
 })

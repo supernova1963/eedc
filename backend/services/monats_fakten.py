@@ -74,8 +74,12 @@ from backend.api.routes.strompreise import (
     resolve_netzbezug_preis_cent,
     resolve_strompreis_for_komponente,
 )
-from backend.services.strompreis_aggregator import wirksamer_arbeitspreis_cent
+from backend.services.strompreis_aggregator import (
+    aufgeloester_monatspreis,
+    wirksamer_arbeitspreis_cent,
+)
 from backend.core.berechnungen import (
+    ModusStromZeile,
     PvModulWert,
     VerbrauchsKennzahlen,
     abdeckung_ueber_geraete,
@@ -84,6 +88,7 @@ from backend.core.berechnungen import (
     bkw_finanz_beitrag,
     erzeugung_hinter_zaehler_kwh,
     ersetzt_keine_heizung,
+    funktionsfremd_abzug_kwh,
     hat_gemessene_betriebsart,
     imd_typ_beitrag,
 )
@@ -97,7 +102,11 @@ from backend.core.wirtschaftlichkeit_defaults import (
     EINSPEISEVERGUETUNG_DEFAULT_CENT,
     NETZBEZUG_DEFAULT_CENT,
 )
-from backend.core.field_definitions import get_emob_pv_netz_kwh, get_wp_strom_kwh
+from backend.core.field_definitions import (
+    get_emob_pv_netz_kwh,
+    get_wp_strom_kwh,
+    nenner_ist_feine_summe,
+)
 from backend.models.investition import Investition, InvestitionMonatsdaten
 from backend.models.monatsdaten import Monatsdaten
 from backend.services.eauto_wirtschaftlichkeit import (
@@ -374,6 +383,12 @@ class WpFakten:
     strom_warmwasser_kwh: float = 0.0
     #: True, sobald **eine** aktive WP getrennte Strommessung führt.
     hat_split: bool = False
+    #: N-391: True, sobald **eine** aktive WP ihre Wärme mit EINEM gemeinsamen
+    #: Wärmemengenzähler misst (Feld ``waerme_kwh``). Die MENGE steht in
+    #: ``waerme_kwh`` oben; dies ist ihre Herkunft — und die entscheidet, ob es
+    #: eine Arbeitszahl **je Funktion** geben kann
+    #: ({@link backend.core.berechnungen.waermepumpe_kennzahl.arbeitszahl_je_funktion}).
+    waerme_ist_gesamt: bool = False
 
     # ── Modus-Split (#263 K-2) ───────────────────────────────────────────────
     #: **Teilmengen** von ``strom_kwh``, keine Summanden — nie addieren
@@ -394,11 +409,34 @@ class WpFakten:
     #: die Felder anbietet.
     modus_strom_lueften_kwh: float = 0.0
     modus_strom_entfeuchten_kwh: float = 0.0
+    #: **SOLL-§9-E7 / Ergänzung (Option A, 12.09.2026): der Teil des
+    #: funktionsfremden Stroms, der vom Nenner abgezogen werden DARF.**
+    #:
+    #: ⛔ **Bewusst ein Feld und keine Property neben**
+    #: {@link modus_strom_funktionsfremd_kwh}. Die Regel *„abgezogen wird nur,
+    #: was im Nenner steht"* hängt an ``getrennte_strommessung`` — also an
+    #: **einem Gerät**. Hier oben ist ``hat_split`` bereits ein ``any(...)``
+    #: über alle Wärmepumpen der Anlage; eine Property könnte die Frage für
+    #: eine Mischanlage (F5-Gerät neben nicht-F5-Gerät) nicht mehr richtig
+    #: beantworten. Die Entscheidung fällt deshalb je Zeile in
+    #: {@link imd_monatsaggregat.imd_typ_beitrag} und wird hierher **summiert**.
+    #:
+    #: ⚠ {@link modus_strom_funktionsfremd_kwh} bleibt daneben stehen und
+    #: bleibt die **Menge** — für Anzeige, Balken und Restmenge (K1). Wer einen
+    #: **Nenner** bildet, liest dieses Feld.
+    modus_strom_funktionsfremd_abzug_kwh: float = 0.0
     #: W-5 (SOLL §4.1): abgegebene **Kälte**menge im Kühlbetrieb — der Zähler
     #: der Arbeitszahl Kühlen. **Nur gemessen**: einen Weg, sie abzuleiten, gibt
     #: es nicht, und eine geschätzte Kältemenge wäre eine Zahl, die genauer
     #: aussieht als sie ist.
     nutzenergie_kuehlen_kwh: float = 0.0
+    #: **R-C (WK-16f, N-398):** die abgegebene Nutzenergie im **Lüft**- bzw.
+    #: **Entfeuchtungs**betrieb — dieselbe Familie wie die Kältemenge darüber,
+    #: nur ohne Kennzahl. **E4 bleibt:** Sie erscheinen als *Menge* neben
+    #: ``modus_strom_lueften_kwh``/``…_entfeuchten_kwh``, nie als Quotient.
+    #: Bis zum 14.09.2026 hatte kein Leser diese zwei Registry-Felder.
+    nutzenergie_lueften_kwh: float = 0.0
+    nutzenergie_entfeuchten_kwh: float = 0.0
     #: Stunden mit gültigem Modus-Signal — das Qualitätsmaß neben den Mengen.
     modus_abdeckung_h: float = 0.0
     #: #263 — die Aufteilung ist **gemessen** (Betriebsart-Zähler) statt aus
@@ -409,17 +447,51 @@ class WpFakten:
     #: {@link modus_nicht_aufgeteilt_kwh}. Auf Anlagenebene ist `strom_kwh` der
     #: falsche Bezug: er trägt auch Wärmepumpen ohne Modus-Sensor.
     modus_strom_bezug_kwh: float = 0.0
+    #: **WK-16d/K5 — der Rest der SUMMANDEN-Aufteilung** (Heizen/Warmwasser),
+    #: summiert über die Geräte: was ein Gesamtzähler **mehr** misst als seine
+    #: Achsen zusammen. Standby, Steuerung, Umwälzpumpen — dietmar1968s
+    #: „Systemverbrauch", bei ihm 145 von 2193 kWh im Jahr.
+    #:
+    #: ⛔ **Der ZWEITE Rest, und er ist nicht {@link
+    #: modus_nicht_aufgeteilt_kwh}.** Dieselbe Menge wird auf **zwei** Weisen
+    #: aufgeteilt, und jede lässt ihren eigenen Rest übrig:
+    #:
+    #: | Aufteilung | Rest | Herkunft des Rests |
+    #: | --- | --- | --- |
+    #: | Summanden (Strom Heizen + Strom Warmwasser) | **dieses Feld** | der Gesamtzähler misst mehr als die Achsen |
+    #: | Teilmengen (Betriebsart bzw. Modus-Split) | ``modus_nicht_aufgeteilt_kwh`` | Stunden ohne Modus-Signal, nicht gemessene Betriebsarten |
+    #:
+    #: Sie zu addieren wäre Doppelzählung; sie zu verwechseln hieße, in einer
+    #: Sicht den falschen Rest zu zeigen. Beide sind ≥ 0 und beide sind K5.
+    strom_nicht_aufgeteilt_kwh: float = 0.0
     #: Anteil von ``waerme_kwh``, der aus ``Strom × JAZ`` stammt statt aus
     #: einem Wärmemengenzähler. **Trägt die JAZ-Sperre aus Konzept §3.5** —
     #: siehe {@link jaz_belastbar}.
     waerme_abgeleitet_kwh: float = 0.0
 
     # ── R2/Gerät: dieselbe Abgrenzung im Zähler wie im Nenner? ──────────────
-    #: Wie viele Wärmepumpen des Monats haben **Strom** beigetragen …
-    geraete_mit_strom: int = 0
-    #: … und wie viele davon auch **Wärme**? Sind das weniger, mischt der Block
-    #: den Strom mehrerer Geräte mit der Wärme von weniger Geräten.
-    geraete_mit_waerme: int = 0
+    #: **Welche** Wärmepumpen des Monats stehen mit ihrem Strom im **Nenner**
+    #: der Gesamtzahl — als Menge von ``Investition.id``.
+    #:
+    #: ⭐ **Gezählt wird NACH dem Abzug des funktionsfremden Stroms** (N-441,
+    #: Fall J): ``arbeitszahl`` zieht Kühl-, Lüftungs- und Entfeuchtungsstrom
+    #: vom Nenner ab (W-14/E4). Ein Zweitgerät, das **nur** kühlt, steht damit
+    #: gar nicht im Nenner — es darf die Gesamtzahl auch nicht sperren. Gemessen:
+    #: 2400 ÷ 800 = 3,0 existiert, wurde aber mit „nicht alle Geräte melden
+    #: Wärme" unterdrückt. Die Bauart-Zähler {@link geraete_luft_luft} /
+    #: {@link geraete_luft_wasser} bleiben bewusst bei „Strom > 0": sie zählen
+    #: Stammdaten, nicht den Nenner.
+    geraete_mit_strom: frozenset[int] = frozenset()
+    #: … und **welche** steuern **Wärme** bei? Ist das eine echte Teilmenge,
+    #: mischt der Block den Strom mehrerer Geräte mit der Wärme von weniger
+    #: ({@link waerme_deckt_nicht_alle_geraete}); liegt ein Gerät **außerhalb**,
+    #: stammen Zähler und Nenner von verschiedenen Geräten
+    #: ({@link geraete_verschieden}).
+    #:
+    #: ⛔ **Mengen, keine Anzahlen** (N-441): „ein Gerät hier, ein Gerät dort"
+    #: ergab ``1 == 1`` und galt als deckungsgleich — der Anlassfall (Wärme von
+    #: A, Strom von B) lieferte 3,0 **ohne jeden Grund**.
+    geraete_mit_waerme: frozenset[int] = frozenset()
 
     # ── R2/Bauart: dieselbe Geräteart im Zähler wie im Nenner? ──────────────
     #: Wie viele der stromtragenden Geräte sind **Split-Klimaanlagen**
@@ -445,6 +517,114 @@ class WpFakten:
     #: ⛔ **`None` heißt „keine bekannte Abweichung", nicht „geprüft".**
     abgrenzung_stoerung: Optional[str] = None
 
+    # ── R2 JE FUNKTION (10.09.2026, SOLL §3.2b) ────────────────────────────
+    #: **Welche** Geräte den **Strom** (``e``) bzw. die **Nutzenergie** (``q``)
+    #: je Funktion beisteuern — Mengen von ``Investition.id``. Grundlage von
+    #: {@link funktion_sauber_abgegrenzt} und {@link deckung_je_funktion}.
+    #:
+    #: ⛔ **Mengen statt Anzahlen (N-441, 12.09.2026).** Bis dahin standen hier
+    #: ``int``, und ``(1, 1)`` hieß „deckt sich" — auch dann, wenn der Strom von
+    #: Gerät A und die Wärme von Gerät B kam. Die Regel prüft seither
+    #: **Identität** (``e == q``), nicht Gleichmächtigkeit.
+    geraete_e_heizen: frozenset[int] = frozenset()
+    geraete_q_heizen: frozenset[int] = frozenset()
+    geraete_e_warmwasser: frozenset[int] = frozenset()
+    geraete_q_warmwasser: frozenset[int] = frozenset()
+    geraete_e_kuehlen: frozenset[int] = frozenset()
+    geraete_q_kuehlen: frozenset[int] = frozenset()
+
+    def funktion_sauber_abgegrenzt(self, funktion: str) -> bool:
+        """Tragen dieselben Geräte Zähler **und** Nenner dieser Funktion? (**R2**)
+
+        **SOLL §3.2b: die Trennlinie ist die Abgrenzung, nicht die Bauart.** Ein
+        Block darf als Ganzes gemischt sein und trotzdem einzelne Funktionen
+        sauber abgrenzen — dann erscheint deren Kennzahl.
+
+        ⭐ **Der belegte Fall (dietmar1968, Fixture A5):** Wärmepumpe mit
+        getrennter Strommessung neben einer Split-Klimaanlage. Die Klimaanlage
+        trägt ihre 200 kWh in ``stromverbrauch_kwh`` — das gehört zu **keiner**
+        Funktion und steht in keinem der beiden Quotienten. Heizen und
+        Warmwasser sind damit reine Wärmepumpen-Größen; ihre Arbeitszahlen
+        (3,0 und 2,5) waren bis hierher gesperrt, obwohl sie stimmen.
+
+        ⛔ **Beidseitig, und das ist nicht verhandelbar.** Eine einseitige Regel
+        („jedes Gerät mit Strom liefert auch Wärme") fängt nur den **Nenner**.
+        Der Zähler kippt genauso, und zwar in die teurere Richtung:
+
+        * ``heizenergie_kwh`` trägt nur ``!brauchwasser``
+          (``field_definitions.py:452-458``) — eine Split-Klimaanlage **darf**
+          Heizwärme melden. Tut sie es ohne Heizstrom, wäre die Heiz-Arbeitszahl
+          zu **hoch**: an der A8-Bauform 4,25 statt 3,75.
+        * ``strom_warmwasser_kwh`` wird **ungefiltert** gelesen
+          (``imd_monatsaggregat.py:276``, mit ausdrücklicher Begründung), und
+          bis zum 22.08.2026 wurde das Feld einer Klimaanlage mit getrennter
+          Strommessung angeboten. Altbestand ohne Wärme daneben ergäbe eine zu
+          **niedrige** Zahl.
+
+        ⚠ **Eine zu Unrecht gezeigte Kennzahl ist teurer als eine zu Unrecht
+        gesperrte** — deshalb Gleichheit und nicht „≥".
+
+        ⭐ **Das löst zugleich einen Fehler, der heute schon falsche Zahlen
+        zeigt:** Eine **Brauchwasser-Wärmepumpe** neben einer Wärmepumpe mit
+        getrennter Strommessung fällt in keine der bisherigen Sperren — sie
+        zählt als Luft-Wasser-Gerät und meldet Wärme, also greifen weder
+        {@link bauarten_gemischt} noch {@link waerme_deckt_nicht_alle_geraete}.
+        Ihre Warmwasser-Wärme landet im Zähler, ihr Strom (ungeteilt) in
+        keinem Nenner ⇒ die Warmwasser-Arbeitszahl war zu hoch, **ohne Grund
+        daneben**. 8ear hat genau diese Konstellation.
+
+        ⛔ **Null Geräte auf beiden Seiten ist NICHT „sauber".** Dann gibt es
+        die Funktion in diesem Monat gar nicht; die Kennzahl entsteht ohnehin
+        nicht, und „sauber" zu melden hieße, eine Abwesenheit für eine
+        Zusicherung auszugeben.
+        """
+        return self.deckung_je_funktion(funktion) is True
+
+    def deckung_je_funktion(self, funktion: str) -> Optional[bool]:
+        """Deckt sich der Geräte-Kreis von Zähler und Nenner dieser Funktion?
+
+        ``True`` = ja · ``False`` = nein · ``None`` = **die Frage stellt sich
+        nicht**, und das ist der wichtigste der drei Werte.
+
+        ⚠ **Zwei Lagen ergeben ``None``, und in beiden wäre eine Sperre die
+        schlechtere Auskunft:**
+
+        * ``q`` leer, ``e`` leer — die Funktion gab es in diesem Monat nicht.
+          Ein Sommermonat ohne Heizbetrieb ist nicht „unsauber abgegrenzt".
+        * ``q`` leer, ``e`` nicht — Strom ja, Wärme nein. Dafür hat
+          ``arbeitszahl`` den genaueren Satz („kein Wärmemengenzähler
+          zugeordnet"); ihn gegen einen allgemeinen Abgrenzungs-Grund zu
+          tauschen verstieße gegen S3.
+
+        ⛔ ``e`` leer bei nicht leerem ``q`` ist dagegen **False**: Wärme ohne
+        den Strom derselben Funktion. Für den Monat selbst folgt daraus nichts
+        (ohne Nenner gibt es keinen Quotienten) — **für das Jahr sehr wohl**:
+        Dort wandert die Wärme dieses Monats in die Summe, sein fehlender Strom
+        nicht. Gemessen an einem Zweimonats-Fall: **3,75 statt 3,0.**
+
+        ⛔ **Verglichen werden GERÄTE, nicht Anzahlen (N-441, 12.09.2026).**
+        Bis dahin standen hier zwei ``int``, und „ein Gerät auf jeder Seite"
+        hieß deckungsgleich — auch dann, wenn es zwei **verschiedene** Geräte
+        waren. Der Anlassfall (Wärme 2400 kWh von A, Heizstrom 800 kWh von B)
+        zeigte **3,0 ohne jeden Grund**.
+        """
+        # Die Regel steht seit Bauschnitt 6 im Layer — der Tag ruft sie auch.
+        from backend.core.berechnungen.waermepumpe_kennzahl import (
+            deckung_aus_geraeten,
+        )
+
+        e, q = self._funktions_paar(funktion)
+        return deckung_aus_geraeten(e, q)
+
+    def _funktions_paar(
+        self, funktion: str,
+    ) -> tuple[frozenset[int], frozenset[int]]:
+        return {
+            "heizen": (self.geraete_e_heizen, self.geraete_q_heizen),
+            "warmwasser": (self.geraete_e_warmwasser, self.geraete_q_warmwasser),
+            "kuehlen": (self.geraete_e_kuehlen, self.geraete_q_kuehlen),
+        }[funktion]
+
     @property
     def waerme_deckt_nicht_alle_geraete(self) -> bool:
         """Trägt der Block Strom von Geräten, deren Wärme fehlt? (**R2**)
@@ -468,8 +648,57 @@ class WpFakten:
         bivalenter Zweiterzeuger bleiben von außen unsichtbar und brauchen die
         Angabe des Anwenders (`abgrenzung_stoerung`); der Zeitraum-Versatz ist
         nur dort erkennbar, wo die Herkunft je Größe bekannt ist.
+
+        ⭐ **Zwei Präzisierungen aus N-441 (12.09.2026), beide gemessen:**
+
+        * **Echte Teilmenge statt „weniger".** Verglichen werden die **Mengen**
+          der Geräte, nicht ihre Anzahlen. Zwei Geräte, von denen jedes genau
+          eine Seite trägt, sind gleich viele — und trotzdem verschiedene; diese
+          Lage trägt jetzt {@link geraete_verschieden}.
+        * **``w = ∅`` ist keine Geräte-Lage mehr.** Ein Monat ganz **ohne**
+          Wärme sagt nichts über Geräte aus; dafür hat ``arbeitszahl`` den
+          genaueren Satz „kein Wärmemengenzähler zugeordnet" (er gewinnt ohnehin,
+          weil ``q ≤ 0`` **vor** der Abgrenzung geprüft wird). Sichtbar wird der
+          Unterschied erst im **Jahr**, und dort heilt er eine Übersperre: Eine
+          Anlage mit EINEM Gerät, das im Juli 0 kWh Wärme meldet (gemessene
+          Sommer-Null) und 50 kWh Standby-Strom zieht, verlor bis hierher ihre
+          **Gesamt**-Arbeitszahl mit dem Satz „nicht alle Geräte melden Wärme" —
+          während direkt daneben die Heiz-Arbeitszahl 2,77 stand (Verstoß gegen
+          SOLL §3.3/**S1**).
         """
-        return self.geraete_mit_waerme < self.geraete_mit_strom
+        return bool(self.geraete_mit_waerme) and (
+            self.geraete_mit_waerme < self.geraete_mit_strom
+        )
+
+    @property
+    def geraete_verschieden(self) -> bool:
+        """Steuert ein Gerät Wärme bei, dessen Strom **nicht** im Nenner steht?
+
+        ⭐ **Die Gegenrichtung zu {@link waerme_deckt_nicht_alle_geraete}**
+        (N-441, SOLL §3.2b/**R2**: *„Gezählt wird BEIDSEITIG, und das ist nicht
+        verhandelbar"*). Jene Property fängt nur den Nenner (Strom von mehr
+        Geräten als Wärme); der **Zähler** kippt genauso, und zwar in die
+        teurere Richtung — dort erscheint eine zu **hohe** Zahl statt gar keiner.
+
+        **Gemessen, beides ausgeliefert (v4.0.44):**
+
+        * Wärme 2400 kWh von Gerät A, Heizstrom 800 kWh von Gerät B ⇒ **3,0**
+          im Cockpit (Jahr **und** Monat), an die Community als *belastbar*.
+        * Gerät A vollständig (2400/800), Gerät B **nur** 600 kWh Wärme ⇒
+          **3,75** statt 3,0 — mit ``w = {A, B} ⊋ s = {A}`` sah die einseitige
+          Regel nichts.
+
+        ⛔ **Disjunkt zur Teilmengen-Lage, und das ist Absicht.** ``w ⊊ s``
+        trägt den gerichteten Satz („im Nenner der Strom von allen, im Zähler
+        die Wärme von weniger", Handbuch §4) mit seinem Handgriff; alles andere
+        Ungleiche trägt den neutralen. Zusammen decken beide genau
+        ``s ≠ ∅ ∧ w ≠ ∅ ∧ w ≠ s`` ab.
+        """
+        return (
+            bool(self.geraete_mit_strom)
+            and bool(self.geraete_mit_waerme)
+            and not (self.geraete_mit_waerme <= self.geraete_mit_strom)
+        )
 
     @property
     def bauarten_gemischt(self) -> bool:
@@ -695,6 +924,10 @@ class TarifFakten:
     """
 
     netzbezug_preis_cent: float = NETZBEZUG_DEFAULT_CENT
+    #: Welche Stufe der Kaskade den Preis geliefert hat (``gepflegt`` ·
+    #: ``gemessen`` · ``zeitfenster`` · ``stamm``) — die Zahl allein sagt es
+    #: nicht, und eine Sicht muss es aussprechen können (P4, #412).
+    netzbezug_preis_herkunft: Optional[str] = None
     netzbezug_stammpreis_cent: float = NETZBEZUG_DEFAULT_CENT
     einspeiseverguetung_cent: float = EINSPEISEVERGUETUNG_DEFAULT_CENT
     grundpreis_euro_monat: float = 0.0
@@ -886,6 +1119,9 @@ async def lade_monats_fakten(
     #: entscheiden kann, statt je Monat: eine Anlage mit zwei Wärmepumpen kann
     #: für die eine einen Abschluss haben und für die andere nicht.
     wp_je_monat: dict[MonatsSchluessel, dict[str, tuple[bool, float]]] = {}
+    #: (jahr, monat) → {investition_id_als_string: „der Nenner dieser Zeile ist
+    #: die feine Summe"} — dieselbe Buchführung, andere Frage (N-462).
+    wp_nenner_fein: dict[MonatsSchluessel, dict[str, bool]] = {}
     for imd in imd_rows:
         inv = inv_by_id.get(imd.investition_id)
         # #153/#155/#236/#308: vor Anschaffung / nach Stilllegung / deaktiviert
@@ -908,6 +1144,12 @@ async def lade_monats_fakten(
                 float(daten.get(MODUS_ABDECKUNG_FELD) or 0) > 0
                 or hat_gemessene_betriebsart(daten),
                 get_wp_strom_kwh(daten, inv.parameter),
+            )
+            # N-462: Welche **Stufe** trägt der Strom dieser Zeile (K3)? Der
+            # Nachtrag-Block unten sieht die Zeile nicht mehr, braucht die
+            # Antwort aber für SOLL-§9-E7/Option A.
+            wp_nenner_fein.setdefault((imd.jahr, imd.monat), {})[str(inv.id)] = (
+                nenner_ist_feine_summe(daten, inv.parameter)
             )
 
     # ── Modus-Split für Monate ohne Abschluss (F-52) ─────────────────────────
@@ -936,7 +1178,8 @@ async def lade_monats_fakten(
     # dass es überhaupt eine Wärmepumpe gibt.
     if any(i.typ == "waermepumpe" for i in investitionen):
         await _ergaenze_modus_split_ohne_abschluss(
-            db, anlage_id, roh, wp_je_monat, inv_by_id, von=von, bis=bis
+            db, anlage_id, roh, wp_je_monat, inv_by_id,
+            wp_nenner_fein=wp_nenner_fein, von=von, bis=bis,
         )
 
     # Die lokale Tagesebene als **zusätzliche** Grundgesamtheit (N-121). Ohne
@@ -946,9 +1189,10 @@ async def lade_monats_fakten(
     # ⚠ Seit N-141 Weg (c) gibt es einen **zweiten** Grund, sie zu laden, und er
     # hat nichts mit der Grundgesamtheit zu tun: der PV-Anteil der Heimladung
     # ist nirgends gemessen und wird aus der Tagesebene abgeleitet. Ohne dieses
-    # Nachladen sähe genau EINE Sicht (Cockpit → Monat, der einzige Aufrufer mit
-    # dem Flag) einen PV-Anteil, während Komponenten-Hub, CO₂-Bilanz und
-    # E-Auto-Ersparnis weiter 0 % behaupten — zwei Zahlen für dieselbe Größe,
+    # Nachladen sähen nur die Aufrufer MIT dem Flag (Speicher-Potential,
+    # Auswertungen → Tabelle und Cockpit → Jahr über `monatsdaten.py`; Cockpit →
+    # Monat ruft seit C1a OHNE das Flag) einen PV-Anteil, während Komponenten-Hub,
+    # CO₂-Bilanz und E-Auto-Ersparnis weiter 0 % behaupten — zwei Zahlen für dieselbe Größe,
     # die Klasse hinter #331 und F-15. Deshalb **bedingt**: nur wenn ein Monat
     # überhaupt Heimladung ohne gepflegten PV-Anteil trägt. Eine Anlage ohne
     # Wallbox und ohne E-Auto zahlt dafür nichts (Entscheid Gernot 2026-08-08).
@@ -978,6 +1222,10 @@ async def lade_monats_fakten(
         tarif_cache = {}
     # N-267: eigener Cache je Aufruf — begruendet im Block ueber `_komponenten_preis`.
     zeittarif_cache: dict = {}
+    # #412: dieselbe Bauform für die volle Preis-Kaskade. Sie fragt je Monat
+    # die Stundenpreise ab; über ein Jahr wären das sonst zwölf Abfragen pro
+    # Leser, und Cockpit → Jahr hat mehrere.
+    preis_cache: dict = {}
     fakten: list[MonatsFakt] = []
     for schluessel in sorted(k for k in kandidaten if _im_fenster(k, von, bis)):
         fakten.append(
@@ -994,6 +1242,7 @@ async def lade_monats_fakten(
                 tarif_cache=tarif_cache,
                 zeittarif_cache=zeittarif_cache,
                 tages_summe=tages_summen.get(schluessel),
+                preis_cache=preis_cache,
             )
         )
     return fakten
@@ -1006,6 +1255,7 @@ async def _ergaenze_modus_split_ohne_abschluss(
     wp_je_monat: dict[MonatsSchluessel, dict[str, tuple[bool, float]]],
     inv_by_id: dict[int, Investition],
     *,
+    wp_nenner_fein: dict[MonatsSchluessel, dict[str, bool]],
     von: Optional[MonatsSchluessel],
     bis: Optional[MonatsSchluessel],
 ) -> None:
@@ -1026,11 +1276,60 @@ async def _ergaenze_modus_split_ohne_abschluss(
         von=von, bis=bis,
     )
     for schluessel, je_inv in angewandt.items():
-        for split in je_inv.values():
+        for inv_id, split in je_inv.items():
             r = roh.setdefault(schluessel, _RohMonat())
             r.wp_modus_strom_heizen += split.heizen_kwh
             r.wp_modus_strom_kuehlen += split.kuehlen_kwh
             r.wp_modus_strom_warmwasser += split.warmwasser_kwh
+            # ⭐ **SOLL-§9-E7/Option A — auch hier, und hier ist es immer der
+            # abgeleitete Zweig.** `lade_modus_split_ohne_abschluss` trägt
+            # genau die Monate nach, für die es *keinen* Abschluss und damit
+            # keine gemessene Betriebsart-Zeile gibt: Dieser Split ist per
+            # Konstruktion eine **Verteilung** des Gesamtstroms. Bei getrennter
+            # Strommessung verteilt er `strom_heizen + strom_warmwasser` und
+            # darf diesen Nenner deshalb nicht kürzen.
+            #
+            # ⛔ **Die Regel wird GERUFEN, nicht nachgebaut** (F-56). Der
+            # Umweg über eine `ModusStromZeile` sieht nach Umstand aus und ist
+            # der Kern: So gilt hier **dieselbe** Definition von
+            # „funktionsfremd" und **dieselbe** Abzugsbedingung wie im
+            # IMD-Zweig. Ein `if hat_split: 0 else kuehlen_kwh` daneben wäre
+            # die zweite Codestelle, an der F-56 schon einmal entstanden ist.
+            #
+            # ⚠ `gemessen=False` ist keine Annahme, sondern die Definition
+            # dieses Pfads: `lade_modus_split_ohne_abschluss` trägt genau die
+            # Monate nach, für die es keine gemessene Betriebsart-Zeile gibt.
+            # Lüften/Entfeuchten bleiben 0 — der abgeleitete Weg kann sie
+            # nicht (E4/D11).
+            #
+            # ⚠ **`int(inv_id)`** — `angewandt` ist nach Investitions-ID als
+            # **Zeichenkette** gekeyt, `inv_by_id` nach `int`. Ohne die
+            # Umwandlung liefe der Nachschlag still ins Leere und der Abzug
+            # würde für JEDE Anlage gezogen.
+            _inv_nach = inv_by_id.get(int(inv_id))
+            r.wp_modus_strom_funktionsfremd_abzug += funktionsfremd_abzug_kwh(
+                ModusStromZeile(
+                    heizen_kwh=split.heizen_kwh,
+                    kuehlen_kwh=split.kuehlen_kwh,
+                    warmwasser_kwh=split.warmwasser_kwh,
+                    gemessen=False,
+                    abdeckung_h=split.abdeckung_h,
+                ),
+                # ⛔ **N-462: die STUFE dieser Zeile, nicht das Kennzeichen.**
+                # `lade_modus_split_ohne_abschluss` nimmt als Bezug den
+                # *gepflegten* Strom der Monatszeile, sobald es einen gibt —
+                # also genau die Menge, die `get_wp_strom_kwh` gewählt hat. Ist
+                # das der Gesamtzähler (feine Achse unvollständig, K3), steckt
+                # der Kühlstrom darin und muss abgezogen werden.
+                # Ein Monat **ohne** jede Zeile hat auch keinen Gesamtzähler,
+                # auf den er zurückfallen könnte — dort bleibt es beim
+                # Kennzeichen, und das heißt „feine Summe".
+                hat_split=wp_nenner_fein.get(schluessel, {}).get(
+                    inv_id,
+                    bool((getattr(_inv_nach, "parameter", None) or {})
+                         .get("getrennte_strommessung")),
+                ),
+            )
             # W-17: Stunden werden ueber GERAETE nicht addiert (SoT-Helfer).
             # Die Schleife laeuft ueber `je_inv` — jeder Durchlauf ist ein
             # weiteres Geraet DESSELBEN Monats. Mengen ja, Zeitraum nein.
@@ -1294,6 +1593,7 @@ class _RohMonat:
         self.speicher_preis_summe = 0.0
         self.speicher_preis_gewicht = 0.0
         self.wp_strom = 0.0
+        self.wp_strom_nicht_aufgeteilt = 0.0
         self.wp_waerme = 0.0
         self.wp_strom_mit_ersatz = 0.0
         self.wp_waerme_mit_ersatz = 0.0
@@ -1302,6 +1602,9 @@ class _RohMonat:
         self.wp_strom_heizen = 0.0
         self.wp_strom_warmwasser = 0.0
         self.wp_hat_split = False
+        #: N-391: mindestens ein Gerät des Monats misst die Wärme mit EINEM
+        #: gemeinsamen Zähler (Feld ``waerme_kwh``).
+        self.wp_waerme_ist_gesamt = False
         self.wp_modus_strom_heizen = 0.0
         self.wp_modus_strom_kuehlen = 0.0
         #: N-336 — nur aus dem abgeleiteten Split; die Gegenrichtung zu E4.
@@ -1309,8 +1612,13 @@ class _RohMonat:
         #: E4 — nur aus gemessenen Zaehlern; der abgeleitete Split kann sie nicht.
         self.wp_modus_strom_lueften = 0.0
         self.wp_modus_strom_entfeuchten = 0.0
+        #: SOLL-§9-E7/Option A — je Zeile entschieden, hier nur summiert.
+        self.wp_modus_strom_funktionsfremd_abzug = 0.0
         #: W-5 — die Kältemenge, nur gemessen.
         self.wp_nutzenergie_kuehlen = 0.0
+        #: R-C/N-398 — die zwei Mengen ohne Kennzahl (E4).
+        self.wp_nutzenergie_lueften = 0.0
+        self.wp_nutzenergie_entfeuchten = 0.0
         self.wp_modus_abdeckung_h = 0.0
         #: #263 — mindestens ein Gerät bringt die Aufteilung GEMESSEN mit.
         self.wp_modus_gemessen = False
@@ -1329,13 +1637,44 @@ class _RohMonat:
         # SELBST erkennen kann** — sie braucht keine Angabe des Anwenders. Die
         # übrigen drei (Heizstab am Zähler, bivalenter Zweiterzeuger,
         # Zeitraum-Versatz) sind von außen nicht sichtbar.
-        self.wp_geraete_mit_strom = 0
-        self.wp_geraete_mit_waerme = 0
+        #
+        # ⛔ **Mengen von `Investition.id`, keine Anzahlen (N-441, 12.09.2026).**
+        # Zwei Anzahlen sagen nur, wie VIELE Geräte je Seite beitragen — nicht,
+        # ob es dieselben sind. Wärme von A und Strom von B ergab `1 == 1` und
+        # damit „deckungsgleich": **3,0 ohne Grund**, als belastbar an die
+        # Community.
+        self.wp_geraete_mit_strom: set[int] = set()
+        self.wp_geraete_mit_waerme: set[int] = set()
         # R2/Bauart (SOLL §5): Wie viele der stromtragenden Geräte sind
         # Split-Klimaanlagen (Luft-Luft), wie viele klassische Wärmepumpen?
         # Stehen BEIDE im Block, gibt es keine gemeinsame Kennzahl.
         self.wp_geraete_luft_luft = 0
         self.wp_geraete_luft_wasser = 0
+        # ── R2 JE FUNKTION (10.09.2026) ────────────────────────────────────
+        # Wie viele Geraete tragen den **Strom** einer Funktion bei, wie viele
+        # ihre **Waerme**? Sind es dieselben (Mengengleichheit), ist die
+        # Funktion sauber abgegrenzt und ihre Kennzahl darf erscheinen — auch
+        # wenn der Block als GANZES gemischt ist.
+        #
+        # ⭐ **Beidseitig, und das ist der Kern.** Eine einseitige Regel
+        # („jedes Geraet mit Strom liefert auch Waerme") faengt nur den Nenner.
+        # Der Zaehler kippt genauso: `heizenergie_kwh` traegt NUR
+        # `!brauchwasser` (field_definitions.py:452-458), eine Split-Klima darf
+        # also Heizwaerme melden. Meldet sie welche, ohne Heizstrom
+        # beizusteuern, waere die Heiz-Arbeitszahl zu HOCH — gemessen an der
+        # A8-Bauform 4,25 statt 3,75.
+        #
+        # ⛔ Und die Gegenrichtung ist kein Papierfall: `strom_warmwasser_kwh`
+        # wird **ungefiltert** gelesen (imd_monatsaggregat.py:276, mit
+        # ausdruecklicher Begruendung), und bis 22.08.2026 wurde das Feld einer
+        # Klimaanlage mit getrennter Strommessung angeboten. Altbestand steht
+        # dort also, ohne Waerme daneben.
+        self.wp_geraete_e_heizen: set[int] = set()
+        self.wp_geraete_q_heizen: set[int] = set()
+        self.wp_geraete_e_warmwasser: set[int] = set()
+        self.wp_geraete_q_warmwasser: set[int] = set()
+        self.wp_geraete_e_kuehlen: set[int] = set()
+        self.wp_geraete_q_kuehlen: set[int] = set()
         #: R2/W-7 + R2/F12: die Abgrenzungs-Störung des Blocks. **Sobald EIN
         #: Gerät gestört ist, ist der Block gestört** — dieselbe Faltung wie
         #: `wp_hat_split`. Ein Block, der Strom eines Geräts mit Heizstab am
@@ -1473,6 +1812,10 @@ class _RohMonat:
 
         elif inv.typ == "waermepumpe":
             self.wp_strom += b.wp_strom
+            # WK-16d: der Rest der Summanden-Achsen, je Geraet aufgeloest und
+            # erst danach summiert — wie die Menge darueber. Auf der
+            # Anlagensumme gebildet waere er fuer eine Mischanlage sinnlos.
+            self.wp_strom_nicht_aufgeteilt += b.wp_strom_nicht_aufgeteilt
             self.wp_waerme += b.wp_waerme
             # N-256: dieselben Mengen noch einmal, aber nur über die Geräte, die
             # überhaupt eine Heizung ersetzt haben. KEINE Aufteilung je Gerät —
@@ -1489,12 +1832,23 @@ class _RohMonat:
             self.wp_strom_heizen += b.wp_strom_heizen
             self.wp_strom_warmwasser += b.wp_strom_warmwasser
             self.wp_hat_split = self.wp_hat_split or b.wp_hat_split
+            self.wp_waerme_ist_gesamt = (
+                self.wp_waerme_ist_gesamt or b.wp_waerme_ist_gesamt
+            )
             self.wp_modus_strom_heizen += b.wp_modus_strom_heizen
             self.wp_modus_strom_kuehlen += b.wp_modus_strom_kuehlen
             self.wp_modus_strom_warmwasser += b.wp_modus_strom_warmwasser
             self.wp_modus_strom_lueften += b.wp_modus_strom_lueften
             self.wp_modus_strom_entfeuchten += b.wp_modus_strom_entfeuchten
+            # SOLL-§9-E7/Option A: die Entscheidung ist in `b` schon gefallen
+            # (je Gerät). Hier wird nur addiert — anlagenweit wäre sie falsch,
+            # sobald ein F5-Gerät neben einem nicht-F5-Gerät steht.
+            self.wp_modus_strom_funktionsfremd_abzug += (
+                b.wp_modus_strom_funktionsfremd_abzug
+            )
             self.wp_nutzenergie_kuehlen += b.wp_nutzenergie_kuehlen
+            self.wp_nutzenergie_lueften += b.wp_nutzenergie_lueften
+            self.wp_nutzenergie_entfeuchten += b.wp_nutzenergie_entfeuchten
             # W-17: derselbe Grund wie im abgeleiteten Zweig oben — `b` ist der
             # Beitrag EINES Geraets zu diesem Monat. Beide Zweige schreiben in
             # dasselbe `_RohMonat`; das Maximum ueber beide ist deshalb das
@@ -1506,18 +1860,61 @@ class _RohMonat:
             self.wp_modus_gemessen = self.wp_modus_gemessen or b.wp_modus_gemessen
             self.wp_modus_strom_bezug += b.wp_modus_strom_bezug
             self.wp_waerme_abgeleitet += b.wp_waerme_abgeleitet
+            # ⭐ **N-441/Fall J: der Geräte-Kreis des Nenners wird NACH dem
+            # Abzug gezählt.** `arbeitszahl` zieht den funktionsfremden Strom
+            # (Kühlen · Lüften · Entfeuchten, W-14/E4) vom Nenner ab. Ein
+            # Zweitgerät, das ausschliesslich kühlt, steht damit **nicht** im
+            # Nenner der Gesamtzahl — es darf sie auch nicht sperren. Gemessen:
+            # 2400 kWh Waerme ÷ 800 kWh Heizstrom = 3,0 existiert, wurde aber
+            # mit „nicht alle Geraete melden Waerme" unterdrueckt, waehrend
+            # Heizen und Kuehlen daneben beide 3,0 zeigten.
             if b.wp_strom > 0:
-                self.wp_geraete_mit_strom += 1
                 # R2/Bauart: nur Geräte, die auch **Strom** beitragen — ein
                 # stillstehendes Zweitgerät soll die Kennzahl des laufenden
                 # nicht sperren. Dieselbe Zusicherung wie beim Tages-Zweig der
                 # Abgrenzungs-Störung, wo genau das schon einmal nötig war.
+                #
+                # ⚠ Die Bauart-Zaehler bleiben bei „Strom > 0" — sie zaehlen
+                # STAMMDATEN (welche Bauarten stehen im Block?), nicht den
+                # Nenner. Ein reines Kuehlgeraet ist weiterhin ein Geraet der
+                # Anlage, und eine gemischte Bauart bleibt gemischt.
                 if ist_luft_luft_waermepumpe(inv):
                     self.wp_geraete_luft_luft += 1
                 else:
                     self.wp_geraete_luft_wasser += 1
+            if b.wp_strom - (
+                b.wp_modus_strom_kuehlen
+                + b.wp_modus_strom_lueften
+                + b.wp_modus_strom_entfeuchten
+            ) > 0:
+                self.wp_geraete_mit_strom.add(inv.id)
             if b.wp_waerme > 0:
-                self.wp_geraete_mit_waerme += 1
+                self.wp_geraete_mit_waerme.add(inv.id)
+            # R2 je Funktion: je Seite EINES Quotienten zaehlen. Gezaehlt wird
+            # der **Beitrag**, nicht die Stammdaten-Zusicherung — nur so faengt
+            # die Regel den Altbestand, den die Bauart-Bedingung nicht kennt.
+            #
+            # ⚠ `wp_strom` (das ungeteilte `stromverbrauch_kwh`) zaehlt hier
+            # bewusst NICHT mit: Es gehoert zu KEINER Funktion. Genau deshalb
+            # stoert die Klimaanlage in A5 die Heiz-Arbeitszahl nicht — ihre
+            # 200 kWh stehen in keinem der beiden Quotienten.
+            #
+            # ⛔ **Gesammelt werden IDs, nicht Anzahlen (N-441).** „Ein Geraet
+            # hier, ein Geraet dort" ergab `(1, 1)` und galt als deckungsgleich
+            # — der Anlassfall (Waerme von A, Heizstrom von B) lieferte 3,0 ohne
+            # jeden Grund. Die Regel prueft seither Identitaet.
+            if b.wp_strom_heizen > 0:
+                self.wp_geraete_e_heizen.add(inv.id)
+            if b.wp_heizung > 0:
+                self.wp_geraete_q_heizen.add(inv.id)
+            if b.wp_strom_warmwasser > 0:
+                self.wp_geraete_e_warmwasser.add(inv.id)
+            if b.wp_warmwasser > 0:
+                self.wp_geraete_q_warmwasser.add(inv.id)
+            if b.wp_modus_strom_kuehlen > 0:
+                self.wp_geraete_e_kuehlen.add(inv.id)
+            if b.wp_nutzenergie_kuehlen > 0:
+                self.wp_geraete_q_kuehlen.add(inv.id)
             # Erste gemeldete Störung gewinnt. Zwei verschiedene Störungen an
             # zwei Geräten wären beide richtig — die Kachel trägt aber nur einen
             # Grund, und beide führen zu derselben Folge (keine Kennzahl).
@@ -1615,6 +2012,7 @@ async def _baue_fakt(
     tarif_cache: dict[date, dict],
     zeittarif_cache: dict,
     tages_summe: Optional[TagesMonatsSumme] = None,
+    preis_cache: Optional[dict] = None,
 ) -> MonatsFakt:
     jahr, monat = schluessel
 
@@ -1724,7 +2122,8 @@ async def _baue_fakt(
     ausgaben = roh.ausgaben_euro + (md_summen["ausgaben_euro"] if md_summen else 0.0)
 
     tarif = await _lade_tarif(
-        db, anlage_id, schluessel, monatsdaten, tarif_cache, zeittarif_cache
+        db, anlage_id, schluessel, monatsdaten, tarif_cache, zeittarif_cache,
+        preis_cache=preis_cache,
     )
 
     speicher = SpeicherFakten(
@@ -1779,18 +2178,33 @@ async def _baue_fakt(
             strom_heizen_kwh=roh.wp_strom_heizen,
             strom_warmwasser_kwh=roh.wp_strom_warmwasser,
             hat_split=roh.wp_hat_split,
+            waerme_ist_gesamt=roh.wp_waerme_ist_gesamt,
             modus_strom_heizen_kwh=roh.wp_modus_strom_heizen,
             modus_strom_kuehlen_kwh=roh.wp_modus_strom_kuehlen,
             modus_strom_warmwasser_kwh=roh.wp_modus_strom_warmwasser,
             modus_strom_lueften_kwh=roh.wp_modus_strom_lueften,
             modus_strom_entfeuchten_kwh=roh.wp_modus_strom_entfeuchten,
+            modus_strom_funktionsfremd_abzug_kwh=(
+                roh.wp_modus_strom_funktionsfremd_abzug
+            ),
             nutzenergie_kuehlen_kwh=roh.wp_nutzenergie_kuehlen,
+            nutzenergie_lueften_kwh=roh.wp_nutzenergie_lueften,
+            nutzenergie_entfeuchten_kwh=roh.wp_nutzenergie_entfeuchten,
             modus_abdeckung_h=roh.wp_modus_abdeckung_h,
             modus_gemessen=roh.wp_modus_gemessen,
             modus_strom_bezug_kwh=roh.wp_modus_strom_bezug,
+            strom_nicht_aufgeteilt_kwh=roh.wp_strom_nicht_aufgeteilt,
             waerme_abgeleitet_kwh=roh.wp_waerme_abgeleitet,
-            geraete_mit_strom=roh.wp_geraete_mit_strom,
-            geraete_mit_waerme=roh.wp_geraete_mit_waerme,
+            # `WpFakten` ist `frozen=True` — die Mengen frieren beim Übergang
+            # mit ein, damit ein Leser sie nicht versehentlich fortschreibt.
+            geraete_mit_strom=frozenset(roh.wp_geraete_mit_strom),
+            geraete_mit_waerme=frozenset(roh.wp_geraete_mit_waerme),
+            geraete_e_heizen=frozenset(roh.wp_geraete_e_heizen),
+            geraete_q_heizen=frozenset(roh.wp_geraete_q_heizen),
+            geraete_e_warmwasser=frozenset(roh.wp_geraete_e_warmwasser),
+            geraete_q_warmwasser=frozenset(roh.wp_geraete_q_warmwasser),
+            geraete_e_kuehlen=frozenset(roh.wp_geraete_e_kuehlen),
+            geraete_q_kuehlen=frozenset(roh.wp_geraete_q_kuehlen),
             geraete_luft_luft=roh.wp_geraete_luft_luft,
             geraete_luft_wasser=roh.wp_geraete_luft_wasser,
             abgrenzung_stoerung=roh.wp_abgrenzung,
@@ -1906,6 +2320,7 @@ async def _lade_tarif(
     monatsdaten: Optional[Monatsdaten],
     cache: dict[date, dict],
     zeittarif_cache: dict,
+    preis_cache: Optional[dict] = None,
 ) -> TarifFakten:
     """Tarif zum Monatsersten (P8) — ein Cache-Eintrag je Stichtag pro Anfrage."""
     stichtag = date(schluessel[0], schluessel[1], 1)
@@ -1928,9 +2343,19 @@ async def _lade_tarif(
     wallbox_cent = await _komponenten_preis(
         db, anlage_id, schluessel, tarife, "wallbox", stammpreis, cache
     )
+    # ⭐ **Die ganze Kaskade** (#412, 11.09.2026): gepflegt → gemessen →
+    # Zeitfenster → Stamm. Bis dahin fehlte die **Messung** zwischen den beiden
+    # äußeren Stufen — ein dynamischer Tarif rechnete ohne Monatsabschluss mit
+    # dem Stammpreis, obwohl die Stundenpreise mitgeschrieben werden.
+    # ⚠ `stammpreis` bleibt daneben stehen: er ist der Bezugspunkt der
+    # Komponenten-Kaskade (`_komponenten_preis`) und eine eigene Aussage.
+    preis = await aufgeloester_monatspreis(
+        db, anlage_id, schluessel[0], schluessel[1], monatsdaten, allgemein,
+        cache=preis_cache,
+    )
     return TarifFakten(
-        # Flex-Ø des Monats vor dem Stammdaten-Arbeitspreis (P8, zweite Form).
-        netzbezug_preis_cent=resolve_netzbezug_preis_cent(monatsdaten, stammpreis),
+        netzbezug_preis_cent=preis.cent,
+        netzbezug_preis_herkunft=preis.herkunft,
         netzbezug_stammpreis_cent=stammpreis,
         # #392: der Monatswert der variablen Vergütung schlägt den Stammwert —
         # dieselbe zweite P8-Form wie beim Netzbezug eine Zeile darüber.
@@ -1946,7 +2371,14 @@ async def _lade_tarif(
         ),
         wallbox_preis_cent=wallbox_cent,
         # Der Flex-Ø gilt für den ganzen Zähler — auch für die Wallbox.
-        wallbox_preis_effektiv_cent=resolve_netzbezug_preis_cent(monatsdaten, wallbox_cent),
+        # #412: dieselbe Kaskade wie beim Netzbezug eine Zeile darüber — sonst
+        # trüge DASSELBE `TarifFakten`-Objekt zwei verschiedene Auflösungen
+        # (`netzbezug_preis_cent` mit Messung, die Wallbox ohne).
+        # `stammpreis_override`: der Wallbox-Tarif bleibt Stufe 4.
+        wallbox_preis_effektiv_cent=(await aufgeloester_monatspreis(
+            db, anlage_id, schluessel[0], schluessel[1], monatsdaten, allgemein,
+            stammpreis_override=wallbox_cent,
+        )).cent,
         kraftstoffpreis_euro=monatsdaten.kraftstoffpreis_euro if monatsdaten else None,
         gaspreis_cent_kwh=monatsdaten.gaspreis_cent_kwh if monatsdaten else None,
     )

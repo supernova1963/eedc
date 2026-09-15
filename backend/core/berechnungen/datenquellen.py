@@ -1,16 +1,25 @@
 """Datenquellen-Priorisierung — reine Merge-Präzedenz für aktueller_monat.
 
-`get_aktueller_monat` sammelt Monatswerte aus vier Quellen (gespeichert,
-Connector, MQTT-Inbound, HA-Statistics) und führt sie nach fester Präzedenz
-zusammen. Das Sammeln ist I/O (DB/HA) und bleibt in der Route; die
-Zusammenführungs-Regel ist reine Logik und lebt hier (ADR-001) — eine Stelle,
-testbar, ohne Drift zwischen den vier `update`/`setdefault`-Zweigen.
+`get_aktueller_monat` sammelt Monatswerte aus fünf Quellen (gespeichert,
+Connector, MQTT-Inbound, HA-Statistics, lokale Tagesebene) und führt sie nach
+fester Präzedenz zusammen. Das Sammeln ist I/O (DB/HA) und bleibt in der Route;
+die Zusammenführungs-Regel ist reine Logik und lebt hier (ADR-001) — eine
+Stelle, testbar, ohne Drift zwischen den `update`/`setdefault`-Zweigen.
 
 Präzedenz (höchste überschreibt niedrigere):
   1. gespeicherte Monatsdaten (Basis)
   2. Connector (Geräte-Snapshot-Delta)
   3. MQTT-Inbound (Energy-Topics, nur laufender Monat — vom Aufrufer gegated)
   4. HA-Statistics (Recorder-DB)
+  5. lokale Tagesebene (nur laufender Monat — füllt, was sonst fehlt)
+
+**Die Tagesebene ist die schwächste Quelle, und das ist keine Wertung ihrer
+Genauigkeit** (sie entsteht aus denselben Snapshots wie 3 und 4). Sie ist die
+**abgeleitete** Quelle: Σ über die Tage, für die eine Aggregation gelaufen ist.
+Wo eine der vier direkten Quellen antwortet, ist deren Antwort die über den
+ganzen Monat — die Tagesebene füllt deshalb ausschließlich Lücken
+(`setdefault`, in jedem Monat, auch im laufenden) und überschreibt nie. Der
+Anlass steht in `mqtt_teilzeitraum_felder` weiter unten (N-472).
 
 Laufender Monat: jede frischere Quelle DARF gespeicherte Werte überschreiben
 (Live-Vorschau) → `update`. Abgeschlossener Monat: gespeicherte/manuell
@@ -63,6 +72,39 @@ def connector_deckt_monatsanfang(
     return abdeckung_von <= monat_start
 
 
+def mqtt_teilzeitraum_felder(
+    *,
+    mqtt_energy: dict[str, _V],
+    mqtt_ab_monatsbeginn: set[str] | None = None,
+    tagesebene: dict[str, _V] | None = None,
+) -> set[str]:
+    """Felder, deren Endwert **nicht** den ganzen Monat misst (N-472).
+
+    Zwei Herkünfte, dieselbe Eigenschaft:
+
+    * **MQTT mit Rückfall** — der Stand am Monatsersten fehlte, gemessen ist
+      erst ab dem ersten Stand des Monats (`mqtt_ab_monatsbeginn` nennt die
+      Gegenmenge: die Felder, deren linker Rand *der* Monatserste war).
+    * **lokale Tagesebene** — Σ über die Tage mit Spur; im laufenden Monat sind
+      das naturgemäß nicht alle.
+
+    ⛔ **Warum das nicht bloß Kosmetik ist.** Der Aufrufer sperrt mit einem
+    Top-Level-Wert die Aggregation der Komponenten-Werte (sonst Doppelzählung).
+    Vor dem Rückfall *fehlte* ein solcher Wert und sperrte nichts; mit dem
+    Rückfall steht er da und würde eine **vollständige** Komponentensumme durch
+    eine beschnittene Anlagenzahl verdrängen. Genau dieselbe Klasse wie #361
+    (coolxmad #353) beim Connector — dort mit demselben Ergebnis behandelt: ein
+    Bruchstück sperrt nicht, es wird vom ersten aggregierten Beitrag ersetzt.
+    """
+    felder = {
+        k for k in mqtt_energy
+        if mqtt_ab_monatsbeginn is None or k not in mqtt_ab_monatsbeginn
+    }
+    if tagesebene:
+        felder |= set(tagesebene)
+    return felder
+
+
 def teilzeitraum_felder(
     *,
     saved: dict[str, _V],
@@ -72,31 +114,44 @@ def teilzeitraum_felder(
     ist_aktueller_monat: bool,
     connector_abdeckung_von: datetime | None = None,
     monat_start: datetime | None = None,
+    tagesebene: dict[str, _V] | None = None,
+    mqtt_ab_monatsbeginn: set[str] | None = None,
 ) -> set[str]:
-    """Felder, deren Endwert aus einem Connector-Delta ohne Monatsabdeckung stammt.
+    """Felder, deren Endwert nur einen **Teilzeitraum** des Monats misst.
 
     Gegenstück zu `merge_datenquellen` mit denselben Argumenten: Während der
     Merge entscheidet, *welcher* Wert gewinnt, sagt diese Funktion, welche
-    Gewinner nur einen **Teilzeitraum** messen. Der Aufrufer braucht das, weil
+    Gewinner nur einen Teilzeitraum messen. Der Aufrufer braucht das, weil
     ein Anlagen-Gesamtwert die Aggregation der Komponenten-Werte unterdrückt
     (sonst Doppelzählung) — und ein Bruchstück das nicht darf (#361, coolxmad
     #353: frisch eingerichteter Connector, Delta 0 kWh, verdrängte die
     vollständige HA-Summe der PV-Komponente).
 
-    Deckt der Connector den Monat ab, ist sein Wert vollwertig → leere Menge.
-    Sonst zählen genau die Felder, die er selbst gesetzt hat: `saved` gewinnt
-    im `setdefault`-Zweig, MQTT und (im laufenden Monat) HA-Statistik
+    **Connector:** deckt er den Monat ab, ist sein Wert vollwertig. Sonst
+    zählen genau die Felder, die er selbst gesetzt hat: `saved` gewinnt im
+    `setdefault`-Zweig, MQTT und (im laufenden Monat) HA-Statistik
     überschreiben ihn danach.
+
+    **MQTT-Rückfall und Tagesebene** kommen über {@link mqtt_teilzeitraum_felder}
+    dazu (N-472) — dort steht, warum sie dieselbe Behandlung brauchen. Ein
+    MQTT-Feld, das den Monatsersten als linken Rand hat, ist **kein**
+    Teilzeitraum; ohne `mqtt_ab_monatsbeginn` gilt es aus Vorsicht als einer
+    (der Aufrufer hat dann keine Auskunft gegeben).
     """
+    teil = mqtt_teilzeitraum_felder(
+        mqtt_energy=mqtt_energy if mqtt_ab_monatsbeginn is not None else {},
+        mqtt_ab_monatsbeginn=mqtt_ab_monatsbeginn,
+        tagesebene=tagesebene,
+    )
     if not connector:
-        return set()
+        return teil
     if connector_deckt_monatsanfang(connector_abdeckung_von, monat_start):
-        return set()
+        return teil
 
     ueberschrieben = set(mqtt_energy)
     if ist_aktueller_monat:
         ueberschrieben |= set(ha_stats)
-    return {k for k in connector if k not in saved and k not in ueberschrieben}
+    return teil | {k for k in connector if k not in saved and k not in ueberschrieben}
 
 
 def merge_datenquellen(
@@ -108,8 +163,9 @@ def merge_datenquellen(
     ist_aktueller_monat: bool,
     connector_abdeckung_von: datetime | None = None,
     monat_start: datetime | None = None,
+    tagesebene: dict[str, _V] | None = None,
 ) -> dict[str, _V]:
-    """Führt die vier Datenquellen nach fester Präzedenz zusammen.
+    """Führt die fünf Datenquellen nach fester Präzedenz zusammen.
 
     Reine Funktion, kein I/O. Regeln siehe Modul-Docstring. ``mqtt_energy``
     wird unverändert per ``update`` angewendet — der Aufrufer übergibt für
@@ -118,6 +174,11 @@ def merge_datenquellen(
     ``connector_abdeckung_von``/``monat_start`` beschreiben den Zeitraum, den
     das Connector-Delta wirklich misst. Fehlen sie, gilt die Abdeckung als
     unbekannt und der Connector überschreibt auch im laufenden Monat nicht.
+
+    ``tagesebene`` ist die fünfte und schwächste Quelle (N-472) und wird
+    **immer** per ``setdefault`` angewendet — sie füllt, was keine der vier
+    direkten Quellen beantwortet hat, und verdrängt nie. Ohne sie ist das
+    Ergebnis bitgleich zu vorher.
     """
     resolved: dict[str, _V] = {}
     resolved.update(saved)
@@ -146,5 +207,12 @@ def merge_datenquellen(
         # kein rückwirkender Override (#118).
         for k, v in ha_stats.items():
             resolved.setdefault(k, v)
+
+    # N-472: die lokale Tagesebene ganz zuletzt und nur füllend. Sie ist die
+    # abgeleitete Quelle (Σ der Tage mit Spur) — wo eine direkte Quelle den
+    # Monat kennt, hat die den Vorrang, und zwar auch dann, wenn ihre Zahl
+    # kleiner ist.
+    for k, v in (tagesebene or {}).items():
+        resolved.setdefault(k, v)
 
     return resolved

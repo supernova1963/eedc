@@ -114,9 +114,13 @@ async def test_x5_die_jahresformel_und_der_vorjahresvergleich_kennen_e_b(db):
     summe = berechne_wp_alternativkosten_ersparnis(
         [inv], {(inv.id, JAHR, MONAT): daten}, {}, {(JAHR, MONAT): 30.0}, 30.0,
     )
-    # 400 € (alt) − (1300 − 300) × 0,5 × 0,30 = 400 − 150 = 250 (mit dem
-    # PV-Anteil-Default der Jahresformel); vorher 400 − 195 = 205.
-    assert summe == pytest.approx(250.0, abs=0.01)
+    # 400 € (alt) − (1300 − 300) × 0,30 = 400 − 300 = 100.
+    # ⛔ Bis 2026-09-13 stand hier 250 € — die Jahresformel trug einen festen
+    # PV-Abschlag von 50 %, den der Monats-Layer nie hatte. Mit SOLL Wärme/Klima
+    # S1b belasten beide den ganzen Strom. Geprüft wird hier E-B (der Kühlstrom
+    # von 300 kWh bleibt draußen: der Abzug rechnet mit 1.000, nicht 1.300 kWh),
+    # nicht der PV-Anteil.
+    assert summe == pytest.approx(100.0, abs=0.01)
 
 
 @pytest.mark.asyncio

@@ -403,10 +403,16 @@ def _abschnitte_komponenten(d: Any) -> list[Abschnitt]:
             _z("Arbeitszahl Kühlen", fmt_zahl(d.wp_jaz_kuehlen, 2),
                hinweis=d.wp_jaz_kuehlen_grund),
         ]
+        # Bauschnitt 8 (11.09.2026, E1 (b)): Den Balken `el:wp-aufteilung` gibt
+        # es in der Monatsansicht nicht mehr — Wärme und Arbeitszahl je Funktion
+        # stehen dort in der Liste „Je Funktion" (`el:wp-detail`), zusammen mit
+        # dem Strom je Funktion. Wer sie parkt, parkt beide Abschnitte hier mit.
+        # Der alte Anker hätte nie wieder gefiltert, still
+        # (`test_jeder_park_anker_existiert_im_render_pfad` hat es gemeldet).
         if _hat(aufteilung):
             aus.append(Abschnitt(
                 "wp_aufteilung", "Wärmepumpe — Wärme-Aufteilung", "komponenten",
-                aufteilung, park_id="el:wp-aufteilung",
+                aufteilung, park_id="el:wp-detail",
             ))
 
         strom = [

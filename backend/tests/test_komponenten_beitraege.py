@@ -128,17 +128,48 @@ def test_wp_nur_stromverbrauch_wenn_kein_split():
 
 
 def test_wp_getrennte_strommessung():
+    """Getrennte Strommessung **ohne** Gesamtzähler — die beiden Achsen tragen.
+
+    ⛔ **Diese Probe hatte bis zum 14.09.2026 zusätzlich einen zugeordneten
+    ``stromverbrauch_kwh`` („ignoriert bei split") und hielt fest, dass er
+    **nicht** zählt.** Die Substanz, die sie sichert, ist die Doppelzählung:
+    Gesamtzähler und Achsen laufen auf EINEN Ziel-Key, es darf immer nur eine
+    Seite beitragen. Diese Substanz gilt unverändert — nur gewinnt seit WK-16d
+    die andere Seite (K1), und dafür steht die Probe direkt darunter. Hier
+    bleibt der Fall ohne Gesamtzähler: Die Achsen sind die einzige Messung.
+    """
     inv = _inv(7, "waermepumpe", parameter={"getrennte_strommessung": True})
     sm = {"felder": {
         "strom_heizen_kwh": _sensor("sensor.wp_heiz_strom"),
         "strom_warmwasser_kwh": _sensor("sensor.wp_ww_strom"),
-        "stromverbrauch_kwh": _sensor("sensor.wp_gesamt"),  # ignoriert bei split
         "heizenergie_kwh": _sensor("sensor.wp_thermisch"),  # ignoriert
     }}
     b = investition_beitraege(inv, sm)
     felder = [x[0] for x in _fields_to_beitraege(b)]
     assert set(felder) == {"strom_heizen_kwh", "strom_warmwasser_kwh"}
     assert all(x[1] == "waermepumpe_7" for x in _fields_to_beitraege(b))
+
+
+def test_wp_getrennte_strommessung_mit_gesamtzaehler_traegt_der_gesamtzaehler():
+    """K1/WK-16d: Gesamtzähler zugeordnet ⇒ **er** trägt, die Achsen nicht.
+
+    ⭐ **Die Doppelzählungs-Aussage der Probe darüber, mit getauschtem Sieger.**
+    Beide Seiten laufen auf ``waermepumpe_7``; beide zu emittieren hieße, den
+    Heiz- und Warmwasserstrom zweimal in die Tagesbilanz zu legen. Welche Seite
+    gewinnt, entscheidet K1: die Gesamtmenge. Was sie **mehr** misst als die
+    Achsen — Standby, Steuerung, Umwälzpumpen —, war vorher aus Tag, Monat,
+    Kosten und CO₂ verschwunden.
+    """
+    inv = _inv(7, "waermepumpe", parameter={"getrennte_strommessung": True})
+    sm = {"felder": {
+        "strom_heizen_kwh": _sensor("sensor.wp_heiz_strom"),
+        "strom_warmwasser_kwh": _sensor("sensor.wp_ww_strom"),
+        "stromverbrauch_kwh": _sensor("sensor.wp_gesamt"),
+    }}
+    b = investition_beitraege(inv, sm)
+    assert _fields_to_beitraege(b) == [
+        ("stromverbrauch_kwh", "waermepumpe_7", +1, None),
+    ]
 
 
 # ─── Wallbox ───────────────────────────────────────────────────────────────

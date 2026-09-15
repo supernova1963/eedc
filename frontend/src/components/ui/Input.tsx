@@ -24,6 +24,30 @@ interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
    * Zeilen (`grid-rows-subgrid`-tauglich). Hint wandert in den `title`-Tooltip.
    */
   denseRow?: boolean
+  /**
+   * **SoT für Such- und Filterfelder** — Felder, die eine Liste verengen, statt
+   * Anwenderdaten zu erfassen (Einstellungen-Suche, Sensor-Picker, Protokoll-Filter).
+   *
+   * Setzt den Autofill-Riegel `autoComplete="off"`. Der Grund ist kein Komfort,
+   * sondern eine Sackgasse: Ein vom Browser eingesetzter Begriff steht in einem
+   * Filterfeld genauso da wie ein getippter — die Liste darunter ist leer, und die
+   * Sicht ist von einem Defekt nicht mehr zu unterscheiden. Radiocarbonat (simon42
+   * T89667 #316/#319) hielt die Einstellungen deshalb für kaputt und musste Autofill
+   * am Ende **im Browser** abschalten; sein Firefox füllte „frank" nach **jedem**
+   * Löschen sofort nach, der eigene ✕-Knopf löst seinen Fall also nicht.
+   *
+   * ⚠ Was hier NICHT behauptet wird: dass der Riegel in jedem Browser greift. Das
+   * Verhalten ist browserabhängig und von uns **nicht gemessen** — `autocomplete="off"`
+   * ist das standardkonforme Mittel, nicht eine Garantie. Vendor-Attribute einzelner
+   * Passwortmanager stehen bewusst nicht hier: nicht geprüft, also nicht behauptet.
+   *
+   * ⛔ Nicht für Anmelde-/PIN-Felder (`SperreContext`): dort ist das Ausfüllen durch
+   * einen Passwortmanager erwünscht, und Browser ignorieren den Riegel dort ohnehin.
+   *
+   * Ein ausdrückliches `autoComplete` des Aufrufers gewinnt — der SoT setzt den
+   * Standard, er nimmt die Entscheidung nicht weg.
+   */
+  suchfeld?: boolean
 }
 
 // Feld-Basisklassen (ohne Rahmenfarbe — die hängt am Fehlerzustand).
@@ -35,7 +59,7 @@ const FELD_KLASSEN =
   "[&[type='date']]:text-left [&::-webkit-datetime-edit]:text-left"
 
 const Input = forwardRef<HTMLInputElement, InputProps>(
-  ({ className = '', label, error, hint, warnung = false, labelClassName = '', denseRow = false, id, ...props }, ref) => {
+  ({ className = '', label, error, hint, warnung = false, labelClassName = '', denseRow = false, suchfeld = false, id, ...props }, ref) => {
     const inputId = id || props.name
     const feldKlassen = `${FELD_KLASSEN} ${error ? 'border-red-500' : warnung ? 'border-amber-300 dark:border-amber-700' : 'border-gray-300 dark:border-gray-600'} ${className}`
 
@@ -43,6 +67,9 @@ const Input = forwardRef<HTMLInputElement, InputProps>(
       <input
         ref={ref}
         id={inputId}
+        // Vor dem Spread: der SoT setzt den Standard, ein ausdrückliches
+        // `autoComplete` des Aufrufers überschreibt ihn.
+        autoComplete={suchfeld ? 'off' : undefined}
         {...props}
         className={feldKlassen}
         title={denseRow ? (hint ?? props.title) : props.title}

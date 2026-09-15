@@ -34,25 +34,65 @@ const ZEITRAUM_WORT: Record<ZaehlerZeitraum, string> = {
   gesamt: 'seit Aufzeichnungsbeginn',
 }
 
+/** Das Fenster, für das Zählerstände geholt wurden — Zeitraum plus sein Schlüssel. */
+export interface ZaehlerFenster {
+  zeitraum: ZaehlerZeitraum
+  datum?: string
+  jahr?: number
+  monat?: number
+}
+
+/**
+ * Die Antwort des Hooks **mit** ihrem Fenster.
+ *
+ * ⭐ Das Fenster gehört zur Nutzlast, nicht zum Aufrufer (Style-Guide A3a): Der
+ * Hook hält seine Vordaten beim Fensterwechsel — ohne diese Marke stünden die
+ * Zählerstände des alten Zeitraums unter den Zahlen des neuen, und keine der
+ * drei Sichten könnte es merken.
+ */
+export interface ZaehlerAntwort {
+  staende: ZaehlerStand[]
+  fenster: ZaehlerFenster
+}
+
 export function useZaehlerstaende(
   anlageId: number | undefined,
   zeitraum: ZaehlerZeitraum,
   opts: { datum?: string; jahr?: number; monat?: number } = {}
-) {
-  const [staende, setStaende] = useState<ZaehlerStand[] | null>(null)
+): ZaehlerAntwort | null {
+  const [antwort, setAntwort] = useState<ZaehlerAntwort | null>(null)
   const { datum, jahr, monat } = opts
   useEffect(() => {
     if (!anlageId) return
     let aktiv = true
+    const fenster: ZaehlerFenster = { zeitraum, datum, jahr, monat }
     zaehlerstaendeApi
       .get(anlageId, { zeitraum, datum, jahr, monat })
-      .then((r) => { if (aktiv) setStaende(r) })
+      .then((r) => { if (aktiv) setAntwort({ staende: r, fenster }) })
       // Still: wer keinen Zähler pflegt, soll keine Fehlermeldung über eine
       // Funktion sehen, die er nicht benutzt.
-      .catch(() => { if (aktiv) setStaende([]) })
+      .catch(() => { if (aktiv) setAntwort({ staende: [], fenster }) })
     return () => { aktiv = false }
   }, [anlageId, zeitraum, datum, jahr, monat])
-  return staende
+  return antwort
+}
+
+/**
+ * **Paarung** — die Stände, wenn sie zu genau diesem Fenster gehören, sonst `null`.
+ *
+ * `null` ist für die drei Sichten dasselbe wie „noch nichts geladen": Sie gaten
+ * ohnehin auf `length > 0`, der Block entfällt dann. Das ist die bestehende
+ * Bauform des Blocks — kein neuer Ladezustand, keine zweite Komponente.
+ */
+export function zaehlerstaendeFuer(
+  antwort: ZaehlerAntwort | null,
+  fenster: ZaehlerFenster,
+): ZaehlerStand[] | null {
+  if (!antwort) return null
+  const f = antwort.fenster
+  const passt = f.zeitraum === fenster.zeitraum
+    && f.datum === fenster.datum && f.jahr === fenster.jahr && f.monat === fenster.monat
+  return passt ? antwort.staende : null
 }
 
 /**

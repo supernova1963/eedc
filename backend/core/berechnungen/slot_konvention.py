@@ -79,6 +79,25 @@ derselben Zeile; ``speicher_wirtschaftlichkeit`` multipliziert die
 (forward) — der effektive Ladepreis eines Speichers rechnet damit auf einem
 dynamischen Tarif mit dem Preis der Nachbarstunde.
 
+⭐ **Und die Tagesdetail-Zähler — eine zweite Klasse aus demselben Raster
+(N-444, 13.09.2026).** Sie ist NICHT einer der drei Forward-Bahnen oben,
+sondern die Folge davon, dass die Zeile **backward** liegt: Die Σ der 24
+Slots deckt ``[Vortag 23:00, Heute 23:00)`` ab, ein Tagesgesamt per
+Boundary-Diff dagegen ``[00:00, 24:00)``. Wer beides in **einer** Zeile
+nebeneinanderstellt — einen Zähler als Teilmenge über einem Bezug aus den
+Stundenzeilen —, rechnet über zwei Tage. Getroffen hat es
+``get_tagesdetail_kwh`` (``services/snapshot/aggregator.py``): die
+Netzladung des Speichers und die PV-/Netz-Anteile der E-Mobilität standen in
+``[00:00, 24:00)``, ihre Bezüge (``Σ max(0, −batterie_kw)`` bzw. Σ der
+``komponenten``-Serien) im Rückwärtsfenster. **Gemessen** (Demo-DB, 187 Tage):
+18 von 182 Tagen weichen um mehr als 5 % ab, am 25.11.2025 um +131,9 %.
+Seither entscheidet **eine** Tabelle, welches Fenster ein Gerätetyp trägt:
+``services/snapshot/boundary_range.py::TAGESFENSTER_JE_TYP`` /
+``tagesfenster_fuer`` (SOLL §3.3/S1a). Wer eine neue Tagesgröße
+danebenstellt, schlägt dort ihr Fenster nach — der Wächter
+``test_n444_tagesdetail_ein_fenster.py::TestJederTypHatEinFenster`` verlangt
+es.
+
 ⛔ **Sie sind bewusst NICHT mit N-382 gebaut worden.** Ein Paket, das fünf
 Bahnen gleichzeitig verschiebt, hat keine saubere Abnahme, und jede der drei
 trägt eine eigene Sachfrage: ein Preis ist keine Energiemenge, ein Ladestand ist

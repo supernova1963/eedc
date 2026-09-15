@@ -71,15 +71,20 @@ async def _jahres_ersparnis(db, anlage: Anlage) -> float:
 
 
 async def test_wp_alternativkosten_ersparnis_pinned(db):
-    """WP vs. Gas: pro Monat gas_kosten − wp_stromkosten_netz.
+    """WP vs. Gas: pro Monat gas_kosten − wp_stromkosten.
 
-    Pro Monat (Default-Gas-WP, Wirkungsgrad 0,90, Gaspreis 12 ct, PV-Anteil 50 %):
+    Pro Monat (Default-Gas-WP, Wirkungsgrad 0,90, Gaspreis 12 ct):
         thermisch = 200 (heiz) + 50 (ww) = 250 kWh
         gas_kosten = 250 / 0,90 × 12 ct / 100 = 33,3333 €
-        wp_stromkosten_netz = 80 kWh × (1−0,5) × 30 ct / 100 = 12,00 €
-        Ersparnis/Monat = 21,3333 € → ×12 = 256,00 €/Jahr
+        wp_stromkosten = 80 kWh × 30 ct / 100 = 24,00 €
+        Ersparnis/Monat = 9,3333 € → ×12 = 112,00 €/Jahr
     Bei 12 Monatsdaten kürzt sich die Annualisierung (÷12 ×12), also muss die
-    Delta-`jahres_ersparnis_euro` exakt 256,00 € betragen."""
+    Delta-`jahres_ersparnis_euro` exakt 112,00 € betragen.
+
+    ⛔ Bis 2026-09-13 stand hier 256,00 € — mit einem festen PV-Abschlag von
+    50 % auf den WP-Strom. Er ist entfallen (SOLL Wärme/Klima S1b): geprüft
+    wird weiterhin die Delta-Konstruktion (nur die WP unterscheidet die beiden
+    Anlagen), nicht der PV-Anteil."""
     basis = await _seed_basis_anlage(db, "wp-basis")
     mit_wp = await _seed_basis_anlage(db, "wp-mit")
 
@@ -87,7 +92,7 @@ async def test_wp_alternativkosten_ersparnis_pinned(db):
         anlage_id=mit_wp.id, typ="waermepumpe", bezeichnung="WP",
         anschaffungsdatum=date(2024, 1, 1),
         anschaffungskosten_gesamt=20000.0,
-        parameter={},  # Defaults: Gas, Wirkungsgrad 0,90, 12 ct, PV-Anteil 50 %
+        parameter={},  # Defaults: Gas, Wirkungsgrad 0,90, 12 ct
     )
     db.add(wp)
     await db.flush()
@@ -103,9 +108,9 @@ async def test_wp_alternativkosten_ersparnis_pinned(db):
     await db.flush()
 
     delta = await _jahres_ersparnis(db, mit_wp) - await _jahres_ersparnis(db, basis)
-    assert abs(delta - 256.0) < 0.01, (
+    assert abs(delta - 112.0) < 0.01, (
         f"WP-Alternativkosten-Beitrag zu jahres_ersparnis_euro driftet: "
-        f"Delta {delta:.4f} €, erwartet 256,00 €."
+        f"Delta {delta:.4f} €, erwartet 112,00 €."
     )
 
 
@@ -143,9 +148,10 @@ async def test_wp_oel_wirkungsgrad_und_monats_gaspreis(db):
     """Öl-Energieträger (Wirkungsgrad 0,85) + Monats-Gaspreis aus Monatsdaten
     schlagen den WP-Parameter-Default. Pro Monat:
         gas_kosten = 250 / 0,85 × 15 ct / 100 = 44,1176 €
-        wp_stromkosten_netz = 80 × 0,5 × 30 ct / 100 = 12,00 €
-        Ersparnis/Monat = 32,1176 € → ×12 = 385,41 €/Jahr
-    Der Monats-Gaspreis (15 ct) überstimmt den Parameter-Default."""
+        wp_stromkosten = 80 × 30 ct / 100 = 24,00 €
+        Ersparnis/Monat = 20,1176 € → ×12 = 241,41 €/Jahr
+    Der Monats-Gaspreis (15 ct) überstimmt den Parameter-Default.
+    (Bis S1b, 13.09.2026: halber Stromtarif ⇒ 385,41 €.)"""
     basis = await _seed_basis_anlage(db, "wp-oel-basis")
     anlage = Anlage(anlagenname="wp-oel", leistung_kwp=10.0)
     db.add(anlage)
@@ -178,7 +184,7 @@ async def test_wp_oel_wirkungsgrad_und_monats_gaspreis(db):
     await db.flush()
 
     delta = await _jahres_ersparnis(db, anlage) - await _jahres_ersparnis(db, basis)
-    assert abs(delta - 385.41) < 0.05, (
+    assert abs(delta - 241.41) < 0.05, (
         f"WP-Öl/Monats-Gaspreis-Beitrag driftet: Delta {delta:.4f} €, "
-        f"erwartet 385,41 €."
+        f"erwartet 241,41 €."
     )

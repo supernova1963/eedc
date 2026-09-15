@@ -17,6 +17,12 @@ abgenommen, nicht gegen echte MELCloud-Daten.
    Eintrag im Kanon**, und dieser Test sagt sofort, was dazu fehlt. Ohne ihn
    wäre „eine spätere Betriebsart kostet ein Feld, keine Migration“
    (Konzept §3.1, Folge 4) eine Behauptung.
+   ⭐ **1b (N-347, 13.09.2026):** dieselbe Frage für die **gemessenen**
+   Betriebsart-Zähler (`BETRIEBSART_*`), gegen `MESSBARE_MODI` statt gegen
+   `AUFGETEILTE_MODI` — andere Familie, andere Menge, und der Unterschied ist
+   selbst gewächtert. Bis dahin hielt **keine** Probe diese Tabellen; der
+   Kommentar an ihnen behauptete eine unter dem Namen einer Datei, die es nie
+   gab.
 2. `test_teilmengen_werden_nirgends_addiert` — baumweit: keine Bilanz-Read-Site
    summiert Heiz- und Kühlstrom zum Gesamtverbrauch dazu (Konzept §9).
 3. `test_keine_jaz_stelle_rechnet_mit_abgeleiteter_waerme` — die sieben Stellen
@@ -49,13 +55,20 @@ from backend.core.berechnungen import (
 from backend.core.betriebsmodus import (
     AUFGETEILTE_MODI,
     AUS,
+    BETRIEBSART_LABEL,
+    BETRIEBSART_NUTZENERGIE_FELD,
+    BETRIEBSART_STROM_FELD,
+    BETRIEBSMODUS_KANON,
+    ENTFEUCHTEN,
     HEIZEN,
     KUEHLEN,
     LUEFTEN,
+    MESSBARE_MODI,
     MODUS_ABDECKUNG_FELD,
     MODUS_SPLIT_FELDER,
     MODUS_STROM_FELD,
     UNBESTIMMT,
+    WARMWASSER,
 )
 
 BACKEND = Path(__file__).resolve().parents[1]
@@ -96,6 +109,147 @@ def test_die_feldnamen_kollidieren_nicht_mit_der_getrennten_strommessung():
     """
     assert "strom_heizen_kwh" not in MODUS_SPLIT_FELDER
     assert "strom_warmwasser_kwh" not in MODUS_SPLIT_FELDER
+
+
+# ============================================================================
+# Wächter 1b — dieselbe Frage für die GEMESSENEN Betriebsart-Zähler (N-347)
+# ============================================================================
+#
+# ⛔ **Der Kommentar an den Tabellen behauptete bis zum 29.08.2026 eine Probe,
+# die es nie gab** — unter dem Namen einer Datei (`test_263_betriebsart_felder.py`),
+# die nicht existiert. Der Verweis ist mit `1dd6c384` auf die Wahrheit gesetzt
+# worden, die Lücke blieb: **keine Testdatei hielt `BETRIEBSART_STROM_FELD` oder
+# `BETRIEBSART_NUTZENERGIE_FELD` gegen irgendeine Kanon-Menge** (N-347).
+#
+# ⚠ **Die Nachbar-Probe darüber abzuschreiben wäre falsch gewesen, und das ist
+# der ganze Grund, warum der Fund einen eigenen Bau brauchte.** Sie prüft gegen
+# `AUFGETEILTE_MODI` — drei Modi **inklusive Warmwasser**. Diese Tabellen führen
+# **vier ohne Warmwasser**. Die beiden Mengen beantworten verschiedene Fragen
+# (`betriebsmodus.py:75-81`), und `warmwasser` fehlt hier **bewusst** (N-336,
+# 27.08.): Ein `betriebsart_strom_warmwasser_kwh` wäre der zweite Weg zu
+# `strom_warmwasser_kwh` — Teilmenge gegen Summand, die Zweideutigkeit, an der
+# ein Tester schon zwei Felder addiert hat (T89667 #62).
+#
+# ⭐ **Die Referenzmenge ist `MESSBARE_MODI`, und sie ist es nicht per Analogie,
+# sondern weil der Baum sie so benutzt:** `field_definitions.py::_betriebsart_felder`
+# erzeugt beide Feldfamilien in zwei Schleifen **über `MESSBARE_MODI`**,
+# `berechnungen/betriebsart_gemessen.py:124` fragt über `MESSBARE_MODI`, und
+# `test_263_innengeraete.py:99-102` indiziert beide Tabellen mit ihr.
+#
+# ⚑ **Eine Richtung ist schon laut, die andere still — nur die stille braucht
+# einen Wächter.** Fehlt ein Modus aus `MESSBARE_MODI` in einer Tabelle,
+# scheitert `_betriebsart_felder()` mit `KeyError` beim Import. Steht dort ein
+# Schlüssel **zu viel**, entsteht ein totes Feld, das nie angeboten wird — und
+# das merkt heute niemand.
+
+#: Modi des Kanons, die **bewusst keinen** Betriebsart-Zähler bekommen — je mit
+#: dem Grund, der die Entscheidung trägt. Wer den Kanon erweitert, trägt den
+#: neuen Wert hier ODER in `MESSBARE_MODI` ein; genau diese Wahl ist die
+#: Entscheidung, die ``test_jeder_kanon_wert_ist_eingeordnet`` einfordert.
+_OHNE_BETRIEBSART_ZAEHLER: dict[str, str] = {
+    WARMWASSER: "N-336: `strom_warmwasser_kwh` gibt es schon — Summand statt "
+                "Teilmenge, ein zweiter Weg zu derselben Zahl",
+    AUS: "kein Betrieb, also keine Betriebsart",
+    UNBESTIMMT: "kein Signal, also nichts zu messen",
+}
+
+
+def test_die_betriebsart_tabellen_folgen_den_messbaren_modi():
+    """**N-347** — beide Tabellen sind exakt an `MESSBARE_MODI` gebunden.
+
+    Der stille Fall, gegen den das hier steht: ein Schlüssel **zu viel**. Er
+    erzeugt ein Feld, das `_betriebsart_felder()` nie anbietet — eine tote
+    Zeile in der Zuordnungs-Registry, die niemand bemerkt, weil nichts
+    abstürzt.
+    """
+    for name, tabelle in (
+        ("BETRIEBSART_STROM_FELD", BETRIEBSART_STROM_FELD),
+        ("BETRIEBSART_NUTZENERGIE_FELD", BETRIEBSART_NUTZENERGIE_FELD),
+        ("BETRIEBSART_LABEL", BETRIEBSART_LABEL),
+    ):
+        assert set(tabelle) == set(MESSBARE_MODI), (
+            f"{name} ist nicht mehr deckungsgleich mit MESSBARE_MODI: "
+            f"zu viel {sorted(set(tabelle) - set(MESSBARE_MODI))}, "
+            f"fehlt {sorted(set(MESSBARE_MODI) - set(tabelle))}. "
+            "Ein Schlüssel zu viel ist ein Feld, das nie angeboten wird; "
+            "einer zu wenig lässt `_betriebsart_felder()` beim Import fallen."
+        )
+
+
+def test_die_betriebsart_feldnamen_folgen_ihrer_konvention():
+    """Die Namen sind gebunden — wie bei `MODUS_STROM_FELD`, nur andere Familie.
+
+    ⚠ `nutzenergie` und nicht `waerme`: im Kühlbetrieb ist die abgegebene
+    Größe **Kälte**. Ein Feldname, der etwas anderes behauptet als er trägt,
+    ist die Klasse, an der `heizenergie_kwh` schon einmal missverstanden wurde
+    (#120).
+    """
+    for modus, feld in BETRIEBSART_STROM_FELD.items():
+        assert feld == f"betriebsart_strom_{modus}_kwh", (
+            f"{feld!r} folgt nicht `betriebsart_strom_<modus>_kwh` für {modus!r}."
+        )
+    for modus, feld in BETRIEBSART_NUTZENERGIE_FELD.items():
+        assert feld == f"betriebsart_nutzenergie_{modus}_kwh", (
+            f"{feld!r} folgt nicht `betriebsart_nutzenergie_<modus>_kwh` "
+            f"für {modus!r}."
+        )
+
+
+def test_jeder_kanon_wert_ist_eingeordnet():
+    """**Die Klausel, die die Fund-Folge trägt: „eine fünfte Betriebsart".**
+
+    Eine Maschine kann nicht entscheiden, ob ein neuer Kanon-Wert einen eigenen
+    Zähler verdient — das ist eine Modell-Entscheidung. Was sie kann: verlangen,
+    dass die Entscheidung **getroffen und hingeschrieben** wird. Jeder Wert des
+    Kanons steht deshalb entweder in `MESSBARE_MODI` oder mit Grund in
+    `_OHNE_BETRIEBSART_ZAEHLER`.
+
+    ⛔ Ohne diese Klausel bliebe genau der Fall still, den der Fund nennt: Wer
+    eine fünfte Betriebsart in den Kanon aufnimmt, bekommt hier kein Feld — und
+    keinen Hinweis darauf.
+    """
+    eingeordnet = set(MESSBARE_MODI) | set(_OHNE_BETRIEBSART_ZAEHLER)
+    offen = [m for m in BETRIEBSMODUS_KANON if m not in eingeordnet]
+    assert not offen, (
+        f"Diese Kanon-Werte sind nicht eingeordnet: {offen}. Entscheide je "
+        "Wert: eigener Betriebsart-Zähler (⇒ MESSBARE_MODI, dazu ein Eintrag "
+        "in BETRIEBSART_STROM_FELD, BETRIEBSART_NUTZENERGIE_FELD, "
+        "BETRIEBSART_LABEL und _BETRIEBSART_CSV) — oder bewusst keiner "
+        "(⇒ _OHNE_BETRIEBSART_ZAEHLER, mit Grund)."
+    )
+
+
+def test_ein_messbarer_modus_steht_auch_im_kanon():
+    """Die Gegenrichtung: kein Zähler für eine Betriebsart, die es nicht gibt."""
+    unbekannt = [m for m in MESSBARE_MODI if m not in BETRIEBSMODUS_KANON]
+    assert not unbekannt, (
+        f"MESSBARE_MODI führt Werte außerhalb des Kanons: {unbekannt}. "
+        "Ein Zähler für eine Betriebsart, die `normalisiere_betriebsmodus` "
+        "nie liefert, ist ein Feld ohne Weg zu einem Wert."
+    )
+
+
+def test_die_beiden_mengen_bleiben_verschieden_und_das_ist_die_aussage():
+    """⛔ Die Gegenprobe zum Prüfer darüber — sie hält die **falsche** Referenz fern.
+
+    Der naheliegende „Aufräum"-Griff wäre, beide Familien auf **eine** Menge zu
+    ziehen. Genau das ist der Fehler, vor dem `betriebsmodus.py:75-81` warnt:
+    *„Wer die eine Menge aus der anderen ableiten will, macht aus zwei Fragen
+    eine."* Diese Probe hält fest, dass sie sich in **beide** Richtungen
+    unterscheiden — Warmwasser nur links, Lüften und Entfeuchten nur rechts.
+    Ohne sie wäre der Prüfer darüber grün zu bekommen, indem man `MESSBARE_MODI`
+    an `AUFGETEILTE_MODI` angleicht.
+    """
+    assert WARMWASSER in AUFGETEILTE_MODI and WARMWASSER not in MESSBARE_MODI, (
+        "Warmwasser ist ableitbar, bekommt aber bewusst keinen eigenen "
+        "Betriebsart-Zähler (N-336) — sonst stünde neben dem Summanden "
+        "`strom_warmwasser_kwh` eine gleichnamige Teilmenge."
+    )
+    assert {LUEFTEN, ENTFEUCHTEN} <= set(MESSBARE_MODI), (
+        "Lüften und Entfeuchten sind messbar, auch wenn ein Modus-Signal sie "
+        "nicht aufteilen kann — ein Utility-Meter je Tarif kann es."
+    )
+    assert not ({LUEFTEN, ENTFEUCHTEN} & AUFGETEILTE_MODI)
 
 
 # ============================================================================

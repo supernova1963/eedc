@@ -63,6 +63,7 @@ function KategorieSektion({
   onReaggregateBereich,
   onGeraetewerteLoeschen,
   onKraftstoffpreiseNachpflegen,
+  onTemperaturAusMessung,
   onFeldwertEntfernen,
   reparaturBusy,
 }: {
@@ -75,6 +76,7 @@ function KategorieSektion({
     anlageId: number, jahr: number, monat: number, hatZaehler?: boolean,
   ) => Promise<void>
   onKraftstoffpreiseNachpflegen?: (anlageId: number) => Promise<void>
+  onTemperaturAusMessung?: (anlageId: number) => Promise<void>
   onFeldwertEntfernen?: (investitionId: number, feld: string, label: string, monate: string[]) => Promise<void>
   reparaturBusy?: string | null  // key = `${anlage_id}:${datum}` (Einzeltag) bzw. `${anlage_id}:${von}:${bis}` (Bereich) bzw. `${anlage_id}:${jahr}-${monat}` (#349)
 }) {
@@ -168,6 +170,12 @@ function KategorieSektion({
             const kpKey = kpAnlageId ? `${kpAnlageId}:kraftstoffpreis` : null
             const isKpBusy = kpKey && reparaturBusy === kpKey
 
+            // N-426-Nachtrag: Ø-Temperatur aus der eigenen Messreihe nachtragen.
+            const tempAnlageId = e.action_kind === 'temperatur_aus_messung'
+              ? Number(e.action_params?.anlage_id) : undefined
+            const tempKey = tempAnlageId ? `${tempAnlageId}:temperatur` : null /* de-de-allow: interner State-Key (Busy-Kennung), keine Anzeige */
+            const isTempBusy = tempKey && reparaturBusy === tempKey
+
             // N-393: Wert in einem Feld, das das Gerät nicht mehr führt.
             const fwInvId = e.action_kind === 'feldwert_entfernen'
               ? Number(e.action_params?.investition_id) : undefined
@@ -248,6 +256,21 @@ function KategorieSektion({
                   >
                     {!isFwBusy && <Wrench className="h-3 w-3 mr-1" />}
                     {e.action_label ?? 'Wert entfernen'}
+                  </Button>
+                )}
+                {e.action_kind === 'temperatur_aus_messung' && onTemperaturAusMessung
+                  && tempAnlageId && (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    className="flex-shrink-0"
+                    onClick={() => onTemperaturAusMessung(tempAnlageId)}
+                    disabled={!!reparaturBusy}
+                    loading={!!isTempBusy}
+                  >
+                    {!isTempBusy && <Wrench className="h-3 w-3 mr-1" />}
+                    {e.action_label ?? 'Temperatur aus Messung übernehmen'}
                   </Button>
                 )}
                 {e.action_kind === 'kraftstoffpreis_backfill' && onKraftstoffpreiseNachpflegen
@@ -423,6 +446,32 @@ export function DatenCheckerVerwaltung({ anlageId, kopfZusatz }: { anlageId: num
     }
   }
 
+  const handleTemperaturAusMessung = async (anlageId: number) => {
+    const key = `${anlageId}:temperatur` /* de-de-allow: interner State-Key (Busy-Kennung), keine Anzeige */
+    setReparaturBusy(key)
+    setReparaturMessage(null)
+    try {
+      const r = await monatsdatenApi.temperaturAusMessung(anlageId)
+      setReparaturMessage({
+        art: r.gefuellt > 0 ? 'ok' : 'hinweis',
+        text: r.gefuellt > 0
+          ? `${r.gefuellt} Monat(e) haben jetzt eine Ø Temperatur aus deinen eigenen Messwerten.`
+            + (r.offen > 0
+                ? ` Für ${r.offen} weitere reicht die Messreihe nicht zurück — dort hilft „Wetterdaten holen“ im Monat selbst.`
+                : '')
+          : 'Es war nichts nachzutragen — für die offenen Monate reicht die Messreihe nicht zurück.',
+      })
+      setRefreshKey(k => k + 1)
+    } catch (e) {
+      setReparaturMessage({
+        art: 'fehler',
+        text: e instanceof Error ? e.message : 'Die Ø Temperatur konnte nicht nachgetragen werden',
+      })
+    } finally {
+      setReparaturBusy(null)
+    }
+  }
+
   const handleKraftstoffpreiseNachpflegen = async (anlageId: number) => {
     const key = `${anlageId}:kraftstoffpreis` /* de-de-allow: interner State-Key (Busy-Kennung), keine Anzeige */
     setReparaturBusy(key)
@@ -590,6 +639,7 @@ export function DatenCheckerVerwaltung({ anlageId, kopfZusatz }: { anlageId: num
                   onReaggregateBereich={handleReaggregateBereich}
                   onGeraetewerteLoeschen={handleGeraetewerteLoeschen}
                   onKraftstoffpreiseNachpflegen={handleKraftstoffpreiseNachpflegen}
+                  onTemperaturAusMessung={handleTemperaturAusMessung}
                   onFeldwertEntfernen={handleFeldwertEntfernen}
                   reparaturBusy={reparaturBusy}
                 />

@@ -33,12 +33,23 @@ export interface ProviderInfo {
   hinweis?: string
 }
 
+/**
+ * Woher die Ø-Monatstemperatur stammt (N-426).
+ *
+ * `messung` = die eigene Außentemperatur-Reihe der Anlage (Stundenwerte, sonst
+ * Tages-Min/Max) — sie steht VOR dem Archiv. Bewusst nicht dasselbe wie
+ * `datenquelle`: die beschreibt die Strahlung und kann `pvgis-tmy` sein, wo es
+ * gar keine Temperatur gibt.
+ */
+export type TemperaturHerkunft = 'messung' | 'open-meteo' | 'brightsky'
+
 export interface WetterDaten {
   jahr: number
   monat: number
   globalstrahlung_kwh_m2: number
   sonnenstunden: number
   durchschnittstemperatur_c?: number
+  temperatur_herkunft?: TemperaturHerkunft
   datenquelle: 'open-meteo' | 'brightsky' | 'pvgis-tmy' | 'defaults'
   standort: StandortInfo
   abdeckung_prozent?: number

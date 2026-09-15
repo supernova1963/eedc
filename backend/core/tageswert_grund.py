@@ -189,3 +189,43 @@ def tageswert_grund_text(
         if handlung:
             return f"{text} — {handlung}"
     return text
+
+
+#: Wortlaut der **Abdeckungs-Marke** eines Tages (R-4, 15.09.2026) —
+#: die positive Kehrseite der drei Zustände oben.
+#:
+#: ⭐ **Warum sie in dieses Modul gehört.** Die drei Gründe darüber sagen, warum
+#: eine Zahl **fehlt**; diese Marke sagt, was eine Zahl, die **da ist**, nicht
+#: abdeckt. Beides ist dieselbe Frage — *was darf diese Tagesansicht
+#: behaupten?* — und beides ist Text für den Anwender, der nur an einer Stelle
+#: stehen darf (Regel 3 des Modulkopfs: die Route liefert den fertigen Satz,
+#: nicht den Schlüssel).
+#:
+#: ⚠ **Ohne Einschränkung gibt es keinen Satz.** Ein „gemessen 00:00–24:00" an
+#: jedem normalen Tag wäre Lärm — und Lärm macht den Ausnahmefall unsichtbar.
+ABDECKUNG_AB: Final[str] = "gemessen ab {ab} Uhr"
+ABDECKUNG_BIS: Final[str] = "gemessen bis {bis} Uhr"
+ABDECKUNG_VON_BIS: Final[str] = "gemessen {ab}–{bis} Uhr"
+
+
+def tages_abdeckung_hinweis(ab: Optional[str], bis: Optional[str]) -> Optional[str]:
+    """„gemessen ab 11:00 Uhr" — oder ``None``, wenn der Tag ganz abgedeckt ist.
+
+    Der Tages-Zwilling zu ``DatenquelleInfo.abdeckung_von``/``…_bis`` aus dem
+    laufenden Monat (N-472): **keine Hochrechnung, aber auch kein Verschweigen**
+    (ADR-002/**P4**). Er entsteht am ersten Tag nach einer Zuordnung (linker
+    Rand fehlt) und am laufenden Tag (rechter Rand fehlt).
+
+    Args:
+        ab: Uhrzeit ``HH:MM`` des ersten Standes — ``None``, wenn der Tag um
+            0 Uhr beginnt.
+        bis: Uhrzeit ``HH:MM`` des letzten Standes — ``None``, wenn er bis
+            24 Uhr reicht.
+    """
+    if ab and bis:
+        return ABDECKUNG_VON_BIS.format(ab=ab, bis=bis)
+    if ab:
+        return ABDECKUNG_AB.format(ab=ab)
+    if bis:
+        return ABDECKUNG_BIS.format(bis=bis)
+    return None

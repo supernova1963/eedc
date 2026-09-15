@@ -34,13 +34,18 @@ from typing import Optional
 
 from backend.core.berechnungen.betriebsart_gemessen import (
     betriebsart_nutzenergie_kwh,
+    nutzenergie_ohne_kennzahl_kwh,
+    funktionsfremd_abzug_kwh,
     modus_strom_zeile,
 )
 from backend.core.berechnungen.modus_split import (
     heizwaerme_ist_abgeleitet,
     warmwasser_ist_abgeleitet,
 )
-from backend.core.berechnungen.waermepumpe_kennzahl import waerme_gesamt_kwh
+from backend.core.berechnungen.waermepumpe_kennzahl import (
+    heizwaerme_kwh,
+    waerme_gesamt_kwh,
+)
 from backend.core.betriebsmodus import MODUS_ABDECKUNG_FELD, MODUS_STROM_FELD
 from backend.core.betriebsmodus import HEIZEN as _HEIZEN
 from backend.core.betriebsmodus import KUEHLEN as _KUEHLEN
@@ -52,8 +57,8 @@ from backend.core.field_definitions import (
     ist_abgabe_kategorie,
     ist_zaehler_kategorie,
     get_speicher_netzladung_kwh,
-    get_wp_heizenergie_kwh,
-    get_wp_strom_kwh,
+    get_wp_heizenergie_kwh,  # noqa: F401  (Re-Export fuer Altaufrufer)
+    wp_strom_aufteilung,
 )
 from backend.core.investition_parameter import abgrenzung_stoerung
 
@@ -92,7 +97,32 @@ class ImdTypBeitrag:
     wp_waerme: float = 0.0
     wp_strom_heizen: float = 0.0
     wp_strom_warmwasser: float = 0.0
-    wp_hat_split: bool = False            # getrennte_strommessung aktiv
+    #: **WK-16d/K5: der Rest der SUMMANDEN-Aufteilung** —
+    #: ``wp_strom − (Strom Heizen + Strom Warmwasser + gemessene
+    #: Betriebsart-Teilmengen)``. Er entsteht, sobald ein Gesamtzähler **mehr**
+    #: misst als die Achsen zusammen: Standby, Steuerung, Umwälzpumpen
+    #: (dietmar1968s „Systemverbrauch").
+    #:
+    #: ⛔ **Nicht zu verwechseln mit** ``WpFakten.modus_nicht_aufgeteilt_kwh``.
+    #: Zwei Reste, zwei **verschiedene** Aufteilungen derselben Menge: hier die
+    #: der Summanden-Achsen, dort die der Betriebsart-Teilmengen (Stunden ohne
+    #: Modus-Signal). Sie zu addieren wäre Doppelzählung — die Klasse, gegen die
+    #: der ganze Kanon in Kapitel 3 steht.
+    wp_strom_nicht_aufgeteilt: float = 0.0
+    #: ⛔ **Das Kennzeichen ``getrennte_strommessung``, und das bleibt es**
+    #: (N-462): Die Frage hier lautet *liegt der Strom getrennt je Funktion
+    #: vor?* (Konsumenten: Jahreskennzahlen, ``/aggregiert``, PDF) — nicht
+    #: *ist der Nenner die feine Summe?*, wie bei
+    #: {@link funktionsfremd_abzug_kwh}. Ein Wort, zwei Fragen.
+    wp_hat_split: bool = False
+    #: N-391: Trägt die Zeile eine **gemessene Gesamtwärme** (Feld
+    #: ``waerme_kwh``, EIN gemeinsamer Wärmemengenzähler)? Dann gilt sie (D1) —
+    #: und die Kennzahlen **je Funktion** haben für die Funktionen ohne eigenen
+    #: Wärmewert keinen Zähler, sondern einen Grund
+    #: ({@link GRUND_WAERME_NICHT_JE_FUNKTION}).
+    #: ⚠ Die MENGE steht schon in ``wp_waerme``; dies hier ist ihre **Herkunft**,
+    #: und nur die kann die Frage „je Funktion?" beantworten.
+    wp_waerme_ist_gesamt: bool = False
     # #263 K-2 (S3): der Modus-Split. NICHT mit `wp_strom_heizen` verwechseln —
     # das ist der SUMMAND bei getrennter Strommessung (zwei physische Zähler),
     # dies hier sind TEILMENGEN von `wp_strom` (ein Zähler, Modus mitgeschrieben).
@@ -108,6 +138,31 @@ class ImdTypBeitrag:
     #: ``ModusStromZeile.funktionsfremd_kwh`` aus dem Nenner der Arbeitszahl.
     wp_modus_strom_lueften: float = 0.0
     wp_modus_strom_entfeuchten: float = 0.0
+    #: **R-C / N-398 (WK-16f):** die abgegebene **Nutzenergie** derselben zwei
+    #: Betriebsarten — die Gegenstuecke zu den zwei Feldern darueber.
+    #:
+    #: ⚠ **Menge ja, Kennzahl nein.** E4 bleibt unveraendert: Aus diesen Zahlen
+    #: entsteht keine Arbeitszahl, weil eedc den Nutzen von Lueften und
+    #: Entfeuchten nicht bewerten kann. Sie stehen als **Zeile** neben ihrem
+    #: Strom, damit ein zugeordneter Zaehler ueberhaupt irgendwo erscheint —
+    #: bis zum 14.09.2026 las sie niemand (N-398, Prinzip F-7).
+    wp_nutzenergie_lueften: float = 0.0
+    wp_nutzenergie_entfeuchten: float = 0.0
+    #: **SOLL-§9-E7 / Ergänzung (Option A):** der Teil des funktionsfremden
+    #: Stroms, der vom Nenner einer Arbeitszahl abgezogen werden **darf** —
+    #: aufgelöst von {@link funktionsfremd_abzug_kwh}.
+    #:
+    #: ⛔ **Nicht dasselbe wie die Summe der drei Felder darüber, und deshalb
+    #: ein eigenes Feld statt einer Property.** Die Entscheidung hängt an
+    #: ``getrennte_strommessung`` — also an **diesem Gerät**. Eine Anlage darf
+    #: ein F5-Gerät neben einem nicht-F5-Gerät haben; auf der Aggregat-Ebene
+    #: wäre sie nicht mehr zu treffen, weil ``wp_hat_split`` dort schon zu
+    #: ``any(...)`` gefaltet ist. Sie fällt deshalb hier, je Zeile.
+    #:
+    #: ⚠ Die drei Mengen-Felder darüber bleiben **unverändert** — sie tragen
+    #: die Aufteilung, die Balken und die Restmenge (K1). Nur der Nenner der
+    #: Kennzahl liest dieses Feld.
+    wp_modus_strom_funktionsfremd_abzug: float = 0.0
     #: W-5 (SOLL §4.1): die **Kältemenge** — abgegebene Nutzenergie im
     #: Kühlbetrieb. Bewusst nicht „waerme": im Kühlbetrieb ist die Nutzenergie
     #: Kälte, und ein Feldname, der etwas anderes behauptet als er trägt, ist
@@ -239,7 +294,10 @@ def imd_typ_beitrag(
     if typ == "waermepumpe":
         params = getattr(inv, "parameter", None) or {}
         hat_split = bool(params.get("getrennte_strommessung"))
-        heizung = get_wp_heizenergie_kwh(data)
+        # N-398: `heizwaerme_kwh` statt der Rohspalte — dieselbe Lesetuer plus
+        # den Rueckfall auf die gemessene *Nutzenergie Heizbetrieb*, wenn kein
+        # Waermemengenzaehler am Geraet haengt (die eine Weiche, s. dort).
+        heizung = heizwaerme_kwh(data) or 0.0
         # N-379: **Der Lesepfad fragt dieselbe Registry wie die Erfassung.**
         # An einer Split-Klimaanlage gibt es keinen Warmwasserkreis (N-304); ein
         # dort noch gespeicherter Altwert floss trotzdem in `wp_waerme` und von
@@ -261,21 +319,29 @@ def imd_typ_beitrag(
         # D1: waerme_kwh hat Vorrang, sonst Heizung + Warmwasser (kanonisch).
         # Seit 2026-08-26 im Layer-SoT `waermepumpe_kennzahl.waerme_gesamt_kwh`
         # — der Client hatte dieselbe Regel als zweite Stelle (Befund W-9).
-        waerme = waerme_gesamt_kwh(_f(data, "waerme_kwh"), heizung, warmwasser)
+        _waerme_gesamt = _f(data, "waerme_kwh")
+        waerme = waerme_gesamt_kwh(_waerme_gesamt, heizung, warmwasser)
         # F-56: die Weiche liegt im Layer-SoT `modus_strom_zeile` — sie stand
         # bis dahin hier inline und war im HA-Export daneben nachgebaut, ohne
         # den Gemessen-Zweig. Eine Regel, zwei Codestellen, eine Drift.
         _modus = modus_strom_zeile(data)
         _gemessen = _modus.gemessen
+        _nutz = nutzenergie_ohne_kennzahl_kwh(data)
+        # WK-16d: Menge UND Rest kommen aus **einem** Aufruf. Den Rest daneben
+        # selbst zu bilden hieße, die Stufenregel nachzubauen (F-56).
+        _strom = wp_strom_aufteilung(data, params)
         return ImdTypBeitrag(
             typ=typ,
-            wp_strom=get_wp_strom_kwh(data, params),
+            wp_strom=_strom.menge_kwh,
+            wp_strom_nicht_aufgeteilt=_strom.nicht_aufgeteilt_kwh,
             wp_heizung=heizung,
             wp_warmwasser=warmwasser,
             wp_waerme=waerme,
             wp_strom_heizen=_f(data, "strom_heizen_kwh"),
             wp_strom_warmwasser=_f(data, "strom_warmwasser_kwh"),
             wp_hat_split=hat_split,
+            # N-391: die Herkunft der Wärme, nicht ihre Menge — s. Feld-Docstring.
+            wp_waerme_ist_gesamt=bool(_waerme_gesamt),
             # #263 — **gemessen schlägt abgeleitet** (ADR-002/P8), und zwar
             # **ganz oder gar nicht je Zeile**.
             #
@@ -298,13 +364,36 @@ def imd_typ_beitrag(
             wp_modus_strom_warmwasser=_modus.warmwasser_kwh,
             wp_modus_strom_lueften=_modus.lueften_kwh,
             wp_modus_strom_entfeuchten=_modus.entfeuchten_kwh,
+            # SOLL-§9-E7/Option A: **abgezogen wird nur, was im Nenner steht.**
+            # Die Regel liegt im Layer, nicht hier — sie gilt für DIESES Gerät,
+            # und genau deshalb fällt die Entscheidung in dieser Zeile und nicht
+            # in der Anlagen-Summe (Mischanlagen).
+            # ⛔ **die STUFE dieser Zeile, nicht das Kennzeichen** (N-462,
+            # 13.09.2026): Das Kennzeichen sagt nichts darüber, WELCHE Menge
+            # `wp_strom_aufteilung` für diese Zeile gewählt hat. Ist es der
+            # Gesamtzähler, steckt der Kühlstrom darin und muss abgezogen
+            # werden — sonst zeigt dasselbe Gerät mit denselben Zählern 3,0
+            # statt 3,75, allein weil ein Schalter gesetzt ist. `wp_hat_split`
+            # unten bleibt das Kennzeichen: es beantwortet die ANDERE Frage
+            # („liegt der Strom getrennt je Funktion vor?").
+            # ⚠ Seit WK-16d ist der Gesamtzähler auch neben einer
+            # **vollständigen** Achse die Menge — der Abzug folgt mit, weil er
+            # dieselbe Antwort liest und keine eigene bildet (N-450).
+            wp_modus_strom_funktionsfremd_abzug=funktionsfremd_abzug_kwh(
+                _modus, hat_split=_strom.stufe == "fein",
+            ),
             wp_nutzenergie_kuehlen=(
                 betriebsart_nutzenergie_kwh(data, _KUEHLEN) or 0.0
             ),
+            # R-C (N-398): dieselbe Lesetuer, die andere Frage — die zwei
+            # Betriebsarten OHNE Kennzahl. Ueber den Layer-SoT, nicht ueber
+            # zwei Direktaufrufe daneben (F-56).
+            wp_nutzenergie_lueften=_nutz.lueften_kwh,
+            wp_nutzenergie_entfeuchten=_nutz.entfeuchten_kwh,
             wp_modus_abdeckung_h=_f(data, MODUS_ABDECKUNG_FELD),
             wp_modus_gemessen=_gemessen,
             wp_modus_strom_bezug=(
-                get_wp_strom_kwh(data, params)
+                _strom.menge_kwh
                 if (_f(data, MODUS_ABDECKUNG_FELD) > 0 or _gemessen) else 0.0
             ),
             # Ist die Heizwärme abgeleitet, ist der abgeleitete Anteil die

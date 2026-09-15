@@ -84,6 +84,12 @@ export interface AggregierteMonatsdaten {
   netzbezug_kwh: number
   globalstrahlung_kwh_m2: number | null
   sonnenstunden: number | null
+  /** Monatsmittel der Außentemperatur (°C) — die zweite Linie des
+   *  Wärme/Klima-Verlaufs. **Nicht** das Formularfeld
+   *  `durchschnittstemperatur`: das ist seit dem V4-Flip leer (N-426). Der
+   *  Wert kommt aus den eigenen Messreihen (Stundenwerte, sonst Tages-Min/Max);
+   *  Vorrangkette in `services/mitteltemperatur.py`. `null` = keine Spur. */
+  durchschnittstemperatur_c?: number | null
   // Dynamischer Monats-Ø-Netzbezugspreis (Flex-Tarif). null = kein Flex-Wert
   // → Fallback auf statischen Tarif, gleiche Quelle wie Cockpit (#326).
   netzbezug_durchschnittspreis_cent?: number | null
@@ -286,6 +292,20 @@ export const monatsdatenApi = {
     monate: { jahr: number; monat: number; wert: number | null }[]
   }> {
     return api.delete(`/monatsdaten/investition/${investitionId}/feld/${encodeURIComponent(feld)}`)
+  },
+
+  /**
+   * Ø-Temperatur der leeren Monate aus der eigenen Messreihe nachtragen
+   * (N-426-Nachtrag). Füllt **nur Lücken** und nur Monate, die die Reihe
+   * erreicht; ein zweiter Lauf findet nichts mehr.
+   */
+  async temperaturAusMessung(anlageId: number): Promise<{
+    anlage_id: number
+    gefuellt: number
+    offen: number
+    monate: { jahr: number; monat: number; wert: number }[]
+  }> {
+    return api.post(`/monatsdaten/anlage/${anlageId}/temperatur-aus-messung`, {})
   },
 
   /**

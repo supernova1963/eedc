@@ -1,4 +1,5 @@
 import { api } from './client'
+import type { WpGeraetZeile, WpMoeglichZeile } from './aktuellerMonat'
 
 export interface SerieInfo {
   key: string
@@ -216,6 +217,16 @@ export interface TagDetail {
   datum: string
   wp_strom_heizen_kwh: number | null
   wp_strom_warmwasser_kwh: number | null
+  /**
+   * **Was dieser Tag wirklich abdeckt** (R-4/N-491) — der fertige Satz
+   * „gemessen ab 11:00 Uhr", `null` am vollen Tag. Er entsteht am ersten Tag
+   * nach einer Zuordnung und am laufenden Tag, wenn ein Tagesrand fehlt.
+   *
+   * ⛔ **Der Wortlaut kommt aus dem Layer** (`core/tageswert_grund.py`) —
+   * eine TS-Kopie wäre die zweite Wahrheit, dieselbe Regel wie bei den drei
+   * W-18-Gründen darunter.
+   */
+  wp_abdeckung_hinweis: string | null
   wp_heizung_kwh: number | null
   wp_warmwasser_kwh: number | null
   /** Wärme gesamt des Tages — **aus dem Backend**, nicht als Client-Summe.
@@ -244,10 +255,24 @@ export interface TagDetail {
   wp_jaz_heizen_grund: string | null
   wp_jaz_warmwasser: number | null
   wp_jaz_warmwasser_grund: string | null
-  //  Im Tag immer `null` — die Kältemenge hat keinen Tages-Aggregationspfad;
-  //  der Grund daneben sagt, welcher der beiden Fälle vorliegt.
+  //  Kältemenge ÷ Kühlstrom des Tages — seit Bauschnitt 6 mit Tagespfad für
+  //  die Kälte (bis dahin im Tag immer `null`). Wert ODER Grund, wie oben.
   wp_jaz_kuehlen: number | null
   wp_jaz_kuehlen_grund: string | null
+  /** E1b — siehe {@link WpGeraetZeile}. */
+  wp_jaz_ist_schranke?: boolean | null
+  /** Der EINE Satz unter der Schranke: „Klimaanlage: Strom ohne Wärmemessung
+   *  enthalten". Fertig formuliert aus dem Layer. */
+  wp_jaz_schranke_hinweis?: string | null
+  /** D-Sicht 3: die Kennzahlen **je Gerät**, im Block selbst. */
+  wp_geraete?: WpGeraetZeile[] | null
+  /** D-Sicht 1: was die Ausstattung nicht hergibt — **einmal je Sicht**, mit
+   *  Handgriff. Eine Größe, deren Grund hier steht, bekommt **keine** Kachel
+   *  mit „—"; eine Größe mit einem Zeitraum-Grund bleibt als „—" ohne Text. */
+  wp_moeglich?: WpMoeglichZeile[] | null
+  /** Bauschnitt 8 — die Kältemenge des Tages, der Zähler der Kühlzahl
+   *  (> 0, sonst `null`). Optional, weil ältere Antworten sie nicht tragen. */
+  wp_kaelte_kwh?: number | null
   /** **W-18** — warum die Tages-Wärme fehlt, als fertiger Satz aus dem Backend.
    *  Nur gesetzt, wenn `wp_waerme_kwh` `null` ist. **Nicht im Client
    *  formulieren**: Der frühere fest verdrahtete Satz beschrieb einen von drei
@@ -353,6 +378,9 @@ export interface MonatsAuswertung {
   autarkie_prozent: number | null
   eigenverbrauch_prozent: number | null
   performance_ratio_avg: number | null
+  /** Tage mit Einstrahlungsdaten, über die `performance_ratio_avg` mittelt (A6).
+   *  NICHT `tage_mit_daten` — das ist ein anderer Nenner. */
+  performance_ratio_tage?: number | null
   batterie_vollzyklen_summe: number | null
   grundbedarf_kw: number | null
   batterie_ladung_kwh: number | null
@@ -541,6 +569,132 @@ export interface ReaggregateTagResponse {
   komponenten_ohne_wert: string[]
 }
 
+/**
+ * Eine Tageszeile des Wärme/Klima-Verlaufs (Konzept §8, Bauschnitt 4).
+ *
+ * ⚠ **Feldnamen deckungsgleich mit der Jahres-Reihe** — beide gehen durch
+ * dieselbe reine Funktion (`v4/waermeVerlauf.ts`): Jahr liefert Monate, Monat
+ * liefert Tage. Deshalb ein eigener Typ statt `TagWerte`: dessen `wp_strom` ist
+ * die Σ der Stundenleistungen (Leistungspfad), der Verlauf braucht den
+ * Zählerpfad — sonst passte die Grundmenge nicht zur Kachel darüber (W-17b).
+ *
+ * ⚠ **Kein `wp_waerme_abgeleitet_kwh`** — auf Tagesebene gibt es keine
+ * abgeleitete Wärme; sie entsteht an den Monatszeilen.
+ */
+/** Ein Segment der Verteilung — **ein Gerät, eine Funktion** (WK-16c).
+ *
+ *  ⚠ Die Kennzahl eines Geräts teilt sich mit keinem anderen (E1); die **Menge**
+ *  darf summiert werden. Deshalb steht hier eine Menge und keine Arbeitszahl. */
+export interface VerteilungSegment {
+  /** `"<investition_id>:<funktion>"` — der Schlüssel der Perioden-Werte. */
+  schluessel: string
+  /** `heizen` · `warmwasser` · `kuehlen` · `lueften` · `entfeuchten` ·
+   *  `system` (Zähler-Rest) · `ohne_modus` (Modus-Rest). */
+  funktion: string
+  funktion_label: string
+  geraet: string
+  investition_id: number
+  kwh: number
+  /** Anteil an der **aufgeteilten** Menge, nicht an der Gesamtmenge (W-17b). */
+  anteil_prozent: number
+  /** `gemessen` · `abgeleitet` · `rest`. */
+  herkunft: string
+  preis_cent?: number | null
+  kosten_euro?: number | null
+}
+
+/** Eine Periode des Verlaufs — Stunde, Tag oder Monat. */
+export interface VerteilungPeriode {
+  schluessel: string
+  label: string
+  /** `{Segment-Schlüssel: kWh}` — nur Segmente mit Menge (P4). */
+  kwh_je_segment: Record<string, number>
+  temperatur_c?: number | null
+  /** Symbol-Name wie im Live-Dashboard (`sunny` · `cloudy` · …) oder `null`. */
+  wetter_symbol?: string | null
+}
+
+/** Verteilung eines Zeitraums **und** ihr Verlauf — ein Typ für alle drei Stufen. */
+export interface VerteilungVerlauf {
+  sicht: string
+  /** `stunde` · `tag` · `monat` — die Auflösung der Perioden. */
+  stufe: string
+  segmente: VerteilungSegment[]
+  perioden: VerteilungPeriode[]
+  /** Der **gesamte** Wärme/Klima-Strom des Zeitraums (K1). */
+  menge_kwh: number
+  /** Σ der Segmente — die Differenz zu `menge_kwh` wird genannt (W-17b). */
+  aufgeteilt_kwh: number
+  kosten_gesamt_euro?: number | null
+  /** Σ aller Perioden. Bei Monat und Tag **nicht** `aufgeteilt_kwh` (andere
+   *  Quelle, anderes Fenster) — die Differenz wird genannt. */
+  verlauf_kwh: number
+  /** Nur `stufe === 'stunde'`: was sich keiner Stunde zuordnen ließ (P4). */
+  ohne_stundenform_kwh?: number | null
+}
+
+export interface WaermeVerlaufTag {
+  datum: string
+  wp_strom_kwh: number | null
+  wp_waerme_kwh: number | null
+  /** Bauschnitt 6b: gemessene **Kälte** des Tages — eine eigene Rolle, nie in
+   *  `wp_waerme_kwh` (Konzept §8). `null` = keine Aussage. */
+  wp_kaelte_kwh?: number | null
+  temperatur_c: number | null
+  wp_modus_strom_heizen_kwh: number | null
+  wp_modus_strom_warmwasser_kwh: number | null
+  wp_modus_strom_kuehlen_kwh: number | null
+  wp_modus_strom_lueften_kwh: number | null
+  wp_modus_strom_entfeuchten_kwh: number | null
+  wp_modus_nicht_aufgeteilt_kwh: number | null
+  wp_modus_strom_bezug_kwh: number | null
+  wp_modus_abdeckung_h: number | null
+  wp_modus_gemessen: boolean | null
+}
+
+/** Eine Stunde des Wärme/Klima-Verlaufs in *Cockpit → Tag* (Bauschnitt 5).
+ *  Dieselben Feldnamen wie `WaermeVerlaufTag`; statt `datum` der Slot
+ *  (Rückwärts-Raster wie die Stundenantwort). Das Tor (`wp_modus_gemessen`,
+ *  `wp_modus_abdeckung_h`) ist das des Tages. Keine Temperatur — die steht in
+ *  `StundenWert`. */
+export interface WaermeVerlaufStunde {
+  stunde: number
+  wp_strom_kwh: number | null
+  wp_waerme_kwh: number | null
+  /** Bauschnitt 6b: gemessene Kälte des Slots (je Gerät verteilt, N-437). */
+  wp_kaelte_kwh?: number | null
+  wp_modus_strom_heizen_kwh: number | null
+  wp_modus_strom_warmwasser_kwh: number | null
+  wp_modus_strom_kuehlen_kwh: number | null
+  wp_modus_strom_lueften_kwh: number | null
+  wp_modus_strom_entfeuchten_kwh: number | null
+  wp_modus_nicht_aufgeteilt_kwh: number | null
+  wp_modus_strom_bezug_kwh: number | null
+  wp_modus_abdeckung_h: number | null
+  wp_modus_gemessen: boolean | null
+  /** WK-09 B2 — der **Funktions**-Stapel (Summanden aus den Zählern
+   *  `strom_heizen_kwh`/`strom_warmwasser_kwh`). `null` heißt „an diesem Tag
+   *  nicht erfasst": dann gibt es die Sicht „nach Funktion" nicht (S2a). */
+  wp_funktion_strom_heizen_kwh?: number | null
+  wp_funktion_strom_warmwasser_kwh?: number | null
+  wp_funktion_uebrige_kwh?: number | null
+}
+
+export interface WaermeVerlaufStunden {
+  stunden: WaermeVerlaufStunde[]
+  /** Menge der Aufteilung (**Strom**-Stapel) ohne Stundenform — nicht
+   *  verteilt, sondern genannt. */
+  ohne_stundenform_kwh: number | null
+  /** Dasselbe für die Wärme- und die Kälte-Linie (N-437, Bauschnitt 6b). */
+  waerme_ohne_stundenform_kwh?: number | null
+  kaelte_ohne_stundenform_kwh?: number | null
+  /** Gibt es an diesem Tag Funktions-Zähler? Nur dann erscheint der Umschalter
+   *  „nach Betriebsart / nach Funktion" (SOLL §3.3/S2a). */
+  funktions_stapel_verfuegbar?: boolean
+  /** Dasselbe für die Funktions-Zähler (P4). */
+  funktion_ohne_stundenform_kwh?: number | null
+}
+
 export const energieProfilApi = {
   getStunden: (anlageId: number, datum: string): Promise<StundenAntwort> =>
     api.get(`/energie-profil/${anlageId}/stunden?datum=${datum}`),
@@ -553,6 +707,34 @@ export const energieProfilApi = {
 
   getTageWerte: (anlageId: number, von: string, bis: string): Promise<TagWerte[]> =>
     api.get(`/energie-profil/${anlageId}/tage-werte?von=${von}&bis=${bis}`),
+
+  /** Die Tagesreihe des Wärme/Klima-Verlaufs. Zeitraum max. 31 Tage. */
+  /** Verteilung & Verlauf (WK-16c) — **eine** Route für alle drei Sichten.
+   *
+   *  `sicht` bestimmt die Auflösung der Perioden: Jahr → Monate, Monat → Tage,
+   *  Tag → Stunden. Der Aufrufer gibt den Zeitraum, den seine Sicht ohnehin
+   *  kennt; drei Client-Funktionen für dieselbe Antwort wären drei Stellen, an
+   *  denen ein Feld vergessen wird. */
+  getWaermeVerteilung: (
+    anlageId: number,
+    q: { sicht: 'tag'; datum: string } | { sicht: 'monat'; jahr: number; monat: number }
+      | { sicht: 'jahr'; jahr: number },
+  ): Promise<VerteilungVerlauf> => {
+    const p = new URLSearchParams({ sicht: q.sicht })
+    if (q.sicht === 'tag') p.set('datum', q.datum)
+    else {
+      p.set('jahr', String(q.jahr))
+      if (q.sicht === 'monat') p.set('monat', String(q.monat))
+    }
+    return api.get(`/energie-profil/${anlageId}/waerme-verteilung?${p.toString()}`)
+  },
+
+  getWaermeVerlauf: (anlageId: number, von: string, bis: string): Promise<WaermeVerlaufTag[]> =>
+    api.get(`/energie-profil/${anlageId}/waerme-verlauf?von=${von}&bis=${bis}`),
+
+  /** Die 24 Stunden des Wärme/Klima-Verlaufs eines Tages. */
+  getWaermeVerlaufStunden: (anlageId: number, datum: string): Promise<WaermeVerlaufStunden> =>
+    api.get(`/energie-profil/${anlageId}/waerme-verlauf-stunden?datum=${datum}`),
 
   getTagDetail: (anlageId: number, datum: string): Promise<TagDetail> =>
     api.get(`/energie-profil/${anlageId}/tag-detail?datum=${datum}`),

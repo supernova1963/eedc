@@ -35,10 +35,14 @@ _BASIS_EXTRA_KEYS = {
 }
 
 # Investment-Keys die als Live-Leistungswerte (W) interpretiert werden
+# ⭐ `leistung_kuehlen_w` kam am 13.09.2026 dazu (N-439). Ohne den Key gab es im
+# MQTT-Standalone-Betrieb keine Kühl-Kurve — die Serie im Tagesverlauf entsteht
+# aus genau diesen Snapshots (`live_tagesverlauf_service`, MQTT-Zweig).
 _INV_POWER_KEYS = {
     "leistung_w",
     "leistung_heizen_w",
     "leistung_warmwasser_w",
+    "leistung_kuehlen_w",
 }
 
 

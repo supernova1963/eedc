@@ -337,7 +337,14 @@ class VorschlagService:
                 modus = params.get("effizienz_modus", "gesamt_jaz")
 
                 cop = None
-                if modus == "gesamt_jaz":
+                if feld == "waerme_kwh":
+                    # N-391: **eine Gesamtwärme braucht eine Gesamt-Arbeitszahl.**
+                    # Die getrennten Werte (`scop_*`/`cop_*`) gelten je Funktion
+                    # — einen davon auf den Gesamtstrom anzuwenden ergäbe eine
+                    # Menge, die keine Funktion beschreibt. Fehlt die gepflegte
+                    # JAZ, gibt es hier keinen Vorschlag statt eines falschen.
+                    cop = params.get("jaz")
+                elif modus == "gesamt_jaz":
                     cop = params.get("jaz")
                 elif modus == "scop":
                     if feld == "heizenergie_kwh":

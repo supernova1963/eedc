@@ -235,7 +235,10 @@ async def get_komponenten_zeitreihe(
             # Ersparnis und CO₂ seit v4.0.5 ziehen (E-B). Kühlen, Lüften und
             # Entfeuchten stehen dafür in EINER Größe: die Aufzählung an vier
             # Aufrufern war die Bauform, an der W-14 entstanden ist.
-            strom_funktionsfremd_kwh=wp.modus_strom_funktionsfremd_kwh,
+            # ⭐ SOLL-§9-E7/Option A: der **Abzug**, nicht die Menge. Bei
+            # getrennter Strommessung mit nur abgeleiteter Aufteilung ist er 0
+            # — die Verteilung kürzt keinen gemessenen Nenner.
+            strom_funktionsfremd_kwh=wp.modus_strom_funktionsfremd_abzug_kwh,
             # R2: alle erkennbaren Lagen über die eine Layer-Stelle. Der
             # Zeitraum-Versatz gehört nicht dazu — der Hub liest EINE Quelle
             # (die Monats-Fakten), die Vier-Quellen-Auflösung gibt es nur in
@@ -248,6 +251,9 @@ async def get_komponenten_zeitreihe(
                 # oben („EINE Quelle") meint die Daten-Herkunft, nicht ein Gerät.
                 bauarten_gemischt=wp.bauarten_gemischt,
                 geraete_ohne_waerme=wp.waerme_deckt_nicht_alle_geraete,
+                # N-441: die Gegenrichtung — Waerme von einem Geraet, Strom von
+                # einem anderen. Dieselbe anlagenweite Summe wie oben.
+                geraete_verschieden=wp.geraete_verschieden,
             ),
         )
         wp_cop = _wp_az.wert

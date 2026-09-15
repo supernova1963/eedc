@@ -19,7 +19,7 @@ import { fmtCalc, FehlerZustand, ChartDatenTabelle } from '../components/ui'
 import { AnlageLeer, DatenLeer } from './OnboardingLeer'
 import { BlockShell, BlockStackSkeleton, KpiStrip, type Block } from '../components/blocks'
 import { ParkProvider, ParkFuss, Parkbar, usePark } from '../components/park'
-import ZaehlerstaendeBlock, { useZaehlerstaende, zaehlerParkIds } from '../components/zaehler/ZaehlerstaendeBlock'
+import ZaehlerstaendeBlock, { useZaehlerstaende, zaehlerstaendeFuer, zaehlerParkIds } from '../components/zaehler/ZaehlerstaendeBlock'
 import { useApiData, useScrollErhalt } from '../hooks'
 import { MONAT_KURZ, BLOCK_IDENTITAET } from '../lib'
 import { TagesverlaufChart, baueChartDaten } from './TagesverlaufChart'
@@ -27,6 +27,7 @@ import { baueMonatKpis, MonatBilanz, type GleicheMonatStats } from './MonatBilan
 import { monatBilanzParkIds } from './bilanzParkIds'
 import { MONAT_PARK_KEY } from './monatParkScope'
 import { baueKomponentenBloecke } from './KomponentenSektionen'
+import { punkteAusVerlaufsTagen, type WaermeVerlaufPunkt } from './waermeVerlauf'
 import { baueMonatAuswertungBloecke } from './MonatAuswertungBloecke'
 import { MonatsRail, type RailEintrag } from './MonatsRail'
 import { MonatStepper } from './MonatStepper'
@@ -39,6 +40,11 @@ import { sollErfuellungProzent, sollFensterText } from '../lib/sollErfuellung'
 import { offenerAbschlussMonat } from '../lib/monatsLuecken'
 
 interface MonatRef { jahr: number; monat: number }
+
+/** Zwei Monatsreferenzen, ein Monat? (Paarung, Style-Guide A3a) */
+function gleicherMonat(a: MonatRef | null | undefined, b: MonatRef | null | undefined): boolean {
+  return !!a && !!b && a.jahr === b.jahr && a.monat === b.monat
+}
 
 function vormonat({ jahr, monat }: MonatRef): MonatRef {
   return monat === 1 ? { jahr: jahr - 1, monat: 12 } : { jahr, monat: monat - 1 }
@@ -57,12 +63,16 @@ function monatLabel({ jahr, monat }: MonatRef): string {
 
 /** Tages-Werte des Monats + Einzelmonats-KPIs in einem Zug — geteilt von
  *  Initial-Load und Reload (C1), damit es keinen zweiten Fetch-Pfad gibt. */
-function ladeMonatsdaten(anlageId: number, ref: MonatRef) {
+async function ladeMonatsdaten(anlageId: number, ref: MonatRef) {
   const akt = monatsSpanne(ref)
-  return Promise.all([
+  const [tage, monatData] = await Promise.all([
     energieProfilApi.getTageWerte(anlageId, akt.von, akt.bis),
     aktuellerMonatApi.getData(anlageId, ref.jahr, ref.monat).catch(() => null),
   ])
+  // `ref` gehört zur Nutzlast: Sie sagt selbst, zu welchem Monat sie gehört —
+  // beim Monatswechsel steht die Auswahl schon auf dem neuen, während hier noch
+  // die Vordaten des alten liegen (`keepPreviousData`).
+  return { ref, tage, monatData }
 }
 
 // persistKey-SoT der Sicht — geteilt von BlockShell (Block-Ebene) und ParkProvider
@@ -223,8 +233,15 @@ function CockpitMonatInner({ anlageId }: { anlageId: number | undefined }) {
       keepPreviousData: true,
     },
   )
-  const tage = useMemo(() => tageQ.data?.[0] ?? [], [tageQ.data])
-  const monatData = tageQ.data?.[1] ?? null
+  const tage = useMemo(() => tageQ.data?.tage ?? [], [tageQ.data])
+  const monatData = tageQ.data?.monatData ?? null
+  // ── Die Sicht zeigt EINE Periode ────────────────────────────────────────────
+  // `gewaehlt` ist die **Auswahl** (Rail/Stepper, wirkt sofort), `angezeigterMonat`
+  // der Monat, zu dem die **Zahlen im Bild** gehören. Alles, was diese Zahlen
+  // beschriftet oder ergänzt, hängt am angezeigten Monat; die Auswahl steht im
+  // Kopf als Lade-Marker daneben (Style-Guide A3a, gebaut zuerst in Cockpit → Tag).
+  const angezeigterMonat: MonatRef | null = tageQ.data?.ref ?? gewaehlt
+  const laedtMonat = gewaehlt && !gleicherMonat(angezeigterMonat, gewaehlt) ? gewaehlt : null
 
   // Monats-Auswertung (getMonat) — fertig berechnete Analyse-Werte für die vor dem
   // Flip wiederhergestellten Energieprofil-Blöcke (Peaks/Tagesprofil/Kategorien/§51 +
@@ -232,7 +249,7 @@ function CockpitMonatInner({ anlageId }: { anlageId: number | undefined }) {
   // respektiert das Installationsdatum backend-seitig. Fehlt die Antwort (Fehler/
   // laden), bleiben die Blöcke einfach aus — sie sind additiv zur Monatsbilanz.
   const auswQ = useApiData(
-    () => energieProfilApi.getMonat(anlageId!, gewaehlt!.jahr, gewaehlt!.monat),
+    async () => ({ ref: gewaehlt!, ausw: await energieProfilApi.getMonat(anlageId!, gewaehlt!.jahr, gewaehlt!.monat) }),
     [anlageId, gewaehlt?.jahr, gewaehlt?.monat],
     {
       enabled: !!anlageId && !!gewaehlt,
@@ -240,7 +257,60 @@ function CockpitMonatInner({ anlageId }: { anlageId: number | undefined }) {
       keepPreviousData: true,
     },
   )
-  const monatAusw = auswQ.data ?? null
+  // Paarung: die Auswertungs-Blöcke und die PR-Ø-Kachel gehören zu DIESEN Kacheln
+  // oder sie erscheinen nicht — sonst stünde die Analyse des einen Monats über den
+  // Mengen eines anderen, je nachdem welche der beiden Abfragen zuerst antwortet.
+  const monatAusw = gleicherMonat(auswQ.data?.ref, angezeigterMonat) ? auswQ.data!.ausw : null
+
+  // ── Wärme/Klima-Verlauf (Konzept §8, Bauschnitt 4): x = Tage des Monats ──
+  //
+  // ⚠ **Eigener Abruf, und das ist die Entscheidung.** Die Tageszeilen von
+  // `getTageWerte` liegen oben schon geladen — sie tragen die Größen aber
+  // nicht: `wp_strom` ist dort die Σ der Stundenleistungen (Leistungspfad),
+  // während Kachel und Aufteilung mit dem Zählerpfad rechnen. Zwei Zahlen für
+  // dieselbe Größe in EINEM Bild wären W-17b ein zweites Mal (dietmar1968 sah
+  // 30 kWh Balken unter einer 284-kWh-Kachel). Betriebsart-Aufteilung und
+  // gemessene Wärme je Tag fehlen dort ohnehin.
+  //
+  // Er lädt **neben** der Sicht: Bleibt er aus, fehlt der Verlauf-Block und
+  // sonst nichts — wie die Auswertungs-Blöcke darunter.
+  const verlaufQ = useApiData(
+    async () => {
+      const spanne = monatsSpanne(gewaehlt!)
+      return { ref: gewaehlt!, tage: await energieProfilApi.getWaermeVerlauf(anlageId!, spanne.von, spanne.bis) }
+    },
+    [anlageId, gewaehlt?.jahr, gewaehlt?.monat],
+    {
+      enabled: !!anlageId && !!gewaehlt,
+      swrKey: `v4-monat-waermeverlauf:${anlageId}:${gewaehlt?.jahr}-${gewaehlt?.monat}`,
+      keepPreviousData: true,
+    },
+  )
+  // Die Punkte baut eine reine Funktion (`waermeVerlauf.ts`) — dort ist eine
+  // vergessene Durchreichung prüfbar, hier im `useMemo` war sie unsichtbar.
+  // WK-16c: Verteilung & Verlauf — **dieselbe Bauform wie der Verlauf darüber**,
+  // inklusive Paarung über `ref` (A3a: eine Sicht zeigt EINE Periode).
+  const verteilungQ = useApiData(
+    async () => ({
+      ref: gewaehlt!,
+      v: await energieProfilApi.getWaermeVerteilung(anlageId!, {
+        sicht: 'monat', jahr: gewaehlt!.jahr, monat: gewaehlt!.monat,
+      }),
+    }),
+    [anlageId, gewaehlt?.jahr, gewaehlt?.monat],
+    {
+      enabled: !!anlageId && !!gewaehlt,
+      swrKey: `v4-monat-waermeverteilung:${anlageId}:${gewaehlt?.jahr}-${gewaehlt?.monat}`, /* de-de-allow: Cache-Key, keine Anzeige */
+      keepPreviousData: true,
+    },
+  )
+  const wpVerteilung = gleicherMonat(verteilungQ.data?.ref, angezeigterMonat)
+    ? verteilungQ.data!.v : null
+  const wpVerlaufTage = gleicherMonat(verlaufQ.data?.ref, angezeigterMonat) ? verlaufQ.data!.tage : null
+  const wpVerlauf = useMemo<WaermeVerlaufPunkt[]>(
+    () => punkteAusVerlaufsTagen(wpVerlaufTage ?? []),
+    [wpVerlaufTage],
+  )
   const loading = monateQ.loading || (!!gewaehlt && tageQ.loading)
   const reloading = tageQ.reloading
   const error = monateQ.data == null && monateQ.error
@@ -265,14 +335,14 @@ function CockpitMonatInner({ anlageId }: { anlageId: number | undefined }) {
 
   // Vormonat-Aggregat + Ø gleicher Monat (andere Jahre) aus der Monatsreihe.
   const vormonatAgg = useMemo<AggregierteMonatsdaten | null>(() => {
-    if (!gewaehlt) return null
-    const vm = vormonat(gewaehlt)
+    if (!angezeigterMonat) return null
+    const vm = vormonat(angezeigterMonat)
     return alleMonate.find((m) => m.jahr === vm.jahr && m.monat === vm.monat) ?? null
-  }, [alleMonate, gewaehlt])
+  }, [alleMonate, angezeigterMonat])
 
   const glMonStats = useMemo<GleicheMonatStats | null>(() => {
-    if (!gewaehlt) return null
-    const ms = alleMonate.filter((m) => m.monat === gewaehlt.monat && m.jahr !== gewaehlt.jahr)
+    if (!angezeigterMonat) return null
+    const ms = alleMonate.filter((m) => m.monat === angezeigterMonat.monat && m.jahr !== angezeigterMonat.jahr)
     if (ms.length === 0) return null
     const avg = (vals: number[]) => (vals.length ? vals.reduce((s, v) => s + v, 0) / vals.length : null)
     const pick = (f: (m: AggregierteMonatsdaten) => number | null | undefined) =>
@@ -287,7 +357,7 @@ function CockpitMonatInner({ anlageId }: { anlageId: number | undefined }) {
       autarkie: pick((m) => m.autarkie_prozent),
       count: ms.length,
     }
-  }, [alleMonate, gewaehlt])
+  }, [alleMonate, angezeigterMonat])
 
   // Rail-Einträge = **Vereinigung** beider Grundgesamtheiten + laufender Monat:
   // die Monats-Fakten (Abschlüsse, Import, Komponenten-Zeilen) UND die lokale
@@ -321,19 +391,26 @@ function CockpitMonatInner({ anlageId }: { anlageId: number | undefined }) {
     return entries
   }, [monate, alleMonateVoll])
 
+  // „läuft/abgeschlossen" beschreibt die Zahlen im Bild, nicht die Auswahl.
   const istLaufend = useMemo(() => {
-    if (!gewaehlt) return false
+    if (!angezeigterMonat) return false
     const heute = new Date()
-    return gewaehlt.jahr === heute.getFullYear() && gewaehlt.monat === heute.getMonth() + 1
-  }, [gewaehlt])
+    return angezeigterMonat.jahr === heute.getFullYear() && angezeigterMonat.monat === heute.getMonth() + 1
+  }, [angezeigterMonat])
 
-  // #377 — Verbrauchszähler dieses Monats.
-  const zaehlerstaende = useZaehlerstaende(anlageId, 'monat', {
+  // #377 — Verbrauchszähler dieses Monats. Geholt wird für die **Auswahl** (der
+  // Abruf soll nicht auf die Kacheln warten), gezeigt wird nur, was zum
+  // **angezeigten** Monat gehört: sonst stünden die Stände des einen Monats unter
+  // den Mengen eines anderen (Style-Guide A3a).
+  const zaehlerQ = useZaehlerstaende(anlageId, 'monat', {
     jahr: gewaehlt?.jahr, monat: gewaehlt?.monat,
+  })
+  const zaehlerstaende = zaehlerstaendeFuer(zaehlerQ, {
+    zeitraum: 'monat', jahr: angezeigterMonat?.jahr, monat: angezeigterMonat?.monat,
   })
 
   const bloecke: Block[] = useMemo(() => {
-    if (!gewaehlt) return []
+    if (!angezeigterMonat) return []
     // Energie-Bilanz Block-Summary = Kernwerte auf einen Blick (wie IST), nicht
     // die Struktur-Beschreibung — im eingeklappten Zustand direkt ablesbar (A1).
     // Die Kopfzeile rendert ungekürzt — sie ist deshalb der Ort für die
@@ -352,7 +429,7 @@ function CockpitMonatInner({ anlageId }: { anlageId: number | undefined }) {
     // werden im Strip ausgeblendet. Sind ALLE geparkt → Block-Hülle ausblenden
     // (Gernot-Abnahme 2026-06-25, Entscheidung 2).
     const kpiItems = monatData
-      ? baueMonatKpis(monatData, vormonatAgg, monatAusw?.performance_ratio_avg).map((k) => ({
+      ? baueMonatKpis(monatData, vormonatAgg, monatAusw?.performance_ratio_avg, monatAusw?.performance_ratio_tage).map((k) => ({
           ...k,
           parkId: `kpi:${k.title.toLowerCase().replace(/[^a-z0-9]+/gi, '-')}`,
         }))
@@ -395,7 +472,7 @@ function CockpitMonatInner({ anlageId }: { anlageId: number | undefined }) {
         summary: bilanzSummary,
         defaultOpen: false,
         render: () => (monatData
-          ? <MonatBilanz d={monatData} vm={vormonatAgg} glMonStats={glMonStats} monatName={MONAT_KURZ[gewaehlt.monat]} />
+          ? <MonatBilanz d={monatData} vm={vormonatAgg} glMonStats={glMonStats} monatName={MONAT_KURZ[angezeigterMonat.monat]} />
           : <p className="text-sm text-gray-500 dark:text-gray-400">Keine Vergleichsdaten verfügbar.</p>),
       }]),
       ...(park.istGeparkt('el:verlauf') ? [] : [{
@@ -414,7 +491,7 @@ function CockpitMonatInner({ anlageId }: { anlageId: number | undefined }) {
             spalten={verlaufTabellenSpalten(false)}
             daten={baueChartDaten(tage)}
             zeilen={31}
-            csvDateiname={gewaehlt ? `verlauf_${gewaehlt.jahr}-${String(gewaehlt.monat).padStart(2, '0')}.csv` : 'verlauf.csv'} /* de-de-allow: Dateiname (ISO sortierbar) */
+            csvDateiname={`verlauf_${angezeigterMonat.jahr}-${String(angezeigterMonat.monat).padStart(2, '0')}.csv`} /* de-de-allow: Dateiname (ISO sortierbar) */
           />
         ),
       }]),
@@ -423,7 +500,7 @@ function CockpitMonatInner({ anlageId }: { anlageId: number | undefined }) {
       // /Park-Lage (Element-Park-Doktrin).
       ...(monatAusw ? baueMonatAuswertungBloecke(monatAusw, park, monatData?.nicht_vergueteter_erloes_euro) : []),
       // Komponenten-Detailblöcke (aktiv-gegatet, B6/B7).
-      ...(monatData ? baueKomponentenBloecke(monatData, park) : []),
+      ...(monatData ? baueKomponentenBloecke(monatData, park, 'monat', null, wpVerlauf, null, wpVerteilung) : []),
       // Finanz-Teaser (B5) — bewusst GANZ UNTEN: Netto-Ertrag/Monatsergebnis stehen
       // bereits in den Kennzahlen (D), hier nur Aufschlüsselung + Tarif + Cross-Link.
       // #377 — Verbrauchszähler: nur wenn wirklich einer gepflegt ist.
@@ -437,7 +514,7 @@ function CockpitMonatInner({ anlageId }: { anlageId: number | undefined }) {
       }] : []),
       ...(finanzBlock ? [finanzBlock] : []),
     ]
-  }, [gewaehlt, tage, monatData, monatAusw, vormonatAgg, glMonStats, park, zaehlerstaende])
+  }, [angezeigterMonat, tage, monatData, monatAusw, vormonatAgg, glMonStats, park, zaehlerstaende, wpVerlauf, wpVerteilung])
 
   if (!anlageId) {
     return (
@@ -472,7 +549,8 @@ function CockpitMonatInner({ anlageId }: { anlageId: number | undefined }) {
 
         <div className="flex-1 min-w-0 space-y-4">
           <MonatHeader
-            titel={gewaehlt ? monatLabel(gewaehlt) : '…'}
+            titel={angezeigterMonat ? monatLabel(angezeigterMonat) : '…'}
+            laedtTitel={laedtMonat ? monatLabel(laedtMonat) : null}
             laufend={istLaufend}
             d={monatData}
             onReload={reload}

@@ -27,6 +27,10 @@ from __future__ import annotations
 from typing import Iterable, Optional
 
 from backend.core.berechnungen.betriebsart_gemessen import modus_strom_zeile
+from backend.core.berechnungen.waermepumpe_kennzahl import (
+    heizwaerme_kwh,
+    waerme_gesamt_kwh,
+)
 from backend.core.field_definitions import (
     get_wp_strom_kwh,
     get_wp_warmwasser_kwh,
@@ -36,7 +40,6 @@ from backend.core.investition_parameter import (
     PARAM_WAERMEPUMPE_DEFAULTS,
 )
 from backend.core.wirtschaftlichkeit_defaults import (
-    WP_PV_ANTEIL_DEFAULT,
     WP_WIRKUNGSGRAD_GAS_DEFAULT,
     WP_WIRKUNGSGRAD_OEL_DEFAULT,
     WP_WIRKUNGSGRAD_STROM_DEFAULT,
@@ -178,10 +181,12 @@ def berechne_wp_alternativkosten_ersparnis(
             fehlen (ct/kWh).
 
     Returns:
-        Σ über alle WPs/Monate ``(gas_kosten − wp_stromkosten_netz)`` plus die
+        Σ über alle WPs/Monate ``(gas_kosten − wp_stromkosten)`` plus die
         anteiligen fixen Zusatzkosten ``Σ zusatzkosten_jahr × erfasste_Monate / 12``.
-        Der PV-Anteil am WP-Strom (``WP_PV_ANTEIL_DEFAULT``) wird nicht zum
-        Netztarif belastet.
+        Der **ganze** WP-Strom wird zum Netztarif belastet (SOLL Wärme/Klima
+        S1b) — auch der Teil aus der eigenen PV. Sein Wert steht auf der
+        PV-Seite als Eigenverbrauch; ihn hier ein zweites Mal abzuziehen
+        zählte dieselbe Kilowattstunde doppelt (ADR-002/P9).
     """
     ersparnis = 0.0
     zusatzkosten_jahr_gesamt = 0.0
@@ -206,8 +211,25 @@ def berechne_wp_alternativkosten_ersparnis(
             # Split-Klimaanlage gibt es die Groesse nicht, und genau hier
             # entstand aus einem Altwert die "Ersparnis vs. Gas" fuer Waerme,
             # die das Geraet nie abgegeben hat (dietmar1968, T89667 #295).
-            thermisch = (daten.get("heizenergie_kwh", 0) or 0) + (
-                get_wp_warmwasser_kwh(daten, wp.parameter)
+            #
+            # ⛔ **N-391/D1 (14.09.2026): der Gesamtwert VOR den Summanden.**
+            # Hier stand bis dahin die blosse Summe der beiden Achsen. Wer EINEN
+            # Waermemengenzaehler ueber Heizung und Warmwasser fuehrt, traegt
+            # seine Waerme seit WK-14b in `waerme_kwh` — und `thermisch` war
+            # dann **0**. An dieser Funktion gemessen (Lage B: Waerme gesamt
+            # 3000 kWh, Strom 1000 kWh, Gas 10 ct, Netz 30 ct): **-300,00 EUR**
+            # statt **33,33 EUR** — keine Gas-Ersparnis, nur die Stromkosten.
+            #
+            # Das ist die **N-397-Klasse** (roh gelesen, wo der Layer kanonisch
+            # liest) an einem **Geldpfad**: An dieser Summe haengen die
+            # Aussichten, der ROI-Fortschritt und die Jahres-Ersparnis des
+            # HA-Exports. `waerme_gesamt_kwh` ist die eine Regelstelle (D1);
+            # `waerme_kwh` waere als dritter Summand eine Doppelzaehlung, sobald
+            # jemand Gesamtzaehler **und** Aufteilung pflegt.
+            thermisch = waerme_gesamt_kwh(
+                daten.get("waerme_kwh"),
+                heizwaerme_kwh(daten),   # N-398
+                get_wp_warmwasser_kwh(daten, wp.parameter),
             )
             strom = get_wp_strom_kwh(daten, wp.parameter)
             # B5/X-5 (05.09.2026, Entscheid E-B 18.08.): Kühlen ersetzt keine
@@ -224,10 +246,14 @@ def berechne_wp_alternativkosten_ersparnis(
             monats_strompreis = netzbezug_preis_by_periode.get(
                 (jahr, monat), netzbezug_preis_fallback
             )
-            wp_stromkosten_netz = (
-                strom * (1.0 - WP_PV_ANTEIL_DEFAULT) * monats_strompreis / 100
-            )
-            ersparnis += gas_kosten - wp_stromkosten_netz
+            # S1b (13.09.2026, N-459): der GANZE Strom zum Netztarif. Bis
+            # hierher stand ein fester PV-Abschlag von 50 %
+            # (`WP_PV_ANTEIL_DEFAULT`) — er zog eine Kilowattstunde ab, die auf
+            # der PV-Seite schon als Eigenverbrauch gutgeschrieben ist
+            # (ADR-002/P9). Der am Gerät gepflegte „PV-Anteil (%)" beantwortet
+            # eine Mengenfrage (N-277/N-354), keine Preisfrage.
+            wp_stromkosten = strom * monats_strompreis / 100
+            ersparnis += gas_kosten - wp_stromkosten
             monate_gezaehlt.add((jahr, monat))
     ersparnis += zusatzkosten_jahr_gesamt * len(monate_gezaehlt) / 12
     return ersparnis

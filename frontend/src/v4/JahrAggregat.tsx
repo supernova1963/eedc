@@ -216,6 +216,15 @@ export function baueJahrAlsMonat(
   // Auswertungen/Finanzen): numerische Felder Σ (null-bewusst), Identität/Label
   // vom ersten Vorkommen. Monats-`formel`/`berechnung` entfallen — ein Jahres-Σ
   // hat kein sinnvolles Monats-Formelbild (Tooltip zeigt dann nur Label + Σ).
+  //
+  // ⭐ Dasselbe gilt seit 2026-09-13 für die beiden A6-Felder der Erlös- und der
+  // Betriebskosten-Zeile: `erloes_berechnung` und `betriebskosten_jahr_euro`
+  // stammen aus dem ERSTEN Monat, die Beträge daneben sind Jahres-Σ. Eine
+  // Herleitung, die auf eine andere Zahl führt als die Zeile, ist schlimmer als
+  // keine — dieselbe Begründung wie oben, deshalb hier ebenfalls leer.
+  // ⚠ Bis dahin trug `erloes_formel` die Werte IM Text („… — 123,4 kWh × 8,20
+  // ct/kWh") und zeigte damit im Jahres-T-Konto den Januar neben der Jahres-Σ;
+  // mit dem Split ist der Formeltext wertfrei und gilt im Jahr wie im Monat.
   // (Die Monat-Bauer für Cockpit/Jahr lesen nur typ/bezeichnung → unverändert.)
   const addNull = (a: number | null, b: number | null): number | null =>
     a == null && b == null ? null : (a ?? 0) + (b ?? 0)
@@ -223,7 +232,10 @@ export function baueJahrAlsMonat(
   for (const m of monate) for (const fin of m.investitionen_financials ?? []) {
     const prev = financialsMap.get(fin.investition_id)
     if (!prev) {
-      financialsMap.set(fin.investition_id, { ...fin, formel: null, berechnung: null })
+      financialsMap.set(fin.investition_id, {
+        ...fin, formel: null, berechnung: null,
+        erloes_berechnung: null, betriebskosten_jahr_euro: undefined,
+      })
     } else {
       prev.betriebskosten_monat_euro += fin.betriebskosten_monat_euro
       prev.erloes_euro = addNull(prev.erloes_euro, fin.erloes_euro)
@@ -379,6 +391,12 @@ export function baueJahrAlsMonat(
     ),
     wp_modus_strom_lueften_kwh: k?.wp_modus_strom_lueften_kwh ?? summe(f('wp_modus_strom_lueften_kwh')),
     wp_modus_strom_entfeuchten_kwh: k?.wp_modus_strom_entfeuchten_kwh ?? summe(f('wp_modus_strom_entfeuchten_kwh')),
+    // R-C (WK-16f/N-398): dieselbe Bauform wie die zwei Zeilen darüber —
+    // Jahres-Kennzahl der Route, sonst die Summe über die Monate.
+    wp_modus_nutzenergie_lueften_kwh:
+      k?.wp_modus_nutzenergie_lueften_kwh ?? summe(f('wp_modus_nutzenergie_lueften_kwh')),
+    wp_modus_nutzenergie_entfeuchten_kwh:
+      k?.wp_modus_nutzenergie_entfeuchten_kwh ?? summe(f('wp_modus_nutzenergie_entfeuchten_kwh')),
     wp_modus_strom_bezug_kwh: k?.wp_modus_strom_bezug_kwh ?? summe(f('wp_modus_strom_bezug_kwh')),
     // Kennzahlen NUR aus der Route (P12) — ohne sie bleibt „—", aber mit Grund,
     // wo die Route einen liefert.
@@ -396,6 +414,18 @@ export function baueJahrAlsMonat(
     wp_jaz_warmwasser_grund: k?.wp_jaz_warmwasser_grund ?? null,
     wp_jaz_kuehlen: k?.wp_jaz_kuehlen ?? null,
     wp_jaz_kuehlen_grund: k?.wp_jaz_kuehlen_grund ?? null,
+    // E1b + D-Sicht: alles NUR aus der Route (P12). Ohne sie bleibt der Block
+    // wie bisher — die Schranke ist ein Flag des Layers, und die Tabelle je
+    // Gerät entsteht dort, wo die Kennzahl entsteht.
+    wp_jaz_ist_schranke: k?.wp_cop_ist_schranke ?? false,
+    wp_jaz_schranke_hinweis: k?.wp_cop_schranke_hinweis ?? null,
+    wp_geraete: k?.wp_geraete ?? [],
+    wp_moeglich: k?.wp_moeglich ?? [],
+    // Bauschnitt 8: Die Kältemenge kommt aus dem Layer (`WpJahreskennzahlen`).
+    // Die Σ der Monatsantworten ist nur der Rückfall OHNE Route — wie bei
+    // Heizwärme und Strom daneben, damit die Gruppe Kühlen dann nicht Strom
+    // ohne Kälte zeigt. Liefert die Route `null`, bleibt es `null`.
+    wp_kaelte_kwh: k ? (k.wp_kaelte_kwh ?? null) : summe(f('wp_kaelte_kwh')),
     wp_strom_warmwasser_kwh: summe(f('wp_strom_warmwasser_kwh')),
     // Jahres-Counter im period-neutralen Σ-Slot; Max/Tag = höchster Einzeltag des Jahres.
     wp_starts_summe_monat: summe(f('wp_starts_summe_monat')),

@@ -959,8 +959,12 @@ async def aggregate_day(
     # Etappe 4: TagesZusammenfassung-Source spiegelt die Hauptquelle der
     # Daily-Werte. Wenn die Stunden aus HA-LTS kamen, ist auch die
     # Tagessumme aus HA-LTS-Daten konsistent (Σ Hourly = Daily).
+    # N-434: Die Kennung ist eine geteilte Konstante — die Tagessichten lesen an
+    # ihr ab, in welchem Fenster `komponenten_kwh` steht (Σ der LTS-Slots ⇒
+    # [Vortag 23:00, 23:00)). Ein Literal hier und eines dort wäre F-56.
+    from backend.services.snapshot.boundary_range import TZ_QUELLE_LTS
     tz_source_label = (
-        "external:ha_statistics:daily"
+        TZ_QUELLE_LTS
         if kwh_source_label == "external:ha_statistics:hourly"
         else "auto:monatsabschluss"
     )

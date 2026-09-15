@@ -16,8 +16,22 @@ function langesDatum(iso: string): string {
   return `${WT_LANG[d.getDay()]}, ${d.toLocaleDateString('de-DE', { day: '2-digit', month: 'long', year: 'numeric' })}`
 }
 
-export function TagHeader({ datum, laufend, tag, onReload, reloading }: {
+/** Kurzform für den Lade-Marker — im Kopf steht der lange Titel schon daneben. */
+function kurzesDatum(iso: string): string {
+  return new Date(iso + 'T12:00:00')
+    .toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' })
+}
+
+export function TagHeader({ datum, laedtTag, laufend, tag, onReload, reloading }: {
+  /** Der Tag, zu dem die Zahlen unter dem Kopf gehören — nicht zwingend der gewählte. */
   datum: string
+  /**
+   * Der **gewählte** Tag, solange seine Zahlen noch laden (sonst `null`). Kopf
+   * und Zahlen bleiben so lange beim angezeigten Tag zusammen; der Marker sagt,
+   * worauf die Sicht gerade umstellt. Ohne ihn stand das Datum des neuen Tages
+   * über den Zahlen des alten (Style-Guide A3: `…` = in Berechnung).
+   */
+  laedtTag?: string | null
   laufend: boolean
   tag: TagWerte | null
   onReload?: () => void
@@ -45,6 +59,14 @@ export function TagHeader({ datum, laufend, tag, onReload, reloading }: {
         }`}>
           {laufend ? 'heute' : 'abgeschlossen'}
         </span>
+        {laedtTag && (
+          <span
+            className={PROVENANZ_BADGE}
+            title="Die Zahlen gehören noch zum angezeigten Tag. Sobald der gewählte Tag geladen ist, wechselt die ganze Sicht auf einmal."
+          >
+            lädt {kurzesDatum(laedtTag)} …
+          </span>
+        )}
       </div>
       <div className="flex items-center gap-2 flex-wrap">
         {onReload && <ReloadButton onClick={onReload} loading={!!reloading} />}

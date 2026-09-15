@@ -134,4 +134,18 @@ describe('EinstellungenV4 (Einstellungen-Shell)', () => {
     expect(screen.getByText('Anlage')).toBeInTheDocument()
     expect(screen.queryByLabelText('Suche löschen')).not.toBeInTheDocument()
   })
+
+  /**
+   * N-425, zweite Hälfte: Der ✕-Knopf darüber löst Radiocarbonats Fall NICHT —
+   * er hat gemessen, dass Firefox nach jedem Löschen sofort nachfüllt (T89667
+   * #319) und Autofill am Ende im Browser abgeschaltet. Deshalb trägt das Feld
+   * zusätzlich den SoT-Riegel aus `ui/Input` (`suchfeld`).
+   *
+   * ⚠ Geprüft wird, dass der Riegel HIER ankommt — nicht, dass ein Browser sich
+   * daran hält. Das ist nicht gemessen und wird nicht behauptet.
+   */
+  it('das Suchfeld trägt den Autofill-Riegel', () => {
+    renderAt('/einstellungen/stammdaten')
+    expect(screen.getByLabelText('Einstellungen durchsuchen')).toHaveAttribute('autocomplete', 'off')
+  })
 })

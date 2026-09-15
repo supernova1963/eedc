@@ -1,8 +1,6 @@
 
 # eedc Benutzerhandbuch
 
-**Version 4.0** | Stand: 2026-07-25
-
 ---
 
 ## Über diese Hilfe

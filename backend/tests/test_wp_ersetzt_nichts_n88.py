@@ -171,13 +171,13 @@ def test_prognose_ohne_ersetzte_heizung_hat_keine_altanlage():
     """
     ohne = berechne_waermepumpe_einsparung(
         waermebedarf_kwh=9000, jaz=3.5, effizienz_modus="gesamt_jaz",
-        strompreis_cent=28.0, pv_anteil_prozent=30,
+        strompreis_cent=28.0,
         alter_energietraeger=ERSETZT_NICHTS, alter_preis_cent_kwh=12,
         alternativ_zusatzkosten_jahr=240,
     )
     mit = berechne_waermepumpe_einsparung(
         waermebedarf_kwh=9000, jaz=3.5, effizienz_modus="gesamt_jaz",
-        strompreis_cent=28.0, pv_anteil_prozent=30,
+        strompreis_cent=28.0,
         alter_energietraeger="gas", alter_preis_cent_kwh=12,
         alternativ_zusatzkosten_jahr=240,
     )

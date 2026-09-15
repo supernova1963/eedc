@@ -154,6 +154,10 @@ class DatenChecker(
         ergebnisse.extend(self._check_emob_sensor_doppelmapping(anlage))
         ergebnisse.extend(await self._check_emob_doppelzaehlung_tage(anlage))
         ergebnisse.extend(await self._check_vergleichspreis_fehlt(anlage))
+        # N-426-Nachtrag: die erste Wetterfeld-Kategorie. Anlagenweit, eine
+        # Zeile — sie zaehlt die leeren Monate und wie viele davon die eigene
+        # Messreihe erreicht (Stufe 1+2, kein Netzabruf).
+        ergebnisse.extend(await self._check_wetterwert_fehlt(anlage, monatsdaten))
         ergebnisse.extend(self._check_erfassungsort_positionen(anlage))
         # #377/D3: Verbrauchszähler (Gas/Wasser/Öl) — Quelle, Reihenbruch,
         # Inaktiv-Falle. Eigene Fragen, kein zweiter Turm über die

@@ -65,13 +65,13 @@ async def test_publisher_sendet_fuer_none_den_ha_leerwert_mit_grund(monkeypatch)
     client = mqtt_mod.MQTTClient()
     definition = get_sensor_definition("wp_cop_durchschnitt")
     sv = SensorValue(definition=definition, value=None,
-                     zusatz_attribute={"grund": "Heizstab-Strom auf dem WP-Zähler"})
+                     zusatz_attribute={"grund": "Ein weiterer Verbraucher auf dem WP-Zähler (z. B. Heizstab)"})
     assert await client.publish_all_sensors([sv], 1, "Test", 7, "WP") == {
         "total": 1, "success": 1, "failed": 0, "errors": []}
     zustand = {t: p for t, p in fake.published if t.endswith("/wp_cop_durchschnitt")}
     attribute = {t: p for t, p in fake.published if t.endswith("/wp_cop_durchschnitt/attributes")}
     assert list(zustand.values()) == ["None"], zustand
-    assert json.loads(list(attribute.values())[0])["grund"] == "Heizstab-Strom auf dem WP-Zähler"
+    assert json.loads(list(attribute.values())[0])["grund"] == "Ein weiterer Verbraucher auf dem WP-Zähler (z. B. Heizstab)"
 
 
 # ── Produzent: gesperrte Arbeitszahl = leerer Sensor mit Grund ───────────────
@@ -103,7 +103,7 @@ async def test_gesperrte_arbeitszahl_ist_ein_leerer_sensor_mit_grund(db):
     export = {sv.definition.key: sv for sv in await calculate_investition_sensors(db, inv, None)}
     sv = export["wp_cop_durchschnitt"]
     assert sv.value is None
-    assert sv.zusatz_attribute["grund"] == "Heizstab-Strom auf dem WP-Zähler"
+    assert sv.zusatz_attribute["grund"] == "Ein weiterer Verbraucher auf dem WP-Zähler (z. B. Heizstab)"
 
 
 @pytest.mark.asyncio

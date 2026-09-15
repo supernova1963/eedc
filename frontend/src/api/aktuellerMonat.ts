@@ -21,9 +21,17 @@ export interface InvestitionFinancialDetail {
   bezeichnung: string
   typ: string
   betriebskosten_monat_euro: number
+  /** Jahresbetrag, aus dem `betriebskosten_monat_euro` der Zwölftel ist (A6). */
+  betriebskosten_jahr_euro?: number
   erloes_euro: number | null
   /** Herleitung der Erlös-Zeile — je Typ verschieden (gerechnet vs. gepflegt). */
   erloes_formel: string | null
+  /**
+   * Die **eingesetzten Werte** zur Formel darüber (A6). `null` bei den
+   * gepflegten Erlösen — dort gibt es keine Rechnung, nur eine Herkunftsangabe.
+   * Optional, damit ältere Antworten ohne das Feld weiter gelten.
+   */
+  erloes_berechnung?: string | null
   /**
    * Anzeigename der Erlös-Zeile („{Gerät} — {erloes_label}"). Kommt aus dem
    * Backend, weil ihn die **Kategorie** entscheidet: „Einspeisung" für BKW und
@@ -52,6 +60,48 @@ export interface SonstigesGeraet {
   /** §9.2 — Abgabe an Dritte (kategorie 'abgabe'). */
   abgabe_kwh?: number | null
   erloes_euro?: number | null
+}
+
+/** Eine Zeile der Tabelle „Zahlen je Gerät" im Wärme/Klima-Block (D-Sicht 3).
+ *  Aus **derselben** Rechenstelle wie der Komponenten-Hub. */
+export interface WpGeraetZeile {
+  investition_id: number
+  name: string
+  strom_kwh?: number | null
+  waerme_kwh?: number | null
+  /** Warum die Wärme-Zelle leer ist (WK-16h/R-4) — aus dem Layer, nicht aus
+   *  dem Client. */
+  waerme_grund?: string | null
+  jaz?: number | null
+  jaz_grund?: string | null
+  jaz_heizen?: number | null
+  jaz_heizen_grund?: string | null
+  jaz_warmwasser?: number | null
+  jaz_warmwasser_grund?: string | null
+  jaz_kuehlen?: number | null
+  jaz_kuehlen_grund?: string | null
+  /** Die **Wärme-Achsen** dieses Geräts (WK-16h/R-1) — `'heizen'` und/oder
+   *  `'warmwasser'`, Spiegel von `services/waerme_klima_block.py`.
+   *
+   *  Eine Zelle ohne Zahl hat zwei Bedeutungen, und nur dieses Feld trennt
+   *  sie: fehlt die Achse, bleibt die Zelle **leer** (kein Strich, kein
+   *  Tooltip — „gilt nicht" ist kein Mangel); gilt sie, steht dort „—" mit
+   *  dem Grund als Tooltip. */
+  achsen?: string[] | null
+}
+
+/** Eine Zeile des Kastens „Was noch möglich wäre" (D-Sicht 1) — **eine je
+ *  Grund**, nicht je Kachel. `groesse` nennt alle betroffenen Größen. */
+export interface WpMoeglichZeile {
+  /** Die betroffenen Größen als **Bezeichner** — womit der Client abfragt,
+   *  ob eine Kachel in den Kasten gewandert ist. Ein Bezeichner ist ein
+   *  Schlüssel, ein Grund-Satz ist eine Formulierung. */
+  groessen: string[]
+  /** Dieselben Größen als Anzeigetext („A · B"). */
+  groesse: string
+  grund: string
+  handgriff?: string | null
+  link?: string | null
 }
 
 export interface AktuellerMonatResponse {
@@ -141,9 +191,24 @@ export interface AktuellerMonatResponse {
   wp_jaz_nenner_kwh?: number | null
   /** Ist ein Teil der Wärme aus `Strom × JAZ` gerechnet statt gemessen? */
   wp_waerme_abgeleitet?: boolean | null
+  /** Steht mindestens eine hier gesperrte Kennzahl im Komponenten-Hub?
+   *  Die Entscheidung fällt im Layer (`GRUENDE_HUB_HILFT`) — der Client
+   *  vergleicht bewusst keine Grund-Texte. */
+  wp_hub_hilft?: boolean | null
+  /** **Wie viel** davon gerechnet ist. Das Flag darüber sagt „irgendein Teil"
+   *  und ist für die **Kennzahl** richtig so (alles-oder-nichts, sonst käme
+   *  gemessene Wärme ÷ Gesamtstrom heraus). Für eine **Menge** — etwa die
+   *  Wärmelinie im Verlauf, die nur Gemessenes zeigen darf — ist die Differenz
+   *  `wp_waerme_kwh − wp_waerme_abgeleitet_kwh` die richtige Größe. */
+  wp_waerme_abgeleitet_kwh?: number | null
   /** B4 (C-2): Herkunft der Wärme („gemessen" | „geschätzt: Strom × JAZ 3,5") und der
    *  Vorbehalt an Ersparnis/CO₂ — fertig aus dem Layer, dieselben Worte wie im Hub. */
   wp_waerme_herkunft?: string | null
+  /** R-4/N-491 (**nur Cockpit → Tag**): „gemessen ab 11:00 Uhr", wenn der Tag
+   *  nicht von 0 bis 24 Uhr gemessen ist — erster Tag nach der Zuordnung bzw.
+   *  laufender Tag. `null`/undefined überall sonst. Der Satz kommt fertig aus
+   *  dem Layer (`core/tageswert_grund.py`). */
+  wp_abdeckung_hinweis?: string | null
   wp_ersparnis_vorbehalt?: string | null
   /** B6/Y-3: der Rechenweg hinter der Ersparnis, aus dem Layer-Ergebnis. */
   wp_ersparnis_berechnung?: string | null
@@ -172,8 +237,30 @@ export interface AktuellerMonatResponse {
    *  Quotient über einen Zeitraum. */
   wp_jaz_kuehlen?: number | null
   wp_jaz_kuehlen_grund?: string | null
+  /** E1b — siehe {@link WpGeraetZeile}. */
+  wp_jaz_ist_schranke?: boolean | null
+  /** Der EINE Satz unter der Schranke: „Klimaanlage: Strom ohne Wärmemessung
+   *  enthalten". Fertig formuliert aus dem Layer. */
+  wp_jaz_schranke_hinweis?: string | null
+  /** D-Sicht 3: die Kennzahlen **je Gerät**, im Block selbst. */
+  wp_geraete?: WpGeraetZeile[] | null
+  /** D-Sicht 1: was die Ausstattung nicht hergibt — **einmal je Sicht**, mit
+   *  Handgriff. Eine Größe, deren Grund hier steht, bekommt **keine** Kachel
+   *  mit „—"; eine Größe mit einem Zeitraum-Grund bleibt als „—" ohne Text. */
+  wp_moeglich?: WpMoeglichZeile[] | null
+  /** Bauschnitt 6b: gemessene **Kälte** des Monats — der Zähler der
+   *  Arbeitszahl Kühlen daneben. `null`, wo kein Kältemengenzähler etwas
+   *  gemeldet hat (keine 0 ohne Messung). */
+  wp_kaelte_kwh?: number | null
   wp_modus_strom_lueften_kwh?: number | null
   wp_modus_strom_entfeuchten_kwh?: number | null
+  /** **R-C (WK-16f, N-398): die abgegebene Nutzenergie** derselben zwei
+   *  Betriebsarten — als **Menge** neben ihrem Strom. E4 bleibt: daraus
+   *  entsteht keine Arbeitszahl, weil eedc den Nutzen von Lüften und
+   *  Entfeuchten nicht bewerten kann. Nur gesetzt, wenn ein Zähler etwas
+   *  gemeldet hat; sonst steht die Zeile nicht da (D-Sicht). */
+  wp_modus_nutzenergie_lueften_kwh?: number | null
+  wp_modus_nutzenergie_entfeuchten_kwh?: number | null
   wp_modus_nicht_aufgeteilt_kwh?: number | null
   wp_modus_abdeckung_h?: number | null
   /** **W-17b** — die Grundmenge, auf die sich die Aufteilung bezieht.
@@ -256,6 +343,9 @@ export interface AktuellerMonatResponse {
   anlage_sonstige_ausgaben_euro: number
   gesamtnettoertrag_euro: number | null
   betriebskosten_anteilig_euro: number | null
+  /** Σ der Jahresbeträge hinter `betriebskosten_anteilig_euro` und ihre Anzahl (A6). */
+  betriebskosten_anteilig_jahr_euro?: number | null
+  betriebskosten_anteilig_anzahl?: number | null
 
   // Tarif-Info
   netzbezug_preis_cent: number | null
@@ -264,6 +354,14 @@ export interface AktuellerMonatResponse {
   netzbezug_preis_zeittarif?: boolean
   einspeise_preis_cent: number | null
   netzbezug_durchschnittspreis_cent: number | null
+  /** Welche Stufe der Preis-Kaskade gegriffen hat (#412):
+   *  `gepflegt` (abgerechneter Ø aus dem Monatsabschluss) · `gemessen` (Ø der
+   *  mitgeschriebenen Stundenpreise) · `zeitfenster` (HT/NT, über den Netzbezug
+   *  gewichtet) · `stamm` (Tarifspalte). Ohne diese Angabe wäre ein gemessener
+   *  Preis von einem Stammpreis nicht zu unterscheiden. */
+  netzbezug_preis_herkunft?: 'gepflegt' | 'gemessen' | 'zeitfenster' | 'stamm' | null
+  /** Anteil der Monatsstunden mit Preisdaten (0..1) — nur bei `gemessen`. */
+  netzbezug_preis_abdeckung?: number | null
   // G19-1 K3: Grundgebühr des Monats (steckt bereits in netzbezug_kosten_euro,
   // reiner Ausweis) + jährliche Zählergebühr vom Tarif (nur Jahresaufstellung,
   // nicht verrechnet).
@@ -317,6 +415,17 @@ export interface AktuellerMonatResponse {
 
   // Quellenangabe pro Feld
   feld_quellen: Record<string, DatenquelleInfo>
+  /**
+   * Warum eine Kachel **leer** bleibt — je Basis-Größe der fertige Satz aus
+   * `core/monatswert_grund.py` (N-472). Nur für Größen ohne Wert gesetzt.
+   *
+   * ⛔ **Der Client baut hier keinen Text.** Die Route liefert den Satz, nicht
+   * den Schlüssel — eine TS-Kopie der Textliste wäre eine zweite Wahrheit über
+   * denselben Sachverhalt und driftet, sobald jemand einen Fall ergänzt (die
+   * Klasse, die F-56 und W-14 erzeugt hat; dieselbe Regel wie bei den
+   * Tageswert-Gründen aus W-18).
+   */
+  datenlage_gruende?: Record<string, string>
 }
 
 export const aktuellerMonatApi = {

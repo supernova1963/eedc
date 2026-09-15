@@ -21,6 +21,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
+from backend.core.berechnungen.waermepumpe_kennzahl import GRUND_FREMDSTROM
 from backend.models import Anlage, Investition  # noqa: F401  (Base.metadata)
 from backend.models.sensor_snapshot import SensorSnapshot
 from backend.models.tages_energie_profil import (  # noqa: F401
@@ -415,6 +416,46 @@ def test_w18_arbeitszahl_behaelt_ihren_wortlaut_ohne_besseren_grund():
 
 # ═══ III-DOK — das Handbuch zitiert die Gründe, also muss es sie kennen ═════
 
+#: Das Handbuch — oder ``None`` im Standalone-Spiegel, der ``docs/`` nicht trägt.
+_HANDBUCH_WK = Path(__file__).resolve().parents[3] / "docs" / "HANDBUCH_WAERME_KLIMA.md"
+
+
+def _handbuch_abschnitt(ueberschrift: str) -> list[str]:
+    """Die Zeilen von ``ueberschrift`` bis zur nächsten Überschrift **gleicher
+    oder höherer** Ebene.
+
+    ⛔ **Das ist der ganze Prüfer, nicht Kosmetik (N-458).** Bis zum 13.09.2026
+    suchten die beiden Prüfer darunter ihre Zeichenketten über die **ganze
+    Datei**. Gemessen (WK-11 §4.4): Wird „Strom nicht getrennt je Funktion
+    gemessen" aus der §4-Gründe-Tabelle entfernt, bleibt der Test **grün** —
+    derselbe Satz steht unformatiert in der §2-Tabelle (:86). Der Wächter
+    verteidigte damit „das Wort kommt vor", nicht „die Nachschlagestelle ist
+    vollständig". Dieselbe Klasse wie eine gewanderte Fundstelle: *ein Prüfer,
+    der neben der Sache misst, misst nichts.*
+
+    ⚠ **Eine fehlende Überschrift ist ein Fehler, kein leerer Abschnitt.**
+    Sonst schaltete ein Umbau des Handbuchs den Prüfer still ab — genau die
+    Selbstabschaltung, gegen die er gebaut ist.
+    """
+    zeilen = _HANDBUCH_WK.read_text(encoding="utf-8").split("\n")
+    start = next(
+        (i for i, z in enumerate(zeilen) if z.startswith(ueberschrift)), None
+    )
+    assert start is not None, (
+        f"HANDBUCH_WAERME_KLIMA.md: die Überschrift „{ueberschrift}“ steht nicht "
+        "mehr da. Wurde der Abschnitt umbenannt? Dann diesen Prüfer mitziehen — "
+        "nicht löschen; ohne den Abschnitt misst er nichts mehr."
+    )
+    ebene = len(zeilen[start]) - len(zeilen[start].lstrip("#"))
+    ende = next(
+        (i for i in range(start + 1, len(zeilen))
+         if zeilen[i].startswith("#")
+         and (len(zeilen[i]) - len(zeilen[i].lstrip("#"))) <= ebene),
+        len(zeilen),
+    )
+    return zeilen[start:ende]
+
+
 def test_handbuch_waerme_klima_zitiert_die_gruende_woertlich():
     """⛔ **Ein Handbuch ist auch nur eine Behauptung über den Code.**
 
@@ -431,34 +472,62 @@ def test_handbuch_waerme_klima_zitiert_die_gruende_woertlich():
     nicht, dass jeder neue Grund sofort dort steht. Ein Grund ohne Handbuch-Zeile
     ist eine Lücke; ein Handbuch-Zitat ohne Grund im Code ist eine Falschaussage,
     und nur die ist hier gefangen.
+
+    ⭐ **Seit N-458 (13.09.2026) sucht er im ABSCHNITT, nicht in der Datei** —
+    und verlangt die **Nachschlagestelle**, nicht bloß ein Vorkommen: Die zehn
+    Sperr-Gründe stehen als **Zeilenkopf** der §4-Tabelle „Die Gründe,
+    wörtlich", die drei Tages-Gründe **fett** im Abschnitt daneben. Ein Grund,
+    der nur noch irgendwo im Fließtext auftaucht, ist genau das, was der Prüfer
+    verhindern soll: Der Anwender schlägt in der Tabelle nach und findet seinen
+    Satz nicht.
     """
-    from pathlib import Path
+    import pytest
+
+    if not _HANDBUCH_WK.exists():  # eedc-Standalone-Spiegel trägt `docs/` nicht mit
+        pytest.skip("docs/ liegt nur im Source-of-Truth-Repo")
 
     from backend.core.berechnungen.waermepumpe_kennzahl import (
-        GRUND_FREMDSTROM, GRUND_FREMDWAERME, GRUND_GERAETE_OHNE_WAERME,
-        GRUND_KEINE_KAELTEMENGE, GRUND_STROM_NICHT_JE_FUNKTION, GRUND_ZEITRAUM,
+        GRUND_FREMDWAERME, GRUND_GERAETE_OHNE_WAERME,
+        GRUND_KEINE_KAELTEMENGE, GRUND_STROM_NICHT_JE_FUNKTION,
+        GRUND_WAERME_NICHT_JE_FUNKTION, GRUND_ZEITRAUM,
     )
     from backend.core.tageswert_grund import TAGESWERT_GRUND_TEXT
 
-    doc = Path(__file__).resolve().parents[3] / "docs" / "HANDBUCH_WAERME_KLIMA.md"
-    if not doc.exists():  # eedc-Standalone-Spiegel trägt `docs/` nicht mit
-        import pytest
-        pytest.skip("docs/ liegt nur im Source-of-Truth-Repo")
-    text = doc.read_text(encoding="utf-8")
+    tabelle = _handbuch_abschnitt("### Die Gründe, wörtlich")
+    nur_am_tag = _handbuch_abschnitt("### Und drei Gründe, die nur der **Tag** kennt")
 
-    erwartet = [
+    sperr_gruende = [
         GRUND_GERAETE_OHNE_WAERME, GRUND_FREMDSTROM, GRUND_FREMDWAERME,
         GRUND_ZEITRAUM, GRUND_STROM_NICHT_JE_FUNKTION, GRUND_KEINE_KAELTEMENGE,
+        # N-391: der Spiegel auf der Wärmeseite — er ist der erste neue Grund
+        # seit dem Umbau dieses Prüfers und gehört in dieselbe Liste, sonst wäre
+        # er der einzige ohne Nachschlagestelle.
+        GRUND_WAERME_NICHT_JE_FUNKTION,
         "kein Stromverbrauch erfasst",
         "nur Kühlbetrieb in diesem Zeitraum",
         "Wärme ist gerechnet, nicht gemessen",
         "kein Wärmemengenzähler zugeordnet",
-        *TAGESWERT_GRUND_TEXT.values(),
     ]
-    fehlend = [g for g in erwartet if g not in text]
+    fehlend = [
+        g for g in sperr_gruende
+        if not any(z.startswith(f"| **{g}** |") for z in tabelle)
+    ]
     assert not fehlend, (
-        "Das Handbuch zitiert diese Gründe nicht mehr wörtlich — im Code steht "
-        f"jetzt etwas anderes: {fehlend}"
+        "Diese Sperr-Gründe stehen nicht mehr als Zeile in der §4-Tabelle "
+        f"„Die Gründe, wörtlich“: {fehlend}. Entweder hat der Code einen neuen "
+        "Wortlaut, oder die Zeile ist aus der Tabelle verschwunden — in beiden "
+        "Fällen findet der Anwender seinen Satz dort nicht mehr. ⚠ Ein "
+        "Vorkommen anderswo im Handbuch zählt nicht: Nachgeschlagen wird in "
+        "dieser Tabelle."
+    )
+
+    fehlend_tag = [
+        g for g in TAGESWERT_GRUND_TEXT.values()
+        if not any(f"**{g}**" in z for z in nur_am_tag)
+    ]
+    assert not fehlend_tag, (
+        "Diese Tages-Gründe stehen nicht mehr im Abschnitt „Und drei Gründe, "
+        f"die nur der Tag kennt“: {fehlend_tag}"
     )
 
 
@@ -486,22 +555,31 @@ def test_handbuch_nennt_jeden_lesbaren_betriebsmodus_wert():
     nötig: Ein zu großzügiges Handbuch führt niemanden in die Irre, ein zu
     knappes schon.
     """
-    from pathlib import Path
+    import pytest
 
     from backend.core.betriebsmodus import _ZUSTAND_ZU_KANON
 
-    doc = Path(__file__).resolve().parents[3] / "docs" / "HANDBUCH_WAERME_KLIMA.md"
-    if not doc.exists():  # eedc-Standalone-Spiegel trägt `docs/` nicht mit
-        import pytest
+    if not _HANDBUCH_WK.exists():  # eedc-Standalone-Spiegel trägt `docs/` nicht mit
         pytest.skip("docs/ liegt nur im Source-of-Truth-Repo")
-    text = doc.read_text(encoding="utf-8")
 
-    fehlend = [wert for wert in _ZUSTAND_ZU_KANON if f"`{wert}`" not in text]
+    # N-458: der Suchraum ist der Abschnitt, nicht die Datei — dieselbe
+    # Schärfung wie beim Nachbar-Prüfer darüber. Heute steht jeder der Werte
+    # ohnehin nur hier (gemessen 13.09.2026: 21 von 21, keiner daneben) — der
+    # Defekt war also **latent**: Sobald ein Wert einmal im Fließtext einer
+    # anderen Sektion auftaucht, dürfte er aus der Tabelle verschwinden, ohne
+    # dass der Prüfer es merkt. Ein Wächter, der erst beim zweiten Vorkommen
+    # blind wird, ist trotzdem blind.
+    tabelle = _handbuch_abschnitt("### Schritt 4")
+    fehlend = [
+        wert for wert in _ZUSTAND_ZU_KANON
+        if not any(f"`{wert}`" in z for z in tabelle)
+    ]
     assert not fehlend, (
-        "Diese Betriebsmodus-Werte versteht eedc, das Handbuch nennt sie aber "
-        f"nicht: {fehlend}. Wer den Kanon erweitert, erweitert die Tabelle in "
-        "§Schritt 4 mit — sonst probiert der nächste Anwender einen Wert aus, "
-        "den es gibt, und findet ihn nirgends beschrieben."
+        "Diese Betriebsmodus-Werte versteht eedc, die Werte-Tabelle in "
+        f"§Schritt 4 nennt sie aber nicht: {fehlend}. Wer den Kanon erweitert, "
+        "erweitert die Tabelle mit — sonst probiert der nächste Anwender einen "
+        "Wert aus, den es gibt, und findet ihn nirgends beschrieben. ⚠ Ein "
+        "Vorkommen in einem anderen Abschnitt zählt nicht (N-458)."
     )
 
 
@@ -538,8 +616,12 @@ def test_die_263_konzepte_verweisen_auf_den_geltenden_sot_und_das_handbuch():
     if not wurzel.exists():  # eedc-Standalone-Spiegel traegt `docs/` nicht mit
         pytest.skip("docs/ liegt nur im Source-of-Truth-Repo")
 
+    # ⭐ Seit E5 (13.09.2026, WK-13) liegt das geltende Flaechen-Konzept in
+    # `docs/KONZEPT-WAERME-KLIMA.md`; `soll-waerme-klima.md` ist das Zielbild,
+    # aus dem es entstanden ist, und bleibt als Herkunft gefordert.
     pflicht = {
-        "soll-waerme-klima.md": "der geltende SoT der Flaeche",
+        "KONZEPT-WAERME-KLIMA.md": "das geltende Flaechen-Konzept (E5)",
+        "soll-waerme-klima.md": "das Zielbild, aus dem es entstand",
         "HANDBUCH_WAERME_KLIMA.md": "die Anwendersicht",
     }
     for name in ("KONZEPT-263-klima-split.md", "KONZEPT-263-INNENGERAETE.md"):
@@ -587,13 +669,17 @@ _N349_STELLEN: tuple[tuple[str, str, str, str], ...] = (
         "eedc/frontend/src/components/forms/sections/InvestitionTypFelder/WaermepumpeFelder.tsx",
         "value: 'fremdwaerme',",
         "] as const",
-        "Heizstab-Strom liegt mit auf dem Stromzähler",
+        # N-371 (13.09.2026): das Label der Gegenlage heißt nicht mehr
+        # „Heizstab-Strom …", sondern nennt die Klasse. Ein Gegenanker, der
+        # nirgends mehr steht, kann nie mehr rot melden — er wäre ein Prüfer,
+        # der sich selbst abgeschaltet hat.
+        "Ein weiterer Verbraucher liegt mit auf dem Stromzähler",
     ),
     (
         "docs/HANDBUCH_WAERME_KLIMA.md",
         "| **zweiter Erzeuger am Wärmezähler** |",
         "\n",
-        "Heizstab-Strom auf dem WP-Zähler",
+        GRUND_FREMDSTROM,  # N-371: aus dem Code, damit er nicht wieder driftet
     ),
     (
         "docs/HANDBUCH_WAERME_KLIMA.md",

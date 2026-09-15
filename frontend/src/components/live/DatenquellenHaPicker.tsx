@@ -158,6 +158,7 @@ export default function DatenquellenHaPicker({
         <div className="relative">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400 dark:text-gray-500" />
           <Input
+            suchfeld
             value={suche}
             onChange={(e) => setSuche(e.target.value)}
             placeholder="Entity oder Name suchen …"

@@ -140,6 +140,11 @@ class ModusStunde:
 
     kwh: Optional[float] = None
     modus: Optional[str] = None
+    #: Der Slot dieser Stunde (0–23, Rückwärts-Raster wie die Tageszeile) —
+    #: ``None``, wo der Aufrufer ihn nicht braucht. Die Tagesfaltung ignoriert
+    #: ihn; der Tag-Verlauf (Bauschnitt 5) braucht ihn, um die Menge wieder
+    #: auf ihre Stunde zu legen.
+    stunde: Optional[int] = None
 
 
 @dataclass(frozen=True)

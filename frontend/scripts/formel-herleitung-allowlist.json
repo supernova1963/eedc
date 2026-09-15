@@ -1,0 +1,102 @@
+{
+  "src/components/finanzen/TKonto.tsx::… — Sonstige Erträge": {
+    "klasse": "a",
+    "grund": "Herkunftsangabe statt Rechnung: der Betrag ist im Monatsabschluss als Position vom Typ \"Ertrag\" erfasst — es gibt keine Rechnung, die man zeigen könnte."
+  },
+  "src/components/finanzen/TKonto.tsx::Anlage — Sonstige Erträge": {
+    "klasse": "a",
+    "grund": "Herkunftsangabe wie die Gerätezeile darüber, nur auf Anlage-Ebene (Monatsdaten statt Investition). Kein gerechneter Wert."
+  },
+  "src/components/finanzen/TKonto.tsx::… — Sonstige Ausgaben": {
+    "klasse": "a",
+    "grund": "Herkunftsangabe: erfasst im Monatsabschluss als Position vom Typ \"Ausgabe\". Kein gerechneter Wert."
+  },
+  "src/components/finanzen/TKonto.tsx::Anlage — Sonstige Ausgaben": {
+    "klasse": "a",
+    "grund": "Herkunftsangabe auf Anlage-Ebene (Monatsdaten). Kein gerechneter Wert."
+  },
+  "src/components/prognose/PrognoseVsIstTeile.tsx::PVGIS Prognose": {
+    "klasse": "a",
+    "grund": "Triviale Σ mit sichtbaren Summanden: die Monatswerte stehen im Nachbarblock derselben Sicht (Tabelle \"pvgis-detail\" in AuswertungenPrognoseV4)."
+  },
+  "src/components/prognose/PrognoseVsIstTeile.tsx::IST-Erzeugung": {
+    "klasse": "a",
+    "grund": "Triviale Σ mit sichtbaren Summanden: die Monatswerte stehen in derselben Detailtabelle wie die SOLL-Reihe daneben."
+  },
+  "src/components/prognose/PrognoseVsIstTeile.tsx::Abweichung": {
+    "klasse": "b",
+    "grund": "Quotient aus den beiden Nachbarkacheln desselben KpiStrip (\"PVGIS Prognose\" und \"IST-Erzeugung\") — der Anwender hat beide Zahlen auf einer Fläche."
+  },
+  "src/components/prognose/PrognoseVsIstTeile.tsx::Hochrechnung Jahr": {
+    "klasse": "b",
+    "grund": "IST ist die Nachbarkachel \"IST-Erzeugung\", \"Monate mit Daten\" steht in deren Zweitzeile — der A6-Nachtrag stellt die Zweitzeile der eigenen Kachel gleich."
+  },
+  "src/components/prognose/PvStringsTeile.tsx::SOLL (Prognose)": {
+    "klasse": "a",
+    "grund": "Triviale Σ mit sichtbaren Summanden: die String-Einzelwerte stehen in der Tabelle \"string-details\" desselben Blocks."
+  },
+  "src/components/prognose/PvStringsTeile.tsx::IST (Erzeugt)": {
+    "klasse": "a",
+    "grund": "Triviale Σ mit sichtbaren Summanden: dieselbe String-Tabelle führt die Einzelwerte je String."
+  },
+  "src/components/prognose/PvStringsTeile.tsx::Abweichung": {
+    "klasse": "b",
+    "grund": "Quotient aus den beiden Nachbarkacheln \"SOLL (Prognose)\" und \"IST (Erzeugt)\" desselben Strips."
+  },
+  "src/components/prognose/PvStringsTeile.tsx::Spez. Ertrag Ø": {
+    "klasse": "b",
+    "grund": "IST ist die Nachbarkachel \"IST (Erzeugt)\", die Anlagenleistung steht in der Kopfzeile desselben Blocks (PvStringHeaderZeile) — der A6-Nachtrag stellt die Blockkopfzeile gleich."
+  },
+  "src/pages/HAExportSettingsTeile.tsx::anzeigeSensoren/formel:d.formel": {
+    "klasse": "a",
+    "grund": "A3-Fall: Fallback-Zeile für einen HA-Export-Sensor OHNE aktuellen Wert (\"—\"). Die Definition trägt ihre Formel, eine Berechnung gäbe es nicht — deshalb steht dort ausdrücklich berechnung: null."
+  },
+  "src/v4/KomponentenSektionen.tsx::Kompressor-Starts": {
+    "klasse": "a",
+    "grund": "Roher Zähler bzw. triviale Σ der Tagessummen; der Tages-Maximalwert steht als Zweitzeile derselben Kachel, der Lebensdauer-Zählerstand als Berechnung im Hub."
+  },
+  "src/v4/KomponentenSektionen.tsx::Betriebsstunden": {
+    "klasse": "a",
+    "grund": "Roher Zähler bzw. triviale Σ der Tages-Betriebsstunden; Max/Tag steht in der Zweitzeile derselben Kachel."
+  },
+  "src/v4/MonatAuswertungBloecke.tsx::Einspeisung bei neg. Preis": {
+    "klasse": "a",
+    "grund": "Definition statt Rechnung: eingespeiste Energie in Stunden mit negativem Börsenpreis (§51 EEG). Die Stundenzahl steht als Nachbarkachel."
+  },
+  "src/v4/SpeicherPotentialIST.tsx::Überschuss bei vollem Speicher": {
+    "klasse": "a",
+    "grund": "Σ über gefilterte Stunden; der einzige Parameter des Filters (Ladestand-Schwelle) ist im Formeltext bereits eingesetzt."
+  },
+  "src/v4/SpeicherSizingIST.tsx::Amortisation": {
+    "klasse": "b",
+    "grund": "Quotient aus Mehrkosten (Zweitzeile derselben Kachel) und \"Netto-Nutzen pro Jahr\" (Nachbarkachel); der Richtpreis ist im Formeltext bereits eingesetzt."
+  },
+  "src/v4/TagBilanz.tsx::Ø-Preis Netz": {
+    "klasse": "a",
+    "grund": "Zweig 1 ist eine Herkunftsangabe (Netzbezugspreis des Tages bzw. Monats-Ø bei flexiblem Tarif); Zweig 2 ist ein Quotient, dessen beide Eingangswerte in der Zweitzeile DERSELBEN Kachel stehen."
+  },
+  "src/v4/TagBilanz.tsx::Performance Ratio": {
+    "klasse": "a",
+    "grund": "Leer-Zweig (A3): dieser Tooltip steht genau dort, wo es keinen Wert gibt (\"Keine Einstrahlungsdaten für diesen Tag\") — eine Berechnung gäbe es nicht."
+  },
+  "src/v4/komponentenAdapter.tsx::Verlust": {
+    "klasse": "b",
+    "grund": "Differenz der beiden Nachbarkacheln \"Ladung gesamt\" und \"Entladung gesamt\" desselben Kennzahlen-Blocks."
+  },
+  "src/v4/komponentenAdapter.tsx::Netzladung-Kosten": {
+    "klasse": "b",
+    "grund": "Produkt der beiden Nachbarkacheln \"Netzladung\" und \"Ø Ladepreis\" desselben Blocks. ⚠ Die Multiplikation passiert heute im Client — abgelegt als N-453 (P5), ausdrücklich NICHT Teil von WK-04; mit dem Backend-Feld fällt dieser Eintrag weg."
+  },
+  "src/v4/komponentenAdapter.tsx::Ø Laufzeit/Start": {
+    "klasse": "b",
+    "grund": "Quotient der beiden Nachbarkacheln \"Betriebsstunden\" und \"Kompressor-Starts\"; das Backend setzt ihn nur, wenn beide Summen vorliegen und größer null sind — genau die Bedingung, unter der der Client die Kacheln pusht."
+  },
+  "src/v4/komponentenAdapter.tsx::Starts/Betriebsstunde": {
+    "klasse": "b",
+    "grund": "Kehrwert-Quotient derselben beiden Nachbarkacheln, mit derselben strukturellen Garantie aus dem Backend."
+  },
+  "src/v4/komponentenAdapter.tsx::Entgangener Erlös": {
+    "klasse": "b",
+    "grund": "Produkt aus der Nachbarkachel \"Einspeisung\" und einem Satz, der im Formeltext bereits eingesetzt ist. ⚠ Dieser Satz ist eine harte Client-Konstante von 8 ct/kWh und hängt an keinem Tarif — abgelegt als N-453 (P5), ausdrücklich NICHT Teil von WK-04; mit dem Backend-Feld fällt dieser Eintrag weg."
+  }
+}

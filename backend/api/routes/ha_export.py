@@ -45,6 +45,8 @@ from backend.core.berechnungen.waermepumpe_kennzahl import (
     abgrenzungs_grund,
     arbeitszahl,
     ersparnis_vorbehalt,
+    heizwaerme_kwh,
+    waerme_gesamt_kwh,
 )
 from backend.services.wp_wirtschaftlichkeit import berechne_wp_ersparnis
 from backend.services.prognose_auswahl import lade_aktive_prognose
@@ -60,11 +62,16 @@ from backend.api.routes.strompreise import (
 from backend.core.betriebsmodus import HEIZEN as BM_HEIZEN
 from backend.core.betriebsmodus import KUEHLEN as BM_KUEHLEN
 from backend.core.betriebsmodus import MODUS_ABDECKUNG_FELD, MODUS_STROM_FELD
-from backend.core.berechnungen.betriebsart_gemessen import modus_strom_zeile
+from backend.core.berechnungen.betriebsart_gemessen import (
+    ModusStromZeile,
+    funktionsfremd_abzug_kwh,
+    modus_strom_zeile,
+)
 from backend.core.field_definitions import (
     get_emob_pv_netz_kwh,
     get_wp_strom_kwh,
     get_wp_warmwasser_kwh,
+    nenner_ist_feine_summe,
 )
 from backend.core.berechnungen.phev_anteil import teile_fahrleistung
 from backend.core.berechnungen.kapitalrechnung import (
@@ -85,6 +92,7 @@ from backend.services.emob_ladeanteil import reichere_monatszeilen_an
 from backend.models.anlage import Anlage
 from backend.services.activity_service import log_activity
 from backend.models.monatsdaten import Monatsdaten
+from backend.services.strompreis_aggregator import aufgeloester_monatspreis
 from backend.services.energie_profil.modus_split_monat import (
     lade_modus_split_ohne_abschluss,
 )
@@ -138,7 +146,6 @@ from backend.core.berechnungen.ust_eigenverbrauch import (
 from backend.core.wirtschaftlichkeit_defaults import (
     EINSPEISEVERGUETUNG_DEFAULT_CENT,
     NETZBEZUG_DEFAULT_CENT,
-    WP_PV_ANTEIL_DEFAULT,
 )
 
 router = APIRouter(prefix="/ha/export", tags=["HA Export"])
@@ -820,6 +827,15 @@ async def calculate_anlage_sensors(
     # steckt über `historischer_netto_ertrag` in vier ausgelieferten Sensoren
     # (`netto_ertrag_euro` · `roi_prozent` · `amortisation_jahre` und dem
     # per-Investition-Sensor `e_auto_ersparnis_vs_benzin_euro`).
+    # ⭐ **#412 (11.09.2026): auch dieser Sensor sieht die volle Kaskade.** Bis
+    # dahin las die Schleife allein den Wallbox-Tarif — der **abgerechnete**
+    # Monats-Ø kam nie an, während Cockpit → Übersicht ihn für dieselbe
+    # Ersparnis längst nahm. Zwei Zahlen für eine Größe, je nach Sicht.
+    _md_result = await db.execute(
+        select(Monatsdaten).where(Monatsdaten.anlage_id == anlage.id)
+    )
+    _md_je_monat = {(m.jahr, m.monat): m for m in _md_result.scalars().all()}
+    _preis_cache_wb: dict = {}
     wallbox_preis_by_periode: dict[tuple[int, int], float] = {}
     for (_inv_id, _p_jahr, _p_monat) in historische_inv_daten:
         _periode = (_p_jahr, _p_monat)
@@ -828,9 +844,16 @@ async def calculate_anlage_sensors(
         _p_tarife = await lade_tarife_fuer_anlage(
             db, anlage.id, target_date=date(_p_jahr, _p_monat, 1)
         )
-        wallbox_preis_by_periode[_periode] = resolve_strompreis_for_komponente(
-            _p_tarife, "wallbox", fallback=netzbezug_preis_cent
-        )
+        # Der Wallbox-Tarif bleibt Stufe 4 (`stammpreis_override`) — er geht
+        # nicht verloren, nur ein gepflegter oder gemessener Ø schlägt ihn.
+        wallbox_preis_by_periode[_periode] = (await aufgeloester_monatspreis(
+            db, anlage.id, _p_jahr, _p_monat, _md_je_monat.get(_periode),
+            _p_tarife.get("allgemein"),
+            stammpreis_override=resolve_strompreis_for_komponente(
+                _p_tarife, "wallbox", fallback=netzbezug_preis_cent
+            ),
+            cache=_preis_cache_wb,
+        )).cent
     wallbox_netzbezug_preis_cent = resolve_strompreis_for_komponente(
         _tarife, "wallbox", fallback=netzbezug_preis_cent
     )
@@ -1591,8 +1614,14 @@ async def calculate_investition_sensors(
         # DI-4: WP-Strom mit dem WP-Spezialtarif bewerten (Fallback allgemein),
         # deckungsgleich mit aktueller_monat.py und der Anlage-Aggregation oben.
         gesamt_strom = 0.0
-        gesamt_heizung = 0.0
-        gesamt_warmwasser = 0.0
+        # N-391: die Wärme des Geräts nach der kanonischen Vorrangregel D1 —
+        # **je Zeile aufgelöst**, nicht am Ende aus zwei Summen gebildet.
+        # ⛔ Hier standen bis zum 14.09.2026 `gesamt_heizung` und
+        # `gesamt_warmwasser`, deren einziger Zweck ihre Summe am Ende war. Eine
+        # Zeile mit gemeinsamem Wärmemengenzähler trug zu beiden nichts bei —
+        # die Wärme-, Arbeitszahl- und Ersparnis-Sensoren dieser Wärmepumpe
+        # meldeten 0 bzw. nichts, während Hub und Cockpit die Zahl zeigten.
+        gesamt_waerme_kanonisch = 0.0
 
         # #263 K-2 (Konzept §3.5): abgeleitete Wärme trägt keine JAZ — sonst
         # exportierte eedc die gepflegte JAZ als gemessenen Sensorwert nach HA,
@@ -1602,7 +1631,16 @@ async def calculate_investition_sensors(
         gesamt_modus_heizen = 0.0
         gesamt_modus_kuehlen = 0.0
         gesamt_modus_warmwasser = 0.0
-        gesamt_modus_funktionsfremd = 0.0
+        #: ⭐ **SOLL-§9-E7/Option A: was vom Nenner abgezogen werden DARF.**
+        #: ⛔ **Nicht die Summe der funktionsfremden Mengen** — hier stand bis
+        #: zum 12.09.2026 `gesamt_modus_funktionsfremd`, das jede solche Menge
+        #: aufaddierte. Bei getrennter Strommessung mit nur **abgeleiteter**
+        #: Aufteilung ist der Abzug 0: Die Verteilung darf
+        #: `strom_heizen + strom_warmwasser` nicht um eine Menge kürzen, die nie
+        #: dazukam (W-16 addiert nur den **gemessenen** Anteil). Die Mengen
+        #: selbst tragen unverändert die Betriebsart-Sensoren weiter unten (K1)
+        #: — sie stehen in `gesamt_modus_kuehlen` und seinen Nachbarn.
+        gesamt_modus_funktionsfremd_abzug = 0.0
         gesamt_modus_abdeckung_h = 0.0
         #: F-56 — trägt irgendeine Zeile GEMESSENE Betriebsart-Zähler? Dann
         #: dürfen die beiden Sensoren erscheinen, auch ohne Modus-Abdeckung:
@@ -1619,6 +1657,12 @@ async def calculate_investition_sensors(
         kuehl_je_monat: dict[tuple[int, int], float] = {}
         # B5/X-1: der Kühlstrom je Monat — für E-B in der Ersparnis unten.
         kuehl_je_monat: dict[tuple[int, int], float] = {}
+        #: ⛔ **N-462 (13.09.2026): je Monatszeile, nicht einmal vor der
+        #: Schleife.** SOLL-§9-E7/Option A fragt „steckt der funktionsfremde
+        #: Anteil im Nenner?" — das entscheidet die **Stufe** dieser Zeile (K3),
+        #: nicht das Kennzeichen des Geräts. Der Nachtrag-Block weiter unten
+        #: sieht seine Zeile nicht mehr und liest die Stufe deshalb hier mit.
+        _nenner_fein_je_monat: dict[tuple[int, int], bool] = {}
         for md in monatsdaten:
             d = md.verbrauch_daten or {}
             # F-56: **gemessen schlägt abgeleitet**, über den Layer-SoT —
@@ -1631,7 +1675,13 @@ async def calculate_investition_sensors(
             gesamt_modus_heizen += _zeile.heizen_kwh
             gesamt_modus_kuehlen += _zeile.kuehlen_kwh
             gesamt_modus_warmwasser += _zeile.warmwasser_kwh
-            gesamt_modus_funktionsfremd += _zeile.funktionsfremd_kwh
+            # SOLL-§9-E7/Option A — die Regel wird gerufen, nicht nachgebaut.
+            _nenner_fein_je_monat[(md.jahr, md.monat)] = nenner_ist_feine_summe(
+                d, investition.parameter,
+            )
+            gesamt_modus_funktionsfremd_abzug += funktionsfremd_abzug_kwh(
+                _zeile, hat_split=_nenner_fein_je_monat[(md.jahr, md.monat)],
+            )
             gesamt_modus_abdeckung_h += _zeile.abdeckung_h
             gesamt_modus_gemessen = gesamt_modus_gemessen or _zeile.gemessen
             gesamt_strom += get_wp_strom_kwh(d, investition.parameter)
@@ -1645,10 +1695,13 @@ async def calculate_investition_sensors(
                     get_wp_strom_kwh(d, investition.parameter),
                 )
             }
-            gesamt_heizung += d.get("heizenergie_kwh", 0) or 0
-            # N-379: die eine Lesetuer — sonst traegt der HA-Sensor eine
-            # Waermemenge, die es am Geraet nicht gibt.
-            gesamt_warmwasser += get_wp_warmwasser_kwh(d, investition.parameter)
+            gesamt_waerme_kanonisch += waerme_gesamt_kwh(
+                d.get("waerme_kwh"),
+                heizwaerme_kwh(d),   # N-398
+                # N-379: die eine Lesetuer — sonst traegt der HA-Sensor eine
+                # Waermemenge, die es am Geraet nicht gibt.
+                get_wp_warmwasser_kwh(d, investition.parameter),
+            )
             waerme_abgeleitet = waerme_abgeleitet or heizwaerme_ist_abgeleitet(
                 md.source_provenance
             )
@@ -1673,18 +1726,40 @@ async def calculate_investition_sensors(
                 gesamt_modus_heizen += _split.heizen_kwh
                 gesamt_modus_kuehlen += _split.kuehlen_kwh
                 gesamt_modus_warmwasser += _split.warmwasser_kwh
-                # ⚠ Hier steht `kuehlen_kwh` und NICHT `funktionsfremd_kwh` —
-                # `AngewandterSplit` hat die Eigenschaft nicht, und das ist
-                # richtig so: Der **abgeleitete** Modus-Split kennt nur Heizen,
-                # Kühlen und Warmwasser (er leitet aus dem Betriebsmodus ab,
-                # und Lüften/Entfeuchten liefern dort keine eigene Menge).
-                # Die funktionsfremde Menge dieses Zweigs IST damit der
-                # Kühlstrom; der gemessene Zweig darüber nimmt die volle
-                # Definition aus `ModusStromZeile.funktionsfremd_kwh`.
-                gesamt_modus_funktionsfremd += _split.kuehlen_kwh
+                # ⚠ Hier zählt `kuehlen_kwh` und nicht die volle Definition —
+                # `AngewandterSplit` hat sie nicht, und das ist richtig so: Der
+                # **abgeleitete** Modus-Split kennt nur Heizen, Kühlen und
+                # Warmwasser (er leitet aus dem Betriebsmodus ab, und
+                # Lüften/Entfeuchten liefern dort keine eigene Menge).
+                # ⭐ **SOLL-§9-E7/Option A, und hier ist der Zweig immer der
+                # abgeleitete** — `lade_modus_split_ohne_abschluss` trägt genau
+                # die Monate ohne gemessene Betriebsart-Zeile nach. Die Regel
+                # wird gerufen, nicht nachgebaut (F-56); `ModusStromZeile` ist
+                # bloß die Übergabeform.
+                gesamt_modus_funktionsfremd_abzug += funktionsfremd_abzug_kwh(
+                    ModusStromZeile(
+                        heizen_kwh=_split.heizen_kwh,
+                        kuehlen_kwh=_split.kuehlen_kwh,
+                        warmwasser_kwh=_split.warmwasser_kwh,
+                        gemessen=False,
+                        abdeckung_h=_split.abdeckung_h,
+                    ),
+                    # N-462: die Stufe DIESES Monats. Trägt er gar keine
+                    # Zeile, gibt es auch keinen Gesamtzähler, auf den er
+                    # zurückfallen könnte — dann bleibt es bei der Lage des
+                    # Kennzeichens, und die ist hier „feine Summe".
+                    hat_split=_nenner_fein_je_monat.get(
+                        _schluessel,
+                        bool((investition.parameter or {})
+                             .get("getrennte_strommessung")),
+                    ),
+                )
                 gesamt_modus_abdeckung_h += _split.abdeckung_h
 
-        gesamt_waerme = gesamt_heizung + gesamt_warmwasser
+        # N-391: dieselbe Auflösung wie im Hub und in den Monats-Fakten. Ohne sie
+        # meldeten die Sensoren *Wärme erzeugt*, *Arbeitszahl* und *Ersparnis*
+        # einer Wärmepumpe mit gemeinsamem Wärmemengenzähler 0 bzw. nichts.
+        gesamt_waerme = gesamt_waerme_kanonisch
 
         # Issue #238: Counter-Summen (Starts/Betriebsstunden) dieser WP aus
         # TagesZusammenfassung.komponenten_starts über die Laufzeit. Nur gesetzt,
@@ -1738,7 +1813,8 @@ async def calculate_investition_sensors(
                 _az = arbeitszahl(
                     gesamt_waerme, gesamt_strom,
                     waerme_abgeleitet_kwh=1.0 if waerme_abgeleitet else 0.0,
-                    strom_funktionsfremd_kwh=gesamt_modus_funktionsfremd,
+                    # SOLL-§9-E7/Option A: der **Abzug**, nicht die Menge.
+                    strom_funktionsfremd_kwh=gesamt_modus_funktionsfremd_abzug,
                     abgrenzung_verletzt=abgrenzungs_grund(
                         abgrenzung_stoerung=abgrenzung_stoerung(investition),
                     ),
@@ -1791,9 +1867,11 @@ async def calculate_investition_sensors(
                 bewertbar = False
                 for md in monatsdaten:
                     d = md.verbrauch_daten or {}
-                    m_waerme = (d.get("heizenergie_kwh", 0) or 0) + (
-                        get_wp_warmwasser_kwh(d, investition.parameter)
-                    )  # N-379
+                    m_waerme = waerme_gesamt_kwh(   # N-391 (D1), N-379, N-398
+                        d.get("waerme_kwh"),
+                        heizwaerme_kwh(d),
+                        get_wp_warmwasser_kwh(d, investition.parameter),
+                    )
                     m_strom = get_wp_strom_kwh(d, investition.parameter)
                     if m_waerme <= 0 and m_strom <= 0:
                         continue

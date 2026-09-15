@@ -185,11 +185,21 @@ async def monats_strompreis_lookup(
     ``aufgeloester_strompreis_cent`` als Eingabe erwartet — dieselbe Rolle,
     die ``Monatsdaten.kraftstoffpreis_euro`` auf der Benzinseite längst hat.
 
-    Bewusst **ohne** Flex-Ø: der ``resolve_netzbezug_preis_cent``-Override
-    braucht die Monatsdaten-Zeile, die hier nicht vorliegt. Wer sie hat
-    (Cockpit über ``f.tarif.wallbox_preis_effektiv_cent``), liefert den
-    genaueren Wert — beide sind derselbe Stammtarif, nur einmal mit und
-    einmal ohne den abgerechneten Durchschnitt.
+    ⛔ **Hier stand bis zum 11.09.2026: „Bewusst ohne Flex-Ø — der Override
+    braucht die Monatsdaten-Zeile, die hier nicht vorliegt."** Der Satz war
+    technisch richtig und in seiner Folge falsch: Diese Funktion hat ``db`` und
+    ``anlage_id``, sie **kann** die Zeilen laden. Was als Bauumstand begann, war
+    im Ergebnis eine Drift — Cockpit → Übersicht und die Aussichten nahmen für
+    dieselbe E-Mob-Ersparnis den **abgerechneten** Monats-Ø (über
+    ``f.tarif.wallbox_preis_effektiv_cent``), der HA-Sensor daneben den
+    Stammtarif. Dieselbe Größe, zwei Zahlen, je nachdem wo man hinsieht.
+
+    ⚠ Das ist die **F-18-Klasse eine Ebene tiefer**: Der Wächter
+    ``test_p8_emob_ersparnis_bekommt_die_monatspreise`` prüft, **dass** ein
+    Lookup übergeben wird — nicht, **welcher**.
+
+    Seit #412 fährt diese Funktion die volle Kaskade (gepflegt → gemessen →
+    Zeitfenster → Stamm); der Komponenten-Tarif bleibt dabei Stufe 4.
     """
     # N-267: Der Zeittarif faehrt hier mit, weil diese Funktion die DRITTE
     # Bildungsstelle des Monatspreises ist (neben `monats_fakten::_lade_tarif`
@@ -199,19 +209,32 @@ async def monats_strompreis_lookup(
     # gegen die F-18 gebaut wurde.
     from backend.services.strompreis_aggregator import wirksamer_arbeitspreis_cent
 
+    from backend.models.monatsdaten import Monatsdaten
+    from backend.services.strompreis_aggregator import aufgeloester_monatspreis
+
+    md_result = await db.execute(
+        select(Monatsdaten).where(Monatsdaten.anlage_id == anlage_id)
+    )
+    md_je_monat = {(m.jahr, m.monat): m for m in md_result.scalars().all()}
+
     lookup: dict[tuple[int, int], float] = {}
-    zeittarif_cache: dict = {}
+    preis_cache: dict = {}
     for jahr, monat in dict.fromkeys(monate):
         m_tarife = await lade_tarife_fuer_anlage(
             db, anlage_id, target_date=date(jahr, monat, 1)
         )
         m_tarif = resolve_tarif_for_komponente(m_tarife, verwendung)
-        if m_tarif is None:
-            lookup[(jahr, monat)] = fallback_bezug
-            continue
-        lookup[(jahr, monat)] = await wirksamer_arbeitspreis_cent(
-            db, anlage_id, jahr, monat, m_tarif, cache=zeittarif_cache
+        # Der Komponenten-Tarif ist Stufe 4 der Kaskade; ein gepflegter oder
+        # gemessener Ø schlägt ihn, wie in den Monats-Fakten.
+        stamm = (
+            m_tarif.netzbezug_arbeitspreis_cent_kwh if m_tarif is not None
+            else fallback_bezug
         )
+        lookup[(jahr, monat)] = (await aufgeloester_monatspreis(
+            db, anlage_id, jahr, monat, md_je_monat.get((jahr, monat)),
+            m_tarif if m_tarif is not None else m_tarife.get("allgemein"),
+            stammpreis_override=stamm, cache=preis_cache,
+        )).cent
     return lookup
 
 

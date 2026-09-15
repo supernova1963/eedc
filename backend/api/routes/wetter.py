@@ -9,6 +9,8 @@ Unterstützte Datenquellen:
 - PVGIS TMY: Langjährige Durchschnittswerte als Fallback
 """
 
+import calendar
+from datetime import date
 from typing import Optional, List, Literal
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from pydantic import BaseModel, Field
@@ -18,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.core.exceptions import bad_request, not_found
 from backend.api.deps import get_db
 from backend.models.anlage import Anlage
+from backend.services.mitteltemperatur import lade_monatsmittel_temperatur
 from backend.services.wetter.orchestrator import (
     get_wetterdaten,
     get_wetterdaten_multi,
@@ -57,7 +60,23 @@ class WetterDatenResponse(BaseModel):
     globalstrahlung_kwh_m2: float = Field(..., ge=0, description="Globalstrahlung in kWh/m²")
     sonnenstunden: float = Field(..., ge=0, description="Sonnenstunden im Monat")
     durchschnittstemperatur_c: float | None = Field(
-        None, description="Monats-Tagesdurchschnittstemperatur in °C (open-meteo + brightsky)"
+        None,
+        description=(
+            "Monats-Tagesdurchschnittstemperatur in °C. Vorrang: die eigene "
+            "Messreihe der Anlage, sonst open-meteo/brightsky. Welche der "
+            "beiden Stufen den Wert gestellt hat, sagt `temperatur_herkunft`."
+        ),
+    )
+    temperatur_herkunft: Literal["messung", "open-meteo", "brightsky"] | None = Field(
+        None,
+        description=(
+            "Woher `durchschnittstemperatur_c` kommt: `messung` = eigene "
+            "Außentemperatur-Reihe der Anlage (Stundenwerte, sonst Tages-"
+            "Min/Max), sonst der Wetterdienst. `null`, wenn es keinen Wert "
+            "gibt. **Nicht dasselbe wie `datenquelle`** — die beschreibt die "
+            "Strahlung und kann `pvgis-tmy` sein, wo es gar keine Temperatur "
+            "gibt."
+        ),
     )
     datenquelle: str = Field(..., description="open-meteo, brightsky, pvgis-tmy oder defaults")
     standort: StandortInfo
@@ -129,13 +148,20 @@ async def get_wetter_monat(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Holt Wetterdaten (Globalstrahlung, Sonnenstunden) für einen Monat.
+    Holt Wetterdaten (Globalstrahlung, Sonnenstunden, Ø-Temperatur) für einen Monat.
 
-    Datenquellen:
+    Datenquellen der **Strahlung**:
     - auto: Automatische Auswahl (Bright Sky für DE, Open-Meteo sonst)
     - open-meteo: Open-Meteo Archive API (weltweit)
     - brightsky: Bright Sky / DWD (nur Deutschland, höhere Qualität)
     - Fallback: PVGIS TMY → Statische Defaults
+
+    ⭐ **Die Ø-Temperatur folgt einer eigenen Vorrangkette** (N-426): zuerst die
+    gemessene Außentemperatur-Reihe der Anlage (`services/mitteltemperatur.py`
+    — Stundenwerte, sonst Tages-Min/Max), erst danach der Wetterdienst. Welche
+    Stufe den Wert gestellt hat, steht in `temperatur_herkunft`; ohne das Feld
+    stünde in der Oberfläche „von Open-Meteo" über einer Zahl aus dem eigenen
+    Zähler.
 
     Args:
         anlage_id: ID der Anlage (für Koordinaten)
@@ -188,6 +214,34 @@ async def get_wetter_monat(
         provider=gewaehlt,  # type: ignore
         land=anlage.standort_land,
     )
+
+    # ── Ø-Temperatur: die eigene Messreihe steht VOR dem Archiv (N-426) ──────
+    #
+    # Der Provider-Wert oben ist damit die **letzte** Stufe derselben
+    # Vorrangkette, mit der die Temperaturlinie des Wärme/Klima-Verlaufs
+    # rechnet — und sie wird GERUFEN, nicht nachgebaut (`services/
+    # mitteltemperatur.py`, ADR-001): Stundenmittel, sonst Tages-Min/Max.
+    #
+    # ⛔ **Ohne ihre dritte Stufe**, und das ist keine Sparsamkeit: Stufe 3 ist
+    # `Monatsdaten.durchschnittstemperatur` — genau das Feld, das diese Antwort
+    # füllen soll. Gäbe man `gepflegt_je_monat` mit, bestätigte das Auto-Fill
+    # dem Anwender seinen eigenen Wert als „gemessen" und die Kette liefe im
+    # Kreis. Dieselbe Trennung wie bei `lade_heizgradtage_je_monat`.
+    #
+    # ⚠ Für den LAUFENDEN Monat liefert der Provider ohnehin nichts (die
+    # Anbieter-Schleife greift nur für vergangene Monate, `orchestrator.py`) —
+    # dort ist die Messreihe nicht nur besser, sondern die einzige Quelle.
+    letzter_tag = calendar.monthrange(jahr, monat)[1]
+    gemessen = await lade_monatsmittel_temperatur(
+        db,
+        anlage_id,
+        von=date(jahr, monat, 1),
+        bis=date(jahr, monat, letzter_tag),
+    )
+    kettenwert = gemessen.get((jahr, monat))
+    if kettenwert is not None:
+        data["durchschnittstemperatur_c"] = kettenwert
+        data["temperatur_herkunft"] = "messung"
 
     return WetterDatenResponse(**data)
 

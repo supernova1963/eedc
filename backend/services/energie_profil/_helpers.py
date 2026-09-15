@@ -698,6 +698,35 @@ async def _get_tagespeaks_aus_ha_lts(
     return TagesPeaks(pv=peak_pv, netzbezug=peak_bezug, einspeisung=peak_einsp)
 
 
+def strompreis_sensor_id(sensor_mapping: Optional[dict]) -> Optional[str]:
+    """Die Entity des zugeordneten Strompreis-Sensors — oder ``None``.
+
+    **Die eine Leseart** (11.09.2026). Sie stand als drei Zeilen mitten in
+    ``_get_strompreis_stunden`` und war damit für jeden anderen Frager
+    unerreichbar.
+
+    ⛔ **Der zweite Frager, für den sie herausgezogen wurde, ist am selben Tag
+    wieder entfallen** — und der Grund gehört hierher, damit ihn niemand erneut
+    baut: Der Monatsabschluss sollte das Feld „Ø Strompreis" freischalten,
+    sobald ein Preissensor zugeordnet ist. Das war falsch. Der Zuordnungs-Slot
+    für diesen Sensor ist selbst nur bei ``vertragsart == "dynamisch"`` sichtbar
+    (``datenquellen.py``, begründet mit Forum #89667/54); der Zustand „Sensor
+    ohne dynamische Vertragsart" entsteht fast nur nach einem **Tarifwechsel**,
+    und eine stichtagslose Bedingung hätte das Feld danach in jedem Monat
+    gezeigt. Dort entscheidet jetzt die **Messung dieses Monats**.
+
+    ⚠ **Die Funktion bleibt öffentlich**, weil sie die Leseart benennt: Wer
+    wissen will, woran ein zugeordneter Preissensor erkennbar ist, findet hier
+    eine Antwort statt drei Zeilen in einem Ladepfad.
+
+    ⚠ Geprüft wird die **Zuordnung**, nicht die Erreichbarkeit von Home
+    Assistant.
+    """
+    basis = (sensor_mapping or {}).get("basis", {}) or {}
+    sp = basis.get("strompreis")
+    return sp.get("sensor_id") if isinstance(sp, dict) else None
+
+
 async def _get_strompreis_stunden(
     anlage: Anlage,
     sensor_mapping: dict,
@@ -716,9 +745,7 @@ async def _get_strompreis_stunden(
     boersen_preise: dict[int, float] = {}
 
     # ── HA-Sensor (Endpreis, wenn konfiguriert) ──────────────────────────
-    basis = sensor_mapping.get("basis", {})
-    sp = basis.get("strompreis")
-    sensor_id = sp.get("sensor_id") if isinstance(sp, dict) else None
+    sensor_id = strompreis_sensor_id(sensor_mapping)
 
     if sensor_id:
         # F-26: dritte Stelle derselben Klasse. Der Zugriff hängt an einer

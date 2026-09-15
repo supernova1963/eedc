@@ -5,6 +5,7 @@
  */
 
 import { api } from './client'
+import type { WpGeraetZeile, WpMoeglichZeile } from './aktuellerMonat'
 
 // =============================================================================
 // Types
@@ -58,11 +59,31 @@ export interface CockpitUebersicht {
   wp_jaz_warmwasser_grund?: string | null
   wp_jaz_kuehlen?: number | null
   wp_jaz_kuehlen_grund?: string | null
+  /** E1b — siehe {@link WpGeraetZeile}. */
+  wp_cop_ist_schranke?: boolean | null
+  /** Der EINE Satz unter der Schranke: „Klimaanlage: Strom ohne Wärmemessung
+   *  enthalten". Fertig formuliert aus dem Layer. */
+  wp_cop_schranke_hinweis?: string | null
+  /** D-Sicht 3: die Kennzahlen **je Gerät**, im Block selbst. */
+  wp_geraete?: WpGeraetZeile[] | null
+  /** D-Sicht 1: was die Ausstattung nicht hergibt — **einmal je Sicht**, mit
+   *  Handgriff. Eine Größe, deren Grund hier steht, bekommt **keine** Kachel
+   *  mit „—"; eine Größe mit einem Zeitraum-Grund bleibt als „—" ohne Text. */
+  wp_moeglich?: WpMoeglichZeile[] | null
+  /** Bauschnitt 8: Kältemenge des Jahres aus dem Layer (> 0, sonst `null`). */
+  wp_kaelte_kwh?: number | null
   wp_modus_strom_heizen_kwh?: number | null
   wp_modus_strom_kuehlen_kwh?: number | null
   wp_modus_strom_warmwasser_kwh?: number | null
   wp_modus_strom_lueften_kwh?: number | null
   wp_modus_strom_entfeuchten_kwh?: number | null
+  /** **R-C (WK-16f, N-398): die abgegebene Nutzenergie** derselben zwei
+   *  Betriebsarten — als **Menge** neben ihrem Strom. E4 bleibt: daraus
+   *  entsteht keine Arbeitszahl, weil eedc den Nutzen von Lüften und
+   *  Entfeuchten nicht bewerten kann. Nur gesetzt, wenn ein Zähler etwas
+   *  gemeldet hat; sonst steht die Zeile nicht da (D-Sicht). */
+  wp_modus_nutzenergie_lueften_kwh?: number | null
+  wp_modus_nutzenergie_entfeuchten_kwh?: number | null
   wp_modus_nicht_aufgeteilt_kwh?: number | null
   wp_modus_abdeckung_h?: number | null
   wp_modus_strom_bezug_kwh?: number | null

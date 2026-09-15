@@ -7,7 +7,7 @@ Enthält nur reine Daten und Logik ohne I/O.
 
 import logging
 from dataclasses import dataclass
-from typing import Optional
+from typing import Callable, Container, Mapping, Optional, Sequence
 
 from backend.core.field_definitions import (
     SONSTIGES_KATEGORIE_UNGEPFLEGT,
@@ -161,9 +161,18 @@ def baue_investitions_serien(
         if not has_leistung and typ == "waermepumpe":
             config = TV_SERIE_CONFIG.get("waermepumpe")
             if config:
+                # ⭐ **Drei Betriebsarten, nicht zwei** (N-439, 13.09.2026).
+                # `leistung_kuehlen_w` ist seit W-13 (26.08.) jeder Wärmepumpe
+                # zuordenbar und wurde bis hierher an keiner Station gelesen —
+                # wer nur den Kühlsensor hatte, bekam gar keine Serie und stand
+                # darunter als „nicht dargestellt". Die drei Felder sind
+                # **disjunkte Momentanwerte** desselben Kältekreises
+                # (`core/betriebsmodus.py`: ein Umschaltventil, dietmar1968
+                # T89667 #225), also dieselbe Bauform wie ihre zwei Nachbarn.
                 for suffix, field in (
                     ("heizen", "leistung_heizen_w"),
                     ("warmwasser", "leistung_warmwasser_w"),
+                    ("kuehlen", "leistung_kuehlen_w"),
                 ):
                     eid = live.get(field)
                     if eid:
@@ -257,6 +266,74 @@ def baue_investitions_serien(
         dedupliziert = behalten
 
     return dedupliziert, serie_entities
+
+
+#: Die Felder, aus denen der Tagesverlauf überhaupt eine Leistungskurve bauen
+#: kann. `leistung_w` ist der Regelfall; die drei Funktions-Felder tragen die
+#: Wärmepumpe mit getrennter Strommessung (s. {@link baue_investitions_serien}).
+#:
+#: ⚠ **`leistung_kuehlen_w` gehört dazu, seit es eine Serie erzeugt** (N-439).
+#: Die Liste steht im Anwendersatz *„Nicht dargestellt (kein HA-Leistungssensor)"*
+#: (N-447) — ein Feld, das eine Fläche zeichnet, aber hier fehlt, macht genau
+#: die Falschaussage, gegen die dieser Satz gebaut wurde.
+LEISTUNGS_FELDER: tuple[str, ...] = (
+    "leistung_w", "leistung_heizen_w", "leistung_warmwasser_w",
+    "leistung_kuehlen_w",
+)
+
+
+def uebersprungene_investitionen(
+    investitionen: Mapping[str, object],
+    inv_ids_mit_serie: Container[str],
+    hat_leistungsquelle: Callable[[str], bool],
+) -> list[str]:
+    """Welche Geräte der Tagesverlauf **nicht** zeichnet — die EINE Bedingung
+    hinter dem Anwendersatz *„Nicht dargestellt (kein HA-Leistungssensor)"*.
+
+    ⛔ **N-447: bis 12.09.2026 beantworteten beide Pfade diese Frage anders, und
+    beide falsch.** Der HA-Pfad sammelte jede Investition ohne ``leistung_w`` —
+    also auch die Wärmepumpe mit getrennten Leistungssensoren, die zwölf Zeilen
+    später in **zwei** Serien zerlegt und gezeichnet wurde: Der Anwender sah
+    seine Wärmepumpe zweimal im Chart und darüber den Satz, sie fehle. Der
+    MQTT-Pfad machte denselben Fehler spiegelverkehrt (``if typ != "waermepumpe"``)
+    und ließ eine Wärmepumpe **ganz ohne** Leistungsquelle wortlos verschwinden.
+    SOLL §3.3/**S3**: *„Eine Sicht, die weniger zeigt als die Nachbarsicht, sagt
+    warum"* — hier sagte sie das Gegenteil des Sichtbaren.
+
+    ⭐ **Der Satz behauptet ZWEI Dinge, also prüft die Bedingung beide:** das
+    Gerät ist nicht gezeichnet (keine Serie) **und** der Grund dafür ist eine
+    fehlende Leistungsquelle. Die zweite Hälfte ist nicht redundant, sie ist die
+    Abgrenzung: ``baue_investitions_serien`` lässt Geräte auch aus **anderen**
+    Gründen weg, und für die wäre der Satz eine Falschaussage — das E-Auto an
+    einer Wallbox (die es mitmisst), zwei Investitionen an derselben Entity
+    (Pool-Dedup #227) und ein Zähler unter *Sonstiges* (#377, hat keine Seite).
+    Alle drei haben einen Leistungssensor; sie standen deshalb auch bisher nicht
+    in dieser Liste und dürfen es nicht anfangen.
+
+    Args:
+        investitionen: ``{inv_id: Investition}`` — dieselbe Map wie beim
+            Serien-Bau, damit die Frage über derselben Menge gestellt wird.
+        inv_ids_mit_serie: die IDs, für die der Serien-Bauer geliefert hat.
+        hat_leistungsquelle: ``inv_id -> bool``; die Pfade beantworten sie
+            verschieden (HA aus dem Mapping, MQTT aus den Snapshot-Keys) —
+            **die Regel darüber ist dieselbe.**
+    """
+    uebersprungen: list[str] = []
+    for inv_id, inv in investitionen.items():
+        typ = getattr(inv, "typ", None)
+        if typ in SKIP_TYPEN or typ not in TV_SERIE_CONFIG:
+            continue
+        if inv_id in inv_ids_mit_serie:
+            continue
+        if hat_leistungsquelle(inv_id):
+            continue
+        uebersprungen.append(getattr(inv, "bezeichnung", None) or typ)
+    return uebersprungen
+
+
+def inv_ids_mit_serie(serien: Sequence[TagesverlaufSerie]) -> set[str]:
+    """Die Investitionen, für die {@link baue_investitions_serien} geliefert hat."""
+    return {s.inv_id for s in serien}
 
 
 def extract_live_config(anlage: Anlage) -> tuple[

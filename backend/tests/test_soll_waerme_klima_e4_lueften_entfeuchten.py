@@ -108,7 +108,7 @@ def test_e4_lueften_und_entfeuchten_fallen_aus_dem_nenner():
         modus_strom_lueften_kwh=15.0,
         modus_strom_entfeuchten_kwh=5.0,
         modus_strom_bezug_kwh=100.0,
-        geraete_mit_strom=1, geraete_mit_waerme=1,
+        geraete_mit_strom=frozenset({1}), geraete_mit_waerme=frozenset({1}),
     )
 
     assert fakten.modus_strom_funktionsfremd_kwh == pytest.approx(40.0), (
@@ -136,7 +136,7 @@ def test_e4_ohne_lueftungszaehler_aendert_sich_nichts():
         modus_strom_heizen_kwh=80.0,
         modus_strom_kuehlen_kwh=20.0,
         modus_strom_bezug_kwh=100.0,
-        geraete_mit_strom=1, geraete_mit_waerme=1,
+        geraete_mit_strom=frozenset({1}), geraete_mit_waerme=frozenset({1}),
     )
 
     assert fakten.modus_strom_funktionsfremd_kwh == pytest.approx(20.0)

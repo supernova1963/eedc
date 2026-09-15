@@ -9,7 +9,12 @@ import re
 from datetime import date
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+from backend.services.waerme_klima_block import (
+    WpGeraetZeile,
+    WpMoeglichZeile,
+)
 
 from backend.core.field_definitions import SONSTIGES_KATEGORIE_UNGEPFLEGT
 from backend.models.investition import Investition
@@ -43,8 +48,12 @@ _VIRTUAL_SERIEN: dict[str, dict] = {
     "pv_gesamt":   {"label": "PV Gesamt",   "typ": "virtual", "kategorie": "pv",       "seite": "quelle"},
 }
 
-# Optionale Suffixe bei WP-Serien (waermepumpe_{id}_heizen)
-_SUFFIX_LABELS = {"heizen": " Heizen", "warmwasser": " Warmwasser"}
+# Optionale Suffixe bei WP-Serien (waermepumpe_{id}_heizen).
+# ⚠ Die Menge ist der **Rückweg** zu `live_sensor_config.baue_investitions_serien`
+# — wer dort ein Suffix ergänzt und hier nicht, bekommt im Tag-Stundenverlauf
+# zwei Flächen mit demselben blanken Gerätenamen (Wächter:
+# `test_serien_aufbau_symmetrie_m1.py::test_split_keys_loesen_zurueck_*`).
+_SUFFIX_LABELS = {"heizen": " Heizen", "warmwasser": " Warmwasser", "kuehlen": " Kühlen"}
 
 # Kategorien die bereits in dedizierten Spalten landen (kein Extra-Tracking nötig)
 _DEDIZIERTE_KATEGORIEN = {"pv", "batterie", "netz", "haushalt", "waermepumpe", "wallbox", "eauto"}
@@ -247,6 +256,11 @@ class MonatsAuswertungResponse(BaseModel):
     autarkie_prozent: Optional[float] = None
     eigenverbrauch_prozent: Optional[float] = None
     performance_ratio_avg: Optional[float] = None
+    #: Anzahl der Tage, über die `performance_ratio_avg` gemittelt ist (A6: ein Ø
+    #: ohne genannte Grundgesamtheit ist keine Auskunft). ⛔ NICHT `tage_mit_daten`
+    #: — das sind die Tage mit irgendwelchen Daten; hier zählen nur die Tage mit
+    #: einer Performance Ratio, also mit Einstrahlungsdaten.
+    performance_ratio_tage: Optional[int] = None
     batterie_vollzyklen_summe: Optional[float] = None
 
     # Erweiterte Analyse-KPIs
@@ -314,6 +328,190 @@ class TagesZusammenfassungResponse(BaseModel):
     boersenpreis_min_cent: Optional[float] = None
     negative_preis_stunden: Optional[int] = None
     einspeisung_neg_preis_kwh: Optional[float] = None
+
+
+class WaermeVerlaufTagResponse(BaseModel):
+    """Eine Tageszeile des Wärme/Klima-Verlaufs (Konzept §8, Bauschnitt 4).
+
+    **Warum ein eigenes Schema und nicht ``TagWerteResponse``.** Die Feldnamen
+    sind hier bewusst **deckungsgleich mit der Jahres-Reihe** — der Client baut
+    beide über dieselbe reine Funktion (``v4/waermeVerlauf.ts``), Jahr liefert
+    Monate, Monat liefert Tage. ``TagWerteResponse`` dagegen ist an die
+    Frontend-**Registry** gekoppelt (`lib/werte`), und ihr ``wp_strom`` ist die
+    Σ der Stundenspalte ``waermepumpe_kw``. ⚠ Hier stand bis 11.09.2026
+    „Leistungspfad" — falsch: die Spalte kommt aus dem **Zählerpfad** im
+    Rückwärts-Raster (LTS bzw. Snapshot-Slots). Der Unterschied zu
+    ``komponenten_kwh`` ist das Fenster, nicht die Quelle (N-434). Der Verlauf
+    nimmt ``komponenten_kwh``, weil die Aufteilung darunter damit rechnet
+    (W-17b).
+
+    ⚠ **Kein ``wp_waerme_abgeleitet_kwh``.** Auf Tagesebene gibt es keine
+    abgeleitete Wärme: Sie entsteht aus ``Strom × Arbeitszahl`` an den
+    Monatszeilen. Was hier steht, ist gemessen — oder es fehlt.
+    """
+
+    datum: date
+    #: Der gesamte Wärmepumpen-Strom des Tages (Zählerpfad).
+    wp_strom_kwh: Optional[float] = None
+    #: Σ der **gemessenen** Wärme (Heizung + Warmwasser). ``None`` = keine
+    #: Aussage; der Verlauf lässt die Linie dort aussetzen, statt sie auf 0 zu
+    #: ziehen.
+    wp_waerme_kwh: Optional[float] = None
+    #: Σ der **gemessenen Kälte** des Tages (Bauschnitt 6b) — eine eigene Rolle,
+    #: nie in ``wp_waerme_kwh`` (Konzept §8). ``None`` = keine Aussage.
+    wp_kaelte_kwh: Optional[float] = None
+    #: Tagesmittel der Außentemperatur (°C) — zweite Achse.
+    temperatur_c: Optional[float] = None
+    # ── Der Betriebsart-Stapel; ``None``, wo der Tag keine Aufteilung trägt ──
+    wp_modus_strom_heizen_kwh: Optional[float] = None
+    wp_modus_strom_warmwasser_kwh: Optional[float] = None
+    wp_modus_strom_kuehlen_kwh: Optional[float] = None
+    wp_modus_strom_lueften_kwh: Optional[float] = None
+    wp_modus_strom_entfeuchten_kwh: Optional[float] = None
+    wp_modus_nicht_aufgeteilt_kwh: Optional[float] = None
+    #: ⚠ **Die Grundmenge des Stapels** — Σ der Bezugsmengen der Geräte **mit**
+    #: Aufteilung, nicht der gesamte WP-Strom. Die Differenz benennt der Client
+    #: mit derselben Zeile wie der Balken darunter (W-17b).
+    wp_modus_strom_bezug_kwh: Optional[float] = None
+    wp_modus_abdeckung_h: Optional[float] = None
+    #: Kam die Aufteilung aus **gemessenen** Betriebsart-Zählern?
+    wp_modus_gemessen: Optional[bool] = None
+
+
+class WaermeVerlaufStundeResponse(BaseModel):
+    """Eine Stunde des Wärme/Klima-Verlaufs in *Cockpit → Tag* (Bauschnitt 5).
+
+    **Dieselben Feldnamen wie die Tageszeile** (``WaermeVerlaufTagResponse``) —
+    der Client baut Jahr, Monat und Tag über dieselbe reine Funktion. Statt
+    ``datum`` trägt die Zeile ihren Slot (Rückwärts-Raster, Slot h = [h−1, h)).
+
+    ⚠ **Das Tor ist das Tor des Tages:** ``wp_modus_gemessen`` und
+    ``wp_modus_abdeckung_h`` stehen in jeder Stunde so, wie sie für den Tag
+    gelten. Hat der Tag eine Aufteilung, gilt sie für jede Stunde — eine Stunde,
+    die nur Rest trägt, bleibt sichtbar, sonst verlöre die Zeichnung ihre Summe.
+
+    ⚠ **Keine Temperatur** — sie steht schon in der Stundenantwort des Tages.
+    """
+
+    stunde: int
+    #: Der Wärmepumpen-Strom des Slots — die Zählerspalte, deren Summe die
+    #: Kachel „Strom verbraucht" ist.
+    wp_strom_kwh: Optional[float] = None
+    #: Gemessene Wärme des Slots (Heizung + Warmwasser), **je Gerät** nach der
+    #: Stundenform seiner Zähler verteilt (N-437); ``None`` = keine Aussage.
+    wp_waerme_kwh: Optional[float] = None
+    #: Gemessene **Kälte** des Slots (Bauschnitt 6b), dieselbe Verteilung — eine
+    #: eigene Rolle, nie in ``wp_waerme_kwh``.
+    wp_kaelte_kwh: Optional[float] = None
+    wp_modus_strom_heizen_kwh: Optional[float] = None
+    wp_modus_strom_warmwasser_kwh: Optional[float] = None
+    wp_modus_strom_kuehlen_kwh: Optional[float] = None
+    wp_modus_strom_lueften_kwh: Optional[float] = None
+    wp_modus_strom_entfeuchten_kwh: Optional[float] = None
+    wp_modus_nicht_aufgeteilt_kwh: Optional[float] = None
+    wp_modus_strom_bezug_kwh: Optional[float] = None
+    wp_modus_abdeckung_h: Optional[float] = None
+    wp_modus_gemessen: Optional[bool] = None
+    # ── Der Funktions-Stapel (WK-09 B2, SOLL §3.3/S2a) ────────────────────
+    #
+    # ⭐ **Eine andere Familie, deshalb eigene Feldnamen** (SOLL §3.2): Die
+    # `wp_modus_*`-Felder darüber sind **Teilmengen** des Stroms (Betriebsart,
+    # Rest heißt *nicht aufgeteilt*); diese hier sind **Summanden** aus den
+    # Funktions-Zählern `strom_heizen_kwh`/`strom_warmwasser_kwh`. Sie dürfen
+    # nie im selben Stapel liegen — der Verlauf schaltet um (S2a).
+    wp_funktion_strom_heizen_kwh: Optional[float] = None
+    wp_funktion_strom_warmwasser_kwh: Optional[float] = None
+    #: Der Rest des Wärmepumpen-Stroms dieses Slots, der zu keiner Funktion
+    #: gehört (Standby, Geräte ohne Funktions-Zähler). Er hält die Stapelhöhe
+    #: auf dem Gesamtstrom (K1) und heißt, was er ist.
+    wp_funktion_uebrige_kwh: Optional[float] = None
+
+
+class WaermeVerlaufStundenResponse(BaseModel):
+    """Die 24 Stunden eines Tages — und was sich keiner Stunde zuordnen ließ."""
+
+    stunden: list[WaermeVerlaufStundeResponse]
+    #: Menge der Aufteilung (**Strom**-Stapel), für die es keine Stundenform
+    #: gab (P4: nicht gleichmäßig verteilt, sondern genannt). ``None`` = alles
+    #: zugeordnet.
+    ohne_stundenform_kwh: Optional[float] = None
+    #: Dasselbe für die **Wärme**- und die **Kälte**-Linie (N-437, E6 (a)) — je
+    #: Gerät gegen den Tageswert gemessen, wie beim Stapel.
+    waerme_ohne_stundenform_kwh: Optional[float] = None
+    kaelte_ohne_stundenform_kwh: Optional[float] = None
+    #: Gibt es an diesem Tag überhaupt gepflegte **Funktions**-Zähler? Nur dann
+    #: hat die Sicht „nach Funktion" etwas zu sagen und der Umschalter erscheint
+    #: (SOLL §3.3/S2a). ``False`` heißt „nicht erfasst", nicht „alles null".
+    funktions_stapel_verfuegbar: bool = False
+    #: Menge der **Funktions**-Zähler ohne Stundenform (P4, wie oben).
+    funktion_ohne_stundenform_kwh: Optional[float] = None
+
+
+# ── Verteilung & Verlauf (WK-16c) ────────────────────────────────────────────
+#
+# ⭐ **Ein Antworttyp für alle drei Stufen.** Was sich zwischen *Tag*, *Monat*
+# und *Jahr* ändert, ist allein die Auflösung der Perioden (Stunden · Tage ·
+# Monate) — die Segmente, die Kosten und die Temperatur-Linie sind dieselben.
+# Drei Typen wären drei Stellen, an denen dieselbe Regel driftet.
+
+
+class VerteilungSegmentResponse(BaseModel):
+    """Ein Segment der Verteilung — **ein Gerät, eine Funktion**."""
+
+    #: ``"<investition_id>:<funktion>"`` — der Schlüssel, unter dem die Perioden
+    #: ihre Mengen tragen.
+    schluessel: str
+    #: ``heizen`` · ``warmwasser`` · ``kuehlen`` · ``lueften`` · ``entfeuchten``
+    #: · ``system`` (Zähler-Rest) · ``ohne_modus`` (Modus-Rest).
+    funktion: str
+    funktion_label: str
+    geraet: str
+    investition_id: int
+    kwh: float
+    #: Anteil an der **aufgeteilten** Menge, nicht an der Gesamtmenge (W-17b).
+    anteil_prozent: float
+    #: ``gemessen`` · ``abgeleitet`` · ``rest``.
+    herkunft: str
+    #: Der Arbeitspreis, mit dem gerechnet wurde (ct/kWh) — über mehrere Monate
+    #: mengengewichtet, damit ``kwh × preis = kosten`` aufgeht (A6).
+    preis_cent: Optional[float] = None
+    kosten_euro: Optional[float] = None
+
+
+class VerteilungPeriodeResponse(BaseModel):
+    """Eine Periode des Verlaufs."""
+
+    schluessel: str
+    label: str
+    #: ``{Segment-Schlüssel: kWh}`` — nur Segmente mit Menge. Eine Periode ohne
+    #: Aufteilung trägt ein leeres Objekt, **keine** Reihe von Nullen (P4).
+    kwh_je_segment: dict[str, float] = {}
+    temperatur_c: Optional[float] = None
+    #: Symbol-Name des Live-Dashboards (``sunny`` · ``cloudy`` · …). ``None``,
+    #: wo kein WMO-Code vorliegt — kein Symbol statt eines erfundenen.
+    wetter_symbol: Optional[str] = None
+
+
+class VerteilungVerlaufResponse(BaseModel):
+    """Die Verteilung eines Zeitraums **und** ihr Verlauf (WK-16c)."""
+
+    #: ``tag`` · ``monat`` · ``jahr`` — die angefragte Cockpit-Sicht.
+    sicht: str
+    #: ``stunde`` · ``tag`` · ``monat`` — die Auflösung der Perioden.
+    stufe: str
+    segmente: list[VerteilungSegmentResponse] = []
+    perioden: list[VerteilungPeriodeResponse] = []
+    #: Der **gesamte** Wärme/Klima-Strom des Zeitraums (K1).
+    menge_kwh: float = 0.0
+    #: Σ der Segmente. Die Differenz zu ``menge_kwh`` nennt der Client als
+    #: *„Aufgeteilte Menge X von Y kWh"* — sie wird nicht hineingerechnet.
+    aufgeteilt_kwh: float = 0.0
+    kosten_gesamt_euro: Optional[float] = None
+    #: Σ aller Perioden — bei *Monat* und *Tag* **nicht** ``aufgeteilt_kwh``
+    #: (andere Quelle, anderes Fenster). Der Client nennt die Differenz.
+    verlauf_kwh: float = 0.0
+    #: Nur bei ``stufe == "stunde"``: was sich keiner Stunde zuordnen ließ (P4).
+    ohne_stundenform_kwh: Optional[float] = None
 
 
 class TagWerteResponse(BaseModel):
@@ -491,6 +689,16 @@ class TagDetailResponse(BaseModel):
     # WP-Strom-Split (getrennte Strommessung) — Tages-Boundary-Diff.
     wp_strom_heizen_kwh: Optional[float] = None
     wp_strom_warmwasser_kwh: Optional[float] = None
+    #: **Was dieser Tag wirklich abdeckt** (R-4/N-491) — der fertige Satz
+    #: *„gemessen ab 11:00 Uhr"*, ``None`` am vollen Tag. Er entsteht am ersten
+    #: Tag nach einer Zuordnung und am laufenden Tag, wenn ein Tagesrand fehlt
+    #: und eedc deshalb ab dem ersten bzw. bis zum letzten Stand misst.
+    #:
+    #: ⛔ **Der Satz kommt aus dem Layer** (``core/tageswert_grund.py``), nicht
+    #: aus dem Client — dieselbe Regel 3 wie bei den drei W-18-Gründen: eine
+    #: TS-Kopie der Textliste wäre eine zweite Wahrheit über denselben
+    #: Sachverhalt.
+    wp_abdeckung_hinweis: Optional[str] = None
     # WP-Wärme (thermisch, nur mit Wärmemengenzähler-Sensor) — Tages-Boundary-Diff.
     # Ermöglicht Tages-JAZ (= Wärme ÷ Strom) und Wärme-Aufteilung.
     wp_heizung_kwh: Optional[float] = None
@@ -543,17 +751,32 @@ class TagDetailResponse(BaseModel):
     wp_jaz_heizen_grund: Optional[str] = None
     wp_jaz_warmwasser: Optional[float] = None
     wp_jaz_warmwasser_grund: Optional[str] = None
-    #: ⛔ **Im Tag gibt es hier NIE einen Wert, und das ist gemessen, nicht
-    #: vergessen:** Die Kältemenge (`betriebsart_nutzenergie_kuehlen_kwh`) ist
-    #: zwar ein stündlicher Zähler, aber der Tages-Aggregator holt ausschließlich
-    #: `betriebsart_strom_*` (`snapshot/aggregator.py::get_betriebsart_strom_
-    #: tageswerte`, Filter `ist_betriebsart_strom_feld`) — der Zähler des
-    #: Quotienten hat also keinen Tagespfad. `GRUND_KEINE_KAELTEMENGE` („kein
-    #: Kältemengenzähler zugeordnet") wäre hier deshalb eine **Falschaussage**
-    #: für jeden, der einen zugeordnet hat. Stattdessen der Grund unten, der
-    #: sagt, was zutrifft und wo die Zahl steht.
+    #: Kältemenge ÷ Kühlstrom des Tages — **seit Bauschnitt 6** (11.09.2026)
+    #: mit einem Tagespfad für den Zähler (`wp_kaelte_kwh` in
+    #: `snapshot/aggregator.py::TAGESDETAIL_AUSGABE`, Gerätefeld oder Σ
+    #: Innengeräte). Bis dahin stand hier nie ein Wert, nur der Grund „nur im
+    #: Monat". Derselbe Layer-Aufruf wie im Monat; die Geräte-Deckung prüft der
+    #: Tag selbst, weil er beide Seiten je Gerät kennt.
     wp_jaz_kuehlen: Optional[float] = None
     wp_jaz_kuehlen_grund: Optional[str] = None
+    #: **E1b:** ``wp_jaz`` ist eine untere **Schranke** („≥ 3,0") — im Nenner
+    #: steht Strom ohne gemessene Wärme. Gleiche Bedeutung und gleiche Quelle
+    #: wie im Monat (``AktuellerMonatResponse.wp_jaz_ist_schranke``); der Tages-
+    #: Grund *„nicht alle Geräte melden Wärme"* ist damit dieselbe Schranke
+    #: statt eines Strichs.
+    wp_jaz_ist_schranke: bool = False
+    wp_jaz_schranke_hinweis: Optional[str] = None
+    #: **D-Sicht 3:** die Kennzahlen je Gerät — aus derselben Rechenstelle wie
+    #: Hub, Monat und Jahr (``services/waermepumpe_kennzahlen_je_geraet.py``),
+    #: nur mit der Tages-Herkunft der Mengen.
+    wp_geraete: list[WpGeraetZeile] = Field(default_factory=list)
+    #: **D-Sicht 1:** was die Ausstattung nicht hergibt, einmal je Sicht.
+    wp_moeglich: list[WpMoeglichZeile] = Field(default_factory=list)
+    #: Die Kältemenge des Tages — der Zähler der Kühlzahl darüber, als Zeile
+    #: „Kälte" der Gruppe Kühlen (Bauschnitt 8, 11.09.2026). Bis dahin stand sie
+    #: nur lokal in der Route. **> 0, sonst `None`** — dieselbe Regel wie Monat und
+    #: Jahr; eine gemessene 0 erklärt die Kühlzahl-Zeile mit ihrem Grund.
+    wp_kaelte_kwh: Optional[float] = None
     # Speicher-Netzladung (Arbitrage) — Tages-Boundary-Diff.
     speicher_ladung_netz_kwh: Optional[float] = None
     # Speicher effektiver Netz-Ladepreis (stundengewichtet, Tagesspanne).

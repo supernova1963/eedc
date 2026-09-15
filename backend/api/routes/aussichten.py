@@ -62,6 +62,10 @@ from backend.core.berechnungen.ust_eigenverbrauch import (
     bemessungsgrundlage_aus_investitionen,
     ust_eigenverbrauch_fuer_anlage,
 )
+from backend.core.berechnungen.waermepumpe_kennzahl import (
+    heizwaerme_kwh,
+    waerme_gesamt_kwh,
+)
 from backend.core.field_definitions import (
     get_emob_pv_netz_kwh,
     get_wp_strom_kwh,
@@ -77,7 +81,6 @@ from backend.services.emob_ladeanteil import reichere_monatszeilen_an
 from backend.core.wirtschaftlichkeit_defaults import (
     EINSPEISEVERGUETUNG_DEFAULT_CENT,
     NETZBEZUG_DEFAULT_CENT,
-    WP_PV_ANTEIL_DEFAULT,
 )
 from backend.core.berechnungen.speicher_wirtschaftlichkeit import (
     berechne_speicher_ersparnis,
@@ -1532,8 +1535,20 @@ async def get_finanz_prognose(
             if inv_id == wp.id and wp.ist_aktiv_im_monat(jahr, monat):
                 # N-379: dieselbe Lesetuer wie im Layer — sonst traegt die
                 # Aussicht eine Waermemenge weiter, die es am Geraet nicht gibt.
-                thermisch = (daten.get("heizenergie_kwh", 0) or 0) + (
-                    get_wp_warmwasser_kwh(daten, wp.parameter)
+                #
+                # N-391/D1 (14.09.2026): und derselbe Vorrang „Gesamtwert vor
+                # Summanden" wie in `alternativkosten.py` eine Bildschirmseite
+                # weiter oben — die beiden Schleifen lesen dieselbe Zeile und
+                # duerfen sie nicht verschieden verstehen. Ohne D1 wog eine
+                # Waermepumpe mit EINEM Waermemengenzaehler in der thermischen
+                # Mischung mit **0 kWh**: `gesamt_wp_thermisch` blieb 0, die
+                # WP-Prognose fiel ganz aus (gemessen ueber `get_finanz_prognose`:
+                # `wp_alternativ_ersparnis_euro` **0,0** statt **790,0**), und
+                # `wp_ersparnis_je_inv` liess das Geraet leer ausgehen.
+                thermisch = waerme_gesamt_kwh(
+                    daten.get("waerme_kwh"),
+                    heizwaerme_kwh(daten),   # N-398
+                    get_wp_warmwasser_kwh(daten, wp.parameter),
                 )
                 gesamt_wp_thermisch += thermisch
                 wp_agg["thermisch_kwh"] += thermisch
@@ -1812,18 +1827,38 @@ async def get_finanz_prognose(
     # Der reale Deckungsgrad liegt darunter. Ein Gleichzeitigkeitsmodell
     # bräuchte ein Lastprofil — das es in genau diesem Fallback-Fall (keine
     # historische EV-Quote) per Definition nicht gibt.
+    def _gepflegter_pv_anteil(wp) -> Optional[float]:
+        """Der gepflegte PV-Anteil **eines** Geräts als Bruch — die EINE Lesetür.
+
+        ⭐ **Sie steht seit N-354 (13.09.2026) als Funktion da, weil sie zwei
+        Leser hat:** diesen Fallback hier und die Komponenten-Beiträge weiter
+        unten. Zweimal `.get(PARAM_WAERMEPUMPE["PV_ANTEIL_PROZENT"], …)` wäre
+        genau die Bauform, gegen die dieser Fund gebaut ist — dieselbe Größe,
+        zwei Bildungsvorschriften in einer Datei.
+
+        ⚠ ``None`` heißt **hier** „nicht gepflegt" und wird von den beiden
+        Lesern unterschiedlich behandelt; die Entscheidung gehört zum Leser,
+        nicht zur Lesetür (s. dort).
+        """
+        roh = (wp.parameter or {}).get(
+            PARAM_WAERMEPUMPE["PV_ANTEIL_PROZENT"],
+            PARAM_WAERMEPUMPE_DEFAULTS["pv_anteil_prozent"],
+        )
+        return float(roh) / 100.0 if roh is not None else None
+
     if waermepumpen:
         # Mehrere Wärmepumpen: Mittelwert. `wp_strom_monat_avg` ist ohnehin
         # anlagenweit, eine Gewichtung je Gerät hätte hier keinen Nenner.
+        #
+        # ⚠ Ein Gerät mit ausdrücklich `None` fällt aus dem **Mittel** heraus —
+        # der Wert der übrigen gilt dann für alle. Das ist gemessenes Verhalten
+        # aus N-277 und speist den Eigenverbrauchs-Fallback, also eine wirksame
+        # Zahl: nicht im Vorbeigehen ändern.
         _anteile = [
-            (wp.parameter or {}).get(
-                PARAM_WAERMEPUMPE["PV_ANTEIL_PROZENT"],
-                PARAM_WAERMEPUMPE_DEFAULTS["pv_anteil_prozent"],
-            )
-            for wp in waermepumpen
+            a for a in (_gepflegter_pv_anteil(wp) for wp in waermepumpen)
+            if a is not None
         ]
-        _anteile = [float(a) for a in _anteile if a is not None]
-        wp_pv_anteil = (sum(_anteile) / len(_anteile) / 100.0) if _anteile else 0.0
+        wp_pv_anteil = (sum(_anteile) / len(_anteile)) if _anteile else 0.0
     else:
         wp_pv_anteil = 0.0
 
@@ -1953,8 +1988,20 @@ async def get_finanz_prognose(
             )
             + wp_alternativ_zusatzkosten_jahr
         )
-        # WP-Stromkosten pro Jahr (nur Netzanteil) — konservative 50/50-Annahme
-        wp_netz_anteil = 1.0 - WP_PV_ANTEIL_DEFAULT
+        # WP-Stromkosten pro Jahr — der GANZE Strom zum Netztarif.
+        #
+        # ⛔ **SOLL Wärme/Klima S1b (Entscheid 13.09.2026, N-459).** Bis hierher
+        # stand ein fester PV-Abschlag von 50 % (`WP_PV_ANTEIL_DEFAULT`) und
+        # ließ 206,53 €/Jahr der Demo-Anlage unbelastet. Der Abzug war eine
+        # **Doppelzählung**: dieselbe Kilowattstunde trägt schon auf der
+        # PV-Seite — `jahres_ev_ersparnis` bewertet den ganzen Eigenverbrauch
+        # zum Netzpreis, und der WP-Strom hinter dem Hauszähler steckt darin
+        # (im Fallback-Zweig sogar ausdrücklich als Summand, N-277). Ein Fluss
+        # trägt genau einmal zum Finanz-Netto bei (ADR-002/P9).
+        # ⚠ Der am Gerät gepflegte „PV-Anteil (%)" gehört NICHT hierher: er
+        # beantwortet eine Mengenfrage (Eigenverbrauchs-Fallback N-277, Zuordnung
+        # je Gerät N-354), keine Preisfrage. Wer ihn hier einsetzt, halbiert die
+        # Doppelzählung, statt sie zu beseitigen.
         # N-279: dieselbe Grundmenge wie `gas_kosten_jahr` darüber — also NUR die
         # Geräte mit Ersatz. `jahres_wp_verbrauch` (alle WPs) stand hier bis
         # 2026-08-29 und machte die Differenz unsymmetrisch: der Zähler zählte
@@ -1962,9 +2009,61 @@ async def get_finanz_prognose(
         # Wärmepumpe im Neubau senkte damit die ausgewiesene Ersparnis der
         # zweiten, die tatsächlich eine Gasheizung ersetzt hat.
         wp_strom_jahr = jahres_wp_verbrauch_mit_ersatz
-        wp_stromkosten_netz_jahr = wp_strom_jahr * wp_netz_anteil * wp_netzbezug_preis / 100
+        wp_stromkosten_netz_jahr = wp_strom_jahr * wp_netzbezug_preis / 100
         # Netto-Ersparnis
         jahres_wp_ersparnis = gas_kosten_jahr - wp_stromkosten_netz_jahr
+
+    # ── N-354: die zwei WP-PV-Größen, EINMAL gebildet und je Gerät ──────────
+    #
+    # ⛔ **Bis zum 13.09.2026 standen sie zweimal verschieden in dieser Datei:**
+    # `jahres_wp_verbrauch * 0.5` in den Komponenten-Beiträgen und dieselbe feste
+    # 50-%-Konstante im Response-Feld — obwohl das Formularfeld „PV-Anteil (%)"
+    # am Gerät gepflegt wird, und beide **je Gerät mit dem ANLAGEN-Aggregat**:
+    # bei zwei Wärmepumpen stand derselbe volle Betrag zweimal in der Liste.
+    #
+    # ⭐ **Diese zwei Größen sind seit S1b die EINZIGEN Leser des Felds** (dazu
+    # der Eigenverbrauchs-Fallback oben) — es beantwortet eine Mengenfrage. Die
+    # Geld- und CO₂-Formeln belasten den WP-Strom voll und lesen es nicht.
+    #
+    # ⭐ **Die Lesetür ist dieselbe wie beim Eigenverbrauchs-Fallback oben**
+    # (`_gepflegter_pv_anteil`) — der Muster-Commit ist `029533d1` (N-277).
+    # ⚠ **Der RECHENWEG von dort ist NICHT übertragbar** und wird bewusst nicht
+    # kopiert: Der Fallback oben normiert über die zwölf Kalendermonate, weil
+    # er eine Saisonform trägt. Hier steht ein Jahreswert ohne Saisonform; eine
+    # Normierung hätte nichts zu normieren.
+    #
+    # ⚠ **`None` heißt hier „nicht gepflegt" ⇒ Default**, anders als im Mittel
+    # oben, wo ein solches Gerät herausfällt. Je Gerät gibt es niemanden, an
+    # dessen Wert man sich anlehnen könnte — der Default ist die einzige
+    # Auskunft, die bleibt.
+    #
+    # ⭐ **Der eigene Nenner je Gerät ist sein gemessener Stromanteil**
+    # (`wp_strom_pro_inv`, dieselbe Quelle wie `gesamt_wp_strom`). Damit gilt
+    # Σ Geräte == Anlage exakt, ohne eine zweite Hochrechnung neben der
+    # saisonalen Schleife zu erfinden. Ohne Historie ist `gesamt_wp_strom` 0 —
+    # dann ist auch `jahres_wp_verbrauch` 0, und beide Seiten sind 0.
+    wp_pv_kwh_je_inv: dict[int, float] = {}
+    for _wp in waermepumpen:
+        _anteil = _gepflegter_pv_anteil(_wp)
+        if _anteil is None:
+            _anteil = float(PARAM_WAERMEPUMPE_DEFAULTS["pv_anteil_prozent"]) / 100.0
+        _geraete_anteil = (
+            wp_strom_pro_inv.get(_wp.id, 0.0) / gesamt_wp_strom
+            if gesamt_wp_strom > 0 else 0.0
+        )
+        wp_pv_kwh_je_inv[_wp.id] = jahres_wp_verbrauch * _geraete_anteil * _anteil
+    wp_pv_kwh_total = sum(wp_pv_kwh_je_inv.values())
+
+    #: Die Alternativkosten-Ersparnis je Gerät — thermisch gewichtet, wie die
+    #: Aggregate, aus denen `jahres_wp_ersparnis` entsteht. **Nur Geräte mit
+    #: Ersatz**: Eine Wärmepumpe im Neubau hat nichts ersetzt und bekam bis
+    #: hierher trotzdem die volle Ersparnis der Anlage in die Liste geschrieben.
+    wp_ersparnis_je_inv: dict[int, float] = {}
+    if gesamt_wp_thermisch > 0:
+        for _wp in wp_mit_ersatz:
+            wp_ersparnis_je_inv[_wp.id] = jahres_wp_ersparnis * (
+                wp_aggregate[_wp.id]["thermisch_kwh"] / gesamt_wp_thermisch
+            )
 
     # E-Auto: Ersparnis gegenüber Benzin.
     # Aggregat-Werte für die saisonal-skalierte Jahresprognose: km-gewichteter
@@ -2244,30 +2343,31 @@ async def get_finanz_prognose(
                     beschreibung="PV-Direktladung statt Netzbezug",
                 ))
 
-    # Wärmepumpe
+    # Wärmepumpe — N-354: je Gerät sein eigener Beitrag, nicht das Anlagen-Aggregat
     if waermepumpen:
-        wp_pv_kwh = jahres_wp_verbrauch * 0.5  # ~50% aus PV
-        wp_pv_ersparnis = wp_pv_kwh * netzbezug_preis / 100
         alter_energietraeger = "Gas"
         for wp in waermepumpen:
             if wp.parameter:
                 ae = wp.parameter.get(PARAM_WAERMEPUMPE["ALTER_ENERGIETRAEGER"], PARAM_WAERMEPUMPE_DEFAULTS["alter_energietraeger"])
                 alter_energietraeger = "Öl" if ae == "oel" else "Gas"
-            # PV-Direktverbrauch
+            # PV-Direktverbrauch — gepflegter Anteil × eigener Stromanteil
+            wp_pv_kwh = wp_pv_kwh_je_inv.get(wp.id, 0.0)
             komponenten_beitraege.append(KomponentenBeitragSchema(
                 typ="waermepumpe-pv",
                 bezeichnung=f"{wp.bezeichnung} (PV-Nutzung)",
                 beitrag_kwh_jahr=round(wp_pv_kwh, 0),
-                beitrag_euro_jahr=round(wp_pv_ersparnis, 2),
+                beitrag_euro_jahr=round(wp_pv_kwh * netzbezug_preis / 100, 2),
                 beschreibung="PV-Direktverbrauch für Heizung/Warmwasser",
             ))
-            # Alternativkosten-Ersparnis gegenüber Gas/Öl
-            if jahres_wp_ersparnis > 0:
+            # Alternativkosten-Ersparnis gegenüber Gas/Öl — nur für das Gerät,
+            # das tatsächlich etwas ersetzt hat, und nur mit seinem Anteil.
+            wp_ersparnis = wp_ersparnis_je_inv.get(wp.id, 0.0)
+            if wp_ersparnis > 0:
                 komponenten_beitraege.append(KomponentenBeitragSchema(
                     typ="waermepumpe-ersparnis",
                     bezeichnung=f"{wp.bezeichnung} (vs. {alter_energietraeger})",
                     beitrag_kwh_jahr=0,  # Nicht direkt in kWh
-                    beitrag_euro_jahr=round(jahres_wp_ersparnis, 2),
+                    beitrag_euro_jahr=round(wp_ersparnis, 2),
                     beschreibung=f"Ersparnis gegenüber {alter_energietraeger}heizung",
                 ))
 
@@ -2455,7 +2555,8 @@ async def get_finanz_prognose(
         einspeise_verg_cent=einspeiseverguetung,
     ).ersparnis_euro
     eauto_ersparnis_euro = jahres_eauto_pv * netzbezug_preis / 100
-    wp_pv_kwh_total = jahres_wp_verbrauch * WP_PV_ANTEIL_DEFAULT
+    # N-354: `wp_pv_kwh_total` ist Σ der Gerätebeiträge von oben — dieselbe
+    # Quelle wie die Liste, keine zweite Bildungsvorschrift.
     wp_pv_ersparnis_euro = wp_pv_kwh_total * netzbezug_preis / 100
 
     return FinanzPrognoseResponse(

@@ -68,6 +68,10 @@ export const KATEGORIE_LABELS: Record<string, string> = {
   // Sicht des Anwenders — im Monatsabschluss heißt der Abschnitt
   // „Vergleichspreise", und genau dort sieht er das leere Feld.
   vergleichspreis_fehlt: 'Vergleichspreise – Ø Benzinpreis',
+  // N-426-Nachtrag: die erste Wetterfeld-Kategorie. Label nennt die **Klasse**,
+  // nicht das eine Feld — die Wetter-Route liefert drei Werte, und ein
+  // „…Ø Temperatur" würde beim zweiten zur Falschaussage.
+  wetterwert_fehlt: 'Wetterwerte – fehlende Monatswerte',
 }
 
 /** Anzeige-Reihenfolge der Kategorien (Vollständigkeit → Plausibilität → …). */
@@ -103,4 +107,5 @@ export const KATEGORIE_REIHENFOLGE: string[] = [
   'position_doppelerfassung',
   'zaehlerstand_reihe',
   'vergleichspreis_fehlt',
+  'wetterwert_fehlt',
 ]

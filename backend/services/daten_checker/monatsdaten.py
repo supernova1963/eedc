@@ -8,6 +8,7 @@ from datetime import date
 from typing import Optional
 
 from backend.core.berechnungen.anlagen_kwp import anlagen_kwp
+from backend.core.berechnungen.waermepumpe_kennzahl import heizwaerme_kwh
 from backend.core.berechnungen.spez_ertrag import PV_ERZEUGER_TYPEN
 from backend.core.betriebsmodus import MODUS_STROM_FELD
 from backend.core.field_definitions import (
@@ -16,7 +17,9 @@ from backend.core.field_definitions import (
     get_feld_bedarf,
     get_speicher_netzladung_kwh,
     get_wp_strom_kwh,
+    get_wp_warmwasser_kwh,
     groesse_gibt_es_am_geraet,
+    wp_strom_aufteilung,
 )
 from backend.core.berechnungen.erzeuger_traeger import erzeuger_traeger
 from backend.core.investition_kennwerte import get_erzeuger_kwp
@@ -31,6 +34,7 @@ from .kategorien import (
     CheckErgebnis,
     CheckKategorie,
     CheckSeverity,
+    LINK_DATENQUELLEN,
     LINK_MONATSDATEN,
     MonatsdatenAbdeckung,
     link_monat_erfassen,
@@ -44,6 +48,18 @@ PV_MAX_KWH_PRO_KWP = {
     1: 55, 2: 75, 3: 110, 4: 140, 5: 170, 6: 180,
     7: 180, 8: 165, 9: 140, 10: 90, 11: 55, 12: 40,
 }
+
+#: WK-16d: Ab welchem Anteil der Menge stellt eedc die **Frage**, ob der
+#: Gesamtzähler wirklich nur die Wärmepumpe misst?
+#:
+#: ⚠ **Großzügig, und das ist Absicht.** Der Rest *soll* es geben — Standby,
+#: Steuerung und Umwälzpumpen laufen auf keiner der beiden Achsen; bei
+#: dietmar1968 sind es 6,6 % im Jahr, im Sommer einzelner Monate deutlich mehr.
+#: Ein Viertel trennt „das ist der Systemverbrauch" von „da hängt vermutlich
+#: noch etwas anderes am Zähler", ohne einer normalen Anlage zwölfmal im Jahr
+#: eine Frage zu stellen. Sie ist **kein Fehler** (INFO, Fragesatz): eedc weiß
+#: nicht, was am Zähler hängt, und behauptet es nicht.
+_REST_AUFFAELLIG_ANTEIL = 0.25
 
 
 class MonatsdatenChecks:
@@ -1043,31 +1059,19 @@ class MonatsdatenChecks:
         heiz_erwartet = get_feld_bedarf("waermepumpe", "heizenergie_kwh", param)[0] == "pflicht"
         ww_strom_gibt_es = groesse_gibt_es_am_geraet("waermepumpe", "strom_warmwasser_kwh", param)
 
-        # #183: bei getrennter Strommessung wird der alte stromverbrauch_kwh-
-        # Sensor in der Aggregation ignoriert. Wenn er trotzdem im Sensor-
-        # Mapping steht, ist das überflüssig (und schreibt parallel Werte
-        # in die JSON, die niemand mehr liest). INFO-Hinweis zum Entfernen.
-        if getrennte_strommessung:
-            anlage = getattr(inv, "anlage", None)
-            sensor_mapping = (anlage.sensor_mapping if anlage else None) or {}
-            inv_map = (sensor_mapping.get("investitionen") or {}).get(str(inv.id)) or {}
-            felder = inv_map.get("felder") or {}
-            alter_sensor = felder.get("stromverbrauch_kwh")
-            if isinstance(alter_sensor, dict) and alter_sensor.get("strategie") == "sensor":
-                ergebnisse.append(CheckErgebnis(
-                    kategorie=kat, schwere=CheckSeverity.INFO,
-                    meldung=(
-                        f"{name}: Alter Gesamt-Stromverbrauch-Sensor "
-                        f"({alter_sensor.get('sensor_id')}) ist bei aktivierter "
-                        f"getrennter Strommessung obsolet"
-                    ),
-                    details=(
-                        "Der Sensor wird in der Aggregation ignoriert — Gesamt-"
-                        "Strom kommt aus Strom Heizen + Strom Warmwasser. Beim "
-                        "nächsten Speichern des Sensor-Mappings wird der Eintrag "
-                        "automatisch entfernt — kein Klick nötig."
-                    ),
-                ))
+        # ⛔ **Hier stand bis zum 14.09.2026 eine INFO „Alter
+        # Gesamt-Stromverbrauch-Sensor … ist bei aktivierter getrennter
+        # Strommessung obsolet" (#183).** Sie ist mit WK-16d **ersatzlos
+        # entfallen, weil der Zustand, den sie meldete, nicht mehr eintritt:**
+        # Ein zugeordneter Gesamtzähler ist seither die Menge (K1) und wird
+        # gelesen, auch neben einer vollständigen Achse — er ist nicht obsolet,
+        # sondern die Quelle des „nicht aufgeteilt"-Rests. Eine Empfehlung, ihn
+        # zu entfernen, hätte ab jetzt Standby, Steuerung und Umwälzpumpen aus
+        # der Bilanz geworfen. *Dieselbe Bauform wie die F-7-Stufe-1-Warnung,
+        # die mit #406 entfiel: eine Meldung ohne Defekt ist eine Falschmeldung.*
+        # An ihre Stelle treten die zwei Prüfungen unter der Monats-Karte: der
+        # **Widerspruch** (Gesamt < Σ Achsen) und die **Plausibilitätsfrage**
+        # (Rest > 25 %).
 
         imd_map = {
             (imd.jahr, imd.monat): (imd.verbrauch_daten or {})
@@ -1123,7 +1127,154 @@ class MonatsdatenChecks:
                 investition_id=inv.id,
             ))
 
+        # N-391: **dieselbe Frage auf der Wärmeseite** — eine Aufteilung kann
+        # ihre Gesamtmenge nicht übersteigen. Sie steht bewusst hier, direkt
+        # neben ihrem Strom-Zwilling: gleiche Zeile, gleiche Kategorie, gleicher
+        # Weg, gleiche Monatsliste. Ein eigener Prüfer in
+        # `daten_checker/waermepumpe.py` wäre ein zweiter Turm — dort geht es um
+        # die **Kennzahl** (Arbeitszahl über 7), hier um einen **Widerspruch in
+        # den Mengen** derselben Monatszeile.
+        #
+        # ⚠ **Nur diese eine Richtung**: `waerme_kwh` KLEINER als die Summe der
+        # beiden Achsen. eedc rechnet nach D1 mit der Gesamtmenge — steht sie zu
+        # niedrig, verschwindet der Unterschied lautlos aus Wärme, Arbeitszahl,
+        # Ersparnis und CO₂. Der umgekehrte Fall (Gesamt größer als die Summe)
+        # ist **kein** Fehler: Er ist die normale Lage, wenn nur EINE Achse
+        # eigens gemessen wird und der Rest im Gesamtzähler steckt.
+        #
+        # ⚠ Toleranz 0,5 kWh wie beim Strom-Zwilling — Zählerstände runden.
+        waerme_widerspruch: list[str] = []
+        for (jahr, monat), daten in sorted(imd_map.items()):
+            _gesamt_waerme = daten.get("waerme_kwh")
+            if not _gesamt_waerme:
+                continue
+            # R-3/N-488: dieselbe Weiche wie die Anzeige (D1-Stufe 3) — sonst
+            # sähe der Widerspruchs-Prüfer an einem Gerät mit Betriebsart-Wärme
+            # eine kleinere Summe als der Block daneben und schwiege zu Unrecht.
+            _teile = ((heizwaerme_kwh(daten) or 0.0)
+                      + get_wp_warmwasser_kwh(daten, param))
+            if _teile > float(_gesamt_waerme) + 0.5:
+                waerme_widerspruch.append(f"{monat:02d}/{jahr}")
+        if waerme_widerspruch:
+            _w_monate = ", ".join(waerme_widerspruch[:6])
+            if len(waerme_widerspruch) > 6:
+                _w_monate += f" … (+{len(waerme_widerspruch) - 6})"
+            ergebnisse.append(CheckErgebnis(
+                kategorie=kat, schwere=CheckSeverity.WARNING,
+                meldung=(
+                    f"{name}: Gesamtwärme kleiner als Heizwärme + "
+                    f"Warmwasser-Wärme ({_w_monate})"
+                ),
+                details=(
+                    "„Wärme gesamt“ ist die Wärme des ganzen Geräts — Heizung "
+                    "und Warmwasser zusammen. Steht dort weniger als in den "
+                    "beiden Einzelwerten, meint einer der Werte etwas anderes "
+                    "als gedacht: Häufig ist unter „Wärme gesamt“ die Heizwärme "
+                    "gelandet. eedc rechnet mit der Gesamtwärme — Wärmemenge, "
+                    "Arbeitszahl, Ersparnis und CO₂ dieser Monate fallen "
+                    "deshalb zu niedrig aus. Prüf bitte im Monatsabschluss, "
+                    "welcher Zähler welchen Wert liefert: Mit EINEM gemeinsamen "
+                    "Wärmemengenzähler gehört sein Wert unter „Wärme gesamt“ "
+                    "und die beiden Einzelfelder bleiben leer; mit getrennten "
+                    "Zählern ist es umgekehrt."
+                ),
+                link=link_monat_erfassen(waerme_widerspruch[0]),
+                investition_id=inv.id,
+            ))
+
+        # ── WK-16d: der Gesamt-Stromzähler und seine Achsen ──────────────────
+        #
+        # **Zwei Meldungen, zwei verschiedene Aussagen** — sie stehen hier, weil
+        # sie dieselbe Zeile lesen wie die zwei Prüfungen darüber und dieselbe
+        # Monatsliste bauen. Beide Zahlen kommen aus **einer** Auflösung
+        # ({@link backend.core.field_definitions.wp_strom_aufteilung}); die
+        # Toleranz und die Stufenregel liegen dort, nicht hier — ein zweiter
+        # Schwellenwert wäre die F-56-Klasse (die Fläche bemängelte eine Lage,
+        # die die Rechnung daneben durchgehen lässt).
+        strom_widerspruch: list[str] = []
+        rest_auffaellig: list[tuple[str, float, float]] = []
+        for (jahr, monat), daten in sorted(imd_map.items()):
+            _auf = wp_strom_aufteilung(daten, param)
+            if _auf.gesamtzaehler_zu_klein:
+                strom_widerspruch.append(f"{monat:02d}/{jahr}")
+                continue
+            # ⚠ **Die Frage setzt eine Aufteilung voraus, die auch etwas
+            # aufteilt.** Wer nur den Gesamtzähler pflegt, hat keinen Rest,
+            # sondern nur eine Menge — dass die Achsen fehlen, sagt die Meldung
+            # „Strom Heizen/Warmwasser fehlt" weiter unten, und zwei Hinweise
+            # auf denselben Sachverhalt wären Lärm.
+            #
+            # ⛔ **Und die Bedingung ist NICHT dieselbe wie die des Rests.**
+            # ``wp_strom_aufteilung`` fragt *steht eine Achse in der Zeile?*
+            # (``is not None`` — eine gemessene 0 ist eine Messung); hier wird
+            # gefragt, ob sie auch **etwas trägt**. Eine Zeile mit nur
+            # ``strom_warmwasser_kwh: 0.0`` hat einen Rest in voller Höhe der
+            # Menge, aber keine Aufteilung, über die sich eine Frage lohnte.
+            if _auf.feine_summe_kwh <= 0:
+                continue
+            if _auf.nicht_aufgeteilt_kwh > _REST_AUFFAELLIG_ANTEIL * _auf.menge_kwh:
+                rest_auffaellig.append(
+                    (f"{monat:02d}/{jahr}", _auf.nicht_aufgeteilt_kwh, _auf.menge_kwh)
+                )
+        if strom_widerspruch:
+            _s_monate = ", ".join(strom_widerspruch[:6])
+            if len(strom_widerspruch) > 6:
+                _s_monate += f" … (+{len(strom_widerspruch) - 6})"
+            ergebnisse.append(CheckErgebnis(
+                kategorie=kat, schwere=CheckSeverity.WARNING,
+                meldung=(
+                    f"{name}: Gesamtzähler kleiner als die Summe der Achsen "
+                    f"({_s_monate})"
+                ),
+                details=(
+                    "Der Gesamt-Stromverbrauch ist der Verbrauch des ganzen "
+                    "Geräts — Strom Heizen und Strom Warmwasser sind Teile "
+                    "davon und können zusammen nicht mehr sein. Steht dort "
+                    "weniger, meint einer der Werte etwas anderes als gedacht: "
+                    "Häufig misst der Gesamtzähler nur einen Teil des Geräts "
+                    "(nur das Außengerät, nur einen Stromkreis) oder eine der "
+                    "beiden Achsen zählt einen fremden Verbrauch mit. eedc "
+                    "rechnet in diesen Monaten mit der Summe der Achsen, damit "
+                    "nichts verloren geht — prüf bitte im Monatsabschluss, "
+                    "welcher Zähler welchen Wert liefert."
+                ),
+                link=link_monat_erfassen(strom_widerspruch[0]),
+                investition_id=inv.id,
+            ))
+        if rest_auffaellig:
+            _r_monate = ", ".join(m for m, _, _ in rest_auffaellig[:6])
+            if len(rest_auffaellig) > 6:
+                _r_monate += f" … (+{len(rest_auffaellig) - 6})"
+            _beispiel = max(rest_auffaellig, key=lambda e: e[1] / e[2])
+            ergebnisse.append(CheckErgebnis(
+                kategorie=kat, schwere=CheckSeverity.INFO,
+                meldung=(
+                    f"{name}: Der Gesamtzähler misst deutlich mehr als die "
+                    f"Achsen — misst er nur die Wärmepumpe? ({_r_monate})"
+                ),
+                details=(
+                    # P-6: der Weg steht dabei. Und **kein Fehler, eine Frage** —
+                    # der Unterschied kann vollkommen richtig sein (Standby,
+                    # Steuerung, Umwälzpumpen; bei einem Melder 6,6 % im Jahr).
+                    # Deshalb INFO und deshalb ein Fragesatz: eedc weiß nicht,
+                    # was am Zähler hängt, und behauptet es auch nicht.
+                    f"In {_beispiel[0]} liegen "
+                    f"{_beispiel[1]:.0f} von {_beispiel[2]:.0f} kWh weder auf "
+                    "Strom Heizen noch auf Strom Warmwasser; eedc führt sie als "
+                    "„nicht aufgeteilt“. Das ist oft richtig — Standby, "
+                    "Steuerung und Umwälzpumpen laufen auf keiner der beiden "
+                    "Achsen. Es kann aber auch heißen, dass am Gesamtzähler "
+                    "noch etwas anderes hängt als die Wärmepumpe. Prüf das "
+                    "unter Einstellungen → Datenquellen; ändern musst du "
+                    "nichts, wenn der Zähler stimmt."
+                ),
+                link=LINK_DATENQUELLEN,
+                investition_id=inv.id,
+            ))
+
         fehlend_strom: list[str] = []
+        fehlend_strom_heizen: list[str] = []
+        fehlend_strom_ww: list[str] = []
         fehlend_heiz: list[str] = []
 
         for (jahr, monat) in erwartete:
@@ -1137,21 +1288,66 @@ class MonatsdatenChecks:
                 # ein Feld zu erwarten, das der Monatsabschluss gar nicht mehr
                 # anbietet — die Klasse, an der N-86 schon einmal hing:
                 # dieselbe Anlage, zwei Flächen, gegenteilige Aussage.
-                if daten.get("strom_heizen_kwh") is None and (
-                    not ww_strom_gibt_es or daten.get("strom_warmwasser_kwh") is None
-                ):
+                heizen_fehlt = daten.get("strom_heizen_kwh") is None
+                ww_fehlt = (
+                    ww_strom_gibt_es and daten.get("strom_warmwasser_kwh") is None
+                )
+                if heizen_fehlt and (ww_fehlt or not ww_strom_gibt_es):
+                    # Die ganze Stromachse ist leer (an einer Klimaanlage: ihre
+                    # einzige Seite) — EINE Meldung, unverändert seit je. Für
+                    # den Anwender ist das EIN Sachverhalt; ihn in zwei Zeilen
+                    # zu zerlegen wäre kein schärferer Hinweis, sondern Lärm.
                     fehlend_strom.append(label)
+                else:
+                    # ⭐ Fehlt nur EINE Seite, während die zugehörige Wärme
+                    # gemessen ist, war hier bis zum 13.09.2026 **nichts** — die
+                    # `and`-Verknüpfung darüber verlangte beide Leerstellen. Der
+                    # Monat bekam statt dessen die OK-Zeile „Monatsdaten
+                    # vollständig", und die Gesamt-Arbeitszahl rechnete die Wärme
+                    # BEIDER Seiten über den Strom EINER (gemessen: Heizwärme
+                    # 1800 + Heizstrom 600 + Warmwasser-Wärme 600 ohne
+                    # Warmwasser-Strom ⇒ 4,0 — plausibel genug, dass auch der
+                    # Plausibilitäts-Prüfer schweigt, dessen Schwelle bei 7,0
+                    # liegt).
+                    #
+                    # ⛔ Die Bedingung hängt an der **Wärme**, nicht an der
+                    # bloßen Anwesenheit des Felds: ein Monat ohne Warmwasser-
+                    # Abgabe braucht keinen Warmwasser-Strom. Sonst meldete eedc
+                    # jeder reinen Heiz-Anlage zwölf Lücken im Jahr — ein
+                    # Hinweis, der keinen Fehler beschreibt.
+                    #
+                    # ⚠ Beide Lesetüren mit dem, was sie brauchen (N-450):
+                    # `get_wp_warmwasser_kwh` filtert mit `param` den Wert weg,
+                    # den eine Klimaanlage gar nicht abgeben kann.
+                    # R-3/N-488: auch hier die Weiche — wer seine Heizwärme je
+                    # Betriebsart misst, hat sehr wohl geheizt, und der fehlende
+                    # Heizstrom gehört genannt.
+                    if heizen_fehlt and (heizwaerme_kwh(daten) or 0.0) > 0:
+                        fehlend_strom_heizen.append(label)
+                    if ww_fehlt and get_wp_warmwasser_kwh(daten, param) > 0:
+                        fehlend_strom_ww.append(label)
             else:
                 if daten.get("stromverbrauch_kwh") is None:
                     fehlend_strom.append(label)
 
-            if heiz_erwartet and daten.get("heizenergie_kwh") is None:
+            # N-391: **die Gruppe zählt, nicht das eine Feld.** *Heizwärme* und
+            # *Wärme gesamt* sind Alternativen derselben Größe
+            # (`BEDARF_GRUPPEN_ALTERNATIV`, Gruppe `wp_waerme`) — wer seinen
+            # gemeinsamen Wärmemengenzähler pflegt, hat nichts nachzutragen.
+            # Ihn trotzdem anzumahnen wäre die N-86-Klasse: dieselbe Anlage,
+            # zwei Flächen, gegenteilige Aussage (die Zuordnungs-Fläche sagt für
+            # dieses Feld bereits „bereits zugeordnet").
+            if (heiz_erwartet and daten.get("heizenergie_kwh") is None
+                    and daten.get("waerme_kwh") is None):
                 fehlend_heiz.append(label)
 
+        def _monate(labels: list[str]) -> str:
+            text = ", ".join(labels[:6])
+            if len(labels) > 6:
+                text += f" (+{len(labels) - 6} weitere)"
+            return text
+
         if fehlend_strom:
-            monate_str = ", ".join(fehlend_strom[:6])
-            if len(fehlend_strom) > 6:
-                monate_str += f" (+{len(fehlend_strom) - 6} weitere)"
             if not getrennte_strommessung:
                 strom_label = "Stromverbrauch"
             elif not ww_strom_gibt_es:
@@ -1161,14 +1357,61 @@ class MonatsdatenChecks:
             ergebnisse.append(CheckErgebnis(
                 kategorie=kat, schwere=CheckSeverity.WARNING,
                 meldung=f"{name}: {strom_label} fehlt in {len(fehlend_strom)} Monat(en)",
-                details=monate_str,
+                details=_monate(fehlend_strom),
                 link=link_monat_erfassen(fehlend_strom[0]),
             ))
 
+        # Je Seite eine Meldung — sie können nebeneinander stehen, ohne dasselbe
+        # zu sagen: die eine nennt die Heiz-, die andere die Warmwasser-Achse,
+        # und ein Monat steht nie in beiden (fehlen beide, greift der Block
+        # darüber). Schwere, Kategorie und Weg sind dieselben wie dort — kein
+        # zweiter Turm, derselbe Melder, geschärft.
+        #
+        # ⭐ **Der Verweis auf die Zuordnungs-Fläche ist seit N-456 (13.09.2026)
+        # dabei, und vorher wäre er falsch gewesen.** Bis dahin erklärte
+        # Einstellungen → Datenquellen genau dieses Feld für „bereits zugeordnet
+        # — hier ist nichts einzutragen", sobald die andere Stromseite belegt
+        # war: Wer dem Hinweis folgte, landete auf einer Fläche, die ihm sagte,
+        # es sei nichts zu tun (N-86-Klasse, deshalb nannte der Text zunächst
+        # bewusst nur den Monatsabschluss). Seit die Belegung je Gerät und nach
+        # den Registry-Bedingungen eingestuft wird, steht das Feld dort als
+        # Pflicht — beide Wege sagen jetzt dasselbe.
+        #
+        # ⚠ **Die Reihenfolge trägt die Aussage:** Der Monatsabschluss steht
+        # zuerst, weil nur er die **vergangenen** Monate füllt; eine Zuordnung
+        # wirkt nach vorn. Wer beides braucht, braucht beides.
+        for labels, seite, waerme_satz in (
+            (fehlend_strom_heizen, "Strom Heizen",
+             "Die Heizwärme dieser Monate ist erfasst, der Strom dafür nicht."),
+            (fehlend_strom_ww, "Strom Warmwasser",
+             "Die Warmwasser-Wärme dieser Monate ist erfasst, der Strom dafür "
+             "nicht."),
+        ):
+            if not labels:
+                continue
+            ergebnisse.append(CheckErgebnis(
+                kategorie=kat, schwere=CheckSeverity.WARNING,
+                meldung=f"{name}: {seite} fehlt in {len(labels)} Monat(en)",
+                details=(
+                    f"{_monate(labels)}. {waerme_satz} eedc bildet jede "
+                    "Arbeitszahl aus abgegebener Wärme ÷ eingesetztem Strom und "
+                    "setzt dafür beide Seiten der getrennten Messung voraus. Die "
+                    "Zeile dieser Funktion sagt es bereits („kein Stromverbrauch "
+                    "erfasst“); die Gesamt-Arbeitszahl kann es nicht sagen — sie "
+                    "rechnet dann mit einem unvollständigen Nenner, also die "
+                    "Wärme beider Seiten über dem Strom einer, und fällt zu hoch "
+                    f"aus. Trage „{seite}“ für diese Monate im Monatsabschluss "
+                    "nach — die Arbeitszahlen stehen danach mit vollständigem "
+                    "Nenner da, ohne dass du sonst etwas tun musst. Soll dieser "
+                    "Zähler künftig von allein mitlaufen, ordne ihn zusätzlich "
+                    "unter Einstellungen → Datenquellen zu."
+                ),
+                investition_id=inv.id,
+                link=link_monat_erfassen(labels[0]),
+            ))
+
         if fehlend_heiz:
-            monate_str = ", ".join(fehlend_heiz[:6])
-            if len(fehlend_heiz) > 6:
-                monate_str += f" (+{len(fehlend_heiz) - 6} weitere)"
+            monate_str = _monate(fehlend_heiz)
             ergebnisse.append(CheckErgebnis(
                 kategorie=kat, schwere=CheckSeverity.INFO,
                 meldung=f"{name}: Heizwärme fehlt in {len(fehlend_heiz)} Monat(en)",
@@ -1182,7 +1425,11 @@ class MonatsdatenChecks:
         # in `_check_werte_in_nicht_gefuehrten_feldern` (N-393) — aufgerufen aus
         # `stammdaten.py` im Block „Allgemeine Prüfungen für alle Typen".
 
-        if not fehlend_strom and not fehlend_heiz:
+        # ⛔ Die beiden Seiten-Listen gehören hier dazu. Vor dem 13.09.2026 bekam
+        # ein Monat, dem genau eine Stromseite fehlte, nicht nur keine Warnung —
+        # er bekam diese OK-Zeile, also eine ausdrückliche Zusage „vollständig".
+        if not (fehlend_strom or fehlend_strom_heizen
+                or fehlend_strom_ww or fehlend_heiz):
             ergebnisse.append(CheckErgebnis(
                 kategorie=kat, schwere=CheckSeverity.OK,
                 meldung=f"{name}: Monatsdaten vollständig ({len(erwartete)} Monate)",
@@ -1221,6 +1468,114 @@ def _de_euro(betrag: float) -> str:
 
 class ErfassungsortChecks:
     """§8.1 — welche Fehleingabe das Wirtschaftlichkeits-Modell erzeugen kann."""
+
+    async def _check_wetterwert_fehlt(
+        self, anlage: Anlage, monatsdaten: list[Monatsdaten]
+    ) -> list[CheckErgebnis]:
+        """**N-426-Nachtrag** — Monate ohne Ø-Temperatur, und wie viele erreichbar sind.
+
+        ⛔ **Warum es diese Zeile überhaupt gibt.** Der Wetter-Auto-Fill des
+        Monatsformulars ist mit dem IA-V4-Flip (`243944e5`, 25.07.2026) samt der
+        alten Seite verschwunden und mit WK-03 (`fe28f49e`) zurückgekehrt. Er
+        wirkt **nach vorn**: Jeder seit dem V4-Flip abgeschlossene Monat trägt
+        weiterhin `NULL`, und der Anwender hätte jeden einzelnen aufmachen und
+        „Wetterdaten holen" drücken müssen. An der Demo-Anlage gemessen (11.09.):
+        34 von 34 Monaten leer, die Messreihe erreicht 7 davon.
+
+        ⭐ **Die Zeile nennt BEIDE Zahlen, und das ist ihre Aussage.** „n Monate
+        ohne Ø Temperatur" allein wäre eine Aufgabe ohne Weg; „für m davon reicht
+        die Messreihe" sagt, was der Knopf leisten kann und was nicht. Für die
+        übrigen gibt es keinen Knopf — dort hilft nur der Auto-Fill im Monat
+        selbst, und der holt seinen Wert aus dem Netz.
+
+        ⚠ **Kein Netzabruf in einer Prüfung.** Die Erreichbarkeit kommt aus
+        `lade_monatsmittel_temperatur` **ohne** ``gepflegt_je_monat`` — also
+        Stufe 1 (Stundenmittel) und Stufe 2 (Tages-Min/Max) der Vorrangkette,
+        ohne die dritte, die das gepflegte Feld selbst ist. Ein Kreislauf wäre
+        es sonst, und eine Prüfung, die Provider anfragt, wäre eine Prüfung mit
+        Nebenwirkung.
+
+        ⚠ **`hat_zaehlerzeile` ist die Grundmenge, nicht der Erwartungs-Anker.**
+        Gefragt wird nur nach Monaten, die es als Zeile **gibt** — ein Monat, den
+        der Anwender nie abgeschlossen hat, ist keine Wetter-Lücke, sondern eine
+        Monats-Lücke, und die meldet der Nachbar-Check.
+        """
+        kat = CheckKategorie.WETTERWERT_FEHLT
+        offen = [md for md in monatsdaten if md.durchschnittstemperatur is None]
+        if not offen:
+            if monatsdaten:
+                return [CheckErgebnis(
+                    kategorie=kat, schwere=CheckSeverity.OK,
+                    meldung=(
+                        f"Alle {len(monatsdaten)} erfassten Monate tragen eine "
+                        "Ø Temperatur"
+                    ),
+                )]
+            return []
+
+        from backend.services.mitteltemperatur import lade_monatsmittel_temperatur
+
+        # Stufe 1+2 der Vorrangkette — ohne die dritte (das Feld selbst).
+        messreihe = await lade_monatsmittel_temperatur(self.db, anlage.id)
+        erreichbar = [md for md in offen if (md.jahr, md.monat) in messreihe]
+
+        def _mm(md: Monatsdaten) -> str:
+            return f"{md.monat:02d}/{md.jahr}"
+
+        beispiele = ", ".join(_mm(md) for md in offen[:6])
+        if len(offen) > 6:
+            beispiele += f" (+{len(offen) - 6} weitere)"
+
+        gemeinsam = (
+            "Das Feld „Ø Temperatur“ im Monatsabschluss wird seit dem "
+            "Oberflächen-Wechsel im Juli 2026 wieder automatisch gefüllt — das "
+            "wirkt aber nur nach vorn. eedc rechnet mit dem Feld heute keine "
+            "Kennzahl aus (die Außentemperatur-Linie und der Vergleich je "
+            "Heizgradtag lesen die eigene Tagesreihe); es ist die gepflegte "
+            "Rückfallebene für Monate, in denen diese Reihe fehlt. "
+            f"Betroffen: {beispiele}."
+        )
+
+        if not erreichbar:
+            return [CheckErgebnis(
+                kategorie=kat, schwere=CheckSeverity.INFO,
+                meldung=f"Ø Temperatur fehlt in {len(offen)} Monat(en)",
+                details=(
+                    f"{gemeinsam} Für keinen dieser Monate reicht die eigene "
+                    "Messreihe zurück — dort hilft nur, den Monat im "
+                    "Monatsabschluss zu öffnen und „Wetterdaten holen“ zu "
+                    "drücken; eedc holt den Wert dann aus dem Wetter-Archiv."
+                ),
+                link=link_monat_erfassen(_mm(offen[0])),
+            )]
+
+        return [CheckErgebnis(
+            kategorie=kat, schwere=CheckSeverity.INFO,
+            meldung=(
+                f"Ø Temperatur fehlt in {len(offen)} Monat(en), "
+                f"für {len(erreichbar)} davon reicht die Messreihe"
+            ),
+            details=(
+                f"{gemeinsam} „Temperatur aus Messung übernehmen“ trägt die "
+                f"{len(erreichbar)} erreichbaren Monate aus deinen eigenen "
+                "Messwerten nach (Stundenmittel, sonst Tages-Min/Max) — "
+                "bereits gepflegte Werte bleiben unberührt. Für die "
+                f"übrigen {len(offen) - len(erreichbar)} reicht die Reihe nicht "
+                "zurück; dort hilft nur, den Monat im Monatsabschluss zu öffnen "
+                "und „Wetterdaten holen“ zu drücken."
+                if len(erreichbar) < len(offen) else
+                f"{gemeinsam} „Temperatur aus Messung übernehmen“ trägt sie aus "
+                "deinen eigenen Messwerten nach (Stundenmittel, sonst "
+                "Tages-Min/Max) — bereits gepflegte Werte bleiben unberührt."
+            ),
+            link=link_monat_erfassen(_mm(offen[0])),
+            action_kind="temperatur_aus_messung",
+            action_label="Temperatur aus Messung übernehmen",
+            action_params={
+                "anlage_id": anlage.id,
+                "monate": [_mm(md) for md in erreichbar],
+            },
+        )]
 
     def _check_erfassungsort_positionen(self, anlage: Anlage) -> list[CheckErgebnis]:
         from backend.models.investition import ERTRAGSFELD_TYPEN

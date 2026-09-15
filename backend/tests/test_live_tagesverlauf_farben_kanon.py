@@ -37,6 +37,9 @@ KANON_NETZBEZUG = "#b91c1c"
 KANON_EINSPEISUNG = "#10b981"
 KANON_HAUSHALT = "#64748b"
 KANON_WP_WARMWASSER = "#3b82f6"   # blau (= CHART_COLORS.wpWarmwasser; Gernot 2026-06-25 nach detLAN „Wasser=blau")
+# ⭐ N-439 (13.09.2026): die dritte Funktions-Fläche. sky-500 ist die Rollenfarbe
+# des Kühl-STROMS (`CHART_COLORS.modusKuehlen` = `ROLLEN_BG.kuehlung`).
+KANON_WP_KUEHLEN = "#0ea5e9"
 
 _BACKEND = Path(__file__).resolve().parents[1]
 _SERVICE = (_BACKEND / "services" / "live_tagesverlauf_service.py").read_text(encoding="utf-8")
@@ -66,8 +69,30 @@ def test_service_virtuelle_serien_farben_kanonisch():
         (KANON_EINSPEISUNG, "Einspeisung"),
         (KANON_HAUSHALT, "Haushalt"),
         (KANON_WP_WARMWASSER, "WP-Warmwasser"),
+        (KANON_WP_KUEHLEN, "WP-Kühlen"),
     ]:
         assert hex_wert in _SERVICE, f"{rolle}-Kanon {hex_wert} fehlt im Service (Drift?)"
+
+
+def test_wp_kuehlen_traegt_nicht_die_farbe_der_kaeltemenge():
+    """⛔ Zwei Größen, zwei Töne (N-439 gegen N-437).
+
+    ``CHART_COLORS.kaelteGemessen`` (teal-600, ``#0d9488``) gehört der
+    **gemessenen Kältemenge** — der Linie über dem Strom-Stapel (Bauschnitt 6b).
+    Die Kühl-Fläche im Tagesverlauf ist dagegen **Strom**. Trüge sie teal, stünde
+    die Menge in der Farbe des Verbrauchs, und die Linie läge unlesbar auf ihr.
+    """
+    from backend.services.live_tagesverlauf_service import WP_SPLIT_ANZEIGE
+
+    assert WP_SPLIT_ANZEIGE["kuehlen"] == (" Kühlen", KANON_WP_KUEHLEN)
+    assert "#0d9488" not in _SERVICE, "kaelteGemessen (teal) gehört der MENGE, nicht dem Strom"
+    # Und die drei Funktions-Flächen tragen drei verschiedene Töne.
+    from backend.services.live_sensor_config import TV_SERIE_CONFIG
+    toene = {
+        farbe or TV_SERIE_CONFIG["waermepumpe"]["farbe"]
+        for _label, farbe in WP_SPLIT_ANZEIGE.values()
+    }
+    assert len(toene) == 3, f"Funktions-Flächen teilen sich einen Ton: {toene}"
 
 
 def test_service_keine_legacy_drift_hexes():

@@ -112,6 +112,25 @@ class CheckKategorie(str, Enum):
     # eindeutig gefährliche Leistung/Energie-Verwechslung; %/°C/Preis/km bewusst
     # ausgenommen (legitime Einheiten-Varianten → Fehlalarm-Risiko).
     SENSOR_MAPPING_EINHEIT = "sensor_mapping_einheit"
+    # N-426-Nachtrag (13.09.2026): **die erste Kategorie für Wetterfelder.**
+    # `Monatsdaten.durchschnittstemperatur` wurde mit dem V4-Flip vom
+    # Auto-Fill abgehängt und ist seit dem 25.07.2026 in jedem abgeschlossenen
+    # Monat leer, sofern niemand die Zahl von Hand getippt hat. Der Auto-Fill
+    # ist mit WK-03 zurück — er wirkt aber nur **nach vorn**; die Historie
+    # bleibt leer, und der Anwender hätte sie Monat für Monat aufmachen müssen.
+    #
+    # ⚠ **Der Name nennt die Klasse, nicht das eine Feld.** Die Route liefert
+    # drei Wetterwerte (Ø Temperatur, Globalstrahlung, Sonnenstunden); heute
+    # trägt die Kategorie nur den ersten, weil nur für ihn eine Quelle ohne
+    # Netzabruf existiert (die eigene Messreihe). Ein Label „…Ø Temperatur"
+    # würde beim zweiten Feld zur Falschaussage.
+    #
+    # ⛔ **Eine Zeile je Anlage, kein Heiler-Knopf über alles**
+    # ([[feedback_kein_grosser_heiler_knopf]]): Die Zeile nennt, wie viele
+    # Monate leer sind UND wie viele davon die Messreihe überhaupt erreicht.
+    # Für die übrigen sagt sie, dass nur der Auto-Fill im Monat selbst hilft —
+    # ein Netzabruf je Monat ist keine Aktion, die eedc von allein auslöst.
+    WETTERWERT_FEHLT = "wetterwert_fehlt"
     # v3.45.9: Alt-Tage, die VOR dem Batterie-Vorzeichen-Fix (v3.45.7/8, SoT
     # batterie_kw_spalte: ENTLADUNG positiv) aggregiert wurden, tragen das
     # gespeicherte Batterie-Tagesnetto noch in vertauschter Richtung. Erkennung

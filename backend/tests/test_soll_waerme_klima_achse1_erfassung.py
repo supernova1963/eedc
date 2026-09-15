@@ -1,11 +1,16 @@
 """SOLL Wärme/Klima — **Achse I: Erfassungswege.** Welche Größe darf welche entwerten?
 
 Maschinelle Fassung von `soll-waerme-klima.md` §3.2 (**K3**) und §3.2a (**R1**).
-Schwesterdatei zu `test_komponenten_beitraege.py`: Dort liegt die Probe für den
-**korrekten** Fall (Kennzeichen an, beide feinen Zähler vorhanden ⇒ Gesamtzähler
-verworfen, sonst Doppelzählung). **Sie bleibt unverändert und hat recht** — die
-Abgrenzung zwischen ihr und den Proben hier ist der eigentliche Testgegenstand
-und nur im Paar lesbar.
+Schwesterdatei zu `test_komponenten_beitraege.py`: Dort liegt die Probe für die
+**Doppelzählung** — alle Beiträge einer Wärmepumpe laufen auf EINEN Ziel-Key,
+also darf immer nur eine Seite tragen. Die Abgrenzung zwischen ihr und den
+Proben hier ist der eigentliche Testgegenstand und nur im Paar lesbar.
+
+⛔ **Hier stand bis zum 14.09.2026: „Dort liegt die Probe für den korrekten Fall
+(Kennzeichen an, beide feinen Zähler vorhanden ⇒ Gesamtzähler verworfen)."**
+Welche Seite gewinnt, hat WK-16d umgedreht (K1: der Gesamtzähler ist die Menge,
+die Achsen sind die Aufteilung darunter). *Dass nur eine Seite tragen darf,* ist
+davon unberührt — und das war schon immer die Aussage der Schwesterprobe.
 
 ## Zwei Sorten von Proben, bewusst getrennt
 
@@ -209,21 +214,49 @@ def test_i2c_luft_luft_kann_nie_vollstaendig_aufgeteilt_sein():
 # ══ I-3 · ERFÜLLT — die Abgrenzung, die heute schon richtig ist ═════════════
 
 def test_i3_kennzeichen_an_beide_feinen_zaehler_da():
-    """**ERFÜLLT.** Sind beide feinen Zähler zugeordnet, wird der Gesamtzähler
-    verworfen — sonst zählte derselbe Strom doppelt.
+    """**ERFÜLLT (K1/K5, umgestellt mit WK-16d am 14.09.2026).** Sind beide
+    feinen Zähler **und** der Gesamtzähler zugeordnet, trägt der Gesamtzähler —
+    und die Achsen tragen daneben **nicht** mit.
 
-    ⚠ **Diese Probe ist der Grund, warum I-1 und I-2 keine Rücknahme dieser Regel
-    verlangen dürfen.** Sie hält denselben Schalter in seinem **berechtigten**
-    Fall fest. Der Unterschied ist nicht das Kennzeichen, sondern ob die feinen
-    Zähler **existieren**.
+    ⚠ **Die Substanz ist unverändert die Doppelzählung: es darf immer nur EINE
+    Seite in den Ziel-Key.** Alle Beiträge einer Wärmepumpe laufen auf
+    ``waermepumpe_<id>``; Gesamtzähler *und* Achsen zu emittieren hieße, den
+    Heiz- und Warmwasserstrom zweimal zu zählen. Diese Probe hält genau das
+    fest — nur gewinnt seit WK-16d die andere Seite.
 
-    ⭐ **Und daraus folgt die Fundstelle:** `keys.py::_categorize_counter` sieht
+    ⛔ **Sie behauptete bis dahin: „Sind beide feinen Zähler zugeordnet, wird
+    der Gesamtzähler verworfen."** Das verwarf eine **Messung**: Was der
+    Gesamtzähler mehr misst als die zwei Achsen — Standby, Steuerung,
+    Umwälzpumpen; bei dietmar1968 145 von 2193 kWh im Jahr — fiel aus Strom,
+    Kosten, CO₂ und Arbeitszahl-Nenner. **K1** („die Gesamtmenge ist immer die
+    Wahrheit") und **K5** („der Rest heißt *nicht aufgeteilt*") sagen das
+    Gegenteil; die Aufteilung steht daneben, nie an ihrer Stelle.
+
+    ⭐ **Die Fundstelle bleibt dieselbe:** `keys.py::_categorize_counter` sieht
     immer nur **ein** Feld und kann die Feldmenge nicht kennen — K3 ist dort
     nicht formulierbar. Sie gehört auf diese Ebene, die alle Felder sieht.
     """
     inv = _inv(parameter={"getrennte_strommessung": True})
     sm = {"felder": {
         "stromverbrauch_kwh": _sensor("sensor.wp_gesamt"),
+        "strom_heizen_kwh": _sensor("sensor.wp_heizen"),
+        "strom_warmwasser_kwh": _sensor("sensor.wp_ww"),
+    }}
+
+    assert _felder(investition_beitraege(inv, sm)) == {"stromverbrauch_kwh"}
+
+
+def test_i3c_ohne_gesamtzaehler_tragen_beide_feinen_zaehler():
+    """**ERFÜLLT (K3, Regel 3).** Die Gegenprobe zu I-3: **ohne** Gesamtzähler
+    sind die beiden Achsen die einzige Messung — und sie tragen beide.
+
+    ⚠ **Ohne sie bewiese I-3 nichts.** Dort steht jetzt genau ein Feld im
+    Ergebnis; dass das nicht daran liegt, dass die Beitragsschicht die Achsen
+    überhaupt nicht mehr kennt, zeigt erst diese Probe. *Ein Prüfer, der nur
+    eine Richtung misst, kann nicht sagen, was er gemessen hat.*
+    """
+    inv = _inv(parameter={"getrennte_strommessung": True})
+    sm = {"felder": {
         "strom_heizen_kwh": _sensor("sensor.wp_heizen"),
         "strom_warmwasser_kwh": _sensor("sensor.wp_ww"),
     }}
@@ -371,7 +404,14 @@ def test_i5_brauchwasser_waermepumpe_traegt_nur_die_warmwasser_achse():
     p = {"wp_art": "brauchwasser", "getrennte_strommessung": True}
 
     # Der Monatsabschluss fragt nur nach dem, was das Gerät tut.
-    assert _pflegbar(p) == {"strom_warmwasser_kwh", "warmwasser_kwh"}
+    # ⚠ **`waerme_kwh` steht seit N-391 (14.09.2026) daneben** — die abgegebene
+    # Wärme GESAMT. Sie ist keine Heiz-Achse: An einer Brauchwasser-Wärmepumpe
+    # ist die Gesamtwärme die Warmwasser-Wärme, und wessen Zähler beides misst,
+    # bekommt sein Feld ohne Rücksicht auf die Bauart (R1, „keine Bedingung",
+    # Entscheid 14.09.). Die Aussage der Probe bleibt: **keine Heiz-Achse in
+    # der ersten Reihe.**
+    assert _pflegbar(p) == {"strom_warmwasser_kwh", "warmwasser_kwh",
+                            "waerme_kwh"}
 
     # Zuordenbar bleibt beides — die Heiz-Achse als erweiterte Größe.
     flaeche = _zuordenbar(p)

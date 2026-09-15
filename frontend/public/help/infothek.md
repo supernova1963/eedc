@@ -1,8 +1,6 @@
 
 # eedc Handbuch — Infothek
 
-**Version 4.0** | Stand: 2026-07-25
-
 > Dieses Handbuch ist Teil der eedc-Dokumentation.
 > Siehe auch: [Teil I: Installation & Einrichtung](HANDBUCH_INSTALLATION.md) | [Teil II: Bedienung](HANDBUCH_BEDIENUNG.md) | [Teil III: Einstellungen](HANDBUCH_EINSTELLUNGEN.md) | [Daten-Checker](HANDBUCH_DATEN_CHECKER.md) | [Glossar](GLOSSAR.md)
 

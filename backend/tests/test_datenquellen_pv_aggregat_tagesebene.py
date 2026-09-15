@@ -37,6 +37,7 @@ nicht zurückkehren.
 
 from __future__ import annotations
 
+from backend.core.field_definitions import BEDARF_GRUPPEN_ALTERNATIV
 from backend.services.datenquellen_validierung import (
     finde_redundante_aggregate,
     stufe_bedarf_ein,
@@ -98,8 +99,16 @@ def test_redundantes_aggregat_wird_weiter_gemeldet():
 
 
 def _bedarf_feld(fid, feld, typ, belegt, gruppe):
+    # ⚠ **`pflicht_am_geraet` kommt aus derselben Regel wie an der Route**
+    # (N-391, 14.09.2026): `mqtt_topic_registry` setzt das Kennzeichen für
+    # Felder einer ALTERNATIV-Gruppe nicht — dort deckt ein belegtes Mitglied
+    # die Gruppe. Bis dahin fehlte der Schlüssel hier ganz und fiel auf den
+    # Default `False`; die Proben unten maßen damit eine Eingabe, die die Route
+    # seit N-456 gar nicht mehr erzeugte, und blieben grün, während die Fläche
+    # die Komponenten-Zeile als offene Pflicht führte.
     return {"id": fid, "feld": feld, "typ": typ, "belegt": belegt,
-            "bedarf": "pflicht", "bedarf_gruppe": gruppe, "bedingung_anlage": None}
+            "bedarf": "pflicht", "bedarf_gruppe": gruppe, "bedingung_anlage": None,
+            "pflicht_am_geraet": gruppe not in BEDARF_GRUPPEN_ALTERNATIV}
 
 
 def test_komponenten_zeile_nennt_den_gewinn_ohne_drohung():

@@ -64,6 +64,7 @@ from backend.services.provenance import (
     write_json_subkey_with_provenance,
     write_with_provenance,
 )
+from backend.services.mitteltemperatur import lade_monatsmittel_temperatur
 from backend.services.pv_monatswerte import lade_pv_je_monat, pv_summe_je_monat
 from backend.services.zaehlerstaende import lade_zaehlerstaende
 
@@ -222,6 +223,16 @@ class AggregierteMonatsdatenResponse(BaseModel):
     netzbezug_kwh: float
     globalstrahlung_kwh_m2: Optional[float]
     sonnenstunden: Optional[float]
+    #: Monatsmittel der Außentemperatur (°C) — die zweite Linie des
+    #: Wärme/Klima-Verlaufs (Konzept §8).
+    #:
+    #: ⭐ **Nicht aus `Monatsdaten.durchschnittstemperatur`**, und das ist kein
+    #: Umweg: Dieses Feld ist seit dem IA-V4-Flip leer, weil sein Auto-Fill in
+    #: der gelöschten V3-Seite lag (**N-426**). Der Wert kommt aus den eigenen
+    #: Messreihen — Stundenwerte, sonst Tages-Min/Max —, ein gepflegter Wert
+    #: füllt nur Lücken. Vorrangkette und Begründung:
+    #: `services/mitteltemperatur.py`.
+    durchschnittstemperatur_c: Optional[float] = None
     # Dynamischer Monats-Ø-Netzbezugspreis (Flex-Tarif, Tibber/aWATTar/EPEX).
     # None = kein Flex-Wert gepflegt → Frontend fällt auf den statischen Tarif
     # zurück (gleiche Quelle wie Cockpit via resolve_netzbezug_preis_cent, #326).
@@ -536,6 +547,26 @@ async def list_monatsdaten_aggregiert(
         except Exception:  # pragma: no cover - eine Zusatzspalte kippt die Liste nicht
             logger.exception("Zählerstände für die Monats-Tabelle nicht ladbar")
 
+    # Konzept §8 — Monatsmittel der Außentemperatur, **einmal** für alle Monate.
+    # Zwei Abfragen über die Historie statt einer je Monat; eine Hilfslinie darf
+    # die Liste weder verlangsamen noch kippen (deshalb derselbe Schutz wie bei
+    # den Zählerständen darüber).
+    temperatur_je_monat: dict[tuple[int, int], float] = {}
+    if fakten:
+        try:
+            temperatur_je_monat = await lade_monatsmittel_temperatur(
+                db, anlage_id,
+                gepflegt_je_monat={
+                    (f.jahr, f.monat): getattr(
+                        f.meta.monatsdaten, "durchschnittstemperatur", None
+                    )
+                    for f in fakten
+                    if f.meta.monatsdaten is not None
+                },
+            )
+        except Exception:  # pragma: no cover - eine Zusatzspalte kippt die Liste nicht
+            logger.exception("Monatsmittel-Temperatur nicht ladbar")
+
     result = []
     for f in fakten:
         md = f.meta.monatsdaten
@@ -676,11 +707,14 @@ async def list_monatsdaten_aggregiert(
         _wp_az = arbeitszahl(
             f.wp.waerme_kwh, f.wp.strom_kwh,
             waerme_abgeleitet_kwh=f.wp.waerme_abgeleitet_kwh,
-            strom_funktionsfremd_kwh=f.wp.modus_strom_funktionsfremd_kwh,
+            # SOLL-§9-E7/Option A: der **Abzug**, nicht die Menge.
+            strom_funktionsfremd_kwh=f.wp.modus_strom_funktionsfremd_abzug_kwh,
             abgrenzung_verletzt=abgrenzungs_grund(
                 abgrenzung_stoerung=f.wp.abgrenzung_stoerung,
                 bauarten_gemischt=f.wp.bauarten_gemischt,
                 geraete_ohne_waerme=f.wp.waerme_deckt_nicht_alle_geraete,
+                # N-441: Waerme von einem Geraet, Strom von einem anderen.
+                geraete_verschieden=f.wp.geraete_verschieden,
             ),
         )
 
@@ -713,6 +747,7 @@ async def list_monatsdaten_aggregiert(
             ),
             globalstrahlung_kwh_m2=md.globalstrahlung_kwh_m2 if md is not None else None,
             sonnenstunden=md.sonnenstunden if md is not None else None,
+            durchschnittstemperatur_c=temperatur_je_monat.get((f.jahr, f.monat)),
             netzbezug_durchschnittspreis_cent=(
                 md.netzbezug_durchschnittspreis_cent if md is not None else None
             ),
@@ -1366,6 +1401,82 @@ async def delete_feldwert_nicht_gefuehrt(
         "feld": feld,
         "entfernt": len(entfernt),
         "monate": entfernt,
+    }
+
+
+@router.post("/anlage/{anlage_id}/temperatur-aus-messung")
+async def temperatur_aus_messung_uebernehmen(
+    anlage_id: int, db: AsyncSession = Depends(get_db)
+) -> dict:
+    """Füllt leere Ø-Temperaturen aus der eigenen Messreihe (N-426-Nachtrag).
+
+    Der Gegenstand ist eine **Historie**, die niemand mehr von Hand aufmacht:
+    Zwischen dem IA-V4-Flip (25.07.2026) und WK-03 (13.09.2026) gab es keinen
+    Wetter-Auto-Fill; jeder in dieser Zeit abgeschlossene Monat trägt in
+    ``Monatsdaten.durchschnittstemperatur`` ``NULL``. Der zurückgebaute
+    Auto-Fill wirkt nur nach vorn — für die Vergangenheit gibt es diesen Weg,
+    angeboten als Inline-Aktion am Daten-Checker (Bauform N-393).
+
+    ⛔ **Nur Lücken, nie ein gepflegter Wert (P3b).** Geschrieben wird
+    ausschließlich, wo das Feld ``None`` ist; alles andere bleibt unberührt.
+    Der Schreibweg ist ``write_with_provenance``, jeder gesetzte Wert steht
+    damit im Audit-Log.
+
+    ⚠ **Quelle ``manual:form``, und das ist bewusst so** — wie beim
+    Nachbar-Knopf ``feldwert_entfernen`` (N-393). Es ist eine **vom Anwender
+    ausgelöste** Aktion (SOURCE_LABELS: *„User-Eingabe oder User-bestätigte
+    Aktion"*), und derselbe Wert, den er sich im Monatsformular per Auto-Fill
+    holt und speichert, landet ebenfalls als ``manual:form`` in der Zeile. Zwei
+    Labels für denselben Wert, je nachdem welchen Knopf jemand gedrückt hat,
+    wären die Drift. ``repair`` bleibt dem Repair-Orchestrator vorbehalten, der
+    die Hierarchie durchbricht — hier gibt es nichts zu durchbrechen, das Feld
+    ist leer.
+
+    ⛔ **Nur, was die Messreihe hergibt, und kein Netzabruf.**
+    ``lade_monatsmittel_temperatur`` **ohne** ``gepflegt_je_monat`` ist Stufe 1
+    (Stundenmittel) und Stufe 2 (Tages-Min/Max) der Vorrangkette — die dritte
+    ist das Feld selbst, und ein Provider-Abruf je Monat ist bewusst **kein**
+    Teil dieser Aktion: er gehört in den Monat, den der Anwender öffnet
+    ([[feedback_kein_grosser_heiler_knopf]]).
+
+    ⭐ **Idempotent.** Ein zweiter Lauf findet nichts mehr — die Monate, die er
+    gefüllt hat, sind nicht mehr leer.
+    """
+    anlage = (await db.execute(
+        select(Anlage).where(Anlage.id == anlage_id)
+    )).scalar_one_or_none()
+    if anlage is None:
+        raise not_found("Anlage", anlage_id)
+
+    messreihe = await lade_monatsmittel_temperatur(db, anlage_id)
+
+    zeilen = (await db.execute(
+        select(Monatsdaten)
+        .where(Monatsdaten.anlage_id == anlage_id,
+               Monatsdaten.durchschnittstemperatur.is_(None))
+        .order_by(Monatsdaten.jahr, Monatsdaten.monat)
+    )).scalars().all()
+
+    gefuellt: list[dict] = []
+    for md in zeilen:
+        wert = messreihe.get((md.jahr, md.monat))
+        if wert is None:
+            continue
+        ergebnis = await write_with_provenance(
+            db, md, "durchschnittstemperatur", float(wert),
+            source="manual:form", writer=_MANUAL_WRITER,
+        )
+        if ergebnis.applied:
+            gefuellt.append(
+                {"jahr": md.jahr, "monat": md.monat, "wert": float(wert)}
+            )
+
+    await db.commit()
+    return {
+        "anlage_id": anlage_id,
+        "gefuellt": len(gefuellt),
+        "offen": len(zeilen) - len(gefuellt),
+        "monate": gefuellt,
     }
 
 

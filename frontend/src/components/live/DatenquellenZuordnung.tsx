@@ -34,6 +34,9 @@ import DatenquellenTopicListe from './DatenquellenTopicListe'
 import { useSelectedAnlage } from '../../hooks'
 import { TYP_LABELS } from '../../lib/constants'
 import { STATUS_TEXT_CLASS } from '../../lib/colors'
+// Bauschnitt 7: Ton UND Symbol der Schwere `info` kommen aus der SoT (Regel 0a) —
+// ein blauer Text unter einem Warndreieck wäre die halbe Übernahme.
+import { STATUS_ICONS } from '../../lib/komponentenStyle'
 import { formatDatum } from '../../lib/datum'
 import { TYP_ICON_STYLE } from '../../pages/InvestitionenTeile'
 import {
@@ -332,6 +335,9 @@ export default function DatenquellenZuordnung() {
     // `inaktiv` gesetzt). Der Hinweis erklärt dann, was hier hingehört — also
     // ohne Klick zeigen und rot einfärben (Style-Guide D1: Pflicht-Marker `*`,
     // Fehler rot unter dem Feld; Signal-Rot ist seit F2 der Fehler-Kanon).
+    // R-A: die Wegbeschreibungen kommen fertig aus dem Backend (SoT
+    // `core/feld_auswertungen.py`) — hier wird nur gerendert.
+    const ausgewertetIn = f.ausgewertet_in ?? []
     const offenePflicht = f.bedarf === 'pflicht' && istKeine
     const hinweisOffen = offeneHinweise.has(f.id) || offenePflicht
     return (
@@ -342,7 +348,7 @@ export default function DatenquellenZuordnung() {
             {f.bedarf === 'pflicht' && (
               <span className={`${STATUS_TEXT_CLASS.kritisch}`} title="Pflichtfeld">*</span>
             )}
-            {f.hinweis && (
+            {(f.hinweis || ausgewertetIn.length > 0) && (
               <Button
                 type="button" variant="ghost" size="icon"
                 // SoT-Button hat min-h-[36px] (app-weite Aktionshöhe) — für das
@@ -368,18 +374,42 @@ export default function DatenquellenZuordnung() {
               {f.hinweis}
             </p>
           )}
+          {/* **R-A (WK-16f, Prinzip F-7): „ausgewertet in".** Gernot: *„alle
+              zugeordneten Sensoren [müssen] in mindestens einer Auswertung
+              verarbeitet werden, da man sich anderenfalls die Frage stellt,
+              wofür habe ich diesen Sensor zugeordnet."* Die Antwort steht
+              jetzt am Feld — im selben leisen Ton wie der Hinweis darüber
+              (Konzept §9 *„Hinweis am Feld, kein Alarm"*), kein neuer Stil und
+              keine eigene Farbe.
+
+              ⚠ **Kein Satz ohne Inhalt:** Ist die Liste leer, steht hier
+              nichts. Ein „ausgewertet in: —" wäre schlechter als Schweigen. */}
+          {hinweisOffen && ausgewertetIn.length > 0 && (
+            <p className="mt-1 max-w-prose text-xs text-gray-500 dark:text-gray-400">
+              <span className="font-medium">Ausgewertet in:</span>{' '}
+              {ausgewertetIn.join(' · ')}
+            </p>
+          )}
           {/* §2i: diagnostische Zuordnungs-Probleme (Einheit/state_class/Redundanz/
-              Doppelmapping). Rot=error, amber=warning; Redundanz mit Inline-„auf keine". */}
-          {f.probleme.map((p, i) => (
+              Doppelmapping). Rot=error, amber=warning; Redundanz mit Inline-„auf keine".
+              Bauschnitt 7: `info` = kein Fehler, sondern eine Folge der Zuordnung —
+              blau und mit Info-Symbol, beides aus der Stil-SoT. */}
+          {f.probleme.map((p, i) => {
+            const InfoIcon = STATUS_ICONS.info
+            return (
             <div
               key={i}
               className={`mt-1 flex items-start gap-1 text-xs ${
                 p.schwere === 'error'
                   ? 'text-red-600 dark:text-red-400'
-                  : 'text-amber-600 dark:text-amber-400'
+                  : p.schwere === 'info'
+                    ? STATUS_TEXT_CLASS.info
+                    : 'text-amber-600 dark:text-amber-400'
               }`}
             >
-              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              {p.schwere === 'info'
+                ? <InfoIcon className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                : <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />}
               <span className="max-w-prose">
                 {p.text}
                 {p.art === 'redundant' && (
@@ -393,7 +423,8 @@ export default function DatenquellenZuordnung() {
                 )}
               </span>
             </div>
-          ))}
+            )
+          })}
         </div>
         {/* Wert + ±-Invert direkt am Wert (quellen-unabhängige Wert-Eigenschaft). */}
         <div className={`flex items-center justify-end gap-1 sm:w-28 sm:flex-shrink-0 ${istKeine ? 'opacity-60' : ''}`}>

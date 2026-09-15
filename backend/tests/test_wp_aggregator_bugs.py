@@ -7,9 +7,16 @@ Bug 1 — WP-Starts Stunden-Plausibilitäts-Cap:
     und Tages-Tab nicht drift'n.
 
 Bug 2 — WP-Kategorisierung bei getrennte_strommessung:
-    `_categorize_counter` muss `strom_heizen_kwh` und `strom_warmwasser_kwh`
-    als `verbrauch_wp` erkennen, wenn `parameter.getrennte_strommessung=True`
-    — analog zu `get_wp_strom_kwh` (SoT in field_definitions.py).
+    Die Stunden-Kategorie `verbrauch_wp` muss dieselben Felder tragen, die der
+    Tagespfad ausgewählt hat — bei getrennter Strommessung also
+    `strom_heizen_kwh` + `strom_warmwasser_kwh`, und `stromverbrauch_kwh`,
+    solange die feine Achse unvollständig ist (K3, analog `get_wp_strom_kwh`,
+    SoT in field_definitions.py).
+
+    ⛔ **Die Auswahl fällt in `investition_beitraege`, nicht in
+    `_categorize_counter`** (#298, N-461 vom 13.09.2026). Die Proben unten
+    messen sie deshalb an `investition_hourly_eintraege` — der Tür, durch die
+    beide Stunden-Konsumenten gehen.
 """
 
 from __future__ import annotations
@@ -96,31 +103,92 @@ async def _put_snapshot(
 # ───────────────────────────── Bug 2: Kategorisierung ──────────────────────────────
 
 
+class _WpDouble:
+    """Die Investition, wie sie die Beitragsschicht sieht — Typ und Parameter."""
+
+    def __init__(self, parameter):
+        self.id = 7
+        self.typ = "waermepumpe"
+        self.parameter = parameter
+        self.parent_investition_id = None
+
+
+def _stundenfelder(parameter, zugeordnet: set[str]) -> set[str]:
+    """Welche Felder erreichen die Stunden-Kategorie `verbrauch_wp`? (die Tür)"""
+    from backend.services.snapshot.komponenten_beitraege import (
+        investition_hourly_eintraege,
+    )
+
+    return {
+        e.feld for e in investition_hourly_eintraege(
+            _WpDouble(parameter), {}, ist_verfuegbar=lambda f: f in zugeordnet,
+        )
+        if e.kategorie == "verbrauch_wp"
+    }
+
+
 def test_kategorisierung_wp_getrennt_strommessung():
-    """Bei getrennte_strommessung=True → strom_heizen_kwh + strom_warmwasser_kwh."""
-    p_split = {"getrennte_strommessung": True}
-    assert _categorize_counter("strom_heizen_kwh", "waermepumpe", p_split) == "verbrauch_wp"
-    assert _categorize_counter("strom_warmwasser_kwh", "waermepumpe", p_split) == "verbrauch_wp"
-    # Gesamt-Sensor wird im Split-Modus IGNORIERT, damit keine Doppelzählung
-    # passiert (analog zu get_wp_strom_kwh).
-    assert _categorize_counter("stromverbrauch_kwh", "waermepumpe", p_split) is None
+    """Bei getrennte_strommessung zählen die feinen Zähler — **oder** der
+    Gesamtzähler, sobald einer zugeordnet ist (N-461, 13.09.2026; WK-16d).
+
+    ⛔ **Hier stand bis dahin `_categorize_counter(…, p_split) is None` für
+    `stromverbrauch_kwh`**, und die Substanz *„bei Split zählen die feinen"*
+    stimmt unverändert — nur die **Stelle**, an der sie durchgesetzt wird, war
+    falsch. `investition_hourly_eintraege` routet seit #298 durch
+    `investition_beitraege`, und die trifft die K3-Auswahl schon davor; das
+    zweite Tor in `_categorize_counter` warf danach genau das Feld weg, das die
+    Beitragsschicht ausgewählt hatte. Folge, gemessen: gefüllte Tagessumme über
+    **leerem** Stundenverlauf, sobald das Kennzeichen gesetzt war und ein feiner
+    Zähler fehlte. Die Probe misst die Auswahl deshalb an der Tür, an der sie
+    fällt.
+    """
+    p_split = {"wp_art": "luft_wasser", "getrennte_strommessung": True}
+
+    # Nur die feinen Zähler ⇒ sie sind die einzige Messung und tragen beide.
+    assert _stundenfelder(p_split, {
+        "strom_heizen_kwh", "strom_warmwasser_kwh",
+    }) == {"strom_heizen_kwh", "strom_warmwasser_kwh"}
+
+    # ⛔ **Hier stand bis zum 14.09.2026 derselbe Fall MIT `stromverbrauch_kwh`
+    # und der Erwartung, die beiden feinen Zähler trügen ihn.** Die Substanz —
+    # **eine** Seite trägt, nie beide, sonst steht dieselbe Kilowattstunde
+    # zweimal in der Stunde — ist unverändert; seit WK-16d gewinnt der
+    # Gesamtzähler (K1). Er zählt jetzt in JEDER dieser drei Lagen.
+    assert _stundenfelder(p_split, {
+        "strom_heizen_kwh", "strom_warmwasser_kwh", "stromverbrauch_kwh",
+    }) == {"stromverbrauch_kwh"}
+
+    # Feine Achse unvollständig ⇒ der Gesamtzähler trägt (K3) — und der
+    # Stundenverlauf zeigt dieselbe Menge wie die Tagessumme.
+    assert _stundenfelder(p_split, {
+        "strom_heizen_kwh", "stromverbrauch_kwh",
+    }) == {"stromverbrauch_kwh"}
+    assert _stundenfelder(p_split, {"stromverbrauch_kwh"}) == {"stromverbrauch_kwh"}
+
     # Thermische Felder bleiben ungezählt (Wärme ≠ Strom)
     assert _categorize_counter("heizenergie_kwh", "waermepumpe", p_split) is None
     assert _categorize_counter("warmwasser_kwh", "waermepumpe", p_split) is None
 
 
 def test_kategorisierung_wp_single_sensor():
-    """Ohne getrennte_strommessung → nur stromverbrauch_kwh."""
-    p_single = {"getrennte_strommessung": False}
-    assert _categorize_counter("stromverbrauch_kwh", "waermepumpe", p_single) == "verbrauch_wp"
-    assert _categorize_counter("strom_heizen_kwh", "waermepumpe", p_single) is None
-    assert _categorize_counter("strom_warmwasser_kwh", "waermepumpe", p_single) is None
+    """Ohne getrennte_strommessung → nur stromverbrauch_kwh.
+
+    Die Auswahl trifft `investition_beitraege`: ohne Kennzeichen sind die
+    feinen Felder keine Summanden, und ein dort liegengebliebener Zähler zählt
+    nicht mit.
+    """
+    p_single = {"wp_art": "luft_wasser", "getrennte_strommessung": False}
+    assert _stundenfelder(p_single, {
+        "stromverbrauch_kwh", "strom_heizen_kwh", "strom_warmwasser_kwh",
+    }) == {"stromverbrauch_kwh"}
 
 
 def test_kategorisierung_wp_legacy_kein_param():
     """Legacy-Anlagen ohne parameter-Dict: default = single-Sensor-Modus."""
     assert _categorize_counter("stromverbrauch_kwh", "waermepumpe", None) == "verbrauch_wp"
-    assert _categorize_counter("strom_heizen_kwh", "waermepumpe", None) is None
+    assert _stundenfelder(None, {
+        "stromverbrauch_kwh", "strom_heizen_kwh",
+    }) == {"stromverbrauch_kwh"}
 
 
 # ───────────────────────────── Bug 2: get_komponenten_tageskwh ──────────────────────────────

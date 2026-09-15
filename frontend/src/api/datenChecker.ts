@@ -24,8 +24,12 @@ export interface CheckErgebnis {
   // das Gerät nach seinen Einstellungen nicht (mehr) führt. Der Monatsabschluss
   // zeigt das Feld nicht, ein erneuter Abschluss lässt den Wert stehen — der
   // einzige Weg an ihn heran ist dieser Knopf. Zweite Aktion, die entfernt.
+  // N-426-Nachtrag: 'temperatur_aus_messung' — die Ø-Temperatur der Monate,
+  // die zwischen dem V4-Flip und WK-03 ohne Auto-Fill abgeschlossen wurden,
+  // aus der eigenen Messreihe nachtragen. Additiv wie der Benzinpreis-Backfill:
+  // schreibt nur, wo NULL steht, und nur so weit die Reihe zurückreicht.
   action_kind?: 'reaggregate_day' | 'reaggregate_range' | 'geraetewerte_loeschen'
-    | 'kraftstoffpreis_backfill' | 'feldwert_entfernen'
+    | 'kraftstoffpreis_backfill' | 'feldwert_entfernen' | 'temperatur_aus_messung'
   action_params?: Record<string, unknown>
   action_label?: string
   // IA-V4 #243: Komponenten-Zuordnung (nur komponenten-bezogene Befunde) —

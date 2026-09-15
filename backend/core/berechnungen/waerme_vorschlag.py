@@ -8,15 +8,21 @@ Funktion, derselbe Zeitraum):
 
 * **Heizwärme** aus dem **Heizstrom** — gemessen je Betriebsart (F4,
   ``betriebsart_strom_heizen_kwh``), sonst aus der getrennten Messung (F5,
-  ``strom_heizen_kwh``), sonst aus dem **Gesamt**strom (F2) — aber nur, wenn am
-  Gerät **kein Strom einer anderen Funktion belegt** ist. Steht in der Zeile ein
-  Kühl-, Lüft- oder Entfeucht-Strom, eine Kältemenge oder ein getrennter
-  Warmwasser-Strom, ist der Gesamtstrom nicht der Heizstrom — dann gibt es
-  **keinen** Vorschlag, statt eines falschen.
+  ``strom_heizen_kwh``). Ohne beides gibt es **keinen** Heizwärme-Vorschlag.
 * **Warmwasser-Wärme** nur aus dem **Warmwasser-Strom** (F5,
-  ``strom_warmwasser_kwh``). Ohne getrennte Strommessung gibt es keinen
-  Warmwasser-Vorschlag: die Menge steckt dann im Heizwärme-Vorschlag (die
-  Gesamtwärme landet unter „Heizwärme", N-391).
+  ``strom_warmwasser_kwh``).
+* **Wärme gesamt** aus dem **Gesamt**strom (F2) — aber nur, wenn am Gerät **kein
+  Strom einer anderen Funktion belegt** ist. Steht in der Zeile ein Kühl-, Lüft-
+  oder Entfeucht-Strom, eine Kältemenge oder ein getrennter Warmwasser-Strom,
+  ist der Gesamtstrom nicht der Wärmestrom — dann gibt es **keinen** Vorschlag,
+  statt eines falschen.
+
+⭐ **Der F2-Vorschlag ist am 14.09.2026 von *Heizwärme* nach *Wärme gesamt*
+gewandert (N-391).** ``E_gesamt × JAZ`` ist die Wärme des ganzen Geräts,
+Warmwasser eingeschlossen — solange es dafür kein Feld gab, hat eedc die
+Gesamtwärme selbst unter dem Namen „Heizwärme" vorgeschlagen. Genau daraus wurde
+bei getrennter Strommessung später eine Arbeitszahl Heizen aus fremdem Zähler
+(gemessen 5,0 statt 3,0).
 
 **Was das repariert — gemessen am Code vom 05.09.2026 (Paket B1):**
 
@@ -54,8 +60,12 @@ from backend.core.berechnungen.betriebsart_gemessen import (
 )
 from backend.core.betriebsmodus import HEIZEN, KUEHLEN
 
-#: Die beiden Wärmefelder, für die es einen Vorschlag geben kann.
-WAERME_FELDER: tuple[str, str] = ("heizenergie_kwh", "warmwasser_kwh")
+#: Die Wärmefelder, für die es einen Vorschlag geben kann.
+#: N-391: **drei**, seit es *Wärme gesamt* gibt — dorthin gehört der Vorschlag
+#: aus dem Gesamtstrom (F2), s. ``strom_basis_fuer_waerme_vorschlag``.
+WAERME_FELDER: tuple[str, ...] = (
+    "heizenergie_kwh", "warmwasser_kwh", "waerme_kwh",
+)
 
 
 @dataclass(frozen=True)
@@ -138,15 +148,36 @@ def strom_basis_fuer_waerme_vorschlag(
         if getrennt:
             sh = _zahl(d.get("strom_heizen_kwh"))
             return WaermeVorschlagBasis(sh, "Strom Heizen", "F5") if sh is not None else None
-        ges = _zahl(d.get("stromverbrauch_kwh"))
-        if ges is None or not gesamtstrom_ist_heizstrom(d):
-            return None
-        return WaermeVorschlagBasis(ges, "Strom", "F2")
+        # ⛔ **Der F2-Zweig steht seit N-391 (14.09.2026) nicht mehr hier.** Der
+        # Gesamtstrom × JAZ ist die Wärme des **ganzen Geräts** — Warmwasser
+        # eingeschlossen. Solange es kein Feld dafür gab, landete sie unter
+        # „Heizwärme"; eedc schrieb die Zweideutigkeit damit selbst in die
+        # Zeile, und bei getrennter Strommessung wurde daraus später eine
+        # Arbeitszahl Heizen aus fremdem Zähler. Der Vorschlag steht jetzt an
+        # *Wärme gesamt*, wo die Menge hingehört.
+        return None
 
     if feld == "warmwasser_kwh":
         if not getrennt:
             return None
         sw = _zahl(d.get("strom_warmwasser_kwh"))
         return WaermeVorschlagBasis(sw, "Strom Warmwasser", "F5") if sw is not None else None
+
+    if feld == "waerme_kwh":
+        # N-391/F2: der GESAMTstrom ergibt die GESAMTwärme — und nur dann, wenn
+        # keine fremde Spur in der Zeile steht (`gesamtstrom_ist_heizstrom`
+        # prüft genau das: kein Kühl-/Lüft-/Entfeucht-Strom, keine Kältemenge,
+        # kein getrennter Warmwasser-Strom).
+        #
+        # ⚠ **Mit getrennter Strommessung gibt es hier keinen Vorschlag**: Dann
+        # tragen `heizenergie_kwh` und `warmwasser_kwh` ihre eigenen (F5), und
+        # ein dritter Vorschlag daneben wäre die Doppelzählung, die B1 auf
+        # dieser Seite gerade abgeschafft hat.
+        if getrennt:
+            return None
+        ges = _zahl(d.get("stromverbrauch_kwh"))
+        if ges is None or not gesamtstrom_ist_heizstrom(d):
+            return None
+        return WaermeVorschlagBasis(ges, "Strom", "F2")
 
     return None

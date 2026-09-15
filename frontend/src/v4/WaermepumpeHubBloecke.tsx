@@ -79,7 +79,23 @@ export function WaermepumpeVergleichIST({ anlageId, inv, melde }: { anlageId: nu
   useEffect(() => { melde?.(leer ? KEINE : VERGLEICH_IDS) }, [leer, melde])
   if (loading) return <Lade />
   if (!ds || ds.monatsdaten.length === 0) return <Leer text="Keine Vergleichsdaten erfasst." />
-  return <Parkbar id="chart:wp-vergleich" titel="Monats-/Saisonvergleich"><WaermepumpeVergleich monatsdaten={ds.monatsdaten} jazJeMonat={ds.zusammenfassung.jaz_je_monat} hatGetrennteStrom={ds.zusammenfassung.gesamt_strom_heizen_kwh !== undefined} /></Parkbar>
+  return (
+    <Parkbar id="chart:wp-vergleich" titel="Monats-/Saisonvergleich">
+      <WaermepumpeVergleich
+        monatsdaten={ds.monatsdaten}
+        jazJeMonat={ds.zusammenfassung.jaz_je_monat}
+        hatGetrennteStrom={ds.zusammenfassung.gesamt_strom_heizen_kwh !== undefined}
+        /* Wetternormierung (SOLL §4.1): Heizgradtage sind eine Eigenschaft der
+           ANLAGE — die Route lädt sie einmal je Request und legt dieselbe Liste
+           in jeden Geräte-Eintrag. Ältere Antworten ohne die Felder verhalten
+           sich unverändert (die Props sind optional, der Modus erscheint dann
+           nicht). */
+        heizgradtageJeMonat={ds.zusammenfassung.heizgradtage_je_monat}
+        heizgradtageGrund={ds.zusammenfassung.heizgradtage_grund}
+        heizgrenzeC={ds.zusammenfassung.heizgrenze_c}
+      />
+    </Parkbar>
+  )
 }
 
 /** Wirtschaftlichkeit: Kostenvergleich WP vs. Alternative + Ersparnis. */

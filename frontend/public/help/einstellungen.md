@@ -1,8 +1,6 @@
 
 # eedc Handbuch — Teil III: Einstellungen
 
-**Version 4.0** | Stand: 2026-07-25
-
 > Dieses Handbuch ist Teil der eedc-Dokumentation.
 > Siehe auch: [Teil I: Installation & Einrichtung](HANDBUCH_INSTALLATION.md) | [Teil II: Bedienung](HANDBUCH_BEDIENUNG.md) | [Daten-Checker](HANDBUCH_DATEN_CHECKER.md) | [Infothek](HANDBUCH_INFOTHEK.md) | [Wärme & Klima](HANDBUCH_WAERME_KLIMA.md) | [Sensor-Referenz](SENSOR-REFERENZ.md) | [Glossar](GLOSSAR.md)
 
@@ -550,7 +548,9 @@ Der Block zeigt die Tabelle aller erfassten Monate inline (sortierbar, mit Spalt
 
 **Werte aus Home Assistant holen:** Neben „Neuer Monat" gibt es „Aus HA laden". Bei einem **neuen** Monat werden die Werte direkt ins Formular übernommen; bei einem **existierenden** Monat zeigt ein Vergleichs-Modal die Unterschiede (Vorhanden / HA-Statistik / Diff, farbkodiert ab 10 %) mit „HA-Werte übernehmen" oder „Abbrechen". Bei E-Auto- bzw. WP-Komponenten schlägt eedc den Ø Benzin- bzw. Gaspreis vor.
 
-**Wetter-Autofill:** „Wetter abrufen" füllt Globalstrahlung und Sonnenstunden (Open-Meteo historisch bzw. PVGIS TMY).
+**Wetter-Autofill:** Der Knopf **„Auto-Fill"** im Abschnitt *Wetterdaten* füllt **Globalstrahlung**, **Sonnenstunden** und **Ø Temperatur**. Strahlung und Sonnenstunden kommen aus dem Archiv (Open-Meteo historisch bzw. Bright Sky, sonst PVGIS TMY). Die **Ø Temperatur** nimmt eedc **zuerst aus deinen eigenen gemessenen Außentemperaturen** des Monats (stündliche Werte, ersatzweise Tages-Min/Max) — sie wurden an deinem Standort gemessen und sind für den laufenden Monat die einzige Quelle; erst ohne sie kommt der Archivwert. Unter dem Knopf steht, welche der beiden es war. ⛔ **Der Auto-Fill füllt nur leere Felder — in allen drei.** Ein selbst eingetragener Wert bleibt stehen, egal um welches der drei es geht; unter dem Knopf steht dann in einem Satz, was übernommen wurde und was unverändert blieb (*„Globalstrahlung und Sonnenstunden übernommen, Ø Temperatur unverändert — der eingetragene Wert bleibt stehen."*). Wer einen Wert doch ersetzen will, **leert das Feld und klickt erneut**. Von Hand änderbar bleiben alle drei immer.
+
+**Ø Temperatur kommt von selbst — und die Historie holt ein Knopf nach.** Beim Abschließen füllt eedc das Wetter-Feld *„Ø Temperatur"* automatisch: zuerst aus **deiner eigenen Messreihe** (Stundenwerte, ersatzweise Tages-Min/Max), sonst aus dem Wetter-Archiv. Ein von Hand gesetzter Wert bleibt dabei immer stehen. **Monate, die zwischen Juli und September 2026 abgeschlossen wurden, sind ohne diesen Wert entstanden** — damals fehlte das Auto-Fill. Der **Daten-Checker** meldet sie unter *Wetterwerte – fehlende Monatswerte* und stellt *„Temperatur aus Messung übernehmen"* daneben, wo deine eigenen Messwerte weit genug zurückreichen; für die übrigen Monate öffnest du den Monat und drückst *„Wetterdaten holen"*.
 
 **Ø Benzinpreis kommt von selbst.** eedc holt den Monatsdurchschnitt täglich aus dem EU Weekly Oil Bulletin und trägt ihn in jeden Monat ohne Preis nach — auch rückwirkend, auch für importierte Monate; du musst dafür nichts tun. Bleibt doch einmal ein Monat offen, meldet es der **Daten-Checker** unter *Vergleichspreise – Ø Benzinpreis* und stellt „Vergleichspreise nachpflegen" daneben. *(Bis v4.0.15 stand hier ein eigener Knopf unter dem Monatsdaten-Block; er ist mit der V4-Oberfläche entfallen — diese Zeile beschrieb ihn danach noch, obwohl es ihn nicht mehr gab.)*
 
@@ -645,7 +645,7 @@ eedc exportiert berechnete Kennzahlen an einen Broker (HA-Discovery-Konvention).
 
 Jeder Monat ist einzeln per Checkbox wählbar — so bleiben manuell erfasste Daten geschützt.
 
-> **Voraussetzungen:** zugeordnete HA-Sensoren (siehe [Datenquellen](#7-datenquellen--feld-zentrische-zuordnung)) und Sensoren, die in der HA-Langzeitstatistik geführt werden. Den **Zugang zur Statistik** hat eedc auf drei Wegen, und einer genügt: über die verbundene Home-Assistant-Instanz (Add-on oder Long-Lived-Token — **ohne** jede weitere Einrichtung), über das Volume-Mapping `config:ro` auf die Recorder-Datei, oder über `HA_RECORDER_DB_URL` bei MariaDB/MySQL. Wo eine Datenbank erreichbar ist, wird sie bevorzugt; sonst holt eedc dieselben Werte über die HA-API. Bei Tagesreset-Zählern nutzt eedc `MAX(sum) − MIN(sum)` aus HA-Statistics (reset-bereinigt).
+> **Voraussetzungen:** zugeordnete HA-Sensoren (siehe [Datenquellen](#7-datenquellen--feld-zentrische-zuordnung)) und Sensoren, die in der HA-Langzeitstatistik geführt werden. Den **Zugang zur Statistik** hat eedc auf drei Wegen, und einer genügt: über die verbundene Home-Assistant-Instanz (Add-on oder Long-Lived-Token — **ohne** jede weitere Einrichtung), über den Lesezugriff des Add-ons auf die Recorder-Datei, oder über `HA_RECORDER_DB_URL` bei MariaDB/MySQL. Wo eine Datenbank erreichbar ist, wird sie bevorzugt; sonst holt eedc dieselben Werte über die HA-API. Bei Tagesreset-Zählern nutzt eedc `MAX(sum) − MIN(sum)` aus HA-Statistics (reset-bereinigt).
 >
 > **Wie weit zurück?** So weit, wie Home Assistant den Sensor selbst führt — die Langzeitstatistik beginnt mit seiner Einrichtung. Für die Zeit davor gibt es den Datei-Import (CSV/Excel); daran ändert auch der API-Weg nichts.
 

@@ -310,6 +310,38 @@ def extract_quellen_energy(anlage) -> dict[str, tuple[Optional[str], Optional[st
     return out
 
 
+def zaehler_feld_kandidaten(
+    inv_id_str: str, felder: Optional[dict], mqtt_keys: Optional[set[str]],
+) -> set[str]:
+    """Alle Feld-Keys, die für dieses Gerät einen Zähler tragen **können** — aus beiden Ablagen.
+
+    N-328b: Ein per MQTT gespeister Zähler steht nicht in ``felder`` — sein
+    ``sensor_key`` steht in ``mqtt_keys``, und nur dort. Wer allein über
+    ``felder`` iteriert, sieht ihn nie. Ob ein Kandidat wirklich einen Zähler
+    hat, entscheidet danach weiterhin {@link feld_hat_zaehler}.
+
+    Herausgezogen aus ``aggregator.get_betriebsart_strom_tageswerte``
+    (Bauschnitt 6, Kälte je Tag), damit die Tagesdetails und der Bereichs-Leser
+    **dieselbe** Menge sehen — auch die Innengerät-Kopien.
+    """
+    praefix = f"inv:{inv_id_str}:"
+    return set(felder or {}) | {
+        sk[len(praefix):] for sk in (mqtt_keys or ()) if sk.startswith(praefix)
+    }
+
+
+def innengeraet_felder(basis_feld: str, kandidaten) -> list[str]:
+    """Die Innengerät-Kopien eines Feldes unter den Kandidaten, sortiert.
+
+    ``betriebsart_nutzenergie_kuehlen_kwh`` → ``[…_kwh-1, …_kwh-3]``; das
+    Gerätefeld selbst gehört nicht dazu. Für ein Feld ohne ``je_innengeraet``
+    ist die Liste leer — seine Leser verhalten sich dort bitgleich zu vorher.
+    """
+    return sorted(
+        k for k in kandidaten if k != basis_feld and basis_feld_key(k) == basis_feld
+    )
+
+
 def feld_hat_zaehler(
     config: Optional[dict],
     sensor_key: str,
@@ -460,17 +492,23 @@ def _categorize_counter(
         if feld == "entladung_kwh":
             return "entladung_batterie"
     if inv_typ == "waermepumpe":
-        # Wenn die Anlage Strom-Heizen/-Warmwasser getrennt erfasst (#191),
-        # sind die beiden Einzel-Sensoren die elektrische Wahrheit; das alte
-        # `stromverbrauch_kwh`-Feld wird ignoriert (analog zu get_wp_strom_kwh
-        # in field_definitions.py). Andernfalls zählt der Gesamt-Strom-Sensor.
-        getrennte = bool((parameter or {}).get("getrennte_strommessung"))
-        if getrennte:
-            if feld in ("strom_heizen_kwh", "strom_warmwasser_kwh"):
-                return "verbrauch_wp"
-        else:
-            if feld == "stromverbrauch_kwh":
-                return "verbrauch_wp"
+        # ⛔ **Hier stand bis zum 13.09.2026 ein zweiter Gatekeeper** (N-461):
+        # Bei `getrennte_strommessung` lieferte `stromverbrauch_kwh` `None` —
+        # „das alte Feld wird ignoriert". `investition_hourly_eintraege` routet
+        # aber seit #298 durch `investition_beitraege`, und die trifft die
+        # K3-Auswahl schon **davor**. Beides zusammen warf genau das Feld weg,
+        # das die Beitragsschicht ausgewählt hatte: Der Stundenverlauf zeigte
+        # eine **leere** Wärmepumpen-Spalte über einer gefüllten Tagessumme
+        # (gemessen an vier Lagen — F5 gesetzt, feine Achse unvollständig).
+        # Der Modulkopf sagt es seit #298 selbst: diese Funktion ist *„kein
+        # Whitelist-Gatekeeper mehr, sondern nur noch die Abbildung
+        # Feld → Kategorie"*. Alle drei Strom-Felder tragen denselben
+        # Energiefluss; **welches** davon zählt, entscheidet die Feld-Auswahl
+        # davor — genau wie bei `basis:pv_gesamt` oben.
+        if feld in (
+            "stromverbrauch_kwh", "strom_heizen_kwh", "strom_warmwasser_kwh",
+        ):
+            return "verbrauch_wp"
     if inv_typ == "wallbox" and feld == "ladung_kwh":
         return "ladung_wallbox"
     if inv_typ == "e-auto" and feld in ("verbrauch_kwh", "ladung_kwh"):

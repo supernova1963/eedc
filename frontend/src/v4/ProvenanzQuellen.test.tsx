@@ -60,6 +60,45 @@ describe('provenanzQuellen', () => {
     }), JULI)
     expect(q[0].titel).toContain('unter 1 von 31 Tagen')
   })
+
+  // ── N-472: die beiden neuen Quellen tragen dieselbe Zeile ─────────────────
+  //
+  // ⭐ **Hier wird nichts gebaut, und das ist der Punkt.** Der Rückfall setzt
+  // `abdeckung_von`/`abdeckung_bis` in genau dem Slot, den diese Zeile seit
+  // #360 liest — der Zeitraum-Vorbehalt steht damit ohne eine einzige weitere
+  // Client-Stelle da. Was hier geprüft wird, ist dass er wirklich ankommt.
+
+  it('MQTT ab Monatsmitte wird als Teilzeitraum beschriftet (Rückfall)', () => {
+    const q = provenanzQuellen(quellen({
+      netzbezug_kwh: {
+        quelle: 'mqtt_inbound', konfidenz: 91,
+        abdeckung_von: '2025-07-14T12:05:00', abdeckung_bis: '2025-07-31T12:00:00',
+      },
+    }), JULI)
+
+    expect(q[0].label).toBe('MQTT')
+    expect(q[0].zusatz).toBe('14.–31.07.2025')
+    expect(q[0].titel).toContain('Der Monatsanfang fehlt in dieser Zahl.')
+  })
+
+  it('die Tagesebene heißt „Tageswerte" und schweigt, wenn sie den Monat deckt', () => {
+    const ab_erstem = provenanzQuellen(quellen({
+      pv_erzeugung_kwh: {
+        quelle: 'tagesebene', konfidenz: 80,
+        abdeckung_von: '2025-07-01T00:00:00', abdeckung_bis: '2025-07-14T00:00:00',
+      },
+    }), JULI)
+    const ab_fuenftem = provenanzQuellen(quellen({
+      pv_erzeugung_kwh: {
+        quelle: 'tagesebene', konfidenz: 80,
+        abdeckung_von: '2025-07-05T00:00:00', abdeckung_bis: '2025-07-14T00:00:00',
+      },
+    }), JULI)
+
+    expect(ab_erstem[0].label).toBe('Tageswerte')
+    expect(ab_erstem[0].zusatz, 'ab dem Ersten ist die Angabe Rauschen').toBeUndefined()
+    expect(ab_fuenftem[0].zusatz, 'eine Lücke am Anfang gehört gesagt').toBe('05.–14.07.2025')
+  })
 })
 
 describe('JahrHeader — E3: kein Zeitraum in der Jahres-Sicht', () => {

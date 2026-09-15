@@ -3,8 +3,12 @@
 Single Source of Truth für hartcodierte Werte, die bisher an mehreren Stellen
 dupliziert waren (siehe `docs/archive/INVENTUR-DRIFT-AUDIT.md`, Domäne B).
 
-Pendant im Frontend: `eedc/frontend/src/lib/wirtschaftlichkeitDefaults.ts`
-— bei Änderungen dort spiegeln.
+⚠ Hier stand bis 2026-09-13 „Pendant im Frontend:
+`eedc/frontend/src/lib/wirtschaftlichkeitDefaults.ts` — bei Änderungen dort
+spiegeln". **Diese Datei gibt es nicht** (gemessen per `find`); die
+Spiegel-Pflicht war unerfüllbar. Die Frontend-Vorgabewerte der Investitionen
+stehen in `eedc/frontend/src/lib/investitionParameter.ts` (Kanon je Typ), die
+Konstanten hier sind Backend-Rechenwerte ohne Client-Pendant.
 """
 
 from typing import Final
@@ -29,7 +33,11 @@ EXTERNE_LADUNG_DEFAULT_EURO_KWH: Final[float] = 0.50
 BENZIN_VERBRAUCH_DEFAULT_L_100KM: Final[float] = 7.5
 BENZIN_PREIS_DEFAULT_EURO_L: Final[float] = 1.65
 
-# WP-PV-Anteil: Annahme wenn keine Detail-Daten vorliegen
-# Konservative 50/50-Annahme — sollte langfristig durch tatsächlichen Anteil
-# aus InvestitionMonatsdaten ersetzt werden.
-WP_PV_ANTEIL_DEFAULT: Final[float] = 0.5
+# ⛔ Hier stand bis 2026-09-13 `WP_PV_ANTEIL_DEFAULT = 0.5` — ein fester
+# PV-Abschlag auf den Wärmepumpen-Strom. Er ist **ersatzlos entfallen**
+# (SOLL Wärme/Klima S1b, N-459): Der Strom einer Wärmepumpe wird in jeder
+# Geld- und CO₂-Rechnung voll belastet, weil sein PV-Anteil auf der PV-Seite
+# schon gutgeschrieben ist — als Eigenverbrauch (Geld) und als vermiedener
+# Netzstrom (CO₂). Ein zweiter Abzug zählte dieselbe Kilowattstunde doppelt
+# (ADR-002/P9). Das Feld „PV-Anteil (%)" am Gerät bleibt, beantwortet aber
+# eine Mengenfrage (N-277/N-354) und speist keine Preisformel.

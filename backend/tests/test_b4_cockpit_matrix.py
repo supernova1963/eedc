@@ -30,7 +30,7 @@ import pytest
 
 from backend.core.berechnungen.waermepumpe_kennzahl import (
     GRUND_FREMDWAERME,
-    GRUND_KUEHLZAHL_NUR_MONAT,
+    GRUND_KEINE_KAELTEMENGE,
     HERKUNFT_GEMESSEN,
     VORBEHALT_ABGELEITET,
     VORBEHALT_FREMDWAERME,
@@ -181,6 +181,12 @@ async def test_c2_monat_traegt_herkunft_und_vorbehalt(db):
     assert m.wp_waerme_abgeleitet is True
     assert m.wp_waerme_herkunft == "geschätzt: Strom × JAZ 3,5"
     assert m.wp_ersparnis_vorbehalt == VORBEHALT_ABGELEITET
+    # Konzept Wärme/Klima §8/E7: Neben dem Flag steht die MENGE. Das Flag sagt
+    # „irgendein Teil irgendeines Geräts" und ist für die Kennzahl richtig so
+    # (alles-oder-nichts, `jaz_belastbar`); eine Menge — die Wärmelinie im
+    # Verlauf zeigt nur Gemessenes — braucht die Differenz. Hier ist die ganze
+    # Wärme geschätzt, also deckt der abgeleitete Anteil sie vollständig.
+    assert m.wp_waerme_abgeleitet_kwh == pytest.approx(m.wp_waerme_kwh)
 
     b = await _anlage(db, "C-2 F12")
     await _geraet(db, b, *SPROSSEN["F12_bivalent"])
@@ -234,7 +240,9 @@ TAG_SPROSSEN = {
                                    modus_stunden=[("heizen", 1.0)] * 12 + [("kuehlen", 1.0)] * 6 + [(None, 1.0)] * 6), {
         "wp_modus_strom_heizen_kwh": 12.0, "wp_modus_strom_kuehlen_kwh": 6.0,
         "wp_modus_nicht_aufgeteilt_kwh": 6.0, "wp_modus_abdeckung_h": 18.0, "wp_modus_gemessen": False,
-        "wp_jaz_kuehlen_grund": GRUND_KUEHLZAHL_NUR_MONAT}),
+        # Bauschnitt 6: kein Kältezähler zugeordnet — dieser Satz ist hier WAHR.
+        # Bis dahin stand „nur im Monat", weil die Kälte keinen Tagespfad hatte.
+        "wp_jaz_kuehlen_grund": GRUND_KEINE_KAELTEMENGE}),
     "T-F4_betriebsart": (dict(parameter=LL, zaehler={"betriebsart_strom_heizen_kwh": (100.0, 120.0),
                                                      "betriebsart_strom_kuehlen_kwh": (50.0, 58.0)}), {
         "wp_modus_strom_heizen_kwh": 20.0, "wp_modus_strom_kuehlen_kwh": 8.0,
@@ -253,11 +261,12 @@ TAG_SPROSSEN = {
                                                      "betriebsart_strom_kuehlen_kwh": (50.0, 60.0),
                                                      "betriebsart_nutzenergie_kuehlen_kwh": (200.0, 230.0),
                                                      "heizenergie_kwh": (1000.0, 1060.0)}), {
-        # 60 kWh Wärme ÷ (30 − 10 Kühlstrom) — W-14; die Kühlzahl bleibt Monatssache (N-348).
-        "wp_jaz": 3.0, "wp_jaz_nenner_kwh": 20.0, "wp_jaz_kuehlen": None,
-        "wp_jaz_kuehlen_grund": GRUND_KUEHLZAHL_NUR_MONAT}),
+        # 60 kWh Wärme ÷ (30 − 10 Kühlstrom) — W-14. Seit Bauschnitt 6 steht auch
+        # die Kühlzahl im Tag: 30 kWh Kälte ÷ 10 kWh Kühlstrom (bis dahin „nur im Monat").
+        "wp_jaz": 3.0, "wp_jaz_nenner_kwh": 20.0, "wp_jaz_kuehlen": 3.0,
+        "wp_jaz_kuehlen_grund": None}),
     "T-F11_fremdstrom": (dict(parameter={**LW, "abgrenzung": "fremdstrom"}, zaehler={"heizenergie_kwh": (1000.0, 1105.0)}), {
-        "wp_waerme_kwh": 105.0, "wp_jaz": None, "wp_jaz_grund": "Heizstab-Strom auf dem WP-Zähler"}),
+        "wp_waerme_kwh": 105.0, "wp_jaz": None, "wp_jaz_grund": "Ein weiterer Verbraucher auf dem WP-Zähler (z. B. Heizstab)"}),
 }
 
 

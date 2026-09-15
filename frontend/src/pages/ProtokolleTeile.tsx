@@ -142,6 +142,7 @@ function SystemLogsTab() {
         />
         <Input
           type="text"
+          suchfeld
           value={module}
           onChange={(e) => setModule(e.target.value)}
           placeholder="Modul..."
@@ -151,6 +152,7 @@ function SystemLogsTab() {
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 dark:text-gray-500" />
           <Input
             type="text"
+            suchfeld
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Suche in Nachrichten..."
@@ -360,6 +362,7 @@ function AktivitaetenTab() {
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 dark:text-gray-500" />
           <Input
             type="text"
+            suchfeld
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
             placeholder="Suche in Aktionen..."

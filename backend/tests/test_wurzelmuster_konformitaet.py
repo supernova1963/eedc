@@ -2117,6 +2117,29 @@ P10_PER_INVESTITION: frozenset[str] = frozenset({
     # durch `lade_monats_fakten` zu führen, hieße ihn zur Energiegröße zu
     # machen — die Bewegung, gegen die das ganze Vorhaben gebaut ist.
     "backend/services/zaehlerstaende.py::_gepflegte_monatsstaende",
+    # WK-16a (2026-09-14): die Kennzahl JE GERÄT für Cockpit Monat/Jahr.
+    # **Dieselbe Begründung wie `get_waermepumpe_dashboard` weiter oben**, und
+    # zwar wörtlich: Die Schicht liefert die **anlagenweite** Monatszeile; eine
+    # Arbeitszahl je Gerät lässt sich daraus strukturell nicht ablesen — genau
+    # dafür gibt es diese Kategorie.
+    #
+    # ⭐ **Der Eintrag ersetzt keinen zweiten, er verhindert ihn.** Bis hierher
+    # stand die Faltung IN `get_waermepumpe_dashboard`; der Cockpit-Block hätte
+    # sie ein zweites Mal gebraucht. Jetzt lädt **eine** Funktion, und Hub,
+    # Monat und Jahr lesen dasselbe Ergebnis.
+    "backend/services/waermepumpe_kennzahlen_je_geraet.py::lade_kennzahlen_je_geraet",
+    # WK-16c (2026-09-14): die Strom-Verteilung JE GERÄT und Funktion für den
+    # Blockteil *Verteilung & Verlauf*. **Dieselbe Begründung wie die Zeile
+    # darüber**, an derselben Fläche: `WpFakten` trägt die Wärmepumpen-Größen
+    # der **Anlage** und führt die Geräte nur als ID-Mengen
+    # (`geraete_mit_strom`/`geraete_mit_waerme`) — keine kWh je Gerät. Ein
+    # Segment „Wärmepumpe Heizen" neben „Klimaanlage Heizen" ist daraus
+    # strukturell nicht ablesbar.
+    #
+    # ⚠ **Was die Schicht trotzdem liefert, kommt aus ihr:** der Monatstarif
+    # (P8) für die Kosten je Funktion — `_wp_preise_je_monat` liest
+    # `TarifFakten.wp_preis_cent` und löst keinen Preis selbst auf.
+    "backend/services/waerme_verteilung.py::_monatszeilen",
 })
 
 #: **Offene Schuld.** Diese Funktionen falten eine ANLAGEN-weite Monatszeile
@@ -2872,10 +2895,23 @@ P13_AUSNAHMEN: frozenset[str] = frozenset({
     # mit je eigener Faltung (der Bericht warf den Grund weg).
     "backend/services/waermepumpe_jahreskennzahlen.py::waermepumpe_jahreskennzahlen",
     "backend/services/community_service.py::_monatswert",         # Flag im Payload (N-367)
+    # SOLL §3.2b (10.09.2026): die Schwester von `abgrenzungs_grund` — sie sagt
+    # nicht WARUM gesperrt wird, sondern WO. Sie liest `bauarten_gemischt` aus
+    # demselben Grund und trifft dieselbe Art Entscheidung (Abgrenzung einer
+    # Kennzahl), nur je Funktion statt für den ganzen Block.
+    #
+    # ⭐ **Sie schwächt R1, statt es zu verletzen:** Bis hierher sperrte die
+    # gemischte Bauart BEIDE Funktionszahlen; jetzt entscheidet die
+    # Geräte-Deckung je Funktion, und die Bauart tritt nur noch als Grund-TEXT
+    # auf. Die Trennlinie ist die Abgrenzung, nicht die Bauart.
+    "backend/core/berechnungen/waermepumpe_kennzahl.py::abgrenzung_je_funktion",
 
     # ── 2. Vorschlag: Vorbelegung · Beschriftung · weiche Herabstufung ────────
     "backend/core/field_definitions.py::get_feld_bedarf",         # Pflicht → optional, nie weg (N-86)
-    "backend/api/routes/investitionen/crud.py::_wp_nicht_bewertbar",  # Default-Bedarfe nicht vorbelegt (N-88/F2b)
+    # ⛔ `crud.py::_wp_nicht_bewertbar` stand hier bis WK-15c (14.09.2026) — die
+    # Vorbelegungs-Sperre fragte `ist_luft_luft_waermepumpe`. Sie fragt jetzt die
+    # **Achsen** (`feld_urteil`) und liest die Bauart nicht mehr; der Eintrag wäre
+    # tot und die Liste ist damit um einen Leser kürzer.
 
     # ── 3. Stammdatum: die Bauart reist als Eigenschaft ──────────────────────
     "backend/services/community_service.py::prepare_community_data",

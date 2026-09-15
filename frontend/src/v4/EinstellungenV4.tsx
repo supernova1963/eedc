@@ -260,6 +260,7 @@ function EinstellungenInner({ kategorie }: { kategorie: KategorieKey }) {
           <div className="relative">
             <Input
               type="search"
+              suchfeld
               value={suche}
               onChange={(e) => setSuche(e.target.value)}
               placeholder="Suchen in allen Einstellungen …"

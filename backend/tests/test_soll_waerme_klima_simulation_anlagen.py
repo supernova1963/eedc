@@ -141,8 +141,8 @@ async def _baue_a1(db):
     return a, wp
 
 
-async def test_a1_anlagenweite_arbeitszahl_faellt_weg_mit_grund(db):
-    """Die vermischte Zahl darf NICHT erscheinen — der Grund tritt an ihre Stelle.
+async def test_a1_anlagenweite_zahl_ist_eine_benannte_schranke(db):
+    """Die vermischte Zahl darf **keine Geräte-Kennzahl** sein — sie ist eine Schranke.
 
     ⚠ **Der erwartete Grund hat am 28.08.2026 gewechselt, die Aussage nicht.**
     Bis dahin stand hier `GRUND_GERAETE_OHNE_WAERME` („nicht alle Geräte melden
@@ -156,14 +156,29 @@ async def test_a1_anlagenweite_arbeitszahl_faellt_weg_mit_grund(db):
     Gegenstand — *die vermischte Zahl darf es nicht geben* — gilt unverändert
     und wird eine Zeile höher weiter geprüft. Nur der Grund ist jetzt der
     konkretere, und der konkretere Grund ist die bessere Auskunft (SOLL §3.3/S3).
+
+    ⭐ **Zweite Umstellung am 14.09.2026 (E1b), wieder ohne Zurückdrehen.** Die
+    Substanz war und bleibt: *3,0 ist keine Arbeitszahl DER WÄRMEPUMPE* — die
+    hat 3,75 (3000 ÷ 800), und nur diese Zahl darf so heißen. Was 3,0 sehr wohl
+    ist: eine **untere Schranke der Anlage**, denn die 200 kWh der Klimaanlage
+    stehen im Nenner und ihre Nutzenergie in keinem Zähler. Eine wahre Schranke
+    ist eine bessere Auskunft als ein Strich (ADR-002/P4 verbietet falsche
+    Zahlen, nicht Schranken), und **der Melder selbst rechnet sie so** (sein
+    Dashboard: 7075 ÷ [2193 − 17] = 3,25).
     """
     a, _wp = await _baue_a1(db)
     antwort = await _monat(db, a.id)
 
-    assert antwort.wp_jaz is None, (
-        "3000 ÷ 1000 = 3,0 wurde gebildet, obwohl die Klimaanlage keine Wärme "
-        "meldet — genau die Vermischung, die dietmar1968 gemeldet hat")
-    assert antwort.wp_jaz_grund == GRUND_BAUARTEN_GEMISCHT
+    assert antwort.wp_jaz == pytest.approx(3.0), "3000 ÷ (800 + 200)"
+    assert antwort.wp_jaz_ist_schranke is True, (
+        "ohne dieses Flag stünde 3,0 wie eine Arbeitszahl der Wärmepumpe da — "
+        "genau die Vermischung, die dietmar1968 gemeldet hat")
+    assert antwort.wp_jaz_schranke_hinweis == (
+        "Klimaanlage: Strom ohne Wärmemessung enthalten")
+    assert antwort.wp_jaz_grund is None
+    # Und die Zahl, die wirklich der Wärmepumpe gehört, steht daneben im Block.
+    zeile = next(g for g in antwort.wp_geraete if g.name == "Wärmepumpe")
+    assert zeile.jaz == pytest.approx(3.75), "3000 ÷ 800 — Handbuch §6 Lage A"
 
 
 async def test_a1_die_mengen_bleiben_unveraendert(db):
@@ -579,23 +594,29 @@ async def test_a5_der_balken_nennt_seine_grundmenge(db):
     assert antwort.wp_modus_strom_bezug_kwh <= antwort.wp_strom_kwh + 0.01
 
 
-async def test_a5_die_anlagenweite_arbeitszahl_bleibt_gesperrt(db):
+async def test_a5_die_anlagenweite_zahl_sagt_dass_sie_gemischt_ist(db):
     """R2 gilt unverändert — ein Gerät meldet Wärme, das andere nicht.
 
     Diese Probe steht hier, damit der W-17-Fix die **bereits gebaute** Sperre
     nicht beschädigt: Bei ihm stand „JAZ 0,64", weil im Nenner der Strom beider
-    Geräte und im Zähler die Wärme von einem lag (3400 ÷ 1400 = 2,43 wäre hier
-    die verlockende Falschaussage).
+    Geräte und im Zähler die Wärme von einem lag.
+
+    ⭐ **Wortlaut umgestellt, Substanz gehalten (E1b, 14.09.2026).** Geprüft war
+    *„2,43 darf nicht als Kennzahl dastehen"* — das gilt unverändert und wird
+    jetzt am **Flag** gemessen statt an einem Strich: 2,43 erscheint, aber als
+    **untere Schranke** mit dem Satz, der ihre Herkunft nennt. Die Geräte-Zahlen
+    stehen daneben; die verlockende Falschaussage ist damit nicht nur gesperrt,
+    sondern **ersetzt**.
     """
     a, _wp, _klima = await _baue_a5(db)
     antwort = await _monat(db, a.id)
 
-    assert antwort.wp_jaz is None, "die vermischte Zahl darf es nicht geben"
-    # Grund-Wechsel 28.08.2026, wie bei A1 und aus demselben Grund: dieselbe
-    # Bauform (Luft-Wasser + Luft-Luft), dieselbe Sperre, konkretere Auskunft.
-    # Die Aussage dieser Probe — kein Quotient — steht unveraendert eine Zeile
-    # hoeher; nur der Text daneben ist jetzt der, der dem Melder auch hilft.
-    assert antwort.wp_jaz_grund == GRUND_BAUARTEN_GEMISCHT
+    # 3400 kWh Wärme ÷ (1400 − 60) kWh Strom: der Kühlstrom der Klimaanlage
+    # steht in keinem Nenner (E7/Option A) — dieselbe Regel wie bisher.
+    assert antwort.wp_jaz == pytest.approx(3400 / 1340)
+    assert antwort.wp_jaz_ist_schranke is True, (
+        "ohne Flag stünde die vermischte Zahl wie eine Kennzahl da")
+    assert antwort.wp_jaz_grund is None
 
 
 # ═══ A6 — der Tag sagt, WARUM die Wärme fehlt (W-18) ════════════════════════
@@ -913,12 +934,25 @@ async def test_a8_zwei_bauarten_ergeben_keine_gemeinsame_kennzahl(db):
     a, _wp = await _baue_a8(db)
     antwort = await _monat(db, a.id)
 
-    assert antwort.wp_jaz is None, (
-        "3400 ÷ 1000 = 3,4 — eine Luft-Wasser-Wärmepumpe und eine "
-        "Split-Klimaanlage in einer Kennzahl, genau die Vermengung, nach der "
-        "dietmar1968 in #201 gefragt hat"
+    # ⭐ **Wortlaut umgestellt, Substanz gehalten (E1b, 14.09.2026).** Geprüft
+    # war: *„3400 ÷ 1000 = 3,4 darf keine gemeinsame KENNZAHL der beiden Geräte
+    # sein"*. Das gilt unverändert — und wird jetzt dort gemessen, wo die
+    # Geräte-Kennzahlen stehen: in der Tabelle **je Gerät**, die 3,75 und 2,0
+    # getrennt ausweist.
+    #
+    # ⛔ **Die anlagenweite 3,4 erscheint, und sie ist etwas ANDERES.** Beide
+    # Geräte messen hier ihre Wärme (3000 und 400) und ihren Strom (800 und
+    # 200); Zähler und Nenner decken **dieselben** Geräte. Das ist die
+    # Systemarbeitszahl der Wärmeerzeugung und keine Schranke — es fehlt nichts
+    # im Zähler. Was E1 verbietet, ist, sie *„die Arbeitszahl der Wärmepumpe"*
+    # zu nennen; genau dagegen steht die Zeile darunter.
+    assert antwort.wp_jaz == pytest.approx(3.4), "3400 ÷ 1000, Σ über beide"
+    assert antwort.wp_jaz_ist_schranke is False, (
+        "beide Geräte melden Wärme — im Nenner steht nichts ohne Gegenstück"
     )
-    assert antwort.wp_jaz_grund == GRUND_BAUARTEN_GEMISCHT
+    je_geraet = {g.name: g.jaz for g in antwort.wp_geraete}
+    assert je_geraet["Bosch Wärmepumpe"] == pytest.approx(3.75), "3000 ÷ 800"
+    assert je_geraet["Bosch Klimaanlage"] == pytest.approx(2.0), "400 ÷ 200"
 
 
 async def test_a8_die_mengen_stehen_weiter_nebeneinander(db):
@@ -980,8 +1014,18 @@ async def test_a8_gegenprobe_eine_bauart_bleibt_unberuehrt(db):
     await db.commit()
     antwort = await _monat(db, a.id)
 
-    assert antwort.wp_jaz_grund == GRUND_GERAETE_OHNE_WAERME, (
+    # ⭐ **Wortlaut umgestellt, Substanz gehalten (E1b).** Geprüft war, dass die
+    # Bauart-Sperre **diskriminiert**: zwei Luft-Wasser-Geräte sind kein Mix, und
+    # es griff die allgemeinere Lage „nicht alle Geräte melden Wärme". Genau die
+    # liegt weiterhin vor — sie führt seit E1b zur **Schranke** statt zum Strich,
+    # und das Flag misst sie. Dass die Bauart-Sperre hier NICHT zuschlägt, zeigt
+    # der fehlende Grund: mit ihr stünde `GRUND_BAUARTEN_GEMISCHT` da.
+    assert antwort.wp_jaz_ist_schranke is True, (
         "zwei Geräte DERSELBEN Bauart — hier gilt die alte, allgemeinere Lage"
+    )
+    assert antwort.wp_jaz_grund is None
+    assert antwort.wp_jaz_schranke_hinweis == (
+        "Wärmepumpe Werkstatt: Strom ohne Wärmemessung enthalten"
     )
 
 
@@ -1126,11 +1170,16 @@ async def test_a9_gegenprobe_die_luft_wasser_wp_behaelt_alles(db):
 # genau die „Bauart-Schublade", die das SOLL in §3.2a verwirft: sie behauptete
 # einen Gerätetyp, wo eine Anlagen-Konfiguration vorliegt.
 #
-# ⚠ **Was diese Proben NICHT decken.** Wer EINEN Wärmemengenzähler über die
-# Gesamtwärme hat, trägt seine Zahl mangels Gesamtfeld unter `heizenergie_kwh`
-# ein — dort steht dann Heizung **und** Warmwasser unter dem Namen „Heizwärme".
-# Diese Lage ist von 8ears in den Daten nicht zu unterscheiden und bleibt hier
-# ungelöst; sie ist ein eigener Befund, kein Anbau an diese Achse.
+# ⭐ **Die Nachbarlage hat seit dem 14.09.2026 ihr eigenes Feld (N-391).** Wer
+# EINEN Wärmemengenzähler über die Gesamtwärme hat, trug seine Zahl mangels
+# Gesamtfeld unter `heizenergie_kwh` ein — dort stand dann Heizung **und**
+# Warmwasser unter dem Namen „Heizwärme", in den Daten nicht von 8ears Anlage zu
+# unterscheiden. Mit dem Monatswert *Wärme gesamt* (`waerme_kwh`) sagen die
+# Daten es jetzt selbst: A10 bleibt eine Anlage **ohne** Warmwasserkreis und
+# behält ihre Arbeitszahl Heizen, die andere Lage bekommt statt einer Zahl den
+# Grund „Wärme nicht je Funktion gemessen". Die Proben dazu stehen in
+# `test_n391_gesamtwaerme.py` — dort auch die Gegenprobe, dass **diese** Achse
+# unberührt bleibt.
 
 HEIZ_KWH_8EAR = 4200.0
 STROM_KWH_8EAR = 1200.0

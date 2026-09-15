@@ -1,5 +1,8 @@
 """B1 — der Wärme-Vorschlag rechnet mit dem Strom derselben Funktion und sagt, dass er schätzt.
 
+Schwesterdateien: ``test_waerme_verlauf_bereichs_leser.py`` (die Wärme je Tag),
+``test_soll_waerme_klima_achse3_aufloesung.py`` (was je Auflösung entstehen kann).
+
 SOLL Wärme/Klima §6, Präzisierung F2–F5 (05.09.2026): abgeleitete Wärme ist als
 **gekennzeichnete Schätzung** zulässig, nie Kennzahl-Basis — und sie entsteht nur
 aus dem Strom derselben Funktion. Gemessen am Code vom 05.09.: (1) ohne getrennte
@@ -38,15 +41,24 @@ GETRENNT = {"jaz": 3.5, "getrennte_strommessung": True}
 
 # ── Der Layer: welche Basis ─────────────────────────────────────────────────
 
-def test_f2_gesamtstrom_traegt_nur_die_heizwaerme():
-    """Ohne getrennte Messung: Heizwärme aus dem Gesamtstrom, Warmwasser KEIN Vorschlag.
+def test_f2_gesamtstrom_traegt_die_gesamtwaerme():
+    """Ohne getrennte Messung: **ein** Vorschlag, und er steht an *Wärme gesamt*.
 
-    Bis B1 kamen beide aus demselben Strom — „Lücken füllen" übernahm beide, und
-    die Gesamtwärme stand doppelt in der Zeile.
+    Bis B1 kamen beide Wärmefelder aus demselben Strom — „Lücken füllen" übernahm
+    beide, und die Gesamtwärme stand doppelt in der Zeile.
+
+    ⭐ **Seit N-391 (14.09.2026) steht der eine Vorschlag am richtigen Feld.**
+    ``E_gesamt × JAZ`` ist die Wärme des ganzen Geräts, Warmwasser
+    eingeschlossen — solange es dafür kein Feld gab, hat eedc sie unter dem Namen
+    „Heizwärme" vorgeschlagen und damit die Zweideutigkeit selbst in die Zeile
+    geschrieben (aus der bei getrennter Strommessung später eine Arbeitszahl
+    Heizen aus fremdem Zähler wurde). Die Aussage der Probe ist unverändert:
+    **einer, nicht zwei.**
     """
     daten = {"stromverbrauch_kwh": 300.0}
-    heiz = strom_basis_fuer_waerme_vorschlag("heizenergie_kwh", daten, JAZ)
-    assert heiz is not None and heiz.strom_kwh == 300.0 and heiz.sprosse == "F2"
+    gesamt = strom_basis_fuer_waerme_vorschlag("waerme_kwh", daten, JAZ)
+    assert gesamt is not None and gesamt.strom_kwh == 300.0 and gesamt.sprosse == "F2"
+    assert strom_basis_fuer_waerme_vorschlag("heizenergie_kwh", daten, JAZ) is None
     assert strom_basis_fuer_waerme_vorschlag("warmwasser_kwh", daten, JAZ) is None
 
 
@@ -189,17 +201,21 @@ async def test_dienst_dietmars_juni_schlaegt_null_heizwaerme_und_kein_warmwasser
 
 @pytest.mark.asyncio
 async def test_dienst_f2_ein_vorschlag_statt_zwei(db):
+    """Ein Vorschlag — und seit N-391 an *Wärme gesamt* statt an *Heizwärme*."""
     anlage, inv = await _wp_mit_monat(
         db, parameter={"jaz": 3.5}, daten={"stromverbrauch_kwh": 300.0},
     )
     svc = VorschlagService(db)
+    gesamt = [v for v in await svc.get_vorschlaege(anlage.id, "waerme_kwh", 2026, 6, inv.id)
+              if v.quelle == VorschlagQuelle.BERECHNUNG]
     heiz = [v for v in await svc.get_vorschlaege(anlage.id, "heizenergie_kwh", 2026, 6, inv.id)
             if v.quelle == VorschlagQuelle.BERECHNUNG]
     ww = [v for v in await svc.get_vorschlaege(anlage.id, "warmwasser_kwh", 2026, 6, inv.id)
           if v.quelle == VorschlagQuelle.BERECHNUNG]
-    assert [v.wert for v in heiz] == [1050.0]
-    assert heiz[0].details["sprosse"] == "F2"
-    assert ww == []
+    assert [v.wert for v in gesamt] == [1050.0]
+    assert gesamt[0].details["sprosse"] == "F2"
+    assert gesamt[0].abgeleitet == REGEL_JAZ_VORSCHLAG
+    assert heiz == [] and ww == []
 
 
 @pytest.mark.asyncio
@@ -295,14 +311,15 @@ def test_reiner_heizmonat_bleibt_unberuehrt():
     Ohne sie wäre der Fix eine Verschlechterung — jeder F2-Anwender verlöre
     Ersparnis und CO₂ (SOLL §6: genau dafür existiert der Parameter ``jaz``).
     """
+    # N-391: dasselbe Feld wie in der Fläche — *Wärme gesamt*.
     basis = strom_basis_fuer_waerme_vorschlag(
-        "heizenergie_kwh", {"stromverbrauch_kwh": 1000.0}, JAZ,
+        "waerme_kwh", {"stromverbrauch_kwh": 1000.0}, JAZ,
     )
     assert basis is not None and basis.sprosse == "F2" and basis.strom_kwh == 1000.0
 
     # Auch mit Modus-Split, solange dort nur geheizt wurde.
     nur_heizen = {"stromverbrauch_kwh": 1000.0, "modus_strom_heizen_kwh": 1000.0}
-    basis_b = strom_basis_fuer_waerme_vorschlag("heizenergie_kwh", nur_heizen, JAZ)
+    basis_b = strom_basis_fuer_waerme_vorschlag("waerme_kwh", nur_heizen, JAZ)
     assert basis_b is not None and basis_b.strom_kwh == 1000.0
 
 

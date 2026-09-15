@@ -78,7 +78,6 @@ def _einsparung(traeger: str, **kwargs):
         jaz=3.5,
         effizienz_modus="gesamt_jaz",
         strompreis_cent=30.0,
-        pv_anteil_prozent=30.0,
         alter_energietraeger=traeger,
         alter_preis_cent_kwh=12.0,
     )
@@ -121,8 +120,11 @@ def test_co2_alt_nutzt_denselben_wirkungsgrad_wie_die_kosten():
     Energieträger mit gleichem CO₂-Faktor-Verhältnis wäre indirekt — daher
     direkt gegen die erwartete Größenordnung des Kesselverlusts."""
     ohne_zusatz = _einsparung("gas", alternativ_zusatzkosten_jahr=0.0)
-    # WP-Strom = 15000/3,5 = 4285,7 kWh, davon 70 % Netz.
-    wp_strom_netz = 15000.0 / 3.5 * 0.7
+    # WP-Strom = 15000/3,5 = 4285,7 kWh — GANZ, ohne PV-Abschlag (S1b,
+    # 13.09.2026). Bis dahin standen hier 70 % („davon Netz"); der Abschlag
+    # ist mit `pv_anteil_prozent` entfallen, weil er dieselbe Kilowattstunde
+    # ein zweites Mal abzog, die auf der PV-Seite schon gutgeschrieben ist.
+    wp_strom = 15000.0 / 3.5
     from backend.core.calculations import (
         CO2_FAKTOR_GAS_KG_KWH,
         CO2_FAKTOR_STROM_KG_KWH,
@@ -130,7 +132,7 @@ def test_co2_alt_nutzt_denselben_wirkungsgrad_wie_die_kosten():
 
     erwartet = (
         15000.0 / WP_WIRKUNGSGRAD_GAS_DEFAULT * CO2_FAKTOR_GAS_KG_KWH
-        - wp_strom_netz * CO2_FAKTOR_STROM_KG_KWH
+        - wp_strom * CO2_FAKTOR_STROM_KG_KWH
     )
     assert ohne_zusatz.co2_einsparung_kg == pytest.approx(erwartet, abs=0.1)
 

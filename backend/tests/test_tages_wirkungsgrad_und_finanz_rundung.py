@@ -1,5 +1,10 @@
 """Die drei Befunde aus Knallfroschs Meldung (Forum T89667 #163, 15.08.2026).
 
+Schwesterdateien: ``test_tages_stapel_gemessen_verdraengt_abgeleitet.py``
+(die Betriebsart-Aufteilung derselben Tagessicht),
+``test_soll_waerme_klima_achse3_aufloesung.py`` (was auf Tagesebene
+überhaupt entstehen kann).
+
 Sein Screenshot zeigte in *Cockpit → Tag* einen Speicher-Wirkungsgrad von
 **100,5 %** — kommentarlos. Im selben Faden hat rapahl (#164) die richtige
 Erklärung geliefert: *„Da es am Tage schon vorkommen kann, dass mehr aus der

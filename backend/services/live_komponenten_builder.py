@@ -18,6 +18,7 @@ from backend.core.betriebsmodus import (
     BETRIEBSMODUS_LABEL,
     BETRIEBSMODUS_LIVE_OHNE_KLARTEXT,
     HEIZEN,
+    KUEHLEN,
 )
 from backend.core.berechnungen.anlagen_kwp import anlagen_kwp
 from backend.core.berechnungen.energie import PV_KOMPONENTEN_PREFIXE
@@ -152,13 +153,35 @@ def build_komponenten(
         if inv.typ == "waermepumpe":
             heizen_w = values.get("leistung_heizen_w")
             ww_w = values.get("leistung_warmwasser_w")
-            if heizen_w is not None or ww_w is not None:
+            # ⭐ **Die dritte Betriebsart** (N-439, 13.09.2026). `leistung_kuehlen_w`
+            # war seit W-13 zuordenbar und wurde hier nie gelesen — mit
+            # ausschließlich diesem Sensor blieb `val_w` `None` und die
+            # Wärmepumpe fiel ganz aus dem Live-Bild; mit allen dreien stand
+            # sie im Kühlbetrieb bei **0,0 kW**, weil die Summe nur zwei
+            # Summanden kannte.
+            #
+            # ⚠ Summiert wird weiterhin NUR, wenn keine Gesamtleistung
+            # zugeordnet ist (K1: die Gesamtmenge ist die Wahrheit). Die drei
+            # Felder sind disjunkte Momentanwerte desselben Kältekreises
+            # (`core/betriebsmodus.py`), ihre Summe ist deshalb die
+            # Momentanleistung und keine Doppelzählung.
+            kuehl_w = values.get("leistung_kuehlen_w")
+            if heizen_w is not None or ww_w is not None or kuehl_w is not None:
                 if val_w is None:
-                    val_w = (heizen_w or 0) + (ww_w or 0)
+                    val_w = (heizen_w or 0) + (ww_w or 0) + (kuehl_w or 0)
                 h = heizen_w or 0
                 w = ww_w or 0
-                if h > 0 or w > 0:
-                    wp_icon = "heater" if h >= w else "droplets"
+                k = kuehl_w or 0
+                if h > 0 or w > 0 or k > 0:
+                    # Das Symbol folgt der stärksten Betriebsart. `snowflake`
+                    # ist der Kanon-Name für Kühlen (`BETRIEBSMODUS_ICON`) —
+                    # Regel 0a: dieselbe Rolle, dasselbe Symbol, egal ob sie
+                    # über den Leistungssensor oder den Betriebsmodus ins Bild
+                    # kommt. Bei Gleichstand gewinnt Heizen wie bisher.
+                    if k > h and k > w:
+                        wp_icon = BETRIEBSMODUS_ICON[KUEHLEN]
+                    else:
+                        wp_icon = "heater" if h >= w else "droplets"
             # Der gemessene Modus schlägt die Leistungs-Heuristik — AUSSER beim
             # Heizen: dort ist „Heizen oder Warmwasser?" die feinere Auskunft,
             # und die hat nur die Heuristik. Fehlt der Modus (keine Zuordnung,

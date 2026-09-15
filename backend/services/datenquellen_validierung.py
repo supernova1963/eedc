@@ -23,7 +23,11 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Optional
 
-from backend.core.field_definitions import einheit_klasse, verdraengender_typ
+from backend.core.field_definitions import (
+    BEDARF_GRUPPEN_ALTERNATIV,
+    einheit_klasse,
+    verdraengender_typ,
+)
 
 # ─── Aggregat ⊥ Komponenten (Engine-Vorrang, C) ─────────────────────────────
 # Aggregat-Sensor wird bei vorhandenen Komponenten still ignoriert — ABER die
@@ -125,6 +129,100 @@ def state_class_problem(feld_einheit: Optional[str], state_class: Optional[str])
         "text": "HA-Sensor ohne state_class → keine Langzeit-Statistik/History "
                 "(nur Live). Einen Sensor mit state_class wählen.",
     }
+
+
+#: **Bauschnitt 7** — die feinen Leistungsfelder einer Wärmepumpe. Sie erzeugen
+#: die getrennten Verlaufs-Reihen (Heizen/Warmwasser/Kühlen) nur, solange am
+#: selben Gerät **keine** Gesamtleistung zugeordnet ist.
+#:
+#: ⭐ **`leistung_kuehlen_w` gehört seit dem 13.09.2026 dazu** (N-439) — nicht
+#: als Erweiterung der Regel, sondern weil es an diesem Tag überhaupt erst eine
+#: Verlaufs-Reihe erzeugt. Vorher wurde es nirgends ausgewertet und konnte
+#: deshalb auch von nichts verdrängt werden; jetzt gilt für es dieselbe
+#: Bedingung wie für seine zwei Nachbarn (`baue_investitions_serien`:
+#: `if not has_leistung`). Ein Hinweis an zwei von drei gleich behandelten
+#: Feldern wäre genau die Lücke, gegen die SOLL §3.3/**S3** steht.
+_WP_LEISTUNG_FEIN = (
+    "leistung_heizen_w", "leistung_warmwasser_w", "leistung_kuehlen_w",
+)
+_WP_LEISTUNG_GESAMT = "leistung_w"
+
+#: Was die Zuordnung bewirkt — die **Ursache**, nicht das Bild.
+#:
+#: ⛔ **Nicht „wirkungslos", und kein Rat.** Beide Zustände sind legitim: Die
+#: Gesamtleistung ist der genauere Anlagenwert, die Aufteilung die feinere
+#: Auskunft. Zwei Formulierungen sind an der Messung gescheitert (Gegenprüfung
+#: 12.09.2026): „wirkungslos" ist falsch, weil Symbol und MQTT-Snapshots die
+#: feinen Felder weiter lesen; und der Rat „Zuordnung entfernen" hätte auf einer
+#: frischen HA-Anlage den Wärmepumpen-Anteil der Verbrauchsprognose gekostet
+#: (`live_verbrauchsprofil_service.py`, HA-Pfad). Auch „als eine Fläche" wäre zu
+#: viel behauptet: Bei einer zugeordneten, aber toten Entity erscheint die
+#: Wärmepumpe im Verlauf **gar nicht**.
+_GESAMTLEISTUNG_TEXT = (
+    "Solange „Leistung gesamt“ zugeordnet ist, wertet eedc „Leistung Heizen“, "
+    "„Leistung Warmwasser“ und „Leistung Kühlen“ im Verlauf nicht aus."
+)
+
+
+def finde_gesamtleistung_verdraengt(felder: list[dict]) -> dict[str, dict]:
+    """Feine WP-Leistungsfelder, die von der Gesamtleistung **desselben Geräts**
+    aus dem Verlauf gedrängt werden (**Bauschnitt 7**, Konzept Wärme/Klima §5).
+
+    ``felder``: ``[{"id", "feld", "typ", "inv_id", "in_ha_live": bool}]``.
+
+    ⭐ **Maßgeblich ist die HA-Zuordnungsliste, nicht „belegt" und nicht „liefert"
+    — und das ist an zwei Fehlversuchen gelernt** (Gegenprüfung, zwei Runden):
+
+    * ``_liefert`` (die Bedingung der Aggregat-Redundanz) wäre **zu eng**: Drei
+      der vier Verdrängungsstellen lesen den **Eintrag** (`live.get("leistung_w")`),
+      nicht den Wert. Eine zugeordnete, aber tote Entity verdrängt weiter — der
+      Anwender bekäme keinen Hinweis, während die Aufteilung ausbleibt.
+    * ``belegt`` wäre **zu weit**: Die B8-Materialisierung stempelt
+      ``mqtt_inbound_standard`` auf **jedes** Feld ohne HA-Sensor, also auch auf
+      diese; jede migrierte Anlage bekäme einen Hinweis, ohne etwas zugeordnet zu
+      haben. Ein solcher Stempel erreicht die ``live``-Map nie
+      (``datenquellen_mapping_sync._setze_live`` schreibt nur bei HA).
+
+    Die ``live``-Map ist genau die Menge, die die Verdrängung **bewirkt** — eine
+    Quelle, kein Nachbau. Der MQTT-Zweig (`live_tagesverlauf_service`) verdrängt
+    wertgetrieben und bleibt bewusst außen vor; dort führt kein Weg zur
+    Aufteilung, den ein Hinweis eröffnen könnte.
+
+    ⚠ **Roher Feldschlüssel, kein ``basis_feld_key``.** Mit Innengeräte-Liste gibt
+    es ``leistung_w-<gid>``; verdrängt wird nur vom **Gerätefeld**. Wer hier
+    normalisiert, meldet an einer Multisplit-Anlage eine Verdrängung, die es nicht
+    gibt (die übliche Bewegung im Baum ist die andere — deshalb der Hinweis).
+
+    Returns ``{feld_id: {"art", "schwere", "grund", "wirksame_felder", "text"}}``.
+    """
+    gesamt_je_inv: dict[str, str] = {}
+    for f in felder:
+        if (f.get("typ") == "waermepumpe" and f.get("feld") == _WP_LEISTUNG_GESAMT
+                and f.get("in_ha_live")):
+            gesamt_je_inv[str(f.get("inv_id"))] = f["id"]
+
+    out: dict[str, dict] = {}
+    for f in felder:
+        if f.get("typ") != "waermepumpe" or f.get("feld") not in _WP_LEISTUNG_FEIN:
+            continue
+        if not f.get("in_ha_live"):
+            continue
+        gesamt_fid = gesamt_je_inv.get(str(f.get("inv_id")))
+        if not gesamt_fid:
+            continue
+        out[f["id"]] = {
+            # ⛔ **Nicht `redundant`.** Für diese Art rendert die Fläche inline
+            # „auf keine setzen", und der Knopf leert **das Feld der Zeile** —
+            # er würde also die Aufteilung löschen statt der Gesamtleistung.
+            "art": "gesamtleistung_verdraengt",
+            # `info`: Es liegt kein Fehler vor. `warning` (amber) steht auf
+            # dieser Fläche für Zuordnungs-PROBLEME.
+            "schwere": "info",
+            "grund": "gesamtleistung",
+            "wirksame_felder": [gesamt_fid],
+            "text": _GESAMTLEISTUNG_TEXT,
+        }
+    return out
 
 
 def _liefert(feld: dict) -> bool:
@@ -372,9 +470,52 @@ _GRUPPEN_TEXT = {
                "hier ist nichts einzutragen.",
     "netz_live": "Netz-Leistung ist bereits zugeordnet (kombiniert oder "
                  "getrennt) — hier ist nichts einzutragen.",
-    "wp_strom": "Der WP-Stromverbrauch ist bereits zugeordnet — hier ist "
-                "nichts einzutragen.",
+    # N-391: *Heizwärme* und *Wärme gesamt* sind zwei Wege zu derselben Größe —
+    # ein gemeinsamer Wärmemengenzähler oder getrennte. Wer einen davon
+    # zugeordnet hat, braucht den anderen nicht.
+    "wp_waerme": "Die abgegebene Wärme ist bereits zugeordnet — hier ist "
+                 "nichts einzutragen.",
 }
+
+# ⛔ **`wp_strom` stand bis zum 14.09.2026 in der Tabelle darüber**, mit dem
+# Satz *„Der WP-Stromverbrauch ist bereits zugeordnet — hier ist nichts
+# einzutragen."* Er ist mit WK-16d falsch geworden: Seit ein Gesamtzähler die
+# Menge ist (K1), trägt er **mehr** als die beiden Achsen — Standby, Steuerung,
+# Umwälzpumpen —, und wer ihn wegen dieses Satzes nicht zuordnet, verliert
+# genau diese Kilowattstunden. Der Ersatz sagt, was er **bringt**, statt was
+# angeblich nichts zu tun ist (dieselbe Lehre wie bei rapahl, PN 91806).
+#
+# ⚠ **Und die Einstufung ändert sich mit**: „inaktiv" heißt auf dieser Fläche
+# *hier gehört nichts hin*; das Feld ist aber **optional nützlich**. Beides
+# folgt jetzt aus einer Eigenschaft der Gruppe statt aus einem Sonderfall —
+# s. {@link stufe_bedarf_ein}, Schritt 2.
+_SUMMANDEN_ZUSATZ_TEXT: dict[tuple[str, str], str] = {
+    ("waermepumpe", "stromverbrauch_kwh"): (
+        "Optional — misst dieser Zähler mehr als Strom Heizen und Strom "
+        "Warmwasser zusammen (Standby, Steuerung, Umwälzpumpen), gilt sein "
+        "Wert als Verbrauch des Geräts und die Differenz erscheint als "
+        "„nicht aufgeteilt“."
+    ),
+}
+
+
+def _deckt_ab(belegtes: dict, leeres: dict) -> bool:
+    """Deckt dieses **belegte** Feld das **leere** seiner Gruppe ab? (N-456)
+
+    ⛔ **Nein, sobald beide an VERSCHIEDENEN Geräten hängen.** Bis zum
+    13.09.2026 war die Belegung nur nach `bedarf_gruppe` geschlüsselt — an einer
+    Anlage mit zwei Wärmepumpen schaltete ein zugeordnetes Feld an Gerät A die
+    leeren Felder an Gerät B auf *„hier ist nichts einzutragen"*. Das Feld des
+    zweiten Geräts konnte damit gar nicht als offen erscheinen.
+
+    ⭐ **Die Anlagen-Ebene deckt weiterhin in BEIDE Richtungen ab, und das ist
+    kein Widerspruch:** Der Anlagen-Zählerstand (`typ: basis`, ohne Gerät) und
+    ein Komponentenzähler messen dieselbe Größe an verschiedenen Stellen — dort
+    ist die Gruppe eine echte Alternative (`pv_energie`, `pv_live`,
+    `netz_live`). Zwei Geräte sind es nie.
+    """
+    a, b = belegtes.get("inv_id"), leeres.get("inv_id")
+    return not (a and b and a != b)
 
 
 def stufe_bedarf_ein(
@@ -383,8 +524,13 @@ def stufe_bedarf_ein(
     """Bedarfs-Einstufung je Feld.
 
     `felder`: [{"id", "feld", "typ", "belegt", "bedarf", "bedarf_gruppe",
-                "bedingung_anlage"}].
+                "bedingung_anlage", "inv_id", "pflicht_am_geraet"}].
     `vorhandene_typen`: Investitionstypen der Anlage (für `bedingung_anlage`).
+
+    ``inv_id`` und ``pflicht_am_geraet`` sind **optional** — ohne sie verhält
+    sich die Funktion wie vor N-456 (alles anlagenweit, jede Gruppe eine
+    Alternative). Die Route füllt beide; die Vorgabe hält die vorhandenen
+    Proben unverändert gültig.
 
     Returns {field_id: {"bedarf": …, "grund": …|None, "text": …|None}}.
     """
@@ -395,7 +541,6 @@ def stufe_bedarf_ein(
         gruppe_f = f.get("bedarf_gruppe")
         if f.get("belegt") and gruppe_f:
             belegt_je_gruppe.setdefault(gruppe_f, []).append(f)
-    belegte_gruppen = set(belegt_je_gruppe)
     out: dict[str, dict] = {}
     for f in felder:
         fid = f["id"]
@@ -418,8 +563,58 @@ def stufe_bedarf_ein(
             continue
 
         # 2. Leer, aber ein anderes Mitglied der Alternativ-Gruppe trägt den Wert.
+        #
+        # ⛔ **Zwei Einschränkungen seit N-456 (13.09.2026), beide aus der
+        # Registry, keine für `wp_strom` erfundene Sonderregel:**
+        #
+        # (a) Deckung nur innerhalb desselben Geräts oder gegen die
+        #     Anlagen-Ebene (`_deckt_ab`) — an zwei Wärmepumpen schaltete
+        #     bisher ein belegtes Feld an Gerät A das leere an Gerät B still ab.
+        #
+        # (b) **Ein Feld, das an DIESEM Gerät Pflicht ist, wird nie verdrängt.**
+        #     Sind an einem Gerät zwei Felder derselben Gruppe gleichzeitig
+        #     Pflicht, sind sie **Summanden** und keine Alternativen — bei
+        #     getrennter Strommessung tragen `strom_heizen_kwh` und
+        #     `strom_warmwasser_kwh` zusammen den Verbrauch, jedes einzeln nur
+        #     die Hälfte. Wäre eines von beiden eine Alternative, hätte die
+        #     Registry es als `erweitert` oder `nicht_an_dieser_bauart`
+        #     gekennzeichnet und `pflicht_felder_am_geraet` ließe es weg — genau
+        #     das passiert mit `stromverbrauch_kwh`, sobald F5 an ist.
+        #
+        # ⭐ **Dieselbe Wahrheit, zwei Leser:** `pflicht_am_geraet` kommt aus
+        # `pflicht_felder_am_geraet(typ, parameter, gruppe)`, dem Helfer, den
+        # `_check_energieprofil_abdeckung` schon liest. Vorher sagten die zwei
+        # Flächen über dasselbe Feld Gegenteiliges (N-86-Klasse): „hier ist
+        # nichts einzutragen" gegen „ohne vollständige Zähler-Abdeckung".
         gruppe = f.get("bedarf_gruppe")
-        if gruppe and gruppe in belegte_gruppen:
+        deckende = [b for b in belegt_je_gruppe.get(gruppe or "", ())
+                    if _deckt_ab(b, f)]
+        if gruppe and deckende and not f.get("pflicht_am_geraet"):
+            # ⛔ **(c) seit WK-16d: nur eine ALTERNATIV-Gruppe deckt ab.**
+            # `BEDARF_GRUPPEN_ALTERNATIV` trägt die Unterscheidung bereits
+            # (N-391) — Alternativen sind Wege zu EINER Größe, Summanden sind
+            # Teile einer Größe. Ein Summand kann seine Geschwister deshalb
+            # niemals decken, auch dann nicht, wenn er an diesem Gerät keine
+            # Pflicht ist: `stromverbrauch_kwh` ist bei getrennter Messung
+            # „erweitert" (weiche Bedingung) und fiel damit bis dahin in diesen
+            # Zweig — mit dem Satz „ist bereits zugeordnet, hier ist nichts
+            # einzutragen". Seit ein Gesamtzähler die Menge ist (K1), ist dieser
+            # Satz ein Rat, der Kilowattstunden kostet.
+            #
+            # ⚠ **`pflicht_am_geraet` bleibt daneben stehen und bleibt nötig:**
+            # Es beantwortet die Frage für die Felder, die an DIESEM Gerät
+            # Pflicht sind (N-456, zwei Wärmepumpen, F5-Achsen). Die neue
+            # Klausel beantwortet sie für die Gruppe als Ganzes. Zwei Fragen,
+            # zwei Bedingungen.
+            if gruppe not in BEDARF_GRUPPEN_ALTERNATIV:
+                out[fid] = {
+                    "bedarf": f.get("bedarf") or "optional",
+                    "grund": None,
+                    "text": _SUMMANDEN_ZUSATZ_TEXT.get(
+                        (f.get("typ") or "", f.get("feld") or "")
+                    ),
+                }
+                continue
             text = _GRUPPEN_TEXT.get(gruppe)
             # Trägt NUR das Anlagen-Aggregat die Gruppe, ist die Komponenten-
             # Zeile für den Monat abgedeckt und für Tag/Stunde eben nicht.
@@ -427,8 +622,7 @@ def stufe_bedarf_ein(
             # allgemeine Satz richtig — deshalb die Herkunftsprüfung.
             if (gruppe == "pv_energie"
                     and f.get("feld") == _PV_KOMPONENTEN_FELD_MONAT
-                    and all(b.get("typ") == "basis"
-                            for b in belegt_je_gruppe.get(gruppe, ()))):
+                    and all(b.get("typ") == "basis" for b in deckende)):
                 text = _PV_AGGREGAT_NUR_ANLAGENSUMME_TEXT
             out[fid] = {
                 "bedarf": "inaktiv", "grund": f"gruppe:{gruppe}",

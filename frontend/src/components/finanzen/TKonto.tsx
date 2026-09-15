@@ -85,6 +85,18 @@ export function TKonto({ d, sonderkosten = null }: { d: AktuellerMonatResponse; 
   const fins = d.investitionen_financials ?? []
   const hasPerInv = fins.length > 0
 
+  // ⚠ **Dasselbe T-Konto trägt Monat UND Jahr** — die Jahres-Sicht reicht das
+  // Σ-12-Aggregat aus `JahrAggregat.baueJahrAlsMonat` durch. Dessen Marke ist
+  // `monat: 0` (ein echter Monat ist 1–12; das Aggregat setzt zusätzlich
+  // `monat_name = String(jahr)`). Sie existiert seit dem Aggregat und wird hier
+  // nur gelesen — eine neue Prop wäre eine zweite Wahrheit über denselben Zustand.
+  //
+  // Gebraucht wird sie für die Betriebskosten-FORMEL: Im Jahr ist der Betrag
+  // daneben die Σ über zwölf Monatszwölftel, „Betriebskosten/Jahr ÷ 12"
+  // beschreibt dort eine andere Rechnung als die Zahl. Der Betrag war immer
+  // richtig, der Satz darüber nicht.
+  const istJahr = d.monat === 0
+
   // Welche Komponenten-Ersparnisse stecken in ev_ersparnis (BKW, Speicher, Wallbox-PV-Ladung).
   // Backend rechnet ev_ersparnis = eigenverbrauch_kwh × netzbezug_preis, wobei eigenverbrauch
   // den Direktverbrauch (= Erzeugung − Einspeisung − Batterie-Ladung) inkl. Wallbox-PV-Ladung
@@ -220,6 +232,12 @@ export function TKonto({ d, sonderkosten = null }: { d: AktuellerMonatResponse; 
           // Betrag (Konzept §9 Weg 2). Der Satz kam von hier und behauptete für
           // den zweiten Fall eine Rechnung, die niemand angestellt hat.
           formel: inv.erloes_formel ?? 'Einspeisung × Einspeisevergütung',
+          // A6: die eingesetzten Werte stehen seit 2026-09-13 in einem eigenen
+          // Feld statt im Formeltext — dort standen sie unter der Überschrift
+          // „Formel", während jede andere Zeile „Berechnung" daneben führt.
+          // `null` in den gepflegt-Zweigen (Herkunftsangabe, keine Rechnung)
+          // und im Jahres-Σ (`JahrAggregat`: der Monatswert passt nicht zur Σ).
+          berechnung: inv.erloes_berechnung ?? undefined,
           ergebnis: `= ${fmtCalc(inv.erloes_euro, 2)} €`,
         })
       }
@@ -325,14 +343,34 @@ export function TKonto({ d, sonderkosten = null }: { d: AktuellerMonatResponse; 
             label: `${inv.bezeichnung} — Betriebskosten`,
             wert: inv.betriebskosten_monat_euro,
             color: 'text-amber-600',
-            formel: 'Betriebskosten/Jahr ÷ 12',
+            formel: istJahr
+              ? 'Σ der Monats-Zwölftel (Betriebskosten/Jahr ÷ 12)'
+              : 'Betriebskosten/Jahr ÷ 12',
+            // A6: der Jahresbetrag kommt aus derselben Antwort
+            // (`betriebskosten_jahr_euro`) und stand bis 2026-09-13 auf keiner
+            // Fläche. Im Jahres-T-Konto bleibt das Feld leer (`JahrAggregat`) —
+            // dort ist der Betrag daneben die Σ über die Monate, „÷ 12" führte
+            // dann auf eine andere Zahl.
+            berechnung: inv.betriebskosten_jahr_euro
+              ? `${fmtCalc(inv.betriebskosten_jahr_euro, 2)} €/Jahr ÷ 12`
+              : undefined,
             ergebnis: `= ${fmtCalc(inv.betriebskosten_monat_euro, 2)} €`,
           } as TKontoPosten))
       : (d.betriebskosten_anteilig_euro ?? 0) > 0 ? [{
           label: 'Betriebskosten (anteilig)',
           wert: d.betriebskosten_anteilig_euro!,
           color: 'text-amber-600',
-          formel: 'Σ (Betriebskosten/Jahr ÷ 12) aller aktiven Investitionen',
+          formel: istJahr
+            ? 'Σ der Monats-Zwölftel aller aktiven Investitionen'
+            : 'Σ (Betriebskosten/Jahr ÷ 12) aller aktiven Investitionen',
+          // A6: Diese Zeile erscheint GENAU DANN, wenn es keine
+          // Per-Investition-Zeilen gibt (`hasPerInv === false`) — der Anwender
+          // sieht die Summanden nirgends sonst. Σ Jahresbeträge und ihre Anzahl
+          // kommen deshalb aus derselben Antwort; im Jahres-Aggregat fehlen sie
+          // bewusst (eine Σ über zwölf Monate hätte den Jahresbetrag zwölffach).
+          berechnung: d.betriebskosten_anteilig_jahr_euro != null && d.betriebskosten_anteilig_anzahl
+            ? `${fmtCalc(d.betriebskosten_anteilig_jahr_euro, 2)} €/Jahr ÷ 12 (${d.betriebskosten_anteilig_anzahl} ${d.betriebskosten_anteilig_anzahl === 1 ? 'Investition' : 'Investitionen'})`
+            : undefined,
           ergebnis: `= ${fmtCalc(d.betriebskosten_anteilig_euro, 2)} €`,
         } as TKontoPosten] : []
     ),

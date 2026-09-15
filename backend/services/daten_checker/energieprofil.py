@@ -18,7 +18,14 @@ from backend.core.investition_parameter import (
     PARAM_SONSTIGES,
     ist_dienstlich,
 )
-from backend.core.field_definitions import sonstiges_feld_reihenfolge, feld_herabgestuft, pflicht_felder_am_geraet
+from backend.core.field_definitions import (
+    BEDARF_GRUPPEN_ALTERNATIV,
+    FELD_BEDARF,
+    feld_herabgestuft,
+    get_feld_bedarf,
+    pflicht_felder_am_geraet,
+    sonstiges_feld_reihenfolge,
+)
 from backend.core.berechnungen.anlagen_kwp import anlagen_kwp
 from backend.core.berechnungen.erzeuger_traeger import (
     traegt_erzeugungsgroessen_selbst,
@@ -66,6 +73,30 @@ MANUELLE_DATENQUELLEN: dict[str, str] = {
     "manuell": "manuell",
     "manual": "manuell",
 }
+
+
+def _alternativ_geschwister(typ: str, feld: str, parameter: Optional[dict]) -> list[str]:
+    """Die Felder, die **dieselbe Größe** erfüllen können — inklusive ``feld``.
+
+    Eine ALTERNATIV-Gruppe (``BEDARF_GRUPPEN_ALTERNATIV``) sind Wege zu **einer**
+    Größe: *Heizwärme* und *Wärme gesamt* führen beide zur Wärmemenge, keiner ist
+    ein Summand des anderen (N-391). Wer einen davon zugeordnet hat, hat die
+    Größe — ihn nach dem anderen zu fragen wäre die N-86-Klasse.
+
+    ⛔ **Nur ALTERNATIV-Gruppen, und das ist der Kern.** ``wp_strom`` ist
+    ebenfalls eine Gruppe der Bedarfs-Tabelle, aber seine Felder sind
+    **Summanden** (N-456): ``strom_heizen_kwh`` deckt ``strom_warmwasser_kwh``
+    nicht ab. Die Unterscheidung steht genau einmal, an der Gruppe — hier wird
+    sie nur gelesen, wie in ``mqtt_topic_registry`` (``pflicht_am_geraet``).
+
+    Ohne Gruppe (oder ohne ALTERNATIV-Eigenschaft) bleibt es beim Feld selbst;
+    für ``ladung_pv_kwh`` an Wallbox und E-Auto ändert sich damit nichts.
+    """
+    gruppe = get_feld_bedarf(typ, feld, parameter)[1]
+    if gruppe not in BEDARF_GRUPPEN_ALTERNATIV:
+        return [feld]
+    return [f for (t, f), (_bedarf, g) in FELD_BEDARF.items()
+            if t == typ and g == gruppe]
 
 
 class EnergieprofilChecks:
@@ -539,10 +570,26 @@ class EnergieprofilChecks:
             # ⛔ Bis B2: `if ist_luft_luft_waermepumpe(inv): continue` — die
             # Bauart entschied das Schweigen, und die Brauchwasser-WP wäre nach
             # einem Heizwärme-Zähler gefragt worden, den sie nicht braucht.
+            # N-451b (14.09.2026): **die Gruppe zählt, nicht das eine Feld.**
+            # Hier stand `not inv_zaehler(inv.id, feld)`. Wer seit WK-14b EINEN
+            # gemeinsamen Wärmemengenzähler unter *Wärme gesamt* (`waerme_kwh`)
+            # führt, bekam trotzdem „Offen: … Heizwärme" zu lesen — obwohl
+            # beide Felder Alternativen **derselben** Größe sind (Gruppe
+            # `wp_waerme`, gemessen: `get_feld_bedarf` liefert für beide
+            # `('pflicht', 'wp_waerme')`) und der Tag daraus `wp_waerme_kwh`
+            # bildet. Das ist die N-86-Klasse: dieselbe Anlage, zwei Flächen,
+            # gegenteilige Aussage — die Zuordnungs-Fläche zählt das Feld
+            # bereits als gedeckt. Der Monats-Checker hat dieselbe Frage mit
+            # WK-14b gelernt (`monatsdaten.py`, *„die Gruppe zählt"*).
             fehlend = [
                 label for feld, label in zusatz
                 if not feld_herabgestuft(inv.typ, feld, inv.parameter)
-                and not inv_zaehler(inv.id, feld)
+                and not any(
+                    inv_zaehler(inv.id, geschwister)
+                    for geschwister in _alternativ_geschwister(
+                        inv.typ, feld, inv.parameter,
+                    )
+                )
             ]
             if fehlend:
                 offen.append(f"{inv.bezeichnung}: {', '.join(fehlend)}")

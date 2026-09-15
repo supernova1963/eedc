@@ -69,7 +69,27 @@ describe('N-348 — Cockpit → Tag zeigt die Arbeitszahl je Funktion', () => {
 
     expect(screen.getByText('Arbeitszahl · Heizen')).toBeInTheDocument()
     expect(screen.getByText('Arbeitszahl · Warmwasser')).toBeInTheDocument()
+    // ⭐ **Wortlaut umgestellt, Substanz gehalten (D-Sicht, 14.09.2026).**
+    // Die Kühl-Zeile trug hier nur einen Grund und keine Menge; seit der
+    // D-Sicht hat eine Zeile ohne Zahl und ohne Text nichts zu sagen und
+    // entfällt. **Die Aussage dieser Datei — Monat und Tag antworten gleich —
+    // ist unberührt**, und sie wird unten an genau der Stelle geprüft.
+    // Mit Kühlstrom steht die Zeile wieder da; das misst der Fall darunter.
+    expect(screen.queryByText('Arbeitszahl · Kühlen')).toBeNull()
+  })
+
+  it('mit Kühlmenge steht die Kühl-Zeile da — Gegenprobe zur D-Sicht', () => {
+    // ⛔ **Ohne diese Gegenprobe wäre nicht gezeigt, dass die Zeile an der
+    // MENGE hängt und nicht am Zufall.** Eine Regel, die die Kühl-Zeile immer
+    // verschluckt, wäre an der Probe darüber ebenso grün.
+    rendereWpBlock({
+      ...TAG_MIT_ZAHLEN,
+      wp_modus_strom_kuehlen_kwh: 5, wp_kaelte_kwh: 15, wp_jaz_kuehlen: 3.0,
+      wp_jaz_kuehlen_grund: null,
+    }, 'tag')
+
     expect(screen.getByText('Arbeitszahl · Kühlen')).toBeInTheDocument()
+    expect(screen.getByText('3,00')).toBeInTheDocument()
   })
 
   it('zeigt die Werte, nicht nur die Beschriftung', () => {
@@ -81,19 +101,49 @@ describe('N-348 — Cockpit → Tag zeigt die Arbeitszahl je Funktion', () => {
     expect(screen.getByText('2,00')).toBeInTheDocument()
   })
 
-  it('das gesperrte „—" trägt seinen Grund — nie ein nacktes „—"', () => {
+  it('der Grund steht EINMAL im Kasten, nicht zweimal an den Zeilen', () => {
+    // ⭐ **Wortlaut umgestellt, Substanz gehalten (D-Sicht, 14.09.2026).**
+    // Geprüft war: *„das gesperrte ‚—' trägt seinen Grund — nie ein nacktes
+    // ‚—'"*, gemessen an **zwei** Zeilen mit demselben Satz. Genau diese
+    // Verdopplung war der Anlass des Pakets: Ein fehlender Zähler erzeugte zwei
+    // bis vier identische Sätze. Die Auskunft bleibt — sie steht einmal im
+    // Kasten, mit dem Handgriff daneben —, und die Zeilen zeigen „—".
+    const GRUND = 'Strom nicht getrennt je Funktion gemessen'
+    rendereWpBlock({
+      ...TAG_MIT_ZAHLEN,
+      wp_jaz_heizen: null, wp_jaz_heizen_grund: GRUND,
+      wp_jaz_warmwasser: null, wp_jaz_warmwasser_grund: GRUND,
+      wp_moeglich: [{
+        groessen: ['Arbeitszahl Heizen', 'Arbeitszahl Warmwasser'],
+        groesse: 'Arbeitszahl Heizen · Arbeitszahl Warmwasser',
+        grund: GRUND,
+        handgriff: 'Getrennte Strommessung einschalten und beide Zähler zuordnen',
+        link: '#/einstellungen/datenquellen',
+      }],
+    }, 'tag')
+
+    // Die Zeilen entfallen — ihr Grund steht im Kasten.
+    expect(screen.queryByText('Arbeitszahl · Heizen')).toBeNull()
+    expect(screen.getAllByText(GRUND)).toHaveLength(1)
+    expect(screen.getByText(
+      'Getrennte Strommessung einschalten und beide Zähler zuordnen',
+    )).toBeInTheDocument()
+  })
+
+  it('ohne Kasten-Eintrag bleibt die Zeile mit „—" stehen (Zeitraum-Grund)', () => {
+    // ⛔ **Die andere Hälfte der D-Sicht, und sie muss diskriminieren.** Ein
+    // Grund der Klasse *Zeitraum* legt nichts in den Kasten; dort gibt es
+    // nichts zu tun, und die Zeile bleibt mit „—" stehen, solange sie eine
+    // Menge trägt. Ohne diese Gegenprobe wäre nicht gezeigt, dass der Wegfall
+    // an der Kasten-Angabe hängt und nicht am fehlenden Wert.
     rendereWpBlock({
       ...TAG_MIT_ZAHLEN,
       wp_jaz_heizen: null,
-      wp_jaz_heizen_grund: 'Strom nicht getrennt je Funktion gemessen',
-      wp_jaz_warmwasser: null,
-      wp_jaz_warmwasser_grund: 'Strom nicht getrennt je Funktion gemessen',
+      wp_jaz_heizen_grund: 'kein Heizbetrieb in diesem Zeitraum',
     }, 'tag')
 
     expect(screen.getByText('Arbeitszahl · Heizen')).toBeInTheDocument()
-    expect(
-      screen.getAllByText('— (Strom nicht getrennt je Funktion gemessen)').length,
-    ).toBe(2)
+    expect(screen.queryByText('kein Heizbetrieb in diesem Zeitraum')).toBeNull()
   })
 
   it('DER KERN: ohne Wert UND ohne Grund verschwindet die Zeile — das war der Defekt', () => {

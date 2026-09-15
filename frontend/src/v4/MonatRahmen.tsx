@@ -23,12 +23,19 @@ import { BLOCK_IDENTITAET, LAUFEND_ZUSTAND } from '../lib'
 import type { Block } from '../components/blocks'
 import { Parkbar, NOOP_PARK, type ParkApi } from '../components/park'
 import type { AktuellerMonatResponse } from '../api/aktuellerMonat'
-import { provenanzQuellen, ProvenanzQuellenZeile } from './ProvenanzQuellen'
+import { PROVENANZ_BADGE, provenanzQuellen, ProvenanzQuellenZeile } from './ProvenanzQuellen'
 
 const euro = (v: number | null | undefined) => (v == null ? '—' : `${v >= 0 ? '+' : ''}${fmtCalc(v, 2)} €`)
 
-export function MonatHeader({ titel, laufend, d, onReload, reloading, zeigeAbschlussLink }: {
+export function MonatHeader({ titel, laedtTitel, laufend, d, onReload, reloading, zeigeAbschlussLink }: {
+  /** Der Monat, zu dem die Zahlen unter dem Kopf gehören — nicht zwingend der gewählte. */
   titel: string
+  /**
+   * Der **gewählte** Monat, solange seine Zahlen noch laden (sonst `null`).
+   * Dieselbe Bauform wie `TagHeader.laedtTag`: Kopf und Zahlen bleiben zusammen,
+   * der Marker sagt, worauf die Sicht umstellt (Style-Guide A3: `…` = in Berechnung).
+   */
+  laedtTitel?: string | null
   laufend: boolean
   d: AktuellerMonatResponse | null
   /** C1: Aktualisieren-Aktion (nur laufender Monat); fehlt → Button entfällt. */
@@ -55,6 +62,14 @@ export function MonatHeader({ titel, laufend, d, onReload, reloading, zeigeAbsch
         }`}>
           {laufend ? 'läuft' : 'abgeschlossen'}
         </span>
+        {laedtTitel && (
+          <span
+            className={PROVENANZ_BADGE}
+            title="Die Zahlen gehören noch zum angezeigten Monat. Sobald der gewählte Monat geladen ist, wechselt die ganze Sicht auf einmal."
+          >
+            lädt {laedtTitel} …
+          </span>
+        )}
       </div>
       <div className="flex items-center gap-2 flex-wrap">
         {/* C1: Aktualisieren — nur im laufenden Monat (IST-Parität MonatsabschlussView). */}

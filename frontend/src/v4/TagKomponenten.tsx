@@ -42,7 +42,11 @@ import { baueKomponentenBloecke } from './KomponentenSektionen'
 import { finanzTeaserBlock } from './MonatRahmen'
 import type { Block } from '../components/blocks'
 import type { ParkApi } from '../components/park'
-import type { TagWerte, StundenWert, SerieInfo, TagDetail } from '../api/energie_profil'
+import type {
+  TagWerte, StundenWert, SerieInfo, TagDetail, VerteilungVerlauf,
+  WaermeVerlaufStunde, WaermeVerlaufStunden,
+} from '../api/energie_profil'
+import type { WaermeVerlaufPunkt } from './waermeVerlauf'
 import type { AktuellerMonatResponse, SonstigesGeraet } from '../api/aktuellerMonat'
 
 /** Tages-Daten → `AktuellerMonatResponse`-Shape (nur die von den Bauern gelesenen
@@ -128,10 +132,25 @@ export function baueTagAlsMonat(
     wp_jaz_warmwasser_grund: tagDetail?.wp_jaz_warmwasser_grund ?? null,
     wp_jaz_kuehlen: tagDetail?.wp_jaz_kuehlen ?? null,
     wp_jaz_kuehlen_grund: tagDetail?.wp_jaz_kuehlen_grund ?? null,
+    // E1b + D-Sicht: dieselben drei Felder wie in Monat und Jahr, aus der
+    // Tages-Route. Der Tag kennt sie seit WK-16a — vorher stand hier bei
+    // gemischter Ausstattung ein Strich mit dem Grund „nicht alle Geräte
+    // melden Wärme".
+    wp_jaz_ist_schranke: tagDetail?.wp_jaz_ist_schranke ?? false,
+    wp_jaz_schranke_hinweis: tagDetail?.wp_jaz_schranke_hinweis ?? null,
+    wp_geraete: tagDetail?.wp_geraete ?? [],
+    wp_moeglich: tagDetail?.wp_moeglich ?? [],
+    // Bauschnitt 8: die Zeile „Kälte" der Gruppe Kühlen — der Zähler der
+    // Kühlzahl darüber, aus derselben Antwort.
+    wp_kaelte_kwh: tagDetail?.wp_kaelte_kwh ?? null,
     // W-18: Der Grund kommt fertig formuliert aus dem Backend — er weiss als
     // einziger, ob der Zaehler fehlt, ob er zugeordnet aber fuer diesen Tag
     // leer ist, oder ob er zurueckgesprungen ist.
     wp_waerme_grund: tagDetail?.wp_waerme_grund ?? null,
+    // R-4/N-491: „gemessen ab 11:00 Uhr" — die Marke steht an der Basis-Größe
+    // des Blocks (Strom), nicht an jeder abgeleiteten Zahl. Dieselbe Regel, mit
+    // der N-472 die Gründe im laufenden Monat verteilt hat.
+    wp_abdeckung_hinweis: tagDetail?.wp_abdeckung_hinweis ?? null,
     emob_ladung_pv_grund: tagDetail?.emob_ladung_pv_grund ?? null,
     // #263/T2 — Aufteilung Heizen/Kühlen des Tages (gemeldet von OB73-gif).
     // Die Blockfabrik zeigt den Balken bereits, sobald `wp_modus_abdeckung_h`
@@ -219,12 +238,70 @@ export function socTagWerte(stunden: StundenWert[]): { min: number; max: number;
   return { min: Math.min(...werte), max: Math.max(...werte), ende: werte[werte.length - 1] }
 }
 
+/**
+ * Die 24 Stunden des Wärme/Klima-Verlaufs → Punkte für `baueWaermeVerlauf`
+ * (Konzept Wärme/Klima §8, Bauschnitt 5).
+ *
+ * ⭐ **Keine Rechnung hier.** Die Stundenmengen verteilt das Backend so, dass
+ * ihre Summe der Aufteilungs-Balken darunter ist (`tages_stapel.py`, „die
+ * Stunde verteilt den Tag"). Dieser Bauer benennt nur um: x-Achse `${h}:00`
+ * wie im Stundenverlauf derselben Sicht, Temperatur aus der Stundenantwort
+ * (Slot = Zeile), abgeleitete Wärme gibt es am Tag nicht.
+ */
+export function baueTagWaermeVerlauf(
+  zeilen: WaermeVerlaufStunde[], stunden: StundenWert[],
+): WaermeVerlaufPunkt[] {
+  const temperatur = new Map(stunden.map((s) => [s.stunde, s.temperatur_c]))
+  return zeilen.map((z) => ({
+    name: `${z.stunde}:00`,
+    temperatur_c: temperatur.get(z.stunde) ?? null,
+    wp_strom_kwh: z.wp_strom_kwh,
+    wp_waerme_kwh: z.wp_waerme_kwh,
+    wp_waerme_abgeleitet_kwh: null,
+    wp_kaelte_kwh: z.wp_kaelte_kwh ?? null,
+    wp_modus_strom_heizen_kwh: z.wp_modus_strom_heizen_kwh,
+    wp_modus_strom_warmwasser_kwh: z.wp_modus_strom_warmwasser_kwh,
+    wp_modus_strom_kuehlen_kwh: z.wp_modus_strom_kuehlen_kwh,
+    wp_modus_strom_lueften_kwh: z.wp_modus_strom_lueften_kwh,
+    wp_modus_strom_entfeuchten_kwh: z.wp_modus_strom_entfeuchten_kwh,
+    wp_modus_nicht_aufgeteilt_kwh: z.wp_modus_nicht_aufgeteilt_kwh,
+    wp_modus_gemessen: z.wp_modus_gemessen,
+    wp_modus_abdeckung_h: z.wp_modus_abdeckung_h,
+    wp_modus_strom_bezug_kwh: z.wp_modus_strom_bezug_kwh,
+    // WK-09 B2: die Funktions-Summanden derselben Stunde. `null` heißt „an
+    // diesem Tag nicht erfasst" — dann gibt es die Sicht „nach Funktion" nicht.
+    wp_funktion_strom_heizen_kwh: z.wp_funktion_strom_heizen_kwh ?? null,
+    wp_funktion_strom_warmwasser_kwh: z.wp_funktion_strom_warmwasser_kwh ?? null,
+    wp_funktion_uebrige_kwh: z.wp_funktion_uebrige_kwh ?? null,
+  }))
+}
+
 /** Komponenten-Detailblöcke (aktiv-gegated) + Finanz-Teaser für einen Tag — gleiche
  *  Bauer wie Cockpit/Monat. Reihenfolge: Komponenten …, dann Finanzen (ganz unten). */
 export function baueTagKomponentenUndFinanz(
   tag: TagWerte, stunden: StundenWert[], serien: SerieInfo[], park: ParkApi, tagDetail?: TagDetail | null,
+  /** Der Wärme/Klima-Verlauf des Tages (eigene Route) — ohne ihn fehlt nur der Verlauf. */
+  wpVerlaufStunden?: WaermeVerlaufStunden | null,
+  /** WK-16c: Verteilung & Verlauf des Tages (Stunden). Gleiche Bauform — ohne
+   *  ihn fehlt genau dieser Blockteil. */
+  wpVerteilung?: VerteilungVerlauf | null,
 ): Block[] {
   const d = baueTagAlsMonat(tag, stunden, serien, tagDetail)
   const finanz = finanzTeaserBlock(d, park)
-  return [...baueKomponentenBloecke(d, park, 'tag', socTagWerte(stunden)), ...(finanz ? [finanz] : [])]
+  const wpVerlauf = wpVerlaufStunden ? baueTagWaermeVerlauf(wpVerlaufStunden.stunden, stunden) : null
+  return [
+    ...baueKomponentenBloecke(
+      d, park, 'tag', socTagWerte(stunden), wpVerlauf,
+      wpVerlaufStunden
+        ? {
+            strom: wpVerlaufStunden.ohne_stundenform_kwh,
+            waerme: wpVerlaufStunden.waerme_ohne_stundenform_kwh,
+            kaelte: wpVerlaufStunden.kaelte_ohne_stundenform_kwh,
+            funktion: wpVerlaufStunden.funktion_ohne_stundenform_kwh,
+          }
+        : null,
+      wpVerteilung,
+    ),
+    ...(finanz ? [finanz] : []),
+  ]
 }

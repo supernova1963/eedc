@@ -156,15 +156,22 @@ def test_w4_heizstab_hinweis_erscheint_auch_je_funktion():
     assert r.heizen.hinweis is None
 
 
-# ── Abgrenzung zu E4: kein doppelter Abzug ─────────────────────────────────
+# ── Abgrenzung zu E4: je Funktion wird nichts abgezogen ────────────────────
 
 def test_w4_zieht_keinen_funktionsfremden_strom_ab():
-    """**Die Falle, die hier NICHT gebaut werden durfte.**
+    """**Die Falle, die hier NICHT gebaut werden durfte — SOLL-§9-E7.**
 
-    `strom_heizen_kwh` ist bereits nur der Heizbetrieb — Kühlen, Lüften und
-    Entfeuchten sind darin gar nicht enthalten. Einen `funktionsfremd`-Abzug
-    hier anzuwenden zöge dieselbe Menge zweimal ab. Die Probe hält fest, dass
-    die Zahl exakt Q/E ist.
+    Der Nenner einer Funktions-Arbeitszahl ist der getrennt **gemessene** Strom
+    dieser Funktion (F5). Ein aus dem Betriebsmodus abgeleiteter Anteil ist eine
+    **Verteilung** und darf ihn weder stellen noch kürzen — sonst stünde dort
+    *Messung − Verteilung*, und das ist keine Messung mehr. Die Probe hält fest,
+    dass die Zahl exakt Q/E ist.
+
+    ⛔ **Hier stand bis zum 12.09.2026 als Begründung: „`strom_heizen_kwh` ist
+    bereits nur der Heizbetrieb … ein Abzug zöge dieselbe Menge zweimal ab."**
+    Der erste Halbsatz ist der Feld-**Vertrag**, keine Messung; der zweite war
+    falsch, denn in diesem Pfad wird nichts abgezogen. **Die Substanz der Probe
+    ändert sich nicht** — nur ihr Grund trägt jetzt (Option A, 12.09.2026).
     """
     r = _je_funktion(heizung_kwh=1000.0, strom_heizen_kwh=250.0)
 

@@ -51,11 +51,13 @@ const fmt = (v: number | null | undefined, dec = 0) => fmtCalc(v, dec, '—')
  *  `prAvg` (Monats-Ø der Performance Ratio, aus `getMonat.performance_ratio_avg`,
  *  M1-Wiederherstellung 2026-07-19): eine zusätzliche neutrale Kachel, nur wenn
  *  gesetzt — die Datenquelle ist die Auswertung, nicht das Monats-Aggregat, daher
- *  als eigener Parameter durchgereicht statt aus `d` gelesen. */
+ *  als eigener Parameter durchgereicht statt aus `d` gelesen. `prTage` ist die
+ *  Grundgesamtheit dieses Ø (dieselbe Antwort, `performance_ratio_tage`). */
 export function baueMonatKpis(
   d: AktuellerMonatResponse,
   vm: AggregierteMonatsdaten | null,
   prAvg?: number | null,
+  prTage?: number | null,
 ): KpiStripItem[] {
   // N-69: im laufenden Monat trägt `soll_pv_kwh` nur die abgelaufenen Tage. Die
   // Zweitzeile ist `truncate` und fasst keine Fensterangabe mehr — die steht
@@ -74,10 +76,23 @@ export function baueMonatKpis(
     ? d.gesamtnettoertrag_euro - (d.betriebskosten_anteilig_euro ?? 0) + (d.sonstige_netto_euro ?? 0)
     : null
 
+  // N-472: Warum eine Kachel leer bleibt. Der **Satz kommt aus der Antwort**
+  // (`core/monatswert_grund.py`) — hier wird nur der Slot bedient, den die
+  // Kachel dafür schon hat: `hinweis` ist wörtlich der „Voraussetzungs-Hinweis
+  // bei fehlendem Wert", und WK-16ab hat an der JAZ-Kachel dieselbe Wahl
+  // getroffen. Ein rohes `title` daneben wäre eine zweite Bauform.
+  //
+  // ⚠ Der **Zeitraum**-Vorbehalt („misst erst ab dem 14.") steht NICHT hier,
+  // sondern in der Provenanz-Zeile über dem Strip (`ProvenanzQuellen`, seit
+  // #360 mit genau dieser Beschriftung aus `abdeckung_von`/`abdeckung_bis`).
+  // Zwei Träger für dieselbe Aussage wären Regel-0a-widrig.
+  const grund = (feld: string) => d.datenlage_gruende?.[feld]
+
   return [
     {
       title: 'PV-Erzeugung', value: fmt(d.pv_erzeugung_kwh), unit: 'kWh', color: 'yellow', icon: DATENROLLEN_ICONS.pv,
       subtitle: pvSoll,
+      hinweis: grund('pv_erzeugung_kwh'),
       formel: sollPct != null ? 'PV-Ertrag ÷ PVGIS-SOLL × 100' : undefined,
       berechnung: sollPct != null
         ? `${fmt(d.pv_erzeugung_kwh)} ÷ ${fmt(d.soll_pv_kwh)} kWh${sollFenster ? ` (${sollFenster})` : ''}`
@@ -99,15 +114,27 @@ export function baueMonatKpis(
     {
       title: 'Einspeisung', value: fmt(d.einspeisung_kwh), unit: 'kWh', color: 'green', icon: DATENROLLEN_ICONS.einspeisung,
       subtitle: vm ? `VM: ${fmt(vm.einspeisung_kwh)} kWh` : undefined,
+      hinweis: grund('einspeisung_kwh'),
     },
     {
       title: 'Netzbezug', value: fmt(d.netzbezug_kwh), unit: 'kWh', color: 'red', icon: DATENROLLEN_ICONS.netzbezug,
       subtitle: vm ? `VM: ${fmt(vm.netzbezug_kwh)} kWh` : undefined,
+      hinweis: grund('netzbezug_kwh'),
     },
     {
       title: 'Netto-Ertrag', value: fmtCalc(d.netto_ertrag_euro, 2, '—'), unit: '€', color: 'blue', icon: DATENROLLEN_ICONS.nettoErtrag,
       subtitle: 'vor Betriebskosten',
       formel: 'Einspeise-Erlös + Eigenverbrauchs-Ersparnis',
+      // A6: die beiden Summanden aus DERSELBEN Antwort, die auch den Wert
+      // daneben trägt (`netto_ertrag_euro = einspeise_erloes + ev_ersparnis`,
+      // `aktueller_monat.py`). Kein `?? 0`: fehlt einer der beiden, bleibt die
+      // Herleitung leer, statt eine Rechnung aus „—" zu bauen.
+      berechnung: (d.einspeise_erloes_euro != null && d.ev_ersparnis_euro != null)
+        ? `${fmtCalc(d.einspeise_erloes_euro, 2)} € Einspeise-Erlös + ${fmtCalc(d.ev_ersparnis_euro, 2)} € Eigenverbrauchs-Ersparnis`
+        : undefined,
+      ergebnis: (d.einspeise_erloes_euro != null && d.ev_ersparnis_euro != null && d.netto_ertrag_euro != null)
+        ? `= ${fmtCalc(d.netto_ertrag_euro, 2)} €`
+        : undefined,
     },
     {
       title: 'Monatsergebnis',
@@ -115,6 +142,13 @@ export function baueMonatKpis(
       color: monatsergebnis != null && monatsergebnis < 0 ? 'red' : 'green', icon: DATENROLLEN_ICONS.ergebnis,
       subtitle: 'nach Betriebskosten',
       formel: 'Gesamt-Nettoertrag − Betriebskosten + Sonstiges',
+      // A6: dieselben drei Felder, aus denen `monatsergebnis` oben entsteht —
+      // derselbe Guard (`gesamtnettoertrag_euro != null`), damit die Rechnung
+      // nicht neben einem „—" steht.
+      berechnung: d.gesamtnettoertrag_euro != null
+        ? `${fmtCalc(d.gesamtnettoertrag_euro, 2)} € − ${fmtCalc(d.betriebskosten_anteilig_euro ?? 0, 2)} € + ${fmtCalc(d.sonstige_netto_euro ?? 0, 2)} €`
+        : undefined,
+      ergebnis: monatsergebnis != null ? `= ${fmtCalc(monatsergebnis, 2)} €` : undefined,
     },
     // Performance Ratio Ø des Monats (M1-Wiederherstellung) — neutrale Kachel, nur
     // wenn ableitbar. Physikalische Kennzahl (keine Datenrolle) → raw Gauge-Icon
@@ -128,6 +162,13 @@ export function baueMonatKpis(
           // bewusst KEINE eigene Einstrahlungszahl: der Monats-Ø mittelt Tages-PRs,
           // er teilt nicht selbst. Die Zahl steht in Cockpit → Tag.
           formel: 'Ø der täglichen Performance Ratio (Ertrag ÷ Einstrahlung auf die Modulfläche × kWp)',
+          // A6: ein Ø ohne genannte Grundgesamtheit ist keine Auskunft. Die Zahl
+          // ist der Nenner, mit dem der Layer gemittelt hat (`performance_ratio_tage`
+          // = `len(pr_werte)`) — NICHT `tage_mit_daten`, das zählt Tage mit
+          // irgendwelchen Daten und stünde neben einer anderen Rechnung.
+          berechnung: prTage != null && prTage > 0
+            ? `Ø aus ${prTage} ${prTage === 1 ? 'Tag' : 'Tagen'} mit Einstrahlungsdaten`
+            : undefined,
         }]
       : []),
     ...baueNetzKostenKpis(d),
@@ -140,6 +181,35 @@ export function baueMonatKpis(
  *  0 kWh ist eine Aussage und bleibt sichtbar (Rainer-PN 2026-07-25), ein
  *  fehlender Speicher blendet die Kachel aus. Geteilt von Monat + Jahr
  *  (Jahres-Aggregat hat denselben Shape). */
+/** Woher der Ø-Preis stammt — als Satz über der Rechnung (#412).
+ *
+ *  ⚠ Die Reihenfolge folgt der Kaskade im Backend
+ *  (`strompreis_aggregator.aufgeloester_monatspreis`); ein unbekannter Wert
+ *  fällt auf den neutralen Text, statt eine Herkunft zu behaupten.
+ */
+function preisFormel(d: AktuellerMonatResponse): string {
+  const kosten = ' · Kosten = Netzbezug × Ø-Preis, ohne Grundpreis'
+  switch (d.netzbezug_preis_herkunft) {
+    case 'gepflegt':
+      return 'Dein abgerechneter Ø-Preis aus dem Monatsabschluss' + kosten
+    case 'gemessen': {
+      // Die Abdeckung gehört dazu: Im laufenden Monat ist sie zwangsläufig
+      // klein, und ein Ø aus wenigen Stunden sagt weniger als einer aus allen.
+      const a = d.netzbezug_preis_abdeckung
+      const anteil = a != null ? ` (${fmtCalc(a * 100, 0)} % der Monatsstunden)` : ''
+      return `Ø deiner gemessenen Stundenpreise, verbrauchsgewichtet${anteil}` + kosten
+    }
+    case 'zeitfenster':
+      return 'Ø aus deinem Zeittarif (HT/NT), über den Netzbezug gewichtet' + kosten
+    case 'stamm':
+      return 'Arbeitspreis aus dem Strompreis-Tarif' + kosten
+    default:
+      return d.netzbezug_durchschnittspreis_cent != null
+        ? 'Ø-Bezugspreis (dynamischer Tarif, verbrauchsgewichtet)' + kosten
+        : 'Arbeitspreis aus dem Strompreis-Tarif' + kosten
+  }
+}
+
 export function baueNetzKostenKpis(d: AktuellerMonatResponse): KpiStripItem[] {
   const kpis: KpiStripItem[] = []
   if (d.speicher_ladung_netz_kwh != null) {
@@ -179,9 +249,13 @@ export function baueNetzKostenKpis(d: AktuellerMonatResponse): KpiStripItem[] {
       // Algie). Der Tooltip allein reichte nicht: er wird erst nach dem
       // Stolpern gelesen.
       subtitle: `${fmt(d.netzbezug_kwh)} kWh · ${fmtCalc(d.netzbezug_arbeitspreis_kosten_euro, 2, '—')} €`,
-      formel: d.netzbezug_durchschnittspreis_cent != null
-        ? 'Ø-Bezugspreis (dynamischer Tarif, verbrauchsgewichtet) · Kosten = Netzbezug × Ø-Preis, ohne Grundpreis'
-        : 'Arbeitspreis aus dem Strompreis-Tarif · Kosten = Netzbezug × Arbeitspreis, ohne Grundpreis',
+      // ⭐ **Die Formel nennt die HERKUNFT** (#412). Bis 11.09.2026 gab es nur
+      // zwei Texte — „dynamischer Tarif" oder „aus dem Strompreis-Tarif" —,
+      // und ein über HT/NT-Fenster gewichteter Preis lief unter dem zweiten.
+      // Mit der gemessenen Stufe wären es drei Fälle unter zwei Namen
+      // geworden: Ein aus Stundenpreisen gemittelter Wert hätte „Arbeitspreis
+      // aus dem Strompreis-Tarif" darüber gehabt — eine Falschaussage.
+      formel: preisFormel(d),
       berechnung: `${fmt(d.netzbezug_kwh)} kWh × ${fmtCalc(netzPreis, 1)} ct/kWh`,
       ergebnis: (d.grundgebuehr_euro ?? 0) > 0
         ? `= ${fmtCalc(d.netzbezug_arbeitspreis_kosten_euro, 2)} € · + ${fmtCalc(d.grundgebuehr_euro, 2)} € Grundpreis = ${fmtCalc(d.netzbezug_kosten_euro, 2)} € gesamt`

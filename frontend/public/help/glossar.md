@@ -1,8 +1,6 @@
 
 # eedc Glossar & Support
 
-**Version 4.0** | Stand: 2026-07-25
-
 > Dieses Glossar ist Teil der eedc-Dokumentation.
 > Siehe auch: [Teil I: Installation](HANDBUCH_INSTALLATION.md) | [Teil II: Bedienung](HANDBUCH_BEDIENUNG.md) | [Teil III: Einstellungen](HANDBUCH_EINSTELLUNGEN.md) | [Berechnungen](BERECHNUNGEN.md) | [Prognosen](HANDBUCH_PROGNOSEN.md) | [Wärme & Klima](HANDBUCH_WAERME_KLIMA.md) | [Sensor-Referenz](SENSOR-REFERENZ.md)
 
@@ -41,7 +39,7 @@
 | **TMY** | Typical Meteorological Year — statistisches Durchschnittswetterjahr als Prognosebasis |
 | **Wettermodell-Kaskade** | Bei spezifischer Modellauswahl versucht eedc zuerst das gewählte Modell und fällt bei fehlenden Daten auf den besten verfügbaren Anbieter zurück. Datenquelle pro Tag wird mit Kürzel angezeigt (MS/D2/EU/EC/BM). Wahl unter [Einstellungen → Stammdaten → Anlage](HANDBUCH_EINSTELLUNGEN.md#21-anlage). |
 | **Solar Noon** | Astronomische Tagesmitte — Zeitpunkt des höchsten Sonnenstands. Weicht je nach Standort und Datum bis ~30 min von 12:00 Clockzeit ab. eedc splittet VM/NM-Tageshälften daran. |
-| **Heizgradtage** | Heuristik für die WP-Temperaturkorrektur: Differenz zwischen Innenraum-Solltemperatur (typ. 20 °C) und Außentemperatur, summiert über die Heizperiode. |
+| **Heizgradtage (Kd)** | Maß für den Wetterbedarf eines Zeitraums: je Tag `max(0; 15 °C − Tagesmittel der Außentemperatur)`, über die Tage summiert. **15 °C ist die Heizgrenze** (Gradtag-Konvention) — nicht die Innenraum-Temperatur. eedc nutzt sie an zwei Stellen: für die Temperaturkorrektur der Verbrauchsprognose und für den wetternormierten Vergleich im Komponenten-Hub ([Wärme & Klima → Vergleich](HANDBUCH_WAERME_KLIMA.md)). |
 
 ### Prognosen & Genauigkeit
 

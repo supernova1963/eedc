@@ -166,9 +166,14 @@ def test_luft_wasser_stellt_die_betriebsarten_hintan():
     # In der ersten Reihe steht unverändert genau das, was vorher die ganze
     # Liste war — bis auf `stromverbrauch_kwh`, das ohne Kennzeichen gilt.
     erste_reihe = {f for f, erw in energie.items() if not erw}
+    # N-391 (14.09.2026): `waerme_kwh` ist dazugekommen — der gemeinsame
+    # Wärmemengenzähler. Er trägt **keine** Bedingung (die Bilanzgröße gibt es
+    # an jedem Gerät) und steht deshalb wie die beiden Achsen in der ersten
+    # Reihe. Die Aussage der Probe bleibt: die BETRIEBSART-Felder stehen in der
+    # zweiten.
     assert erste_reihe == {"stromverbrauch_kwh", "strom_heizen_kwh",
                            "strom_warmwasser_kwh", "heizenergie_kwh",
-                           "warmwasser_kwh"}
+                           "warmwasser_kwh", "waerme_kwh"}
     # Und alle acht Betriebsart-Felder liegen dahinter, keines davor.
     betriebsart = {f for f in energie if f.startswith("betriebsart_")}
     assert len(betriebsart) == 8

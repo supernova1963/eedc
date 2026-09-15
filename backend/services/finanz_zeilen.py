@@ -34,7 +34,7 @@ from backend.api.routes.strompreise import (
     resolve_einspeise_preis_cent,
     resolve_netzbezug_preis_cent,
 )
-from backend.services.strompreis_aggregator import wirksamer_arbeitspreis_cent
+from backend.services.strompreis_aggregator import aufgeloester_monatspreis
 from backend.core.berechnungen import FinanzMonatsZeile
 from backend.core.wirtschaftlichkeit_defaults import (
     EINSPEISEVERGUETUNG_DEFAULT_CENT,
@@ -89,8 +89,15 @@ async def baue_finanz_zeile(
     # Helfer die Spalte unveraendert. Ohne eigenen Cache — diese Funktion baut
     # EINE Zeile. Warum er auch nicht im `tarif_cache` mitreist, steht in
     # `monats_fakten.py` im Block ueber `_komponenten_preis`.
-    netz_cent = await wirksamer_arbeitspreis_cent(
-        db, anlage_id, eingabe.jahr, eingabe.monat, allgemein
+    # ⭐ **Die ganze Kaskade an einer Stelle** (#412, 11.09.2026): gepflegt →
+    # gemessen → Zeitfenster → Stamm. Bis dahin standen hier zwei Schritte —
+    # `wirksamer_arbeitspreis_cent` (Zeitfenster) und darunter der
+    # `resolve_netzbezug_preis_cent`-Override (gepflegt) —, und die **Messung**
+    # fehlte dazwischen ganz: Wer einen dynamischen Tarif hat, rechnete im
+    # laufenden Monat und an jedem Tag mit dem Stammpreis, obwohl eedc die
+    # Stundenpreise mitschreibt.
+    preis = await aufgeloester_monatspreis(
+        db, anlage_id, eingabe.jahr, eingabe.monat, eingabe.monatsdaten, allgemein,
     )
     verg_cent = (
         allgemein.einspeiseverguetung_cent_kwh if allgemein else EINSPEISEVERGUETUNG_DEFAULT_CENT
@@ -107,8 +114,8 @@ async def baue_finanz_zeile(
         v2h_entladung_kwh=eingabe.v2h_entladung_kwh or 0,
         abgabe_dritte_kwh=eingabe.abgabe_dritte_kwh or 0,
         bkw_eigenverbrauch_kwh=eingabe.bkw_eigenverbrauch_kwh or 0,
-        # Flex-Ø-Override (dynamischer Tarif) vor dem Monatstarif.
-        netzbezug_preis_cent=resolve_netzbezug_preis_cent(eingabe.monatsdaten, netz_cent),
+        netzbezug_preis_cent=preis.cent,
+        netzbezug_preis_herkunft=preis.herkunft,
         einspeiseverguetung_cent=verg_cent,
         neg_preis_kwh=eingabe.neg_preis_kwh,
     )

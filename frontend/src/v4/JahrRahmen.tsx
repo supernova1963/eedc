@@ -5,11 +5,17 @@
  */
 import type { AktuellerMonatResponse } from '../api/aktuellerMonat'
 import { ReloadButton } from './ReloadButton'
-import { provenanzQuellen, ProvenanzQuellenZeile } from './ProvenanzQuellen'
+import { PROVENANZ_BADGE, provenanzQuellen, ProvenanzQuellenZeile } from './ProvenanzQuellen'
 import { LAUFEND_ZUSTAND } from '../lib'
 
-export function JahrHeader({ jahr, laufend, d, onReload, reloading }: {
+export function JahrHeader({ jahr, laedtJahr, laufend, d, onReload, reloading }: {
+  /** Das Jahr, zu dem die Zahlen unter dem Kopf gehören — nicht zwingend das gewählte. */
   jahr: number
+  /**
+   * Das **gewählte** Jahr, solange seine Zahlen noch laden (sonst `null`).
+   * Dieselbe Bauform wie `TagHeader.laedtTag` und `MonatHeader.laedtTitel`.
+   */
+  laedtJahr?: number | null
   laufend: boolean
   d: AktuellerMonatResponse | null
   onReload?: () => void
@@ -31,6 +37,14 @@ export function JahrHeader({ jahr, laufend, d, onReload, reloading }: {
         }`}>
           {laufend ? 'läuft' : 'abgeschlossen'}
         </span>
+        {laedtJahr != null && (
+          <span
+            className={PROVENANZ_BADGE}
+            title="Die Zahlen gehören noch zum angezeigten Jahr. Sobald das gewählte Jahr geladen ist, wechselt die ganze Sicht auf einmal."
+          >
+            lädt {laedtJahr} …
+          </span>
+        )}
       </div>
       <div className="flex items-center gap-2 flex-wrap">
         {laufend && onReload && <ReloadButton onClick={onReload} loading={!!reloading} />}

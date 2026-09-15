@@ -9,7 +9,7 @@
  *   entladung_v2h_kwh        → v2h_entladung_kwh  (E-Auto V2H)
  */
 
-import { PARAM_SONSTIGES_DEFAULTS, istLuftLuft } from './investitionParameter'
+import { PARAM_SONSTIGES_DEFAULTS, istBrauchwasser, istLuftLuft } from './investitionParameter'
 
 export interface FeldDefinition {
   feld: string
@@ -81,6 +81,39 @@ const SPEICHER_FELDER: FeldDefinition[] = [
 // verwechselt wird → COP=1 verraet das, ist aber nicht selbsterklaerend.
 // „Heizwaerme" + Tooltip macht klar, dass es die abgegebene Waermemenge
 // (z.B. von einem Waermemengenzaehler) ist, nicht der WP-Strom.
+/**
+ * Hat dieses Gerät eine **Heiz-Achse**? — Spiegel von
+ * `field_definitions.py::feld_urteil("waermepumpe", "heizenergie_kwh", p) === URTEIL_GILT`
+ * (die Bedingung dort: `bedingung: '!brauchwasser'`, weich).
+ *
+ * ⭐ **WK-15c (14.09.2026): die kleinste Spiegelung, die die Frage beantwortet.**
+ * Der Client hat keinen Urteils-Auswerter — `getFelderFuerInvestition` unten
+ * kennt nur „Feld zeigen oder nicht" und keine *weichen* Bedingungen. Ein
+ * vollständiger Spiegel von `bedingungs_urteil` wäre erheblich mehr Code, als
+ * die zwei Fragen wert sind, die ihn brauchen (Vorbelegung und Feld-
+ * Sichtbarkeit im Investitionsformular). Deshalb zwei benannte Prädikate mit
+ * dem Verweis auf die Backend-Stelle — **nicht** ein `wp_art`-Vergleich neben
+ * dem Formular: Die Bauart liest weiterhin nur `investitionParameter.ts`
+ * (N-306, `check:bauart-roh` Gruppe 0).
+ *
+ * ⚠ **Eine Klimaanlage hat sehr wohl eine Heiz-Achse** — sie gibt Wärme ab, und
+ * genau daran hängt ihre Gas-Ersparnis (N-88/F2b). Zurückgestuft ist dort nur
+ * die *Messung* (kein Wärmemengenzähler möglich), nicht die Achse.
+ */
+export function hatHeizAchse(params: Record<string, unknown> | null | undefined): boolean {
+  return !istBrauchwasser(params)
+}
+
+/**
+ * Hat dieses Gerät eine **Warmwasser-Achse**? — Spiegel von
+ * `feld_urteil("waermepumpe", "warmwasser_kwh", p) === URTEIL_GILT`
+ * (`bedingung: '!luft_luft'`, hart — N-304: eine Split-Klimaanlage hat keinen
+ * Warmwasserkreis). Begründung der Bauform: siehe `hatHeizAchse`.
+ */
+export function hatWarmwasserAchse(params: Record<string, unknown> | null | undefined): boolean {
+  return !istLuftLuft(params)
+}
+
 const WAERMEPUMPE_FELDER: FeldDefinition[] = [
   { feld: 'stromverbrauch_kwh',   label: 'Stromverbrauch',   einheit: 'kWh', bedingung: '!getrennte_strommessung',
     hint: 'Stromaufnahme der WP (elektrisch)' },
@@ -99,6 +132,13 @@ const WAERMEPUMPE_FELDER: FeldDefinition[] = [
   // zeigt. Beide SoTs bleiben wortgleich.
   { feld: 'warmwasser_kwh',       label: 'Warmwasser-Wärme', einheit: 'kWh', bedingung: '!luft_luft',
     hint: 'Abgegebene Warmwasser-Wärme (thermisch)' },
+  // N-391 (14.09.2026) — der Ort für EINEN gemeinsamen Wärmemengenzähler.
+  // Spiegel von `field_definitions.py::waerme_kwh`; ohne diese Zeile gäbe es
+  // das Feld auf der Zuordnungs-Fläche, aber nicht im Monatsabschluss (die
+  // beiden Registries sind nur durch Kommentare verbunden).
+  // **Nach** den beiden Einzelwerten: der Regelfall bleibt die Aufteilung.
+  { feld: 'waerme_kwh',           label: 'Wärme gesamt',     einheit: 'kWh',
+    hint: 'Abgegebene Wärme gesamt (thermisch) — für EINEN Zähler über Heizung und Warmwasser. Mit getrennten Zählern leer lassen.' },
 ]
 
 const EAUTO_FELDER: FeldDefinition[] = [

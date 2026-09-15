@@ -5,7 +5,17 @@ export interface ChartTooltipProps {
   active?: boolean
   payload?: Payload<ValueType, NameType>[]
   label?: unknown
-  formatter?: (value: number, name: string) => string | null
+  /** Eigener Wert-Text. Der dritte Parameter ist die **Datenzeile** hinter dem
+   *  Punkt (Recharts `entry.payload`) — für Tooltips, die neben dem Ergebnis
+   *  auch seine Herleitung zeigen müssen (Style-Guide A6: „0,55 kWh/Kd ·
+   *  603,9 kWh ÷ 1.089,6 Kd"). Ohne ihn müsste der Aufrufer die Herleitung über
+   *  den Zahlenwert zurücksuchen — bei zwei gleich hohen Balken ein Fehlgriff.
+   *  Optional und rückwärtskompatibel: bestehende Formatter ignorieren ihn. */
+  formatter?: (
+    value: number,
+    name: string,
+    zeile?: Record<string, unknown>,
+  ) => string | null
   labelFormatter?: (label: unknown) => string
   nameFormatter?: (name: string) => string
   itemSorter?: (item: Payload<ValueType, NameType>) => number
@@ -69,7 +79,7 @@ export default function ChartTooltip({
         let formatted: string | null
         const isNum = typeof val === 'number' && Number.isFinite(val)
         if (formatter) {
-          formatted = formatter(val, entry.name as string)
+          formatted = formatter(val, entry.name as string, p)
         } else if (isNum) {
           // #228: decimals werden konsistent angewandt — auch ohne unit.
           // Vorher fiel der Fall „decimals ohne unit" auf String(val) durch

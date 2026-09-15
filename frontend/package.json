@@ -21,6 +21,7 @@
     "check:cop-roh": "node scripts/check-cop-roh.mjs",
     "check:bauart-roh": "node scripts/check-bauart-roh.mjs",
     "check:finanz-roh": "node scripts/check-finanz-roh.mjs",
+    "check:formel-herleitung": "node scripts/check-formel-herleitung.mjs",
     "check:datum-utc": "node scripts/check-datum-utc.mjs",
     "check:scrollschatten": "node scripts/check-scrollschatten.mjs",
     "check:persistenz": "node scripts/check-persistenz.mjs",

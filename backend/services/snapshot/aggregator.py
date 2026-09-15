@@ -16,12 +16,17 @@ Slot-Konvention seit Etappe 3c P2 (KONZEPT-ENERGIEPROFIL-3C.md):
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field as dc_field
 from datetime import date, datetime, timedelta
 from typing import Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.core.berechnungen.betriebsart_gemessen import (
+    geraetefeld_oder_innengeraete,
+)
+from backend.core.betriebsmodus import BETRIEBSART_NUTZENERGIE_FELD, HEIZEN, KUEHLEN
+from backend.core.field_definitions import FEINE_STROM_FELDER, WP_GESAMT_STROM_FELDER
 from backend.core.berechnungen.stundenbilanz import (
     berechne_batterie_netto_kwh,
     stunden_verbrauch_kwh,
@@ -32,13 +37,15 @@ from backend.core.tageswert_grund import (
     GRUND_RANG,
     GRUND_ZAEHLER_RUECKSPRUNG,
 )
-from backend.services.snapshot.boundary_range import BoundaryRange
+from backend.services.snapshot.boundary_range import BoundaryRange, tagesfenster_fuer
 from backend.services.snapshot.keys import (
     KUMULATIVE_COUNTER_FELDER,
     FLOAT_COUNTER_FELDER,
     PV_AGGREGAT_BASIS_FELD,
     extract_quellen_energy,
     feld_hat_zaehler,
+    innengeraet_felder,
+    zaehler_feld_kandidaten,
 )
 from backend.core.berechnungen.pv_tages_praezedenz import (
     QUELLE_AGGREGAT,
@@ -62,9 +69,13 @@ from backend.services.snapshot.plausibility import (
 )
 from backend.services.snapshot.reader import (
     MQTT_AKTIV_TAGE,
+    TAGESRESET_TOLERANZ_KWH,
+    erster_stand_im_fenster,
     get_snapshot,
+    letzter_stand_im_fenster,
     mqtt_zaehler_keys,
-    zaehler_faellt_im_fenster,
+    reihe_im_fenster,
+    tageswert_aus_reihe,
 )
 
 logger = logging.getLogger(__name__)
@@ -156,7 +167,7 @@ async def _tageswert_aus_raendern(
 
     1. **Randdifferenz negativ** — der Rücksprung liegt zwischen den Rändern und
        ist an ihnen selbst ablesbar.
-    2. **Monotonie der Zwischenstände verletzt** (`zaehler_faellt_im_fenster`) —
+    2. **Monotonie der Zwischenstände verletzt** (`tageswert_aus_reihe`) —
        ein Zwischenstand liegt über dem End- oder unter dem Startstand.
 
     Weg 2 läuft **immer**, nicht nur bei verdächtig kleinem Delta. Der Grund ist
@@ -165,19 +176,65 @@ async def _tageswert_aus_raendern(
     **positiv, plausibel und still falsch**. Weg 1 sieht davon nichts, und ein
     „nur bei d ≈ 0 nachsehen" hätte ihn ebenfalls durchgelassen.
     """
-    d = s1 - s0
-    if d < -0.01:
+    # ⛔ **Hier stand die Regel bis 10.09.2026 ein ZWEITES Mal ausgeschrieben** —
+    # mit dem Literal `-0.01`, während `reader.delta` dieselbe Schwelle als
+    # Konstante `TAGESRESET_TOLERANZ_KWH` führte. Zwei Stellen, beide mit dem
+    # Anspruch „der eine Ort", formal schon auseinander: genau die F-56-Form,
+    # vor der dieser Docstring warnt. Die Regel selbst steht jetzt als reine
+    # Funktion in `reader.tageswert_aus_reihe`; hier wird geladen und
+    # protokolliert.
+    zwischenstaende = [w for _ts, w in await reihe_im_fenster(
+        db, anlage_id, sensor_key, ts_start, ts_ende
+    )]
+    wert = tageswert_aus_reihe(s0, s1, zwischenstaende)
+    if wert is None:
         logger.info(
-            f"Zähler-Rücksprung über das Tagesfenster für anlage={anlage_id} "
-            f"key={sensor_key} ({datum}): {d:.3f} → keine Tagesaussage"
+            f"Zähler-Rücksprung im Tagesfenster für anlage={anlage_id} "
+            f"key={sensor_key} ({datum}): {s0:.3f} → {s1:.3f} über "
+            f"{len(zwischenstaende)} Zwischenstände → keine Tagesaussage"
         )
         return None
-    if await zaehler_faellt_im_fenster(
-        db, anlage_id, sensor_key, ts_start, ts_ende, s0, s1
-    ):
-        logger.info(
-            f"Zähler fällt innerhalb des Tages für anlage={anlage_id} "
-            f"key={sensor_key} ({datum}) → Tagesreset-Zähler, keine Tagesaussage"
+    return wert
+
+
+def stunden_slot_delta(
+    s0: float,
+    s1: float,
+    *,
+    sensor_key: str,
+    datum: date,
+    slot_idx: int,
+) -> Optional[float]:
+    """Die Menge **eines Stunden-Slots** aus zwei Zählerständen — die Regel selbst.
+
+    ⭐ **Warum sie eine Funktion ist** (11.09.2026, Wärme/Klima Bauschnitt 5): Sie
+    stand inline in `get_hourly_kwh_by_category`, und der Tag-Verlauf braucht
+    für die Stundenform seiner Zähler **dieselbe** Regel. Abgeschrieben wäre sie
+    die F-56-Klasse — und die Gegenprüfung hat genau diese Divergenz zwischen
+    Kachel-Stunden und Verlaufs-Stunden als Einwand gebracht.
+
+    ⚠ **Dieselbe Schwelle wie im Tagesfenster, aber eine ANDERE Frage** — und
+    deshalb bewusst eine andere Antwort. Der Tag lehnt einen zurückgesetzten
+    Zähler ab (`tageswert_aus_reihe`); der Slot über Mitternacht wertet ihn mit
+    `s1` (der Energie seit dem Reset), weil das für DIESE Stunde die richtige
+    Zahl ist. *Gleiche Formel, verschiedene Fenster, verschiedene Wahrheit* —
+    s. Docstring von `_tageswert_aus_raendern`. Geteilt wird nur die
+    **Schwelle**, seit 10.09.2026 als Konstante statt als Literal.
+
+    Returns:
+        Menge in kWh (≥ 0), oder ``None`` für einen Rücksprung, der kein
+        Tagesreset ist (protokolliert).
+    """
+    d = s1 - s0
+    if d < -TAGESRESET_TOLERANZ_KWH:
+        # Tagesreset-Zähler (HA utility_meter mit daily cycle): s0 ≈ Tagesendwert,
+        # s1 ≈ 0 nach Mitternachts-Reset. Slot wird mit s1 (Energie seit Reset)
+        # gewertet statt verworfen, sonst bliebe Slot 0 dauerhaft None und
+        # ist_unvollstaendig=True würde irreführend triggern.
+        if s1 < 0.5 and s0 > 0.5:
+            return max(0.0, s1)
+        logger.warning(
+            f"Negatives Delta bei {sensor_key} ({datum} Slot{slot_idx}): {d:.3f}"
         )
         return None
     return max(0.0, d)
@@ -383,20 +440,11 @@ async def get_hourly_kwh_by_category(
             s1 = snaps[sensor_key][curr_off]
             if s0 is None or s1 is None:
                 continue  # Kategorie unvollständig für diese Stunde
-            d = s1 - s0
-            if d < -0.01:
-                # Tagesreset-Zähler (HA utility_meter mit daily cycle): s0 ≈ Tagesendwert,
-                # s1 ≈ 0 nach Mitternachts-Reset. Slot wird mit s1 (Energie seit Reset)
-                # gewertet statt verworfen, sonst bliebe Slot 0 dauerhaft None und
-                # ist_unvollstaendig=True würde irreführend triggern.
-                if s1 < 0.5 and s0 > 0.5:
-                    d = max(0.0, s1)
-                else:
-                    logger.warning(
-                        f"Negatives Delta bei {sensor_key} ({datum} Slot{slot_idx}): {d:.3f}"
-                    )
-                    continue
-            d = max(0.0, d)
+            d = stunden_slot_delta(
+                s0, s1, sensor_key=sensor_key, datum=datum, slot_idx=slot_idx,
+            )
+            if d is None:
+                continue
             if kat == "pv":
                 # Getrennt halten statt summieren — die Wahl fällt in 3b.
                 if sensor_key == f"basis:{PV_AGGREGAT_BASIS_FELD}":
@@ -725,6 +773,9 @@ async def get_komponenten_tageskwh(
                 ist_verfuegbar=lambda feld, _id=inv_id_str, _f=felder: feld_hat_zaehler(
                     _f.get(feld), f"inv:{_id}:{feld}", quellen_energy, mqtt_keys,
                 ),
+                # K3 Regel 4 (R-1) fragt auch nach Innengerät-Kopien, und die
+                # stehen bei einer MQTT-Anlage nur in den Topics (N-328b).
+                kandidaten=zaehler_feld_kandidaten(inv_id_str, felder, mqtt_keys),
             ),
             lambda feld, _id=inv_id_str: f"inv:{_id}:{feld}",
             inv_data,
@@ -741,6 +792,30 @@ async def get_komponenten_tageskwh(
     return result
 
 
+@dataclass(frozen=True)
+class TagesRandMenge:
+    """Ein Tageswert **und** das Fenster, das ihn wirklich trägt (R-4/N-491).
+
+    ``ab_tagesbeginn``/``bis_tagesende`` sind ``True``, solange beide
+    Tagesränder standen — dann ist ``seit``/``bis`` genau das angefragte
+    Fenster und die Zahl ist der volle Tag. Steht einer der beiden nicht, rückt
+    er auf den ersten bzw. letzten Stand **im** Tag, und die Marke sagt es
+    (ADR-002/**P4**: keine Hochrechnung, aber auch kein Verschweigen).
+
+    ⭐ **Der Zwilling zu** {@link
+    backend.services.snapshot.reader.MengeSeit} **eine Zeitebene tiefer.** Der
+    Monat hat die Frage am 14.09.2026 beantwortet (N-472, „MQTT (14.–30.09.)");
+    der Tag stellte sie bis zum 15.09.2026 nicht und lieferte am ersten Tag nach
+    einer Zuordnung **gar keine** Zahl je Gerät.
+    """
+
+    wert_kwh: float
+    seit: datetime
+    bis: datetime
+    ab_tagesbeginn: bool
+    bis_tagesende: bool
+
+
 async def _tagesdetail_boundary_diff_mit_grund(
     db: AsyncSession,
     anlage,
@@ -750,7 +825,9 @@ async def _tagesdetail_boundary_diff_mit_grund(
     ts_start: datetime,
     ts_ende: datetime,
     datum: date,
-) -> tuple[Optional[float], Optional[str]]:
+    *,
+    rueckfall_tagesrand: bool = False,
+) -> tuple[Optional["TagesRandMenge"], Optional[str]]:
     """Boundary-Diff eines kumulativen kWh-Zählers über das HA-Tagesfenster.
 
     **Warum als Modul-Funktion und nicht als Closure** (#263): Sie hat zwei
@@ -759,6 +836,28 @@ async def _tagesdetail_boundary_diff_mit_grund(
     hinzuschreiben wäre die F-56-Klasse (*„eine Regel, die an zwei Stellen
     nachgebaut wird, driftet"*), und ausgerechnet an diesem Feld ist sie schon
     einmal gedriftet.
+
+    Args:
+        rueckfall_tagesrand: **R-4** (15.09.2026). Ohne den Schalter ist das
+            Ergebnis bitgleich zu vorher, nur um die Fenster-Marke ergänzt. Mit
+            ihm gilt zusätzlich: *fehlt ein Tagesrand, rückt er auf den ersten
+            bzw. letzten Stand **im** Tag* — und die Zahl sagt, ab wann bzw. bis
+            wann sie gilt.
+
+            ⛔ **Er greift ausschließlich bei einem fehlenden RAND**, nie bei
+            einem Zählerrücksprung: dessen ``None`` ist eine *Entscheidung über
+            Datenqualität* (N-341), und ein engeres Fenster machte daraus eine
+            kleinere, ebenso falsche Zahl. Die Struktur schützt davor von
+            selbst — gefragt wird nur der Rand, der wirklich fehlt; stehen
+            beide, entscheidet weiterhin allein
+            {@link _tageswert_aus_raendern}.
+
+            ⛔ **Und er ist ein Schalter, kein Default.** Der zweite Leser
+            dieser Funktion ist über ``get_komponenten_tageskwh`` der
+            **gespeicherte** Tageswert (``TagesZusammenfassung.komponenten_kwh``);
+            dort wäre eine Menge „seit 11 Uhr" ein Tageswert wie jeder andere —
+            dieselbe Klasse wie F-66 eine Zeitebene höher. Nur die **Anzeige**
+            bekommt den Rückfall, weil sie ihn beschriften kann.
     """
     s0 = await get_snapshot(
         db, anlage.id, sensor_key, sensor_id, ts_start,
@@ -768,17 +867,52 @@ async def _tagesdetail_boundary_diff_mit_grund(
         db, anlage.id, sensor_key, sensor_id, ts_ende,
         quellen_energy=quellen_energy,
     )
+    von, bis = ts_start, ts_ende
+    if rueckfall_tagesrand and (s0 is None or s1 is None):
+        if s0 is None:
+            von_neu = await erster_stand_im_fenster(
+                db, anlage.id, sensor_key, ts_start, ts_ende,
+            )
+            if von_neu is not None:
+                s0 = await get_snapshot(
+                    db, anlage.id, sensor_key, sensor_id, von_neu,
+                    quellen_energy=quellen_energy,
+                )
+                von = von_neu
+        if s1 is None:
+            bis_neu = await letzter_stand_im_fenster(
+                db, anlage.id, sensor_key, von, ts_ende,
+            )
+            # ⚠ **Echt größer, nicht „größer gleich".** Ein einziger Stand im
+            # Tag ist kein Fenster: ``_tageswert_aus_raendern(s, s)`` lieferte
+            # eine gemessene **0**, und die sähe aus wie „nichts gelaufen"
+            # (ADR-002/P4, F-42-Klasse). Gemessen am Sprengsatz S20.
+            if bis_neu is not None and bis_neu > von:
+                s1 = await get_snapshot(
+                    db, anlage.id, sensor_key, sensor_id, bis_neu,
+                    quellen_energy=quellen_energy,
+                )
+                bis = bis_neu
+    # ⛔ **Hier stand bis zum 15.09.2026 zusätzlich ``or bis <= von``.** Der
+    # Sprengsatz S20 blieb daran **still**, und die Nachschau gab ihm recht: Der
+    # Zweig ist unerreichbar — ``von`` rückt nur vor, wenn ``s0`` fehlte, und
+    # ``bis`` nur zurück, wenn ``bis_neu > von`` gilt. Eine tote Klausel, die
+    # kein Sprengsatz treffen kann, ist keine Absicherung, sondern Rauschen;
+    # die echte Kante bewacht die Zeile ``bis_neu > von`` oben.
     if s0 is None or s1 is None:
         return None, GRUND_KEINE_ZAEHLERSTAENDE
     wert = await _tageswert_aus_raendern(
-        db, anlage.id, sensor_key, s0, s1, ts_start, ts_ende, datum,
+        db, anlage.id, sensor_key, s0, s1, von, bis, datum,
     )
     # W-18: `_tageswert_aus_raendern` gibt bei einem Rücksprung bewusst `None`
     # zurück und schreibt eine Logzeile — die kein Anwender sieht. Hier bekommt
     # derselbe Zustand einen Namen, damit die Oberfläche ihn aussprechen kann.
     if wert is None:
         return None, GRUND_ZAEHLER_RUECKSPRUNG
-    return wert, None
+    return TagesRandMenge(
+        wert_kwh=wert, seit=von, bis=bis,
+        ab_tagesbeginn=von == ts_start, bis_tagesende=bis == ts_ende,
+    ), None
 
 
 async def _tagesdetail_boundary_diff(
@@ -790,6 +924,8 @@ async def _tagesdetail_boundary_diff(
     ts_start: datetime,
     ts_ende: datetime,
     datum: date,
+    *,
+    rueckfall_tagesrand: bool = False,
 ) -> Optional[float]:
     """Nur der Wert — für Aufrufer, die den Grund nicht brauchen.
 
@@ -797,11 +933,11 @@ async def _tagesdetail_boundary_diff(
     {@link _tagesdetail_boundary_diff_mit_grund}. Die Tagesreset-Behandlung
     steht weiterhin genau einmal im Baum (F-56).
     """
-    wert, _grund = await _tagesdetail_boundary_diff_mit_grund(
+    menge, _grund = await _tagesdetail_boundary_diff_mit_grund(
         db, anlage, quellen_energy, sensor_key, sensor_id,
-        ts_start, ts_ende, datum,
+        ts_start, ts_ende, datum, rueckfall_tagesrand=rueckfall_tagesrand,
     )
-    return wert
+    return menge.wert_kwh if menge is not None else None
 
 
 async def get_betriebsart_strom_tageswerte(
@@ -809,8 +945,20 @@ async def get_betriebsart_strom_tageswerte(
     anlage,
     investitionen_by_id: dict,
     datum: date,
+    *,
+    rueckwaerts: bool = False,
 ) -> dict[str, dict[str, float]]:
     """Tages-kWh der **gemessenen** Betriebsart-Zähler, je Wärmepumpe (#263).
+
+    ⛔ **``rueckwaerts`` ist keine Stilfrage (N-434, 11.09.2026).** Diese Werte
+    sind **Teilmengen** eines Bezugs, und der Bezug steht in
+    ``TagesZusammenfassung.komponenten_kwh`` — im HA-Add-on als Σ der 24
+    LTS-Slots, also im Fenster [Vortag 23:00, Heute 23:00). Im bisherigen
+    Tagesfenster [00:00, 24:00) gelesen, stand die Differenz zweier Randstunden
+    als „nicht aufgeteilt" in der Tagesaufteilung (gemessen: 1,8 von 7,0 kWh an
+    einem Gerät, das nur heizt) — oder die Aufteilung verschwand ganz. Der
+    Aufrufer entscheidet über ``tageszeile_ist_rueckwaerts`` an der Herkunft
+    DERSELBEN Tageszeile, aus der er den Bezug nimmt.
 
     **Warum je Investition und nicht als anlagenweite Σ** — anders als jedes
     andere Feld in `get_tagesdetail_kwh`: Die Regel *gemessen schlägt
@@ -839,8 +987,13 @@ async def get_betriebsart_strom_tageswerte(
     sensor_mapping = anlage.sensor_mapping or {}
     quellen_energy = extract_quellen_energy(anlage)  # C2b-Read-Through
     mqtt_keys = await mqtt_zaehler_keys(db, anlage.id)  # N-328b
-    rng = BoundaryRange.for_day_total(datum)
-    start_off, end_off = rng.boundary_offsets  # (0, 24)
+    # Dieselbe Tabelle wie `get_tagesdetail_kwh` (N-444): das Fenster eines Typs
+    # steht EINMAL im Baum. Verhalten bitgleich zur früheren lokalen Weiche —
+    # `waermepumpe` ist dort „bedingt", und dieser Aufrufer liest nur Wärmepumpen.
+    rng = tagesfenster_fuer(
+        "waermepumpe", datum, tageszeile_rueckwaerts=rueckwaerts
+    )
+    start_off, end_off = rng.boundary_offsets  # (-1, 23) bzw. (0, 24)
     ts_start = rng.boundary_at(start_off)
     ts_ende = rng.boundary_at(end_off)
 
@@ -856,9 +1009,7 @@ async def get_betriebsart_strom_tageswerte(
         # `sensor_key` steht in `mqtt_keys`, und nur dort. Wer allein über
         # `felder` iteriert, sieht ihn nie.
         praefix = f"inv:{inv_id_str}:"
-        kandidaten = set(felder) | {
-            sk[len(praefix):] for sk in mqtt_keys if sk.startswith(praefix)
-        }
+        kandidaten = zaehler_feld_kandidaten(inv_id_str, felder, mqtt_keys)
         je_inv: dict[str, float] = {}
         for feld in sorted(kandidaten):
             if not ist_betriebsart_strom_feld(feld):
@@ -866,16 +1017,91 @@ async def get_betriebsart_strom_tageswerte(
             cfg = felder.get(feld)
             if not feld_hat_zaehler(cfg, praefix + feld, quellen_energy, mqtt_keys):
                 continue
+            # R-4: derselbe Rückfall wie in `get_tagesdetail_kwh` — die
+            # Teilmengen eines Tages müssen im selben Fenster stehen wie ihr
+            # Bezug, und der bekommt ihn seit dem 15.09.2026 auch. Ohne das
+            # fiele am ersten Tag nach einer Zuordnung die ganze Aufteilung in
+            # den Rest *nicht aufgeteilt*, obwohl sie gemessen ist.
             d = await _tagesdetail_boundary_diff(
                 db, anlage, quellen_energy,
                 praefix + feld, cfg.get("sensor_id") if isinstance(cfg, dict) else None,
-                ts_start, ts_ende, datum,
+                ts_start, ts_ende, datum, rueckfall_tagesrand=True,
             )
             if d is None:
                 continue
             je_inv[feld] = d
         if je_inv:
             ergebnis[str(inv_id_str)] = je_inv
+    return ergebnis
+
+
+async def get_wp_strom_stufe_je_investition(
+    db: AsyncSession,
+    anlage,
+    investitionen_by_id: dict,
+) -> dict[str, str]:
+    """Welche **K3-Stufe** trägt der Tagesbezug je Wärmepumpe? (N-462)
+
+    ``{inv_id_str: "fein" | "gesamt"}`` — dieselbe Frage und **derselbe
+    Eingang**, mit dem ``investition_beitraege`` den Tageswert in
+    ``TagesZusammenfassung.komponenten_kwh`` gelegt hat: ``feld_hat_zaehler``
+    über HA-Mapping **und** MQTT-Keys. ⭐ Seit WK-16d ist das genau **ein**
+    Feld — ``stromverbrauch_kwh`` —, weil ein zugeordneter Gesamtzähler die
+    Menge ist (K1) und die Registry-Achsen an der Stufe nichts mehr entscheiden.
+
+    ⛔ **Warum das eine eigene Funktion ist und keine Ableitung aus dem
+    Kennzeichen.** ``funktionsfremd_abzug_kwh`` fragt *„steht der funktionsfremde
+    Anteil überhaupt im Nenner?"* (SOLL-§9-E7/Option A). Der Nenner des
+    Tagesstapels ist ``komponenten_kwh[waermepumpe_<id>]``, und ob darin die
+    feine Summe oder der Gesamtzähler steht, entscheidet K3 — nicht
+    ``getrennte_strommessung``. **Gemessen** (13.09.2026): derselbe Bezug,
+    derselbe abgeleitete Split, Tages-Arbeitszahl **3,00 mit** und **3,75 ohne**
+    gesetztes Kennzeichen — 20 % Unterschied durch einen Schalter, der in dieser
+    Lage nichts misst. Klasse **N-450**: *„denselben Layer zu rufen genügt nicht,
+    es müssen dieselben EINGÄNGE sein."*
+
+    ⚠ **Die Antwort hängt an der Zuordnung, nicht am Tag** — sie gilt für die
+    ganze Reihe und wird deshalb **einmal** vor einer Tagesschleife erhoben
+    (``waerme_verlauf``), nicht je Tag.
+    """
+    from backend.core.berechnungen.betriebsart_gemessen import (
+        betriebsart_strom_felder_belegt,
+    )
+    from backend.core.field_definitions import feine_strom_achsen, wp_strom_stufe
+
+    sensor_mapping = anlage.sensor_mapping or {}
+    quellen_energy = extract_quellen_energy(anlage)
+    mqtt_keys = await mqtt_zaehler_keys(db, anlage.id)
+
+    ergebnis: dict[str, str] = {}
+    for inv_id_str, inv, inv_data in _investitionen_mit_mapping(
+        sensor_mapping, investitionen_by_id
+    ):
+        if getattr(inv, "typ", None) != "waermepumpe":
+            continue
+        felder = inv_data.get("felder", {}) or {}
+        praefix = f"inv:{inv_id_str}:"
+
+        def _belegt(feld: str, _f=felder, _p=praefix) -> bool:
+            return feld_hat_zaehler(
+                _f.get(feld), _p + feld, quellen_energy, mqtt_keys,
+            )
+
+        # K3 Regel 4 (R-1): dieselben zwei Eingänge wie in der Beitragsschicht.
+        # Die Stufe entscheidet den Nenner-Abzug (E7/Option A) — steht dort
+        # „betriebsart", IST die Menge die Σ der Betriebsart-Zähler und der
+        # funktionsfremde Anteil steckt darin, muss also abgezogen werden.
+        ergebnis[str(inv_id_str)] = wp_strom_stufe(
+            hat_gesamtzaehler=_belegt("stromverbrauch_kwh"),
+            hat_feine_achsen=any(
+                _belegt(f) for f in feine_strom_achsen(
+                    getattr(inv, "parameter", None) or {}
+                )
+            ),
+            hat_betriebsart_zaehler=bool(betriebsart_strom_felder_belegt(
+                zaehler_feld_kandidaten(inv_id_str, felder, mqtt_keys), _belegt,
+            )),
+        )
     return ergebnis
 
 
@@ -894,6 +1120,111 @@ class TagesDetail:
     werte: dict[str, float]
     #: ``{ausgabe_key: grund}`` für Keys **ohne** Wert. Nie beides zugleich.
     grund_je_feld: dict[str, str]
+    #: ``{ausgabe_key: {inv_id: kwh}}`` — dieselben Werte **je Gerät**; ``werte``
+    #: ist ihre Summe. Bauschnitt 6: Die Tages-Kühlzahl muss ihren Zähler auf
+    #: die Geräte einschränken, die ihren Nenner tragen (R2 beidseitig) — aus
+    #: der Summe allein ist das nicht ablesbar (gemessen: 6,0 statt 3,0, wenn ein
+    #: Gerät aus dem Tages-Stapel fällt, seine Kälte aber mitgezählt wird).
+    werte_je_inv: dict[str, dict[str, float]] = dc_field(default_factory=dict)
+    #: ``{ausgabe_key: {inv_id: {feld: kwh}}}`` — die Feldwerte, die je Gerät
+    #: in ``geraetefeld_oder_innengeraete`` gingen (Gerätefeld und/oder
+    #: Innengerät-Kopien, nur Felder mit Tageswert). Bauschnitt 6b (N-437): Der
+    #: Stunden-Verlauf liest die Formen **genau dieser** Felder und löst je
+    #: Stunde mit derselben Regel auf — sonst nähme die Stunde eine andere
+    #: Quelle als der Tag (gemessen: Gerätefeld mit Rücksprung, Wert aus den
+    #: Innengeräten, Form aus dem Gerätefeld ⇒ Stunde 14 leer).
+    felder_je_inv: dict[str, dict[str, dict[str, float]]] = dc_field(default_factory=dict)
+    #: **Ab wann / bis wann die Zahlen wirklich gemessen sind** (R-4, N-491) —
+    #: der früheste und der späteste Rand über alle Felder, die den Tag **nicht**
+    #: von 0 bis 24 Uhr abdecken. ``None``, solange jedes gelesene Feld beide
+    #: Tagesränder hatte (der Regelfall; dann gibt es nichts auszuweisen).
+    #:
+    #: ⚠ **Eine Marke für den ganzen Block, nicht je Feld.** Sie beantwortet die
+    #: Frage *„deckt diese Sicht den ganzen Tag ab?"*; je Feld beantwortet sie
+    #: dieselbe Frage n-mal und zwänge die Oberfläche zu n Fußnoten. Die
+    #: Marke ist absichtlich die **weiteste** Einschränkung (spätestes ``von``,
+    #: frühestes ``bis``) — sie warnt damit eher zu viel als zu wenig (P4).
+    abdeckung_von: Optional[datetime] = None
+    abdeckung_bis: Optional[datetime] = None
+
+
+#: **(typ, mapping-feld) → semantischer Ausgabe-Key** — die Feldmenge, die
+#: `get_tagesdetail_kwh` erhebt und die der Bereichs-Leser des Wärme/Klima-
+#: Verlaufs teilt.
+#:
+#: ⭐ **Warum sie eine Modul-Konstante ist** (10.09.2026): Sie stand als lokale
+#: Variable in `get_tagesdetail_kwh` und war damit für jeden anderen Leser
+#: unerreichbar — obwohl `core/berechnungen/waermepumpe_kennzahl.py` künftige
+#: Leser ausdrücklich hierher schickt (*„die AUSGABE-Tabelle … erweitern, damit
+#: ihn niemand neu suchen muss"*, Weg zur Tages-Kühlzahl). Der Monats-Verlauf
+#: brauchte dieselbe Menge für 28–31 Tage; eine zweite Liste hätte bedeutet,
+#: dass **Bauschnitt 6** (Kälte je Tag) an zwei Stellen gebaut werden muss.
+#:
+#: Alle Felder liegen in `KUMULATIVE_ZAEHLER_FELDER`, sind also per
+#: Boundary-Diff erhebbar. Wichtig: speicher- und emob-`ladung_netz_kwh` sind
+#: verschiedene Begriffe → getrennte Ausgabe-Keys (sonst Vermischung). Wallbox
+#: und E-Auto fließen in DENSELBEN emob-Key (Σ).
+TAGESDETAIL_AUSGABE: dict[tuple[str, str], str] = {
+    ("waermepumpe", "strom_heizen_kwh"): "wp_strom_heizen_kwh",
+    ("waermepumpe", "strom_warmwasser_kwh"): "wp_strom_warmwasser_kwh",
+    # R-4/N-482: der **Gesamt**-Stromzähler je Gerät. Er steht hier nicht, weil
+    # die Tagessicht ihn als eigene Zeile zeigte — er steht hier, damit der Tag
+    # K3 an denselben Werten entscheiden kann wie der Monat, wenn der
+    # aggregierte Tageswert (`komponenten_kwh`) für ein Gerät fehlt: ein
+    # zugeordneter, an diesem Tag **stummer** Gesamtzähler ließ bis zum
+    # 15.09.2026 die feinen Achsen nicht tragen, weil die Beitragsschicht
+    # 1-aus-n an der *Zuordnung* entscheidet.
+    ("waermepumpe", "stromverbrauch_kwh"): "wp_strom_gesamt_kwh",
+    # R-2/N-487: die gemessene **Nutzenergie Heizbetrieb**. Bis zum 15.09.2026
+    # mappte diese Tabelle von den vier Nutzenergie-Feldern nur KUEHLEN — ein
+    # Gerät, das seine Heizwärme je Betriebsart misst, zeigte sie in Monat und
+    # Jahr und im Tag nicht, und der Kasten nannte dort „Wärmemengenzähler
+    # zuordnen", obwohl er zugeordnet war. Die Weiche darüber (D1-Stufe 3,
+    # `waermepumpe_kennzahl.heizwaerme_kwh`) ist dieselbe wie im Monat; sie
+    # steht NICHT in `WAERME_AUSGABE_KEYS`, weil dort summiert wird und diese
+    # Menge die Heizwärme **ersetzt**, statt sie zu ergänzen.
+    ("waermepumpe", BETRIEBSART_NUTZENERGIE_FELD[HEIZEN]):
+        "wp_betriebsart_heizen_kwh",
+    # thermische Wärme (nur mit Wärmemengenzähler-Sensor; in der Bilanz
+    # ausgeschlossen, hier für Tages-JAZ/Wärme).
+    ("waermepumpe", "heizenergie_kwh"): "wp_heizung_kwh",
+    ("waermepumpe", "warmwasser_kwh"): "wp_warmwasser_kwh",
+    # N-391: der gemeinsame Wärmemengenzähler. Er ist der **Gesamtwert** über
+    # den beiden Achsen (D1) — deshalb steht er NICHT in `WAERME_AUSGABE_KEYS`
+    # (dort wird summiert; er würde dieselbe Wärme ein zweites Mal in die Linie
+    # legen). Der Tag löst ihn mit derselben Vorrangregel auf wie der Monat.
+    ("waermepumpe", "waerme_kwh"): "wp_waerme_kwh",
+    # Kälte (Bauschnitt 6): eine **eigene Rolle**, kein Wärme-Sonderfall —
+    # deshalb NICHT in `WAERME_AUSGABE_KEYS` (Konzept Wärme/Klima §8). Das Feld
+    # gibt es auch je Innengerät; `get_tagesdetail_kwh` und der Bereichs-Leser
+    # lösen den Suffix mit `geraetefeld_oder_innengeraete` auf.
+    ("waermepumpe", BETRIEBSART_NUTZENERGIE_FELD[KUEHLEN]): "wp_kaelte_kwh",
+    ("speicher", "ladung_netz_kwh"): "speicher_ladung_netz_kwh",
+    ("wallbox", "ladung_pv_kwh"): "emob_ladung_pv_kwh",
+    ("wallbox", "ladung_netz_kwh"): "emob_ladung_netz_kwh",
+    ("e-auto", "ladung_pv_kwh"): "emob_ladung_pv_kwh",
+    ("e-auto", "ladung_netz_kwh"): "emob_ladung_netz_kwh",
+}
+
+#: Die Wärme-Ausgabekeys — die Teilmenge, die der Verlauf als Linie zeichnet.
+WAERME_AUSGABE_KEYS: frozenset[str] = frozenset(
+    {"wp_heizung_kwh", "wp_warmwasser_kwh"}
+)
+
+#: **Ausgabe-Key → Registry-Feld** für die drei Strom-Größen einer Wärmepumpe —
+#: der Rückweg aus der Tabelle oben.
+#:
+#: ⭐ **Wozu (R-4):** ``wp_strom_aufteilung`` beantwortet K3 an **Registry**-
+#: Feldnamen, weil sie für eine Monatszeile geschrieben ist. Damit der Tag
+#: dieselbe Funktion rufen kann statt die Regel nachzubauen, braucht er genau
+#: diese Rückabbildung. Sie wird **abgeleitet** und nicht getippt: eine zweite
+#: Liste neben der Tabelle wäre die F-56-Form.
+WP_STROM_AUSGABE_ZU_FELD: dict[str, str] = {
+    ausgabe: feld
+    for (typ, feld), ausgabe in TAGESDETAIL_AUSGABE.items()
+    if typ == "waermepumpe"
+    and (feld in WP_GESAMT_STROM_FELDER or feld in FEINE_STROM_FELDER)
+}
 
 
 async def get_tagesdetail_kwh(
@@ -901,6 +1232,8 @@ async def get_tagesdetail_kwh(
     anlage,
     investitionen_by_id: dict,
     datum: date,
+    *,
+    tageszeile_rueckwaerts: bool = False,
 ) -> "TagesDetail":
     """Tages-kWh für Felder, die `get_komponenten_tageskwh` bewusst NICHT separat
     ausweist, die aber Cockpit/Tag für die Detailzeilen braucht (D1 „maximal
@@ -911,8 +1244,9 @@ async def get_tagesdetail_kwh(
       - Speicher `ladung_netz_kwh` (Arbitrage) — in der Bilanz bewusst
         ausgeschlossen (Teilmenge von `ladung_kwh`, Doppelzähl-Schutz).
 
-    Boundary-Diff über das HA-Tagesfenster `[Tag 00:00, Folgetag 00:00)`,
-    identisch zu `get_komponenten_tageskwh` (gleiche Tagesreset-Behandlung). Summe
+    Boundary-Diff **im Fenster des jeweiligen Bezugs** — je Gerätetyp aus
+    {@link tagesfenster_fuer} (SOLL §3.3/S1a, N-444), Tagesreset-Behandlung
+    identisch zu `get_komponenten_tageskwh`. Summe
     über alle aktiven Investitionen des Typs. Liefert `{feld: Σ_kwh}` nur für
     tatsächlich als Sensor gemappte Felder mit Snapshot-Daten — fehlt das
     Mapping/der Snapshot, fehlt das Feld (Aufrufer lässt es weg, kein „—"-Clutter).
@@ -927,36 +1261,39 @@ async def get_tagesdetail_kwh(
     sensor_mapping = anlage.sensor_mapping or {}
     quellen_energy = extract_quellen_energy(anlage)  # C2b-Read-Through
     mqtt_keys = await mqtt_zaehler_keys(db, anlage.id)  # N-328b
-    rng = BoundaryRange.for_day_total(datum)
-    start_off, end_off = rng.boundary_offsets  # (0, 24)
-    ts_start = rng.boundary_at(start_off)
-    ts_ende = rng.boundary_at(end_off)
-
+    # ⛔ **Jeder Typ liest im Fenster SEINES Bezugs (N-435 · N-444, SOLL §3.3/S1a).**
+    # Ein Tagesdetail ist eine Teilmenge, ein Anteil oder ein Quotient — Zähler
+    # und Bezug müssen denselben Zeitraum abdecken, sonst ist die Zahl eine
+    # Rechnung über zwei Tage. Welches Fenster ein Typ trägt, steht **einmal** in
+    # `boundary_range.TAGESFENSTER_JE_TYP`; hier wird es nur je Investition
+    # abgefragt (keine zusätzliche DB-Abfrage — weiterhin zwei Randstände je Feld).
+    #
+    # ⚠ **Es ist NICHT „alle rückwärts".** Die Wärmepumpe bleibt bedingt: ihr
+    # Bezug `komponenten_kwh` ist im HA-Add-on Σ der LTS-Slots [Vortag 23:00,
+    # 23:00), im Snapshot-Pfad [00:00, 24:00) — über das falsche Fenster gelesen
+    # war die Arbeitszahl um die Differenz zweier Randstunden verfälscht
+    # (gemessen: 2,23 statt 4,04 an einer Wärmepumpe, die jede Stunde 3,0 macht).
+    # Speicher, Wallbox und E-Auto hängen dagegen an den **Stundenzeilen**, und
+    # die liegen seit N-382 unbedingt rückwärts — dort ist der Versatz in JEDER
+    # Installation da.
+    #
+    # ⭐ **Hier stand bis N-444: „Speicher- und E-Mob-Felder behalten [0, 24) …
+    # Verdacht V-4, aber nicht gemessen".** Gemessen ist er seit dem 12.09.2026
+    # (Demo-DB, 187 Tage): an 18 von 182 Tagen weicht die Speicher-Ladung
+    # zwischen den Fenstern um mehr als 5 % ab, am 25.11.2025 um +131,9 %
+    # (1,11 gegen 2,58 kWh). Die Netzladung konnte dadurch größer sein als ihr
+    # eigener Bezug — im Client still auf 100 % gekappt.
     async def _diff(
-        sensor_key: str, sensor_id: Optional[str],
-    ) -> tuple[Optional[float], Optional[str]]:
+        sensor_key: str, sensor_id: Optional[str], *, rng: BoundaryRange,
+    ) -> tuple[Optional["TagesRandMenge"], Optional[str]]:
+        start_off, end_off = rng.boundary_offsets
         return await _tagesdetail_boundary_diff_mit_grund(
             db, anlage, quellen_energy, sensor_key, sensor_id,
-            ts_start, ts_ende, datum,
+            rng.boundary_at(start_off), rng.boundary_at(end_off),
+            datum, rueckfall_tagesrand=True,
         )
 
-    # (typ, mapping-feld) → semantischer Ausgabe-Key. Alle Felder sind in
-    # KUMULATIVE_ZAEHLER_FELDER, also per Boundary-Diff erhebbar. Wichtig: speicher-
-    # und emob-`ladung_netz_kwh` sind verschiedene Begriffe → getrennte Ausgabe-Keys
-    # (sonst Vermischung). Wallbox + E-Auto fließen in DENSELBEN emob-Key (Σ).
-    AUSGABE = {
-        ("waermepumpe", "strom_heizen_kwh"): "wp_strom_heizen_kwh",
-        ("waermepumpe", "strom_warmwasser_kwh"): "wp_strom_warmwasser_kwh",
-        # thermische Wärme (nur mit Wärmemengenzähler-Sensor; in der Bilanz
-        # ausgeschlossen, hier für Tages-JAZ/Wärme).
-        ("waermepumpe", "heizenergie_kwh"): "wp_heizung_kwh",
-        ("waermepumpe", "warmwasser_kwh"): "wp_warmwasser_kwh",
-        ("speicher", "ladung_netz_kwh"): "speicher_ladung_netz_kwh",
-        ("wallbox", "ladung_pv_kwh"): "emob_ladung_pv_kwh",
-        ("wallbox", "ladung_netz_kwh"): "emob_ladung_netz_kwh",
-        ("e-auto", "ladung_pv_kwh"): "emob_ladung_pv_kwh",
-        ("e-auto", "ladung_netz_kwh"): "emob_ladung_netz_kwh",
-    }
+    AUSGABE = TAGESDETAIL_AUSGABE
     summen: dict[str, float] = {}
     # W-18: Warum ein Ausgabe-Key FEHLT — je Key der Zustand, der ihn verhindert
     # hat. Er entsteht in **derselben** Schleife wie der Wert; eine zweite
@@ -975,6 +1312,10 @@ async def get_tagesdetail_kwh(
         if vorher is None or GRUND_RANG[grund] > GRUND_RANG[vorher]:
             grund_kandidat[out_key] = grund
 
+    je_inv: dict[str, dict[str, float]] = {}
+    felder_je: dict[str, dict[str, dict[str, float]]] = {}
+    abdeckung_von: Optional[datetime] = None
+    abdeckung_bis: Optional[datetime] = None
     for inv_id_str, inv, inv_data in _investitionen_mit_mapping(
         sensor_mapping, investitionen_by_id
     ):
@@ -983,34 +1324,72 @@ async def get_tagesdetail_kwh(
         # (spiegelt investition_beitraege/Live-Pfad).
         if typ == "e-auto" and getattr(inv, "parent_investition_id", None) is not None:
             continue
+        # Das Fenster hängt am Bezug DIESES Typs, nicht am Aufrufweg (S1a).
+        rng_typ = tagesfenster_fuer(
+            typ, datum, tageszeile_rueckwaerts=tageszeile_rueckwaerts
+        )
         felder = inv_data.get("felder", {}) or {}
+        kandidaten = zaehler_feld_kandidaten(inv_id_str, felder, mqtt_keys)
         for (t, feld), out_key in AUSGABE.items():
             if t != typ:
                 continue
-            cfg = felder.get(feld)
-            sensor_key = f"inv:{inv_id_str}:{feld}"
-            # ⛔ N-328b: Hier entschied bis 2026-08-27 `strategie == "sensor"`,
-            # ob das Feld überhaupt erhoben wird — und wer per MQTT misst, bekam
-            # von W-18 den Grund „Kein Zähler zugeordnet" zu lesen, obwohl seine
-            # Zählerstände in der Datenbank standen. Der Grund war damit nicht
-            # nur nutzlos, sondern **falsch**: Er riet zu einer Zuordnung, die
-            # es gar nicht braucht.
-            if not feld_hat_zaehler(cfg, sensor_key, quellen_energy, mqtt_keys):
-                _merke_grund(out_key, GRUND_NICHT_ZUGEORDNET)
-                continue
-            d, grund = await _diff(
-                sensor_key, cfg.get("sensor_id") if isinstance(cfg, dict) else None,
-            )
+            # ⭐ Bauschnitt 6: Gerätefeld UND seine Innengerät-Kopien (Suffix
+            # `-<id>`). Bis dahin las diese Schleife allein den exakten Key — ein
+            # Multisplit mit Kälte je Innengerät bekam deshalb keine Zahl und den
+            # Grund „nicht zugeordnet", obwohl beide Zähler zugeordnet waren
+            # (gemessen 11.09.2026). Für Felder ohne Innengerät-Kopien ist die
+            # Liste leer und die Schleife bitgleich zu vorher.
+            werte_geraet: dict[str, float] = {}
+            for k in (feld, *innengeraet_felder(feld, kandidaten)):
+                cfg = felder.get(k)
+                sensor_key = f"inv:{inv_id_str}:{k}"
+                # ⛔ N-328b: Hier entschied bis 2026-08-27 `strategie == "sensor"`,
+                # ob das Feld überhaupt erhoben wird — und wer per MQTT misst,
+                # bekam von W-18 den Grund „Kein Zähler zugeordnet" zu lesen,
+                # obwohl seine Zählerstände in der Datenbank standen. Der Grund
+                # war damit nicht nur nutzlos, sondern **falsch**: Er riet zu
+                # einer Zuordnung, die es gar nicht braucht.
+                if not feld_hat_zaehler(cfg, sensor_key, quellen_energy, mqtt_keys):
+                    _merke_grund(out_key, GRUND_NICHT_ZUGEORDNET)
+                    continue
+                menge, grund = await _diff(
+                    sensor_key, cfg.get("sensor_id") if isinstance(cfg, dict) else None,
+                    rng=rng_typ,
+                )
+                if menge is None:
+                    _merke_grund(out_key, grund or GRUND_KEINE_ZAEHLERSTAENDE)
+                    continue
+                werte_geraet[k] = menge.wert_kwh
+                # R-4: die weiteste Einschränkung über alle gelesenen Felder.
+                if not menge.ab_tagesbeginn:
+                    abdeckung_von = (
+                        menge.seit if abdeckung_von is None
+                        else max(abdeckung_von, menge.seit)
+                    )
+                if not menge.bis_tagesende:
+                    abdeckung_bis = (
+                        menge.bis if abdeckung_bis is None
+                        else min(abdeckung_bis, menge.bis)
+                    )
+            # Die EINE Regel für Gerät vs. Innengeräte — dieselbe, mit der der
+            # Monat und der Nenner (Zweig 1, `modus_strom_zeile`) auflösen.
+            d = geraetefeld_oder_innengeraete(werte_geraet, feld)
             if d is None:
-                _merke_grund(out_key, grund or GRUND_KEINE_ZAEHLERSTAENDE)
                 continue
             summen[out_key] = summen.get(out_key, 0.0) + d
+            geraete = je_inv.setdefault(out_key, {})
+            geraete[inv_id_str] = geraete.get(inv_id_str, 0.0) + d
+            felder_je.setdefault(out_key, {}).setdefault(inv_id_str, {}).update(werte_geraet)
 
     return TagesDetail(
         werte=summen,
         # Ein Key mit Wert braucht keine Erklärung — und ein Grund neben einer
         # vorhandenen Zahl wäre ein Widerspruch auf der Fläche.
         grund_je_feld={k: g for k, g in grund_kandidat.items() if k not in summen},
+        werte_je_inv=je_inv,
+        felder_je_inv=felder_je,
+        abdeckung_von=abdeckung_von,
+        abdeckung_bis=abdeckung_bis,
     )
 
 

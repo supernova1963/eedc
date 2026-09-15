@@ -191,3 +191,164 @@ async def wirksamer_arbeitspreis_cent(
     if cache is not None:
         cache[schluessel] = preis
     return preis
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Die vollständige Auflösung des Monats-Netzbezugspreises (#412, 11.09.2026)
+# ─────────────────────────────────────────────────────────────────────────────
+
+#: Woher der Preis eines Monats stammt — vier disjunkte Fälle, die Kaskade
+#: nimmt immer genau einen.
+#:
+#: ⭐ **Warum die Herkunft mitgeliefert wird und nicht nur die Zahl** (P4: *die
+#: Antwort sagt, was sie ist*): Bis 11.09.2026 lieferte Cockpit → Monat zwei
+#: Felder — den gepflegten Ø und „den verwendeten Tarif" — und der Client bildete
+#: daraus `durchschnitt ?? tarif`. Ein **zeitgewichteter** Preis (HT/NT) war
+#: darin von einem reinen Stammpreis nicht zu unterscheiden; die Formel-Zeile
+#: der Kachel nannte beide „Arbeitspreis aus dem Strompreis-Tarif". Mit einem
+#: dritten Fall (gemessen) wäre aus der Halbwahrheit eine ganze geworden.
+PREIS_HERKUNFT_GEPFLEGT = "gepflegt"
+PREIS_HERKUNFT_GEMESSEN = "gemessen"
+PREIS_HERKUNFT_ZEITFENSTER = "zeitfenster"
+PREIS_HERKUNFT_STAMM = "stamm"
+
+
+@dataclass(frozen=True)
+class MonatsPreis:
+    """Der Preis eines Monats **mit** seiner Herkunft."""
+
+    cent: float
+    herkunft: str
+    #: Anteil der Monatsstunden mit Preisdaten (0..1) — **nur** bei
+    #: ``gemessen``, sonst ``None``. ⚠ Herkunft und Güte sind zwei
+    #: verschiedene Dinge: Ein Ø aus 40 % der Stunden hat dieselbe Herkunft
+    #: wie einer aus 98 %, aber nicht dieselbe Belastbarkeit.
+    abdeckung: Optional[float] = None
+
+    @property
+    def ist_gemessen(self) -> bool:
+        return self.herkunft == PREIS_HERKUNFT_GEMESSEN
+
+
+async def aufgeloester_monatspreis(
+    db: AsyncSession,
+    anlage_id: int,
+    jahr: int,
+    monat: int,
+    monatsdaten,
+    tarif,
+    *,
+    stammpreis_override: Optional[float] = None,
+    cache: Optional[dict] = None,
+) -> MonatsPreis:
+    """Der Netzbezugspreis, mit dem dieser Monat zu rechnen ist — **die ganze Kaskade**.
+
+    **Die Reihenfolge und ihre Begründung:**
+
+    1. **gepflegt** — ``Monatsdaten.netzbezug_durchschnittspreis_cent``. Er kommt
+       aus der **Abrechnung** und schlägt jede Messung: eedc misst, was durch den
+       Zähler ging, der Versorger stellt in Rechnung, was er berechnet.
+    2. **gemessen** — der verbrauchsgewichtete Ø der mitgeschriebenen
+       Stundenpreise. ⭐ **Neu seit #412** (OB73-gif): Bis dahin endete die
+       Kaskade hier und fiel auf den Stammpreis. Wer einen dynamischen Tarif
+       hat, sah deshalb in *Cockpit → Tag* und im **laufenden** Monat den festen
+       Tarifpreis — obwohl eedc die echten Stundenpreise längst mitschrieb und
+       im Monatsabschluss sogar daraus einen Vorschlag rechnete. Die Zahl war
+       nicht falsch gerechnet, aber sie war die schlechtere von zwei
+       verfügbaren.
+    3. **zeitfenster** — bei HT/NT der über den gemessenen Netzbezug gewichtete
+       Tarifpreis (N-267).
+    4. **stamm** — die Tarifspalte.
+
+    ⚠ **Stufe 2 kommt VOR Stufe 3, und das ist eine Aussage:** Der gemessene
+    Endpreis ist der **bezahlte** Preis; ein aus Tarif-Zeitfenstern abgeleiteter
+    ist eine Rechnung über den Tarif. Wo beides vorliegt — ein Anwender mit
+    HT/NT-Fenstern **und** zugeordnetem Preissensor, vom Datenmodell nicht
+    ausgeschlossen —, gewinnt die Messung.
+
+    ⛔ **Keine Mindestabdeckung, und das ist gemessen statt vermutet.** Der
+    erste Entwurf sah eine vor. Sie hätte genau den Fall ausgeschlossen, für den
+    sie gedacht war: ``StrompreisAggregat.abdeckung`` misst gegen den **vollen**
+    Monat (``sollstunden = tage_im_monat * 24``), am 11. eines 30-Tage-Monats
+    sind also höchstens 36 % erreichbar — jede Schwelle ab 50 % hätte den
+    laufenden Monat bis nach Monatsmitte auf den Stammpreis zurückgeworfen.
+    Stattdessen wird die Abdeckung **mitgeliefert** statt den Wert zu ersetzen;
+    das ist die P4-Linie (*„der Wert wird nicht ersetzt, nur beschriftet"*) und
+    dieselbe Wahl, die ``live_dashboard._monats_durchschnitt_cent`` trifft:
+    „den Monat, soweit er da ist".
+
+    Args:
+        stammpreis_override: Stufe 4 mit einem **anderen** Stammpreis als der
+            Tarifspalte — für die **Komponenten**-Tarife (Wallbox, Wärmepumpe).
+            Ihre eigene Kaskade (Komponente → allgemein → Default) löst
+            ``resolve_strompreis_for_komponente`` auf; was sie liefert, ist für
+            diese Funktion der Stammpreis. ⚠ Die Stufen 1 und 2 bleiben davon
+            unberührt und schlagen ihn — genau so, wie
+            ``wallbox_preis_effektiv_cent`` es in den Monats-Fakten tut: *„Der
+            Flex-Ø gilt für den ganzen Zähler — auch für die Wallbox."*
+        cache: optionales ``{(jahr, monat): MonatsPreis}`` je Anfrage — Cockpit →
+            Jahr fragt sonst denselben Monat mehrfach. ⛔ **Nur setzen, wo der
+            Stammpreis über die Monate derselbe ist** — mit
+            ``stammpreis_override`` je Komponente braucht jede Verwendung ihren
+            eigenen Cache.
+
+    Returns:
+        ``MonatsPreis`` — Zahl **und** Herkunft, nie nur die Zahl.
+    """
+    schluessel = (jahr, monat)
+    if cache is not None and schluessel in cache:
+        return cache[schluessel]
+
+    ergebnis = await _aufgeloester_monatspreis_ungecacht(
+        db, anlage_id, jahr, monat, monatsdaten, tarif, stammpreis_override,
+    )
+    if cache is not None:
+        cache[schluessel] = ergebnis
+    return ergebnis
+
+
+async def _aufgeloester_monatspreis_ungecacht(
+    db: AsyncSession, anlage_id: int, jahr: int, monat: int, monatsdaten, tarif,
+    stammpreis_override: Optional[float] = None,
+) -> MonatsPreis:
+    # 1 — gepflegt. ⚠ `is not None`, nicht truthy: ein Monats-Ø von 0,0 ct ist
+    # bei dynamischem Tarif real (viele Negativpreis-Stunden) und wäre als
+    # falsy stillschweigend durchgefallen — die 0-Werte-Falle.
+    gepflegt = getattr(monatsdaten, "netzbezug_durchschnittspreis_cent", None)
+    if gepflegt is not None:
+        return MonatsPreis(cent=gepflegt, herkunft=PREIS_HERKUNFT_GEPFLEGT)
+
+    # ⚠ **Alle Tarif-Attribute VOR dem ersten Datenbank-Roundtrip lesen.** Ein
+    # ORM-Objekt kann danach abgelaufen sein, und ein Nachladen im falschen
+    # Kontext endet in `MissingGreenlet` statt in einem Wert. Beim Bau genau so
+    # aufgetreten — die Reihenfolge ist hier kein Stil, sondern Funktion.
+    stammpreis = stammpreis_override
+    if stammpreis is None:
+        stammpreis = (
+            tarif.netzbezug_arbeitspreis_cent_kwh
+            if tarif is not None and tarif.netzbezug_arbeitspreis_cent_kwh is not None
+            else None
+        )
+    tarif_hat_zeitfenster = tarif is not None and hat_zeitfenster(tarif)
+
+    # 2 — gemessen.
+    aggregat = await berechne_monats_durchschnittspreis(anlage_id, jahr, monat, db)
+    if aggregat is not None and aggregat.gewichtet_cent is not None:
+        return MonatsPreis(
+            cent=aggregat.gewichtet_cent,
+            herkunft=PREIS_HERKUNFT_GEMESSEN,
+            abdeckung=round(aggregat.abdeckung, 3),
+        )
+
+    if stammpreis is None:
+        from backend.core.wirtschaftlichkeit_defaults import NETZBEZUG_DEFAULT_CENT
+        return MonatsPreis(cent=NETZBEZUG_DEFAULT_CENT, herkunft=PREIS_HERKUNFT_STAMM)
+
+    # 3 — Zeitfenster (HT/NT).
+    if tarif_hat_zeitfenster:
+        gewichtet = await wirksamer_arbeitspreis_cent(db, anlage_id, jahr, monat, tarif)
+        if gewichtet != stammpreis:
+            return MonatsPreis(cent=gewichtet, herkunft=PREIS_HERKUNFT_ZEITFENSTER)
+
+    # 4 — Stammpreis.
+    return MonatsPreis(cent=stammpreis, herkunft=PREIS_HERKUNFT_STAMM)

@@ -22,9 +22,15 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Any, Callable, Iterable, Optional
 
+from backend.core.berechnungen.betriebsart_gemessen import (
+    MODI_OHNE_BEWERTETE_NUTZENERGIE,
+    betriebsart_strom_felder_belegt,
+)
 from backend.core.field_definitions import (
     SONSTIGES_KATEGORIE_UNGEPFLEGT,
+    feine_strom_achsen,
     sonstiges_feld_reihenfolge,
+    wp_strom_stufe,
 )
 from backend.services.snapshot.keys import BASIS_ZAEHLER_FELDER, _categorize_counter
 
@@ -73,41 +79,6 @@ def _is_sensor_mapping(cfg) -> bool:
         and cfg.get("strategie") == "sensor"
         and bool(cfg.get("sensor_id"))
     )
-
-
-#: Die zwei **Summanden**-Achsen des WP-Stroms (Gegenstück zu den Betriebsart-
-#: Teilmengen). Nur die Namen — welche davon ein konkretes Gerät hat, beantwortet
-#: `_feine_strom_achsen` an der Registry.
-_FEINE_STROM_FELDER: tuple[str, ...] = ("strom_heizen_kwh", "strom_warmwasser_kwh")
-
-
-def _feine_strom_achsen(parameter: dict) -> list[str]:
-    """Welche feinen Strom-Achsen **hat** dieses Gerät? (K3, SOLL §3.2)
-
-    Die Frage ist eine Eigenschaft des **Geräts**, nicht der Erfassung: Eine
-    Luft-Wasser-Wärmepumpe hat Heizen und Warmwasser, eine Split-Klimaanlage
-    nur Heizen (kein Warmwasserkreis — `strom_warmwasser_kwh` trägt
-    `!luft_luft`, N-304/B5).
-
-    ⚠ **Deshalb wird die Registry mit gesetztem Kennzeichen befragt**, auch wenn
-    es an der Investition aus ist: `getrennte_strommessung` sagt, ob die Achsen
-    *getrennt erfasst werden*, nicht ob es sie *gibt*. Ohne diese Normalisierung
-    meldete ein Gerät mit ausgeschaltetem Kennzeichen „gar keine Achsen" — und
-    K3 könnte in dieser Richtung (Kennzeichen aus, feiner Zähler zugeordnet)
-    nicht greifen.
-
-    ⭐ **Registry statt Bauart-Abfrage** (R1): `ist_luft_luft_waermepumpe` hier
-    aufzurufen wäre die zweite Stelle, die dieselbe Frage beantwortet — genau
-    die Drift-Klasse, an der F-56 entstanden ist.
-    """
-    from backend.core.field_definitions import get_felder_fuer_investition
-
-    angeboten = {
-        f["feld"] for f in get_felder_fuer_investition(
-            "waermepumpe", {**parameter, "getrennte_strommessung": True},
-        )
-    }
-    return [f for f in _FEINE_STROM_FELDER if f in angeboten]
 
 
 def pv_je_investition_belegt_in_map(
@@ -281,6 +252,7 @@ def investition_beitraege(
     *,
     ist_verfuegbar: Optional[Callable[[str], bool]] = None,
     wallbox_deckt_ladung: bool = False,
+    kandidaten: Optional[Iterable[str]] = None,
 ) -> list[KomponentenBeitrag]:
     """Per-Typ-Beiträge einer Investition zur `komponenten_kwh`.
 
@@ -298,6 +270,13 @@ def investition_beitraege(
             Pfad (#317) reicht „MQTT-Key vorhanden" durch, damit Whitelist +
             Either-Or + parent-Skip quellen-agnostisch über DIESELBE Funktion
             laufen statt über rohe `_categorize_counter`-Aufrufe.
+        kandidaten: alle Feldnamen, die dieses Gerät tragen **kann** — inklusive
+            der Innengerät-Kopien mit `-<id>`-Suffix
+            (`snapshot/keys.zaehler_feld_kandidaten`). Nur K3 Regel 4 (R-1)
+            braucht sie: ein Betriebsart-Zähler kann je Innengerät sitzen, und
+            dann gibt es sein Gerätefeld gar nicht. Default (None) = die
+            Schlüssel des Mapping-Dicts — bitgleich zu vor dem 15.09.2026, weil
+            die übrigen Zweige nur exakte Feldnamen kennen.
 
     Returns:
         Liste der Beiträge. Leer wenn keinem der zulässigen Felder ein
@@ -377,47 +356,87 @@ def investition_beitraege(
         #
         # **Die Regel entscheidet jetzt am Zähler, nicht am Kennzeichen:**
         #
-        #   1. Die feine Aufteilung ist **vollständig** (jede Achse, die das
-        #      Gerät überhaupt hat, ist belegt) ⇒ sie IST die Gesamtmenge, der
-        #      Gesamtzähler wird verworfen. Sonst zählte derselbe Strom
-        #      doppelt — alle Beiträge laufen auf EINEN Ziel-Key.
-        #   2. Sonst gilt K1: *„Die Gesamtmenge ist immer die Wahrheit."*
-        #   3. Sonst trägt, was gemessen ist — eine unvollständige Aufteilung
-        #      ohne Gesamtzähler ist die einzige Messung, die es gibt.
-        #      Sie zu verwerfen hieße den Block verschwinden zu lassen, und
-        #      das ist genau der Befund, der hier repariert wird.
+        #   1. Ein zugeordneter **Gesamtzähler ist die Menge** (K1: *„Die
+        #      Gesamtmenge ist immer die Wahrheit."*). Die feinen Achsen sind
+        #      die Aufteilung darunter und laufen deshalb NICHT zusätzlich in
+        #      denselben Ziel-Key — das wäre die Doppelzählung.
+        #   2. Sonst trägt, was gemessen ist — eine (auch unvollständige)
+        #      Aufteilung ohne Gesamtzähler ist die einzige Messung, die es
+        #      gibt. Sie zu verwerfen hieße den Block verschwinden zu lassen,
+        #      und das ist genau der Befund, der hier repariert wurde.
         #
-        # ⚠ **Warum die Achsen aus der Registry kommen und nicht aus der
-        # Bauart:** Eine Split-Klimaanlage hat keinen Warmwasserkreis
-        # (`strom_warmwasser_kwh` trägt `!luft_luft`, N-304/B5). Ihre feine
-        # Aufteilung kann deshalb **nie** vollständig sein — sie fällt auf
-        # Stufe 2, und das ist richtig: `strom_heizen_kwh` ist dort kein
-        # Summand einer zweiteiligen Achse, sondern ein Ausschnitt neben
-        # Kühlen, Lüften und Standby. Die Frage *„welche Achsen hat dieses
-        # Gerät?"* wird an genau einer Stelle beantwortet (R1) — hier sie ein
-        # zweites Mal zu beantworten wäre die F-56-Klasse.
+        # ⛔ **Hier stand bis zum 14.09.2026 eine erste Stufe davor: „Die feine
+        # Aufteilung ist vollständig ⇒ sie IST die Gesamtmenge, der
+        # Gesamtzähler wird verworfen."** Sie ist mit WK-16d entfallen, weil sie
+        # eine Messung verwarf: Was der Gesamtzähler **mehr** misst als die
+        # beiden Achsen (Standby, Steuerung, Umwälzpumpen), fiel damit aus Tag,
+        # Monat, Kosten und CO₂ heraus. Doppelzählung entsteht beim **Addieren**,
+        # nicht beim **Ersetzen** — und ersetzt wird hier, genau wie vorher.
         #
         # ⚠ **Die Aufteilung geht nicht verloren, sie steht nur woanders:**
         # `aggregator.get_tagesdetail_kwh` trägt `strom_heizen_kwh`/
         # `strom_warmwasser_kwh` als eigene Ausgabe-Keys. „Aufteilung daneben,
         # nie an ihrer Stelle" (K1) heißt Detail-Pfad, nicht Bilanz-Pfad.
+        # ⭐ **Die Stufenregel steht seit dem 13.09.2026 in `field_definitions`**
+        # ({@link wp_strom_stufe}) und nicht mehr hier: Der Monatspfad
+        # (`get_wp_strom_kwh`) stellt dieselbe Frage, und zwei Fassungen
+        # nebeneinander wären die F-56-Klasse. Was hier bleibt, sind die
+        # **Eingänge** dieser Ebene — der Tag fragt „ist ein Zähler zugeordnet?",
+        # der Monat „steht ein Wert in der Zeile?".
+        #
+        # ⚠ **Deshalb bleiben `gesamt_kwh`/`feine_summe_kwh` hier leer.** Auf
+        # der Zuordnungs-Ebene gibt es keine Werte, also auch keinen
+        # Widerspruch „Gesamtzähler kleiner als die Summe" zu prüfen — den
+        # meldet der Daten-Checker an der Monatszeile, wo die Zahlen stehen.
+        #
+        # ⭐ **K3 Regel 4 seit dem 15.09.2026 (R-1, N-486):** Ist weder ein
+        # Gesamtzähler noch eine feine Achse zugeordnet, tragen die **gemessenen
+        # Betriebsart-Zähler**. Sie sind sonst eine Teilmenge von
+        # `stromverbrauch_kwh` und dürfen deshalb keinen eigenen Beitrag leisten
+        # (`_SNAPSHOT_OHNE_KOMPONENTEN_BEITRAG`) — in dieser Lage gibt es die
+        # Menge, deren Teilmenge sie wären, aber gar nicht. Ohne diesen Zweig
+        # trug ein Gerät mit nur Betriebsart-Zählern **nichts** bei: kein
+        # `waermepumpe_<id>` in der Tagesbilanz, kein Tageswert, keine Kennzahl.
         params = getattr(inv, "parameter", None) or {}
         if not isinstance(params, dict):
             params = {}
-        fein_moeglich = _feine_strom_achsen(params)
-        fein_belegt = [f for f in fein_moeglich if ist_verfuegbar(f)]
-        aufteilung_vollstaendig = (
-            bool(params.get("getrennte_strommessung"))
-            and len(fein_moeglich) >= 2
-            and len(fein_belegt) == len(fein_moeglich)
+        fein_belegt = [f for f in feine_strom_achsen(params) if ist_verfuegbar(f)]
+        betriebsart_belegt = betriebsart_strom_felder_belegt(
+            kandidaten if kandidaten is not None else felder.keys(), ist_verfuegbar,
         )
-        if aufteilung_vollstaendig:
-            for feld in fein_belegt:
-                _add(feld)
-        elif ist_verfuegbar("stromverbrauch_kwh"):
+        _stufe = wp_strom_stufe(
+            hat_gesamtzaehler=ist_verfuegbar("stromverbrauch_kwh"),
+            hat_feine_achsen=bool(fein_belegt),
+            hat_betriebsart_zaehler=bool(betriebsart_belegt),
+        )
+        if _stufe == "gesamt":
             _add("stromverbrauch_kwh")
+        elif _stufe == "betriebsart":
+            for feld in betriebsart_belegt:
+                _add(feld)
         else:
             for feld in fein_belegt:
+                _add(feld)
+            # ⭐ **W-16 am Tag (R-1-Folge, 15.09.2026).** Die **gemessenen**
+            # funktionsfremden Teilmengen (Kühlen · Lüften · Entfeuchten) stehen
+            # NEBEN den beiden Achsen, nicht darin — genau das rechnet
+            # `wp_feine_summe_kwh` an der Monatszeile seit W-16. Der Tag ließ sie
+            # weg und lieferte damit eine **kleinere** Menge als der Monat für
+            # denselben Bestand (gemessen r28/Anlage 2, 15.07.2026: `0,921`
+            # statt `5,398` kWh — 4,5 kWh gemessener Kühlstrom fielen aus
+            # Tagesbilanz, Kosten und CO₂; der Prüfstand-Seed schreibt in
+            # `komponenten_kwh` schon die 5,399).
+            #
+            # ⛔ **Heizen gehört NICHT dazu.** `betriebsart_strom_heizen_kwh`
+            # steht IN `strom_heizen_kwh`; beide zu addieren wäre die
+            # Doppelzählung von W-16b. Welche drei Betriebsarten gemeint sind,
+            # sagt `MODI_OHNE_BEWERTETE_NUTZENERGIE` — eine Aufzählung hier wäre
+            # die zweite Stelle.
+            for feld in betriebsart_strom_felder_belegt(
+                kandidaten if kandidaten is not None else felder.keys(),
+                ist_verfuegbar,
+                modi=MODI_OHNE_BEWERTETE_NUTZENERGIE,
+            ):
                 _add(feld)
 
     elif typ == "wallbox":
@@ -615,6 +634,7 @@ def investition_hourly_eintraege(
     sensor_mapping_for_inv: dict,
     *,
     ist_verfuegbar: Optional[Callable[[str], bool]] = None,
+    kandidaten: Optional[Iterable[str]] = None,
 ) -> list[HourlyEintrag]:
     """Hourly-Einträge einer Investition — Whitelist + Either-Or + parent-Skip
     aus `investition_beitraege` (Daily-SoT), gemappt auf die Energiefluss-
@@ -632,7 +652,10 @@ def investition_hourly_eintraege(
     typ = getattr(inv, "typ", None)
     parameter = getattr(inv, "parameter", None)
     out: list[HourlyEintrag] = []
-    for b in investition_beitraege(inv, sensor_mapping_for_inv, ist_verfuegbar=ist_verfuegbar):
+    for b in investition_beitraege(
+        inv, sensor_mapping_for_inv,
+        ist_verfuegbar=ist_verfuegbar, kandidaten=kandidaten,
+    ):
         kat = _categorize_counter(b.feld, typ, parameter)
         if kat:
             out.append(HourlyEintrag(feld=b.feld, kategorie=kat,
@@ -703,6 +726,10 @@ def mqtt_hourly_eintraege(
         for he in investition_hourly_eintraege(
             inv, inv_data,
             ist_verfuegbar=lambda feld, _s=felder_vorhanden: feld in _s,
+            # K3 Regel 4 (R-1): ein per MQTT gespeister Betriebsart-Zähler steht
+            # in KEINEM `felder`-Dict — seine Kandidaten sind genau die Keys,
+            # die der Broker geliefert hat (N-328b, eine Ebene weiter).
+            kandidaten=felder_vorhanden,
         ):
             out.append((f"inv:{inv_id}:{he.feld}", he.kategorie, he.fallback_gruppe))
     return out

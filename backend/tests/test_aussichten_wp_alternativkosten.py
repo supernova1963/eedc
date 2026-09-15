@@ -23,8 +23,8 @@ from backend.api.routes.aussichten import get_finanz_prognose
 from backend.models import Anlage, Investition, Monatsdaten
 from backend.models.investition import InvestitionMonatsdaten
 
-# Zwei erfasste Monate; Default-Tarif (netzbezug 30 ct), Gas-WP wirkungsgrad 0,90,
-# PV-Anteil 0,5. Pro Monat: thermisch 1000 kWh, WP-Netzstrom 300 kWh, Gaspreis 10 ct.
+# Zwei erfasste Monate; Default-Tarif (netzbezug 30 ct), Gas-WP wirkungsgrad 0,90.
+# Pro Monat: thermisch 1000 kWh, WP-Strom 300 kWh (voll belastet), Gaspreis 10 ct.
 _MONATE = [(2026, 1), (2026, 2)]
 
 
@@ -70,10 +70,14 @@ async def test_wp_alternativkosten_delta_isoliert(db):
 
     Hand-Rechnung pro Monat:
       gas_kosten        = (1000 / 0,90) * 10 / 100 = 111,111 €
-      wp_stromkosten    = 300 * (1−0,5) * 30 / 100 =  45,000 €
-      monats_ersparnis  =                            66,111 €
-    zwei Monate = 132,222 €; fixe Zusatzkosten 120 * 2/12 = 20 € → 152,22 €.
+      wp_stromkosten    = 300 * 30 / 100           =  90,000 €
+      monats_ersparnis  =                             21,111 €
+    zwei Monate = 42,222 €; fixe Zusatzkosten 120 * 2/12 = 20 € → 62,22 €.
     (Monats-Gaspreis 10 ct aus Monatsdaten überstimmt den WP-Default 12 ct.)
+
+    ⛔ Bis 2026-09-13: 152,22 € — der WP-Strom trug nur den halben Netztarif.
+    Der Abschlag ist mit SOLL Wärme/Klima S1b entfallen; geprüft wird weiterhin
+    die **Isolation** des Deltas (mit−ohne WP), nicht der PV-Anteil.
     """
     id_ohne = await _seed(db, mit_wp=False)
     id_mit = await _seed(db, mit_wp=True)
@@ -82,16 +86,22 @@ async def test_wp_alternativkosten_delta_isoliert(db):
     res_mit = await get_finanz_prognose(anlage_id=id_mit, monate=12, db=db)
 
     delta = res_mit.bisherige_ertraege_euro - res_ohne.bisherige_ertraege_euro
-    assert delta == pytest.approx(152.22, abs=0.01)
+    assert delta == pytest.approx(62.22, abs=0.01)
 
 
 async def test_wp_forecast_ersparnis_golden(db):
     """Golden-Master für den WP-PROGNOSE-Pfad (`wp_alternativ_ersparnis_euro`),
     der die Gaskosten-Teilformel inline trägt. Ohne WP ist der Wert 0 → der
     Forecast-Wert ist hier isoliert. Pinnt den IST-Stand vor der Migration auf
-    `gas_kosten_altanlage` (byte-identische Arithmetik → unverändert)."""
+    `gas_kosten_altanlage` (byte-identische Arithmetik → unverändert).
+
+    ⛔ Bis 2026-09-13 lautete der Golden-Wert 971,83 €. Mit SOLL Wärme/Klima
+    S1b trägt der ganze WP-Strom den Netztarif; die Differenz ist exakt der
+    weggefallene halbe Abschlag: Σ Saisonfaktoren = 10,7 × 300 kWh/Monat
+    = 3.210 kWh Jahresstrom, davon 50 % × 30 ct = 481,50 € → 490,33 €.
+    """
     id_mit = await _seed(db, mit_wp=True)
     res = await get_finanz_prognose(anlage_id=id_mit, monate=12, db=db)
     # 12-Monats-Horizont deckt jeden Kalendermonat genau einmal ab →
     # Saison-Summen datums-unabhängig, Golden-Wert stabil.
-    assert res.wp_alternativ_ersparnis_euro == pytest.approx(971.83, abs=0.01)
+    assert res.wp_alternativ_ersparnis_euro == pytest.approx(490.33, abs=0.01)

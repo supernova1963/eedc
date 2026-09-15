@@ -212,6 +212,57 @@ export const CHART_COLORS = {
   speicherZyklen: '#8b5cf6',     // Vollzyklen-Verlauf
   wpWarmwasser: '#3b82f6',       // WP-Warmwasser = blau (Gernot 2026-06-25 nach detLAN: „Wasser=blau" — Tester-Wunsch übersteuert die kurzzeitige rot-400-Variante). Heizung = wpWaerme (rot)
   emobV2h: '#06b6d4',            // Vehicle-to-Home-Rückspeisung
+  // ── Betriebsarten der Wärme/Klima-Geräte (Chart-Zwillinge zu {@link ROLLEN_BG}) ──
+  //
+  // ⭐ **Keine neuen Farbentscheidungen** — die Töne sind unten bei `ROLLEN_BG`
+  // samt Begründung gefallen (#263 K-2 für Kühlung, E4 für Lüften/Entfeuchten).
+  // Hier stehen nur ihre Hex-Zwillinge, weil ein Chart `fill`/`stroke` braucht
+  // und keine Tailwind-Klasse. Ohne sie hätte der Verlauf im Wärme/Klima-Block
+  // eigene Werte erfunden — genau die Drift, gegen die Regel 0a gebaut ist.
+  // `heizung` und `warmwasser` brauchen keinen Eintrag: das sind `wpWaerme`
+  // (red-500) und `wpWarmwasser` (blue-500) darüber, identisch mit `ROLLEN_BG`.
+  //
+  // ⚠ `modusKuehlen` teilt den Hexwert mit `niederschlag` (beide sky-500). Das
+  // ist hingenommen und keine Verwechslung: Wetter- und Betriebsart-Serien
+  // treffen in keinem Chart aufeinander, und der Ton der Kühlung ist gegen
+  // `blue` (Warmwasser) und `cyan` (Wallbox) bewusst gewählt worden.
+  // Die **gemessene Nutzwärme** als Linie über dem Strom-Stapel (Konzept
+  // Wärme/Klima §8). Sie braucht einen eigenen Ton und darf NICHT `wpWaerme`
+  // (rot) sein: Rot ist in dieser Fläche die **Funktion Heizen** — sowohl im
+  // Wärme- als auch im Strom-Balken (`ROLLEN_BG.heizung`). Die Linie ist aber
+  // eine Menge **über alle Funktionen** (Heizen + Warmwasser); rot hieße dort
+  // „das ist Heizung", und sie läge unlesbar auf dem gleichfarbigen Segment.
+  //
+  // ⭐ Orange ist kein neuer Ton, sondern ein **freigewordener**: es war bis
+  // zur Regel-A-Umstellung die Farbe der WP-Heizwärme (siehe `ROLLEN_BG.heizung`:
+  // „war orange"). In diesem Chart kommt keine der drei Rollen vor, die es
+  // sonst trägt (`wpCop`, `direktverbrauch`, `speicherLadung`).
+  waermeGemessen: '#f97316',        // Orange-500
+  // Die **gemessene Kälte** als eigene Linie (Konzept Wärme/Klima §8, Bauschnitt
+  // 6b). Dieselbe Begründung wie bei `waermeGemessen`: Die Linie liegt über dem
+  // Kühlen-Segment (`modusKuehlen`, sky-500) und darf nicht dessen Ton tragen —
+  // sie hieße sonst „das ist Kühlstrom". Gewählt gegen alle Nachbarn im Chart
+  // gerechnet (Plan 6b §B5): Kontrast 3,74 auf Weiß und 3,92 auf gray-800 (beide
+  // ≥ 3:1, `CHART_COLORS` hat keine Dunkel-Variante); teal-700/cyan-700 fallen
+  // dunkel unter 3:1, cyan-600 liegt zu nah am Kühlen-Segment.
+  // ⚠ Ko-Existenz, hingenommen: `text-teal-600` ist die Textfarbe „Batterie
+  // heute" in `LiveHeuteKacheln.tsx` — andere Sicht, kein Chart.
+  kaelteGemessen: '#0d9488',        // Teal-600
+  modusKuehlen: '#0ea5e9',          // = ROLLEN_BG.kuehlung (sky-500)
+  modusLueften: '#818cf8',          // = ROLLEN_BG.lueftung (indigo-400)
+  modusEntfeuchten: '#4f46e5',      // = ROLLEN_BG.entfeuchtung (indigo-600)
+  modusNichtAufgeteilt: '#9ca3af',  // = ROLLEN_BG.nicht_aufgeteilt (gray-400)
+  // ⭐ **Der ZWEITE Rest** (WK-16c): „System/Standby" ist der Zähler-Rest
+  // (Gesamtzähler − Summanden-Achsen), `modusNichtAufgeteilt` darüber der
+  // Modus-Rest (Stunden ohne Modus-Signal). Sie stehen im selben Bild
+  // nebeneinander und werden nie addiert (Konzept Wärme/Klima Kap. 3) — also
+  // zwei Rollen und nach Regel 0a zwei Farben. Beide bleiben in der
+  // Grau-Familie: Ein Rest ist keine bewertete Betriebsart, und eine eigene
+  // Hue hieße „hier passiert etwas Eigenes". Der dunklere Ton steht bewusst auf
+  // dem Zähler-Rest — er ist die Menge, die eine Anlage WIRKLICH verbraucht
+  // hat (Standby, Steuerung, Umwälzpumpen), während der Modus-Rest nur sagt,
+  // dass ein Signal fehlte.
+  systemRest: '#4b5563',            // = ROLLEN_BG.system_rest (gray-600)
 }
 
 /** Börsenpreis-Stufen (#335) — EINE Datenrolle (Strompreis), nach Preisniveau abgestuft.
@@ -442,6 +493,9 @@ export const ROLLEN_BG = {
   // E4 gilt beides nebeneinander: **gemessen** bekommen sie ihr Segment,
   // **ungemessen** bleiben sie hier.
   nicht_aufgeteilt: 'bg-gray-400',
+  // WK-16c: der **Zähler**-Rest (System/Standby) — die zweite Rest-Rolle, s.
+  // `CHART_COLORS.systemRest`. Zwei Reste, zwei Farben; addiert werden sie nie.
+  system_rest: 'bg-gray-600',
   ladung: DATENROLLE.speicherLadung.bg,
   entladung: DATENROLLE.speicherEntladung.bg,
 } as const

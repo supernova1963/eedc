@@ -477,7 +477,17 @@ export const KOMPONENTEN_ADAPTER: Record<string, KompAdapter> = {
           titel: 'Kennzahlen', kpis: [
             k('Ladung gesamt', n0(z.gesamt_ladung_kwh), 'kWh', 'blue', Battery),
             k('Entladung gesamt', n0(z.gesamt_entladung_kwh), 'kWh', 'green', Zap),
-            k('Zyklen/Monat', n1(z.zyklen_pro_monat), undefined, 'purple', Activity, { formel: 'Vollzyklen ÷ Anzahl Monate' }),
+            // A6 (K-3): Der Divisor stand auf keiner Fläche — „Anzahl Monate"
+            // war eine Division, deren zweite Zahl nirgends zu sehen war.
+            // `anzahl_monate` ist DERSELBE Wert, mit dem das Backend
+            // `zyklen_pro_monat` bildet (beide `len(monatsdaten)`,
+            // `dashboards.py:1813-1815` gegen `:1827`) — keine Client-Rechnung.
+            k('Zyklen/Monat', n1(z.zyklen_pro_monat), undefined, 'purple', Activity, {
+              formel: 'Vollzyklen ÷ Anzahl Monate',
+              berechnung: (z.vollzyklen != null && z.anzahl_monate > 0)
+                ? `${n1(z.vollzyklen)} Vollzyklen ÷ ${z.anzahl_monate} ${z.anzahl_monate === 1 ? 'Monat' : 'Monate'}`
+                : undefined,
+            }),
             k('Verlust', n0(z.gesamt_ladung_kwh - z.gesamt_entladung_kwh), 'kWh', 'gray', TrendingUp, { formel: 'Ladung − Entladung' }),
           ],
         },
@@ -532,20 +542,13 @@ export const KOMPONENTEN_ADAPTER: Record<string, KompAdapter> = {
             { label: 'Netz-Ladung', wert: z.arbitrage_kwh ?? 0, farbe: SEG.netz },
           ],
         } : undefined,
-        verlauf: md.length ? {
-          bars: [
-            { key: 'ladung', label: 'Ladung', farbe: CHART_COLORS.speicherLadung },
-            { key: 'entladung', label: 'Entladung', farbe: CHART_COLORS.speicherEntladung },
-          ],
-          rows: rowsAusMd(md, [
-            { key: 'ladung', wert: (vd) => vd.ladung_kwh },
-            { key: 'entladung', wert: (vd) => vd.entladung_kwh },
-          ]),
-        } : undefined,
-        vergleich: md.length ? {
-          label: 'Entladung', einheit: 'kWh', farbe: CHART_COLORS.speicherEntladung,
-          jahre: jahresSummen(md, (vd) => vd.entladung_kwh),
-        } : undefined,
+        // ⛔ N-448: KEIN `verlauf`/`vergleich` für diesen Typ. `KomponentenTypV4`
+        // entscheidet die Registry ZUERST (`analyse?.verlauf ? … : g.verlauf ? …`),
+        // und `komponentenAnalyse.tsx` setzt für ihn beide Schlüssel — ein Zweig
+        // hier wäre unerreichbar. Der WP-Zweig bildete zuletzt die Jahressumme
+        // WÄRME, während die sichtbare Sicht Strom bzw. Arbeitszahl zeigt: andere
+        // Größe, andere Achse, und niemand hätte es gemerkt, wenn die Weiche kippt.
+        // Die Probe dazu: `komponentenAdapter.registry-tote-zweige.test.tsx`.
         // Wirtschaftlichkeit = Ertrags-Zusammensetzung: Eigenverbrauchs-Ersparnis
         // (höhere PV-Nutzung) + Arbitrage-Gewinn (Netzladung billig → teuer), wenn vorhanden.
         // #358: Der erste Posten ist die PV-HÄLFTE (`pv_anteil_euro`), nicht die
@@ -583,26 +586,45 @@ export const KOMPONENTEN_ADAPTER: Record<string, KompAdapter> = {
       // Gernot 2026-06-22). Sie existierte bereits und trägt genau diesen Fall:
       // Wert „—", neutrale Farbe, Grund als Zweitzeile. Eine eigene Variante
       // daneben wäre die zweite Komponente für ein bestehendes Muster (Regel 0a).
+      // ⭐ A6 (N-365): `zaehler`/`nenner` sind die Zahlen, mit denen der LAYER
+      // gerechnet hat — sie kommen fertig aus der Antwort und werden hier NICHT
+      // gebildet. ⛔ Nicht, weil ein Abzug drinsteckte (je Funktion zieht der
+      // Layer bewusst nichts ab, SOLL-§9-E7), sondern weil er entscheidet, OB
+      // es eine Zahl geben darf: bei abgeleiteter Wärme oder einer
+      // Abgrenzungs-Störung stehen `gesamt_strom_heizen_kwh` und die Wärme
+      // weiter in derselben Antwort, die Arbeitszahl aber ist gesperrt. Ein
+      // hier gebauter Quotient zeigte dann eine Rechnung, die es nicht geben
+      // darf — neben einem „—" mit Grund. Dieselbe Haltung wie an der
+      // Gesamt-Arbeitszahl in `KomponentenSektionen`.
       const jazJeFunktion = (
         wert: number | null | undefined, grund: string | null | undefined,
         label: string, farbe: KomponentenColor, icon: typeof Flame, formel: string,
+        zaehler?: number | null, nenner?: number | null,
       ) => {
         if (wert != null) {
-          sek.push(k(label, formatEffizienz(wert).wert, undefined, farbe, icon, { formel }))
+          // Ohne beide Zahlen bleibt die Herleitung leer, statt eine halbe
+          // Rechnung zu zeigen — A3-Kopplung, Präzedenz `MonatBilanz`.
+          const berechnung = (zaehler != null && nenner != null)
+            ? `${n1(zaehler)} kWh ÷ ${n1(nenner)} kWh`
+            : undefined
+          sek.push(k(label, formatEffizienz(wert).wert, undefined, farbe, icon, { formel, berechnung }))
         } else if (grund) {
           // `color` wird von `unbewertet` auf 'gray' überschrieben — die
           // Farbrolle der Kennzahl gilt nur, wo es eine Zahl gibt.
           sek.push(unbewertet({ title: label, icon, color: farbe }, grund))
         }
       }
-      jazJeFunktion(z.jaz_heizen, z.jaz_heizen_grund, 'JAZ Heizen', 'orange', Flame, 'Heizwärme ÷ Strom Heizen')
-      jazJeFunktion(z.jaz_warmwasser, z.jaz_warmwasser_grund, 'JAZ Warmwasser', 'cyan', Droplet, 'Warmwasser ÷ Strom Warmwasser')
+      jazJeFunktion(z.jaz_heizen, z.jaz_heizen_grund, 'JAZ Heizen', 'orange', Flame, 'Heizwärme ÷ Strom Heizen',
+        z.jaz_heizen_zaehler_kwh, z.jaz_heizen_nenner_kwh)
+      jazJeFunktion(z.jaz_warmwasser, z.jaz_warmwasser_grund, 'JAZ Warmwasser', 'cyan', Droplet, 'Warmwasser ÷ Strom Warmwasser',
+        z.jaz_warmwasser_zaehler_kwh, z.jaz_warmwasser_nenner_kwh)
       // W-5: „JAZ Kühlen", nicht „SEER" — dieselbe Bauform, andere Größe.
       // Farbe `blue`: Die KPI-Palette kennt kein `sky` (die Rollenfarbe der
       // Kühlung in `ROLLEN_BG`), und `cyan` trägt hier schon das Warmwasser.
       // `blue` ist von beiden Nachbarn unterscheidbar — keine neue Farbe für
       // eine Achse, die es in der Palette nicht gibt.
-      jazJeFunktion(z.jaz_kuehlen, z.jaz_kuehlen_grund, 'JAZ Kühlen', 'blue', Snowflake, 'Kältemenge ÷ Strom Kühlen')
+      jazJeFunktion(z.jaz_kuehlen, z.jaz_kuehlen_grund, 'JAZ Kühlen', 'blue', Snowflake, 'Kältemenge ÷ Strom Kühlen',
+        z.jaz_kuehlen_zaehler_kwh, z.jaz_kuehlen_nenner_kwh)
       if (z.kompressor_starts_summe_erfasst != null) sek.push(k('Kompressor-Starts', n0(z.kompressor_starts_summe_erfasst), undefined, 'purple', Power, {
         subtitle: z.kompressor_starts_max_tag != null ? `Max/Tag: ${n0(z.kompressor_starts_max_tag)}` : undefined,
         berechnung: z.kompressor_starts_gesamt != null ? `Zählerstand (Lebensdauer): ${n0(z.kompressor_starts_gesamt)}` : undefined,
@@ -678,8 +700,13 @@ export const KOMPONENTEN_ADAPTER: Record<string, KompAdapter> = {
         // hatte der Balken EIN Segment „Heizung · 100 %" — an einem Gerät mit einem
         // Gesamt-Wärmemengenzähler (Lage B in N-391) ist das die Behauptung, alles
         // sei Heizung, und die kann eedc nicht wissen. Ein Balken mit einem Segment
-        // teilt nichts auf; die Menge steht in der Kachel darüber. Die Modellfrage
-        // (Gesamtfeld oder Schalter) bleibt bei N-391 offen.
+        // teilt nichts auf; die Menge steht in der Kachel darüber.
+        //
+        // ⭐ **Die Modellfrage ist seit dem 14.09.2026 entschieden** (N-391, Weg 1):
+        // Der gemeinsame Zähler bekommt ein eigenes Feld *Wärme gesamt*, keinen
+        // Schalter. Wer es pflegt, hat `gesamt_heizenergie_kwh` = 0 — dieser Zweig
+        // greift dann aus dem zweiten Grund nicht, und die Menge steht als
+        // *Wärme erzeugt* in der Kachel.
         aufteilung: (z.hat_warmwasser_achse !== false
             && (z.gesamt_heizenergie_kwh > 0 || z.gesamt_warmwasser_kwh > 0)) ? {
           titel: 'Wärme nach Zweck', segmente: [
@@ -687,31 +714,13 @@ export const KOMPONENTEN_ADAPTER: Record<string, KompAdapter> = {
             { label: 'Warmwasser', wert: z.gesamt_warmwasser_kwh, farbe: SEG.warmwasser },
           ],
         } : undefined,
-        verlauf: md.length ? {
-          bars: [
-            // B3/N-391: ohne Warmwasser-Achse ist die eine Serie die ganze Wärme (S2).
-            { key: 'heizung', label: z.hat_warmwasser_achse !== false ? 'Heizung' : 'Wärme', farbe: CHART_COLORS.wpWaerme },
-            ...(z.hat_warmwasser_achse !== false
-              ? [{ key: 'warmwasser', label: 'Warmwasser', farbe: CHART_COLORS.wpWarmwasser }]
-              : []),
-          ],
-          // ⚠ `vd` ist hier ausgeschrieben: Ein Spread im Array-Literal nimmt
-          // dem zweiten Eintrag die kontextuelle Typisierung aus `rowsAusMd`
-          // (TS7006) — ohne die Annotation wäre er implizit `any`.
-          rows: rowsAusMd(md, [
-            { key: 'heizung', wert: (vd: Record<string, number>) => vd.heizenergie_kwh },
-            ...(z.hat_warmwasser_achse !== false
-              ? [{ key: 'warmwasser', wert: (vd: Record<string, number>) => vd.warmwasser_kwh }]
-              : []),
-          ]),
-        } : undefined,
-        vergleich: md.length ? {
-          label: 'Wärme', einheit: 'kWh', farbe: CHART_COLORS.wpWaerme,
-          jahre: jahresSummen(md, (vd) => (
-            (vd.heizenergie_kwh ?? 0)
-            + (z.hat_warmwasser_achse !== false ? (vd.warmwasser_kwh ?? 0) : 0)
-          )),
-        } : undefined,
+        // ⛔ N-448: KEIN `verlauf`/`vergleich` für diesen Typ. `KomponentenTypV4`
+        // entscheidet die Registry ZUERST (`analyse?.verlauf ? … : g.verlauf ? …`),
+        // und `komponentenAnalyse.tsx` setzt für ihn beide Schlüssel — ein Zweig
+        // hier wäre unerreichbar. Der WP-Zweig bildete zuletzt die Jahressumme
+        // WÄRME, während die sichtbare Sicht Strom bzw. Arbeitszahl zeigt: andere
+        // Größe, andere Achse, und niemand hätte es gemerkt, wenn die Weiche kippt.
+        // Die Probe dazu: `komponentenAdapter.registry-tote-zweige.test.tsx`.
       }
       })
     },
@@ -753,20 +762,13 @@ export const KOMPONENTEN_ADAPTER: Record<string, KompAdapter> = {
             { label: 'Extern', wert: z.ladung_extern_kwh, farbe: SEG.extern },
           ],
         } : undefined,
-        verlauf: md.length ? {
-          bars: [
-            { key: 'pv', label: 'PV-Ladung', farbe: LADEQUELLEN_FARBEN.pv },
-            { key: 'netz', label: 'Netz-Ladung', farbe: LADEQUELLEN_FARBEN.netz },
-          ],
-          rows: rowsAusMd(md, [
-            { key: 'pv', wert: (vd) => vd.ladung_pv_kwh },
-            { key: 'netz', wert: (vd) => vd.ladung_netz_kwh },
-          ]),
-        } : undefined,
-        vergleich: md.length ? {
-          label: 'Ladung', einheit: 'kWh', farbe: CHART_COLORS.emobLadung,
-          jahre: jahresSummen(md, (vd) => (vd.ladung_pv_kwh ?? 0) + (vd.ladung_netz_kwh ?? 0)),
-        } : undefined,
+        // ⛔ N-448: KEIN `verlauf`/`vergleich` für diesen Typ. `KomponentenTypV4`
+        // entscheidet die Registry ZUERST (`analyse?.verlauf ? … : g.verlauf ? …`),
+        // und `komponentenAnalyse.tsx` setzt für ihn beide Schlüssel — ein Zweig
+        // hier wäre unerreichbar. Der WP-Zweig bildete zuletzt die Jahressumme
+        // WÄRME, während die sichtbare Sicht Strom bzw. Arbeitszahl zeigt: andere
+        // Größe, andere Achse, und niemand hätte es gemerkt, wenn die Weiche kippt.
+        // Die Probe dazu: `komponentenAdapter.registry-tote-zweige.test.tsx`.
         // ③ Sub-Komponente: V2H (Vehicle-to-Home) — nur wenn entladen wurde.
         subKomponente: (z.v2h_entladung_kwh ?? 0) > 0 ? {
           titel: 'Vehicle-to-Home (V2H)',
@@ -844,21 +846,13 @@ export const KOMPONENTEN_ADAPTER: Record<string, KompAdapter> = {
             { label: 'Einspeisung', wert: z.gesamt_einspeisung_kwh, farbe: SEG.einspeisung },
           ],
         } : undefined,
-        verlauf: md.length ? {
-          bars: [
-            { key: 'ev', label: 'Eigenverbrauch', farbe: CHART_COLORS.eigenverbrauch },
-            { key: 'einsp', label: 'Einspeisung', farbe: CHART_COLORS.einspeisung },
-          ],
-          // Einspeisung im Monat = Erzeugung − Eigenverbrauch (kein eigener Key).
-          rows: rowsAusMd(md, [
-            { key: 'ev', wert: (vd) => vd.eigenverbrauch_kwh },
-            { key: 'einsp', wert: (vd) => (vd.pv_erzeugung_kwh ?? 0) - (vd.eigenverbrauch_kwh ?? 0) },
-          ]),
-        } : undefined,
-        vergleich: md.length ? {
-          label: 'Erzeugung', einheit: 'kWh', farbe: CHART_COLORS.erzeugung,
-          jahre: jahresSummen(md, (vd) => vd.pv_erzeugung_kwh ?? 0),
-        } : undefined,
+        // ⛔ N-448: KEIN `verlauf`/`vergleich` für diesen Typ. `KomponentenTypV4`
+        // entscheidet die Registry ZUERST (`analyse?.verlauf ? … : g.verlauf ? …`),
+        // und `komponentenAnalyse.tsx` setzt für ihn beide Schlüssel — ein Zweig
+        // hier wäre unerreichbar. Der WP-Zweig bildete zuletzt die Jahressumme
+        // WÄRME, während die sichtbare Sicht Strom bzw. Arbeitszahl zeigt: andere
+        // Größe, andere Achse, und niemand hätte es gemerkt, wenn die Weiche kippt.
+        // Die Probe dazu: `komponentenAdapter.registry-tote-zweige.test.tsx`.
         // Wirtschaftlichkeit = Ertrags-Zusammensetzung: 1 Posten (Eigenverbrauchs-
         // Ersparnis); BKW-Einspeisung ist unvergütet → als Hinweis (entgangener Erlös), kein Posten.
         wirtschaftlichkeit: (z.gesamt_ersparnis_euro ?? 0) > 0 ? {

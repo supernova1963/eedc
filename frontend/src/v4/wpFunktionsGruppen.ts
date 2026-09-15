@@ -1,0 +1,154 @@
+/**
+ * Die Detail-Liste des Wärme/Klima-Blocks **je Funktion** — Bauschnitt 8
+ * (Konzept Wärme/Klima §4 ②, §5 Position 3; SOLL §4.1).
+ *
+ * Bis 11.09.2026 stand die Liste nach **Größe** geordnet: erst zwei Stromzeilen,
+ * dann drei Arbeitszahlen, die Wärme je Funktion nur im Balken darüber, die Kälte
+ * nirgends als Zahl. Wer wissen wollte, *warum* die Heizzahl so aussieht, musste
+ * die Zutaten über drei Elemente zusammensuchen.
+ *
+ * ⭐ **Jede Gruppe zeigt Zähler und Nenner ihrer eigenen Zahl.** Heizen und
+ * Warmwasser teilen durch den getrennt gemessenen Strom (F5), Kühlen durch den
+ * Betriebsart-Strom — genau die Mengen, die hier daneben stehen. Die Proben
+ * `test_bs8_funktions_gruppen.py` halten den Vertrag im Backend fest.
+ *
+ * ⛔ **Keine Überschrift ohne Menge.** Eine Überschrift behauptet, dass das Gerät
+ * diese Funktion hat. Eine Split-Klima bekäme sonst „Warmwasser", jede
+ * Heizungs-Wärmepumpe im Winter „Kühlen" (Gegenprüfung G7). Eine Funktion ohne
+ * Menge, aber mit Grund, bleibt die eine Zeile, die sie bis hierher war —
+ * unverändert im Wortlaut, weil der Name die Funktion ohnehin trägt.
+ *
+ * Reine Funktion, damit sie ohne Render prüfbar ist (Bauform `verlaufRestZeilen`).
+ */
+import type { AktuellerMonatResponse } from '../api/aktuellerMonat'
+import { GROESSE, imKasten, type GroessenName } from './waermeKlimaSicht'
+
+export type WpFunktion = 'heizen' | 'warmwasser' | 'kuehlen'
+
+export type FunktionsZeile =
+  | { art: 'strom' | 'nutzenergie'; label: string; kwh: number }
+  /** ⛔ **Ohne sichtbaren `grund`** — seit der D-Sicht (14.09.2026) trägt eine
+   *  Arbeitszahl-Zeile entweder eine Zahl oder ein „—" ohne Text. Ein
+   *  **Ausstattungs**-Grund steht im Kasten „Was noch möglich wäre".
+   *
+   *  ⭐ **Ein ZEITRAUM-Grund steht im `tooltip`** (Entscheid Fable, 14.09.2026,
+   *  Gegenlesung zu A-4): Er gehört in keinen Kasten — es gibt nichts zu tun —,
+   *  aber er soll auch nicht verschwinden. **S3 bleibt damit erfüllt: der Grund
+   *  ist da, eine Geste entfernt**, ohne dass der Block wieder mit Texten
+   *  vollläuft. */
+  | { art: 'arbeitszahl'; label: string; wert: number | null; tooltip?: string }
+
+export interface FunktionsGruppe {
+  funktion: WpFunktion
+  titel: string
+  zeilen: FunktionsZeile[]
+}
+
+export interface FunktionsGruppen {
+  gruppen: FunktionsGruppe[]
+}
+
+type Zahl = number | null | undefined
+
+interface Definition {
+  funktion: WpFunktion
+  titel: string
+  strom: [string, Zahl]
+  nutzenergie: [string, Zahl]
+  arbeitszahl: [string, Zahl, string | null | undefined]
+  /** Unter welchem Bezeichner diese Arbeitszahl im Kasten „Was noch möglich
+   *  wäre" stehen kann (D-Sicht). */
+  kasten: GroessenName
+}
+
+/** Die Namen der Mengen sind die des Formulars (S1: *Strom Heizen*, *Heizwärme*,
+ *  *Warmwasser-Wärme*); die Kennzahl behält ihren eingeführten Namen. */
+function definitionen(d: AktuellerMonatResponse): Definition[] {
+  return [
+    {
+      funktion: 'heizen', titel: 'Heizen',
+      strom: ['Strom Heizen', d.wp_strom_heizen_kwh],
+      nutzenergie: ['Heizwärme', d.wp_heizung_kwh],
+      arbeitszahl: ['Arbeitszahl · Heizen', d.wp_jaz_heizen, d.wp_jaz_heizen_grund],
+      kasten: GROESSE.heizen,
+    },
+    {
+      funktion: 'warmwasser', titel: 'Warmwasser',
+      strom: ['Strom Warmwasser', d.wp_strom_warmwasser_kwh],
+      nutzenergie: ['Warmwasser-Wärme', d.wp_warmwasser_kwh],
+      arbeitszahl: ['Arbeitszahl · Warmwasser', d.wp_jaz_warmwasser, d.wp_jaz_warmwasser_grund],
+      kasten: GROESSE.warmwasser,
+    },
+    {
+      // Kühlen: Betriebsart = Funktion, der Strom ist derselbe wie im Segment
+      // „Kühlen" des Betriebsart-Balkens.
+      funktion: 'kuehlen', titel: 'Kühlen',
+      strom: ['Strom Kühlen', d.wp_modus_strom_kuehlen_kwh],
+      nutzenergie: ['Kälte', d.wp_kaelte_kwh],
+      arbeitszahl: ['Arbeitszahl · Kühlen', d.wp_jaz_kuehlen, d.wp_jaz_kuehlen_grund],
+      kasten: GROESSE.kuehlen,
+    },
+  ]
+}
+
+export function wpFunktionsGruppen(d: AktuellerMonatResponse): FunktionsGruppen {
+  const gruppen: FunktionsGruppe[] = []
+  const moeglich = d.wp_moeglich ?? []
+  for (const def of definitionen(d)) {
+    const [azLabel, azWert, azGrund] = def.arbeitszahl
+    // ── D-Sicht (Konzept §6, 14.09.2026) ────────────────────────────────────
+    //
+    // ⛔ **Hier stand bis dahin: „Auch das gesperrte ‚—' erscheint, mit seinem
+    // Grund (S3)."** Das war richtig und trotzdem der Grund, warum dieser Block
+    // aus Strichen bestand: Ein einziger fehlender Zähler erzeugte zwei bis drei
+    // Zeilen, die alle denselben Satz trugen.
+    //
+    // Jetzt entscheidet der **Layer** über die Klasse des Grundes, und diese
+    // Liste liest nur das Ergebnis:
+    //
+    //   • Grund im Kasten (**Ausstattung**) ⇒ die Zeile entfällt; der Satz steht
+    //     einmal am Blockende, mit dem Handgriff daneben.
+    //   • Grund **nicht** im Kasten (**Zeitraum**) ⇒ „—" ohne Text, wie bei
+    //     einer Heizzahl im Juni: Es gibt nichts zu tun.
+    //
+    // ⚠ **Die Mengen-Zeilen bleiben unberührt** (K1). Gesperrt wird eine
+    // Kennzahl, nie eine Messung.
+    const azImKasten = azWert == null && imKasten(moeglich, def.kasten)
+    const az: FunktionsZeile | null = (azWert != null || (azGrund && !azImKasten))
+      ? {
+          art: 'arbeitszahl', label: azLabel, wert: azWert ?? null,
+          // D-Sicht 2: ein Zeitraum-Grund zeigt „—" ohne sichtbaren Text — und
+          // nennt sich beim Überfahren. Bei vorhandener Zahl gibt es nichts zu
+          // erklären.
+          tooltip: (azWert == null && azGrund) ? azGrund : undefined,
+        }
+      : null
+    const hatMenge = (def.strom[1] ?? 0) > 0 || (def.nutzenergie[1] ?? 0) > 0
+    if (!hatMenge) {
+      // ⛔ **Eine Zeile ohne Menge und ohne Grund-Text hat nichts zu sagen.**
+      // Bis zur D-Sicht war sie der Träger des Grundes; der steht jetzt im
+      // Kasten. Ein nacktes „Arbeitszahl · Heizen —" wäre genau die
+      // Strich-Zeile, gegen die das Paket gebaut ist.
+      continue
+    }
+    const zeilen: FunktionsZeile[] = []
+    // `!= null`: eine gemessene 0 bleibt stehen — sie sagt „getrennt erfasst,
+    // aktuell nichts", und das ist etwas anderes als „nicht erfasst".
+    for (const [label, kwh, art] of [
+      [...def.strom, 'strom'], [...def.nutzenergie, 'nutzenergie'],
+    ] as const) {
+      if (kwh != null) zeilen.push({ art, label, kwh })
+    }
+    if (az) zeilen.push(az)
+    gruppen.push({ funktion: def.funktion, titel: def.titel, zeilen })
+  }
+  return { gruppen }
+}
+
+/** E3 (b): Zeigen die Gruppen einen **getrennt gemessenen** Strom (F5), stehen im
+ *  Block zwei verschiedene Strommengen „Heizen" — die der Funktion hier und die
+ *  der Betriebsart im Balken (sie enthält den Warmwasser-Strom, IST §888). Dann
+ *  muss der Balken sagen, dass er nach Betriebsart aufteilt (S2). */
+export function zeigtStromJeFunktion(fg: FunktionsGruppen): boolean {
+  return fg.gruppen.some((g) => g.funktion !== 'kuehlen' && g.zeilen.some((z) => z.art === 'strom'))
+}

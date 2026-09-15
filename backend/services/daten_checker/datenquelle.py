@@ -1288,6 +1288,7 @@ class DatenquelleChecks:
         from backend.core.berechnungen.betriebsart_gemessen import (
             betriebsart_nutzenergie_kwh,
             betriebsart_strom_kwh,
+            modus_strom_zeile,
         )
         from backend.core.betriebsmodus import (
             BETRIEBSART_NUTZENERGIE_FELD,
@@ -1354,12 +1355,102 @@ class DatenquelleChecks:
                         return True
             return False
 
+        # ── WK-06 / SOLL-§9-E7: der Kühlanteil wird geschätzt, nicht gelesen ──
+        #
+        # ⭐ **Was der Anwender hier erfährt** (`[[feedback_eedc_rechnet_
+        # voraussetzungen_handgriff]]`): *was eedc rechnet* — es verteilt den
+        # gemessenen Gesamtstrom nach dem Betriebsmodus —, *was es voraussetzt*
+        # — dass die zwei Zähler den Kühlbetrieb **nicht** getrennt führen —,
+        # und *den einen Handgriff*, der aus der Schätzung eine Messung macht.
+        #
+        # ⛔ **Kein zweiter Turm** (N-346): Es ist ein INFO-Befund in der
+        # **bestehenden** Kategorie `KLIMA_MODUS_SENSOR`, die die Nachbarfrage
+        # („ist der Betriebsmodus zugeordnet?") schon trägt. Sie meldet für
+        # genau diese Anlagen heute „Betriebsmodus ist zugeordnet — OK"; dass
+        # daneben eine Größe geschätzt wird, sagt bisher niemand.
+        #
+        # ⚠ **Nicht auf `klimas` beschränkt, und das ist der Kern.** `klimas`
+        # verlangt eine **Kühl-Spur** (gemessener Kühlstrom, Kältemenge oder
+        # eine Zuordnung) — und genau die fehlt in dieser Lage. Eine
+        # Luft-Wasser-WP mit F5 und Betriebsmodus-Sensor stünde sonst nie in
+        # der Liste, obwohl sie der Anlass ist.
+        def _hat_kuehl_zaehler(inv_id: int) -> bool:
+            """Ist ein **Stromzähler Kühlbetrieb** zugeordnet oder gepflegt?
+
+            ⚠ Enger als {@link _hat_kuehl_spur}: Eine Kältemenge und erst recht
+            ein `leistung_kuehlen_w` sind **kein** kWh-Zähler und lösen den
+            Fall nicht auf. Wer nur sie hat, soll den Hinweis bekommen.
+            """
+            if any(
+                imd.investition_id == inv_id
+                and betriebsart_strom_kwh(imd.verbrauch_daten or {}, KUEHLEN) is not None
+                for imd in imd_alle
+            ):
+                return True
+            feld = BETRIEBSART_STROM_FELD[KUEHLEN]
+            eintrag = mapping.get(str(inv_id))
+            if isinstance(eintrag, dict):
+                for k, m in (eintrag.get("felder") or {}).items():
+                    if basis_feld_key(k) == feld and isinstance(m, dict) \
+                            and m.get("strategie") == "sensor" and m.get("sensor_id"):
+                        return True
+            praefix = f"inv_energy_{inv_id}_"
+            for feld_id, q in quellen_alle.items():
+                if isinstance(feld_id, str) and feld_id.startswith(praefix) \
+                        and basis_feld_key(feld_id[len(praefix):]) == feld:
+                    quelle = (q or {}).get("quelle") if isinstance(q, dict) else None
+                    if quelle and quelle != "keine":
+                        return True
+            return False
+
+        geschaetzter_kuehlanteil = []
+        for i in aktive:
+            if not (i.parameter or {}).get("getrennte_strommessung"):
+                continue
+            if _hat_kuehl_zaehler(i.id):
+                continue
+            # Die Aufteilung über denselben SoT, den auch die Rechnung befragt:
+            # abgeleitet (nicht gemessen), mit Modus-Abdeckung und Kühlanteil.
+            if not any(
+                imd.investition_id == i.id
+                and not (_z := modus_strom_zeile(imd.verbrauch_daten or {})).gemessen
+                and _z.abdeckung_h > 0
+                and _z.kuehlen_kwh > 0
+                for imd in imd_alle
+            ):
+                continue
+            geschaetzter_kuehlanteil.append(CheckErgebnis(
+                kategorie=kat, schwere=CheckSeverity.INFO.value,
+                meldung=(
+                    f"„{i.bezeichnung}“: Kühlanteil wird geschätzt — "
+                    f"es fehlt ein Stromzähler für den Kühlbetrieb"
+                ),
+                details=(
+                    "Deine Wärmepumpe misst Heizen und Warmwasser getrennt und "
+                    "teilt zusätzlich aus dem Betriebsmodus auf. Für den "
+                    "Kühlbetrieb gibt es aber keinen eigenen Stromzähler — eedc "
+                    "muss den Kühlanteil deshalb aus der Summe der beiden "
+                    "anderen Zähler schätzen. "
+                    "Die Mengen stimmen weiterhin: Verbrauch, Kosten und CO₂ "
+                    "rechnen mit dem vollen Strom. Nur die Aufteilung nach "
+                    "Betriebsart ist eine Verteilung und keine Messung, und "
+                    "deshalb kürzt sie die Arbeitszahl nicht. "
+                    "Ordne „Strom Kühlbetrieb“ zu, dann liest eedc ab, statt zu "
+                    "verteilen: Einstellungen → Datenquellen, beim Gerät das "
+                    "Feld „Strom Kühlbetrieb“. "
+                    "Das ist freiwillig — ohne die Zuordnung bleibt alles wie "
+                    "bisher."
+                ),
+                link=LINK_DATENQUELLEN,
+                investition_id=i.id,
+            ))
+
         klimas = [
             i for i in aktive
             if ist_luft_luft_waermepumpe(i) or _hat_kuehl_spur(i.id)
         ]
         if not klimas:
-            return []
+            return geschaetzter_kuehlanteil
 
         def _hat_modus(inv_id: int) -> bool:
             """Hat dieses Gerät IRGENDEINE Modus-Zuordnung?
@@ -1474,7 +1565,7 @@ class DatenquelleChecks:
                     "gekühlt hat, und kann den Stromverbrauch entsprechend aufteilen."
                 )
                 titel = "Betriebsmodus ist zugeordnet"
-            return [CheckErgebnis(
+            return geschaetzter_kuehlanteil + [CheckErgebnis(
                 kategorie=kat, schwere=CheckSeverity.OK.value,
                 meldung=(
                     f"{titel} bei {'allen ' if len(klimas) > 1 else ''}"
@@ -1521,7 +1612,7 @@ class DatenquelleChecks:
                 investition_id=i.id,
             ) for i in mehrdeutig]
 
-        return meldungen_mehrdeutig + [CheckErgebnis(
+        return geschaetzter_kuehlanteil + meldungen_mehrdeutig + [CheckErgebnis(
             kategorie=kat, schwere=CheckSeverity.INFO.value,
             meldung=(
                 f"„{i.bezeichnung}“: Betriebsmodus nicht zugeordnet — "

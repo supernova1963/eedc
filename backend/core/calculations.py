@@ -425,7 +425,6 @@ def berechne_waermepumpe_einsparung(
     effizienz_modus: str = "gesamt_jaz",
     # Gemeinsame Parameter
     strompreis_cent: float = NETZBEZUG_DEFAULT_CENT,
-    pv_anteil_prozent: float = 30.0,
     alter_energietraeger: str = "gas",  # "gas", "oel", "strom"
     alter_preis_cent_kwh: float = GASPREIS_DEFAULT_CENT,
     alternativ_zusatzkosten_jahr: float = 0.0,
@@ -456,8 +455,13 @@ def berechne_waermepumpe_einsparung(
         scop_heizung: SCOP für Heizung vom EU-Label (für scop)
         scop_warmwasser: SCOP für Warmwasser vom EU-Label (für scop)
         effizienz_modus: "gesamt_jaz", "getrennte_cops" oder "scop"
-        strompreis_cent: Strompreis in Cent
-        pv_anteil_prozent: Anteil PV-Strom am WP-Verbrauch
+        strompreis_cent: Strompreis in Cent — er gilt für den **ganzen**
+            WP-Strom (SOLL Wärme/Klima S1b). ⛔ Bis 2026-09-13 nahm diese
+            Funktion zusätzlich ein ``pv_anteil_prozent`` und belastete nur
+            ``1 − PV-Anteil``; der Parameter ist **ersatzlos entfallen**
+            (N-459). Der PV-Anteil des WP-Stroms ist auf der PV-Seite als
+            Eigenverbrauch gutgeschrieben — hier ein zweites Mal abgezogen
+            zählte dieselbe Kilowattstunde doppelt (ADR-002/P9).
         alter_energietraeger: "gas", "oel" oder "strom"
         alter_preis_cent_kwh: Preis des alten Energieträgers in Cent je kWh
             **Brennstoff** (so steht er auf der Gas-/Ölrechnung), nicht je kWh
@@ -510,11 +514,8 @@ def berechne_waermepumpe_einsparung(
 
         wp_strom_kwh = gesamt_waermebedarf / verwendete_jaz
 
-    # Gemeinsame Berechnungen
-    pv_anteil = pv_anteil_prozent / 100
-    netz_anteil = 1 - pv_anteil
-
-    wp_kosten = wp_strom_kwh * netz_anteil * strompreis_cent / 100
+    # Gemeinsame Berechnungen — der GANZE WP-Strom trägt den Netztarif (S1b).
+    wp_kosten = wp_strom_kwh * strompreis_cent / 100
 
     # Alte Heizung: Brennstoffkosten über den Layer-SoT + fixe Zusatzkosten
     # (Schornsteinfeger, Wartung, Zähler-Grundpreis).
@@ -551,7 +552,12 @@ def berechne_waermepumpe_einsparung(
     co2_alt = 0.0 if ersetzt_nichts else (
         gesamt_waermebedarf / wirkungsgrad * co2_faktoren.get(alter_energietraeger, 0)
     )
-    co2_wp = wp_strom_kwh * netz_anteil * CO2_FAKTOR_STROM_KG_KWH
+    # S1b: derselbe volle Strom wie bei den Kosten — und damit dieselbe Regel
+    # wie im gemessenen Pfad `co2_wp_ersparnis_kg` unten (DI-1), der schon
+    # immer ohne Anteil rechnet. Bis 2026-09-13 stand hier `* netz_anteil`,
+    # und die ROI-Zeile wies für dieselbe Wärmepumpe eine andere CO₂-Zahl aus
+    # als *Auswertungen → CO₂*.
+    co2_wp = wp_strom_kwh * CO2_FAKTOR_STROM_KG_KWH
     co2_einsparung = co2_alt - co2_wp
 
     return WaermepumpeEinsparung(

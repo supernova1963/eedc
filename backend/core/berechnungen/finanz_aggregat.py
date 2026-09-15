@@ -20,9 +20,10 @@ Dieser Helper rechnet **ausschließlich per-Monat** und summiert:
   für BKW-Monate ohne erfasste Erzeugung — sonst zählte derselbe Fluss zweimal
   (ADR-002/**P9**, `bkw_finanz_beitrag` entscheidet das je Zeile, s. u.).
 - Einspeise-Erlös pro Monat über `einspeise_erloes_euro` (§51 EEG-Abzug).
-- `netzbezug_preis_cent` ist der bereits **aufgelöste** Monats-Flexpreis
-  (`resolve_netzbezug_preis_cent`) — die Auflösung bleibt beim Caller, weil sie
-  ein `Monatsdaten`-Objekt braucht (ADR-001: Layer DB-frei).
+- `netzbezug_preis_cent` ist der bereits **aufgelöste** Monatspreis
+  (`aufgeloester_monatspreis`: gepflegt → gemessen → Zeitfenster → Stamm) — die
+  Auflösung bleibt beim Caller, weil sie die Datenbank braucht (ADR-001: Layer
+  DB-frei). `netzbezug_preis_herkunft` sagt, welche Stufe gegriffen hat.
 
 WICHTIG zu „Sonstige": Der Helper kennt KEINE Investition und filtert NICHT.
 Die Sichtbarkeitsregel (``aktiv`` + Laufzeit-Fenster Anschaffung→Stilllegung)
@@ -73,6 +74,11 @@ class FinanzMonatsZeile:
     abgabe_dritte_kwh: float = 0.0
     bkw_eigenverbrauch_kwh: float = 0.0
     netzbezug_preis_cent: float = 0.0
+    #: Woher dieser Preis stammt (``gepflegt`` · ``gemessen`` · ``zeitfenster``
+    #: · ``stamm``, SoT `services/strompreis_aggregator`). ⚠ Die Zahl allein
+    #: sagt nicht, ob sie eine Messung, eine Abrechnung oder ein Stammwert ist
+    #: — und genau das muss eine Sicht aussprechen können (P4).
+    netzbezug_preis_herkunft: Optional[str] = None
     einspeiseverguetung_cent: float = 0.0
     neg_preis_kwh: Optional[float] = None
 

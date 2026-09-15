@@ -12,7 +12,7 @@ import {
   PARAM_SONSTIGES_DEFAULTS,
 } from '../../../lib'
 import type { Innengeraet } from '../../../lib/investitionParameter'
-import { istLuftLuft } from '../../../lib/investitionParameter'
+import { hatHeizAchse, hatWarmwasserAchse } from '../../../lib/fieldDefinitions'
 import type { ParamWert } from './InvestitionTypFelder/types'
 import type { SelectItem } from '../../ui/Select'
 
@@ -270,12 +270,27 @@ export function getInitialParamData(
         // daraus eine Ersparnis gegen eine nie ersetzte Gasheizung. Ein bereits
         // gespeicherter Wert bleibt erhalten (`params.…` gewinnt), es wird nur
         // nichts mehr erfunden.
-        heizwaermebedarf_kwh: istLuftLuft(params)
-          ? paramStr(params.heizwaermebedarf_kwh)
-          : paramStr(params.heizwaermebedarf_kwh, PARAM_WAERMEPUMPE_DEFAULTS.heizwaermebedarf_kwh),
-        warmwasserbedarf_kwh: istLuftLuft(params)
-          ? paramStr(params.warmwasserbedarf_kwh)
-          : paramStr(params.warmwasserbedarf_kwh, PARAM_WAERMEPUMPE_DEFAULTS.warmwasserbedarf_kwh),
+        //
+        // ⭐ **WK-15c (14.09.2026): dieselbe Regel, an der Achse statt an der
+        // Bauart.** N-87 galt nur für `luft_luft` — und ließ damit die
+        // **Brauchwasser**-Wärmepumpe mit 12.000 kWh Heizwärme zurück, die sie
+        // nie abgibt: gemessen **714,29 €/Jahr** statt 142,86 €, also 571 €
+        // erfundene Ersparnis, sobald das Formular einmal gespeichert wurde.
+        // Das Paar 12.000/3.000 beschreibt ein Haus mit Heizung **und**
+        // Warmwasser; fehlt dem Gerät eine der beiden Achsen, passt es als
+        // Ganzes nicht — dann wird **keine** der beiden Zahlen gesetzt.
+        // Registry-Spiegel statt `wp_art` (ADR-002/P13); Gegenstück im Backend:
+        // `crud.py::_wp_nicht_bewertbar`, das genau dieses Paar als offene
+        // Frage liest.
+        ...(hatHeizAchse(params) && hatWarmwasserAchse(params)
+          ? {
+              heizwaermebedarf_kwh: paramStr(params.heizwaermebedarf_kwh, PARAM_WAERMEPUMPE_DEFAULTS.heizwaermebedarf_kwh),
+              warmwasserbedarf_kwh: paramStr(params.warmwasserbedarf_kwh, PARAM_WAERMEPUMPE_DEFAULTS.warmwasserbedarf_kwh),
+            }
+          : {
+              heizwaermebedarf_kwh: paramStr(params.heizwaermebedarf_kwh),
+              warmwasserbedarf_kwh: paramStr(params.warmwasserbedarf_kwh),
+            }),
         // Vergleich mit alter Heizung
         pv_anteil_prozent: paramStr(params.pv_anteil_prozent, PARAM_WAERMEPUMPE_DEFAULTS.pv_anteil_prozent),
         alter_energietraeger: paramStr(params.alter_energietraeger, PARAM_WAERMEPUMPE_DEFAULTS.alter_energietraeger),

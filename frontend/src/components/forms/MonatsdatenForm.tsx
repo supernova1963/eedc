@@ -8,6 +8,7 @@ import { Button, Input, Alert, Select, Textarea, FormSection } from '../ui'
 import { useInvestitionen, useAktuellerStrompreis } from '../../hooks'
 import { investitionenApi, wetterApi, monatsabschlussApi } from '../../api'
 import type { MonatsabschlussResponse, FeldStatus, BehalteneAbweichung } from '../../api/monatsabschluss'
+import type { WetterDaten } from '../../api/wetter'
 import type { Monatsdaten, Investition } from '../../types'
 import { getFelderFuerInvestition, LEGACY_FELDNAMEN, readFeldWert } from '../../lib/fieldDefinitions'
 import { prefillWert, ermittleZustand, zaehleAmpel, behaltenEintrag, abgeleiteteMarke, type ErfassungZustand } from '../../lib/erfassungZustand'
@@ -143,6 +144,35 @@ const invKey = (invId: number, feld: string) => `${invId}:${feld}`
  *  Zahl über die `fmtZahl`-SoT (de-DE) statt roher Interpolation. */
 const bkwLeistung = (inv: Investition) =>
   inv.leistung_kwp_effektiv != null ? `${fmtZahl(inv.leistung_kwp_effektiv, 1)} kWp` : null
+
+/**
+ * Die drei Felder des Wetter-Auto-Fills — EINE Liste, EINE Regel (**N-426**).
+ *
+ * Sie steht hier, damit die Regel „nur in eine Lücke" nicht dreimal als `if`
+ * im Handler klebt: Genau so ist der Bestand auseinandergelaufen — zwei Felder
+ * überschrieben bedingungslos, das dritte wurde gar nicht erst gesetzt, und
+ * der Feld-Hinweis der Globalstrahlung versprach schon damals das Gegenteil
+ * („…, wenn nicht manuell gepflegt"). Ein viertes Wetterfeld hängt sich hier
+ * ein und erbt die Regel, statt sie neu zu erfinden.
+ *
+ * `label` ist der Text, unter dem der Anwender das Feld im Formular sieht —
+ * er wird im Hinweis unter dem Knopf wiederverwendet.
+ */
+const WETTER_AUTOFILL_FELDER: ReadonlyArray<{
+  feld: 'globalstrahlung_kwh_m2' | 'sonnenstunden' | 'durchschnittstemperatur'
+  label: string
+  ausAntwort: (d: WetterDaten) => number | null | undefined
+}> = [
+  { feld: 'globalstrahlung_kwh_m2', label: 'Globalstrahlung', ausAntwort: d => d.globalstrahlung_kwh_m2 },
+  { feld: 'sonnenstunden', label: 'Sonnenstunden', ausAntwort: d => d.sonnenstunden },
+  { feld: 'durchschnittstemperatur', label: 'Ø Temperatur', ausAntwort: d => d.durchschnittstemperatur_c },
+]
+
+/** „A", „A und B", „A, B und C" — deutsche Aufzählung für den Hinweistext. */
+const aufzaehlung = (teile: string[]): string =>
+  teile.length <= 1
+    ? (teile[0] ?? '')
+    : `${teile.slice(0, -1).join(', ')} und ${teile[teile.length - 1]}`
 
 export default function MonatsdatenForm({ monatsdaten, anlageId, onSubmit, onCancel, haVorausfuellung, voreingestellterMonat }: MonatsdatenFormProps) {
   const currentYear = new Date().getFullYear()
@@ -639,20 +669,69 @@ export default function MonatsdatenForm({ monatsdaten, anlageId, onSubmit, onCan
         parseInt(formData.monat)
       )
 
-      setFormData(prev => ({
-        ...prev,
-        globalstrahlung_kwh_m2: data.globalstrahlung_kwh_m2.toString(),
-        sonnenstunden: data.sonnenstunden.toString(),
-      }))
+      // ── Alle drei Wetterfelder füllen nur LÜCKEN (N-426) ────────────────
+      //
+      // EIN Weg für die drei, kein dreifach kopiertes `if`: Bis v4.0.44
+      // überschrieben Globalstrahlung und Sonnenstunden auch einen getippten
+      // Wert, die Ø Temperatur wurde gar nicht gesetzt — drei Felder, drei
+      // Verhalten. Maßgeblich ist jetzt für alle die Hausregel des Formulars:
+      // ein selbst eingetragener Wert ist die vertrauenswürdigste Quelle und
+      // wird nicht automatisch überschrieben (P3b, `lib/erfassungZustand.ts`;
+      // derselbe Satz steht am Prefill weiter oben).
+      //
+      // ⭐ Der Feld-Hinweis der Globalstrahlung versprach das ohnehin schon
+      // („…, wenn nicht manuell gepflegt") — die Regel macht ihn wahr, statt
+      // ihn umschreiben zu müssen. Wer einen Wert ersetzen will, leert das
+      // Feld und klickt erneut; ein zweiter Knopfzustand wäre eine Bedienung
+      // mehr für einen Fall, den das leere Feld schon löst.
+      const ergebnis = WETTER_AUTOFILL_FELDER.map(({ feld, label, ausAntwort }) => {
+        const gepflegt = ((formData as Record<string, string>)[feld] ?? '').trim() !== ''
+        const wert = ausAntwort(data)
+        return { feld, label, gepflegt, wert, uebernommen: !gepflegt && wert != null }
+      })
 
-      // Info-Text über Datenquelle
+      setFormData(prev => {
+        const next = { ...prev } as Record<string, string>
+        for (const e of ergebnis) {
+          if (e.uebernommen) next[e.feld] = String(e.wert)
+        }
+        return next as typeof prev
+      })
+
+      // Info-Text über die Datenquelle der Strahlung.
       const quellenText = data.datenquelle === 'open-meteo'
         ? `Historische Daten von Open-Meteo${data.abdeckung_prozent ? ` (${data.abdeckung_prozent} % Abdeckung)` : ''}`
+        : data.datenquelle === 'brightsky'
+        // Der DWD misst — er schätzt nicht. Ohne diesen Zweig fiel Bright Sky
+        // in den Sonst-Fall und wurde als „Geschätzte Durchschnittswerte"
+        // ausgegeben, und zwar für die MEHRHEIT: an einer deutschen Anlage ist
+        // Bright Sky die Voreinstellung, nicht die Ausnahme.
+        ? `Messwerte des DWD (Bright Sky)${data.abdeckung_prozent ? ` (${data.abdeckung_prozent} % Abdeckung)` : ''}`
         : data.datenquelle === 'pvgis-tmy'
         ? 'Durchschnittswerte von PVGIS (TMY)'
         : 'Geschätzte Durchschnittswerte'
 
-      setWetterInfo(quellenText)
+      // Was der Klick getan hat — je Feld, und in einem Satz zusammengefasst.
+      const teile: string[] = []
+      const uebernommen = ergebnis.filter(e => e.uebernommen).map(e => e.label)
+      const behalten = ergebnis.filter(e => e.gepflegt).map(e => e.label)
+      if (uebernommen.length > 0) teile.push(`${aufzaehlung(uebernommen)} übernommen`)
+      if (behalten.length > 0) {
+        teile.push(`${aufzaehlung(behalten)} unverändert — der eingetragene Wert bleibt stehen`)
+      }
+      const bilanzText = teile.length > 0 ? ` ${teile.join(', ')}.` : ''
+
+      // Die Herkunft der Temperatur steht daneben, weil sie eine ANDERE sein
+      // kann als die der Strahlung: die eigene Messreihe der Anlage schlägt
+      // das Archiv (`temperatur_herkunft`, api/wetter.ts).
+      const temperatur = ergebnis.find(e => e.feld === 'durchschnittstemperatur')
+      const temperaturText = temperatur?.uebernommen
+        ? data.temperatur_herkunft === 'messung'
+          ? ' Ø Temperatur aus den gemessenen Außentemperaturen des Monats.'
+          : ` Ø Temperatur von ${data.provider_info?.name ?? 'Wetterdienst'}.`
+        : ''
+
+      setWetterInfo(quellenText + bilanzText + temperaturText)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Wetterdaten konnten nicht abgerufen werden')
     } finally {

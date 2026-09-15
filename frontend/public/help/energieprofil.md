@@ -1,8 +1,6 @@
 
 # eedc Handbuch — Energieprofil
 
-**Version 4.0** | Stand: 2026-07-25
-
 > Dieses Handbuch ist Teil der eedc-Dokumentation.
 > Siehe auch: [Teil II: Bedienung](HANDBUCH_BEDIENUNG.md) | [Teil III: Einstellungen](HANDBUCH_EINSTELLUNGEN.md) | [Daten-Checker](HANDBUCH_DATEN_CHECKER.md) | [Prognosen](HANDBUCH_PROGNOSEN.md) | [Berechnungen & Kennzahlen](BERECHNUNGEN.md) | [Glossar](GLOSSAR.md)
 

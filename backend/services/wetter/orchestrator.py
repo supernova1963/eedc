@@ -119,6 +119,23 @@ async def get_wetterdaten(
     return result
 
 
+def _mit_temperatur_herkunft(result: dict, quelle: str) -> dict:
+    """Schreibt die Herkunft der Ø-Temperatur — und nur, wenn es eine gibt.
+
+    ⭐ **Warum ein eigenes Feld neben ``datenquelle`` (N-426, 13.09.2026).** Die
+    beiden fallen auseinander: ``datenquelle`` beschreibt die **Strahlung** und
+    steht auch bei ``pvgis-tmy``/``defaults``, wo es überhaupt keine Temperatur
+    gibt; und die Wetter-Route stellt der Antwort die **eigene Messreihe** der
+    Anlage voran (``temperatur_herkunft = "messung"``), während die Strahlung
+    weiter vom Provider kommt. Ein Anwender, dem die Oberfläche sagt „von
+    Open-Meteo", obwohl die Zahl aus seinem eigenen Zähler stammt, bekäme
+    dieselbe falsche Zusage, die dieser Fund beseitigt.
+    """
+    if result.get("durchschnittstemperatur_c") is not None:
+        result["temperatur_herkunft"] = quelle
+    return result
+
+
 async def get_wetterdaten_multi(
     latitude: float,
     longitude: float,
@@ -214,7 +231,7 @@ async def get_wetterdaten_multi(
                             "temperatur_c": data.get("durchschnitts_temperatur_c"),
                         },
                     })
-                    return result
+                    return _mit_temperatur_herkunft(result, "brightsky")
 
             elif prov == "open-meteo":
                 logger.debug(f"Wetterdaten: Versuche Open-Meteo für {monat}/{jahr}")
@@ -236,7 +253,7 @@ async def get_wetterdaten_multi(
                             "temperatur_c": data.get("durchschnitts_temperatur_c"),
                         },
                     })
-                    return result
+                    return _mit_temperatur_herkunft(result, "open-meteo")
 
     # Fallback: PVGIS TMY
     logger.debug(f"Wetterdaten: Versuche PVGIS TMY für Monat {monat}")

@@ -2,9 +2,14 @@
 `calculate_investition_sensors` (HA-Export, per-WP).
 
 Pinnt den Wert VOR der Migration der Altanlagen-Gaskosten-Formel auf den
-SoT-Helper `gas_kosten_altanlage`. Dieser per-WP-Sensor verwendet bewusst
-die VOLLEN WP-Stromkosten (ohne PV-Anteil-Split) — anderer WP-Kosten-Term
-als die Aggregat-Alternativkosten; nur die Gaskosten-Teilformel ist geteilt.
+SoT-Helper `gas_kosten_altanlage`. Dieser per-WP-Sensor verwendet die VOLLEN
+WP-Stromkosten.
+
+⭐ **Nachtrag 13.09.2026 (N-459, SOLL Wärme/Klima S1b).** Hier stand bis dahin,
+das sei ein *„anderer WP-Kosten-Term als die Aggregat-Alternativkosten"* — der
+Satz ist überholt: die Aggregat-Formel zog damals einen festen PV-Anteil von
+50 % ab, heute belasten **beide** den ganzen Strom. Der Wert dieses Sensors hat
+sich dadurch **nicht** geändert; geändert haben sich die anderen drei.
 """
 
 from __future__ import annotations

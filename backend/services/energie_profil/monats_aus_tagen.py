@@ -100,6 +100,17 @@ class TagesMonatsSumme:
     emob_ladung_netz_abgeleitet_kwh: float = 0.0
     tage: int = 0
     stunden: int = 0
+    #: Erster und letzter Tag **mit Spur** (N-472). ⭐ Sie machen aus der
+    #: Belegdichte oben eine *ausweisbare* Abdeckung: Wer diese Summe als
+    #: Monatswert zeigt, kann daneben schreiben, ab wann sie misst — und genau
+    #: das verlangt P4, wenn die Tagesebene erst mitten im Monat beginnt (ein
+    #: später eingerichtetes Add-on, ein Vollbackfill, der nicht zurückreicht).
+    #:
+    #: ⚠ **Sie beschreiben die Ränder, nicht die Lückenlosigkeit dazwischen.**
+    #: Ein Loch in der Mitte (Add-on war drei Tage aus) sieht man ihnen nicht
+    #: an; dafür ist der Daten-Checker zuständig, der fehlende Tage meldet.
+    erster_tag: Optional[date] = None
+    letzter_tag: Optional[date] = None
 
     @property
     def pv_kwh(self) -> float:
@@ -206,6 +217,7 @@ async def lade_monats_summen_aus_tagen(
     for schluessel in sorted(set(stunden_je_monat) | set(pv_je_monat) | set(bkw_je_monat)):
         stunden = stunden_je_monat.get(schluessel, [])
         bilanz = bilanz_aus_stundenrows(stunden)
+        tage = tage_je_monat.get(schluessel, set())
         summen[schluessel] = TagesMonatsSumme(
             einspeisung_kwh=bilanz.einspeisung_kwh,
             netzbezug_kwh=bilanz.netzbezug_kwh,
@@ -215,7 +227,9 @@ async def lade_monats_summen_aus_tagen(
             speicher_entladung_kwh=bilanz.speicher_entladung_kwh,
             emob_ladung_pv_abgeleitet_kwh=lade_pv_je_monat.get(schluessel, 0.0),
             emob_ladung_netz_abgeleitet_kwh=lade_netz_je_monat.get(schluessel, 0.0),
-            tage=len(tage_je_monat.get(schluessel, ())),
+            tage=len(tage),
             stunden=len(stunden),
+            erster_tag=min(tage) if tage else None,
+            letzter_tag=max(tage) if tage else None,
         )
     return summen

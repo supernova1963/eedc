@@ -280,3 +280,53 @@ describe('baueNetzKostenKpis (via baueMonatKpis)', () => {
     expect(k.ergebnis).not.toContain('Grundpreis')
   })
 })
+
+// ─── N-472: eine leere Kachel nennt ihren Grund ─────────────────────────────
+//
+// ⛔ Der **Text** wird hier nicht geprüft und nicht gebaut — er kommt fertig
+// aus `core/monatswert_grund.py`. Geprüft wird, dass er an der richtigen
+// Kachel im richtigen Slot ankommt und nirgends sonst.
+describe('Grund statt Leere (N-472)', () => {
+  const LEER = {
+    pv_erzeugung_kwh: null, einspeisung_kwh: null, netzbezug_kwh: null,
+    eigenverbrauch_kwh: null, gesamtverbrauch_kwh: null, autarkie_prozent: null,
+    soll_pv_kwh: null,
+  }
+  const SATZ = 'Für diesen Monat liegen noch keine Werte vor.'
+
+  it('trägt den Grund an den drei Basis-Kacheln', () => {
+    const k = baueMonatKpis(d({
+      ...LEER,
+      datenlage_gruende: {
+        pv_erzeugung_kwh: SATZ, einspeisung_kwh: SATZ, netzbezug_kwh: SATZ,
+      },
+    }), null)
+
+    for (const titel of ['PV-Erzeugung', 'Einspeisung', 'Netzbezug']) {
+      const kachel = k.find((x) => x.title === titel)!
+      expect(kachel.value, titel).toBe('—')
+      expect(kachel.hinweis, titel).toBe(SATZ)
+    }
+  })
+
+  it('lässt die abgeleiteten Kacheln ohne Text — sonst stünde er fünfmal da', () => {
+    const k = baueMonatKpis(d({
+      ...LEER,
+      datenlage_gruende: {
+        pv_erzeugung_kwh: SATZ, einspeisung_kwh: SATZ, netzbezug_kwh: SATZ,
+      },
+    }), null)
+
+    for (const titel of ['Autarkie', 'Eigenverbrauch']) {
+      expect(k.find((x) => x.title === titel)!.hinweis, titel).toBeUndefined()
+    }
+  })
+
+  it('ohne Grund-Feld bleibt alles wie bisher', () => {
+    const k = baueMonatKpis(d(), vm)
+
+    for (const titel of ['PV-Erzeugung', 'Einspeisung', 'Netzbezug']) {
+      expect(k.find((x) => x.title === titel)!.hinweis, titel).toBeUndefined()
+    }
+  })
+})

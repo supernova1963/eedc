@@ -72,7 +72,15 @@ export function baueTagKpis(
       title: 'Batterieladung Netz',
       value: fmtCalc(kosten, 2, '—'), unit: '€', color: 'red', icon: DATENROLLEN_ICONS.netzladungKosten,
       subtitle: `${fmt(netzladung.kwh, 1)} kWh${preisTxt}`,
-      formel: 'Netzladung × Ø-Ladepreis (Tag)',
+      // N-444/K3: Die beiden Faktoren haben **verschiedene Herkünfte**, und das
+      // muss die Formel sagen. Die Menge ist der Boundary-Diff des Zählers
+      // `ladung_netz_kwh`; der Preis entsteht in
+      // `services/speicher_wirtschaftlichkeit.py` aus den Stundenzeilen des Tages
+      // über eine ANDERE Netzladungs-Definition (`min(Ladung, Netzbezug)` je
+      // Stunde). Seit N-444 stimmen wenigstens die **Fenster** überein — beide
+      // liegen im Rückwärtsfenster der Tageszeile. Die Vereinheitlichung der
+      // Definitionen gehört zu N-197/N-290 und ist hier bewusst nicht gebaut.
+      formel: 'Menge aus dem Netzladungs-Zähler × Ø-Preis aus den Ladestunden',
       berechnung: netzladung.preis_cent != null
         ? `${fmt(netzladung.kwh, 1)} kWh × ${fmtCalc(netzladung.preis_cent, 1)} ct/kWh`
         : undefined,

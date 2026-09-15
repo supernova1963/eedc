@@ -7,23 +7,39 @@ Monatsdaten zu einer Echtzeit-Übersicht des laufenden Monats.
 
 import asyncio
 import logging
-from datetime import date, datetime
+from datetime import date, datetime, time, timedelta
 from typing import NamedTuple, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from backend.core.exceptions import not_found
 from backend.api.deps import get_db
+from backend.services.waermepumpe_kennzahlen_je_geraet import (
+    lade_kennzahlen_je_geraet,
+)
+from backend.services.waerme_klima_block import (
+    WpGeraetZeile,
+    WpMoeglichZeile,
+    achsen_der_anlage,
+    funktions_eingaenge_der_anlage,
+    geraete_zeilen,
+    schranken_eingang,
+    traegt_menge,
+    was_noch_moeglich,
+)
 from backend.models.anlage import Anlage
 from backend.models.investition import Investition, InvestitionMonatsdaten
 from backend.models.monatsdaten import Monatsdaten
 from backend.services.prognose_auswahl import lade_aktive_monatsprognosen
 from backend.core.berechnungen.zeittarif import hat_zeitfenster
-from backend.services.strompreis_aggregator import wirksamer_arbeitspreis_cent
+from backend.services.strompreis_aggregator import (
+    aufgeloester_monatspreis,
+    wirksamer_arbeitspreis_cent,
+)
 from backend.api.routes.strompreise import (
     lade_tarife_fuer_anlage,
     resolve_einspeise_preis_cent,
@@ -32,7 +48,9 @@ from backend.api.routes.strompreise import (
 from backend.api.routes.connector import _calc_month_delta
 from backend.core.berechnungen.anlagen_kwp import anlagen_kwp
 from backend.core.berechnungen.waermepumpe_kennzahl import (
+    ARBEITSZAHL_FUNKTIONEN, abgrenzung_je_funktion, als_arbeitszahl, hub_hilft,
     abgrenzungs_grund, arbeitszahl, arbeitszahl_je_funktion, arbeitszahl_kuehlen,
+    heizwaerme_kwh, systemarbeitszahl, waerme_gesamt_kwh,
 )
 from backend.core.berechnungen import (
     sonstiges_richtung,
@@ -58,6 +76,7 @@ from backend.core.berechnungen import (
     teilzeitraum_felder,
     vollzyklen as berechne_vollzyklen,
 )
+from backend.core.monatswert_grund import monatswert_grund, monatswert_grund_text
 from backend.services.einspeise_erloes_service import get_neg_preis_einspeisung_monat
 from backend.services.wp_wirtschaftlichkeit import (
     WP_ERSPARNIS_FORMEL,
@@ -81,17 +100,23 @@ from backend.core.wirtschaftlichkeit_defaults import (
     NETZBEZUG_DEFAULT_CENT,
 )
 from backend.core.berechnungen.betriebsart_gemessen import modus_strom_zeile
+from backend.core.betriebsmodus import BETRIEBSART_NUTZENERGIE_FELD
+from backend.core.betriebsmodus import BETRIEBSART_STROM_FELD
+from backend.core.betriebsmodus import HEIZEN as BM_HEIZEN
 from backend.core.betriebsmodus import KUEHLEN as BM_KUEHLEN
+from backend.core.betriebsmodus import MESSBARE_MODI
 from backend.core.betriebsmodus import MODUS_STROM_FELD
 from backend.core.field_definitions import (
+    FEINE_STROM_FELDER,
     SONSTIGES_ABGABE_LABEL,
+    basis_feld_key,
     get_eauto_ladung_kwh,
     get_emob_pv_netz_kwh,
     get_speicher_netzladung_kwh,
-    get_wp_heizenergie_kwh,
     get_wp_strom_kwh,
     get_wp_warmwasser_kwh,
     ist_abgabe_kategorie,
+    wp_strom_aufteilung,
 )
 from backend.utils.sonstige_positionen import berechne_sonstige_summen
 from backend.core.investition_kennwerte import get_speicher_kapazitaet_kwh
@@ -141,6 +166,24 @@ MONAT_NAMEN = [
     "Juli", "August", "September", "Oktober", "November", "Dezember",
 ]
 
+#: Der Schluessel, unter dem die **Vorausloesung** der Waerme je Geraet ihr
+#: Ergebnis in ``resolved`` ablegt (N-391/D1, 14.09.2026).
+#:
+#: ⚠ **Kein Registry-Feld und keine Groesse der Anlage** — er entsteht in dieser
+#: Route und lebt nur zwischen ``_wp_waerme_d1`` und ``typ_aggregation``. Der
+#: Praefix ``_`` haelt ihn auseinander von den Feldnamen aus
+#: ``INVESTITION_FELDER``, die in ``resolved`` daneben stehen; ein Sensor- oder
+#: MQTT-Feld dieses Namens gibt es nicht und darf es nicht geben, sonst
+#: ueberschriebe eine Quelle die aufgeloeste Zahl.
+_WP_WAERME_D1_SUFFIX: str = "_waerme_d1_kwh"
+
+#: Der Zwilling auf der **Strom**seite: der Schluessel, unter dem die
+#: K3-Vorausloesung je Geraet ihr Ergebnis ablegt (N-451b, 14.09.2026).
+#:
+#: ⚠ Dieselbe Warnung wie oben — **kein Registry-Feld**, kein Sensor- oder
+#: MQTT-Name; er lebt nur zwischen ``_wp_strom_k3`` und ``typ_aggregation``.
+_WP_STROM_K3_SUFFIX: str = "_strom_k3_kwh"
+
 
 # =============================================================================
 # Schemas
@@ -171,6 +214,11 @@ class InvestitionFinancialDetail(BaseModel):
     bezeichnung: str
     typ: str
     betriebskosten_monat_euro: float = 0.0
+    #: Der Jahresbetrag, aus dem `betriebskosten_monat_euro` der Zwölftel ist
+    #: (A6: die Kachel nennt „Betriebskosten/Jahr ÷ 12", der Jahreswert stand
+    #: bis 2026-09-13 auf keiner Fläche). Quelle ist dieselbe wie oben —
+    #: `Investition.betriebskosten_jahr`; der Client teilt NICHT selbst.
+    betriebskosten_jahr_euro: float = 0.0
     erloes_euro: Optional[float] = None      # z.B. BKW-Einspeisung
     #: Herleitung der Erlös-Zeile. Sie ist NICHT für alle Typen dieselbe: beim
     #: BKW rechnet eedc `Einspeisung × Vergütung`, bei einem sonstigen Erzeuger
@@ -179,6 +227,15 @@ class InvestitionFinancialDetail(BaseModel):
     #: Fall eine Rechnung behauptet, die niemand angestellt hat (Regel A6:
     #: Formel **+ eingesetzte Werte**). Wer den Wert bildet, beschreibt ihn.
     erloes_formel: Optional[str] = None
+    #: Die **eingesetzten Werte** zur Formel darüber (Style-Guide A6: Formel sagt
+    #: WAS gerechnet wird, die Berechnung WOMIT). Bis 2026-09-13 standen beide in
+    #: `erloes_formel` in EINER Zeile („Einspeisung × Einspeisevergütung — 123,4
+    #: kWh × 8,20 ct/kWh") und damit unter der Überschrift „Formel" — an jeder
+    #: anderen Kachel stehen sie getrennt. `None` bei den **gepflegten** Erlösen:
+    #: dort gibt es keine Rechnung, nur eine Herkunftsangabe (Konzept §9 Weg 2).
+    #: ⛔ Der Wert wird hier gebildet, nicht im Client — eine im Client
+    #: nachgerechnete Herleitung führt auf eine andere Zahl als die Zeile daneben.
+    erloes_berechnung: Optional[str] = None
     #: Anzeigename der Erlös-Zeile („{Gerät} — {erloes_label}"). Kommt aus dem
     #: Backend statt aus dem Client, weil ihn die **Kategorie** entscheidet:
     #: ein Gerät der Kategorie *Abgabe an Dritte* trägt keinen Einspeise-Erlös,
@@ -234,6 +291,15 @@ class AktuellerMonatResponse(BaseModel):
     #: gespeicherten Zeile stammt — kommt sie aus Sensor, Connector oder MQTT,
     #: sagt `pv_vollstaendig` der Monats-Fakten nichts über sie aus.
     hinweise: list[str] = []
+    #: Warum eine Kachel **leer** bleibt — je Basis-Größe der fertige Satz aus
+    #: `core/monatswert_grund.py` (N-472, W-18-Klasse eine Zeitebene höher).
+    #: Nur für Größen ohne Wert gesetzt; eine Größe mit Zahl steht nicht drin.
+    #:
+    #: ⚠ Bewusst nur die **drei Basis-Größen** (PV · Einspeisung · Netzbezug).
+    #: Autarkie, Eigenverbrauch und Gesamtverbrauch entstehen aus ihnen — an
+    #: jeder abgeleiteten Kachel denselben Grund zu wiederholen wäre genau die
+    #: Strich-Flut, gegen die die D-Sicht gebaut ist (WK-16ab/E-2).
+    datenlage_gruende: dict[str, str] = {}
 
     # Energie-Bilanz (kWh)
     pv_erzeugung_kwh: Optional[float] = None
@@ -325,6 +391,28 @@ class AktuellerMonatResponse(BaseModel):
     #: Gleicher Name wie im Komponenten-Hub (`KomponentenMonat`), damit dieselbe
     #: Größe in beiden Sichten gleich heißt (S1).
     wp_waerme_abgeleitet: bool = False
+    #: Steht mindestens eine hier gesperrte Kennzahl im **Komponenten-Hub**?
+    #:
+    #: Der Hub rechnet je Gerät; was aus dem Zusammenspiel MEHRERER Geräte
+    #: entsteht, gibt es dort nicht. Nur dann lohnt der Weg — die Liste der
+    #: Gründe steht im Layer (``GRUENDE_HUB_HILFT``), damit der Client keine
+    #: Grund-Texte vergleichen muss.
+    wp_hub_hilft: bool = False
+    #: **Wie viel** davon gerechnet ist — die Menge neben dem Flag darüber.
+    #:
+    #: ⚠ Das Flag beantwortet „ist *irgendein* Teil gerechnet?" und ist damit
+    #: für eine **Kennzahl** die richtige Auskunft: `jaz_belastbar`
+    #: (`monats_fakten.py`) sperrt alles-oder-nichts, und zwar mit Grund —
+    #: gemessene Wärme durch den **Gesamt**strom geteilt gäbe eine zu kleine
+    #: JAZ, also falsch statt unbekannt.
+    #:
+    #: ⭐ Für eine **Menge** gilt das nicht. Ein Verlauf, der nur gemessene
+    #: Wärme zeigen soll (Konzept Wärme/Klima §8/E7, SOLL §3.3), braucht
+    #: `waerme_kwh − waerme_abgeleitet_kwh` — und das ist bei gemischter Lage
+    #: (Wärmepumpe mit Wärmemengenzähler + Klimaanlage ohne) eine ganz andere
+    #: Aussage als das Flag: dort ist der größte Teil der Wärme gemessen,
+    #: während das Flag bereits True ist. **Zwei Objekte, zwei Regeln.**
+    wp_waerme_abgeleitet_kwh: Optional[float] = None
     # B4 (05.09.2026, C-2): Herkunft der Wärme und Vorbehalt an Ersparnis/CO₂,
     # fertig formuliert aus dem Layer (`waermepumpe_kennzahl.waerme_herkunft` /
     # `ersparnis_vorbehalt`) — dieselben Worte wie im Komponenten-Hub (B3).
@@ -364,8 +452,46 @@ class AktuellerMonatResponse(BaseModel):
     #: Quotient über einen Zeitraum.
     wp_jaz_kuehlen: Optional[float] = None
     wp_jaz_kuehlen_grund: Optional[str] = None
+    #: **E1b (14.09.2026): die anlagenweite Zahl darf eine untere SCHRANKE sein.**
+    #: ``True`` ⇒ ``wp_jaz`` ist ein **Mindestwert** („≥ 3,25"), weil im Nenner
+    #: Strom steht, dem keine gemessene Wärme gegenübersteht (Klimaanlage ohne
+    #: Wärmemengenzähler, Heizstab). Mehr Strom im Nenner kann den Quotienten
+    #: nur kleiner machen — die Aussage bleibt wahr (ADR-002/**P4** verbietet
+    #: falsche Zahlen, nicht wahre Schranken).
+    #:
+    #: ⛔ **Der Client rechnet daraus nichts** — er setzt ein „≥" davor
+    #: (``check:cop-roh``). Die Entscheidung, ob eine Schranke vorliegt, gehört
+    #: in den Layer; im Client wäre sie eine zweite Regel über denselben
+    #: Sachverhalt.
+    wp_jaz_ist_schranke: bool = False
+    #: Der EINE Satz unter der Schranke: *„Klimaanlage: Strom ohne Wärmemessung
+    #: enthalten"*. Er nennt die Ursache, er bewertet nicht.
+    wp_jaz_schranke_hinweis: Optional[str] = None
+    #: **D-Sicht 3: die Kennzahlen JE GERÄT stehen im Block selbst.** Bis
+    #: 14.09.2026 gab es sie nur im Komponenten-Hub, und der Block verwies mit
+    #: einem Link dorthin — bei gemischter Ausstattung blieb der Anwender damit
+    #: vor vier Strichen stehen, obwohl jedes seiner Geräte eine saubere Zahl
+    #: hat. Quelle ist **dieselbe** Rechenstelle wie im Hub
+    #: (``services/waermepumpe_kennzahlen_je_geraet.py``).
+    wp_geraete: list[WpGeraetZeile] = Field(default_factory=list)
+    #: **D-Sicht 1: was die Ausstattung nicht hergibt — einmal je Sicht.**
+    #: Größen ohne Zahl erscheinen nicht mehr als Kachel mit „—", sondern hier,
+    #: mit dem Handgriff und dem Weg dorthin. Ein Grund der Klasse *Zeitraum*
+    #: („kein Heizbetrieb in diesem Zeitraum") steht **nicht** darin — dort gibt
+    #: es nichts zu tun, und die Kachel zeigt ein „—" ohne Text.
+    wp_moeglich: list[WpMoeglichZeile] = Field(default_factory=list)
+    #: Bauschnitt 6b: die **gemessene Kälte** des Monats — dieselbe Menge, die
+    #: die Arbeitszahl Kühlen daneben als Zähler benutzt. ``None`` statt 0,0,
+    #: wo kein Kältemengenzähler etwas gemeldet hat: die Monats-Fakten füllen
+    #: dort 0,0 (`or 0.0`), und eine 0 ohne Zähler ist keine Messung (P4).
+    wp_kaelte_kwh: Optional[float] = None
     wp_modus_strom_lueften_kwh: Optional[float] = None
     wp_modus_strom_entfeuchten_kwh: Optional[float] = None
+    #: **R-C (WK-16f, N-398):** die abgegebene Nutzenergie derselben zwei
+    #: Betriebsarten — **nur mit Zahl** (D-Sicht). E4 bleibt: Menge, keine
+    #: Kennzahl. Bis zum 14.09.2026 las diese zwei Registry-Felder niemand.
+    wp_modus_nutzenergie_lueften_kwh: Optional[float] = None
+    wp_modus_nutzenergie_entfeuchten_kwh: Optional[float] = None
     wp_modus_nicht_aufgeteilt_kwh: Optional[float] = None
     wp_modus_abdeckung_h: Optional[float] = None
     #: **W-17b** — die Grundmenge, auf die sich die Aufteilung bezieht.
@@ -464,6 +590,19 @@ class AktuellerMonatResponse(BaseModel):
     netzbezug_preis_zeittarif: bool = False
     einspeise_preis_cent: Optional[float] = None
     netzbezug_durchschnittspreis_cent: Optional[float] = None  # Flexibler Tarif (Monatsdurchschnitt)
+    #: Welche Stufe der Preis-Kaskade gegriffen hat: ``gepflegt`` (abgerechneter
+    #: Ø aus dem Monatsabschluss) · ``gemessen`` (Ø der mitgeschriebenen
+    #: Stundenpreise) · ``zeitfenster`` (HT/NT, über den Netzbezug gewichtet) ·
+    #: ``stamm`` (die Tarifspalte). ⚠ Ohne diese Angabe wäre ein **gemessener**
+    #: Preis in der Anzeige von einem Stammpreis nicht zu unterscheiden — die
+    #: Formel-Zeile der Kachel nannte bis 11.09.2026 beide „Arbeitspreis aus dem
+    #: Strompreis-Tarif" (P4: die Antwort sagt, was sie ist).
+    netzbezug_preis_herkunft: Optional[str] = None
+    #: Anteil der Monatsstunden mit Preisdaten (0..1) — **nur** bei
+    #: ``gemessen``. Ein Ø aus 40 % der Stunden hat dieselbe Herkunft wie einer
+    #: aus 98 %, aber nicht dieselbe Belastbarkeit; im **laufenden** Monat ist
+    #: er zwangsläufig klein (die Abdeckung misst gegen den vollen Monat).
+    netzbezug_preis_abdeckung: Optional[float] = None
     # G19-1 K3 (R19-3): Grundgebühr des Monats — steckt bereits in
     # netzbezug_kosten_euro (reiner Ausweis, kein zweiter Posten).
     grundgebuehr_euro: Optional[float] = None
@@ -500,6 +639,12 @@ class AktuellerMonatResponse(BaseModel):
 
     # Betriebskosten (anteilig, Σ betriebskosten_jahr / 12 aller aktiven Investitionen)
     betriebskosten_anteilig_euro: Optional[float] = None
+    #: Die beiden Summanden der Zeile darüber (A6). Die T-Konto-Zeile
+    #: „Betriebskosten (anteilig)" erscheint GENAU DANN, wenn es keine
+    #: Per-Investition-Zeilen gibt — der Anwender sieht die Summanden also
+    #: nirgends sonst und braucht die Herleitung dort am nötigsten.
+    betriebskosten_anteilig_jahr_euro: Optional[float] = None
+    betriebskosten_anteilig_anzahl: Optional[int] = None
 
     # Per-Investition Finanzdetails (für T-Konto)
     investitionen_financials: list[InvestitionFinancialDetail] = []
@@ -731,8 +876,18 @@ async def _collect_mqtt_inbound_data(
     Die Menge kommt jetzt aus der mitgeschriebenen Standreihe. Fehlt ein Rand
     oder sprang der Zähler zurück, fehlt das Feld im Ergebnis — dann bleibt der
     **gespeicherte** Wert stehen, statt von einem Stand verdrängt zu werden.
+
+    ⭐ **Seit N-472 mit Rückfall auf den ersten Stand des Monats.** Fehlt der
+    Stand am Monatsersten — die Lage jeder Anlage, die mitten im Monat
+    eingerichtet wurde —, misst die Menge ab dem ersten mitgeschriebenen Stand,
+    und die ``DatenquelleInfo`` dieses Feldes trägt dann ``abdeckung_von``/
+    ``abdeckung_bis``. Der Slot ist derselbe, den der Connector seit #361 für
+    genau diese Aussage benutzt; die Provenanz-Zeile beschriftet ihn bereits
+    (*„MQTT (ab 14.09.)"*). Ein Feld **ohne** ``abdeckung_von`` hat den
+    Monatsersten als linken Rand — daran erkennt der Aufrufer die Teilzeiträume,
+    ohne dass diese Funktion eine zweite Liste zurückgeben muss.
     """
-    from backend.services.mqtt_energy_history_service import mqtt_monats_deltas
+    from backend.services.mqtt_energy_history_service import mqtt_monats_mengen
     from backend.services.mqtt_inbound_service import get_mqtt_inbound_service
     from backend.services.snapshot.keys import extract_quellen_energy
 
@@ -753,10 +908,11 @@ async def _collect_mqtt_inbound_data(
     # — und die Suite fährt in drei Zeitzonen. Der Wächter
     # `test_konformitaet_echte_uhr_in_tests.py` hat genau das beim Bau dieser
     # Zeile gemeldet; die Naht ist die Antwort darauf und gehört ohnehin hierher.
-    mengen = await mqtt_monats_deltas(
+    mengen = await mqtt_monats_mengen(
         db, anlage.id, jahr, monat, list(energy.keys()),
         quellen_energy=extract_quellen_energy(anlage),
         bis=bis if bis is not None else datetime.now(),
+        rueckfall_erster_stand=True,
     )
     if not mengen:
         return {}
@@ -765,6 +921,21 @@ async def _collect_mqtt_inbound_data(
     now_str = datetime.now().isoformat()
     quelle = DatenquelleInfo(quelle="mqtt_inbound", konfidenz=91, zeitpunkt=now_str)
 
+    def _quelle(menge) -> DatenquelleInfo:
+        """Die gemeinsame Quelle — oder eine eigene, wenn der Monatsanfang fehlt.
+
+        Ein Feld ab Monatsbeginn bekommt die geteilte Instanz **ohne**
+        Abdeckung (bitgleich zu vor N-472). Nur das Rückfall-Feld trägt seinen
+        gemessenen Zeitraum, damit Provenanz-Zeile und Kachel-Hinweis ihn
+        nennen können — und nur seinen eigenen, nicht den eines Nachbarn.
+        """
+        if menge.ab_fenster_beginn:
+            return quelle
+        return DatenquelleInfo(
+            quelle="mqtt_inbound", konfidenz=91, zeitpunkt=now_str,
+            abdeckung_von=menge.seit, abdeckung_bis=menge.bis,
+        )
+
     # Basis-Felder
     basis_map = {
         "pv_gesamt_kwh": "pv_erzeugung_kwh",
@@ -772,20 +943,142 @@ async def _collect_mqtt_inbound_data(
         "netzbezug_kwh": "netzbezug_kwh",
     }
     for mqtt_key, feld_name in basis_map.items():
-        val = mengen.get(mqtt_key)
-        if val is not None and val > 0:
-            resolved[feld_name] = (val, quelle)
+        menge = mengen.get(mqtt_key)
+        if menge is not None and menge.menge_kwh > 0:
+            resolved[feld_name] = (menge.menge_kwh, _quelle(menge))
 
     # Investitions-Felder: inv/{inv_id}/{key} → inv_{inv_id}_{key}
     # (passt zum Aggregations-Pattern in der Prioritätskette)
     inv_ids = {str(i.id) for i in investitionen}
-    for mqtt_key, val in mengen.items():
-        if not mqtt_key.startswith("inv/") or val is None or val <= 0:
+    for mqtt_key, menge in mengen.items():
+        if not mqtt_key.startswith("inv/") or menge.menge_kwh <= 0:
             continue
         parts = mqtt_key.split("/", 2)  # ["inv", "3", "ladung_kwh"]
         if len(parts) == 3 and parts[1] in inv_ids:
-            resolved[f"inv_{parts[1]}_{parts[2]}"] = (val, quelle)
+            resolved[f"inv_{parts[1]}_{parts[2]}"] = (menge.menge_kwh, _quelle(menge))
 
+    return resolved
+
+
+async def _collect_tagesebene_data(
+    db: AsyncSession,
+    anlage_id: int,
+    jahr: int,
+    monat: int,
+    wp_mengen: Optional[dict] = None,
+    wp_von: Optional[date] = None,
+    wp_bis: Optional[date] = None,
+) -> dict[str, tuple[float, DatenquelleInfo]]:
+    """Die **fünfte** Quelle: die lokale Tagesebene (Konfidenz 80 %, N-472).
+
+    ⛔ **Der Anlass.** Eine Anlage mit vollständig aggregierter Tagesebene sah
+    in *Cockpit → Monat* leere Kacheln, solange keine der vier direkten Quellen
+    antwortete: einen automatischen Monatsabschluss gibt es nicht, der laufende
+    Monat hat also nie eine ``Monatsdaten``-Zeile, und wer weder HA-Statistik
+    noch Connector noch MQTT-Zählerreihe hat, bekam gar nichts. **Der Verlauf
+    daneben zeigte dieselben Tage vollständig** (gemessen an der
+    Prüfstand-Anlage der Demo-DB r28: 13 September-Tage, PV 265,3 kWh,
+    Einspeisung 191,9, Netzbezug 101,3 — und drei leere Kacheln darüber).
+
+    Die Quelle ist dieselbe, die N-121 für die **Zeitreihen** geöffnet hat
+    (``services/energie_profil/monats_aus_tagen.py``); hier wird sie direkt
+    gelesen statt über ``lade_monats_fakten(inkl_nur_tageswerte=True)``, und
+    zwar aus einem Grund: Über die Fakten-Schicht käme sie als ``gespeichert``
+    heraus und behauptete eine Herkunft, die sie nicht hat. Die Marke
+    ``quellen.tagesebene`` und die eigene ``DatenquelleInfo`` sind der Punkt.
+
+    ⭐ **Zwei Leser, eine Quelle.** Die anlagenweite Strom-Bilanz kommt aus
+    ``monats_aus_tagen`` (Zähler · PV · BKW · Speicher). Die **Wärme/Klima**-
+    Größen reicht der Aufrufer als ``wp_mengen`` herein — aus
+    ``waerme_verlauf.lade_waerme_monatsmengen_je_geraet``, **demselben Leser,
+    den der Verlauf daneben für seine Tage benutzt**. Das ist keine
+    Bequemlichkeit: Genau dieses Nebeneinander war der Anlass (*„der Verlauf
+    zeigt dieselben Tage, die Kacheln nicht"*), und eine zweite Quelle hätte
+    zwei Zahlen erzeugt, wo eine gefragt war (S1).
+
+    ⚠ **Sie werden hereingereicht statt hier geholt**, weil der Aufrufer sie ein
+    zweites Mal braucht: für die Tabelle *Zahlen je Gerät*, deren Monatszeilen
+    es im laufenden Monat noch nicht gibt. Zweimal zu lesen wäre dieselbe
+    Abfrage zweimal.
+
+    ⚠ **Die WP-Größen kommen als Rohfelder je Gerät** (``inv_<id>_…``), nicht
+    aufgelöst — K3 und D1 fallen anschließend in ``_wp_strom_k3`` bzw.
+    ``_wp_waerme_d1`` wie bei jeder anderen Nicht-DB-Quelle. Eine Quelle, die
+    ihre Größen vorab auflöst, stünde als einzige neben der Kette.
+
+    ⚠ **Kein HA-Zugriff.** Die Tagesebene liegt lokal; das war die Auflage, unter
+    der N-121 entschieden wurde, und sie gilt hier genauso.
+
+    Returns:
+        ``{feld: (menge, DatenquelleInfo)}`` — nur Größen mit ``> 0``, wie in
+        allen vier Collectoren. Keine Tagesspur ⇒ leeres Dict.
+    """
+    from backend.services.energie_profil.monats_aus_tagen import (
+        lade_monats_summen_aus_tagen,
+    )
+
+    summen = await lade_monats_summen_aus_tagen(
+        db, anlage_id, von=(jahr, monat), bis=(jahr, monat)
+    )
+    summe = summen.get((jahr, monat))
+    wp_mengen = wp_mengen or {}
+
+    if (summe is None or summe.tage <= 0) and not wp_mengen:
+        return {}
+
+    # Die Abdeckung gehört dazu (P4): Beginnt die Tagesspur erst mitten im
+    # Monat — später eingerichtetes Add-on, Vollbackfill, der nicht zurückreicht
+    # —, sagt die Provenanz-Zeile es (*„Tageswerte (ab 05.09.)"*). Derselbe
+    # Slot, dieselbe Beschriftung wie beim Connector seit #361; beginnt sie am
+    # Monatsersten, schweigt sie von selbst (`connector_deckt_monatsanfang`).
+    # ⚠ Die Ränder der **beiden** Leser zusammen — die Wärme-Spur kann früher
+    # beginnen als die Bilanz-Spur und umgekehrt.
+    _erste = [t for t in (getattr(summe, "erster_tag", None), wp_von) if t]
+    _letzte = [t for t in (getattr(summe, "letzter_tag", None), wp_bis) if t]
+    quelle = DatenquelleInfo(
+        quelle="tagesebene", konfidenz=80, zeitpunkt=datetime.now().isoformat(),
+        abdeckung_von=datetime.combine(min(_erste), time.min) if _erste else None,
+        abdeckung_bis=(
+            datetime.combine(max(_letzte), time.min) + timedelta(days=1)
+            if _letzte else None
+        ),
+    )
+    resolved: dict[str, tuple[float, DatenquelleInfo]] = {}
+    for feld, wert in (
+        ("einspeisung_kwh", getattr(summe, "einspeisung_kwh", 0.0)),
+        ("netzbezug_kwh", getattr(summe, "netzbezug_kwh", 0.0)),
+        # `pv_kwh` ist Module + BKW — dieselbe PV-Achse wie im DB-Zweig.
+        ("pv_erzeugung_kwh", summe.pv_kwh if summe is not None else 0.0),
+        ("bkw_erzeugung_kwh", getattr(summe, "bkw_kwh", 0.0)),
+        ("speicher_ladung_kwh", getattr(summe, "speicher_ladung_kwh", 0.0)),
+        ("speicher_entladung_kwh", getattr(summe, "speicher_entladung_kwh", 0.0)),
+    ):
+        if wert > 0:
+            resolved[feld] = (wert, quelle)
+
+    # ── Wärme/Klima je Gerät (A-5) ──
+    # Die Feldnamen sind die der **Registry**, nicht die der Tagesebene — genau
+    # die Keys, die `_wp_strom_k3` und `_wp_waerme_d1` unten lesen. Damit läuft
+    # die bestehende Kette (K3 · D1 · `typ_aggregation` · Systemarbeitszahl),
+    # statt daneben eine zweite zu entstehen.
+    for inv_id, m in wp_mengen.items():
+        for feld, wert in (
+            ("stromverbrauch_kwh", m.strom_kwh),
+            ("waerme_kwh", m.waerme_kwh),
+            ("heizenergie_kwh", m.heizung_kwh),
+            ("warmwasser_kwh", m.warmwasser_kwh),
+            ("strom_heizen_kwh", m.strom_heizen_kwh),
+            ("strom_warmwasser_kwh", m.strom_warmwasser_kwh),
+            ("kaelte_kwh", m.kaelte_kwh),
+        ):
+            if wert > 0:
+                resolved[f"inv_{inv_id}_{feld}"] = (wert, quelle)
+    # Der Kühlanteil als Anlagensumme — Eingang der Ersparnis-Rechnung, wie im
+    # DB-Zweig (`fakt.wp.modus_strom_kuehlen_kwh`). Er ist eine **Teilmenge**
+    # des WP-Stroms, keine eigene Achse, und läuft deshalb nicht durch K3.
+    _kuehl = sum(m.modus_strom_kuehlen_kwh for m in wp_mengen.values())
+    if _kuehl > 0:
+        resolved["wp_modus_kuehlen_kwh"] = (_kuehl, quelle)
     return resolved
 
 
@@ -1171,6 +1464,7 @@ def _baue_investition_financial(
     inv_sonstige_ausgaben = round(inv_sonstige["ausgaben_euro"], 2)
     inv_erloes: Optional[float] = None
     inv_erloes_formel: Optional[str] = None
+    inv_erloes_berechnung: Optional[str] = None
     #: Default „Einspeisung" — die Abgabe-Kategorie überschreibt ihn unten.
     inv_erloes_label = ERLOES_LABEL_EINSPEISUNG
 
@@ -1189,8 +1483,11 @@ def _baue_investition_financial(
             inv_berechnung = f"{ev_kwh:.1f} kWh × {netz_p:.2f} ct/kWh"
         if einsp_kwh and einsp_kwh > 0:
             inv_erloes = round(einsp_kwh * einsp_p / 100, 2)
-            inv_erloes_formel = (
-                f"Einspeisung × Einspeisevergütung — "
+            # A6: Formel und eingesetzte Werte in GETRENNTE Felder — beides in
+            # einem Satz stand unter der Überschrift „Formel", während jede
+            # andere Kachel „Berechnung" daneben führt. Kein Wert ändert sich.
+            inv_erloes_formel = "Einspeisung × Einspeisevergütung"
+            inv_erloes_berechnung = (
                 f"{einsp_kwh:.1f} kWh × {einsp_p:.2f} ct/kWh"
             )
 
@@ -1235,11 +1532,24 @@ def _baue_investition_financial(
                 inv_berechnung = f"{entl_kwh:.1f} kWh × {erg.spread_cent_kwh:.2f} ct/kWh"
 
     elif inv.typ == "waermepumpe":
-        waerme = get_wp_heizenergie_kwh(data)
+        # N-398: dieselbe Weiche wie im Layer — Geraetefeld, sonst die gemessene
+        # Nutzenergie Heizbetrieb. Ohne sie blieb die Zeile „Ersparnis vs.
+        # Alternative" an einer Split-Klimaanlage leer, die ihre Waerme je
+        # Innengeraet misst.
+        waerme = heizwaerme_kwh(data)
         # N-379: die eine Lesetuer — an einem Geraet ohne Warmwasserkreis ist 0.
         ww = get_wp_warmwasser_kwh(data, inv.parameter)
         strom = get_wp_strom_kwh(data, inv.parameter) or None
-        waerme_total = (waerme or 0) + (ww or 0)
+        # ⛔ **N-391/D1 (14.09.2026): Gesamtwert vor Summanden, je Geraet.**
+        # Hier stand bis dahin `(waerme or 0) + (ww or 0)`. Traegt der Monat
+        # dieses Geraets EINEN Waermemengenzaehler (`waerme_kwh`), war die
+        # Summe **0** — und die Zeile „Ersparnis vs. Alternative" entstand
+        # wegen der Bedingung darunter **gar nicht**, waehrend der
+        # Komponenten-Hub fuer dieselbe Anlage seit WK-14b eine Ersparnis
+        # nennt. Zwei Sichten, zwei Auskuenfte (SOLL §3.3 S1). Gemessen ueber
+        # die echte Route (`get_aktueller_monat`): Lage B **0** WP-Zeilen,
+        # Lage D eine Zeile mit **33,33 EUR**.
+        waerme_total = waerme_gesamt_kwh(data.get("waerme_kwh"), waerme, ww)
         if waerme_total > 0 and strom is not None:
             wp_result = berechne_wp_ersparnis(
                 wp_waerme_kwh=waerme_total,
@@ -1375,8 +1685,10 @@ def _baue_investition_financial(
             bezeichnung=inv.bezeichnung,
             typ=inv.typ,
             betriebskosten_monat_euro=bk_monat,
+            betriebskosten_jahr_euro=round(float(inv.betriebskosten_jahr or 0), 2),
             erloes_euro=inv_erloes,
             erloes_formel=inv_erloes_formel,
+            erloes_berechnung=inv_erloes_berechnung,
             erloes_label=inv_erloes_label,
             ersparnis_euro=inv_ersparnis,
             ersparnis_label=inv_label,
@@ -1479,6 +1791,38 @@ async def get_aktueller_monat(
         if ist_aktueller_monat else {}
     )
     ha_stats = await _collect_ha_statistics_data(anlage, jahr, monat)
+    # Fünfte Quelle (N-472) — nur im laufenden Monat, und das ist eine Aussage
+    # über die Kategorie, nicht über den Aufwand: Im laufenden Monat IST eine
+    # Teilmenge der Tage die vollständige Auskunft über das bisher Geschehene,
+    # und alle vier Quellen darüber messen dort ebenfalls nur bis jetzt. In
+    # einem abgeschlossenen Monat wäre dieselbe Teilmenge eine stille
+    # Untertreibung eines Monatswertes — dort ist die Antwort der
+    # Monatsabschluss, auf den der Daten-Checker ohnehin zeigt
+    # (`daten_checker/monatsdaten.py`, MONATSDATEN_VOLLSTAENDIGKEIT).
+    # Die Wärme/Klima-Mengen der Tagesebene — EINMAL gelesen, zweimal gebraucht:
+    # für die Kacheln (über den Collector) und für die Tabelle *Zahlen je Gerät*
+    # weiter unten, deren Monatszeilen es im laufenden Monat noch nicht gibt.
+    _tages_wp_mengen: dict = {}
+    _tages_wp_von = _tages_wp_bis = None
+    if ist_aktueller_monat and investitionen:
+        from calendar import monthrange
+
+        from backend.services.energie_profil.waerme_verlauf import (
+            lade_waerme_monatsmengen_je_geraet,
+        )
+        _tages_wp_mengen, _tages_wp_von, _tages_wp_bis = (
+            await lade_waerme_monatsmengen_je_geraet(
+                db, anlage, {str(i.id): i for i in investitionen},
+                date(jahr, monat, 1), date(jahr, monat, monthrange(jahr, monat)[1]),
+            )
+        )
+    tagesebene = (
+        await _collect_tagesebene_data(
+            db, anlage_id, jahr, monat,
+            wp_mengen=_tages_wp_mengen, wp_von=_tages_wp_von, wp_bis=_tages_wp_bis,
+        )
+        if ist_aktueller_monat else {}
+    )
 
     # Abdeckung des Connector-Deltas — sie steht in jedem seiner
     # DatenquelleInfo (eine Instanz für alle Felder), der erste Eintrag genügt.
@@ -1497,13 +1841,22 @@ async def get_aktueller_monat(
         ist_aktueller_monat=ist_aktueller_monat,
         connector_abdeckung_von=connector_abdeckung_von,
         monat_start=datetime(jahr, monat, 1),
+        tagesebene=tagesebene,
     )
     resolved: dict[str, tuple[float, DatenquelleInfo]] = merge_datenquellen(**quellen_args)
 
-    # Felder, die nur einen Teilzeitraum messen (Connector-Delta ohne Abdeckung
-    # des Monatsanfangs) — sie dürfen die Aggregation der Komponenten-Werte
-    # nicht unterdrücken, siehe `direct_fields` unten (#361).
-    teilzeitraum = teilzeitraum_felder(**quellen_args)
+    # Felder, die nur einen Teilzeitraum messen — sie dürfen die Aggregation der
+    # Komponenten-Werte nicht unterdrücken, siehe `direct_fields` unten (#361).
+    # Drei Herkünfte: Connector-Delta ohne Abdeckung des Monatsanfangs, MQTT mit
+    # Rückfall auf den ersten Stand (N-472) und die Tagesebene. Woran ein
+    # MQTT-Feld als Rückfall erkennbar ist, steht in `_collect_mqtt_inbound_data`:
+    # an der gesetzten `abdeckung_von` seiner eigenen `DatenquelleInfo`.
+    teilzeitraum = teilzeitraum_felder(
+        **quellen_args,
+        mqtt_ab_monatsbeginn={
+            k for k, (_, info) in mqtt_energy.items() if info.abdeckung_von is None
+        },
+    )
 
     # ── Investitions-Felder in Top-Level aggregieren (typabhängig) ──
     # Nur aggregieren wenn kein direkter Top-Level-Wert existiert (sonst Doppelzählung!)
@@ -1517,11 +1870,41 @@ async def get_aktueller_monat(
             "entladung_kwh": ("speicher_entladung_kwh",),
         },
         "waermepumpe": {
-            "stromverbrauch_kwh": ("wp_strom_kwh",),
-            "strom_heizen_kwh": ("wp_strom_kwh",),
-            "strom_warmwasser_kwh": ("wp_strom_kwh",),
-            "heizenergie_kwh": ("wp_waerme_kwh",),
-            "warmwasser_kwh": ("wp_waerme_kwh",),
+            # ⛔ **Der Strom steht hier NICHT als drei Summanden.**
+            # `stromverbrauch_kwh`, `strom_heizen_kwh` und
+            # `strom_warmwasser_kwh` standen bis 14.09.2026 alle drei an dieser
+            # Stelle und wurden **addiert** — der Gesamtzaehler UND die
+            # Aufteilung darunter. Die Lesetuer `get_wp_strom_kwh`
+            # (K3, `wp_strom_aufteilung`) tut genau das nicht: ein
+            # Gesamtzaehler IST die Menge (K1), die feinen Achsen stehen
+            # daneben — addiert wird nie, ersetzt schon.
+            # Gemessen ueber die echte Route (eine WP, HA-Statistik liefert
+            # 1000 + 600 + 400, `getrennte_strommessung=True`):
+            # `wp_strom_kwh` **2000 statt 1000**, `wp_jaz` **1,5 statt 3,0** —
+            # den ganzen laufenden Monat lang, und beim Monatsabschluss heilte
+            # es sich von selbst (der DB-Zweig geht durch dieselbe Lesetuer und
+            # nennt fuer dieselben Werte 1000/3,0). Die Anlage sah halb so gut
+            # aus, wie sie ist.
+            # ⚠ Das Kennzeichen half nicht: ohne `getrennte_strommessung` sind
+            # die feinen Felder gar keine Summanden — die Tabelle addierte sie
+            # trotzdem (gemessen: ebenfalls 2000).
+            # K3 faellt deshalb **je Geraet** in `_wp_strom_k3` unten; hier
+            # steht nur noch dessen Ergebnis, und diese Tabelle summiert es.
+            _WP_STROM_K3_SUFFIX: ("wp_strom_kwh",),
+            # ⛔ **Die Waerme steht hier NICHT als zwei (oder drei) Summanden.**
+            # `heizenergie_kwh` und `warmwasser_kwh` standen bis 14.09.2026 an
+            # dieser Stelle, `waerme_kwh` fehlte ganz — wer seine Waerme ueber
+            # EINEN Waermemengenzaehler fuehrt (Feld seit WK-14b) und fuer den
+            # laufenden Monat noch keine gespeicherte Zeile hat, sah in
+            # *Cockpit → Monat* **keine Waerme** (gemessen: `wp_waerme_kwh`
+            # None statt 3000). `waerme_kwh` als dritten Summanden nachzutragen
+            # waere die Gegenrichtung desselben Fehlers: Wer Gesamtzaehler
+            # **und** Aufteilung pflegt, zaehlte 3000 + 2100 + 900 = 6000.
+            # D1 faellt deshalb **je Geraet** in `_wp_waerme_d1` unten; hier
+            # steht nur noch dessen Ergebnis, und diese Tabelle summiert es —
+            # wie im DB-Zweig, wo `monats_fakten` je IMD-Zeile aufloest und
+            # erst danach addiert.
+            _WP_WAERME_D1_SUFFIX: ("wp_waerme_kwh",),
         },
         # E-Auto und Wallbox NICHT hier — sie messen denselben Stromfluss aus
         # zwei Perspektiven (Vehicle vs. Loadpoint). Aufsummieren über beide
@@ -1555,6 +1938,163 @@ async def get_aktueller_monat(
     direct_fields = set(resolved.keys()) - teilzeitraum
     ersetzbar = set(teilzeitraum)
 
+    def _wp_heizwaerme_eintrag(inv_id: int):
+        """Die Heizwaerme dieses Geraets aus den Nicht-DB-Quellen (N-398).
+
+        Dieselbe Weiche wie im Layer ({@link heizwaerme_kwh}), nur auf der
+        anderen Datenform: ``resolved`` traegt ``inv_<id>_<feld>`` statt einer
+        ``verbrauch_daten``-Zeile. Der **Regel**-Teil bleibt im Layer — hier
+        wird nur die Zeile zusammengesetzt, die er lesen kann.
+
+        ⚠ **Ohne das faellt der laufende Monat hinter den abgeschlossenen
+        zurueck.** Der DB-Zweig kommt ueber die Monats-Fakten und hat die
+        Aufloesung seit dem Layer-Eingriff; eine Klimaanlage, die ihre
+        Nutzenergie je Innengeraet ueber MQTT oder HA meldet, saehe sonst im
+        laufenden Monat 0 und im Folgemonat die Zahl — zwei Sichten, zwei
+        Auskuenfte (Konzept §6/S1).
+
+        Returns:
+            ``(menge, DatenquelleInfo)`` wie jeder andere ``resolved``-Eintrag,
+            oder ``None``.
+        """
+        direkt = resolved.get(f"inv_{inv_id}_heizenergie_kwh")
+        if direkt is not None:
+            return direkt
+        praefix = f"inv_{inv_id}_"
+        zeile = {
+            k[len(praefix):]: v[0]
+            for k, v in resolved.items() if k.startswith(praefix)
+        }
+        menge = heizwaerme_kwh(zeile)
+        if menge is None:
+            return None
+        # Die Herkunfts-Marke des Wertes, der die Menge getragen hat — bei
+        # mehreren Innengeraeten die des ersten gefundenen (dieselbe Naeherung,
+        # die `_wp_waerme_d1` darunter fuer die Summanden macht).
+        quelle = next(
+            (v[1] for k, v in resolved.items()
+             if k.startswith(praefix)
+             and basis_feld_key(k[len(praefix):])
+             == BETRIEBSART_NUTZENERGIE_FELD[BM_HEIZEN]),
+            None,
+        )
+        return (menge, quelle) if quelle is not None else None
+
+    def _wp_waerme_d1(inv_id: int) -> None:
+        """D1 je Geraet — der Gesamtwert verdraengt nur die EIGENE Aufteilung.
+
+        Legt das Ergebnis unter ``inv_<id>_<_WP_WAERME_D1_SUFFIX>`` ab, damit
+        ``typ_aggregation`` darueber nur noch **summieren** muss. Die Regel
+        selbst bleibt die eine Stelle (``waerme_gesamt_kwh``); dass sie **je
+        Geraet** faellt und nicht auf der Anlagensumme, ist dieselbe Lehre wie
+        im Tagespfad (N-391b): ``waerme_kwh`` ist ein Feld **am Geraet**, und
+        eine Aufloesung ueber den Summen liesse die Aufteilung des zweiten
+        Geraets still hinter dem Gesamtwert des ersten verschwinden (P4).
+
+        Die Herkunfts-Marke ist die des Wertes, der D1 tatsaechlich gewonnen
+        hat — bei den Summanden die des **letzten** vorhandenen, wie es die
+        frueheren zwei ``_aggregate``-Aufrufe hinterliessen (verhaltensgleich).
+        """
+        _gesamt = resolved.get(f"inv_{inv_id}_waerme_kwh")
+        _teile = [
+            _wp_heizwaerme_eintrag(inv_id),
+            resolved.get(f"inv_{inv_id}_warmwasser_kwh"),
+        ]
+        if _gesamt is None and all(t is None for t in _teile):
+            return
+        # Dieselbe Form wie im Layer-Zwilling `waerme_gesamt_je_geraet`: die
+        # Summanden werden **vorher** addiert und als EIN Argument uebergeben.
+        # Sonst haengt der Aufruf an der Laenge des Tupels darueber und eine
+        # dritte Waermeachse liesse ihn umfallen, statt mitzuzaehlen.
+        _wert = waerme_gesamt_kwh(
+            _gesamt[0] if _gesamt is not None else None,
+            sum(t[0] for t in _teile if t is not None),
+            None,
+        )
+        if _gesamt is not None and _gesamt[0]:
+            _quelle = _gesamt[1]
+        else:
+            _quelle = next(
+                (t[1] for t in reversed(_teile) if t is not None), None
+            )
+            if _quelle is None:          # nur eine gemessene 0 im Gesamtfeld
+                _quelle = _gesamt[1]
+        resolved[f"inv_{inv_id}_{_WP_WAERME_D1_SUFFIX}"] = (_wert, _quelle)
+
+    def _wp_strom_k3(inv_id: int, parameter: Optional[dict]) -> None:
+        """K3 je Geraet — Gesamtzaehler und feine Aufteilung sind KEINE Summanden.
+
+        Der Zwilling zu {@link _wp_waerme_d1} auf der Stromseite, und aus
+        demselben Grund **je Geraet**: Die Stufenregel haengt an
+        ``Investition.parameter`` (``getrennte_strommessung``) und an den
+        Werten *dieses* Geraets. Auf der Anlagensumme gestellt, waere sie fuer
+        eine Waermepumpe neben einer Split-Klimaanlage gar nicht beantwortbar.
+
+        ⛔ **Die Regel selbst bleibt die eine Stelle** (``get_wp_strom_kwh`` /
+        ``wp_strom_aufteilung``, K3/N-451/WK-16d). Hier wird sie nur
+        **gerufen** — mit denselben Werten fuer Menge und Marke, auch fuer
+        die Herkunfts-Marke, statt ihre Bedingung lokal nachzubauen: ein
+        Nachbau derselben Bedingung faellt erfahrungsgemaess anders aus als das
+        Original (die Lehre aus Sprengsatz S7 in N-391c).
+
+        ⚠ **Der Monat fragt „steht ein Wert?", nicht „ist ein Zaehler
+        zugeordnet?"** (Konzept Kap. 3). Fuer den laufenden Monat aus
+        Nicht-DB-Quellen gilt die **Monats**frage: Was keine Quelle geliefert
+        hat, steht nicht in ``resolved`` und ist damit unbelegt — genau die
+        Ebene, auf der ``get_wp_strom_kwh`` an einer IMD-Zeile entscheidet.
+
+        ⭐ **Seit dem 15.09.2026 stehen die Betriebsart-Zaehler mit in der
+        Feldliste (R-1/K3 Regel 4, N-486).** Bis dahin stand hier: *„bewusst nur
+        die drei Achsen, die die Tabelle vorher trug"* — mit der Begruendung,
+        dieser Bau solle **eine** Verhaltensaenderung tragen (Summe → K3). Die
+        Begruendung war fuer WK-12c richtig und ist mit R-1 verbraucht: Ein
+        Geraet, dessen einzige Messung die Betriebsart-Zaehler sind, saehe im
+        laufenden Monat sonst **0 kWh**, waehrend der abgeschlossene Monat
+        daneben seine Menge traegt — genau der S1-Bruch zwischen zwei Sichten,
+        gegen den K3 gebaut ist. ⚠ Die Felder muessen dafuer nichts Neues
+        liefern: Steht kein ``inv_<id>_betriebsart_strom_*_kwh`` in
+        ``resolved``, ist die Liste leer wie vorher und der Lauf bitgleich.
+        """
+        _felder = (
+            "stromverbrauch_kwh", *FEINE_STROM_FELDER,
+            *(BETRIEBSART_STROM_FELD[_m] for _m in MESSBARE_MODI),
+        )
+        _eintraege = {
+            f: resolved[f"inv_{inv_id}_{f}"]
+            for f in _felder
+            if f"inv_{inv_id}_{f}" in resolved
+        }
+        if not _eintraege:
+            return
+        _wert = get_wp_strom_kwh(
+            {f: e[0] for f, e in _eintraege.items()}, parameter,
+        )
+        # Die Marke ist die des Wertes, der K3 gewonnen hat — bei der feinen
+        # Aufteilung die der **letzten** vorhandenen Achse, wie es die frueheren
+        # drei `_aggregate`-Aufrufe hinterliessen (verhaltensgleich).
+        _stufe = wp_strom_aufteilung(
+            {f: e[0] for f, e in _eintraege.items()}, parameter,
+        ).stufe
+        _traeger = {
+            "gesamt": ("stromverbrauch_kwh",),
+            "fein": FEINE_STROM_FELDER,
+            # K3 Regel 4 (R-1): dann traegt die Marke der Betriebsart-Zaehler,
+            # nicht die einer Achse, die gar nichts beigesteuert hat.
+            "betriebsart": tuple(
+                BETRIEBSART_STROM_FELD[_m] for _m in MESSBARE_MODI
+            ),
+        }[_stufe]
+        _quelle = next(
+            (_eintraege[f][1] for f in reversed(_traeger) if f in _eintraege),
+            None,
+        )
+        if _quelle is None:
+            # Stufe „gesamt" ohne Gesamtzaehler gibt es nicht, Stufe „fein"
+            # ohne eine einzige feine Achse auch nicht — bleibt der Fall, dass
+            # eine kuenftige Achse hinzukommt. Dann traegt die Marke, was da ist.
+            _quelle = next(iter(_eintraege.values()))[1]
+        resolved[f"inv_{inv_id}_{_WP_STROM_K3_SUFFIX}"] = (_wert, _quelle)
+
     def _aggregate(top_level_feld: str, inv_key: str) -> None:
         if inv_key not in resolved:
             return
@@ -1576,6 +2116,9 @@ async def get_aktueller_monat(
     for inv in investitionen:
         if not inv.ist_aktiv_im_monat(jahr, monat):
             continue
+        if inv.typ == "waermepumpe":
+            _wp_waerme_d1(inv.id)
+            _wp_strom_k3(inv.id, inv.parameter)
         agg_map = typ_aggregation.get(inv.typ, {})
         for inv_suffix, ziel_felder in agg_map.items():
             for top_level_feld in ziel_felder:
@@ -1702,6 +2245,8 @@ async def get_aktueller_monat(
     netto_ertrag = None
     netzbezug_preis_cent = None
     netzbezug_preis_effektiv_cent = None
+    netzbezug_preis_herkunft = None
+    netzbezug_preis_abdeckung = None
     einspeise_cent = None
     grundgebuehr = None
     zaehlergebuehr_jahr = None
@@ -1768,9 +2313,17 @@ async def get_aktueller_monat(
         # ein Monats-Ø von **0,0 ct** ist bei dynamischem Tarif real (viele
         # Negativpreis-Stunden) und wäre als falsy stillschweigend auf den
         # Tarifpreis zurückgefallen — die 0-Werte-Falle.
-        netzbezug_preis_effektiv_cent = resolve_netzbezug_preis_cent(
-            md_for_gas, netzbezug_preis_cent
+        # ⭐ **#412 (11.09.2026): die Kaskade hat eine dritte Stufe bekommen** —
+        # gepflegt → **gemessen** → Zeitfenster → Stamm. Zwischen dem
+        # abgerechneten Ø und dem Tarifpreis fehlte die **Messung**: Wer einen
+        # dynamischen Tarif hat, sah im laufenden Monat den festen Tarif,
+        # obwohl eedc die Stundenpreise mitschreibt (OB73-gif).
+        _preis = await aufgeloester_monatspreis(
+            db, anlage_id, jahr, monat, md_for_gas, allgemein_tarif,
         )
+        netzbezug_preis_effektiv_cent = _preis.cent
+        netzbezug_preis_herkunft = _preis.herkunft
+        netzbezug_preis_abdeckung = _preis.abdeckung
 
         if einspeisung is not None:
             # §51 EEG: siehe `_load_vorjahr` für Begründung.
@@ -1872,21 +2425,173 @@ async def get_aktueller_monat(
             and monats_fakt.wp.waerme_deckt_nicht_alle_geraete
         ),
         zeitraum_versetzt=_wp_seiten_teilzeitraum == 1,
+        # N-441: die Gegenrichtung. ⚠ Sie haengt **hinter** `zeitraum_versetzt`
+        # in der Kette (`abgrenzungs_grund`), weil hier — und nur hier — beide
+        # zugleich wahr sein koennen: Der Zeitraum-Versatz entsteht aus der
+        # Vier-Quellen-Aufloesung dieses Monats. Vorn eingehaengt haette das
+        # neue Glied dort einen heute gezeigten Grund samt Hub-Link getauscht.
+        geraete_verschieden=(
+            monats_fakt is not None and monats_fakt.wp.geraete_verschieden
+        ),
     )
+    # ⭐ **Die Frage „welche Funktion trifft die Verletzung?" steht weiter
+    # unten** (SOLL §3.2b; seit WK-16i hinter den Geräte-Kennzahlen, denn aus
+    # ihnen beantwortet der laufende Monat sie).
     # W-14 + E4: Der funktionsfremde Strom (Kühlen · Lüften · Entfeuchten) kommt
     # — wie der abgeleitete Anteil darüber — IMMER aus den Monats-Fakten. Er
     # beschreibt die Aufteilung der IMD-Zeilen dieses Monats, und die ändert sich
     # nicht dadurch, dass eine Menge über HA-Statistik statt aus der Datenbank
     # kam. Eine Größe statt drei Summanden: die Aufzählung an vier Aufrufern war
     # die Bauform, an der W-14 entstanden ist.
+    #
+    # ⭐ **SOLL-§9-E7/Option A (12.09.2026): der ABZUG, nicht die Menge.** Hier
+    # stand bis dahin `modus_strom_funktionsfremd_kwh`. Bei getrennter
+    # Strommessung mit nur **abgeleiteter** Aufteilung kürzte das den Nenner um
+    # eine Menge, die er nie enthielt — der Split verteilt
+    # `strom_heizen + strom_warmwasser`, er stellt nichts daneben. Die
+    # Mengen-Größe bleibt daneben stehen und trägt weiter die Aufteilung (K1).
     wp_strom_funktionsfremd_kwh = (
-        monats_fakt.wp.modus_strom_funktionsfremd_kwh if monats_fakt is not None else 0.0
+        monats_fakt.wp.modus_strom_funktionsfremd_abzug_kwh
+        if monats_fakt is not None else 0.0
     )
-    wp_arbeitszahl = arbeitszahl(
+    # ── E1b: die ANLAGENWEITE Zahl, als Schranke statt als Strich ──────────
+    #
+    # ⭐ **Entscheid Gernot, 14.09.2026.** Hier stand `arbeitszahl(...)` mit
+    # `wp_abgrenzung_verletzt` — und damit sperrten **zwei** Lagen die Zahl, die
+    # sie gar nicht falsch machen, sondern nur zu **klein**: gemischte Bauarten
+    # (`GRUND_BAUARTEN_GEMISCHT`) und Geräte ohne Wärmemeldung
+    # (`GRUND_GERAETE_OHNE_WAERME`). In beiden steht Strom im Nenner, dem keine
+    # gemessene Wärme gegenübersteht; der Quotient ist dann eine **untere
+    # Schranke** — und die ist eine wahre Aussage.
+    #
+    # ⚠ **Die übrigen Gründe sperren weiter, und das ist der Kern der
+    # Unterscheidung:** Fremdanteil-Angabe, Zeitraum-Versatz, „Wärme und Strom
+    # von verschiedenen Geräten" und „… aus verschiedenen Monaten" kippen die
+    # Zahl nach **oben** oder in unbekannte Richtung. Eine untere Schranke wäre
+    # dort eine Falschaussage. Deshalb dieselbe Kette ein zweites Mal — ohne die
+    # beiden Glieder, die zur Schranke werden.
+    _wp_invs_fuer_block = [i for i in investitionen if i.typ == "waermepumpe"]
+    _wp_kennzahlen_je_geraet = await lade_kennzahlen_je_geraet(
+        db, anlage_id, _wp_invs_fuer_block, von=(jahr, monat), bis=(jahr, monat),
+    )
+    # ── N-472/A-5: dieselbe Tabelle im laufenden Monat, aus der Tagesebene ──
+    #
+    # ⛔ **Der Dienst liest `InvestitionMonatsdaten` — die es im laufenden Monat
+    # nicht gibt.** Die Tabelle *Zahlen je Gerät* blieb deshalb leer, während
+    # Kachel und Verlauf darüber dieselben Tage vollständig zeigten; genau das
+    # Bild, gegen das dieses Paket gebaut ist, eine Ebene tiefer.
+    #
+    # ⭐ **Die Kennzahl entsteht trotzdem in derselben Funktion.** Der Dienst
+    # trägt für diesen Fall seit WK-16ab `mengen_aus_tageswerten` — dieselbe
+    # zweite Herkunft, die *Cockpit → Tag* benutzt; nur der Zeitraum ist ein
+    # Monat statt eines Tages. Es entsteht **keine** zweite Rechenstelle.
+    #
+    # ⚠ **Ersetzt wird nur, was leer ist.** Trägt ein Gerät für diesen Monat
+    # schon eine Zeile (gepflegter Teilmonat, Import), gewinnt sie — dieselbe
+    # Präzedenz wie oben in der Quellen-Kaskade.
+    if _tages_wp_mengen:
+        from backend.services.waermepumpe_kennzahlen_je_geraet import (
+            kennzahlen_aus_mengen,
+            mengen_aus_tageswerten,
+        )
+        _wp_invs_by_id = {i.id: i for i in _wp_invs_fuer_block}
+        _ersetzt: list = []
+        for _k in _wp_kennzahlen_je_geraet:
+            _m = _tages_wp_mengen.get(str(_k.inv_id))
+            _inv = _wp_invs_by_id.get(_k.inv_id)
+            if _m is None or _inv is None or traegt_menge(_k.mengen):
+                _ersetzt.append(_k)
+                continue
+            _ersetzt.append(kennzahlen_aus_mengen(mengen_aus_tageswerten(
+                _inv,
+                strom_kwh=_m.strom_kwh,
+                waerme_kwh=waerme_gesamt_kwh(
+                    _m.waerme_kwh or None,
+                    _m.heizung_kwh + _m.warmwasser_kwh,
+                    None,
+                ),
+                heizung_kwh=_m.heizung_kwh,
+                warmwasser_kwh=_m.warmwasser_kwh,
+                strom_heizen_kwh=_m.strom_heizen_kwh,
+                strom_warmwasser_kwh=_m.strom_warmwasser_kwh,
+                kaelte_kwh=_m.kaelte_kwh,
+                modus_strom_kuehlen_kwh=_m.modus_strom_kuehlen_kwh,
+                funktionsfremd_abzug_kwh=_m.funktionsfremd_abzug_kwh,
+                waerme_ist_gesamt=bool(_m.waerme_kwh),
+            )))
+        _wp_kennzahlen_je_geraet = _ersetzt
+    # ── S5 anlagenweit (WK-16i, N-503): die Eingänge der Funktions-Zahlen ──
+    #
+    # ⛔ **Sie kamen bis zum 15.09.2026 ausschließlich aus den Monats-Fakten**,
+    # und der laufende Monat hat keine `Monatsdaten`-Zeile. Im Kasten stand
+    # deshalb *„Strom nicht getrennt je Funktion gemessen → Getrennte
+    # Strommessung einschalten"*, während die Tabelle **direkt darunter** 5,58
+    # und 3,32 zeigte (r28/Prüfstand, September 2026) — zwei Leser, ein
+    # Bildschirm (dieselbe Klasse wie N-492).
+    #
+    # ⭐ **S5 gilt für alle anlagenweiten Wärme/Klima-Eingänge, nicht nur für
+    # die Kacheln.** Trägt die Monatszeile eine Menge, gilt sie — sonst
+    # entstehen die Eingänge aus **denselben** Geräte-Mengen, die die Tabelle
+    # oben speist. Die Faltung steht an EINER Stelle
+    # (`waerme_klima_block.funktions_eingaenge_der_anlage`); hier wird sie nur
+    # gerufen, und beide Herkünfte tragen dieselben Feldnamen (F-56).
+    _wp_zeile_traegt = monats_fakt is not None and traegt_menge(monats_fakt.wp)
+    _wp_funktion = (
+        monats_fakt.wp if _wp_zeile_traegt
+        else funktions_eingaenge_der_anlage(_wp_kennzahlen_je_geraet)
+    )
+    # ── SOLL §3.2b (10.09.2026): WELCHE Funktionen die Verletzung trifft ──
+    #
+    # Bis dahin galt sie unbesehen fuer beide Zeilen — bei einer Waermepumpe
+    # neben einer Split-Klimaanlage standen deshalb drei Striche, waehrend der
+    # Komponenten-Hub fuer dasselbe Geraet 3,0 und 2,5 auswies.
+    #
+    # ⚠ Die Gleichheit wird je Funktion aus den BEITRAEGEN gezaehlt, nicht aus
+    # der Bauart: `strom_warmwasser_kwh` wird ungefiltert gelesen, und
+    # `heizenergie_kwh` traegt kein `!luft_luft` — beides kann eine Klimaanlage
+    # tragen. Nur Gleichheit in BEIDE Richtungen schuetzt vor einer falschen
+    # Zahl (zu hoch wie zu niedrig).
+    #
+    # ⭐ **Aus derselben Quelle wie die Mengen darüber** (WK-16i). ⚠ Ein Dict aus
+    # lauter `None` wirkt wie das frühere `None` (`abgrenzung_je_funktion` legt
+    # `global_grund` dann ohnehin auf alle Funktionen); neu ist allein, dass der
+    # Rückfall die Deckung **beantworten** kann, statt sie offenzulassen.
+    _wp_deckung_je_funktion = {
+        f: _wp_funktion.deckung_je_funktion(f) for f in ARBEITSZAHL_FUNKTIONEN
+    }
+    _wp_abgrenzung_je_funktion = abgrenzung_je_funktion(
+        abgrenzung_stoerung=(
+            monats_fakt.wp.abgrenzung_stoerung if monats_fakt is not None else None
+        ),
+        bauarten_gemischt=(
+            monats_fakt is not None and monats_fakt.wp.bauarten_gemischt
+        ),
+        geraete_ohne_waerme=(
+            monats_fakt is not None
+            and monats_fakt.wp.waerme_deckt_nicht_alle_geraete
+        ),
+        zeitraum_versetzt=_wp_seiten_teilzeitraum == 1,
+        deckung_je_funktion=_wp_deckung_je_funktion,
+    )
+    _wp_strom_ohne_waerme, _wp_geraete_ohne_waerme = schranken_eingang(
+        _wp_kennzahlen_je_geraet,
+    )
+    wp_abgrenzung_sperrt = abgrenzungs_grund(
+        abgrenzung_stoerung=(
+            monats_fakt.wp.abgrenzung_stoerung if monats_fakt is not None else None
+        ),
+        zeitraum_versetzt=_wp_seiten_teilzeitraum == 1,
+        geraete_verschieden=(
+            monats_fakt is not None and monats_fakt.wp.geraete_verschieden
+        ),
+    )
+    wp_arbeitszahl = systemarbeitszahl(
         wp_waerme, wp_strom,
         waerme_abgeleitet_kwh=wp_waerme_abgeleitet_kwh,
-        strom_funktionsfremd_kwh=wp_strom_funktionsfremd_kwh,
-        abgrenzung_verletzt=wp_abgrenzung_verletzt,
+        kuehlstrom_kwh=wp_strom_funktionsfremd_kwh,
+        strom_ohne_waerme_kwh=_wp_strom_ohne_waerme,
+        geraete_ohne_waerme=_wp_geraete_ohne_waerme,
+        abgrenzung_verletzt=wp_abgrenzung_sperrt,
     )
     # B4 (C-2): Herkunft und Vorbehalt — der Faktor nur bei EINER Wärmepumpe
     # (bei mehreren gibt es keinen einen Faktor, der Text nennt dann die Regel).
@@ -1946,13 +2651,21 @@ async def get_aktueller_monat(
 
     # ── Betriebskosten anteilig ──
     betriebskosten_anteilig = None
-    bk_summe = sum(
-        (i.betriebskosten_jahr or 0) / 12
+    betriebskosten_anteilig_jahr = None
+    betriebskosten_anteilig_anzahl = None
+    # A6: dieselbe Filtermenge trägt Σ Monatsanteil UND Σ Jahresbetrag/Anzahl —
+    # ein zweiter Durchlauf mit anderem Filter wäre eine Herleitung, die auf
+    # eine andere Zahl führt als die Zeile daneben.
+    bk_jahre = [
+        (i.betriebskosten_jahr or 0)
         for i in investitionen
         if (i.betriebskosten_jahr or 0) > 0
-    )
+    ]
+    bk_summe = sum(j / 12 for j in bk_jahre)
     if bk_summe > 0:
         betriebskosten_anteilig = round(bk_summe, 2)
+        betriebskosten_anteilig_jahr = round(sum(bk_jahre), 2)
+        betriebskosten_anteilig_anzahl = len(bk_jahre)
 
     # ── Sonstige Erträge / Ausgaben über alle Investitionen aggregieren ──
     # Pro Investition gehen Detail-Zeilen ins T-Konto (siehe
@@ -2202,21 +2915,26 @@ async def get_aktueller_monat(
     wp_modus_warmwasser = None
     wp_modus_lueften = None
     wp_modus_entfeuchten = None
+    wp_nutz_lueften = None
+    wp_nutz_entfeuchten = None
     wp_modus_rest = None
     wp_modus_abdeckung = None
     wp_modus_gemessen = None
     wp_modus_bezug = None
+    # ⭐ **EINE Lesestelle, zwei Herkünfte** (WK-16i): `_wp_funktion` ist die
+    # Monatszeile, wo sie eine Menge trägt, sonst die Faltung über die
+    # Geräte-Mengen. Beide tragen dieselben Feldnamen — deshalb steht hier
+    # **kein** zweiter Zweig, der dieselben vier Gates noch einmal schreibt.
+    if _wp_funktion.heizung_kwh > 0:
+        wp_heizung = round(_wp_funktion.heizung_kwh, 2)
+    if _wp_funktion.warmwasser_kwh > 0:
+        wp_warmwasser = round(_wp_funktion.warmwasser_kwh, 2)
+    if _wp_funktion.hat_split:
+        # Auch 0-Werte zurückgeben, damit Frontend "getrennt erfasst, aktuell 0"
+        # vs. "gar nicht getrennt erfasst" unterscheiden kann.
+        wp_strom_heizen = round(_wp_funktion.strom_heizen_kwh, 2)
+        wp_strom_warmwasser = round(_wp_funktion.strom_warmwasser_kwh, 2)
     if mf_wp is not None:
-        if mf_wp.heizung_kwh > 0:
-            wp_heizung = round(mf_wp.heizung_kwh, 2)
-        if mf_wp.warmwasser_kwh > 0:
-            wp_warmwasser = round(mf_wp.warmwasser_kwh, 2)
-        if mf_wp.hat_split:
-            # Auch 0-Werte zurückgeben, damit Frontend "getrennt erfasst, aktuell 0"
-            # vs. "gar nicht getrennt erfasst" unterscheiden kann.
-            wp_strom_heizen = round(mf_wp.strom_heizen_kwh, 2)
-            wp_strom_warmwasser = round(mf_wp.strom_warmwasser_kwh, 2)
-
         # #263 K-2: derselbe Alles-oder-nichts-Grundsatz für den Modus-Split —
         # ohne erfasste Stunde gibt es keine Aufteilung statt einer 0.
         if mf_wp.hat_modus_split:
@@ -2225,6 +2943,10 @@ async def get_aktueller_monat(
             wp_modus_warmwasser = round(mf_wp.modus_strom_warmwasser_kwh, 2)
             wp_modus_lueften = round(mf_wp.modus_strom_lueften_kwh, 2)
             wp_modus_entfeuchten = round(mf_wp.modus_strom_entfeuchten_kwh, 2)
+            # R-C: nur mit Zahl (D-Sicht) — `or None` statt einer 0-Zeile.
+            wp_nutz_lueften = round(mf_wp.nutzenergie_lueften_kwh, 2) or None
+            wp_nutz_entfeuchten = (
+                round(mf_wp.nutzenergie_entfeuchten_kwh, 2) or None)
             wp_modus_rest = round(mf_wp.modus_nicht_aufgeteilt_kwh, 2)
             wp_modus_abdeckung = round(mf_wp.modus_abdeckung_h, 1)
             wp_modus_gemessen = mf_wp.modus_gemessen
@@ -2243,17 +2965,53 @@ async def get_aktueller_monat(
     wp_az_kuehlen = arbeitszahl_kuehlen(
         mf_wp.nutzenergie_kuehlen_kwh if mf_wp is not None else None,
         mf_wp.modus_strom_kuehlen_kwh if mf_wp is not None else None,
-        abgrenzung_verletzt=wp_abgrenzung_verletzt,
+        # Kuehlen ist KEINE klimaanlagen-exklusive Funktion: A4 ist eine
+        # Luft-Wasser-WP mit Kaeltemengenzaehler, und die `luft_luft`-Bedingung
+        # der Betriebsart-Felder ist weich. Deshalb dieselbe je-Funktion-Frage
+        # wie oben — nicht „gilt hier ohnehin nicht".
+        abgrenzung_verletzt=_wp_abgrenzung_je_funktion["kuehlen"],
     )
     wp_az_funktion = arbeitszahl_je_funktion(
         heizung_kwh=wp_heizung,
         strom_heizen_kwh=wp_strom_heizen,
         warmwasser_kwh=wp_warmwasser,
         strom_warmwasser_kwh=wp_strom_warmwasser,
-        hat_split=bool(mf_wp is not None and mf_wp.hat_split),
+        # WK-16i: dieselbe Quelle wie die vier Mengen darüber — im laufenden
+        # Monat also das Kennzeichen der **beitragenden** Geräte, wie es der
+        # Tag seit jeher fragt (`views.py::_wp_getrennte_strommessung_tag`).
+        hat_split=_wp_funktion.hat_split,
+        # N-391: Misst EIN gemeinsamer Wärmemengenzähler beide Funktionen, gibt
+        # es die Wärme je Funktion nicht — die Zeile sagt dann den Grund, statt
+        # die Gesamtwärme durch den Heizstrom zu teilen (gemessen: 5,0 statt 3,0).
+        waerme_ist_gesamt=_wp_funktion.waerme_ist_gesamt,
         waerme_abgeleitet_kwh=wp_waerme_abgeleitet_kwh,
         abgrenzung_verletzt=wp_abgrenzung_verletzt,
+        abgrenzung_je_funktion_grund=_wp_abgrenzung_je_funktion,
+        # **R-2 (WK-16h, N-499): anlagenweit entsteht eine Funktions-Zahl nur
+        # aus den Geräten, die die Achse HABEN.** Die Vereinigung über die
+        # beitragenden Geräte steht an einer Stelle (`achsen_der_anlage`) —
+        # Monat, Tag und Jahr fragen dieselbe. Trägt die Ausstattung nur eine
+        # Wärme-Achse, ist die anlagenweite Gesamtzahl ihre Zahl; eine Schranke
+        # geht dabei nicht mit (`als_arbeitszahl` liefert dann `None`).
+        achsen=achsen_der_anlage(_wp_kennzahlen_je_geraet),
+        gesamt=als_arbeitszahl(wp_arbeitszahl),
     )
+
+    # ── D-Sicht: die Tabelle je Gerät und der EINE Kasten ──────────────────
+    #
+    # Die Gründe werden **hier** gesammelt, weil erst hier alle vier vorliegen;
+    # welche davon in den Kasten gehören, entscheidet die Klasse an der
+    # Grund-Konstante (`grund_klasse`), nicht diese Route und erst recht nicht
+    # der Client.
+    wp_block_geraete = geraete_zeilen(_wp_kennzahlen_je_geraet)
+    # R-4: die **Geräte**-Ausstattungsgründe kommen mit in den Kasten, mit dem
+    # Namen davor und dedupliziert gegen die anlagenweiten Zeilen darüber.
+    wp_block_moeglich = was_noch_moeglich([
+        ("Arbeitszahl", wp_arbeitszahl.grund),
+        ("Arbeitszahl Heizen", wp_az_funktion.heizen.grund),
+        ("Arbeitszahl Warmwasser", wp_az_funktion.warmwasser.grund),
+        ("Arbeitszahl Kühlen", wp_az_kuehlen.grund),
+    ], wp_block_geraete)
 
     # E-Mobilität: PV/Netz/Extern-Split + V2H
     emob_pv = get_val("emob_pv_ladung_kwh")
@@ -2464,12 +3222,31 @@ async def get_aktueller_monat(
     )
 
     # ── Quellen-Übersicht ──
+    # `tagesebene` steht **als eigene Marke** daneben und wird nicht unter
+    # „gespeichert" verbucht (N-472): Sie ist nicht gepflegt, sondern abgeleitet
+    # — wer sie für einen Monatsabschluss hält, sucht eine Zeile, die es nicht
+    # gibt.
     quellen = {
         "ha_statistics": bool(ha_stats),
         "mqtt_inbound": bool(mqtt_energy) if ist_aktueller_monat else False,
         "connector": bool(connector),
         "gespeichert": bool(saved),
+        "tagesebene": bool(tagesebene),
     }
+
+    # ── Grund statt Leere (N-472) ──
+    # Die Regel und der Wortlaut stehen in `core/monatswert_grund.py`; hier wird
+    # nur die eine Frage beantwortet, die diese Route beantworten kann: Hat für
+    # diesen Monat überhaupt irgendeine Quelle irgendetwas geliefert?
+    _grund = monatswert_grund_text(monatswert_grund(bool(resolved)))
+    datenlage_gruende: dict[str, str] = (
+        {
+            feld: _grund
+            for feld in ("pv_erzeugung_kwh", "einspeisung_kwh", "netzbezug_kwh")
+            if get_val(feld) is None
+        }
+        if _grund else {}
+    )
 
     # ── Feld-Quellen extrahieren ──
     feld_quellen = {
@@ -2667,6 +3444,7 @@ async def get_aktueller_monat(
         aktualisiert_um=now.isoformat(),
         quellen=quellen,
         hinweise=hinweise,
+        datenlage_gruende=datenlage_gruende,
         # Energie
         pv_erzeugung_kwh=pv,
         einspeisung_kwh=einspeisung,
@@ -2706,6 +3484,21 @@ async def get_aktueller_monat(
         wp_jaz_zaehler_kwh=wp_arbeitszahl.zaehler_kwh,
         wp_jaz_nenner_kwh=wp_arbeitszahl.nenner_kwh,
         wp_waerme_abgeleitet=wp_waerme_abgeleitet_kwh > 0,
+        # Alle Gründe des Blocks in EINE Frage — der Link ist ein Element des
+        # Blocks, keine Zeile je Kennzahl.
+        wp_hub_hilft=hub_hilft(
+            wp_arbeitszahl.grund,
+            wp_az_funktion.heizen.grund,
+            wp_az_funktion.warmwasser.grund,
+            wp_az_kuehlen.grund,
+            ist_schranke=wp_arbeitszahl.ist_schranke,
+        ),
+        # Die Menge nur, wo es überhaupt Wärme gibt — sonst stünde eine 0
+        # neben einem „—" und sähe aus wie „nichts gerechnet" statt „nichts
+        # gemessen". Gleiche Rundung wie `wp_waerme_kwh` daneben.
+        wp_waerme_abgeleitet_kwh=(
+            round(wp_waerme_abgeleitet_kwh, 2) if wp_waerme is not None else None
+        ),
         wp_waerme_herkunft=wp_waerme_herkunft,
         wp_ersparnis_vorbehalt=wp_ersparnis_vorbehalt,
         wp_ersparnis_berechnung=wp_ersparnis_berechnung_text,
@@ -2720,8 +3513,18 @@ async def get_aktueller_monat(
         wp_jaz_warmwasser_grund=wp_az_funktion.warmwasser.grund,
         wp_jaz_kuehlen=wp_az_kuehlen.wert,
         wp_jaz_kuehlen_grund=wp_az_kuehlen.grund,
+        wp_jaz_ist_schranke=wp_arbeitszahl.ist_schranke,
+        wp_jaz_schranke_hinweis=wp_arbeitszahl.schranke_hinweis,
+        wp_geraete=wp_block_geraete,
+        wp_moeglich=wp_block_moeglich,
+        wp_kaelte_kwh=(
+            round(mf_wp.nutzenergie_kuehlen_kwh, 2)
+            if mf_wp is not None and mf_wp.nutzenergie_kuehlen_kwh > 0 else None
+        ),
         wp_modus_strom_lueften_kwh=wp_modus_lueften,
         wp_modus_strom_entfeuchten_kwh=wp_modus_entfeuchten,
+        wp_modus_nutzenergie_lueften_kwh=wp_nutz_lueften,
+        wp_modus_nutzenergie_entfeuchten_kwh=wp_nutz_entfeuchten,
         wp_modus_nicht_aufgeteilt_kwh=wp_modus_rest,
         wp_modus_abdeckung_h=wp_modus_abdeckung,
         wp_modus_strom_bezug_kwh=wp_modus_bezug,
@@ -2772,8 +3575,12 @@ async def get_aktueller_monat(
         anlage_sonstige_ausgaben_euro=anlage_sonstige_ausgaben,
         gesamtnettoertrag_euro=gesamtnettoertrag,
         betriebskosten_anteilig_euro=betriebskosten_anteilig,
+        betriebskosten_anteilig_jahr_euro=betriebskosten_anteilig_jahr,
+        betriebskosten_anteilig_anzahl=betriebskosten_anteilig_anzahl,
         # Tarif-Info
         netzbezug_preis_cent=netzbezug_preis_cent if allgemein_tarif else None,
+        netzbezug_preis_herkunft=netzbezug_preis_herkunft,
+        netzbezug_preis_abdeckung=netzbezug_preis_abdeckung,
         # N-267: sagt der Anzeige, dass der Preis daneben gewichtet ist.
         netzbezug_preis_zeittarif=hat_zeitfenster(allgemein_tarif),
         einspeise_preis_cent=einspeise_cent if allgemein_tarif else None,

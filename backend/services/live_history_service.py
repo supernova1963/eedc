@@ -330,14 +330,20 @@ async def get_tages_kwh(
 
         entity_id = live.get("leistung_w")
 
-        # WP: getrennte Leistungssensoren → beide als Komponenten
+        # WP: getrennte Leistungssensoren → jede Betriebsart als Komponente.
+        # ⭐ Kühlen kam am 13.09.2026 dazu (N-439) — die Schwesterstellen
+        # `live_sensor_config.baue_investitions_serien` und
+        # `live_tagesverlauf_service` führen dieselben drei Suffixe.
         if not entity_id and typ == "waermepumpe":
             heiz_eid = live.get("leistung_heizen_w")
             ww_eid = live.get("leistung_warmwasser_w")
+            kuehl_eid = live.get("leistung_kuehlen_w")
             if heiz_eid:
                 component_entities[f"waermepumpe_{inv_id}_heizen"] = heiz_eid
             if ww_eid:
                 component_entities[f"waermepumpe_{inv_id}_warmwasser"] = ww_eid
+            if kuehl_eid:
+                component_entities[f"waermepumpe_{inv_id}_kuehlen"] = kuehl_eid
             continue
 
         # Speicher ohne leistung_w aber mit separaten kWh-Sensoren
@@ -565,9 +571,16 @@ async def safe_get_tages_kwh(
             logger.warning(f"Fehler bei {label}-kWh Berechnung (HA): {type(e).__name__}: {e}")
 
     # 2. Fallback: MQTT Energy Snapshots
+    #
+    # ⛔ **Die eigene Sitzung wird durchgereicht** (N-400, 13.09.2026). Bis dahin
+    # öffnete der MQTT-Zweig darunter je eine EIGENE Sitzung auf der App-Datenbank,
+    # obwohl diese Funktion `db` von `Depends(get_db)` an hält — dieselbe Bauform,
+    # die nach v4.0.40 den Tests-Workflow rot gemacht hat (N-399). ⚠ Und sie fiele
+    # hier besonders leise aus: das `except Exception` unten macht aus jedem Fehler
+    # ein `logger.debug` und ein leeres Ergebnis.
     try:
         from backend.services.mqtt_energy_history_service import get_tages_kwh as mqtt_get_tages_kwh
-        result = await mqtt_get_tages_kwh(anlage.id, tage_zurueck, inv_types=inv_types)
+        result = await mqtt_get_tages_kwh(anlage.id, db, tage_zurueck, inv_types=inv_types)
         if result:
             if tage_zurueck == 0:
                 kwh_cache.set_heute(anlage.id, result)

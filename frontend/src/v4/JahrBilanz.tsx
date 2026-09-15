@@ -120,11 +120,24 @@ export function baueJahrKpis(
     {
       title: 'Netto-Ertrag', value: fmtCalc(d.netto_ertrag_euro, 2, '—'), unit: '€', color: 'blue', icon: DATENROLLEN_ICONS.nettoErtrag,
       subtitle: 'vor Betriebskosten', formel: 'Einspeise-Erlös + Eigenverbrauchs-Ersparnis',
+      // A6 — wortgleich zu `MonatBilanz`: dieselben Feldnamen, im Jahr aus der
+      // Σ-12-Aggregation (`JahrAggregat`). Kein `?? 0`, s. dort.
+      berechnung: (d.einspeise_erloes_euro != null && d.ev_ersparnis_euro != null)
+        ? `${fmtCalc(d.einspeise_erloes_euro, 2)} € Einspeise-Erlös + ${fmtCalc(d.ev_ersparnis_euro, 2)} € Eigenverbrauchs-Ersparnis`
+        : undefined,
+      ergebnis: (d.einspeise_erloes_euro != null && d.ev_ersparnis_euro != null && d.netto_ertrag_euro != null)
+        ? `= ${fmtCalc(d.netto_ertrag_euro, 2)} €`
+        : undefined,
     },
     {
       title: 'Jahresergebnis', value: fmtCalc(jahresergebnis, 2, '—'), unit: '€',
       color: jahresergebnis != null && jahresergebnis < 0 ? 'red' : 'green', icon: DATENROLLEN_ICONS.ergebnis,
       subtitle: 'nach Betriebskosten', formel: 'Gesamt-Nettoertrag − Betriebskosten + Sonstiges',
+      // A6 — dieselben drei Felder und derselbe Guard wie oben bei `jahresergebnis`.
+      berechnung: d.gesamtnettoertrag_euro != null
+        ? `${fmtCalc(d.gesamtnettoertrag_euro, 2)} € − ${fmtCalc(d.betriebskosten_anteilig_euro ?? 0, 2)} € + ${fmtCalc(d.sonstige_netto_euro ?? 0, 2)} €`
+        : undefined,
+      ergebnis: jahresergebnis != null ? `= ${fmtCalc(jahresergebnis, 2)} €` : undefined,
     },
     // R15-1: Kosten-Kacheln (geteilter Bauer, Jahres-Aggregat = Monats-Shape).
     ...baueNetzKostenKpis(d),

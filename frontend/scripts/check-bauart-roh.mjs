@@ -63,7 +63,7 @@ const KLASSIFIZIERT = new Map([
   ['src/lib/jazVergleich.ts', '1 · Bezugsgruppe des JAZ-Vergleichs je Bauart (N-350): dieselbe Kennzahl nur gegen dieselbe Bauart'],
   // ── 2 · Vorschlag ────────────────────────────────────────────────────────
   ['src/components/forms/sections/InvestitionTypFelder/WaermepumpeFelder.tsx', '2 · Formular: Auswahl der Bauart, Hinweise und Vorbelegung — schlägt vor, entscheidet nichts (N-88/F2b)'],
-  ['src/components/forms/sections/investitionFormHelpers.ts', '2 · Formular-Defaults: Heizwärme-/Warmwasserbedarf werden für luft_luft NICHT vorbelegt'],
+  ['src/components/forms/sections/investitionFormHelpers.ts', '3 · Formular-Defaults: reicht `wp_art` als Formularwert durch — die Bedarfs-Vorbelegung fragt seit WK-15c die Achsen (`hatHeizAchse`), nicht die Bauart'],
   // ── 3 · Stammdatum ───────────────────────────────────────────────────────
   ['src/api/community.ts', '3 · Community-Vertrag: `wp_art` als Anlagen-Attribut'],
   ['src/api/communityDemo.ts', '3 · Demo-Payload derselben Form'],

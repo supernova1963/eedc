@@ -5,7 +5,7 @@
  * bedient (Tageswerte-Tabelle und Cockpit → Tag).
  */
 import { describe, it, expect } from 'vitest'
-import { baueErzeugerSpalten, pvRestKw } from './erzeugerSpalten'
+import { baueErzeugerSpalten, pvRestKw, pvSplitKw } from './erzeugerSpalten'
 import { getTagWert, ERZEUGER_METRIK_PREFIX } from './werte'
 import type { Investition } from '../types'
 import { tagWerte } from '../test/factories'
@@ -108,5 +108,63 @@ describe('pvRestKw — die Stapelhöhe bleibt die Erzeugung', () => {
 
   it('behandelt eine fehlende Stunde als 0 statt NaN', () => {
     expect(pvRestKw(null, null, ['pv_7'])).toBe(0)
+  })
+})
+
+describe('pvSplitKw — der Deckel auf der Quellenseite (N-455)', () => {
+  // ⛔ **`pvRestKw` allein hält K1 nur in EINER Richtung**, und das ist der
+  // Befund: Der Rest klemmt bei 0, die String-Flächen selbst waren ungedeckelt.
+  // Liegt Σ Strings über `pv_kw` — die Strings kommen aus dem Leistungspfad,
+  // `pv_kw` aus dem Zählerpfad —, ragte der Quellen-Stapel über die
+  // PV-Gesamtlinie hinaus. Die Senkenseite hat den Deckel seit N-449.
+  const KEYS = ['pv_7', 'pv_9']
+
+  it('Lage UNTER: Σ Strings kleiner als die Anlagen-PV ⇒ nichts wird gestreckt', () => {
+    // Was die Strings nicht erklären, bleibt „PV (übrige)" — eine
+    // hochskalierte Fläche wäre eine Behauptung über ein Dach ohne Sensor.
+    const werte = pvSplitKw(6.0, { pv_7: 3.0, pv_9: 1.5 }, KEYS)
+    expect(werte.pv_7).toBeCloseTo(3.0, 10)
+    expect(werte.pv_9).toBeCloseTo(1.5, 10)
+    expect(pvRestKw(6.0, { pv_7: 3.0, pv_9: 1.5 }, KEYS)).toBeCloseTo(1.5, 10)
+  })
+
+  it('Lage GLEICH: Σ Strings genau die Anlagen-PV ⇒ unverändert, kein Rest', () => {
+    const werte = pvSplitKw(4.5, { pv_7: 3.0, pv_9: 1.5 }, KEYS)
+    expect(werte.pv_7).toBeCloseTo(3.0, 10)
+    expect(werte.pv_9).toBeCloseTo(1.5, 10)
+    expect(pvRestKw(4.5, { pv_7: 3.0, pv_9: 1.5 }, KEYS)).toBe(0)
+  })
+
+  it('Lage ÜBER: Σ Strings größer ⇒ proportional auf die Anlagen-PV skaliert', () => {
+    // Σ 4,5 gegen Zähler 3,6 ⇒ Faktor 0,8. Einzelwerte, keine Summe.
+    const werte = pvSplitKw(3.6, { pv_7: 3.0, pv_9: 1.5 }, KEYS)
+    expect(werte.pv_7).toBeCloseTo(2.4, 10)
+    expect(werte.pv_9).toBeCloseTo(1.2, 10)
+    // K1: Σ Flächen + Rest ist exakt die Anlagen-PV.
+    expect(werte.pv_7 + werte.pv_9 + pvRestKw(3.6, { pv_7: 3.0, pv_9: 1.5 }, KEYS))
+      .toBeCloseTo(3.6, 10)
+  })
+
+  it('behält das Größenverhältnis der Strings — er skaliert, er verteilt nicht', () => {
+    // ⚠ Die Abgrenzung zur Memory-Doktrin „die Stunde verteilt nicht": Hier
+    // wird kein Anlagenwert auf Module aufgeteilt (das Verhältnis 2:1 kommt
+    // aus der Messung und bleibt), sondern Gemessenes auf die gemessene
+    // Gesamtmenge gestaucht.
+    const werte = pvSplitKw(3.6, { pv_7: 3.0, pv_9: 1.5 }, KEYS)
+    expect(werte.pv_7 / werte.pv_9).toBeCloseTo(2.0, 10)
+  })
+
+  it('behandelt eine fehlende Stunde als 0 statt NaN', () => {
+    expect(pvSplitKw(null, null, KEYS)).toEqual({ pv_7: 0, pv_9: 0 })
+    // Ohne Strings gibt es nichts zu deckeln — und keine Division durch 0.
+    expect(pvSplitKw(4.0, {}, KEYS)).toEqual({ pv_7: 0, pv_9: 0 })
+  })
+
+  it('lässt negative Einzelwerte nicht in die Fläche (Quellenseite ist positiv)', () => {
+    // Dieselbe Vorzeichen-Regel wie in `pvRestKw`; die Senken-Variante
+    // `wpSplitKw` spiegelt sie mit `Math.min(0, …)`.
+    const werte = pvSplitKw(4.0, { pv_7: 3.0, pv_9: -1.0 }, KEYS)
+    expect(werte.pv_9).toBe(0)
+    expect(werte.pv_7).toBeCloseTo(3.0, 10)
   })
 })

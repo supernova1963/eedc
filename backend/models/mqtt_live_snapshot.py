@@ -15,6 +15,7 @@ component_key Format:
   "inv:14:leistung_w"         — Investition 14, Gesamtleistung
   "inv:14:leistung_heizen_w"  — WP Heizung separat
   "inv:14:leistung_warmwasser_w" — WP Warmwasser separat
+  "inv:14:leistung_kuehlen_w"  — WP Kühlbetrieb separat
 """
 
 from datetime import datetime

@@ -1,6 +1,6 @@
 # Sensor-Referenz: Feldnamen, Einheiten, Anforderungen
 
-**Version 4.0** | Stand: 2026-07-25 — Referenz für UI-Beschreibungen in der Datenquellen-Zuordnung und im MQTT-Setup
+*Referenz für UI-Beschreibungen in der Datenquellen-Zuordnung und im MQTT-Setup.*
 
 > Siehe auch: [Wärme & Klima](HANDBUCH_WAERME_KLIMA.md) — welcher der Wärmepumpen-Zähler unten welche Kennzahl möglich macht, und was ohne ihn passiert.
 
@@ -23,7 +23,7 @@
 
 > **Pflicht, optional, oder hier gar nicht?** Die Fläche stuft jedes Feld ein, damit „keine Quelle" nicht pauschal wie ein Mangel aussieht (SoT: `FELD_BEDARF` in `backend/core/field_definitions.py`):
 >
-> - **Pflicht** (`*`) — Anlage: Einspeisung + Netzbezug (Zählerstand) und die PV-Erzeugung. Je Gerät das jeweilige Kernfeld: Speicher Ladung/Entladung, Wärmepumpe Strom + Heizwärme, Wallbox Ladung gesamt, E-Auto gefahrene km, PV-Modul/Balkonkraftwerk Erzeugung.
+> - **Pflicht** (`*`) — Anlage: Einspeisung + Netzbezug (Zählerstand) und die PV-Erzeugung. Je Gerät das jeweilige Kernfeld: Speicher Ladung/Entladung, Wärmepumpe Strom + abgegebene Wärme (*Heizwärme* **oder** *Wärme gesamt* — eines von beiden genügt), Wallbox Ladung gesamt, E-Auto gefahrene km, PV-Modul/Balkonkraftwerk Erzeugung.
 > - **Optional** — alles Übrige, insbesondere **alle Live-Felder (W, %, °C)**: ohne sie bleibt nur das Live-Dashboard leer, Statistik und Wirtschaftlichkeit laufen über die kWh-Zählerstände weiter.
 > - **Nicht hier zu erfassen** — das Feld ist durch einen anderen Weg abgedeckt und wird mit Begründung ausgegraut: die drei Alternativ-Gruppen (unten) sowie die Heimladung am E-Auto, sobald eine Wallbox existiert (die Wallbox ist die maßgebliche Quelle, siehe §5).
 >
@@ -51,23 +51,23 @@
 
 ### Monatserfassung (kWh)
 
-| Feld | Label | Einheit | Sensortyp | Beschreibung |
-|------|-------|---------|-----------|-------------|
-| `einspeisung_kwh` | Einspeisung `*` | kWh | Kumulativ oder Tagessensor | Ins Netz eingespeiste Energie. Muss immer ≥ 0 sein. Bei Zweirichtungszähler: nur der Einspeiseanteil. |
-| `netzbezug_kwh` | Netzbezug `*` | kWh | Kumulativ oder Tagessensor | Aus dem Netz bezogene Energie. Muss immer ≥ 0 sein. Bei Zweirichtungszähler: nur der Bezugsanteil. |
-| `globalstrahlung_kwh_m2` | Globalstrahlung | kWh/m² | Kumulativ | Globalstrahlung im Monat. Wird automatisch von Open-Meteo geholt wenn nicht manuell gepflegt. |
-| `sonnenstunden` | Sonnenstunden | h | Kumulativ | Sonnenstunden im Monat. Wird automatisch von Open-Meteo geholt. |
-| `durchschnittstemperatur` | Ø Temperatur | °C | — | Monatsdurchschnitt. Wird automatisch von Open-Meteo geholt. |
+| Feld | Label | Einheit | Sensortyp | Beschreibung | Ausgewertet in |
+|------|-------|---------|-----------|-------------|-----------------|
+| `einspeisung_kwh` | Einspeisung `*` | kWh | Kumulativ oder Tagessensor | Ins Netz eingespeiste Energie. Muss immer ≥ 0 sein. Bei Zweirichtungszähler: nur der Einspeiseanteil. | Cockpit → Monat · Cockpit → Jahr · Auswertungen → Tabelle · HA-Sensoren |
+| `netzbezug_kwh` | Netzbezug `*` | kWh | Kumulativ oder Tagessensor | Aus dem Netz bezogene Energie. Muss immer ≥ 0 sein. Bei Zweirichtungszähler: nur der Bezugsanteil. | Cockpit → Monat · Cockpit → Jahr · Auswertungen → Tabelle · HA-Sensoren |
+| `globalstrahlung_kwh_m2` | Globalstrahlung | kWh/m² | Kumulativ | Globalstrahlung im Monat. Der Auto-Fill im Monatsabschluss holt sie von Open-Meteo bzw. Bright Sky — **nur in ein leeres Feld**. | Cockpit → Aussicht · Auswertungen → Tabelle |
+| `sonnenstunden` | Sonnenstunden | h | Kumulativ | Sonnenstunden im Monat. Der Auto-Fill im Monatsabschluss holt sie von Open-Meteo bzw. Bright Sky — **nur in ein leeres Feld**. | Cockpit → Aussicht · Auswertungen → Tabelle |
+| `durchschnittstemperatur` | Ø Temperatur | °C | — | Monatsdurchschnitt. Der Auto-Fill im Monatsabschluss holt ihn zuerst aus den **gemessenen Außentemperaturen** des Monats (Stundenwerte, sonst Tages-Min/Max), sonst von Open-Meteo — und nur in ein leeres Feld. | Komponenten → Wärmepumpe · Auswertungen → Tabelle |
 
 ### Live-Dashboard (W)
 
-| Feld | Label | Einheit | Sensortyp | Beschreibung |
-|------|-------|---------|-----------|-------------|
-| `einspeisung_w` | Einspeisung | W | Momentan | Aktuelle Einspeiseleistung. Muss ≥ 0 sein. Wird alle paar Sekunden abgefragt. |
-| `netzbezug_w` | Netzbezug | W | Momentan | Aktuelle Netzbezugsleistung. Muss ≥ 0 sein. |
-| `pv_gesamt_w` | PV Gesamt | W | Momentan | Gesamte aktuelle PV-Leistung. Nur nötig wenn keine individuellen PV-Komponenten-Sensoren konfiguriert sind. |
-| `netz_kombi_w` | Kombinierter Netz-Sensor | W | Momentan, bidirektional | Alternative zu getrennt `einspeisung_w`/`netzbezug_w`. Positiv = Netzbezug, negativ = Einspeisung. Nur verwenden wenn kein getrennter Zähler vorhanden. |
-| `strompreis` | Strompreis (dynamischer Tarif) | ct/kWh | Momentan | **Optional, ab v3.16.0.** Aktueller Strompreis aus Tibber, aWATTar, EPEX oder eigenem Template-Sensor. Akzeptierte Einheiten: `ct/kWh`, `EUR/kWh`, `EUR/MWh` (×0.1 → ct/kWh), `Cent`, `€`. Wird im Live-Tagesverlauf als gepunktete Linie auf sekundärer Y-Achse gezeigt. Ohne eigenen Sensor lädt eedc automatisch den EPEX-Börsenpreis (DE/AT) via aWATTar API als Fallback. |
+| Feld | Label | Einheit | Sensortyp | Beschreibung | Ausgewertet in |
+|------|-------|---------|-----------|-------------|-----------------|
+| `einspeisung_w` | Einspeisung | W | Momentan | Aktuelle Einspeiseleistung. Muss ≥ 0 sein. Wird alle paar Sekunden abgefragt. | Cockpit → Live · Cockpit → Tag |
+| `netzbezug_w` | Netzbezug | W | Momentan | Aktuelle Netzbezugsleistung. Muss ≥ 0 sein. | Cockpit → Live · Cockpit → Tag |
+| `pv_gesamt_w` | PV Gesamt | W | Momentan | Gesamte aktuelle PV-Leistung. Nur nötig wenn keine individuellen PV-Komponenten-Sensoren konfiguriert sind. | Cockpit → Live · Cockpit → Tag |
+| `netz_kombi_w` | Kombinierter Netz-Sensor | W | Momentan, bidirektional | Alternative zu getrennt `einspeisung_w`/`netzbezug_w`. Positiv = Netzbezug, negativ = Einspeisung. Nur verwenden wenn kein getrennter Zähler vorhanden. | Cockpit → Live · Cockpit → Tag |
+| `strompreis` | Strompreis (dynamischer Tarif) | ct/kWh | Momentan | **Optional, ab v3.16.0.** Aktueller Strompreis aus Tibber, aWATTar, EPEX oder eigenem Template-Sensor. Akzeptierte Einheiten: `ct/kWh`, `EUR/kWh`, `EUR/MWh` (×0.1 → ct/kWh), `Cent`, `€`. Wird im Live-Tagesverlauf als gepunktete Linie auf sekundärer Y-Achse gezeigt. Ohne eigenen Sensor lädt eedc automatisch den EPEX-Börsenpreis (DE/AT) via aWATTar API als Fallback. | Cockpit → Live |
 
 ### MQTT-Topic-Mapping (Basis)
 
@@ -87,12 +87,12 @@
 
 ### Monatserfassung
 
-| Feld | Label | Einheit | Sensortyp | Beschreibung |
-|------|-------|---------|-----------|-------------|
-| `pv_erzeugung_kwh` | PV-Erzeugung | kWh | Kumulativ oder Tagessensor | Erzeugte Energie dieses PV-Strings/Moduls. Muss ≥ 0 sein. Alternativ: automatische kWp-Verteilung aus dem Gesamt-PV-Sensor. |
-| `eigenverbrauch_kwh` | Eigenverbrauch | kWh | Kumulativ oder Tagessensor | Nur BKW: Direkt im Haushalt verbrauchte BKW-Erzeugung. Optional, **nur Monatswert** (siehe Kasten). |
-| `speicher_ladung_kwh` | Speicher Ladung | kWh | **kein Sensor** — nur manuell/Import | Nur BKW mit Speicher: Ins BKW-Akku geladene Energie. Altbestand, siehe Kasten. |
-| `speicher_entladung_kwh` | Speicher Entladung | kWh | **kein Sensor** — nur manuell/Import | Nur BKW mit Speicher: Aus BKW-Akku entladene Energie. Altbestand, siehe Kasten. |
+| Feld | Label | Einheit | Sensortyp | Beschreibung | Ausgewertet in |
+|------|-------|---------|-----------|-------------|-----------------|
+| `pv_erzeugung_kwh` | PV-Erzeugung | kWh | Kumulativ oder Tagessensor | Erzeugte Energie dieses PV-Strings/Moduls. Muss ≥ 0 sein. Alternativ: automatische kWp-Verteilung aus dem Gesamt-PV-Sensor. | Komponenten → PV-Module · Cockpit → Monat · HA-Sensoren |
+| `eigenverbrauch_kwh` | Eigenverbrauch | kWh | Kumulativ oder Tagessensor | Nur BKW: Direkt im Haushalt verbrauchte BKW-Erzeugung. Optional, **nur Monatswert** (siehe Kasten). | Komponenten → Balkonkraftwerk · Auswertungen → Finanzen |
+| `speicher_ladung_kwh` | Speicher Ladung | kWh | **kein Sensor** — nur manuell/Import | Nur BKW mit Speicher: Ins BKW-Akku geladene Energie. Altbestand, siehe Kasten. | Cockpit → Monat · Komponenten → Balkonkraftwerk |
+| `speicher_entladung_kwh` | Speicher Entladung | kWh | **kein Sensor** — nur manuell/Import | Nur BKW mit Speicher: Aus BKW-Akku entladene Energie. Altbestand, siehe Kasten. | Cockpit → Monat · Komponenten → Balkonkraftwerk |
 
 > **Ein Balkonkraftwerk mit Akku: den Akku als eigene Speicher-Investition erfassen.**
 > Neu anlegen, Typ *Speicher*, und unter **Gehört zu** das Balkonkraftwerk wählen. Nur so
@@ -124,9 +124,9 @@
 
 ### Live-Dashboard
 
-| Feld | Label | Einheit | Sensortyp | Beschreibung |
-|------|-------|---------|-----------|-------------|
-| `leistung_w` | Leistung | W | Momentan | Aktuelle PV-Erzeugungsleistung dieses Strings. Muss ≥ 0 sein. |
+| Feld | Label | Einheit | Sensortyp | Beschreibung | Ausgewertet in |
+|------|-------|---------|-----------|-------------|-----------------|
+| `leistung_w` | Leistung | W | Momentan | Aktuelle PV-Erzeugungsleistung dieses Strings. Muss ≥ 0 sein. | Cockpit → Live |
 
 ### MQTT Energy Topics
 
@@ -145,21 +145,21 @@ eigene Speicher-Investition erfasst und publiziert unter deren ID auf
 
 ### Monatserfassung
 
-| Feld | Label | Einheit | Sensortyp | Beschreibung |
-|------|-------|---------|-----------|-------------|
-| `ladung_kwh` | Ladung — bei Speichern mit Netzladung: **„Ladung (gesamt, inkl. Netz)"** | kWh | Kumulativ oder Tagessensor | Gesamte im Monat in den Speicher geladene Energie, **Netzladung eingeschlossen**. Muss ≥ 0 sein. `ladung_netz_kwh` ist ein *davon*-Anteil, kein zweiter Summand — ein Gerät, das PV- und Netzladung getrennt zählt, braucht hier die Summe beider (HA-Helfer). **Messstelle:** die zur [Kopplung](HANDBUCH_EINSTELLUNGEN.md#34-typ-spezifische-parameter) passende Seite — bei AC-Kopplung hausseitig hinter dem Batterie-Wechselrichter, bei DC-Kopplung am Batterie-Anschluss. |
-| `entladung_kwh` | Entladung | kWh | Kumulativ oder Tagessensor | Gesamte im Monat aus dem Speicher entladene Energie. Muss ≥ 0 sein. **Dieselbe Messstelle wie die Ladung** — kommen die beiden von verschiedenen Seiten (etwa Ladung DC aus der Hersteller-Cloud, Entladung AC aus einem Riemann-Sensor), enthält der Wirkungsgrad die Wandlung nur in eine Richtung. |
-| `ladung_netz_kwh` | Netzladung | kWh | Kumulativ oder Tagessensor | Anteil der Ladung aus dem Netz (Arbitrage). Optional. Muss ≤ `ladung_kwh` sein. **Kanonischer Schlüssel** `ladung_netz_kwh` (Legacy-Fallback `speicher_ladung_netz_kwh` wird noch gelesen). |
-| `speicher_ladepreis_cent` | Ø Ladepreis | ct/kWh | **kein Sensor, kein Topic** — nur manuell/Import | Ø Preis der Netzladung. Nur bei echter Arbitrage relevant — Backup-/Notladung läuft zum Bezugspreis. Erfassung im Monatsdaten-Formular, per CSV-Import oder über den errechneten Vorschlag bei dynamischem Tarif; auf der Datenquellen-Fläche wird das Feld **nicht** zur Zuordnung angeboten (seit v4.0.6). |
+| Feld | Label | Einheit | Sensortyp | Beschreibung | Ausgewertet in |
+|------|-------|---------|-----------|-------------|-----------------|
+| `ladung_kwh` | Ladung — bei Speichern mit Netzladung: **„Ladung (gesamt, inkl. Netz)"** | kWh | Kumulativ oder Tagessensor | Gesamte im Monat in den Speicher geladene Energie, **Netzladung eingeschlossen**. Muss ≥ 0 sein. `ladung_netz_kwh` ist ein *davon*-Anteil, kein zweiter Summand — ein Gerät, das PV- und Netzladung getrennt zählt, braucht hier die Summe beider (HA-Helfer). **Messstelle:** die zur [Kopplung](HANDBUCH_EINSTELLUNGEN.md#34-typ-spezifische-parameter) passende Seite — bei AC-Kopplung hausseitig hinter dem Batterie-Wechselrichter, bei DC-Kopplung am Batterie-Anschluss. | Komponenten → Speicher · Cockpit → Monat · HA-Sensoren |
+| `entladung_kwh` | Entladung | kWh | Kumulativ oder Tagessensor | Gesamte im Monat aus dem Speicher entladene Energie. Muss ≥ 0 sein. **Dieselbe Messstelle wie die Ladung** — kommen die beiden von verschiedenen Seiten (etwa Ladung DC aus der Hersteller-Cloud, Entladung AC aus einem Riemann-Sensor), enthält der Wirkungsgrad die Wandlung nur in eine Richtung. | Komponenten → Speicher · Cockpit → Monat · HA-Sensoren |
+| `ladung_netz_kwh` | Netzladung | kWh | Kumulativ oder Tagessensor | Anteil der Ladung aus dem Netz (Arbitrage). Optional. Muss ≤ `ladung_kwh` sein. **Kanonischer Schlüssel** `ladung_netz_kwh` (Legacy-Fallback `speicher_ladung_netz_kwh` wird noch gelesen). | Cockpit → Monat · Komponenten → Speicher |
+| `speicher_ladepreis_cent` | Ø Ladepreis | ct/kWh | **kein Sensor, kein Topic** — nur manuell/Import | Ø Preis der Netzladung. Nur bei echter Arbitrage relevant — Backup-/Notladung läuft zum Bezugspreis. Erfassung im Monatsdaten-Formular, per CSV-Import oder über den errechneten Vorschlag bei dynamischem Tarif; auf der Datenquellen-Fläche wird das Feld **nicht** zur Zuordnung angeboten (seit v4.0.6). | Komponenten → Speicher · Cockpit → Monat |
 
 ### Live-Dashboard
 
-| Feld | Label | Einheit | Sensortyp | Beschreibung |
-|------|-------|---------|-----------|-------------|
-| `leistung_w` | Leistung | W | Momentan, **bidirektional** | Positiv = Ladung (Senke), negativ = Entladung (Quelle). ⚠️ Manche WR liefern umgekehrtes Vorzeichen — dann in der Datenquellen-Zuordnung „±" (Vorzeichen umkehren) aktivieren. |
-| `ladung_kwh` | Ladung heute | kWh | Tagessensor | Tages-Ladeenergie. Optional — wenn vorhanden, wird für heute-kWh-Anzeige bevorzugt (genauer als Trapez-Integration aus W-Sensor). Wird täglich um 0:00 auf 0 zurückgesetzt. |
-| `entladung_kwh` | Entladung heute | kWh | Tagessensor | Tages-Entladeenergie. Optional — wie `ladung_kwh`. Wird täglich auf 0 zurückgesetzt. |
-| `soc` | Ladezustand | % | Momentan | State of Charge. 0–100%. |
+| Feld | Label | Einheit | Sensortyp | Beschreibung | Ausgewertet in |
+|------|-------|---------|-----------|-------------|-----------------|
+| `leistung_w` | Leistung | W | Momentan, **bidirektional** | Positiv = Ladung (Senke), negativ = Entladung (Quelle). ⚠️ Manche WR liefern umgekehrtes Vorzeichen — dann in der Datenquellen-Zuordnung „±" (Vorzeichen umkehren) aktivieren. | Cockpit → Live |
+| `ladung_kwh` | Ladung heute | kWh | Tagessensor | Tages-Ladeenergie. Optional — wenn vorhanden, wird für heute-kWh-Anzeige bevorzugt (genauer als Trapez-Integration aus W-Sensor). Wird täglich um 0:00 auf 0 zurückgesetzt. | Komponenten → Speicher · Cockpit → Monat · HA-Sensoren |
+| `entladung_kwh` | Entladung heute | kWh | Tagessensor | Tages-Entladeenergie. Optional — wie `ladung_kwh`. Wird täglich auf 0 zurückgesetzt. | Komponenten → Speicher · Cockpit → Monat · HA-Sensoren |
+| `soc` | Ladezustand | % | Momentan | State of Charge. 0–100%. | Cockpit → Live |
 
 ### MQTT Energy Topics
 
@@ -175,25 +175,40 @@ eigene Speicher-Investition erfasst und publiziert unter deren ID auf
 
 ### Monatserfassung
 
-| Feld | Label | Einheit | Sensortyp | Beschreibung |
-|------|-------|---------|-----------|-------------|
-| `stromverbrauch_kwh` | Stromverbrauch | kWh | Kumulativ oder Tagessensor | Gesamter elektrischer Energieverbrauch der WP im Monat. Bei getrennter Messung: Summe aus Heizen + Warmwasser. |
-| `strom_heizen_kwh` | Strom Heizen | kWh | Kumulativ oder Tagessensor | Nur bei getrennter Strommessung. Elektrische Energie für Heizbetrieb. |
-| `strom_warmwasser_kwh` | Strom Warmwasser | kWh | Kumulativ oder Tagessensor | Nur bei getrennter Strommessung. Elektrische Energie für Warmwasserbereitung. |
-| `heizenergie_kwh` | Heizwärme | kWh | Kumulativ oder Tagessensor | Bereitgestellte Wärmeenergie (thermisch, **nicht** Strom). Für JAZ-Berechnung: `heizenergie / stromverbrauch`. Kann alternativ via JAZ-Strategie aus Strom × JAZ berechnet werden. |
-| `warmwasser_kwh` | Warmwasser | kWh | Kumulativ oder Tagessensor | Bereitgestellte Warmwasserenergie (thermisch). Optional. |
-| `wp_starts_anzahl` | Kompressor-Starts | Anzahl | Counter (Total-Increasing) | **Optional, ab v3.24.0 (#136).** Kumulativer Anzahl-Zähler für Kompressor-Starts der Wärmepumpe. Z. B. aus der lokalen „Nibe Heat Pump"-Integration: `sensor.compressor_number_of_starts_…`. Stündlicher Snapshot-Job erfasst den Counter wie kWh-Zähler; Tagesabschluss berechnet Stunden- und Tages-Differenzen. **Bewusst kein Fallback** aus `leistung_w` oder Compressor-Binary — würde gerade kurze Takte (wo der KPI sticht) systematisch unterzählen. Anzeige: [Cockpit → Tag](HANDBUCH_BEDIENUNG.md#22-tag) (Spalte „WP-Starts", default ausgeblendet) und Wärmepumpe-Komponentensicht ([Bedienung §3.4](HANDBUCH_BEDIENUNG.md#34-wärmepumpe)). |
-| `wp_betriebsstunden` | Betriebsstunden | h | Counter (Total-Increasing) | **Optional, ab v3.34 (#238).** Kumulativer Zähler der Gesamt-Betriebsstunden der WP. Kombiniert mit `wp_starts_anzahl` ergibt sich „Ø Laufzeit pro Start" als Auslegungs-/Verschleiß-Maß. Wird wie ein Counter behandelt — keine Energie-Einheit, keine Aufnahme in die Energie-Bilanz (siehe §9). |
+| Feld | Label | Einheit | Sensortyp | Beschreibung | Ausgewertet in |
+|------|-------|---------|-----------|-------------|-----------------|
+| `stromverbrauch_kwh` | Stromverbrauch | kWh | Kumulativ oder Tagessensor | Gesamter elektrischer Energieverbrauch der WP im Monat. Bei getrennter Messung zählt er, solange nicht **beide** getrennten Werte vorliegen — erst dann ist ihre Summe der Verbrauch des Geräts und dieser Zähler wird verworfen (sonst zählte derselbe Strom zweimal). | Komponenten → Wärmepumpe · Cockpit → Monat · HA-Sensoren |
+| `strom_heizen_kwh` | Strom Heizen | kWh | Kumulativ oder Tagessensor | Nur bei getrennter Strommessung. Elektrische Energie für Heizbetrieb. | Komponenten → Wärmepumpe · Cockpit → Tag · Cockpit → Monat |
+| `strom_warmwasser_kwh` | Strom Warmwasser | kWh | Kumulativ oder Tagessensor | Nur bei getrennter Strommessung. Elektrische Energie für Warmwasserbereitung. | Komponenten → Wärmepumpe · Cockpit → Tag · Cockpit → Monat |
+| `heizenergie_kwh` | Heizwärme | kWh | Kumulativ oder Tagessensor | Bereitgestellte Wärmeenergie (thermisch, **nicht** Strom). Für JAZ-Berechnung: `heizenergie / stromverbrauch`. Kann alternativ via JAZ-Strategie aus Strom × JAZ berechnet werden. | Komponenten → Wärmepumpe · Cockpit → Monat · Auswertungen → Finanzen |
+| `warmwasser_kwh` | Warmwasser-Wärme | kWh | Kumulativ oder Tagessensor | Bereitgestellte Warmwasserenergie (thermisch). Optional. | Komponenten → Wärmepumpe · Cockpit → Monat |
+| `waerme_kwh` | Wärme gesamt | kWh | Kumulativ oder Tagessensor | **Ab v4.1 (N-391).** Abgegebene Wärme **gesamt** (thermisch) — für **EINEN** Wärmemengenzähler, der Heizung und Warmwasser zusammen misst (der Regelfall bei Umschaltventil auf den Speicher). Mit **getrennten** Zählern bleibt das Feld leer. ⚠️ **Ein gepflegter Gesamtwert gilt vor den beiden Einzelwerten** (`heizenergie_kwh` + `warmwasser_kwh`): Er ist die Wärme des Geräts, die Aufteilung steht daneben. Wo er die Wärme trägt, gibt es **keine** Arbeitszahl je Funktion — die Zeilen *Heizen* und *Warmwasser* nennen dann den Grund „Wärme nicht je Funktion gemessen". | Komponenten → Wärmepumpe · Cockpit → Monat · HA-Sensoren |
+| `wp_starts_anzahl` | Kompressor-Starts | Anzahl | Counter (Total-Increasing) | **Optional, ab v3.24.0 (#136).** Kumulativer Anzahl-Zähler für Kompressor-Starts der Wärmepumpe. Z. B. aus der lokalen „Nibe Heat Pump"-Integration: `sensor.compressor_number_of_starts_…`. Stündlicher Snapshot-Job erfasst den Counter wie kWh-Zähler; Tagesabschluss berechnet Stunden- und Tages-Differenzen. **Bewusst kein Fallback** aus `leistung_w` oder Compressor-Binary — würde gerade kurze Takte (wo der KPI sticht) systematisch unterzählen. Anzeige: [Cockpit → Tag](HANDBUCH_BEDIENUNG.md#22-tag) (Spalte „WP-Starts", default ausgeblendet) und Wärmepumpe-Komponentensicht ([Bedienung §3.4](HANDBUCH_BEDIENUNG.md#34-wärmepumpe)). | Komponenten → Wärmepumpe · Jahresbericht (PDF) |
+| `wp_betriebsstunden` | Betriebsstunden | h | Counter (Total-Increasing) | **Optional, ab v3.34 (#238).** Kumulativer Zähler der Gesamt-Betriebsstunden der WP. Kombiniert mit `wp_starts_anzahl` ergibt sich „Ø Laufzeit pro Start" als Auslegungs-/Verschleiß-Maß. Wird wie ein Counter behandelt — keine Energie-Einheit, keine Aufnahme in die Energie-Bilanz (siehe §9). | Komponenten → Wärmepumpe |
 
 ### Live-Dashboard
 
-| Feld | Label | Einheit | Sensortyp | Beschreibung |
-|------|-------|---------|-----------|-------------|
-| `leistung_w` | Leistung | W | Momentan | Aktuelle elektrische Leistungsaufnahme der WP. Muss ≥ 0 sein. Alternativ: getrennte Sensoren (s.u.). |
-| `leistung_heizen_w` | Leistung Heizen | W | Momentan | Nur bei getrennter Messung: Leistungsaufnahme Heizbetrieb. Optional. |
-| `leistung_warmwasser_w` | Leistung Warmwasser | W | Momentan | Nur bei getrennter Messung: Leistungsaufnahme Warmwasser. Optional. |
-| `leistung_kuehlen_w` | Leistung Kühlen | W | Momentan | Nur bei getrennter Messung: Leistungsaufnahme Kühlbetrieb. Optional, reine Anzeige — die Mengen kommen aus dem kWh-Zähler. |
-| `warmwasser_temperatur_c` | Warmwassertemperatur | °C | Momentan | Aktuelle Warmwassertemperatur. Optional, wird als Gauge angezeigt. |
+| Feld | Label | Einheit | Sensortyp | Beschreibung | Ausgewertet in |
+|------|-------|---------|-----------|-------------|-----------------|
+| `leistung_w` | Leistung | W | Momentan | Aktuelle elektrische Leistungsaufnahme der WP. Muss ≥ 0 sein. Alternativ: getrennte Sensoren (s.u.). ⚠️ **Zugeordnet verdrängt es sie** — siehe Kasten unter der Tabelle. | Cockpit → Live |
+| `leistung_heizen_w` | Leistung Heizen | W | Momentan | Nur bei getrennter Messung: Leistungsaufnahme Heizbetrieb. Optional. ⚠️ Wird **nicht** ausgewertet, solange `leistung_w` zugeordnet ist — siehe Kasten unter der Tabelle. | Cockpit → Live · Cockpit → Tag |
+| `leistung_warmwasser_w` | Leistung Warmwasser | W | Momentan | Nur bei getrennter Messung: Leistungsaufnahme Warmwasser. Optional. ⚠️ Wird **nicht** ausgewertet, solange `leistung_w` zugeordnet ist — siehe Kasten unter der Tabelle. | Cockpit → Live · Cockpit → Tag |
+| `leistung_kuehlen_w` | Leistung Kühlen | W | Momentan | Nur bei getrennter Messung: Leistungsaufnahme Kühlbetrieb. Optional, reine Anzeige — die Mengen kommen aus dem kWh-Zähler. ⚠️ Wird **nicht** ausgewertet, solange `leistung_w` zugeordnet ist — siehe Kasten unter der Tabelle. | Cockpit → Live · Cockpit → Tag |
+| `warmwasser_temperatur_c` | Warmwassertemperatur | °C | Momentan | Aktuelle Warmwassertemperatur. Optional, wird als Gauge angezeigt. | Cockpit → Live |
+
+> ⚠️ **`leistung_w` verdrängt `leistung_heizen_w`, `leistung_warmwasser_w` und
+> `leistung_kuehlen_w`.** Ist die Gesamtleistung zugeordnet, wertet eedc die drei
+> Funktions-Sensoren im Tagesverlauf **nicht** aus — die Wärmepumpe erscheint dort als **eine**
+> Fläche. Bleibt `leistung_w` leer, bekommt jeder zugeordnete Funktions-Sensor im Tagesverlauf
+> von *Cockpit → Live* eine eigene Fläche mit eigenem Namen (Heizen, Warmwasser, Kühlen). Der
+> **Stundenverlauf des Tages** schlüsselt erst ab **zwei** Funktions-Sensoren auf — ein einzelner
+> wäre dort die Gerätereihe unter anderem Namen. Beides ist richtig, es ist eine Wahl: Die
+> Gesamtleistung ist der vollständige Anlagenwert (und die einzige Quelle des
+> Wärmepumpen-Anteils in der Verbrauchsprognose), die getrennten Felder sind die feinere
+> Auskunft. Details und Folgen: [Handbuch Wärme & Klima §5, Schritt 6](HANDBUCH_WAERME_KLIMA.md#schritt-6--live-werte-optional).
+>
+> ⚠️ **Kein Ersatz für kWh-Zähler.** Diese Felder sind Momentanleistungen und speisen die
+> Mengen nicht — Stromverbrauch, Wärme und alle Arbeitszahlen kommen aus den kWh-Feldern oben.
 
 ### MQTT Energy Topics
 
@@ -228,17 +243,30 @@ Grund dafür.
 
 **Lüften und Entfeuchten bekommen eine eigene Zeile in der Aufteilung, sobald du
 einen Zähler dafür zugeordnet hast** — vorher stecken sie in „nicht aufgeteilt".
-Eine Kennzahl bekommen sie bewusst nicht: Es gibt keine Nutzenergie, gegen die
-man sie rechnen könnte.
+Eine **Kennzahl** bekommen sie bewusst nicht: Es gibt keinen Nutzen, gegen den
+man sie rechnen könnte. Misst du zusätzlich ihre *abgegebene Nutzenergie*, steht
+sie seit v4.0.45 als eigene **Mengenzeile** daneben — im Komponenten-Hub und im
+Wärme/Klima-Block von Cockpit → Monat/Jahr, und nur dann, wenn ein Zähler etwas
+gemeldet hat.
 
-| Feld | Label | Einheit | Sensortyp |
-|------|-------|---------|-----------|
-| `betriebsart_strom_heizen_kwh` | Strom Heizbetrieb | kWh | Kumulativ oder Tagessensor |
-| `betriebsart_strom_kuehlen_kwh` | Strom Kühlbetrieb | kWh | Kumulativ oder Tagessensor |
-| `betriebsart_strom_lueften_kwh` | Strom Lüftbetrieb | kWh | Kumulativ oder Tagessensor |
-| `betriebsart_strom_entfeuchten_kwh` | Strom Entfeuchtungsbetrieb | kWh | Kumulativ oder Tagessensor |
-| `betriebsart_nutzenergie_*_kwh` | Nutzenergie je Betriebsart | kWh | Kumulativ, **thermisch** |
-| `soll_temperatur_c` / `ist_temperatur_c` | Soll-/Raumtemperatur | °C | Momentan, reine Anzeige |
+**Nutzenergie Heizbetrieb ist die Heizwärme deines Geräts.** Hast du keinen
+Wärmemengenzähler am Gerät selbst (Feld *Heizwärme* bzw. *Wärme gesamt*), rechnet
+eedc seit v4.0.45 mit ihr: Sie trägt dann die Wärme-Kachel und die Arbeitszahl.
+Ist beides gepflegt, gewinnt der Gerätezähler — er misst mehr als eine einzelne
+Betriebsart. Bei mehreren Innengeräten werden ihre Werte summiert; ein Wert am
+Gerät schlägt die Summe seiner Innengeräte und wird nie dazuaddiert.
+
+| Feld | Label | Einheit | Sensortyp | Ausgewertet in |
+|------|-------|---------|-----------|-----------------|
+| `betriebsart_strom_heizen_kwh` | Strom Heizbetrieb | kWh | Kumulativ oder Tagessensor | Komponenten → Wärmepumpe · Cockpit → Tag |
+| `betriebsart_strom_kuehlen_kwh` | Strom Kühlbetrieb | kWh | Kumulativ oder Tagessensor | Komponenten → Wärmepumpe · Cockpit → Tag |
+| `betriebsart_strom_lueften_kwh` | Strom Lüftbetrieb | kWh | Kumulativ oder Tagessensor | Komponenten → Wärmepumpe · Cockpit → Tag |
+| `betriebsart_strom_entfeuchten_kwh` | Strom Entfeuchtungsbetrieb | kWh | Kumulativ oder Tagessensor | Komponenten → Wärmepumpe · Cockpit → Tag |
+| `betriebsart_nutzenergie_heizen_kwh` | Nutzenergie Heizbetrieb | kWh | Kumulativ, **thermisch** | Komponenten → Wärmepumpe |
+| `betriebsart_nutzenergie_kuehlen_kwh` | Nutzenergie Kühlbetrieb | kWh | Kumulativ, **thermisch** | Komponenten → Wärmepumpe · Cockpit → Monat |
+| `betriebsart_nutzenergie_lueften_kwh` | Nutzenergie Lüftbetrieb | kWh | Kumulativ, **thermisch** | Komponenten → Wärmepumpe · Cockpit → Monat |
+| `betriebsart_nutzenergie_entfeuchten_kwh` | Nutzenergie Entfeuchtungsbetrieb | kWh | Kumulativ, **thermisch** | Komponenten → Wärmepumpe · Cockpit → Monat |
+| `soll_temperatur_c` / `ist_temperatur_c` | Soll-/Raumtemperatur | °C | Momentan, reine Anzeige | Cockpit → Live |
 
 > **`betriebsart_nutzenergie_kuehlen_kwh` ist die Kältemenge — und der einzige
 > Zähler, der die *Arbeitszahl Kühlen* möglich macht** (Kältemenge ÷ Kühlstrom).
@@ -296,22 +324,22 @@ Vorzeichenkorrekturen, oder das Zusammenfassen mehrerer Entitäten zu einer.
 
 ### Monatserfassung
 
-| Feld | Label | Einheit | Sensortyp | Beschreibung |
-|------|-------|---------|-----------|-------------|
-| `ladung_pv_kwh` | Heim: PV | kWh | Kumulativ oder Tagessensor | Zu Hause aus PV geladene Energie. **Nur ohne Wallbox** (sonst an der Wallbox). Kann via EV-Quote aus Gesamt-Ladung berechnet werden. |
-| `ladung_netz_kwh` | Heim: Netz | kWh | Kumulativ oder Tagessensor | Zu Hause aus Netz geladene Energie. **Nur ohne Wallbox.** Kann via EV-Quote berechnet werden. |
-| `ladung_extern_kwh` | Externe Ladung | kWh | — | Extern geladene Energie (Autobahn, Arbeit). Manuell erfassen. Optional. |
-| `ladung_extern_euro` | Externe Ladekosten | € | — | Kosten der externen Ladung. Manuell. Optional. |
-| `verbrauch_kwh` | Verbrauch gesamt | kWh | Kumulativ oder Tagessensor | Gefahrener Energieverbrauch des E-Autos (reiner Fahrverbrauch), für die kWh/100 km-Effizienz mit `km_gefahren` verrechnet. Optional — fehlt der Wert, nähert eedc die kWh/100 km aus der geladenen Energie an (inkl. Ladeverluste). |
-| `km_gefahren` | Gefahrene km | km | Kumulativ oder Tagessensor | Gefahrene Kilometer im Monat. Sensor (Auto-Integration, OBD) oder manuell. Ohne Sensor: im Monatsabschluss den **Tachostand** eintragen — eedc rechnet die Differenz zum Vormonat und schlägt sie hier vor. |
-| `v2h_entladung_kwh` | V2H Entladung | kWh | Kumulativ oder Tagessensor | Vehicle-to-Home Entladung. Nur bei V2H-fähigem Fahrzeug. Optional. |
+| Feld | Label | Einheit | Sensortyp | Beschreibung | Ausgewertet in |
+|------|-------|---------|-----------|-------------|-----------------|
+| `ladung_pv_kwh` | Heim: PV | kWh | Kumulativ oder Tagessensor | Zu Hause aus PV geladene Energie. **Nur ohne Wallbox** (sonst an der Wallbox). Kann via EV-Quote aus Gesamt-Ladung berechnet werden. | Komponenten → E-Auto · Cockpit → Monat · Cockpit → Jahr |
+| `ladung_netz_kwh` | Heim: Netz | kWh | Kumulativ oder Tagessensor | Zu Hause aus Netz geladene Energie. **Nur ohne Wallbox.** Kann via EV-Quote berechnet werden. | Komponenten → E-Auto · Cockpit → Monat · Auswertungen → Finanzen |
+| `ladung_extern_kwh` | Externe Ladung | kWh | — | Extern geladene Energie (Autobahn, Arbeit). Manuell erfassen. Optional. | Komponenten → E-Auto · Cockpit → Monat |
+| `ladung_extern_euro` | Externe Ladekosten | € | — | Kosten der externen Ladung. Manuell. Optional. | Komponenten → E-Auto · Cockpit → Jahr |
+| `verbrauch_kwh` | Verbrauch gesamt | kWh | Kumulativ oder Tagessensor | Gefahrener Energieverbrauch des E-Autos (reiner Fahrverbrauch), für die kWh/100 km-Effizienz mit `km_gefahren` verrechnet. Optional — fehlt der Wert, nähert eedc die kWh/100 km aus der geladenen Energie an (inkl. Ladeverluste). | Komponenten → E-Auto · Cockpit → Monat |
+| `km_gefahren` | Gefahrene km | km | Kumulativ oder Tagessensor | Gefahrene Kilometer im Monat. Sensor (Auto-Integration, OBD) oder manuell. Ohne Sensor: im Monatsabschluss den **Tachostand** eintragen — eedc rechnet die Differenz zum Vormonat und schlägt sie hier vor. | Komponenten → E-Auto · Cockpit → Monat · HA-Sensoren |
+| `v2h_entladung_kwh` | V2H Entladung | kWh | Kumulativ oder Tagessensor | Vehicle-to-Home Entladung. Nur bei V2H-fähigem Fahrzeug. Optional. | Komponenten → E-Auto · Cockpit → Jahr · HA-Sensoren |
 
 ### Live-Dashboard
 
-| Feld | Label | Einheit | Sensortyp | Beschreibung |
-|------|-------|---------|-----------|-------------|
-| `leistung_w` | Ladeleistung | W | Momentan | Aktuelle Ladeleistung. ≥ 0 (Laden) oder bidirektional bei V2H (negativ = Entladung ins Haus). ⚠️ Wenn gleicher Sensor wie Wallbox: wird automatisch dedupliziert. |
-| `soc` | Ladezustand | % | Momentan | State of Charge des Fahrzeugakkus. 0–100%. |
+| Feld | Label | Einheit | Sensortyp | Beschreibung | Ausgewertet in |
+|------|-------|---------|-----------|-------------|-----------------|
+| `leistung_w` | Ladeleistung | W | Momentan | Aktuelle Ladeleistung. ≥ 0 (Laden) oder bidirektional bei V2H (negativ = Entladung ins Haus). ⚠️ Wenn gleicher Sensor wie Wallbox: wird automatisch dedupliziert. | Cockpit → Live |
+| `soc` | Ladezustand | % | Momentan | State of Charge des Fahrzeugakkus. 0–100%. | Cockpit → Live |
 
 ### MQTT Energy Topics
 
@@ -330,17 +358,17 @@ Vorzeichenkorrekturen, oder das Zusammenfassen mehrerer Entitäten zu einer.
 
 ### Monatserfassung
 
-| Feld | Label | Einheit | Sensortyp | Beschreibung |
-|------|-------|---------|-----------|-------------|
-| `ladung_kwh` | Ladung gesamt | kWh | Kumulativ oder Tagessensor | Gesamte von der Wallbox abgegebene Ladeenergie im Monat. |
-| `ladung_pv_kwh` | Ladung PV | kWh | Kumulativ oder Tagessensor | Anteil aus PV. Optional — manche Wallboxen (z.B. go-e) messen das separat. |
-| `ladevorgaenge` | Ladevorgänge | Anzahl | Kumulativ oder Tagessensor | Anzahl der Ladevorgänge. Optional. |
+| Feld | Label | Einheit | Sensortyp | Beschreibung | Ausgewertet in |
+|------|-------|---------|-----------|-------------|-----------------|
+| `ladung_kwh` | Ladung gesamt | kWh | Kumulativ oder Tagessensor | Gesamte von der Wallbox abgegebene Ladeenergie im Monat. | Komponenten → Wallbox · Cockpit → Monat |
+| `ladung_pv_kwh` | Ladung PV | kWh | Kumulativ oder Tagessensor | Anteil aus PV. Optional — manche Wallboxen (z.B. go-e) messen das separat. | Komponenten → Wallbox · Cockpit → Monat |
+| `ladevorgaenge` | Ladevorgänge | Anzahl | Kumulativ oder Tagessensor | Anzahl der Ladevorgänge. Optional. | Komponenten → Wallbox |
 
 ### Live-Dashboard
 
-| Feld | Label | Einheit | Sensortyp | Beschreibung |
-|------|-------|---------|-----------|-------------|
-| `leistung_w` | Ladeleistung | W | Momentan | Aktuelle Wallbox-Ladeleistung. Muss ≥ 0 sein. |
+| Feld | Label | Einheit | Sensortyp | Beschreibung | Ausgewertet in |
+|------|-------|---------|-----------|-------------|-----------------|
+| `leistung_w` | Ladeleistung | W | Momentan | Aktuelle Wallbox-Ladeleistung. Muss ≥ 0 sein. | Cockpit → Live |
 
 ### MQTT Energy Topics
 
