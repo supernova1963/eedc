@@ -133,7 +133,7 @@ def test_n450_die_getrennt_messende_anlage_wird_ueberhaupt_gesehen():
     assert len(ergebnisse) == 1, (
         "Der Prüfer hat die Anlage nicht gesehen — `params` fehlt an der Lesetür."
     )
-    assert "9.0" in ergebnisse[0].meldung
+    assert "9,0" in ergebnisse[0].meldung
     assert "08/2026" in ergebnisse[0].meldung
 
 
@@ -200,7 +200,7 @@ def test_e7_der_pruefer_kuerzt_keinen_gemessenen_f5_nenner():
     )
 
     assert len(ergebnisse) == 1
-    assert "9.0" in ergebnisse[0].meldung, (
+    assert "9,0" in ergebnisse[0].meldung, (
         "Der Prüfer hat den abgeleiteten Kühlanteil vom gemessenen F5-Nenner "
         "abgezogen — Option A verbietet genau das."
     )

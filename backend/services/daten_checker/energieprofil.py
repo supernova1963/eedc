@@ -43,6 +43,7 @@ from .kategorien import (
     CheckErgebnis, CheckKategorie, CheckSeverity, LINK_DATENQUELLEN,
     LINK_ENERGIEPROFIL, LINK_MONATSDATEN, link_monat_erfassen,
 )
+from backend.core.zahlenformat import fmt_zahl
 
 
 # Achse B deckt die MONATS-Ebene ab. Tages- und Stundenwerte lesen ausschließlich
@@ -696,7 +697,7 @@ class EnergieprofilChecks:
         if not spike_tage:
             ergebnisse.append(CheckErgebnis(
                 kategorie=kat, schwere=CheckSeverity.OK,
-                meldung=f"Keine Counter-Spikes in den letzten 30 Tagen (Schwelle: {schwelle_kw:.1f} kW = {kwp:.1f} kWp × 1.5)",
+                meldung=f"Keine Counter-Spikes in den letzten 30 Tagen (Schwelle: {fmt_zahl(schwelle_kw, 1)} kW = {fmt_zahl(kwp, 1)} kWp × 1.5)",
             ))
             return ergebnisse
 
@@ -704,12 +705,12 @@ class EnergieprofilChecks:
         for datum_spike in sorted(spike_tage.keys(), reverse=True):
             spikes = spike_tage[datum_spike]
             details = "; ".join(
-                f"{stunde:02d}:00 {feld}={wert:.1f} kW"
+                f"{stunde:02d}:00 {feld}={fmt_zahl(wert, 1)} kW"
                 for stunde, feld, wert in spikes
             )
             ergebnisse.append(CheckErgebnis(
                 kategorie=kat, schwere=CheckSeverity.WARNING,
-                meldung=f"Counter-Spike am {datum_spike.isoformat()}: {len(spikes)} Stundenwert(e) > {schwelle_kw:.1f} kW",
+                meldung=f"Counter-Spike am {datum_spike.isoformat()}: {len(spikes)} Stundenwert(e) > {fmt_zahl(schwelle_kw, 1)} kW",
                 details=(
                     f"Stunden mit physikalisch unmöglichem Wert: {details}. "
                     f"Häufige Ursache sind Update-Restarts während des Tages (Counter-Off-by-one). "
@@ -1009,15 +1010,15 @@ class EnergieprofilChecks:
 
         marker_zeilen: list[str] = []
         if pr_signal:
-            beispiele = ", ".join(f"{d.isoformat()}: PR={pr:.2f}" for d, pr in pr_recent)
+            beispiele = ", ".join(f"{d.isoformat()}: PR={fmt_zahl(pr, 2)}" for d, pr in pr_recent)
             marker_zeilen.append(
                 f"Performance Ratio > {self.PR_PLAUSI_SCHWELLE} an "
                 f"{anzahl_pr_drueber} von {tage_mit_pr} Tagen ({beispiele})"
             )
         if spez_signal:
-            beispiele = ", ".join(f"{d.isoformat()}: {s:.1f} kWh/kWp" for d, s in spez_recent)
+            beispiele = ", ".join(f"{d.isoformat()}: {fmt_zahl(s, 1)} kWh/kWp" for d, s in spez_recent)
             marker_zeilen.append(
-                f"Spez. Tagesertrag > {self.SPEZ_TAGES_ERTRAG_OBERGRENZE_KWH_PRO_KWP:.0f} kWh/kWp "
+                f"Spez. Tagesertrag > {fmt_zahl(self.SPEZ_TAGES_ERTRAG_OBERGRENZE_KWH_PRO_KWP, 0)} kWh/kWp "
                 f"an {len(spez_ertrag_ueberschreitungen)} Tagen ({beispiele})"
             )
 

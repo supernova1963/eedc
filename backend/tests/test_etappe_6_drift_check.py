@@ -160,7 +160,7 @@ async def test_drift_ueber_schwelle_eintrag_mit_action():
         f"action_params: {eintrag.action_params}"
     assert eintrag.action_label == "Tag reparieren"
     assert test_datum.isoformat() in eintrag.meldung
-    assert "35.0" in eintrag.meldung and "38.0" in eintrag.meldung
+    assert "35,0" in eintrag.meldung and "38,0" in eintrag.meldung
 
 
 async def test_sortierung_nach_delta_desc():
@@ -188,8 +188,8 @@ async def test_sortierung_nach_delta_desc():
     # 1.5 kWh ist 4.8 % → unter 5 %-Schwelle → nicht enthalten
     assert len(info_eintraege) == 2, f"Erwartet 2, bekommen {len(info_eintraege)}: {[e.meldung for e in info_eintraege]}"
     # Erster Eintrag = Δ=6 (größer)
-    assert "36.0" in info_eintraege[0].meldung, f"Erster: {info_eintraege[0].meldung}"
-    assert "33.0" in info_eintraege[1].meldung, f"Zweiter: {info_eintraege[1].meldung}"
+    assert "36,0" in info_eintraege[0].meldung, f"Erster: {info_eintraege[0].meldung}"
+    assert "33,0" in info_eintraege[1].meldung, f"Zweiter: {info_eintraege[1].meldung}"
 
 
 async def test_max_20_eintraege_plus_rest_hinweis():

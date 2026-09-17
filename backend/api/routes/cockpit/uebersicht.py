@@ -39,6 +39,7 @@ from backend.core.berechnungen.ust_eigenverbrauch import (
     ust_eigenverbrauch_fuer_anlage,
 )
 from backend.core.calculations import berechne_co2_bilanz
+from backend.services.strompreis_aggregator import lade_preis_aggregate_je_monat
 from backend.services.finanz_zeilen import baue_finanz_zeile
 from backend.services.waermepumpe_jahreskennzahlen import waermepumpe_jahreskennzahlen
 from backend.services.waermepumpe_kennzahlen_je_geraet import (
@@ -295,8 +296,14 @@ async def get_cockpit_uebersicht(
     # spezifischen Ertrag und in der Energiebilanz (kein Frontend-Aufrufer
     # übergibt heute ein Jahr, deshalb hat es niemand gesehen — s. Übergabe N-10).
     _fenster = ((jahr, 1), (jahr, 12)) if jahr else (None, None)
+    _preis_messung = await lade_preis_aggregate_je_monat(
+        db, anlage_id,
+        von=date(_fenster[0][0], _fenster[0][1], 1) if _fenster[0] else None,
+        bis=date(_fenster[1][0] + 1, 1, 1) if _fenster[1] else None,
+    )
     fakten = await lade_monats_fakten(
-        db, anlage_id, von=_fenster[0], bis=_fenster[1], tarif_cache=_tarif_cache
+        db, anlage_id, von=_fenster[0], bis=_fenster[1], tarif_cache=_tarif_cache,
+        preis_messung=_preis_messung,
     )
 
     speicher_ladung = sum(f.speicher.ladung_kwh for f in fakten)
@@ -721,7 +728,8 @@ async def get_cockpit_uebersicht(
         # #326: FinanzMonatsZeile über den gemeinsamen Builder (einzige erlaubte
         # Konstruktions-Stelle, Wächter).
         finanz_zeilen.append(await baue_finanz_zeile(
-            db, anlage_id, finanz_zeile_eingabe(f), tarif_cache=_tarif_cache
+            db, anlage_id, finanz_zeile_eingabe(f), tarif_cache=_tarif_cache,
+            preis_messung=_preis_messung,
         ))
 
     # §51 EEG: nicht vergüteter Erlös + zugehörige kWh kommen aus dem Aggregat;

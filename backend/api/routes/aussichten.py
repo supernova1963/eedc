@@ -54,6 +54,7 @@ from backend.core.berechnungen import (
     spezifischer_ertrag_kwh_kwp,
     verteile_nach_gewichten,
 )
+from backend.services.strompreis_aggregator import lade_preis_aggregate_je_monat
 from backend.services.finanz_zeilen import baue_finanz_zeile
 from backend.services.monats_fakten import finanz_zeile_eingabe, lade_monats_fakten
 from backend.core.berechnungen.phev_anteil import teile_fahrleistung
@@ -1097,7 +1098,8 @@ async def get_finanz_prognose(
     # und damit ein um 85 % zu niedriger ROI-Fortschritt.
     # `lade_monats_fakten` löst genau einmal auf — inklusive Zeitfilter (#236),
     # Dienstwagen-Filter und Monatstarif ([[feedback_aggregations_drift]]).
-    fakten = await lade_monats_fakten(db, anlage_id)
+    _preis_messung = await lade_preis_aggregate_je_monat(db, anlage_id)
+    fakten = await lade_monats_fakten(db, anlage_id, preis_messung=_preis_messung)
 
     gesamt_eauto_pv = 0.0
     gesamt_wp_strom = 0.0
@@ -1453,7 +1455,8 @@ async def get_finanz_prognose(
         if not f.meta.hat_zaehlerzeile or not f.meta.erzeuger_aktiv:
             continue
         _zeile = await baue_finanz_zeile(
-            db, anlage_id, finanz_zeile_eingabe(f), tarif_cache=_tarif_cache
+            db, anlage_id, finanz_zeile_eingabe(f), tarif_cache=_tarif_cache,
+            preis_messung=_preis_messung,
         )
         finanz_zeilen.append(_zeile)
         finanz_zeilen_je_jahr[f.jahr].append(_zeile)

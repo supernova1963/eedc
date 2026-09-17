@@ -1,11 +1,148 @@
 # Was ist neu
 
-> **Stand:** September 2026 (v4.0.45) — der Abschnitt ganz oben gilt der **kommenden** Version und trägt ihre Nummer, sobald sie feststeht.
+> **Stand:** September 2026 (v4.0.46) — der Abschnitt ganz oben gilt der **kommenden** Version und trägt ihre Nummer, sobald sie feststeht.
 > **Diese Seite** zeigt pro Version, was sich für dich als Anwender geändert hat — kürzer als der technische [CHANGELOG](https://github.com/supernova1963/eedc-homeassistant/blob/main/CHANGELOG.md), ausführlicher als die Schnellübersicht-Tabelle in der [Übersicht](BENUTZERHANDBUCH.md#was-ist-neu-seit-v316).
 >
 > **Kein Banner, kein Pop-up:** eedc zeigt diese Liste nicht ungefragt an. HA-App-Nutzer sehen den Changelog ohnehin schon im Add-on-Store, GitHub-Releases haben einen eigenen. Wer wissen will, was neu ist, schaut hier rein — Pull statt Push.
 >
 > **Lesehinweis:** Die jüngsten Versionen stehen oben. Jeder Punkt verlinkt entweder auf die zuständige Hilfe-Sektion oder direkt auf die App-Funktion (sofern erreichbar). Anker-URLs (`?doc=was-ist-neu`) sind teilbar.
+
+---
+
+## v4.0.46 — 17. September 2026
+
+**Flexible Stromtarife: Deine Tage rechnen jetzt mit den Preisen dieser Tage**
+
+**Betrifft dich das?** Nur, wenn du einen **dynamischen Stromtarif** hast
+(Tibber, aWATTar, EPEX & Co.). Bei einem Festpreis-Tarif bewegt sich **keine
+einzige Zahl** — das ist geprüft, nicht bloß beabsichtigt.
+
+**Was war:** Der Monat gewann und schrieb nach unten durch. Jeder Tag eines
+Monats trug denselben Strompreis — obwohl eedc die Stundenpreise längst
+mitschreibt. An einem Tag mit viel Netzbezug am teuren Abend stand ein zu
+niedriger Betrag, an einem günstigen Tag ein zu hoher. Der Monat stimmte, der
+einzelne Tag nicht.
+
+**Was jetzt:** **Tage sind Messung, Monate sind Abrechnung.** Die Tageskosten
+entstehen Stunde für Stunde aus Preis × Menge; daneben steht, woher der Preis
+kommt und wie viel deiner Menge damit bewertet werden konnte. Die Monatskachel
+zeigt jetzt denselben Wert, den ihre Formelzeile beschreibt.
+
+⚠ **Trägst du später deinen abgerechneten Monats-Durchschnitt nach**, ändert
+das den Monatsbetrag — deine Tage bleiben, wie sie gemessen wurden.
+
+---
+
+**Dein Speicher wird nicht mehr schlechter gerechnet, als er ist**
+
+**Betrifft dich das?** Ja, wenn du einen **Speicher** und einen **dynamischen
+Tarif** hast.
+
+**Was war:** Entladen wird abends, wenn Strom teuer ist — genau darum lohnt
+sich ein Speicher. Bewertet wurde die Entladung aber mit dem Durchschnittspreis
+über die gesamte Lebensdauer, also systematisch zu niedrig. Umgekehrt entstand
+beim **Ladepreis** ein Gewinn, den es nicht gab: Fehlten Stundenpreise, nahm
+eedc den Monatsdurchschnitt deines **Netzbezugs** — der sagt über eine
+Speicherladung nichts aus. An einem Beispielbestand waren das **99 € Gewinn aus
+Daten, die die Frage nicht beantworten.**
+
+**Was jetzt:** Die Entladung zählt mit dem Preis ihrer Stunde, der erfundene
+Rückfall ist weg, und der Wirkungsgrad hängt an der Menge statt am Preis.
+⭐ **Ein selbst gepflegter Ladepreis bleibt erhalten** — aber eine echte
+Messung geht jetzt vor: Ein Ladepreis steht auf keiner Rechnung.
+
+---
+
+**Eine alte Datenbank-Datei blockiert die Langzeitstatistik nicht mehr**
+
+**Betrifft dich das?** Ja, wenn du deinen Home-Assistant-Recorder auf
+**PostgreSQL, MariaDB oder Timescale** umgestellt hast und die alte
+`home-assistant_v2.db` noch im Konfigurationsordner liegt.
+
+**Was war:** eedc fand die Datei, konnte sie nicht lesen — und probierte den
+dritten Weg (die Home-Assistant-Verbindung selbst) gar nicht erst. Sichtbar
+war das als leere Langzeit-Kennzahlen.
+
+**Was jetzt:** eedc prüft die Datei auf Lesbarkeit und weicht sonst auf die
+Home-Assistant-Verbindung aus. ⚠ **Eine alte, aber lesbare Datei erkennt eedc
+weiterhin nicht als veraltet** — die kannst du nach einem Recorder-Wechsel
+entfernen.
+
+---
+
+**Löschen sagt jetzt, was verloren geht**
+
+**Betrifft dich das?** Nur, wenn du *Einstellungen → Daten →
+Energieprofil-Daten löschen* benutzt.
+
+**Was war:** „Der Scheduler berechnet sie neu." Das stimmt für Messwerte —
+aber **nur so weit, wie deine HA-Statistik zurückreicht**. Und deine
+**aufgezeichneten PV-Prognosen** kann niemand neu berechnen; sie sind die
+Grundlage des Genauigkeits-Vergleichs.
+
+**Was jetzt:** Beides steht in der Rückfrage. ⛔ **An der Funktion ändert sich
+nichts** — nur daran, dass du informiert entscheidest.
+
+---
+
+**Ohne E-Auto keine Benzinpreise mehr in deinen Daten**
+
+**Betrifft dich das?** Ja, wenn du **kein** E-Auto in eedc angelegt hast.
+
+**Was war:** eedc trug jede Woche den EU-Durchschnittspreis für Benzin in deine
+Tages- und Monatszeilen ein — auch ohne E-Auto. Wer daneben einen eigenen Wert
+gepflegt hatte, bekam einen **Quellen-Konflikt** gemeldet: einen Hinweis auf
+ein Auto, das er nie angelegt hat.
+
+**Was jetzt:** Kein E-Auto, kein Benzinpreis. ⚠ Ein auf **inaktiv** gesetztes
+E-Auto zählt dabei nicht mit. **Bereits gefüllte Werte bleiben unberührt.**
+
+---
+
+**Die Sichten mit langer Historie öffnen sich schneller — und bleiben es.**
+
+**Betrifft dich das?** Ja, wenn du *Cockpit → Monat* oder *→ Jahr*, die
+**Komponenten**-Sichten, *Auswertungen → Tabelle* oder den **Investitions-ROI**
+benutzt — und umso mehr, je länger du eedc schon pflegst.
+
+**Was war:** Beim ersten Öffnen einer dieser Sichten pro Sitzung rechnete eedc
+deine **ganze Historie** neu durch, Monat für Monat. An einer Anlage mit 39
+gepflegten Monaten dauerte das messbar: *Auswertungen → Tabelle* 2,4 Sekunden,
+der *Investitions-ROI* 3,9 Sekunden, *Cockpit → Jahr* im Browser gut zehn.
+⚠ **Und es wuchs mit:** Jeder neue Monat legte rund eine Zehntelsekunde drauf —
+etwa **eine Sekunde pro Jahr**, dauerhaft.
+
+**Was jetzt:** Dieselben Zahlen, ein Bruchteil der Arbeit. eedc fragt die
+Stundenwerte einmal statt 117 Mal, liest von ihnen nur noch die Spalten, die es
+wirklich braucht, und holt die Tarife aller Monate in einem Zug. Im Nachbau
+derselben Anlage: *Auswertungen → Tabelle* von 1,2 Sekunden auf **unter eine
+Zehntelsekunde**, der ROI von 1,3 auf **0,13**.
+
+⛔ **An deinen Zahlen ändert sich nichts.** Das ist nicht nur die Absicht,
+sondern nachgewiesen: 25 Antworten wurden vor und nach dem Umbau Zeichen für
+Zeichen verglichen, auf drei verschiedenen Datenbeständen.
+
+---
+
+**Der Daten-Checker schreibt Zahlen jetzt so, wie der Rest von eedc sie schreibt**
+
+**Betrifft dich das?** Ja, wenn du den **Daten-Checker** benutzt — die
+Schreibweise ändert sich in allen sieben Prüfbereichen.
+
+**Was war:** Der Checker nannte dieselbe Anlage anders als die Oberfläche und
+die vier PDF-Berichte: „6.0 kWp" statt „6,0 kWp", „12000 kWh" statt
+„12.000 kWh". Betroffen waren beide Hälften der deutschen Schreibweise — das
+**Dezimalkomma** und der **Tausenderpunkt**, der auch bei ganzen Zahlen fehlte
+(„1260 W" statt „1.260 W").
+
+**Was jetzt:** 85 Meldungstexte lesen sich wie der Rest der App. Damit es so
+bleibt, hängt die Regel nicht mehr an der Aufmerksamkeit: Die Schreibweise
+entsteht an einem einzigen Ort, und ein Prüfer meldet bei jedem Testlauf rot,
+sobald im Daten-Checker wieder eine Zahl von Hand formatiert wird.
+
+⛔ **An deinen Daten ändert sich nichts.** Es geht allein darum, wie die
+Meldungen aussehen; eedc liest Zahlen unverändert ein, auch aus importierten
+Dateien.
 
 ---
 

@@ -1,4 +1,12 @@
-"""N-234: EIN Ort für die deutsche Zahlenschreibweise in allen PDF-Berichten.
+"""N-234: die deutsche Zahlenschreibweise der PDF-Berichte.
+
+⭐ **Seit N-353 (2026-09-16) ist dieses Modul die PDF-SEITE eines groesseren SoT.**
+Die Rechnung selbst steht in ``core/zahlenformat.py`` — sie ist keine PDF-Regel,
+sondern die Darstellungs-Regel des Produkts (Style-Guide 0a), und der Daten-Checker
+brauchte sie ebenso. Was hier bleibt, ist genau das PDF-Spezifische: ``LEER`` ist der
+**Gedankenstrich** der alten Makros, nicht der leere String des Kerns, und
+``JINJA_FORMATIERER`` haengt die Namen in die Template-Umgebung. Die Signaturen sind
+unveraendert; kein Builder und kein Template hat sich geaendert.
 
 **Der Befund:** Der Jahresbericht schrieb Zahlen deutsch, die drei anderen
 Berichte englisch — sichtbar als „7.9 Jahre", „12.32 kWp" und „48.1372°" in
@@ -24,6 +32,8 @@ from __future__ import annotations
 
 from typing import Optional
 
+from backend.core import zahlenformat as _kern
+
 #: Was ein fehlender Wert im PDF anzeigt. Bewusst der Gedankenstrich der
 #: bisherigen Makros — nicht der Display-Token „—" des Frontends, sonst
 #: änderte sich das Schriftbild jedes bestehenden Berichts.
@@ -31,51 +41,28 @@ LEER = "–"
 
 
 def fmt_zahl(wert: Optional[float], decimals: int = 0) -> str:
-    """Deutsche Schreibweise mit Tausenderpunkt: ``12.345,67``.
-
-    Der Dreischritt über ``X`` ist nötig, weil Python beide Trennzeichen
-    vertauscht setzt; ein einfaches ``replace`` würde sich selbst überschreiben.
-    """
-    if wert is None:
-        return LEER
-    return f"{wert:,.{decimals}f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    """Deutsche Schreibweise mit Tausenderpunkt: ``12.345,67``. Kern: `core.zahlenformat`."""
+    return _kern.fmt_zahl(wert, decimals, leer=LEER)
 
 
 def fmt_euro(wert: Optional[float]) -> str:
     """``12.345,67 €`` — zwei Nachkommastellen, wie bisher im Jahresbericht."""
-    if wert is None:
-        return LEER
-    return f"{fmt_zahl(wert, 2)} €"
+    return _kern.fmt_euro(wert, 2, leer=LEER)
 
 
 def fmt_kwh(wert: Optional[float], decimals: int = 0) -> str:
     """``12.345 kWh``."""
-    if wert is None:
-        return LEER
-    return f"{fmt_zahl(wert, decimals)} kWh"
+    return _kern.fmt_kwh(wert, decimals, leer=LEER)
 
 
 def fmt_pct(wert: Optional[float], decimals: int = 1) -> str:
-    """``12,3 %`` — **ohne** Tausenderpunkt und mit Leerzeichen vor dem Zeichen.
-
-    Das Leerzeichen ist Regel 0a des Style-Guides („% mit Leerzeichen"), der
-    fehlende Tausenderpunkt die Übernahme des bisherigen ``fmt_pct``-Makros:
-    Prozentwerte über 1000 gibt es in diesen Berichten nicht.
-    """
-    if wert is None:
-        return LEER
-    return f"{wert:.{decimals}f}".replace(".", ",") + " %"
+    """``12,3 %`` — **ohne** Tausenderpunkt und mit Leerzeichen vor dem Zeichen."""
+    return _kern.fmt_pct(wert, decimals, leer=LEER)
 
 
 def fmt_einheit(wert: Optional[float], einheit: str, decimals: int = 2) -> str:
-    """``12,32 kWp`` — für die Einheiten, die keinen eigenen Helfer verdienen.
-
-    Genau die Form, die in ``anlagendokumentation.py`` fünfmal als f-String
-    ausgeschrieben stand (kWp · kWh · kW (AC)).
-    """
-    if wert is None:
-        return LEER
-    return f"{fmt_zahl(wert, decimals)} {einheit}"
+    """``12,32 kWp`` — fuer die Einheiten, die keinen eigenen Helfer verdienen."""
+    return _kern.fmt_einheit(wert, einheit, decimals, leer=LEER)
 
 
 #: Was ``engine.py`` in die Jinja-Umgebung hängt. Als **Filter** benutzbar

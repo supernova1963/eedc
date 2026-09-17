@@ -21,6 +21,78 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
+# ── Wofür ein Kraftstoffpreis überhaupt da ist ──────────────────────────────
+
+# Der Benzinpreis dient EINEM Zweck: dem Vergleich „was hätte dieselbe Strecke
+# mit einem Verbrenner gekostet?" — er ist die Grundlage des E-Auto-Vergleichs.
+# Ohne E-Auto ist er ein Wert ohne Frage.
+KRAFTSTOFFPREIS_AB_JAHR = 2005  # weiter zurück reicht das Oil Bulletin nicht
+
+
+def kraftstoffpreis_ab_monat(investitionen) -> Optional[tuple[int, int]]:
+    """``(jahr, monat)``, ab dem ein Kraftstoffpreis sinnvoll ist — sonst ``None``.
+
+    ⛔ **Warum das ein geteilter SoT ist und keine Kopie** (Forum simon42
+    T89667, PN rapahl 15.09.2026): Die **Melde**-Seite hatte diese Prüfung
+    längst (``daten_checker.emob._check_vergleichspreis_fehlt``: kein E-Auto ⇒
+    keine Meldung, erst ab dem Anschaffungsmonat des ältesten, erst ab 2005) —
+    die **Schreib**-Seite nicht. ``kraftstoffpreis_job`` lief wöchentlich über
+    ``select(Anlage)`` und füllte ``kraftstoffpreis_euro`` in Tages- und
+    Monatszeilen **jeder** Anlage, auch ohne jedes E-Auto.
+
+    Der Schaden war nicht der Plattenplatz, sondern eine Falschauskunft: Bei
+    einem Melder ohne E-Auto stand daneben ein manuell gepflegter Wert, und der
+    Quellen-Resolver meldete pflichtgemäß einen Konflikt
+    (``kraftstoffpreis_euro · fuel price ↔ manuell``). Er suchte daraufhin das
+    Auto, das er nie angelegt hatte. *Ein Wert, den niemand bestellt hat, wird
+    zur Frage, die niemand beantworten kann.*
+
+    ⚠ **``aktiv=False`` zählt nicht** — das heißt „wie gelöscht, nirgends in
+    Auswertungen" ([[feedback_anschaffungsdatum_grenze]]). Die Nachbar-Checks
+    derselben Datei filtern längst so (``ist_aktiv_im_monat``); dieser eine
+    fragte nur ``typ == "e-auto"``. Ein deaktiviertes Auto hielt damit die
+    ganze Kategorie am Leben.
+
+    ⚠ **Ein Anschaffungsdatum in der Zukunft** (bestelltes Auto) liefert einen
+    Monat in der Zukunft — korrekt: Für die Vergangenheit gibt es dann nichts
+    zu füllen, und die Melde-Seite findet nichts Offenes.
+
+    Args:
+        investitionen: Investitionen der Anlage (bereits geladen).
+    """
+    eautos = [
+        i for i in investitionen
+        if getattr(i, "typ", None) == "e-auto" and getattr(i, "aktiv", None) is not False
+    ]
+    if not eautos:
+        return None
+    anschaffungen = [
+        i.anschaffungsdatum for i in eautos
+        if getattr(i, "anschaffungsdatum", None) is not None
+    ]
+    if not anschaffungen:
+        return None
+    aeltestes = min(anschaffungen)
+    return max((aeltestes.year, aeltestes.month), (KRAFTSTOFFPREIS_AB_JAHR, 1))
+
+
+async def kraftstoffpreis_fenster_der_anlage(db, anlage_id: int) -> Optional[tuple[int, int]]:
+    """``kraftstoffpreis_ab_monat`` für eine Anlage, die noch nicht geladen ist.
+
+    Lädt nur die E-Auto-Investitionen — der Backfill braucht die übrigen nicht.
+    """
+    from sqlalchemy import select
+    from backend.models.investition import Investition
+
+    res = await db.execute(
+        select(Investition).where(
+            Investition.anlage_id == anlage_id,
+            Investition.typ == "e-auto",
+        )
+    )
+    return kraftstoffpreis_ab_monat(res.scalars().all())
+
+
 # Stabile URL zur History-XLSX (aktualisiert wöchentlich, feste UUID)
 OIL_BULLETIN_URL = (
     "https://energy.ec.europa.eu/document/download/"
@@ -248,6 +320,12 @@ async def backfill_monatsdaten_kraftstoffpreise(
 
     oil_land = LAND_MAPPING.get(land, land)
 
+    # Ohne E-Auto gibt es nichts zu vergleichen — und damit nichts zu füllen.
+    ab = await kraftstoffpreis_fenster_der_anlage(db, anlage_id)
+    if ab is None:
+        return {"aktualisiert": 0, "land": oil_land,
+                "hinweis": "Kein E-Auto — ein Kraftstoffpreis hat hier keinen Zweck"}
+
     # ERST die offenen Zeilen, DANN erst der Download. Die Reihenfolge ist
     # nicht Geschmack: die History-XLSX ist 4,25 MB, und seit der Job täglich
     # läuft (statt wöchentlich) wäre sie an fast allen Tagen umsonst geladen.
@@ -259,7 +337,9 @@ async def backfill_monatsdaten_kraftstoffpreise(
             Monatsdaten.kraftstoffpreis_euro.is_(None),
         )
     )
-    rows = result.scalars().all()
+    # Erst ab dem Monat, in dem das älteste E-Auto dabei war — dieselbe Grenze,
+    # die der Daten-Checker meldet (ein SoT, zwei Seiten).
+    rows = [md for md in result.scalars().all() if (md.jahr, md.monat) >= ab]
 
     if not rows:
         return {"aktualisiert": 0, "land": oil_land, "hinweis": "Alle Monate haben bereits einen Preis"}
@@ -322,12 +402,20 @@ async def backfill_kraftstoffpreise(
 
     oil_land = LAND_MAPPING.get(land, land)
 
+    # Ohne E-Auto gibt es nichts zu vergleichen — und damit nichts zu füllen.
+    ab = await kraftstoffpreis_fenster_der_anlage(db, anlage_id)
+    if ab is None:
+        return {"aktualisiert": 0, "land": oil_land,
+                "hinweis": "Kein E-Auto — ein Kraftstoffpreis hat hier keinen Zweck"}
+    ab_datum = date(ab[0], ab[1], 1)
+
     # Erst zählen, dann laden — Begründung siehe
     # ``backfill_monatsdaten_kraftstoffpreise``.
     query = select(TagesZusammenfassung).where(
         TagesZusammenfassung.anlage_id == anlage_id,
         TagesZusammenfassung.kraftstoffpreis_euro.is_(None),
     )
+    query = query.where(TagesZusammenfassung.datum >= ab_datum)
     if von:
         query = query.where(TagesZusammenfassung.datum >= von)
     if bis:

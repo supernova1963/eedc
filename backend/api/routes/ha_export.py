@@ -52,6 +52,7 @@ from backend.services.wp_wirtschaftlichkeit import berechne_wp_ersparnis
 from backend.services.prognose_auswahl import lade_aktive_prognose
 from datetime import date
 
+from backend.services.strompreis_aggregator import lade_preis_aggregate_je_monat
 from backend.services.finanz_zeilen import baue_finanz_zeile
 from backend.services.monats_fakten import finanz_zeile_eingabe, lade_monats_fakten
 from backend.api.routes.strompreise import (
@@ -452,7 +453,11 @@ async def calculate_anlage_sensors(
     # im Cockpit — und es ist eine bewegte Zahl für Anlagen mit stillgelegter
     # Komponente (s. Übergabe N-11).
     _tarif_cache: dict[date, dict] = {}
-    fakten = await lade_monats_fakten(db, anlage.id, tarif_cache=_tarif_cache)
+    # Wie der Tarif-Cache: EINE gruppierte Preismessung für Schicht und Finanzzeile.
+    _preis_messung = await lade_preis_aggregate_je_monat(db, anlage.id)
+    fakten = await lade_monats_fakten(
+        db, anlage.id, tarif_cache=_tarif_cache, preis_messung=_preis_messung,
+    )
 
     # PV je Monat über den Read-time-SoT (Messwerte + Aggregat-Lückenfüllung)
     # statt einer rohen IMD-Summe. Die rohe Summe kannte das Anlagen-Aggregat
@@ -604,7 +609,8 @@ async def calculate_anlage_sensors(
         # gibt es keine Finanz-Zeile.
         finanz_zeilen: list[FinanzMonatsZeile] = [
             await baue_finanz_zeile(
-                db, anlage.id, finanz_zeile_eingabe(f), tarif_cache=_tarif_cache
+                db, anlage.id, finanz_zeile_eingabe(f), tarif_cache=_tarif_cache,
+                preis_messung=_preis_messung,
             )
             for f in fakten if f.meta.hat_zaehlerzeile
         ]

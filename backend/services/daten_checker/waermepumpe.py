@@ -41,6 +41,7 @@ from backend.core.field_definitions import (
 from backend.models.anlage import Anlage
 
 from .kategorien import CheckErgebnis, CheckKategorie, CheckSeverity
+from backend.core.zahlenformat import fmt_zahl
 
 
 class WaermepumpeChecks:
@@ -163,7 +164,7 @@ class WaermepumpeChecks:
             ergebnisse.append(CheckErgebnis(
                 kategorie=kat, schwere=CheckSeverity.WARNING.value,
                 meldung=(
-                    f"{name}: Arbeitszahl {wert:.1f} im {monat:02d}/{jahr} — "
+                    f"{name}: Arbeitszahl {fmt_zahl(wert, 1)} im {monat:02d}/{jahr} — "
                     "höher, als eine Wärmepumpe leisten kann"
                 ),
                 details=(

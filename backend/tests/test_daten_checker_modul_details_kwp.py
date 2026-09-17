@@ -42,8 +42,8 @@ async def test_vertippte_modulanzahl_wird_am_string_gemeldet(db):
     assert len(treffer) == 1, f"Befund erwartet, war: {[r.meldung for r in ergebnisse]}"
     assert treffer[0].schwere == CheckSeverity.WARNING
     assert "Dach Nord-West" in treffer[0].meldung
-    assert "18 Module × 400 Wp = 7.20 kWp" in treffer[0].details
-    assert "4.00 kWp" in treffer[0].details
+    assert "18 Module × 400 Wp = 7,20 kWp" in treffer[0].details
+    assert "4,00 kWp" in treffer[0].details
 
 
 async def test_stimmige_modul_details_ergeben_keinen_befund(db):

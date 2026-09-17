@@ -122,7 +122,7 @@ async def test_pr_dauerhaft_drueber_warnung(db):
     assert "Doppelerfassung" in e.meldung or "Doppelerfassung" in (e.details or "")
     assert "BKW" in (e.details or "")
     # Höchstwerte in Details
-    assert "1.22" in (e.details or "")
+    assert "1,22" in (e.details or "")
 
 
 async def test_spez_ertrag_signal_ohne_pr(db):

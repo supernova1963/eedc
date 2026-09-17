@@ -52,7 +52,7 @@ async def test_ueberbelegtes_bkw_ohne_grenze_wird_gemeldet(db):
     assert len(treffer) == 1, f"Befund erwartet, war: {[r.meldung for r in ergebnisse]}"
     assert treffer[0].schwere == CheckSeverity.WARNING
     assert "Vorgarten" in treffer[0].meldung
-    assert "1260 W" in treffer[0].details
+    assert "1.260 W" in treffer[0].details
     assert "stündlich gekappt" in treffer[0].details
 
 

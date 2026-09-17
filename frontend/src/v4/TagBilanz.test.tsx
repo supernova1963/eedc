@@ -6,7 +6,7 @@
  * (Rainer-PN 2026-07-25); ein fehlender Speicher blendet die Kachel aus.
  */
 import { describe, it, expect } from 'vitest'
-import { baueTagKpis } from './TagBilanz'
+import { baueTagKpis, tagesPreisFormel } from './TagBilanz'
 import type { TagWerte } from '../api/energie_profil'
 import { tagWerte } from '../test/factories'
 
@@ -133,5 +133,46 @@ describe('baueTagKpis — ohne erfasste PV wird nichts behauptet', () => {
   it('lässt den Vortag weg, wenn dessen Erzeugung nicht erfasst ist', () => {
     const k = kachel(baueTagKpis(tag(), ohnePv()), 'PV-Erzeugung')!
     expect(k.subtitle ?? '').not.toContain('VT:')
+  })
+})
+
+/**
+ * ⭐ **Der Tag nennt die Herkunft seines Preises** (17.09.2026, SOLL Flex-Tarife
+ * H-1, F2).
+ *
+ * Bis dahin stand über der Kachel pauschal „bei flexiblem Tarif der Monats-Ø" —
+ * wahr, solange der Tag tatsächlich mit dem Monatswert rechnete. Seit dem
+ * Entscheid *„Tage bleiben Messung, Monat bleibt Abrechnung"* kann dieselbe
+ * Kachel vier verschiedene Quellen zeigen, und ein gemessener Tages-Ø sieht
+ * sonst aus wie ein über den Monat verteilter Wert.
+ */
+describe('Ø-Preis Netz (Tag) — die Formel nennt die Herkunft', () => {
+  const preisKachel = (herkunft: Parameters<typeof tagesPreisFormel>[0]) =>
+    kachel(
+      baueTagKpis(tag({ netzbezug: 4, netzbezug_kosten: 1.2 }), null, null, undefined, 30, herkunft),
+      'Ø-Preis Netz',
+    )!
+
+  it('gemessen: nennt die Stundenpreise DIESES Tages', () => {
+    expect(preisKachel('gemessen').formel).toContain('dieses Tages')
+    expect(preisKachel('gemessen').formel).toContain('gemessenen')
+  })
+
+  it('abgerechnet: sagt „verteilt", nicht „gemessen"', () => {
+    // ⚠ Der Kern von H-1: Ein über den Monat verteilter Wert darf nicht wie
+    // eine Messung dieses Tages klingen.
+    const f = preisKachel('abgerechnet').formel!
+    expect(f).toContain('verteilt')
+    expect(f).not.toContain('gemessen')
+  })
+
+  it('vertrag: bleibt beim Arbeitspreis', () => {
+    expect(preisKachel('vertrag').formel).toContain('Arbeitspreis')
+  })
+
+  it('ohne Feld (alte Antwort) behauptet die Kachel keine Herkunft', () => {
+    const f = preisKachel(undefined).formel!
+    expect(f).not.toContain('gemessen')
+    expect(f).not.toContain('verteilt')
   })
 })

@@ -30,6 +30,7 @@ from .kategorien import (
     CheckErgebnis, CheckKategorie, CheckSeverity, LINK_DATENQUELLEN,
     LINK_ENERGIEPROFIL, LINK_INTEGRATION, _quelle_label,
 )
+from backend.core.zahlenformat import fmt_zahl, fmt_pct
 
 logger = logging.getLogger(__name__)
 
@@ -524,16 +525,17 @@ class DatenquelleChecks:
             delta_signed = ha - eedc
             rel_signed = (delta_signed / max(eedc, ha)) * 100 if max(eedc, ha) > 0 else 0.0
             details = (
-                f"Dein eedc-Wert für {datum_.isoformat()} ist {eedc:.2f} kWh PV-Erzeugung. "
-                f"Die HA-Statistics liefert für denselben Tag {ha:.2f} kWh. "
+                f"Dein eedc-Wert für {datum_.isoformat()} ist {fmt_zahl(eedc, 2)} kWh PV-Erzeugung. "
+                f"Die HA-Statistics liefert für denselben Tag {fmt_zahl(ha, 2)} kWh. "
                 f"Mit „Tag reparieren“ schreibt eedc den Wert aus HA-Statistics "
                 f"in deine Tages-Zusammenfassung."
             )
             ergebnisse.append(CheckErgebnis(
                 kategorie=kat, schwere=CheckSeverity.INFO.value,
                 meldung=(
-                    f"{datum_.isoformat()}: PV {eedc:.1f} → HA {ha:.1f} kWh "
-                    f"(Δ {delta_signed:+.1f} kWh, {rel_signed:+.1f}%)"
+                    f"{datum_.isoformat()}: PV {fmt_zahl(eedc, 1)} → HA {fmt_zahl(ha, 1)} kWh "
+                    f"(Δ {fmt_zahl(delta_signed, 1, vorzeichen=True)} kWh, "
+                    f"{fmt_pct(rel_signed, 1, vorzeichen=True)})"
                 ),
                 details=details,
                 link=LINK_ENERGIEPROFIL,
@@ -565,8 +567,9 @@ class DatenquelleChecks:
                 meldung=(
                     f"{label}: {len(tage)} Tag(e) weichen von HA-Statistics ab "
                     f"(größte Abweichung {datum_.isoformat()}: "
-                    f"{eedc:.1f} → {ha:.1f} kWh, Δ {delta_signed:+.1f} kWh, "
-                    f"{rel_signed:+.1f}%)"
+                    f"{fmt_zahl(eedc, 1)} → {fmt_zahl(ha, 1)} kWh, "
+                    f"Δ {fmt_zahl(delta_signed, 1, vorzeichen=True)} kWh, "
+                    f"{fmt_pct(rel_signed, 1, vorzeichen=True)})"
                 ),
                 details=(
                     f"Für diese Komponente steht in deiner Tages-Zusammenfassung "
@@ -908,7 +911,7 @@ class DatenquelleChecks:
         MAX_EINZEL = 15
         for datum_, fehlend in sorted(befunde, key=lambda x: x[0], reverse=True)[:MAX_EINZEL]:
             teile = ", ".join(
-                f"{_key_label(k)} {v:.1f} kWh" for k, v in sorted(fehlend.items())
+                f"{_key_label(k)} {fmt_zahl(v, 1)} kWh" for k, v in sorted(fehlend.items())
             )
             ergebnisse.append(CheckErgebnis(
                 kategorie=kat, schwere=CheckSeverity.WARNING.value,
@@ -1791,7 +1794,7 @@ class DatenquelleChecks:
         betrag_text = (
             f"{int(betrag)} Stunde" if betrag == 1
             else f"{int(betrag)} Stunden" if betrag == int(betrag)
-            else f"{betrag:.1f} Stunden".replace(".", ",")
+            else f"{fmt_zahl(betrag, 1)} Stunden"
         )
         richtung = "vor" if stunden > 0 else "hinter"
 
@@ -1934,7 +1937,7 @@ class DatenquelleChecks:
         _name, _anzahl, zeitpunkt, vorher, nachher = betroffen[0]
         beleg = (
             f"Zuletzt am {zeitpunkt.strftime('%d.%m.%Y um %H:%M')} bei „{_name}“: "
-            f"{vorher:.1f} → {nachher:.1f}."
+            f"{fmt_zahl(vorher, 1)} → {fmt_zahl(nachher, 1)}."
         )
 
         return [CheckErgebnis(

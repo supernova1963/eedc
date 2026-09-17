@@ -267,6 +267,44 @@ class HAStatisticsService:
                 connect_args={"timeout": 30},
             )
             self._is_mysql = False
+            # ── Der Datei-Zweig prüft jetzt auch, ob er wirklich lesen kann ──
+            #
+            # ⛔ **Warum das nötig wurde** (Forum simon42 T89667 #326/#332,
+            # Blockmove): Sein Recorder läuft auf PostgreSQL/Timescale, aber in
+            # `/config` lag noch die **alte** `home-assistant_v2.db` vom Juni.
+            # Sie existiert, also griff dieser Zweig — und weil `_engine` damit
+            # gesetzt war, gab `_ws` ab da `None` zurück (s. dort: „erst SQL,
+            # dann WebSocket"). Der WebSocket-Weg, der bei ihm funktioniert
+            # hätte, wurde **nie versucht**; im Log stand nur ein
+            # `OperationalError: (sqlite3…)`, und die Langzeit-Kennzahlen
+            # blieben leer.
+            #
+            # ⭐ **Das ist die Symmetrie zum URL-Zweig, keine neue Heuristik.**
+            # Der hat seinen Verbindungstest samt Rückfall seit #45; hier fehlte
+            # er. Geprüft wird bewusst eine **Recorder-Tabelle** statt `SELECT
+            # 1`: Eine Datei, die sich öffnen lässt, ist noch keine brauchbare
+            # Statistik-Quelle — „no such table" und eine nicht lesbare
+            # WAL-Datei auf einem read-only-Mount fallen erst hier auf.
+            #
+            # ⚠ **Die ehrliche Grenze:** Das fängt „nicht lesbar", **nicht**
+            # „alt, aber lesbar". Wessen alte Datei sauber öffnet, bekommt
+            # weiterhin veraltete Zahlen — dagegen hilft kein Test, sondern nur
+            # der Hinweis, die Datei nach einem Recorder-Wechsel zu entfernen.
+            # Ein Frische-Urteil („älter als X") wäre genau die Automatik mit
+            # eigenem Fehlerrisiko, gegen die wir uns entschieden haben
+            # (HA über Nacht aus ⇒ Datei „veraltet").
+            try:
+                with self._engine.connect() as conn:
+                    conn.execute(text("SELECT id FROM statistics_meta LIMIT 1"))
+            except Exception as e:
+                logger.warning(
+                    "HA Recorder-Datei %s ist nicht als Statistik-Quelle lesbar "
+                    "(%s: %s) — eedc weicht auf die Home-Assistant-API aus. Wenn "
+                    "dein Recorder auf eine andere Datenbank zeigt, kann die alte "
+                    "Datei entfernt werden.",
+                    db_path, type(e).__name__, e,
+                )
+                self._engine = None
 
     def _ws_verfuegbar(self) -> bool:
         """Antwortet der WebSocket-Transport? Ergebnis wird kurz gemerkt.

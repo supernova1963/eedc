@@ -314,7 +314,13 @@ export interface TagDetail {
   wp_modus_gemessen: boolean | null
   soll_pv_kwh: number | null
   einspeise_preis_cent: number | null
+  /** Seit 17.09.2026 der Preis DIESES Tages (SOLL Flex-Tarife P-2): der über
+   *  den Netzbezug gewichtete Ø seiner Slot-Preise, wo sie mitgeschrieben
+   *  sind. Ohne Mitschrift weiterhin der Monatswert — `_herkunft` sagt es. */
   netzbezug_preis_cent: number | null
+  /** Woher der Preis daneben stammt (H-1): `gemessen` · `gemischt` ·
+   *  `abgerechnet` (über den Monat verteilt) · `vertrag` · `keine`. */
+  netzbezug_preis_herkunft?: 'gemessen' | 'gemischt' | 'abgerechnet' | 'vertrag' | 'keine' | null
   /** Welche **Geräte** hinter den anlagenweiten Tagessummen stecken, je Typ.
    *  Speist den `GeraeteHinweis` („Aggregiert aus: …"), der ab zwei Geräten
    *  erscheint — dieselbe Form wie in Monat und Jahr.

@@ -831,9 +831,20 @@ class TagDetailResponse(BaseModel):
     emob_ladung_pv_grund: Optional[str] = None
     # PV Tages-SOLL = OM-Tagesprognose × eedc-Lernfaktor (wie Genauigkeits-Tracking).
     soll_pv_kwh: Optional[float] = None
-    # Tages-Tarif (Monatstarif je Tag) — für Wirkungsverluste € + Tarif-Zeile.
+    # Tages-Tarif — für Wirkungsverluste € + Tarif-Zeile.
     einspeise_preis_cent: Optional[float] = None
+    #: ⭐ **Seit 17.09.2026 der Preis DIESES Tages**, nicht mehr der des Monats
+    #: (SOLL Flex-Tarife **P-2**, Entscheid Gernot): Wo Slot-Preise
+    #: mitgeschrieben sind, ist ihr über den Netzbezug gewichteter Tages-Ø die
+    #: feinere Quelle. Ohne Mitschrift bleibt es der Monatswert — dann sagt
+    #: `netzbezug_preis_herkunft` es auch.
     netzbezug_preis_cent: Optional[float] = None
+    #: Woher der Preis daneben stammt: ``gemessen`` (Slot-Preise dieses Tages) ·
+    #: ``gemischt`` · ``abgerechnet`` (über den Monat verteilt) · ``vertrag`` ·
+    #: ``keine``. **H-1:** Eine Preiszahl ohne ihre Herkunft ist keine Aussage —
+    #: ein gemessener Tages-Ø und ein verteilter Monatswert sehen sonst gleich
+    #: aus.
+    netzbezug_preis_herkunft: Optional[str] = None
     #: Welche **Geräte** hinter den anlagenweiten Summen dieses Tages stecken,
     #: je Typ und beim Namen genannt — dieselbe Form wie in der Monatssicht
     #: (`aktueller_monat.py`), damit die geteilte Blockfabrik im Frontend sie

@@ -74,6 +74,21 @@ class FinanzMonatsZeile:
     abgabe_dritte_kwh: float = 0.0
     bkw_eigenverbrauch_kwh: float = 0.0
     netzbezug_preis_cent: float = 0.0
+    #: Der Preis, mit dem die **Eigenverbrauchs-Ersparnis** bewertet wird —
+    #: ``None`` ⇒ es gilt ``netzbezug_preis_cent`` (das bisherige Verhalten).
+    #:
+    #: ⭐ **Warum das ein eigener Preis ist** (SOLL Flex-Tarife **A-2**,
+    #: 17.09.2026): *Gewichtet wird mit der Menge, die bewertet wird.* Die
+    #: EV-Ersparnis bewertet **vermiedenen** Bezug; der fällt mittags an (PV),
+    #: der tatsächliche Bezug abends und nachts. Bei einem dynamischen Tarif
+    #: bewertet ein bezugsgewichteter Ø die vermiedene Menge deshalb
+    #: systematisch **zu hoch** — in den Slots, in denen der Bezug vermieden
+    #: wurde, gibt es gar keine gemessene Bezugsmenge, die ihn gewichten könnte.
+    #:
+    #: Und nach **P-1** gilt: Eine Bezugs*abrechnung* sagt nichts über den
+    #: Eigenverbrauch. Für diese Größe gibt es auch auf Monatsebene keine
+    #: externe Wahrheit — der abgerechnete Ø ist hier Rückfall, nicht Vorrang.
+    ev_preis_cent: Optional[float] = None
     #: Woher dieser Preis stammt (``gepflegt`` · ``gemessen`` · ``zeitfenster``
     #: · ``stamm``, SoT `services/strompreis_aggregator`). ⚠ Die Zahl allein
     #: sagt nicht, ob sie eine Messung, eine Abrechnung oder ein Stammwert ist
@@ -147,10 +162,16 @@ def berechne_finanz_aggregat(
             abgabe_dritte_kwh=z.abgabe_dritte_kwh,
         )
         ev_kwh += kz.eigenverbrauch_kwh
-        ev += kz.eigenverbrauch_kwh * z.netzbezug_preis_cent / 100
+        # A-2: der EV-gewichtete Preis, wenn der Aufrufer ihn kennt — sonst
+        # unverändert der Bezugspreis.
+        ev_preis = (
+            z.ev_preis_cent if z.ev_preis_cent is not None else z.netzbezug_preis_cent
+        )
+        ev += kz.eigenverbrauch_kwh * ev_preis / 100
         # Nur der Rest-Eigenverbrauch aus BKW-Monaten OHNE erfasste Erzeugung
         # (P9-Kontrakt der Zeile) — mit Erzeugung steckt er bereits in `ev`.
-        bkw += (z.bkw_eigenverbrauch_kwh or 0.0) * z.netzbezug_preis_cent / 100
+        # Er ist dieselbe Größe wie `ev` und trägt deshalb denselben Preis.
+        bkw += (z.bkw_eigenverbrauch_kwh or 0.0) * ev_preis / 100
 
         erloes = einspeise_erloes_euro(
             einspeisung_kwh=z.einspeisung_kwh or 0.0,

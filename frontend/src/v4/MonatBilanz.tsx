@@ -236,7 +236,17 @@ export function baueNetzKostenKpis(d: AktuellerMonatResponse): KpiStripItem[] {
         : undefined,
     })
   }
-  const netzPreis = d.netzbezug_durchschnittspreis_cent ?? d.netzbezug_preis_cent
+  // Der Wert, den `preisFormel()` darüber beschreibt: das Ergebnis der vollen
+  // Kaskade. ⛔ Hier stand bis 2026-09-17 `netzbezug_durchschnittspreis_cent ??
+  // netzbezug_preis_cent` — also der GEPFLEGTE Ø, sonst der TARIF. Im laufenden
+  // Monat ohne Abschluss gewann damit der Stammpreis, während die Formelzeile
+  // „Ø deiner gemessenen Stundenpreise" sagte und die Kosten daneben mit genau
+  // diesem gemessenen Ø gerechnet waren (OB73-gif, #412-Folgemeldung).
+  // Die beiden alten Felder bleiben als Rückfall — eine ältere Antwort ohne das
+  // neue Feld zeigt damit weiter das, was sie vorher zeigte.
+  const netzPreis = d.netzbezug_preis_effektiv_cent
+    ?? d.netzbezug_durchschnittspreis_cent
+    ?? d.netzbezug_preis_cent
   if (netzPreis != null && d.netzbezug_kwh != null) {
     kpis.push({
       title: 'Ø-Preis Netz',

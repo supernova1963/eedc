@@ -108,7 +108,7 @@ Die **Reparatur-Werkbank** bündelt die Operationen mit ihren echten Bezeichnung
 - **„Lücken aus HA-LTS nachfüllen"** (Vollbackfill) — ergänzt **nur fehlende** Tage aus den HA-Long-Term-Statistics. **Bestehende Tage bleiben unverändert** — es gibt bewusst keinen Overwrite-Modus. Sinnvoll nach Erstinstallation, längerem Stillstand oder einer Datenquellen-Änderung.
 - **„Kraftstoffpreise nachpflegen"** — trägt fehlende Benzin-/Dieselpreise (EU Weekly Oil Bulletin) für die E-Auto-Ersparnis nach; strikt additiv.
 
-Der **Gefahrenbereich** „Energieprofil-Daten löschen" entfernt Stunden- und Tageswerte (Monatsdaten bleiben erhalten); der Scheduler baut die Tage anschließend neu auf. Nur nutzen, wenn ein Neuaufbau wirklich gewollt ist.
+Der **Gefahrenbereich** „Energieprofil-Daten löschen" entfernt Stunden- und Tageswerte (Monatsdaten bleiben erhalten). Der Scheduler holt die **Messwerte** anschließend aus der HA-Langzeitstatistik zurück — **aber nur so weit, wie deine HA-Statistik reicht**; nach einem Recorder-Purge, Sensor-Umbau oder einer Neuinstallation ist sie oft kürzer als dein gepflegtes Profil, und ältere Tage bleiben dann weg. Die **aufgezeichneten PV-Prognosen** (`pv_prognose_final_kwh` und die Solcast-/ML-Werte, Grundlage des Genauigkeits-Vergleichs) sind Aufzeichnungen eines vergangenen Zeitpunkts — sie lassen sich nicht neu berechnen und sind endgültig verloren. Nur nutzen, wenn ein Neuaufbau wirklich gewollt ist.
 
 Vollständige Beschreibung der Pflege-Kachel: [Einstellungen → §5.2 Energieprofil-Pflege](HANDBUCH_EINSTELLUNGEN.md#52-energieprofil-pflege).
 

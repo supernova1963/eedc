@@ -83,7 +83,7 @@ async def test_kwp_summe_ignoriert_stillgelegten_string(db):
     ok_meldungen = [r for r in ergebnisse if "PV-Module:" in r.meldung]
     assert len(ok_meldungen) == 1, f"Erwarte 1 PV-Modul-Σ-Meldung, fand {len(ok_meldungen)}"
     msg = ok_meldungen[0].meldung
-    assert "16.0 kWp" in msg, f"Σ aktiver kWp sollte 16.0 sein (ohne stillgelegten String), war: {msg}"
+    assert "16,0 kWp" in msg, f"Σ aktiver kWp sollte 16.0 sein (ohne stillgelegten String), war: {msg}"
     assert "3 Modul-Gruppen" in msg, f"3 aktive Module erwartet, war: {msg}"
 
     # Kein Mismatch-WARNING
@@ -181,7 +181,7 @@ async def test_zukuenftig_stillgelegt_zaehlt_weiterhin(db):
     ergebnisse = checker._check_stammdaten(anlage)
     ok = [r for r in ergebnisse if "PV-Module:" in r.meldung]
     assert len(ok) == 1
-    assert "10.0 kWp" in ok[0].meldung
+    assert "10,0 kWp" in ok[0].meldung
     assert "2 Modul-Gruppen" in ok[0].meldung
 
 

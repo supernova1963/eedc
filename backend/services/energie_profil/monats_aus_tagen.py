@@ -56,7 +56,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Optional
 
-from sqlalchemy import and_, select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.berechnungen import (
@@ -156,14 +156,36 @@ async def lade_monats_summen_aus_tagen(
     *,
     von: Optional[MonatsSchluessel] = None,
     bis: Optional[MonatsSchluessel] = None,
+    stunden_nur_fuer: Optional[set[MonatsSchluessel]] = None,
 ) -> dict[MonatsSchluessel, TagesMonatsSumme]:
     """Faltet die lokale Tagesebene je Monat — zwei Queries, danach reine Summe.
+
+    ⚠ **Die Stundenzeilen kommen als Spalten-Tupel, nicht als ORM-Objekte.**
+    Die Faltung (``bilanz_aus_stundenrows``) liest genau sechs Felder; ein
+    Entity-Load baut daneben je Zeile ein ``TagesEnergieProfil``-Objekt **und
+    deserialisiert dessen JSON-Spalten** (``komponenten``,
+    ``source_provenance``, ``soc_je_speicher``, ``betriebsmodus_je_wp``).
+    An der produktiven Anlage waren das 17.366 Objekte und 35.861
+    ``json.loads`` je Anfrage — der Posten, der den Event-Loop für rund 0,7 s
+    blockierte und parallele Seitenabrufe gegenseitig ausbremste (gemessen
+    15.09.2026). Ein Spalten-Tupel trägt dieselben Attributnamen; die Faltung
+    merkt den Unterschied nicht.
 
     Args:
         db: Session.
         anlage_id: Anlage.
         von: frühester Monat ``(jahr, monat)``, **inklusive**. ``None`` = offen.
         bis: spätester Monat ``(jahr, monat)``, **inklusive**. ``None`` = offen.
+        stunden_nur_fuer: Monate, für die die **Stundenebene** überhaupt
+            gebraucht wird. ``None`` (Default) = alle im Fenster, wie bisher.
+            Eine **leere** Menge heißt: keine — dann entfällt die Stunden-Query
+            ganz. Die Tageszusammenfassungen werden **immer** vollständig
+            geladen; aus ihnen kommen PV, BKW und die Ladeanteils-Quote.
+
+            ⛔ Wer die Menge setzt, muss wissen, was er aufgibt: ``stunden``,
+            ``tage``, ``erster_tag`` und ``letzter_tag`` beschreiben dann nur
+            noch die geladene Teilmenge. Im Fakten-Pfad liest sie heute
+            niemand (baumweit geprüft); wer sie braucht, ruft ohne die Menge.
 
     Returns:
         Je Monat mit mindestens einer Tages-Spur eine ``TagesMonatsSumme``.
@@ -172,7 +194,17 @@ async def lade_monats_summen_aus_tagen(
     """
     ab, vor = _monatsgrenzen(von, bis)
 
-    tep_query = select(TagesEnergieProfil).where(
+    # Nur die Felder, die `bilanz_aus_stundenrows` liest — plus `datum` für die
+    # Zuordnung zum Monat. Die Row-Objekte tragen dieselben Attributnamen.
+    tep_query = select(
+        TagesEnergieProfil.datum,
+        TagesEnergieProfil.pv_kw,
+        TagesEnergieProfil.verbrauch_kw,
+        TagesEnergieProfil.einspeisung_kw,
+        TagesEnergieProfil.netzbezug_kw,
+        TagesEnergieProfil.batterie_kw,
+        TagesEnergieProfil.waermepumpe_kw,
+    ).where(
         TagesEnergieProfil.anlage_id == anlage_id
     )
     tz_query = select(TagesZusammenfassung).where(
@@ -185,15 +217,30 @@ async def lade_monats_summen_aus_tagen(
         tep_query = tep_query.where(TagesEnergieProfil.datum < vor)
         tz_query = tz_query.where(TagesZusammenfassung.datum < vor)
 
+    if stunden_nur_fuer is not None:
+        # Je gewünschtem Monat ein Datumsfenster — dieselbe Bauform wie oben,
+        # damit der Index `ix_tep_anlage_datum` greift (kein `extract`).
+        fenster = [
+            and_(
+                TagesEnergieProfil.datum >= date(jahr, monat, 1),
+                TagesEnergieProfil.datum < date(
+                    jahr + (monat == 12), (monat % 12) + 1, 1
+                ),
+            )
+            for jahr, monat in sorted(stunden_nur_fuer)
+        ]
+        tep_query = tep_query.where(or_(*fenster)) if fenster else None
+
     # Stundenzeilen je Monat sammeln — die Faltung macht danach der Layer-Helfer
     # über den ganzen Monatsblock (Σ über Stunden ist assoziativ, s. Modul-Kopf).
-    tep_result = await db.execute(tep_query)
-    stunden_je_monat: dict[MonatsSchluessel, list[TagesEnergieProfil]] = defaultdict(list)
+    stunden_je_monat: dict[MonatsSchluessel, list] = defaultdict(list)
     tage_je_monat: dict[MonatsSchluessel, set[date]] = defaultdict(set)
-    for row in tep_result.scalars().all():
-        schluessel = (row.datum.year, row.datum.month)
-        stunden_je_monat[schluessel].append(row)
-        tage_je_monat[schluessel].add(row.datum)
+    if tep_query is not None:
+        tep_result = await db.execute(tep_query)
+        for row in tep_result.all():
+            schluessel = (row.datum.year, row.datum.month)
+            stunden_je_monat[schluessel].append(row)
+            tage_je_monat[schluessel].add(row.datum)
 
     tz_result = await db.execute(tz_query)
     pv_je_monat: dict[MonatsSchluessel, float] = defaultdict(float)

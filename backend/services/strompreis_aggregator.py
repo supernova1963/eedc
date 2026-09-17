@@ -18,18 +18,35 @@ from __future__ import annotations
 import logging
 from calendar import monthrange
 from dataclasses import dataclass
+from datetime import date
 from typing import Optional
 
-from sqlalchemy import and_, extract, select
+from sqlalchemy import and_, extract, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.berechnungen.zeittarif import (
     gewichteter_arbeitspreis_cent,
     hat_zeitfenster,
+    preis_je_slot,
 )
 from backend.models.tages_energie_profil import TagesEnergieProfil
 
 logger = logging.getLogger(__name__)
+
+
+def monats_fenster(jahr: int, monat: int) -> tuple[date, date]:
+    """``[erster Tag, erster Tag des Folgemonats)`` — die Monatsgrenzen als **Bereich**.
+
+    ⛔ **Nicht auf ``extract("year"/"month", datum)`` zurückdrehen.** Eine Funktion
+    über der Spalte macht den Index ``ix_tep_anlage_datum (anlage_id, datum)`` für
+    die Monatseingrenzung unbrauchbar: SQLite grenzt dann nur noch auf die *Anlage*
+    ein und liest je Aufruf **alle** ihre Stundenzeilen — auch für einen Monat, der
+    gar keine hat. Gemessen am 15.09.2026 an der produktiven Anlage (16.391 Zeilen):
+    **117 solcher Aufrufe je ``GET /monatsdaten/aggregiert``**, zusammen rund 1,4 s
+    von 2,4 s. Der Wächter dazu ist
+    ``backend/tests/test_query_budget_monats_fakten.py``.
+    """
+    return date(jahr, monat, 1), date(jahr + (monat == 12), (monat % 12) + 1, 1)
 
 
 @dataclass
@@ -67,6 +84,7 @@ async def berechne_monats_durchschnittspreis(
     Returns:
         StrompreisAggregat oder None wenn keine Preisdaten vorhanden.
     """
+    _von, _bis = monats_fenster(jahr, monat)
     result = await db.execute(
         select(
             TagesEnergieProfil.strompreis_cent,
@@ -74,8 +92,8 @@ async def berechne_monats_durchschnittspreis(
         ).where(
             and_(
                 TagesEnergieProfil.anlage_id == anlage_id,
-                extract("year", TagesEnergieProfil.datum) == jahr,
-                extract("month", TagesEnergieProfil.datum) == monat,
+                TagesEnergieProfil.datum >= _von,
+                TagesEnergieProfil.datum < _bis,
                 TagesEnergieProfil.strompreis_cent.isnot(None),
             )
         )
@@ -111,6 +129,344 @@ async def berechne_monats_durchschnittspreis(
         abgedeckte_stunden=n,
         sollstunden=sollstunden,
     )
+
+
+# =============================================================================
+# Dieselbe Messung für ALLE Monate — eine Abfrage statt einer je Monat
+# =============================================================================
+
+
+class PreisMessung:
+    """Die gemessenen Monats-Aggregate **einer** Anlage, einmal je Anfrage geladen.
+
+    ⭐ **Sie hält die Messung, nicht den aufgelösten Preis.** Das ist der
+    Unterschied, auf den es ankommt: Stufe 2 der Kaskade („gemessen") ist von
+    ``stammpreis_override`` unabhängig — derselbe gemessene Monats-Ø gilt für den
+    Netzbezug **und** für die Wallbox. Ein Cache über dem *Ergebnis* konnte das
+    nicht, weshalb ``wallbox_preis_effektiv_cent`` bis hierher bewusst ohne Cache
+    lief und die Messung ein zweites Mal anstieß (``monats_fakten._lade_tarif``).
+
+    Ein Monat **ohne** Preiszeilen fehlt im Dict — genau wie
+    ``berechne_monats_durchschnittspreis`` dort ``None`` liefert. Die
+    Unterscheidung „kein Eintrag" gegen „Eintrag ohne gewichteten Wert" bleibt
+    damit erhalten (letzteres: Preise vorhanden, Netzbezug überall 0).
+    """
+
+    __slots__ = ("anlage_id", "_je_monat")
+
+    def __init__(self, anlage_id: int, je_monat: dict[tuple[int, int], StrompreisAggregat]):
+        self.anlage_id = anlage_id
+        self._je_monat = je_monat
+
+    def hole(self, jahr: int, monat: int) -> Optional[StrompreisAggregat]:
+        return self._je_monat.get((jahr, monat))
+
+    def __len__(self) -> int:  # für Proben und Protokoll
+        return len(self._je_monat)
+
+
+async def lade_preis_aggregate_je_monat(
+    db: AsyncSession,
+    anlage_id: int,
+    *,
+    von: Optional[date] = None,
+    bis: Optional[date] = None,
+) -> PreisMessung:
+    """Alle Monats-Aggregate auf einmal — dieselbe Aussage wie
+    ``berechne_monats_durchschnittspreis``, **ein** Query.
+
+    Gegenstück zum Einzelmonat für Aufrufer, die eine ganze Historie aufbereiten
+    (``services/monats_fakten.py``): je Monat einzeln zu fragen waren an der
+    produktiven Anlage **117 Abfragen** je ``GET /monatsdaten/aggregiert``.
+    Bauform wie ``einspeise_erloes_service.get_neg_preis_einspeisung_je_monat``.
+
+    ⚠ **Der Clamp trägt, das ``COALESCE`` nicht — beides gemessen.** Ein
+    negativer Netzbezug muss auf 0 **geclampt** und nicht verworfen werden;
+    nimmt man ``MAX(…, 0)`` heraus, meldet
+    ``backend/tests/test_preis_aggregat_symmetrie.py`` drei Proben rot
+    (Gegenprobe 15.09.2026). Das ``COALESCE`` davor ist dagegen **folgenlos**:
+    ``MAX(NULL, 0)`` ist in SQLite zwar ``NULL``, aber ``SUM`` überspringt
+    ``NULL``, und die Stunde trüge ohnehin 0 bei — ``arithmetisch_cent`` und
+    ``abgedeckte_stunden`` hängen an ``strompreis_cent`` bzw. ``COUNT(*)``, nicht
+    am Bezug. Es steht hier, damit die Absicht („fehlender Bezug = 0", wie
+    ``max(0.0, bezug or 0.0)`` im Original) nicht von einer Ignorier-Regel des
+    SQL-Dialekts abhängt — ohne den Anspruch, eine Zahl zu retten.
+
+    Die Gleichheit beider Wege hält ``backend/tests/test_preis_aggregat_symmetrie.py``
+    fest.
+    """
+    bezug = func.max(func.coalesce(TagesEnergieProfil.netzbezug_kw, 0.0), 0.0)
+    bedingungen = [
+        TagesEnergieProfil.anlage_id == anlage_id,
+        TagesEnergieProfil.strompreis_cent.isnot(None),
+    ]
+    if von is not None:
+        bedingungen.append(TagesEnergieProfil.datum >= von)
+    if bis is not None:
+        bedingungen.append(TagesEnergieProfil.datum < bis)
+
+    jahr_spalte = extract("year", TagesEnergieProfil.datum).label("jahr")
+    monat_spalte = extract("month", TagesEnergieProfil.datum).label("monat")
+    # `extract` steht hier in GROUP BY und SELECT, **nicht** im Filter über
+    # `anlage_id`/`datum` — der Index bleibt nutzbar. Genau diese Trennung
+    # bewacht `test_query_budget_monats_fakten.py`.
+    result = await db.execute(
+        select(
+            jahr_spalte,
+            monat_spalte,
+            func.sum(TagesEnergieProfil.strompreis_cent * bezug),
+            func.sum(bezug),
+            func.sum(TagesEnergieProfil.strompreis_cent),
+            func.count(),
+        )
+        .where(and_(*bedingungen))
+        .group_by(jahr_spalte, monat_spalte)
+    )
+
+    je_monat: dict[tuple[int, int], StrompreisAggregat] = {}
+    for jahr, monat, summe_kosten, summe_kwh, summe_preise, n in result.all():
+        jahr, monat, n = int(jahr), int(monat), int(n or 0)
+        if n <= 0:
+            continue
+        summe_kwh = float(summe_kwh or 0.0)
+        je_monat[(jahr, monat)] = StrompreisAggregat(
+            gewichtet_cent=round(float(summe_kosten or 0.0) / summe_kwh, 2) if summe_kwh > 0 else None,
+            arithmetisch_cent=round(float(summe_preise or 0.0) / n, 2),
+            abgedeckte_stunden=n,
+            sollstunden=monthrange(jahr, monat)[1] * 24,
+        )
+    return PreisMessung(anlage_id, je_monat)
+
+
+# =============================================================================
+# Slot-Kosten je Tag — SOLL Flex-Tarife, F2 (2026-09-17)
+# =============================================================================
+
+
+@dataclass
+class SlotKosten:
+    """Die Kosten eines Tages als **Summe der Slot-Kosten**.
+
+    SOLL Flex-Tarife **A-3**: *Die Kosten einer Ebene sind die Summe der
+    Slot-Kosten über die Slots, die Preis und Menge tragen; ein Durchschnitt ist
+    daraus abgeleitet — nie umgekehrt.*
+
+    ⛔ **Warum nicht Ø × Tagesmenge.** Tragen 18 von 24 Slots einen Preis, aber
+    alle 24 eine Menge, bekämen die sechs preislosen beim Multiplizieren
+    stillschweigend den Durchschnitt — eine Interpolation nach unten (**P-4**).
+    Als Summe ist der Betrag stattdessen additiv und richtungssicher zu niedrig;
+    ``abdeckung_menge`` sagt daneben, wie viel davon bewertet ist.
+
+    ``mittel_cent`` ist deshalb ein **Quotient über genau dieselbe Slot-Menge**
+    wie ``kosten_euro`` — zwischen Zähler und Nenner kann kein
+    Abdeckungskonflikt entstehen.
+    """
+    kosten_euro: float
+    mittel_cent: Optional[float]
+    menge_bewertet_kwh: float
+    menge_gesamt_kwh: float
+    #: Menge, deren Preis **gemessen** war (Rest: abgerechnet bzw. abgeleitet).
+    menge_gemessen_kwh: float
+    #: Menge, die mit dem **abgerechneten Monats-Ø** bewertet wurde.
+    menge_abgerechnet_kwh: float = 0.0
+    #: Der mit dem **Eigenverbrauch** gewichtete Ø-Preis desselben Tages.
+    #:
+    #: SOLL Flex-Tarife **A-2**: *Gewichtet wird mit der Menge, die bewertet
+    #: wird.* Die Eigenverbrauchs-Ersparnis bewertet **vermiedenen** Bezug —
+    #: und der fällt zu anderen Zeiten an als der tatsächliche Bezug.
+    #: Eigenverbrauch entsteht mittags (PV), Netzbezug abends und nachts. Ein
+    #: mit dem Bezug gewichteter Ø bewertet die vermiedene Menge deshalb
+    #: systematisch **zu hoch**; in den Slots, in denen der Bezug vermieden
+    #: wurde, gibt es gar keine gemessene Bezugsmenge.
+    ev_mittel_cent: Optional[float] = None
+    #: Die Menge, die ``ev_mittel_cent`` gewichtet hat (PV − Einspeisung je
+    #: Slot, auf 0 geklemmt) — **Gewicht, nicht Kennzahl**: Die ausgewiesene
+    #: Eigenverbrauchs-Menge bildet weiterhin
+    #: ``berechne_verbrauchs_kennzahlen`` (mit Speicher, V2H und Abgabe).
+    ev_menge_kwh: float = 0.0
+
+    @property
+    def abdeckung_menge(self) -> Optional[float]:
+        """Anteil der Menge mit Preis (0..1) — ``None`` ohne Menge.
+
+        ⚠ **Anteil der MENGE, nicht der Slots** (SOLL **A-1**): „68 % der
+        Stunden" sagt weniger als „68 % des Bezugs" — fehlen ausgerechnet die
+        verbrauchsstarken Slots, ist eine hohe Slot-Abdeckung wertlos.
+        """
+        if self.menge_gesamt_kwh <= 0:
+            return None
+        return self.menge_bewertet_kwh / self.menge_gesamt_kwh
+
+    @property
+    def herkunft(self) -> str:
+        """``gemessen`` · ``gemischt`` · ``abgerechnet`` · ``vertrag`` · ``keine``.
+
+        Entlang der bewerteten **Menge**, nicht der Slot-Zahl — aus demselben
+        Grund wie bei ``abdeckung_menge``.
+        """
+        if self.menge_bewertet_kwh <= 0:
+            return "keine"
+        if self.menge_gemessen_kwh >= self.menge_bewertet_kwh:
+            return "gemessen"
+        if self.menge_gemessen_kwh > 0:
+            return "gemischt"
+        if self.menge_abgerechnet_kwh > 0:
+            return "abgerechnet"
+        return "vertrag"
+
+
+async def lade_slot_kosten_je_tag(
+    db: AsyncSession,
+    anlage_id: int,
+    *,
+    von: date,
+    bis: date,
+    tarif_fuer,
+    abgerechnet_fuer=None,
+) -> dict[date, SlotKosten]:
+    """Netzbezugskosten je Tag aus Slot-Preis × Slot-Menge, für ``[von, bis]``.
+
+    **Die Preis-Kaskade der Slot-Ebene** (SOLL **P-6**): gemessener Endpreis →
+    abgerechneter Monats-Ø → Vertragspreis → *kein Wert*. Der Kern des
+    Entscheids vom 17.09.2026 (*„Tage bleiben Messung, Monat bleibt
+    Abrechnung"*) ist die **erste** Stufe: Wo eine Slot-Messung vorliegt, gilt
+    sie — und kein Monatsmittel verdrängt sie mehr.
+
+    ⛔ **Warum Stufe 2 trotzdem ein Monatswert ist, und warum das kein
+    P-4-Verstoß ist.** P-4 verbietet, eine gröbere Quelle **statt** einer
+    vorhandenen feineren zu nehmen. Existiert keine feinere, ist die gröbere die
+    beste verfügbare Information — und der abgerechnete Ø ist bei einem
+    dynamischen Tarif *die bezahlte Wahrheit*, während der Stammpreis dort nach
+    **T-1** gar kein ableitbarer Preis ist, sondern ein Platzhalter.
+
+    *Diese Stufe hat sich beim Bau eine rote Probe erkämpft:*
+    ``test_tage_werte_symmetrie.py::test_tage_werte_nehmen_den_abgerechneten_monats_durchschnittspreis``
+    (30.07.2026, Forum simon42 #89667/60) hält fest, dass Cockpit/Tag nicht 30 ct
+    nennen darf, während Cockpit/Monat 18 ct rechnet. Ohne Stufe 2 wäre genau
+    das zurückgekehrt — ein Rückschritt hinter eine belegte Melder-Korrektur.
+    ``herkunft`` sagt deshalb ``abgerechnet`` und nicht ``gemessen``: Der Wert
+    ist über den Monat **verteilt**, nicht in diesem Slot gemessen.
+
+    ⭐ **Der Vertragspreis ist kein Rückfall auf eine gröbere Ebene.** Bei
+    Festpreis und Zeitfenstern ist der Slot-Preis aus dem Vertrag **ableitbar**
+    (SOLL **T-1**) — ihn zu verwenden ist die Anwendung von P-4, nicht ihre
+    Verletzung. Deshalb bewegt sich bei einem Festpreis-Anwender **keine Zahl**
+    gegenüber dem Zustand vor diesem Bau: Σ(Menge_s × Arbeitspreis) ist
+    identisch zu Tagesmenge × Arbeitspreis (SOLL §10, Prüfstein 2).
+
+    ⚠ **``is not None``, nicht ``> 0``** (SOLL **P-8**): Bei einem dynamischen
+    Tarif sind Null- und Negativpreise Alltag. Eine Prüfung auf „größer null"
+    würfe ausgerechnet die interessantesten Slots weg und bewertete sie mit dem
+    Vertragspreis — also zu hoch, genau dort, wo der echte Preis null oder
+    negativ war.
+
+    Args:
+        von, bis: Tagesbereich, **beide einschließlich**.
+        tarif_fuer: ``(datum) -> Tarifzeile | None`` — die Quelle des
+            abgeleiteten Slot-Preises. Als Callable statt als Dict, damit der
+            Aufrufer die Stichtagsregel besitzt: Heute reicht jeder Aufrufer den
+            Monatstarif durch; die feinere Regel (**P-7**: der Stichtag eines
+            Vertragspreises ist der Beginn des Zeitraums, den die Zahl
+            beschreibt — für einen Slot also sein Tag) lässt sich dann hier
+            nachziehen, ohne diese Funktion zu ändern.
+
+    Returns:
+        ``{datum: SlotKosten}`` — nur für Tage mit Stundenzeilen. Ein Tag ohne
+        Zeilen fehlt im Dict; er hat keine Kosten von 0, sondern keine Aussage.
+    """
+    result = await db.execute(
+        select(
+            TagesEnergieProfil.datum,
+            TagesEnergieProfil.stunde,
+            TagesEnergieProfil.netzbezug_kw,
+            TagesEnergieProfil.strompreis_cent,
+            # Fuer die EV-Gewichtung (A-2) — dieselbe Abfrage, damit beide
+            # Seiten der Tagesbilanz aus derselben Quelle stammen (P-5).
+            TagesEnergieProfil.pv_kw,
+            TagesEnergieProfil.einspeisung_kw,
+        )
+        .where(
+            TagesEnergieProfil.anlage_id == anlage_id,
+            TagesEnergieProfil.datum >= von,
+            TagesEnergieProfil.datum <= bis,
+        )
+        .order_by(TagesEnergieProfil.datum, TagesEnergieProfil.stunde)
+    )
+
+    roh: dict[date, list[float]] = {}
+    for datum, stunde, netzbezug_kw, preis_cent, pv_kw, einspeisung_kw in result.all():
+        # Negative Mengen klemmen (Zähler-Glitch) — dieselbe Behandlung wie im
+        # Monats-Aggregat oben, damit beide Ebenen dieselbe Menge sehen.
+        menge = max(0.0, float(netzbezug_kw or 0.0))
+        eintrag = roh.setdefault(datum, [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+        eintrag[4] += menge  # Gesamtmenge — unabhängig davon, ob ein Preis existiert
+        # Vermiedener Bezug dieses Slots: erzeugt und NICHT eingespeist.
+        ev_menge = max(0.0, float(pv_kw or 0.0) - float(einspeisung_kw or 0.0))
+
+        # Die Kaskade der Slot-Ebene, in dieser Reihenfolge und nur hier.
+        preis: Optional[float] = None
+        gemessen = preis_cent is not None
+        abgerechnet = False
+        if gemessen:
+            preis = float(preis_cent)
+        else:
+            if abgerechnet_fuer is not None:
+                _abg = abgerechnet_fuer(datum)
+                if _abg is not None:
+                    preis, abgerechnet = float(_abg), True
+            if preis is None:
+                tarif = tarif_fuer(datum)
+                if tarif is not None:
+                    preis = preis_je_slot(tarif, datum, int(stunde))
+
+        if preis is None:
+            continue
+        # Derselbe Slot-Preis, andere Gewichtungsmenge (A-2).
+        eintrag[5] += preis * ev_menge / 100.0
+        eintrag[6] += ev_menge
+        eintrag[0] += preis * menge / 100.0  # Kosten in €
+        eintrag[1] += menge                  # bewertete Menge
+        if gemessen:
+            eintrag[2] += menge              # davon gemessen
+        elif abgerechnet:
+            eintrag[3] += menge              # davon aus der Abrechnung verteilt
+
+    je_tag: dict[date, SlotKosten] = {}
+    for datum, (
+        kosten, bewertet, gemessen_menge, abgerechnet_menge, gesamt,
+        ev_kosten, ev_menge_sum,
+    ) in roh.items():
+        # ⛔ **Die Rundung hier ist eine Glättung, keine Anzeige-Rundung — beide
+        # Grenzen sind gemessen.** Zwei Proben haben sie eingerahmt:
+        #
+        # * **Nach oben** (`test_tages_wirkungsgrad_und_finanz_rundung.py::
+        #   test_oe_preis_netz_bleibt_der_tarif_auch_bei_kleiner_menge`): Mit
+        #   `round(kosten, 4)` ergibt 0,19 kWh × 29,53 ct rückgerechnet 29,5263
+        #   statt 29,53 ct. Der Client bildet den angezeigten Ø aus Kosten ÷
+        #   Menge — eine Rundung auf Anzeige-Präzision verfälscht ihn dort.
+        # * **Nach unten** (`test_tage_werte_symmetrie.py::
+        #   test_tage_werte_ohne_monats_durchschnitt_bleiben_beim_tarif`): Ganz
+        #   ohne Rundung summieren sich vier Slots à 0,45 € zu
+        #   1,7999999999999998 € — die Summe über Slots erzeugt einen
+        #   Float-Rest, den die alte Rechnung (eine einzige Multiplikation)
+        #   nicht hatte.
+        #
+        # 1e-6 € sind 1e-4 ct und liegen weit unter jeder Anzeige; die Glättung
+        # entfernt den Akkumulationsrest, ohne eine Zahl zu bewegen.
+        kosten = round(kosten, 6)
+        je_tag[datum] = SlotKosten(
+            kosten_euro=kosten,
+            mittel_cent=(kosten * 100.0 / bewertet) if bewertet > 0 else None,
+            menge_bewertet_kwh=bewertet,
+            menge_gesamt_kwh=gesamt,
+            menge_gemessen_kwh=gemessen_menge,
+            menge_abgerechnet_kwh=abgerechnet_menge,
+            ev_mittel_cent=(
+                round(ev_kosten, 6) * 100.0 / ev_menge_sum if ev_menge_sum > 0 else None
+            ),
+            ev_menge_kwh=ev_menge_sum,
+        )
+    return je_tag
 
 
 # =============================================================================
@@ -172,6 +528,7 @@ async def wirksamer_arbeitspreis_cent(
     if cache is not None and schluessel in cache:
         return cache[schluessel]
 
+    _von, _bis = monats_fenster(jahr, monat)
     result = await db.execute(
         select(
             TagesEnergieProfil.datum,
@@ -180,8 +537,8 @@ async def wirksamer_arbeitspreis_cent(
         ).where(
             and_(
                 TagesEnergieProfil.anlage_id == anlage_id,
-                extract("year", TagesEnergieProfil.datum) == jahr,
-                extract("month", TagesEnergieProfil.datum) == monat,
+                TagesEnergieProfil.datum >= _von,
+                TagesEnergieProfil.datum < _bis,
             )
         )
     )
@@ -240,6 +597,7 @@ async def aufgeloester_monatspreis(
     *,
     stammpreis_override: Optional[float] = None,
     cache: Optional[dict] = None,
+    messung: Optional[PreisMessung] = None,
 ) -> MonatsPreis:
     """Der Netzbezugspreis, mit dem dieser Monat zu rechnen ist — **die ganze Kaskade**.
 
@@ -301,6 +659,7 @@ async def aufgeloester_monatspreis(
 
     ergebnis = await _aufgeloester_monatspreis_ungecacht(
         db, anlage_id, jahr, monat, monatsdaten, tarif, stammpreis_override,
+        messung=messung,
     )
     if cache is not None:
         cache[schluessel] = ergebnis
@@ -310,6 +669,8 @@ async def aufgeloester_monatspreis(
 async def _aufgeloester_monatspreis_ungecacht(
     db: AsyncSession, anlage_id: int, jahr: int, monat: int, monatsdaten, tarif,
     stammpreis_override: Optional[float] = None,
+    *,
+    messung: Optional[PreisMessung] = None,
 ) -> MonatsPreis:
     # 1 — gepflegt. ⚠ `is not None`, nicht truthy: ein Monats-Ø von 0,0 ct ist
     # bei dynamischem Tarif real (viele Negativpreis-Stunden) und wäre als
@@ -331,8 +692,14 @@ async def _aufgeloester_monatspreis_ungecacht(
         )
     tarif_hat_zeitfenster = tarif is not None and hat_zeitfenster(tarif)
 
-    # 2 — gemessen.
-    aggregat = await berechne_monats_durchschnittspreis(anlage_id, jahr, monat, db)
+    # 2 — gemessen. Liegt die Messung der ganzen Anfrage vor, steht der Monat
+    # schon darin (EINE gruppierte Abfrage statt einer je Monat und Aufrufer);
+    # sonst der Einzelmonat wie bisher.
+    aggregat = (
+        messung.hole(jahr, monat)
+        if messung is not None
+        else await berechne_monats_durchschnittspreis(anlage_id, jahr, monat, db)
+    )
     if aggregat is not None and aggregat.gewichtet_cent is not None:
         return MonatsPreis(
             cent=aggregat.gewichtet_cent,

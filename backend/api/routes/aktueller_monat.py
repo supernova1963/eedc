@@ -590,6 +590,22 @@ class AktuellerMonatResponse(BaseModel):
     netzbezug_preis_zeittarif: bool = False
     einspeise_preis_cent: Optional[float] = None
     netzbezug_durchschnittspreis_cent: Optional[float] = None  # Flexibler Tarif (Monatsdurchschnitt)
+    #: **Der Preis, mit dem das Geld dieses Monats gerechnet wurde** — das
+    #: Ergebnis der vollen Kaskade (`aufgeloester_monatspreis`), zu dem die
+    #: beiden Felder darunter (`_herkunft`, `_abdeckung`) gehören.
+    #:
+    #: ⛔ **Bis 2026-09-17 fehlte er, und das war der Fehler:** Herkunft und
+    #: Abdeckung wurden ausgeliefert, der zugehörige **Wert** nicht. Die Kachel
+    #: zeigte deshalb `netzbezug_durchschnittspreis_cent ?? netzbezug_preis_cent`
+    #: — im laufenden Monat ohne Abschluss also den **Stammpreis**, während die
+    #: Formelzeile darüber „Ø deiner gemessenen Stundenpreise" sagte und die
+    #: Kosten daneben mit dem gemessenen Ø gerechnet waren. Drei Zahlen, eine
+    #: Kachel (OB73-gif, #412-Folgemeldung).
+    #:
+    #: SOLL Flex-Tarife **H-2**: die Beschriftung beschreibt die Zahl daneben.
+    #: `netzbezug_preis_cent` bleibt unverändert der **Tarif**-Wert („Verwendeter
+    #: Tarif") — beide nebeneinander sind eine Aussage, eines allein ist keine.
+    netzbezug_preis_effektiv_cent: Optional[float] = None
     #: Welche Stufe der Preis-Kaskade gegriffen hat: ``gepflegt`` (abgerechneter
     #: Ø aus dem Monatsabschluss) · ``gemessen`` (Ø der mitgeschriebenen
     #: Stundenpreise) · ``zeitfenster`` (HT/NT, über den Netzbezug gewichtet) ·
@@ -3579,6 +3595,9 @@ async def get_aktueller_monat(
         betriebskosten_anteilig_anzahl=betriebskosten_anteilig_anzahl,
         # Tarif-Info
         netzbezug_preis_cent=netzbezug_preis_cent if allgemein_tarif else None,
+        # Der Wert zu `_herkunft`/`_abdeckung` — ohne ihn beschreiben die beiden
+        # eine Zahl, die die Antwort nicht enthält (SOLL Flex-Tarife H-2).
+        netzbezug_preis_effektiv_cent=netzbezug_preis_effektiv_cent,
         netzbezug_preis_herkunft=netzbezug_preis_herkunft,
         netzbezug_preis_abdeckung=netzbezug_preis_abdeckung,
         # N-267: sagt der Anzeige, dass der Preis daneben gewichtet ist.

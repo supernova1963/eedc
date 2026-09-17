@@ -234,9 +234,10 @@ CO2-Einsparung (kg)      = PV_Erzeugung * 0.38               (VERALTET — s. Ka
 > 210,45 € ⇒ 37,6 ct statt 33 ct; Forum simon42 #89667). **Faustregel:** neben einem
 > **Preis** steht der Arbeitspreis-Anteil, in einer **Kostenaufstellung** die Gesamtsumme.
 >
-> **Welcher Preis gilt:** bei einem flexiblen Tarif der **verbrauchsgewichtete
-> Monatsdurchschnitt** (`Monatsdaten.netzbezug_durchschnittspreis_cent`), sonst der
-> Tarif-Arbeitspreis. Das gilt für Netzbezug-Kosten, EV-Ersparnis und — ohne eigenen
+> **Welcher Preis gilt:** der **abgerechnete** Monatsdurchschnitt
+> (`Monatsdaten.netzbezug_durchschnittspreis_cent`), sonst der aus den
+> Stundenpreisen **gemessene** verbrauchsgewichtete Ø, sonst der
+> Tarif-Arbeitspreis (die Kaskade weiter unten in diesem Dokument). Das gilt für Netzbezug-Kosten, EV-Ersparnis und — ohne eigenen
 > WP-Tarif — auch für die WP-Ersparnis. Bis v4.0.6 nahm der **laufende** Monat hier
 > den Tarifpreis, während Vorjahres-Vergleich und die per-Investition-Details schon den
 > Durchschnitt nahmen; derselbe Monat trug damit je nach Sicht zwei Beträge.
@@ -2887,14 +2888,36 @@ Grundpreis         = 0 EUR/Monat
 
 Für Nutzer mit dynamischem Stromtarif (z.B. Tibber, aWATTar) kann der tatsächliche monatliche Durchschnittspreis verwendet werden statt des festen Tarifpreises.
 
-**Fallback-Kette für `netzbezug_preis_cent`:**
+**Die Kaskade des Monatspreises** (`services/strompreis_aggregator.py::aufgeloester_monatspreis`):
 
 ```text
-1. Monatsdaten.netzbezug_durchschnittspreis_cent  (manuell pro Monat)
-2. HA-Sensor strompreis (via Datenquellen-Zuordnung) (automatisch aus HA)
-3. Strompreis.netzbezug_arbeitspreis_cent_kwh      (fester Tarif)
-4. Hardcoded Default: 30.0 ct/kWh
+1. abgerechnet  Monatsdaten.netzbezug_durchschnittspreis_cent (aus deiner Rechnung)
+2. gemessen     Ø der mitgeschriebenen Stundenpreise, verbrauchsgewichtet
+3. zeitfenster  bei HT/NT der über den Netzbezug gewichtete Tarifpreis
+4. stamm        Strompreis.netzbezug_arbeitspreis_cent_kwh
 ```
+
+Jede gelieferte Zahl trägt ihre **Herkunft** (`netzbezug_preis_herkunft`) und bei
+Stufe 2 zusätzlich die **Abdeckung** — ein Ø aus 40 % der Stunden hat dieselbe
+Herkunft wie einer aus 98 %, aber nicht dieselbe Belastbarkeit.
+
+> **Die Tages- und Stundenebene rechnet mit ihren eigenen Preisen** (seit
+> 2026-09-17). Ein abgerechneter Monatswert ist die Wahrheit über **den Monat**;
+> er ist keine Aussage über einen einzelnen Tag. Wo Stundenpreise mitgeschrieben
+> sind, bildet eedc die Tageskosten deshalb als **Summe der Stunden-Kosten**
+> (Preis der Stunde × Menge der Stunde) und den Tages-Ø als deren Quotienten —
+> nicht mehr als Tagesmenge × Monatspreis.
+>
+> Die Slot-Kaskade lautet: **gemessener Stundenpreis → abgerechneter Monats-Ø
+> (über den Monat verteilt) → Vertragspreis → kein Wert.** Bei Festpreis und
+> Zeitfenstern ist der Stundenpreis aus dem Vertrag *ableitbar*; dort ändert
+> sich gegenüber früher keine Zahl.
+>
+> ⚠ **Folge:** Σ der Tageskosten kann vom abgerechneten Monatsbetrag
+> **abweichen**. Das ist gewollt — die Messung sagt, *wann* das Geld angefallen
+> ist, und wird nicht auf die Abrechnung skaliert. Eine große Abweichung ist
+> umgekehrt ein Hinweis: entweder ist die Stundenerfassung lückenhaft oder der
+> eingetragene Abrechnungswert falsch.
 
 **Konfiguration:**
 

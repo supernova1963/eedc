@@ -849,6 +849,33 @@ async def get_tag_detail(
         tarif_cache={},
     )
 
+    # ── Der Preis DIESES Tages (SOLL Flex-Tarife P-2, 17.09.2026) ──
+    #
+    # Die Zeile darüber liefert den **Monats**preis; bis hierher war er auch der
+    # Preis des Tages. Wo Slot-Preise mitgeschrieben sind, ist der Tages-Ø die
+    # feinere und damit richtige Quelle — und dieselbe, mit der die Tages-
+    # Tabelle (`services/energie_profil/tage_werte.py`) seit demselben Bau
+    # rechnet. Ohne diesen Block nennten die beiden Tagessichten verschiedene
+    # Preise für denselben Tag (die F-18-Klasse).
+    from backend.api.routes.strompreise import lade_tarife_je_stichtag as _ltjs
+    from backend.services.strompreis_aggregator import lade_slot_kosten_je_tag
+
+    _stichtag = date(datum.year, datum.month, 1)
+    _tarife_tag = await _ltjs(db, anlage_id, [_stichtag])
+    _slot_kosten = await lade_slot_kosten_je_tag(
+        db, anlage_id, von=datum, bis=datum,
+        tarif_fuer=lambda _t: (_tarife_tag.get(_stichtag) or {}).get("allgemein"),
+        abgerechnet_fuer=lambda _t: getattr(
+            md_tag, "netzbezug_durchschnittspreis_cent", None
+        ) if md_tag else None,
+    )
+    _slot_tag = _slot_kosten.get(datum)
+    netzbezug_preis_tag = (
+        _slot_tag.mittel_cent if _slot_tag is not None and _slot_tag.mittel_cent is not None
+        else tarif.netzbezug_preis_cent
+    )
+    netzbezug_preis_herkunft_tag = _slot_tag.herkunft if _slot_tag is not None else None
+
     # #263/T2 — die Aufteilung Heizen/Kühlen des Tages, anlagenweite Σ.
     #
     # Die Rechnung ist ohnehin tagesweise (`falte_modus_split_tag`); die
@@ -1605,7 +1632,8 @@ async def get_tag_detail(
         ),
         soll_pv_kwh=soll_pv,
         einspeise_preis_cent=tarif.einspeiseverguetung_cent,
-        netzbezug_preis_cent=tarif.netzbezug_preis_cent,
+        netzbezug_preis_cent=netzbezug_preis_tag,
+        netzbezug_preis_herkunft=netzbezug_preis_herkunft_tag,
     )
 
 

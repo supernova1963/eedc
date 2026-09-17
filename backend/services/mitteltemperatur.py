@@ -46,7 +46,7 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Optional
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.berechnungen.heizgradtage import (
@@ -69,7 +69,19 @@ async def lade_tagesmittel_temperatur(
     fehlen, statt mit 0 dazustehen.
     """
     # 1 — echtes Mittel über die Stundenzeilen des Tages.
-    q = select(TagesEnergieProfil.datum, TagesEnergieProfil.temperatur_c).where(
+    #
+    # ⭐ Summe und Anzahl holt die Datenbank je Tag (`GROUP BY datum`), geteilt
+    # wird weiter in Python. Vorher kamen alle Stundenzeilen einzeln herüber —
+    # an einer Anlage mit zwei Jahren Historie 16.391 Tupel je Anfrage, für 685
+    # Mittelwerte. ⛔ **Nicht auf `AVG()` umstellen:** Die Division hier bleibt
+    # dieselbe Rechnung wie bisher, `AVG` wäre eine andere (und die Rundung auf
+    # eine Nachkommastelle im Monatsmittel darüber ist nah genug an der Kante,
+    # dass das sichtbar werden könnte).
+    q = select(
+        TagesEnergieProfil.datum,
+        func.sum(TagesEnergieProfil.temperatur_c),
+        func.count(TagesEnergieProfil.temperatur_c),
+    ).where(
         TagesEnergieProfil.anlage_id == anlage_id,
         TagesEnergieProfil.temperatur_c.is_not(None),
     )
@@ -77,12 +89,12 @@ async def lade_tagesmittel_temperatur(
         q = q.where(TagesEnergieProfil.datum >= von)
     if bis is not None:
         q = q.where(TagesEnergieProfil.datum <= bis)
-    summe: dict[object, float] = defaultdict(float)
-    anzahl: dict[object, int] = defaultdict(int)
-    for datum, temp in (await db.execute(q)).all():
-        summe[datum] += float(temp)
-        anzahl[datum] += 1
-    je_tag = {d: summe[d] / anzahl[d] for d in summe if anzahl[d] > 0}
+    q = q.group_by(TagesEnergieProfil.datum)
+    je_tag = {
+        datum: float(summe) / int(anzahl)
+        for datum, summe, anzahl in (await db.execute(q)).all()
+        if anzahl and int(anzahl) > 0
+    }
 
     # 2 — Näherung aus Min/Max, nur wo Stufe 1 nichts hat.
     q2 = select(

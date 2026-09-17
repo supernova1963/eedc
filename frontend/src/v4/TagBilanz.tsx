@@ -33,6 +33,36 @@ export type GleicheWochentagStats = GleicheMonatStats
 
 const fmt = (v: number | null | undefined, dec = 0) => fmtCalc(v, dec, '—')
 
+/** Woher der Preis dieses Tages stammt — als Satz über der Rechnung.
+ *
+ *  Gegenstück zu `preisFormel()` in `MonatBilanz.tsx`, eine Ebene tiefer: Dort
+ *  beschreibt der Satz die Stufe der **Monats**kaskade, hier die der
+ *  **Slot**kaskade (SOLL Flex-Tarife P-6).
+ *
+ *  ⚠ `abgerechnet` ist bewusst als *verteilt* benannt: Der Wert ist der
+ *  abgerechnete Monats-Ø, nicht eine Messung dieses Tages. Beides gleich zu
+ *  beschriften wäre genau die Falschaussage, gegen die H-1 steht.
+ */
+export type TagDetailPreisHerkunft =
+  'gemessen' | 'gemischt' | 'abgerechnet' | 'vertrag' | 'keine' | null | undefined
+
+export function tagesPreisFormel(herkunft: TagDetailPreisHerkunft): string {
+  switch (herkunft) {
+    case 'gemessen':
+      return 'Ø der gemessenen Stundenpreise dieses Tages, verbrauchsgewichtet'
+    case 'gemischt':
+      return 'Ø dieses Tages — teils gemessene Stundenpreise, teils Monatswert'
+    case 'abgerechnet':
+      return 'Abgerechneter Monats-Ø, auf die Stunden dieses Tages verteilt'
+    case 'vertrag':
+      return 'Arbeitspreis aus deinem Tarif'
+    default:
+      // Ältere Antwort ohne das Feld: keine Herkunft behaupten, die der Client
+      // nicht kennt — dieselbe Zurückhaltung wie im Monat.
+      return 'Netzbezugspreis des Tages'
+  }
+}
+
 /** Energie-Strip: 5 Energie + Netto-Ertrag €. Vortag in der Zweitzeile.
  *  `sollPvKwh` (OM-Tagesprognose × eedc-Lernfaktor, optional) → SOLL-Annotation am
  *  PV-KPI wie im Monat. `netzladung` (tagDetail, optional) → Kosten-Kacheln R15-1. */
@@ -46,6 +76,11 @@ export function baueTagKpis(
    *  bildet. Sie ist der Ø-Preis; der Quotient Kosten ÷ Menge ist nur seine
    *  Rekonstruktion und bei kleinen Mengen ungenau (T89667 #163). */
   netzbezugPreisCent?: number | null,
+  /** Herkunft des Preises daneben (`tagDetail.netzbezug_preis_herkunft`, seit
+   *  17.09.2026). Getrennter Parameter, weil er aus derselben Detail-Antwort
+   *  kommt wie `netzbezugPreisCent` — `TagWerte` (die Tabellenzeile) trägt ihn
+   *  nicht. */
+  netzbezugPreisHerkunft?: TagDetailPreisHerkunft,
 ): KpiStripItem[] {
   // Ohne erfasste Tages-Erzeugung bleibt das SOLL stehen, die Erfüllung aber
   // leer — sonst stünde dort „0 %" für einen Tag, an dem nur nichts gemessen
@@ -104,7 +139,13 @@ export function baueTagKpis(
       unit: 'ct/kWh',
       color: 'red', icon: DATENROLLEN_ICONS.netzpreis,
       subtitle: `${fmt(t.netzbezug, 1)} kWh · ${fmtCalc(t.netzbezug_kosten, 2)} €`,
-      formel: ausTarif ? 'Netzbezugspreis des Tages (bei flexiblem Tarif der Monats-Ø)' : 'Netzbezug-Kosten ÷ Netzbezug',
+      // ⛔ Hier stand bis 17.09.2026 „bei flexiblem Tarif der Monats-Ø" — das
+      // war wahr und ist es nicht mehr: Seit dem Entscheid „Tage bleiben
+      // Messung" rechnet der Tag mit seinen eigenen Slot-Preisen, wo sie
+      // mitgeschrieben sind (SOLL Flex-Tarife P-2). Der Satz nennt jetzt die
+      // Herkunft, die das Backend mitliefert (H-1) — ein gemessener Tages-Ø
+      // und ein über den Monat verteilter Wert sehen sonst gleich aus.
+      formel: ausTarif ? tagesPreisFormel(netzbezugPreisHerkunft) : 'Netzbezug-Kosten ÷ Netzbezug',
     })
   }
 

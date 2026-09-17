@@ -93,7 +93,26 @@ async def delete_rohdaten(
 
     Bleibt direkter Pfad (Konzept Sektion 5.2 — Bulk-Delete kein
     Orchestrator-Bedarf). Der Scheduler schreibt ab dem nächsten Lauf
-    (alle 15 Min) neue, korrekte Daten. Monatsdaten bleiben erhalten.
+    (alle 15 Min) neue Daten. Monatsdaten bleiben erhalten.
+
+    ⛔ **Zwei Dinge kommen NICHT zurück, und der Hinweis sagt das jetzt**
+    (Forum simon42 T89667, PN rapahl 15.09.2026):
+
+    1. **Die aufgezeichneten Prognosen.** ``pv_prognose_final_kwh`` /
+       ``pv_prognose_final_at`` und die SFML-/Solcast-Felder hängen an
+       ``TagesEnergieProfil`` und sind Aufzeichnungen eines vergangenen
+       Zeitpunkts — Grundlage des Genauigkeits-Vergleichs. Neu *berechnen*
+       kann sie niemand.
+    2. **Messwerte jenseits der Recorder-Tiefe.** Zurück kommt nur, was die
+       HA-Langzeitstatistik noch führt; nach Purge, Sensor-Umbau oder
+       Neuinstallation reicht sie oft kürzer als das gepflegte Profil. Das
+       ist dieselbe Begründung, aus der der Overwrite-Modus des
+       Vollbackfills mit v3.25.22 entfernt wurde — sie galt hier genauso,
+       stand aber nirgends.
+
+    ⚠ Die Funktion selbst bleibt unverändert: Sie wird bewusst genutzt, und
+    die Entscheidung gehört dem Anwender. Geändert ist nur, dass er sie
+    informiert trifft.
     """
     result = await db.execute(select(Anlage).where(Anlage.id == anlage_id))
     anlage = result.scalar_one_or_none()
@@ -114,7 +133,12 @@ async def delete_rohdaten(
     return {
         "geloescht_stundenwerte": del_stunden.rowcount,
         "geloescht_tagessummen": del_tage.rowcount,
-        "hinweis": "Scheduler schreibt ab dem nächsten Lauf (max. 15 Min) neue Daten. Monatsdaten bleiben erhalten.",
+        "hinweis": (
+            "Der Scheduler holt die Messwerte aus der HA-Langzeitstatistik "
+            "nach (max. 15 Min), soweit sie zurückreicht. Aufgezeichnete "
+            "PV-Prognosen sind nicht rekonstruierbar. Monatsdaten bleiben "
+            "erhalten."
+        ),
     }
 
 
@@ -487,8 +511,12 @@ async def delete_alle_rohdaten(
 
     Bleibt direkter Pfad (Konzept Sektion 5.2 — Bulk-Delete). Wird
     verwendet wenn Energieprofil-Daten durch falsch gemappte Sensoren
-    korrumpiert wurden. Monatsdaten bleiben erhalten. Der Scheduler
-    berechnet alles neu (max. 15 Min).
+    korrumpiert wurden. Monatsdaten bleiben erhalten. Der Scheduler holt
+    die Messwerte nach (max. 15 Min).
+
+    ⛔ Wie beim anlagenweiten Zwilling darüber: aufgezeichnete Prognosen
+    sind endgültig weg, und Messwerte kommen nur so weit zurück, wie die
+    HA-Langzeitstatistik reicht.
     """
     del_stunden = await db.execute(delete(TagesEnergieProfil))
     del_tage = await db.execute(delete(TagesZusammenfassung))
@@ -500,5 +528,10 @@ async def delete_alle_rohdaten(
     return {
         "geloescht_stundenwerte": del_stunden.rowcount,
         "geloescht_tagessummen": del_tage.rowcount,
-        "hinweis": "Scheduler schreibt ab dem nächsten Lauf (max. 15 Min) neue Daten. Monatsdaten bleiben erhalten.",
+        "hinweis": (
+            "Der Scheduler holt die Messwerte aus der HA-Langzeitstatistik "
+            "nach (max. 15 Min), soweit sie zurückreicht. Aufgezeichnete "
+            "PV-Prognosen sind nicht rekonstruierbar. Monatsdaten bleiben "
+            "erhalten."
+        ),
     }

@@ -78,3 +78,67 @@ describe('Ø-Preis Netz — die Formel nennt die Herkunft', () => {
     expect(k?.formel).toContain('Arbeitspreis aus dem Strompreis-Tarif')
   })
 })
+
+/**
+ * ⭐ **Die Gegenrichtung, und sie fehlte** (17.09.2026, SOLL Flex-Tarife H-2).
+ *
+ * Die Prüfungen oben lesen ausschließlich `formel` — den **Satz**. Dass die
+ * **Zahl** daneben dieselbe Herkunft hat, hat nie jemand geprüft, und genau
+ * dort saß der Fehler: Die Kachel las `netzbezug_durchschnittspreis_cent ??
+ * netzbezug_preis_cent`, also den gepflegten Ø, sonst den Tarif. Im laufenden
+ * Monat ohne Abschluss stand deshalb der **Stammpreis** unter dem Satz „Ø
+ * deiner gemessenen Stundenpreise" — und die Kosten daneben waren mit dem
+ * gemessenen Ø gerechnet. Drei Zahlen, eine Kachel (OB73-gif zu #412).
+ *
+ * *Ein Prüfer, der nur die Beschriftung liest, bestätigt die Beschriftung.*
+ */
+describe('Ø-Preis Netz — die Kachel zeigt die Zahl, die die Formel beschreibt', () => {
+  it('gemessen: zeigt den gemessenen Ø, nicht den Tarif-Arbeitspreis', () => {
+    // Genau OB73-gifs Lage: September läuft, kein Abschluss, Stammpreis 31,5,
+    // gemessener Ø 35,6.
+    const k = preisKachel(basis({
+      netzbezug_preis_herkunft: 'gemessen',
+      netzbezug_preis_abdeckung: 0.55,
+      netzbezug_preis_effektiv_cent: 35.6,
+      netzbezug_preis_cent: 31.5,
+      netzbezug_durchschnittspreis_cent: null,
+    }))
+
+    expect(k?.value).toContain('35,6')
+    expect(k?.value).not.toContain('31,5')
+  })
+
+  it('gepflegt: der abgerechnete Ø steht in der Kachel', () => {
+    const k = preisKachel(basis({
+      netzbezug_preis_herkunft: 'gepflegt',
+      netzbezug_preis_effektiv_cent: 26.5,
+      netzbezug_durchschnittspreis_cent: 26.5,
+      netzbezug_preis_cent: 31.5,
+    }))
+
+    expect(k?.value).toContain('26,5')
+  })
+
+  it('stamm: Tarifpreis und angezeigter Preis sind dieselbe Zahl', () => {
+    // Die Regression (SOLL §10, Prüfstein 2): Wo nichts gemessen wird, bewegt
+    // sich nichts.
+    const k = preisKachel(basis({
+      netzbezug_preis_herkunft: 'stamm',
+      netzbezug_preis_effektiv_cent: 31.5,
+      netzbezug_preis_cent: 31.5,
+    }))
+
+    expect(k?.value).toContain('31,5')
+  })
+
+  it('alte Antwort ohne das Feld: verhält sich wie vorher', () => {
+    // ⚠ Rückfall-Kette, damit ein Client gegen eine ältere Antwort nicht leer
+    // läuft — gepflegter Ø, sonst Tarif.
+    const k = preisKachel(basis({
+      netzbezug_durchschnittspreis_cent: 26.5,
+      netzbezug_preis_cent: 31.5,
+    }))
+
+    expect(k?.value).toContain('26,5')
+  })
+})

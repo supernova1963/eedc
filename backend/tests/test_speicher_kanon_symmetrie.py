@@ -154,21 +154,30 @@ async def test_t_konto_und_dashboard_rechnen_denselben_spread(db):
 async def test_netzgeladene_energie_bekommt_keinen_pv_spread(db):
     """100 kWh aus dem Netz zu 10 ct, η 80 % ⇒ 80 kWh der Entladung sind Netz.
 
-    PV-Anteil  : (400 − 80) × (30 − 8) = 70,40 €
-    Netz-Anteil:        80  × (30 − 10) = 16,00 €
-    Summe                               = 86,40 €
+    PV-Anteil  : (400 − 80) × (30 − 8)     = 70,40 €
+    Netz-Anteil:  80 × 30 ct − 100 × 10 ct = 14,00 €
+    Summe                                  = 84,40 €
 
     Die alte Rechnung gab dem Netz-Anteil den PV-Spread (400 × 22 = 88,00 €)
-    **und** wies die 16,00 € zusätzlich als Arbitrage-Gewinn aus — die
-    Aufstellung im Hub addiert beide Posten und kam damit auf 104,00 €.
+    **und** wies den Arbitrage-Gewinn zusätzlich aus — die Aufstellung im Hub
+    addiert beide Posten und kam damit auf 104,00 €.
+
+    ⛔ **Der Netz-Anteil stand hier bis 17.09.2026 auf 16,00 € (= 80 × 0,20).**
+    Das war `L·η·(B − P)`: auch die Ladekosten mit η verkleinert. Bezahlt wurden
+    aber **100** kWh × 10 ct, nutzbar sind 80 kWh — die 2,00 € für die
+    Verlustenergie fehlten im Abzug. Die Substanz dieser Probe ist unberührt:
+    netzgeladene Energie bekommt keinen PV-Spread, und die beiden Posten bleiben
+    disjunkt (die Invariante unten prüft genau das).
     """
     anlage_id = await _anlage_mit_speicher(db, netzladung=100.0, ladepreis=10.0)
 
     dashboards = await get_speicher_dashboard(anlage_id=anlage_id, db=db)
     dash = dashboards[0].zusammenfassung
 
-    assert dash["ersparnis_euro"] == pytest.approx(86.4, abs=0.5)
-    assert dash["arbitrage_gewinn_euro"] == pytest.approx(16.0, abs=0.5)
+    assert dash["ersparnis_euro"] == pytest.approx(84.4, abs=0.5)
+    assert dash["arbitrage_gewinn_euro"] == pytest.approx(
+        (80 * 30 - 100 * 10) / 100, abs=0.5
+    )
     assert dash["pv_anteil_euro"] == pytest.approx(70.4, abs=0.5)
     # Die beiden Posten der Hub-Aufstellung sind DISJUNKT und ergeben zusammen
     # die ausgewiesene Ersparnis — das ist die Invariante, an der die

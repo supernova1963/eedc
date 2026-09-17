@@ -102,6 +102,30 @@ class EffektiverLadepreisErgebnis:
     netzlade_stunden_gesamt: int  # Stunden mit echter Netz-Ladung (mit/ohne Preis)
     stunden_gesamt_im_fenster: int  # alle TEP-Stunden im Fenster (Diagnose)
 
+    # ── Die Entladeseite (SOLL Flex-Tarife P-5, 17.09.2026) ────────────────
+    #
+    # ⭐ **Warum sie HIER wohnt und nicht in einem eigenen Helper.** Die
+    # Abfrage oben liest bereits jede Stundenzeile mit ``batterie_kw IS NOT
+    # NULL`` im Zeitraum — also genau die Zeilen, aus denen sich auch der
+    # Entladewert bildet. Ein zweiter Helper wäre ein zweiter Durchgang über
+    # dieselben zehntausende Zeilen; über die Lebensdauer eines Speichers ist
+    # dieser Lauf laut #333 ohnehin der Hauptkostenfaktor des Dashboards.
+    # **So kostet die Entladeseite keine einzige zusätzliche Abfrage.**
+    #
+    # Fachlich gehören beide ohnehin zusammen: Ein Spread ist eine Differenz,
+    # und nach **P-5** müssen beide Seiten dieselbe Auflösung und dieselbe
+    # Quelle haben. Sie in zwei Helpern zu bilden wäre genau die Trennung, die
+    # den Fehler erst möglich gemacht hat.
+    #: Der mit der **Entladung** gewichtete Ø-Preis der Entladestunden — der
+    #: vermiedene Bezugspreis. ``None``, wenn keine Entladestunde einen Preis
+    #: trägt.
+    entladewert_cent: Optional[float] = None
+    #: Entladene kWh, die in ``entladewert_cent`` eingegangen sind.
+    entladung_kwh_mit_preis: float = 0.0
+    #: Alle entladenen kWh im Fenster (mit und ohne Preis) — für die
+    #: Abdeckung **nach Menge** (A-1).
+    entladung_kwh_gesamt: float = 0.0
+
     @property
     def abdeckung_prozent(self) -> float:
         """Anteil der Netzlade-Stunden mit Preis (0..100). Diagnose-Wert
@@ -196,14 +220,31 @@ async def berechne_effektiver_ladepreis(
 
     netz_lade_summe = 0.0
     kosten_summe = 0.0
+    entlade_summe = 0.0          # kWh mit Preis
+    entlade_wert_summe = 0.0     # ct·kWh
+    entlade_summe_gesamt = 0.0   # kWh mit und ohne Preis
     stunden_mit_preis = 0
     netzlade_stunden_gesamt = 0  # alle Stunden mit netz_lade > 0 (mit oder ohne Preis)
     hat_endkundenpreis = False
 
     for row in rows:
         batterie = row.batterie_kw or 0
+        if batterie > 0:
+            # Entladestunde: die Energie ersetzt in DIESER Stunde Netzbezug,
+            # also ist ihr Wert der Preis DIESER Stunde (P-5). Dieselbe
+            # Preisregel wie bei der Ladung — ein Börsenpreis ist kein
+            # Endkundenpreis und gilt nur bei ausdrücklich dynamischem Tarif.
+            entlade_h = batterie  # kW × 1 h ≈ kWh (Stundenraster)
+            entlade_summe_gesamt += entlade_h
+            _preis_e = row.strompreis_cent
+            if _preis_e is None and hat_dyn_tarif:
+                _preis_e = row.boersenpreis_cent
+            if _preis_e is not None:
+                entlade_summe += entlade_h
+                entlade_wert_summe += entlade_h * _preis_e
+            continue
         if batterie >= 0:
-            continue  # nur Ladestunden
+            continue  # weder Laden noch Entladen (batterie == 0)
         ladung_h = -batterie  # kW × 1 h ≈ kWh (Stundenraster)
 
         # Anteil der Ladung, der wirklich aus dem Netz kommt — der Rest
@@ -227,6 +268,19 @@ async def berechne_effektiver_ladepreis(
         kosten_summe += netz_lade_h * preis / 100
         stunden_mit_preis += 1
 
+    # ⚠ **Die Entlade-Felder gehören an JEDEN Rückgabeweg**, nicht nur an den
+    # Erfolgsfall. Ein reiner PV-Speicher hat keine Netzladung und läuft in den
+    # Zweig „keine-netzladung" — seine Entladung ist aber genau die Größe, mit
+    # der der PV-Anteil seiner Ersparnis bewertet wird. Ohne diese Zeilen wäre
+    # der Entladewert ausgerechnet dort verloren, wo er allein zählt.
+    _entlade = {
+        "entladewert_cent": (
+            entlade_wert_summe / entlade_summe if entlade_summe > 0 else None
+        ),
+        "entladung_kwh_mit_preis": entlade_summe,
+        "entladung_kwh_gesamt": entlade_summe_gesamt,
+    }
+
     # Keine Netz-Ladestunden im Fenster (reiner PV-Speicher oder nur Entladung).
     if netzlade_stunden_gesamt == 0:
         return EffektiverLadepreisErgebnis(
@@ -236,6 +290,7 @@ async def berechne_effektiver_ladepreis(
             netzlade_stunden_mit_preis=0,
             netzlade_stunden_gesamt=0,
             stunden_gesamt_im_fenster=len(rows),
+            **_entlade,
         )
 
     # Netzladung ja, aber kein Endkundenpreis je Stunde UND kein dynamischer
@@ -251,6 +306,7 @@ async def berechne_effektiver_ladepreis(
             netzlade_stunden_mit_preis=0,
             netzlade_stunden_gesamt=netzlade_stunden_gesamt,
             stunden_gesamt_im_fenster=len(rows),
+            **_entlade,
         )
 
     abdeckung = stunden_mit_preis / netzlade_stunden_gesamt
@@ -271,6 +327,7 @@ async def berechne_effektiver_ladepreis(
             netzlade_stunden_mit_preis=stunden_mit_preis,
             netzlade_stunden_gesamt=netzlade_stunden_gesamt,
             stunden_gesamt_im_fenster=len(rows),
+            **_entlade,
         )
 
     return EffektiverLadepreisErgebnis(
@@ -280,6 +337,7 @@ async def berechne_effektiver_ladepreis(
         netzlade_stunden_mit_preis=stunden_mit_preis,
         netzlade_stunden_gesamt=netzlade_stunden_gesamt,
         stunden_gesamt_im_fenster=len(rows),
+        **_entlade,
     )
 
 

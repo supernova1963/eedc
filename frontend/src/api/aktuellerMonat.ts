@@ -354,6 +354,14 @@ export interface AktuellerMonatResponse {
   netzbezug_preis_zeittarif?: boolean
   einspeise_preis_cent: number | null
   netzbezug_durchschnittspreis_cent: number | null
+  /** Der Preis, mit dem das Geld dieses Monats gerechnet wurde — Ergebnis der
+   *  vollen Kaskade, zu dem `_herkunft` und `_abdeckung` gehören.
+   *
+   *  ⚠ **Diesen Wert zeigt die Kachel**, nicht `netzbezug_preis_cent` (das ist
+   *  der verwendete Tarif). Bis 2026-09-17 fehlte er in der Antwort, und die
+   *  Kachel zeigte im laufenden Monat den Stammpreis unter einer Formelzeile,
+   *  die „gemessen" sagte (OB73-gif). SOLL Flex-Tarife H-2. */
+  netzbezug_preis_effektiv_cent?: number | null
   /** Welche Stufe der Preis-Kaskade gegriffen hat (#412):
    *  `gepflegt` (abgerechneter Ø aus dem Monatsabschluss) · `gemessen` (Ø der
    *  mitgeschriebenen Stundenpreise) · `zeitfenster` (HT/NT, über den Netzbezug

@@ -39,6 +39,7 @@ from .kategorien import (
     MonatsdatenAbdeckung,
     link_monat_erfassen,
 )
+from backend.core.zahlenformat import fmt_zahl
 
 
 # Theoretisches PV-Maximum pro kWp und Monat (kWh) für Mitteleuropa
@@ -114,8 +115,8 @@ class MonatsdatenChecks:
             return None
         return (
             f"Wahrscheinlichste Ursache zuerst: die Tageswerte dieses Monats "
-            f"summieren sich bereits auf {tages_pv:.0f} kWh PV, der gespeicherte "
-            f"Monatswert steht aber bei {monats_pv:.0f} kWh. Die Tage wurden also "
+            f"summieren sich bereits auf {fmt_zahl(tages_pv, 0)} kWh PV, der gespeicherte "
+            f"Monatswert steht aber bei {fmt_zahl(monats_pv, 0)} kWh. Die Tage wurden also "
             f"nachgetragen oder repariert, der Monatswert nie nachgezogen. "
             f"Weg dorthin: Einstellungen → Integration → Statistik-Import, "
             f"„Vorschau laden“ — bereits belegte Monate stehen dort unter "
@@ -601,7 +602,7 @@ class MonatsdatenChecks:
                 if wert is not None and wert < 0:
                     ergebnisse.append(CheckErgebnis(
                         kategorie=kat, schwere=CheckSeverity.ERROR,
-                        meldung=f"{prefix}: {feld} ist negativ ({wert:.1f} kWh)",
+                        meldung=f"{prefix}: {feld} ist negativ ({fmt_zahl(wert, 1)} kWh)",
                         link=md_link,
                     ))
 
@@ -622,17 +623,17 @@ class MonatsdatenChecks:
                 if pv_erzeugung > max_kwh:
                     if pvgis_soll is not None:
                         details = (
-                            f"PVGIS-Prognose: {pvgis_soll:.0f} kWh, "
-                            f"Obergrenze (×{max_kwh / pvgis_soll:.1f}): {max_kwh:.0f} kWh"
+                            f"PVGIS-Prognose: {fmt_zahl(pvgis_soll, 0)} kWh, "
+                            f"Obergrenze (×{fmt_zahl(max_kwh / pvgis_soll, 1)}): {fmt_zahl(max_kwh, 0)} kWh"
                         )
                     else:
                         details = (
-                            f"Statisches Maximum für {gesamt_kwp:.1f} kWp "
-                            f"im Monat {md.monat}: ca. {max_kwh:.0f} kWh"
+                            f"Statisches Maximum für {fmt_zahl(gesamt_kwp, 1)} kWp "
+                            f"im Monat {md.monat}: ca. {fmt_zahl(max_kwh, 0)} kWh"
                         )
                     ergebnisse.append(CheckErgebnis(
                         kategorie=kat, schwere=CheckSeverity.WARNING,
-                        meldung=f"{prefix}: PV-Erzeugung ungewöhnlich hoch ({pv_erzeugung:.0f} kWh)",
+                        meldung=f"{prefix}: PV-Erzeugung ungewöhnlich hoch ({fmt_zahl(pv_erzeugung, 0)} kWh)",
                         details=details,
                         link=md_link,
                     ))
@@ -670,7 +671,7 @@ class MonatsdatenChecks:
                 vorspann = await _hole_nachzug_hinweis()
                 ergebnisse.append(CheckErgebnis(
                     kategorie=kat, schwere=CheckSeverity.ERROR,
-                    meldung=f"{prefix}: Einspeisung ({md.einspeisung_kwh:.0f} kWh) > PV-Erzeugung ({pv_erzeugung:.0f} kWh)",
+                    meldung=f"{prefix}: Einspeisung ({fmt_zahl(md.einspeisung_kwh, 0)} kWh) > PV-Erzeugung ({fmt_zahl(pv_erzeugung, 0)} kWh)",
                     details=(vorspann or "") + details_3,
                     link=md_link,
                 ))
@@ -712,9 +713,9 @@ class MonatsdatenChecks:
                         kategorie=kat, schwere=CheckSeverity.WARNING,
                         meldung=(
                             f"{prefix}: mehr PV verwendet als erzeugt? "
-                            f"Einspeisung ({md.einspeisung_kwh:.0f}) + Speicherladung aus PV "
-                            f"({pv_ladung_speicher:.0f}) = {stapel:.0f} kWh, "
-                            f"erzeugt wurden {pv_erzeugung:.0f} kWh"
+                            f"Einspeisung ({fmt_zahl(md.einspeisung_kwh, 0)}) + Speicherladung aus PV "
+                            f"({fmt_zahl(pv_ladung_speicher, 0)}) = {fmt_zahl(stapel, 0)} kWh, "
+                            f"erzeugt wurden {fmt_zahl(pv_erzeugung, 0)} kWh"
                         ),
                         details=(vorspann or "") + (
                             "Beides kommt aus derselben Erzeugung — zusammen kann es "
@@ -803,7 +804,7 @@ class MonatsdatenChecks:
                     if vj_wert and vj_wert > 50 and wert is not None and wert > 3 * vj_wert:
                         ergebnisse.append(CheckErgebnis(
                             kategorie=kat, schwere=CheckSeverity.WARNING,
-                            meldung=f"{prefix}: {feld} > 3× Vorjahr ({wert:.0f} vs. {vj_wert:.0f} kWh)",
+                            meldung=f"{prefix}: {feld} > 3× Vorjahr ({fmt_zahl(wert, 0)} vs. {fmt_zahl(vj_wert, 0)} kWh)",
                             details="Deutliche Abweichung zum Vorjahresmonat",
                             link=md_link,
                         ))
@@ -832,12 +833,12 @@ class MonatsdatenChecks:
                 if hausverbrauch < -0.5:
                     ergebnisse.append(CheckErgebnis(
                         kategorie=kat, schwere=CheckSeverity.ERROR,
-                        meldung=f"{prefix}: Energiebilanz ergibt negativen Hausverbrauch ({hausverbrauch:.1f} kWh)",
+                        meldung=f"{prefix}: Energiebilanz ergibt negativen Hausverbrauch ({fmt_zahl(hausverbrauch, 1)} kWh)",
                         details=(
-                            f"PV {pv:.0f} – Einspeisung {md.einspeisung_kwh:.0f} "
-                            f"+ Netzbezug {md.netzbezug_kwh:.0f} "
-                            f"+ Bat.Entladung {bat_entladung:.0f} "
-                            f"– Bat.Ladung {bat_ladung:.0f} = {hausverbrauch:.1f} kWh. "
+                            f"PV {fmt_zahl(pv, 0)} – Einspeisung {fmt_zahl(md.einspeisung_kwh, 0)} "
+                            f"+ Netzbezug {fmt_zahl(md.netzbezug_kwh, 0)} "
+                            f"+ Bat.Entladung {fmt_zahl(bat_entladung, 0)} "
+                            f"– Bat.Ladung {fmt_zahl(bat_ladung, 0)} = {fmt_zahl(hausverbrauch, 1)} kWh. "
                             f"Häufige Ursachen: vertauschte Einspeisungs-/Netzbezugs-Sensoren "
                             f"im Mapping oder fehlende Batterie-Daten."
                         ),
@@ -1259,7 +1260,7 @@ class MonatsdatenChecks:
                     # Deshalb INFO und deshalb ein Fragesatz: eedc weiß nicht,
                     # was am Zähler hängt, und behauptet es auch nicht.
                     f"In {_beispiel[0]} liegen "
-                    f"{_beispiel[1]:.0f} von {_beispiel[2]:.0f} kWh weder auf "
+                    f"{fmt_zahl(_beispiel[1], 0)} von {fmt_zahl(_beispiel[2], 0)} kWh weder auf "
                     "Strom Heizen noch auf Strom Warmwasser; eedc führt sie als "
                     "„nicht aufgeteilt“. Das ist oft richtig — Standby, "
                     "Steuerung und Umwälzpumpen laufen auf keiner der beiden "
@@ -1463,7 +1464,7 @@ def _de_euro(betrag: float) -> str:
     ⚠ `check:de-de` liest nur `frontend/src` und kann eine Backend-Meldung
     nicht sehen (N-203). Hier steht die Regel deshalb im Code.
     """
-    return f"{betrag:_.2f} €".replace(".", ",").replace("_", ".")
+    return f"{fmt_zahl(betrag, 2)} €"
 
 
 class ErfassungsortChecks:

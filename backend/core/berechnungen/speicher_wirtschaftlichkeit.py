@@ -186,8 +186,30 @@ def berechne_speicher_ersparnis(
     # Netz-Anteil: nur Vorteil, wenn Ladepreis < Bezugspreis (Arbitrage).
     # Ohne gepflegten Ladepreis → kostenneutrale Annahme (Bezugspreis = Ladepreis).
     ladepreis_eff = bezug_preis_cent if lade_preis_cent is None else lade_preis_cent
-    netz_spread = max(0.0, bezug_preis_cent - ladepreis_eff)
-    netz_ersparnis = netz_anteil_entladung * netz_spread / 100
+    # ⭐ **Der Wirkungsgrad gehört an die MENGE, nicht an den Spread**
+    # (17.09.2026, SOLL Flex-Tarife §6).
+    #
+    # ⛔ Hier stand `netz_anteil_entladung × (B − P)`. Ausmultipliziert ist das
+    # `L·η·B − L·η·P` — die Ladekosten wurden also ebenfalls mit η verkleinert.
+    # Bezahlt hat der Anwender aber die **eingespeicherte** Menge, nicht die
+    # nutzbare: richtig ist `L·η·B − L·P`. Die Differenz `L·P·(1−η)` fehlte im
+    # ausgewiesenen Gewinn — bei 1.000 kWh Netzladung, 20 ct und η = 90 % rund
+    # 20 €/Jahr zu **hoch**.
+    bezahlte_netzladung = (
+        netz_anteil_entladung / wirkungsgrad if wirkungsgrad > 0
+        else netz_anteil_entladung
+    )
+    # ⚠ Die Klemmung bei 0 bleibt vorerst: Ohne gepflegten Ladepreis ist
+    # `ladepreis_eff == bezug_preis_cent`, und der Term wird dann rechnerisch
+    # negativ (die Verluste kosten) — die dokumentierte Semantik ist an dieser
+    # Stelle aber „kostenneutrale Durchleitung", nicht „Verlust". Ob ein
+    # Arbitrage-Gewinn negativ werden **darf**, wenn ein echter Ladepreis
+    # vorliegt und teurer war als der Nutzen, ist eine eigene Entscheidung und
+    # hier bewusst nicht getroffen.
+    netz_ersparnis = max(0.0, (
+        netz_anteil_entladung * bezug_preis_cent
+        - bezahlte_netzladung * ladepreis_eff
+    ) / 100)
 
     return SpeicherErsparnisErgebnis(
         ersparnis_euro=pv_ersparnis + netz_ersparnis,

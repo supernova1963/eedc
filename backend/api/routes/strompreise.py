@@ -149,11 +149,27 @@ async def lade_tarife_fuer_anlage(
     ).order_by(Strompreis.gueltig_ab.desc())
 
     result = await db.execute(query)
-    alle_preise = result.scalars().all()
+    return tarife_zum_stichtag(result.scalars().all(), stichtag)
 
+
+def tarife_zum_stichtag(
+    zeilen: "Iterable[Strompreis]", stichtag: date
+) -> dict[str, Strompreis | None]:
+    """Die Auflösungs-Regel allein — **ohne** Datenbank.
+
+    Sie steht getrennt, weil zwei Wege sie brauchen: der Einzel-Stichtag oben
+    und ``lade_tarife_je_stichtag`` darunter, das **alle** Tarifzeilen einer
+    Anlage einmal holt und die Regel dann je Monat in Python anwendet. Die
+    Trennung ist die Bedingung dafür, dass beide Wege dieselbe Antwort geben —
+    eine zweite Handschrift wäre die Drift-Klasse, gegen die ADR-002/P8 steht.
+
+    ``zeilen`` muss **nach ``gueltig_ab`` absteigend** sortiert sein und darf
+    nur Zeilen enthalten, die am ``stichtag`` gelten; beides stellen die beiden
+    Aufrufer sicher.
+    """
     # Nach Verwendung gruppieren (erster = neuester wg. ORDER BY DESC)
     tarife: dict[str, Strompreis | None] = {"allgemein": None, "waermepumpe": None, "wallbox": None}
-    for preis in alle_preise:
+    for preis in zeilen:
         verwendung = preis.verwendung or "allgemein"
         if verwendung in tarife and tarife[verwendung] is None:
             tarife[verwendung] = preis
@@ -166,6 +182,44 @@ async def lade_tarife_fuer_anlage(
         tarife["wallbox"] = allgemein
 
     return tarife
+
+
+async def lade_tarife_je_stichtag(
+    db: AsyncSession,
+    anlage_id: int,
+    stichtage: "Iterable[date]",
+) -> dict[date, dict[str, Strompreis | None]]:
+    """Dieselbe Auflösung für **viele** Stichtage — eine Abfrage statt einer je Monat.
+
+    ⭐ **P8 bleibt unberührt:** Jeder Stichtag bekommt genau den Tarif, den
+    ``lade_tarife_fuer_anlage`` ihm gäbe — nur wird die *Zeilenmenge* der Anlage
+    ein einziges Mal geholt und die Regel danach in Python angewandt. An einer
+    Anlage mit 39 Monaten waren das bisher 39 Abfragen plus 39 Nachladungen der
+    Zeitfenster-Relationship (gemessen 15.09.2026).
+
+    Die Zeitfenster reisen über ``lazy="selectin"`` mit (``models/strompreis.py``)
+    — sie werden für die ganze Menge auf einmal nachgeladen, nicht je Zeile.
+    """
+    stichtage = sorted(set(stichtage))
+    if not stichtage:
+        return {}
+    result = await db.execute(
+        select(Strompreis)
+        .where(Strompreis.anlage_id == anlage_id)
+        .order_by(Strompreis.gueltig_ab.desc())
+    )
+    alle = list(result.scalars().all())
+    return {
+        stichtag: tarife_zum_stichtag(
+            [
+                p for p in alle
+                if p.gueltig_ab <= stichtag
+                and (p.gueltig_bis is None or p.gueltig_bis >= stichtag)
+            ],
+            stichtag,
+        )
+        for stichtag in stichtage
+    }
 
 
 async def monats_strompreis_lookup(
@@ -217,12 +271,20 @@ async def monats_strompreis_lookup(
     )
     md_je_monat = {(m.jahr, m.monat): m for m in md_result.scalars().all()}
 
+    # Tarife und gemessene Monats-Ø EINMAL fuer alle Monate (statt je Monat
+    # eine Abfrage auf `strompreise` und eine ueber die Stundentabelle).
+    from backend.services.strompreis_aggregator import lade_preis_aggregate_je_monat
+
+    _monate = list(dict.fromkeys(monate))
+    _tarife_je_stichtag = await lade_tarife_je_stichtag(
+        db, anlage_id, [date(j, m, 1) for j, m in _monate]
+    )
+    _messung = await lade_preis_aggregate_je_monat(db, anlage_id)
+
     lookup: dict[tuple[int, int], float] = {}
     preis_cache: dict = {}
-    for jahr, monat in dict.fromkeys(monate):
-        m_tarife = await lade_tarife_fuer_anlage(
-            db, anlage_id, target_date=date(jahr, monat, 1)
-        )
+    for jahr, monat in _monate:
+        m_tarife = _tarife_je_stichtag[date(jahr, monat, 1)]
         m_tarif = resolve_tarif_for_komponente(m_tarife, verwendung)
         # Der Komponenten-Tarif ist Stufe 4 der Kaskade; ein gepflegter oder
         # gemessener Ø schlägt ihn, wie in den Monats-Fakten.
@@ -233,7 +295,7 @@ async def monats_strompreis_lookup(
         lookup[(jahr, monat)] = (await aufgeloester_monatspreis(
             db, anlage_id, jahr, monat, md_je_monat.get((jahr, monat)),
             m_tarif if m_tarif is not None else m_tarife.get("allgemein"),
-            stammpreis_override=stamm, cache=preis_cache,
+            stammpreis_override=stamm, cache=preis_cache, messung=_messung,
         )).cent
     return lookup
 

@@ -1465,11 +1465,18 @@ async def get_roi_dashboard(
             if not pv_module_ids:
                 return {}
 
-            fakten = await lade_monats_fakten(
-                db, anlage_id,
-                von=(filter_jahr, 1) if filter_jahr is not None else None,
-                bis=(filter_jahr, 12) if filter_jahr is not None else None,
-            )
+            # ⭐ Dieselbe Anlage, dasselbe Fenster, dieselbe Schicht — die Fakten
+            # stehen seit dem Kopf dieser Funktion schon da (`_anlage_fakten`).
+            # Sie ein zweites Mal zu bauen kostete an der produktiven Anlage die
+            # Haelfte der ROI-Laufzeit (gemessen 15.09.2026: 3,9 s gesamt).
+            if filter_jahr == jahr:
+                fakten = _anlage_fakten
+            else:
+                fakten = await lade_monats_fakten(
+                    db, anlage_id,
+                    von=(filter_jahr, 1) if filter_jahr is not None else None,
+                    bis=(filter_jahr, 12) if filter_jahr is not None else None,
+                )
             return {
                 f.schluessel: (f.erzeugung.pv_module_kwh or 0.0) for f in fakten
             }

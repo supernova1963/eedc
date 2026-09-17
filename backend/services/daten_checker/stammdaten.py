@@ -43,6 +43,7 @@ from backend.core.investition_kennwerte import (
 from .kategorien import (
     CheckErgebnis, CheckKategorie, CheckSeverity, LINK_MONATSDATEN,
 )
+from backend.core.zahlenformat import fmt_zahl
 
 # Ab diesem DC/AC-Verhältnis meldet der Stammdaten-Check. Bewusst weit oberhalb
 # der üblichen Auslegung (1,1–1,3; Ost/West bis ~1,5, #354-Melder 1,38): bis
@@ -337,7 +338,7 @@ class StammdatenChecks:
             summe_kwp = sum(get_pv_kwp(m) for m in pv_module)
             ergebnisse.append(CheckErgebnis(
                 kategorie=kat, schwere=CheckSeverity.OK,
-                meldung=f"PV-Module: {summe_kwp:.1f} kWp ({len(pv_module)} Modul-Gruppen)",
+                meldung=f"PV-Module: {fmt_zahl(summe_kwp, 1)} kWp ({len(pv_module)} Modul-Gruppen)",
                 details=(
                     "Das Feld „Anlagenleistung“ meint die installierte "
                     "Modulleistung (DC). Ein Balkonkraftwerk zählt nicht mit — "
@@ -371,8 +372,8 @@ class StammdatenChecks:
                         kategorie=kat, schwere=CheckSeverity.WARNING,
                         meldung=f"{modul.bezeichnung}: Modul-Details passen nicht zur Leistung",
                         details=(
-                            f"{int(anzahl)} Module × {int(wp)} Wp = {berechnet:.2f} kWp, "
-                            f"eingetragen: {gepflegt:.2f} kWp"
+                            f"{int(anzahl)} Module × {int(wp)} Wp = {fmt_zahl(berechnet, 2)} kWp, "
+                            f"eingetragen: {fmt_zahl(gepflegt, 2)} kWp"
                         ),
                         link="/einstellungen/investitionen",
                     ))
@@ -390,11 +391,11 @@ class StammdatenChecks:
             # ohne dass sich ein einziger IST-Wert ändert.
             ergebnisse.append(CheckErgebnis(
                 kategorie=kat, schwere=CheckSeverity.INFO,
-                meldung=f"PVGIS-Systemverluste ggf. zu hoch ({system_losses:.0f}%)",
+                meldung=f"PVGIS-Systemverluste ggf. zu hoch ({fmt_zahl(system_losses, 0)}%)",
                 details=(
                     f"Anlage produziert Ø {abweichung_pct}% mehr als die PVGIS-Prognose "
-                    f"(Performance Ratio: {pr:.2f} über {pr_count} Monate). Die "
-                    f"{system_losses:.0f}% sind eine Annahme der Prognose, keine Messung. "
+                    f"(Performance Ratio: {fmt_zahl(pr, 2)} über {pr_count} Monate). Die "
+                    f"{fmt_zahl(system_losses, 0)}% sind eine Annahme der Prognose, keine Messung. "
                     f"Wirksam wird eine Änderung erst mit einem neuen PVGIS-Abruf "
                     f"(Solarprognose → „Neue Prognose abrufen“ → „Speichern & Aktivieren“). "
                     f"Folge: das SOLL steigt, deshalb sinken Performance Ratio und "
@@ -453,19 +454,19 @@ class StammdatenChecks:
                 return []
 
         bkw_zusatz = (
-            f" (mit Balkonkraftwerk {mit_bkw:.2f} kWp)"
+            f" (mit Balkonkraftwerk {fmt_zahl(mit_bkw, 2)} kWp)"
             if mit_bkw > summe_pv_kwp + ANLAGENLEISTUNG_TOLERANZ_KWP else ""
         )
         return [CheckErgebnis(
             kategorie=CheckKategorie.STAMMDATEN.value,
             schwere=CheckSeverity.WARNING,
             meldung=(
-                f"Anlagenleistung {gepflegt:.2f} kWp passt nicht zu den "
-                f"Modulen ({summe_pv_kwp:.2f} kWp)"
+                f"Anlagenleistung {fmt_zahl(gepflegt, 2)} kWp passt nicht zu den "
+                f"Modulen ({fmt_zahl(summe_pv_kwp, 2)} kWp)"
             ),
             details=(
-                f"Unter „Anlage“ stehen {gepflegt:.2f} kWp, die Summe der "
-                f"angelegten PV-Module ergibt {summe_pv_kwp:.2f} kWp"
+                f"Unter „Anlage“ stehen {fmt_zahl(gepflegt, 2)} kWp, die Summe der "
+                f"angelegten PV-Module ergibt {fmt_zahl(summe_pv_kwp, 2)} kWp"
                 f"{bkw_zusatz}. eedc rechnet den spezifischen Ertrag, die "
                 "Performance Ratio und die Plausibilitätsprüfungen mit der "
                 "Modulsumme — die Anlagenleistung geht dagegen an den "
@@ -532,10 +533,10 @@ class StammdatenChecks:
             ergebnisse.append(CheckErgebnis(
                 kategorie=kat, schwere=CheckSeverity.WARNING,
                 meldung=f"{wr.bezeichnung}: Modulleistung ist mehr als das "
-                        f"{DC_AC_MELDESCHWELLE:.0f}-fache der Wechselrichter-Leistung",
+                        f"{fmt_zahl(DC_AC_MELDESCHWELLE, 0)}-fache der Wechselrichter-Leistung",
                 details=(
-                    f"{dc_kwp:.2f} kWp Module an {grenze_kw:.2f} kW "
-                    f"(Verhältnis {verhaeltnis:.2f}). Überbelegung ist normal, "
+                    f"{fmt_zahl(dc_kwp, 2)} kWp Module an {fmt_zahl(grenze_kw, 2)} kW "
+                    f"(Verhältnis {fmt_zahl(verhaeltnis, 2)}). Überbelegung ist normal, "
                     f"dieses Verhältnis aber ungewöhnlich hoch — steht in einem "
                     f"„Leistung (kWp)“-Feld versehentlich die Wechselrichter-"
                     f"Leistung statt der Modulleistung?"
@@ -690,7 +691,7 @@ class StammdatenChecks:
                 details=(
                     f"Ab {aeltester[1]:02d}/{aeltester[0]} sind Werte erfasst, aber kein "
                     f"Strompreis hinterlegt — diese Monate rechnen mit der Vorbelegung "
-                    f"{NETZBEZUG_DEFAULT_CENT:.0f} ct/kWh. Beim ältesten Tarif das "
+                    f"{fmt_zahl(NETZBEZUG_DEFAULT_CENT, 0)} ct/kWh. Beim ältesten Tarif das "
                     f"Gültig-ab-Datum auf den Beginn der Daten zurücksetzen; die "
                     f"Auswertungen rechnen sofort neu."
                 ),
@@ -772,7 +773,7 @@ class StammdatenChecks:
             if len(gleich) < 2:
                 continue
             namen = ", ".join(
-                t.tarifname or f"{t.netzbezug_arbeitspreis_cent_kwh:.1f} ct"
+                t.tarifname or f"{fmt_zahl(t.netzbezug_arbeitspreis_cent_kwh, 1)} ct"
                 for t in gleich
             )
             ergebnisse.append(CheckErgebnis(
@@ -866,7 +867,7 @@ class StammdatenChecks:
             if preis is not None and (preis < 5 or preis > 80):
                 ergebnisse.append(CheckErgebnis(
                     kategorie=kat, schwere=CheckSeverity.WARNING,
-                    meldung=f"Arbeitspreis ungewöhnlich: {preis:.1f} ct/kWh ({name})",
+                    meldung=f"Arbeitspreis ungewöhnlich: {fmt_zahl(preis, 1)} ct/kWh ({name})",
                     details="Erwarteter Bereich: 5–80 ct/kWh",
                     link="/einstellungen/strompreise",
                 ))
@@ -875,7 +876,7 @@ class StammdatenChecks:
             if verg is not None and (verg < 0 or verg > 30):
                 ergebnisse.append(CheckErgebnis(
                     kategorie=kat, schwere=CheckSeverity.WARNING,
-                    meldung=f"Einspeisevergütung ungewöhnlich: {verg:.1f} ct/kWh ({name})",
+                    meldung=f"Einspeisevergütung ungewöhnlich: {fmt_zahl(verg, 1)} ct/kWh ({name})",
                     details="Erwarteter Bereich: 0–30 ct/kWh",
                     link="/einstellungen/strompreise",
                 ))
@@ -943,7 +944,7 @@ class StammdatenChecks:
             return ergebnisse
 
         def _de(wert: float, nachkomma: int) -> str:
-            return f"{wert:_.{nachkomma}f}".replace(".", ",").replace("_", ".")
+            return fmt_zahl(wert, nachkomma)
 
         ergebnisse.append(CheckErgebnis(
             kategorie=CheckKategorie.INVESTITIONEN,
@@ -1224,7 +1225,7 @@ class StammdatenChecks:
                         kategorie=kat, schwere=CheckSeverity.WARNING,
                         meldung=f"{name}: Wechselrichter-Leistung fehlt",
                         details=(
-                            f"Die Module leisten {modul_w:.0f} W. Ohne die "
+                            f"Die Module leisten {fmt_zahl(modul_w, 0)} W. Ohne die "
                             "Wechselrichter-Leistung rechnet die Prognose mit dieser "
                             "vollen Leistung — bei Überbelegung (z. B. 1.260 W Module "
                             "an 600 W Wechselrichter) fällt sie dadurch zu hoch aus. "
@@ -1363,9 +1364,9 @@ class StammdatenChecks:
                         gesamt_ladung_kwh, gesamt_entladung_kwh
                     ) or 0.0
                     _hinweis = (
-                        f"Über die gesamte Historie stehen {gesamt_entladung_kwh:.0f} kWh "
-                        f"Entladung gegen {gesamt_ladung_kwh:.0f} kWh Ladung "
-                        f"({_eta:.0f} %). Ein Speicher kann nicht mehr abgeben, als er "
+                        f"Über die gesamte Historie stehen {fmt_zahl(gesamt_entladung_kwh, 0)} kWh "
+                        f"Entladung gegen {fmt_zahl(gesamt_ladung_kwh, 0)} kWh Ladung "
+                        f"({fmt_zahl(_eta, 0)} %). Ein Speicher kann nicht mehr abgeben, als er "
                         "aufgenommen hat."
                     )
                     if gesamt_netzladung_kwh > 0:
@@ -1554,7 +1555,7 @@ class StammdatenChecks:
                     elif not (1.5 <= jaz <= 7.0):
                         ergebnisse.append(CheckErgebnis(
                             kategorie=kat, schwere=CheckSeverity.WARNING,
-                            meldung=f"{name}: JAZ unplausibel ({jaz:.1f})",
+                            meldung=f"{name}: JAZ unplausibel ({fmt_zahl(jaz, 1)})",
                             details="Typischer Bereich: 1,5–7,0 (Luft-WP ca. 2,5–4,5, Sole-WP ca. 3,5–5,5)",
                             link="/einstellungen/investitionen",
                         ))

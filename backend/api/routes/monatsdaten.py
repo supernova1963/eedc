@@ -39,6 +39,7 @@ from backend.core.berechnungen.ust_eigenverbrauch import (
     ust_eigenverbrauch_fuer_anlage,
 )
 from backend.services.finanz_zeilen import baue_finanz_zeile
+from backend.services.strompreis_aggregator import lade_preis_aggregate_je_monat
 from backend.utils.sonstige_positionen import ist_gueltige_position
 from backend.core.field_definitions import basis_feld_key, get_feld_hinweise, groesse_gibt_es_am_geraet
 from backend.api.routes.strompreise import (
@@ -488,8 +489,16 @@ async def list_monatsdaten_aggregiert(
     # `baue_finanz_zeile` liest ihn danach nur noch. Ohne ihn löste jeder Monat
     # seinen Stichtag zweimal auf.
     tarif_cache: dict[date, dict] = {}
+    # Dieselbe Bauform für die gemessenen Stundenpreise (Stufe 2 der Kaskade):
+    # EINE gruppierte Abfrage, von der Schicht UND der Finanzzeile gelesen.
+    preis_messung = await lade_preis_aggregate_je_monat(
+        db, anlage_id,
+        von=date(von[0], von[1], 1) if von else None,
+        bis=date(bis[0] + (bis[1] == 12), (bis[1] % 12) + 1, 1) if bis else None,
+    )
     fakten = await lade_monats_fakten(
         db, anlage_id, von=von, bis=bis, tarif_cache=tarif_cache,
+        preis_messung=preis_messung,
         inkl_nur_tageswerte=inkl_nur_tageswerte,
     )
     # Absteigend (neueste zuerst) — Datums-Listen-Konvention, wie die frühere
@@ -554,6 +563,12 @@ async def list_monatsdaten_aggregiert(
     temperatur_je_monat: dict[tuple[int, int], float] = {}
     if fakten:
         try:
+            # Das Fenster gibt es seit N-426; diese Route nutzte es nicht und
+            # las die komplette Historie, obwohl sie nur die gelieferten Monate
+            # beschriftet. Grenzen aus den Fakten selbst — ohne `jahr`-Filter
+            # sind das ohnehin alle.
+            _t_von = date(min(f.jahr for f in fakten), 1, 1)
+            _t_bis = date(max(f.jahr for f in fakten), 12, 31)
             temperatur_je_monat = await lade_monatsmittel_temperatur(
                 db, anlage_id,
                 gepflegt_je_monat={
@@ -563,6 +578,7 @@ async def list_monatsdaten_aggregiert(
                     for f in fakten
                     if f.meta.monatsdaten is not None
                 },
+                von=_t_von, bis=_t_bis,
             )
         except Exception:  # pragma: no cover - eine Zusatzspalte kippt die Liste nicht
             logger.exception("Monatsmittel-Temperatur nicht ladbar")
@@ -659,7 +675,8 @@ async def list_monatsdaten_aggregiert(
         # `berechne_finanz_aggregat` über EINE Zeile: derselbe Weg, den der
         # Tages-Pfad derselben Tabelle längst geht (`tage_werte.py`).
         finanz_zeile = await baue_finanz_zeile(
-            db, anlage_id, finanz_zeile_eingabe(f), tarif_cache=tarif_cache
+            db, anlage_id, finanz_zeile_eingabe(f), tarif_cache=tarif_cache,
+            preis_messung=preis_messung,
         )
         # §9.2 Geldseite (E1, Entscheid 06.09.2026): der gepflegte Erloes eines
         # Erzeugers mit eigenem Vergütungssatz bzw. eines Geräts der Kategorie

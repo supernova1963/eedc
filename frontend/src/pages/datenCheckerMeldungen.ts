@@ -155,3 +155,62 @@ export function baueFeldwertMeldung(
   const monate = r.monate.map(m => `${String(m.monat).padStart(2, '0')}/${m.jahr}`).join(', ')
   return { art: 'ok', text: `„${label}“ in ${r.entfernt} Monat(en) entfernt (${monate}).` }
 }
+
+/**
+ * Rückfrage vor „Energieprofil-Daten löschen" — nennt BEIDE Verluste.
+ *
+ * ⛔ **Warum der alte Satz ein Problem war** (Forum simon42 T89667, PN rapahl
+ * vom 15.09.2026): Er lautete „Der Scheduler berechnet sie neu (max. 15 Min).
+ * Monatsdaten bleiben erhalten." — und war damit eine **Beruhigung, die nicht
+ * trägt**. Zwei Dinge kommen nicht zurück:
+ *
+ *  1. **Die aufgezeichneten Prognosen.** `pv_prognose_final_kwh` &
+ *     `pv_prognose_final_at`, dazu die SFML- und Solcast-Felder sind
+ *     Aufzeichnungen eines vergangenen Zeitpunkts und Grundlage des
+ *     Genauigkeits-Vergleichs. Eine Vorhersage von damals kann niemand neu
+ *     *berechnen* — sie ist endgültig weg. Rainer hat genau das gemeldet.
+ *  2. **Messwerte jenseits der Recorder-Tiefe.** Der Scheduler holt aus der
+ *     HA-Langzeitstatistik zurück, was dort noch liegt. In vielen Setups
+ *     (Recorder-Purge, Sensor-Umbau, Add-on-Neuinstallation) reicht sie
+ *     **kürzer zurück als das gepflegte Profil** — der Rest ist verloren.
+ *     Das ist die Begründung, aus der der Overwrite-Modus des Vollbackfills
+ *     v3.25.22 entfernt wurde; sie galt hier genauso, stand aber nirgends.
+ *
+ * ⚠ **Kein Abraten, keine Sonderlogik.** Die Funktion bleibt wie sie ist —
+ * Rainer nutzt sie bewusst und schätzt sie. Der Text sagt nur, was passiert;
+ * die Entscheidung bleibt beim Anwender (*eedc ist nicht die Strom-Polizei*).
+ */
+export function baueRohdatenLoeschRueckfrage(): string {
+  return (
+    'Alle Energieprofil-Daten dieser Anlage löschen?\n\n' +
+    'Der Scheduler holt die Messwerte aus der Home-Assistant-Langzeitstatistik ' +
+    'zurück (max. 15 Min) — aber nur so weit, wie deine HA-Statistik ' +
+    'zurückreicht. Ältere Tage bleiben weg.\n\n' +
+    'Die aufgezeichneten PV-Prognosen (Grundlage des Genauigkeits-Vergleichs) ' +
+    'lassen sich nicht neu berechnen und sind endgültig verloren.\n\n' +
+    'Monatsdaten bleiben erhalten.'
+  )
+}
+
+/** Kurzform derselben Aussage für die Beschreibung der Operation. */
+export const ROHDATEN_LOESCH_BESCHREIBUNG =
+  'Entfernt alle Stundenwerte und Tageszusammenfassungen dieser Anlage. Der ' +
+  'Scheduler holt die Messwerte aus HA nach (max. 15 Min), soweit die ' +
+  'Langzeitstatistik zurückreicht; aufgezeichnete PV-Prognosen kommen nicht ' +
+  'zurück. Monatsdaten bleiben erhalten.'
+
+/** Rückmeldung nach dem Löschen — zählt, was weg ist, und was nicht zurückkommt. */
+export function baueRohdatenLoeschMeldung(
+  r: { geloescht_stundenwerte?: number; geloescht_tagessummen?: number },
+): ReparaturMeldung {
+  const stunden = r.geloescht_stundenwerte ?? 0
+  const tage = r.geloescht_tagessummen ?? 0
+  return {
+    art: 'ok',
+    text:
+      `${stunden} Stundenwerte + ${tage} Tagessummen gelöscht. Der Scheduler ` +
+      'füllt die Messwerte aus HA nach (max. 15 Min), soweit die ' +
+      'Langzeitstatistik zurückreicht. Aufgezeichnete PV-Prognosen kommen ' +
+      'nicht zurück.',
+  }
+}

@@ -7,7 +7,10 @@
  * „Zeitraum … neu aus HA-Statistics aggregiert." — ein Erfolg, den es nicht gab.
  */
 import { describe, it, expect } from 'vitest'
-import { baueBereichsMeldung, baueFeldwertMeldung, baueFeldwertRueckfrage, baueTagesMeldung } from './datenCheckerMeldungen'
+import {
+  baueBereichsMeldung, baueFeldwertMeldung, baueFeldwertRueckfrage, baueTagesMeldung,
+  baueRohdatenLoeschRueckfrage, baueRohdatenLoeschMeldung, ROHDATEN_LOESCH_BESCHREIBUNG,
+} from './datenCheckerMeldungen'
 
 const VON = '2026-07-19'
 const BIS = '2026-07-29'
@@ -170,5 +173,50 @@ describe('baueFeldwertMeldung', () => {
     const m = baueFeldwertMeldung('Netzladung', { entfernt: 0, monate: [] })
     expect(m.art).toBe('hinweis')
     expect(m.text).toContain('nichts mehr zu entfernen')
+  })
+})
+
+describe('Rohdaten löschen — der Text nennt beide Verluste', () => {
+  // Forum simon42 T89667, PN rapahl 15.09.2026: Der alte Satz „Der Scheduler
+  // berechnet sie neu" war eine Beruhigung, die nicht trägt. Diese Proben
+  // halten fest, WAS gesagt werden muss — nicht, wie es formuliert ist.
+  it('die Rückfrage nennt die verlorene Prognose-Historie', () => {
+    const t = baueRohdatenLoeschRueckfrage()
+    expect(t).toMatch(/Prognose/i)
+    expect(t).toMatch(/nicht neu berechnen|endgültig verloren/i)
+  })
+
+  it('die Rückfrage nennt die Grenze der HA-Langzeitstatistik', () => {
+    expect(baueRohdatenLoeschRueckfrage()).toMatch(/zurückreicht/i)
+  })
+
+  it('die Rückfrage sagt weiterhin, dass Monatsdaten bleiben', () => {
+    expect(baueRohdatenLoeschRueckfrage()).toMatch(/Monatsdaten bleiben erhalten/i)
+  })
+
+  // ⛔ Der eigentliche Wächter: Die alte Formulierung behauptete
+  // Wiederherstellbarkeit. Sie darf in KEINEM der drei Texte zurückkehren —
+  // auch nicht durch eine gut gemeinte Umformulierung.
+  it('kein Text verspricht, dass der Scheduler die Daten neu BERECHNET', () => {
+    const texte = [
+      baueRohdatenLoeschRueckfrage(),
+      ROHDATEN_LOESCH_BESCHREIBUNG,
+      baueRohdatenLoeschMeldung({ geloescht_stundenwerte: 5, geloescht_tagessummen: 1 }).text,
+    ]
+    for (const t of texte) {
+      expect(t).not.toMatch(/berechnet (sie |alles )?neu/i)
+    }
+  })
+
+  it('die Rückmeldung zählt, was weg ist, und nennt die Prognose-Grenze', () => {
+    const m = baueRohdatenLoeschMeldung({ geloescht_stundenwerte: 720, geloescht_tagessummen: 30 })
+    expect(m.art).toBe('ok')
+    expect(m.text).toContain('720 Stundenwerte')
+    expect(m.text).toContain('30 Tagessummen')
+    expect(m.text).toMatch(/Prognosen kommen nicht zurück/i)
+  })
+
+  it('fehlende Zähler in der Antwort werden zu 0, nicht zu undefined', () => {
+    expect(baueRohdatenLoeschMeldung({}).text).toContain('0 Stundenwerte + 0 Tagessummen')
   })
 })

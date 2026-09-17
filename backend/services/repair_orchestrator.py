@@ -40,7 +40,7 @@ from typing import Any, Literal, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.anlage import Anlage
@@ -719,22 +719,40 @@ async def _plan_kraftstoffpreis_backfill(
     if scope not in ("tages", "monats", "beides"):
         raise ValueError(f"Ungültiger scope: {scope!r} (erlaubt: tages, monats, beides)")
 
+    from backend.services.kraftstoff_preis_service import (
+        kraftstoffpreis_fenster_der_anlage,
+    )
+
     anlage = await _load_anlage(db, req.anlage_id)
 
-    tages_offen = await db.scalar(
-        select(func.count(TagesZusammenfassung.id)).where(
-            TagesZusammenfassung.anlage_id == req.anlage_id,
-            TagesZusammenfassung.kraftstoffpreis_euro.is_(None),
-        )
-    ) or 0
-    monats_offen = await db.scalar(
-        select(func.count(Monatsdaten.id)).where(
-            Monatsdaten.anlage_id == req.anlage_id,
-            Monatsdaten.kraftstoffpreis_euro.is_(None),
-        )
-    ) or 0
+    # ⚠ Die Vorschau muss DIESELBE Menge zählen, die der Lauf schreibt.
+    # Zählte sie weiter alle offenen Zeilen, verspräche sie seit dem E-Auto-Gate
+    # (17.09.2026) Arbeit, die `_execute_` gar nicht mehr tut — genau der
+    # Auseinanderlauf zwischen Versprechen und Einlösen, den das Gate behebt.
+    ab = await kraftstoffpreis_fenster_der_anlage(db, req.anlage_id)
 
     estimated: dict[str, int] = {}
+    if ab is None:
+        tages_offen = monats_offen = 0
+    else:
+        tages_offen = await db.scalar(
+            select(func.count(TagesZusammenfassung.id)).where(
+                TagesZusammenfassung.anlage_id == req.anlage_id,
+                TagesZusammenfassung.kraftstoffpreis_euro.is_(None),
+                TagesZusammenfassung.datum >= date(ab[0], ab[1], 1),
+            )
+        ) or 0
+        monats_offen = await db.scalar(
+            select(func.count(Monatsdaten.id)).where(
+                Monatsdaten.anlage_id == req.anlage_id,
+                Monatsdaten.kraftstoffpreis_euro.is_(None),
+                or_(
+                    Monatsdaten.jahr > ab[0],
+                    and_(Monatsdaten.jahr == ab[0], Monatsdaten.monat >= ab[1]),
+                ),
+            )
+        ) or 0
+
     if scope in ("tages", "beides"):
         estimated["tages_offen"] = int(tages_offen)
     if scope in ("monats", "beides"):
@@ -742,7 +760,12 @@ async def _plan_kraftstoffpreis_backfill(
 
     warnings = []
     total = sum(estimated.values())
-    if total == 0:
+    if ab is None:
+        warnings.append(
+            "Diese Anlage hat kein E-Auto — ein Kraftstoffpreis dient nur dem "
+            "Verbrenner-Vergleich. Operation ist No-Op."
+        )
+    elif total == 0:
         warnings.append("Keine offenen Zeilen ohne Kraftstoffpreis — Operation ist No-Op.")
     return (
         estimated,

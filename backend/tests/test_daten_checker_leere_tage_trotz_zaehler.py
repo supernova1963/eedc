@@ -189,7 +189,7 @@ async def test_basis_zaehler_leer_wird_gemeldet():
     assert len(day_eintraege) == 1, f"Erwartet 1 Einzeltag, bekommen {len(day_eintraege)}"
     assert day_eintraege[0].action_params == {"anlage_id": 1, "datum": tag.isoformat()}
     # Die Meldung nennt, was HA hat — sonst ist der Knopf ein Blindflug.
-    assert "22.0 kWh" in day_eintraege[0].meldung, day_eintraege[0].meldung
+    assert "22,0 kWh" in day_eintraege[0].meldung, day_eintraege[0].meldung
 
 
 async def test_fehlende_tageszeile_wird_gemeldet():

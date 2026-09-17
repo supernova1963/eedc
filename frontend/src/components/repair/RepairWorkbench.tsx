@@ -41,6 +41,11 @@ import {
 } from '../../api/repair'
 import { energieProfilApi } from '../../api/energie_profil'
 import { REPARATUR_AENDERUNG_LABELS } from '../../lib/constants'
+import {
+  baueRohdatenLoeschRueckfrage,
+  baueRohdatenLoeschMeldung,
+  ROHDATEN_LOESCH_BESCHREIBUNG,
+} from '../../pages/datenCheckerMeldungen'
 
 /** Deutscher Name eines Vorschau-/Ergebnis-Zählers; unbekannte Schlüssel
  *  bleiben roh stehen, damit ein neuer Zähler nicht still verschwindet. */
@@ -153,13 +158,13 @@ export default function RepairWorkbench({ anlageId, anlagenname }: Props) {
 
   // D14-8: direkter Lösch-Pfad (Bestätigung → Endpoint → Ergebnis-Meldung).
   const handleDeleteEnergieprofil = async () => {
-    if (!window.confirm('Alle Energieprofil-Daten für diese Anlage löschen? Der Scheduler berechnet sie neu (max. 15 Min). Monatsdaten bleiben erhalten.')) return
+    if (!window.confirm(baueRohdatenLoeschRueckfrage())) return
     try {
       setDeleteRunning(true)
       setDeleteMessage(null)
       setError(null)
       const res = await energieProfilApi.deleteRohdatenAnlage(anlageId)
-      setDeleteMessage(`${res.geloescht_stundenwerte} Stundenwerte + ${res.geloescht_tagessummen} Tagessummen gelöscht. Scheduler berechnet neu (max. 15 Min).`)
+      setDeleteMessage(baueRohdatenLoeschMeldung(res).text)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Löschen fehlgeschlagen')
     } finally {
@@ -307,7 +312,7 @@ export default function RepairWorkbench({ anlageId, anlagenname }: Props) {
   const istDelete = selectedOp === DELETE_ENERGIEPROFIL
   const opMeta = istDelete ? undefined : OPERATION_META.find((o) => o.type === selectedOp)
   const opBeschreibung = istDelete
-    ? 'Entfernt alle Stundenwerte und Tageszusammenfassungen dieser Anlage. Der Scheduler berechnet sie neu (max. 15 Min). Monatsdaten bleiben erhalten.'
+    ? ROHDATEN_LOESCH_BESCHREIBUNG
     : opMeta?.description
 
   return (

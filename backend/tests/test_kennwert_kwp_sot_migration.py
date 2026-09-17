@@ -573,7 +573,7 @@ async def test_daten_checker_zaehlt_das_bkw_nicht_in_die_anlagen_kwp(db):
 
     summe = [r for r in ergebnisse if r.meldung.startswith("PV-Module:")]
     assert len(summe) == 1, f"Summenzeile erwartet: {[r.meldung for r in ergebnisse]}"
-    assert "6.0 kWp" in summe[0].meldung, "das BKW gehört nicht in die Anlagen-kWp"
+    assert "6,0 kWp" in summe[0].meldung, "das BKW gehört nicht in die Anlagen-kWp"
     assert "inkl. BKW" not in summe[0].meldung
 
 
@@ -609,6 +609,6 @@ async def test_daten_checker_meldet_die_kwp_abweichung_wieder(db):
         if r.schwere == CheckSeverity.WARNING and "kWp" in r.meldung
     ]
     assert len(warnungen) == 1, f"eine kWp-Warnung erwartet: {[r.meldung for r in ergebnisse]}"
-    assert "6.80" in warnungen[0].meldung and "6.00" in warnungen[0].meldung
+    assert "6,80" in warnungen[0].meldung and "6,00" in warnungen[0].meldung
     # Die Summenzeile selbst bleibt BKW-frei — der Nachbartest darüber hält das.
     assert "Anlagenleistung überein" not in warnungen[0].meldung

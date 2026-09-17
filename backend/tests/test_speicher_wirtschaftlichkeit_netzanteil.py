@@ -71,8 +71,16 @@ def test_netzladung_ohne_ladepreis_kostet_keinen_pv_vorteil() -> None:
 
 
 def test_netzladung_mit_guenstigem_ladepreis_bringt_arbitrage() -> None:
-    # Wie oben, aber Ladepreis 12 ct → Netz-Spread 30−12 = 18 ct
-    # Netz-Anteil: 190 × 0.18 = 34.20 €
+    """Ladepreis 12 ct gegen Bezug 30 ct — der Vorteil bleibt, aber die
+    Verluste kosten.
+
+    ⛔ **Hier stand bis 17.09.2026 `190 × 0.18` (= 34,20 €).** Das war die
+    Formel `L·η·(B − P)`, in der auch die LADEKOSTEN mit η verkleinert wurden.
+    Bezahlt hat der Anwender aber die eingespeicherte Menge: 200 kWh × 12 ct,
+    genutzt werden nur 190 kWh. Die Substanz der Probe — günstig laden bringt
+    Arbitrage — hält unverändert; nur die 1,20 € für die Verlustenergie
+    (200 × 12 ct × 5 %) fehlten bisher im Abzug.
+    """
     r = berechne_speicher_ersparnis(
         entladung_kwh=500,
         bezug_preis_cent=30,
@@ -81,9 +89,11 @@ def test_netzladung_mit_guenstigem_ladepreis_bringt_arbitrage() -> None:
         wirkungsgrad_prozent=95,
         lade_preis_cent=12,
     )
-    assert _approx(r.netz_anteil_euro, 190 * 0.18)
+    # Nutzen der nutzbaren Menge minus Kosten der EINGESPEICHERTEN Menge.
+    assert _approx(r.netz_anteil_euro, (190 * 30 - 200 * 12) / 100)
+    assert r.netz_anteil_euro > 0  # die Substanz: es lohnt sich weiterhin
     assert _approx(r.pv_anteil_euro, 310 * 0.22)
-    assert _approx(r.ersparnis_euro, 310 * 0.22 + 190 * 0.18)
+    assert _approx(r.ersparnis_euro, 310 * 0.22 + (190 * 30 - 200 * 12) / 100)
 
 
 def test_netzladung_groesser_als_entladung_geclamped() -> None:
@@ -101,7 +111,10 @@ def test_netzladung_groesser_als_entladung_geclamped() -> None:
     )
     assert _approx(r.netz_anteil_entladung_kwh, 100.0)
     assert _approx(r.pv_anteil_entladung_kwh, 0.0)
-    assert _approx(r.netz_anteil_euro, 100 * 0.18)
+    # Die Mengen sind geclamped, die Kosten folgen ihnen: bezahlt wurde die
+    # Menge, die für diese 100 kWh eingespeichert werden musste (100 ÷ 0,95).
+    # Vorher stand hier `100 × 0.18` — dieselbe η-Verwechslung wie oben.
+    assert _approx(r.netz_anteil_euro, (100 * 30 - (100 / 0.95) * 12) / 100)
     assert _approx(r.pv_anteil_euro, 0.0)
 
 

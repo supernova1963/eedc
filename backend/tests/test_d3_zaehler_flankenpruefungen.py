@@ -369,4 +369,4 @@ async def test_echte_drift_einer_aktiven_komponente_bleibt(db, monkeypatch):
 
     drift = [e for e in erg if e.action_kind == "reaggregate_day"]
     assert len(drift) == 1, [e.meldung for e in erg]
-    assert "55.0" in drift[0].meldung, drift[0].meldung
+    assert "55,0" in drift[0].meldung, drift[0].meldung

@@ -45,6 +45,7 @@ from backend.services.zaehlerstaende import (
 )
 
 from .kategorien import CheckErgebnis, CheckKategorie, CheckSeverity, LINK_DATENQUELLEN
+from backend.core.zahlenformat import fmt_zahl
 
 #: Wie viele Brüche je Gerät namentlich genannt werden, bevor gezählt wird.
 #: Drei reichen, um das Muster zu erkennen; eine lange Liste hilft niemandem.
@@ -161,7 +162,7 @@ class ZaehlerChecks:
         einheit_suffix = f" {einheit}" if einheit else ""
         genannt = [
             f"{b.zeitpunkt.strftime('%d.%m.%Y')}: "
-            f"{b.stand_vorher:.3f}{einheit_suffix} → {b.stand_nachher:.3f}{einheit_suffix}"
+            f"{fmt_zahl(b.stand_vorher, 3)}{einheit_suffix} → {fmt_zahl(b.stand_nachher, 3)}{einheit_suffix}"
             for b in brueche[:MAX_GENANNTE_BRUECHE]
         ]
         liste = "; ".join(genannt)

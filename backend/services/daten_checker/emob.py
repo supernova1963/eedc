@@ -13,6 +13,7 @@ from backend.models.anlage import Anlage
 from .kategorien import (
     CheckErgebnis, CheckKategorie, CheckSeverity, LINK_ENERGIEPROFIL,
 )
+from backend.core.zahlenformat import fmt_zahl
 
 
 class EmobChecks:
@@ -141,7 +142,7 @@ class EmobChecks:
             return ergebnisse
 
         beispiel_monate = ", ".join(
-            f"{m:02d}/{j} (EA {ea:.0f} kWh / WB {wb:.0f} kWh)"
+            f"{m:02d}/{j} (EA {fmt_zahl(ea, 0)} kWh / WB {fmt_zahl(wb, 0)} kWh)"
             for j, m, ea, wb in doppel_monate[:3]
         )
 
@@ -160,7 +161,7 @@ class EmobChecks:
                     "E-Auto- als auch die Wallbox-Investition mit "
                     "Heimladung gepflegt (Beispiele: "
                     f"{beispiel_monate}). Im Monat {m:02d}/{j} liegt der "
-                    f"PV-Anteil bei EA={ea_pv:.0f} kWh, WB={wb_pv:.0f} kWh "
+                    f"PV-Anteil bei EA={fmt_zahl(ea_pv, 0)} kWh, WB={fmt_zahl(wb_pv, 0)} kWh "
                     f"— Abweichung > {int(self.EMOB_POOL_PV_INKONSISTENZ*100)} %, "
                     "obwohl beide Sichten denselben Stromfluss messen "
                     "sollten. eedc führt die Heimladung kanonisch an der "
@@ -276,12 +277,12 @@ class EmobChecks:
                 kategorie=kat, schwere=CheckSeverity.WARNING.value,
                 meldung=(
                     f"{name}: PV-Ladung größer als Gesamtladung "
-                    f"({monat:02d}/{jahr}: {pv_f:.1f} kWh von {gesamt_f:.1f} kWh)"
+                    f"({monat:02d}/{jahr}: {fmt_zahl(pv_f, 1)} kWh von {fmt_zahl(gesamt_f, 1)} kWh)"
                 ),
                 details=(
                     "Die PV-Ladung ist ein Teil der Gesamtladung und kann nicht "
                     "größer sein. eedc rechnet deshalb mit PV + Netz weiter und "
-                    f"legt die eingetragenen {gesamt_f:.1f} kWh beiseite — die "
+                    f"legt die eingetragenen {fmt_zahl(gesamt_f, 1)} kWh beiseite — die "
                     "Zahl, die du siehst, ist dann nicht die, die du erfasst "
                     "hast. Welcher der beiden Werte stimmt, kann eedc nicht "
                     "wissen: Trage den Monat noch einmal nach."
@@ -514,7 +515,7 @@ class EmobChecks:
 
         details = (
             f"An {len(befunde)} Tag(en) tragen Wallbox und E-Auto beide eine "
-            f"Ladung — insgesamt rund {summe_zuviel:.0f} kWh, die im "
+            f"Ladung — insgesamt rund {fmt_zahl(summe_zuviel, 0)} kWh, die im "
             f"Tagesverlauf doppelt erscheinen. eedc zählt eine Ladung "
             f"inzwischen nur noch einmal (die Wallbox ist die Quelle); diese Tage "
             f"wurden vorher geschrieben und bleiben stehen, bis sie neu "
@@ -534,7 +535,7 @@ class EmobChecks:
         )
 
         beispiele = ", ".join(
-            f"{d.isoformat()} (Wallbox {wb:.1f} + E-Auto {ea:.1f} kWh)"
+            f"{d.isoformat()} (Wallbox {fmt_zahl(wb, 1)} + E-Auto {fmt_zahl(ea, 1)} kWh)"
             for d, wb, ea in sorted(befunde, key=lambda x: min(x[1], x[2]),
                                     reverse=True)[:3]
         )
@@ -588,20 +589,21 @@ class EmobChecks:
         Monat davor wäre eine wahre Warnung ohne Weg — die kennen wir aus #389.
         """
         from backend.models.monatsdaten import Monatsdaten
+        from backend.services.kraftstoff_preis_service import kraftstoffpreis_ab_monat
 
         kat = CheckKategorie.VERGLEICHSPREIS_FEHLT.value
 
-        eautos = [i for i in anlage.investitionen if i.typ == "e-auto"]
-        if not eautos:
+        # ⭐ Geteilter SoT mit der SCHREIB-Seite (``backfill_*_kraftstoffpreise``).
+        # Bis 17.09.2026 stand die Bedingung nur hier, und der wöchentliche
+        # Backfill-Job füllte ungefragt jede Anlage — ein Melder ohne E-Auto
+        # bekam dadurch einen Quellen-Konflikt auf ``kraftstoffpreis_euro``
+        # gemeldet (Forum simon42 T89667, PN rapahl). Versprechen und Schreiben
+        # benutzen jetzt dieselbe Funktion, wie ``erwartete_komponenten_keys``
+        # es für die Komponenten-Menge tut.
+        ab = kraftstoffpreis_ab_monat(anlage.investitionen)
+        if ab is None:
             return []
-
-        anschaffungen = [
-            i.anschaffungsdatum for i in eautos if i.anschaffungsdatum is not None
-        ]
-        if not anschaffungen:
-            return []
-        aeltestes = min(anschaffungen)
-        ab_jahr, ab_monat = max((aeltestes.year, aeltestes.month), (2005, 1))
+        ab_jahr, ab_monat = ab
 
         rows = (await self.db.execute(
             select(Monatsdaten).where(

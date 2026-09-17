@@ -334,7 +334,7 @@ async def test_absurdes_verhaeltnis_meldet_und_nennt_die_wahrscheinliche_ursache
     treffer = [r for r in ergebnisse if "Wechselrichter-Leistung" in r.meldung]
     assert len(treffer) == 1, f"Befund erwartet: {[r.meldung for r in ergebnisse]}"
     assert treffer[0].schwere == CheckSeverity.WARNING
-    assert "4.00" in treffer[0].details
+    assert "4,00" in treffer[0].details
     assert "Leistung (kWp)" in treffer[0].details, "der Anwender braucht den Weg"
 
 

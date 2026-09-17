@@ -96,7 +96,7 @@ async def test_noahs_fall_haelfte_der_modulsumme_meldet(db):
     anlage_id = await _seed(db, anlage_kwp=15.62, module=[31.24])
     warnungen = _warnungen(await _run(db, anlage_id))
     assert len(warnungen) == 1
-    assert "15.62" in warnungen[0].meldung and "31.24" in warnungen[0].meldung
+    assert "15,62" in warnungen[0].meldung and "31,24" in warnungen[0].meldung
     # Der Anwender muss beide Wege sehen — eedc leitet nichts ab.
     assert "Einstellungen" in warnungen[0].details
     assert "Investitionen" in warnungen[0].details

@@ -168,7 +168,7 @@ async def test_gefallener_stand_wird_erklaert_nicht_geheilt(db):
     assert b.schwere == CheckSeverity.WARNING
     # Datum und BEIDE Stände — ohne sie sucht der Anwender die Stelle selbst.
     assert "31.03.2025" in b.details, b.details
-    assert "1260" in b.details and "40" in b.details
+    assert "1.260" in b.details and "40" in b.details
     # ⛔ Kein Reparatur-Knopf: eedc weiß nicht, welcher Stand gilt.
     assert b.action_kind is None
     # Der Weg steht drin, und zwar vollständig — inklusive der Falle,

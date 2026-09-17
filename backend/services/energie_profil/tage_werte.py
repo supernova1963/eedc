@@ -190,6 +190,54 @@ async def baue_tage_werte(
 
     alle_tage = sorted(set(tep_pro_tag) | set(tz_pro_tag))
     tarif_cache: dict[date, dict] = {}
+
+    # ── Tageskosten aus Slot-Preisen (SOLL Flex-Tarife P-2/A-3, 17.09.2026) ──
+    #
+    # ⛔ **Hier stand bis dahin ``Tagesmenge × Monatspreis``.** Bei einem
+    # dynamischen Tarif trug damit jeder Tag desselben Monats denselben Preis —
+    # die Stundenpreise, die eedc mitschreibt, blieben ungenutzt, obwohl sie die
+    # feinere und damit richtige Quelle sind (OB73-gif, #412-Folgemeldung;
+    # Entscheid Gernot 17.09.2026: *„Tage bleiben Messung, Monat bleibt
+    # Abrechnung"*).
+    #
+    # ⭐ **Für Festpreis-Anlagen ändert sich dadurch keine Zahl:** Der Helper
+    # leitet den Slot-Preis dort aus dem Vertrag ab, und Σ(Menge_s × Preis) ist
+    # identisch zu Tagesmenge × Preis (SOLL §10, Prüfstein 2).
+    from backend.api.routes.strompreise import lade_tarife_je_stichtag
+    from backend.services.strompreis_aggregator import lade_slot_kosten_je_tag
+
+    _stichtage = sorted({date(t.year, t.month, 1) for t in alle_tage})
+    _tarife_je_stichtag = await lade_tarife_je_stichtag(db, anlage_id, _stichtage)
+
+    def _tarif_fuer(tag: date):
+        """Der Vertragspreis-Träger dieses Slots — heute der Monatstarif.
+
+        P-7 (Stichtag eines Vertragspreises ist der Beginn des Zeitraums, den
+        die Zahl beschreibt — für einen Slot also sein Tag) ist damit noch
+        **nicht** umgesetzt: Ein Tarifwechsel zur Monatsmitte wirkt hier erst im
+        Folgemonat, wie bisher unter ADR-002/P8. Die Stelle dafür ist genau
+        diese Funktion; der Helper nimmt sie als Callable entgegen.
+        """
+        return (_tarife_je_stichtag.get(date(tag.year, tag.month, 1)) or {}).get("allgemein")
+
+    def _abgerechnet_fuer(tag: date):
+        """Der abgerechnete Monats-Ø — Stufe 2 der Slot-Kaskade.
+
+        ⚠ **Nicht wegoptimieren.** Ohne ihn zeigte ein dynamischer Tarif ohne
+        Stundenmitschrift wieder den Stammpreis (30 ct) im Tag, während der
+        Monat mit dem abgerechneten Ø (18 ct) rechnet — genau der Zustand, den
+        `test_tage_werte_symmetrie.py::test_tage_werte_nehmen_den_abgerechneten_
+        monats_durchschnittspreis` seit dem 30.07.2026 verhindert (Forum
+        simon42 #89667/60).
+        """
+        _md = md_pro_monat.get((tag.year, tag.month))
+        return getattr(_md, "netzbezug_durchschnittspreis_cent", None) if _md else None
+
+    slot_kosten_je_tag = await lade_slot_kosten_je_tag(
+        db, anlage_id, von=von, bis=bis,
+        tarif_fuer=_tarif_fuer, abgerechnet_fuer=_abgerechnet_fuer,
+    )
+
     zeilen: list[TagWerteResponse] = []
 
     for tag in alle_tage:
@@ -307,6 +355,14 @@ async def baue_tage_werte(
             neg_preis_kwh=neg_preis_kwh,
             # Speicher/V2H/BKW = 0: Netto-Flüsse bilden Speicher schon ab.
             monatsdaten=md_pro_monat.get((tag.year, tag.month)),
+            # A-2: Die Ersparnis bewertet VERMIEDENEN Bezug — sie wird deshalb
+            # mit dem Preis der Slots gewichtet, in denen er vermieden wurde,
+            # nicht mit dem des tatsächlichen Bezugs. Ohne Slot-Daten bleibt es
+            # beim Bezugspreis (der Helper liefert dann `None`).
+            ev_preis_cent=(
+                slot_kosten_je_tag[tag].ev_mittel_cent
+                if tag in slot_kosten_je_tag else None
+            ),
         )
         finanz_zeile = await baue_finanz_zeile(
             db, anlage_id, eingabe, tarif_cache=tarif_cache
@@ -321,9 +377,14 @@ async def baue_tage_werte(
         # Schicht. Die umfassende Regel dafür ist die Bewertungsgrenze (eigener
         # Auftrag) — hier stehen nur die zwei Beträge, deren Menge diese Zeile
         # selbst als fehlend ausweist.
+        # Die Kosten dieses Tages sind die Summe seiner Slot-Kosten (A-3), nicht
+        # Menge × Ø. Fehlen Slot-Zeilen ganz, gibt es keinen Betrag — und keine
+        # 0: `None` ist hier „nicht bestimmbar", genau wie eine Zeile darüber
+        # für die fehlende Menge.
+        _slot = slot_kosten_je_tag.get(tag)
         netzbezug_kosten = (
-            bilanz.netzbezug_kwh * finanz_zeile.netzbezug_preis_cent / 100
-            if bilanz.netzbezug_erfasst else None
+            _slot.kosten_euro
+            if bilanz.netzbezug_erfasst and _slot is not None else None
         )
         ev_ersparnis = (
             finanz.ev_ersparnis_euro if bilanz.eigenverbrauch_kwh is not None else None

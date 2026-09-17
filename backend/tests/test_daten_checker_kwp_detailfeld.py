@@ -52,7 +52,7 @@ async def test_kwp_nur_im_detailfeld_ist_keine_abweichung(db):
     )
     ok = [r for r in ergebnisse if r.meldung.startswith("PV-Module:")]
     assert len(ok) == 1 and ok[0].schwere == CheckSeverity.OK
-    assert "9.8 kWp" in ok[0].meldung
+    assert "9,8 kWp" in ok[0].meldung
 
 
 async def test_der_detailfeld_wert_landet_in_der_ausgewiesenen_summe(db):
@@ -70,7 +70,7 @@ async def test_der_detailfeld_wert_landet_in_der_ausgewiesenen_summe(db):
 
     ok = [r for r in ergebnisse if r.meldung.startswith("PV-Module:")]
     assert len(ok) == 1, f"Summenzeile erwartet, war: {[r.meldung for r in ergebnisse]}"
-    assert "6.0 kWp" in ok[0].meldung, "Spalten-Direktzugriff hätte 0,0 gemeldet"
+    assert "6,0 kWp" in ok[0].meldung, "Spalten-Direktzugriff hätte 0,0 gemeldet"
 
 
 async def test_kwp_in_der_spalte_bleibt_unveraendert(db):
