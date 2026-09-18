@@ -256,3 +256,28 @@ async def test_komponente_erst_ab_ihrem_anschaffungsdatum_versprochen(db, monkey
 
     status = await baue_tag_status(db, anlage, VORGESTERN)
     assert status.lage == "keine_zuordnung"
+
+
+@pytest.mark.asyncio
+async def test_pv_gesamtzaehler_zaehlt_als_holbarer_ha_wert(db, monkeypatch):
+    """F-75, zweiter Leser: der LTS-Read liefert den Anlagen-Zähler aufgelöst.
+
+    Eine Anlage, deren einziger Zähler `basis:pv_gesamt` ist, bekam „Auch Home
+    Assistant hat für diesen Tag nichts aufgezeichnet" — HA hatte 4,8 kWh PV, nur
+    hieß der Key `pv_<id>` statt `pv_gesamt`. Jetzt: Lücke reparierbar, und die
+    Antwort nennt den Zähler mit seinem Namen aus der Zuordnungs-Fläche.
+    """
+    mapping = {
+        "basis": {
+            "pv_gesamt": {"strategie": "sensor", "sensor_id": "sensor.pv"},
+            "live": {"netz_leistung": {"sensor_id": "sensor.netz_w"}},
+        },
+        "investitionen": {},
+    }
+    anlage = await _anlage(db, mapping=mapping)
+    _patch_ha(monkeypatch, verfuegbar=True, werte={"pv_999": 4.8})
+
+    status = await baue_tag_status(db, anlage, VORGESTERN)
+    assert status.lage == "luecke_reparierbar", status
+    assert status.aktion_kind == "reaggregate_day"
+    assert "PV gesamt 4.8 kWh" in (status.details or ""), status.details

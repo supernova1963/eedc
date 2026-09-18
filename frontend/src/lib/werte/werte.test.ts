@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { MonatsZeitreihe } from '../../pages/auswertung/types'
 import type { TagWerte } from '../../api/energie_profil'
+import type { WerteZeile } from './zeile'
 import {
   WERTE_METRIKEN, WERTE_GRUPPEN, METRIK_BY_KEY, getMonatWert, getTagWert,
   metrikenFuer, monatsZeile, tagesZeile, richteMonateAus,
@@ -371,5 +372,23 @@ describe('angezeigtesDelta — der Prozentwert kommt aus den ANGEZEIGTEN Zahlen 
     expect(angezeigtesDelta(100.4, 100.0, 0)!.pfeil).toBe('=')
     expect(angezeigtesDelta(100.6, 100.0, 0)!.pfeil).toBe('▲')
     expect(angezeigtesDelta(99.4, 100.0, 0)!.pfeil).toBe('▼')
+  })
+})
+
+
+describe('aggregiere gewichtet (A-1: kein arithmetisches Mittel über Preise)', () => {
+  const zeile = (werte: Record<string, number | null>) =>
+    ({ wert: (k: string) => werte[k] ?? null }) as unknown as WerteZeile
+  const preis = METRIK_BY_KEY['netzbezug_preis_cent']
+
+  it('Ø Netzpreis ist über den Netzbezug gewichtet — 20 ct × 300 kWh und 40 ct × 100 kWh ⇒ 25 ct, nicht 30', () => {
+    const rows = [zeile({ netzbezug: 300, netzbezug_preis_cent: 20 }), zeile({ netzbezug: 100, netzbezug_preis_cent: 40 })]
+    expect(preis.aggregation).toBe('gewichtet')
+    expect(aggregiere(rows, [preis])['netzbezug_preis_cent']).toBeCloseTo(25, 6)
+  })
+
+  it('Zeilen ohne Gewicht oder ohne Preis zählen nicht; ohne jede Menge kein Ø (null, nicht 0)', () => {
+    const rows = [zeile({ netzbezug: 0, netzbezug_preis_cent: 99 }), zeile({ netzbezug: null, netzbezug_preis_cent: 50 }), zeile({ netzbezug: 10, netzbezug_preis_cent: null })]
+    expect(aggregiere(rows, [preis])['netzbezug_preis_cent']).toBeNull()
   })
 })

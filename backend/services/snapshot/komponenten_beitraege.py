@@ -32,7 +32,9 @@ from backend.core.field_definitions import (
     sonstiges_feld_reihenfolge,
     wp_strom_stufe,
 )
-from backend.services.snapshot.keys import BASIS_ZAEHLER_FELDER, _categorize_counter
+from backend.services.snapshot.keys import (
+    BASIS_ZAEHLER_FELDER, PV_AGGREGAT_BASIS_FELD, _categorize_counter,
+)
 
 # Das Feld, mit dem ein Erzeuger seinen EIGENEN kumulativen PV-Zähler trägt.
 # Gegenspieler des Anlagen-Aggregats `basis:pv_gesamt` (s. `basis_beitraege`).
@@ -555,6 +557,49 @@ def erwartete_komponenten_keys(
     return erwartet
 
 
+#: Anwender-Name des Anlagen-Zählers `basis:pv_gesamt` — derselbe wie in der
+#: Zuordnungs-Fläche („PV gesamt"). Bis F-75 fiel er auf den Präfix zurück und
+#: hieß in der Reparatur-Rückmeldung „pv".
+PV_AGGREGAT_LABEL: str = "PV gesamt"
+
+
+def geschriebener_wert_fuer(key: str, geschrieben: dict) -> Optional[float]:
+    """Der geschriebene kWh-Wert zu einem **versprochenen** Key — oder ``None``.
+
+    Gegenstück zu `erwartete_komponenten_keys`: dort steht, was die Zuordnung
+    verspricht, hier, was der Lauf davon eingelöst hat. Wer beides selbst
+    vergleicht, läuft in **F-75** (Frank85, T89667 #340): das Versprechen für
+    den Anlagen-Zähler heißt ``pv_gesamt``, der Tagespfad löst ihn aber seit
+    #406 in die Erzeuger auf — ``loese_pv_tageswerte_auf`` sagt es wörtlich,
+    *„``pv_gesamt`` verlässt die Funktion in keinem Fall"* — und schreibt
+    ``pv_<id>``/``bkw_<id>``. Ein wörtlicher Abgleich fand das Versprechen nie
+    erfüllt und meldete „ohne Wert blieb: pv" für **jede** Anlage mit
+    zugeordnetem Gesamtzähler, obwohl der Wert dastand (im Cockpit sichtbar).
+
+    Erfüllt ist ``pv_gesamt``, sobald irgendein Erzeuger-Key einen Zahlenwert
+    trägt; der Wert ist deren Summe — dieselbe Bildung wie ``pv_kwh_neu`` in
+    der Reparatur-Antwort (`summe_pv_bkw_kwh`), damit eine Antwort nicht zwei
+    PV-Zahlen nennt. Eine gemessene ``0.0`` ist ein geschriebener Wert
+    ([[feedback_legacy_felder]]: ``is not None`` statt Wahrheitswert).
+    """
+    from backend.core.berechnungen.energie import (
+        PV_KOMPONENTEN_PREFIXE, summe_pv_bkw_kwh,
+    )
+
+    def _zahl(v: Any) -> bool:
+        return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+    if key == PV_AGGREGAT_BASIS_FELD:
+        if not any(
+            str(k).startswith(PV_KOMPONENTEN_PREFIXE) and _zahl(v)
+            for k, v in (geschrieben or {}).items()
+        ):
+            return None
+        return float(summe_pv_bkw_kwh(geschrieben))
+    wert = (geschrieben or {}).get(key)
+    return float(wert) if _zahl(wert) else None
+
+
 def komponenten_key_label(key: str, inv: Any = None) -> str:
     """Anwender-Name eines Komponenten-Keys (`pv_7` → „Dach Süd").
 
@@ -564,6 +609,8 @@ def komponenten_key_label(key: str, inv: Any = None) -> str:
     """
     if key in ("einspeisung", "netzbezug"):
         return key.capitalize()
+    if key == PV_AGGREGAT_BASIS_FELD:
+        return PV_AGGREGAT_LABEL
     bezeichnung = getattr(inv, "bezeichnung", None) if inv is not None else None
     if bezeichnung:
         return bezeichnung

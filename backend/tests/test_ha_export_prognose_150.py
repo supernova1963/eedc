@@ -259,3 +259,144 @@ async def test_quellen_regel_nur_eedc_kein_solcast_sfml(db, _patch_prognose):
 
     assert any(k.startswith("eedc_prognose_") for k in keys)
     assert not any("solcast" in k or "sfml" in k for k in keys)
+
+
+# ── N-392: „Speicher voll um" nennt seine Verbrauchsannahme ─────────────────
+
+#: Ein fester Mittwoch — die Proben unten lesen KEINE Uhr (N-167): der Export
+#: bekommt dieses Datum über `_fixiere_export_uhr` gestellt, das Seeding rechnet
+#: gegen dieselbe Konstante. Derselbe Tag wie `_MITTWOCH` in test_395.
+_N392_HEUTE = date(2026, 6, 17)
+
+
+async def _seed_speicher_mit_soc(db, anlage, *, mit_historie: bool) -> None:
+    """Ein 10-kWh-Speicher mit gestrigem SoC 50 % — und wahlweise drei
+    vollständige Tage desselben Wochentags in den letzten acht Wochen (die
+    Kaskadenstufe „gleicher_wochentag" braucht MIN_TAGE_GLEICHER_WT = 3)."""
+    from backend.models.tages_energie_profil import TagesEnergieProfil
+
+    heute = _N392_HEUTE
+    db.add(Investition(
+        anlage_id=anlage.id, typ="speicher", bezeichnung="Akku",
+        anschaffungsdatum=date(2024, 1, 1),
+        parameter={"kapazitaet_kwh": 10.0, "wirkungsgrad_prozent": 100},
+    ))
+    if mit_historie:
+        for wochen in (1, 2, 3):
+            tag = heute - timedelta(weeks=wochen)
+            for stunde in range(24):
+                db.add(TagesEnergieProfil(
+                    anlage_id=anlage.id, datum=tag, stunde=stunde, verbrauch_kw=0.5,
+                ))
+    db.add(TagesEnergieProfil(
+        anlage_id=anlage.id, datum=heute - timedelta(days=1), stunde=23, soc_prozent=50.0,
+    ))
+    await db.flush()
+
+
+def _fixiere_export_uhr(monkeypatch, stunde: int) -> None:
+    """Stellt dem Export Datum UND Uhrzeit: `_N392_HEUTE` um `stunde`:00.
+
+    Die Simulation startet bei `now.hour` — mit der echten Uhr wäre der Speicher
+    abends nie mehr voll und der Sensor entfiele (N-167: vier von 24 Stunden rot).
+    Das Datum wird mitgestellt, damit Seeding (Historie, gestriger SoC) und
+    Prüfling denselben Tag meinen, ohne dass einer von beiden die Uhr liest.
+    """
+    from datetime import date as real_date, datetime as real_datetime, time as dt_time
+    import backend.services.ha_export_prognose as hep
+
+    class _FixedDate(real_date):
+        @classmethod
+        def today(cls):
+            return _N392_HEUTE
+
+    class _Fixed(real_datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return real_datetime.combine(_N392_HEUTE, dt_time(stunde, 0), tzinfo=tz)
+
+    monkeypatch.setattr(hep, "date", _FixedDate)
+    monkeypatch.setattr(hep, "datetime", _Fixed)
+
+
+async def test_speicher_voll_um_nennt_seine_verbrauchsannahme(db, _patch_prognose, monkeypatch):
+    """N-392: zwei Verbrauchsmodelle im selben Export — jeder Sensor sagt, welches.
+
+    `eedc_verbrauchsprognose_heute_kwh` rechnet das 7-Tage-Profil der Live-Kachel,
+    die Simulation hinter `eedc_speicher_voll_um` das gewichtete 8-Wochen-Profil.
+    Bis 18.09.2026 trug nur der Nachbar seine Grundlage als Attribut; eine
+    Automation, die beide verrechnet, mischte zwei Modelle, ohne dass ein
+    Attribut es sagte. Der Punkt der Probe ist deshalb der letzte Vergleich:
+    die beiden `profil_typ` sind verschieden.
+    """
+    from unittest.mock import AsyncMock, patch
+    from backend.api.routes.ha_export import calculate_anlage_sensors
+    from backend.services.verbrauch_prognose_service import HALBWERTSZEIT_TAGE
+
+    _fixiere_export_uhr(monkeypatch, 8)
+    anlage = await _seed_pv_anlage(db)
+    await _seed_speicher_mit_soc(db, anlage, mit_historie=True)
+
+    # Der Nachbar braucht ein individuelles Profil + Forecast (wie test_395).
+    # Werktag UND Wochenende, damit er an jedem Tag des Laufs entsteht.
+    profil = {h: 0.5 for h in range(24)}
+    daten = {
+        "werktag": profil, "tage_werktag": 7, "slots_werktag": 24,
+        "wochenende": profil, "tage_wochenende": 2, "slots_wochenende": 24,
+    }
+    forecast = (
+        {"hourly": {"time": [f"2026-06-17T{h:02d}:00" for h in range(24)],
+                    "temperature_2m": [15.0] * 24}},
+        None, True,
+    )
+    with patch(
+        "backend.services.verbrauchsprognose_heute.get_live_power_service"
+    ) as svc, patch(
+        "backend.api.routes.live_wetter._lade_forecast_gecached",
+        new=AsyncMock(return_value=forecast),
+    ):
+        svc.return_value.get_verbrauchsprofil = AsyncMock(return_value=daten)
+        sensors = await calculate_anlage_sensors(db, anlage)
+    by_key = {sv.definition.key: sv for sv in sensors}
+
+    assert "eedc_speicher_voll_um" in by_key, "ab 8 Uhr mit 18 kWh PV wird ein 10-kWh-Speicher voll"
+    z = by_key["eedc_speicher_voll_um"].zusatz_attribute
+    assert z["profil_typ"] == "gewichtet_8_wochen"
+    assert z["profil_wochen"] == 8
+    assert z["profil_halbwertszeit_tage"] == HALBWERTSZEIT_TAGE
+    assert z["profil_stufe"] == "gleicher_wochentag"
+    assert z["profil_tage"] == 3
+    # 24 h × 0,5 kW — die Σ genau der Liste, die die Simulation bekommen hat.
+    assert z["verbrauch_annahme_kwh"] == pytest.approx(12.0)
+
+    nachbar = by_key["eedc_verbrauchsprognose_heute_kwh"].zusatz_attribute
+    assert nachbar["profil_typ"].startswith("individuell_")
+    assert z["profil_typ"] != nachbar["profil_typ"], (
+        "Zwei Sensoren, zwei Verbrauchsmodelle — und beide nennen dasselbe Profil? "
+        "Dann kann eine Automation sie nicht mehr auseinanderhalten (N-392)."
+    )
+
+
+async def test_speicher_voll_um_ohne_profil_sagt_null_verbrauch(db, _patch_prognose, monkeypatch):
+    """Ohne brauchbare Historie simuliert eedc mit 0 kWh Verbrauch — die Annahme
+    mit der größten Überraschung, sie darf am wenigsten stumm bleiben."""
+    from unittest.mock import AsyncMock, patch
+    from backend.api.routes.ha_export import calculate_anlage_sensors
+
+    _fixiere_export_uhr(monkeypatch, 8)
+    anlage = await _seed_pv_anlage(db)
+    await _seed_speicher_mit_soc(db, anlage, mit_historie=False)
+
+    with patch(
+        "backend.services.verbrauchsprognose_heute.get_live_power_service"
+    ) as svc:
+        svc.return_value.get_verbrauchsprofil = AsyncMock(return_value=None)
+        sensors = await calculate_anlage_sensors(db, anlage)
+    by_key = {sv.definition.key: sv for sv in sensors}
+
+    z = by_key["eedc_speicher_voll_um"].zusatz_attribute
+    assert z["profil_typ"] == "kein_profil"
+    assert z["verbrauch_annahme_kwh"] == 0.0
+    assert z["profil_stufe"] is None and z["profil_tage"] is None
+    # N-332-Regel beim Nachbarn: ohne individuelles Profil kein Sensor.
+    assert "eedc_verbrauchsprognose_heute_kwh" not in by_key

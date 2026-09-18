@@ -196,10 +196,10 @@ async def _post_save_hintergrund(
         async with async_session_maker() as db:
             try:
                 from backend.services.community_service import COMMUNITY_SERVER_URL, prepare_community_data
-                import httpx
+                from backend.services.community_client import community_client
                 share_data = await prepare_community_data(db, anlage_id)
                 if share_data and share_data.get("monatswerte"):
-                    async with httpx.AsyncClient(timeout=15.0) as client:
+                    async with community_client(timeout=15.0) as client:
                         resp = await client.post(f"{COMMUNITY_SERVER_URL}/api/submit", json=share_data)
                         if resp.status_code == 200:
                             result_data = resp.json()

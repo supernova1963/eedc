@@ -10,17 +10,21 @@
  * **Was daraus wurde — und warum diese Datei zwei Server-Staende kennen muss.**
  * Ein Teiljahr wird weiterhin hochgerechnet, aber **saisonal**: mit der
  * Ertragserwartung des eigenen Standorts als Massstab statt mit dem Faktor
- * zwoelf. Ein Fruehling zaehlt dann als Fruehling. Die Umstellung passiert am
- * **01.09.2026** in einem eigenen Server-Deploy — der Client wird dabei
- * **nicht** angefasst. Deshalb muss diese Datei ab v4.0.22 beides koennen:
+ * zwoelf. Ein Fruehling zaehlt dann als Fruehling. Die Umstellung war fuer den
+ * **01.09.2026** angekuendigt und ist am **17.09.2026** serverseitig gebaut
+ * worden (eedc-community `core/spez_ertrag.py`; der Deploy ist ein eigener
+ * Schritt). Der Client wird dabei **nicht** angefasst. Deshalb muss diese
+ * Datei seit v4.0.22 beides koennen:
  *
- * - **bis zum 01.09.:** Der Server rechnet flach und sendet `basis_monate`
+ * - **Server vor der Umstellung:** rechnet flach und sendet `basis_monate`
  *   nicht. Es gibt immer einen Wert, also keine Kennzeichnung und keinen
  *   Hinweis — die Anzeige bleibt, wie sie war.
- * - **ab dem 01.09.:** Der Server sendet `basis_monate`. Liegt es unter zwoelf,
- *   ist der Jahreswert **hochgerechnet** und muss das sagen
+ * - **Server nach der Umstellung:** sendet `basis_monate`. Liegt es unter
+ *   zwoelf, ist der Jahreswert **hochgerechnet** und muss das sagen
  *   ({@link jahresfensterKennzeichnung}) — eine Zahl, die aus fuenf Monaten
- *   entsteht, darf nicht aussehen wie eine aus zwoelf.
+ *   entsteht, darf nicht aussehen wie eine aus zwoelf. Gibt es keinen Wert,
+ *   sendet er den Grund (`basis_grund`), und {@link jahresfensterHinweis}
+ *   nennt den Handgriff.
  *
  * ⛔ **Was hier bis zum 19.08.2026 stand, galt nie:** „Wer die zwoelf Monate
  * nicht hat, bekommt keinen Wert und keinen Rang." Diese Fassung wurde vom
@@ -70,10 +74,14 @@ export function jahresfensterKennzeichnung(b: BenchmarkData | null | undefined):
 /**
  * Warum es **gar keinen** Jahreswert gibt — als fertiger Satz, oder `null`.
  *
- * Nach der Umstellung bleibt dafuer ein einziger Grund: die geteilten Daten
- * sind aelter als ein Jahr. Wer zu wenige Monate hat, bekommt einen
- * hochgerechneten Wert samt {@link jahresfensterKennzeichnung} — keinen
- * leeren Platz. Bewusst ohne Zusage: kein Termin.
+ * Nach der Umstellung gibt es dafuer zwei Gruende, und der Server nennt sie:
+ * die geteilten Daten sind aelter als ein Jahr (`basis_veraltet`), oder die
+ * Anlage hat weniger als zwoelf Monate und keinen Massstab (`basis_grund`
+ * `kein_massstab` — keine aktive Solarprognose, oder ein eedc vor v4.0.22;
+ * Server-Entscheid 17.09.2026: kein Ersatzmassstab, sondern der Handgriff).
+ * Wer zu wenige Monate hat UND einen Massstab, bekommt einen hochgerechneten
+ * Wert samt {@link jahresfensterKennzeichnung} — keinen leeren Platz.
+ * Bewusst ohne Zusage: kein Termin.
  */
 export function jahresfensterHinweis(b: BenchmarkData | null | undefined): string | null {
   if (!b || hatJahresfenster(b)) return null
@@ -81,6 +89,11 @@ export function jahresfensterHinweis(b: BenchmarkData | null | undefined): strin
   if (b.basis_veraltet) {
     return `Deine jüngsten geteilten Daten sind älter als ein Jahr. Teile sie erneut, `
       + `dann ist der Jahresvergleich wieder da.`
+  }
+  if (b.basis_grund === 'kein_massstab') {
+    return `Für die Hochrechnung fehlt die Ertragserwartung deines Standorts. `
+      + `Lege unter Einstellungen → Solarprognose eine PVGIS-Prognose an und teile `
+      + `deine Daten erneut — dann ist der Jahresvergleich da.`
   }
   return `Für den Jahresvergleich fehlen noch abgeschlossene Monate. `
     + `Die monatlichen Vergleiche unten gelten unabhängig davon.`

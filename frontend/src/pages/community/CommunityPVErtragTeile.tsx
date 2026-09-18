@@ -39,7 +39,7 @@ export const PV_PARK_IDS = {
 
 export interface PVErtragDaten {
   distribution: Verteilung | null
-  chartData: { name: string; ertrag: number; durchschnitt: number | undefined; isPositive: boolean; fill: string }[]
+  chartData: { name: string; ertrag: number; durchschnitt: number | undefined; isPositive: boolean | null; fill: string }[]
   jahresStats: { jahr: number; spezErtrag: number; anzahlMonate: number; vollstaendig: boolean }[] | null
   perzentil: number | null
   performanceStats: { abweichungGesamt: number | null; abweichungRegion: number | null; differenzAbsolut: number | null } | null
@@ -75,20 +75,22 @@ export function usePVErtragDaten(benchmark: CommunityBenchmarkResponse | null): 
       .slice(-12)
       .map((m) => {
         const spezErtrag = m.spez_ertrag_kwh_kwp || 0
-        let durchschnitt = avgMap.get(`${m.jahr}-${m.monat}`) ?? avgMap.get(`${m.jahr - 1}-${m.monat}`)
-        // Rückfall auf ein Zwölftel des Community-Jahreswerts, wenn für diesen
-        // Monat kein Community-Mittel vorliegt. Fehlt auch der Jahreswert (#387),
-        // gibt es keinen Vergleich für diesen Monat.
-        if (durchschnitt === undefined) {
-          const jahr = benchmark.benchmark.spez_ertrag_durchschnitt
-          durchschnitt = jahr ? jahr / 12 : undefined
-        }
-        const abweichung = durchschnitt && durchschnitt > 0 ? ((spezErtrag - durchschnitt) / durchschnitt) * 100 : 0
+        const durchschnitt = avgMap.get(`${m.jahr}-${m.monat}`) ?? avgMap.get(`${m.jahr - 1}-${m.monat}`)
+        // N-292 (17.09.2026): Liegt für diesen Monat und den Vorjahresmonat kein
+        // Community-Mittel vor, gibt es KEINEN Vergleich. Hier stand als Rückfall
+        // ein Zwölftel des Community-Jahreswerts — ein flacher Wert, gegen den im
+        // Winter jede Anlage darunter und im Sommer jede darüber liegt (gemessen
+        // 16.09.: Zwölftel 68,2 gegen echte Monatsmittel 17,3 im Dezember und
+        // 117,6 im Juli). Die Balkenfarbe sagte die Jahreszeit, nicht die
+        // Leistung. Ohne Vergleich bleibt der Balken neutral.
+        const hatVergleich = durchschnitt !== undefined && durchschnitt > 0
+        const abweichung = hatVergleich ? ((spezErtrag - durchschnitt) / durchschnitt) * 100 : 0
         // D13-16: `fill` je Zeile → der Tooltip zeigt die tatsächliche Balken-
         // (Zell-)Farbe (über/unter Ø) statt Neutral-Grau; der Balken selbst wird
         // weiterhin per <Cell> gefärbt (identische Werte).
-        const isPositive = abweichung >= 0
-        return { name: `${monatsnamen[m.monat - 1]} ${String(m.jahr).slice(2)}`, ertrag: spezErtrag, durchschnitt, isPositive, fill: isPositive ? STATUS_COLORS.ok : STATUS_COLORS.kritisch }
+        const isPositive = hatVergleich ? abweichung >= 0 : null
+        const fill = isPositive === null ? SERIE_NEUTRAL : isPositive ? STATUS_COLORS.ok : STATUS_COLORS.kritisch
+        return { name: `${monatsnamen[m.monat - 1]} ${String(m.jahr).slice(2)}`, ertrag: spezErtrag, durchschnitt, isPositive, fill }
       })
   }, [benchmark, monthlyAverages])
 
@@ -201,7 +203,7 @@ export function MonatsErtragChart({ benchmark, chartData }: { benchmark: Communi
               <Tooltip content={<ChartTooltip formatter={(value: number) => `${fmtZahl(value, 1)} kWh/kWp`} />} />
               <Line type="monotone" dataKey="durchschnitt" stroke={achsen.referenz} strokeWidth={2} strokeDasharray="5 5" dot={false} name="Community Ø" hide={istVersteckt('durchschnitt')} />
               <Bar dataKey="ertrag" radius={[2, 2, 0, 0]} name="Ertrag">
-                {chartData.map((entry, index) => <Cell key={`cell-${index}`} fill={entry.isPositive ? STATUS_COLORS.ok : STATUS_COLORS.kritisch} fillOpacity={0.8} />)}
+                {chartData.map((entry, index) => <Cell key={`cell-${index}`} fill={entry.fill} fillOpacity={0.8} />)}
               </Bar>
             </ComposedChart>
           </ResponsiveContainer>

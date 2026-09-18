@@ -57,7 +57,15 @@ async def get_verbrauch_prognose(
           - daten_tage: int (Anzahl Tage die einflossen)
           - zeitraum_von: date
           - zeitraum_bis: date
+          - profil_typ: str ("gewichtet_8_wochen") — der Name des Modells
+          - wochen: int (Länge des Rückblicks, = ``wochen_zurueck``)
+          - halbwertszeit_tage: float (Gewichtung, = ``HALBWERTSZEIT_TAGE``)
         oder None wenn zu wenig Daten
+
+    Die drei letzten Kennwerte nennen das Modell (N-392): ein Sensor, der auf
+    diesem Profil rechnet, muss seine Annahme als Attribut tragen können —
+    neben ihm steht ein zweiter mit einem anderen Verbrauchsmodell
+    (``verbrauchsprognose_heute``, 7-Tage-Profil der Live-Kachel).
     """
     von = ziel_datum - timedelta(weeks=wochen_zurueck)
     bis = ziel_datum - timedelta(days=1)  # Gestern als letzter Tag
@@ -131,4 +139,7 @@ async def get_verbrauch_prognose(
         "daten_tage": len(auswahl),
         "zeitraum_von": von,
         "zeitraum_bis": bis,
+        "profil_typ": f"gewichtet_{wochen_zurueck}_wochen",
+        "wochen": wochen_zurueck,
+        "halbwertszeit_tage": HALBWERTSZEIT_TAGE,
     }

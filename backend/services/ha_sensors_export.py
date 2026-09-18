@@ -767,7 +767,12 @@ PROGNOSE_SENSOREN = [
         unit="",
         icon="mdi:battery-clock",
         category=SensorCategory.PROGNOSE,
-        formel="SoC-Simulation ab aktuellem Speicherstand: Uhrzeit, zu der der Speicher voll ist",
+        formel=(
+            "SoC-Simulation ab aktuellem Speicherstand: Uhrzeit, zu der der Speicher voll ist. "
+            "Verbrauchsannahme = gewichtetes 8-Wochen-Profil (Attribute profil_typ, profil_stufe, "
+            "profil_tage, verbrauch_annahme_kwh) — ein anderes Modell als "
+            "eedc_verbrauchsprognose_heute_kwh."
+        ),
     ),
 ]
 

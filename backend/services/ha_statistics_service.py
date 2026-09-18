@@ -219,6 +219,12 @@ class HAStatisticsService:
         if self._initialized:
             return
         self._initialized = True
+        # Merkt sich, ob die eingetragene Recorder-Adresse (Stufe 1) versagt hat
+        # und eedc deshalb auf Datei oder WebSocket zurückgefallen ist. Bis
+        # 18.09.2026 sagte der Status danach schlicht „SQLite" — der Anwender
+        # konnte nicht sehen, dass seine Konfiguration nicht wirkt (LTS-Fund B,
+        # Blockmove-Diagnose 16.09.).
+        self._url_rueckfall: Optional[str] = None
 
         # Priorität: Konfigurierte MariaDB URL → SQLite-Datei
         if settings.ha_recorder_db_url:
@@ -252,6 +258,7 @@ class HAStatisticsService:
             except Exception as e:
                 logger.warning(f"HA Recorder DB Verbindung fehlgeschlagen: {type(e).__name__}: {e}")
                 self._engine = None
+                self._url_rueckfall = type(e).__name__
 
         # Fallback: SQLite-Datei
         db_path = None
@@ -358,9 +365,20 @@ class HAStatisticsService:
         """Gibt den genutzten Transport zurück."""
         if not self.is_available:
             return "nicht verfügbar"
-        if self._engine is None:
-            return "HA-WebSocket"
-        return "MariaDB/MySQL" if self._is_mysql else "SQLite"
+        basis = (
+            "HA-WebSocket" if self._engine is None
+            else ("MariaDB/MySQL" if self._is_mysql else "SQLite")
+        )
+        rueckfall = getattr(self, "_url_rueckfall", None)
+        if rueckfall:
+            # Der Transport, der wirklich rechnet — UND warum es nicht der
+            # konfigurierte ist. Sonst liest der Anwender „SQLite" und hält
+            # seine Recorder-Adresse für wirksam.
+            return (
+                f"{basis} (Rückfall — die eingetragene Recorder-Adresse ist "
+                f"nicht erreichbar: {rueckfall})"
+            )
+        return basis
 
     def count_statistics_sensors(self) -> int:
         """Zählt die Anzahl der Sensoren in statistics_meta."""

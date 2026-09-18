@@ -1321,6 +1321,8 @@ def arbeitszahl_je_funktion(
     waerme_fehlt_grund_heizen: Optional[str] = None,
     waerme_fehlt_grund_warmwasser: Optional[str] = None,
     null_ist_gemessen: bool = False,
+    null_ist_gemessen_heizen: Optional[bool] = None,
+    null_ist_gemessen_warmwasser: Optional[bool] = None,
     abgrenzung_je_funktion_grund: Optional[dict[str, Optional[str]]] = None,
     achsen: Optional[AbstractSet[str]] = None,
     gesamt: Optional[Arbeitszahl] = None,
@@ -1525,17 +1527,33 @@ def arbeitszahl_je_funktion(
     # Wert gibt. `arbeitszahl` wertet den Grund nur bei fehlendem Zähler aus —
     # wer die Aufteilung daneben pflegt, behält seine Zahlen.
     _gesamt_grund = GRUND_WAERME_NICHT_JE_FUNKTION if waerme_ist_gesamt else None
+    # **N-479: die Marke darf je Funktion verschieden sein.** Der TAG liest die
+    # Zeile selbst und setzt ``null_ist_gemessen=True`` pauschal — für ihn ist
+    # jede fehlende Größe schon vorher als Grund benannt. Monat und Jahr
+    # summieren dagegen über Geräte und Zeilen; dort kann die Heizwärme gemessen
+    # sein und die Warmwasser-Wärme nicht. Ohne diese Trennung müssten sie sich
+    # für **eine** der beiden Aussagen entscheiden und lägen bei der anderen
+    # falsch. Fehlt die feine Angabe, gilt die pauschale — der Tagespfad bleibt
+    # damit unverändert.
+    _ng_heizen = (
+        null_ist_gemessen if null_ist_gemessen_heizen is None
+        else null_ist_gemessen_heizen
+    )
+    _ng_warmwasser = (
+        null_ist_gemessen if null_ist_gemessen_warmwasser is None
+        else null_ist_gemessen_warmwasser
+    )
     _roh = ArbeitszahlJeFunktion(
         heizen=_je(
             heizung_kwh, strom_heizen_kwh,
             _gesamt_grund or waerme_fehlt_grund_heizen,
-            GRUND_KEIN_HEIZBETRIEB if null_ist_gemessen else None,
+            GRUND_KEIN_HEIZBETRIEB if _ng_heizen else None,
             _abgrenzung("heizen"),
         ),
         warmwasser=_je(
             warmwasser_kwh, strom_warmwasser_kwh,
             _gesamt_grund or waerme_fehlt_grund_warmwasser,
-            GRUND_KEINE_WARMWASSERBEREITUNG if null_ist_gemessen else None,
+            GRUND_KEINE_WARMWASSERBEREITUNG if _ng_warmwasser else None,
             _abgrenzung("warmwasser"),
         ),
     )

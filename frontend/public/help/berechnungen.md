@@ -170,11 +170,22 @@ Spez. Ertrag        = PV_Erzeugung / Leistung_kWp              (kWh/kWp, NUR PV;
 Einspeise-Erlös (EUR)    = (Einspeisung - Einspeisung_neg_Preis) * Einspeisevergütung / 100
 Netzbezug-Kosten (EUR)   = Netzbezug * Netzbezug_Preis / 100 + Grundpreis
 Arbeitspreis-Kosten (EUR)= Netzbezug * Netzbezug_Preis / 100            (ohne Grundpreis, reiner Ausweis)
-EV-Ersparnis (EUR)       = PV_Eigenverbrauch * Netzbezug_Preis / 100   (s. Hinweis)
+EV-Ersparnis (EUR)       = PV_Eigenverbrauch * EV_Preis / 100          (s. Hinweis; EV_Preis = EV-gewichteter Ø der Stundenpreise, sonst Netzbezug_Preis)
 Netto-Ertrag (EUR)       = Einspeise-Erlös + EV-Ersparnis
 CO2-Einsparung (kg)      = PV_Erzeugung * 0.38               (VERALTET — s. Kasten)
 ```
 
+> **Hinweis „EV_Preis" (SOLL Flex-Tarife A-2, Tag seit v4.0.46, Monat/Jahr seit 18.09.2026).** Die Ersparnis
+> bewertet **vermiedenen** Bezug, und der fällt zu anderen Zeiten an als der tatsächliche: Eigenverbrauch
+> mittags (PV), Netzbezug abends. Bei einem dynamischen Tarif wird die vermiedene Menge deshalb mit dem
+> Ø der Stundenpreise **in den Stunden des vermiedenen Bezugs** bewertet (Gewicht je Stunde:
+> max(0, PV − Einspeisung)), nicht mit dem bezugsgewichteten Ø — der läge systematisch zu hoch.
+> Auf der Tagesebene liefert ihn `SlotKosten.ev_mittel_cent`, auf Monatsebene `MonatsPreis.ev_cent`
+> aus derselben Messung (`strompreis_aggregator`), und `baue_finanz_zeile` reicht ihn an alle Sichten
+> durch. **P-1:** Ein gepflegter (abgerechneter) Bezugs-Ø stellt den Bezugspreis, für die Ersparnis ist
+> er nur der Rückfall — unterhalb der Abrechnung gilt die Messung. Ohne Stundenpreise (Festpreis)
+> bleibt es beim Netzbezug_Preis; dort bewegt sich keine Zahl.
+>
 > **Hinweis „Eigenverbrauch".** Der Eigenverbrauch, der zu **Geld** wird, ist derselbe wie der in
 > der Mengen-Bilanz: die Erzeugung **hinter dem Zähler** — PV-Module, Balkonkraftwerk **und** ein
 > Erzeuger unter *Sonstiges* (BHKW, Windrad, Wasserkraft). Der Zähler am einen Netzanschluss misst
@@ -394,7 +405,7 @@ Die Cockpit-Übersicht aggregiert alle Monatsdaten für ein Jahr (oder alle Jahr
 
 ```
 Einspeise-Erlös     = Σ(Einspeisung) * Einspeisevergütung / 100
-EV-Ersparnis        = Σ(PV_Eigenverbrauch) * Netzbezug_Preis / 100  (s. Hinweis)
+EV-Ersparnis        = Σ(PV_Eigenverbrauch * EV_Preis) / 100         (s. Hinweis; je Monat der EV-gewichtete Ø, sonst Netzbezug_Preis)
 Netto-Ertrag        = Einspeise-Erlös + EV-Ersparnis + Erlös_eigener_Satz
                       [- USt_Eigenverbrauch]
 BKW-Ersparnis       = Σ(BKW_Eigenverbrauch) * Netzbezug_Preis / 100

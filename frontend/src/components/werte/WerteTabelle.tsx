@@ -501,7 +501,7 @@ export function WerteTabelle({
                 </td>
                 {aktiveMetriken.map((m) => {
                   const v = aggregat[m.key]
-                  const prefix = m.aggregation === 'avg' ? 'Ø ' : ''
+                  const prefix = m.aggregation === 'avg' || m.aggregation === 'gewichtet' ? 'Ø ' : ''
                   if (zeigeVergleich) {
                     const pv = vorjahrAggregat?.[m.key] ?? null
                     return (
@@ -523,6 +523,13 @@ export function WerteTabelle({
 
       {sorted.length > 1 && fussSchweigt && (
         <p className="text-xs text-gray-500 dark:text-gray-400">{fussGrund}</p>
+      )}
+      {/* SOLL Flex-Tarife A-3/P-3 (18.09.2026): die Abweichung wird BENANNT, nicht
+          beseitigt und nicht geschwellt — Tage sind Messung, der Monat ist Abrechnung. */}
+      {sorted.length > 1 && granularitaet === 'tag' && (
+        <p className="text-xs text-gray-500 dark:text-gray-400">
+          Tage sind gemessen, der Monat ist abgerechnet — die Summe der Tage kann vom Monatsbetrag abweichen.
+        </p>
       )}
       {/* N-374: der Grund zu einer leeren Kennzahl-Spalte, sichtbar. */}
       {zellGruende.length > 0 && (

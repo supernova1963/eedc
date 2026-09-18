@@ -495,6 +495,19 @@ class FunktionsEingaengeDerAnlage:
     #: **mit Strom**: Das Kennzeichen ist eine Aussage über die Messung dieses
     #: Zeitraums, die Mengen darüber sind es nicht (WK-16j).
     hat_split: bool = False
+    #: **N-479 — hier bewusst immer ``False``, und das ist eine Grenze, keine
+    #: Lücke.** Das Gegenstück ``WpFakten`` beantwortet die Frage „ist diese
+    #: Funktion GEMESSEN (auch wenn 0 herauskam)?" aus der Monatszeile, die den
+    #: Zählerstand selbst trägt. Dieser Zwilling springt genau dann ein, wenn es
+    #: **keine** Monatszeile gibt — er kennt nur Geräte-Kennzahlen und kann eine
+    #: gemessene Null nicht von einer fehlenden Messung trennen. Eine Näherung
+    #: über „das Gerät hat die Achse" wäre eine zweite, schwächere Regel neben
+    #: der echten; dann lieber kein Zeitraum-Grund als ein falscher. Dieser Pfad
+    #: verhält sich damit unverändert wie vor N-479.
+    heizung_gemessen: bool = False
+    warmwasser_gemessen: bool = False
+    strom_heizen_gemessen: bool = False
+    strom_warmwasser_gemessen: bool = False
     #: Mindestens ein beitragendes Gerät misst seine Wärme mit EINEM
     #: gemeinsamen Zähler (N-391). Ohne das Feld sagte die leere Funktions-Zeile
     #: *„kein Wärmemengenzähler zugeordnet"* an einer Anlage, deren Zähler

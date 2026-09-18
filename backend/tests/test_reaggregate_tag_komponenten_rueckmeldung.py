@@ -35,16 +35,18 @@ _SENSOR = {"strategie": "sensor", "sensor_id": "sensor.x"}
 _TAG = date.today() - timedelta(days=3)
 
 
-def _anlage(*, wp_ids=(8,)):
-    investitionen = {"7": {"felder": {"pv_erzeugung_kwh": dict(_SENSOR)}}}
+def _anlage(*, wp_ids=(8,), pv_gesamt: bool = False, pv_modul_zaehler: bool = True):
+    investitionen = {}
+    if pv_modul_zaehler:
+        investitionen["7"] = {"felder": {"pv_erzeugung_kwh": dict(_SENSOR)}}
     for wp_id in wp_ids:
         investitionen[str(wp_id)] = {"felder": {"stromverbrauch_kwh": dict(_SENSOR)}}
+    basis = {"einspeisung": dict(_SENSOR)}
+    if pv_gesamt:
+        basis["pv_gesamt"] = dict(_SENSOR)
     return SimpleNamespace(
         id=1,
-        sensor_mapping={
-            "basis": {"einspeisung": dict(_SENSOR)},
-            "investitionen": investitionen,
-        },
+        sensor_mapping={"basis": basis, "investitionen": investitionen},
     )
 
 
@@ -156,3 +158,58 @@ async def test_marker_am_orm_objekt_setzbar():
     # Default für Aufrufer, die den Marker nicht kennen (Altbestand/Doubles).
     tz2 = TagesZusammenfassung(anlage_id=1, datum=_TAG)
     assert getattr(tz2, "komponenten_frisch", True) is True
+
+
+# ── F-75: der Anlagen-Zähler wird aufgelöst geschrieben ──────────────────────
+#
+# Frank85 (T89667 #340): „komponenten_ohne_wert: pv" bei PV 4,827 kWh im Cockpit.
+# Die Zuordnung verspricht `pv_gesamt`; der Tagespfad schreibt seit #406 nur
+# `pv_<id>` und entfernt `pv_gesamt` in jedem Fall. Bis F-75 mappte diese Probe
+# in `basis` nur `einspeisung` — der Fall war strukturell unsichtbar.
+
+
+async def test_pv_gesamt_gilt_als_geschrieben_wenn_die_erzeuger_stehen():
+    """Der Anlagen-Zähler ist erfüllt, sobald ein Erzeuger-Key frisch dasteht."""
+    out = await _komponenten_rueckmeldung(
+        _db(_INVS), _anlage(pv_gesamt=True, pv_modul_zaehler=False), _TAG,
+        _lauf({"einspeisung": 0.96, "pv_7": 4.83, "waermepumpe_8": 6.0}),
+    )
+    assert out["komponenten_erwartet"] == 3, out
+    assert out["komponenten_ohne_wert"] == [], out
+    pv = [k for k in out["komponenten"] if k["key"] == "pv_gesamt"][0]
+    assert pv["geschrieben"] is True and pv["kwh"] == 4.83, pv
+    # Dieselbe Bezeichnung wie in der Zuordnungs-Fläche — nicht der Präfix „pv".
+    assert pv["name"] == "PV gesamt", pv
+
+
+async def test_pv_gesamt_summiert_alle_erzeuger_wie_pv_kwh_neu():
+    """Zwei Strings aus einem Aggregat verteilt ⇒ eine Zahl, dieselbe wie `pv_kwh_neu`."""
+    from backend.core.berechnungen.energie import summe_pv_bkw_kwh
+
+    lauf = {"einspeisung": 1.0, "pv_7": 3.0, "pv_9": 1.5, "bkw_11": 0.5, "waermepumpe_8": 0.0}
+    out = await _komponenten_rueckmeldung(
+        _db(_INVS), _anlage(pv_gesamt=True, pv_modul_zaehler=False), _TAG, _lauf(lauf),
+    )
+    pv = [k for k in out["komponenten"] if k["key"] == "pv_gesamt"][0]
+    assert pv["kwh"] == round(summe_pv_bkw_kwh(lauf), 2) == 5.0, pv
+
+
+async def test_pv_gesamt_ohne_erzeuger_key_bleibt_ohne_wert():
+    """Die Gegenprobe: schreibt der Lauf keinen Erzeuger, fehlt der Zähler wirklich."""
+    out = await _komponenten_rueckmeldung(
+        _db(_INVS), _anlage(pv_gesamt=True, pv_modul_zaehler=False), _TAG,
+        _lauf({"einspeisung": 0.96, "waermepumpe_8": 6.0}),
+    )
+    assert out["komponenten_ohne_wert"] == ["PV gesamt"], out
+    assert out["komponenten_geschrieben"] == 2, out
+
+
+async def test_pv_gesamt_null_ist_ein_geschriebener_wert():
+    """Eine gemessene 0,0 (Schnee, Anlage aus) ist ein Wert, keine Lücke."""
+    out = await _komponenten_rueckmeldung(
+        _db(_INVS), _anlage(pv_gesamt=True, pv_modul_zaehler=False), _TAG,
+        _lauf({"einspeisung": 0.0, "pv_7": 0.0, "waermepumpe_8": 1.0}),
+    )
+    pv = [k for k in out["komponenten"] if k["key"] == "pv_gesamt"][0]
+    assert pv["geschrieben"] is True and pv["kwh"] == 0.0, pv
+    assert out["komponenten_ohne_wert"] == [], out

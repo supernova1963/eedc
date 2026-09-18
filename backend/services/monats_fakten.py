@@ -384,6 +384,17 @@ class WpFakten:
     warmwasser_kwh: float = 0.0
     strom_heizen_kwh: float = 0.0
     strom_warmwasser_kwh: float = 0.0
+    #: **N-479 — „gemessen" je Funktion.** Hat mindestens ein aktives Gerät des
+    #: Zeitraums die Größe gemessen, auch wenn dabei 0 herauskam? Die Summen
+    #: oben können das nicht sagen: Eine gemessene Null und ein fehlender Zähler
+    #: tragen beide 0.0 bei. Erst damit dürfen Monat und Jahr denselben
+    #: Zeitraum-Grund führen wie der Tag (``null_ist_gemessen``) — vorher
+    #: meldeten sie im Sommer „kein Wärmemengenzähler zugeordnet", obwohl beide
+    #: Zähler hingen (simon42 T89667, dietmar1968, 16.09.2026).
+    heizung_gemessen: bool = False
+    warmwasser_gemessen: bool = False
+    strom_heizen_gemessen: bool = False
+    strom_warmwasser_gemessen: bool = False
     #: True, sobald **eine** aktive WP getrennte Strommessung führt.
     hat_split: bool = False
     #: N-391: True, sobald **eine** aktive WP ihre Wärme mit EINEM gemeinsamen
@@ -1663,6 +1674,16 @@ class _RohMonat:
         self.wp_strom_heizen = 0.0
         self.wp_strom_warmwasser = 0.0
         self.wp_hat_split = False
+        #: N-479: hat **mindestens ein** Gerät des Monats die Größe gemessen —
+        #: unabhängig davon, ob dabei 0 herauskam? Das ``sum()`` darunter kann
+        #: die Frage nicht beantworten, weil eine gemessene Null und ein
+        #: fehlender Zähler beide 0.0 beitragen. Ohne diese vier Marken meldet
+        #: der Monat im Sommer den Ausstattungs-Grund („kein Wärmemengenzähler
+        #: zugeordnet") statt des Zeitraum-Grunds („kein Heizbetrieb").
+        self.wp_heizung_gemessen = False
+        self.wp_warmwasser_gemessen = False
+        self.wp_strom_heizen_gemessen = False
+        self.wp_strom_warmwasser_gemessen = False
         #: N-391: mindestens ein Gerät des Monats misst die Wärme mit EINEM
         #: gemeinsamen Zähler (Feld ``waerme_kwh``).
         self.wp_waerme_ist_gesamt = False
@@ -1892,6 +1913,17 @@ class _RohMonat:
             self.wp_warmwasser += b.wp_warmwasser
             self.wp_strom_heizen += b.wp_strom_heizen
             self.wp_strom_warmwasser += b.wp_strom_warmwasser
+            # N-479: ODER über die Geräte — ein einziges gemessenes Gerät macht
+            # die Funktion für diesen Monat „gemessen". Dieselbe Bauform wie
+            # ``wp_hat_split`` darunter.
+            self.wp_heizung_gemessen = (
+                self.wp_heizung_gemessen or b.wp_heizung_gemessen)
+            self.wp_warmwasser_gemessen = (
+                self.wp_warmwasser_gemessen or b.wp_warmwasser_gemessen)
+            self.wp_strom_heizen_gemessen = (
+                self.wp_strom_heizen_gemessen or b.wp_strom_heizen_gemessen)
+            self.wp_strom_warmwasser_gemessen = (
+                self.wp_strom_warmwasser_gemessen or b.wp_strom_warmwasser_gemessen)
             self.wp_hat_split = self.wp_hat_split or b.wp_hat_split
             self.wp_waerme_ist_gesamt = (
                 self.wp_waerme_ist_gesamt or b.wp_waerme_ist_gesamt
@@ -2239,6 +2271,10 @@ async def _baue_fakt(
             warmwasser_kwh=roh.wp_warmwasser,
             strom_heizen_kwh=roh.wp_strom_heizen,
             strom_warmwasser_kwh=roh.wp_strom_warmwasser,
+            heizung_gemessen=roh.wp_heizung_gemessen,
+            warmwasser_gemessen=roh.wp_warmwasser_gemessen,
+            strom_heizen_gemessen=roh.wp_strom_heizen_gemessen,
+            strom_warmwasser_gemessen=roh.wp_strom_warmwasser_gemessen,
             hat_split=roh.wp_hat_split,
             waerme_ist_gesamt=roh.wp_waerme_ist_gesamt,
             modus_strom_heizen_kwh=roh.wp_modus_strom_heizen,

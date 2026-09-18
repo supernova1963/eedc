@@ -1,9 +1,10 @@
 /**
- * Geteilte Wärmepumpen-Charts (IST-`WaermepumpeDashboard` + IA-v4-Hub):
+ * Geteilte Wärmepumpen-Charts (heute allein vom IA-v4-Hub genutzt; die V3-Seite
+ * `WaermepumpeDashboard` ist mit dem V4-Flip entfallen — F-WK10-B3, 18.09.2026):
  * - {@link WaermepumpeMonatsverlauf}: Wärmeerzeugung/Monat (Heizung+Warmwasser, Area)
  * - {@link WaermepumpeKostenvergleich}: WP vs. Gas/Öl (Bar) + Ersparnis
  * - {@link WaermepumpeMonatsTabelle}: Strom · Heizung · Warmwasser · JAZ je Monat
- * Eine Code-Wahrheit, kein Drift zwischen Dashboard und Hub.
+ * Eine Code-Wahrheit für alle Leser dieser Charts.
  */
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, AreaChart, Area,

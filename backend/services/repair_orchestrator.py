@@ -376,7 +376,7 @@ async def _komponenten_rueckmeldung(
     ohne frische Werte (Preserve-Logik) zählt als „nichts geschrieben".
     """
     from backend.services.snapshot.komponenten_beitraege import (
-        erwartete_komponenten_keys, komponenten_key_label,
+        erwartete_komponenten_keys, geschriebener_wert_fuer, komponenten_key_label,
     )
 
     inv_res = await db.execute(
@@ -394,8 +394,10 @@ async def _komponenten_rueckmeldung(
 
     komponenten: list[dict[str, Any]] = []
     for key in sorted(erwartet):
-        wert = geschrieben_map.get(key)
-        hat_wert = isinstance(wert, (int, float)) and not isinstance(wert, bool)
+        # Versprechen gegen Ergebnis über den SoT-Helfer, nicht wörtlich —
+        # `pv_gesamt` wird vom Lauf aufgelöst geschrieben (F-75).
+        wert = geschriebener_wert_fuer(key, geschrieben_map)
+        hat_wert = wert is not None
         komponenten.append({
             "key": key,
             "name": komponenten_key_label(key, erwartet[key]),

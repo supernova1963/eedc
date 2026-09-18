@@ -15,6 +15,7 @@ from backend.core.exceptions import not_found
 from backend.api.deps import get_db
 from backend.models import Anlage
 from backend.services.activity_service import log_activity
+from backend.services.community_client import community_client
 from backend.services.community_service import (
     prepare_community_data,
     get_community_preview,
@@ -111,7 +112,7 @@ async def share_to_community(
 
     # An Community-Server senden
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with community_client(timeout=30.0) as client:
             response = await client.post(
                 f"{COMMUNITY_SERVER_URL}/api/submit",
                 json=data,
@@ -212,7 +213,7 @@ async def get_community_status():
     Prüft ob der Community-Server erreichbar ist.
     """
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with community_client(timeout=10.0) as client:
             response = await client.get(f"{COMMUNITY_SERVER_URL}/api/health")
 
             if response.status_code == 200:
@@ -281,7 +282,7 @@ async def delete_from_community(
 
     # Delete-Request an Community-Server senden
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with community_client(timeout=30.0) as client:
             response = await client.delete(
                 f"{COMMUNITY_SERVER_URL}/api/submit/{anlage.community_hash}"
             )
@@ -342,7 +343,7 @@ async def delete_from_community(
 async def get_monatsbenchmark(jahr: int, monat: int):
     """Öffentlicher Community-Benchmark für einen bestimmten Monat — kein Hash nötig."""
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with community_client(timeout=30.0) as client:
             response = await client.get(
                 f"{COMMUNITY_SERVER_URL}/api/benchmark/monat/{jahr}/{monat}"
             )
@@ -396,7 +397,7 @@ async def get_community_benchmark(
         if jahr:
             params["jahr"] = jahr
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with community_client(timeout=30.0) as client:
             response = await client.get(
                 f"{COMMUNITY_SERVER_URL}/api/benchmark/anlage/{anlage.community_hash}",
                 params=params,
@@ -439,7 +440,7 @@ async def get_global_statistics():
     Proxy zum Community-Server.
     """
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with community_client(timeout=30.0) as client:
             response = await client.get(f"{COMMUNITY_SERVER_URL}/api/statistics/global")
             if response.status_code == 200:
                 return response.json()
@@ -457,7 +458,7 @@ async def get_monthly_averages(
     Proxy zum Community-Server.
     """
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with community_client(timeout=30.0) as client:
             response = await client.get(
                 f"{COMMUNITY_SERVER_URL}/api/statistics/monthly-averages",
                 params={"monate": monate}
@@ -476,7 +477,7 @@ async def get_regional_statistics():
     Proxy zum Community-Server.
     """
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with community_client(timeout=30.0) as client:
             response = await client.get(f"{COMMUNITY_SERVER_URL}/api/statistics/regional")
             if response.status_code == 200:
                 return response.json()
@@ -492,7 +493,7 @@ async def get_regional_details(region: str):
     Proxy zum Community-Server.
     """
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with community_client(timeout=30.0) as client:
             response = await client.get(f"{COMMUNITY_SERVER_URL}/api/statistics/regional/{region}")
             if response.status_code == 200:
                 return response.json()
@@ -513,7 +514,7 @@ async def get_distribution(
     Metriken: kwp, spez_ertrag, speicher, autarkie
     """
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with community_client(timeout=30.0) as client:
             response = await client.get(
                 f"{COMMUNITY_SERVER_URL}/api/statistics/distributions/{metric}",
                 params={"bins": bins}
@@ -537,7 +538,7 @@ async def get_ranking(
     Kategorien: spez_ertrag, autarkie, eigenverbrauch
     """
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with community_client(timeout=30.0) as client:
             response = await client.get(
                 f"{COMMUNITY_SERVER_URL}/api/statistics/rankings/{category}",
                 params={"limit": limit}
@@ -561,7 +562,7 @@ async def get_speicher_by_class():
     Speicher-Statistiken nach Kapazitätsklasse.
     """
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with community_client(timeout=30.0) as client:
             response = await client.get(f"{COMMUNITY_SERVER_URL}/api/components/speicher/by-class")
             if response.status_code == 200:
                 return response.json()
@@ -576,7 +577,7 @@ async def get_waermepumpe_by_region():
     Wärmepumpen-Statistiken nach Region.
     """
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with community_client(timeout=30.0) as client:
             response = await client.get(f"{COMMUNITY_SERVER_URL}/api/components/waermepumpe/by-region")
             if response.status_code == 200:
                 return response.json()
@@ -591,7 +592,7 @@ async def get_eauto_by_usage():
     E-Auto-Statistiken nach Nutzungsintensität.
     """
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with community_client(timeout=30.0) as client:
             response = await client.get(f"{COMMUNITY_SERVER_URL}/api/components/eauto/by-usage")
             if response.status_code == 200:
                 return response.json()
@@ -614,7 +615,7 @@ async def get_degradation():
     Degradations-Analyse nach Anlagenalter.
     """
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with community_client(timeout=30.0) as client:
             response = await client.get(f"{COMMUNITY_SERVER_URL}/api/trends/degradation")
             if response.status_code == 200:
                 return response.json()
@@ -629,7 +630,7 @@ async def get_trends(period: TrendPeriod):
     Zeitliche Trends der Community-Daten.
     """
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with community_client(timeout=30.0) as client:
             response = await client.get(f"{COMMUNITY_SERVER_URL}/api/trends/{period}")
             if response.status_code == 200:
                 return response.json()

@@ -286,6 +286,22 @@ def waermepumpe_jahreskennzahlen(
         warmwasser_kwh=sum(f.wp.warmwasser_kwh for f in fakten if f.wp.hat_split),
         strom_warmwasser_kwh=strom_ww,
         hat_split=hat_split,
+        # **N-479: das Jahr darf denselben Zeitraum-Grund führen wie der Tag.**
+        # ⚠ Derselbe Filter wie bei den Mengen darüber (``if f.wp.hat_split``) —
+        # eine Marke aus einem Monat, dessen Menge gar nicht eingeht, wäre eine
+        # Aussage über Zahlen, die in diesem Quotienten nicht stehen.
+        # ``any``, weil ein einziger gemessener Monat die Funktion für den
+        # Zeitraum messbar macht: „im Sommer nicht geheizt" ist dann die richtige
+        # Auskunft, „kein Zähler zugeordnet" die falsche.
+        # ⚠ **BEIDE Seiten** (N-438/S3): siehe die Begründung im Monat.
+        null_ist_gemessen_heizen=any(
+            f.wp.heizung_gemessen and f.wp.strom_heizen_gemessen
+            for f in fakten if f.wp.hat_split
+        ),
+        null_ist_gemessen_warmwasser=any(
+            f.wp.warmwasser_gemessen and f.wp.strom_warmwasser_gemessen
+            for f in fakten if f.wp.hat_split
+        ),
         # N-391: gefragt sind dieselben Monate wie oben — nur die mit getrennter
         # Strommessung tragen die Funktions-Quotienten. Ein Monat mit gemeinsamem
         # Wärmemengenzähler liefert für sie keinen Zähler, sondern einen Grund.

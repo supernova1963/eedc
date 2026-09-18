@@ -8,7 +8,7 @@ import logging
 from calendar import monthrange
 from datetime import date, datetime
 from typing import Annotated, Optional, Any
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
@@ -1003,7 +1003,11 @@ async def get_monatsdaten(monatsdaten_id: int, db: AsyncSession = Depends(get_db
 
 
 @router.post("/", response_model=MonatsdatenResponse, status_code=status.HTTP_201_CREATED)
-async def create_monatsdaten(data: MonatsdatenCreate, db: AsyncSession = Depends(get_db)):
+async def create_monatsdaten(
+    data: MonatsdatenCreate,
+    background_tasks: BackgroundTasks = None,
+    db: AsyncSession = Depends(get_db),
+):
     """
     Erstellt neue Monatsdaten.
 
@@ -1087,7 +1091,74 @@ async def create_monatsdaten(data: MonatsdatenCreate, db: AsyncSession = Depends
     if investitionen_daten:
         await _save_investitionen_monatsdaten(db, investitionen_daten, data.jahr, data.monat)
 
+    await _nachlauf_planen(background_tasks, db, md)
     return md
+
+
+async def _nachlauf_planen(
+    background_tasks: BackgroundTasks | None,
+    db: AsyncSession,
+    md: Monatsdaten,
+) -> None:
+    """Der Nachlauf des Monatsabschlusses — MQTT-Publish, Energieprofil-Rollup
+    samt Modus-Split, Community-Auto-Share und der Aktivitätseintrag.
+
+    ⛔ **F-73 (17.09.2026): Seit dem IA-V4-Flip lief dieser Nachlauf für NIEMANDEN.**
+    Er hängt an ``monatsabschluss/wizard.py::_post_save_hintergrund``, das nur die
+    Route ``POST /monatsabschluss/{id}/{jahr}/{monat}`` startet — und deren
+    einziger Client, der 7-Schritt-Wizard, wurde mit v4.0.0 (`243944e5`,
+    25.07.2026) gelöscht. Das v4-Formular *„Monatsabschluss als ein Formular"*
+    speichert über **diese** beiden Routen (``useMonatsdaten`` → ``create``/
+    ``update``), und hier gab es keinen Nachlauf. Gemessen an Gernots Instanz:
+    Aktivitätsprotokoll endet mit „Monatsabschluss Juni 2026 gespeichert" vom
+    03.07.; Juli und August sind gespeichert, aber ohne Eintrag, ohne
+    Auto-Share (Community-Server kennt seine Anlage bis Juli) und ohne
+    MQTT-Publish. Und der Community-Bestand zeigt es in der Breite: am
+    17.09. hatten 19 von 138 Anlagen einen August-Wert.
+
+    Der Nachlauf ist derselbe wie beim Wizard — bewusst keine neue Bauform,
+    keine neue Bedingung: der Wizard lief auch bei jedem Speichern eines
+    beliebigen Monats. ``background_tasks`` ist ``None``, wenn die Funktion
+    direkt (Tests, interne Aufrufer) statt über FastAPI läuft — dann gibt es
+    keinen Request, hinter dem etwas nachlaufen könnte.
+    """
+    if background_tasks is None:
+        return
+
+    # Lokale Importe: `wizard.py` ist eine Nachbar-Route, kein Service — und
+    # der Nachlauf bleibt vorerst dort, damit beide Routen dieselbe Funktion
+    # starten (eine Kopie wäre die nächste stille Abweichung).
+    from backend.api.routes.monatsabschluss._shared import MONAT_NAMEN
+    from backend.api.routes.monatsabschluss.wizard import _post_save_hintergrund
+    from backend.services.activity_service import log_activity
+
+    anlage = (
+        await db.execute(select(Anlage).where(Anlage.id == md.anlage_id))
+    ).scalar_one_or_none()
+    if anlage is None:
+        return
+
+    background_tasks.add_task(
+        _post_save_hintergrund,
+        anlage_id=md.anlage_id,
+        jahr=md.jahr,
+        monat=md.monat,
+        # Feldauswahl des MQTT-Payloads wie im Wizard (Einheiten: N-54).
+        monatsdaten_dict={
+            "jahr": md.jahr,
+            "monat": md.monat,
+            "einspeisung_kwh": md.einspeisung_kwh,
+            "netzbezug_kwh": md.netzbezug_kwh,
+        },
+        community_auto_share=bool(anlage.community_auto_share),
+        community_hash=anlage.community_hash,
+    )
+    await log_activity(
+        kategorie="monatsabschluss",
+        aktion=f"Monatsabschluss {MONAT_NAMEN[md.monat]} {md.jahr} gespeichert",
+        erfolg=True,
+        anlage_id=md.anlage_id,
+    )
 
 
 async def _save_investitionen_monatsdaten(
@@ -1175,7 +1246,8 @@ async def _save_investitionen_monatsdaten(
 async def update_monatsdaten(
     monatsdaten_id: int,
     data: MonatsdatenUpdate,
-    db: AsyncSession = Depends(get_db)
+    background_tasks: BackgroundTasks = None,
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Aktualisiert Monatsdaten.
@@ -1253,6 +1325,7 @@ async def update_monatsdaten(
     if investitionen_daten:
         await _save_investitionen_monatsdaten(db, investitionen_daten, md.jahr, md.monat)
 
+    await _nachlauf_planen(background_tasks, db, md)
     return md
 
 

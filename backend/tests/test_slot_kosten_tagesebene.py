@@ -49,19 +49,19 @@ async def _anlage(db, *, arbeitspreis: float = 30.0) -> tuple[int, Strompreis]:
     return anlage.id, tarif
 
 
-def _stunde(aid: int, h: int, netzbezug, preis=None):
+def _stunde(aid: int, h: int, netzbezug, preis=None, *, datum: date = TAG):
     return TagesEnergieProfil(
-        anlage_id=aid, datum=TAG, stunde=h,
+        anlage_id=aid, datum=datum, stunde=h,
         netzbezug_kw=netzbezug, strompreis_cent=preis,
     )
 
 
-async def _lade(db, aid, tarif, *, abgerechnet=None):
+async def _lade(db, aid, tarif, *, abgerechnet=None, tag: date = TAG):
     return (await lade_slot_kosten_je_tag(
-        db, aid, von=TAG, bis=TAG,
+        db, aid, von=tag, bis=tag,
         tarif_fuer=lambda _t: tarif,
         abgerechnet_fuer=(lambda _t: abgerechnet) if abgerechnet is not None else None,
-    )).get(TAG)
+    )).get(tag)
 
 
 @pytest.mark.asyncio
@@ -222,3 +222,45 @@ async def test_negativer_netzbezug_wird_geklemmt(db):
 
     assert sk.kosten_euro == pytest.approx(2.0 * 30.0 / 100)
     assert sk.menge_gesamt_kwh == pytest.approx(2.0)
+
+
+# ── SOLL §10, dritter Prüffall: die Zeitumstellung ──────────────────────────
+#
+# Das SOLL nennt ihn als Bau-Bedingung („beim Bau zu prüfen"), gebaut wurde er
+# am 17.09. ohne diese Probe. Der Ø ist konstruktionsbedingt robust — ein
+# Quotient über die **vorhandenen** Zeilen —, aber nichts hielt ihn dort fest,
+# und der Baum trägt rund vierzig `range(24)`-Vorbilder. ⚠ Die 25. Stunde im
+# Oktober kann die Tabelle nicht speichern (`UniqueConstraint(anlage_id, datum,
+# stunde)`); Preis und Menge fehlen dann gemeinsam, der Ø bleibt richtig, die
+# Tagesmenge ist um eine Stunde kurz. Das ist die benannte Grenze, kein Fehler.
+
+FRUEHJAHR = date(2026, 3, 29)   # 02:00 → 03:00 entfällt: 23 Slots
+HERBST = date(2026, 10, 25)     # 02:00 zweimal: 25 Slots, 24 speicherbar
+
+
+@pytest.mark.asyncio
+async def test_zeitumstellung_fruehjahr_rechnet_mit_23_slots(db):
+    """Kein Auffüllen auf 24, keine Interpolation der fehlenden Stunde (P-4)."""
+    aid, tarif = await _anlage(db)
+    stunden = [h for h in range(24) if h != 2]
+    db.add_all([_stunde(aid, h, 1.0, 20.0 + h, datum=FRUEHJAHR) for h in stunden])
+    await db.flush()
+
+    sk = await _lade(db, aid, tarif, tag=FRUEHJAHR)
+
+    assert sk.kosten_euro == pytest.approx(sum(20.0 + h for h in stunden) / 100)
+    assert sk.mittel_cent == pytest.approx(sum(20.0 + h for h in stunden) / 23)
+    assert sk.herkunft == "gemessen"
+
+
+@pytest.mark.asyncio
+async def test_zeitumstellung_herbst_bleibt_ein_quotient(db):
+    """24 gespeicherte Slots des 25-Stunden-Tags: Σ und Ø aus genau diesen."""
+    aid, tarif = await _anlage(db)
+    db.add_all([_stunde(aid, h, 0.5, 30.0, datum=HERBST) for h in range(24)])
+    await db.flush()
+
+    sk = await _lade(db, aid, tarif, tag=HERBST)
+
+    assert sk.kosten_euro == pytest.approx(24 * 0.5 * 30.0 / 100)
+    assert sk.mittel_cent == pytest.approx(30.0)

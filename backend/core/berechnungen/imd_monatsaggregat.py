@@ -54,6 +54,7 @@ from backend.core.field_definitions import (
     get_pv_erzeugung_kwh,
     get_sonstiges_verbrauch_kwh,
     get_wp_warmwasser_kwh,
+    hat_wp_warmwasser_wert,
     ist_abgabe_kategorie,
     ist_zaehler_kategorie,
     get_speicher_netzladung_kwh,
@@ -114,6 +115,17 @@ class ImdTypBeitrag:
     #: vor?* (Konsumenten: Jahreskennzahlen, ``/aggregiert``, PDF) — nicht
     #: *ist der Nenner die feine Summe?*, wie bei
     #: {@link funktionsfremd_abzug_kwh}. Ein Wort, zwei Fragen.
+    #: **N-479 — „gemessen" je Funktion, nicht „größer als null".** Die vier
+    #: Mengen darüber sind ``float`` mit 0-Default; eine gemessene Null und ein
+    #: fehlender Zähler sehen dort gleich aus. Monat und Jahr summieren sie
+    #: (``sum()`` ⇒ immer eine Zahl) und konnten den Unterschied deshalb nicht
+    #: mehr sehen — sie meldeten im Sommer „kein Wärmemengenzähler zugeordnet",
+    #: obwohl beide Zähler hingen und lieferten (simon42 T89667, dietmar1968).
+    #: Der **Tag** konnte es schon immer; er liest die Zeile selbst.
+    wp_heizung_gemessen: bool = False
+    wp_warmwasser_gemessen: bool = False
+    wp_strom_heizen_gemessen: bool = False
+    wp_strom_warmwasser_gemessen: bool = False
     wp_hat_split: bool = False
     #: N-391: Trägt die Zeile eine **gemessene Gesamtwärme** (Feld
     #: ``waerme_kwh``, EIN gemeinsamer Wärmemengenzähler)? Dann gilt sie (D1) —
@@ -253,6 +265,21 @@ def _f(data: dict, key: str) -> float:
     return float(data.get(key, 0) or 0)
 
 
+def _hat(data: dict, key: str) -> bool:
+    """Trägt die Zeile für ``key`` überhaupt einen Wert? (N-479)
+
+    Die Umkehrung zu {@link _f} an derselben Lesetür — keine zweite Regel,
+    sondern die Information, die ``_f`` verwirft: Eine **gemessene 0** und ein
+    **fehlender Zähler** kommen dort beide als ``0.0`` heraus, sind aber
+    verschiedene Aussagen (``CLAUDE.md``: ``is not None`` statt ``if val``).
+
+    Wer sie unterscheiden muss, ist die Kennzahl: „diesen Monat nicht geheizt"
+    ist ein **Zeitraum**-Grund, „kein Zähler zugeordnet" ein **Ausstattungs**-Grund
+    — und der zweite schickt den Anwender zu einem Handgriff, den er nicht braucht.
+    """
+    return data.get(key) is not None
+
+
 def imd_typ_beitrag(
     inv, data: dict | None, source_provenance: dict | None = None
 ) -> ImdTypBeitrag:
@@ -297,7 +324,13 @@ def imd_typ_beitrag(
         # N-398: `heizwaerme_kwh` statt der Rohspalte — dieselbe Lesetuer plus
         # den Rueckfall auf die gemessene *Nutzenergie Heizbetrieb*, wenn kein
         # Waermemengenzaehler am Geraet haengt (die eine Weiche, s. dort).
-        heizung = heizwaerme_kwh(data) or 0.0
+        # N-479: Das ``or 0.0`` verwirft die Auskunft, die ``heizwaerme_kwh``
+        # ausdrücklich gibt — sie liefert **0.0 bei gemessener Null** und
+        # **None ohne Zähler** (s. dort, Stufe 4: „kein Zähler" und „Zähler
+        # stand auf null" sind verschiedene Aussagen). Die Menge braucht die
+        # 0, der GRUND braucht die Unterscheidung. Beides festhalten.
+        _heizung_roh = heizwaerme_kwh(data)
+        heizung = _heizung_roh or 0.0
         # N-379: **Der Lesepfad fragt dieselbe Registry wie die Erfassung.**
         # An einer Split-Klimaanlage gibt es keinen Warmwasserkreis (N-304); ein
         # dort noch gespeicherter Altwert floss trotzdem in `wp_waerme` und von
@@ -339,6 +372,12 @@ def imd_typ_beitrag(
             wp_waerme=waerme,
             wp_strom_heizen=_f(data, "strom_heizen_kwh"),
             wp_strom_warmwasser=_f(data, "strom_warmwasser_kwh"),
+            # N-479: Ist die Größe an diesem Gerät GEMESSEN — unabhängig davon,
+            # ob dabei 0 herauskam? Die Mengen oben können das nicht sagen.
+            wp_heizung_gemessen=_heizung_roh is not None,
+            wp_warmwasser_gemessen=hat_wp_warmwasser_wert(data, params),
+            wp_strom_heizen_gemessen=_hat(data, "strom_heizen_kwh"),
+            wp_strom_warmwasser_gemessen=_hat(data, "strom_warmwasser_kwh"),
             wp_hat_split=hat_split,
             # N-391: die Herkunft der Wärme, nicht ihre Menge — s. Feld-Docstring.
             wp_waerme_ist_gesamt=bool(_waerme_gesamt),

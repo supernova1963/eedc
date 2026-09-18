@@ -368,17 +368,18 @@ export function CommunityShareBlockInhalt() {
                 </Button>
               </div>
             ) : nachsendenOffen ? (
-              /* #387 Schritt 3: Seit dieser Version geht die Ertragserwartung
-                 deines Standorts mit — der Community-Vergleich stellt am
-                 1.9.2026 darauf um. Wer automatisch teilt, sendet von selbst
-                 nach; hier steht nur, wer es einmal von Hand tun muss. Der
-                 Knopf ist derselbe wie oben (Voll-Submit), es entsteht keine
-                 zweite Übertragungsart. */
+              /* #387 Schritt 3 (v4.0.22) und F-73 (17.09.2026): Wer automatisch
+                 teilt, sendet nach einem Update mit neuem Schema-Stand von
+                 selbst nach; hier steht nur, wer es einmal von Hand tun muss.
+                 Der Knopf ist derselbe wie oben (Voll-Submit), es entsteht
+                 keine zweite Übertragungsart. Der Text nennt bewusst keinen
+                 Termin und kein Feld mehr — beim ersten Lauf stand hier
+                 „ab dem 1. September", und der Satz überlebte den Termin. */
               <div className="flex flex-wrap items-center gap-3">
                 <p className="text-sm text-yellow-600 dark:text-yellow-400">
-                  Neu: eedc kann jetzt auch die Ertragserwartung deines Standorts mitschicken.
-                  Der Community-Vergleich rechnet damit ab dem 1. September fairer — für Anlagen,
-                  die noch kein volles Jahr gemessen haben. Einmal übertragen genügt.
+                  Seit deinem letzten Teilen hat sich geändert, was eedc der Community mitschickt
+                  oder was seither hätte gesendet werden sollen. Einmal übertragen bringt deinen
+                  Datensatz wieder auf den aktuellen Stand — danach verschwindet dieser Hinweis.
                 </p>
                 <Button variant="secondary" size="sm" loading={uebertrage} onClick={jetztUebertragen}>
                   Jetzt übertragen

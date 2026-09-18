@@ -1,7 +1,8 @@
 /**
  * Wärmepumpen-Hub-Blöcke (IA v4) — ④ Verlauf · ⑤ Vergleich · Wirtschaftlichkeit.
  * Self-fetch über anlageId + aktives Gerät; rendern die geteilten IST-Komponenten
- * aus `components/waermepumpe` (eine Code-Wahrheit mit `WaermepumpeDashboard`).
+ * aus `components/waermepumpe` — eine Code-Wahrheit; die V3-Seite `WaermepumpeDashboard`,
+ * mit der sie geteilt waren, ist mit dem V4-Flip entfallen (F-WK10-B3, 18.09.2026).
  */
 import { useEffect, useState } from 'react'
 import {

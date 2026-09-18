@@ -15,7 +15,13 @@ import type { MonatsZeitreihe } from '../../pages/auswertung/types'
 import type { TagWerte } from '../../api/energie_profil'
 
 export type WerteGruppe = 'basis' | 'quoten' | 'wetter' | 'speicher' | 'waermepumpe' | 'eauto' | 'sonstiges' | 'finanzen' | 'co2' | 'tagdetail' | 'erzeuger' | 'zaehler'
-export type WerteAggregation = 'sum' | 'avg' | 'none'
+/**
+ * Fuß-Aggregation einer Spalte. `gewichtet` ist das **mengengewichtete** Mittel
+ * (Σ Wert × Gewicht ÷ Σ Gewicht) mit der Spalte `gewicht` als Gewicht — für
+ * Preise Pflicht (SOLL Flex-Tarife **A-1/§8**: kein arithmetisches Mittel über
+ * Preise; ein teurer Winter- und ein billiger Sommermonat wiegen sonst gleich).
+ */
+export type WerteAggregation = 'sum' | 'avg' | 'none' | 'gewichtet'
 
 /**
  * Zeit-Granularität einer Werte-Sicht. Der verfügbare Metrik-Satz **unterscheidet
@@ -33,6 +39,8 @@ export interface WerteMetrik {
   gruppe: WerteGruppe
   decimals: number
   aggregation: WerteAggregation
+  /** Nur bei `aggregation: 'gewichtet'`: Key der Mengen-Spalte, die gewichtet. */
+  gewicht?: string
   defaultVisible: boolean
   /** In welchen Granularitäten verfügbar (mind. eine). */
   granular: Granularitaet[]
@@ -122,7 +130,9 @@ export const WERTE_METRIKEN: WerteMetrik[] = [
   { key: 'netto_ertrag',       label: 'Netto-Ertrag (PV)', unit: '€',       gruppe: 'finanzen',    decimals: 2, aggregation: 'sum', defaultVisible: false, granular: MONAT_TAG, higherIsBetter: true },
   { key: 'ust_eigenverbrauch', label: 'USt Eigenverbrauch', unit: '€',      gruppe: 'finanzen',    decimals: 2, aggregation: 'sum', defaultVisible: false, granular: NUR_MONAT, higherIsBetter: false },
   { key: 'netto_bilanz',       label: 'Netto-Bilanz',      unit: '€',       gruppe: 'finanzen',    decimals: 2, aggregation: 'sum', defaultVisible: true,  granular: MONAT_TAG, higherIsBetter: true },
-  { key: 'netzbezug_preis_cent', label: 'Ø Netzpreis',     unit: 'ct/kWh',  gruppe: 'finanzen',    decimals: 2, aggregation: 'avg', defaultVisible: false, granular: NUR_MONAT, higherIsBetter: false },
+  // A-1 (18.09.2026): der Fuß ist der mengengewichtete Ø über den Netzbezug — bis dahin ein
+  // arithmetisches Mittel der Monats-Ø, das §8 des Flex-Konzepts wörtlich verbietet.
+  { key: 'netzbezug_preis_cent', label: 'Ø Netzpreis',     unit: 'ct/kWh',  gruppe: 'finanzen',    decimals: 2, aggregation: 'gewichtet', gewicht: 'netzbezug', defaultVisible: false, granular: NUR_MONAT, higherIsBetter: false },
   // CO₂ — „(PV)" grenzt gegen die vollständige Bilanz ab, wie „Netto-Ertrag (PV)"
   // gegen das T-Konto: hier steht der PV-Anteil (Eigenverbrauch × Strommix,
   // Layer-SoT `berechne_co2_bilanz`), OHNE Wärmepumpe und E-Mobilität. Nur der
@@ -148,6 +158,9 @@ export const WERTE_METRIKEN: WerteMetrik[] = [
   { key: 'grundlast_kw',           label: 'Grundlast',      unit: 'kW',     gruppe: 'tagdetail',   decimals: 2, aggregation: 'none', defaultVisible: false, granular: NUR_TAG, higherIsBetter: false },
   { key: 'performance_ratio',      label: 'Performance Ratio', unit: '',    gruppe: 'tagdetail',   decimals: 2, aggregation: 'avg', defaultVisible: false, granular: NUR_TAG, higherIsBetter: true },
   { key: 'batterie_vollzyklen',    label: 'SoC-Hübe', unit: '',     gruppe: 'tagdetail',   decimals: 2, aggregation: 'sum', defaultVisible: false, granular: NUR_TAG, higherIsBetter: undefined },
+  // Bewusst `avg`: der Tages-Ø des Börsenpreises ist ein ZEITgewichteter Marktwert (24 gleich lange
+  // Stunden), sein Mittel über Tage ist der Basispreis des Zeitraums — kein bezahlter Preis, also
+  // keine Menge, die ihn gewichten müsste (Flex-Konzept §8, benannte Ausnahme 18.09.2026).
   { key: 'boersenpreis_avg_cent',  label: 'Börsenpreis Ø',  unit: 'ct/kWh', gruppe: 'tagdetail',   decimals: 2, aggregation: 'avg', defaultVisible: false, granular: NUR_TAG, higherIsBetter: false },
   { key: 'negative_preis_stunden', label: 'Neg. Preisstd.', unit: 'h',      gruppe: 'tagdetail',   decimals: 0, aggregation: 'sum', defaultVisible: false, granular: NUR_TAG, higherIsBetter: undefined },
   { key: 'einspeisung_neg_preis_kwh', label: 'Einsp. neg. Preis', unit: 'kWh', gruppe: 'tagdetail', decimals: 1, aggregation: 'sum', defaultVisible: false, granular: NUR_TAG, higherIsBetter: undefined },

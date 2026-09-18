@@ -350,7 +350,12 @@ export function SpeicherDeepDive({
           icon={<BatteryCharging className="h-5 w-5 text-green-500" />}
           kpi={speicher.zyklen_jahr}
           einheit=""
-          beschreibung="Vollständige Lade-/Entladezyklen"
+          // N-524: worauf die Zahl steht — unter zwölf Monaten ist sie hochgerechnet (#387-Klasse).
+          beschreibung={
+            speicher.basis_monate != null && speicher.basis_monate < 12
+              ? `Vollständige Lade-/Entladezyklen — hochgerechnet aus ${fmtZahl(speicher.basis_monate, 0)} von 12 Monaten`
+              : 'Vollständige Lade-/Entladezyklen'
+          }
           parkId="komp-speicher-kpi-zyklen"
           parkTitel="Speicher · Zyklen/Jahr"
         />
@@ -1231,6 +1236,13 @@ function CommunityVergleichsKPI({
           <span>
             {abweichung >= 0 ? '+' : ''}{fmtZahl(abweichung, 1)} % vs. Ø
           </span>
+          {/* F-76 (18.09.2026): ein Ø ohne Grundgesamtheit ist keine Auskunft — der
+              Server liefert n seither auf jeder Vergleichsachse (KPIVergleich.von). */}
+          {kpi.von != null && (
+            <span className="text-gray-400 dark:text-gray-500">
+              (Ø von {fmtZahl(kpi.von, 0)} {kpi.von === 1 ? 'Anlage' : 'Anlagen'})
+            </span>
+          )}
         </div>
       )}
       <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">{beschreibung}</p>

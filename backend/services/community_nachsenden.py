@@ -41,7 +41,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-import httpx
+from backend.services.community_client import community_client
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -56,7 +56,16 @@ NACHSENDE_SETTINGS_KEY = "community_nachsende_lauf"
 #: Der Schema-Stand, den dieser Lauf herstellt. Wer ihn ändert, löst einen
 #: neuen Lauf aus — bewusst als Zeichenkette und nicht als Versionsnummer:
 #: nicht jede Version ändert den Datensatz.
-SCHEMA_STAND = "2026-08-soll-co2-eigenverbrauch"
+#:
+#: ⭐ **Zweiter Lauf, 17.09.2026 (F-73, Gernots Auftrag):** Seit v4.0.0 hatte
+#: der Monatsabschluss keinen Nachlauf mehr — das v4-Formular speicherte über
+#: eine Route ohne Auto-Share. Jeder seit dem 25.07. abgeschlossene Monat liegt
+#: damit bei Anwendern mit automatischem Teilen **ungesendet**. Der Datensatz
+#: selbst ist unverändert; der Stand wechselt trotzdem, weil genau dieser Lauf
+#: der eine Mechanismus ist, der den Bestand ohne Zutun des Anwenders heilt —
+#: mit der Einwilligung, die für das automatische Teilen ohnehin vorliegt.
+#: Alle anderen bekommen wie beim ersten Lauf Hinweis und Knopf.
+SCHEMA_STAND = "2026-09-nachlauf-f73"
 
 
 async def _marker(db: AsyncSession) -> Optional[dict]:
@@ -175,7 +184,7 @@ async def fuehre_nachsende_lauf_aus(db: AsyncSession) -> dict:
             daten = await prepare_community_data(db, anlage.id)
             if not daten or not daten.get("monatswerte"):
                 continue
-            async with httpx.AsyncClient(timeout=20.0) as client:
+            async with community_client(timeout=20.0) as client:
                 antwort = await client.post(
                     f"{COMMUNITY_SERVER_URL}/api/submit", json=daten
                 )

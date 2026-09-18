@@ -1363,6 +1363,11 @@ async def calculate_anlage_sensors(
                     zusatz = {"solar_noon": prognose["solar_noon_morgen"]}
             elif sensor.key == "eedc_speicher_voll_um":
                 value = prognose["speicher_voll_um"]
+                # Die Verbrauchsannahme der Simulation reist mit (N-392) — ein
+                # ANDERES Modell als beim Nachbarn darunter (8-Wochen-Profil
+                # statt 7-Tage-Profil); das Attribut `profil_typ` sagt es.
+                if value is not None and prognose.get("speicher_verbrauch_profil"):
+                    zusatz = dict(prognose["speicher_verbrauch_profil"])
             elif sensor.key == "eedc_verbrauchsprognose_heute_kwh":
                 value = prognose.get("verbrauch_heute_kwh")
                 if value is not None:

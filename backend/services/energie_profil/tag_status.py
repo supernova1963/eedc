@@ -243,7 +243,9 @@ async def _ha_tageswerte(
     """
     from backend.services.ha_statistics_service import get_ha_statistics_service
     from backend.services.snapshot.lts_aggregator import get_komponenten_tageskwh_lts
-    from backend.services.snapshot.komponenten_beitraege import komponenten_key_label
+    from backend.services.snapshot.komponenten_beitraege import (
+        geschriebener_wert_fuer, komponenten_key_label,
+    )
 
     if not get_ha_statistics_service().is_available:
         return None
@@ -260,7 +262,11 @@ async def _ha_tageswerte(
         _praefix, _, inv_id = key.rpartition("_")
         return komponenten_key_label(key, invs_by_id.get(inv_id))
 
+    # Versprechen gegen HA-Ergebnis über den SoT-Helfer (F-75): der LTS-Read
+    # liefert den Anlagen-Zähler aufgelöst als `pv_<id>`, nie als `pv_gesamt` —
+    # wörtlich verglichen hieß das „auch HA hat nichts" für eine Anlage, deren
+    # einziger Zähler der PV-Gesamtzähler ist.
     return {
-        _label(k): float(v) for k in sorted(erwartete_keys)
-        if isinstance((v := roh.get(k)), (int, float)) and v >= SCHWELLE_KWH
+        _label(k): v for k in sorted(erwartete_keys)
+        if (v := geschriebener_wert_fuer(k, roh)) is not None and v >= SCHWELLE_KWH
     }

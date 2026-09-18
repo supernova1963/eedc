@@ -75,6 +75,15 @@ describe('der einzige Fall ohne Jahreswert', () => {
     expect(text).toContain('erneut')
   })
 
+  it('nennt den fehlenden Massstab beim Namen und den Handgriff (Server seit 17.09.2026)', () => {
+    const text = jahresfensterHinweis(
+      b({ spez_ertrag_anlage: null, basis_monate: 7, basis_grund: 'kein_massstab' }) as BenchmarkData,
+    ) ?? ''
+    expect(text).toContain('Solarprognose')
+    expect(text).toContain('erneut')
+    expect(text).not.toContain('fehlen noch abgeschlossene Monate')
+  })
+
   it('macht keine Zusage, wann der Vergleich kommt', () => {
     const text = jahresfensterHinweis(b({ spez_ertrag_anlage: null }) as BenchmarkData) ?? ''
     expect(text).not.toMatch(/\b(Woche|Monat 20|Termin|bald)\b/)

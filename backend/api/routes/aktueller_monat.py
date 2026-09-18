@@ -2996,6 +2996,25 @@ async def get_aktueller_monat(
         # Monat also das Kennzeichen der **beitragenden** Geräte, wie es der
         # Tag seit jeher fragt (`views.py::_wp_getrennte_strommessung_tag`).
         hat_split=_wp_funktion.hat_split,
+        # **N-479: der Monat darf jetzt denselben Zeitraum-Grund führen wie der
+        # Tag.** Er konnte es nicht, weil seine Summen („gemessen 0" und „kein
+        # Zähler" tragen beide 0.0 bei) die Frage nicht mehr beantworteten — und
+        # meldete deshalb im Sommer „kein Wärmemengenzähler zugeordnet", obwohl
+        # beide Zähler hingen und lieferten (simon42 T89667, dietmar1968). Die
+        # Marke kommt aus den Monats-Fakten, je Funktion getrennt: Die Heizwärme
+        # kann gemessen sein und die Warmwasser-Wärme nicht.
+        # ⚠ **BEIDE Seiten müssen gemessen sein, nicht nur die Wärme** (N-438/S3,
+        # von deren Probe gefangen). „In diesem Zeitraum nicht geheizt" ist eine
+        # Aussage über das Gerät — sie setzt voraus, dass Zähler **und** Nenner
+        # dastanden und null meldeten. Bei gemessener Wärme ohne Heizstrom ist
+        # „kein Stromverbrauch erfasst" der genauere Satz und behält Vorrang.
+        null_ist_gemessen_heizen=(
+            _wp_funktion.heizung_gemessen and _wp_funktion.strom_heizen_gemessen
+        ),
+        null_ist_gemessen_warmwasser=(
+            _wp_funktion.warmwasser_gemessen
+            and _wp_funktion.strom_warmwasser_gemessen
+        ),
         # N-391: Misst EIN gemeinsamer Wärmemengenzähler beide Funktionen, gibt
         # es die Wärme je Funktion nicht — die Zeile sagt dann den Grund, statt
         # die Gesamtwärme durch den Heizstrom zu teilen (gemessen: 5,0 statt 3,0).

@@ -510,6 +510,12 @@ export function Top10Bestenliste({ ranking }: { ranking: Ranking }) {
               </td>
               <td className={`${ZELLE} text-right font-medium text-gray-900 dark:text-white`}>
                 {fmtZahl(eintrag.wert, 0)}
+                {/* #387: ein hochgerechneter Wert sagt es auch in der Liste (Server seit 17.09.2026). */}
+                {eintrag.basis_monate != null && eintrag.basis_monate < 12 && (
+                  <span className="ml-1 text-xs font-normal text-gray-400 dark:text-gray-500" title={`hochgerechnet aus ${eintrag.basis_monate} von 12 Monaten`}>
+                    ({fmtZahl(eintrag.basis_monate, 0)}/12)
+                  </span>
+                )}
               </td>
             </tr>
           ))}

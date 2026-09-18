@@ -56,6 +56,14 @@ class StrompreisAggregat:
     arithmetisch_cent: float         # Einfacher Ø aller Stunden (ct/kWh)
     abgedeckte_stunden: int          # Stunden mit Preisdaten
     sollstunden: int                 # Theoretische Stunden im Monat
+    #: Der mit dem **Eigenverbrauch** gewichtete Ø derselben Preiszeilen (SOLL
+    #: Flex-Tarife **A-2**): vermiedener Bezug je Slot = max(0, PV − Einspeisung).
+    #: ``None``, wenn der Monat keinen vermiedenen Bezug in Preiszeilen trägt.
+    #: Bis 18.09.2026 kannte nur die Tagesebene diesen Preis
+    #: (``SlotKosten.ev_mittel_cent``); Monat, Jahr, PDF und HA-Export
+    #: bewerteten die Ersparnis weiter mit dem bezugsgewichteten Ø — an einem
+    #: dynamischen Tarif systematisch zu hoch (Flex-Prüfung §12, Befund a).
+    ev_gewichtet_cent: Optional[float] = None
 
     @property
     def abdeckung(self) -> float:
@@ -89,6 +97,8 @@ async def berechne_monats_durchschnittspreis(
         select(
             TagesEnergieProfil.strompreis_cent,
             TagesEnergieProfil.netzbezug_kw,
+            TagesEnergieProfil.pv_kw,
+            TagesEnergieProfil.einspeisung_kw,
         ).where(
             and_(
                 TagesEnergieProfil.anlage_id == anlage_id,
@@ -107,14 +117,21 @@ async def berechne_monats_durchschnittspreis(
     summe_kosten = 0.0   # ct (preis × kWh)
     summe_kwh = 0.0      # kWh
     summe_preise = 0.0   # ct (für arithmetischen Ø)
+    # A-2: dieselben Preiszeilen, mit dem VERMIEDENEN Bezug gewichtet —
+    # dieselbe Bildung wie `SlotKosten.ev_mittel_cent` auf der Tagesebene.
+    summe_ev_kosten = 0.0
+    summe_ev_kwh = 0.0
 
-    for preis, bezug in rows:
+    for preis, bezug, pv, einspeisung in rows:
         if preis is None:
             continue
         kw = max(0.0, bezug or 0.0)  # Negativen Netzbezug auf 0 clampen
         summe_kosten += preis * kw    # ct × kW × 1h = ct·kWh
         summe_kwh += kw
         summe_preise += preis
+        ev = max(0.0, float(pv or 0.0) - float(einspeisung or 0.0))
+        summe_ev_kosten += preis * ev
+        summe_ev_kwh += ev
 
     n = len(rows)
     tage_im_monat = monthrange(jahr, monat)[1]
@@ -128,6 +145,9 @@ async def berechne_monats_durchschnittspreis(
         arithmetisch_cent=arithmetisch,
         abgedeckte_stunden=n,
         sollstunden=sollstunden,
+        ev_gewichtet_cent=(
+            round(summe_ev_kosten / summe_ev_kwh, 2) if summe_ev_kwh > 0 else None
+        ),
     )
 
 
@@ -196,6 +216,13 @@ async def lade_preis_aggregate_je_monat(
     fest.
     """
     bezug = func.max(func.coalesce(TagesEnergieProfil.netzbezug_kw, 0.0), 0.0)
+    # A-2: vermiedener Bezug je Slot = max(0, PV − Einspeisung) — dieselbe
+    # Bildung wie im Einzelmonat und auf der Tagesebene (`lade_slot_kosten_je_tag`).
+    ev = func.max(
+        func.coalesce(TagesEnergieProfil.pv_kw, 0.0)
+        - func.coalesce(TagesEnergieProfil.einspeisung_kw, 0.0),
+        0.0,
+    )
     bedingungen = [
         TagesEnergieProfil.anlage_id == anlage_id,
         TagesEnergieProfil.strompreis_cent.isnot(None),
@@ -218,22 +245,28 @@ async def lade_preis_aggregate_je_monat(
             func.sum(bezug),
             func.sum(TagesEnergieProfil.strompreis_cent),
             func.count(),
+            func.sum(TagesEnergieProfil.strompreis_cent * ev),
+            func.sum(ev),
         )
         .where(and_(*bedingungen))
         .group_by(jahr_spalte, monat_spalte)
     )
 
     je_monat: dict[tuple[int, int], StrompreisAggregat] = {}
-    for jahr, monat, summe_kosten, summe_kwh, summe_preise, n in result.all():
+    for jahr, monat, summe_kosten, summe_kwh, summe_preise, n, summe_ev_kosten, summe_ev in result.all():
         jahr, monat, n = int(jahr), int(monat), int(n or 0)
         if n <= 0:
             continue
         summe_kwh = float(summe_kwh or 0.0)
+        summe_ev = float(summe_ev or 0.0)
         je_monat[(jahr, monat)] = StrompreisAggregat(
             gewichtet_cent=round(float(summe_kosten or 0.0) / summe_kwh, 2) if summe_kwh > 0 else None,
             arithmetisch_cent=round(float(summe_preise or 0.0) / n, 2),
             abgedeckte_stunden=n,
             sollstunden=monthrange(jahr, monat)[1] * 24,
+            ev_gewichtet_cent=(
+                round(float(summe_ev_kosten or 0.0) / summe_ev, 2) if summe_ev > 0 else None
+            ),
         )
     return PreisMessung(anlage_id, je_monat)
 
@@ -581,6 +614,13 @@ class MonatsPreis:
     #: verschiedene Dinge: Ein Ø aus 40 % der Stunden hat dieselbe Herkunft
     #: wie einer aus 98 %, aber nicht dieselbe Belastbarkeit.
     abdeckung: Optional[float] = None
+    #: Der **EV-gewichtete** Ø der gemessenen Stundenpreise dieses Monats (A-2),
+    #: ``None`` ohne Messung. ⚠ Er hängt NICHT an ``herkunft``: Auch ein Monat
+    #: mit gepflegtem (abgerechnetem) Bezugs-Ø trägt ihn, denn nach **P-1** ist
+    #: die Bezugsabrechnung für die Ersparnis nur der Rückfall — unterhalb der
+    #: Abrechnung gilt die Messung (P-2), genau wie auf der Tagesebene, wo der
+    #: gemessene Slot-Preis den abgerechneten Ø schlägt.
+    ev_cent: Optional[float] = None
 
     @property
     def ist_gemessen(self) -> bool:
@@ -676,8 +716,6 @@ async def _aufgeloester_monatspreis_ungecacht(
     # bei dynamischem Tarif real (viele Negativpreis-Stunden) und wäre als
     # falsy stillschweigend durchgefallen — die 0-Werte-Falle.
     gepflegt = getattr(monatsdaten, "netzbezug_durchschnittspreis_cent", None)
-    if gepflegt is not None:
-        return MonatsPreis(cent=gepflegt, herkunft=PREIS_HERKUNFT_GEPFLEGT)
 
     # ⚠ **Alle Tarif-Attribute VOR dem ersten Datenbank-Roundtrip lesen.** Ein
     # ORM-Objekt kann danach abgelaufen sein, und ein Nachladen im falschen
@@ -695,27 +733,41 @@ async def _aufgeloester_monatspreis_ungecacht(
     # 2 — gemessen. Liegt die Messung der ganzen Anfrage vor, steht der Monat
     # schon darin (EINE gruppierte Abfrage statt einer je Monat und Aufrufer);
     # sonst der Einzelmonat wie bisher.
+    # ⭐ **Die Messung wird auch bei gepflegtem Ø gelesen** (seit 18.09.2026):
+    # sie trägt den EV-gewichteten Preis (A-2), und der gilt für die Ersparnis
+    # unabhängig davon, welche Stufe den Bezugspreis stellt (P-1: die
+    # Bezugsabrechnung ist für die Ersparnis nur der Rückfall).
     aggregat = (
         messung.hole(jahr, monat)
         if messung is not None
         else await berechne_monats_durchschnittspreis(anlage_id, jahr, monat, db)
     )
+    ev_cent = aggregat.ev_gewichtet_cent if aggregat is not None else None
+
+    if gepflegt is not None:
+        return MonatsPreis(cent=gepflegt, herkunft=PREIS_HERKUNFT_GEPFLEGT, ev_cent=ev_cent)
+
     if aggregat is not None and aggregat.gewichtet_cent is not None:
         return MonatsPreis(
             cent=aggregat.gewichtet_cent,
             herkunft=PREIS_HERKUNFT_GEMESSEN,
             abdeckung=round(aggregat.abdeckung, 3),
+            ev_cent=ev_cent,
         )
 
     if stammpreis is None:
         from backend.core.wirtschaftlichkeit_defaults import NETZBEZUG_DEFAULT_CENT
-        return MonatsPreis(cent=NETZBEZUG_DEFAULT_CENT, herkunft=PREIS_HERKUNFT_STAMM)
+        return MonatsPreis(
+            cent=NETZBEZUG_DEFAULT_CENT, herkunft=PREIS_HERKUNFT_STAMM, ev_cent=ev_cent,
+        )
 
     # 3 — Zeitfenster (HT/NT).
     if tarif_hat_zeitfenster:
         gewichtet = await wirksamer_arbeitspreis_cent(db, anlage_id, jahr, monat, tarif)
         if gewichtet != stammpreis:
-            return MonatsPreis(cent=gewichtet, herkunft=PREIS_HERKUNFT_ZEITFENSTER)
+            return MonatsPreis(
+                cent=gewichtet, herkunft=PREIS_HERKUNFT_ZEITFENSTER, ev_cent=ev_cent,
+            )
 
     # 4 — Stammpreis.
-    return MonatsPreis(cent=stammpreis, herkunft=PREIS_HERKUNFT_STAMM)
+    return MonatsPreis(cent=stammpreis, herkunft=PREIS_HERKUNFT_STAMM, ev_cent=ev_cent)

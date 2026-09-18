@@ -128,7 +128,15 @@ async def baue_finanz_zeile(
         abgabe_dritte_kwh=eingabe.abgabe_dritte_kwh or 0,
         bkw_eigenverbrauch_kwh=eingabe.bkw_eigenverbrauch_kwh or 0,
         netzbezug_preis_cent=preis.cent,
-        ev_preis_cent=eingabe.ev_preis_cent,
+        # A-2 auf JEDER Ebene (seit 18.09.2026): kennt der Aufrufer den
+        # EV-gewichteten Preis (Tagesebene), gilt seiner; sonst der aus der
+        # Monatsmessung — damit rechnen Cockpit → Monat/Jahr, Aussichten, PDF
+        # und HA-Export dieselbe Ersparnis wie die Summe der Tage es tut. Ohne
+        # Messung bleibt ``None`` und der Aggregat-Helper nimmt den Bezugspreis
+        # (Prüfstein 2: bei Festpreis bewegt sich keine Zahl).
+        ev_preis_cent=(
+            eingabe.ev_preis_cent if eingabe.ev_preis_cent is not None else preis.ev_cent
+        ),
         netzbezug_preis_herkunft=preis.herkunft,
         einspeiseverguetung_cent=verg_cent,
         neg_preis_kwh=eingabe.neg_preis_kwh,

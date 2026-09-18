@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import logging
 from datetime import date, datetime, timedelta
-from typing import Optional
+from typing import Optional, Sequence
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
@@ -54,7 +54,9 @@ async def berechne_prognose_export(db, anlage) -> Optional[dict]:
         ``rest_today_kwh`` (verbleibende Stunden ab jetzt, laufende Stunde
         anteilig nach verstrichenen Minuten, #339), ``day_plus_1_kwh``,
         ``day_plus_2_kwh``, ``day_plus_3_kwh``, ``speicher_voll_um``
-        (str "HH:00" | None), ``verbrauch_heute_kwh`` (Σ des Live-Verbrauchsprofils,
+        (str "HH:00" | None), ``speicher_verbrauch_profil`` (die Verbrauchsannahme
+        dieser Simulation als Attribut-Dict, s. ``_speicher_verbrauch_profil``; None,
+        solange nicht simuliert wurde), ``verbrauch_heute_kwh`` (Σ des Live-Verbrauchsprofils,
         nur aus einem individuellen Profil — sonst None, #395), ``stundenprofil_heute`` und
         ``stundenprofil_day_plus_1/2/3`` (je 24 kWh-Slots) — oder ``None``.
     """
@@ -124,6 +126,7 @@ async def berechne_prognose_export(db, anlage) -> Optional[dict]:
 
         # „Speicher voll um" — Simulation ab aktuellem SoC (nicht Mitternacht).
         speicher_voll_um = None
+        speicher_verbrauch_profil = None
         speicher_kap, speicher_eta, akt_soc = await _aktueller_speicher(
             db, anlage.id, heute
         )
@@ -139,6 +142,7 @@ async def berechne_prognose_export(db, anlage) -> Optional[dict]:
                 wirkungsgrad_prozent=speicher_eta,
             )
             speicher_voll_um = sim.speicher_voll_um
+            speicher_verbrauch_profil = _speicher_verbrauch_profil(vp, verbrauch_stunden)
 
         # #395 (OB73-gif): die Verbrauchsprognose des Tages — dieselbe Zahl wie
         # die Kachel in Cockpit → Live, aus demselben Dienst. `None` ohne
@@ -170,6 +174,7 @@ async def berechne_prognose_export(db, anlage) -> Optional[dict]:
             "day_plus_2_kwh": _tageswert(2),
             "day_plus_3_kwh": _tageswert(3),
             "speicher_voll_um": speicher_voll_um,
+            "speicher_verbrauch_profil": speicher_verbrauch_profil,
             "verbrauch_heute_kwh": verbrauch.summe_kwh if verbrauch else None,
             "verbrauch_profil_typ": verbrauch.profil_typ if verbrauch else None,
             "verbrauch_profil_tage": verbrauch.profil_tage if verbrauch else None,
@@ -185,6 +190,41 @@ async def berechne_prognose_export(db, anlage) -> Optional[dict]:
             getattr(anlage, "id", "?"), type(e).__name__, e,
         )
         return None
+
+
+def _speicher_verbrauch_profil(
+    vp: Optional[dict], verbrauch_stunden: Sequence[float]
+) -> dict:
+    """Die Verbrauchsannahme der Speicher-Simulation als Sensor-Attribute (N-392).
+
+    ⚠ **Zwei Verbrauchsmodelle stehen im selben Export nebeneinander**, und
+    das ist bekannt und bleibt so: `eedc_verbrauchsprognose_heute_kwh` trägt
+    das 7-Tage-Profil der Live-Kachel (``verbrauchsprognose_heute``), die
+    Simulation hinter `eedc_speicher_voll_um` rechnet mit dem gewichteten
+    8-Wochen-Profil (``verbrauch_prognose_service``). Bis 2026-09-18 nannte
+    nur der Nachbar seine Grundlage (``profil_typ``/``profil_tage``) — eine
+    Automation, die beide verrechnet, mischte zwei Modelle ohne ein Attribut,
+    das es sagt. Deshalb trägt jetzt jeder Sensor seine Annahme; die
+    Algorithmen werden hier **nicht** zusammengeführt.
+
+    Dieselben Feldnamen wie beim Nachbarn, wo dieselbe Bedeutung dahintersteht
+    (``profil_typ``, ``profil_tage``); die Kennwerte des Modells kommen aus dem
+    Ergebnis des Dienstes — nichts wird hier ein zweites Mal hergeleitet.
+
+    ``verbrauch_annahme_kwh`` ist die Σ genau der Liste, die die Simulation
+    bekommen hat — auch dann, wenn kein Profil vorlag: dann rechnet sie mit
+    **0 kWh Verbrauch** (``profil_typ: "kein_profil"``), und das ist die
+    Annahme mit der größten Überraschung für den Anwender; sie darf am
+    wenigsten stumm bleiben.
+    """
+    return {
+        "profil_typ": vp["profil_typ"] if vp else "kein_profil",
+        "profil_wochen": vp["wochen"] if vp else None,
+        "profil_halbwertszeit_tage": vp["halbwertszeit_tage"] if vp else None,
+        "profil_stufe": vp["basis"] if vp else None,
+        "profil_tage": vp["daten_tage"] if vp else None,
+        "verbrauch_annahme_kwh": round(sum(float(v or 0.0) for v in verbrauch_stunden), 1),
+    }
 
 
 def _solar_noon_text(tag: date, longitude: Optional[float]) -> Optional[str]:

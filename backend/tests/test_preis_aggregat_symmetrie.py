@@ -57,10 +57,11 @@ async def _anlage(db, name="Preismessung") -> int:
     return anlage.id
 
 
-async def _stunde(db, anlage_id, d: date, stunde: int, preis, bezug):
+async def _stunde(db, anlage_id, d: date, stunde: int, preis, bezug, pv=None, einspeisung=None):
     db.add(TagesEnergieProfil(
         anlage_id=anlage_id, datum=d, stunde=stunde,
         strompreis_cent=preis, netzbezug_kw=bezug,
+        pv_kw=pv, einspeisung_kw=einspeisung,
     ))
 
 
@@ -92,6 +93,14 @@ async def _bestand(db) -> int:
         await _stunde(db, aid, date(2025, 6, 9), stunde, None, 3.0)
     await _stunde(db, aid, date(2025, 2, 28), 23, 99.0, 9.0)
     await _stunde(db, aid, date(2025, 4, 1), 0, 88.0, 9.0)
+    # **2025-07** — A-2: vier Mittagsstunden mit vermiedenem Bezug (PV 3, Einspeisung 1
+    # ⇒ EV 2) zu 10 ct, vier Abendstunden mit Bezug 2 kW zu 50 ct und ohne PV;
+    # dazu eine Stunde, in der die Einspeisung die PV übersteigt (EV klemmt auf 0).
+    for stunde in (11, 12, 13, 14):
+        await _stunde(db, aid, date(2025, 7, 8), stunde, 10.0, 0.0, pv=3.0, einspeisung=1.0)
+    for stunde in (19, 20, 21, 22):
+        await _stunde(db, aid, date(2025, 7, 8), stunde, 50.0, 2.0, pv=0.0, einspeisung=0.0)
+    await _stunde(db, aid, date(2025, 7, 8), 23, 70.0, 0.0, pv=0.5, einspeisung=1.5)
     await db.flush()
     return aid
 
@@ -113,6 +122,8 @@ class TestBeideWegeSagenDasselbe:
             assert gruppiert.arithmetisch_cent == einzeln.arithmetisch_cent
             assert gruppiert.abgedeckte_stunden == einzeln.abgedeckte_stunden
             assert gruppiert.sollstunden == einzeln.sollstunden
+            # A-2 (18.09.2026): der EV-gewichtete Ø ist das fünfte Feld.
+            assert gruppiert.ev_gewichtet_cent == einzeln.ev_gewichtet_cent
 
     @pytest.mark.asyncio
     async def test_erwartungswerte_von_hand_nachgerechnet(self, db):
@@ -182,3 +193,24 @@ class TestBeideWegeSagenDasselbe:
         assert eng.hole(2025, 5) is None
         assert eng.hole(2025, 4).gewichtet_cent == alle.hole(2025, 4).gewichtet_cent
         assert eng.hole(2025, 4).abgedeckte_stunden == alle.hole(2025, 4).abgedeckte_stunden
+
+
+@pytest.mark.asyncio
+async def test_ev_gewichteter_oe_nimmt_die_stunden_des_vermiedenen_bezugs(db):
+    """A-2 (18.09.2026): Bezugs-Ø 50 ct, EV-Ø 10 ct — aus denselben Preiszeilen.
+
+    Juli: der Bezug fällt abends (50 ct), der vermiedene Bezug mittags (10 ct).
+    Die 23-Uhr-Stunde zu 70 ct trägt Einspeisung > PV und klemmt auf 0 — sie
+    darf den EV-Ø nicht bewegen. Beide Wege (Einzelmonat, gruppiert) gleich.
+    """
+    from backend.services.strompreis_aggregator import (
+        berechne_monats_durchschnittspreis, lade_preis_aggregate_je_monat,
+    )
+    aid = await _bestand(db)
+    einzeln = await berechne_monats_durchschnittspreis(aid, 2025, 7, db)
+    gruppe = (await lade_preis_aggregate_je_monat(db, aid)).hole(2025, 7)
+    for agg in (einzeln, gruppe):
+        assert agg.gewichtet_cent == 50.0
+        assert agg.ev_gewichtet_cent == 10.0
+    # Monate ohne PV-Zeilen kennen keinen EV-Ø — `None`, nicht 0.
+    assert (await berechne_monats_durchschnittspreis(aid, 2025, 3, db)).ev_gewichtet_cent is None
