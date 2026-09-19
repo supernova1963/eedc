@@ -368,7 +368,7 @@ def test_helper_laesst_die_null_stehen():
 
 
 def test_die_kette_haelt_wie_die_roi_route_sie_baut():
-    """Auflösung wie in `crud.py::get_roi_dashboard` — Helper, dann Formel.
+    """Auflösung wie in `roi.py::get_roi_dashboard` — Helper, dann Formel.
 
     Das ist der Weg, den die Route seit dem Fix geht; ohne den Helper stünde
     hier der ValueError von oben.

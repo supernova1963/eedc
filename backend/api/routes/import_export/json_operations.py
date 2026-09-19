@@ -267,6 +267,7 @@ async def export_anlage_full(
             aktion="Anlage exportiert",
             erfolg=True,
             anlage_id=anlage_id,
+            db=db,
         )
         return result
     except HTTPException:
@@ -279,6 +280,7 @@ async def export_anlage_full(
             erfolg=False,
             details=f"{type(e).__name__}: {e}",
             anlage_id=anlage_id,
+            db=db,
         )
         raise HTTPException(status_code=500, detail=f"Export-Fehler: {type(e).__name__}: {str(e)}")
 
@@ -511,7 +513,7 @@ async def _export_anlage_full_impl(anlage_id: int, db: AsyncSession):
 async def import_json(
     file: UploadFile = File(...),
     ueberschreiben: bool = Query(False, description="Existierende Anlage mit gleichem Namen überschreiben"),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db, scope="function")
 ) -> JSONImportResult:
     """
     Importiert eine Anlage aus einer JSON-Export-Datei.
@@ -901,6 +903,7 @@ async def import_json(
             erfolg=True,
             details=f"{importiert['monatsdaten']} Monate, {importiert['investitionen']} Investitionen",
             anlage_id=anlage_id,
+            db=db,
         )
 
         return JSONImportResult(
@@ -919,6 +922,7 @@ async def import_json(
             aktion="Import fehlgeschlagen",
             erfolg=False,
             details=f"{type(e).__name__}: {e}",
+            db=db,
         )
         return JSONImportResult(
             erfolg=False,

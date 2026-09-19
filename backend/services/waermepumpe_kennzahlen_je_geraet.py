@@ -1,6 +1,6 @@
 """Die Wärme/Klima-Kennzahlen **eines Geräts** — EINE Stelle (WK-16a).
 
-Der Komponenten-Hub rechnet sie seit jeher (``investitionen/dashboards.py::
+Der Komponenten-Hub rechnet sie seit jeher (``investitionen/dashboard_waermepumpe.py::
 get_waermepumpe_dashboard``): Strom, Wärme, Arbeitszahl gesamt, je Funktion und
 Kühlen — je Gerät, über dessen Monatszeilen gefaltet. Das **Cockpit** hatte sie
 nicht; der Block *Wärme/Klima* zeigte anlagenweite Summen und verwies für die
@@ -541,7 +541,7 @@ async def lade_kennzahlen_je_geraet(
 
     ⚠ **P10/``P10_PER_INVESTITION``: hier werden ``InvestitionMonatsdaten``
     selbst geladen, und das ist die richtige Kategorie.** Die Monats-Fakten
-    (``services/monats_fakten.py``) liefern die **anlagenweite** Zeile; eine
+    (``services/monats_fakten/``) liefern die **anlagenweite** Zeile; eine
     Kennzahl JE GERÄT lässt sich daraus strukturell nicht ablesen — genau die
     Begründung, mit der ``get_waermepumpe_dashboard`` und
     ``get_hub_leer_grund`` seit jeher in dieser Liste stehen. Die Zeitfilter

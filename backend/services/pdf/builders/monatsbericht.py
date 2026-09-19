@@ -30,7 +30,7 @@ Zahl auf dem Weg nicht anfassen.
 Ausschließlich aus zwei bestehenden Routen — dieses Modul faltet **nichts**
 selbst (ADR-002/**P10**):
 
-* ``api/routes/aktueller_monat.py::get_aktueller_monat`` — nimmt ``jahr`` und
+* ``api/routes/aktueller_monat/__init__.py::get_aktueller_monat`` — nimmt ``jahr`` und
   ``monat`` seit jeher als Parameter; die Datenschicht war für den Bericht
   bereits vollständig da.
 * ``api/routes/cockpit/nachhaltigkeit.py::get_nachhaltigkeit`` — die CO₂-Zahlen.

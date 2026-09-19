@@ -22,6 +22,16 @@ vi.mock('../../api', async (importOriginal) => ({
       amortisation_annahme: 'ohne künftige Instandhaltung',
       gesamt_co2_einsparung_kg: 2000,
       benzinpreis_hinweis_euro: 1.7,
+      // N-525: die Kurve kommt fertig aus dem Backend — hier eine Treppe:
+      // 8.000 € ab 2023, weitere 7.000 € ab 2025.
+      basis_jahr: 2023,
+      gesamt_amortisation_jahr: 2033,
+      amortisations_verlauf: [
+        { jahr: 2023, kapitaleinsatz_kumuliert_euro: 8000, einsparung_kumuliert_euro: 0 },
+        { jahr: 2024, kapitaleinsatz_kumuliert_euro: 8000, einsparung_kumuliert_euro: 600 },
+        { jahr: 2025, kapitaleinsatz_kumuliert_euro: 15000, einsparung_kumuliert_euro: 1200 },
+        { jahr: 2026, kapitaleinsatz_kumuliert_euro: 15000, einsparung_kumuliert_euro: 2700 },
+      ],
       berechnungen: [{
         investition_id: 1, investition_typ: 'speicher', investition_bezeichnung: 'BYD HVS 10',
         relevante_kosten: 8000, kapitaleinsatz: 8000, anschaffungskosten: 8000, anschaffungskosten_alternativ: 0,
@@ -80,6 +90,18 @@ describe('RoiAnalyse', () => {
     expect(screen.getAllByText('40,0').length).toBeGreaterThan(0)
     // Der Untertitel nennt Restbetrag und voraussichtliches Jahr.
     expect(screen.getAllByText(/noch 9\.000 €.*2032/).length).toBeGreaterThan(0)
+  })
+
+  it('N-525: die Kurve ist die Server-Reihe — Treppe statt Gerade, und der Satz darunter sagt es', async () => {
+    // Der Client rechnet die Kurve nicht mehr selbst (ADR-001): er zeichnet
+    // `amortisations_verlauf`. Sichtbar geprüft wird der Satz, der die alte
+    // Näherung („eher optimistisch") ablöst, und das Break-Even-Jahr der
+    // Kachel, das der Schnittpunkt derselben Reihe ist (F-19).
+    render(<RoiAnalyse anlageId={1} />)
+    expect(await screen.findAllByText(/jede Komponente zählt Kosten und Einsparung ab ihrem/))
+      .not.toHaveLength(0)
+    expect(screen.queryByText(/eher optimistisch/)).not.toBeInTheDocument()
+    expect(screen.getAllByText(/Kostendeckung voraussichtlich 2033/).length).toBeGreaterThan(0)
   })
 
   it('§8/6: die Dauer nennt ihre Annahme sichtbar unter der Break-Even-Kurve', async () => {

@@ -70,7 +70,11 @@ def test_sensor_ist_definiert_und_kein_zaehler():
 
 def test_jeder_prognose_schluessel_hat_einen_leser_in_der_route():
     """Wächter: eine Definition ohne Wert-Zuweisung wäre ein Sensor ohne Zustand."""
-    quelle = (_BACKEND / "api" / "routes" / "ha_export.py").read_text(encoding="utf-8")
+    # Vorlage 8 (18.09.2026): der HA-Export ist ein Paket — die Leser stehen in seinen Modulen.
+    quelle = "\n".join(
+        p.read_text(encoding="utf-8")
+        for p in sorted((_BACKEND / "api" / "routes" / "ha_export").glob("*.py"))
+    )
     fehlend = [
         s.key for s in PROGNOSE_SENSOREN
         if not re.search(rf'sensor\.key == "{re.escape(s.key)}"', quelle)

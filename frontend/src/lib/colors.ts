@@ -621,7 +621,7 @@ export const KATEGORIE_FARBEN: Record<string, string> = {
  * war in `pages/auswertung/EnergieprofilMonat.tsx` inline). Farben aus der
  * Komponenten-Identität ({@link KOMPONENTEN_FARBEN}/{@link SONSTIGES_ERZEUGER_FARBE})
  * bzw. Haushalt-Slate wie {@link KATEGORIE_FARBEN}.haushalt — keine neuen Töne.
- * Backend-Producer: `api/routes/energie_profil/views.py` (ERZEUGER_KAT/VERBRAUCHER_KAT).
+ * Backend-Producer: `api/routes/energie_profil/monat.py` (`ENERGIE_KATEGORIEN`; bis 18.09.2026 in views.py).
  */
 export const ENERGIE_KATEGORIE: Record<string, { label: string; bg: string; gruppe: 'erzeuger' | 'verbraucher' }> = {
   pv_module:            { label: 'PV-Module',            bg: KOMPONENTEN_FARBEN['pv-module'].bg,       gruppe: 'erzeuger' },

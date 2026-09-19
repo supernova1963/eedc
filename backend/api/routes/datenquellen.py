@@ -290,7 +290,7 @@ def _detect_payload(raw: str) -> tuple:
 
 
 @router.post("/mqtt/discovery", response_model=DiscoveryResponse)
-async def mqtt_discovery(data: DiscoveryRequest, db: AsyncSession = Depends(get_db)) -> DiscoveryResponse:
+async def mqtt_discovery(data: DiscoveryRequest, db: AsyncSession = Depends(get_db, scope="function")) -> DiscoveryResponse:
     """Kurzlebiger `#`-Scan des Brokers → gefundene Topics mit letztem Sample (B3.1).
 
     Sammelt distinkte Topics (letzter Payload gewinnt) bis `max_topics` oder
@@ -403,7 +403,7 @@ class LevelResponse(BaseModel):
 
 
 @router.post("/mqtt/level", response_model=LevelResponse)
-async def mqtt_level(data: LevelRequest, db: AsyncSession = Depends(get_db)) -> LevelResponse:
+async def mqtt_level(data: LevelRequest, db: AsyncSession = Depends(get_db, scope="function")) -> LevelResponse:
     """Direkte Kinder einer Baum-Ebene (Durchhangeln) — serverseitig aggregiert.
 
     Vollständig für die Ebene (kein 1000-Topic-Cap): der Server liest den
@@ -804,7 +804,7 @@ class TaktCheckResponse(BaseModel):
 
 @router.post("/{anlage_id}/ha/takt-check", response_model=TaktCheckResponse)
 async def ha_takt_check(
-    anlage_id: int, req: TaktCheckRequest, db: AsyncSession = Depends(get_db)
+    anlage_id: int, req: TaktCheckRequest, db: AsyncSession = Depends(get_db, scope="function")
 ) -> TaktCheckResponse:
     """On-Demand-Taktpruefung eines kWh-Kandidaten im Pick-Moment (#343).
 
@@ -1275,7 +1275,7 @@ class InvertSetRequest(BaseModel):
 
 @router.post("/{anlage_id}/felder/{field_id}/invert")
 async def set_feld_invert(
-    anlage_id: int, field_id: str, body: InvertSetRequest, db: AsyncSession = Depends(get_db)
+    anlage_id: int, field_id: str, body: InvertSetRequest, db: AsyncSession = Depends(get_db, scope="function")
 ):
     """Setzt/entfernt die Vorzeichen-Umkehr eines Feldes im vereinheitlichten Store.
 
@@ -1320,7 +1320,7 @@ async def set_feld_invert(
 
 
 @router.delete("/{anlage_id}/historie-hinweis")
-async def quittiere_historie_hinweis(anlage_id: int, db: AsyncSession = Depends(get_db)):
+async def quittiere_historie_hinweis(anlage_id: int, db: AsyncSession = Depends(get_db, scope="function")):
     """Quittiert den Historie-Hinweis („Verstanden") — Konzept #192 B.
 
     Bewusst eine Quittung des **Anwenders** und kein „erledigt": ob er die
@@ -1346,7 +1346,7 @@ async def quittiere_historie_hinweis(anlage_id: int, db: AsyncSession = Depends(
 
 @router.post("/{anlage_id}/felder/{field_id}/quelle")
 async def set_feld_quelle(
-    anlage_id: int, field_id: str, body: QuelleSetRequest, db: AsyncSession = Depends(get_db)
+    anlage_id: int, field_id: str, body: QuelleSetRequest, db: AsyncSession = Depends(get_db, scope="function")
 ):
     """Setzt die Quelle eines Feldes (genau eine pro Feld, §2d) in sensor_mapping.quellen.
 
@@ -1493,7 +1493,7 @@ _ENERGY_BASIS_FELD_IDS = {
 
 @router.post("/{anlage_id}/energy-vorschlaege/uebernehmen")
 async def uebernehme_energy_vorschlaege(
-    anlage_id: int, body: EnergyUebernahmeRequest, db: AsyncSession = Depends(get_db)
+    anlage_id: int, body: EnergyUebernahmeRequest, db: AsyncSession = Depends(get_db, scope="function")
 ):
     """D2 (2026-07-18): Uebernimmt BESTAETIGTE Energy-Dashboard-Vorschlaege (#197)
     in die Datenquellen-Quellen — nie stumm, der Wizard zeigt die Auswahl vorher.

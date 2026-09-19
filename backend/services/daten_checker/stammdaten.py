@@ -306,15 +306,17 @@ class StammdatenChecks:
         pv_module = [i for i in anlage.investitionen if i.typ == "pv-module" and i.ist_aktiv_an(heute)]
         hat_bkw = any(i.typ == "balkonkraftwerk" and i.ist_aktiv_an(heute) for i in anlage.investitionen)
         if not pv_module:
-            if hat_bkw:
-                # BKW-only Setup: kein Fehler, nur Hinweis
-                ergebnisse.append(CheckErgebnis(
-                    kategorie=kat, schwere=CheckSeverity.INFO,
-                    meldung="Nur Balkonkraftwerk, keine PV-Module angelegt",
-                    details="PVGIS-Prognose und String-Vergleich sind ohne PV-Module nicht verfügbar",
-                    link="/einstellungen/investitionen",
-                ))
-            else:
+            # N-526 (Kai2, T89667 #345): hier stand seit #37 (22.03.) ein
+            # INFO-Hinweis "Nur Balkonkraftwerk, keine PV-Module angelegt -
+            # PVGIS-Prognose und String-Vergleich sind ohne PV-Module nicht
+            # verfuegbar". Beides ist seit #367 (v4.0.9) bzw. F-10 (07.08.)
+            # falsch: ein Balkonkraftwerk bekommt sein eigenes PVGIS-SOLL und
+            # ist im Vergleich eine Zeile wie ein String. Ein Anwender las den
+            # Satz als "deine Module fehlen". Es fehlt nichts, also keine
+            # Meldung - kein Ersatztext, eedc ist nicht die PV-Polizei
+            # (Gernot, 18.09.2026). Der ERROR darunter bleibt fuer Anlagen ohne
+            # jeden Erzeuger.
+            if not hat_bkw:
                 ergebnisse.append(CheckErgebnis(
                     kategorie=kat, schwere=CheckSeverity.ERROR,
                     meldung="Keine PV-Module als Investition angelegt",
@@ -847,7 +849,7 @@ class StammdatenChecks:
         # ihn irgendeine Eingabe hätte abstellen können. Was ein Anwender
         # wirklich hinterlegen kann und was gelesen wird, ist der Wallbox-Tarif
         # — beide Dashboards ziehen ihn („E-Auto lädt über Wallbox",
-        # investitionen/dashboards.py). Wallbox ohne E-Auto zählt genauso: der
+        # investitionen/dashboard_eauto.py, dashboard_wallbox.py). Wallbox ohne E-Auto zählt genauso: der
         # Ladetarif hängt am Ladepunkt.
         hat_wallbox = any(i.typ == "wallbox" and i.ist_aktiv_an(heute) for i in anlage.investitionen)
         if (hat_eauto or hat_wallbox) and "wallbox" not in verwendungen:
@@ -1270,11 +1272,11 @@ class StammdatenChecks:
                     # (rapahl, PN 91806). Es gibt zwei mit fast gleichem Namen,
                     # und beide zu Recht:
                     #   • `lade_durchschnittspreis_cent` — Stammdaten-Annahme,
-                    #     aus der Prognose und ROI rechnen (`aussichten.py`,
-                    #     `investitionen/crud.py`). DAS prüft diese Zeile.
+                    #     aus der Prognose und ROI rechnen (`aussichten/finanzen.py`,
+                    #     `investitionen/roi.py`). DAS prüft diese Zeile.
                     #   • `speicher_ladepreis_cent` — der gemessene Monatswert,
                     #     im Monatsabschluss erfassbar und per Sensor füllbar
-                    #     (`monats_fakten.py`).
+                    #     (`monats_fakten/`).
                     # Er hatte den Sensor zugeordnet, sah daneben 24,79 ct
                     # stehen und las die Meldung als Widerspruch. Sie war
                     # richtig — sie sagte nur nicht, welchen Preis sie meint.
@@ -1491,7 +1493,7 @@ class StammdatenChecks:
                 # deshalb fragen diese beiden INFO ab jetzt `ersetzt_keine_heizung`,
                 # während `daten_checker/energieprofil.py:419`,
                 # `daten_checker/monatsdaten.py:848` und
-                # `core/field_definitions.py:722` bewusst an der Bauart bleiben:
+                # `core/field_definitions/registry.py::INVESTITION_FELDER` bewusst an der Bauart bleiben:
                 # Sie fragen nach einem **Wärmemengenzähler**, den ein
                 # Splitgerät physisch nicht hat. Konzept: `docs/KONZEPT-263-klima-split.md` §7 E-C.
                 ersetzt_nichts = ersetzt_keine_heizung(
@@ -1643,7 +1645,7 @@ class StammdatenChecks:
                     # Ohne Heiz-Achse **fällt die Frage nicht weg, sie wechselt
                     # die Achse.** Dieselbe Schätzung läuft für ein solches Gerät
                     # über den Warmwasserbedarf: `_wp_nicht_bewertbar`
-                    # (`investitionen/crud.py`) lässt die ROI-Zeile nur mit
+                    # (`investitionen/roi.py`) lässt die ROI-Zeile nur mit
                     # **einem** gepflegten Bedarf überhaupt rechnen und schreibt
                     # sonst „Nicht bewertet: kein Wärmebedarf gepflegt" — ohne
                     # diesen Zweig stünde der Anwender vor genau dieser Zeile,
@@ -1705,7 +1707,7 @@ class StammdatenChecks:
             # Gernot).** Die Begründung dieser INFO lautet „Werden für
             # ROI-Berechnung benötigt" — und für einen Gas-, Wasser- oder
             # Ölzähler stimmt sie nicht: Er wird **erfasst, nicht bewertet**
-            # (#377). `investitionen/dashboards.py` schließt ihn ausdrücklich
+            # (#377). `investitionen/dashboard_sonstiges.py` schließt ihn ausdrücklich
             # aus der Wirtschaftlichkeit aus, mit genau diesem Satz; Gas- und
             # Wasserkosten sind Haushaltskosten und gehören nicht in die
             # Bewertung der PV-Anlage.

@@ -24,7 +24,7 @@ Die Reihenfolge je Tag ist damit: **Tageswert der Quelle → ihr Stundenprofil �
 eedc** (dann mit ``rueckfall: "eedc"`` ausgewiesen).
 
 ⛔ **Was hier NICHT geprüft wird und bewusst so bleibt:** *Cockpit → Aussicht*
-(``aussichten.py`` kennt SFML/Solcast nicht — Entscheid nach #401 Punkt 3) und
+(``aussichten/prognose.py`` kennt SFML/Solcast nicht — Entscheid nach #401 Punkt 3) und
 die MQTT-/HA-Sensoren (tragen bewusst immer die eedc-Prognose). Beide sind
 begründete Ausnahmen, keine vergessenen Stellen.
 

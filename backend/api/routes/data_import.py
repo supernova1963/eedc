@@ -357,7 +357,7 @@ async def apply_import(
     data: ApplyRequest,
     ueberschreiben: bool = Query(False, description="Bestehende Monatsdaten überschreiben"),
     datenquelle: str = Query("portal_import", description="Datenquelle (portal_import, cloud_import)"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """Bestätigte Monatswerte aus Portal-Import oder Cloud-Import in die Datenbank übernehmen."""
     # Anlage prüfen
@@ -773,6 +773,7 @@ async def apply_import(
             "geschuetzt": geschuetzt_count, "fehler": fehler[:5],
         },
         anlage_id=anlage_id,
+        db=db,
     )
 
     return ApplyResponse(

@@ -1,6 +1,6 @@
 """C1b — `cockpit/komponenten.py` bezieht seine Monatszeile aus den Fakten (P10).
 
-Die Migration von `get_komponenten_zeitreihe` auf `services/monats_fakten.py`
+Die Migration von `get_komponenten_zeitreihe` auf `services/monats_fakten/`
 (ADR-002/**P10**, Register-ID **N-17**) war als *deckungsgleich* geplant: der
 Auftrag hatte sechs Eigenschaften am Code als „gleich" belegt. Alle 2068
 vorhandenen Tests liefen nach dem Umbau ohne Anpassung durch — das ist ein
@@ -237,7 +237,7 @@ async def test_dienstwagen_allein_erzeugt_keine_nullzeile(db):
     an, *bevor* er den Dienstwagen übersprang — der Monat erschien danach mit
     lauter Nullen in „Auswertungen → Komponenten". Das behauptete „0 kWh
     geladen" über ein Fahrzeug, das diese Sicht ausdrücklich nicht auswertet
-    (`services/monats_fakten.py::_RohMonat.falte`,
+    (`services/monats_fakten/roh.py::_RohMonat.falte`,
     [[feedback_dienstwagen_alle_checks]]) — dieselbe Klasse, gegen die
     `docs/KONZEPT-UNVOLLSTAENDIGE-WERTE.md` steht.
 

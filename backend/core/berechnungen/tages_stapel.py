@@ -16,7 +16,7 @@ Anlage — eine Klimaanlage mit Betriebsart-Zählern und eine Wärmepumpe ohne
 dürfen nebeneinander stehen.
 
 ⛔ **Bis hierher stand diese Zusammenführung ausgeschrieben in
-``api/routes/energie_profil/views.py::get_tag_detail``** — also in einer Route,
+``api/routes/energie_profil/tag.py::get_tag_detail``** — also in einer Route,
 und damit für jeden anderen Leser unerreichbar. Beim Bau des Monats-Verlaufs
 (x = Tage) hätte sie ein zweites Mal entstehen müssen: **F-56.** Die Probe
 ``test_263_t3_gemessene_betriebsart_tag.py`` sagt im Kopf, warum das teuer

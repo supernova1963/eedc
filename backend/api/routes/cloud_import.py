@@ -372,7 +372,7 @@ async def fetch_status(job_id: str):
 async def save_credentials(
     anlage_id: int,
     data: SaveCredentialsRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """Credentials für Cloud-Import an einer Anlage speichern."""
     result = await db.execute(select(Anlage).where(Anlage.id == anlage_id))
@@ -469,7 +469,7 @@ async def remove_credentials(
             "Ohne Angabe werden ALLE entfernt — das bisherige Verhalten."
         ),
     ),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """Cloud-Import Credentials entfernen — einzeln oder alle."""
     result = await db.execute(select(Anlage).where(Anlage.id == anlage_id))

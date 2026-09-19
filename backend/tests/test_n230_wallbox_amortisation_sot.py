@@ -17,7 +17,7 @@ und den Annahme-Text — nicht die Frage, welcher Zähler der richtige ist.
 liefert ``None`` im völlig normalen Fall „weniger als drei Monate Historie".
 Der Speicher-Hub griff ungeprüft auf ``.jahres_faktor`` zu; der breite
 ``except`` machte daraus die Log-Warnung „η-IST fehlgeschlagen:
-AttributeError". Der Schwesterpfad in ``crud.py`` prüft dort seit jeher.
+AttributeError". Der Schwesterpfad in ``investitionen/roi.py`` prüft dort seit jeher.
 """
 
 from __future__ import annotations

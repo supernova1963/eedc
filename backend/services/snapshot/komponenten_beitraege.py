@@ -536,7 +536,7 @@ def erwartete_komponenten_keys(
     sind und keine zweite Query brauchen.
 
     Zwei Konsumenten, damit Versprechen und Rückmeldung dieselbe Menge
-    benutzen: der Daten-Checker (`daten_checker.datenquelle.
+    benutzen: der Daten-Checker (`daten_checker.datenquelle.tage.
     _check_leere_tage_trotz_zaehler`) und die Tages-Reparatur
     (`repair_orchestrator._execute_reaggregate_day`, N-58).
     """
@@ -758,8 +758,14 @@ def mqtt_hourly_eintraege(
             _, inv_id, feld = sk.split(":", 2)
             inv_felder.setdefault(inv_id, set()).add(feld)
 
+    # N-529 (18.09.2026): beide Mengen SORTIERT durchlaufen. `basis_felder` ist ein `set[str]`,
+    # und Python randomisiert String-Hashes je Prozess — die Reaggregate-Vorschau stand nach
+    # jedem Add-on-Neustart in anderer Zeilenfolge (gemessen: dieselben 225 Grenzen, andere
+    # Abfolge). Die inv-Keys kommen schon sortiert (`mqtt_sks_alle`), ihre Feld-Mengen gehen
+    # als Kandidaten in einen Helfer, der selbst sortiert; die Liste hier macht die Funktion
+    # trotzdem für sich allein deterministisch, ohne dass ein Leser das nachschlagen muss.
     out: list[tuple[str, str, Optional[str]]] = []
-    for feld in basis_felder:
+    for feld in sorted(basis_felder):
         kat = _categorize_counter(feld, None, None)
         if kat:
             out.append((f"basis:{feld}", kat, None))
@@ -776,7 +782,7 @@ def mqtt_hourly_eintraege(
             # K3 Regel 4 (R-1): ein per MQTT gespeister Betriebsart-Zähler steht
             # in KEINEM `felder`-Dict — seine Kandidaten sind genau die Keys,
             # die der Broker geliefert hat (N-328b, eine Ebene weiter).
-            kandidaten=felder_vorhanden,
+            kandidaten=sorted(felder_vorhanden),
         ):
             out.append((f"inv:{inv_id}:{he.feld}", he.kategorie, he.fallback_gruppe))
     return out

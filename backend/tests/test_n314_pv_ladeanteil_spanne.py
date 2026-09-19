@@ -6,7 +6,7 @@
 (``Σ pv ÷ Σ ladung × 100``). Der Verdacht: ein erfasster Datensatz mit
 ``ladung_pv_kwh > ladung_kwh`` — an Anlage 1 real vorhanden (2026-06: **100,5
 kWh PV bei 86,0 kWh Gesamt**) — erzeugt 116,9 %, und weil der Wert ein
-Rechen-**Eingang** ist (``crud.py`` → ``calculations.py``:
+Rechen-**Eingang** ist (``investitionen/roi.py`` → ``calculations.py``:
 ``netz_anteil = 1 − pv_anteil/100``), würde daraus ein negativer Faktor: das
 Laden verdiente Geld.
 

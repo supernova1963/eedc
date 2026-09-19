@@ -148,7 +148,7 @@ async def test_ohne_pflege_gilt_der_katalog_default_wie_bei_n277(db):
 
     ⭐ **Nachtrag 13.09.2026 (S1b):** Die Frage hat sich damit endgültig
     erledigt — es gibt nur noch **einen** Vorgabewert. Die 0,5-Konstante ist
-    ersatzlos gelöscht, und der ROI-Pfad (`investitionen/crud.py`), der das Feld
+    ersatzlos gelöscht, und der ROI-Pfad (`investitionen/roi.py`), der das Feld
     bis dahin als dritte Lesestelle in eine Geldformel trug, liest es nicht
     mehr. Übrig sind die zwei Mengen-Leser: dieser hier und der N-277-Fallback.
     """

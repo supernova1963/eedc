@@ -279,7 +279,7 @@ class TagesZusammenfassung(Base):
     # (SoT `core/berechnungen/pv_anteil_ladung.py`).
     #
     # ⚠ **Ein gepflegter echter Wert gewinnt immer** — diese beiden Spalten
-    # füllen nur Lücken (`services/monats_fakten.py`), sie überschreiben nichts.
+    # füllen nur Lücken (`services/monats_fakten/`), sie überschreiben nichts.
     # `None` heißt „keine Aussage", ausdrücklich NICHT 0 kWh PV: genau diese
     # Behauptung löst der Fund auf.
     #

@@ -155,7 +155,7 @@ class EnergieprofilChecks:
         Formular ohne dieses Feld.
 
         ⭐ **Dieselbe Klasse war schon gelöst, und derselbe Melder hatte sie
-        gemeldet:** `datenquelle.py:1180` liest seit #389 beide Ablagen und sagt
+        gemeldet:** `datenquelle/speicher.py::_check_soc_nur_ein_speicher` liest seit #389 beide Ablagen und sagt
         wörtlich, warum. Dieses Modul hatte den Sweep verpasst.
 
         Args:

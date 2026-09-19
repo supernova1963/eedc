@@ -19,7 +19,7 @@ ließen.
 
 Reine Funktion, kein I/O, kein ORM (ADR-001). Der Aufrufer bringt die drei
 Zahlen mit; wie er zu den bisherigen Erträgen kommt, ist seine Sache — heute
-tut das `api/routes/aussichten.py` über Monats-Fakten und Finanz-Zeilen.
+tut das `api/routes/aussichten/finanz_rueckblick.py` über Monats-Fakten und Finanz-Zeilen.
 """
 
 from __future__ import annotations

@@ -351,20 +351,11 @@ async def get_solar_prognose_endpoint(
     # (Anzahl × Wp). `get_pv_kwp` lieferte dort 0,0, der String fiel heraus, und
     # eine reine BKW-Anlage bekam auf `strings == []` einen HTTP 400: keine
     # Prognose in *Cockpit → Live* und *Cockpit → Aussicht*.
-    from backend.services.pv_orientation import (
-        get_erzeuger_kwp, get_pv_neigung, get_pv_azimut,
-    )
-    for pv in alle_pv:
-        kwp = get_erzeuger_kwp(pv)
-        if kwp <= 0:
-            continue
+    # N-527: derselbe String-Bauer wie im Prefetch — eine Ost-West-Komponente
+    # wird zu zwei halben Strings (Ost/West), alle anderen bleiben unverändert.
+    from backend.services.pv_orientation import erzeuger_string_configs
 
-        strings.append(PVStringConfig(
-            name=pv.bezeichnung or f"String {pv.id}",
-            kwp=kwp,
-            neigung=get_pv_neigung(pv),
-            ausrichtung=get_pv_azimut(pv),
-        ))
+    strings.extend(erzeuger_string_configs(alle_pv))
 
     if not strings:
         raise HTTPException(

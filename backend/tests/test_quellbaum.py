@@ -63,7 +63,7 @@ def test_bekannte_dateien_sind_dabei():
     """Namentlich, damit ein zu scharfer Filter nicht nur an der Zahl auffällt."""
     p = {d.rel for d in qb.produktivbaum()}
     for erwartet in (
-        "services/monats_fakten.py",
+        "services/monats_fakten/__init__.py",   # seit Vorlage 10 (19.09.2026) ein Paket
         "core/investition_kennwerte.py",
         "api/routes/cockpit/uebersicht.py",
         "main.py",

@@ -9,7 +9,7 @@ ins ``parameter``-JSON — Spalte und ``parameter["kwp"]`` bleiben leer. Ein
 Balkonkraftwerk lieferte dort also 0 und fiel **ganz aus der Gruppierung**:
 im gesamten Kanon-Pfad (Tagesprognose, Stundenprofil, Live-Wetter, Prefetch,
 MQTT-/HA-Prognosesensoren). Die 14-Tage-Aussichten zählten es mit
-(``aussichten.py`` ist mit A24-2 auf ``get_erzeuger_kwp`` umgestellt worden) —
+(``aussichten/prognose.py`` ist mit A24-2 auf ``get_erzeuger_kwp`` umgestellt worden) —
 dieselbe Anlage hatte damit zwei Wahrheiten.
 
 **#347 (zu hoch).** Ein BKW ist regelmäßig überbelegt (3 × 420 Wp an einem
@@ -84,7 +84,7 @@ def test_reine_bkw_anlage_bildet_eine_gruppe():
 
 def test_die_gruppierung_nutzt_denselben_kwp_wert_wie_die_aussichten():
     """Symmetrie: der Kanon darf für dieselbe Komponente nichts anderes lesen
-    als der 14-Tage-Pfad (`aussichten.py` rechnet mit `get_erzeuger_kwp`)."""
+    als der 14-Tage-Pfad (`aussichten/prognose.py` rechnet mit `get_erzeuger_kwp`)."""
     bkw = _bkw()
     assert get_pv_kwp(bkw) == 0.0, "Vorbedingung des Befunds — sonst greift der Test daneben"
     assert orientierungs_gruppen([bkw])[0].kwp == pytest.approx(get_erzeuger_kwp(bkw))

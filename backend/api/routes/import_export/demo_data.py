@@ -64,7 +64,7 @@ DEMO_MONATSDATEN = [
 
 
 @router.post("/demo", response_model=DemoDataResult)
-async def create_demo_data(db: AsyncSession = Depends(get_db)):
+async def create_demo_data(db: AsyncSession = Depends(get_db, scope="function")):
     """
     Erstellt eine komplette Demo-Anlage mit allen Daten.
 
@@ -636,7 +636,7 @@ async def create_demo_data(db: AsyncSession = Depends(get_db)):
 
 
 @router.delete("/demo", response_model=dict)
-async def delete_demo_data(db: AsyncSession = Depends(get_db)):
+async def delete_demo_data(db: AsyncSession = Depends(get_db, scope="function")):
     """Löscht die Demo-Anlage und alle zugehörigen Daten."""
     result = await db.execute(
         select(Anlage).where(Anlage.anlagenname == "Demo-Anlage")

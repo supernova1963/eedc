@@ -29,11 +29,17 @@ router = APIRouter(prefix="/community", tags=["Community"])
 
 
 class ShareResponse(BaseModel):
-    """Antwort nach erfolgreicher Übertragung."""
+    """Antwort nach erfolgreicher Übertragung.
+
+    ``hinweise`` (N-523, Server seit 19.09.2026): Klartext je Monat, den der
+    Server übersprungen oder als sehr hoch vermerkt hat — der Rest wurde
+    angenommen. Vorher wies EIN unplausibler Monat den ganzen Datensatz ab.
+    """
     success: bool
     message: str
     anlage_hash: str | None = None
     anzahl_monate: int | None = None
+    hinweise: list[str] = []
     benchmark: dict | None = None
 
 
@@ -79,7 +85,7 @@ async def get_share_preview(
 @router.post("/share/{anlage_id}", response_model=ShareResponse)
 async def share_to_community(
     anlage_id: int,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """
     Überträgt anonymisierte Anlagendaten an den Community-Server.
@@ -138,18 +144,24 @@ async def share_to_community(
 
                 await merke_gesendet(db, anlage_id)
 
+                # N-523: der Server nennt übersprungene Monate im Klartext —
+                # sie gehören ins Protokoll und in die Antwort, nicht ins Nichts.
+                hinweise = [h for h in (result.get("hinweise") or []) if isinstance(h, str)]
                 await log_activity(
                     kategorie="community",
                     aktion="Community-Daten geteilt",
                     erfolg=True,
-                    details=f"{result.get('anzahl_monate', 0)} Monate",
+                    details=f"{result.get('anzahl_monate', 0)} Monate"
+                    + (f" — {'; '.join(hinweise)}" if hinweise else ""),
                     anlage_id=anlage_id,
+                    db=db,
                 )
                 return ShareResponse(
                     success=True,
                     message="Daten erfolgreich geteilt!",
                     anlage_hash=anlage_hash,
                     anzahl_monate=result.get("anzahl_monate"),
+                    hinweise=hinweise,
                     benchmark=result.get("benchmark"),
                 )
             elif response.status_code == 429:
@@ -188,6 +200,7 @@ async def share_to_community(
             erfolg=False,
             details="Timeout — Server antwortet nicht",
             anlage_id=anlage_id,
+            db=db,
         )
         raise HTTPException(
             status_code=504,
@@ -200,6 +213,7 @@ async def share_to_community(
             erfolg=False,
             details=f"{type(e).__name__}: {e}",
             anlage_id=anlage_id,
+            db=db,
         )
         raise HTTPException(
             status_code=503,
@@ -259,7 +273,7 @@ async def get_nachsende_status(db: AsyncSession = Depends(get_db)):
 @router.delete("/delete/{anlage_id}", response_model=DeleteResponse)
 async def delete_from_community(
     anlage_id: int,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """
     Löscht die geteilten Daten vom Community-Server.
@@ -300,6 +314,7 @@ async def delete_from_community(
                     erfolg=True,
                     details=f"{result_data.get('anzahl_geloeschte_monate', 0)} Monate entfernt",
                     anlage_id=anlage_id,
+                    db=db,
                 )
                 return DeleteResponse(
                     success=True,

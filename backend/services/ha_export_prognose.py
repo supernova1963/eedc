@@ -45,8 +45,15 @@ logger = logging.getLogger(__name__)
 _BERLIN_TZ = ZoneInfo("Europe/Berlin")
 
 
-async def berechne_prognose_export(db, anlage) -> Optional[dict]:
+async def berechne_prognose_export(db, anlage, *, skip_jitter: bool = False) -> Optional[dict]:
     """Berechnet die eedc-eigenen PV-Prognose-Exportwerte einer Anlage.
+
+    ``skip_jitter`` (N-531, 18.09.2026): der Prognose-Kanon schläft vor jedem Open-Meteo-Abruf
+    ``random.uniform(1, 30)`` Sekunden, um Lastspitzen zu verteilen — bei parallelem Fan-out je
+    Orientierungsgruppe wartet der Aufrufer auf das Maximum, gemessen 26 s bei kaltem Cache. Jede
+    Sicht mit Bedienoberfläche überspringt das; der HA-Export war der einzige Aufrufer ohne den
+    Schalter. On-Demand-Wege (REST-Sichten, Publish-Knopf) übergeben ``True``; der zeitgesteuerte
+    Publish-Job behält den Jitter, weil er bei allen Installationen zur selben Minute läuft.
 
     Returns:
         dict mit ``heute_kwh`` (kanonische eedc-Tagesprognose, rollt mit den
@@ -67,7 +74,7 @@ async def berechne_prognose_export(db, anlage) -> Optional[dict]:
 
         heute = date.today()
 
-        prognose = await kanon_tagesprognose(db, anlage, days=4)
+        prognose = await kanon_tagesprognose(db, anlage, days=4, skip_jitter=skip_jitter)
         if not prognose:
             return None
 

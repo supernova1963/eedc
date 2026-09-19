@@ -22,6 +22,7 @@ import KopfAmpel from './KopfAmpel'
 import ZustandLegende from './ZustandLegende'
 import AbschlussReview, { type ReviewWarnung } from './AbschlussReview'
 import type { SonstigePosition } from './sections/types'
+import { haBasisWert } from '../../lib/haVergleich'
 
 interface MonatsdatenFormProps {
   monatsdaten?: Monatsdaten | null
@@ -209,20 +210,19 @@ export default function MonatsdatenForm({ monatsdaten, anlageId, onSubmit, onCan
   // #392: variable Einspeisevergütung — Monatssatz-Feld einblenden
   const hatVariableEinspeisung = strompreis?.einspeisung_variabel === true
 
-  // Hilfsfunktion um HA-Basiswert zu finden
-  const getHaBasisWert = (feld: string): string => {
-    if (!haVorausfuellung) return ''
-    const found = haVorausfuellung.basis.find(b => b.feld === feld)
-    return found?.wert !== null && found?.wert !== undefined ? found.wert.toString() : ''
-  }
+  // Hilfsfunktion um HA-Basiswert zu finden — N-534: das Backend liefert die
+  // DB-Feldnamen (`einspeisung_kwh`); mit den Mapping-Kurzformen blieb die
+  // Vorbelegung seit v2.5.3 leer.
+  const getHaBasisWert = (feld: string): string => haBasisWert(haVorausfuellung?.basis, feld)
 
   // Basis-Formulardaten
   const [formData, setFormData] = useState({
     jahr: haVorausfuellung?.jahr?.toString() || monatsdaten?.jahr?.toString() || voreingestellterMonat?.jahr?.toString() || currentYear.toString(),
     monat: haVorausfuellung?.monat?.toString() || monatsdaten?.monat?.toString() || voreingestellterMonat?.monat?.toString() || currentMonth.toString(),
-    einspeisung_kwh: getHaBasisWert('einspeisung') || monatsdaten?.einspeisung_kwh?.toString() || '',
-    netzbezug_kwh: getHaBasisWert('netzbezug') || monatsdaten?.netzbezug_kwh?.toString() || '',
-    pv_erzeugung_kwh: monatsdaten?.pv_erzeugung_kwh?.toString() || '',
+    einspeisung_kwh: getHaBasisWert('einspeisung_kwh') || monatsdaten?.einspeisung_kwh?.toString() || '',
+    netzbezug_kwh: getHaBasisWert('netzbezug_kwh') || monatsdaten?.netzbezug_kwh?.toString() || '',
+    // N-534: der Anlagen-PV-Zähler aus HA ist das importierte Anlagen-Aggregat (ADR-002/P7).
+    pv_erzeugung_kwh: getHaBasisWert('pv_erzeugung_kwh') || monatsdaten?.pv_erzeugung_kwh?.toString() || '',
     batterie_ladung_kwh: monatsdaten?.batterie_ladung_kwh?.toString() || '',
     batterie_entladung_kwh: monatsdaten?.batterie_entladung_kwh?.toString() || '',
     globalstrahlung_kwh_m2: monatsdaten?.globalstrahlung_kwh_m2?.toString() || '',

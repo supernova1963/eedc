@@ -56,7 +56,7 @@ async def get_templates(db: AsyncSession = Depends(get_db)):
 async def save_template(
     name: str,
     mapping: MappingConfig,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """Mapping-Template speichern."""
     if not name.strip():
@@ -84,7 +84,7 @@ async def save_template(
 @router.delete("/templates/{name}")
 async def delete_template(
     name: str,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """Mapping-Template löschen."""
     result = await db.execute(select(Settings).where(Settings.key == SETTINGS_KEY))

@@ -292,7 +292,7 @@ async def test_tagespfad_mit_eeg51_flag_kuerzt_weiterhin(db):
 
 
 async def test_tagesliste_und_monatsauswertung_gaten_die_ausweis_spalte(db):
-    """Die beiden Ausweis-Stellen in `energie_profil/views.py` ziehen mit."""
+    """Die beiden Ausweis-Stellen (`energie_profil/tage.py`, `energie_profil/monat.py`) ziehen mit."""
     anlage_ohne, tag = await _seed_tag_mit_einspeisung(db, unterliegt_eeg_51=False)
     await db.commit()
 

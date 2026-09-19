@@ -17,7 +17,7 @@ eine Zeile mit **0 kWh IST** erzeugt — also 100 % Abweichung nach unten, was
 schlimmer ist als die leere Tabelle vorher. Grund: das BKW steht **nicht** in
 ``ErzeugungFakten.pv_je_modul``; dort stehen ausschließlich ``pv-module``, weil
 deren Σ ``pv_module_kwh`` in die ROI-Rechnung geht, wo das BKW eine **eigene**
-Zeile hat (``investitionen/crud.py::get_pv_erzeugung``) und sonst doppelt
+Zeile hat (``investitionen/roi.py::get_roi_dashboard`` (innere ``get_pv_erzeugung``)) und sonst doppelt
 zählte. Sein IST kommt deshalb aus ``BkwFakten.erzeugung_je_investition``.
 
 Die Abgrenzungen unten sind daher der eigentliche Beleg des Pakets: ``pv_kwh``

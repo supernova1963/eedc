@@ -127,7 +127,7 @@ async def _mqtt_import_auf_default(db: AsyncSession) -> dict:
 
 
 @router.post("/remote/settings")
-async def save_ha_remote_settings(config: dict, db: AsyncSession = Depends(get_db)):
+async def save_ha_remote_settings(config: dict, db: AsyncSession = Depends(get_db, scope="function")):
     """Speichert die Remote-HA-Verbindung (URL + Long-Lived-Token).
 
     Nur Persistenz (Basis) — kein Gate-/Router-Effekt. Bei `enabled` wird die
@@ -187,7 +187,7 @@ async def save_ha_remote_settings(config: dict, db: AsyncSession = Depends(get_d
 
 
 @router.post("/remote/test")
-async def test_ha_remote(config: dict, db: AsyncSession = Depends(get_db)):
+async def test_ha_remote(config: dict, db: AsyncSession = Depends(get_db, scope="function")):
     """Testet URL + Token gegen `GET {base_url}/api/` (HA meldet „API running.")."""
     base_url = _normalize_base_url(config.get("base_url", ""))
     token = (config.get("token") or "").strip()

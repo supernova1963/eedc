@@ -20,12 +20,58 @@ if str(_BACKEND_ROOT) not in sys.path:
 
 import ipaddress
 import os
+import shutil
 import socket
+import tempfile
 
+import pytest
 import pytest_asyncio
+from sqlalchemy import create_engine as _create_sync_engine
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from backend.core.database import Base
+# ── Die Produktiv-Engine zeigt im Testlauf NIE auf `data/eedc.db` (N-414 · N-532) ──
+#
+# `backend/core/database.py` baut seine Engine beim Import aus `DATABASE_URL`
+# (Default: `eedc/data/eedc.db`, die Entwickler-Datenbank). Alles, was nicht über
+# die `db`-Fixture läuft — `log_activity` mit eigener Sitzung, die echte Lifespan
+# in `test_n237_…` (`init_db` + Datenmigrationen + Scheduler-Start), der
+# L2-Cache-Persist des Prognose-Kanons — schrieb bis zum 19.09.2026 in genau
+# diese Datei: je Lauf 12–20 echte Aktivitätszeilen („Connector-Tagesabruf",
+# „E-Mob-Heimladung konsolidiert" …), und die nie disposte Pool-Verbindung
+# meldete am Ende des funktionsweiten Loops „Event loop is closed" (N-414, die
+# wandernde Warnung — 0/1/8/12 je Lauf, je nach Worker-Zuteilung). Gemessen mit
+# `plans/n414-sonden/sonde_checkout.py`: 69 Pool-Checkouts der Produktiv-Engine
+# in 15 Testdateien. Deshalb hier, VOR dem ersten Import von `backend.core.database`,
+# eine Wegwerf-Datei je Worker; ihr Schema entsteht einmal synchron, damit ein
+# Protokolleintrag dort landen kann statt still zu scheitern.
+_TEST_DB_DIR = tempfile.mkdtemp(prefix="eedc-tests-")
+os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_TEST_DB_DIR}/eedc.db"
+# Die Lifespan (`main.py`) startet ohne dieses Flag Scheduler, Recovery-Task und
+# Sofort-Prefetch — Hintergrundarbeit, die den Test-Loop überlebt und nichts prüft.
+os.environ.setdefault("EEDC_DISABLE_SCHEDULER", "true")
+
+from backend.core.database import Base  # noqa: E402
+import backend.models  # noqa: E402,F401 — registriert alle Tabellen an `Base`
+
+_sync_engine = _create_sync_engine(f"sqlite:///{_TEST_DB_DIR}/eedc.db")
+Base.metadata.create_all(_sync_engine)
+_sync_engine.dispose()
+
+
+def pytest_sessionfinish(session, exitstatus):  # noqa: ARG001
+    shutil.rmtree(_TEST_DB_DIR, ignore_errors=True)
+
+
+@pytest.fixture(autouse=True)
+def _wetter_cache_ohne_l2_persist(monkeypatch):
+    """`main.py` setzt beim Lifespan-Start `wetter.cache._loop_running = True`, und
+    niemand setzte es zurück — im selben Worker feuerte danach JEDER Prognose-Test
+    seine L2-Persistenz per `create_task` gegen die Produktiv-Engine (N-414, Weg B:
+    33 Öffnungen in 24 Prognose-Tests, wenn `test_n237_…` zuerst lief; isoliert 0).
+    Modulzustand darf einen Test nicht überleben."""
+    from backend.services.wetter import cache
+
+    monkeypatch.setattr(cache, "_loop_running", False)
 
 # ── Kein echtes Netz im Testlauf (N-232, Entscheid Gernot 2026-08-11) ────────
 #

@@ -1,11 +1,156 @@
 # Was ist neu
 
-> **Stand:** September 2026 (v4.0.47) — der Abschnitt ganz oben gilt der **kommenden** Version und trägt ihre Nummer, sobald sie feststeht.
+> **Stand:** September 2026 (v4.0.48) — der Abschnitt ganz oben gilt der **kommenden** Version und trägt ihre Nummer, sobald sie feststeht.
 > **Diese Seite** zeigt pro Version, was sich für dich als Anwender geändert hat — kürzer als der technische [CHANGELOG](https://github.com/supernova1963/eedc-homeassistant/blob/main/CHANGELOG.md), ausführlicher als die Schnellübersicht-Tabelle in der [Übersicht](BENUTZERHANDBUCH.md#was-ist-neu-seit-v316).
 >
 > **Kein Banner, kein Pop-up:** eedc zeigt diese Liste nicht ungefragt an. HA-App-Nutzer sehen den Changelog ohnehin schon im Add-on-Store, GitHub-Releases haben einen eigenen. Wer wissen will, was neu ist, schaut hier rein — Pull statt Push.
 >
 > **Lesehinweis:** Die jüngsten Versionen stehen oben. Jeder Punkt verlinkt entweder auf die zuständige Hilfe-Sektion oder direkt auf die App-Funktion (sofern erreichbar). Anker-URLs (`?doc=was-ist-neu`) sind teilbar.
+
+---
+
+## v4.0.48 — 19. September 2026
+
+**Balkonkraftwerk: Das Formular zeigt die Wechselrichter-Leistung wieder, und der Daten-Checker verlangt keine PV-Module mehr**
+
+**Betrifft dich das?** Ja, wenn du ein Balkonkraftwerk als Komponente führst
+oder einen Verbrauchszähler (Gas, Wasser, Heizöl) unter „Sonstiges" angelegt hast.
+
+**Was war:** Die Wechselrichter-Leistung des Balkonkraftwerks war gespeichert
+und wirkte in der Prognose, aber das Bearbeiten-Formular zeigte das Feld beim
+erneuten Öffnen leer. Bei einem Verbrauchszähler standen beim Öffnen immer
+„Gas" und „m³", egal was du gewählt hattest. Und der Daten-Checker meldete
+bei einem Balkonkraftwerk ohne PV-Module, PVGIS-Prognose und String-Vergleich
+seien nicht verfügbar. Das stimmte seit v4.0.9 nicht mehr.
+
+**Was jetzt:** Beide Formulare zeigen die gespeicherten Werte. Die Meldung des
+Daten-Checkers ist weg: Ein Balkonkraftwerk trägt Nennleistung, Ausrichtung
+und Neigung selbst und bekommt sein eigenes Soll. Wann du die Module eines
+Balkonkraftwerks trotzdem einzeln erfassen solltest, sagt das Handbuch unter
+*Einstellungen → 3.5*: immer dann, wenn dein Wechselrichter die Strings
+getrennt liefert. Dann vergleicht eedc jeden String mit seinem eigenen Soll.
+**Du musst nichts tun.**
+
+---
+
+**Ost-West-Anlagen: Die Wetterprognose rechnet jetzt wie PVGIS mit zwei halben Anlagen**
+
+**Betrifft dich das?** Ja, wenn eine deiner PV-Komponenten oder dein Balkonkraftwerk die
+Ausrichtung „Ost-West (gemischt)" trägt, oder wenn du dein Balkonkraftwerk im
+Einrichtungsassistenten angelegt hast.
+
+**Was war:** Die PVGIS-Prognose rechnete Ost-West richtig als eine halbe Anlage nach Ost und
+eine nach West. Die Wetterprognose dagegen — Live, 14 Tage, die Prognosesensoren in Home
+Assistant — kannte den Wert nicht und rechnete Süd: eine Mittagsspitze, die deine Anlage
+nicht hat, und eine zu hohe Tagessumme. Ein Balkonkraftwerk aus dem Einrichtungsassistenten
+wurde in der PVGIS-Prognose ebenfalls als Süd gerechnet, weil seine Ausrichtung an einer
+Stelle lag, die die Prognose nicht las.
+
+**Was jetzt:** Beide Prognosen rechnen Ost-West als zwei halbe Anlagen mit derselben Neigung,
+und das Balkonkraftwerk aus dem Assistenten mit seiner gepflegten Ausrichtung. ⚠ **Die
+Prognosesensoren einer Ost-West-Anlage sinken nach dem Update einmalig** — auf das Niveau,
+das die Anlage wirklich liefert. Bei fester Ausrichtung ändert sich keine Zahl. **Du musst
+nichts tun.**
+
+---
+
+**Die Amortisationskurve zeigt gewachsene Anlagen als Treppe**
+
+**Betrifft dich das?** Ja, wenn du deine Anlage über mehrere Jahre erweitert
+hast — PV zuerst, später Speicher, Wärmepumpe oder Wallbox — und in
+*Auswertungen → ROI* die Break-Even-Kurve liest.
+
+**Was war:** Die Kurve nahm deinen gesamten Kapitaleinsatz ab der frühesten
+Anschaffung und rechnete die heutige Jahres-Einsparung von dort an durch. Sie
+zählte also Geld, das du damals noch nicht ausgegeben hattest, und Einsparung
+von Komponenten, die es damals noch nicht gab. Der Satz darunter nannte das
+Jahr deshalb „eher optimistisch".
+
+**Was jetzt:** Jede Komponente zählt ihre Kosten und ihre Einsparung erst ab
+ihrem eigenen Anschaffungsjahr. Die Investitionslinie steigt bei jeder
+Anschaffung eine Stufe; eine Reparatur hebt sie im Jahr der Buchung, eine
+Förderung senkt sie dort. Das Break-Even-Jahr in der Kachel „Amortisation" ist
+der Schnittpunkt dieser Treppe — bei einer gewachsenen Anlage später als bisher,
+und zwar das richtige Jahr. ⛔ **Die Dauer in Jahren daneben ändert sich nicht**,
+ebenso wenig HA-Sensoren, PDF-Berichte und die Aussichten. Wer alles auf einmal
+gebaut hat, sieht dieselbe Kurve wie zuvor.
+
+---
+
+**Monatsdaten speichern und Importe dauern nicht mehr 30 Sekunden**
+
+**Betrifft dich das?** Ja, wenn du Monate unter *Einstellungen → Monatsdaten*
+speicherst oder den Portal-, Cloud- oder Custom-Import nutzt.
+
+**Was war:** Beim Speichern eines Monats (seit 4.0.47) und bei jedem dieser
+Importe wartete eedc 30 Sekunden auf die Antwort, und der Eintrag im
+Aktivitätsprotokoll fehlte danach. Das Protokoll öffnete für seinen Eintrag eine
+zweite Datenbankverbindung, während die erste noch schrieb — und SQLite lässt
+nur einen Schreiber zu.
+
+**Was jetzt:** Das Protokoll schreibt in derselben Verbindung wie die Aktion.
+Speichern und Import antworten sofort, der Protokolleintrag ist da. **Du musst
+nichts tun.**
+
+---
+
+**Community: Ein unplausibler Monat sperrt nicht mehr den ganzen Datensatz**
+
+**Betrifft dich das?** Ja, wenn du deine Anlage mit der Community teilst und
+ein Monat einen spezifischen Ertrag über 180 kWh/kWp trägt — etwa durch einen
+Zähler-Rücksprung, eine falsche Nennleistung oder ein Balkonkraftwerk im
+Hochsommer.
+
+**Was war:** Der Community-Server wies den gesamten Datensatz ab, sobald ein
+einziger Monat unplausibel war. Beim automatischen Teilen sah niemand etwas
+davon, beim Knopf nur „Unrealistischer Ertrag". Eine Installation verlor so
+wochenlang täglich ihren ganzen Vergleichsdatensatz.
+
+**Was jetzt:** Der Server überspringt den Monat, nimmt die übrigen an und nennt
+den Grund. Der Teilen-Block zeigt den Hinweis nach „Jetzt übertragen", das
+Aktivitätsprotokoll führt ihn mit. Prüfe dann den genannten Monat unter
+*Einstellungen → Monatsdaten*. Der 180er-Maßstab selbst ist unverändert.
+
+---
+
+**Statistik-Import und „Aus HA laden" kennen den PV-Gesamtzähler der Anlage**
+
+**Betrifft dich das?** Ja, wenn du in Home Assistant nur einen gemeinsamen
+PV-Zähler hast und mehrere Modulgruppen führst — und wenn du unter
+*Einstellungen → Monatsdaten* den Knopf „Aus HA laden" nutzt.
+
+**Was war:** Der Statistik-Import zeigte den PV-Gesamtzähler in der Vorschau,
+verglich aber nur Einspeisung und Netzbezug und schrieb den Zähler beim Import
+nirgendwohin. Die Monate galten als vollständig, hatten aber keine PV, und der
+Daten-Checker riet zu genau diesem Import. Der Vergleichsdialog hinter „Aus HA
+laden" zeigte für Einspeisung und Netzbezug seit März nur Striche, und das
+Formular dahinter blieb leer. Gemeldet von Frank85.
+
+**Was jetzt:** Ein Monat ohne PV ist im Import ein Import, und der Zähler wird
+wie im Monatsabschluss nach kWp auf die aktiven Module verteilt, als Zerlegung
+gekennzeichnet; Module mit eigenem Sensor behalten ihren Messwert. Der Dialog
+zeigt jedes zugeordnete Zählerfeld samt PV-Gesamtzähler und belegt das Formular
+damit vor. **Wer betroffen ist:** einmal die Vorschau des Statistik-Imports
+öffnen — die Monate ohne PV stehen dann auf „importieren".
+
+---
+
+**Zwei Wartezeiten weniger: HA-Export-Sensoren und eben gespeicherte Komponenten**
+
+**Betrifft dich das?** Ja, wenn Home Assistant die eedc-Sensoren per REST
+abfragt, oder wenn du im Einrichtungsassistenten Komponenten anlegst.
+
+**Was war:** Bei kaltem Prognose-Cache wartete die Sensor-Abfrage bis zu
+30 Sekunden auf eine zufällige Pause vor dem Wetterabruf; Home Assistant brach
+nach 10 Sekunden ab und zeigte die Sensoren einmal je Stunde als nicht
+verfügbar. Und eine eben angelegte Komponente war für einen sofort folgenden
+Aufruf in 0,4 % der Fälle noch nicht da, weil der Datenbank-Commit erst nach
+dem Senden der Antwort lief.
+
+**Was jetzt:** Die Export-Sichten und der Publish-Knopf überspringen die Pause,
+nur der zeitgesteuerte Publish-Job behält sie als Lastverteilung. Jede
+Schreibroute committet, bevor die Antwort den Browser erreicht. **Du musst
+nichts tun.**
 
 ---
 

@@ -76,7 +76,7 @@ async def test_netzbezug_nie_gemessen_unterdrueckt_die_autarkie(db):
     """Verbrauch gemessen, Netzbezug nirgends ⇒ nicht „100 % Autarkie".
 
     Dieselbe Lage wie Strikers Januar (T89667 #162). Der Tages-Prognose-Pfad
-    schützt sich seit A28 ausdrücklich dagegen (`views.py`, „würde dann aber
+    schützt sich seit A28 ausdrücklich dagegen (`prognose.py`, „würde dann aber
     ‚Netzbezug 0, Autarkie 100 %' behaupten") — dieser Pfad tat es nicht.
     """
     tag = date(2026, 5, 11)

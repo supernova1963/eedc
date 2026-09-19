@@ -194,7 +194,7 @@ async def get_anlage(anlage_id: int, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/", response_model=AnlageResponse, status_code=status.HTTP_201_CREATED)
-async def create_anlage(data: AnlageCreate, db: AsyncSession = Depends(get_db)):
+async def create_anlage(data: AnlageCreate, db: AsyncSession = Depends(get_db, scope="function")):
     """
     Erstellt eine neue Anlage.
 
@@ -212,7 +212,7 @@ async def create_anlage(data: AnlageCreate, db: AsyncSession = Depends(get_db)):
 
 
 @router.put("/{anlage_id}", response_model=AnlageResponse)
-async def update_anlage(anlage_id: int, data: AnlageUpdate, db: AsyncSession = Depends(get_db)):
+async def update_anlage(anlage_id: int, data: AnlageUpdate, db: AsyncSession = Depends(get_db, scope="function")):
     """
     Aktualisiert eine Anlage.
 
@@ -243,7 +243,7 @@ async def update_anlage(anlage_id: int, data: AnlageUpdate, db: AsyncSession = D
 
 
 @router.delete("/{anlage_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_anlage(anlage_id: int, db: AsyncSession = Depends(get_db)):
+async def delete_anlage(anlage_id: int, db: AsyncSession = Depends(get_db, scope="function")):
     """
     Löscht eine Anlage.
 
@@ -292,7 +292,7 @@ async def get_sensor_config(anlage_id: int, db: AsyncSession = Depends(get_db)):
 async def update_sensor_config(
     anlage_id: int,
     data: SensorConfigUpdate,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db, scope="function")
 ):
     """
     Aktualisiert die HA-Sensor-Konfiguration einer Anlage.
@@ -428,7 +428,7 @@ MAX_FOTO_UPLOAD_BYTES = 50 * 1024 * 1024  # Grenze vor Resize
 async def upload_anlagenfoto(
     anlage_id: int,
     datei: UploadFile = File(...),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """Lädt das Hauptfoto der Anlage hoch (ersetzt ggf. ein vorhandenes)."""
     result = await db.execute(select(Anlage).where(Anlage.id == anlage_id))
@@ -500,7 +500,7 @@ async def get_anlagenfoto_thumb(anlage_id: int, db: AsyncSession = Depends(get_d
 
 
 @router.delete("/{anlage_id}/foto", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_anlagenfoto(anlage_id: int, db: AsyncSession = Depends(get_db)):
+async def delete_anlagenfoto(anlage_id: int, db: AsyncSession = Depends(get_db, scope="function")):
     """Entfernt das Anlagenfoto."""
     result = await db.execute(
         select(AnlageFoto).where(AnlageFoto.anlage_id == anlage_id)

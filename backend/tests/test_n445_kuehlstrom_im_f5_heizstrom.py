@@ -350,12 +350,12 @@ def test_n445_sommermonat_bekommt_seine_zahl_zurueck():
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 2 · TAG — dieselbe Lage in `energie_profil/views.py::get_tag_detail`
+# 2 · TAG — dieselbe Lage in `energie_profil/tag.py::get_tag_detail`
 # ═══════════════════════════════════════════════════════════════════════════
 #
 # Der Tag baut seinen Nenner aus `komponenten_kwh` (Σ `waermepumpe_*`) und
 # seinen funktionsfremden Abzug aus dem `TagesStapel`; die Heizzahl liest
-# `detail["wp_strom_heizen_kwh"]` roh (`views.py:991-998` gegen `:1040-1046`).
+# `detail["wp_strom_heizen_kwh"]` roh (beide Stellen in `tag.py::get_tag_detail`).
 
 TAG_DETAIL = {
     "wp_strom_heizen_kwh": 6.0,

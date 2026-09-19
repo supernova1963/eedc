@@ -377,7 +377,7 @@ async def test_eine_klimaanlage_allein_kennt_kein_warmwasser(db):
 async def test_der_tag_uebt_dieselbe_regel_aus(db):
     """⛔ **Der Tag ist ein eigener Pfad — und er war zuerst ungeprüft.**
 
-    Der Sprengsatz S14 (die Achsen erreichen ``views.py`` nicht) blieb bei den
+    Der Sprengsatz S14 (die Achsen erreichen ``tag.py`` nicht) blieb bei den
     Proben oben **still**: Monat und Jahr laufen über andere Routen. Genau die
     Lage, um die es geht, ist aber eine **Tages**-Lage — am Demo-Tag 15.06.
     trug allein die Klimaanlage Strom bei.

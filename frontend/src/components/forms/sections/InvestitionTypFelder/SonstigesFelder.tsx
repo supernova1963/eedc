@@ -1,6 +1,6 @@
 import { FormSection, Input, Select } from '../../../ui'
 import { istZaehlerKategorie } from '../../../../lib/fieldDefinitions'
-import { ZAEHLER_ARTEN, ZAEHLER_EINHEITEN } from '../../../../lib/investitionParameter'
+import { PARAM_SONSTIGES_DEFAULTS, ZAEHLER_ARTEN, ZAEHLER_EINHEITEN } from '../../../../lib/investitionParameter'
 import type { TypFelderProps } from './types'
 
 const KATEGORIE_OPTIONEN = [
@@ -61,7 +61,7 @@ export function SonstigesFelder({ paramData, onInputChange, setParam }: TypFelde
             <Select
               label="Was wird gezählt?"
               name="param_zaehler_art"
-              value={(paramData.zaehler_art as string) ?? 'gas'}
+              value={(paramData.zaehler_art as string) || PARAM_SONSTIGES_DEFAULTS.zaehler_art}
               onChange={(e) => setParam('zaehler_art', e.target.value)}
               options={ZAEHLER_ART_OPTIONEN}
               hint="Nur für Bezeichnung und Symbol"
@@ -69,7 +69,7 @@ export function SonstigesFelder({ paramData, onInputChange, setParam }: TypFelde
             <Select
               label="Einheit"
               name="param_zaehler_einheit"
-              value={(paramData.zaehler_einheit as string) ?? 'm³'}
+              value={(paramData.zaehler_einheit as string) || PARAM_SONSTIGES_DEFAULTS.zaehler_einheit}
               onChange={(e) => setParam('zaehler_einheit', e.target.value)}
               options={ZAEHLER_EINHEIT_OPTIONEN}
               hint="Steht neben der Zahl — eedc rechnet nichts um"

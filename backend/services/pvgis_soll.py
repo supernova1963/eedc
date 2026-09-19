@@ -14,7 +14,7 @@ AC-Kappung und Wechselrichtergrenze bereits enthalten — und vor allem den
 **tagesgenau gekürzten Anschaffungsmonat**.
 
 **Warum diese Datei überhaupt existiert.** ``pvgis.monatswerte`` wurde bisher an
-mindestens drei Stellen inline entpackt (``api/routes/aussichten.py`` 545 · 678 ·
+mindestens drei Stellen inline entpackt (``api/routes/aussichten/prognose.py bzw. trend.py`` 545 · 678 ·
 1203, jedes Mal dieselbe ``{monat: e_m}``-Schleife) — und **keine** davon kürzt
 den Anschaffungsmonat; das tut nur ``cockpit/pv_strings.py``. Eine vierte Kopie
 für den Gemeinschaftsdatensatz wäre genau die Bauform, an der #387 hing (dort

@@ -316,7 +316,7 @@ async def test_ohne_ersetzte_heizung_bleiben_beide_achsen_still(db):
 async def test_brauchwasser_wp_wird_nach_ihrer_eigenen_achse_gefragt(db):
     """Die Frage fällt nicht weg, sie wechselt die Achse.
 
-    `_wp_nicht_bewertbar` (investitionen/crud.py) lässt die ROI-Zeile nur mit
+    `_wp_nicht_bewertbar` (investitionen/roi.py) lässt die ROI-Zeile nur mit
     einem gepflegten Bedarf rechnen; ohne diesen Hinweis stünde der Anwender vor
     „Nicht bewertet: kein Wärmebedarf gepflegt" und erführe nicht mehr, welches
     Feld gemeint ist.

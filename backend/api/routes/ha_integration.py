@@ -9,7 +9,7 @@ beide waren seit dem IA-V4-Flip clientlos (Sensor-Auswahl läuft über die
 Datenquellen-Fläche, `datenquellen.py`). Die Legacy-Settings selbst bleiben
 unangetastet (CLAUDE.md §Deprecated).
 
-Für HA-Export: Siehe ha_export.py (MQTT + REST).
+Für HA-Export: Siehe das Paket ha_export/ (MQTT + REST).
 """
 
 from fastapi import APIRouter

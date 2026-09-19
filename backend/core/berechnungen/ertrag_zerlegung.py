@@ -32,7 +32,7 @@ nicht mehr im Zähler, und der gepflegte Erzeuger-Erlös (§9 Weg 2) wird direkt
 seiner Zeile zugeordnet — seine Investition ist bekannt.
 
 Reine Funktionen, kein I/O, kein ORM (ADR-001). Wer die Größen beschafft, ist
-Sache des Aufrufers — heute ``api/routes/aussichten.py``, wo alle Summanden des
+Sache des Aufrufers — heute ``api/routes/aussichten/finanz_zerlegung.py::roi_und_fortschritt``, wo alle Summanden des
 anlagenweiten Zählers ohnehin entstehen.
 """
 

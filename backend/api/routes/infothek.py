@@ -484,7 +484,7 @@ async def get_eintrag(
 @router.post("/", response_model=InfothekEintragResponse, status_code=status.HTTP_201_CREATED)
 async def create_eintrag(
     item: InfothekEintragCreate,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """Erstellt einen neuen Infothek-Eintrag."""
     # investition_ids aus Request extrahieren (nicht ans Model durchreichen)
@@ -510,7 +510,7 @@ async def create_eintrag(
 async def update_eintrag(
     eintrag_id: int,
     item: InfothekEintragUpdate,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """Updated einen Infothek-Eintrag."""
     result = await db.execute(
@@ -551,7 +551,7 @@ async def update_eintrag(
 @router.delete("/{eintrag_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_eintrag(
     eintrag_id: int,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """Löscht einen Infothek-Eintrag."""
     result = await db.execute(
@@ -567,7 +567,7 @@ async def delete_eintrag(
 @router.put("/sortierung/batch")
 async def update_sortierung(
     items: list[SortierungItem],
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """Aktualisiert die Reihenfolge mehrerer Einträge."""
     for item in items:
@@ -681,7 +681,7 @@ async def update_verknuepfung(
     eintrag_id: int,
     body: Optional[VerknuepfungBody] = None,
     investition_id: Optional[int] = Query(None, description="Legacy: einzelne Investition-ID"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """Verknüpft einen Infothek-Eintrag mit Investitionen (N:M)."""
     result = await db.execute(
@@ -781,7 +781,7 @@ async def get_migration_status(
 @router.post("/migration/batch")
 async def migrate_all(
     anlage_id: int = Query(..., description="Anlage-ID"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """Migriert alle Investitionen einer Anlage auf einmal."""
     status = await check_migration_status(db, anlage_id)
@@ -795,7 +795,7 @@ async def migrate_all(
 @router.post("/migration/{investition_id}")
 async def migrate_stammdaten(
     investition_id: int,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """Migriert stamm_*-Daten einer Investition in Infothek-Einträge."""
     created = await migrate_investition(db, investition_id)
@@ -811,7 +811,7 @@ async def upload_datei(
     eintrag_id: int,
     datei: UploadFile = File(...),
     beschreibung: Optional[str] = Form(None),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """Lädt eine Datei (Bild oder PDF) zu einem Eintrag hoch."""
     # Eintrag prüfen
@@ -944,7 +944,7 @@ async def get_thumbnail(
 async def delete_datei(
     eintrag_id: int,
     datei_id: int,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """Löscht eine Datei."""
     result = await db.execute(

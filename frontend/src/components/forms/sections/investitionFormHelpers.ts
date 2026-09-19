@@ -137,7 +137,7 @@ export const typLabels: Record<InvestitionTyp, string> = {
  * (Konzept §8/1, `einsparung_prognose_jahr`).
  *
  * Die Liste spiegelt den `else`-Zweig der ROI-Typkette in
- * `backend/api/routes/investitionen/crud.py` — nur dort wird das Feld gelesen.
+ * `backend/api/routes/investitionen/roi.py` — nur dort wird das Feld gelesen (bis 18.09.2026 crud.py).
  * Für alle anderen Typen rechnet eedc die Jahres-Einsparung selbst (PV,
  * Speicher, WP, E-Auto, BKW); ein Eingabefeld wäre dort ohne Wirkung.
  */
@@ -323,6 +323,10 @@ export function getInitialParamData(
         anzahl: paramStr(params.anzahl, PARAM_BALKONKRAFTWERK_DEFAULTS.anzahl),
         ausrichtung: paramStr(params.ausrichtung, PARAM_BALKONKRAFTWERK_DEFAULTS.ausrichtung),
         neigung_grad: paramStr(params.neigung_grad, PARAM_BALKONKRAFTWERK_DEFAULTS.neigung_grad),
+        // F-77 (Kai2, T89667 #345): das Feld kam am 29.07. (#347) ins Formular,
+        // hier fehlte der Schluessel — gespeichert wurde der Wert, beim Oeffnen
+        // stand das Feld leer. Bewusst OHNE Default: leer heisst „nicht kappen".
+        wechselrichter_leistung_w: paramStr(params.wechselrichter_leistung_w),
         hat_speicher: (params.hat_speicher as boolean) ?? PARAM_BALKONKRAFTWERK_DEFAULTS.hat_speicher,
         speicher_kapazitaet_wh: paramStr(params.speicher_kapazitaet_wh),
       }
@@ -330,6 +334,12 @@ export function getInitialParamData(
       return {
         kategorie: paramStr(params.kategorie, PARAM_SONSTIGES_DEFAULTS.kategorie),
         beschreibung: paramStr(params.beschreibung),
+        // F-77: beide Schluessel fehlten hier — ein Wasserzaehler zeigte beim
+        // Oeffnen immer „Gas"/„m³". Bewusst OHNE Default (#397-Muster): der
+        // Anzeige-Rueckfall sitzt im Formular, ein leerer Wert wird nicht
+        // persistiert und laesst den Backend-Default greifen.
+        zaehler_art: paramStr(params.zaehler_art),
+        zaehler_einheit: paramStr(params.zaehler_einheit),
       }
     default:
       return {}

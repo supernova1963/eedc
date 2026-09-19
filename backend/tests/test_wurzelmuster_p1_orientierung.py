@@ -140,7 +140,7 @@ async def _seed_verbrauchsprofil(db, anlage_id: int, tage: int = 6) -> None:
 
 async def test_tagesprognose_kanon_faechert_auf(db, _abrufe):
     """Der kanonische Weg (Multi-String-Fan-out) sieht beide Dachflächen."""
-    from backend.api.routes.energie_profil.views import get_tagesprognose
+    from backend.api.routes.energie_profil.prognose import get_tagesprognose
 
     anlage = await _seed_ost_west(db)
     await _seed_verbrauchsprofil(db, anlage.id)
@@ -158,13 +158,13 @@ async def test_tagesprognose_fallback_faechert_auf(db, _abrufe, monkeypatch):
     Query ohne ``ORDER BY``, die Zeile war also die zufällig erste. An dieser
     Anlage sind das 14,0 statt 17,0 kWh (−17,6 %); je nach DB-Reihenfolge auch
     20,0 kWh (+17,6 %). Der Pfad fächert jetzt wie der Kanon auf."""
-    import backend.api.routes.energie_profil.views as views
-    from backend.api.routes.energie_profil.views import get_tagesprognose
+    import backend.api.routes.energie_profil.prognose as prognose
+    from backend.api.routes.energie_profil.prognose import get_tagesprognose
 
     async def kein_kanon(*args, **kwargs):
         return None
 
-    monkeypatch.setattr(views, "_pv_stunden_aus_kanon", kein_kanon)
+    monkeypatch.setattr(prognose, "_pv_stunden_aus_kanon", kein_kanon)
 
     anlage = await _seed_ost_west(db)
     await _seed_verbrauchsprofil(db, anlage.id)
@@ -180,9 +180,9 @@ async def test_tagesprognose_fallback_meldet_teilsumme(db, _abrufe, monkeypatch)
     """P4 im Fallback: fällt eine Orientierungsgruppe aus, ist der Tagesverlauf
     eine Teilsumme — und die Antwort sagt es, statt sie als vollen Wert
     auszuliefern."""
-    import backend.api.routes.energie_profil.views as views
+    import backend.api.routes.energie_profil.prognose as prognose
     import backend.services.solar_forecast_service as sfs
-    from backend.api.routes.energie_profil.views import get_tagesprognose
+    from backend.api.routes.energie_profil.prognose import get_tagesprognose
 
     async def kein_kanon(*args, **kwargs):
         return None
@@ -192,7 +192,7 @@ async def test_tagesprognose_fallback_meldet_teilsumme(db, _abrufe, monkeypatch)
             return None
         return _fake_prognose(kwargs["kwp"], kwargs["ausrichtung"], kwargs.get("days"))
 
-    monkeypatch.setattr(views, "_pv_stunden_aus_kanon", kein_kanon)
+    monkeypatch.setattr(prognose, "_pv_stunden_aus_kanon", kein_kanon)
     monkeypatch.setattr(sfs, "get_solar_prognose", nur_west)
 
     anlage = await _seed_ost_west(db)

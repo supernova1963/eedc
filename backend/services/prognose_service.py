@@ -6,7 +6,7 @@ und Prognosen-Endpoints je Vorhersagetag anwenden.
 
 Die früher hier liegenden ``get_kurzfrist_prognose`` / ``get_langfrist_prognose``
 / ``get_trend_analyse`` waren toter Code und wurden entfernt (A24-2/N-A): die
-gleichnamigen **lebenden** Endpoints liegen in ``api/routes/aussichten.py``.
+gleichnamigen **lebenden** Endpoints liegen in ``api/routes/aussichten/prognose.py``.
 """
 
 import logging

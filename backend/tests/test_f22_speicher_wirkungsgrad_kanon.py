@@ -100,7 +100,13 @@ def test_route_ruft_den_kanon_statt_selbst_zu_dividieren():
 
     from backend.api.routes import aktueller_monat
 
-    quelle = inspect.getsource(aktueller_monat)
+    # Vorlage 2 (18.09.2026): `aktueller_monat` ist ein Paket; der Speicher-Block sitzt in
+    # `komponenten.py`. Gemeint ist die Sicht, also der Quelltext des ganzen Pakets.
+    from pathlib import Path
+    quelle = "".join(
+        pfad.read_text(encoding="utf-8")
+        for pfad in sorted(Path(aktueller_monat.__file__).parent.glob("*.py"))
+    )
     assert "berechne_ist_wirkungsgrad" in quelle, (
         "Die Route muss den SoC-korrigierenden Kanon rufen (F-22)."
     )

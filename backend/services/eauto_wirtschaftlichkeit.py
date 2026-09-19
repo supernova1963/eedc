@@ -768,7 +768,7 @@ class EmobPoolCtx:
     km-anteiligen Wallbox-Pool.
 
     ⚠ **Lag bis 2026-08-08 privat in `api/routes/ha_export.py`** — und genau
-    deshalb hatte `aussichten.py` als einzige der fünf E-Mob-Sichten **gar
+    deshalb hatte `aussichten/finanzen.py` als einzige der fünf E-Mob-Sichten **gar
     keine** Pool-Attribution (F-17): sie hätte den Nachbau abschreiben müssen.
     Ein Mechanismus, den nur eine Route besitzt, ist für jede andere Sicht
     unsichtbar; die vierte Sicht baut ihn dann nicht nach, sondern gar nicht.

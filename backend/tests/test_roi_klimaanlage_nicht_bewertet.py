@@ -182,7 +182,7 @@ async def test_waermepumpe_ohne_wp_art_gilt_als_klassisch(db):
 async def test_klimaanlage_ohne_gepflegte_parameter_erfindet_auch_nichts(db):
     """Der zweite Weg in denselben Fehler: leeres `parameter`-Dict.
 
-    Ohne den Fix griffen hier die Defaults in `crud.py` UND die zweite
+    Ohne den Fix griffen hier die Defaults in `roi.py` UND die zweite
     Default-Schicht in `berechne_waermepumpe_einsparung`.
     """
     anlage_id = await _seed_wp(db, wp_art="luft_luft", parameter={})

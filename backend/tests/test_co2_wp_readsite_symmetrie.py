@@ -112,7 +112,7 @@ def test_gas_co2_faktor_nur_im_helper():
     """Der Gas-CO₂-Faktor `CO2_FAKTOR_GAS_KG_KWH` darf nur in
     `core/calculations.py` referenziert werden.
 
-    DI-2-A: Das WP-Dashboard (`investitionen/dashboards.py`) rechnete die
+    DI-2-A: Das WP-Dashboard (`investitionen/dashboard_waermepumpe.py`) rechnete die
     vermiedene Gas-CO₂ als `wärme × f_gas` — mit dem korrekten Faktor, aber
     OHNE die η_gas-Rückrechnung des Helpers → als 4. WP-CO₂-Read-Site driftete
     es sichtbar gegen die 3 DI-1-Stellen. Der `/η_gas × f_gas`-Wächter oben

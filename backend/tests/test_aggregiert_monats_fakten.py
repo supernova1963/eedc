@@ -4,7 +4,7 @@
 2026-08-03 selbst (Register **N-15**, gedeckelt in
 `test_wurzelmuster_konformitaet.py::P10_NOCH_NICHT_MIGRIERT`). Seit C1a laufen
 Zeitfilter, Dienstwagen-Filter, P7-PV-Auflösung und die E-Mob-Trias über
-`services/monats_fakten.py` (ADR-002/**P10**).
+`services/monats_fakten/` (ADR-002/**P10**).
 
 Die Sicht speist *Auswertungen → Tabelle* **und** *Cockpit → Jahr* — sie ist
 damit eine der sichtbarsten im Produkt. Diese Datei hält deshalb beides fest:

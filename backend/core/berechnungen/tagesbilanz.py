@@ -2,7 +2,7 @@
 
 Single Source of Truth für die **Σ-über-Stunden**-Bilanz eines beliebigen
 Zeitfensters (ein Tag, ein Monat). Die NULL-/Summen-Semantik ist 1:1 die des
-Monats-Endpoints ``get_monatsauswertung`` (energie_profil/views.py): NULL-
+Monats-Endpoints ``get_monatsauswertung`` (energie_profil/monat.py): NULL-
 Stunden zählen **nicht** als 0, Überschuss/Defizit/Direktverbrauch nur wenn
 PV **und** Verbrauch vorhanden, Batterie richtungsgetrennt.
 

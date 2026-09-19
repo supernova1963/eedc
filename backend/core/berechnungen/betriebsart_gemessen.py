@@ -308,7 +308,7 @@ def modus_strom_zeile(daten: Optional[dict]) -> ModusStromZeile:
     Die Regel steht **nur hier**, obwohl sie an mehreren Flächen gebraucht wird:
     Monats-Fakten (Cockpit, Komponenten-Hub) und HA-/MQTT-Export, der seine
     IMD-Zeilen je Investition faltet und deshalb nicht über die Monats-Fakten
-    geht (bekannte P10-Restschuld von ``ha_export.py``).
+    geht (bekannte P10-Restschuld von ``ha_export/investition_sensoren.py``).
 
     ⛔ **Warum sie eine Funktion ist und keine zwei Codestellen — F-56 ist genau
     daran entstanden.** Die Weiche stand bis dahin inline in

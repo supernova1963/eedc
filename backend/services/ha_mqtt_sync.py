@@ -113,8 +113,14 @@ async def publish_anlage_sensors(
     db,
     anlage,
     mqtt_config: Optional[MQTTConfig] = None,
+    *,
+    skip_jitter: bool = False,
 ) -> dict:
     """Berechnet + publiziert alle HA-Export-Sensoren einer Anlage via MQTT Discovery.
+
+    ``skip_jitter`` (N-531): der Publish-Knopf übergibt ``True`` (der Anwender wartet); der Scheduler-Job
+    lässt den Default — er läuft per CronTrigger bei allen Installationen zur selben Minute, und der
+    Open-Meteo-Jitter (bis 30 s, einmal je Stunde bei kaltem Cache) ist dort die Lastverteilung.
 
     Der eine Outbound-Pfad für Auto-Publish (Scheduler) UND die manuelle Route.
     Beide meldeten zuvor „erfolg=True, 0 Sensoren" über den nicht existenten Key
@@ -206,7 +212,7 @@ async def publish_anlage_sensors(
         if any(jetzt.get(k) != zuletzt.get(k) for k in jetzt):
             await schreibe_export_settings(db, **{ZULETZT_FELD: {**zuletzt, **jetzt}})
 
-    sensor_values = _behalten(await calculate_anlage_sensors(db, anlage))
+    sensor_values = _behalten(await calculate_anlage_sensors(db, anlage, skip_jitter=skip_jitter))
     if not sensor_values:
         await _nachziehen(None, [])
         await _merken()

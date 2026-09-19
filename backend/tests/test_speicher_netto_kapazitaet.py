@@ -214,19 +214,19 @@ async def _anlage_mit_speicher(db, *, netto: float | None) -> int:
 
 async def _tagesprognose(db, monkeypatch, anlage_id: int):
     """Tagesprognose mit festem PV-Profil — hermetisch, kein Wetterabruf."""
-    from backend.api.routes.energie_profil import views
+    from backend.api.routes.energie_profil import prognose
 
     async def kanon_liefert(*a, **kw):
         return [0.0] * 6 + [3.0] * 10 + [0.0] * 8
 
-    monkeypatch.setattr(views, "_pv_stunden_aus_kanon", kanon_liefert)
-    return await views.get_tagesprognose(anlage_id=anlage_id, datum=MORGEN, db=db)
+    monkeypatch.setattr(prognose, "_pv_stunden_aus_kanon", kanon_liefert)
+    return await prognose.get_tagesprognose(anlage_id=anlage_id, datum=MORGEN, db=db)
 
 
 async def test_tagesvorschau_riegelt_bei_der_nutzbaren_kapazitaet_ab(db, monkeypatch):
     """Pfad (a) durch die echte Route — inklusive der drei Bilanzgrößen.
 
-    Die Kapazität kommt aus `energie_profil/views.py`; vor A31-2 stand dort
+    Die Kapazität kommt aus `energie_profil/prognose.py`; vor A31-2 stand dort
     die Brutto-Summe. Die Vorschau simulierte dadurch einen Speicher, den es
     so nicht gibt.
     """
@@ -318,7 +318,7 @@ def test_prognose_rechnet_netto_durch_den_speicher():
 
 
 async def test_roi_prognose_nimmt_die_nutzbare_kapazitaet(db):
-    """Pfad (b) durch die echte Route (`crud.py`, AC-Pfad ohne Hybrid-WR).
+    """Pfad (b) durch die echte Route (`roi.py`, AC-Pfad ohne Hybrid-WR).
 
     Umfang: **nur** Speicher ohne IST-Aggregat. Wo Lade-/Entladewerte erfasst
     sind, läuft die Rechnung über den Spread-Service und liest die Kapazität

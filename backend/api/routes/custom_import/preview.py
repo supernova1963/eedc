@@ -213,7 +213,7 @@ async def preview_mapping(
     file: UploadFile = File(...),
     mapping_json: str = Query(..., description="JSON-String mit MappingConfig"),
     anlage_id: Optional[int] = Query(None, description="Für Auto-Erkennung von Investitions-Spalten"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """Wendet das Mapping auf die Datei an und gibt eine Vorschau zurück."""
     try:

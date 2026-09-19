@@ -84,7 +84,7 @@ async def get_mqtt_inbound_values():
 async def delete_mqtt_cache(
     anlage_id: Optional[int] = Query(None, description="Nur Cache einer Anlage löschen"),
     clear_retained: bool = Query(False, description="Auch Retained Messages am Broker löschen"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """Löscht den MQTT-Inbound-Cache und optional Retained Messages am Broker."""
     from backend.services.mqtt_inbound_service import get_mqtt_inbound_service
@@ -199,7 +199,7 @@ async def _publish_initial_values(
 @router.post("/mqtt/settings")
 async def save_mqtt_settings(
     config: dict,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """Speichert MQTT-Inbound-Einstellungen in der DB und (re)startet den Subscriber."""
     from backend.models.settings import Settings as SettingsModel

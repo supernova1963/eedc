@@ -36,7 +36,7 @@ from backend.utils.investition_filter import aktiv_jetzt
 from backend.models.pvgis_prognose import PVGISPrognose as PVGISPrognoseModel, PVGISMonatsprognose
 from backend.services.prognose_auswahl import lade_aktive_prognose
 from backend.services.pvgis_aktualitaet import pruefe_prognose
-from backend.services.pv_orientation import get_pv_neigung
+from backend.services.pv_orientation import ausrichtung_text, get_pv_neigung, ist_ost_west
 from backend.services.wetter.pvgis_kappung import (
     KappungsModul,
     monats_kappungsfaktoren,
@@ -299,11 +299,13 @@ async def fetch_pvgis_data(
 
 
 def _ist_ost_west(ausrichtung: Optional[str]) -> bool:
-    """Prüft ob eine Ausrichtungsangabe eine Ost-West-Anlage beschreibt."""
-    if not ausrichtung:
-        return False
-    al = ausrichtung.lower().strip()
-    return al in ("ost-west", "east-west", "ow", "o-w") or "ost-west" in al or "east-west" in al
+    """Prüft ob eine Ausrichtungsangabe eine Ost-West-Anlage beschreibt.
+
+    N-527/N-143: die Regel lebt in ``services/pv_orientation.ist_ost_west`` —
+    dieselbe Funktion, die die Wetterprognose fragt. Hier nur noch der Name für
+    die beiden Aufrufer in dieser Datei.
+    """
+    return ist_ost_west(ausrichtung)
 
 
 def _kappungs_abrufe(
@@ -493,6 +495,10 @@ async def get_pvgis_prognose(
             continue  # Modul ohne Leistung überspringen
 
         tilt = get_pv_neigung(modul, default=int(DEFAULT_TILT))
+        # N-528: Spalte → parameter.ausrichtung. Ein Balkonkraftwerk aus dem
+        # Einrichtungsassistenten trägt die Ausrichtung nur im JSON; die Spalte
+        # allein las hier still Süd.
+        ausrichtung_roh = ausrichtung_text(modul)
 
         # Exakten Azimut aus Parameter-JSON bevorzugen (falls vorhanden)
         modul_params = modul.parameter or {}
@@ -503,7 +509,7 @@ async def get_pvgis_prognose(
             latitude=anlage.latitude,
             longitude=anlage.longitude,
             leistung_kwp=modul_kwp,
-            ausrichtung=modul.ausrichtung,
+            ausrichtung=ausrichtung_roh,
             neigung_grad=tilt,
             system_losses=system_losses,
             user_horizon=anlage.horizont_daten,
@@ -513,7 +519,7 @@ async def get_pvgis_prognose(
         # gelieferte Wert steht für die ganze Prognose.
         raddatabase = raddatabase or modul_raddatabase
 
-        azimuth = exact_azimuth if exact_azimuth is not None else ausrichtung_zu_azimut(modul.ausrichtung)
+        azimuth = exact_azimuth if exact_azimuth is not None else ausrichtung_zu_azimut(ausrichtung_roh)
         grenze_kw, grenz_id = grenzen.get(modul.id, (None, None))
         roh_prognosen.append((modul, modul_kwp, tilt, azimuth, modul_monatsdaten, jahresertrag))
         kappungs_module.append(KappungsModul(
@@ -521,7 +527,7 @@ async def get_pvgis_prognose(
             kwp=modul_kwp,
             grenze_kw=grenze_kw,
             grenz_id=grenz_id,
-            abrufe=_kappungs_abrufe(modul_kwp, tilt, modul.ausrichtung, azimuth),
+            abrufe=_kappungs_abrufe(modul_kwp, tilt, ausrichtung_text(modul), azimuth),
         ))
 
     # #354/#367: Die AC-Grenze des Wechselrichters wirkt stündlich, die
@@ -562,7 +568,7 @@ async def get_pvgis_prognose(
             investition_id=modul.id,
             bezeichnung=modul.bezeichnung,
             leistung_kwp=modul_kwp,
-            ausrichtung=modul.ausrichtung or _azimut_zu_richtung(azimuth),
+            ausrichtung=ausrichtung_text(modul) or _azimut_zu_richtung(azimuth),
             ausrichtung_grad=azimuth,
             neigung_grad=tilt,
             jahresertrag_kwh=round(jahresertrag, 2),
@@ -657,6 +663,7 @@ async def get_pvgis_modul_prognose(
         )
 
     tilt = get_pv_neigung(modul, default=int(DEFAULT_TILT))
+    ausrichtung_roh = ausrichtung_text(modul)  # N-528, s. Anlagen-Route
 
     # Exakten Azimut aus Parameter-JSON bevorzugen (falls vorhanden)
     modul_params = modul.parameter or {}
@@ -667,14 +674,14 @@ async def get_pvgis_modul_prognose(
         latitude=anlage.latitude,
         longitude=anlage.longitude,
         leistung_kwp=modul_kwp,
-        ausrichtung=modul.ausrichtung,
+        ausrichtung=ausrichtung_roh,
         neigung_grad=tilt,
         system_losses=system_losses,
         user_horizon=anlage.horizont_daten,
         ausrichtung_grad=exact_azimuth,
     )
 
-    azimuth = exact_azimuth if exact_azimuth is not None else ausrichtung_zu_azimut(modul.ausrichtung)
+    azimuth = exact_azimuth if exact_azimuth is not None else ausrichtung_zu_azimut(ausrichtung_roh)
 
     # #354/#367: dieselbe AC-Kappung wie in der Anlagen-Prognose. Der Einzel-
     # Endpunkt sieht nur EIN Modul — teilen sich mehrere Strings einen
@@ -712,7 +719,7 @@ async def get_pvgis_modul_prognose(
                 kwp=modul_kwp,
                 grenze_kw=grenze_kw,
                 grenz_id=grenz_id,
-                abrufe=_kappungs_abrufe(modul_kwp, tilt, modul.ausrichtung, azimuth),
+                abrufe=_kappungs_abrufe(modul_kwp, tilt, ausrichtung_roh, azimuth),
             )],
             losses=system_losses,
             user_horizon=anlage.horizont_daten,
@@ -736,7 +743,7 @@ async def get_pvgis_modul_prognose(
         "investition_id": modul.id,
         "bezeichnung": modul.bezeichnung,
         "leistung_kwp": modul_kwp,
-        "ausrichtung": modul.ausrichtung or _azimut_zu_richtung(azimuth),
+        "ausrichtung": ausrichtung_roh or _azimut_zu_richtung(azimuth),
         "ausrichtung_grad": azimuth,
         "neigung_grad": tilt,
         "jahresertrag_kwh": round(jahresertrag, 2),
@@ -841,7 +848,7 @@ async def get_pvgis_optimum(
 async def speichere_pvgis_prognose(
     anlage_id: int,
     system_losses: float = DEFAULT_LOSSES,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db, scope="function")
 ):
     """
     Ruft PVGIS Prognose ab und speichert sie in der Datenbank.
@@ -1045,7 +1052,7 @@ async def get_aktive_prognose(
 @router.put("/prognose/{prognose_id}/aktivieren")
 async def aktiviere_prognose(
     prognose_id: int,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db, scope="function")
 ):
     """
     Aktiviert eine gespeicherte Prognose.
@@ -1084,7 +1091,7 @@ async def aktiviere_prognose(
 @router.delete("/prognose/{prognose_id}")
 async def loesche_prognose(
     prognose_id: int,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db, scope="function")
 ):
     """
     Löscht eine gespeicherte Prognose.
@@ -1172,7 +1179,7 @@ async def get_horizont(
 async def upload_horizont_datei(
     anlage_id: int,
     file: UploadFile = File(...),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """
     Lädt eine PVGIS Horizont-Datei hoch und speichert das Profil.
@@ -1202,7 +1209,7 @@ async def upload_horizont_datei(
 @router.post("/horizont/{anlage_id}/abrufen", response_model=HorizontStatusResponse)
 async def abrufe_horizont_von_pvgis(
     anlage_id: int,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """
     Ruft das Horizontprofil vom PVGIS-Server ab (DEM-Geländedaten).
@@ -1251,7 +1258,7 @@ async def abrufe_horizont_von_pvgis(
 @router.delete("/horizont/{anlage_id}")
 async def loesche_horizont(
     anlage_id: int,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """Löscht das benutzerdefinierte Horizont-Profil einer Anlage."""
     anlage = await db.get(Anlage, anlage_id)

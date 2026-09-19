@@ -2,8 +2,8 @@
 
 Brückenmodul zwischen `TagesZusammenfassung.einspeisung_neg_preis_kwh`
 (Tages-Aggregat) und den Erlös-Read-Sites (Monatsdaten-basiert, in
-aussichten.py, cockpit/uebersicht.py, ha_export.py, aktueller_monat.py,
-cockpit/komponenten.py, investitionen/dashboards.py).
+aussichten/finanzen.py, cockpit/uebersicht.py, ha_export.py, aktueller_monat.py,
+cockpit/komponenten.py, investitionen/dashboard_*.py).
 
 Liefert die §51-Aggregate pro Anlage × Monat bzw. × Jahr. Der reine
 Berechnungs-Schritt (Erlös-Reduzierung × Vergütung) lebt im
@@ -59,7 +59,8 @@ def neg_preis_einspeisung_tageswert(
     zweite Rundreise für eine Auskunft, die schon vorliegt. Sie sollen deshalb
     **nicht** an diesem Service vorbeigehen: bis 2026-08-03 lasen
     ``services/energie_profil/tage_werte.py`` und
-    ``api/routes/energie_profil/views.py`` die Spalte roh, und der Tages-Erlös
+    ``api/routes/energie_profil/views.py`` (heute ``tage.py`` und ``monat.py``)
+    die Spalte roh, und der Tages-Erlös
     wurde dadurch auch bei Anlagen gekürzt, die dem §51 **nicht** unterliegen
     (Rainer-Meldung 2026-08-02: 45 kWh Einspeisung, 1,86 € statt ~3,7 €).
     Der Rohwert selbst wird bewusst **immer** geschrieben
@@ -147,7 +148,7 @@ async def get_neg_preis_einspeisung_je_monat(
     """Alle Monats-Aggregate auf einmal — dieselbe Aussage, EIN Query.
 
     Gegenstück zu `get_neg_preis_einspeisung_monat` für Aufrufer, die eine ganze
-    Historie aufbereiten (`services/monats_fakten.py`): pro Monat einzeln zu
+    Historie aufbereiten (`services/monats_fakten/`): pro Monat einzeln zu
     fragen wären N Rundreisen für dieselbe Gruppierung.
 
     Returns:

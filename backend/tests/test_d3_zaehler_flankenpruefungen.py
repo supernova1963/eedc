@@ -147,7 +147,7 @@ async def test_zaehler_bekommt_keinen_roi_hinweis(db):
     """⛔ Gemessen vor dem Bau: „Gaszähler (sonstiges): Anschaffungskosten
     fehlen — Werden für ROI-Berechnung benötigt."
 
-    `investitionen/dashboards.py` schließt den Zähler ausdrücklich aus der
+    `investitionen/dashboard_sonstiges.py` schließt den Zähler ausdrücklich aus der
     Wirtschaftlichkeit aus („ein Zähler wird ERFASST, nicht BEWERTET"). Ein
     Hinweis mit erfundenem Grund lässt sich nur durch eine Eingabe abstellen,
     die anschließend nirgends gelesen wird.

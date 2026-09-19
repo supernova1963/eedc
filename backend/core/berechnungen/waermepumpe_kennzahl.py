@@ -678,7 +678,7 @@ GRUND_FUNKTION_VERSCHIEDENE_MONATE = (
 #: Die Gründe, bei denen der **Komponenten-Hub** die Zahl trotzdem zeigt.
 #:
 #: ⭐ **Gemessen, nicht geraten** (10.09.2026): Die beiden Hub-Aufrufer
-#: (`investitionen/dashboards.py`) reichen an ``arbeitszahl_je_funktion`` nur die
+#: (`investitionen/dashboard_waermepumpe.py`) reichen an ``arbeitszahl_je_funktion`` nur die
 #: **Anwender-Angabe** und das **Abgeleitet**-Flag durch. Alles, was aus dem
 #: Zusammenspiel MEHRERER Geräte entsteht, kennt der Hub deshalb gar nicht — er
 #: rechnet je Gerät, und dort gibt es die Mischung nicht.

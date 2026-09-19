@@ -336,7 +336,7 @@ def heiz_effizienz_gepflegt(parameter: Optional[dict]) -> Optional[float]:
 
     ⚑ Es gibt im Baum vier weitere Stellen, die dieselbe Fallunterscheidung von
     Hand machen (``vorschlag_service``, ``daten_checker/stammdaten``,
-    ``investitionen/crud``, ``core/calculations``). Sie hier mit umzustellen
+    ``investitionen/roi``, ``core/calculations``). Sie hier mit umzustellen
     wäre eine Auftragsausweitung — der Befund ist als Nebenfund notiert.
     """
     params = parameter or {}
@@ -414,7 +414,7 @@ def abdeckung_ueber_geraete(bisher_h: float, weiteres_geraet_h: float) -> float:
 
     ⚠ **Über die ZEIT bleibt es eine Summe.** Diese Funktion gilt ausschließlich
     für die Achse *Gerät*. ``summiere_modus_split`` (über Tage),
-    ``dashboards.py``/``ha_export.py`` (über Monate **eines** Geräts) und
+    ``investitionen/dashboard_waermepumpe.py``/``ha_export/investition_sensoren.py`` (über Monate **eines** Geräts) und
     ``JahrAggregat.tsx`` (über Monate) addieren weiterhin — und das ist richtig,
     ein Jahr hat 8760 Stunden. Wer diese Funktion dorthin trägt, baut den
     Fehler in der Gegenrichtung ein.

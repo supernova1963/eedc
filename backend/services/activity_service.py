@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from sqlalchemy import select, delete, func, desc
+from sqlalchemy.ext.asyncio import AsyncSession
 from backend.core.database import get_session
 from backend.models.activity_log import ActivityLog
 
@@ -26,23 +27,41 @@ async def log_activity(
     details: Optional[str] = None,
     details_json: Optional[dict] = None,
     anlage_id: Optional[int] = None,
+    *,
+    db: Optional[AsyncSession] = None,
 ):
     """
     Aktivität im persistenten Protokoll speichern.
 
-    Nutzt eigene Session, kann von überall aufgerufen werden.
+    **Wer eine Sitzung hält, gibt sie mit (`db=`) — N-532.** Der Eintrag wird
+    dann Teil derselben Arbeitseinheit: er landet mit dem Commit des Aufrufers
+    in der Datenbank und verschwindet mit dessen Rollback. Ohne `db` öffnet die
+    Funktion eine eigene Sitzung (Jobs nach abgeschlossenem Block, Gateway,
+    Aufrufer ohne Datenbankzugriff).
+
+    Warum das keine Geschmacksfrage ist: SQLite kennt EINEN Schreiber. Hält die
+    Sitzung des Aufrufers nach einem `flush()` den Schreib-Lock, wartet die
+    eigene Verbindung dieser Funktion den vollen `busy_timeout` (30 s) ab,
+    scheitert mit „database is locked" — und die Zeile ist weg. Gemessen am
+    19.09.2026 auf einer r28-Kopie: Portal-Import-Apply 30,11 s, `PUT`/`POST
+    /api/monatsdaten` 30,09 s, je ohne Protokollzeile; mit übergebener Sitzung
+    0,0 s. Wächter: `tests/test_n532_aktivitaetsprotokoll_in_der_sitzung.py`.
+
     Crasht nie den aufrufenden Code.
     """
+    entry = ActivityLog(
+        kategorie=kategorie,
+        aktion=aktion,
+        erfolg=erfolg,
+        details=details,
+        details_json=details_json,
+        anlage_id=anlage_id,
+    )
+    if db is not None:
+        db.add(entry)
+        return
     try:
         async with get_session() as session:
-            entry = ActivityLog(
-                kategorie=kategorie,
-                aktion=aktion,
-                erfolg=erfolg,
-                details=details,
-                details_json=details_json,
-                anlage_id=anlage_id,
-            )
             session.add(entry)
     except Exception as e:
         logger.warning(f"Aktivitätsprotokoll konnte nicht geschrieben werden: {type(e).__name__}: {e}")

@@ -239,7 +239,7 @@ async def _detect_investition_spalten(
 async def analyze_file(
     file: UploadFile = File(...),
     anlage_id: Optional[int] = Query(None, description="Anlage-ID für Investitions-Erkennung"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """Datei hochladen und Spalten erkennen. Gibt Spalten mit Beispielwerten zurück."""
     content_bytes = await file.read()

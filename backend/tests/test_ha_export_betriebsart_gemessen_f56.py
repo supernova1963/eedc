@@ -8,7 +8,7 @@ faltet seine IMD-Zeilen je Investition (P10-Restschuld) und hatte die Weiche
 **daneben nachgebaut — ohne den Gemessen-Zweig**:
 
     float(d.get(MODUS_ABDECKUNG_FELD) or 0) > 0        # Export, F-56
-    … > 0 or hat_gemessene_betriebsart(daten)          # monats_fakten.py:706
+    … > 0 or hat_gemessene_betriebsart(daten)          # monats_fakten/fakten_wp.py::WpFakten
 
 Folge: Wer die neuen Zähler zuordnete — also genau der Anwender, an den sich
 das Release richtet — sah die Aufteilung in eedc und bekam in Home Assistant

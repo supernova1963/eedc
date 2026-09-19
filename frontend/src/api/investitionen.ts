@@ -85,6 +85,11 @@ export interface ROIBerechnung {
    * `relevante_kosten` bleibt die Mehrkosten-Größe (zugleich USt-Grundlage).
    */
   kapitaleinsatz: number
+  /**
+   * N-525: das Jahr, ab dem die Zeile in der Kalender-Treppe zählt (bei einem
+   * PV-System die früheste Anschaffung seiner Komponenten); null ohne Datum.
+   */
+  anschaffungsjahr?: number | null
   jahres_einsparung: number
   roi_prozent: number | null
   amortisation_jahre: number | null
@@ -97,6 +102,12 @@ export interface ROIBerechnung {
   co2_einsparung_kg: number | null
   detail_berechnung: Record<string, unknown>
   komponenten?: ROIKomponente[]  // Für PV-Systeme: aufklappbare Unterkomponenten
+}
+
+export interface AmortisationsVerlaufJahr {
+  jahr: number
+  kapitaleinsatz_kumuliert_euro: number
+  einsparung_kumuliert_euro: number
 }
 
 export interface ROIDashboardResponse {
@@ -122,8 +133,20 @@ export interface ROIDashboardResponse {
   gesamt_amortisation_jahre: number | null
   /** Frühestes Anschaffungsjahr = „Jahr 0" der Break-Even-Kurve; null ohne gepflegtes Datum. */
   basis_jahr: number | null
-  /** Voraussichtliches Break-Even-Kalenderjahr (basis_jahr + Amortisationsdauer). */
+  /**
+   * Voraussichtliches Break-Even-Kalenderjahr — seit N-525 der Schnittpunkt der
+   * Kalender-Treppe (`amortisations_verlauf`), nicht mehr basis_jahr + Dauer.
+   * Beides ist nur bei einer Anlage gleich, die auf einmal gebaut wurde.
+   */
   gesamt_amortisation_jahr: number | null
+  /**
+   * N-525: die Break-Even-Kurve, vom Backend gerechnet (`kapitalrechnung.
+   * amortisations_verlauf`): jede ROI-Zeile zählt Kosten und Einsparung ab ihrem
+   * Anschaffungsjahr, sonstige Ausgaben/Erträge im Jahr ihrer Buchung. `jahr`
+   * ist ein Kalenderjahr — oder ein Index ab 0, wenn `basis_jahr` null ist.
+   * Der Client zeichnet die Reihe, er rechnet sie nicht.
+   */
+  amortisations_verlauf?: AmortisationsVerlaufJahr[]
   /** Konzept §5/§8-6: die Annahme hinter Kachel, Kurve und Summenzeile. */
   amortisation_annahme: string | null
   gesamt_co2_einsparung_kg: number

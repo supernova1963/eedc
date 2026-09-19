@@ -191,6 +191,17 @@ async def fuehre_nachsende_lauf_aus(db: AsyncSession) -> dict:
             if antwort.status_code == 200:
                 gesendet += 1
                 await merke_gesendet(db, anlage.id)
+                try:
+                    hinweise = antwort.json().get("hinweise") or []
+                except ValueError:
+                    hinweise = []
+                if hinweise:
+                    # N-523: übersprungene Monate im Klartext ins Log — die
+                    # Nachsendung hat keine Oberfläche, der Log ist ihr Kanal.
+                    logger.warning(
+                        "Community-Nachsendung für Anlage %s mit Hinweisen: %s",
+                        anlage.id, "; ".join(str(h) for h in hinweise),
+                    )
                 logger.info(
                     "Community-Nachsendung für Anlage %s erfolgreich", anlage.id
                 )

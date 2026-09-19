@@ -225,7 +225,12 @@ def test_p7_zaehlerstand_verlaesst_die_anlage_nicht():
     from pathlib import Path
 
     wurzel = Path(__file__).resolve().parents[1]
-    for pfad in ("services/community_service.py", "api/routes/ha_export.py"):
+    # Vorlage 8 (18.09.2026): der HA-Export ist ein Paket — der Abwesenheits-Grep laeuft ueber ALLE seine Module.
+    pfade = ["services/community_service.py"] + sorted(
+        str(p.relative_to(wurzel)) for p in (wurzel / "api/routes/ha_export").glob("*.py")
+    )
+    assert len(pfade) >= 8, pfade
+    for pfad in pfade:
         text = (wurzel / pfad).read_text(encoding="utf-8")
         assert ZAEHLERSTAND_FELD not in text, (
             f"{pfad} nennt den Zählerstand — er gehört in keinen Weg nach außen."
@@ -243,7 +248,7 @@ def test_p7b_gegenprobe_der_grep_findet_ueberhaupt_etwas():
     wurzel = Path(__file__).resolve().parents[1]
     for pfad, muss_enthalten in (
         ("services/community_service.py", "sonstiges_verbrauch_kwh"),
-        ("api/routes/ha_export.py", "INVESTITION_SENSOREN"),
+        ("api/routes/ha_export/investition_sensoren.py", "INVESTITION_SENSOREN"),   # Vorlage 8 (18.09.2026): ha_export.py → Paket ha_export/
     ):
         text = (wurzel / pfad).read_text(encoding="utf-8")
         assert muss_enthalten in text, f"{pfad}: der Grep misst das falsche Objekt"

@@ -3,7 +3,7 @@
 
 Single Source of Truth für die drei Quoten-/Ertrags-Primitive, vorher über die
 Codebase verstreut inline dupliziert (calculations, verbrauch, aussichten,
-investitionen/dashboards, cockpit/social (2026-07-31 zurückgebaut),
+investitionen/dashboard_* (bis 18.09.2026 dashboards.py), cockpit/social (2026-07-31 zurückgebaut),
 cockpit/nachhaltigkeit, pdf-builder).
 Reine Arithmetik, DB-/Service-frei (ADR-001).
 
@@ -12,8 +12,11 @@ Maintainer-Entscheid (2026-06-14): die **Eigenverbrauchsquote wird überall auf
 Aussichten-Forecast), was rechnerisch >100 % zeigen konnte. Das ist ein
 Bugfix, release-note-pflichtig.
 
-Bewusst NICHT migriert: `energie_profil/views.py` (Tages-Autarkie mess-seitig,
-offener IA-V4-Phase-1A-Produktentscheid) und die `live_*`-Sites (kW statt kWh).
+Bewusst NICHT migriert: die `live_*`-Sites (kW statt kWh). ⚠ Hier stand bis
+18.09.2026 auch `energie_profil/views.py` („Tages-Autarkie mess-seitig, offener
+IA-V4-Phase-1A-Produktentscheid“) — Monatsauswertung und Tagesprognose rufen
+längst die beiden Helfer hier; beim Umzug der Datei in Module (Vorlage 4)
+gemessen: 0 Inline-Treffer, die Wächter-Ausnahme ist gestrichen.
 """
 
 from __future__ import annotations

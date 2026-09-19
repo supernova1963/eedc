@@ -210,6 +210,7 @@ Der Schalter zum anonymen Teilen deiner Anlagendaten für den [Community-Verglei
 - **Anonymisierung:** nur Bundesland, keine Adresse/PLZ.
 - **Jederzeit löschbar** — auch rückwirkend (einzelne Monate).
 - Der Teilen-Status ist zusätzlich in der Status-Fußzeile sichtbar.
+- **Ein unplausibler Monat sperrt nicht den ganzen Datensatz** (seit 4.0.48): hält der Community-Server einen Monat für unplausibel (Ertrag 0, Zukunftsmonat, über 180 kWh/kWp), überspringt er ihn und nimmt die übrigen an. Der Block zeigt den Hinweis nach „Jetzt übertragen", das Aktivitätsprotokoll führt ihn mit — prüfe dann den genannten Monat unter Einstellungen → Monatsdaten.
 
 ---
 
@@ -375,7 +376,9 @@ Eigenschaft:
 > **Ein Balkonkraftwerk trägt für sich genau *eine* Ausrichtung und *eine* Neigung.** Es ist als
 > Kompaktgerät gedacht — Module, Mikro-Wechselrichter und (optional) Akku in einer Investition. Die
 > Modulzahl steckt in *Leistung je Modul × Anzahl*; alle Module teilen sich dann dieselbe
-> Ausrichtung. Die Option **„Ost-West (gemischt)"** rechnet einen festen **50/50**-Split.
+> Ausrichtung. Die Option **„Ost-West (gemischt)"** rechnet einen festen **50/50**-Split — in der
+> PVGIS-Prognose wie in der Wetterprognose (Live, 14 Tage, HA-Sensoren): zwei halbe Anlagen, eine
+> nach Ost, eine nach West, mit derselben Neigung.
 
 **Neu: du kannst dem Balkonkraftwerk PV-Module zuordnen.** Damit wird jede Ausrichtung einzeln
 erfasst — ohne das Gerät als Wechselrichter umdeklarieren zu müssen. So geht es:
@@ -390,8 +393,9 @@ erfasst — ohne das Gerät als Wechselrichter umdeklarieren zu müssen. So geht
 | Deine Anlage | Erfassen als | Warum |
 |---|---|---|
 | Stecker-Solargerät, alle Module gleich ausgerichtet | **Balkonkraftwerk** allein | Ein Gerät, ein Datensatz. Der Mikro-Wechselrichter braucht keine eigene Investition. |
-| Stecker-Solargerät, Module je zur Hälfte Ost und West | **Balkonkraftwerk** allein, Ausrichtung „Ost-West (gemischt)" | Der 50/50-Split trifft genau diesen Fall — der kürzeste Weg. |
-| Stecker-Solargerät, Module in **mehreren** Richtungen oder **ungleich** verteilt (Balkon + Terrasse) | **Balkonkraftwerk + zugeordnete PV-Module** | Jede Richtung bekommt ihre eigene Prognose, das Gerät bleibt in eedc ein Balkonkraftwerk. |
+| Stecker-Solargerät, Module in verschiedenen Richtungen, der Wechselrichter liefert **nur einen Gesamtwert** | **Balkonkraftwerk** allein, Ausrichtung „Ost-West (gemischt)" | Aus einem Gesamtwert lässt sich nur der 50/50-Split machen. Getrennte Module brächten hier nur eine geschätzte Verteilung. |
+| Stecker-Solargerät, der Wechselrichter liefert **die Strings getrennt** (je ein Sensor in Home Assistant, bei Standalone per MQTT) | **Balkonkraftwerk + zugeordnete PV-Module**, je String Ausrichtung und Neigung | Jeder String bekommt sein eigenes SOLL in PVGIS und Wetterprognose und seinen eigenen IST-Wert. Der Vergleich zeigt dann den schwachen String, nicht nur die Summe. **Sobald die Messung das hergibt, ist das der bessere Weg.** |
+| Stecker-Solargerät, Module **ungleich** verteilt (Balkon + Terrasse) | **Balkonkraftwerk + zugeordnete PV-Module** | Jede Richtung bekommt ihre eigene Prognose, das Gerät bleibt in eedc ein Balkonkraftwerk. |
 | Dachanlage, mehrere Strings | **Wechselrichter + PV-Module** | Der Regelfall. |
 
 **Was das Balkonkraftwerk abgibt, sobald Module zugeordnet sind:** **Nennleistung, Ausrichtung und
@@ -546,7 +550,7 @@ Der Block zeigt die Tabelle aller erfassten Monate inline (sortierbar, mit Spalt
 
 > **Heimladung gehört an die Wallbox.** Hast du eine Wallbox angelegt, blendet das E-Auto-Formular die Felder „Heim: PV"/„Heim: Netz" aus — sie werden an der Wallbox erfasst. Ohne Wallbox (Schuko/Steckerlader) bleibt das E-Auto die Quelle. So kann derselbe Stromfluss nicht aus zwei Quellen widersprüchlich gepflegt werden. Hintergrund: [Berechnungen §3.4](BERECHNUNGEN.md#34-e-auto-einsparung).
 
-**Werte aus Home Assistant holen:** Neben „Neuer Monat" gibt es „Aus HA laden". Bei einem **neuen** Monat werden die Werte direkt ins Formular übernommen; bei einem **existierenden** Monat zeigt ein Vergleichs-Modal die Unterschiede (Vorhanden / HA-Statistik / Diff, farbkodiert ab 10 %) mit „HA-Werte übernehmen" oder „Abbrechen". Bei E-Auto- bzw. WP-Komponenten schlägt eedc den Ø Benzin- bzw. Gaspreis vor.
+**Werte aus Home Assistant holen:** Neben „Neuer Monat" gibt es „Aus HA laden". Bei einem **neuen** Monat werden die Werte direkt ins Formular übernommen; bei einem **existierenden** Monat zeigt ein Vergleichs-Modal die Unterschiede (Vorhanden / HA-Statistik / Diff, farbkodiert ab 10 %) für jedes zugeordnete Zählerfeld, auch den PV-Gesamtzähler der Anlage (bis 4.0.47 blieben Einspeisung und Netzbezug dort leer, und die Vorbelegung des Formulars kam nicht an) mit „HA-Werte übernehmen" oder „Abbrechen". Bei E-Auto- bzw. WP-Komponenten schlägt eedc den Ø Benzin- bzw. Gaspreis vor.
 
 **Wetter-Autofill:** Der Knopf **„Auto-Fill"** im Abschnitt *Wetterdaten* füllt **Globalstrahlung**, **Sonnenstunden** und **Ø Temperatur**. Strahlung und Sonnenstunden kommen aus dem Archiv (Open-Meteo historisch bzw. Bright Sky, sonst PVGIS TMY). Die **Ø Temperatur** nimmt eedc **zuerst aus deinen eigenen gemessenen Außentemperaturen** des Monats (stündliche Werte, ersatzweise Tages-Min/Max) — sie wurden an deinem Standort gemessen und sind für den laufenden Monat die einzige Quelle; erst ohne sie kommt der Archivwert. Unter dem Knopf steht, welche der beiden es war. ⛔ **Der Auto-Fill füllt nur leere Felder — in allen drei.** Ein selbst eingetragener Wert bleibt stehen, egal um welches der drei es geht; unter dem Knopf steht dann in einem Satz, was übernommen wurde und was unverändert blieb (*„Globalstrahlung und Sonnenstunden übernommen, Ø Temperatur unverändert — der eingetragene Wert bleibt stehen."*). Wer einen Wert doch ersetzen will, **leert das Feld und klickt erneut**. Von Hand änderbar bleiben alle drei immer.
 
@@ -644,6 +648,8 @@ eedc exportiert berechnete Kennzahlen an einen Broker (HA-Discovery-Konvention).
 - **Amber** — Konflikt: HA-Werte weichen ab (nicht ausgewählt).
 
 Jeder Monat ist einzeln per Checkbox wählbar — so bleiben manuell erfasste Daten geschützt.
+
+> **Ein PV-Gesamtzähler der Anlage wird auf die Module verteilt** (seit 4.0.48). Hat deine Anlage nur einen gemeinsamen PV-Zähler in HA (Datenquellen: „Über den Anlagen-Zählerstand abgedeckt“), zeigt die Vorschau ihn als „PV Erzeugung Gesamt“, zählt ihn beim Vergleich mit — ein Monat ohne PV ist kein „stimmt überein“ — und schreibt ihn beim Import wie der Monatsabschluss anteilig nach kWp auf die aktiven Module, als Zerlegung gekennzeichnet; Module mit eigenem Sensor behalten ihren Messwert. Bis 4.0.47 blieb der Zähler im Statistik-Import unbeachtet: die Monate galten als vollständig und hatten keine PV, und der Daten-Checker riet zu genau diesem Import.
 
 > **Voraussetzungen:** zugeordnete HA-Sensoren (siehe [Datenquellen](#7-datenquellen--feld-zentrische-zuordnung)) und Sensoren, die in der HA-Langzeitstatistik geführt werden. Den **Zugang zur Statistik** hat eedc auf drei Wegen, und einer genügt: über die verbundene Home-Assistant-Instanz (Add-on oder Long-Lived-Token — **ohne** jede weitere Einrichtung), über den Lesezugriff des Add-ons auf die Recorder-Datei, oder über `HA_RECORDER_DB_URL` bei MariaDB/MySQL. Wo eine Datenbank erreichbar ist, wird sie bevorzugt; sonst holt eedc dieselben Werte über die HA-API. Bei Tagesreset-Zählern nutzt eedc `MAX(sum) − MIN(sum)` aus HA-Statistics (reset-bereinigt).
 >

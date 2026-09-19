@@ -709,6 +709,7 @@ async def sensor_snapshot_5min_cleanup_job() -> None:
                     aktion="5-Min-Snapshot Cleanup",
                     erfolg=True,
                     details=f"{count} Sub-Hour-Slots > 24h gelöscht",
+                    db=db,
                 )
     except Exception as e:
         logger.warning(f"5-Min-Snapshot Cleanup fehlgeschlagen: {type(e).__name__}: {e}")
@@ -1206,6 +1207,7 @@ async def pvgis_aktualitaet_job() -> None:
                         aktion="Solarprognose aktualisiert",
                         erfolg=True,
                         details=f"Anlage {anlage.id}: {abweichung.text}",
+                        db=db,
                     )
                     logger.info(
                         "PVGIS-Aktualität: Anlage %d neu abgerufen (%s)",
@@ -1261,6 +1263,7 @@ async def kraftstoffpreis_job() -> None:
                     aktion="Kraftstoffpreis-Update",
                     erfolg=True,
                     details=f"{gesamt_tage} Tage + {gesamt_monate} Monate für {len(anlagen)} Anlagen",
+                    db=db,
                 )
                 logger.info("Kraftstoffpreis-Job: %d Tage, %d Monate aktualisiert",
                             gesamt_tage, gesamt_monate)

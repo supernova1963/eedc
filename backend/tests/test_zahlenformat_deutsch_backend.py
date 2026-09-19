@@ -52,7 +52,7 @@ SCHARF = [
 ]
 
 #: Restschuld, gemessen am 2026-09-16 — Zahl darf fallen, nie steigen.
-#: ⚠ Das sind **Anwendertexte**, keine Logzeilen: Stichprobe ``crud.py:2295``
+#: ⚠ Das sind **Anwendertexte**, keine Logzeilen: Stichprobe ``investitionen/roi.py::get_roi_dashboard``
 #: (``f'{result.km_elektrisch:.0f} km elektrisch'``) steht in der Begründung,
 #: die eine Wärmepumpen-Kachel anzeigt. Die Fläche ist erhoben, aber nicht
 #: beauftragt — wer sie anfasst, zieht die Zahl hier mit herunter.

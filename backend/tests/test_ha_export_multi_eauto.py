@@ -8,7 +8,7 @@ ALLE E-Autos mit den Werten des LETZTEN. Davon abgeleitet:
 `jahres_ersparnis_euro`, `roi_prozent` und `amortisation_jahre` als
 HA-Sensoren — alle drei waren bei Multi-EA-Haushalten falsch.
 
-Zusätzlich fehlte hier (anders als in aussichten.py) der Fallback auf
+Zusätzlich fehlte hier (anders als in aussichten/finanzen.py) der Fallback auf
 `md.kraftstoffpreis_euro` (EU OB) — der Anlage-Sensor driftete deshalb
 nicht nur intern, sondern auch gegen den per-Investition-Sensor
 `e_auto_ersparnis_vs_benzin_euro`, der den Monatspreis korrekt nutzt.

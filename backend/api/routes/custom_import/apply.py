@@ -66,7 +66,7 @@ async def apply_custom_import(
     mapping_json: str = Query(..., description="JSON-String mit MappingConfig"),
     monate_json: str = Query(..., description="JSON-Array mit [{jahr, monat}] der zu importierenden Monate"),
     ueberschreiben: bool = Query(False),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """
     Wendet das Custom-Mapping auf die Datei an und importiert die Daten.
@@ -420,6 +420,7 @@ async def apply_custom_import(
             "geschuetzt": geschuetzt_count, "fehler": fehler[:5],
         },
         anlage_id=anlage_id,
+        db=db,
     )
 
     return ApplyResponse(

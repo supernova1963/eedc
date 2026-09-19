@@ -83,7 +83,8 @@ const fehler = []
 
 // ── Spiegel 2: die Energie-Kategorien der Monatsauswertung ──────────────────
 {
-  const py = lies(join(REPO, 'eedc/backend/api/routes/energie_profil/views.py'))
+  // Vorlage 4 (18.09.2026): die Map lebt seit dem Umzug von views.py in monat.py.
+  const py = lies(join(REPO, 'eedc/backend/api/routes/energie_profil/monat.py'))
   const ts = lies(join(ROOT, 'src/lib/colors.ts'))
 
   const pyRoh = block(py, 'ENERGIE_KATEGORIEN: dict[str, tuple[str, str, str]] = {', '\n}')

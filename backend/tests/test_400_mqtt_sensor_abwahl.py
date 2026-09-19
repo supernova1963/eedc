@@ -319,7 +319,7 @@ async def test_route_speichert_und_meldet_das_neu_abgewaehlte(db, monkeypatch):
 
     await _anlage_mit_geraet(db)
 
-    import backend.api.routes.ha_export as route_modul
+    import backend.api.routes.ha_export.konfig as route_modul   # Vorlage 8: set_sensor_abwahl bindet MQTTClient/resolve_broker_config hier
 
     klient = _FakeMqttClient()
     monkeypatch.setattr(route_modul, "MQTTClient", lambda *a, **k: klient)

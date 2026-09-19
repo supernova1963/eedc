@@ -30,7 +30,7 @@ Heimlade-Ersparnis gegenüber der öffentlichen Säule, wie sie der Komponenten-
 zeigt). **Entscheid Gernot, 2026-09-01: nein.** Die Ersparnis gehört der
 E-Mobilität als Ganzes und ist in der E-Auto-Zeile bereits enthalten — deren
 Formel rechnet „Benzin minus Heimstrom" und unterstellt damit schon, dass zuhause
-geladen wurde (``aussichten.py``, ``jahres_eauto_km_ersparnis``). Ein zweiter
+geladen wurde (``aussichten/finanz_prognose.py``, ``jahres_eauto_km_ersparnis``). Ein zweiter
 Posten daneben hätte dieselbe Kilowattstunde gegen zwei einander ausschließende
 Alternativen gerechnet — die Klasse aus v4.0.20 (55,9 ct für dieselbe kWh).
 **Nicht neu aufrollen.**

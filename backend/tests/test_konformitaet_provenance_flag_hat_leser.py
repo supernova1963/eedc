@@ -124,7 +124,7 @@ def attributzugriffe_unter_api() -> set[str]:
 def test_w1_jedes_domaenen_flag_erreicht_eine_route():
     """Baseline **0** — gemessen, nicht gesetzt.
 
-    Am 29.08.2026 erhoben: `pv_vollstaendig` (`services/monats_fakten.py`),
+    Am 29.08.2026 erhoben: `pv_vollstaendig` (`services/monats_fakten/`),
     `anfang_vollstaendig` (`services/zaehlerstaende.py`), `om_vollstaendig`
     (`services/prognose_kanon.py`). Vor dem B1-Bau erreichte **`pv_vollstaendig`
     keine Route** — dieser Test wäre rot gewesen. Genau so war er im Bauschnitt

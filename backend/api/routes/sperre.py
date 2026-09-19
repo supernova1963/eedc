@@ -63,7 +63,7 @@ async def status(request: Request, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/entsperren", response_model=NachweisResponse)
-async def entsperren(daten: EntsperrenRequest, db: AsyncSession = Depends(get_db)):
+async def entsperren(daten: EntsperrenRequest, db: AsyncSession = Depends(get_db, scope="function")):
     """Prüft die PIN und gibt den Nachweis für diese Browser-Sitzung zurück."""
     if not await sperre_core.ist_gesetzt(db):
         raise bad_request("Es ist keine PIN gesetzt.")
@@ -85,7 +85,7 @@ async def sperren():
 
 
 @router.post("/pin", response_model=ErfolgResponse)
-async def pin_setzen(daten: PinRequest, db: AsyncSession = Depends(get_db)):
+async def pin_setzen(daten: PinRequest, db: AsyncSession = Depends(get_db, scope="function")):
     """Setzt die erste PIN oder ändert eine bestehende.
 
     Das Ändern ist selbst ein schreibender Aufruf und damit gesperrt, solange die
@@ -102,7 +102,7 @@ async def pin_setzen(daten: PinRequest, db: AsyncSession = Depends(get_db)):
 
 
 @router.delete("/pin", response_model=ErfolgResponse)
-async def pin_entfernen(db: AsyncSession = Depends(get_db)):
+async def pin_entfernen(db: AsyncSession = Depends(get_db, scope="function")):
     """Entfernt die PIN. Danach ist wieder alles offen — wie vor dem Einschalten."""
     await sperre_core.entferne_pin(db)
     logger.info("Einstellungs-PIN entfernt.")

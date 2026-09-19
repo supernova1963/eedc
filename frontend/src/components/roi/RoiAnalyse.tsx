@@ -237,24 +237,21 @@ export function useRoiAnalyse({ anlageId, strompreis, einspeiseverguetung, benzi
   }, [anlageId, strompreis, einspeiseverguetung, benzinpreis, jahr, swrKey])
 
   const amortisationData = useMemo(() => {
-    if (!roiData || roiData.gesamt_relevante_kosten <= 0) return []
-    const data = []
-    let kumulierteEinsparung = 0
-    // F-19: die Break-Even-Linie liegt auf dem **Kapitaleinsatz** — dem Wert,
-    // durch den das Backend teilt. Auf den relevanten Kosten würde die Kurve
-    // die Nulllinie an einem anderen Jahr schneiden als die Amortisations-
-    // Kachel darüber nennt.
-    const nenner = roiData.gesamt_kapitaleinsatz ?? roiData.gesamt_relevante_kosten
-    const maxJahre = Math.min(Math.ceil((roiData.gesamt_amortisation_jahre ?? 20) * 1.5), 30)
-    for (let j = 0; j <= maxJahre; j++) {
-      data.push({
-        jahr: j,
-        kumulierte_einsparung: Math.round(kumulierteEinsparung),
-        investition: nenner,
-      })
-      kumulierteEinsparung += roiData.gesamt_jahres_einsparung
-    }
-    return data
+    // N-525: die Kurve kommt fertig aus dem Backend (`amortisations_verlauf`,
+    // Layer `kapitalrechnung.amortisations_verlauf`) — jede ROI-Zeile zählt
+    // Kosten und Einsparung ab ihrem Anschaffungsjahr, sonstige Positionen im
+    // Jahr ihrer Buchung. Bis 2026-09-18 rechnete der Client hier selbst:
+    // Kapitaleinsatz konstant ab der frühesten Anschaffung, die heutige
+    // Jahres-Einsparung linear dazu — für eine über Jahre gewachsene Anlage
+    // ein zu frühes Jahr (Radiocarbonat, T89667 #342). F-19 gilt weiter: die
+    // Investitionslinie ist der Kapitaleinsatz, und das Break-Even-Jahr der
+    // Kachel ist der Schnittpunkt genau dieser Reihe.
+    if (!roiData) return []
+    return (roiData.amortisations_verlauf ?? []).map((p) => ({
+      jahr: p.jahr,
+      kumulierte_einsparung: Math.round(p.einsparung_kumuliert_euro),
+      investition: Math.round(p.kapitaleinsatz_kumuliert_euro),
+    }))
   }, [roiData])
 
   const einsparungenByTyp = useMemo(() => {
@@ -392,18 +389,20 @@ export function RoiAmortisationChart({ vm }: { vm: RoiAnalyseVM }) {
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={vm.amortisationData} margin={{ top: ACHSEN_MARGIN_TOP }}>
             <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
-            {/* Mit gepflegtem Anschaffungsdatum zeigen die Ticks Kalenderjahre
-                (Radiocarbonat), sonst wie bisher den Jahres-Index ab 0. */}
+            {/* Die Reihe trägt Kalenderjahre (mit gepflegtem Anschaffungsdatum,
+                Radiocarbonat) oder den Jahres-Index ab 0 — beides schon vom
+                Backend, hier nur beschriftet. */}
             <XAxis
               dataKey="jahr"
-              tickFormatter={(j: number) => (basisJahr != null ? `${basisJahr + j}` : `${j}`)}
+              tickFormatter={(j: number) => `${j}`}
               {...xAchse()} /* achsen-allow: Jahres-Index bzw. Kalenderjahr; Einheit steht im Break-Even-Text + KPI, Achsen-Label kollidierte mit Legende (#29-15) */
             />
             <YAxis tickFormatter={geldTick} tick={{ fontSize: 10 }} width={70} label={achsenEinheit('€')} />
-            <Tooltip content={<ChartTooltip labelFormatter={(label) => (basisJahr != null ? `${basisJahr + Number(label)}` : `Jahr ${label}`)} unit="€" />} />
+            <Tooltip content={<ChartTooltip labelFormatter={(label) => (basisJahr != null ? `${label}` : `Jahr ${label}`)} unit="€" />} />
             <Legend content={<ChartLegende onItemClick={legende.onItemClick} />} />
             <Line type="monotone" dataKey="kumulierte_einsparung" name="Kumulierte Einsparung" stroke={GELD_COLORS.ersparnis} strokeWidth={2} dot={false} hide={legende.istVersteckt('kumulierte_einsparung')} />
-            <Line type="monotone" dataKey="investition" name="Investition" stroke={GELD_COLORS.kosten} strokeWidth={2} strokeDasharray="5 5" dot={false} hide={legende.istVersteckt('investition')} />
+            {/* N-525: Stufen, nicht Gerade — Geld wird in dem Jahr eingesetzt, in dem es fließt. */}
+            <Line type="stepAfter" dataKey="investition" name="Investition" stroke={GELD_COLORS.kosten} strokeWidth={2} strokeDasharray="5 5" dot={false} hide={legende.istVersteckt('investition')} />
           </LineChart>
         </ResponsiveContainer>
       </div>
@@ -411,13 +410,14 @@ export function RoiAmortisationChart({ vm }: { vm: RoiAnalyseVM }) {
         <p className="text-sm text-gray-500 dark:text-gray-400 mt-2 text-center">
           Break-Even nach ca. {fmtZahl(roiData.gesamt_amortisation_jahre, 1)} Jahren
           {roiData.gesamt_amortisation_jahr ? ` — voraussichtlich ${roiData.gesamt_amortisation_jahr}` : ''}
-          {/* Ehrlichkeit zum Nullpunkt: die Kurve rechnet ab dem FRÜHESTEN
-              Anschaffungsjahr mit der heutigen Jahres-Einsparung. Wer über
-              mehrere Jahre erweitert hat, liest damit ein optimistisches Jahr. */}
+          {/* N-525: bis 2026-09-18 stand hier „bei über mehrere Jahre verteilten
+              Anschaffungen ist das Jahr eher optimistisch" — die Kurve rechnete
+              ab der frühesten Anschaffung mit der heutigen Jahres-Einsparung.
+              Jetzt stuft sie je Komponente, und der Satz sagt, was sie tut. */}
           {basisJahr != null && (
             <span className="block text-xs mt-0.5">
-              Startjahr {basisJahr} (früheste Anschaffung); bei über mehrere Jahre verteilten
-              Anschaffungen ist das Jahr eher optimistisch.
+              Ab {basisJahr}; jede Komponente zählt Kosten und Einsparung ab ihrem
+              Anschaffungsjahr, sonstige Ausgaben und Erträge im Jahr ihrer Buchung.
             </span>
           )}
           {/* Konzept §5/§8-6: hier steht die Annahme SICHTBAR, nicht im

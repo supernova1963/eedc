@@ -594,7 +594,8 @@ P3A_BASELINE_AUSNAHMEN: frozenset[str] = frozenset({
     # ihn bei Erzeugern über `get_erzeuger_kwp` zu heilen und bei allen anderen
     # Typen (Mehrzweckfeld N-G: Speicher = kWh, WR = kW AC) unverändert
     # durchzureichen. Ein Helper-Aufruf statt des Rohzugriffs wäre hier zirkulär.
-    "backend/api/routes/investitionen/crud.py::self",
+    # Vorlage 5 (18.09.2026): die Response-Klasse zog aus crud.py nach schemas.py.
+    "backend/api/routes/investitionen/schemas.py::self",
     # Der SoT selbst — er IST der Spalten-Fallback und liest sie per `getattr`.
     # Als einziger Eintrag ganzes Modul statt `Modul::Empfänger`.
     P3A_SOT_MODUL,
@@ -1399,6 +1400,10 @@ P7_BASELINE_AUSNAHMEN: frozenset[str] = frozenset({
     # `PvModulWert` — das ERGEBNIS der Auflösung. Genau der Weg, den die Regel
     # vorschreibt; die Summe daraus ist die Anlagen-PV.
     "backend/api/routes/cockpit/pv_strings.py::w",
+    # Dito im HA-Statistik-Import (N-533, 19.09.2026): `modulwert` ist das
+    # `PvModulWert` aus `lade_pv_je_monat` (was ist gemessen?) bzw. aus
+    # `resolve_pv_je_modul` (wie viel bekommt jede Lücke vom Anlagen-Zähler?).
+    "backend/api/routes/ha_statistics.py::modulwert",
     # Dito auf der TAGESEBENE (#406): `loese_pv_tageswerte_auf` ruft denselben
     # SoT `resolve_pv_je_modul` mit Tageswerten statt Monatswerten und liest sein
     # Ergebnis (`PvModulWert`). Es gibt dort keine `Monatsdaten`-Zeile — das
@@ -1420,7 +1425,7 @@ P7_BASELINE_AUSNAHMEN: frozenset[str] = frozenset({
     # Dito — die Erzeugungs-Gewichte der Ertrags-Zerlegung (§8/5): der
     # Einspeise-Erlös wird nach GEMESSENER Erzeugung je ROI-Zeile verteilt,
     # und genau dafür ist `pv_je_modul` die vorgeschriebene Quelle.
-    "backend/api/routes/aussichten.py::_wert",
+    "backend/api/routes/aussichten/finanz_zerlegung.py::_wert",   # Vorlage 7b (18.09.2026): finanzen.py → finanz_zerlegung.py (Fortschritt je Investition)
     # Import-/Connector-/Parser-DTOs auf dem Weg IN die Datenbank. Sie tragen
     # den Wert, bevor es eine Monatsdaten-Zeile gibt — eine Auflösung wäre dort
     # gegenstandslos.
@@ -1598,7 +1603,7 @@ def test_p7_baseline_ausnahmen_sind_noch_belegt():
 #                             — Spaltenstruktur von Vorlage und Export nach
 #                               heutiger Vertragsart. Der Zahlenwert je Zeile
 #                               kommt aus den Monatsdaten, nicht von hier.
-#   investitionen/crud.py     — ROI-/Wirtschaftlichkeits-Prognose NACH VORN:
+#   investitionen/roi.py      — ROI-/Wirtschaftlichkeits-Prognose NACH VORN (bis 18.09.2026 crud.py):
 #                               die Route liefert einen Ø-JAHRESWERT für die
 #                               Amortisationsrechnung, und `AuswertungenRoiV4`
 #                               übergibt kein `jahr` (nachgemessen 03.08.).
@@ -1607,7 +1612,7 @@ def test_p7_baseline_ausnahmen_sind_noch_belegt():
 #                               EINZELNES Altjahr mit dem heutigen Tarif —
 #                               dann gehört die Stelle auf den Stichtag und
 #                               nicht mehr hierher.
-#   investitionen/dashboards.py
+#   investitionen/dashboards.py (seit Vorlage 6, 18.09.2026: dashboard_<typ>.py je Dashboard)
 #                             — Query-Param-Default + Fallback der
 #                               `_gewichtete_monatspreise`-Mittelung; die
 #                               historischen Beträge laufen über den Helper.
@@ -1628,7 +1633,7 @@ def test_p7_baseline_ausnahmen_sind_noch_belegt():
 #                               Kennwerte; alle Monats-Summen laufen seit S4
 #                               über `fakt.tarif` bzw. `baue_finanz_zeile`,
 #                               beide mit dem Monats-Stichtag (ADR-002/P10).
-#   aussichten.py             — Hochrechnung + ausgewiesener Tarif der
+#   aussichten/finanzen.py    — Hochrechnung + ausgewiesener Tarif der
 #                               Response; die Historie läuft über
 #                               `_tarife_fuer_stichtag`.
 #   speicher_sizing_service.py — Der Sizing-Simulator (#358 Phase 3) bewertet
@@ -1651,14 +1656,15 @@ P8_BASELINE_AUSNAHMEN: frozenset[str] = frozenset({
     # Spaltenstruktur von Vorlage und Export nach heutiger Vertragsart.
     "backend/api/routes/import_export/csv_operations.py::get_csv_template_info",
     "backend/api/routes/import_export/csv_operations.py::export_csv",
-    # ROI-/Wirtschaftlichkeits-Prognose NACH VORN (Ø-Jahreswert).
-    "backend/api/routes/investitionen/crud.py::get_roi_dashboard",
+    # ROI-/Wirtschaftlichkeits-Prognose NACH VORN (Ø-Jahreswert). Vorlage 5 (18.09.2026): crud.py → roi.py;
+    # Vorlage 5b (18.09.2026): die Tarif-Ladung zog mit dem Kopf des Endpunkts nach roi_eingaenge.py.
+    "backend/api/routes/investitionen/roi_eingaenge.py::lade_roi_eingaenge",
     # Query-Param-Default + Fallback der `_gewichtete_monatspreise`-Mittelung.
-    "backend/api/routes/investitionen/dashboards.py::get_eauto_dashboard",
-    "backend/api/routes/investitionen/dashboards.py::get_sonstiges_dashboard",
-    "backend/api/routes/investitionen/dashboards.py::get_speicher_dashboard",
-    "backend/api/routes/investitionen/dashboards.py::get_waermepumpe_dashboard",
-    "backend/api/routes/investitionen/dashboards.py::get_wallbox_dashboard",
+    "backend/api/routes/investitionen/dashboard_eauto.py::get_eauto_dashboard",
+    "backend/api/routes/investitionen/dashboard_sonstiges.py::get_sonstiges_dashboard",
+    "backend/api/routes/investitionen/dashboard_speicher.py::get_speicher_dashboard",
+    "backend/api/routes/investitionen/dashboard_waermepumpe.py::get_waermepumpe_dashboard",
+    "backend/api/routes/investitionen/dashboard_wallbox.py::get_wallbox_dashboard",
     # Heutiger Tarif als Fallback des Perioden-Mappings und für die nach vorn
     # gerichteten Sensor-Werte. Die Historien-Summen daneben lösen je Monat auf
     # (`wp_preis_by_periode` / `wallbox_preis_by_periode`, beide mit Stichtag).
@@ -1668,15 +1674,15 @@ P8_BASELINE_AUSNAHMEN: frozenset[str] = frozenset({
     # (gemessen: Juli mit dem Septemberpreis). Die Ausnahme zählte den Lader,
     # nicht, was mit dem Tarif geschah — dieselbe Lücke wie bei P8/S4 oben.
     # Seit X-1 lädt die Funktion je Monat mit Stichtag; der Eintrag ist weg.
-    "backend/api/routes/ha_export.py::calculate_anlage_sensors",
+    "backend/api/routes/ha_export/anlage_sensoren.py::calculate_anlage_sensors",   # Vorlage 8 (18.09.2026): ha_export.py → Paket ha_export/
     # N-200: seit dem SoT-Umbau sichtbar. Die Route reicht den Tarif nur an
     # `calculate_investition_sensors` durch — dieselbe Rolle wie die Zeile
     # darüber, eine Ebene höher.
-    "backend/api/routes/ha_export.py::get_all_sensors",
+    "backend/api/routes/ha_export/sensoren.py::get_all_sensors",   # Vorlage 8 (18.09.2026): ha_export.py → Paket ha_export/
     # Anzeige des aktuellen Tarifs + Komponenten-Kennwerte.
     "backend/api/routes/cockpit/uebersicht.py::get_cockpit_uebersicht",
     # Hochrechnung + ausgewiesener Tarif der Response.
-    "backend/api/routes/aussichten.py::get_finanz_prognose",
+    "backend/api/routes/aussichten/finanzen.py::get_finanz_prognose",   # Vorlage 7 (18.09.2026): aussichten.py → aussichten/finanzen.py
     # Sizing-Simulator (#358 Phase 3): bewertet einen ZUKAUF, keinen Altmonat.
     "backend/services/speicher_sizing_service.py::lade_sizing_auswertung",
 })
@@ -1952,7 +1958,7 @@ def test_p9_durchreicher_sind_noch_belegt():
 # Rohdaten selbst zu Monatswerten, und dabei fällt jedes Mal etwas anderes weg
 # — mal V2H, mal der Erzeuger hinter dem Zähler, mal der Aggregat-Fallback, mal
 # der Monatstarif, mal der Dienstwagen-Filter. SoT ist seit S1
-# `services/monats_fakten.py` (`docs/KONZEPT-MONATS-FAKTEN.md`).
+# `services/monats_fakten/` (`docs/KONZEPT-MONATS-FAKTEN.md`; seit 19.09.2026 ein Paket).
 #
 # **Der Wächter ist funktions-granular, nicht modul-granular**, und das ist der
 # Kern seiner Schärfe: `dashboards.py` darf für seine per-Investition-Sicht
@@ -1992,7 +1998,7 @@ def test_p9_durchreicher_sind_noch_belegt():
 # SOLL der Wächter anschlagen — der Eintrag wird dann bewusst und mit dieser
 # Begründung in P10_SCHREIBEN_IMPORT_CHECKER aufgenommen.
 
-_P10_SCHICHT = "backend/services/monats_fakten.py"
+_P10_SCHICHT = "backend/services/monats_fakten/"   # seit Vorlage 10 (19.09.2026) ein Paket — Praefix
 
 #: Schreib-, Import-, Migrations- und Checker-Pfade + reine Durchreicher.
 P10_SCHREIBEN_IMPORT_CHECKER: frozenset[str] = frozenset({
@@ -2035,6 +2041,10 @@ P10_SCHREIBEN_IMPORT_CHECKER: frozenset[str] = frozenset({
     # Import / Export / Migration.
     "backend/api/routes/ha_statistics.py::get_import_vorschau",
     "backend/api/routes/ha_statistics.py::import_ha_statistics",
+    # N-533 (19.09.2026): schreibt den Anlagen-PV-Zähler eines Monats als Modulwerte
+    # (Import-Pfad). Lädt die Gerätezeilen des Monats nur, um sie zu BESCHREIBEN;
+    # was gemessen ist, fragt sie bei `lade_pv_je_monat` (P7), nicht selbst.
+    "backend/api/routes/ha_statistics.py::_verteile_anlagen_pv",
     "backend/api/routes/import_export/csv_operations.py::export_csv",
     "backend/api/routes/import_export/json_operations.py::_export_anlage_full_impl",
     "backend/services/migrations/migrate_emob_canonical_source.py::migrate_emob_canonical_source",
@@ -2066,7 +2076,7 @@ P10_SCHREIBEN_IMPORT_CHECKER: frozenset[str] = frozenset({
     # solchen Zähler gepflegt?", und dafür zählt auch ein Monat vor der
     # Anschaffung oder nach der Stilllegung. Gelesen wird über den SoT-Helfer
     # `hat_gemessene_betriebsart`, nicht über eine eigene Feldliste.
-    "backend/services/daten_checker/datenquelle.py::_check_klima_modus_sensor",
+    "backend/services/daten_checker/datenquelle/klima.py::_check_klima_modus_sensor",   # Vorlage 9 (18.09.2026): datenquelle.py → Unterpaket datenquelle/
     # Zählt Zeilen für die DB-Statistik.
     "backend/main.py::get_database_stats",
     # Reicht die Zeilen EINES Monats unverändert an das Frontend durch.
@@ -2082,23 +2092,27 @@ P10_PER_INVESTITION: frozenset[str] = frozenset({
     # Erzeuger · Eigenverbrauch/Autarkie) kommen aus `lade_monats_fakten`.
     # Selbst geladen wird nur die Zuordnung `inv → verbrauch_daten` für die
     # eMob-Zeilen des Vorjahres-T-Kontos.
-    "backend/api/routes/aktueller_monat.py::_load_vorjahr",
+    "backend/api/routes/aktueller_monat/vergleich.py::_load_vorjahr",
     # C1d (2026-08-04): der Komponenten-Detailblock ist umgehängt — Speicher,
     # WP, E-Mob, BKW und die sechs Sonstiges-Mengen kommen aus
     # `lade_monats_fakten`. Selbst geladen wird nur noch die Zuordnung
     # `inv → verbrauch_daten` für die Financial-Zeile JE Investition.
-    "backend/api/routes/aktueller_monat.py::get_aktueller_monat",
-    "backend/api/routes/aussichten.py::get_finanz_prognose",
-    "backend/api/routes/ha_export.py::_load_emob_pool_ctx",
-    "backend/api/routes/ha_export.py::calculate_anlage_sensors",
-    "backend/api/routes/ha_export.py::calculate_investition_sensors",
-    "backend/api/routes/investitionen/crud.py::get_roi_dashboard",
-    "backend/api/routes/investitionen/dashboards.py::get_eauto_dashboard",
-    "backend/api/routes/investitionen/dashboards.py::get_waermepumpe_dashboard",
-    "backend/api/routes/investitionen/dashboards.py::get_speicher_dashboard",
-    "backend/api/routes/investitionen/dashboards.py::get_wallbox_dashboard",
-    "backend/api/routes/investitionen/dashboards.py::get_balkonkraftwerk_dashboard",
-    "backend/api/routes/investitionen/dashboards.py::get_sonstiges_dashboard",
+    # Vorlage 2 (18.09.2026): die IMD-Ladung des T-Kontos zog aus dem Endpunkt nach finanzen.py.
+    "backend/api/routes/aktueller_monat/finanzen.py::t_konto_je_investition",
+    "backend/api/routes/aussichten/finanz_eingaenge.py::lade_finanz_eingaenge",   # Vorlage 7b (18.09.2026): finanzen.py::get_finanz_prognose → finanz_eingaenge.py
+    "backend/api/routes/ha_export/emob.py::_load_emob_pool_ctx",   # Vorlage 8 (18.09.2026): ha_export.py → Paket ha_export/
+    "backend/api/routes/ha_export/anlage_komponenten.py::historische_komponenten",   # Vorlage 8b (18.09.2026): Phase des Anlagen-Rechners (IMD-Lader)
+    "backend/api/routes/ha_export/investition_sensoren.py::calculate_investition_sensors",   # Vorlage 8 (18.09.2026): ha_export.py → Paket ha_export/
+    # Vorlage 5b (18.09.2026): die IMD-Ladungen des ROI-Dashboards zogen aus dem Endpunkt in zwei Phasen —
+    # sonstige Positionen je Investition (Kopf) und Speicher-IST-Aggregate (PV-Seite).
+    "backend/api/routes/investitionen/roi_eingaenge.py::lade_roi_eingaenge",
+    "backend/api/routes/investitionen/roi_pv.py::pv_einsparung_und_speicher_ist",
+    "backend/api/routes/investitionen/dashboard_eauto.py::get_eauto_dashboard",
+    "backend/api/routes/investitionen/dashboard_waermepumpe.py::get_waermepumpe_dashboard",
+    "backend/api/routes/investitionen/dashboard_speicher.py::get_speicher_dashboard",
+    "backend/api/routes/investitionen/dashboard_wallbox.py::get_wallbox_dashboard",
+    "backend/api/routes/investitionen/dashboard_balkonkraftwerk.py::get_balkonkraftwerk_dashboard",
+    "backend/api/routes/investitionen/dashboard_sonstiges.py::get_sonstiges_dashboard",
     # N-247 (2026-08-14): der Leer-Grund des Komponenten-Hubs. Diese Funktion
     # bildet **keine Monatsgröße** — sie beantwortet „hat dieses eine Gerät
     # überhaupt eine Zeile?" und zählt dafür die Rohzeilen **einer** Investition
@@ -2192,8 +2206,8 @@ _P10_ZEILE_ERLAUBT: frozenset[str] = frozenset({
     _P10_SCHICHT,
     # Der Builder selbst nimmt die Eingabe entgegen.
     "backend/services/finanz_zeilen.py",
-    # Tages-Pfad (§4).
-    "backend/api/routes/energie_profil/views.py",
+    # Tages-Pfad (§4). Vorlage 4 (18.09.2026): die Zeile entsteht in `get_tag_detail`, heute `tag.py`.
+    "backend/api/routes/energie_profil/tag.py",
     "backend/services/energie_profil/tage_werte.py",
 })
 
@@ -2250,7 +2264,7 @@ def test_p10_monatszeile_nur_aus_der_schicht():
     assert offen == [], (
         f"{len(offen)} Funktionen laden `InvestitionMonatsdaten` selbst: {offen}\n"
         "Eine abgeleitete Monatsgröße einer Anlage kommt aus "
-        "`services/monats_fakten.py::lade_monats_fakten` — dort gelten die "
+        "`services/monats_fakten/laden.py::lade_monats_fakten` — dort gelten die "
         "Zeitfilter (aktiv · Anschaffung · Stilllegung), der Dienstwagen-Filter, "
         "die P7-Auflösung der PV und der Monatstarif (P8) genau einmal. Wer "
         "selbst faltet, verliert erfahrungsgemäß eine davon, und niemand merkt "
@@ -2315,7 +2329,7 @@ def test_p10_finanz_zeile_eingabe_nur_aus_einem_monats_fakt():
     treffer: list[str] = []
     for pfad, baum in _quelldateien():
         modul = f"backend/{pfad.relative_to(_BACKEND).as_posix()}"
-        if modul in _P10_ZEILE_ERLAUBT:
+        if modul in _P10_ZEILE_ERLAUBT or modul.startswith(_P10_SCHICHT):
             continue
         for knoten in ast.walk(baum):
             if (
@@ -2327,7 +2341,7 @@ def test_p10_finanz_zeile_eingabe_nur_aus_einem_monats_fakt():
     assert treffer == [], (
         f"`FinanzZeileEingabe` außerhalb der Schicht gebaut: {treffer}\n"
         "Die Eingabe der Finanz-Zeile entsteht in "
-        "`services/monats_fakten.py::finanz_zeile_eingabe` aus einem "
+        "`services/monats_fakten/ableitungen.py::finanz_zeile_eingabe` aus einem "
         "`MonatsFakt` — nur so tragen alle Sichten denselben Tarif-Stichtag (P8) "
         "und dieselbe BKW-Aufteilung (P9)."
     )
@@ -2382,7 +2396,7 @@ _P11_SELEKTOR = "backend/core/berechnungen/erzeuger_traeger.py"
 #: heute vier (`PV_ERZEUGER_TYPEN`, `PVGIS_ERZEUGER_TYPEN`, `_ERZEUGER_TYPEN`,
 #: `ERZEUGER_TYPEN`), und der fünfte soll nicht erst auffallen, wenn jemand ihn
 #: hier einträgt. Der erste Entwurf listete nur die zwei öffentlichen und war
-#: für `monats_fakten.py::_erzeuger_aktiv` blind.
+#: für `monats_fakten/roh.py::_erzeuger_aktiv` blind.
 _P11_MENGEN_NAMEN: frozenset[str] = frozenset({
     "PV_ERZEUGER_TYPEN",
     "PVGIS_ERZEUGER_TYPEN",
@@ -2405,7 +2419,7 @@ P11_AUSNAHMEN: frozenset[str] = frozenset({
     # ── 1. Definition der Menge selbst ─────────────────────────────────────
     "backend/core/berechnungen/spez_ertrag.py::<modul>",   # PV_ERZEUGER_TYPEN
     "backend/api/routes/pvgis.py::<modul>",                # PVGIS_ERZEUGER_TYPEN
-    "backend/services/monats_fakten.py::<modul>",          # _ERZEUGER_TYPEN
+    "backend/services/monats_fakten/roh.py::<modul>",      # _ERZEUGER_TYPEN (bis 19.09.2026 `monats_fakten/`)
     "backend/services/live_sensor_config.py::<modul>",     # ERZEUGER_TYPEN
     "backend/services/datenquellen_validierung.py::<modul>",  # _PV_KOMPONENTEN_TYPEN
     "backend/api/routes/connector.py::<modul>",            # _KATEGORIE_TYPEN
@@ -2420,7 +2434,7 @@ P11_AUSNAHMEN: frozenset[str] = frozenset({
     # „Ist das ein PV-Erzeuger?" zählt nichts und kann nichts doppeln. Der
     # Selektor davor würde die Frage nicht beantworten, sondern verschieben.
     "backend/main.py::get_database_stats",                 # zählt GERÄTE
-    "backend/services/monats_fakten.py::_erzeuger_aktiv",  # „war einer aktiv?"
+    "backend/services/monats_fakten/roh.py::_erzeuger_aktiv",  # „war einer aktiv?"
     "backend/api/routes/monatsabschluss/views.py::get_naechster_monat",
     "backend/api/routes/monatsdaten.py::list_monatsdaten_aggregiert",  # `pv_ziel_aktiv`
     "backend/services/energie_profil/_helpers.py::_get_tagespeaks_aus_ha_lts",
@@ -2446,6 +2460,13 @@ P11_AUSNAHMEN: frozenset[str] = frozenset({
     # erwarteten Monatsbereich verkürzen (die Klasse aus ARCHITEKTUR §4: zwei
     # Datums-Ebenen, zwei Fragen).
 
+    # Vorlage 7b (18.09.2026): bis dahin im Funktionskörper von `get_finanz_prognose`
+    # und dort über den Selektor-Aufruf des Lade-Abschnitts unsichtbar. Die Liste
+    # `PV_RELEVANTE_TYPEN` bildet KOSTEN-Töpfe (Mehrkosten je Typ für die Response),
+    # keine Erzeuger-Menge: ein abtretendes BKW hat trotzdem Geld gekostet und
+    # gehört in den PV-System-Topf — der Selektor würde es dort streichen.
+    "backend/api/routes/aussichten/finanz_eingaenge.py::investitionen_und_parameter",
+
     # ── 3. Schreib-, Import-, Migrations- und Checker-Pfade ────────────────
     "backend/services/energie_profil/aggregator.py::aggregate_day",
     "backend/services/snapshot/keys.py::_categorize_counter",
@@ -2466,12 +2487,12 @@ P11_AUSNAHMEN: frozenset[str] = frozenset({
     "backend/services/erzeuger_ziel.py::loese_ziel",
 
     # ── 3b. Sie IMPLEMENTIEREN die Abtretung, statt sie anzuwenden ─────────
-    # `monats_fakten.py::falte` bekommt die abgetretenen IDs als Argument
+    # `monats_fakten/roh.py::falte` bekommt die abgetretenen IDs als Argument
     # (`abgetretene_bkw`, vom Aufrufer über `abgetretene_bkw_ids` erhoben) und
     # setzt für sie Erzeugung UND Rest-Eigenverbrauch auf 0. Der Selektor würde
     # die Zeile ganz verwerfen — dann verlöre das BKW auch die Größen, die es
     # NICHT abtritt (Speicher-Beiträge seines Akkus).
-    "backend/services/monats_fakten.py::falte",
+    "backend/services/monats_fakten/roh.py::falte",
     # `pv_monatswerte.py::_lade_bkw_aggregate` ist die GEGENRICHTUNG: sie sucht
     # gezielt die abtretenden BKW, um deren Monatswert als Lückenfüller der
     # Kinder zu verwenden (P7, Stufe 2). Ein Selektor davor lieferte immer `{}`.
@@ -2481,7 +2502,7 @@ P11_AUSNAHMEN: frozenset[str] = frozenset({
     # ── 4. Per-Investition-Sichten: keine Anlagensumme ─────────────────────
     # Hier ist die Ableitung im kWp-SoT zuständig (`get_bkw_kwp` liest die
     # geladenen Modul-Kinder, E5), nicht ein Mengen-Selektor.
-    "backend/api/routes/investitionen/crud.py::leistung_kwp_effektiv",
+    "backend/api/routes/investitionen/schemas.py::leistung_kwp_effektiv",   # Vorlage 5 (18.09.2026): crud.py → schemas.py
     "backend/api/routes/pvgis.py::get_pvgis_modul_prognose",
     "backend/services/pdf/builders/anlagendokumentation.py::_build_investition_tech_grid",
 
@@ -2512,7 +2533,7 @@ P11_AUSNAHMEN: frozenset[str] = frozenset({
     # Altbestands. `orientierungs_gruppen` trägt den Selektor.
     "backend/services/verbrauchsprognose_heute.py::verbrauchsprognose_heute",
     "backend/services/energie_profil/archiv_nachzug.py::wetter_nachziehen_bereich",
-    "backend/api/routes/energie_profil/views.py::get_tagesprognose",
+    "backend/api/routes/energie_profil/prognose.py::get_tagesprognose",
     "backend/services/prognose_kanon.py::pv_invs_im_horizont",
     # ⭐ N-386 (2026-09-04): dieselbe Kategorie, aber aus dem ZEITGRUND, den
     # die Fehlermeldung dieses Wächters selbst nennt („der Selektor läuft NACH
@@ -2875,9 +2896,12 @@ P13_AUSNAHMEN: frozenset[str] = frozenset({
     "backend/core/investition_parameter.py::<modul>",             # Default luft_wasser
     "backend/core/investition_parameter.py::ist_luft_luft_waermepumpe",
     "backend/core/investition_parameter.py::ist_brauchwasser_waermepumpe",
-    "backend/core/field_definitions.py::<modul>",                 # `bedingung`-Literale (N-304, B5)
-    "backend/core/field_definitions.py::_bedingungs_werte",       # der EINE Auswerter
-    "backend/core/field_definitions.py::_betriebsart_felder",     # weiche Bedingung je Innengerät
+    # Vorlage 3 (18.09.2026): `core/field_definitions.py` ist ein Paket — die Literale stehen in
+    # der Registry und im Bedingungs-Modul, der Auswerter im Bedingungs-Modul.
+    "backend/core/field_definitions/registry.py::<modul>",        # `bedingung`-Literale (N-304, B5)
+    "backend/core/field_definitions/bedingungen.py::<modul>",     # `bedingung`-Literale (N-304, B5)
+    "backend/core/field_definitions/bedingungen.py::_bedingungs_werte",  # der EINE Auswerter
+    "backend/core/field_definitions/registry.py::_betriebsart_felder",   # weiche Bedingung je Innengerät
     "backend/core/betriebsmodus.py::<modul>",                     # Modus-Wort „brauchwasser" → Funktion Warmwasser
 
     # ── 1. Kennzahl-Abgrenzung (E1 · §5 · R2): zwei Bauarten, keine gemeinsame Zahl ─
@@ -2885,9 +2909,10 @@ P13_AUSNAHMEN: frozenset[str] = frozenset({
     # Feldangebot. `bauarten_gemischt` kommt aus den Stammdaten (monats_fakten)
     # und wird an `abgrenzungs_grund` gereicht — P12 hält, dass daraus nie eine
     # rohe Division wird.
-    "backend/services/monats_fakten.py::falte",                   # zählt luft_luft/luft_wasser je Block
-    "backend/api/routes/energie_profil/views.py::get_tag_detail", # dieselbe Frage je Tag
-    "backend/api/routes/aktueller_monat.py::get_aktueller_monat",
+    "backend/services/monats_fakten/roh.py::falte",               # zählt luft_luft/luft_wasser je Block
+    "backend/api/routes/energie_profil/tag.py::get_tag_detail",   # dieselbe Frage je Tag (Vorlage 4: views.py → tag.py)
+    # Vorlage 2 (18.09.2026): die R2-/SOLL-3.2b-Abgrenzung zog aus dem Endpunkt nach waerme.py.
+    "backend/api/routes/aktueller_monat/waerme.py::waerme_klima_monat",
     "backend/api/routes/cockpit/komponenten.py::get_komponenten_zeitreihe",
     "backend/api/routes/monatsdaten.py::list_monatsdaten_aggregiert",
     # B6/Y-2 (05.09.2026): Jahresroute UND PDF-Jahresbericht lesen die Abgrenzung
@@ -2907,8 +2932,8 @@ P13_AUSNAHMEN: frozenset[str] = frozenset({
     "backend/core/berechnungen/waermepumpe_kennzahl.py::abgrenzung_je_funktion",
 
     # ── 2. Vorschlag: Vorbelegung · Beschriftung · weiche Herabstufung ────────
-    "backend/core/field_definitions.py::get_feld_bedarf",         # Pflicht → optional, nie weg (N-86)
-    # ⛔ `crud.py::_wp_nicht_bewertbar` stand hier bis WK-15c (14.09.2026) — die
+    "backend/core/field_definitions/bedingungen.py::get_feld_bedarf",  # Pflicht → optional, nie weg (N-86)
+    # ⛔ `crud.py::_wp_nicht_bewertbar` (heute `roi.py`) stand hier bis WK-15c (14.09.2026) — die
     # Vorbelegungs-Sperre fragte `ist_luft_luft_waermepumpe`. Sie fragt jetzt die
     # **Achsen** (`feld_urteil`) und liest die Bauart nicht mehr; der Eintrag wäre
     # tot und die Liste ist damit um einen Leser kürzer.
@@ -2923,7 +2948,7 @@ P13_AUSNAHMEN: frozenset[str] = frozenset({
     # zusätzlich an jedem Gerät mit zugeordneter oder gepflegter Kühl-Spur
     # (Beleglage, bauartblind). Die Bauart entscheidet hier kein Feld und keine
     # Erwartung, nur ob ein Angebot gezeigt wird.
-    "backend/services/daten_checker/datenquelle.py::_check_klima_modus_sensor",
+    "backend/services/daten_checker/datenquelle/klima.py::_check_klima_modus_sensor",   # Vorlage 9 (18.09.2026): datenquelle.py → Unterpaket datenquelle/
 })
 
 #: Gruppe 4 — nach Bauart FORDERN oder SCHWEIGEN, statt den Zähler zu fragen.

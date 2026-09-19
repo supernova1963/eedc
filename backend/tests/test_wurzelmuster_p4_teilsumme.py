@@ -191,7 +191,7 @@ async def test_ohne_pv_prognose_sagt_die_antwort_dass_die_nullen_keine_prognose_
     db, monkeypatch,
 ):
     """N78: `[0.0] * 24` durfte nicht als „0 kWh PV" durchgehen."""
-    from backend.api.routes.energie_profil import views
+    from backend.api.routes.energie_profil import prognose
 
     anlage_id = await _anlage_mit_verbrauchshistorie(db)
 
@@ -203,10 +203,10 @@ async def test_ohne_pv_prognose_sagt_die_antwort_dass_die_nullen_keine_prognose_
     async def kein_abruf(**kw):
         return None
 
-    monkeypatch.setattr(views, "_pv_stunden_aus_kanon", kein_kanon)
+    monkeypatch.setattr(prognose, "_pv_stunden_aus_kanon", kein_kanon)
     monkeypatch.setattr(sfs, "get_solar_prognose", kein_abruf)
 
-    resp = await views.get_tagesprognose(anlage_id=anlage_id, datum=MORGEN, db=db)
+    resp = await prognose.get_tagesprognose(anlage_id=anlage_id, datum=MORGEN, db=db)
 
     assert resp.pv_summe_kwh == pytest.approx(0.0), (
         "Der Wert soll unverändert 0 bleiben — beschriftet, nicht geschätzt."
@@ -222,16 +222,16 @@ async def test_ohne_pv_prognose_sagt_die_antwort_dass_die_nullen_keine_prognose_
 
 async def test_mit_pv_prognose_bleibt_die_antwort_still(db, monkeypatch):
     """Gegenprobe: liegt ein Profil vor, gibt es keinen Hinweis."""
-    from backend.api.routes.energie_profil import views
+    from backend.api.routes.energie_profil import prognose
 
     anlage_id = await _anlage_mit_verbrauchshistorie(db)
 
     async def kanon_liefert(*a, **kw):
         return [0.0] * 8 + [1.5] * 8 + [0.0] * 8
 
-    monkeypatch.setattr(views, "_pv_stunden_aus_kanon", kanon_liefert)
+    monkeypatch.setattr(prognose, "_pv_stunden_aus_kanon", kanon_liefert)
 
-    resp = await views.get_tagesprognose(anlage_id=anlage_id, datum=MORGEN, db=db)
+    resp = await prognose.get_tagesprognose(anlage_id=anlage_id, datum=MORGEN, db=db)
 
     assert resp.pv_summe_kwh == pytest.approx(12.0, abs=0.1)
     assert resp.hinweise == []
@@ -269,16 +269,16 @@ async def test_ohne_verbrauchshistorie_kommt_die_pv_haelfte_statt_422(db, monkey
     Betroffen war jede frische Installation in den ersten drei Tagen — also
     genau die Gruppe, die nach v4.0.0 dazukommt.
     """
-    from backend.api.routes.energie_profil import views
+    from backend.api.routes.energie_profil import prognose
 
     anlage_id = await _anlage_ohne_verbrauchshistorie(db)
 
     async def kanon_liefert(*a, **kw):
         return [0.0] * 8 + [1.5] * 8 + [0.0] * 8
 
-    monkeypatch.setattr(views, "_pv_stunden_aus_kanon", kanon_liefert)
+    monkeypatch.setattr(prognose, "_pv_stunden_aus_kanon", kanon_liefert)
 
-    resp = await views.get_tagesprognose(anlage_id=anlage_id, datum=MORGEN, db=db)
+    resp = await prognose.get_tagesprognose(anlage_id=anlage_id, datum=MORGEN, db=db)
 
     # Die PV-Hälfte ist vollständig da — Stundenprofil UND Summe.
     assert resp.pv_summe_kwh == pytest.approx(12.0, abs=0.1)
@@ -298,16 +298,16 @@ async def test_ohne_verbrauchshistorie_behauptet_kein_feld_eine_null(db, monkeyp
     Betrifft Bilanz, Netzbezug, Einspeisung, Eigenverbrauch, Autarkie, die
     Speicher-Simulation und die Meta-Felder der Verbrauchsseite.
     """
-    from backend.api.routes.energie_profil import views
+    from backend.api.routes.energie_profil import prognose
 
     anlage_id = await _anlage_ohne_verbrauchshistorie(db)
 
     async def kanon_liefert(*a, **kw):
         return [0.0] * 8 + [1.5] * 8 + [0.0] * 8
 
-    monkeypatch.setattr(views, "_pv_stunden_aus_kanon", kanon_liefert)
+    monkeypatch.setattr(prognose, "_pv_stunden_aus_kanon", kanon_liefert)
 
-    resp = await views.get_tagesprognose(anlage_id=anlage_id, datum=MORGEN, db=db)
+    resp = await prognose.get_tagesprognose(anlage_id=anlage_id, datum=MORGEN, db=db)
 
     assert resp.verbrauch_summe_kwh is None
     assert resp.netzbezug_summe_kwh is None
@@ -339,7 +339,7 @@ async def test_solcast_profil_von_heute_wird_als_naeherung_ausgewiesen(db, monke
     Der Gegenfall steht in
     ``test_solcast_eigenes_tagesprofil_ersetzt_die_naeherung``.
     """
-    from backend.api.routes.energie_profil import views
+    from backend.api.routes.energie_profil import prognose
     from backend.services import solcast_service
 
     anlage_id = await _anlage_mit_verbrauchshistorie(db)
@@ -364,7 +364,7 @@ async def test_solcast_profil_von_heute_wird_als_naeherung_ausgewiesen(db, monke
 
     monkeypatch.setattr(solcast_service, "get_solcast_forecast", fake_solcast)
 
-    morgen = await views.get_tagesprognose(anlage_id=anlage_id, datum=MORGEN, db=db)
+    morgen = await prognose.get_tagesprognose(anlage_id=anlage_id, datum=MORGEN, db=db)
     assert morgen.pv_quelle == "solcast"
     assert morgen.pv_summe_kwh == pytest.approx(16.0, abs=0.1), (
         "Der Wert bleibt der von Solcast — nur die Beschriftung kommt hinzu."
@@ -375,7 +375,7 @@ async def test_solcast_profil_von_heute_wird_als_naeherung_ausgewiesen(db, monke
     assert "heutig" in " ".join(morgen.hinweise).lower()
 
     # Für HEUTE ist dasselbe Profil das richtige — dort kein Hinweis.
-    heute = await views.get_tagesprognose(anlage_id=anlage_id, datum=HEUTE, db=db)
+    heute = await prognose.get_tagesprognose(anlage_id=anlage_id, datum=HEUTE, db=db)
     assert heute.pv_quelle == "solcast"
     assert heute.hinweise == []
 
@@ -422,7 +422,7 @@ async def test_solcast_eigenes_tagesprofil_ersetzt_die_naeherung(db, monkeypatch
     Tages-Sensor ein eigenes ``detailedForecast``; der API-Pfad liefert ohnehin
     168 h. Bis v4.0.8 wurde beides verworfen.
     """
-    from backend.api.routes.energie_profil import views
+    from backend.api.routes.energie_profil import prognose
     from backend.services import solcast_service
 
     anlage_id = await _anlage_mit_verbrauchshistorie(db)
@@ -448,7 +448,7 @@ async def test_solcast_eigenes_tagesprofil_ersetzt_die_naeherung(db, monkeypatch
 
     monkeypatch.setattr(solcast_service, "get_solcast_forecast", fake_solcast)
 
-    morgen = await views.get_tagesprognose(anlage_id=anlage_id, datum=MORGEN, db=db)
+    morgen = await prognose.get_tagesprognose(anlage_id=anlage_id, datum=MORGEN, db=db)
     assert morgen.pv_quelle == "solcast"
     assert morgen.pv_summe_kwh == pytest.approx(4.0, abs=0.1), (
         "Die Summe kommt aus dem Morgen-Profil, nicht aus dem von heute (16 kWh)."
@@ -514,7 +514,7 @@ async def test_autarkie_der_vorschau_bleibt_unter_100_prozent(db, monkeypatch):
     der Begründung „strukturell <= 100 %"; diese Zusicherung gilt nur für den
     richtigen Zähler. Deshalb prüft dieser Test die ZAHL, nicht den Cap.
     """
-    from backend.api.routes.energie_profil import views
+    from backend.api.routes.energie_profil import prognose
 
     anlage_id = await _anlage_mit_speicher(db)
 
@@ -522,9 +522,9 @@ async def test_autarkie_der_vorschau_bleibt_unter_100_prozent(db, monkeypatch):
     async def kanon_liefert(*a, **kw):
         return [0.0] * 7 + [3.0] * 10 + [0.0] * 7
 
-    monkeypatch.setattr(views, "_pv_stunden_aus_kanon", kanon_liefert)
+    monkeypatch.setattr(prognose, "_pv_stunden_aus_kanon", kanon_liefert)
 
-    resp = await views.get_tagesprognose(anlage_id=anlage_id, datum=MORGEN, db=db)
+    resp = await prognose.get_tagesprognose(anlage_id=anlage_id, datum=MORGEN, db=db)
 
     assert resp.autarkie_prozent is not None
     assert 0.0 <= resp.autarkie_prozent <= 100.0, (
@@ -541,7 +541,7 @@ async def test_autarkie_der_vorschau_rechnet_wie_die_monatsauswertung(db, monkey
     Dieser Test bindet die Vorschau an die Definition statt an eine Zahl:
     Autarkie == (Verbrauch - Netzbezug) / Verbrauch, über den SoT gerechnet.
     """
-    from backend.api.routes.energie_profil import views
+    from backend.api.routes.energie_profil import prognose
     from backend.core.berechnungen.kennzahlen import autarkie_prozent
 
     anlage_id = await _anlage_mit_speicher(db)
@@ -549,9 +549,9 @@ async def test_autarkie_der_vorschau_rechnet_wie_die_monatsauswertung(db, monkey
     async def kanon_liefert(*a, **kw):
         return [0.0] * 7 + [3.0] * 10 + [0.0] * 7
 
-    monkeypatch.setattr(views, "_pv_stunden_aus_kanon", kanon_liefert)
+    monkeypatch.setattr(prognose, "_pv_stunden_aus_kanon", kanon_liefert)
 
-    resp = await views.get_tagesprognose(anlage_id=anlage_id, datum=MORGEN, db=db)
+    resp = await prognose.get_tagesprognose(anlage_id=anlage_id, datum=MORGEN, db=db)
 
     erwartet = autarkie_prozent(
         resp.verbrauch_summe_kwh - resp.netzbezug_summe_kwh,

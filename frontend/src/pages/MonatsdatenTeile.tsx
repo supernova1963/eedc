@@ -36,6 +36,7 @@ import {
   monatIndex,
   type MonatRef,
 } from '../lib/monatsLuecken'
+import { haBasisZeilen } from '../lib/haVergleich'
 
 // ─── Spalten-SoT ──────────────────────────────────────────────────────────────
 
@@ -792,16 +793,14 @@ export function MonatsdatenVerwaltung({ anlageId, kopfZusatz }: { anlageId: numb
                     </tr>
                   </thead>
                   <tbody>
-                    <VergleichsZeile
-                      label="Einspeisung"
-                      vorhanden={haVergleichsDaten.vorhandeneDaten.einspeisung_kwh}
-                      haWert={haVergleichsDaten.haWerte.basis.find(b => b.feld === 'einspeisung')?.wert}
-                    />
-                    <VergleichsZeile
-                      label="Netzbezug"
-                      vorhanden={haVergleichsDaten.vorhandeneDaten.netzbezug_kwh}
-                      haWert={haVergleichsDaten.haWerte.basis.find(b => b.feld === 'netzbezug')?.wert}
-                    />
+                    {/* N-534: eine Zeile je geliefertem Basis-Zählerfeld, lokaler Wert über den
+                        DB-Feldnamen — die alten Literale `einspeisung`/`netzbezug` fanden nie etwas. */}
+                    {haBasisZeilen(
+                      haVergleichsDaten.haWerte.basis,
+                      haVergleichsDaten.vorhandeneDaten as unknown as Record<string, unknown>,
+                    ).map((z) => (
+                      <VergleichsZeile key={z.feld} label={z.label} vorhanden={z.vorhanden} haWert={z.haWert} />
+                    ))}
                   </tbody>
                 </table>
               </div>

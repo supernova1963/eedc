@@ -66,12 +66,10 @@ from backend.services import solar_forecast_service as sfs
 from backend.services.korrekturprofil_lookup import korrekturfaktoren_fuer_tag
 from backend.services.pv_orientation import (
     Orientierungsgruppe,
-    get_pv_azimut,
-    get_pv_neigung,
+    erzeuger_abrufe,
     orientierungs_gruppen,
     resolve_system_losses,
 )
-from backend.core.investition_kennwerte import get_erzeuger_kwp
 from backend.core.berechnungen.anlagen_kwp import anlagen_kwp
 from backend.core.berechnungen.erzeuger_traeger import erzeuger_traeger
 from backend.core.berechnungen.wr_kappung import (
@@ -271,16 +269,25 @@ def _kappungs_mitglieder(
     for inv in erzeuger_traeger(invs):
         if not inv.ist_aktiv_an(tag):
             continue
-        kwp = get_erzeuger_kwp(inv)
-        if kwp <= 0:
-            continue
-        pos = index.get((int(get_pv_neigung(inv)), int(get_pv_azimut(inv))))
-        if pos is None:
+        abrufe = erzeuger_abrufe(inv)
+        if not abrufe:
             continue
         grenze_kw, grenz_id = grenzen.get(inv.id, (None, None))
-        mitglieder[pos].append(
-            Mitglied(kwp=kwp, grenze_kw=grenze_kw, grenz_id=grenz_id)
-        )
+        # N-527: die zwei Hälften einer Ost-West-Komponente liegen in zwei
+        # Gruppen und teilen sich EINE Grenze — `kappe_stunde` poolt über die
+        # `grenz_id`, sonst dürfte jede Hälfte für sich bis an die volle Grenze
+        # liefern. `zuordne_grenzen` vergibt für die eigene Grenze bereits
+        # `inv:<id>`; der Rückfall hier hält die Invariante auch dann, wenn
+        # eine Grenze einmal ohne Kennung ankommt.
+        if len(abrufe) > 1 and grenze_kw is not None and grenz_id is None:
+            grenz_id = f"inv:{inv.id}"
+        for abruf in abrufe:
+            pos = index.get((abruf.neigung, abruf.ausrichtung))
+            if pos is None:
+                continue
+            mitglieder[pos].append(
+                Mitglied(kwp=abruf.kwp, grenze_kw=grenze_kw, grenz_id=grenz_id)
+            )
     return mitglieder
 
 

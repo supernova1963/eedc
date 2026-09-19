@@ -18,7 +18,7 @@ Zutaten, ohne sie nannte der Monat einen Grund und der Tag schwieg.
 ⛔ **Warum ein Begründungssatz KEIN Fix gewesen wäre.** „Liegt nur monatlich vor"
 ist für Heizen/Warmwasser unwahr: §3.3 stellt den Tag auf *„alles, was aus
 stündlichen Zählern entsteht"*, und alle vier Eingänge liegen in der Tagesantwort
-(`views.py`, `wp_strom_heizen_kwh` · `wp_strom_warmwasser_kwh` · `wp_heizung_kwh` ·
+(`tag.py`, `wp_strom_heizen_kwh` · `wp_strom_warmwasser_kwh` · `wp_heizung_kwh` ·
 `wp_warmwasser_kwh`). Die ehrliche Auskunft ist die Rechnung.
 
 ## Kühlen — bis Bauschnitt 6 die Ausnahme

@@ -52,7 +52,7 @@ class PlanResponse(BaseModel):
 @router.post("/plan", response_model=PlanResponse)
 async def create_plan(
     req: RepairOperationRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """
     Erstellt einen RepairPlan und liefert die Vorschau zurück.
@@ -77,7 +77,7 @@ async def create_plan(
 @router.post("/execute/{plan_id}", response_model=RepairResult)
 async def execute_plan(
     plan_id: UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """
     Führt einen vorbereiteten Plan aus.

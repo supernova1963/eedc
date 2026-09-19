@@ -86,7 +86,7 @@ async def _run_via_orchestrator(
 @router.delete("/{anlage_id}/rohdaten")
 async def delete_rohdaten(
     anlage_id: int,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """
     Löscht alle TagesEnergieProfil- und TagesZusammenfassung-Daten einer Anlage.
@@ -143,7 +143,7 @@ async def delete_rohdaten(
 
 
 @router.post("/reaggregate-heute")
-async def reaggregate_heute(db: AsyncSession = Depends(get_db)):
+async def reaggregate_heute(db: AsyncSession = Depends(get_db, scope="function")):
     """Triggert sofortige Neu-Aggregation des heutigen Tages für alle Anlagen.
 
     Wrapper über RepairOperationType.REAGGREGATE_TODAY. System-weite
@@ -167,7 +167,7 @@ async def reaggregate_tag(
         description="Vor dem Aggregat die SensorSnapshots des Tages frisch aus HA-Statistics ziehen "
                     "(repariert Counter-Spikes, z. B. nach Update-Restarts). Default an.",
     ),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """
     Aggregiert einen einzelnen Tag für eine Anlage neu.
@@ -276,7 +276,7 @@ async def reaggregate_bereich(
         description="Vor jeder Tages-Aggregation die SensorSnapshots des Tages frisch aus "
                     "HA-Statistics ziehen. Default an.",
     ),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """Aggregiert mehrere Tage seriell neu (max. REAGGREGATE_RANGE_MAX_DAYS=31).
 
@@ -406,7 +406,7 @@ async def vollbackfill(
         description="DEPRECATED (#190): wird ignoriert. Vollbackfill ist immer additiv.",
         deprecated=True,
     ),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """
     Füllt fehlende Tage im Energieprofil aus HA Long-Term Statistics nach.
@@ -436,7 +436,7 @@ async def vollbackfill(
 @router.post("/{anlage_id}/kraftstoffpreis-backfill/tages")
 async def kraftstoffpreis_backfill_tages(
     anlage_id: int,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """
     Befüllt TagesZusammenfassung.kraftstoffpreis_euro aus EU Oil Bulletin
@@ -460,7 +460,7 @@ async def kraftstoffpreis_backfill_tages(
 @router.post("/{anlage_id}/kraftstoffpreis-backfill/monats")
 async def kraftstoffpreis_backfill_monats(
     anlage_id: int,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """
     Befüllt Monatsdaten.kraftstoffpreis_euro aus EU Oil Bulletin
@@ -483,7 +483,7 @@ async def kraftstoffpreis_backfill_monats(
 @router.post("/{anlage_id}/kraftstoffpreis-backfill")
 async def kraftstoffpreis_backfill(
     anlage_id: int,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """
     Alt-Endpoint (Rückwärtskompatibilität): befüllt Tages- und Monats-Kraftstoffpreise
@@ -504,7 +504,7 @@ async def kraftstoffpreis_backfill(
 
 @router.delete("/rohdaten")
 async def delete_alle_rohdaten(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """
     Löscht alle TagesEnergieProfil- und TagesZusammenfassung-Daten aller Anlagen.

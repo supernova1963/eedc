@@ -450,7 +450,7 @@ async def list_monatsdaten_aggregiert(
     Gibt Monatsdaten mit aggregierten Werten aus InvestitionMonatsdaten zurück.
 
     Die Monatsgrößen kommen aus der Monats-Fakten-Schicht (ADR-002/**P10**,
-    `services/monats_fakten.py`) — dort gelten Zeitfilter, Dienstwagen-Filter,
+    `services/monats_fakten/`) — dort gelten Zeitfilter, Dienstwagen-Filter,
     die P7-Auflösung der PV und der Monatstarif genau einmal. Bis 2026-08-03
     faltete diese Route die `InvestitionMonatsdaten` selbst (Register N-15).
 
@@ -1006,7 +1006,7 @@ async def get_monatsdaten(monatsdaten_id: int, db: AsyncSession = Depends(get_db
 async def create_monatsdaten(
     data: MonatsdatenCreate,
     background_tasks: BackgroundTasks = None,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """
     Erstellt neue Monatsdaten.
@@ -1158,6 +1158,7 @@ async def _nachlauf_planen(
         aktion=f"Monatsabschluss {MONAT_NAMEN[md.monat]} {md.jahr} gespeichert",
         erfolg=True,
         anlage_id=md.anlage_id,
+        db=db,
     )
 
 
@@ -1247,7 +1248,7 @@ async def update_monatsdaten(
     monatsdaten_id: int,
     data: MonatsdatenUpdate,
     background_tasks: BackgroundTasks = None,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """
     Aktualisiert Monatsdaten.
@@ -1363,7 +1364,7 @@ async def get_geraetewerte_des_monats(
     "/geraetewerte/{anlage_id}/{jahr}/{monat}", status_code=status.HTTP_200_OK
 )
 async def delete_verwaiste_geraetewerte(
-    anlage_id: int, jahr: int, monat: int, db: AsyncSession = Depends(get_db)
+    anlage_id: int, jahr: int, monat: int, db: AsyncSession = Depends(get_db, scope="function")
 ) -> dict:
     """Löscht die Gerätewerte eines Monats **ohne** Zählerzeile (#349).
 
@@ -1429,7 +1430,7 @@ async def delete_verwaiste_geraetewerte(
     "/investition/{investition_id}/feld/{feld}", status_code=status.HTTP_200_OK
 )
 async def delete_feldwert_nicht_gefuehrt(
-    investition_id: int, feld: str, db: AsyncSession = Depends(get_db)
+    investition_id: int, feld: str, db: AsyncSession = Depends(get_db, scope="function")
 ) -> dict:
     """Entfernt einen gespeicherten Wert aus einem Feld, das das Gerät nicht führt (N-393).
 
@@ -1496,7 +1497,7 @@ async def delete_feldwert_nicht_gefuehrt(
 
 @router.post("/anlage/{anlage_id}/temperatur-aus-messung")
 async def temperatur_aus_messung_uebernehmen(
-    anlage_id: int, db: AsyncSession = Depends(get_db)
+    anlage_id: int, db: AsyncSession = Depends(get_db, scope="function")
 ) -> dict:
     """Füllt leere Ø-Temperaturen aus der eigenen Messreihe (N-426-Nachtrag).
 
@@ -1573,7 +1574,7 @@ async def temperatur_aus_messung_uebernehmen(
 @router.delete("/{monatsdaten_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_monatsdaten(
     monatsdaten_id: int,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """
     Löscht einen Monat **vollständig** — Zählerzeile und Werte je Gerät.

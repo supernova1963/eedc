@@ -186,20 +186,20 @@ async def test_heutige_werte_sind_unveraendert(db, monkeypatch, markt_stub):
 @pytest.mark.asyncio
 async def test_die_attribute_erreichen_den_sensor(db, monkeypatch, markt_stub):
     """Bis in die Attribut-Form — REST und MQTT teilen diesen Produzenten."""
-    from backend.api.routes import ha_export as he
+    from backend.api.routes.ha_export import calculate_anlage_sensors
+    from backend.api.routes.ha_export import anlage_sensorwerte as he   # Vorlage 8b: die Prognose-Phase bindet den Namen hier
 
     # Der Prognose-Block derselben Funktion läuft sonst in die Netzsperre und
     # wartet auf DNS-Timeouts — 26 s für eine Probe, die den Preis-Sensor prüft.
     # Er ist hier nicht der Gegenstand; `test_ha_export_prognose_150.py` deckt ihn.
-    # ⚠ Gepatcht wird `ha_export.berechne_prognose_export`, NICHT das
-    # Herkunftsmodul: `ha_export.py:94` bindet den Namen beim Import, ein Patch
+    # ⚠ Gepatcht wird `anlage_sensorwerte.berechne_prognose_export`, NICHT das
+    # Herkunftsmodul: `ha_export/anlage_sensorwerte.py` bindet den Namen beim Import, ein Patch
     # an `services/ha_export_prognose` erreicht die Aufrufstelle nicht (erst
     # gemessen, dann korrigiert — 26 s blieben 26 s).
     async def _keine_prognose(*a, **k):
         return None
 
     monkeypatch.setattr(he, "berechne_prognose_export", _keine_prognose)
-    calculate_anlage_sensors = he.calculate_anlage_sensors
 
     _uhr(monkeypatch, pt.DAY_AHEAD_VEROEFFENTLICHUNG_STUNDE)
     a = await _anlage(db)

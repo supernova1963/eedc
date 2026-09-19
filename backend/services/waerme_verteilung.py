@@ -439,7 +439,7 @@ async def _wp_preise_je_monat(
     ist die ganze Kaskade — Wärmepumpen-Sondertarif → allgemeiner Tarif →
     Zeitfenster (HT/NT) → Default, je zum **Monatsersten**. Der Tagespfad rechnet
     mit demselben Wert (*„Tagestarif = Monatstarif je Tag"*,
-    ``energie_profil/views.py``), und genau deshalb steht hier eine Quelle und
+    ``energie_profil/tag.py::get_tag_detail``), und genau deshalb steht hier eine Quelle und
     nicht zwei.
     """
     fakten = await lade_monats_fakten(db, anlage_id, von=von, bis=bis)

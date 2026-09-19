@@ -281,7 +281,7 @@ async def get_cockpit_uebersicht(
     # =====================================================================
     # Bis 2026-07-31 hat dieser Endpoint die IMD-Zeilen selbst geladen und
     # typweise zu Monatswerten gefaltet — knapp 160 Zeilen, die es in
-    # `aussichten.py`, `ha_export.py`, `jahresbericht.py` und
+    # `aussichten/finanzen.py`, `ha_export.py`, `jahresbericht.py` und
     # `investitionen/crud.py` in leicht abweichenden Fassungen noch einmal gab.
     # Die Rechnung hier war korrekt (Befund F-5 traf die anderen Sichten, nicht
     # diese) — genau das ist der Grund für den Umbau: **eine selbst faltende
@@ -764,7 +764,7 @@ async def get_cockpit_uebersicht(
     # WARNING einfordert. Die Summe rechnete also mit Festannahmen (8.000 /
     # 35.000 €) an genau dem Feld vorbei, nach dem eedc fragt — und ein Fallback
     # darunter setzte bei 0 auf die VOLLkosten, also auf eine vierte Lesart.
-    # Wortgleich stand sie ein zweites Mal in `aussichten.py`.
+    # Wortgleich stand sie ein zweites Mal in `aussichten/finanzen.py`.
     #
     # Seit dem Entscheid zu N-137 gibt es EINE Definition relevanter Kosten
     # (Mehrkosten, Layer-SoT). `investition_gesamt_euro` bleibt als Feld

@@ -34,6 +34,10 @@ from backend.services.ha_statistics_service import (
     SensorMonatswert,
 )
 from backend.services.import_hauszaehler import warnung_monate_ohne_zaehlerwerte
+from backend.core.berechnungen.pv_verteilung import PvModul, QUELLE_GEMESSEN, resolve_pv_je_modul
+from backend.services.pv_monatswerte import lade_pv_je_monat, pv_summe_je_monat
+from backend.core.investition_kennwerte import get_pv_kwp
+from backend.services.provenance import ABGELEITET_KWP_ANTEIL
 from backend.services.provenance import (
     seed_provenance,
     write_json_subkey_with_provenance,
@@ -340,6 +344,7 @@ async def get_monatswerte(
             erfolg=False,
             details=f"{type(e).__name__}: {e}",
             anlage_id=anlage_id,
+            db=db,
         )
         raise HTTPException(status_code=500, detail=f"Fehler bei DB-Abfrage: {e}")
 
@@ -664,6 +669,14 @@ async def get_import_vorschau(
         key = (imd.investition_id, imd.jahr, imd.monat)
         vorhandene_imd[key] = imd
 
+    # N-533: der lokale PV-Gesamtwert je Monat für den Vergleich mit dem Anlagen-Zähler
+    # (`basis.pv_gesamt`) — über die P7-Auflösung (`lade_pv_je_monat`), nicht über die
+    # Rohspalte: Messwerte je Modul plus Aggregat-Lückenfüllung, `None` bei Unvollständigkeit.
+    pv_summen: dict[tuple[int, int], Optional[float]] = {}
+    if ((anlage.sensor_mapping.get("basis") or {}).get("pv_gesamt") or {}).get("sensor_id"):
+        pv_module_der_anlage = [inv for inv in investitionen.values() if inv.typ == "pv-module"]
+        pv_summen = pv_summe_je_monat(await lade_pv_je_monat(db, anlage_id, pv_module_der_anlage))
+
     # Jeden Monat analysieren
     monate_status: list[MonatImportStatus] = []
     anzahl_importieren = 0
@@ -771,6 +784,9 @@ async def get_import_vorschau(
                 "einspeisung": md.einspeisung_kwh,
                 "netzbezug": md.netzbezug_kwh,
             }
+            if "pv_gesamt" in ha_basis_werte:
+                # N-533: sonst stünde „Vorhanden –“ neben einem HA-Wert, ohne jede Folge.
+                vorhandene_werte["pv_gesamt"] = pv_summen.get((jahr, monat))
             vorhandene_anzeige = {FELD_LABELS.get(k, k): v for k, v in vorhandene_werte.items()}
 
             # Sind die Basis-Werte leer (0 oder sehr klein)?
@@ -793,47 +809,50 @@ async def get_import_vorschau(
                 ))
                 anzahl_importieren += 1
             else:
-                # Daten existieren mit Werten - Konflikt?
-                # Prüfen ob große Abweichung bei Basis
-                ha_einspeisung = ha_basis_werte.get("einspeisung", 0) or 0
-                ha_netzbezug = ha_basis_werte.get("netzbezug", 0) or 0
+                # Daten existieren mit Werten — Abweichung? N-533 (Frank85): JEDES
+                # Basis-Zählerfeld des Mappings zählt, nicht nur Einspeisung und
+                # Netzbezug. Ein Feld mit HA-Wert und ohne lokalen Wert (der
+                # Anlagen-PV-Zähler bei 40 Monaten) ist kein „stimmt überein“,
+                # sondern ein Import — vorher ging genau das im Δ-Vergleich der
+                # zwei Zählerfelder unter, und der Monat blieb ohne PV.
+                fehlende: list[str] = []
+                abweichende: list[str] = []
+                for feld, ha_wert in ha_basis_werte.items():
+                    if ha_wert is None:
+                        continue
+                    vorh = vorhandene_werte.get(feld)
+                    label = FELD_LABELS.get(feld, feld)
+                    if vorh is None:
+                        fehlende.append(label)
+                    elif abs(ha_wert - vorh) >= 1:
+                        abweichende.append(f"{label} {abs(ha_wert - vorh):.1f}")
 
-                abweichung_einspeisung = abs(ha_einspeisung - (md.einspeisung_kwh or 0))
-                abweichung_netzbezug = abs(ha_netzbezug - (md.netzbezug_kwh or 0))
-
-                basis_hat_abweichung = abweichung_einspeisung >= 1 or abweichung_netzbezug >= 1
-
-                if not basis_hat_abweichung and not inv_hat_abweichung:
-                    # Sehr geringe Abweichung → Überspringen
-                    monate_status.append(MonatImportStatus(
-                        jahr=jahr,
-                        monat=monat,
-                        monat_name=ha_monat.monat_name,
-                        aktion="ueberspringen",
-                        grund=f"Daten stimmen überein (Δ < 1)",
-                        ha_werte=ha_basis_anzeige,
-                        vorhandene_werte=vorhandene_anzeige,
-                        investitionen=inv_status_liste if inv_status_liste else None
-                    ))
+                if not fehlende and not abweichende and not inv_hat_abweichung:
+                    aktion, grund = "ueberspringen", "Daten stimmen überein (Δ < 1)"
                     anzahl_ueberspringen += 1
-                else:
-                    # Abweichung → Konflikt
+                elif abweichende or inv_hat_abweichung:
                     grund_teile = []
-                    if basis_hat_abweichung:
-                        grund_teile.append(f"Basis: Einspeisung {abweichung_einspeisung:.1f}, Netzbezug {abweichung_netzbezug:.1f}")
+                    if abweichende:
+                        grund_teile.append("Basis: " + ", ".join(abweichende))
+                    if fehlende:
+                        grund_teile.append("fehlt lokal: " + ", ".join(fehlende))
                     if inv_hat_abweichung:
                         grund_teile.append("Komponenten-Werte weichen ab")
-                    monate_status.append(MonatImportStatus(
-                        jahr=jahr,
-                        monat=monat,
-                        monat_name=ha_monat.monat_name,
-                        aktion="konflikt",
-                        grund=" | ".join(grund_teile),
-                        ha_werte=ha_basis_anzeige,
-                        vorhandene_werte=vorhandene_anzeige,
-                        investitionen=inv_status_liste if inv_status_liste else None
-                    ))
+                    aktion, grund = "konflikt", " | ".join(grund_teile)
                     anzahl_konflikte += 1
+                else:
+                    aktion, grund = "importieren", "Fehlt lokal: " + ", ".join(fehlende)
+                    anzahl_importieren += 1
+                monate_status.append(MonatImportStatus(
+                    jahr=jahr,
+                    monat=monat,
+                    monat_name=ha_monat.monat_name,
+                    aktion=aktion,
+                    grund=grund,
+                    ha_werte=ha_basis_anzeige,
+                    vorhandene_werte=vorhandene_anzeige,
+                    investitionen=inv_status_liste if inv_status_liste else None
+                ))
 
     return ImportVorschauResponse(
         anlage_id=anlage.id,
@@ -850,11 +869,89 @@ async def get_import_vorschau(
 # Import Execute Endpoint
 # =============================================================================
 
+async def _verteile_anlagen_pv(
+    db: AsyncSession, anlage_id: int, jahr: int, monat: int, pv_gesamt: float, *, ueberschreiben: bool,
+) -> bool:
+    """Schreibt den Anlagen-PV-Zähler eines Monats als Modulwerte (N-533).
+
+    Dieselbe Regel wie der Monatsabschluss (`monatsabschluss/views.py`, `_mapped_or_distribute`)
+    und die Leseseite (`resolve_pv_je_modul`, ADR-002/P7): Module mit eigenem Messwert behalten
+    ihn, der Rest des Zählers geht nach kWp auf die Module ohne Messwert. Genau ein Empfänger
+    bekommt den Wert als Messung ohne Marke; ab zwei Empfängern trägt jeder Anteil
+    ``ABGELEITET_KWP_ANTEIL`` — der Daten-Checker klassifiziert den Monat dann als „verteilt“,
+    nicht als „fehlt“. Liefert True, wenn mindestens ein Modulwert geschrieben wurde.
+    """
+    inv_result = await db.execute(
+        select(Investition).where(
+            and_(Investition.anlage_id == anlage_id, Investition.typ == "pv-module")
+        )
+    )
+    module = [inv for inv in inv_result.scalars().all() if inv.ist_aktiv_im_monat(jahr, monat)]
+    if not module:
+        return False
+    imd_result = await db.execute(
+        select(InvestitionMonatsdaten).where(
+            and_(
+                InvestitionMonatsdaten.investition_id.in_([inv.id for inv in module]),
+                InvestitionMonatsdaten.jahr == jahr,
+                InvestitionMonatsdaten.monat == monat,
+            )
+        )
+    )
+    imd_map = {imd.investition_id: imd for imd in imd_result.scalars().all()}
+    # Was gemessen ist, sagt die P7-Auflösung — nicht die Rohspalte: ein gespeicherter
+    # Wert mit Zerlegungsmarke (#352) ist eine Lücke, die neu verteilt wird.
+    lokal = (await lade_pv_je_monat(db, anlage_id, module, jahr)).get((jahr, monat), {})
+
+    def _gemessen(inv_id: int) -> Optional[float]:
+        modulwert = lokal.get(inv_id)
+        if modulwert is None or modulwert.quelle != QUELLE_GEMESSEN:
+            return None
+        return modulwert.pv_erzeugung_kwh
+
+    pv_module = [PvModul(inv.id, get_pv_kwp(inv), _gemessen(inv.id)) for inv in module]
+    aufgeloest = resolve_pv_je_modul(aggregat_kwh=pv_gesamt, module=pv_module)
+    luecken = [inv for inv in module if _gemessen(inv.id) is None]
+    if not luecken:
+        return False
+    marke = ABGELEITET_KWP_ANTEIL if len(luecken) > 1 else None
+    geschrieben = False
+    for inv in luecken:
+        modulwert = aufgeloest[inv.id]
+        wert = round(modulwert.pv_erzeugung_kwh, 2)
+        imd = imd_map.get(inv.id)
+        if imd is None:
+            imd = InvestitionMonatsdaten(
+                investition_id=inv.id, jahr=jahr, monat=monat,
+                verbrauch_daten={"pv_erzeugung_kwh": wert},
+            )
+            db.add(imd)
+            await db.flush()
+            seed_provenance(
+                imd, source=_HA_STATS_SOURCE, writer=_HA_STATS_WRITER,
+                json_subkeys={"verbrauch_daten": ["pv_erzeugung_kwh"]},
+                abgeleitet_je_subkey={"pv_erzeugung_kwh": marke} if marke else None,
+            )
+            geschrieben = True
+            continue
+        if imd.verbrauch_daten is None:
+            imd.verbrauch_daten = {}
+        vorhanden = imd.verbrauch_daten.get("pv_erzeugung_kwh")
+        if vorhanden is None or vorhanden == 0 or ueberschreiben:
+            res = await write_json_subkey_with_provenance(
+                db, imd, "verbrauch_daten", "pv_erzeugung_kwh", wert,
+                source=_HA_STATS_SOURCE, writer=_HA_STATS_WRITER, abgeleitet=marke,
+            )
+            if res.applied:
+                geschrieben = True
+    return geschrieben
+
+
 @router.post("/import/{anlage_id}", response_model=ImportResultat)
 async def import_ha_statistics(
     anlage_id: int,
     request: ImportRequest,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db, scope="function")
 ):
     """
     Importiert HA-Statistik-Daten in EEDC Monatsdaten.
@@ -1095,6 +1192,20 @@ async def import_ha_statistics(
                             if result.applied:
                                 inv_importiert = True
 
+            # N-533: der Anlagen-PV-Zähler (`basis.pv_gesamt`) — bis 19.09.2026 stand er
+            # in der Vorschau und wurde beim Import nirgendwohin geschrieben. Jetzt wie der
+            # Monatsabschluss und der Tagespfad: nach kWp auf die aktiven PV-Module ohne
+            # eigenen Messwert verteilen, als Zerlegung gekennzeichnet (P7: Messwerte je
+            # Modul haben Vorrang, der Zähler füllt nur die Lücken).
+            pv_gesamt = None
+            if _basis_aktiv("pv_gesamt") and basis_mapping.get("pv_gesamt", {}).get("sensor_id"):
+                pv_gesamt = sensor_values.get(basis_mapping["pv_gesamt"]["sensor_id"])
+            if pv_gesamt is not None:
+                if await _verteile_anlagen_pv(
+                    db, anlage_id, jahr, monat, pv_gesamt, ueberschreiben=request.ueberschreiben,
+                ):
+                    inv_importiert = True
+
             # N-240: Gerätewerte angekommen, aber keine Zählerzeile für den Monat
             # — der Zustand aus #349, hier auf dem HA-Weg. Geprüft wird die
             # ZEILE, nicht die Zuordnung: existiert sie aus einem früheren Lauf
@@ -1129,6 +1240,7 @@ async def import_ha_statistics(
         erfolg=len(fehler) == 0,
         details=f"Importiert: {importiert}, Übersprungen: {uebersprungen}" + (f", Fehler: {len(fehler)}" if fehler else ""),
         anlage_id=anlage_id,
+        db=db,
     )
 
     warnung = warnung_monate_ohne_zaehlerwerte(monate_ohne_zaehlerwerte)

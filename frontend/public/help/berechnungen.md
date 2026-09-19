@@ -55,7 +55,7 @@ und zum Verständnis der Datenflüsse.
 - `Monatsdaten.batterie_*` - Nutze `InvestitionMonatsdaten` (Speicher)
 - `Monatsdaten.pv_erzeugung_kwh` - **kein Schreibziel** für neuen Code (Pro-Modul-Werte gehören in `InvestitionMonatsdaten`) und seit 2026-07-29 auch **keine allgemeine Lesequelle** mehr: das Feld trägt den manuell erfassten oder importierten **PV-Gesamtwert** eines Monats und ist **ausschließlich Eingang** des Read-time-SoT `core/berechnungen/pv_verteilung.py` (`resolve_pv_je_modul`). Der füllt damit die Lücken der Module ohne eigenen Wert und kennzeichnet sie als gerechnet. Wer nur einen Gesamt-Sensor hat, pflegt weiterhin ausschließlich hier. Jede einzelne Berechnung liest die Pro-Modul-Schicht bzw. deren Summe — nie das Feld selbst. Ladepfad: `services/pv_monatswerte.py`.
 
-> **Seit 2026-07-31 ist die Lesequelle nicht mehr `lade_pv_je_monat`, sondern eine Schicht darüber:** `services/monats_fakten.py::lade_monats_fakten` (ADR-002/**P10**, [Konzept](KONZEPT-MONATS-FAKTEN.md)). Sie liefert die **ganze** Monatszeile kanonisch aufgelöst — die PV ist darin ein Feld (`erzeugung.pv_module_kwh` bzw. `erzeugung.pv_kwh`), daneben stehen Zähler, Speicher, E-Mobilität, Wärmepumpe, Sonstiges, Tarif, §51 und die Verbrauchs-Kennzahlen. Sie **ruft** `lade_pv_je_monat` (die P7-Regel bleibt unverändert), wendet aber zusätzlich **einmal** alle Zeitfilter (`aktiv` · Anschaffung · Stilllegung) und den Dienstwagen-Filter an. Wer eine abgeleitete Monatsgröße auswertet, nimmt sie von dort; `lade_pv_je_monat` direkt zu rufen bleibt richtig, wo **nur** die Pro-Modul-PV gebraucht wird (String-Vergleich, PV-Diagnose). Ausgenommen sind Schreib-, Import- und Checker-Pfade — die Schicht ist reines Lesen.
+> **Seit 2026-07-31 ist die Lesequelle nicht mehr `lade_pv_je_monat`, sondern eine Schicht darüber:** `services/monats_fakten/::lade_monats_fakten` (ADR-002/**P10**, [Konzept](KONZEPT-MONATS-FAKTEN.md)). Sie liefert die **ganze** Monatszeile kanonisch aufgelöst — die PV ist darin ein Feld (`erzeugung.pv_module_kwh` bzw. `erzeugung.pv_kwh`), daneben stehen Zähler, Speicher, E-Mobilität, Wärmepumpe, Sonstiges, Tarif, §51 und die Verbrauchs-Kennzahlen. Sie **ruft** `lade_pv_je_monat` (die P7-Regel bleibt unverändert), wendet aber zusätzlich **einmal** alle Zeitfilter (`aktiv` · Anschaffung · Stilllegung) und den Dienstwagen-Filter an. Wer eine abgeleitete Monatsgröße auswertet, nimmt sie von dort; `lade_pv_je_monat` direkt zu rufen bleibt richtig, wo **nur** die Pro-Modul-PV gebraucht wird (String-Vergleich, PV-Diagnose). Ausgenommen sind Schreib-, Import- und Checker-Pfade — die Schicht ist reines Lesen.
 >
 > Die Migration läuft sichtweise (`KONZEPT-MONATS-FAKTEN.md` §10): umgehängt sind **Aussichten**, **Jahresbericht-PDF** und der **Investitions-ROI** (S2). Der baumweite Wächter wird mit S5 scharf gestellt.
 
@@ -67,10 +67,10 @@ und zum Verständnis der Datenflüsse.
 
 | Datei | Funktionen | Beschreibung |
 |-------|-----------|-------------|
-| `services/monats_fakten.py` | `lade_monats_fakten()`, `finanz_zeile_eingabe()`, `kennzahlen_aus_fakten()` | **Eingabe-Aufbereitung, keine Formel** (ADR-002/P10): löst die Monatszeile einmal auf und ruft die SoT-Helfer. Vorschaltet jeder aggregierenden Lese-Sicht |
+| `services/monats_fakten/` | `lade_monats_fakten()`, `finanz_zeile_eingabe()`, `kennzahlen_aus_fakten()` | **Eingabe-Aufbereitung, keine Formel** (ADR-002/P10): löst die Monatszeile einmal auf und ruft die SoT-Helfer. Vorschaltet jeder aggregierenden Lese-Sicht |
 | `core/calculations.py` | `berechne_monatskennzahlen()`, `berechne_speicher_einsparung()`, `berechne_eauto_einsparung()`, `berechne_waermepumpe_einsparung()`, `berechne_roi()`, `berechne_ust_eigenverbrauch()` | Reine Berechnungsfunktionen ohne DB-Zugriff |
 | `api/routes/cockpit.py` | 6 Endpoints | Aggregation aller Daten für Dashboard |
-| `api/routes/aussichten.py` | 4 Endpoints | Prognosen und Finanzberechnungen |
+| `api/routes/aussichten/` | 5 Endpunkte (Paket seit 18.09.2026) | Prognosen (`prognose.py`, `trend.py`, `wetter.py`) und Finanz-Prognose (`finanzen.py` als Orchestrator; seine Phasen seit 18.09.2026 in `finanz_eingaenge.py` · `finanz_rueckblick.py` · `finanz_prognose.py` · `finanz_zerlegung.py`) |
 | `api/routes/investitionen.py` | ROI-Dashboard | PV-System-Gruppierung und ROI pro Komponente |
 | `api/routes/strompreise.py` | `lade_tarife_fuer_anlage()` | Multi-Tarif-Lookup mit Fallback |
 | `utils/sonstige_positionen.py` | `berechne_sonstige_summen()` | Strukturierte Erträge/Ausgaben |
@@ -114,7 +114,7 @@ Definiert in `core/berechnungen/heizgradtage.py`:
 |-----------|------|---------|-----------|
 | `HEIZGRENZE_C` | 15.0 | °C | Heizgradtage — Temperaturkorrektur der Verbrauchsprognose **und** wetternormierter Vergleich (§3.5f). Gradtag-Konvention, **keine** Innenraum-Temperatur. **Eine** Definitionsstelle, gewächtert von `test_berechnungs_layer_konformitaet.py::test_heizgrenze_nur_im_layer` |
 
-Definiert in `api/routes/aussichten.py`:
+Definiert in `api/routes/aussichten/basis.py` (bis 18.09.2026 `aussichten.py`):
 
 | Konstante | Wert | Verwendung |
 |-----------|------|-----------|
@@ -197,7 +197,7 @@ CO2-Einsparung (kg)      = PV_Erzeugung * 0.38               (VERALTET — s. Ka
 > `Investition.einsparung_prognose_jahr` („Ertrag/Jahr") gepflegt, weil eedc seinen Brennstoff nicht
 > kennt. **Geändert am 2026-09-03** (Maintainer-Entscheid, löst v3.45.4 ab); bis dahin nahm die
 > Finanz-Zeile die PV-Achse, und Menge und Betrag zählten verschiedene Erzeuger.
-> („Ertrag/Jahr"). Beide Größen liegen in **derselben** Summe (`aussichten.py::jahres_netto_ertrag`)
+> („Ertrag/Jahr"). Beide Größen liegen in **derselben** Summe (`jahres_netto_ertrag` in `aussichten/finanz_prognose.py::jahres_alternativkosten`)
 > — würde die Menge zusätzlich monetarisiert, stünde derselbe Nutzen zweimal darin.
 >
 > ⭐ **Ausnahme seit 2026-09-06 — die Kategorie *Abgabe an Dritte* (§9.2 Geldseite).** Dort ist der
@@ -592,7 +592,7 @@ Vollzyklen = Entladung_kWh ÷ Kapazität_brutto_kWh
 ```
 
 **SoT:** `core/berechnungen/speicher.py::vollzyklen`. Alle Sichten rufen ihn auf —
-Komponenten-Hub (`investitionen/dashboards.py`), Cockpit Tag (`energie_profil/tage_werte.py`),
+Komponenten-Hub (`investitionen/dashboard_*.py`), Cockpit Tag (`energie_profil/tage_werte.py`),
 Monat/Jahr (`aktueller_monat.py`) und **Cockpit-Übersicht (`cockpit/uebersicht.py`)**,
 PDF-Jahresbericht, HA-Sensor `speicher_zyklen`.
 Gewächtert von `backend/tests/test_speicher_zyklen_kapazitaets_basis.py` (inkl. Drei-Pfad-Symmetrie),
@@ -651,8 +651,8 @@ Ersparnis = PV-Anteil   × (Netzbezug − Einspeisevergütung) / 100
 ```
 
 **SoT:** `core/berechnungen/speicher_wirtschaftlichkeit.py::berechne_speicher_ersparnis`.
-Aufrufer: T-Konto (`aktueller_monat.py::_baue_investition_financial`), Speicher-Dashboard und
-Sonstiges-Speicher (`investitionen/dashboards.py`), Aussichten. Gewächtert von
+Aufrufer: T-Konto (`aktueller_monat/tkonto.py::_baue_investition_financial`), Speicher-Dashboard und
+Sonstiges-Speicher (`investitionen/dashboard_sonstiges.py`), Aussichten. Gewächtert von
 `test_speicher_kanon_symmetrie.py` (drei Achsen, mit **absoluten** Erwartungen — Symmetrie allein
 ließe auch drei gleich falsche Zahlen durch, Lehre aus N-130).
 
@@ -665,7 +665,7 @@ gilt für sie nicht. Ihr Vorteil ist `Netzbezug − Ladepreis`; ohne gepflegten 
 kostenneutrale Durchleitung (z. B. Backup-Vorhaltung).
 
 > ⚠ **Zwei Fundstellen wichen bis zum 2026-08-04 ab** — beide sichtbar: `aktueller_monat.py`
-> rechnete `Entladung × Netzbezug` (bei 30/8 ct **36 % zu hoch**), `dashboards.py` den Spread
+> rechnete `Entladung × Netzbezug` (bei 30/8 ct **36 % zu hoch**), `dashboard_speicher.py` (damals `dashboards.py`) den Spread
 > **inline** auf der gesamten Entladung *und* wies den Arbitrage-Gewinn zusätzlich aus — der
 > Komponenten-Hub addiert beide Posten, netzgeladene Energie zählte damit doppelt. Die Formel im
 > Layer zu haben genügt nicht; sie ist erst durchgesetzt, wenn keine Inline-Kopie mehr danebensteht
@@ -920,7 +920,7 @@ im IST gemessen, ein Hybrid lädt ohnehin weniger.
 
 #### Dynamischer Kraftstoffpreis (ab v3.17.0)
 
-In der **Finanz-Prognose** ([Auswertungen → Finanzen](HANDBUCH_BEDIENUNG.md#41-finanzen), Backend `aussichten.py`) wird die E-Auto-Ersparnis **pro Monat** mit dem echten Kraftstoffpreis berechnet:
+In der **Finanz-Prognose** ([Auswertungen → Finanzen](HANDBUCH_BEDIENUNG.md#41-finanzen), Backend `aussichten/finanz_rueckblick.py`) wird die E-Auto-Ersparnis **pro Monat** mit dem echten Kraftstoffpreis berechnet:
 
 ```
 Für jeden historischen Monat:
@@ -936,7 +936,7 @@ Für Jahresprognose:
 
 **Datenquelle:** EU Weekly Oil Bulletin (Euro-Super 95, inkl. Steuern, wöchentlich, History seit 2005). Befüllung durch den Scheduler-Job (**täglich 06:00 + Startlauf**), den Reparatur-Pfad „Kraftstoffpreise nachpflegen" oder den Backfill-Endpoint. Fehlt der Monatswert, rechnet die Kette mit dem Investitions-Parameter bzw. 1,65 €/L weiter — der Daten-Checker meldet offene Monate deshalb als eigene Kategorie.
 
-**Betroffen:** Aussichten (`aussichten.py`), HA-Sensor-Export (`ha_export.py`), PDF-Finanzbericht (`pdf_operations.py`).
+**Betroffen:** Aussichten (`aussichten/finanzen.py`), HA-Sensor-Export (`ha_export.py`), PDF-Finanzbericht (`pdf_operations.py`).
 
 #### PV-Anteil der Heimladung: gemessen, sonst abgeleitet (ab 2026-08-08, N-141)
 
@@ -988,7 +988,7 @@ holen dieselbe Anreicherung über `reichere_monatszeilen_an`.
 gepflegte `pv_ladeanteil_prozent`, nimmt die ROI-Prognose den IST-Anteil über
 `monats_fakten.ist_pv_ladeanteil_prozent` (Σ PV ÷ Σ Ladung, ladungsgewichtet) statt des früheren
 Vorgabewerts von 60 %. Der Default greift nur noch, wenn auch das IST keine Heimladung kennt. Die
-zweite Prognose-Quelle (`aussichten.py`, leitet ihre Quote aus der Historie ab) zieht über dieselbe
+zweite Prognose-Quelle (`aussichten/finanz_prognose.py`, leitet ihre Quote aus der Historie ab) zieht über dieselbe
 Anreicherung mit.
 
 **Herkunft:** `EmobFakten.ladung_anteil_abgeleitet` sagt, ob die Aufteilung gerechnet ist; auf der
@@ -1074,7 +1074,7 @@ Anwenders.
 
 > #### Die Strommenge eines Geräts — **der Gesamtzähler ist die Menge** (K1/K3)
 >
-> **SoT:** `core/field_definitions.py::wp_strom_aufteilung`; die Lesetür für die reine Menge heißt
+> **SoT:** `core/field_definitions/wp_strom.py::wp_strom_aufteilung`; die Lesetür für die reine Menge heißt
 > weiterhin `get_wp_strom_kwh`. Jede Sicht, die einen WP-Stromverbrauch auswertet, bekommt ihn von
 > dort — Monats-Fakten, Komponenten-Hub, Cockpit, HA-Export, Community-Payload, Alternativkosten,
 > Daten-Checker und der laufende Monat aus Nicht-DB-Quellen.
@@ -1108,7 +1108,7 @@ Anwenders.
 > Wärmemenge auswertet, bekommt sie von dort — Monats-Fakten, Komponenten-Hub, HA-Export,
 > Community-Payload, der Tag, die anlagenweiten Alternativkosten
 > (`core/berechnungen/alternativkosten.py` ⇒ Aussichten · ROI · Jahres-Ersparnis des HA-Exports),
-> die thermische Gewichtung der WP-Prognose (`api/routes/aussichten.py`), die Komponenten-Zeile
+> die thermische Gewichtung der WP-Prognose (`api/routes/aussichten/finanz_prognose.py`), die Komponenten-Zeile
 > „Ersparnis vs. Alternative“ in *Cockpit → Monat* und die Nicht-DB-Quellen des laufenden Monats
 > (MQTT · Connector · HA-Statistik).
 >
@@ -1203,7 +1203,7 @@ CO2-Einsparung        = CO2_alt - CO2_WP
 > Monats-Layer (`services/wp_wirtschaftlichkeit.py` — Komponenten-Hub, *Cockpit → Monat/
 > Jahr*, HA-Sensor je Gerät), anlagenweite Alternativkosten
 > (`core/berechnungen/alternativkosten.py`), die Jahresformel der Prognose
-> (`api/routes/aussichten.py`) und diese Planungsformel hier. Die CO₂-Zeile trifft sich
+> (`api/routes/aussichten/finanz_prognose.py`) und diese Planungsformel hier. Die CO₂-Zeile trifft sich
 > dabei mit dem gemessenen Pfad `co2_wp_ersparnis_kg`, der schon immer den vollen Strom
 > belastete (ADR-001/DI-1).
 
@@ -1213,7 +1213,7 @@ CO2-Einsparung        = CO2_alt - CO2_WP
 >
 > **Strom-Direktheizung:** η = 1,0. Eine Widerstandsheizung (Nachtspeicher, Infrarot) setzt Strom verlustfrei in Wärme um; ihr einen Kesselverlust anzurechnen, würde die WP-Ersparnis überhöhen. Die η-Wahl lag vorher an vier Stellen dupliziert vor und kannte diesen Fall nirgends.
 
-> **Diese Rechnung braucht zwei gepflegte Angaben — sonst läuft sie nicht.** ⚠ **Bis 2026-08-16 stand hier das Gegenteil:** „Split-Klimaanlagen (`wp_art = luft_luft`) durchlaufen diese Rechnung gar nicht … ein Luft-Luft-Gerät ersetzt in aller Regel keine Heizung." **Diese Prämisse ist gefallen** — eine Luft-Luft-Wärmepumpe kann sehr wohl eine Gasheizung ersetzen, und viele Anwender heizen damit. Der echte Defekt war nie die Bauart, sondern eine **erfundene Eingabe**: Weil `Heizwärmebedarf`/`Warmwasserbedarf` Defaults hatten (12.000/3.000 kWh), kam die Formel nie ohne Ergebnis heraus — bei den übrigen Standardwerten rund **1.100 €/Jahr** und **2.210 kg CO₂/Jahr** Ersparnis gegen eine Gasheizung, die es nie gab, inklusive Beitrag zu den Anlagen-Summen. **Heute gilt stattdessen:** (1) Ist beim **ersetzten Energieträger** „Nichts ersetzt (Neubau)" gewählt, wird **weder Ersparnis noch CO₂-Ersparnis** konstruiert — für **jede** Wärmepumpenart, nicht nur für Klimaanlagen; das war der Neubau-Fall, der bis dahin still eine Gaskessel-Ersparnis bekam. (2) Ist **kein Wärmebedarf gepflegt**, gibt es keinen Default mehr; die ROI-Zeile trägt „—" und `nicht_bewertet` samt Begründung. Eine halb gepflegte Angabe zählt entsprechend halb (nur Warmwasser gepflegt ⇒ Heizwärme 0). (3) **Bestandsschutz ohne Migration:** Steht an einer Luft-Luft-WP noch **exakt** die alte Vorbelegung 12.000/3.000, zählt sie als offene Frage statt als Antwort — sie war seit v4.0.6 unsichtbar und damit nicht korrigierbar. Bei klassischen Wärmepumpen bleibt sie eine Schätzung und wird gerechnet. Die **gemessenen** Pfade (`services/wp_wirtschaftlichkeit.py`, `co2_wp_ersparnis_kg`, Aussichten, JAZ/COP) haben zusätzlich weiterhin ihren `wp_waerme_kwh <= 0`-Wächter. (4) **Eine Achse, die es am Gerät nicht gibt, geht mit 0 ein** (14.09.2026, WK-15c): Eine **Brauchwasser**-Wärmepumpe gibt keine Heizwärme ab, eine **Split-Klimaanlage** hat keinen Warmwasserkreis (N-304) — der jeweils andere Bedarf wird vor der Formel auf 0 gesetzt, auch wenn eine Zahl im Feld steht. Gemessen an einer Brauchwasser-WP mit der Formular-Vorbelegung: **714,29 €/Jahr und 1.721 kg CO₂** gegenüber **142,86 € und 344 kg** — 571 € Ersparnis für Wärme, die das Gerät nie liefert. Steht auf den geltenden Achsen **nur** die Vorbelegung, greift (3); steht dort gar nichts, greift (2). SoT der Unterscheidung: `core/berechnungen/alternativkosten.py::ersetzt_keine_heizung` für (1) und `field_definitions.py::feld_urteil` für (3) und (4) — **die Registry entscheidet je Achse, nicht die Bauart** (ADR-002/P13). Die Layer-Formel `berechne_waermepumpe_einsparung` bleibt davon unberührt: Sie rechnet, was der Aufrufer ihr gibt.
+> **Diese Rechnung braucht zwei gepflegte Angaben — sonst läuft sie nicht.** ⚠ **Bis 2026-08-16 stand hier das Gegenteil:** „Split-Klimaanlagen (`wp_art = luft_luft`) durchlaufen diese Rechnung gar nicht … ein Luft-Luft-Gerät ersetzt in aller Regel keine Heizung." **Diese Prämisse ist gefallen** — eine Luft-Luft-Wärmepumpe kann sehr wohl eine Gasheizung ersetzen, und viele Anwender heizen damit. Der echte Defekt war nie die Bauart, sondern eine **erfundene Eingabe**: Weil `Heizwärmebedarf`/`Warmwasserbedarf` Defaults hatten (12.000/3.000 kWh), kam die Formel nie ohne Ergebnis heraus — bei den übrigen Standardwerten rund **1.100 €/Jahr** und **2.210 kg CO₂/Jahr** Ersparnis gegen eine Gasheizung, die es nie gab, inklusive Beitrag zu den Anlagen-Summen. **Heute gilt stattdessen:** (1) Ist beim **ersetzten Energieträger** „Nichts ersetzt (Neubau)" gewählt, wird **weder Ersparnis noch CO₂-Ersparnis** konstruiert — für **jede** Wärmepumpenart, nicht nur für Klimaanlagen; das war der Neubau-Fall, der bis dahin still eine Gaskessel-Ersparnis bekam. (2) Ist **kein Wärmebedarf gepflegt**, gibt es keinen Default mehr; die ROI-Zeile trägt „—" und `nicht_bewertet` samt Begründung. Eine halb gepflegte Angabe zählt entsprechend halb (nur Warmwasser gepflegt ⇒ Heizwärme 0). (3) **Bestandsschutz ohne Migration:** Steht an einer Luft-Luft-WP noch **exakt** die alte Vorbelegung 12.000/3.000, zählt sie als offene Frage statt als Antwort — sie war seit v4.0.6 unsichtbar und damit nicht korrigierbar. Bei klassischen Wärmepumpen bleibt sie eine Schätzung und wird gerechnet. Die **gemessenen** Pfade (`services/wp_wirtschaftlichkeit.py`, `co2_wp_ersparnis_kg`, Aussichten, JAZ/COP) haben zusätzlich weiterhin ihren `wp_waerme_kwh <= 0`-Wächter. (4) **Eine Achse, die es am Gerät nicht gibt, geht mit 0 ein** (14.09.2026, WK-15c): Eine **Brauchwasser**-Wärmepumpe gibt keine Heizwärme ab, eine **Split-Klimaanlage** hat keinen Warmwasserkreis (N-304) — der jeweils andere Bedarf wird vor der Formel auf 0 gesetzt, auch wenn eine Zahl im Feld steht. Gemessen an einer Brauchwasser-WP mit der Formular-Vorbelegung: **714,29 €/Jahr und 1.721 kg CO₂** gegenüber **142,86 € und 344 kg** — 571 € Ersparnis für Wärme, die das Gerät nie liefert. Steht auf den geltenden Achsen **nur** die Vorbelegung, greift (3); steht dort gar nichts, greift (2). SoT der Unterscheidung: `core/berechnungen/alternativkosten.py::ersetzt_keine_heizung` für (1) und `field_definitions/bedingungen.py::feld_urteil` für (3) und (4) — **die Registry entscheidet je Achse, nicht die Bauart** (ADR-002/P13). Die Layer-Formel `berechne_waermepumpe_einsparung` bleibt davon unberührt: Sie rechnet, was der Aufrufer ihr gibt.
 
 > ⚠ **Punkt (1) galt bis 2026-08-29 nur je Gerät, nicht in den anlagenweiten Sichten** — und der häufigste Fall fiel genau durch diese Lücke. Wer neben einer Wärmepumpe, die eine Gasheizung ersetzt hat, eine **Split-Klimaanlage** betreibt (in eedc ebenfalls eine Wärmepumpe, meist mit „Nichts ersetzt (Neubau)"), bekam auch deren Wärme als vermiedenes Gas gutgeschrieben: Die Sperre griff erst, wenn **keine einzige** Wärmepumpe etwas ersetzt hatte. Betroffen waren die **CO₂-Ersparnis im Jahresbericht** — bei zwei gleich großen Geräten war sie **doppelt so hoch** (2.458 statt 1.229 kg/Jahr, an einer nachgestellten Anlage gemessen) — und die **Alternativkosten-Ersparnis in der Jahresprognose** unter *Auswertungen → Aussichten*, dort mit umgekehrtem Vorzeichen: Der Strom des Neubau-Geräts wurde von der Ersparnis der ersetzenden Wärmepumpe abgezogen (1.057 → 704 €/Jahr, ebenfalls nachgestellt).
 >
@@ -1359,7 +1359,7 @@ derselbe wie dort — **E7/Option A**, also der **Abzug** und nicht die Menge.
 
 | | |
 | --- | --- |
-| **Wer antwortet** | die **Registry** — `core/field_definitions.py::wp_waerme_achsen`, über `feld_urteil(...) == URTEIL_GILT` auf `heizenergie_kwh` bzw. `warmwasser_kwh` |
+| **Wer antwortet** | die **Registry** — `core/field_definitions/bedingungen.py::wp_waerme_achsen`, über `feld_urteil(...) == URTEIL_GILT` auf `heizenergie_kwh` bzw. `warmwasser_kwh` |
 | **Wer sie auswertet** | `core/berechnungen/waermepumpe_kennzahl.py::arbeitszahl_je_funktion(achsen=…, gesamt=…)` — **eine** Stelle für alle fünf Aufrufer |
 | **Anlagenweit** | `services/waerme_klima_block.py::achsen_der_anlage` — Vereinigung über die Geräte, die im Zeitraum **Strom beitragen** |
 | **Ergebnis je Bauart** | `brauchwasser` ⇒ {Warmwasser} · `luft_luft` ⇒ {Heizen} · sonst beide |
@@ -1446,7 +1446,7 @@ mengengewichtete Mittelwert, damit `kWh × Preis = Kosten` aufgeht (**A6**).
 
 ⛔ **Es sind die Kosten des VERBRAUCHTEN Stroms, nicht des Netzbezugs.** Welcher Anteil
 einer Gerätestunde aus der PV kam, ist ohne eine Zuteilungsannahme nicht bekannt —
-dieselbe Begründung, mit der `monats_fakten.py::_komponenten_preis` den Zeittarif über
+dieselbe Begründung, mit der `monats_fakten/tarif.py::_komponenten_preis` den Zeittarif über
 den **Haus**-Netzbezug gewichtet.
 
 ⚠ **Ein Segment unterhalb der Anzeigegenauigkeit erscheint nicht** (0,02 kWh). Steht ein
@@ -1817,9 +1817,21 @@ Wobei `Betriebskosten_Jahr` = `Investition.betriebskosten_jahr` (Wartung, Versic
 > „4.800 € von 12.000 € sind drin". Das ist gewollt und in beiden Tooltips ausgeschrieben; Bedingung
 > ist der **gemeinsame Nenner**, sonst ließen sich die Zahlen nicht ineinander überführen.
 
-> Verteilen sich die Anschaffungen über mehrere Jahre, ist das ausgewiesene Amortisationsjahr
-> **optimistisch** (der Anker ist die *erste* Anschaffung, die Kosten sind die Summe). Der
-> Break-Even-Text sagt das dazu.
+> **Die Break-Even-Kurve ist eine Kalender-Treppe (seit 2026-09-18, N-525).** Jede ROI-Zeile
+> zählt ihre Mehrkosten und ihre Netto-Jahres-Einsparung ab ihrem eigenen Anschaffungsjahr (ein
+> PV-System ab seiner ersten Komponente, seine Kosten je Komponente gestuft), sonstige Ausgaben
+> erhöhen und sonstige Erträge mindern den Kapitaleinsatz im Jahr ihrer Buchung. Das
+> **Break-Even-Jahr** ist das erste Jahr, ab dem die kumulierte Einsparung den kumulierten
+> Kapitaleinsatz dauerhaft nicht mehr unterschreitet — eine spätere Anschaffung kann eine schon
+> amortisierte Anlage wieder unter die Linie drücken. Formel-SoT
+> `core/berechnungen/kapitalrechnung.py::amortisations_verlauf`; der Client zeichnet die Reihe.
+> Die **Dauer** in Jahren bleibt Modell A (Kapitaleinsatz ÷ heutige Jahres-Einsparung); Dauer und
+> Jahr fallen nur bei einer Anlage zusammen, die auf einmal gebaut wurde.
+>
+> *Bis dahin* stand hier: „Verteilen sich die Anschaffungen über mehrere Jahre, ist das
+> ausgewiesene Amortisationsjahr optimistisch (der Anker ist die erste Anschaffung, die Kosten
+> sind die Summe)." Das war die benannte Näherung, die der Kurve seit v4.0.1 unter dem Text stand
+> (Radiocarbonat, T89667 #342).
 
 > **Jede Dauer nennt ihre Annahme (seit 2026-08-10).** Der Fortschritt unterstellt
 > nichts, die Dauer **muss** etwas unterstellen — gewählt ist **Modell A**
@@ -2009,7 +2021,7 @@ Flug-km        = CO2_gesamt / 0.25     (kg/km)
 > Wert aus `ErzeugungFakten.pv_je_modul` (P7-Auflösung); ein `balkonkraftwerk` steht dort
 > **nicht**, sondern in `BkwFakten.erzeugung_je_investition`. Grund: die Σ von `pv_je_modul` ist
 > `pv_module_kwh`, und die geht in die **ROI-Rechnung**, wo das Balkonkraftwerk eine **eigene**
-> Zeile hat (`investitionen/crud.py::get_pv_erzeugung`) — läge es in beiden, zählte seine
+> Zeile hat (`investitionen/roi.py::get_roi_dashboard`, innere `get_pv_erzeugung`) — läge es in beiden, zählte seine
 > Erzeugung dort doppelt. Wer die Sicht erweitert, erweitert deshalb **nicht** `pv_je_modul`.
 > Gewächtert in `tests/test_bkw_erzeuger_sichten_f10.py`.
 >

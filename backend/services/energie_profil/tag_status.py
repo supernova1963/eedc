@@ -6,7 +6,7 @@ Messwerten." Das trifft die Lage seit v4.0.2/4 nicht mehr — leere Sichten
 erklären sich, und der Reparatur-Knopf steht daneben, **wo er wirkt**.
 
 **Warum ein eigener, tagesbezogener Weg?** Der Daten-Checker beschreibt die
-**Anlage** (`daten_checker.datenquelle`): letzte `TagesZusammenfassung`
+**Anlage** (`daten_checker.datenquelle.tage`): letzte `TagesZusammenfassung`
 überhaupt, Lücken über die letzten 90 Tage, ein voller Lauf kostet an einer
 echten Box ~2,5 s. Zu einem konkret **gewählten** Tag sagt er nichts — an
 Winterborn meldete er „keine reparierbaren Tages-Lücken", während die Sicht

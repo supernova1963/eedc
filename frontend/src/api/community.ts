@@ -125,6 +125,10 @@ export interface BenchmarkData {
 export interface ShareResponse {
   success: boolean
   message: string
+  /** N-523: Monate, die der Server übersprungen oder als sehr hoch vermerkt hat
+   *  („2026-07 übersprungen: unrealistischer Ertrag (212 kWh/kWp)"). Der Rest
+   *  wurde angenommen — vorher wies ein solcher Monat den ganzen Datensatz ab. */
+  hinweise?: string[]
   anlage_hash: string | null
   anzahl_monate: number | null
   benchmark: BenchmarkData | null

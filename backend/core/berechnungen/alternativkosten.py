@@ -10,7 +10,7 @@ Jahresersparnis / ROI / Amortisation einfließt:
 - **Balkonkraftwerk** — der BKW-Eigenverbrauch zum Netzbezugspreis bewertet.
 
 Die Formeln waren an mehreren Read-Sites dupliziert (`ha_export.py`,
-`aussichten.py`) und sind eine bekannte Drift-Quelle: bei Multi-Komponenten-
+`aussichten/finanzen.py`) und sind eine bekannte Drift-Quelle: bei Multi-Komponenten-
 Haushalten mit unterschiedlichen Parametern (zwei WPs Gas+Öl, zwei E-Autos)
 rechnete der last-write-wins-Pfad falsch. Dieser Layer rechnet **per
 Komponente und per Monat** und ist DB-/Service-frei (ADR-001): der Caller
@@ -89,7 +89,7 @@ def alter_wirkungsgrad(energietraeger: Optional[str]) -> float:
     Single Source der η-Wahl, die vorher an drei Stellen als
     ``OEL if traeger == "oel" else GAS`` dupliziert war (`_wp_aggregate` hier,
     `services.wp_wirtschaftlichkeit._wp_alter_wirkungsgrad`, das WP-Aggregat in
-    `api/routes/aussichten.py`). Alle drei kannten nur Gas und Öl — die im
+    `api/routes/aussichten/finanzen.py`). Alle drei kannten nur Gas und Öl — die im
     Formular wählbare **Strom-Direktheizung** („Strom (Direktheizung)",
     `WaermepumpeFelder.tsx`) bekam damit stillschweigend den Gas-Kessel-Wirkungsgrad
     0,90 und wurde dadurch um gut 11 % zu teuer gerechnet (= zu hohe WP-Ersparnis).

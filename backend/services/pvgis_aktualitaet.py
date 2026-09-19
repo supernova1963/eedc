@@ -125,6 +125,7 @@ def _gewichtete_winkel(
     prüft `test_frische_prognose_meldet_keine_abweichung`.
     """
     from backend.api.routes.pvgis import ausrichtung_zu_azimut, DEFAULT_TILT
+    from backend.services.pv_orientation import ausrichtung_text
 
     if gesamt_kwp <= 0:
         return 0.0, 0.0
@@ -138,7 +139,9 @@ def _gewichtete_winkel(
         gewicht = kwp / gesamt_kwp
         params = modul.parameter or {}
         exakt = params.get("ausrichtung_grad")
-        modul_azimut = exakt if exakt is not None else ausrichtung_zu_azimut(modul.ausrichtung)
+        # N-528: derselbe Text-Leser wie die PVGIS-Route (Spalte → JSON), sonst
+        # meldete sich ein Assistenten-BKW nach dem Speichern selbst als abweichend.
+        modul_azimut = exakt if exakt is not None else ausrichtung_zu_azimut(ausrichtung_text(modul))
         neigung += get_pv_neigung(modul, default=int(DEFAULT_TILT)) * gewicht
         azimut += modul_azimut * gewicht
     return round(neigung, 1), round(azimut, 1)

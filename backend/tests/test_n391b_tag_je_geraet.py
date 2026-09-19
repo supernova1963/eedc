@@ -20,7 +20,7 @@ Die Wärme des Tages ist **55**, und genau das sagt der Monat für denselben
 Bestand (``imd_monatsaggregat`` wendet D1 je IMD-Zeile an). Der Tagespfad stand
 an **drei** Stellen eine Ebene zu hoch:
 
-* **Kachel** ``energie_profil/views.py`` — ``waerme_gesamt_kwh`` auf
+* **Kachel** ``energie_profil/tag.py`` — ``waerme_gesamt_kwh`` auf
   ``TagesDetail.werte``, den Anlagensummen ⇒ ``waerme_gesamt_kwh(30, 20, 5)`` =
   **30**. Die Aufteilung von WP2 verschwand hinter dem Gesamtwert von WP1.
 * **Stundenlinie** ``_waerme_linien_keys`` — ein **Alles-oder-nichts**: trug

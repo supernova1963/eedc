@@ -3,7 +3,7 @@
 Die Drift-Inventur vom 2026-07-31 fand keinen Rechenfehler im Berechnungs-Layer,
 sondern **sechsmal dieselbe Aufbereitungs-Struktur**: jede Sicht faltet die
 Rohdaten selbst, und dabei fällt jedes Mal etwas anderes weg. `services/
-monats_fakten.py` ist die eine Faltung davor.
+monats_fakten/` ist die eine Faltung davor.
 
 Diese Datei prüft die Schicht **für sich** — keine Sicht ist in S1 umgehängt.
 Geprüft wird je Feldgruppe genau das, was in den sechs Befunden verloren ging:

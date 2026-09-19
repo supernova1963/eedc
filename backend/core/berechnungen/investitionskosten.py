@@ -10,7 +10,7 @@ stellen im Baum drei Größen, und bis 2026-08-04 gab jede eine eigene Antwort:
 N-129/N-130 haben die erste am 04.08. auf `Σ max(0, gesamt − alternativ)`
 festgelegt (Entscheid Gernot). Die beiden anderen liefen weiter auf eigenen
 Summen — namentlich die **Hybrid-Summe** `PV-System voll + WP-/eAuto-Mehrkosten
-+ Sonstiges voll`, die in `aussichten.py` und `cockpit/uebersicht.py` doppelt
++ Sonstiges voll`, die in `aussichten/finanzen.py` und `cockpit/uebersicht.py` doppelt
 stand und ihre Mehrkosten aus `parameter["alternativ_kosten_euro"]` las: einem
 Schlüssel, der **baumweit keinen Schreiber hat** (Fund N-134). Sie fiel damit
 immer auf die Festannahmen 8.000 € / 35.000 € zurück und ignorierte genau das

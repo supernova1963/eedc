@@ -102,8 +102,8 @@ PARENT_PFLICHT_TYPEN: frozenset[str] = frozenset({InvestitionTyp.PV_MODULE.value
 #
 # Für alle anderen Typen rechnet eedc die Jahres-Einsparung selbst (PV,
 # Speicher, WP, E-Auto, BKW, Wechselrichter): dort ist der `else`-Zweig der
-# ROI-Typkette in `api/routes/investitionen/crud.py` gar nicht erreichbar, ein
-# gepflegter Wert bliebe wirkungslos — und in der Prognose (`aussichten.py`)
+# ROI-Typkette in `api/routes/investitionen/roi.py` gar nicht erreichbar, ein
+# gepflegter Wert bliebe wirkungslos — und in der Prognose (`aussichten/finanzen.py`)
 # stünde er dann gegen die selbst gerechnete Zahl. **Eine Menge, drei
 # Verwender:** Formular (Client-Pendant `investitionFormHelpers.ts`),
 # ROI-Dashboard, Aussichten-Prognose.

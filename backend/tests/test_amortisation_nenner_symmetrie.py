@@ -9,12 +9,12 @@ Sicht.
 Bis 04.08. taten sie das nicht. Es gab **drei** Antworten auf „was hat die
 Anlage relevant gekostet?":
 
-- `aussichten.py` und `cockpit/uebersicht.py`: eine **Hybrid-Summe**
+- `aussichten/finanzen.py` und `cockpit/uebersicht.py`: eine **Hybrid-Summe**
   `PV-System voll + WP-/eAuto-Mehrkosten + Sonstiges voll`, deren Mehrkosten aus
   `inv.parameter["alternativ_kosten_euro"]` kamen — einem Schlüssel, der
   baumweit **keinen Schreiber** hat (N-134) und deshalb immer auf die
   Festannahmen 8.000 € / 35.000 € zurückfiel;
-- `investitionen/crud.py` (ROI-Sicht): `Σ (gesamt − alternativ)` aus der
+- `investitionen/roi.py` (ROI-Sicht): `Σ (gesamt − alternativ)` aus der
   gepflegten **Spalte** `anschaffungskosten_alternativ`, ohne Klemmung je
   Position;
 - die USt-Bemessung: `Σ max(0, gesamt − alternativ)` (seit N-129/N-130).

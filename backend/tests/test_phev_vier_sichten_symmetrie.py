@@ -15,7 +15,7 @@ Auswertungen → Finanzen (Aussichten) eigene Monatsschleife
 
 ⚠ **Zwei der fünf wurden beim Bau von #331 zuerst übersehen.** Das Konzept
 führt die Aussichten in der Achsen-Tabelle unter „wer liest sie" — tatsächlich
-*rechnet* `aussichten.py` die Ersparnis inline mit einer eigenen Schleife
+*rechnet* `aussichten/finanzen.py` die Ersparnis inline mit einer eigenen Schleife
 (`agg["bisherige_ersparnis"]`). Ohne diesen Test wäre #331 mit einer bekannten
 Drift ausgeliefert worden: *Auswertungen → Finanzen* hätte für einen
 Plug-in-Hybrid mehr Ersparnis genannt als jede andere Sicht

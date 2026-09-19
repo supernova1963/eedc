@@ -274,7 +274,7 @@ async def test_ladetarif_hinweis_ist_abstellbar(db):
     Bis 2026-07-30 fragte der Check nach der Verwendung `e-auto` — die gibt es
     nicht (`Strompreis.verwendung`: allgemein | waermepumpe | wallbox), das
     Formular bietet sie nicht an, und gelesen wird ohnehin der Wallbox-Tarif
-    („E-Auto lädt über Wallbox", investitionen/dashboards.py). Der Hinweis
+    („E-Auto lädt über Wallbox", investitionen/dashboard_eauto.py). Der Hinweis
     stand damit dauerhaft bei jedem E-Auto-Besitzer, ohne Weg ihn abzustellen —
     und ein Daten-Checker-Hinweis ohne Handgriff ist Rauschen.
     """

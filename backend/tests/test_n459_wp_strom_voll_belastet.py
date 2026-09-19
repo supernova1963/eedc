@@ -14,7 +14,7 @@ Eigenverbrauchs auf das Gerät (N-354). Es beantwortet **keine Preisfrage**.
 
 | Stelle | PV-Abschlag bis 13.09. |
 | --- | --- |
-| `api/routes/aussichten.py` (Jahresformel/Prognose) | fest **50 %** |
+| `api/routes/aussichten/finanz_prognose.py` (Jahresformel/Prognose) | fest **50 %** |
 | `core/berechnungen/alternativkosten.py` (Historie, HA-Export, ROI-Fortschritt) | fest **50 %** |
 | `services/wp_wirtschaftlichkeit.py` (Monats-Layer: Hub, Cockpit, Sensor je WP) | **0 %** |
 | `core/calculations.py::berechne_waermepumpe_einsparung` (ROI-Zeile, Geld **und** CO₂) | **Anteil des Geräts** |

@@ -13,7 +13,7 @@ Drei Dinge werden hier gesichert:
    Vollzyklen und eine Jahres-Ersparnis gerechnet.
 
 3. **N127 im Detail** — der 10-kWh-Default ist an allen drei Fundstellen weg
-   (`investitionen/crud.py` DC- und AC-Pfad, `investitionen/dashboards.py`),
+   (`investitionen/roi.py` DC- und AC-Pfad, `investitionen/dashboard_speicher.py`),
    und was stattdessen passiert, steht in der Antwort statt im Log (P4).
 
 Seit **A31-3 ein baumweiter Wächter** (Abschnitt 3), nicht mehr eine Regression
@@ -191,7 +191,7 @@ async def test_speicher_dashboard_erfindet_keine_kapazitaet(db):
 
 
 async def test_roi_erfindet_keine_jahres_ersparnis(db):
-    """N127-Fundstellen 1+2 (`crud.py` AC-Pfad, hier ohne Hybrid-WR).
+    """N127-Fundstellen 1+2 (`roi.py` AC-Pfad, hier ohne Hybrid-WR).
 
     Der eigentliche Schaden: aus 10 erfundenen kWh entstand über
     `berechne_speicher_einsparung` eine vierstellige Jahres-Ersparnis und

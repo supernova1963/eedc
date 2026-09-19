@@ -180,7 +180,7 @@ async def get_komponenten_zeitreihe(
     # Investitionen. `lade_monats_fakten` deckt beides ab.
     #
     # ADR-002/P10: die Monatszeile wird GENAU EINMAL aufbereitet — in
-    # `services/monats_fakten.py`. Diese Route faltet `InvestitionMonatsdaten`
+    # `services/monats_fakten/`. Diese Route faltet `InvestitionMonatsdaten`
     # nicht mehr selbst; Zeitfilter (`aktiv` · Anschaffung · Stilllegung),
     # Dienstwagen-Ausschluss, E-Mob-Pool (#262), mengengewichteter Arbitrage-Ø,
     # der getrennt gehaltene BKW-Akku, die typunabhängigen Finanz-Positionen

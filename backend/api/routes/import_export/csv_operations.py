@@ -245,7 +245,7 @@ async def import_csv(
     file: UploadFile = File(...),
     ueberschreiben: bool = Query(False, description="Existierende Monate überschreiben"),
     auto_wetter: bool = Query(True, description="Wetterdaten automatisch abrufen wenn leer"),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db, scope="function")
 ):
     """
     Importiert Monatsdaten aus einer CSV-Datei.

@@ -350,7 +350,7 @@ async def test_roi_prognose_nimmt_den_ist_anteil_statt_des_defaults(db):
 
 @pytest.mark.asyncio
 async def test_aussichten_historie_rechnet_mit_dem_abgeleiteten_anteil(db):
-    """Die zweite Prognose-Quelle (`aussichten.py`) zieht denselben Anteil.
+    """Die zweite Prognose-Quelle (`aussichten/finanz_prognose.py`) zieht denselben Anteil.
 
     Sie leitet ihre Quote aus der rohen Historie ab (``netz / (pv + netz)``) und
     ist damit die unauffälligere der beiden: sie **sieht aus** wie eine

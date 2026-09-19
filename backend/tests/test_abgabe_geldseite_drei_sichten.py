@@ -197,7 +197,7 @@ async def test_die_zerlegung_ordnet_den_abgabe_erloes_seiner_zeile_zu(db):
     die Aussichten-Zerlegung (§8/7) Abgabe-Geräte wie Erzeuger behandelt."*
 
     **Antwort: ja, und das ist richtig.** Der Zuordnungs-Block in
-    `aussichten.py` liest jedes *Sonstiges*-Gerät mit gepflegtem
+    `aussichten/finanz_zerlegung.py` liest jedes *Sonstiges*-Gerät mit gepflegtem
     `einspeise_erloes_euro` — **kategorie-blind** — und ordnet den Betrag direkt
     seiner Zeile zu. Die Bauschritt-5-Regel lautet „alles komponentenscharf
     Vorliegende direkt", und der Abgabe-Erlös liegt genau so vor.

@@ -206,6 +206,7 @@ async def migrate_emob_canonical_source(session: AsyncSession) -> None:
                     "kanonisch an der Wallbox geführt."
                 ),
                 erfolg=True,
+                db=session,
             )
         except Exception as e:
             logger.warning(f"Activity-Log (Emob-Migration) fehlgeschlagen: {type(e).__name__}: {e}")

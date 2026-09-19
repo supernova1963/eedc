@@ -41,7 +41,7 @@ import pytest
 from backend.models.anlage import Anlage
 from backend.services import ha_connection
 from backend.services.daten_checker import CheckKategorie, CheckSeverity, DatenChecker
-from backend.services.daten_checker import datenquelle as dq_mod
+from backend.services.daten_checker.datenquelle import zeitzone as dq_mod   # Vorlage 9: die Zeitzonen-Pruefung bindet httpx und die Offset-Helfer hier
 
 
 def _berlin_offset() -> timedelta:

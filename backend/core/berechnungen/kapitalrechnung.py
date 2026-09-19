@@ -65,7 +65,7 @@ sie seine Amortisation **verlängert** statt verkürzt.
 - Die **Zeitraum-Bilanz** behält die sonstigen Positionen auf der **Ertragsseite**.
   „Was hat der Monat März gekostet und eingebracht?" — dort ist eine Reparatur
   ein Aufwand des Zeitraums und eine Förderung ein Ertrag des Zeitraums, und das
-  ist richtig so (``monats_fakten.py``, ``aktueller_monat.py``, ``cockpit/*``,
+  ist richtig so (``monats_fakten/``, ``aktueller_monat.py``, ``cockpit/*``,
   Jahresbericht-PDF, CSV-Export, HA-Sensor ``netto_ertrag_euro``).
 - Die **Kapitalrechnung** nimmt sie in den **Nenner**. „Wie lange dauert es, bis
   sich das rechnet?" — dort ist dieselbe Reparatur zusätzlich eingesetztes
@@ -116,6 +116,7 @@ erst ab dem dritten Monat, wäre auch das wieder eine Verdünnung.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Iterable
 
@@ -266,3 +267,133 @@ def erklaerung_jahres_ersparnis(
     if betriebskosten_jahr_euro:
         text += f" − {betriebskosten_jahr_euro:.2f} (Betriebskosten/Jahr)"
     return text
+
+
+# =============================================================================
+# Die Kalender-Treppe — der Amortisationsverlauf je Jahr (N-525, 2026-09-18)
+# =============================================================================
+#
+# Bis hierher gab es die Dauer (``kapitaleinsatz ÷ jahres_ersparnis``, Modell A
+# aus Konzept §5) und den Fortschritt (``amortisation.py``, Messung). Die
+# Break-Even-KURVE in *Auswertungen → ROI* baute der Client selbst — aus zwei
+# Anlagen-Summen: Kapitaleinsatz konstant ab der frühesten Anschaffung, die
+# heutige Jahres-Einsparung linear dazu. Für eine Anlage, die über Jahre
+# gewachsen ist, zählt das Geld, das damals noch nicht ausgegeben war, und
+# Einsparung von Komponenten, die es damals noch nicht gab (Radiocarbonat,
+# Forum T89667 #342). Die Fußzeile nannte das „eher optimistisch"; jetzt
+# rechnet die Kurve es richtig, und der Client zeichnet nur noch (ADR-001).
+#
+# ⚠ **Nicht „Modell B".** Das ist in Konzept §5/§7 die verworfene IST-Hochrechnung
+# von Reparaturen. Die Treppe ändert keine Annahme über die Zukunft — jede Zeile
+# rechnet weiter Modell A (bzw. C mit Betriebskosten), nur ab ihrem eigenen Jahr.
+
+
+@dataclass(frozen=True)
+class KapitalEreignis:
+    """Geld, das in einem Jahr eingesetzt (``+``) oder zurückgeflossen (``−``) ist.
+
+    Relevante Kosten einer Komponente stehen im Jahr ihrer Anschaffung, eine
+    sonstige Ausgabe im Jahr ihrer Buchung, ein sonstiger Ertrag (Förderung,
+    THG-Quote) ebenfalls dort — mit negativem Vorzeichen. Die Summe aller
+    Ereignisse ist der Kapitaleinsatz aus ``kapitaleinsatz_euro``; die Treppe
+    verteilt ihn nur auf die Zeitachse.
+    """
+
+    jahr: int
+    betrag_euro: float
+
+
+@dataclass(frozen=True)
+class ErsparnisZeile:
+    """Eine ROI-Zeile mit ihrer **Netto**-Jahres-Einsparung ab ihrem Jahr.
+
+    ``jahres_einsparung_euro`` ist die Zahl der Zeile (nach Betriebskosten,
+    Modell A/C) und darf ≤ 0 sein — dann trägt die Zeile nichts oder zehrt.
+    Im Jahr ``ab_jahr`` selbst ist noch nichts eingespart; das erste volle
+    Jahr endet mit ``ab_jahr + 1``.
+    """
+
+    ab_jahr: int
+    jahres_einsparung_euro: float
+
+
+@dataclass(frozen=True)
+class VerlaufsJahr:
+    jahr: int
+    kapitaleinsatz_kumuliert_euro: float
+    einsparung_kumuliert_euro: float
+
+
+@dataclass(frozen=True)
+class AmortisationsVerlauf:
+    """Die Zeitreihe für die Kurve und das Jahr, in dem sie sich schneidet.
+
+    ``break_even_jahr`` ist das erste Jahr, **ab dem** die kumulierte Einsparung
+    den kumulierten Kapitaleinsatz nicht mehr unterschreitet — bis zum Ende des
+    Horizonts. Eine spätere Anschaffung kann eine bereits amortisierte Anlage
+    wieder unter die Linie drücken; dann zählt erst der Punkt, ab dem sie
+    dauerhaft darüber bleibt. ``None``, wenn es nichts zu amortisieren gibt
+    (Kapitaleinsatz am Ende ≤ 0, „vollständig gefördert") oder der Horizont
+    nicht reicht — geraten wird nicht.
+    """
+
+    jahre: tuple[VerlaufsJahr, ...]
+    break_even_jahr: Optional[int]
+
+
+def amortisations_verlauf(
+    *,
+    kapital: Iterable[KapitalEreignis],
+    ersparnis: Iterable[ErsparnisZeile],
+    horizont_jahre: int = 30,
+) -> AmortisationsVerlauf:
+    """Kumulierter Kapitaleinsatz (Treppe) und kumulierte Einsparung je Jahr.
+
+    Für jedes Jahr ``Y`` von der frühesten Jahreszahl bis ``+horizont_jahre``:
+    ``K(Y) = Σ betrag`` aller Ereignisse mit ``jahr ≤ Y`` und
+    ``E(Y) = Σ jahres_einsparung × max(0, Y − ab_jahr)`` über alle Zeilen.
+
+    Die Reihe endet nach dem Break-Even bei ``max(10, ⌈1,5 × Dauer⌉)`` Jahren
+    ab Basis (die Darstellungsregel, die die Kurve schon vorher hatte),
+    ohne Break-Even nach ``horizont_jahre``. Mit einer einzigen Zeile ohne
+    sonstige Positionen ergibt sich exakt ``basis + ⌈K ÷ E⌉`` — die alte
+    Näherung ist der Sonderfall einer Anlage, die auf einmal gebaut wurde.
+
+    ⚠ Die Jahreszahlen sind entweder alle Kalenderjahre oder alle Indizes ab 0
+    (Anlage ohne ein einziges Anschaffungsdatum) — der Aufrufer mischt nicht.
+    """
+    kapital = list(kapital)
+    ersparnis = list(ersparnis)
+    jahre_bekannt = [k.jahr for k in kapital] + [z.ab_jahr for z in ersparnis]
+    if not jahre_bekannt:
+        return AmortisationsVerlauf(jahre=(), break_even_jahr=None)
+    basis = min(jahre_bekannt)
+    ende = basis + max(0, int(horizont_jahre))
+
+    def _k(y: int) -> float:
+        return sum(e.betrag_euro for e in kapital if e.jahr <= y)
+
+    def _e(y: int) -> float:
+        return sum(z.jahres_einsparung_euro * max(0, y - z.ab_jahr) for z in ersparnis)
+
+    voll = [VerlaufsJahr(y, _k(y), _e(y)) for y in range(basis, ende + 1)]
+
+    break_even: Optional[int] = None
+    if voll[-1].kapitaleinsatz_kumuliert_euro > 0:
+        letztes_defizit = None
+        for p in voll:
+            if p.einsparung_kumuliert_euro < p.kapitaleinsatz_kumuliert_euro:
+                letztes_defizit = p.jahr
+        if letztes_defizit is None:
+            break_even = basis
+        elif letztes_defizit < ende:
+            break_even = letztes_defizit + 1
+
+    if break_even is None:
+        return AmortisationsVerlauf(jahre=tuple(voll), break_even_jahr=None)
+    dauer = break_even - basis
+    anzeige_ende = basis + min(int(horizont_jahre), max(10, math.ceil(dauer * 1.5)))
+    return AmortisationsVerlauf(
+        jahre=tuple(p for p in voll if p.jahr <= anzeige_ende),
+        break_even_jahr=break_even,
+    )

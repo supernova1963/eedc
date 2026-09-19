@@ -102,7 +102,7 @@ def test_bkw_kwp_stufe_geht_der_wp_stufe_vor():
     """`get_bkw_kwp ⊇ get_pv_kwp`: ein wie ein PV-Modul gepflegtes BKW.
 
     Ohne diese Reihenfolge liefert der Helper für dieses Objekt 0 — genau der
-    Verlust, den `aussichten.py` sich mit `get_pv_kwp` auf BKW eingehandelt hat,
+    Verlust, den `aussichten/basis.py` sich mit `get_pv_kwp` auf BKW eingehandelt hat,
     nur umgekehrt.
     """
     inv = _bkw(leistung_kwp=None, parameter={"kwp": 0.6, "leistung_wp": 400})

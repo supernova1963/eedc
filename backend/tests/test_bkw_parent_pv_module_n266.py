@@ -416,7 +416,7 @@ async def test_erzeugung_zaehlt_einmal_nicht_zweimal(db):
         "das abgetretene BKW ist kein eigener Summand mehr"
     )
     assert fakt.bkw.erzeugung_je_investition == {}, (
-        "sonst zählt die ROI-Gewichtung in `aussichten.py` es ein zweites Mal"
+        "sonst zählt die ROI-Gewichtung in `aussichten/finanz_zerlegung.py` es ein zweites Mal"
     )
 
 

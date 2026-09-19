@@ -177,7 +177,7 @@ BETRIEBSMODUS_LIVE_OHNE_KLARTEXT: Final[frozenset[str]] = frozenset({UNBESTIMMT}
 # (`Gesamt = strom_heizen + strom_warmwasser`), hier wäre es eine **Teilmenge**
 # von `stromverbrauch_kwh`. Drei Stellen schließen aus seiner bloßen
 # **Anwesenheit** auf die getrennte Messung und würden mitkippen:
-# `investitionen/dashboards.py` (`if 'strom_heizen_kwh' in d`) → daran hängt
+# `investitionen/dashboard_waermepumpe.py` (`if 'strom_heizen_kwh' in d`) → daran hängt
 # `cop_heizen`, und daran wiederum `WaermepumpeHubBloecke.tsx`
 # (`hatGetrennteStrom`). Mit abgeleiteter Wärme (§3.4) käme dort als „JAZ"
 # exakt die gepflegte JAZ heraus — der §3.5-Verstoß, gegen den S3 gebaut ist.

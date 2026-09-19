@@ -688,9 +688,17 @@ Zwei klar getrennte Sichten statt vieler paralleler ROI-Zahlen ohne Bezug:
 
 > **Mit Kalenderjahr** (Forum-Wunsch Radiocarbonat): Neben der Dauer steht das voraussichtliche
 > Break-Even-**Jahr** — in der Kachel „Amortisation", unter der Kurve und als X-Achsen-Beschriftung
-> (Kalenderjahre statt Jahres-Index). Anker ist das **früheste Anschaffungsjahr** deiner Komponenten;
-> ohne gepflegtes Anschaffungsdatum bleibt es beim Jahres-Index. Verteilen sich die Anschaffungen über
-> mehrere Jahre, ist das genannte Jahr **optimistisch** — der Text sagt das dazu.
+> (Kalenderjahre statt Jahres-Index). Die Kurve beginnt mit dem **frühesten Anschaffungsjahr** deiner
+> Komponenten; ohne gepflegtes Anschaffungsdatum bleibt es beim Jahres-Index.
+>
+> **Gewachsene Anlagen zeigen eine Treppe:** Jede Komponente zählt ihre Kosten und ihre Einsparung
+> erst ab ihrem eigenen Anschaffungsjahr — die Investitionslinie steigt bei jeder Anschaffung eine
+> Stufe, sonstige Ausgaben (Reparatur) heben sie im Jahr der Buchung, sonstige Erträge (Förderung)
+> senken sie dort. Das Break-Even-Jahr ist das erste Jahr, ab dem die Einsparung dauerhaft über der
+> Investition liegt; die Dauer in Jahren daneben rechnet weiter mit der heutigen Jahres-Einsparung
+> und ist deshalb bei einer über Jahre gewachsenen Anlage kürzer als der Abstand zum Break-Even-Jahr.
+> Ein PV-System (Wechselrichter mit Modulen und Speicher) hat eine gemeinsame Einsparung: ein später
+> ergänztes Modulfeld stuft die Kosten, die Einsparung des Systems läuft ab seiner ersten Komponente.
 
 **Zwei Amortisations-Kacheln, die sich ergänzen** (neu, nach dem V4-Flip zurückgeholt):
 

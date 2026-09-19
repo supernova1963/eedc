@@ -455,11 +455,16 @@ def test_ii5b_die_zeitraum_pruefung_sitzt_wo_die_quellen_bekannt_sind():
     Bedingung zu behaupten, die nie zutreffen kann — der Prüfer wäre grün und
     wertlos ([[feedback_probe_unerreichbarer_zustand]]).
     """
-    import inspect as _inspect
+    from pathlib import Path
 
     from backend.api.routes import aktueller_monat
 
-    quelle = _inspect.getsource(aktueller_monat)
+    # Vorlage 2 (18.09.2026): `aktueller_monat` ist ein Paket, die Zeitraum-Pruefung sitzt in
+    # `waerme.py`. Gemeint ist die Sicht, also der Quelltext des ganzen Pakets.
+    quelle = "".join(
+        pfad.read_text(encoding="utf-8")
+        for pfad in sorted(Path(aktueller_monat.__file__).parent.glob("*.py"))
+    )
     assert "teilzeitraum" in quelle
     assert "zeitraum_versetzt" in quelle
 

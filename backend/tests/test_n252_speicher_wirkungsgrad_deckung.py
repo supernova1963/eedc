@@ -34,9 +34,11 @@ BACKEND = Path(__file__).resolve().parents[1]
 BRAUCHT_DEN_SOT = [
     "api/routes/cockpit/uebersicht.py",
     "api/routes/cockpit/komponenten.py",
-    "api/routes/investitionen/dashboards.py",
-    "api/routes/ha_export.py",
-    "api/routes/aktueller_monat.py",
+    # Vorlage 6 (18.09.2026): das Speicher-Dashboard zog nach dashboard_speicher.py.
+    "api/routes/investitionen/dashboard_speicher.py",
+    "api/routes/ha_export/anlage_komponenten.py",   # Vorlage 8b (18.09.2026): Phase des Anlagen-Rechners (Speicher-KPIs)
+    # Vorlage 2 (18.09.2026): der Speicher-Block des Endpunkts sitzt in komponenten.py.
+    "api/routes/aktueller_monat/komponenten.py",
     "core/berechnungen/speicher.py",
     "services/energie_profil/tage_werte.py",
     # N-264: der letzte Pfad mit eigener Semantik (stilles Cap auf 100 %).
@@ -56,7 +58,7 @@ BEWUSST_ROH = {
     # Prognose- und Potenzialpfade klemmen selbst (min(...)) und brauchen
     # einen Wert, keine fehlende Aussage.
     "services/speicher_potential_service.py",
-    "api/routes/aussichten.py",
+    "api/routes/aussichten/finanz_eingaenge.py",   # Vorlage 7 (18.09.2026): aussichten.py → Paket; 7b: Quoten-Phase
     # Die Heimat der Regel selbst.
     "core/berechnungen/speicher_wirkungsgrad.py",
     # `speicher.py::speicher_effizienz_prozent` ist der **Diagnose**-Helper:

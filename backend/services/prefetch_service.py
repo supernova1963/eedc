@@ -27,7 +27,6 @@ from backend.services.prognose_auswahl import lade_aktive_prognose
 from backend.services.solar_forecast_service import (
     get_solar_prognose,
     get_multi_string_prognose,
-    PVStringConfig,
 )
 from backend.services.pv_orientation import resolve_system_losses
 from backend.services.wetter.open_meteo import fetch_open_meteo_forecast
@@ -105,20 +104,12 @@ async def _prefetch_for_anlage(anlage: Anlage, db) -> dict:
     # `keine_strings` ab. Folge: `_speichere_prognose` lief nie, und
     # Genauigkeits-Tracking wie Lernfaktor bekamen nur an Tagen einen
     # Datenpunkt, an denen jemand *Cockpit → Live* öffnete.
-    from backend.services.pv_orientation import (
-        get_erzeuger_kwp, get_pv_neigung, get_pv_azimut,
-    )
-    strings = []
-    for pv in alle_pv:
-        kwp = get_erzeuger_kwp(pv)
-        if kwp <= 0:
-            continue
-        strings.append(PVStringConfig(
-            name=pv.bezeichnung or f"String {pv.id}",
-            kwp=kwp,
-            neigung=get_pv_neigung(pv),
-            ausrichtung=get_pv_azimut(pv),
-        ))
+    # N-527: EIN String-Bauer für Prefetch und /solar-prognose — eine
+    # Ost-West-Komponente wird zu zwei halben Strings (Ost/West), alle anderen
+    # bleiben, was sie waren (kWp-Filter, Neigung, Azimut wie zuvor).
+    from backend.services.pv_orientation import erzeuger_string_configs
+
+    strings = erzeuger_string_configs(alle_pv)
 
     if not strings:
         return {"status": "keine_strings"}

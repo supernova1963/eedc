@@ -65,7 +65,7 @@ async def wetter_backfill_endpoint(
         le=2000,
         description="Maximale Rückwärts-Tiefe in Tagen (Default 730 = 2 Jahre)",
     ),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> dict:
     """
     Stößt einen Wetter-Backfill aus Open-Meteo Archive an.
@@ -304,7 +304,7 @@ async def aggregate_endpoint(
         le=2000,
         description="Lookback-Tiefe in Tagen (Default 730 = 2 Jahre)",
     ),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> dict:
     """Aggregiert das Korrekturprofil aus historischen Daten neu.
 

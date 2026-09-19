@@ -372,7 +372,7 @@ class ResnapResponse(BaseModel):
 async def resnap_snapshots(
     days: int = Query(7, ge=1, le=14, description="Anzahl Tage rückwirkend"),
     include_5min: bool = Query(True, description="Auch Sub-Hour-Slots resnappen"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """
     Schreibt Snapshots der letzten N Tage für ALLE Anlagen neu — sowohl

@@ -26,7 +26,7 @@ Die kWp-Helper selbst liegen seit A24-1 in `core/investition_kennwerte.py`
 re-exportiert; Neigung und Azimut bleiben hier.
 """
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Optional
 
 # `get_pv_kwp` lebt seit A24-1 in `core/investition_kennwerte.py` (zusammen mit
 # `get_bkw_kwp`/`get_erzeuger_kwp`), weil der Berechnungs-Layer die Helper
@@ -98,6 +98,110 @@ def get_pv_azimut(inv: Any, default: int = 0) -> int:
     return default
 
 
+def ausrichtung_text(inv: Any) -> Optional[str]:
+    """Roh-Ausrichtung als Text: Top-Level-Spalte → ``parameter.ausrichtung`` → ``None``.
+
+    N-528: das Balkonkraftwerk aus dem Einrichtungsassistenten trägt seine
+    Ausrichtung **nur** im ``parameter``-JSON (``PARAM_BALKONKRAFTWERK["AUSRICHTUNG"]``);
+    das Bearbeiten-Formular schreibt zusätzlich die Spalte. Wer nur die Spalte
+    liest (so die PVGIS-Route bis 18.09.2026), rechnet ein Assistenten-BKW als
+    Süd — dieselbe #229-Lage wie bei der kWp. Dieselbe Reihenfolge wie
+    ``get_pv_azimut`` für den Text-Zweig.
+    """
+    direct = getattr(inv, "ausrichtung", None)
+    if isinstance(direct, str) and direct.strip():
+        return direct
+    params = getattr(inv, "parameter", None) or {}
+    val = params.get("ausrichtung")
+    if isinstance(val, str) and val.strip():
+        return val
+    return None
+
+
+#: PVGIS-Konvention: Ost = -90°, West = +90° — die zwei halben Anlagen einer
+#: Ost-West-Komponente (gleiche Neigung, je kWp/2).
+OST_WEST_AZIMUTE: tuple[int, int] = (-90, 90)
+
+
+def ist_ost_west(ausrichtung: Optional[str]) -> bool:
+    """Beschreibt der Ausrichtungstext eine Ost-West-Anlage?
+
+    SoT für **beide** Prognosepfade: ``api/routes/pvgis._ist_ost_west``
+    delegiert hierher (bis N-143 stand die Regel dort zweimal), und die
+    Wetterprognose (N-527) fragt dieselbe Funktion. Die Formularoption heißt
+    ``Ost-West`` („Ost-West (gemischt)"); Import und Altbestand kennen
+    ``east-west``, ``OW``, ``O-W``.
+    """
+    if not ausrichtung:
+        return False
+    al = ausrichtung.lower().strip()
+    return al in ("ost-west", "east-west", "ow", "o-w") or "ost-west" in al or "east-west" in al
+
+
+@dataclass(frozen=True)
+class Abruf:
+    """Ein Wetter-/PVGIS-Abruf: kWp auf einer (Neigung, Azimut)."""
+
+    kwp: float
+    neigung: int
+    ausrichtung: int
+
+
+def erzeuger_abrufe(inv: Any) -> list[Abruf]:
+    """Die Abrufe EINES Erzeugers — Ost-West sind zwei halbe Anlagen (N-527).
+
+    Bis 18.09.2026 fiel „Ost-West (gemischt)" im OpenMeteo-Pfad auf Süd (0°)
+    zurück: ``AUSRICHTUNG_MAP`` kannte den Wert nicht, und ``get_pv_azimut``
+    nahm den Default — während PVGIS dieselbe Komponente seit jeher als Ost
+    (-90°) + West (+90°) rechnete (``api/routes/pvgis._kappungs_abrufe``). Live,
+    14-Tage-Prognose, Prognose-Kanon, Prefetch und die HA-/MQTT-Prognosesensoren
+    trugen damit die Süd-Mittagsspitze einer Anlage, die keine hat; der
+    Lernfaktor glich nur die Höhe aus.
+
+    Regeln, dieselben wie in PVGIS:
+    * Ost-West gewinnt vor einem gespeicherten ``ausrichtung_grad`` — das
+      Formular schreibt den Grad bei Ost-West nicht, ein älterer Wert kann
+      liegen bleiben.
+    * Neigung wie ``get_pv_neigung`` (Spalte → JSON → 35°), kWp über den
+      Typ-Dispatcher ``get_erzeuger_kwp`` (ADR-002/P3-a); kWp ≤ 0 → keine Abrufe.
+    * Der Aufrufer filtert die Menge (``erzeuger_traeger``, ``ist_aktiv_an``).
+    """
+    kwp = get_erzeuger_kwp(inv)
+    if kwp <= 0:
+        return []
+    neigung = int(get_pv_neigung(inv))
+    if ist_ost_west(ausrichtung_text(inv)):
+        haelfte = kwp / 2
+        return [
+            Abruf(kwp=haelfte, neigung=neigung, ausrichtung=OST_WEST_AZIMUTE[0]),
+            Abruf(kwp=haelfte, neigung=neigung, ausrichtung=OST_WEST_AZIMUTE[1]),
+        ]
+    return [Abruf(kwp=kwp, neigung=neigung, ausrichtung=int(get_pv_azimut(inv)))]
+
+
+def erzeuger_string_configs(invs: Any) -> list:
+    """``PVStringConfig`` je Abruf — EIN Bauer für ``prefetch_service`` und
+    ``/solar-prognose`` (bis N-527 zwei Kopien derselben Schleife, beide ohne
+    Ost-West). Die Hälften einer Ost-West-Komponente heißen „<Name> (Ost)" und
+    „<Name> (West)". Lokaler Import: ``solar_forecast_service`` importiert
+    dieses Modul, ein Modul-Import hier wäre ein Zyklus.
+    """
+    from backend.services.solar_forecast_service import PVStringConfig
+
+    strings = []
+    for pv in invs:
+        abrufe = erzeuger_abrufe(pv)
+        name = getattr(pv, "bezeichnung", None) or f"String {getattr(pv, 'id', '?')}"
+        for a in abrufe:
+            zusatz = ""
+            if len(abrufe) > 1:
+                zusatz = " (Ost)" if a.ausrichtung < 0 else " (West)"
+            strings.append(PVStringConfig(
+                name=name + zusatz, kwp=a.kwp, neigung=a.neigung, ausrichtung=a.ausrichtung,
+            ))
+    return strings
+
+
 @dataclass(frozen=True)
 class Orientierungsgruppe:
     """Eine nach (Neigung, Ausrichtung) zusammengefasste PV-String-Gruppe."""
@@ -145,11 +249,13 @@ def orientierungs_gruppen(invs: Any) -> list[Orientierungsgruppe]:
     """
     gruppen: dict[tuple[int, int], float] = {}
     for inv in erzeuger_traeger(invs or []):
-        kwp = get_erzeuger_kwp(inv)
-        if kwp <= 0:
-            continue
-        key = (int(get_pv_neigung(inv)), int(get_pv_azimut(inv)))
-        gruppen[key] = gruppen.get(key, 0.0) + kwp
+        # N-527: eine Ost-West-Komponente liefert ZWEI Abrufe (je kWp/2 auf
+        # -90° und +90°) und landet damit in zwei Gruppen — wie in PVGIS. Alle
+        # anderen liefern genau einen Abruf mit denselben Werten wie zuvor
+        # (kWp-Filter, Neigung, Azimut), die Rechnung bleibt für sie bitgleich.
+        for abruf in erzeuger_abrufe(inv):
+            key = (abruf.neigung, abruf.ausrichtung)
+            gruppen[key] = gruppen.get(key, 0.0) + abruf.kwp
     return [
         Orientierungsgruppe(neigung=n, ausrichtung=a, kwp=kwp)
         for (n, a), kwp in sorted(gruppen.items(), key=lambda kv: kv[1], reverse=True)
@@ -171,7 +277,7 @@ def resolve_system_losses(pvgis: Any) -> float:
     Hintergrund: diese Zeile stand als
     `pvgis.system_losses / 100 if pvgis and pvgis.system_losses else 0.14`
     an sechs Read-Sites parallel (prognose_service, prefetch_service,
-    prognosen, aussichten, solar_prognose, energie_profil/views) plus die
+    prognosen, aussichten, solar_prognose, energie_profil/prognose) plus die
     `0.14`-Konstante 5× definiert — bei Drift hätte ein Setup-Wert nur in
     manchen Sichten gewirkt (siehe `feedback_aggregations_drift`).
     """

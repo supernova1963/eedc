@@ -257,7 +257,7 @@ async def test_wallbox_ladung_erreicht_die_aussichten(db):
     """F-17: die Sicht, die als einzige keine Pool-Attribution hatte.
 
     Bei einem evcc-Setup liegt die Ladung auf der Wallbox. Vorher sah
-    `aussichten.py` dort **null** Netzladung und zog gar keine Stromkosten ab —
+    `aussichten/finanzen.py` dort **null** Netzladung und zog gar keine Stromkosten ab —
     die ausgewiesene Ersparnis war um genau diesen Betrag zu hoch.
     """
     mit_wb = await _fuenf_sichten(

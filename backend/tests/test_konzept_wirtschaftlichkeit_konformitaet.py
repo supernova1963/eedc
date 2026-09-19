@@ -73,6 +73,11 @@ BAUSCHRITTE_OFFEN: dict[int, str] = {
     # 10 ist gebaut (2026-09-05, drei Commits): Abgabe an Dritte (§9.2) —
     # Proben in `test_abgabe_an_dritte_vier_sichten.py`, `_tag_live.py`,
     # `_anzeige.py`.
+    # 12 ist gebaut (2026-09-18, N-525): die Break-Even-Kurve als Kalender-
+    # Treppe — Layer `kapitalrechnung.amortisations_verlauf`, Proben in
+    # `test_amortisations_verlauf.py` und `test_roi_amortisation_jahr.py`;
+    # die Konformitätsprobe unten hält die Konzept-Erwartung: Positionen
+    # stufen im Jahr ihrer Buchung, die Dauer bleibt Modell A.
 }
 #: ⚑ **Das Dict ist leer — die Bauliste §8 ist abgearbeitet.** Wer hier wieder
 #: einen Eintrag anlegt, eröffnet einen neuen Bauschritt und trägt ihn ins
@@ -503,6 +508,27 @@ async def test_erfuellt_schritt4_allgemeine_position_wirkt_in_allen_sichten(db):
     # der Symmetrie-Wächter für komponentengebundene Positionen trifft).
     assert r_mit.gesamt_kapitaleinsatz == pytest.approx(r_ohne.gesamt_kapitaleinsatz + 500.0)
     assert r_mit.gesamt_kapitaleinsatz == pytest.approx(p_mit.kapitaleinsatz_euro)
+
+
+async def test_erfuellt_schritt12_positionen_stufen_im_jahr_ihrer_buchung(db):
+    """§8/12 (N-525): Die Break-Even-Kurve ist eine Kalender-Treppe. Die PV steht
+    ab 2024 (Anschaffung) mit 10.000 €; Reparatur 3.000 € und THG 200 € sind 2025
+    gebucht und stufen DORT — nicht rückwirkend am Anschaffungsjahr. Die letzte
+    Stufe ist der Kapitaleinsatz aus §2 (F-19: Kurve und Kachel teilen den
+    Nenner), und die Dauer daneben bleibt Modell A — die Treppe verteilt nur auf
+    die Zeitachse, sie unterstellt nichts Neues über die Zukunft."""
+    anlage_id = await _anlage(db, jahr=2025, mit_reparatur=True, mit_ertrag=True)
+    result = await _roi(db, anlage_id)
+
+    reihe = {p.jahr: p for p in result.amortisations_verlauf}
+    assert reihe[2024].kapitaleinsatz_kumuliert_euro == 10000.0
+    assert reihe[2025].kapitaleinsatz_kumuliert_euro == 10000.0 + REPARATUR - THG_ERTRAG
+    assert result.amortisations_verlauf[-1].kapitaleinsatz_kumuliert_euro == result.gesamt_kapitaleinsatz
+    # Die Dauer ist unverändert Modell A: Kapitaleinsatz ÷ Jahres-Einsparung.
+    assert result.gesamt_amortisation_jahre == round(
+        result.gesamt_kapitaleinsatz / result.gesamt_jahres_einsparung, 1
+    )
+    assert result.amortisation_annahme == "ohne künftige Instandhaltung"
 
 
 async def test_erfuellt_schritt7_ertrag_mindert_den_kapitaleinsatz(db):

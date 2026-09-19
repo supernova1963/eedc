@@ -25,7 +25,7 @@ Abtretung drei Größen betrifft, und zwar immer gemeinsam:
    wenig SOLL.
 2. **Erzeugung** — ``pv_erzeugung_kwh`` je Monat. Zählt sie doppelt, sind
    Autarkie, Eigenverbrauchsquote, CO₂, Finanzen, Community-Payload und
-   HA-Export betroffen (``monats_fakten.py``: ``pv_kwh = pv_modul_summe +
+   HA-Export betroffen (``monats_fakten/``: ``pv_kwh = pv_modul_summe +
    bkw_erzeugung``).
 3. **Ausrichtung/Neigung** — der Fan-out der Prognose gruppiert danach
    (``pv_orientation.orientierungs_gruppen``). Bliebe das BKW drin, brächte es

@@ -100,7 +100,7 @@ async def baue_finanz_zeile(
     # gemessenen Netzbezug gewichtete Arbeitspreis; ohne Fenster liefert der
     # Helfer die Spalte unveraendert. Ohne eigenen Cache — diese Funktion baut
     # EINE Zeile. Warum er auch nicht im `tarif_cache` mitreist, steht in
-    # `monats_fakten.py` im Block ueber `_komponenten_preis`.
+    # `monats_fakten/tarif.py` im Block ueber `_komponenten_preis`.
     # ⭐ **Die ganze Kaskade an einer Stelle** (#412, 11.09.2026): gepflegt →
     # gemessen → Zeitfenster → Stamm. Bis dahin standen hier zwei Schritte —
     # `wirksamer_arbeitspreis_cent` (Zeitfenster) und darunter der

@@ -196,7 +196,7 @@ async def lade_preis_aggregate_je_monat(
     ``berechne_monats_durchschnittspreis``, **ein** Query.
 
     Gegenstück zum Einzelmonat für Aufrufer, die eine ganze Historie aufbereiten
-    (``services/monats_fakten.py``): je Monat einzeln zu fragen waren an der
+    (``services/monats_fakten/``): je Monat einzeln zu fragen waren an der
     produktiven Anlage **117 Abfragen** je ``GET /monatsdaten/aggregiert``.
     Bauform wie ``einspeise_erloes_service.get_neg_preis_einspeisung_je_monat``.
 

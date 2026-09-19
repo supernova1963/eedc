@@ -918,7 +918,7 @@ async def get_database_stats():
         # ist eine Zähl-Statistik über den Datenbestand („was steht in den
         # Zeilen"), keine Energie-Aussage über die Anlage. Wer sie als solche
         # liest, bekommt bei Aggregat-Pflege zu wenig — dafür ist
-        # `services/monats_fakten.py` da (ADR-002/P10).
+        # `services/monats_fakten/` da (ADR-002/P10).
         #
         # ⚠ Der Kommentar an dieser Stelle nannte `Monatsdaten.pv_erzeugung_kwh`
         # bis heute ein „LEGACY"-Feld, „das nicht mehr gepflegt wird". Das ist

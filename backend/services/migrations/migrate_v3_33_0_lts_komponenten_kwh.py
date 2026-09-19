@@ -100,6 +100,7 @@ async def migrate_lts_komponenten_kwh_bug(session: AsyncSession) -> None:
                 "(Issue #290). Während des Laufs können Cockpit/Monatsbericht "
                 "kurzzeitig inkonsistente Werte zeigen."
             ),
+            db=session,
         )
     except Exception as e:
         logger.debug(f"Activity-Log-Eintrag (Start) fehlgeschlagen: {e}")
@@ -174,6 +175,7 @@ async def migrate_lts_komponenten_kwh_bug(session: AsyncSession) -> None:
                 "mit Multi-Sensor-Mapping können sich geändert haben."
             ),
             erfolg=fehler == 0,
+            db=session,
         )
     except Exception as e:
         logger.warning(f"Activity-Log-Eintrag (Ende) fehlgeschlagen: {type(e).__name__}: {e}")

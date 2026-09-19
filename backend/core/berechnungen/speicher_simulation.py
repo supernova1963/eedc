@@ -7,7 +7,7 @@ Speicher voll bzw. leer ist.
 Berechnungs-Layer (ADR-001): die Aggregat-Logik liegt hier, nicht inline in
 Routes/Services. Für den HA-Export simulieren wir ab dem **aktuellen** SoC
 (`start_stunde` = jetzige Stunde) — bewusst NICHT das Mitternachts-Mittel, das
-der Planungs-Tab (`energie_profil/views.py`) für seine eigene, deskriptive
+der Planungs-Tab (`energie_profil/prognose.py`) für seine eigene, deskriptive
 Ganztags-Vorschau nutzt. Die beiden Pfade sind absichtlich verschieden
 parametrisiert (anderer Start-SoC, andere Start-Stunde) und damit kein
 Symmetrie-Paar.

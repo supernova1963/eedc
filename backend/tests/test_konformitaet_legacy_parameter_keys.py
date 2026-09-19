@@ -102,7 +102,8 @@ _BACKEND_ROOT = Path(__file__).resolve().parents[1]  # eedc/backend/
 ERLAUBT: dict[str, dict[str, str]] = {
     "core/investition_parameter.py": {"*": "SoT — führt die Legacy→Kanon-Karte selbst"},
     "core/database.py": {"*": "Start-Migration `_migrate_investitionen_parameter_keys_v325`"},
-    "core/field_definitions.py": {
+    # Vorlage 3 (18.09.2026): der Fallback liest in `_bedingungs_werte` — Paketmodul bedingungen.py.
+    "core/field_definitions/bedingungen.py": {
         "nutzt_v2h": "liest `v2h_faehig` ODER `nutzt_v2h` — bewusster Fallback für "
                      "Daten, die die Start-Migration noch nicht gesehen hat",
     },

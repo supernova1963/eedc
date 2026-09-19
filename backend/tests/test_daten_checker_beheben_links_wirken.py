@@ -69,8 +69,10 @@ def _alt_routen_auf_die_daten_flaeche() -> set[str]:
 
 
 def _checker_quellen() -> list[Path]:
-    dateien = sorted(p for p in CHECKER_DIR.glob("*.py") if p.name != "__init__.py")
-    assert dateien, "keine Daten-Checker-Quellen gefunden"
+    # Vorlage 9 (18.09.2026): `datenquelle/` ist ein Unterpaket — rekursiv sammeln, sonst
+    # fallen seine sieben Module still aus dieser Probe (gemessen: 5566 → 5565 Tests).
+    dateien = sorted(p for p in CHECKER_DIR.rglob("*.py") if p.name != "__init__.py")
+    assert len(dateien) >= 15, f"nur {len(dateien)} Daten-Checker-Quellen gefunden — Sammlung prüfen"
     return dateien
 
 
@@ -95,7 +97,7 @@ def test_die_map_kennt_die_daten_flaeche():
     assert "einstellungen/strompreise" not in routen
 
 
-@pytest.mark.parametrize("datei", _checker_quellen(), ids=lambda p: p.name)
+@pytest.mark.parametrize("datei", _checker_quellen(), ids=lambda p: str(p.relative_to(CHECKER_DIR)))
 def test_kein_beheben_link_zeigt_auf_die_eigene_seite(datei: Path):
     """Kein Checker-Link landet ohne wirksamen Query auf `/einstellungen/daten`.
 

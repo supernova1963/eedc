@@ -543,7 +543,7 @@ async def get_strompreis(strompreis_id: int, db: AsyncSession = Depends(get_db))
 
 
 @router.post("/", response_model=StrompreisResponse, status_code=status.HTTP_201_CREATED)
-async def create_strompreis(data: StrompreisCreate, db: AsyncSession = Depends(get_db)):
+async def create_strompreis(data: StrompreisCreate, db: AsyncSession = Depends(get_db, scope="function")):
     """
     Erstellt einen neuen Strompreis.
 
@@ -575,7 +575,7 @@ async def create_strompreis(data: StrompreisCreate, db: AsyncSession = Depends(g
 async def update_strompreis(
     strompreis_id: int,
     data: StrompreisUpdate,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db, scope="function")
 ):
     """
     Aktualisiert einen Strompreis.
@@ -612,7 +612,7 @@ async def update_strompreis(
 
 
 @router.delete("/{strompreis_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_strompreis(strompreis_id: int, db: AsyncSession = Depends(get_db)):
+async def delete_strompreis(strompreis_id: int, db: AsyncSession = Depends(get_db, scope="function")):
     """
     Löscht einen Strompreis.
 

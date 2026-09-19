@@ -102,7 +102,7 @@ async def get_presets():
 
 
 @router.post("/mqtt/gateway/presets/apply", response_model=ApplyPresetResponse)
-async def apply_preset(req: ApplyPresetRequest, db: AsyncSession = Depends(get_db)):
+async def apply_preset(req: ApplyPresetRequest, db: AsyncSession = Depends(get_db, scope="function")):
     """Preset anwenden: Generiert Mappings und speichert sie in der DB."""
     try:
         mapping_dicts = generate_mappings(req.preset_id, req.anlage_id, req.variablen, req.investition_id)

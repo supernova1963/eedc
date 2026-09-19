@@ -162,16 +162,16 @@ FELD_AUSWERTUNGEN: dict[tuple[str, str], tuple[Auswertung, ...]] = {
 
     # ── Anlagen-Ebene: Monatswerte ───────────────────────────────────────────
     (TYP_ANLAGE, "einspeisung_kwh"): (
-        _a(COCKPIT_MONAT, "api/routes/aktueller_monat.py", "get_aktueller_monat"),
+        _a(COCKPIT_MONAT, "api/routes/aktueller_monat/__init__.py", "get_aktueller_monat"),
         _a(COCKPIT_JAHR, "api/routes/cockpit/uebersicht.py", "get_cockpit_uebersicht"),
         _a(AUSW_TABELLE, "api/routes/monatsdaten.py", "list_monatsdaten_aggregiert"),
-        _a(HA_SENSOREN, "api/routes/ha_export.py", "calculate_anlage_sensors"),
+        _a(HA_SENSOREN, "api/routes/ha_export/anlage_energie.py", "monatsfakten_und_energie"),
     ),
     (TYP_ANLAGE, "netzbezug_kwh"): (
-        _a(COCKPIT_MONAT, "api/routes/aktueller_monat.py", "get_aktueller_monat"),
+        _a(COCKPIT_MONAT, "api/routes/aktueller_monat/__init__.py", "get_aktueller_monat"),
         _a(COCKPIT_JAHR, "api/routes/cockpit/uebersicht.py", "get_cockpit_uebersicht"),
         _a(AUSW_TABELLE, "api/routes/monatsdaten.py", "list_monatsdaten_aggregiert"),
-        _a(HA_SENSOREN, "api/routes/ha_export.py", "calculate_anlage_sensors"),
+        _a(HA_SENSOREN, "api/routes/ha_export/anlage_energie.py", "monatsfakten_und_energie"),
     ),
     (TYP_ANLAGE, "pv_gesamt_kwh"): (
         # ADR-002/**P7**: das Anlagen-Aggregat ist ausschliesslich EINGANG der
@@ -182,11 +182,11 @@ FELD_AUSWERTUNGEN: dict[tuple[str, str], tuple[Auswertung, ...]] = {
            "get_komponenten_tageskwh", "pv_gesamt"),
     ),
     (TYP_ANLAGE, "globalstrahlung_kwh_m2"): (
-        _a(COCKPIT_AUSSICHT, "api/routes/aussichten.py", "get_langfrist_prognose"),
+        _a(COCKPIT_AUSSICHT, "api/routes/aussichten/prognose.py", "get_langfrist_prognose"),
         _a(AUSW_TABELLE, "api/routes/monatsdaten.py", "MonatsdatenBase"),
     ),
     (TYP_ANLAGE, "sonnenstunden"): (
-        _a(COCKPIT_AUSSICHT, "api/routes/aussichten.py", "get_kurzfrist_prognose"),
+        _a(COCKPIT_AUSSICHT, "api/routes/aussichten/prognose.py", "get_kurzfrist_prognose"),
         _a(AUSW_TABELLE, "api/routes/monatsdaten.py", "MonatsdatenBase"),
     ),
     (TYP_ANLAGE, "durchschnittstemperatur"): (
@@ -197,7 +197,7 @@ FELD_AUSWERTUNGEN: dict[tuple[str, str], tuple[Auswertung, ...]] = {
 
     # ── Anlagen-Ebene: Preise je Monat (ADR-002/P8) ──────────────────────────
     (TYP_ANLAGE, "netzbezug_durchschnittspreis_cent"): (
-        _a(COCKPIT_MONAT, "api/routes/aktueller_monat.py", "get_aktueller_monat"),
+        _a(COCKPIT_MONAT, "api/routes/aktueller_monat/__init__.py", "get_aktueller_monat"),
         # ADR-002/P8 — der wirksame Arbeitspreis DIESES Monats, nicht der heutige.
         _a(AUSW_FINANZEN, "services/strompreis_aggregator.py", "wirksamer_arbeitspreis_cent"),
     ),
@@ -211,7 +211,7 @@ FELD_AUSWERTUNGEN: dict[tuple[str, str], tuple[Auswertung, ...]] = {
     ),
     (TYP_ANLAGE, "gaspreis_cent_kwh"): (
         _a(KOMP_WP, "services/wp_wirtschaftlichkeit.py", "berechne_wp_ersparnis"),
-        _a(COCKPIT_MONAT, "api/routes/aktueller_monat.py", "get_aktueller_monat"),
+        _a(COCKPIT_MONAT, "api/routes/aktueller_monat/finanzen.py", "finanzen_des_monats"),
     ),
     (TYP_ANLAGE, "strompreis"): (
         # Der dynamische Börsenpreis — Live-Kachel und die stündliche Mitschrift,
@@ -244,7 +244,7 @@ FELD_AUSWERTUNGEN: dict[tuple[str, str], tuple[Auswertung, ...]] = {
     ("pv-module", "pv_erzeugung_kwh"): (
         _a(KOMP_PV, "api/routes/cockpit/pv_strings.py", "_lade_ist_je_modul"),
         _a(COCKPIT_MONAT, "core/berechnungen/imd_monatsaggregat.py", "imd_typ_beitrag"),
-        _a(HA_SENSOREN, "api/routes/ha_export.py", "calculate_anlage_sensors"),
+        _a(HA_SENSOREN, "api/routes/ha_export/anlage_energie.py", "monatsfakten_und_energie"),
     ),
     ("pv-module", "leistung_w"): (
         _a(COCKPIT_LIVE, "services/live_komponenten_builder.py", "build_komponenten"),
@@ -260,21 +260,21 @@ FELD_AUSWERTUNGEN: dict[tuple[str, str], tuple[Auswertung, ...]] = {
     ("speicher", "ladung_kwh"): (
         _a(KOMP_SPEICHER, "services/speicher_wirtschaftlichkeit.py", "berechne_ist_wirkungsgrad"),
         _a(COCKPIT_MONAT, "core/berechnungen/imd_monatsaggregat.py", "imd_typ_beitrag"),
-        _a(HA_SENSOREN, "api/routes/ha_export.py", "calculate_anlage_sensors"),
+        _a(HA_SENSOREN, "api/routes/ha_export/anlage_energie.py", "monatsfakten_und_energie"),
     ),
     ("speicher", "entladung_kwh"): (
         _a(KOMP_SPEICHER, "services/speicher_wirtschaftlichkeit.py", "berechne_ist_wirkungsgrad"),
         _a(COCKPIT_MONAT, "core/berechnungen/imd_monatsaggregat.py", "imd_typ_beitrag"),
-        _a(HA_SENSOREN, "api/routes/ha_export.py", "calculate_anlage_sensors"),
+        _a(HA_SENSOREN, "api/routes/ha_export/anlage_energie.py", "monatsfakten_und_energie"),
     ),
     ("speicher", "ladung_netz_kwh"): (
         # Arbitrage: Netzladung × Ladepreis gegen den Entladewert.
         _a(COCKPIT_MONAT, "core/berechnungen/imd_monatsaggregat.py", "imd_typ_beitrag",
            "get_speicher_netzladung_kwh"),
-        _a(KOMP_SPEICHER, "api/routes/investitionen/dashboards.py", "get_speicher_dashboard"),
+        _a(KOMP_SPEICHER, "api/routes/investitionen/dashboard_speicher.py", "get_speicher_dashboard"),
     ),
     ("speicher", "speicher_ladepreis_cent"): (
-        _a(KOMP_SPEICHER, "api/routes/investitionen/dashboards.py", "get_speicher_dashboard"),
+        _a(KOMP_SPEICHER, "api/routes/investitionen/dashboard_speicher.py", "get_speicher_dashboard"),
         _a(COCKPIT_MONAT, "core/berechnungen/imd_monatsaggregat.py", "imd_typ_beitrag"),
     ),
     ("speicher", "leistung_w"): (
@@ -290,7 +290,7 @@ FELD_AUSWERTUNGEN: dict[tuple[str, str], tuple[Auswertung, ...]] = {
            "get_wp_strom_kwh"),
         _a(COCKPIT_MONAT, "core/berechnungen/imd_monatsaggregat.py", "imd_typ_beitrag",
            "get_wp_strom_kwh"),
-        _a(HA_SENSOREN, "api/routes/ha_export.py", "calculate_investition_sensors",
+        _a(HA_SENSOREN, "api/routes/ha_export/investition_sensoren.py", "calculate_investition_sensors",
            "get_wp_strom_kwh"),
     ),
     ("waermepumpe", "strom_heizen_kwh"): (
@@ -308,7 +308,7 @@ FELD_AUSWERTUNGEN: dict[tuple[str, str], tuple[Auswertung, ...]] = {
     ("waermepumpe", "waerme_kwh"): (
         _a(KOMP_WP, "core/berechnungen/waermepumpe_kennzahl.py", "waerme_gesamt_kwh"),
         _a(COCKPIT_MONAT, "core/berechnungen/imd_monatsaggregat.py", "imd_typ_beitrag"),
-        _a(HA_SENSOREN, "api/routes/ha_export.py", "calculate_investition_sensors"),
+        _a(HA_SENSOREN, "api/routes/ha_export/investition_sensoren.py", "calculate_investition_sensors"),
     ),
     ("waermepumpe", "heizenergie_kwh"): (
         _a(KOMP_WP, "core/berechnungen/waermepumpe_kennzahl.py", "heizwaerme_kwh"),
@@ -413,45 +413,45 @@ FELD_AUSWERTUNGEN: dict[tuple[str, str], tuple[Auswertung, ...]] = {
 
     # ── Wärmepumpe: Counter (KUMULATIVE_COUNTER_FELDER) ──────────────────────
     ("waermepumpe", "wp_starts_anzahl"): (
-        _a(KOMP_WP, "api/routes/investitionen/dashboards.py", "get_waermepumpe_dashboard"),
+        _a(KOMP_WP, "api/routes/investitionen/dashboard_waermepumpe.py", "get_waermepumpe_dashboard"),
         _a(JAHRESBERICHT, "services/pdf/builders/jahresbericht.py", "build_jahresbericht_context"),
     ),
     ("waermepumpe", "wp_betriebsstunden"): (
-        _a(KOMP_WP, "api/routes/investitionen/dashboards.py", "get_waermepumpe_dashboard"),
+        _a(KOMP_WP, "api/routes/investitionen/dashboard_waermepumpe.py", "get_waermepumpe_dashboard"),
     ),
 
     # ── E-Auto ───────────────────────────────────────────────────────────────
     ("e-auto", "km_gefahren"): (
         _a(KOMP_EAUTO, "services/eauto_wirtschaftlichkeit.py", "berechne_eauto_ersparnis"),
         _a(COCKPIT_MONAT, "core/berechnungen/imd_monatsaggregat.py", "imd_typ_beitrag"),
-        _a(HA_SENSOREN, "api/routes/ha_export.py", "calculate_investition_sensors"),
+        _a(HA_SENSOREN, "api/routes/ha_export/investition_sensoren.py", "calculate_investition_sensors"),
     ),
     ("e-auto", "verbrauch_kwh"): (
-        _a(KOMP_EAUTO, "api/routes/investitionen/dashboards.py", "get_eauto_dashboard"),
+        _a(KOMP_EAUTO, "api/routes/investitionen/dashboard_eauto.py", "get_eauto_dashboard"),
         _a(COCKPIT_MONAT, "core/berechnungen/imd_monatsaggregat.py", "imd_typ_beitrag"),
     ),
     ("e-auto", "ladung_pv_kwh"): (
-        _a(KOMP_EAUTO, "api/routes/investitionen/dashboards.py", "get_eauto_dashboard"),
+        _a(KOMP_EAUTO, "api/routes/investitionen/dashboard_eauto.py", "get_eauto_dashboard"),
         _a(COCKPIT_MONAT, "core/berechnungen/imd_monatsaggregat.py", "imd_typ_beitrag"),
         _a(COCKPIT_JAHR, "api/routes/cockpit/uebersicht.py", "get_cockpit_uebersicht"),
     ),
     ("e-auto", "ladung_netz_kwh"): (
-        _a(KOMP_EAUTO, "api/routes/investitionen/dashboards.py", "get_eauto_dashboard"),
+        _a(KOMP_EAUTO, "api/routes/investitionen/dashboard_eauto.py", "get_eauto_dashboard"),
         _a(COCKPIT_MONAT, "core/berechnungen/imd_monatsaggregat.py", "imd_typ_beitrag"),
         _a(AUSW_FINANZEN, "core/berechnungen/dienstliche_ladekosten.py", "berechne_dienstliche_ladekosten"),
     ),
     ("e-auto", "ladung_extern_kwh"): (
-        _a(KOMP_EAUTO, "api/routes/investitionen/dashboards.py", "get_eauto_dashboard"),
-        _a(COCKPIT_MONAT, "api/routes/aktueller_monat.py", "get_aktueller_monat"),
+        _a(KOMP_EAUTO, "api/routes/investitionen/dashboard_eauto.py", "get_eauto_dashboard"),
+        _a(COCKPIT_MONAT, "api/routes/aktueller_monat/__init__.py", "get_aktueller_monat"),
     ),
     ("e-auto", "ladung_extern_euro"): (
-        _a(KOMP_EAUTO, "api/routes/investitionen/dashboards.py", "get_eauto_dashboard"),
+        _a(KOMP_EAUTO, "api/routes/investitionen/dashboard_eauto.py", "get_eauto_dashboard"),
         _a(COCKPIT_JAHR, "api/routes/cockpit/uebersicht.py", "get_cockpit_uebersicht"),
     ),
     ("e-auto", "v2h_entladung_kwh"): (
-        _a(KOMP_EAUTO, "api/routes/investitionen/dashboards.py", "get_eauto_dashboard"),
+        _a(KOMP_EAUTO, "api/routes/investitionen/dashboard_eauto.py", "get_eauto_dashboard"),
         _a(COCKPIT_JAHR, "api/routes/cockpit/uebersicht.py", "get_cockpit_uebersicht"),
-        _a(HA_SENSOREN, "api/routes/ha_export.py", "calculate_anlage_sensors"),
+        _a(HA_SENSOREN, "api/routes/ha_export/anlage_energie.py", "monatsfakten_und_energie"),
     ),
     ("e-auto", "leistung_w"): (
         _a(COCKPIT_LIVE, "services/live_komponenten_builder.py", "build_komponenten"),
@@ -462,15 +462,15 @@ FELD_AUSWERTUNGEN: dict[tuple[str, str], tuple[Auswertung, ...]] = {
 
     # ── Wallbox ──────────────────────────────────────────────────────────────
     ("wallbox", "ladung_kwh"): (
-        _a(KOMP_WALLBOX, "api/routes/investitionen/dashboards.py", "get_wallbox_dashboard"),
+        _a(KOMP_WALLBOX, "api/routes/investitionen/dashboard_wallbox.py", "get_wallbox_dashboard"),
         _a(COCKPIT_MONAT, "core/berechnungen/imd_monatsaggregat.py", "imd_typ_beitrag"),
     ),
     ("wallbox", "ladung_pv_kwh"): (
-        _a(KOMP_WALLBOX, "api/routes/investitionen/dashboards.py", "get_wallbox_dashboard"),
+        _a(KOMP_WALLBOX, "api/routes/investitionen/dashboard_wallbox.py", "get_wallbox_dashboard"),
         _a(COCKPIT_MONAT, "core/berechnungen/imd_monatsaggregat.py", "imd_typ_beitrag"),
     ),
     ("wallbox", "ladevorgaenge"): (
-        _a(KOMP_WALLBOX, "api/routes/investitionen/dashboards.py", "get_wallbox_dashboard"),
+        _a(KOMP_WALLBOX, "api/routes/investitionen/dashboard_wallbox.py", "get_wallbox_dashboard"),
     ),
     ("wallbox", "leistung_w"): (
         _a(COCKPIT_LIVE, "services/live_komponenten_builder.py", "build_komponenten"),
@@ -478,21 +478,21 @@ FELD_AUSWERTUNGEN: dict[tuple[str, str], tuple[Auswertung, ...]] = {
 
     # ── Balkonkraftwerk ──────────────────────────────────────────────────────
     ("balkonkraftwerk", "pv_erzeugung_kwh"): (
-        _a(KOMP_BKW, "api/routes/investitionen/dashboards.py", "get_balkonkraftwerk_dashboard"),
+        _a(KOMP_BKW, "api/routes/investitionen/dashboard_balkonkraftwerk.py", "get_balkonkraftwerk_dashboard"),
         _a(COCKPIT_MONAT, "core/berechnungen/imd_monatsaggregat.py", "imd_typ_beitrag",
            "get_pv_erzeugung_kwh"),
     ),
     ("balkonkraftwerk", "eigenverbrauch_kwh"): (
-        _a(KOMP_BKW, "api/routes/investitionen/dashboards.py", "get_balkonkraftwerk_dashboard"),
+        _a(KOMP_BKW, "api/routes/investitionen/dashboard_balkonkraftwerk.py", "get_balkonkraftwerk_dashboard"),
         _a(AUSW_FINANZEN, "core/berechnungen/bkw_finanz.py", "bkw_finanz_beitrag"),
     ),
     ("balkonkraftwerk", "speicher_ladung_kwh"): (
         _a(COCKPIT_MONAT, "core/berechnungen/imd_monatsaggregat.py", "imd_typ_beitrag"),
-        _a(KOMP_BKW, "api/routes/investitionen/dashboards.py", "get_balkonkraftwerk_dashboard"),
+        _a(KOMP_BKW, "api/routes/investitionen/dashboard_balkonkraftwerk.py", "get_balkonkraftwerk_dashboard"),
     ),
     ("balkonkraftwerk", "speicher_entladung_kwh"): (
         _a(COCKPIT_MONAT, "core/berechnungen/imd_monatsaggregat.py", "imd_typ_beitrag"),
-        _a(KOMP_BKW, "api/routes/investitionen/dashboards.py", "get_balkonkraftwerk_dashboard"),
+        _a(KOMP_BKW, "api/routes/investitionen/dashboard_balkonkraftwerk.py", "get_balkonkraftwerk_dashboard"),
     ),
     ("balkonkraftwerk", "leistung_w"): (
         _a(COCKPIT_LIVE, "services/live_komponenten_builder.py", "build_komponenten"),
@@ -500,34 +500,34 @@ FELD_AUSWERTUNGEN: dict[tuple[str, str], tuple[Auswertung, ...]] = {
 
     # ── Sonstiges ────────────────────────────────────────────────────────────
     ("sonstiges", "erzeugung_kwh"): (
-        _a(KOMP_SONSTIGES, "api/routes/investitionen/dashboards.py", "get_sonstiges_dashboard"),
+        _a(KOMP_SONSTIGES, "api/routes/investitionen/dashboard_sonstiges.py", "get_sonstiges_dashboard"),
         _a(COCKPIT_MONAT, "core/berechnungen/imd_monatsaggregat.py", "imd_typ_beitrag"),
     ),
     ("sonstiges", "eigenverbrauch_kwh"): (
-        _a(KOMP_SONSTIGES, "api/routes/investitionen/dashboards.py", "get_sonstiges_dashboard"),
+        _a(KOMP_SONSTIGES, "api/routes/investitionen/dashboard_sonstiges.py", "get_sonstiges_dashboard"),
         _a(COCKPIT_MONAT, "core/berechnungen/imd_monatsaggregat.py", "imd_typ_beitrag"),
     ),
     ("sonstiges", "einspeisung_kwh"): (
-        _a(KOMP_SONSTIGES, "api/routes/investitionen/dashboards.py", "get_sonstiges_dashboard"),
+        _a(KOMP_SONSTIGES, "api/routes/investitionen/dashboard_sonstiges.py", "get_sonstiges_dashboard"),
         _a(COCKPIT_MONAT, "core/berechnungen/imd_monatsaggregat.py", "imd_typ_beitrag"),
     ),
     ("sonstiges", "einspeise_erloes_euro"): (
         _a(AUSW_FINANZEN, "core/berechnungen/imd_monatsaggregat.py", "imd_typ_beitrag"),
-        _a(KOMP_SONSTIGES, "api/routes/investitionen/dashboards.py", "get_sonstiges_dashboard"),
+        _a(KOMP_SONSTIGES, "api/routes/investitionen/dashboard_sonstiges.py", "get_sonstiges_dashboard"),
     ),
     ("sonstiges", "verbrauch_sonstig_kwh"): (
         _a(COCKPIT_MONAT, "core/berechnungen/imd_monatsaggregat.py", "imd_typ_beitrag",
            "get_sonstiges_verbrauch_kwh"),
-        _a(KOMP_SONSTIGES, "api/routes/investitionen/dashboards.py", "get_sonstiges_dashboard",
+        _a(KOMP_SONSTIGES, "api/routes/investitionen/dashboard_sonstiges.py", "get_sonstiges_dashboard",
            "get_sonstiges_verbrauch_kwh"),
     ),
     ("sonstiges", "bezug_pv_kwh"): (
         _a(COCKPIT_MONAT, "core/berechnungen/imd_monatsaggregat.py", "imd_typ_beitrag"),
-        _a(KOMP_SONSTIGES, "api/routes/investitionen/dashboards.py", "get_sonstiges_dashboard"),
+        _a(KOMP_SONSTIGES, "api/routes/investitionen/dashboard_sonstiges.py", "get_sonstiges_dashboard"),
     ),
     ("sonstiges", "bezug_netz_kwh"): (
         _a(COCKPIT_MONAT, "core/berechnungen/imd_monatsaggregat.py", "imd_typ_beitrag"),
-        _a(KOMP_SONSTIGES, "api/routes/investitionen/dashboards.py", "get_sonstiges_dashboard"),
+        _a(KOMP_SONSTIGES, "api/routes/investitionen/dashboard_sonstiges.py", "get_sonstiges_dashboard"),
     ),
     ("sonstiges", "abgabe_kwh"): (
         _a(COCKPIT_MONAT, "core/berechnungen/imd_monatsaggregat.py", "imd_typ_beitrag"),

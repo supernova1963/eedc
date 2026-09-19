@@ -175,7 +175,7 @@ async def list_mappings(
 @router.post("/mqtt/gateway/mappings", status_code=201)
 async def create_mapping(
     data: MappingCreate,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """Neues Gateway-Mapping anlegen."""
     mapping = MqttGatewayMapping(
@@ -209,7 +209,7 @@ async def create_mapping(
 async def update_mapping(
     mapping_id: int,
     data: MappingUpdate,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """Bestehendes Mapping bearbeiten."""
     result = await db.execute(
@@ -237,7 +237,7 @@ async def update_mapping(
 @router.delete("/mqtt/gateway/mappings/{mapping_id}")
 async def delete_mapping(
     mapping_id: int,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """Mapping löschen."""
     result = await db.execute(
@@ -276,7 +276,7 @@ async def get_gateway_status():
 
 
 @router.post("/mqtt/gateway/reload")
-async def reload_gateway(db: AsyncSession = Depends(get_db)):
+async def reload_gateway(db: AsyncSession = Depends(get_db, scope="function")):
     """Hot-Reload: Mappings neu laden und Service neu starten."""
     return await _reload_gateway(db)
 

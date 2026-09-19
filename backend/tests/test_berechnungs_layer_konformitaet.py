@@ -37,7 +37,7 @@ ALLOWED_PV_PREFIXES_FILES = {
 #
 # Hinweis: Dies sind die Dateien mit dem **exakten** Pattern `("pv_", "bkw_")`
 # oder `startswith("pv_") or ... startswith("bkw_")`. Weitere PV-Aggregations-
-# Konsumenten (views.py, live_wetter.py, live_history_service.py,
+# Konsumenten (energie_profil/*.py, live_wetter.py, live_history_service.py,
 # live_komponenten_builder.py) nutzen andere Schreibweisen (z.B. nur
 # `startswith("pv_")` oder generisches komponenten_kwh-Iteration) und werden
 # beim nächsten Touch separat migriert — siehe project_berechnungs_layer_offen.md.
@@ -349,20 +349,22 @@ _INLINE_EV_QUOTE = re.compile(
     r'''eigenverbrauch\w*\s*/\s*(?:pv|erzeugung|gesamt_erzeugung)\w*\s*\*\s*100'''
 )
 
-# Erlaubt: Helfer-Heimat + dokumentierte Ausnahmen (kW-Live-Sichten +
-# energie_profil/views.py = offener IA-V4-Phase-1A-Produktentscheid).
+# Erlaubt: Helfer-Heimat + dokumentierte Ausnahmen (kW-Live-Sichten).
+# ⚠ Hier stand bis 18.09.2026 auch `api/routes/energie_profil/views.py` („offener
+# IA-V4-Phase-1A-Produktentscheid"). Beim Umzug der Datei in sieben Module (Vorlage 4)
+# gemessen: das Muster trifft dort **0** Zeilen — die Ausnahme war tot und ist gestrichen,
+# nicht umgehängt.
 ALLOWED_EV_QUOTE_FILES = {
     "core/berechnungen/kennzahlen.py",            # eigenverbrauchsquote_prozent (SoT)
     "api/routes/live_dashboard.py",                # Live, kW statt kWh
     "services/live_komponenten_builder.py",        # Live, kW statt kWh
-    "api/routes/energie_profil/views.py",          # IA-V4-Phase-1A-Produktentscheid
 }
 
 
 def test_inline_eigenverbrauchsquote_nur_im_layer():
     """Die Eigenverbrauchsquote `eigenverbrauch / erzeugung × 100` darf nur im
     Helper `eigenverbrauchsquote_prozent` (gecappt) oder den dokumentierten
-    Ausnahmen (kW-Live / views.py) stehen — sonst driftet der 100-%-Cap erneut."""
+    Ausnahmen (kW-Live) stehen — sonst driftet der 100-%-Cap erneut."""
     verstoesse: list[tuple[str, int, str]] = []
     for path, rel in _iter_py_files():
         if rel in ALLOWED_EV_QUOTE_FILES:
