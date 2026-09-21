@@ -151,7 +151,8 @@ def _kanonische_feldnamen() -> set[str]:
 #   sonstige_positionen  — LISTE von Sonderposten-Dicts, kein Skalar-Feld.
 #                          `field_definitions` beschreibt Eingabefelder mit
 #                          Einheit/Label; eine Positionsliste hat beides nicht.
-#                          Gelesen in api/routes/monatsabschluss/views.py:540f.
+#                          Gelesen in
+#                          api/routes/monatsabschluss/views.py::baue_investition_status
 #                          und utils/sonstige_positionen.py:72, geschrieben in
 #                          api/routes/import_export/demo_data.py:445/449/454.
 #   sonderkosten_notiz   — FREITEXT zur Sonderkosten-Zeile, kein Messwert.
@@ -2023,7 +2024,10 @@ P10_SCHREIBEN_IMPORT_CHECKER: frozenset[str] = frozenset({
     # „Formular füllen" eingeordnet, obwohl es ein reiner Lesepfad mit
     # anlagenweiter Faltung war (N-98). Es bezieht seine Mengen jetzt aus der
     # Schicht und lädt nichts mehr selbst.)
-    "backend/api/routes/monatsabschluss/views.py::get_monatsabschluss",
+    # Der Eintrag hieß bis RF-1 (19.09.2026) `::get_monatsabschluss`; der
+    # Schnitt hat den Lader in die eine Funktion gelegt, die ihn braucht —
+    # die Ausnahme bezeichnet jetzt 44 Zeilen statt 415.
+    "backend/api/routes/monatsabschluss/views.py::baue_investition_status",
     "backend/api/routes/monatsabschluss/wizard.py::save_monatsabschluss",
     "backend/api/routes/monatsdaten.py::_save_investitionen_monatsdaten",
     # N-393 (05.09.2026): LÖSCHPFAD. Entfernt einen Sub-Key aus `verbrauch_daten`
@@ -2410,6 +2414,16 @@ _P11_SELEKTOR_AUFRUFE: frozenset[str] = frozenset({
     "traegt_erzeugungsgroessen_selbst",
     "bkw_kwp_aus_kindern",
     "modul_kinder",
+    # N-536: die Kürzungs-Seite derselben Abtretung. `erzeuger_traeger` nimmt
+    # ein abtretendes BKW aus der Menge — diese vier lassen es drin und
+    # kürzen seinen WERT auf den Rest (Wert − Σ gemessene Kinder). Für den
+    # Live- und den Stundenpfad ist das die einzig richtige Form: dort ist das
+    # Balkonkraftwerk bei den meisten Anlagen die einzige Quelle, und eine
+    # Menge ohne es wäre leer.
+    "bkw_restwerte",
+    "kuerze_bkw_in_werte_map",
+    "ergaenze_kinder_deckung",
+    "bkw_kinder_decken_vollstaendig",
 })
 
 #: Klassifizierte Ausnahmen. Form `modul.py::funktion` — funktions-granular,
@@ -2468,7 +2482,7 @@ P11_AUSNAHMEN: frozenset[str] = frozenset({
     "backend/api/routes/aussichten/finanz_eingaenge.py::investitionen_und_parameter",
 
     # ── 3. Schreib-, Import-, Migrations- und Checker-Pfade ────────────────
-    "backend/services/energie_profil/aggregator.py::aggregate_day",
+    "backend/services/energie_profil/aggregator.py::lade_stammdaten",
     "backend/services/snapshot/keys.py::_categorize_counter",
     "backend/services/snapshot/komponenten_beitraege.py::investition_beitraege",
     "backend/core/database.py::_migrate_connector_field_inv_map_backfill",
@@ -2506,19 +2520,28 @@ P11_AUSNAHMEN: frozenset[str] = frozenset({
     "backend/api/routes/pvgis.py::get_pvgis_modul_prognose",
     "backend/services/pdf/builders/anlagendokumentation.py::_build_investition_tech_grid",
 
-    # ── 4b. Live-Pfad: die Zuordnung folgt dem SENSOR, nicht der Struktur ──
-    # Diese vier ordnen einer Investition eine **Entity** zu bzw. summieren
-    # Momentanwerte gemappter Sensoren. Wer einen Sensor hat, zählt — und beim
-    # Melder-Fall ist das gerade das Balkonkraftwerk: sein Wechselrichter ist
-    # oft der EINZIGE Zähler, die Module darunter haben keinen eigenen. Der
-    # Selektor hier würde die einzige Live-Quelle der Anlage stillschweigend
-    # verwerfen. Wer BKW **und** Module mappt, beschreibt dieselbe Energie
-    # zweimal — genau wie heute schon bei Wechselrichter + Modul-Sensoren; das
-    # ist eine Zuordnungs-Frage der Datenquellen-Fläche, keine der Monatsachsen.
-    "backend/services/live_history_service.py::get_tages_kwh",
-    "backend/services/live_komponenten_builder.py::build_komponenten",
+    # ── 4b. Live-Pfad: eine Entity-Zuordnung, keine Σ einer Größe ──────────
+    # ⛔ Hier standen bis N-536 (20.09.2026) VIER Einträge mit der Begründung
+    # „die Zuordnung folgt dem Sensor, nicht der Struktur … wer BKW und Module
+    # mappt, beschreibt dieselbe Energie zweimal — genau wie heute schon bei
+    # Wechselrichter + Modul-Sensoren". **Der zweite Halbsatz beschrieb einen
+    # Zustand, den es nicht gibt:** `SKIP_TYPEN = {"wechselrichter"}` überspringt
+    # den Wechselrichter an jeder Live-Stelle, das Balkonkraftwerk nie. Seit
+    # N-266 spielt ein BKW mit Kindern dieselbe Trägerrolle — und wurde als
+    # einziger Träger doppelt gezählt (Melder Kai2, Forum T89667 #354:
+    # „Solarleistung 167 W" für 84 gemessene Watt).
+    #
+    # Die drei Summen-Stellen implementieren die Abtretung jetzt selbst
+    # (`bkw_restwerte` / `kuerze_bkw_in_werte_map` / `bkw_kinder_decken_vollstaendig`)
+    # und sind damit über `_P11_SELEKTOR_AUFRUFE` freigekauft — sie brauchen
+    # hier keinen Eintrag mehr. Der **Kern** der alten Begründung gilt
+    # unverändert und ist in der Formel aufgehoben: ohne Werte seiner Kinder
+    # ist der Rest der ganze BKW-Wert, die einzige Live-Quelle bleibt also
+    # erhalten.
+    #
+    # Was bleibt, ist die eine Stelle, die wirklich nur eine Entity AUSWÄHLT
+    # und keine Größe summiert:
     "backend/services/live_tagesverlauf_service.py::_resolve_counter_eid",
-    "backend/services/live_verbrauchsprofil_service.py::_profil_from_ha",
 
     # ── 5. Durchreicher an eine Stelle, die den Selektor trägt ─────────────
     # Sie laden die Menge und geben sie weiter an `orientierungs_gruppen` bzw.
