@@ -585,7 +585,7 @@ Live-Zuordnungen (`leistung_w`, `soc`) werden nicht geprüft — sie lesen `stat
 
 Die bisherigen Abschnitte beschreiben Sensoren, die eedc **aus HA liest**. Dieser Abschnitt beschreibt die umgekehrte Richtung: berechnete eedc-Werte, die als **HA-Entitäten** bereitgestellt werden — per MQTT Discovery (empfohlen) oder REST. Einrichtung: [Einstellungen → Integration → MQTT-Export](HANDBUCH_EINSTELLUNGEN.md#63-mqtt-export).
 
-> **Nicht alles muss kommen.** Jeder Sensor dieser Liste lässt sich in eedc **abwählen** — Häkchen weg in der Sensorliste unter [Einstellungen → Integration → MQTT-Export](HANDBUCH_EINSTELLUNGEN.md#63-mqtt-export), einzeln oder kategorieweise. Voreingestellt sind **alle an**; abgewählt wird bewusst, und eedc fragt vorher nach, weil die bisherigen Daten des Sensors in HA und auf dem Broker damit verloren sind. Der Grund für diese Voreinstellung: Ein Sensor, den es nicht gibt, zeichnet nichts auf — und Home Assistant kennt keine Zeitmaschine. Wer einen Wert später braucht, bekäme ihn erst ab dem Einschalten.
+> **Nicht alles muss kommen.** Jeder Sensor dieser Liste lässt sich in eedc **abwählen** — Häkchen weg in der Sensorliste unter [Einstellungen → Integration → MQTT-Export](HANDBUCH_EINSTELLUNGEN.md#63-mqtt-export), einzeln oder kategorieweise. Bei einer **Neuinstallation** sind alle an; abgewählt wird bewusst, und eedc fragt vorher nach, weil die bisherigen Daten des Sensors in HA und auf dem Broker damit verloren sind. ⭐ **Kommen mit einem Update neue Sensoren dazu, starten sie bei einer bestehenden Installation abgewählt** — sie tragen in der Liste die Markierung **„Neu"**, und du hakst an, was du haben willst (ein Knopf nimmt alle auf einmal). Dabei geht nichts verloren: sie waren nie in Home Assistant. Der Grund für diese Voreinstellung: Ein Sensor, den es nicht gibt, zeichnet nichts auf — und Home Assistant kennt keine Zeitmaschine. Wer einen Wert später braucht, bekäme ihn erst ab dem Einschalten.
 
 > **Zeithorizont:** Sofern nicht anders angegeben, beziehen sich die Werte auf die **Gesamtlaufzeit** (alle erfassten Monate, jeweils ab Anschaffungsdatum der Komponenten). Der laufende Monat fließt erst nach dem Monatsabschluss ein. Einzige Ausnahme: der **Spezifische Ertrag** ist aufs Jahr normiert (siehe unten).
 
@@ -608,11 +608,12 @@ Die bisherigen Abschnitte beschreiben Sensoren, die eedc **aus HA liest**. Diese
 | `einspeise_erloes_euro` / `eigenverbrauch_ersparnis_euro` | € | Finanz-Bausteine (deckungsgleich mit Cockpit/Berichten) |
 | `co2_ersparnis_kg` | kg | **Volle CO₂-Bilanz** (PV-Eigenverbrauch inkl. BKW/sonstige Erzeuger + Wärmepumpe + E-Mobilität) — siehe Wertsemantik unten |
 | `investition_gesamt_euro`, `jahres_ersparnis_euro`, `roi_prozent`, `amortisation_jahre` | €, €/Jahr, %, Jahre | Investitions-KPIs — Nenner ist der **Kapitaleinsatz** (siehe Hinweis unten) |
+| `investition_gesamt_euro` **je Gerät** | € | Anschaffungskosten des Geräts — mit Attributen `anschaffungsdatum` · `stilllegungsdatum` · `aktiv` · `betriebsjahre` (seit eedc@ha Teil 1). ⚠ Je Gerät exportiert eedc **alle** Investitionen der Anlage, auch stillgelegte; die anlagenweite Summe zählt nur die heute aktiven — das Attribut `aktiv` sagt, welche Geräte darin stecken |
 | `speicher_zyklen`, `speicher_effizienz_prozent` | —, % | Speicher-KPIs. `speicher_zyklen` = **Entladung ÷ Brutto-Kapazität** — seit 2026-07-28 dieselbe Definition wie in Komponenten-Hub, Cockpit und PDF ([Berechnungen §3.3](BERECHNUNGEN.md#33-speicher-einsparung)). Nicht zu verwechseln mit den „SoC-Hüben" der Energieprofil-Tabelle. |
 | `letzter_import_jahr/_monat/_monat_name`, `anzahl_monate_erfasst` | — | Status der Datenbasis (Diagnose-Kategorie — erscheint in HA im Diagnose-Bereich des Geräts) |
 
 | `eedc_grundlast_kw` | kW | **Gemessener** Nacht-Sockel des laufenden Monats (Median der Stunden 0–5 Uhr aus dem Energieprofil) — dieselbe Zahl wie die Kachel in *Cockpit → Monat*. ⚠ **Nicht zu verwechseln mit „Grundlast (Prognose)"** in *Cockpit → Live*: die stammt aus dem Verbrauchsprofil und ist ohne eigene Historie ein Standard-Lastprofil. Ohne gemessene Nachtstunden entsteht **kein** Sensor. |
-| `eedc_verbrauchsprognose_heute_kwh` | kWh | **Verbrauchsprognose für heute** — dieselbe Zahl wie die Kachel „Verbrauchsprognose" unter *Heute* in *Cockpit → Live*: die Summe des stündlichen Verbrauchsprofils (Werktag oder Wochenende aus der eigenen Historie, Wärmepumpen-Anteil nach Außentemperatur korrigiert). Es ist der **Gesamt**verbrauch (Haus + Batterie + Wärmepumpe + Wallbox + Sonstige), keine Haushalts-Prognose. Attribute `profil_typ`, `profil_tage`, `profil_slots` nennen die Grundlage. ⚠ **Nur aus einem eigenen Profil:** Solange eedc noch keine Historie hat und die Anzeige das Standard-Lastprofil zeigt, entsteht **kein** Sensor — ein Modellwert darf in keine Automation laufen. |
+| `eedc_verbrauchsprognose_heute_kwh` | kWh | **Verbrauchsprognose für heute** — dieselbe Zahl wie die Kachel „Verbrauchsprognose" unter *Heute* in *Cockpit → Live*: die Summe des stündlichen Verbrauchsprofils (Werktag oder Wochenende aus der eigenen Historie, Wärmepumpen-Anteil nach Außentemperatur korrigiert). Es ist der **Gesamt**verbrauch (Haus + Batterie + Wärmepumpe + Wallbox + Sonstige), keine Haushalts-Prognose. Attribute `profil_typ`, `profil_tage`, `profil_slots` nennen die Grundlage; **`stundenprofil_kwh`** trägt seit diesem Release die 24 Stundenwerte, aus denen die Summe entsteht, und **`wp_stundenprofil_kwh`** den darin enthaltenen Wärmepumpen-Anteil. ⚠ Der WP-Anteil ist eine **Teilmenge**, kein Summand daneben — wer beide addiert, zählt ihn doppelt. ⚠ **Nur aus einem eigenen Profil:** Solange eedc noch keine Historie hat und die Anzeige das Standard-Lastprofil zeigt, entsteht **kein** Sensor — ein Modellwert darf in keine Automation laufen. |
 | `eedc_prognose_heute_vormittag_kwh` / `…_heute_nachmittag_kwh` / `…_morgen_vormittag_kwh` / `…_morgen_nachmittag_kwh` | kWh | PV-Prognose je Tageshälfte, für **heute und morgen** (die Abendentscheidung braucht den Folgetag). ⭐ **Die Grenze ist der Sonnenhöchststand**, nicht 13:00 — dieselbe Aufteilung wie in *Cockpit → Aussicht*. Sie reist als Attribut **`solar_noon`** („13:28") mit, damit eine Automation sie lesen kann statt sie zu raten. |
 
 Zusätzlich erscheinen **pro Komponente** (E-Auto, Wärmepumpe, Speicher, Wallbox …) eigene Sensoren (z. B. `e_auto_pv_anteil_prozent`, `wp_cop_durchschnitt`, `wp_betriebsstunden`). Sie hängen — wie alle eedc-Sensoren — **unter dem einen Gerät deiner Anlage**; der Gerätename steht im Sensornamen (*„Daikin3 ECH₂O COP Durchschnitt"*).
@@ -620,6 +621,107 @@ Zusätzlich erscheinen **pro Komponente** (E-Auto, Wärmepumpe, Speicher, Wallbo
 > ⛔ **Hier stand bis August 2026 „jeweils unter einem eigenen HA-Gerät", und genau so war es mit v4.0.30 auch gebaut.** Zwei Anwender haben innerhalb von 24 Stunden gemeldet, dass das Ergebnis schlechter ist: Bei einer PV-Anlage mit mehreren Modulflächen, Wechselrichter und Speicher entstehen so **etliche HA-Geräte mit je einer einzigen Entität** — zusätzlich zum Gerät der Integration. Seit **v4.0.32** gibt es wieder **ein** Gerät je Anlage.
 >
 > ⭐ **Für bestehende Installationen ändert sich nichts an den Daten:** `unique_id` und Topic hängen an der Komponente, nicht am Gerät. Home Assistant erkennt dieselben Entitäten wieder und hängt sie lediglich um — `entity_id`, Langzeitstatistik und Automationen bleiben erhalten, der angezeigte Name ebenfalls (HA setzt ihn aus Gerät + Sensor zusammen). ⚠ Die alten, jetzt leeren Geräte entfernt HA beim nächsten Neustart; sonst lassen sie sich einmalig von Hand löschen.
+
+### Steuerungshilfen — die Gruppe für Automationen (neu)
+
+Stufe 1 der Sensorliste sagt, **was ist**. Diese Gruppe sagt, **was jetzt gilt** und **wann es gilt** — die zwei Fragen, die eine Automation stellt. Alle Sensoren hier sind anlagenweit; die Geräte-Stücke stehen weiter unten.
+
+⛔ **Sie sind Vorschläge, keine Anweisungen.** eedc schaltet nichts, ruft keinen Dienst auf und schreibt nichts nach Home Assistant. Es nennt ein Fenster und einen Betrag; was daraus folgt, entscheidest du.
+
+| Sensor | Einheit | Bedeutung |
+|---|---|---|
+| `eedc_ueberschuss_heute_kwh` | kWh | Σ des heutigen Überschusses bis jetzt (Erzeugung über Verbrauch). Attribute: `defizit_heute_kwh`, `stand` (bis zu welcher Stunde gerechnet wurde) |
+| `eedc_ueberschuss_jetzt_kw` | kW | Überschuss der **letzten vollständigen Stunde**; **negativ = Defizit**. Attribute: `stunde`, `defizit_kw`. ⚠ Das ist ein Stundenmittel und bis zu 15 Minuten alt — einen Live-Überschuss gibt es in eedc als Größe nicht, und ein „ungefährer Live-Wert" wäre in einer Automation die teuerste Sorte Zahl |
+| `eedc_ueberschuss_prognose_heute_kwh` | kWh | Σ des für **heute erwarteten** Überschusses. Attribute: `stundenprofil_kwh` und `defizit_stundenprofil_kwh` (je 24 Slots) sowie `fenster` — alle zusammenhängenden Überschuss-Blöcke mit `ab`, `bis`, `stunden`, `min_kw`, `summe_kwh`. ⭐ **Das ist die Größe, die sonst niemand hat:** eine Wallbox kennt das Auto, eine Wärmepumpe kennt sich selbst — den Verbrauchsgang *dieses* Hauses mit Wärmepumpen-Korrektur kennt nur eedc |
+| `eedc_speicher_soc_prozent` | % | Kapazitätsgewichteter Ladestand aller Speicher. Attribut `je_speicher` schlüsselt nach Gerät auf |
+| `eedc_speicher_voll_um_ts` | Zeitstempel | Derselbe Zeitpunkt wie der Textsensor `eedc_speicher_voll_um`, nur als ISO-8601-Zeitstempel — damit HA „in 2 h" anzeigen kann. ⚠ **Der alte Sensor bleibt unverändert** („14:00"): sein Textformat ist seit v4.0.27 Vertrag, und ein Umbau bräche jede Automation, die ihn vergleicht. Attribut `quelle` nennt den Partner |
+| `eedc_netzbezug_spitze_heute_kw` | kW | Höchste heute gemessene Netzbezugs-**Leistung**. ⚠ Die Attribute `stunde_max_mittel`/`max_mittel_kw` nennen eine **andere** Größe: die Stunde mit dem höchsten Stunden**mittel**. Eine Uhrzeit zum Leistungs-Peak gibt es in eedc nicht, und sie wird hier auch nicht erfunden |
+| `eedc_bestes_fenster_ab` | Zeitstempel | Beginn des günstigsten **2-Stunden-Fensters** ab jetzt. Attribute `dauer_1h`/`_2h`/`_3h`/`_4h` je mit `ab`, `bis`, `stunden`, `kosten_cent_kwh`, `delta_cent_kwh_vs_jetzt`; dazu `kosten_profil_cent_kwh` und `preis_profil_cent_kwh` (je Slot) und `frist`. ⚠ **Bei einem Festpreis ohne Überschuss gibt es keine günstigste Stunde** — jede kostet gleich viel, und das Fenster beginnt dann schlicht jetzt. Erst der Überschuss macht einen Unterschied; `delta_cent_kwh_vs_jetzt` steht dort auf 0.  ⭐ **Warum vier feste Dauern:** Ein Sensor kann keinen Parameter entgegennehmen — eine Dashboard-Karte liest Zustände, sie ruft keine Dienste. Das Kostenprofil ist **mengenneutral** (gilt für eine kWh) und deckt damit „jetzt oder um 14 Uhr" für Waschmaschine, Trockner, Spülmaschine und Auto |
+| `eedc_arbitrage_vorschlag_kwh` | kWh | Empfohlene **Netzladung** des Speichers heute — laden in günstigen Stunden, entladen gegen das teuerste Defizit danach. Attribute: `stunden`, `ersparnis_cent`, `soc_prozent`, `frei_kwh`, `wirkungsgrad_prozent`, `arbitrage_faehig`. ⚠ Er entsteht **nur**, wenn mindestens ein Speicher „lädt aus dem Netz" gesetzt hat **und** sich etwas lohnt — sonst gibt es ihn nicht (eine 0 hieße „geprüft und lohnt nicht", und das ist eine andere Aussage) |
+| `eedc_prognose_abweichung_heute_prozent` | % | (IST bis zur letzten vollen Stunde − Prognose bis dahin) ÷ Prognose × 100; negativ = weniger erzeugt als vorhergesagt. Attribute: `ist_kwh`, `prognose_kwh`, `bis_stunde`, `mae_30_tage_prozent` |
+| `eedc_bezugspreis_jetzt_cent` | ct/kWh | Was **du** in der laufenden Stunde je Kilowattstunde zahlst. Bei Festpreis oder Zeitfenstern **exakt** der Arbeitspreis deines Tarifs; bei einem dynamischen Tarif `(1 + USt) × Börsenpreis + Aufschlag`, wobei der Aufschlag **abgeleitet** wird (s. den Kasten „Woher der Preis je Stunde kommt"). Attribute: `preisquelle`, `aufschlag_cent`, `aufschlag_quelle`, `aufschlag_basis`, `ust_prozent`, `tarif`, `gueltig_ab`, `markt` (nur bei Börsenbezug), `stundenprofil_cent` und `stundenprofil_morgen_cent` (je 24 Slots), `waermepumpe_cent` (nur bei **eigenem** WP-Tarif) |
+| `eedc_einspeiseverguetung_cent` | ct/kWh | Vergütung je eingespeister Kilowattstunde. Attribute: `verguetung_quelle` (`vertrag` · `monatswert`), `einspeisung_variabel`. ⚠ Bei variabler Vergütung gibt es den Sensor **nur mit gepflegtem Monatswert** — der Stammwert beschreibt diesen Monat dann ausdrücklich nicht |
+| `eedc_eigenverbrauch_wert_cent` | ct/kWh | Was eine selbst verbrauchte Kilowattstunde **spart**: Bezugspreis − Einspeisevergütung. ⚠ Er entsteht nur mit einem **vollständigen** Bezugspreis; bei einem dynamischen Tarif ohne ableitbaren Aufschlag wäre „nackter Börsenpreis minus Vertragsvergütung" keine Näherung, sondern eine Differenz aus zwei verschiedenen Preisebenen — dann fehlt er, und `eigenverbrauch_wert_grund` am Bezugspreis-Sensor sagt warum |
+| `eedc_speicher_strom_kosten_cent` | ct/kWh | Was eine aus dem Speicher **entnommene** Kilowattstunde kostet: die entgangene Einspeisevergütung ÷ Wirkungsgrad. Attribute: `wirkungsgrad_prozent`, `wirkungsgrad_quelle` (`gemessen` · `parameter`), `wirkungsgrad_messung`, `je_speicher`, `verguetung_cent`. ⭐ **Nie mit dem Vorgabewert:** gibt es weder einen gemessenen noch einen gepflegten Wirkungsgrad, entsteht der Sensor **nicht** |
+| `eedc_speicher_netzladen_kosten_cent` | ct/kWh | Dasselbe für Strom aus dem Netz: Bezugspreis der laufenden Stunde ÷ Wirkungsgrad. Entsteht nur für Speicher mit „lädt aus dem Netz" |
+| `eedc_speicher_leer_um_ts` | Zeitstempel | Wann der Ladestand nach heutiger Simulation **in den Leerstand übergeht** — derselbe Lauf wie „Speicher voll um". Gibt es keinen solchen Übergang, gibt es den Sensor nicht |
+| `eedc_abregelung_heute_kwh` | kWh | Wie viel Erzeugung heute voraussichtlich an der Wechselrichter-Grenze **abgeregelt** wird. Attribute: `skala`, `stundenprofil_kwh`, `rest_heute_kwh`, `grenzen_kw`. ⚠ **In der Skala der Rohprognose** (s. den Hinweis unter der Tabelle). Ohne gepflegte AC-Grenze gibt es ihn nicht — 0 dagegen heißt „heute wird nichts abgeregelt" |
+
+**Die Schalter (`binary_sensor`) — an, aus oder nicht verfügbar**
+
+| Sensor | AN bedeutet | Attribute |
+|---|---|---|
+| `eedc_ueberschuss_verfuegbar` | Die letzte volle Stunde hatte Überschuss | `seit` |
+| `eedc_guenstige_stunde` | Die laufende Stunde liegt unter der Günstig-Schwelle — **dieselbe** Markierung, die `eedc_preis_rang` trägt | `schwelle_cent`, `preis_cent` |
+| `eedc_speicher_voll` | Ladestand ≥ 99 % | `soc_prozent`, `schwelle_prozent` |
+| `eedc_prognose_auffaellig` | Die Tagesabweichung liegt über dem **Doppelten** des mittleren Fehlers der letzten 30 Tage — frühestens nach 3 vollen Sonnenstunden | `schwelle_prozent`, `mae_30_tage_prozent`, `mae_tage`, `sonnenstunden_bisher`, ggf. `grund` |
+| `eedc_speicher_reicht_bis_mitternacht` | Der Ladestand geht bis Mitternacht **nicht** in den Leerstand über und endet über der Schwelle — dieselbe Regel und derselbe Simulationslauf wie „Speicher leer um" | `min_soc_prozent`, `min_soc_um`, `end_soc_prozent`, Modell-Angaben |
+| `eedc_einspeisung_unerwuenscht` | Der Börsenpreis der laufenden Stunde ist **negativ** und für dieselbe Stunde wird PV-Erzeugung erwartet (§51 EEG). ⛔ Das ist ein Marktzustand, kein Urteil — was daraus folgt, entscheidest du | `boersenpreis_cent`, `pv_prognose_kwh`, `ueberschuss_prognose_kwh`, `negative_stunden_heute`, `naechste_negative_ab` |
+| `wp_warmwasserbetrieb` (je Wärmepumpe) | Der mitgeschriebene Betriebsmodus der letzten vollen Stunde war *Warmwasser* | `modus` |
+
+> **Warum „Abregelung heute" in der Skala der Rohprognose steht.** Der Wert ist die Differenz zwischen dem, was deine Module könnten, und dem, was der Wechselrichter durchlässt — und diese Kappung rechnet eedc auf der **ungefilterten** OpenMeteo-Prognose, **bevor** der gelernte Korrekturfaktor deiner Anlage darauf angewendet wird. Das Attribut `skala: openmeteo_roh_vor_korrektur` sagt es ausdrücklich.
+>
+> ⭐ **Den Verlust mitzukorrigieren wäre falsch, nicht nur ungenau.** Kappung ist `max(0, Leistung − Grenze)` — sie skaliert nicht mit einem Faktor. Eine Anlage, deren Rohprognose die Grenze um 1 kW überschreitet, hat bei einem Korrekturfaktor von 0,8 nicht 0,8 kW Verlust, sondern unter Umständen **gar keinen**: das korrigierte Profil liegt dann komplett unter der Grenze. Eine „korrigierte Abregelung" wäre eine Zahl, die niemand gerechnet hat.
+>
+> **Was du damit anfangen kannst:** die Größenordnung und die **Uhrzeiten**. `stundenprofil_kwh` zeigt, in welchen Stunden gekappt wird — das sind die Stunden, in denen sich eine verschiebbare Last am meisten lohnt, weil ihr Strom sonst gar nicht erst entsteht. `grenzen_kw` nennt die Grenzen, an denen gekappt wird, `rest_heute_kwh` den noch bevorstehenden Teil.
+
+> **Warum die Ampel „Prognose-Abweichung auffällig" heißt und nicht „Anlage defekt".** eedc sieht Verschattung, Schnee auf den Modulen, einen ausgefallenen Sensor und einen echten Defekt als **dieselbe Zahl**. Ein Urteil wäre eine Behauptung über eine Ursache, die eedc nicht kennt. Die Schwelle ist außerdem **anlagenspezifisch**: Sie hängt am mittleren Fehler *deiner* Anlage der letzten 30 Tage — eine Anlage mit 8 % Streuung schlägt bei 16 % an, eine mit 25 % erst bei 50 %. Ein fester Prozentwert hätte je nach Anlage entweder dauernd oder nie ausgelöst. **Ohne Genauigkeits-Tracking gibt es die Ampel nicht.**
+
+### Was ein `binary_sensor` in eedc ist — und was er nicht kann
+
+Bis September 2026 hat eedc genau **eine** Sorte HA-Entität angelegt: `sensor`. Mit den Steuerungshilfen kommt eine zweite dazu, der `binary_sensor` — er kennt zwei Zustände, `ON` und `OFF`, und keine Einheit, keine Langzeitstatistik über Zahlenwerte.
+
+⚠ **Er kennt kein „unbekannt" — deshalb wird er *nicht verfügbar*.** Verliert ein `binary_sensor` seine Grundlage (der Preis-Abruf fällt aus, das Tagesprofil bricht ab), gibt es keinen dritten Zustand, den eedc schreiben könnte: Home Assistant protokolliert jeden anderen Wert als Fehler. eedc meldet die Entität stattdessen über einen eigenen Verfügbarkeits-Kanal als **nicht verfügbar** (`unavailable` in HA) und schreibt **keinen** Zustand.
+
+⭐ **Warum das wichtiger ist, als es klingt.** Bliebe stattdessen einfach der letzte Zustand stehen, bekäme eine Automation ihn weiter als Wahrheit geliefert — ein ausgefallener Preisabruf ließe `eedc_guenstige_stunde` womöglich dauerhaft auf `ON` stehen, und das Auto lüde zur teuersten Stunde. Ein fehlender Eingang muss sichtbar sein; „nicht verfügbar" ist die einzige Form, die HA dafür kennt.
+
+**Was das für Automationen heißt:** Eine Bedingung `is_state('binary_sensor.eedc_haus_gunstige_stunde', 'on')` (Anlage „Haus" — die Entity-ID trägt deinen Anlagennamen, s. die Automations-Beispiele am Ende von §11) ist bei einem Ausfall von selbst `false` — sie löst nicht mehr fälschlich aus. Wer den Unterschied zwischen „aus" und „keine Daten" ausdrücklich behandeln will, fragt `states(...) == 'unavailable'` ab. Für einen **gewöhnlichen Sensor** gilt das *nicht*: der zeigt bei fehlendem Wert weiterhin „unbekannt" (`unknown`) und bleibt verfügbar — dort ist der leere Wert selbst die Aussage.
+
+### Stufe 3 je Gerät — Fenster mit Betrag
+
+Diese Sensoren entstehen **je Gerät** und nur, wenn eedc alle drei Fragen aus vorhandenen Daten beantworten kann: *wie viel* (die Menge des Geräts), *wogegen* (Preis- bzw. Überschussreihe) und *was kommt heraus* (ein Fenster mit Betrag). Fehlt eine Antwort, fehlt der Sensor.
+
+| Sensor | Einheit | Bedeutung |
+|---|---|---|
+| `wp_warmwasser_fenster_ab` | Zeitstempel | Beginn des günstigsten 2-Stunden-Fensters heute für den **Ø-Warmwasserstrom je Tag** (letzte drei abgeschlossene Monate). Attribute: `bis`, `kosten_cent_kwh`, `kosten_cent`, `ersparnis_cent_vs_jetzt`, `menge_kwh`, **`herkunft`**. ⭐ `herkunft` sagt, woher die Menge stammt: `gemessen` (eigener Warmwasser-Zähler) oder `abgeleitet` (aus dem mitgeschriebenen Betriebsmodus gerechnet). **Beides reicht** — ohne Warmwasser-Zähler gibt es das Fenster trotzdem. Deckt auch den in der Wärmepumpe verbauten **Heizstab**: sein Strom läuft über denselben Zähler |
+| `wp_heizfenster_stunden` | h | Anzahl der Stunden innerhalb der erwarteten **Heizzeit**, in die sich das Heizprofil günstiger verschieben ließe. Attribute: `heizstrom_stundenprofil_kwh` (so lang wie die Fenster-Achse, 25 bzw. 48 Slots, aus dem gelernten WP-Profil mit Heizgradtag-Korrektur), `guenstige_heizstunden`, `ersparnis_cent_vs_profil`, `heizzeit_stunden`. ⚠ **Was eedc nicht kennt und nicht erfindet:** Heizkurve, Vorlauftemperatur, Speichervermögen des Gebäudes. Wie weit eine Anhebung trägt, entscheidet deine Wärmepumpen-Regelung — eedc nennt Fenster und Preisvorteil, nicht die Gradzahl |
+| `wp_kuehlfenster_ab` | Zeitstempel | Beginn des günstigsten 2-Stunden-Fensters **vor** der Stunde der Tageshöchsttemperatur (Vorkühlen). Attribute: `bis`, `temperatur_max_um`, `temperatur_max_c`, `ueberschuss_kwh_im_fenster`, `menge_kwh`, `leistung_kuehlen_zugeordnet`. ⚠ **Zwei Bedingungen, beide nötig:** Der Kühlbetrieb muss einen **eigenen Stromzähler** haben (eine Kältemenge oder eine gepflegte Kühl-Leistung reicht nicht), und es muss in den letzten drei Monaten Kühlstrom geflossen sein. Kühlen bleibt dabei **keine Wärme-Achse** — das hier ist Strom-Timing, keine Effizienz-Kennzahl |
+| `sonstiges_verbrauch_monat_kwh` (je sonstigem Verbraucher) | kWh | Stromverbrauch dieses Geräts im **laufenden** Monat. Attribute: `pv_anteil_prozent`, `bezug_pv_kwh`, `bezug_netz_kwh`. ⭐ **Das ist neu und zugleich Stufe 1:** Für Pool, Sauna, Trockner oder einen Heizstab mit eigenem Zähler exportierte eedc bisher **keinen einzigen Energiewert** |
+| `sonstiges_fenster_ab` (je sonstigem Verbraucher) | Zeitstempel | Günstigstes 2-Stunden-Fenster für den **Ø-Tagesverbrauch** dieses Geräts. Attribute: `bis`, `kosten_cent_kwh`, `menge_kwh`, `ersparnis_cent_vs_jetzt` |
+
+> **Woher der Preis je Stunde kommt.** Der Ausgangspunkt ist **dein Tarif**, nicht die Börse — `preisquelle` sagt in jedem Fenster-Sensor, welcher der vier Fälle vorliegt:
+>
+> | `preisquelle` | Was drinsteht |
+> |---|---|
+> | `vertrag` | Der Arbeitspreis deines Tarifs, **exakt**. Für einen Festpreis ist das derselbe Wert in jeder Stunde |
+> | `zeitfenster` | Der Preis des Zeitfensters, das die jeweilige Stunde deckt (Hoch-/Niedertarif, §14a) |
+> | `boerse_plus_aufschlag` | Dynamischer Tarif: `(1 + USt) × Börsenpreis + Aufschlag`. Der **Aufschlag** ist abgeleitet — s. den nächsten Absatz |
+> | `boersenpreis` | Dynamischer Tarif **ohne** ableitbaren Aufschlag: der nackte Börsenpreis als ausdrücklich beschriftete Näherung. Netzentgelte und Abgaben fehlen darin |
+>
+> ⭐ **Wie eedc den Aufschlag eines dynamischen Tarifs findet — ohne dass du ihn pflegst.** Die Annahme ist einfach: dein Endpreis ist der Börsenpreis plus ein über den Vertrag gleichbleibender Anteil. Diesen Anteil rechnet eedc aus, was ohnehin da ist, in dieser Reihenfolge:
+>
+> 1. **Aus deiner Abrechnung** — der letzte abgerechnete Monat innerhalb deines aktuellen Tarifs: dein Monats-Durchschnittspreis minus dem (verbrauchsgewichteten) Börsenmittel desselben Monats. Attribut `aufschlag_quelle: abrechnung 2026-08`.
+> 2. **Aus gemessenen Stunden** — wenn du einen Strompreis-Sensor zugeordnet hast (Tibber, aWATTar): der mittlere Abstand zwischen gemessenem Endpreis und Börsenpreis der letzten sieben Tage (mindestens 24 Stunden). Attribut `aufschlag_quelle: sensor 7 tage`.
+> 3. **Gar nicht** — dann bleibt der nackte Börsenpreis stehen, und `aufschlag_quelle` sagt `keiner`.
+>
+> **Es gibt kein Feld dafür, das du ausfüllen müsstest.** Trägt dein Vertrag einen Deckel oder eine Staffel, bekommst du einen Durchschnitt — und `aufschlag_basis` sagt, worauf er beruht.
+>
+> ⚠ **In einer Stunde mit Überschuss sinkt der Preis anteilig:** Wer dort zusätzlich verbraucht, verdrängt Einspeisung und keinen Netzbezug — bei 3 kWh Überschuss kostet die erste kWh nichts. Deshalb liegt ein Fenster mittags oft **vor** dem Preistal in der Nacht. Liegt gar kein Preis vor (kein Tarif hinterlegt), entstehen Fenster **nur innerhalb** der Überschuss-Stunden, und `preisquelle` sagt `keine`.
+>
+> ⛔ **Bis v4.0.49 stand hier der Börsenpreis für alle** — auch für einen Haushalt mit festem Arbeitspreis, der den Börsenpreis nie zu Gesicht bekommt. Die damalige Begründung („ein fester Aufschlag verschiebt jede Stunde um denselben Betrag und ist deshalb für die Fensterwahl neutral") hält nicht, sobald Überschuss im Spiel ist: der Überschussanteil mindert den Preis **anteilig**, ein Aufschlag verschiebt die Überschuss-Stunden also weniger als die übrigen — und die Reihenfolge der Fenster kann kippen.
+
+> **Wie eedc eine Stunde beschriftet.** Jede Stundenangabe in diesen Sensoren sagt, ob sie einen **Beginn** oder ein **Ende** meint. Das ist nötig, weil eedc in Stunden-*Intervallen* rechnet: Der Slot „14" ist die Stunde von 13:00 bis 14:00 (dieselbe Konvention wie im HA-Energie-Dashboard und bei jedem Stromzähler — ein Zählerstand um 14:00 gehört zur Stunde davor).
+>
+> | Art | Attribute |
+> |---|---|
+> | **Beginn** — ab wann etwas gilt | `ab`, `seit`, `stunden`, `stunde_von`, `naechste_negative_ab`, `stunde_max_mittel`, `guenstige_heizstunden` |
+> | **Ende** — bis wann gerechnet wurde, wann etwas erreicht ist | `bis`, `stand`, `frist`, `stunde_bis`, `bis_stunde`, alles auf `_um` (`speicher_voll_um`, `min_soc_um`) |
+>
+> Ein `stundenprofil_*`-Attribut trägt **24 Werte je Tag**, Index 0 ist die Stunde von 23:00 des Vortags bis 00:00 — genau wie `stundenprofil_kwh` der Prognose-Sensoren. Jede dieser Reihen nennt das im Attribut `slot_konvention: backward`.
+>
+> ⛔ **Bis v4.0.49 lagen fünf dieser Angaben eine Stunde daneben** (vier zu spät, `stand` eine voraus): die Fenster-Achse folgte der Börse, die stundenweise vorwärts beschriftet ist, während alle anderen Reihen rückwärts liegen. Wer eine Automation auf die alten Zeiten gebaut hat, verschiebt sie um eine Stunde.
+
+> **Attribute je Verbrauchs-Sensor: `profil_typ` und `profil_tage`.** eedc führt **zwei** Verbrauchsmodelle, und das bleibt so: die Stundenreihen für heute stammen aus dem 7-Tage-Profil der Live-Kachel, die Speicher-Simulation hinter „Speicher voll um" und der Arbitrage-Vorschlag aus einem gewichteten 8-Wochen-Profil. Sie beantworten verschiedene Fragen. **Jeder Sensor nennt sein Modell** — wer zwei Zahlen verrechnet, sieht damit, ob sie aus derselben Annahme stammen.
 
 ### Wann ein Sensor `entity_category: diagnostic` trägt
 
@@ -756,12 +858,16 @@ schließt daraus, dass eedc sie nicht liefert. Sie sind da — als Attribut, nic
 
 Die drei Vorlagen lassen sich unverändert in *Entwicklerwerkzeuge → Vorlage* kopieren. Wer eine
 davon als Sensor haben will, setzt sie in `configuration.yaml` unter `template: - sensor:` mit
-`state: >`.
+`state: >`. **Sie nehmen eine Anlage namens „Haus" an:** Home Assistant bildet die Entity-ID aus dem
+Gerätenamen `eedc - <Anlage>` und dem Anzeigenamen des Sensors („Börsenpreis-Rang", Umlaut ohne
+Punkte), also `sensor.eedc_haus_borsenpreis_rang` — an einer Anlage „Winterborn" heißt er
+`sensor.eedc_winterborn_borsenpreis_rang`. Setz deinen Anlagennamen ein; welche ID dein Sensor trägt,
+zeigt *Einstellungen → Geräte & Dienste → MQTT*, Gerät „eedc - *dein Anlagenname*".
 
 **1) Der Tageshöchstpreis**
 
 ```jinja
-{%- set p = state_attr('sensor.eedc_preis_rang','rang_profil') or [] -%}
+{%- set p = state_attr('sensor.eedc_haus_borsenpreis_rang','rang_profil') or [] -%}
 {{ (p | map(attribute='preis_cent') | max | round(2)) if p else 'unbekannt' }}
 ```
 
@@ -770,7 +876,7 @@ Für morgen dasselbe mit `rang_profil_morgen` — aber erst, wenn `morgen_verfue
 **2) Die Ränge mit ihren Preisen**
 
 ```jinja
-{%- set p = state_attr('sensor.eedc_preis_rang','rang_profil') or [] -%}
+{%- set p = state_attr('sensor.eedc_haus_borsenpreis_rang','rang_profil') or [] -%}
 {%- for s in p | rejectattr('rang','eq',99) | sort(attribute='stunde') %}
 {{ '%02d'|format(s.stunde) }}:00 Uhr | Rang {{ s.rang }} | {{ s.preis_cent | round(2) }} ct
 {%- endfor -%}
@@ -786,8 +892,8 @@ Für morgen dasselbe mit `rang_profil_morgen` — aber erst, wenn `morgen_verfue
 
 ```jinja
 {%- set eta = 0.90 -%}
-{%- set heute  = state_attr('sensor.eedc_preis_rang','rang_profil') or [] -%}
-{%- set morgen = state_attr('sensor.eedc_preis_rang','rang_profil_morgen') or [] -%}
+{%- set heute  = state_attr('sensor.eedc_haus_borsenpreis_rang','rang_profil') or [] -%}
+{%- set morgen = state_attr('sensor.eedc_haus_borsenpreis_rang','rang_profil_morgen') or [] -%}
 {%- set r = namespace(reihe=[]) -%}
 {%- for s in heute if s.stunde >= now().hour -%}
   {%- set r.reihe = r.reihe + [{'t': s.stunde, 'p': s.preis_cent}] -%}
@@ -826,6 +932,184 @@ verwendbar. `eta` ist dein Speicher-Wirkungsgrad — trag deinen eigenen Wert ei
 > ⚠ **Der Tag hat nicht immer 24 Stunden.** Am Ende der Sommerzeit fehlt die zweite Zwei-Uhr-
 > Stunde, im Frühjahr die Stunde 2 ganz; `rang_profil` hat dann 23 Einträge. Alle drei Vorlagen
 > laufen darüber, weil keine auf eine feste Länge prüft — wer eigene baut, prüft es auch nicht.
+
+### Drei Automationen, die auf diesen Sensoren aufsetzen
+
+eedc nennt Fenster, Preise und Mengen — **schalten tust du.** Die drei Beispiele zeigen, wie
+eine HA-Automation die Sensoren dieser Gruppe liest. Sie sind vollständig, aber jede enthält
+**eine Zeile, die du ersetzen musst:** die Entität deines Geräts (Speicher, Wallbox, Heizstab). Wie
+dein Speicher „nicht entladen" oder „aus dem Netz laden" heißt, weiß nur seine Integration —
+eedc kennt kein Schaltelement und erfindet keins.
+
+Die YAML-Blöcke sind so geschrieben, dass sie sich unter *Einstellungen → Automationen → Neue
+Automation → ⋮ → In YAML bearbeiten* einfügen lassen. **Die Entity-IDs darin gelten für eine Anlage
+namens „Haus"** — Home Assistant bildet die ID aus dem Gerätenamen `eedc - <Anlage>` und dem
+**Anzeigenamen** des Sensors, nicht aus seinem Schlüssel: aus `eedc_bezugspreis_jetzt_cent` an der
+Anlage „Winterborn" wird `sensor.eedc_winterborn_bezugspreis_jetzt`, aus dem Schalter „Speicher
+voll" `binary_sensor.eedc_winterborn_speicher_voll`; Umlaute fallen weg (`borsenpreis_rang`,
+`gunstige_stunde`). Welche ID dein Sensor trägt, zeigt *Einstellungen → Geräte & Dienste → MQTT*, Gerät „eedc - *dein Anlagenname*". Alle drei nutzen native Bedingungen
+(`numeric_state`, `state`) statt Vorlagen, wo Home Assistant das kann; nur das dritte Beispiel
+liest eine Stundenreihe und braucht dafür eine Vorlage.
+
+> **Zwei Eigenschaften der Sensoren, auf die sich die Beispiele verlassen.** Erstens: ein
+> `binary_sensor` wird bei fehlender Grundlage **nicht verfügbar** — eine Bedingung auf `on` ist
+> dann von selbst falsch, die Automation schaltet nichts (s. oben). Zweitens: ein Sensor, den eedc
+> nicht bilden kann, **fehlt** — `eedc_speicher_netzladen_kosten_cent` gibt es nur für Speicher mit
+> „lädt aus dem Netz", `eedc_abregelung_heute_kwh` nur mit gepflegter Wechselrichter-Grenze.
+> Fehlt der Sensor, läuft die Automation ins Leere, ohne Fehler. Prüfe vor dem Bau in
+> *Einstellungen → Integration → MQTT-Export*, ob er bei dir entsteht.
+
+**1) Speicher schonen, solange Netzstrom billiger ist als Speicherstrom**
+
+Strom aus dem Speicher kostet die entgangene Einspeisevergütung geteilt durch den Wirkungsgrad
+(`eedc_speicher_strom_kosten_cent`, bei der Demo-Anlage 9,8 ct). In einer Stunde, in der der
+Bezugspreis darunter liegt — bei einem dynamischen Tarif nachts oder bei negativen Börsenpreisen —
+ist es günstiger, den Speicher zu **halten** und den Haushalt aus dem Netz zu versorgen. Die
+Automation vergleicht die beiden Sensoren bei jedem neuen Preis und stellt den Speicher auf
+„nicht entladen", solange das gilt.
+
+```yaml
+alias: "eedc — Speicher schonen bei billigem Netz"
+description: >
+  Solange der Bezugspreis der laufenden Stunde unter den Kosten einer Speicher-Kilowattstunde
+  liegt, wird der Speicher nicht entladen. Beide Zahlen kommen von eedc; die Schalt-Entität
+  ist die des Speichers.
+mode: single
+triggers:
+  - trigger: state
+    entity_id: sensor.eedc_haus_bezugspreis_jetzt
+    note: "eedc publiziert zur vollen Stunde einen neuen Preis — das ist der Takt."
+actions:
+  - if:
+      - condition: numeric_state
+        entity_id: sensor.eedc_haus_bezugspreis_jetzt
+        below: sensor.eedc_haus_speicherstrom_kostet
+        note: "Netz billiger als Speicher: halten."
+    then:
+      - action: select.select_option
+        target:
+          entity_id: select.speicher_betriebsmodus   # ← Entität deines Speichers
+        data:
+          option: "Entladung sperren"                # ← Wortlaut deiner Integration
+    else:
+      - action: select.select_option
+        target:
+          entity_id: select.speicher_betriebsmodus   # ← Entität deines Speichers
+        data:
+          option: "Automatik"                        # ← Wortlaut deiner Integration
+```
+
+Bei einem **Festpreis** greift der `then`-Zweig praktisch nie (30 ct gegen 9,8 ct) — die
+Automation ist dann harmlos, aber nutzlos. Sie ist für dynamische Tarife gedacht; dort trägt
+`eedc_bezugspreis_jetzt_cent` den Endpreis inklusive abgeleitetem Aufschlag, nicht den nackten
+Börsenpreis (Attribut `preisquelle`).
+
+**2) Aus dem Netz laden, wenn die Kilowattstunde unter deiner Grenze bleibt**
+
+`eedc_speicher_netzladen_kosten_cent` ist der Bezugspreis geteilt durch den Wirkungsgrad — also
+das, was eine später *entnommene* Netz-Kilowattstunde wirklich kostet. Die Grenze legst du in
+einem Zahlen-Helfer fest (*Einstellungen → Geräte & Dienste → Helfer → Zahl*, hier
+`input_number.netzladen_grenze_cent`); so änderst du sie, ohne die Automation anzufassen. Geladen
+wird nur, wenn der Speicher nach heutiger Simulation **nicht** bis Mitternacht reicht — sonst
+würdest du Netzstrom einlagern, den die PV am Tag ohnehin liefert.
+
+```yaml
+alias: "eedc — Netzladen unter Preisgrenze"
+description: >
+  Startet die Netzladung, wenn eine aus dem Speicher entnommene Netz-Kilowattstunde unter der
+  eigenen Grenze kostet und der Speicher heute nicht bis Mitternacht reicht; beendet sie, sobald
+  eine der Bedingungen fällt oder der Speicher voll ist.
+mode: single
+triggers:
+  - trigger: state
+    entity_id:
+      - sensor.eedc_haus_netzladen_kostet
+      - binary_sensor.eedc_haus_speicher_reicht_bis_mitternacht
+      - binary_sensor.eedc_haus_speicher_voll
+    note: "Jeder dieser drei Sensoren kann die Entscheidung kippen."
+actions:
+  - if:
+      - condition: numeric_state
+        entity_id: sensor.eedc_haus_netzladen_kostet
+        below: input_number.netzladen_grenze_cent
+      - condition: state
+        entity_id: binary_sensor.eedc_haus_speicher_reicht_bis_mitternacht
+        state: "off"
+        note: "Bei »nicht verfügbar« (keine Simulation möglich) wird nicht geladen."
+      - condition: state
+        entity_id: binary_sensor.eedc_haus_speicher_voll
+        state: "off"
+    then:
+      - action: switch.turn_on
+        target:
+          entity_id: switch.speicher_netzladen      # ← Entität deines Speichers
+    else:
+      - action: switch.turn_off
+        target:
+          entity_id: switch.speicher_netzladen      # ← Entität deines Speichers
+```
+
+Wer stattdessen der **Menge** folgen will, nimmt `eedc_arbitrage_vorschlag_kwh` (empfohlene
+Netzladung heute, mit `stunden` als Liste der günstigen Stunden) — er entsteht nur, wenn sich
+Laden und späteres Entladen nach Abzug der Verluste lohnt.
+
+**3) Einen Verbraucher in die Abregelung legen**
+
+Was der Wechselrichter an seiner Grenze abregelt, entsteht gar nicht erst. Ein Heizstab, eine
+Poolpumpe oder ein Warmwasserboiler läuft in diesen Stunden also mit Strom, der sonst verloren
+wäre — billiger als jedes Überschuss-Fenster. `eedc_abregelung_heute_kwh` trägt in
+`stundenprofil_kwh` je Stunde die erwartete Kappung (24 Werte, Index 0 = 23–00 Uhr des Vortags,
+Index 15 = 14–15 Uhr) und in `rest_heute_kwh`, was heute noch bevorsteht. Eine Stundenreihe
+lässt sich nicht nativ lesen — hier ist die Vorlage die richtige Form.
+
+```yaml
+alias: "eedc — Heizstab in die Abregelung"
+description: >
+  Schaltet den Heizstab ein, solange eedc für die laufende Stunde eine Abregelung an der
+  Wechselrichter-Grenze erwartet, und danach wieder aus. Die Reihe ist eine Prognose auf der
+  Rohvorhersage (Attribut skala) — Größenordnung und Uhrzeiten, keine Messung.
+mode: single
+triggers:
+  - trigger: state
+    entity_id: sensor.eedc_haus_abregelung_heute
+    note: "Feuert bei jedem Publish, auch wenn sich nur die Attribute ändern."
+  - trigger: time_pattern
+    minutes: 1
+    note: "Zusätzlich zur vollen Stunde, falls der Publish später kommt."
+variables:
+  kappung_jetzt_kwh: >-
+    {% set p = state_attr('sensor.eedc_haus_abregelung_heute', 'stundenprofil_kwh') or [] %}
+    {% set i = now().hour + 1 %}
+    {{ (p[i] | float(0)) if p | length > i else 0 }}
+actions:
+  - if:
+      - condition: numeric_state
+        entity_id: sensor.eedc_haus_abregelung_heute
+        attribute: rest_heute_kwh
+        above: 0.5
+        note: "Heute steht überhaupt noch eine nennenswerte Kappung bevor."
+      - "{{ kappung_jetzt_kwh > 0.2 }}"
+    then:
+      - action: switch.turn_on
+        target:
+          entity_id: switch.heizstab                # ← dein Verbraucher
+    else:
+      - action: switch.turn_off
+        target:
+          entity_id: switch.heizstab                # ← dein Verbraucher
+```
+
+`now().hour + 1` ist der Index der **laufenden** Stunde: die Reihe ist rückwärts beschriftet
+(Index 15 = 14:00–15:00), also liegt 14:37 Uhr in Index 15. Um 23 Uhr gibt es keinen Eintrag
+(er wäre Index 24 — die Stunde gehört schon zur Reihe von morgen), die Vorlage liefert dann 0;
+für einen PV-Verbraucher ist das kein Verlust. Die Schwellen (0,5 kWh Rest, 0,2 kWh in der Stunde)
+sind Beispiele — bei einem 3-kW-Heizstab lohnt eine Stunde mit 0,2 kWh Kappung kaum, bei einer
+Poolpumpe mit 0,5 kW schon.
+
+> ⚠ **Was keins der drei Beispiele tut:** einen Live-Wert lesen. `eedc_ueberschuss_jetzt_kw` ist ein
+> Stundenmittel und bis zu 15 Minuten alt; wer eine Wallbox nach dem *aktuellen* Überschuss regeln
+> will, braucht dafür die Leistungssensoren seines Zählers, nicht eedc. eedc liefert die Planung
+> für heute — Fenster, Reihen, Preise —, und die drei Beispiele bleiben in genau diesem Rahmen.
 
 ---
 

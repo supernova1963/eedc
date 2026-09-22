@@ -1,11 +1,214 @@
 # Was ist neu
 
-> **Stand:** September 2026 (v4.0.49) — der Abschnitt ganz oben gilt der **kommenden** Version und trägt ihre Nummer, sobald sie feststeht.
+> **Stand:** September 2026 (v4.0.50)
 > **Diese Seite** zeigt pro Version, was sich für dich als Anwender geändert hat — kürzer als der technische [CHANGELOG](https://github.com/supernova1963/eedc-homeassistant/blob/main/CHANGELOG.md), ausführlicher als die Schnellübersicht-Tabelle in der [Übersicht](BENUTZERHANDBUCH.md#was-ist-neu-seit-v316).
 >
 > **Kein Banner, kein Pop-up:** eedc zeigt diese Liste nicht ungefragt an. HA-App-Nutzer sehen den Changelog ohnehin schon im Add-on-Store, GitHub-Releases haben einen eigenen. Wer wissen will, was neu ist, schaut hier rein — Pull statt Push.
 >
 > **Lesehinweis:** Die jüngsten Versionen stehen oben. Jeder Punkt verlinkt entweder auf die zuständige Hilfe-Sektion oder direkt auf die App-Funktion (sofern erreichbar). Anker-URLs (`?doc=was-ist-neu`) sind teilbar.
+
+---
+
+## v4.0.50 — 22. September 2026
+
+**Dein HA-Dashboard bekommt die Zahlen, mit denen sich etwas entscheiden lässt**
+
+**Betrifft dich das?** Ja, wenn du den MQTT-Export nutzt und in Home Assistant
+automatisieren willst — Wallbox, Wärmepumpe, Speicher, Pool, Trockner.
+
+**Was war:** eedc hat nach Home Assistant exportiert, **was ist** — Mengen, Geld,
+Quoten, Prognosen, Börsenpreise. Für eine Automation fehlte der zweite Schritt:
+*Was gilt gerade?* und *Wann lohnt es sich?* Den Überschuss je Stunde, das
+günstigste Zwei-Stunden-Fenster, den Ladestand als Zahl — all das gab es in eedc,
+aber es verließ die App nicht.
+
+**Was jetzt:** Eine neue Gruppe **„Steuerungshilfen"** in der Sensorliste. Darin
+unter anderem:
+
+- **Überschuss** — als Tageszahl, als Wert der letzten vollen Stunde und als
+  **Prognose je Stunde für heute**, samt der zusammenhängenden Blöcke („ab 10:00
+  für 5 Stunden, mindestens 2,1 kW"). Das ist die Zahl, die eine Wallbox oder
+  eine Wärmepumpe von sich aus nicht bilden kann: Sie kennen ihr eigenes Gerät,
+  aber nicht den Verbrauchsgang deines Hauses mit Wärmepumpen-Korrektur.
+- **Bestes Fenster ab** — wann eine verschiebbare Last am günstigsten läuft, in
+  vier Dauern (1, 2, 3 und 4 Stunden) und mit den Kosten je Kilowattstunde für
+  jede Stunde des Tages. ⭐ In einer Stunde mit Überschuss kostet die zusätzliche
+  Kilowattstunde **nichts** — deshalb liegt das Fenster mittags oft vor dem
+  billigen Börsenpreis in der Nacht.
+- **Schalter statt Zahlen** für das, was ohnehin nur zwei Zustände hat:
+  *Überschuss verfügbar*, *Günstige Stunde*, *Speicher voll*, *Warmwasserbetrieb*.
+  ⭐ **Fehlt einem Schalter die Grundlage, wird er in Home Assistant *nicht
+  verfügbar*** — er bleibt nicht auf seinem letzten Stand stehen. Fällt etwa der
+  Preisabruf aus, zeigt *Günstige Stunde* nicht weiter „an", sondern gar nichts;
+  eine Automation, die auf „an" prüft, löst dann nicht mehr aus. Bei einem
+  gewöhnlichen Zahlen-Sensor bleibt es wie bisher bei „unbekannt".
+- **Fenster je Gerät** — Warmwasser, Heizen und Vorkühlen der Wärmepumpe, dazu
+  Monatsverbrauch und bestes Fenster für Pool, Sauna, Trockner oder einen
+  Heizstab mit eigenem Zähler. Für solche Geräte gab es bisher **gar keinen**
+  Energiewert in Home Assistant.
+- **Prognose-Abweichung auffällig** — eine Ampel, die anspringt, wenn der Tag
+  deutlich stärker von der Prognose abweicht als sonst. Die Schwelle hängt an
+  **deiner** Anlage (dem mittleren Fehler der letzten 30 Tage), nicht an einem
+  festen Prozentwert.
+
+⚠ **Es bleiben Vorschläge.** eedc schaltet nichts und ruft nichts auf — es nennt
+ein Fenster und einen Betrag. Was daraus folgt, entscheidest du in deiner
+Automation. **Drei fertige Beispiele zum Kopieren** stehen in der Sensor-Referenz
+(§11, am Ende): Speicher schonen, solange Netzstrom billiger ist als Speicherstrom ·
+aus dem Netz laden, wenn die Kilowattstunde unter deiner Grenze bleibt · einen
+Heizstab in die Abregelung legen. Dort steht auch, wie Home Assistant die
+Entity-IDs der eedc-Sensoren bildet — sie tragen deinen Anlagennamen.
+
+**Die 28 neuen Sensoren — damit du vor dem Update weißt, was kommt.** ⭐ **Wenn
+du eedc schon benutzt, kommen sie *nicht* von allein nach Home Assistant.** Sie
+starten bei einer bestehenden Installation **abgewählt**: du findest sie unter
+*Einstellungen → Integration → MQTT-Export* in der Sensorliste mit der Markierung
+**„Neu"**, dazu einen Kasten über der Liste und einen Knopf **„Alle neuen
+anwählen"** — und hakst an, was du haben willst. Es geht dabei nichts verloren,
+denn sie waren nie in Home Assistant. Bei einer **Neu**installation ist wie bisher
+alles an. Je Anlage entstehen 22 Entitäten, dazu 4 je Wärmepumpe und 2 je
+Sonstiges-Verbraucher.
+
+Der Grund für diesen Unterschied: In Home Assistant lässt sich eine einmal
+angelegte Entität nicht dauerhaft loswerden — der Registry-Eintrag bleibt, und bei
+der nächsten Auto-Discovery ist sie wieder da. Mit v4.0.27 kamen 21 Sensoren auf
+einen Schlag; das soll dir nicht noch einmal ungefragt passieren. Was du **schon
+hast**, behältst du: ein Update wählt nie etwas ab, das bei dir schon läuft.
+
+⚠ **Nicht jeder entsteht bei jedem.** Ein Sensor, dessen Grundlage fehlt, wird
+in eedc nicht erfunden — er fehlt dann. Ohne hinterlegten Tarif gibt es keine
+Preise, ohne Speicher keine Speicherkosten, ohne gepflegte Wechselrichter-Grenze
+keine Abregelung. Die Spalte „Entsteht nur mit" sagt es je Zeile.
+
+| Key | Name | Typ | Ebene |
+|---|---|---|---|
+| `eedc_ueberschuss_heute_kwh` | Überschuss heute | sensor | je Anlage |
+| `eedc_ueberschuss_jetzt_kw` | Überschuss letzte Stunde | sensor | je Anlage |
+| `eedc_ueberschuss_verfuegbar` | Überschuss verfügbar | binary_sensor | je Anlage |
+| `eedc_guenstige_stunde` | Günstige Stunde | binary_sensor | je Anlage |
+| `eedc_speicher_voll` | Speicher voll | binary_sensor | je Anlage |
+| `eedc_speicher_voll_um_ts` | Speicher voll um (Zeitstempel) | sensor | je Anlage |
+| `eedc_speicher_soc_prozent` | Ladestand | sensor | je Anlage |
+| `eedc_netzbezug_spitze_heute_kw` | Netzbezugs-Spitze heute | sensor | je Anlage |
+| `eedc_ueberschuss_prognose_heute_kwh` | Überschuss-Prognose heute | sensor | je Anlage |
+| `eedc_arbitrage_vorschlag_kwh` | Arbitrage-Vorschlag | sensor | je Anlage |
+| `eedc_bestes_fenster_ab` | Bestes Fenster ab | sensor | je Anlage |
+| `eedc_prognose_abweichung_heute_prozent` | Prognose-Abweichung heute | sensor | je Anlage |
+| `eedc_prognose_auffaellig` | Prognose-Abweichung auffällig | binary_sensor | je Anlage |
+| `wp_warmwasserbetrieb` | Warmwasserbetrieb | binary_sensor | je Wärmepumpe |
+| `wp_warmwasser_fenster_ab` | Warmwasser-Fenster ab | sensor | je Wärmepumpe |
+| `wp_heizfenster_stunden` | Günstige Heizstunden heute | sensor | je Wärmepumpe |
+| `wp_kuehlfenster_ab` | Kühlfenster ab | sensor | je Wärmepumpe |
+| `sonstiges_verbrauch_monat_kwh` | Verbrauch (Monat) | sensor | je Sonstiges-Verbraucher |
+| `sonstiges_fenster_ab` | Bestes Fenster ab | sensor | je Sonstiges-Verbraucher |
+
+**Dazu neun Sensoren rund um Preise und Speicher** — sie beantworten die Frage,
+die hinter jeder Verschiebe-Automation steht: *was kostet mich diese Stunde,
+und was spare ich?*
+
+| Key | Name | Typ | Entsteht nur mit |
+|---|---|---|---|
+| `eedc_bezugspreis_jetzt_cent` | Bezugspreis jetzt | sensor | hinterlegtem Stromtarif |
+| `eedc_einspeiseverguetung_cent` | Einspeisevergütung | sensor | hinterlegtem Stromtarif |
+| `eedc_eigenverbrauch_wert_cent` | Eigenverbrauch wert | sensor | vollständigem Bezugspreis **und** Vergütung |
+| `eedc_speicher_strom_kosten_cent` | Speicherstrom kostet | sensor | Speicher **und** belastbarem Wirkungsgrad |
+| `eedc_speicher_netzladen_kosten_cent` | Netzladen kostet | sensor | zusätzlich „lädt aus dem Netz" |
+| `eedc_speicher_leer_um_ts` | Speicher leer um | sensor | Ladestand-Sensor; nur wenn er wirklich leer läuft |
+| `eedc_speicher_reicht_bis_mitternacht` | Speicher reicht bis Mitternacht | binary_sensor | Ladestand-Sensor |
+| `eedc_abregelung_heute_kwh` | Abregelung heute | sensor | gepflegter Wechselrichter-Grenze |
+| `eedc_einspeisung_unerwuenscht` | Einspeisung unerwünscht | binary_sensor | Börsenpreisen (Koordinaten gepflegt) |
+
+⭐ **Der Preis ist deiner, nicht der der Börse.** Wer einen Festpreis zahlt,
+sah bisher in den Fenster-Sensoren den Börsenpreis — eine Zahl, die auf seiner
+Rechnung nie auftaucht. Jetzt steht dort der Arbeitspreis seines Tarifs, und die
+Fenster sagen damit erstmals, was eine verschobene Waschmaschine wirklich
+kostet. Bei einem **dynamischen** Tarif rechnet eedc `(1 + USt) × Börsenpreis +
+Aufschlag` — und **leitet den Aufschlag selbst ab**, aus deiner letzten
+Abrechnung oder aus den gemessenen Stunden deines Preis-Sensors. Du musst dafür
+nichts eintragen; jeder Sensor sagt im Attribut, woher seine Zahl stammt.
+
+⚠ **Zwei Dinge ändern sich an Sensoren, die es schon gab.** Beides betrifft nur
+diese Vorab-Version, nicht ein veröffentlichtes Release:
+
+* **Die Fenster-Sensoren rechnen mit dem Tarifpreis statt mit der Börse.** Für
+  einen Festpreis-Haushalt heißt das: es gibt keine „billigste Stunde" mehr —
+  jede kostet gleich viel, und einen Unterschied macht nur noch der Überschuss.
+  Das Fenster liegt dann dort, wo die Sonne scheint, und nicht mehr nachts.
+* **Stundenangaben sind um eine Stunde korrigiert.** eedc rechnet in
+  Stunden-Intervallen; die Angabe „14:00" bei einem Überschuss-Lauf meinte
+  bisher mal den Beginn, mal das Ende. Jetzt sagt jedes Attribut, was es meint
+  (`stunde_von`/`stunde_bis` statt `stunde`), und die Zeiten sitzen auf der
+  richtigen Stunde. **Wer eine Automation auf die alten Zeiten gebaut hat,
+  verschiebt sie um eine Stunde.**
+
+**Der REST-Weg bekommt die Attribute mit.** Wer die Sensoren statt über MQTT per
+`rest`-Plattform einbindet (das YAML-Snippet unter *Einstellungen → Integration*),
+sah bis hierher nur den nackten Wert und den Hinweis-Satz — Stundenreihen, Fenster
+und Quellenangaben endeten an der REST-Grenze. Jetzt liefert die Export-Adresse je
+Sensor das Feld `attribute` mit demselben Inhalt wie über MQTT; das bisherige Feld
+`hinweis` bleibt daneben stehen, bestehende Einbindungen laufen unverändert weiter.
+
+**Und aufgeräumt:** Wer eedc vor März 2026 installiert hat, hat in Home Assistant
+noch Entitäten `number.eedc_…_start` stehen — sie stammen aus einer alten
+Erfassungsweise und zeigen seither „unbekannt". **„Sensoren entfernen" nimmt sie
+jetzt mit zurück.** Entitäten anderer Integrationen bleiben unberührt. Was liegen
+bleibt, sind die Monatsabschluss-Nachrichten auf dem Broker — sie sind keine
+Sensoren, und ein Abschluss wiederholt sich nicht.
+
+→ [Sensor-Referenz §11](?doc=sensor-referenz) · [Einstellungen → Integration → MQTT-Export](?doc=einstellungen)
+
+### „Größerer Speicher?" und „Speicher-Potential" rechnen nur noch mit dem Speicher, der heute bei dir steht
+
+**Betrifft dich das?** Nur, wenn du einen Speicher gegen einen anderen getauscht und das alte
+Gerät — wie empfohlen — mit **Stilllegungsdatum** stehen gelassen hast. Bei einem einzigen
+Speicher ändert sich nichts.
+
+**Was war:** Beide Planungs-Sichten unter *Komponenten → Speicher* nahmen als Ausgangsbasis
+**alle** Speicher deiner Anlage, auch die stillgelegten. Ein Anwender sah so 15,3 kWh statt seiner
+10,24 kWh — die Differenz war sein abgelöstes Gerät. Und weil eedc beim Wirkungsgrad den
+**schlechtesten** Wert aller Speicher nimmt, drückte das alte Gerät auch die Rechnung dauerhaft
+nach unten. Die Empfehlung ging damit von mehr und schlechterem Speicher aus, als da ist, und
+riet eher zu wenig Zubau.
+
+**Was jetzt:** Kapazität, Wirkungsgrad und die Schwelle „Speicher leer" kommen aus den Geräten,
+die **heute** laufen. Ein stillgelegtes oder deaktiviertes Gerät bleibt in deiner Historie —
+die Vergangenheit rechnet weiter mit dem Speicher, der damals dastand —, aber es zählt nicht
+mehr zur Basis der Frage „lohnt sich ein größerer?".
+
+**Was du tun musst:** Nichts. Deine Erfassung als zweites Gerät mit Stilllegungsdatum war und
+bleibt der richtige Weg. Danke an **Radiocarbonat** für die Meldung mit den Zahlen, die den
+Fehler auf den Punkt gebracht haben.
+
+### Eine einzelne eedc-Anzeige im Home-Assistant-Dashboard
+
+**Betrifft dich das?** Ja, wenn du ein HA-Dashboard oder ein Wandtablet pflegst und dort
+eine bestimmte eedc-Anzeige sehen willst — den Energiefluss, die Preiskurve, die
+Energie-Bilanz des Monats.
+
+**Was war:** eedc ließ sich nur als Ganzes verlinken. Wer eine einzelne Anzeige in sein
+Dashboard holen wollte, landete bei der vollen Oberfläche samt Navigation — auf einer
+Dashboard-Karte kaum lesbar. Fesa2702 beschrieb es im Forum für sein Wandtablet,
+OB73-gif fragte nach „kopierbaren Blöcken".
+
+**Was jetzt:** Jede Anzeige mit dem ⤢-Symbol hat eine **eigene Adresse**. Im Fokus steht
+oben ein Knopf **„Link / Einbetten"**: Er zeigt sie an, kopiert sie auf Klick und erklärt
+in drei Zeilen den Weg in Home Assistant (*Dashboard bearbeiten → Karte hinzufügen →
+Webseite*). Du musst also **nie** eine Adresse von Hand bauen.
+
+Die Karte zeigt dann nur diese eine Anzeige — ohne Navigation, ohne „Zurück", ohne
+Theme-Umschalter; das **Theme folgt dem Gerät**, damit sie zum Dashboard passt. Bedienbar
+bleibt, was zur Anzeige gehört: der Umschalter **Chart ⇄ Tabelle** und die
+**Zeitraum-Auswahl** der Bilanzen. `&ansicht=tabelle` startet gleich in der Tabelle,
+`?jahr=2025&monat=3` hält einen festen Monat.
+
+⭐ **Wenn etwas nicht passt, sagt es die Karte.** Zeigt die Adresse auf eine Anzeige, die
+es in dieser Sicht nicht (mehr) gibt, die geparkt ist oder für diesen Zeitraum keine Daten
+hat, steht genau das im Bild — statt kommentarlos etwas anderes.
+
+**Was du tun musst:** Nichts. Wer eine Anzeige einbetten will, schneidet sie vorher in
+eedc zu (Geparktes bleibt geparkt, und **in** der Karte lässt sich nichts zurückholen) und
+kopiert dann den Link. Die Schritt-für-Schritt-Anleitung steht im Handbuch unter
+*[Bedienung §1.5](HANDBUCH_BEDIENUNG.md#15-eine-eedc-anzeige-im-home-assistant-dashboard)*.
 
 ---
 
