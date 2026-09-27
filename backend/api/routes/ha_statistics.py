@@ -23,7 +23,7 @@ from backend.core.exceptions import bad_request, ha_db_unavailable, not_found
 from backend.api.deps import get_db
 from backend.services.activity_service import log_activity
 from backend.core.field_definitions import FELD_LABELS as _FELD_LABELS_REGISTRY
-from backend.core.field_definitions import ist_zaehler_differenz_feld
+from backend.core.field_definitions import ist_heimlade_mengen_feld, ist_zaehler_differenz_feld
 from backend.models.anlage import Anlage
 from backend.models.monatsdaten import Monatsdaten
 from backend.models.investition import Investition, InvestitionMonatsdaten
@@ -34,6 +34,7 @@ from backend.services.ha_statistics_service import (
     SensorMonatswert,
 )
 from backend.services.import_hauszaehler import warnung_monate_ohne_zaehlerwerte
+from backend.services.monatswert_deckel import deckel_je_sensor
 from backend.core.berechnungen.pv_verteilung import PvModul, QUELLE_GEMESSEN, resolve_pv_je_modul
 from backend.services.pv_monatswerte import lade_pv_je_monat, pv_summe_je_monat
 from backend.core.investition_kennwerte import get_pv_kwp
@@ -336,7 +337,10 @@ async def get_monatswerte(
 
     # Werte aus HA-DB holen
     try:
-        response = service.get_monatswerte(sensor_ids, jahr, monat)
+        response = service.get_monatswerte(
+            sensor_ids, jahr, monat,
+            deckel_je_sensor=deckel_je_sensor(anlage, investitionen_db.values()),
+        )
     except Exception as e:
         await log_activity(
             kategorie="ha_statistics",
@@ -465,7 +469,10 @@ async def get_alle_monatswerte(
         ab_datum = date(ab_jahr, ab_monat or 1, 1)
 
     try:
-        raw_responses = service.get_alle_monatswerte(sensor_ids, ab_datum)
+        raw_responses = service.get_alle_monatswerte(
+            sensor_ids, ab_datum,
+            deckel_je_sensor=deckel_je_sensor(anlage, investitionen_db.values()),
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
@@ -638,9 +645,13 @@ async def get_import_vorschau(
             detail="Keine Sensor-Zuordnungen mit Strategie 'sensor' gefunden."
         )
 
-    # Alle HA-Monatswerte holen
+    # Alle HA-Monatswerte holen — Zählerlücken wie HA (Vorlage §10): der Monat
+    # verwirft, was die Stunden verwerfen (Rücksprung; Deckel für PV/Einspeisung).
+    _deckel = deckel_je_sensor(anlage, (await db.execute(
+        select(Investition).where(Investition.anlage_id == anlage_id)
+    )).scalars().all())
     try:
-        ha_monate = service.get_alle_monatswerte(sensor_ids)
+        ha_monate = service.get_alle_monatswerte(sensor_ids, deckel_je_sensor=_deckel)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
@@ -980,6 +991,10 @@ async def import_ha_statistics(
     uebersprungen = 0
     ueberschrieben = 0
     fehler = []
+    # Zählerlücken wie HA (Vorlage §10): dieselbe Monatsregel wie die Vorschau.
+    _deckel = deckel_je_sensor(anlage, (await db.execute(
+        select(Investition).where(Investition.anlage_id == anlage_id)
+    )).scalars().all())
     # N-240: Monate, die nur Gerätewerte bekommen haben — gesammelt statt je
     # Monat gemeldet, sonst stünde derselbe Satz zwölfmal im Ergebnis.
     monate_ohne_zaehlerwerte: list[tuple[int, int]] = []
@@ -992,7 +1007,9 @@ async def import_ha_statistics(
 
         try:
             # HA-Werte für diesen Monat holen
-            ha_response = service.get_monatswerte(sensor_ids, jahr, monat)
+            ha_response = service.get_monatswerte(
+                sensor_ids, jahr, monat, deckel_je_sensor=_deckel,
+            )
 
             # Sensor-Werte zu Dict mappen
             sensor_values = {s.sensor_id: s.differenz for s in ha_response.sensoren}
@@ -1104,9 +1121,11 @@ async def import_ha_statistics(
 
             # Gültige Investitions-IDs laden (verwaiste Mapping-Einträge ignorieren)
             inv_result = await db.execute(
-                select(Investition.id).where(Investition.anlage_id == anlage_id)
+                select(Investition.id, Investition.typ).where(Investition.anlage_id == anlage_id)
             )
-            gueltige_inv_ids = {str(r[0]) for r in inv_result.all()}
+            # N-555: der Typ je Investition für die Heimlade-Regel unten (Regel 4).
+            inv_typ_je_id = {str(r[0]): r[1] for r in inv_result.all()}
+            gueltige_inv_ids = set(inv_typ_je_id)
 
             for inv_id_str, inv_config in inv_mapping.items():
                 if inv_id_str not in gueltige_inv_ids:
@@ -1184,7 +1203,16 @@ async def import_ha_statistics(
 
                     for feld, wert in inv_werte.items():
                         vorhandener_wert = imd.verbrauch_daten.get(feld)
-                        if vorhandener_wert is None or vorhandener_wert == 0 or request.ueberschreiben:
+                        # N-555 Regel 4 (E1 eng): bei einem Heimlade-Mengenfeld ist
+                        # eine gespeicherte 0 ein Wert („die Wallbox hat nicht
+                        # geladen") und wird — wie jeder andere Wert — nur mit
+                        # „überschreiben" ersetzt. Überall sonst gilt die 0 weiter
+                        # als leer (PV-Module: eine eingefrorene Quelle ergäbe 0).
+                        leer = vorhandener_wert is None or (
+                            vorhandener_wert == 0
+                            and not ist_heimlade_mengen_feld(inv_typ_je_id.get(inv_id_str), feld)
+                        )
+                        if leer or request.ueberschreiben:
                             result = await write_json_subkey_with_provenance(
                                 db, imd, "verbrauch_daten", feld, wert,
                                 source=_HA_STATS_SOURCE, writer=_HA_STATS_WRITER,

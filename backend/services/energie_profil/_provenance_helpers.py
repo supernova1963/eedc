@@ -32,6 +32,21 @@ _TZ_SKIP_COLUMNS = frozenset({
     # Stunden-Profile sind interne Caches, keine Aggregat-Werte
     "pv_prognose_stundenprofil", "solcast_prognose_stundenprofil",
     "sfml_prognose_stundenprofil",
+    # N-547: das Lern-SOLL ist ebenfalls ein interner Cache des
+    # Korrekturprofil-Lernens (ein Schreiber, festes Muster) — kein
+    # Aggregat-Wert, den ein Anwender irgendwo abliest.
+    "lern_soll_stundenprofil_kwh", "lern_soll_kwh",
+    # Zählerlücken wie HA (R4/R9): `verworfen` ist eine Markierung ÜBER die
+    # Zeile (welche Achse eine Menge verworfen hat) und die Regelmarke — kein
+    # Aggregat-Wert mit eigener Herkunft.
+    "verworfen",
+    # N-567: `nachtrag` benennt Mengen der Zeile (welche Achse einen Nachtrag nach
+    # Nullstunden trägt) — ebenfalls eine Markierung, kein Aggregat-Wert.
+    "nachtrag",
+    # N-569-Ergänzung: „davon aus dem Speicher" ist eine Teilmenge von
+    # `emob_ladung_pv_abgeleitet_kwh` — dessen Herkunfts-Marke (abgeleitet,
+    # Einspeise-Deckung) gilt für ihn mit; keine eigene Herkunft.
+    "emob_ladung_speicher_abgeleitet_kwh",
 })
 
 # TagesEnergieProfil:
@@ -39,6 +54,9 @@ _TEP_JSON_SUBKEY_COLUMNS = ("komponenten",)
 _TEP_SKIP_COLUMNS = frozenset({
     "id", "anlage_id", "datum", "stunde",
     "source_provenance", "source_hash",
+    # Zählerlücken wie HA (R2): die Spanne beschreibt die Zeile, sie ist kein
+    # Messwert mit eigener Herkunft.
+    "spannen",
 })
 
 

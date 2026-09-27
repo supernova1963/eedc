@@ -8,6 +8,7 @@ Wallbox, Balkonkraftwerk, Sonstiges) aus den Monats-Fakten und dem Layer-SoT.
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from typing import Optional
+from backend.core.zahlenformat import fmt_zahl
 from backend.core.berechnungen import heizwaerme_ist_abgeleitet
 from backend.core.berechnungen.imd_monatsaggregat import imd_typ_beitrag
 from backend.core.berechnungen.fenster import verteile_auf_guenstigste
@@ -38,7 +39,12 @@ from backend.core.field_definitions import (
     get_wp_warmwasser_kwh,
     nenner_ist_feine_summe,
 )
-from backend.services.eauto_wirtschaftlichkeit import berechne_eauto_ersparnis_periode
+from backend.core.berechnungen import eauto_effizienz_100km, eauto_effizienz_zeitraum
+from backend.services.eauto_wirtschaftlichkeit import (
+    berechne_eauto_ersparnis_periode,
+    dienstliche_ladung_der_zeile,
+    monate_des_autos,
+)
 from backend.models.monatsdaten import Monatsdaten
 from backend.services.energie_profil.modus_split_monat import lade_modus_split_ohne_abschluss
 from backend.models.investition import Investition, InvestitionMonatsdaten
@@ -53,8 +59,42 @@ from backend.core.investition_parameter import (
     PARAM_E_AUTO,
     PARAM_E_AUTO_DEFAULTS,
     abgrenzung_stoerung,
+    ist_dienstlich,
 )
-from backend.api.routes.ha_export.emob import _EmobPoolCtx, _emob_month_share
+from backend.api.routes.ha_export.emob import (
+    _EmobPoolCtx,
+    _emob_extern_im_monat,
+    _emob_heimladung_im_monat,
+)
+
+
+def _emob_pv_netz_des_monats(
+    investition: Investition, emob_ctx: Optional[_EmobPoolCtx],
+    km: float, jahr: int, monat: int, d: dict,
+) -> tuple[float, float]:
+    """``(pv, netz)`` der Heimladung dieses Geräts im Monat — N-555, Konzept Regel 0/2/3.
+
+    * **Privates E-Auto:** nach dem Entscheid der einen Funktion
+      (``emob_heimladung_im_monat`` → ``entscheid.je_auto``): seine eigene Messung, sein
+      Anteil am Rest der Wallbox, die Schätzung aus dem Fahrverbrauch oder 0.
+    * **Dienstwagen** (Regel 3, Stufe 2): seine dienstliche Menge aus dem Entscheid —
+      Messung, sonst Fahrverbrauch als Netz; neben einer dienstlichen Wallbox in Betrieb 0.
+      Bis 26.09.2026 bekam er hier, wenn die private Wallbox im Monat lud, einen
+      „km-Anteil" am privaten Topf (sein km durch die km der PRIVATEN Autos).
+    * **Wallbox:** ihre eigenen Felder — sie **ist** die Summe (Regel 0).
+    """
+    if investition.typ == "e-auto" and not ist_dienstlich(investition):
+        return _emob_heimladung_im_monat(emob_ctx, investition.id, km, jahr, monat, d)
+    if investition.typ == "e-auto":
+        entscheid = emob_ctx.entscheide.get((jahr, monat)) if emob_ctx is not None else None
+        if entscheid is not None:
+            dl = entscheid.dienstlich_je_inv.get(investition.id)
+            return (dl.pv_kwh, dl.netz_kwh) if dl is not None else (0.0, 0.0)
+        dl = dienstliche_ladung_der_zeile(d)
+        return (dl.pv_kwh, dl.netz_kwh)
+    # #262: PV/Netz via SoT-Helper — bei Imports ohne expliziten
+    # `ladung_netz_kwh`-Key wird aus `Total − PV` abgeleitet.
+    return get_emob_pv_netz_kwh(d)
 
 
 def laufzeit_attribute(investition: Investition, heute: Optional[date] = None) -> dict:
@@ -153,41 +193,63 @@ async def calculate_investition_sensors(
         gesamt_pv_ladung = 0.0
         gesamt_netz_ladung = 0.0
 
-        for md in monatsdaten:
-            d = _emob_daten(md)
+        # N-555 F-3 (Konzept Regel 10): kWh/100 km je Monat nach der Layer-Regel
+        # (gemessener Fahrverbrauch vor Heim + Extern), der Zeitraum ist
+        # Σ Monatswerte ÷ Σ km — dieselbe Regel wie Cockpit, Hub und Auswertungen.
+        effizienz_monate = []
+        # N-555 Stufe 2 (Konzept Regel 2 Schritt 3): ein privates Auto bekommt Rest der
+        # Wallbox auch in Monaten ohne eigene Zeile (`monate_des_autos`) — dieselben
+        # Monate hier und in der Ersparnis unten, sonst ginge die Summe der Fahrzeug-
+        # Sensoren am Anlagen-Topf vorbei.
+        emob_monate = [(md.jahr, md.monat, _emob_daten(md)) for md in monatsdaten]
+        if investition.typ == "e-auto" and not ist_dienstlich(investition):
+            _mit_zeile = {(j, m) for j, m, _ in emob_monate}
+            emob_monate += [
+                (j, m, {}) for j, m, _ in monate_des_autos(emob_ctx, investition.id, {})
+                if (j, m) not in _mit_zeile and investition.ist_aktiv_im_monat(j, m)
+            ]
+        for _j, _m, d in emob_monate:
             km_m = d.get("km_gefahren", 0) or 0
             gesamt_km += km_m
             gesamt_verbrauch += d.get("verbrauch_kwh", 0) or 0
-            # Phase 2a: evcc-Setup → PV/Netz km-anteilig aus dem Wallbox-Pool.
-            share = _emob_month_share(emob_ctx, investition.typ, km_m, md.jahr, md.monat)
-            if share is not None:
-                gesamt_pv_ladung += share.pv_kwh
-                gesamt_netz_ladung += share.netz_kwh
-            else:
-                # #262: PV/Netz via SoT-Helper — bei Imports ohne expliziten
-                # `ladung_netz_kwh`-Key wird aus `Total − PV` abgeleitet.
-                pv, netz = get_emob_pv_netz_kwh(d)
-                gesamt_pv_ladung += pv
-                gesamt_netz_ladung += netz
+            pv, netz = _emob_pv_netz_des_monats(investition, emob_ctx, km_m, _j, _m, d)
+            gesamt_pv_ladung += pv
+            gesamt_netz_ladung += netz
+            effizienz_monate.append(eauto_effizienz_100km(
+                d.get("verbrauch_kwh", 0) or 0,
+                pv + netz + (d.get("ladung_extern_kwh", 0) or 0),
+                km_m,
+            ))
+        effizienz = eauto_effizienz_zeitraum(effizienz_monate)
 
         gesamt_ladung = gesamt_pv_ladung + gesamt_netz_ladung
 
         for sensor in E_AUTO_SENSOREN:
             value = None
             berechnung = None
+            zusatz: dict = {}
 
             if sensor.key == "e_auto_km_gesamt":
                 if gesamt_km > 0:
                     value = gesamt_km
                     berechnung = f"Summe aus {len(monatsdaten)} Monaten"
             elif sensor.key == "e_auto_verbrauch_kwh_100km":
-                if gesamt_km > 0 and gesamt_verbrauch > 0:
-                    value = gesamt_verbrauch / gesamt_km * 100
-                    berechnung = f"{gesamt_verbrauch:.0f} / {gesamt_km:.0f} × 100"
+                # ⛔ Bis 25.09.2026: `Σ Fahrverbrauch ÷ Σ km` über ALLE Monate — auch
+                # die ohne Fahrverbrauch. Mit einem Verbrauchssensor ab Juli ergab das
+                # die halbe Zahl. Der Sensor war bis dahin praktisch leer (die
+                # Startroutine buchte jeden Verbrauch in eine Ladung um) und erscheint
+                # mit N-555 neu — ein Sprung in der Langzeitstatistik entsteht nicht.
+                if effizienz.wert is not None:
+                    value = effizienz.wert
+                    berechnung = (
+                        f"{fmt_zahl(effizienz.basis_kwh, 0)} / {fmt_zahl(effizienz.km, 0)} × 100"
+                        f" ({'gemessen' if effizienz.quelle == 'gemessen' else 'Näherung über die Ladung'})"
+                    )
+                    zusatz = {"quelle": effizienz.quelle}
             elif sensor.key == "e_auto_pv_anteil_prozent":
                 if gesamt_ladung > 0:
                     value = gesamt_pv_ladung / gesamt_ladung * 100
-                    berechnung = f"{gesamt_pv_ladung:.0f} / {gesamt_ladung:.0f} × 100"
+                    berechnung = f"{fmt_zahl(gesamt_pv_ladung, 0)} / {fmt_zahl(gesamt_ladung, 0)} × 100"
             elif sensor.key == "e_auto_ersparnis_vs_benzin_euro":
                 if gesamt_km > 0:
                     # Monatliche Kraftstoffpreise laden (Fallback: statischer Parameter)
@@ -210,23 +272,28 @@ async def calculate_investition_sensors(
                     km_pro_monat_sensor: list[tuple[int, int, float]] = []
                     netz_pro_monat_sensor: list[tuple[int, int, float]] = []
                     netz_total_sensor = 0.0
+                    extern_euro_sensor = 0.0
                     fahrverbrauch_sensor = 0.0
                     monate_sensor: list[tuple[int, int]] = []
-                    for md in monatsdaten:
-                        d = _emob_daten(md)
+                    for _j, _m, d in emob_monate:
                         km = d.get("km_gefahren", 0) or 0
-                        # #262: SoT-Helper liefert (pv, netz) mit Fallback.
-                        _, netz = get_emob_pv_netz_kwh(d)
-                        # Phase 2a: evcc → Netz km-anteilig aus dem Wallbox-Pool.
-                        share = _emob_month_share(emob_ctx, investition.typ, km, md.jahr, md.monat)
-                        if share is not None:
-                            netz = share.netz_kwh
-                        monate_sensor.append((md.jahr, md.monat))
+                        _, netz = _emob_pv_netz_des_monats(
+                            investition, emob_ctx, km, _j, _m, d,
+                        )
+                        monate_sensor.append((_j, _m))
                         netz_total_sensor += netz
+                        # N-555 (§11): externe Ladekosten nach der Topf-Regel.
+                        if investition.typ == "e-auto" and not ist_dienstlich(investition):
+                            _, extern_euro = _emob_extern_im_monat(
+                                emob_ctx, km, _j, _m, d,
+                            )
+                        else:
+                            extern_euro = float(d.get("ladung_extern_euro", 0) or 0)
+                        extern_euro_sensor += extern_euro
                         if netz > 0:
-                            netz_pro_monat_sensor.append((md.jahr, md.monat, netz))
+                            netz_pro_monat_sensor.append((_j, _m, netz))
                         if km > 0:
-                            km_pro_monat_sensor.append((md.jahr, md.monat, km))
+                            km_pro_monat_sensor.append((_j, _m, km))
                             fahrverbrauch_sensor += d.get("verbrauch_kwh", 0) or 0
 
                     preis_lookup_sensor = await monats_strompreis_lookup(
@@ -236,10 +303,14 @@ async def calculate_investition_sensors(
                     erg = berechne_eauto_ersparnis_periode(
                         km_pro_monat=km_pro_monat_sensor,
                         ladung_netz_kwh_gesamt=netz_total_sensor,
-                        # Wie beim Anlagen-Sensor: externe Ladekosten waren hier
-                        # noch nie enthalten — beim Umhängen nicht stillschweigend
-                        # dazunehmen.
-                        ladung_extern_euro_gesamt=0.0,
+                        # N-555 (§11, Entscheid Gernot 25.09.2026 „angleichen"):
+                        # externe Ladekosten gehören in die Stromkosten — genau so
+                        # rechnen E-Auto-Hub, T-Konto und Cockpit. Hier stand bis
+                        # dahin bewusst 0,0 („beim Umhängen nicht stillschweigend
+                        # dazunehmen"); der Sensor lag damit um genau diese Kosten
+                        # über der Zahl des Hubs. Einmaliger Sprung in der
+                        # HA-Langzeitstatistik, im CHANGELOG angekündigt.
+                        ladung_extern_euro_gesamt=extern_euro_sensor,
                         wallbox_strompreis_cent=netzbezug_preis,
                         eauto_parameter=params,
                         monats_benzinpreis_lookup={
@@ -254,17 +325,23 @@ async def calculate_investition_sensors(
                     fossile_kosten = erg.fossile_kosten_euro
 
                     value = erg.ersparnis_euro
+                    # N-555 (§11): `strom_kosten` enthält jetzt die externen
+                    # Ladekosten — der Rechenweg nennt sie getrennt, sonst stünden
+                    # sie unter „Strom @ … ct/kWh" zum Heimpreis.
+                    heim_kosten = strom_kosten - extern_euro_sensor
                     berechnung = (
-                        f"{benzin_kosten:.2f} (Benzin) - {strom_kosten:.2f} (Strom"
-                        f" @ {erg.verwendeter_strompreis_cent:.2f} ct/kWh)"
-                        + (f" - {fossile_kosten:.2f} (Kraftstoff)" if fossile_kosten else "")
+                        f"{fmt_zahl(benzin_kosten, 2)} (Benzin) - {fmt_zahl(heim_kosten, 2)} (Strom"
+                        f" @ {fmt_zahl(erg.verwendeter_strompreis_cent, 2)} ct/kWh)"
+                        + (f" - {fmt_zahl(extern_euro_sensor, 2)} (extern geladen)" if extern_euro_sensor else "")
+                        + (f" - {fmt_zahl(fossile_kosten, 2)} (Kraftstoff)" if fossile_kosten else "")
                     )
 
             if value is not None:
                 sensor_values.append(SensorValue(
                     definition=sensor,
                     value=value,
-                    berechnung=berechnung
+                    berechnung=berechnung,
+                    zusatz_attribute=zusatz,
                 ))
 
     # Wärmepumpe Sensoren
@@ -480,7 +557,7 @@ async def calculate_investition_sensors(
                 if _az.wert is not None:
                     value = _az.wert
                     berechnung = (
-                        f"{_az.zaehler_kwh:.0f} / {_az.nenner_kwh:.0f}"
+                        f"{fmt_zahl(_az.zaehler_kwh, 0)} / {fmt_zahl(_az.nenner_kwh, 0)}"
                         if _az.zaehler_kwh is not None and _az.nenner_kwh is not None
                         else None
                     )
@@ -557,11 +634,11 @@ async def calculate_investition_sensors(
                 if bewertbar:
                     value = alte_kosten - (wp_kosten - kuehl_kosten)
                     berechnung = (
-                        f"{alte_kosten:.2f} (alt) - {wp_kosten - kuehl_kosten:.2f} (WP)"
+                        f"{fmt_zahl(alte_kosten, 2)} (alt) - {fmt_zahl(wp_kosten - kuehl_kosten, 2)} (WP)"
                     )
                     if kuehl_kosten > 0:
                         berechnung += (
-                            f" · Kühlstrom {kuehl_kosten:.2f} € nicht im Vergleich"
+                            f" · Kühlstrom {fmt_zahl(kuehl_kosten, 2)} € nicht im Vergleich"
                         )
                     # B5/X-2: der Vorbehalt aus dem Layer — dieselben Worte
                     # wie Hub (B3) und Cockpit (B4). Nur gesetzt, wenn es
@@ -579,18 +656,18 @@ async def calculate_investition_sensors(
                 # hat. In HA-Langzeitstatistik lebt so eine 0 weiter.
                 if gesamt_modus_abdeckung_h > 0 or gesamt_modus_gemessen:
                     value = gesamt_modus_heizen
-                    berechnung = f"{gesamt_modus_heizen:.1f} von {gesamt_strom:.1f} kWh gesamt"
+                    berechnung = f"{fmt_zahl(gesamt_modus_heizen, 1)} von {fmt_zahl(gesamt_strom, 1)} kWh gesamt"
             elif sensor.key == "wp_strom_kuehlen_modus_kwh":
                 if gesamt_modus_abdeckung_h > 0 or gesamt_modus_gemessen:
                     value = gesamt_modus_kuehlen
-                    berechnung = f"{gesamt_modus_kuehlen:.1f} von {gesamt_strom:.1f} kWh gesamt"
+                    berechnung = f"{fmt_zahl(gesamt_modus_kuehlen, 1)} von {fmt_zahl(gesamt_strom, 1)} kWh gesamt"
             elif sensor.key == "wp_strom_warmwasser_modus_kwh":
                 # N-336 — dieselbe Leer-Regel wie bei den zwei Nachbarn: ohne
                 # erfassten Modus fehlt der Sensor, statt 0 zu behaupten.
                 if gesamt_modus_abdeckung_h > 0 or gesamt_modus_gemessen:
                     value = gesamt_modus_warmwasser
                     berechnung = (
-                        f"{gesamt_modus_warmwasser:.1f} von {gesamt_strom:.1f} kWh gesamt"
+                        f"{fmt_zahl(gesamt_modus_warmwasser, 1)} von {fmt_zahl(gesamt_strom, 1)} kWh gesamt"
                     )
             elif sensor.key == "wp_betriebsmodus":
                 # #398: der EINZIGE Sensor dieser Liste, der KEINE Monatsgröße
@@ -802,7 +879,7 @@ async def _wp_steuerung_und_plan(
                 ),
                 "preisquelle": fenster_ctx.preisquelle,
             }, berechnung=(
-                f"Ø {je_tag:.1f} kWh Warmwasserstrom je Tag aus {tage} Tagen "
+                f"Ø {fmt_zahl(je_tag, 1)} kWh Warmwasserstrom je Tag aus {tage} Tagen "
                 f"({'gemessen' if herkunft == 'gemessen' else 'aus dem Betriebsmodus abgeleitet'})"
             ))
 
@@ -907,7 +984,7 @@ async def _wp_steuerung_und_plan(
                     ),
                     "preisquelle": fenster_ctx.preisquelle,
                 }, berechnung=(
-                    f"Ø {je_tag:.1f} kWh gemessener Kühlstrom je Tag — günstigstes "
+                    f"Ø {fmt_zahl(je_tag, 1)} kWh gemessener Kühlstrom je Tag — günstigstes "
                     f"2-Stunden-Fenster vor der Tageshöchsttemperatur um {spitze:02d}:00"
                 ))
 
@@ -1021,5 +1098,5 @@ async def _sonstiges_sensoren(*, db, investition, sensor_values, fenster_ctx):
         "preisquelle": fenster_ctx.preisquelle,
         **fenster_ctx.profil_attribute,
     }, berechnung=(
-        f"Ø {je_tag:.1f} kWh je Tag aus {tage} Tagen — günstigstes 2-Stunden-Fenster"
+        f"Ø {fmt_zahl(je_tag, 1)} kWh je Tag aus {tage} Tagen — günstigstes 2-Stunden-Fenster"
     ))

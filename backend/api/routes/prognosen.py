@@ -132,6 +132,20 @@ class PrognosenVergleichResponse(BaseModel):
     # Zwecken neben dem Legacy-Faktor. Live-Pfad nutzt nur eedc_lernfaktor.
     eedc_lernfaktor_o12: Optional[float] = None
     eedc_lernfaktor_o12_delta_pct: Optional[float] = None  # 100 * (O12 - Legacy) / Legacy
+    # ── N-551: es gibt ZWEI Faktoren, je Basis einen ────────────────────────
+    #: Worauf `eedc_lernfaktor` steht — heute immer die **rohe**, ungekappte
+    #: Tagesprognose (`pv_prognose_kwh`, W1 aus N-547). Als Feld und nicht als
+    #: Wissen des Lesers: ein Faktor ohne seine Basis ist nicht anwendbar.
+    eedc_lernfaktor_basis: str = "roh"
+    #: Tage, aus denen `eedc_lernfaktor` gelernt ist (die Zahl steht auch im
+    #: Text von `eedc_lernfaktor_stufe`, dort aber nicht auswertbar).
+    eedc_lernfaktor_tage: Optional[int] = None
+    #: Derselbe Lernstoff auf der **gekappten** Basis (`lern_soll_kwh`) — den
+    #: nimmt der Kanon-Fallback für die an der Wechselrichter-Grenze gekappten
+    #: Slots. `None` an Anlagen ohne Kappung oder mit zu wenigen Tagen; dann
+    #: rechnet der Fallback wie bisher mit dem Roh-Faktor.
+    eedc_lernfaktor_gekappt: Optional[float] = None
+    eedc_lernfaktor_gekappt_tage: Optional[int] = None
     eedc_prognose_basis: str = "eedc"  # "eedc" oder "solcast" (für EEDC-Diagnose)
     eedc_tageshaelften: List[Optional[TageshaelfteSchema]] = []
 
@@ -684,10 +698,18 @@ async def get_prognosen_vergleich(
     # ── IST-Ertrag heute (zentraler Adapter) ──
     # Issue #135: pv_kw kann None sein (kein Zähler gemappt / Datenlücke). None-
     # Stunden fließen NICHT in die Summe ein und bleiben im Profil als Lücke
-    # (kw=None). Eine Lücke in einer bereits abgelaufenen Stunde setzt
-    # unvollstaendig=True; die gerade abgeschlossene Stunde bewusst nicht (HA
-    # schreibt die Hourly-Row erst am Stundenende). Logik in prognose_adapter.
-    ist_p = ist_profil(ist_rows, jetzt_stunde=now.hour, datum=heute)
+    # (kw=None). ⭐ Zählerlücken wie HA (§2): `unvollstaendig` nur noch bei einem
+    # Mitternachtsbündel mit Energie oder `verworfen.pv` der heutigen
+    # Tageszeile; eine gebündelte Stunde fällt aus dem Stundenvergleich, ihre
+    # Energie zählt im IST. Logik in prognose_adapter.
+    _tz_heute_verworfen = (await db.execute(
+        select(TagesZusammenfassung.verworfen).where(
+            TagesZusammenfassung.anlage_id == anlage_id,
+            TagesZusammenfassung.datum == heute,
+        )
+    )).scalar_one_or_none()
+    ist_p = ist_profil(ist_rows, jetzt_stunde=now.hour, datum=heute,
+                       verworfen=_tz_heute_verworfen)
     ist_stundenprofil = _profil_zu_eintraegen(ist_p)
     ist_heute_kwh = ist_p.tageswert_kwh  # roh/ungerundet — für verbleibend-Rechnung
     ist_unvollstaendig = ist_p.unvollstaendig
@@ -831,6 +853,9 @@ async def get_prognosen_vergleich(
         eedc_lernfaktor_stufe=lf_result.label,
         eedc_lernfaktor_o12=lf_result.faktor_o12,
         eedc_lernfaktor_o12_delta_pct=lf_result.delta_o12_pct,
+        eedc_lernfaktor_tage=lf_result.tage_count or None,
+        eedc_lernfaktor_gekappt=lf_result.faktor_gekappt,
+        eedc_lernfaktor_gekappt_tage=lf_result.tage_count_gekappt or None,
         eedc_prognose_basis="eedc",  # EEDC basiert immer auf OpenMeteo
         solcast_verfuegbar=solcast is not None,
         solcast_status=sc_status,
@@ -953,6 +978,14 @@ async def get_prognosen_genauigkeit(
     AUSREISSER_SCHWELLE = 50.0
     anzahl_ausreisser = 0
 
+    # ⭐ Zählerlücken wie HA (§2): Tage um ein Mitternachtsbündel (D und D+1) und
+    # Tage mit verworfener PV bleiben sichtbar, gehen aber nicht in MAE/MBE —
+    # ihr Tageswert ist um die Energie der Lücke verschoben (wie im HA-Dashboard).
+    from backend.services.energie_profil.vergleichstage import tage_ohne_tagesvergleich
+    ohne_vergleich = await tage_ohne_tagesvergleich(
+        db, anlage_id, "pv", von=von, bis=date.today() - timedelta(days=1),
+    )
+
     # PV-IST über den SoT-Helper `summe_pv_bkw_kwh` — Whitelist und v>0-Filter
     # gehören zentral nach `core/berechnungen/energie.py` (ADR-001, BKW-Drift-
     # Klasse 2026-05-19, Rainer-PN). Frontend-Pendant: `PV_KOMPONENTEN_PREFIXE`
@@ -1007,6 +1040,8 @@ async def get_prognosen_genauigkeit(
 
         # Auf Wunsch Ausreißer-Tage aus der MAE/MBE-Aggregation ausschließen (#296 #9).
         if ausreisser_ausblenden and ist_ausreisser:
+            continue
+        if tz.datum in ohne_vergleich:
             continue
         if om_err is not None:
             om_signed.append(om_err)

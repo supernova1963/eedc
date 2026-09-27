@@ -29,6 +29,7 @@ from backend.core.field_definitions import (
     einheit_fuer,
     get_basis_felder,
     get_felder_fuer_investition,
+    ist_heimlade_mengen_feld,
     ist_stand_feld,
     ist_zaehler_differenz_feld,
 )
@@ -60,6 +61,10 @@ if TYPE_CHECKING:  # pragma: no cover — nur für die Signatur, kein Laufzeit-I
     from backend.services.strompreis_aggregator import StrompreisAggregat
 
 router = APIRouter()
+
+#: N-555 Regel 4: der Wortlaut eines 0-Vorschlags bei einem Heimlade-Mengenfeld —
+#: EINE Zeichenkette für HA-Statistik und MQTT (die Quelle steht ohnehin am Vorschlag).
+NULL_VORSCHLAG_BESCHREIBUNG = "0 — kein Zuwachs"
 
 
 # =============================================================================
@@ -523,12 +528,24 @@ async def lade_mqtt_monatsmengen(
             mqtt_energy[feld_name] = val
 
     # Investitions-Felder: inv/{inv_id}/{key}
+    #
+    # N-555 Regel 4 (E1 eng): bei den **Heimlade-Mengenfeldern** ist eine 0 ein
+    # Wert. `mqtt_monats_deltas` liefert einen Key nur, wenn im Monat beide Ränder
+    # der Zählerreihe stehen — eine 0 hier heißt also „Daten da, kein Zuwachs",
+    # nie „keine Daten" (das fehlt im Ergebnis). Bis 25.09.2026 fraß der `<= 0`-Filter
+    # genau diese 0, der Monatsabschluss blieb leer, und der Fahrverbrauch sprang
+    # als Heimladung ein. Alle anderen Felder bleiben bei `> 0` (PV-Module: eine
+    # eingefrorene Integration ergäbe ebenfalls 0 und verdrängte die Verteilung).
+    _typ_je_inv = {i.id: i.typ for i in (getattr(anlage, "investitionen", None) or ())}
     for mqtt_key, val in monats_mengen.items():
-        if not mqtt_key.startswith("inv/") or val is None or val <= 0:
+        if not mqtt_key.startswith("inv/") or val is None or val < 0:
             continue
         ziel = _mqtt_inv_feld(mqtt_key)
-        if ziel:
-            mqtt_inv_energy.setdefault(ziel[0], {})[ziel[1]] = val
+        if not ziel:
+            continue
+        if val == 0 and not ist_heimlade_mengen_feld(_typ_je_inv.get(ziel[0]), ziel[1]):
+            continue
+        mqtt_inv_energy.setdefault(ziel[0], {})[ziel[1]] = val
 
     return mqtt_energy, mqtt_inv_energy
 
@@ -550,7 +567,8 @@ def _sensor_ids_aus_mapping(basis_mapping: dict, inv_mappings: dict) -> list[str
 
 
 async def lade_ha_statistik_werte(
-    basis_mapping: dict, inv_mappings: dict, jahr: int, monat: int
+    basis_mapping: dict, inv_mappings: dict, jahr: int, monat: int,
+    deckel_je_sensor: Optional[dict[str, float]] = None,
 ) -> dict[str, float]:
     """HA Statistics Service für Sensor-Vorschläge: sensor_id → Monatsdifferenz.
 
@@ -578,7 +596,11 @@ async def lade_ha_statistik_werte(
         return {}
 
     try:
-        stats_result = await asyncio.to_thread(ha_stats_svc.get_monatswerte, all_sensor_ids, jahr, monat)
+        # Zählerlücken wie HA (Vorlage §10): der Monat verwirft, was die
+        # Stunden verwerfen — Rücksprung immer, Deckel für PV/Einspeisung.
+        stats_result = await asyncio.to_thread(
+            ha_stats_svc.get_monatswerte, all_sensor_ids, jahr, monat, deckel_je_sensor,
+        )
         return {s.sensor_id: s.differenz for s in stats_result.sensoren if s.differenz is not None}
     except Exception:
         logger.warning("HA Statistics DB nicht erreichbar für Monatsabschluss-Vorschläge")
@@ -612,8 +634,14 @@ async def baue_kontext(
     # Bestehende Monatsdaten laden
     monatsdaten = await lade_monatsdaten(db, anlage_id, jahr, monat)
 
+    from backend.models.investition import Investition
+    from backend.services.monatswert_deckel import deckel_je_sensor
+    _invs = (await db.execute(
+        select(Investition).where(Investition.anlage_id == anlage_id)
+    )).scalars().all()
     ha_stats_werte = await lade_ha_statistik_werte(
-        basis_mapping, inv_mappings, jahr, monat
+        basis_mapping, inv_mappings, jahr, monat,
+        deckel_je_sensor=deckel_je_sensor(anlage, _invs),
     )
 
     alle_basis_felder, preis_messung = await lade_basis_feldliste(
@@ -859,17 +887,28 @@ async def _ergaenze_investitions_vorschlaege(
     # (MAX−MIN), bei einem Preis-Feld also die Monats-Spreizung. Ohne
     # den Filter stand die mit Konfidenz 92 ÜBER dem korrekt
     # gerechneten Vorschlag (s. `ist_zaehler_differenz_feld`).
+    #
+    # N-555 Regel 4 (E1 eng): bei den Heimlade-Mengenfeldern (Wallbox „Ladung
+    # gesamt", E-Auto „Heim: Netz" und der alte Gesamtwert) wird auch eine **0**
+    # vorgeschlagen. `ha_stats_werte` trägt nur Sensoren, für die die Statistik im
+    # Monat Daten hat (`lade_ha_statistik_werte`: `differenz is not None`) — eine 0
+    # darin ist gemessen. Ohne sie blieb das Feld leer, und im abgeschlossenen
+    # Monat sprang der Fahrverbrauch als Heimladung ein (Johnny_1993, 1.364 kWh).
+    null_ist_wert = ist_heimlade_mengen_feld(getattr(inv, "typ", None), feld)
     if (
         strategie == "sensor" and sensor_id and sensor_id in ctx.ha_stats_werte
         and ist_zaehler_differenz_feld(feld)
     ):
         stats_wert = ctx.ha_stats_werte[sensor_id]
-        if stats_wert > 0:
+        if stats_wert > 0 or (null_ist_wert and stats_wert == 0):
             vorschlaege.insert(0, Vorschlag(
                 wert=round(stats_wert, 1),
                 quelle=VorschlagQuelle.HA_STATISTICS,
                 konfidenz=92,
-                beschreibung="Aus HA-Statistik (Recorder-DB)",
+                beschreibung=(
+                    "Aus HA-Statistik (Recorder-DB)" if stats_wert > 0
+                    else NULL_VORSCHLAG_BESCHREIBUNG
+                ),
             ))
 
     # Zählerstand (#377) — der mitgeschriebene Stand, keine Differenz.
@@ -915,11 +954,17 @@ async def _ergaenze_investitions_vorschlaege(
     # MQTT Inbound-Vorschlag einfügen (Konfidenz 91)
     mqtt_inv_values = ctx.mqtt_inv_energy.get(inv.id, {})
     if feld in mqtt_inv_values:
+        # Eine 0 steht hier nur bei Heimlade-Mengenfeldern (Filter in
+        # `lade_mqtt_monatsmengen`) — und dann mit ihrem eigenen Wortlaut.
         vorschlaege.insert(0, Vorschlag(
             wert=mqtt_inv_values[feld],
             quelle=VorschlagQuelle.MQTT_INBOUND,
             konfidenz=91,
-            beschreibung="Aus MQTT-Zählerständen (Differenz über den Monat)",
+            beschreibung=(
+                "Aus MQTT-Zählerständen (Differenz über den Monat)"
+                if mqtt_inv_values[feld] > 0 or not null_ist_wert
+                else NULL_VORSCHLAG_BESCHREIBUNG
+            ),
         ))
 
 
@@ -1033,6 +1078,8 @@ async def baue_investition_status(
         inv.typ, inv.parameter,
         anlage_investitionen=ctx.anlage.investitionen,
         belegte_felder=belegte_felder,
+        # N-555 Stufe 2 (Regel 0): „dienstliche Wallbox in Betrieb" im Monat des Formulars.
+        jahr=ctx.jahr, monat=ctx.monat,
     )
     if not felder_config:
         return None

@@ -2052,6 +2052,9 @@ P10_SCHREIBEN_IMPORT_CHECKER: frozenset[str] = frozenset({
     "backend/api/routes/import_export/csv_operations.py::export_csv",
     "backend/api/routes/import_export/json_operations.py::_export_anlage_full_impl",
     "backend/services/migrations/migrate_emob_canonical_source.py::migrate_emob_canonical_source",
+    # N-555 (25.09.2026): einmalige Rückbenennung der Startroutine-Umbuchungen —
+    # SCHREIBT E-Auto-Zeilen (Schlüssel zurück in `verbrauch_kwh`), leitet nichts ab.
+    "backend/services/migrations/migrate_eauto_fahrverbrauch_rueckbenennung.py::migrate_eauto_fahrverbrauch_rueckbenennung",
     # Reparatur-Werkbank: prüft und schreibt Provenance, leitet nichts ab.
     "backend/services/repair_orchestrator.py::_scan_cloud_provenance",
     "backend/services/repair_orchestrator.py::_execute_reset_cloud_import",
@@ -2284,6 +2287,13 @@ P10_PER_INVESTITION_PHASE: dict[str, str] = {
         "backend/api/routes/ha_export/investition_sensoren.py::calculate_investition_sensors",
     # Verschachtelte Phase im E-Auto-Dashboard (E-Auto- und Wallbox-Zeile).
     "backend/api/routes/investitionen/dashboard_eauto.py::_emob_daten_von":
+        "backend/api/routes/investitionen/dashboard_eauto.py::get_eauto_dashboard",
+    # N-555 Stufe 2: der E-Mob-Kontext der Sichten, die `InvestitionMonatsdaten` selbst
+    # laden — er bekommt deren Zeilen übergeben (Herkunft, Anreicherung, Entscheid je
+    # Monat über die EINE Funktion) und bildet keine eigene Monatsgröße. Aufrufer sind
+    # ausschließlich gelistete Lader: E-Auto-/Wallbox-Hub, T-Konto, Vorjahr, Aussichten,
+    # HA-Export (zweimal); genannt ist der Lader des E-Auto-Hubs.
+    "backend/services/emob_kontext.py::lade_emob_kontext":
         "backend/api/routes/investitionen/dashboard_eauto.py::get_eauto_dashboard",
     # CHECKER-Phase: beantwortet „führt dieses Gerät einen Kühl-Zähler?" über
     # übergebene Zeilen. Der Lader ist der Datenquellen-Check daneben; zweiter

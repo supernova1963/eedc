@@ -1,4 +1,4 @@
-"""Aggregation von *Cockpit → Monat*: die Investitions-Felder je Typ auf Anlagenebene, der E-Mob-Max-Pool, die
+"""Aggregation von *Cockpit → Monat*: die Investitions-Felder je Typ auf Anlagenebene, der E-Mob-Heimlade-Pool, die
 Werte-Extraktion (mit `get_val`) und die berechneten Bilanzwerte.
 """
 # Vorlage 2 des Refactorings grosser Dateien (18.09.2026): Abschnitte des Endpunkts
@@ -102,9 +102,9 @@ def aggregiere_typen(*, investitionen, jahr, monat, resolved, teilzeitraum):
         # E-Auto und Wallbox NICHT hier — sie messen denselben Stromfluss aus
         # zwei Perspektiven (Vehicle vs. Loadpoint). Aufsummieren über beide
         # Typen würde Pool-Doppelzählung produzieren (Joachim/Gernot
-        # 2026-05-02). Aggregation passiert unten als max-Pool nach dem
-        # Standard-Loop, identisch zu `_collect_saved_data` (Commit 92d522a8)
-        # und `cockpit/uebersicht.py`.
+        # 2026-05-02). Aggregation passiert unten in `emob_heimladung_pool`
+        # über den SoT `get_emob_heimladung_canonical` — dieselbe strukturelle
+        # Regel wie Monats-Fakten und `cockpit/uebersicht.py`.
         # BKW zählt in ZWEI Größen, und das ist keine Doppelzählung:
         # `bkw_erzeugung_kwh` ist die **eigene Zeile** (ROI/Finanz — dort hat das
         # BKW eine getrennte Position, s. [[project_bkw_erzeuger_abgrenzung]]),
@@ -320,63 +320,236 @@ def aggregiere_typen(*, investitionen, jahr, monat, resolved, teilzeitraum):
     return {k: _loc[k] for k in ("direct_fields",) if k in _loc}
 
 
-def emob_max_pool(*, direct_fields, investitionen, jahr, monat, resolved):
-    """E-Mobilitaet: max-Pool ueber E-Auto + Wallbox (veraendert `resolved` in place).
+async def emob_bloecke_des_monats(db, anlage_id, investitionen, jahr, monat) -> dict:
+    """N-555 Stufe 3: ``{inv_id: BlockMonat}`` der geltenden Ladeblöcke des Monats.
 
-    Aus `get_aktueller_monat` Zeilen 1020-1071 (Stand vor dem Umzug) byte-identisch herausgeloest — Vorlage 2.
+    Nur mit E-Auto **und** Wallbox (sonst keine Abfrage); die Tages-Bedingung W-C prüft
+    ``monats_aus_tagen.emob_je_auto``.
     """
-    # ── E-Mobilität: max-Pool über E-Auto + Wallbox ──
-    # Dienstliche Fahrzeuge früh herausfiltern (sie zählen separat in
-    # `dienstlich_ladekosten`, nicht in der Haus-Energiebilanz). Pro Feld die
-    # größere Quelle gewinnt; PV ≤ Gesamt erzwingen. Identische Logik wie in
-    # `_collect_saved_data` (Commit 92d522a8) und `cockpit/uebersicht.py`.
-    if "emob_ladung_kwh" not in direct_fields:
-        eauto_ladung = 0.0
-        eauto_km = 0.0
-        eauto_extern_euro = 0.0
-        wb_ladung = 0.0
-        wb_extern_euro = 0.0
-        emob_quelle: Optional[tuple] = None
-        for inv in investitionen:
-            if ist_dienstlich(inv):
-                continue
-            # #239 detLAN-Folge: HA-Statistics-Werte aus vor-Anschaffungs-
-            # Monaten nicht in den Monatsbericht-Pool aggregieren.
-            if not inv.ist_aktiv_im_monat(jahr, monat):
-                continue
+    typen = {getattr(i, "typ", None) for i in investitionen}
+    if not {"e-auto", "wallbox"} <= typen:
+        return {}
+    from backend.services.energie_profil.monats_aus_tagen import emob_je_auto
+
+    return await emob_je_auto(db, anlage_id, investitionen, jahr, monat)
+
+
+async def emob_heimlade_quellen(db, anlage, investitionen, jahr, monat) -> frozenset:
+    """Die Heimlade-Felder mit zugeordneter Quelle — nur für den **laufenden** Monat.
+
+    Die Regel steht in ``services/emob_heimlade_quellen.py`` (N-555, Konzept Regel 1);
+    die Monats-Fakten fragen für den laufenden Monat dieselbe Funktion.
+    """
+    from backend.services.emob_heimlade_quellen import lade_emob_heimlade_quellen
+
+    return await lade_emob_heimlade_quellen(db, anlage, investitionen, jahr, monat)
+
+
+def emob_heimladung_pool(
+    *, direct_fields, investitionen, jahr, monat, resolved,
+    monats_fakt=None, ist_aktueller_monat=True,
+    heimlade_quellen=frozenset(), ha_felder_mit_daten=frozenset(),
+    bloecke=None,
+):
+    """E-Mobilitaet: Heimladung nach der **einen Funktion** (veraendert `resolved` in place).
+
+    ⭐ **Seit N-555 (Konzept Heimladung/Fahrverbrauch, Regel 1 + 2-Ü + 6) entscheidet
+    hier dieselbe Funktion wie in jeder anderen Sicht:**
+    ``eauto_wirtschaftlichkeit.entscheide_emob_heimladung``. Bis dahin lief dieser Zweig
+    über ``get_emob_heimladung_canonical`` mit dem Fahrverbrauch des E-Autos als
+    „Ladung" — hatte die Wallbox im Monat 0 kWh geladen, stand der Fahrverbrauch als
+    Heimladung da (Johnny_1993: 1.364 kWh). N-554 hatte vorher die Groessen-Heuristik
+    ``max(eauto, wallbox)`` abgeloest; allein loeste das den Fall nicht.
+
+    **Wann hier gar nicht gerechnet wird:** Die gespeicherte Zeile hat den Monat
+    **gemessen** entschieden (Wallbox oder E-Auto, Menge ueber 0) — dann steht ihr
+    Wert wie bisher als direkter Wert in ``resolved``. Im **abgeschlossenen** Monat
+    gilt auch eine gespeicherte **0** (Regel 1: nur nach dem gespeicherten Wert).
+
+    **Sonst** entscheidet die Funktion ueber die gespeicherte Zeile je Geraet,
+    ergaenzt um die Werte aus ``resolved`` (``inv_<id>_<feld>``: Live, MQTT,
+    HA-Statistik — im laufenden Monat gewinnen sie, im abgeschlossenen fuellen sie
+    nur Luecken, dieselbe Praezedenz wie ``merge_datenquellen``), um die HA-Felder mit
+    Daten, aber 0 (``ha_felder_mit_daten``: ein Wert, kein Loch) und im laufenden
+    Monat um die Heimlade-Quellen (``heimlade_quellen``). Das deckt auch den Monat,
+    dessen gespeicherte Zeile nur eine **Schaetzung** ergab: ein HA-Wert der Wallbox
+    zaehlt dort wie ein gespeicherter (Konzept Regel 1).
+
+    Dienstwagen und vor der Anschaffung liegende Monate bleiben wie bisher draussen.
+    Die Buchhaltung der Datenquelle (``emob_quelle``) ist unveraendert. N-557: die
+    externe Ladung (kWh) des Pools wird wie die externen Kosten weitergereicht.
+
+    Returns:
+        ``{"emob_entscheid": …}``, wenn hier entschieden wurde — die Geraete-Sicht
+        nimmt PV/Netz/Extern dann von dort statt aus der gespeicherten Zeile.
+    """
+    from backend.core.field_definitions import HEIMLADE_FELDER
+    from backend.services.eauto_wirtschaftlichkeit import (
+        QUELLE_EAUTO,
+        QUELLE_NULL,
+        QUELLE_SCHAETZUNG,
+        QUELLE_WALLBOX,
+        entscheide_emob_heimladung,
+    )
+
+    gespeichert = monats_fakt.emob if monats_fakt is not None else None
+    gespeichert_quelle = gespeichert.quelle if gespeichert is not None else None
+    if "emob_ladung_kwh" in direct_fields and gespeichert_quelle in (QUELLE_WALLBOX, QUELLE_EAUTO):
+        return {}
+    if "emob_ladung_kwh" in direct_fields and gespeichert_quelle != QUELLE_SCHAETZUNG:
+        return {}  # Fremdquelle (kein Fakten-Wert) — wie bisher unangetastet
+    if not ist_aktueller_monat and gespeichert_quelle == QUELLE_NULL:
+        # Abgeschlossener Monat, gespeicherte Entscheidung: 0. `_collect_saved_data`
+        # fuehrt nur Werte ueber 0 — ohne diese Zeile fiele der Monat an die
+        # HA-Statistik zurueck und bekaeme dort wieder den Fahrverbrauch.
+        resolved["emob_ladung_kwh"] = (0.0, _gespeichert_info(resolved))
+        return {}
+
+    gespeicherte_zeilen = dict(gespeichert.ladedaten_je_inv) if gespeichert is not None else {}
+    # N-555 Stufe 2: auch die dienstlichen Zeilen (Regel 3) und die Herkunft von
+    # „Heim: gesamt" (Regel 8) — dieselben Eingänge wie die Monats-Fakten.
+    gespeicherte_dienstlich = (
+        dict(gespeichert.dienstlich_ladedaten_je_inv) if gespeichert is not None else {}
+    )
+    heim_gesamt: set[int] = set(gespeichert.heim_gesamt_ids) if gespeichert is not None else set()
+    eauto_je_inv: dict[int, dict] = {}
+    wallbox_daten: list[dict] = []
+    dienstwagen_je_inv: dict[int, dict] = {}
+    dienstliche_wallbox_je_inv: dict[int, dict] = {}
+    wallbox_ids: set[int] = set()
+    eauto_km = 0.0
+    emob_quelle: Optional[tuple] = None
+    wallbox_in_betrieb = False
+    for inv in investitionen:
+        # #239 detLAN-Folge: HA-Statistics-Werte aus vor-Anschaffungs-
+        # Monaten nicht in den Monatsbericht-Pool aggregieren.
+        if not inv.ist_aktiv_im_monat(jahr, monat):
+            continue
+        if inv.typ not in ("e-auto", "wallbox"):
+            continue
+        dienstlich = ist_dienstlich(inv)
+        praefix = f"inv_{inv.id}_"
+        werte = {k[len(praefix):]: v for k, v in resolved.items() if k.startswith(praefix)}
+        gespeicherte_zeile = (
+            (gespeicherte_dienstlich if dienstlich else gespeicherte_zeilen).get(inv.id) or {}
+        )
+        zeile = dict(gespeicherte_zeile)
+        for feld, eintrag in werte.items():
+            if ist_aktueller_monat:
+                zeile[feld] = eintrag[0]
+            else:
+                zeile.setdefault(feld, eintrag[0])
+        # HA-Statistik mit Daten, aber 0: ein Wert (Regel 1), kein Loch.
+        for feld in HEIMLADE_FELDER[inv.typ]:
+            if f"{praefix}{feld}" in ha_felder_mit_daten:
+                zeile.setdefault(feld, 0.0)
+        # Regel 8: ein `ladung_kwh` am Auto, das aus einer Quelle (HA, MQTT, Live) in die
+        # Zeile kam, ist „Heim: gesamt" — nur der gespeicherte alte Gesamtwert ohne
+        # Herkunft ist es nicht (sein Status steht in `heim_gesamt_ids` der Schicht).
+        if inv.typ == "e-auto":
+            gespeichert_ladung = gespeicherte_zeile.get("ladung_kwh")
+            aus_quelle = (
+                ("ladung_kwh" in werte and (ist_aktueller_monat or gespeichert_ladung is None))
+                or (f"{praefix}ladung_kwh" in ha_felder_mit_daten and gespeichert_ladung is None)
+            )
+            if aus_quelle:
+                heim_gesamt.add(inv.id)
+        if dienstlich:
             if inv.typ == "e-auto":
-                for suffix in ("ladung_kwh", "verbrauch_kwh"):
-                    entry = resolved.get(f"inv_{inv.id}_{suffix}")
-                    if entry:
-                        eauto_ladung += entry[0]
-                        emob_quelle = entry[1]
-                        break
-                km_entry = resolved.get(f"inv_{inv.id}_km_gefahren")
-                if km_entry:
-                    eauto_km += km_entry[0]
-                    emob_quelle = km_entry[1]
-                extern_entry = resolved.get(f"inv_{inv.id}_ladung_extern_euro")
-                if extern_entry:
-                    eauto_extern_euro += extern_entry[0]
-            elif inv.typ == "wallbox":
-                entry = resolved.get(f"inv_{inv.id}_ladung_kwh")
-                if entry:
-                    wb_ladung += entry[0]
-                    emob_quelle = entry[1]
-                extern_entry = resolved.get(f"inv_{inv.id}_ladung_extern_euro")
-                if extern_entry:
-                    wb_extern_euro += extern_entry[0]
-        emob_ladung = max(eauto_ladung, wb_ladung)
-        if emob_ladung > 0 and emob_quelle is not None:
-            resolved["emob_ladung_kwh"] = (emob_ladung, emob_quelle)
-        if "emob_km" not in direct_fields and eauto_km > 0 and emob_quelle is not None:
-            resolved["emob_km"] = (eauto_km, emob_quelle)
-        # #260: externe Lade-Kosten poolen wie ladung_kwh
-        if "emob_ladung_extern_euro" not in direct_fields:
-            emob_extern_euro = max(eauto_extern_euro, wb_extern_euro)
-            if emob_extern_euro > 0 and emob_quelle is not None:
-                resolved["emob_ladung_extern_euro"] = (emob_extern_euro, emob_quelle)
-    return {}
+                dienstwagen_je_inv[inv.id] = zeile
+            else:
+                dienstliche_wallbox_je_inv[inv.id] = zeile
+            continue
+        if inv.typ == "e-auto":
+            eauto_je_inv[inv.id] = zeile
+            # N-555: auch „Heim: PV/Netz" und Extern tragen die Herkunft — bis
+            # 25.09.2026 zählten hier nur `ladung_kwh`/`verbrauch_kwh`, und ein
+            # Steckerlader mit PV-/Netz-Sensor bekam im laufenden Monat gar keine
+            # Heimladung ausgewiesen (der Topf rechnete sie, die Herkunft fehlte).
+            for suffix in ("ladung_kwh", "verbrauch_kwh", "ladung_netz_kwh",
+                           "ladung_pv_kwh", "ladung_extern_kwh"):
+                if werte.get(suffix):
+                    emob_quelle = werte[suffix][1]
+                    break
+            km_entry = werte.get("km_gefahren")
+            if km_entry:
+                eauto_km += km_entry[0]
+                emob_quelle = km_entry[1]
+        else:
+            wallbox_in_betrieb = True
+            wallbox_ids.add(inv.id)
+            wallbox_daten.append(zeile)
+            for suffix in ("ladung_kwh", "ladung_pv_kwh"):
+                if werte.get(suffix):
+                    emob_quelle = werte[suffix][1]
+                    break
+    entscheid = entscheide_emob_heimladung(
+        eauto_je_inv=eauto_je_inv,
+        wallbox_zeilen=wallbox_daten,
+        wallbox_in_betrieb=wallbox_in_betrieb,
+        dienstwagen_je_inv=dienstwagen_je_inv,
+        dienstliche_wallbox_je_inv=dienstliche_wallbox_je_inv,
+        heim_gesamt=heim_gesamt,
+        wallbox_ids=wallbox_ids,
+        heimlade_quellen=heimlade_quellen if ist_aktueller_monat else (),
+        # N-555 Stufe 3 (Regel 9 Punkt 3): geltende Ladeblöcke sind die Messung je Auto.
+        bloecke=bloecke,
+        # Die Quote der gespeicherten Schaetzung gilt weiter; eine andere kennt
+        # dieser Zweig nicht (die Tagesebene liest die Schicht).
+        pv_quote=(
+            gespeichert.ladung_pv_kwh / gespeichert.ladung_kwh
+            if gespeichert is not None and gespeichert_quelle == QUELLE_SCHAETZUNG
+            and gespeichert.ladung_anteil_abgeleitet and gespeichert.ladung_kwh > 0
+            else None
+        ),
+    )
+    pool = entscheid.pool
+    if gespeichert_quelle == QUELLE_SCHAETZUNG:
+        # Die gespeicherte Schaetzung stand als direkter Wert in `resolved` —
+        # sie gilt nur, wenn die Funktion bei ihr bleibt.
+        resolved.pop("emob_ladung_kwh", None)
+        resolved.pop("emob_pv_ladung_kwh", None)
+        if emob_quelle is None and pool.ladung_kwh > 0:
+            emob_quelle = _gespeichert_info(resolved)
+        if pool.pv_kwh > 0 and emob_quelle is not None:
+            resolved["emob_pv_ladung_kwh"] = (pool.pv_kwh, emob_quelle)
+    if pool.ladung_kwh > 0 and emob_quelle is not None:
+        resolved["emob_ladung_kwh"] = (pool.ladung_kwh, emob_quelle)
+    elif entscheid.quelle == QUELLE_NULL:
+        # N-555: „die Wallbox hat nicht geladen" ist eine Zahl, kein Loch — sofern
+        # der Monat überhaupt etwas geliefert hat (ein E-Mob-Wert aus einer Quelle
+        # oder eine gespeicherte Zeile). Ein ganz leerer laufender Monat mit bloß
+        # zugeordneter Quelle bleibt „—": sonst stünde eine 0 da, die nichts
+        # gemessen hat, und die Route hielte den Monat für belegt
+        # (`monatswert_grund`), obwohl keine Quelle einen Wert gab.
+        info = emob_quelle or (_gespeichert_info(resolved) if gespeicherte_zeilen else None)
+        if info is not None:
+            resolved["emob_ladung_kwh"] = (0.0, info)
+    if "emob_km" not in direct_fields and eauto_km > 0 and emob_quelle is not None:
+        resolved["emob_km"] = (eauto_km, emob_quelle)
+    # #260: externe Lade-Kosten — der SoT nimmt die Quelle mit den hoeheren Kosten.
+    if "emob_ladung_extern_euro" not in direct_fields:
+        if pool.extern_euro > 0 and emob_quelle is not None:
+            resolved["emob_ladung_extern_euro"] = (pool.extern_euro, emob_quelle)
+    # N-557: dasselbe Paar in kWh — „Ladung gesamt" zaehlt Extern mit, sobald ein
+    # Sensor es liefert (Konzept Regel 10), nicht erst ab dem Monatsabschluss.
+    if "emob_ladung_extern_kwh" not in direct_fields:
+        if pool.extern_kwh > 0 and emob_quelle is not None:
+            resolved["emob_ladung_extern_kwh"] = (pool.extern_kwh, emob_quelle)
+    return {"emob_entscheid": entscheid}
+
+
+def _gespeichert_info(resolved):
+    """Die DatenquelleInfo fuer eine 0, die die Route selbst setzt (N-555).
+
+    Die der E-Mob-Felder des Monats, wenn es sie gibt — sonst die der gespeicherten
+    Zeile (Konfidenz 85, wie ``_collect_saved_data``)."""
+    from backend.api.routes.aktueller_monat.schemas import DatenquelleInfo
+
+    for feld in ("emob_km", "emob_ladung_extern_euro", "emob_verbrauch_kwh"):
+        if feld in resolved:
+            return resolved[feld][1]
+    return DatenquelleInfo(quelle="gespeichert", konfidenz=85)
 
 
 def extrahiere_werte(*, monats_fakt, resolved):

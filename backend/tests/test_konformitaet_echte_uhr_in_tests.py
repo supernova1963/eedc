@@ -112,6 +112,13 @@ _BASELINE: dict[str, int] = {
     # kWh-Probe derselben Datei kommt mit einem festen Datum aus. Begruendung
     # steht auch im Modul-Docstring der Probe.
     "test_n439_leistung_kuehlen_anzeige.py": 1,
+    # N-565 (26.09.2026), NEU in dieser Liste — derselbe Grund wie N-439 darüber:
+    # `get_tagesverlauf`/`_get_tagesverlauf_mqtt` rechnen den Tag SELBST aus
+    # `datetime.now()` und `tage_zurueck`, und die Probe prüft genau die Grenze
+    # „heute gegen vergangenen Tag" (Stilllegung gestern, Anschaffung morgen).
+    # Ein festes Datum fiele aus diesem Fenster. GENAU EINE Ablesung, in der
+    # Modul-Konstanten `HEUTE`; nur Tagesabstände, keine Uhrzeit.
+    "test_n565_tagesverlauf_investitionen_je_tag.py": 1,
     "test_multi_string_forecast_robustness_306.py": 4,
     "test_prognose_kanon.py": 11,
     # N-317 (29.08.), NEU in dieser Liste — die einzige erlaubte Richtung ist
@@ -132,7 +139,6 @@ _BASELINE: dict[str, int] = {
     "test_reparatur_lts_reichweite.py": 1,
     "test_reparatur_werkbank_komponenten_korrektur.py": 3,
     "test_solcast_tagesprofile_357.py": 7,
-    "test_speicher_dyn_tarif_und_soc.py": 1,
     "test_speicher_netto_kapazitaet.py": 1,
     "test_symmetrie_aggregator_today.py": 6,
     "test_tag_status_leere_tagessicht.py": 5,
@@ -140,6 +146,12 @@ _BASELINE: dict[str, int] = {
     "test_wp_dashboard_betriebsstunden.py": 1,
     "test_wurzelmuster_p1_orientierung.py": 6,
     "test_wurzelmuster_p4_teilsumme.py": 2,
+    # Zählerlücken wie HA (26.09.2026), NEU in dieser Liste: vier Prüflinge
+    # (`stratifizierung_endpoint`, `get_prognosen_genauigkeit`,
+    # `_check_pv_ueber_erfassung`, `_profil_from_db`) verankern ihr Fenster
+    # SELBST an `date.today()` und nehmen keinen Stichtag entgegen; die Proben
+    # legen ihre Tage relativ zu heute (nur Tagesabstände, keine Uhrzeit).
+    "test_zaehlerluecken_leser.py": 4,
 }
 
 

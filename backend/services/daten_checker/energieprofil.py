@@ -548,8 +548,9 @@ class EnergieprofilChecks:
                 während über das Feld 1286,62 kWh liefen.
         """
         # Deckt eine Wallbox die Heimladung ab, ist die PV-Ladung am E-Auto
-        # redundant — dieselbe Regel wie `bedingung_anlage: "keine_wallbox"`
-        # in `core/field_definitions.py` und wie oben bei `ladung_kwh`.
+        # redundant — wie oben bei `ladung_kwh`. (Bis N-555 Stufe 2 dieselbe Regel
+        # wie `bedingung_anlage: "keine_wallbox"`; seitdem darf ein Auto neben der
+        # Wallbox eine eigene Messung tragen — sie ist freiwillig, nichts fehlt.)
         hat_wallbox = any(
             i.typ == "wallbox" and i.ist_aktiv_an(heute) for i in anlage.investitionen
         )
@@ -617,7 +618,7 @@ class EnergieprofilChecks:
     # ─── Counter-Spikes: EINE Ermittlung, zwei Leser ──────────────────────
 
     async def _spike_tage(
-        self, anlage: Anlage, von: date, bis: date, schwelle_kw: float,
+        self, anlage: Anlage, von: date, bis: date, kwp: float,
     ) -> dict:
         """Tage mit physikalisch unmöglichen Stundenwerten → {Tag: [(stunde, feld, wert)]}.
 
@@ -632,7 +633,11 @@ class EnergieprofilChecks:
         Eine zweite Kopie der Ermittlung wäre die Drift-Klasse gewesen, die
         dieses Projekt mehrfach eingeholt hat; deshalb eine Funktion, zwei Leser.
         """
+        from backend.core.berechnungen.spannen import deckel_fenster_je_slot, spanne
         from backend.models.tages_energie_profil import TagesEnergieProfil
+        from backend.services.snapshot.plausibility import (
+            schwelle_pv_einspeisung_stunde_kwh,
+        )
 
         result = await self.db.execute(
             select(TagesEnergieProfil).where(
@@ -642,18 +647,295 @@ class EnergieprofilChecks:
             ).order_by(TagesEnergieProfil.datum, TagesEnergieProfil.stunde)
         )
         spike_tage: dict = {}
+        rows_je_tag: dict = {}
         for row in result.scalars().all():
-            for feld_name in ("pv_kw", "einspeisung_kw"):
-                wert = getattr(row, feld_name, None)
-                if wert is None:
-                    continue
-                if abs(wert) > schwelle_kw:
-                    spike_tage.setdefault(row.datum, []).append(
-                        (row.stunde, feld_name, wert)
-                    )
+            rows_je_tag.setdefault(row.datum, []).append(row)
+        for tag, rows in rows_je_tag.items():
+            for feld_name, achse in (("pv_kw", "pv"), ("einspeisung_kw", "einspeisung")):
+                # Zählerlücken wie HA (R3, Nachträge II): dieselbe Schwelle wie der
+                # Aggregator — mal dem Fenster „Zeit seit der letzten Änderung"
+                # (Spanne der Zeile plus vorangehende Nullzeilen des Tages). Eine
+                # Stunde mit der Energie einer Lücke oder dem Nachtrag eines
+                # eingefrorenen Zählers ist kein Spike, solange sie so viele
+                # Stunden Erzeugung nicht übersteigt.
+                werte = [
+                    (r.stunde, getattr(r, feld_name), spanne(getattr(r, "spannen", None), achse))
+                    for r in rows if getattr(r, feld_name, None) is not None
+                ]
+                fenster = deckel_fenster_je_slot(werte)
+                for stunde, wert, _n in werte:
+                    schwelle_kw = schwelle_pv_einspeisung_stunde_kwh(kwp, spanne=fenster[stunde])
+                    if schwelle_kw is not None and abs(wert) > schwelle_kw:
+                        spike_tage.setdefault(tag, []).append((stunde, feld_name, wert))
+        for tag in spike_tage:
+            spike_tage[tag].sort(key=lambda t: (t[0], t[1]))
         return spike_tage
 
     # ─── Energieprofil-Plausibilität (Counter-Spikes) ─────────────────────
+
+    async def _check_bestandstage_ohne_regelmarke(self, anlage: Anlage) -> list[CheckErgebnis]:
+        """E7 (Zählerlücken wie HA, Vorlage Fassung 7 §5): Tage, die **vor dem
+        Umbau** gerechnet wurden — ohne Regelmarke (``TagesZusammenfassung.
+        verworfen`` NULL, R9) —, begrenzt auf Tage mit Stundenzeilen.
+
+        Solche Tage rechnen weiter nach N-92 (E6): fehlt einer Achse eine
+        Stunde, zeigt Cockpit → Tag „—" bei EV/Autarkie/Verbrauch, obwohl die
+        neue Regel dort einen Wert hätte (die Energie der Lücke steht in der
+        Folgestunde, wie im HA-Dashboard). Nach dem Update heilen nur neu
+        aggregierte Tage — ohne diese Zeile blieben Bestandstage still bei
+        „—" (Doktrin „Fehleranzeige = Daten-Checker"; Präzedenz v3.45.6
+        Speicher-Vorzeichen: **kein** automatischer Nachzug beim Start).
+
+        Eine Zeile für die Anlage, mit dem bestehenden Reparaturweg
+        („Zeitraum neu aggregieren", `reaggregate_range`, max. 31 Tage je
+        Lauf — das jüngste Fenster, ältere Tage bleiben für den nächsten Lauf
+        stehen und werden genannt). Ohne Bestandstage: still.
+        """
+        from datetime import timedelta as _td
+        from sqlalchemy import and_, exists
+        from backend.models.tages_energie_profil import TagesEnergieProfil, TagesZusammenfassung
+        from backend.services.repair_orchestrator import REAGGREGATE_RANGE_MAX_DAYS
+
+        tz, tep = TagesZusammenfassung, TagesEnergieProfil
+        tage = sorted((await self.db.execute(
+            select(tz.datum).where(
+                tz.anlage_id == anlage.id,
+                tz.verworfen.is_(None),
+                exists().where(and_(tep.anlage_id == tz.anlage_id, tep.datum == tz.datum)),
+            )
+        )).scalars().all())
+        if not tage:
+            return []
+
+        aeltester, neuester = tage[0], tage[-1]
+        range_von = max(aeltester, neuester - _td(days=REAGGREGATE_RANGE_MAX_DAYS - 1))
+        rest = sum(1 for d in tage if d < range_von)
+        from backend.services.energie_profil.aggregations_quelle import (
+            ermittle_aggregations_quelle,
+        )
+        reparatur_moeglich = (
+            await ermittle_aggregations_quelle(self.db, anlage, neuester)
+        ).vorhanden
+
+        details = (
+            "Diese Tage wurden vor dem Update „Zählerlücken wie HA“ gerechnet. "
+            "Fehlt dort einer Achse eine Stunde, zeigt Cockpit → Tag bei "
+            "Eigenverbrauch, Autarkie und Gesamtverbrauch noch „—“. Neu "
+            "aggregiert trägt die Stunde nach einer Lücke deren Energie — wie im "
+            "Home-Assistant-Energie-Dashboard — und die Tageswerte erscheinen."
+        )
+        if reparatur_moeglich:
+            details += (
+                f" Der Knopf rechnet die jüngsten Tage neu ({range_von.isoformat()} … "
+                f"{neuester.isoformat()}, höchstens {REAGGREGATE_RANGE_MAX_DAYS} Tage je Lauf)."
+            )
+            if rest:
+                details += (
+                    f" {rest} ältere(r) Tag(e) bleiben danach stehen — nach dem Lauf "
+                    f"erscheint diese Zeile mit dem nächsten Zeitraum erneut."
+                )
+        else:
+            details += (
+                " Für die Neuaggregation braucht diese Anlage eine Leistungs- oder "
+                "Zähler-Zuordnung (Einstellungen → Datenquellen)."
+            )
+        return [CheckErgebnis(
+            kategorie=CheckKategorie.ENERGIEPROFIL_ABDECKUNG,
+            schwere=CheckSeverity.INFO,
+            meldung=(
+                f"{len(tage)} Tag(e) sind vor dem Umbau gerechnet (keine Regelmarke) "
+                f"— {aeltester.isoformat()} … {neuester.isoformat()}"
+            ),
+            details=details,
+            link=LINK_ENERGIEPROFIL if reparatur_moeglich else LINK_DATENQUELLEN,
+            action_kind="reaggregate_range" if reparatur_moeglich else None,
+            action_params={
+                "anlage_id": anlage.id,
+                "von": range_von.isoformat(),
+                "bis": neuester.isoformat(),
+            } if reparatur_moeglich else None,
+            action_label="Zeitraum neu aggregieren" if reparatur_moeglich else None,
+        )]
+
+    #: Toleranz der Tagesprüfung „Einspeisung über Erzeugung" (kWh) — Rundung
+    #: der Stundenwerte und Netto-Batterie je Stunde (Laden und Entladen in
+    #: derselben Stunde heben sich in der Stundenzeile auf).
+    EINSPEISUNG_UEBER_ERZEUGUNG_TOLERANZ_KWH = 0.5
+
+    async def _check_einspeisung_ueber_erzeugung(self, anlage: Anlage) -> list[CheckErgebnis]:
+        """Tage **mit Regelmarke**, an denen mehr eingespeist als erzeugt und aus
+        dem Speicher entladen wurde (Zählerlücken wie HA, Vorlage §10 Nachträge II).
+
+        Seit der Eigenverbrauch einmal bei 0 geklemmt ist (EV = max(0, ΣPV −
+        ΣEinsp)), zeigt Cockpit → Tag an einem solchen Tag 0 statt eines
+        Minuswerts. Die Klemme verweist auf den Daten-Checker — der prüfte das
+        bis hierher nur je Monat (`monatsdaten.py`, „Einspeisung > PV-Erzeugung").
+        Geprüft wird Σ Einspeisung > Σ PV + Σ Entladung + Toleranz: **Entladung
+        ins Netz ist erlaubt** (Arbitrage, netzdienlicher Betrieb). Altbestand
+        ohne Marke wird nicht geprüft (er rechnet N-92, E7 nennt ihn).
+
+        Häufige Ursachen: PV-Zähler liefert nicht (steht auf 0), Einspeisung und
+        Netzbezug vertauscht, Vorzeichen eines kombinierten Netz-Sensors
+        umgekehrt. Eine Zeile je Anlage mit Tagesliste; Reparaturweg wie E7
+        („Zeitraum neu aggregieren" über das jüngste Fenster), nachdem die
+        Zuordnung geprüft ist.
+        """
+        from datetime import timedelta as _td
+        from backend.core.berechnungen.tagesbilanz import bilanz_aus_stundenrows
+        from backend.models.tages_energie_profil import TagesEnergieProfil, TagesZusammenfassung
+        from backend.services.repair_orchestrator import REAGGREGATE_RANGE_MAX_DAYS
+
+        tz, tep = TagesZusammenfassung, TagesEnergieProfil
+        marken = {
+            d: v for d, v in (await self.db.execute(
+                select(tz.datum, tz.verworfen).where(
+                    tz.anlage_id == anlage.id, tz.verworfen.is_not(None),
+                )
+            )).all()
+        }
+        if not marken:
+            return []
+        rows_je_tag: dict = {}
+        for r in (await self.db.execute(
+            select(tep).where(tep.anlage_id == anlage.id, tep.datum.in_(list(marken)))
+        )).scalars().all():
+            rows_je_tag.setdefault(r.datum, []).append(r)
+
+        befunde: list[tuple] = []
+        for d, rows in rows_je_tag.items():
+            b = bilanz_aus_stundenrows(rows, verworfen=marken[d])
+            if not b.einspeisung_erfasst:
+                continue
+            quelle = (b.erzeugung_kwh if b.pv_erfasst else 0.0) + b.speicher_entladung_kwh
+            if b.einspeisung_kwh > quelle + self.EINSPEISUNG_UEBER_ERZEUGUNG_TOLERANZ_KWH:
+                befunde.append((d, b.einspeisung_kwh, b.erzeugung_kwh if b.pv_erfasst else None,
+                                b.speicher_entladung_kwh))
+        if not befunde:
+            return []
+
+        befunde.sort(key=lambda t: t[0], reverse=True)
+        neuester, aeltester = befunde[0][0], befunde[-1][0]
+        range_von = max(aeltester, neuester - _td(days=REAGGREGATE_RANGE_MAX_DAYS - 1))
+        liste = "; ".join(
+            f"{d.isoformat()}: Einspeisung {fmt_zahl(e, 1)} kWh, "
+            f"PV {fmt_zahl(p, 1) if p is not None else '—'} kWh, Entladung {fmt_zahl(x, 1)} kWh"
+            for d, e, p, x in befunde[:10]
+        )
+        if len(befunde) > 10:
+            liste += f"; … und {len(befunde) - 10} weitere"
+        return [CheckErgebnis(
+            kategorie=CheckKategorie.ENERGIEPROFIL_PLAUSIBILITAET,
+            schwere=CheckSeverity.INFO,
+            meldung=(
+                f"{len(befunde)} Tag(e) mit mehr Einspeisung als Erzeugung "
+                f"({aeltester.isoformat()} … {neuester.isoformat()})"
+            ),
+            details=(
+                f"Eingespeist wurde mehr, als PV und Speicher-Entladung zusammen "
+                f"geliefert haben (Toleranz {fmt_zahl(self.EINSPEISUNG_UEBER_ERZEUGUNG_TOLERANZ_KWH, 1)} kWh). "
+                f"Eigenverbrauch und Autarkie stehen an diesen Tagen auf 0 bzw. „—“. {liste}. "
+                "Häufige Ursachen: der PV-Zähler liefert nicht (steht auf 0), Einspeisung und "
+                "Netzbezug sind in den Datenquellen vertauscht, oder das Vorzeichen eines "
+                "kombinierten Netz-Sensors ist umgekehrt. Zuerst die Zuordnung prüfen "
+                "(Einstellungen → Datenquellen), danach die Tage neu aggregieren."
+            ),
+            link=LINK_ENERGIEPROFIL,
+            action_kind="reaggregate_range",
+            action_params={
+                "anlage_id": anlage.id,
+                "von": range_von.isoformat(),
+                "bis": neuester.isoformat(),
+            },
+            action_label="Zeitraum neu aggregieren",
+        )]
+
+    #: Achse → Anzeigename in der Tagesliste des Nachtrag-Hinweises (N-567).
+    _NACHTRAG_ACHSEN_LABEL = {"pv": "PV", "einspeisung": "Einspeisung"}
+
+    async def _check_nachtrag_nach_eingefrorenem_zaehler(self, anlage: Anlage) -> list[CheckErgebnis]:
+        """N-567: Tage, an denen der Deckel eine Stunde **nur dank seines Fensters**
+        durchgelassen hat — ``TagesZusammenfassung.nachtrag`` (Aggregator, `tages_tabelle`).
+
+        Seit dem Deckel-Fenster (Vorlage Zählerlücken §10 Nachträge II) prüft der Deckel eine
+        Menge gegen die Zeit seit der letzten Änderung des Standes. Ein Zähler, der Stunden
+        still steht und dann nachliefert (Lab 24.05.2026: drei Nullstunden, +37 kWh), bleibt
+        damit Menge — wie in HA. Dieselbe Regel lässt aber auch einen Sprung nach einer Nacht
+        mit echten Nullen durch (bis ≈ Schwelle × Nullstunden), und der wäre sonst nirgends
+        sichtbar: vorher (Fenster n) stand er in ``verworfen`` mit N-94-Hinweis.
+
+        **Nur benennen:** kein Verwerfen, keine Anzeigeregel, kein Knopf. Eine Zeile je Anlage
+        mit Tagesliste (neueste zuerst, höchstens zehn je Herkunft). Ohne Nachtrag: still.
+
+        **Der Satz folgt der Herkunft der Tageszeile** (Entscheid Master 26.09.): nur ein Tag aus
+        der HA-Langzeitstatistik darf sagen, die Menge habe in HA in derselben Stunde gestanden.
+        Ein Tag aus Zählerständen (Snapshot-/MQTT-Pfad, Standalone) nutzt dieselbe Tagestabelle
+        und bekommt denselben `nachtrag`, eine HA-Stunde gibt es dort aber nicht. Die Herkunft
+        steht in der Provenance der Zeile: der Aggregator sät sie mit `TZ_QUELLE_LTS` genau
+        dann, wenn die Stunden aus der HA-Statistik kamen (`aggregator.py`, `tz_source_label`).
+        """
+        from backend.models.tages_energie_profil import TagesZusammenfassung
+        from backend.services.snapshot.boundary_range import TZ_QUELLE_LTS
+
+        def _aus_lts(prov) -> bool:
+            return isinstance(prov, dict) and any(
+                isinstance(e, dict) and e.get("source") == TZ_QUELLE_LTS for e in prov.values()
+            )
+
+        tz = TagesZusammenfassung
+        befunde = [
+            (d, n, _aus_lts(p)) for d, n, p in (await self.db.execute(
+                select(tz.datum, tz.nachtrag, tz.source_provenance).where(
+                    tz.anlage_id == anlage.id, tz.nachtrag.is_not(None),
+                )
+            )).all() if n
+        ]
+        if not befunde:
+            return []
+        befunde.sort(key=lambda t: t[0], reverse=True)
+        neuester, aeltester = befunde[0][0], befunde[-1][0]
+
+        def _teile(n: dict) -> str:
+            return ", ".join(
+                f"{self._NACHTRAG_ACHSEN_LABEL.get(a, a)} {fmt_zahl(float(kwh), 1)} kWh"
+                for a, kwh in sorted(n.items())
+            )
+
+        def _liste(tage: list) -> str:
+            s = "; ".join(f"{d.isoformat()}: {_teile(n)}" for d, n, _ in tage[:10])
+            if len(tage) > 10:
+                s += f"; … und {len(tage) - 10} weitere"
+            return s
+
+        lts = [b for b in befunde if b[2]]
+        zaehler = [b for b in befunde if not b[2]]
+        teile = []
+        if lts:
+            teile.append(
+                f"Aus der HA-Langzeitstatistik gerechnet: {_liste(lts)}. "
+                "eedc folgt hier Home Assistant: die Menge stand in HA in derselben Stunde."
+            )
+        if zaehler:
+            teile.append(
+                f"Aus Zählerständen gerechnet (ohne HA-Statistik): {_liste(zaehler)}. "
+                "Die Menge steht in der Stunde, in der der Zähler sie gemeldet hat."
+            )
+        return [CheckErgebnis(
+            kategorie=CheckKategorie.ENERGIEPROFIL_PLAUSIBILITAET,
+            schwere=CheckSeverity.INFO,
+            meldung=(
+                f"{len(befunde)} Tag(e) mit Nachtrag nach eingefrorenem Zähler "
+                f"({aeltester.isoformat()} … {neuester.isoformat()})"
+            ),
+            details=(
+                "An diesen Tagen stand ein Zähler (PV oder Einspeisung) mehrere Stunden still und "
+                "lieferte die Menge danach in einer einzigen Stunde nach — mehr, als in einer Stunde "
+                "erzeugt werden kann. Sie zählt im Tag und im Monat mit. "
+                + " ".join(teile) + " "
+                "Dieselbe Form hat ein Zählersprung nach einer Nacht ohne Erzeugung; stimmt eine "
+                "dieser Mengen nicht, liegt der Fehler in der Zähler-Historie der Quelle."
+            ),
+            link=LINK_ENERGIEPROFIL,
+        )]
 
     async def _check_energieprofil_plausibilitaet(self, anlage: Anlage) -> list[CheckErgebnis]:
         """
@@ -693,7 +975,7 @@ class EnergieprofilChecks:
         bis = date.today()
         von = bis - timedelta(days=30)
 
-        spike_tage = await self._spike_tage(anlage, von, bis, schwelle_kw)
+        spike_tage = await self._spike_tage(anlage, von, bis, kwp)
 
         if not spike_tage:
             ergebnisse.append(CheckErgebnis(
@@ -977,8 +1259,16 @@ class EnergieprofilChecks:
         # auslöst (2× kWp am Mittag), sich hinter dieser Regel verstecken.
         schwelle_spike = schwelle_pv_einspeisung_stunde_kwh(kwp)
         spike_tage = (
-            await self._spike_tage(anlage, von, bis, schwelle_spike)
+            await self._spike_tage(anlage, von, bis, kwp)
             if schwelle_spike is not None else {}
+        )
+        # ⭐ Zählerlücken wie HA (§2): D und D+1 um ein Mitternachtsbündel sowie
+        # Tage mit verworfener PV sind keine Einzeltage für PR oder spez. Ertrag
+        # — der Tageswert trägt dort die Energie einer Lücke bzw. hat sie
+        # verloren (wie der Lernfaktor).
+        from backend.services.energie_profil.vergleichstage import tage_ohne_tagesvergleich
+        ohne_vergleich = await tage_ohne_tagesvergleich(
+            self.db, anlage.id, "pv", von=von, bis=bis,
         )
 
         pr_ueberschreitungen: list[tuple[date, float]] = []
@@ -986,6 +1276,8 @@ class EnergieprofilChecks:
         verdeckt_durch_spike: set = set()
         tage_mit_pr = 0
         for tz in tz_list:
+            if tz.datum in ohne_vergleich:
+                continue
             ist_spike_tag = tz.datum in spike_tage
 
             if tz.performance_ratio is not None:

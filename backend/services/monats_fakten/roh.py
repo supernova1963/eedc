@@ -21,10 +21,10 @@ from backend.core.investition_parameter import (
     ist_dienstlich,
     ist_luft_luft_waermepumpe,
 )
-from backend.core.field_definitions import get_emob_pv_netz_kwh
 from backend.models.investition import Investition, InvestitionMonatsdaten
 from backend.models.monatsdaten import Monatsdaten
-from backend.services.emob_ladeanteil import hat_gepflegten_pv_anteil
+from backend.services.emob_ladeanteil import braucht_tages_quote, hat_gepflegten_pv_anteil
+from backend.core.field_definitions import ist_heim_gesamt
 from backend.utils.sonstige_positionen import berechne_sonstige_summen
 from backend.services.monats_fakten.fakten import MonatsSchluessel
 
@@ -174,14 +174,28 @@ class _RohMonat:
         #: zweite Gerät sauber misst.
         self.wp_abgrenzung: Optional[str] = None
         self.eauto_ladedaten: list[dict] = []
+        #: N-555: dieselben E-Auto-Zeilen je ``Investition.id`` — die eine Funktion
+        #: (``entscheide_emob_heimladung``) entscheidet je Auto, und ihre Schätzung
+        #: ist je Auto. Parallel zu ``eauto_ladedaten`` (gleiche Reihenfolge).
+        self.eauto_ladedaten_ids: list[int] = []
         self.wallbox_ladedaten: list[dict] = []
+        self.wallbox_ladedaten_ids: list[int] = []
+        #: N-555: Dienstwagen und dienstliche Wallboxen je ``Investition.id`` —
+        #: ihre Menge rechnet jetzt die eine Funktion (bitgleich), nicht mehr diese
+        #: Faltung über die Lese-Hilfe mit ihrem stillen Fahrverbrauch-Ersatz.
+        self.dienstlich_je_inv: dict[int, dict] = {}
+        #: N-555 Stufe 2 (Regel 3): welche der dienstlichen Zeilen eine **Wallbox** ist —
+        #: ihre Menge ist die dienstliche Ladung; ein Dienstwagen daneben zählt nicht.
+        self.dienstliche_wallbox_ids: set[int] = set()
+        #: N-555 Stufe 2 (Regel 8, E5): E-Autos (privat und dienstlich), deren
+        #: ``ladung_kwh`` „Heim: gesamt" ist — Herkunft weder fehlend noch ``legacy:unknown``
+        #: (``field_definitions.ist_heim_gesamt``). Der alte Gesamtwert zählt nur ohne Wallbox.
+        self.heim_gesamt_ids: set[int] = set()
         self.eauto_km = 0.0
         self.eauto_km_je_fahrzeug: dict[int, float] = {}
         self.eauto_fahrverbrauch_je_fahrzeug: dict[int, float] = {}
         self.eauto_fahrverbrauch = 0.0
         self.eauto_v2h = 0.0
-        self.dienstlich_pv = 0.0
-        self.dienstlich_netz = 0.0
         self.sonstiges_erzeugung = 0.0
         self.sonstiges_verbrauch = 0.0
         self.sonstiges_eigenverbrauch = 0.0
@@ -212,9 +226,12 @@ class _RohMonat:
         """
         if not (self.eauto_ladedaten or self.wallbox_ladedaten):
             return False
+        # N-555 Stufe 2 (S2-4): die Ableitung gilt je Zeile — die Vorprüfung fragt beides.
+        # Die monatsweise Frage bleibt, damit kein Monat seine Tagesebene verliert, den sie
+        # bisher geladen hat (die Tagesebene füllt dann auch andere Lücken, s. `laden.py`).
         return not hat_gepflegten_pv_anteil(
             self.eauto_ladedaten, self.wallbox_ladedaten
-        )
+        ) or braucht_tages_quote(self.eauto_ladedaten, self.wallbox_ladedaten)
 
     def falte(
         self,
@@ -431,11 +448,21 @@ class _RohMonat:
                 # wird herausgefiltert, aber nicht verworfen: er gehört als
                 # Ausgabe in die Sonstige-Summen (Bewertung beim Aufrufer, sie
                 # braucht den Monatstarif). [[feedback_dienstwagen_alle_checks]]
-                pv_kwh, netz_kwh = get_emob_pv_netz_kwh(data)
-                self.dienstlich_pv += pv_kwh
-                self.dienstlich_netz += netz_kwh
+                #
+                # N-555: die Menge rechnet die eine Funktion (`bau.py`, über
+                # `entscheide_emob_heimladung`) — bitgleich zu vorher, aber der
+                # Fahrverbrauch als Schätzung steht dort ausdrücklich. Hier stand
+                # `get_emob_pv_netz_kwh(data)`, dessen Ersatz still einsprang.
+                self.dienstlich_je_inv[inv.id] = data
+                if inv.typ == "wallbox":
+                    self.dienstliche_wallbox_ids.add(inv.id)
+                elif ist_heim_gesamt(data, source_provenance):
+                    self.heim_gesamt_ids.add(inv.id)
             elif inv.typ == "e-auto":
+                if ist_heim_gesamt(data, source_provenance):
+                    self.heim_gesamt_ids.add(inv.id)
                 self.eauto_ladedaten.append(data)
+                self.eauto_ladedaten_ids.append(inv.id)
                 self.eauto_km += b.eauto_km
                 self.eauto_fahrverbrauch += b.eauto_verbrauch
                 self.eauto_v2h += b.eauto_v2h
@@ -450,6 +477,7 @@ class _RohMonat:
                     )
             else:
                 self.wallbox_ladedaten.append(data)
+                self.wallbox_ladedaten_ids.append(inv.id)
 
         elif inv.typ == "pv-module":
             # Nur zur Monats-Kandidatur; der WERT kommt aus der P7-Auflösung.

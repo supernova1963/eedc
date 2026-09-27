@@ -117,6 +117,32 @@ class KanonTag:
     #: `{grenz_id: kW}` — die Grenzen, an denen gekappt wurde.
     grenzen_kw: Optional[dict] = None
 
+    @property
+    def roh_kwh(self) -> Optional[float]:
+        """Die **ungekappte** Roh-Tagessumme (Σ `roh_slots`) — die Lage, in der
+        `TagesZusammenfassung.pv_prognose_kwh` geführt wird.
+
+        ⭐ **Warum abgeleitet und nicht als eigenes Feld.** `om_kwh` ist Σ der
+        **gekappten** Slots, `abregelung_om_kwh` ist Σ(roh − gekappt) über
+        dieselben Slots derselben Schleife (`:515-519`). Ihre Summe ist damit
+        exakt Σ roh — eine zweite gespeicherte Zahl könnte nur noch davon
+        abdriften. Ohne Kappung ist `abregelung_om_kwh` `None` und `om_kwh`
+        bereits die Rohsumme.
+
+        ⛔ **Wozu sie gebraucht wird (N-547, W1).** Zwei Schreiber füllen
+        `pv_prognose_kwh`: der Prefetch alle 45 Minuten mit Σ der rohen
+        OM-Tageswerte je String (ungekappt, unkorrigiert), der Live-Pfad beim
+        Seitenbesuch bis 22.09.2026 mit `eedc_kwh` (korrigiert **und**
+        gekappt). Gleiche Provenance-Quelle, „letzter gewinnt" — dasselbe Feld
+        trug je nach Tageszeit zwei verschiedene Größen, und seine drei Leser
+        (Genauigkeits-Tracking, HA-Export-Schwelle, Energieprofil-Tages-SOLL)
+        multiplizieren es alle mit dem Legacy-Lernfaktor. Seit N-547 schreiben
+        **beide** dieselbe Lage: roh.
+        """
+        if self.om_kwh is None:
+            return None
+        return round(self.om_kwh + (self.abregelung_om_kwh or 0.0), 1)
+
 
 @dataclass
 class KanonPrognose:
@@ -326,6 +352,7 @@ async def kanon_tagesprognose(
     anlage,
     days: int = 4,
     skip_jitter: bool = False,
+    heute: Optional[date] = None,
 ) -> Optional[KanonPrognose]:
     """Berechnet die kanonische PV-Tagesprognose einer Anlage.
 
@@ -337,7 +364,12 @@ async def kanon_tagesprognose(
     if not anlage.latitude or not anlage.longitude:
         return None
 
-    heute = date.today()
+    # `heute` ist injizierbar, damit Proben den Horizont festnageln können
+    # (der Wächter `test_konformitaet_echte_uhr_in_tests.py` verbietet
+    # `date.today()` in neuen Proben, und ein Fake-Forecast muss dieselben
+    # ISO-Daten tragen wie die Schleife unten). Default unverändert.
+    if heute is None:
+        heute = date.today()
     tagesdaten = [heute + timedelta(days=o) for o in range(days)]
     invs = await pv_invs_im_horizont(db, anlage, tagesdaten[0], tagesdaten[-1])
     gruppen = orientierungs_gruppen(invs)
@@ -406,8 +438,17 @@ async def kanon_tagesprognose(
 
     # Legacy-Skalar (Kaskaden-Miss-Fallback). Function-local Import =
     # Monkeypatch-fähig (Tests patchen live_wetter._get_lernfaktor).
-    from backend.api.routes.live_wetter import _get_lernfaktor
+    from backend.api.routes.live_wetter import (
+        _get_lernfaktor, _get_lernfaktor_gekappt,
+    )
     skalar = await _get_lernfaktor(anlage.id, db)
+    # ⭐ **N-551: für die gekappten Slots der zweite Faktor.** `skalar` ist auf
+    # der **rohen** Tagesprognose gelernt (`pv_prognose_kwh`, W1); `om_slots`
+    # unten sind an der AC-/WR-Grenze bereits **gekappt**. Der rohe Faktor
+    # rechnete die Abregelung dort ein zweites Mal heraus (an einer Messkopie
+    # mit 12-kW-Grenze −12,4 %). `None`, solange zu wenige Tage ein
+    # `lern_soll_kwh` tragen — dann bleibt es beim bisherigen Verhalten.
+    skalar_gekappt = await _get_lernfaktor_gekappt(anlage.id, db)
 
     # #347/#354: AC-Grenze. Sie kann dem Erzeuger selbst gehören (BKW) oder
     # dem Wechselrichter, dem er zugeordnet ist (PV-String) — beides löst
@@ -591,7 +632,13 @@ async def kanon_tagesprognose(
                 stunden_niederschlag=wetter_nieder,
                 stunden_wetter_code=wetter_code,
             )
-            profil = korrigiere_tagesprofil(om_slots, faktoren, fallback_faktor=skalar)
+            # N-551: `om_slots` sind die **gekappten** Slots ⇒ der Rückfall für
+            # Stunden ohne Korrekturprofil ist der auf der gekappten Basis
+            # gelernte Faktor (sonst der bisherige Roh-Faktor).
+            profil = korrigiere_tagesprofil(
+                om_slots, faktoren,
+                fallback_faktor=skalar_gekappt if skalar_gekappt is not None else skalar,
+            )
             eedc_kwh = profil.tageswert_kwh
             om_kwh = round(sum(om_slots), 1)
             vm_kwh, nm_kwh = vm_nm_split(
@@ -601,6 +648,10 @@ async def kanon_tagesprognose(
             # OpenMeteo-Schätzpfad (Tagessumme ohne Hourly): Tages-Ertrag ×
             # Skalar, kein Profil (bisheriges Verhalten, eedc_prognose_service).
             profil = None
+            # ⚠ **Hier bleibt der ROHE Faktor** (N-551): `pv_ertrag_sum` ist der
+            # ungekappte OpenMeteo-Tagesertrag — dieselbe Basis, auf der der
+            # Skalar gelernt wurde. Der gekappte Faktor gehört nur dorthin, wo
+            # die Reihe selbst gekappt ist (Stundenpfad oben).
             eedc_kwh = (
                 round(pv_ertrag_sum * (skalar or 1.0), 1) if pv_ertrag_sum else None
             )
@@ -653,7 +704,11 @@ async def kanon_tagesprognose(
         # `pv_kw`, unabhaengig von `now.hour`. Wer eine SOLL-Summe daneben
         # stellt (P6), braucht genau diese Grenze und nicht die Uhr.
         ist_bis_slot = max(
-            (h for h, v in enumerate(ist_p.slots_kw) if v is not None), default=None
+            [h for h, v in enumerate(ist_p.slots_kw) if v is not None]
+            # Zählerlücken wie HA: ein gebündelter Slot trägt Energie in der
+            # Summe, also reicht die Summe bis zu ihm.
+            + list(ist_p.buendel_stunden),
+            default=None,
         )
     if heute_tag is not None and heute_tag.profil is not None:
         slots = heute_tag.profil.stunden_kwh

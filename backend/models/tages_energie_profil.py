@@ -148,6 +148,25 @@ class TagesEnergieProfil(Base):
     # z.B. {"pv_3": 2.1, "waermepumpe_5": -0.8, "haushalt": -1.2}
     komponenten: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
 
+    # ⭐ **Zählerlücken wie HA (R2, Vorlage Fassung 7):** wie viele **reale**
+    # Stunden die Menge einer Achse in dieser Zeile trägt — nur für n > 1,
+    # z. B. ``{"pv": 3, "netzbezug": 3}``. Fehlt in HA eine Stundenzeile, steht
+    # die Energie der Lücke in der nächsten belegten Stunde (wie im
+    # HA-Energie-Dashboard); diese Spalte sagt, dass es so ist. ``None`` (der
+    # Regelfall) heißt: jede Achse trägt genau ihre Stunde.
+    #
+    # Leser, die **Stunde gegen Stunde** stellen (Korrekturprofil,
+    # Verbrauchsprofil, Speicher-Stundenrechnungen …), lassen eine gebündelte
+    # Zeile über ``core/berechnungen/spannen.py::zeile_gebuendelt`` aus; jede
+    # **Summe** zählt die Energie trotzdem.
+    #
+    # ⚠ ``none_as_null=True`` aus demselben Grund wie ``soc_je_speicher``:
+    # Altbestand hat SQL-NULL, und ein geschriebenes ``None`` darf nicht als
+    # JSON-``null`` daneben stehen.
+    spannen: Mapped[Optional[dict]] = mapped_column(
+        JSON(none_as_null=True), nullable=True
+    )
+
     # Per-Feld-Provenance (Etappe 3d Päckchen 1, KONZEPT-DATENPIPELINE.md Sektion 3.2).
     source_provenance: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
 
@@ -253,6 +272,36 @@ class TagesZusammenfassung(Base):
     # SFML-Quelle SFMLs eigene Kurvenform statt GTI-Schmier (Tracking #110 „A").
     sfml_prognose_stundenprofil: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
 
+    # ⭐ **N-547: das LERN-SOLL des Korrekturprofils — und warum es ein eigenes
+    # Feld sein muss.** Bis 2026-09-22 lernte der Korrekturprofil-Aggregator
+    # gegen `pv_prognose_stundenprofil`. Das ist aber die **korrigierte**
+    # Kanon-Ausgabe (`prognose_kanon.korrigiere_tagesprofil`), also das
+    # Ergebnis der Faktoren, die er gerade lernt. Ein Regelkreis, der seine
+    # eigene Ausgabe als Soll nimmt, konvergiert nicht auf das wahre
+    # Verhältnis r = IST/SOLL, sondern auf dessen **Wurzel**: der Fixpunkt von
+    # f ↦ r/f ist √r. Gemessen (V2, 22.09.2026, r = 0,85): Faktoren laufen auf
+    # 0,922 statt 0,850 ⇒ **+8,5 % Überschätzung an JEDEM Tag**.
+    #
+    # Diese beiden Felder tragen deshalb das, wogegen gelernt werden MUSS:
+    # die **rohe OpenMeteo-Stundenreihe**, unkorrigiert, aber **gekappt**
+    # (`KanonTag.om_stundenprofil_kwh`) — gekappt, weil der Wechselrichter
+    # oberhalb seiner AC-Grenze nichts liefern KANN und ein Faktor sonst eine
+    # physikalische Grenze als Prognosefehler lernt.
+    #
+    # ⛔ Getrennt von `pv_prognose_stundenprofil`, nicht statt seiner: jenes
+    # bleibt die **Vorhersage** (korrigiert + gekappt), an der die
+    # Stratifizierung misst, wie gut eedc vorhergesagt hat. Zwei Fragen, zwei
+    # Felder. Rückwärts leer — Bestandszeilen bleiben NULL („nicht erhoben"),
+    # kein Backfill: die alten Zeilen tragen die korrigierte Reihe, und eine
+    # Rückrechnung wäre geraten, nicht gemessen.
+    #
+    # First-write-wins wie die Vorhersage-Profile (Day-Ahead-Charakter).
+    lern_soll_stundenprofil_kwh: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    # Σ der Lern-SOLL-Slots (= `KanonTag.om_kwh`, dieselbe `om_slots`-Quelle) —
+    # das Tages-SOLL der Skalar-Stufe. Letzter Schreiber gewinnt (der Tageswert
+    # rollt mit OpenMeteo mit, wie `pv_prognose_kwh`).
+    lern_soll_kwh: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+
     # Anzahl verfügbarer Stundenwerte (Qualitätsindikator)
     stunden_verfuegbar: Mapped[int] = mapped_column(Integer, default=0)
 
@@ -290,6 +339,10 @@ class TagesZusammenfassung(Base):
     # gibt (P4-Linie).
     emob_ladung_pv_abgeleitet_kwh: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     emob_ladung_netz_abgeleitet_kwh: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    # N-569-Ergänzung (Konzept Heimladung Anhang E, Gernot 27.09.2026): **davon aus dem
+    # Speicher** — Teilmenge von `emob_ladung_pv_abgeleitet_kwh` (PV = Direkt + Speicher),
+    # keine dritte Menge. `None` ohne Speicherzähler. Ausweis, wirkt auf keine Rechnung.
+    emob_ladung_speicher_abgeleitet_kwh: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
     # Per-Komponenten Tages-kWh (Summe der stündlichen kW-Werte)
     # z.B. {"pv_3": 22.5, "waermepumpe_5": -8.3, "wallbox_7": -12.1, "haushalt": -15.2}
@@ -300,6 +353,39 @@ class TagesZusammenfassung(Base):
     # z.B. {"wp_starts_anzahl": {"5": 12}} = WP-Investition 5 hatte 12 Starts an dem Tag.
     # Wird aus Snapshot-Differenz Tag-Anfang vs. Folgetag-Anfang berechnet.
     komponenten_starts: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+
+    # ⭐ **Zählerlücken wie HA (R4 + R9, Vorlage Fassung 7) — zwei Aufgaben in
+    # einer Spalte:**
+    #
+    # 1. **Verworfen** ist das Einzige, was eedc an einer Tageszeile markiert:
+    #    ``{achse: kWh}`` für eine Achse, auf der ein Stunden-Slot gedeckelt
+    #    (R3) oder ein negatives Zähler-Delta verworfen wurde. Keine Markierung
+    #    für Lücken, Vortagsenergie oder Sensor-Anfang/-Ende — HA kennt keine.
+    # 2. **Regelmarke (R9):** Jede Tageszeile, die der Aggregator seit dem
+    #    Umbau schreibt, trägt hier mindestens ``{}``. ``NULL`` trägt nur der
+    #    Altbestand — dessen Stunden haben die Lückenenergie noch verloren, er
+    #    rechnet deshalb weiter nach N-92 (E6), bis er neu aggregiert wird
+    #    (E7: der Daten-Checker nennt ihn).
+    #
+    # Leser fragen ``tz.verworfen is not None`` — sie brauchen dafür weder
+    # Stundenzeile noch Provenance. ``none_as_null=True`` ist Bedingung: ein
+    # NULL muss NULL bleiben, ``{}`` muss ``{}`` bleiben.
+    verworfen: Mapped[Optional[dict]] = mapped_column(
+        JSON(none_as_null=True), nullable=True
+    )
+
+    # N-567 (26.09.2026): ``{achse: kWh}`` der Stunden, die der Deckel nur dank seines
+    # Fensters durchgelassen hat — Menge über Schwelle × n, aber nicht über Schwelle ×
+    # Stunden seit der letzten Änderung (R3, Vorlage Zählerlücken §10 Nachträge II). Ein
+    # Nachtrag nach einem eingefrorenen Zähler (Lab 24.05.2026: +37 kWh nach drei
+    # Nullstunden) oder ein Sprung nach einer Nacht mit echten Nullen — eedc kann beide nicht
+    # unterscheiden und folgt HA: die Menge ZÄHLT. Die Spalte benennt sie nur, damit der
+    # Daten-Checker sie zeigen kann (sonst wäre sie nirgends sichtbar). Keine Anzeigeregel,
+    # kein Verwerfen. ``NULL`` = kein Nachtrag (oder Tag von vor N-567) — die Regelmarke
+    # bleibt allein ``verworfen``.
+    nachtrag: Mapped[Optional[dict]] = mapped_column(
+        JSON(none_as_null=True), nullable=True
+    )
 
     # Per-Feld-Provenance (Etappe 3d Päckchen 1, KONZEPT-DATENPIPELINE.md Sektion 3.2).
     source_provenance: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)

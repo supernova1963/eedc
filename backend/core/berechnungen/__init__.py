@@ -126,6 +126,7 @@ from backend.core.berechnungen.emob import (
     QUELLE_LADUNG,
     EffizienzWert,
     eauto_effizienz_100km,
+    eauto_effizienz_zeitraum,
 )
 from backend.core.berechnungen.imd_monatsaggregat import (
     ImdTypBeitrag,
@@ -308,6 +309,7 @@ from backend.core.berechnungen.speicher_wirtschaftlichkeit import (
     SpeicherErsparnisErgebnis,
     SpeicherIstAggregat,
     aggregiere_speicher_ist,
+    speicher_ist_mit_grund,
     berechne_netzladung_kosten,
     berechne_speicher_ersparnis,
     berechne_v2h_ersparnis,
@@ -315,8 +317,11 @@ from backend.core.berechnungen.speicher_wirtschaftlichkeit import (
     ist_soc_drift_signifikant,
 )
 from backend.core.berechnungen.tagesbilanz import (
+    MonatsBilanz,
     TagesBilanz,
     bilanz_aus_stundenrows,
+    gesamtverbrauch_ha_formel_kwh,
+    monatsbilanz_aus_tagen,
 )
 from backend.core.berechnungen.verbrauch import (
     VerbrauchsKennzahlen,
@@ -346,8 +351,11 @@ __all__ = [
     "anteilig",
     "monatsfenster",
     "monatsfenster_investition",
+    "MonatsBilanz",
     "TagesBilanz",
     "bilanz_aus_stundenrows",
+    "gesamtverbrauch_ha_formel_kwh",
+    "monatsbilanz_aus_tagen",
     "berechne_wp_alternativkosten_ersparnis",
     "alter_wirkungsgrad",
     "ersetzt_keine_heizung",
@@ -429,6 +437,7 @@ __all__ = [
     "QUELLE_KEINE",
     "EffizienzWert",
     "eauto_effizienz_100km",
+    "eauto_effizienz_zeitraum",
     "PV_KOMPONENTEN_PREFIXE",
     "WAERMEPUMPE_KOMPONENTEN_PREFIXE",
     "WALLBOX_KOMPONENTEN_PREFIXE",
@@ -531,6 +540,7 @@ __all__ = [
     "SpeicherErsparnisErgebnis",
     "NetzladungKosten",
     "aggregiere_speicher_ist",
+    "speicher_ist_mit_grund",
     "berechne_netzladung_kosten",
     "berechne_speicher_ersparnis",
     "berechne_v2h_ersparnis",

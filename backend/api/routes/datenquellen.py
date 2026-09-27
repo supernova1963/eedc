@@ -13,6 +13,7 @@ B2.2/B5. Die aktive Quelle ist daher vorerst konstant der Standard-Inbound-Pfad.
 """
 
 import asyncio
+import copy
 import json as json_mod
 import logging
 from datetime import date, datetime, timezone
@@ -24,6 +25,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.api.deps import get_db
+from backend.services.activity_service import log_activity
+from backend.services.datenquellen_mapping_sync import feld_id
 from backend.core.ha_integrations_wissen import analysiere_vorschlaege
 from backend.models.anlage import Anlage
 from backend.models.investition import Investition
@@ -35,9 +38,13 @@ from backend.services.datenquellen_historie import (
 )
 from backend.core.betriebsmodus import betriebsmodus_klartext
 from backend.core.feld_auswertungen import sichten_fuer
-from backend.core.field_definitions import ist_zustand_feld
+from backend.core.field_definitions import anlage_typen_mit_kontext, ist_zustand_feld
 from backend.services.datenquellen_resolver import resolve_effektive_quelle
-from backend.services.live_sensor_config import extract_live_config
+from backend.services.live_sensor_config import (
+    entferne_legacy_invert,
+    extract_live_config,
+    legacy_invert_aktiv,
+)
 from backend.services.mqtt_topic_registry import build_expected_topics
 from backend.services.mqtt_broker_settings import import_aktiviert
 from backend.utils.investition_filter import aktiv_am_tag, sort_investitionen_nach_typ
@@ -495,8 +502,12 @@ async def mqtt_level(data: LevelRequest, db: AsyncSession = Depends(get_db, scop
 
 
 def _feld_id(match_key) -> str:
-    """Stabile Feld-Kennung aus dem match_key (Zuordnungs-Schlüssel)."""
-    return "_".join(str(x) for x in match_key)
+    """Stabile Feld-Kennung aus dem match_key (Zuordnungs-Schlüssel).
+
+    N-559: die Form liegt in `datenquellen_mapping_sync.feld_id` — dieselbe, die
+    das Aufräumen beim Löschen einer Investition sucht.
+    """
+    return feld_id(match_key)
 
 
 async def _feld_label(db: AsyncSession, anlage: Anlage, field_id: str) -> str:
@@ -507,16 +518,43 @@ async def _feld_label(db: AsyncSession, anlage: Anlage, field_id: str) -> str:
     `field_id` zurück, damit ein Hinweis nie leer bleibt (ein Feld ohne Label
     wäre für den Anwender schlimmer als eine hässliche Kennung).
     """
+    return (await _feld_labels(db, anlage)).get(field_id, field_id)
+
+
+async def _feld_labels(db: AsyncSession, anlage: Anlage) -> dict[str, str]:
+    """Alle Feld-Labels der Fläche auf einmal — für Aufrufer mit mehreren Feldern
+    (N-556: die Energie-Übernahme protokolliert je Feld), damit die Registry nicht
+    je Feld neu gebaut wird."""
     invs = (await db.execute(
         select(Investition).where(Investition.anlage_id == anlage.id, aktiv_am_tag(date.today()))
     )).scalars().all()
     invs = sort_investitionen_nach_typ(invs)
     eintraege = list(await build_expected_topics(db, anlage, investitionen=invs))
     eintraege += await _basis_preis_eintraege(db, anlage.id)
+    labels: dict[str, str] = {}
     for e in eintraege:
-        if _feld_id(e["match_key"]) == field_id:
-            return str(e.get("label") or e.get("feld_label") or field_id)
-    return field_id
+        fid = _feld_id(e["match_key"])
+        # erster Treffer gewinnt — dieselbe Reihenfolge wie die frühere Schleife
+        labels.setdefault(fid, str(e.get("label") or e.get("feld_label") or fid))
+    return labels
+
+
+def _quelle_klartext(eintrag: dict | None, topic: str | None = None) -> str:
+    """Eine Quelle, wie sie im Aktivitätsprotokoll steht (N-556).
+
+    ``None``/``{}`` heißt „kein eigener Eintrag" = Grundeinstellung (MQTT-Inbound
+    auf dem Standard-Topic) — dieselbe Lesart wie `ist_echte_aenderung`.
+    """
+    q = (eintrag or {}).get("quelle")
+    if not q or q == QUELLE_STANDARD:
+        return "Standard (MQTT-Inbound)"
+    if q in QUELLEN_HA:
+        return f"HA-Sensor {(eintrag or {}).get('entity_id') or ''}".strip()
+    if q == QUELLE_GATEWAY:
+        return f"MQTT-Gateway {topic}" if topic else "MQTT-Gateway"
+    if q == QUELLE_KEINE:
+        return "keine Quelle"
+    return str(q)
 
 
 async def _hat_aggregierte_historie(db: AsyncSession, anlage_id: int) -> bool:
@@ -978,7 +1016,9 @@ async def get_datenquellen_felder(anlage_id: int, db: AsyncSession = Depends(get
     feld_bedingung_anlage = {
         _feld_id(e["match_key"]): e.get("bedingung_anlage") for e in eintraege
     }
-    vorhandene_inv_typen = {i.typ for i in invs}
+    # N-555 Stufe 2: mit dem Pseudo-Typ „dienstliche Wallbox in Betrieb" (heute) —
+    # derselbe SoT wie der Monatsabschluss (`anlage_typen_mit_kontext`).
+    vorhandene_inv_typen = anlage_typen_mit_kontext(invs)
     probleme_je_feld: dict[str, list] = {}
 
     def _add_problem(fid: str, p: dict | None) -> None:
@@ -1189,7 +1229,11 @@ async def get_datenquellen_felder(anlage_id: int, db: AsyncSession = Depends(get
             # Invert-Modell (Datenquellen-V4): Vorzeichen-Flip ist quellen-
             # UNABHÄNGIG, aus dem vereinheitlichten Store gelesen (nicht aus dem
             # quellen-Eintrag), am Read-Endwert angewendet.
-            "invertieren": bool(invert_store.get(fid)),
+            # N-562: ein Legacy-`live_invert` (vor v4) wirkt über die Union in
+            # `extract_live_config` mit — der Schalter zeigt, was wirkt, nicht
+            # nur, was im Store steht.
+            "invertieren": bool(invert_store.get(fid))
+            or legacy_invert_aktiv(anlage.sensor_mapping or {}, fid),
             # R1/W-2 (SOLL Wärme/Klima §3.2a): Die Größe ist an dieser Bauart
             # untypisch, aber möglich — etwa die Kühl-Achse an einer
             # Luft-Wasser-Wärmepumpe. Sie steht hinter dem Schritt „Weitere
@@ -1315,13 +1359,17 @@ async def set_feld_invert(
     if not anlage:
         raise HTTPException(status_code=404, detail="Anlage nicht gefunden")
 
-    mapping = dict(anlage.sensor_mapping or {})
+    mapping = copy.deepcopy(anlage.sensor_mapping or {})
     invert = dict(mapping.get("invertieren") or {})
-    vorher_invertiert = bool(invert.get(field_id))
+    vorher_invertiert = bool(invert.get(field_id)) or legacy_invert_aktiv(mapping, field_id)
     if body.invertieren:
         invert[field_id] = True
     else:
         invert.pop(field_id, None)
+        # N-562: Ausschalten heißt aus — auch ein Legacy-`live_invert` (vor v4)
+        # geht mit, sonst hielte die Union in `extract_live_config` den Wert
+        # weiter umgedreht, während der Schalter grau ist (T89667 #378).
+        entferne_legacy_invert(mapping, field_id)
     mapping["invertieren"] = invert
     # Konzept #192 B: das Vorzeichen dreht die Aggregation, wirkt aber erst ab
     # dem nächsten Lauf — die gespeicherten Tage behalten ihre Richtung. Genau
@@ -1331,6 +1379,21 @@ async def set_feld_invert(
         await _historie_vermerken(db, anlage, mapping, field_id)
     anlage.sensor_mapping = mapping
     flag_modified(anlage, "sensor_mapping")
+    # N-556: jede Handlung auf der Fläche steht im Protokoll — in DIESER Sitzung
+    # (N-532), damit die Zeile mit der Zuordnung committet oder verworfen wird.
+    await log_activity(
+        kategorie="sensor_mapping",
+        aktion="Vorzeichen umgekehrt" if body.invertieren else "Vorzeichen-Umkehr entfernt",
+        details=(
+            f"{anlage.anlagenname} · {await _feld_label(db, anlage, field_id)}: "
+            f"{'umgekehrt' if vorher_invertiert else 'normal'} → "
+            f"{'umgekehrt' if body.invertieren else 'normal'}"
+        ),
+        details_json={"field_id": field_id, "vorher": vorher_invertiert,
+                      "nachher": bool(body.invertieren)},
+        anlage_id=anlage_id,
+        db=db,
+    )
     await db.commit()
     return {
         "field_id": field_id,
@@ -1421,6 +1484,11 @@ async def set_feld_quelle(
             select(MqttGatewayMapping).where(MqttGatewayMapping.id == mid)
         )).scalar_one_or_none()
 
+    # N-556: die alte Quelle im Klartext, BEVOR die Gateway-Zeile umgeschrieben
+    # oder gelöscht wird — danach trägt sie schon das neue Topic.
+    _alt_row = await _lade_mapping_row(alt_mapping_id)
+    alt_text = _quelle_klartext(vorher, _alt_row.quell_topic if _alt_row is not None else None)
+
     if quelle == QUELLE_GATEWAY:
         quell_topic = (body.quell_topic or "").strip()
         if not quell_topic:
@@ -1452,10 +1520,9 @@ async def set_feld_quelle(
         quellen[field_id] = {"quelle": QUELLE_GATEWAY, "mapping_id": row.id}
     else:
         # Weg von Gateway → zugehörige Zeile löschen (bewusste Nutzer-Umschaltung).
-        row = await _lade_mapping_row(alt_mapping_id)
-        if row is not None:
-            await db.delete(row)
-            await db.flush()
+        # N-561: derselbe Löschweg wie beim Löschen einer Komponente.
+        from backend.api.routes.mqtt_gateway import entferne_gateway_zeile
+        await entferne_gateway_zeile(db, alt_mapping_id)
         if quelle in QUELLEN_HA:
             entity = (body.entity_id or "").strip()
             if not entity:
@@ -1482,6 +1549,24 @@ async def set_feld_quelle(
     )
     anlage.sensor_mapping = mapping
     flag_modified(anlage, "sensor_mapping")
+    # N-556: Zuordnen und Wegschalten stehen im Protokoll — in DIESER Sitzung (N-532).
+    neu_text = _quelle_klartext(
+        quellen.get(field_id),
+        (body.quell_topic or "").strip() or None if quelle == QUELLE_GATEWAY else None,
+    )
+    await log_activity(
+        kategorie="sensor_mapping",
+        aktion=(
+            "Datenquelle entfernt" if quelle == QUELLE_KEINE
+            else "Datenquelle auf Standard gesetzt" if quelle == QUELLE_STANDARD
+            else "Datenquelle zugeordnet"
+        ),
+        details=f"{anlage.anlagenname} · {await _feld_label(db, anlage, field_id)}: {alt_text} → {neu_text}",
+        details_json={"field_id": field_id, "vorher": vorher or None,
+                      "nachher": quellen.get(field_id)},
+        anlage_id=anlage_id,
+        db=db,
+    )
     await db.commit()
 
     # Gateway-Service hot-reloaden, damit die Subscription der Änderung folgt.
@@ -1554,18 +1639,35 @@ async def uebernehme_energy_vorschlaege(
             zuordnungen.append((fid, entity))
     for inv_id, felder in (body.investitionen or {}).items():
         for feld, entity in (felder or {}).items():
-            fid = f"inv_energy_{inv_id}_{feld}"
+            fid = feld_id(("inv_energy", inv_id, feld))
             if entity and fid in gueltig:
                 zuordnungen.append((fid, entity))
 
     mapping = dict(anlage.sensor_mapping or {})
     quellen = dict(mapping.get(QUELLEN_KEY) or {})
+    protokoll: list[str] = []
+    labels = await _feld_labels(db, anlage) if zuordnungen else {}
     for fid, entity in zuordnungen:
+        alt_text = _quelle_klartext(quellen.get(fid))
         quellen[fid] = {"quelle": kind, "entity_id": entity}
         uebernehme_quelle_ins_mapping(mapping, fid, kind, entity)
+        protokoll.append(
+            f"{labels.get(fid, fid)}: {alt_text} → {_quelle_klartext(quellen[fid])}"
+        )
     mapping[QUELLEN_KEY] = quellen
     anlage.sensor_mapping = mapping
     flag_modified(anlage, "sensor_mapping")
+    # N-556: eine Zeile für die ganze Übernahme, je Feld alt → neu — in DIESER
+    # Sitzung (N-532). Ohne Zuordnung (leere Auswahl) keine Handlung, keine Zeile.
+    if zuordnungen:
+        await log_activity(
+            kategorie="sensor_mapping",
+            aktion=f"Energie-Dashboard-Vorschläge übernommen ({len(zuordnungen)})",
+            details=f"{anlage.anlagenname} · " + " · ".join(protokoll),
+            details_json={"felder": [fid for fid, _ in zuordnungen]},
+            anlage_id=anlage_id,
+            db=db,
+        )
     await db.commit()
 
     return {"gespeichert": True, "anzahl": len(zuordnungen),

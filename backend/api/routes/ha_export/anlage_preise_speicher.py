@@ -21,8 +21,14 @@ import logging
 from datetime import date
 from typing import Any, Optional
 
+from backend.core.zahlenformat import fmt_zahl
+
 from sqlalchemy import select
 
+from backend.core.berechnungen.speicher_wirtschaftlichkeit import (
+    GRUND_KEINE_ENTLADUNG,  # noqa: F401  — Vokabular, hier dokumentiert
+    GRUND_ZU_WENIG_MONATE,
+)
 from backend.models.investition import Investition, InvestitionMonatsdaten
 
 logger = logging.getLogger(__name__)
@@ -47,7 +53,9 @@ async def lade_speicher_wirkungsgrade(
     Sichten dieselbe Zahl nennen.
     """
     from backend.core.investition_kennwerte import get_speicher_wirkungsgrad_gepflegt
-    from backend.services.speicher_wirtschaftlichkeit import wirkungsgrad_ist_fuer_speicher
+    from backend.services.speicher_wirtschaftlichkeit import (
+        wirkungsgrad_ist_fuer_speicher_mit_grund,
+    )
 
     res = await db.execute(
         select(Investition).where(
@@ -79,9 +87,17 @@ async def lade_speicher_wirkungsgrade(
     for sp in speicher:
         gepflegt = get_speicher_wirkungsgrad_gepflegt(sp)
         gemessen = None
+        # ⭐ **Der Grund reist seit A7 mit** (Nachlese 4.0.50). Vorher stand hier
+        # `wirkungsgrad_ist_fuer_speicher` und der Resolver darunter schrieb bei
+        # `None` pauschal `zu-wenig-monate` — auch wenn die Monate längst da
+        # waren und bloß die Entladung fehlte. `GRUND_ZU_WENIG_MONATE` ist der
+        # Anfangswert, weil eine Anlage ohne Anschaffungsdatum (`periode_von is
+        # None`) genau diesen Fall beschreibt: es gibt noch keinen Zeitraum, aus
+        # dem gemessen werden könnte.
+        grund = GRUND_ZU_WENIG_MONATE
         if periode_von is not None:
             try:
-                gemessen = await wirkungsgrad_ist_fuer_speicher(
+                gemessen, grund = await wirkungsgrad_ist_fuer_speicher_mit_grund(
                     db,
                     anlage_id=anlage.id,
                     speicher=sp,
@@ -98,7 +114,8 @@ async def lade_speicher_wirkungsgrade(
                     "HA-Export η-IST fehlgeschlagen (Speicher %s): %s: %s",
                     sp.id, type(e).__name__, e,
                 )
-        out[sp.id] = _aufloesen(sp, gemessen, gepflegt)
+                gemessen, grund = None, GRUND_ZU_WENIG_MONATE
+        out[sp.id] = _aufloesen(sp, gemessen, gepflegt, grund)
     return out
 
 
@@ -131,14 +148,18 @@ class WirkungsgradInfo:
         }
 
 
-def _aufloesen(speicher: Any, gemessen, gepflegt: Optional[float]) -> WirkungsgradInfo:
+def _aufloesen(speicher: Any, gemessen, gepflegt: Optional[float],
+               grund_ohne_aggregat: str = GRUND_ZU_WENIG_MONATE) -> WirkungsgradInfo:
     """gemessen › gepflegt › keiner — und der Grund reist mit."""
     laedt = bool((getattr(speicher, "parameter", None) or {}).get("laedt_aus_netz"))
 
     if gemessen is None:
-        # `aggregiere_speicher_ist` gab `None`: zu wenige Monate ODER gar keine
-        # erfasste Entladung. Der SoT trennt die beiden nicht — der Text auch nicht.
-        messung = "zu-wenig-monate"
+        # ⭐ **Der Grund kommt vom Aufrufer** (Nachlese 4.0.50, A7). Hier stand
+        # fest `"zu-wenig-monate"` mit der Begründung „der SoT trennt die
+        # beiden nicht" — seit `speicher_ist_mit_grund` trennt er sie, und
+        # `keine-entladung` verlangt einen anderen Handgriff des Anwenders
+        # (Quelle zuordnen) als „warte noch ein paar Monate".
+        messung = grund_ohne_aggregat
     elif gemessen.wirkungsgrad_prozent is not None:
         return WirkungsgradInfo(
             round(float(gemessen.wirkungsgrad_prozent), 1), "gemessen", gemessen.quelle, laedt
@@ -222,8 +243,8 @@ def _leer_um_und_reicht(
 
     ⛔ **Hier stand in Fassung 3 der Vorlage „erster Slot ab jetzt ≤ 2 %".** Das
     hätte den häufigsten Abendfall falsch gemeldet: Der Start-Slot der
-    Simulation ist die **abgelaufene** Stunde, und sein SoC ist der
-    Ausgangswert. Ein jetzt leerer Speicher, den die PV bis 11 Uhr wieder füllt,
+    Simulation ist die **zuletzt gemessene** Stunde (bis 22.09.2026 die
+    laufende, s. u.), und sein SoC ist der Ausgangswert. Ein jetzt leerer Speicher, den die PV bis 11 Uhr wieder füllt,
     hätte „leer um" in der Vergangenheit gemeldet und daneben „reicht: AUS" —
     während „voll um 11:00" danebensteht. Mit der Übergangsregel: kein Übergang
     ⇒ kein „leer um", und „reicht" ist AN, wenn er über der Schwelle endet.
@@ -231,7 +252,18 @@ def _leer_um_und_reicht(
     ⚠ Der **12-Uhr-Filter** der Simulation (`speicher_leer_um`) bleibt dem
     Planungs-Tab: er ist dort richtig, weil jene Simulation um Mitternacht
     startet und morgendliche Niedrigstände keine Aussage über den Abend sind.
-    Diese hier startet **jetzt** und braucht ihn nicht.
+    Diese hier startet beim **zuletzt gemessenen Ladestand** und braucht ihn
+    nicht.
+
+    ⚠ **„Leer um" darf in der Vergangenheit liegen (V1, 22.09.2026).** Seit V1
+    beginnt die Simulation nicht mehr bei ``now.hour``, sondern bei der
+    zuletzt von HA verdichteten Stunde — hinkt HA nach oder gibt es heute noch
+    keinen Ladestand, liegt dieser Start **vor** jetzt, und der Übergang kann
+    in diese Lücke fallen. Der Zeitstempel bleibt dann so, wie das Modell ihn
+    sieht („seit 09:00 leer"); ein Anheben auf die laufende Stunde wäre eine
+    zweite Uhr neben dem Sim-Start und genau die Vermischung, die V1 beendet
+    hat. Die Attribute ``sim_start_stunde``/``sim_start_anteil`` nennen den
+    Start.
 
     Returns:
         ``(leer_slot | None, reicht | None, end_soc | None, min_slot | None)``
@@ -365,7 +397,7 @@ async def preise_speicher_sensoren(
                     "stundenprofil_morgen_cent": _ev_profil(reihe.preis_cent, bezugspreise.verguetung_cent, 24, 48),
                 },
                 berechnung=(
-                    f"{bezug_jetzt} ct Bezug − {bezugspreise.verguetung_cent} ct Vergütung"
+                    f"{fmt_zahl(bezug_jetzt, 2)} ct Bezug − {fmt_zahl(bezugspreise.verguetung_cent, 2)} ct Vergütung"
                     if bezug_jetzt is not None and bezugspreise.verguetung_cent is not None
                     else None
                 ),
@@ -400,7 +432,7 @@ async def preise_speicher_sensoren(
                 "verguetung_quelle": bezugspreise.verguetung_quelle,
             },
             berechnung=(
-                f"{bezugspreise.verguetung_cent} ct entgangene Vergütung ÷ {eta} % Wirkungsgrad"
+                f"{fmt_zahl(bezugspreise.verguetung_cent, 2)} ct entgangene Vergütung ÷ {fmt_zahl(eta, 0)} % Wirkungsgrad"
                 if bezugspreise.verguetung_cent is not None and eta is not None else None
             ),
         )
@@ -422,7 +454,7 @@ async def preise_speicher_sensoren(
                     "stundenprofil_morgen_cent": _eta_profil(reihe.preis_cent, eta, 24, 48),
                 },
                 berechnung=(
-                    f"{bezug_jetzt} ct Bezug ÷ {eta} % Wirkungsgrad"
+                    f"{fmt_zahl(bezug_jetzt, 2)} ct Bezug ÷ {fmt_zahl(eta, 0)} % Wirkungsgrad"
                     if bezug_jetzt is not None and eta is not None else None
                 ),
             )
@@ -433,18 +465,26 @@ async def preise_speicher_sensoren(
     )
     if end_soc is not None:
         modell_b = prognose.get("speicher_verbrauch_profil") or {}
+        # V1: die Start-Annahme der Simulation (Slot + Anteil) reist mit —
+        # dieselbe Regel wie beim Verbrauchsmodell daneben, nur fuer die
+        # andere Haelfte der Annahme.
+        sim_annahme = prognose.get("speicher_sim_annahme") or {}
         if leer_slot is not None:
             _anhaengen(
                 sensor_values, "eedc_speicher_leer_um_ts", _iso_ende(heute, leer_slot),
                 {
                     "quelle": "simulation",
-                    "regel": "Übergang in den Leerstand nach der laufenden Stunde",
+                    "regel": "Übergang in den Leerstand nach dem Start-Slot der Simulation "
+                             "(zuletzt gemessene Stunde)",
                     "end_soc_prozent": end_soc,
                     **modell_b,
+                    **sim_annahme,
                 },
                 berechnung=(
-                    f"erste Stunde nach jetzt, in der der Ladestand unter die "
-                    f"Leer-Schwelle fällt (Simulation ab {jetzt_stunde:02d}:00)"
+                    f"erste Stunde nach dem Sim-Start, in der der Ladestand unter die "
+                    f"Leer-Schwelle fällt (Start beim zuletzt gemessenen Ladestand, "
+                    f"Slot {sim_annahme.get('sim_start_stunde')}, davon "
+                    f"{fmt_zahl(sim_annahme.get('sim_start_anteil'), 1)} simuliert)"
                 ),
             )
         _anhaengen(
@@ -456,6 +496,7 @@ async def preise_speicher_sensoren(
                 "min_soc_um": _iso_ende(heute, min_slot) if min_slot is not None else None,
                 "end_soc_prozent": end_soc,
                 **modell_b,
+                **sim_annahme,
             },
         )
 
@@ -522,7 +563,7 @@ async def preise_speicher_sensoren(
 
 def _bezug_berechnung(reihe, aufschlag, ust) -> Optional[str]:
     if reihe.quelle == "boerse_plus_aufschlag" and aufschlag is not None:
-        return f"(1 + {ust:.0f} % USt) × Börsenpreis + {aufschlag.cent} ct Aufschlag ({aufschlag.quelle})"
+        return f"(1 + {fmt_zahl(ust, 0)} % USt) × Börsenpreis + {fmt_zahl(aufschlag.cent, 2)} ct Aufschlag ({aufschlag.quelle})"
     if reihe.quelle == "boersenpreis":
         return "Börsenpreis der laufenden Stunde — Näherung ohne ableitbaren Aufschlag"
     if reihe.quelle == "zeitfenster":

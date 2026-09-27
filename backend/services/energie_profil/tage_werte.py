@@ -37,7 +37,8 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
+from typing import Optional
 
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -45,6 +46,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.api.routes.energie_profil._shared import TagWerteResponse
 from backend.core.berechnungen.kennzahlen import autarkie_prozent, eigenverbrauchsquote_prozent
 from backend.core.berechnungen.anlagen_kwp import anlagen_kwp
+from backend.core.berechnungen.slot_konvention import forward_werte_je_backward_zeile
+from backend.core.berechnungen.spannen import verbrauch_gebuendelt
 from backend.core.berechnungen import (
     aggregiere_tep_komponenten,
     berechne_finanz_aggregat,
@@ -88,19 +91,31 @@ async def baue_tage_werte(
     """
     anlage_id = anlage.id
 
-    # Stündliche Rohdaten je Tag gruppieren
+    # Stündliche Rohdaten je Tag gruppieren.
+    # ⭐ **Ein Tag früher** (N-387): der Ladestand, der zur Backward-Stunde 0
+    # gehört, steht in der Zeile 23 des Vortags. Die Zeilen dieses Zusatztages
+    # liefern nur den SoC und landen **nicht** in `tep_pro_tag` — sonst bekäme
+    # der Aufrufer eine Zeile für einen Tag, nach dem er nicht gefragt hat.
     tep_result = await db.execute(
         select(TagesEnergieProfil)
         .where(and_(
             TagesEnergieProfil.anlage_id == anlage_id,
-            TagesEnergieProfil.datum >= von,
+            TagesEnergieProfil.datum >= von - timedelta(days=1),
             TagesEnergieProfil.datum <= bis,
         ))
         .order_by(TagesEnergieProfil.datum, TagesEnergieProfil.stunde)
     )
+    alle_tep = list(tep_result.scalars().all())
+    soc_gepaart: dict[tuple[date, int], Optional[float]] = {
+        (r.datum, r.stunde): wert
+        for r, wert in zip(
+            alle_tep, forward_werte_je_backward_zeile(alle_tep, "soc_prozent")
+        )
+    }
     tep_pro_tag: dict[date, list[TagesEnergieProfil]] = defaultdict(list)
-    for r in tep_result.scalars().all():
-        tep_pro_tag[r.datum].append(r)
+    for r in alle_tep:
+        if r.datum >= von:
+            tep_pro_tag[r.datum].append(r)
 
     # Tageszusammenfassungen (tag-native Felder)
     tz_result = await db.execute(
@@ -242,8 +257,13 @@ async def baue_tage_werte(
 
     for tag in alle_tage:
         stunden_rows = tep_pro_tag.get(tag, [])
-        bilanz = bilanz_aus_stundenrows(stunden_rows)
         tz = tz_pro_tag.get(tag)
+        # Zählerlücken wie HA (R7/R9): die Tageszeile sagt selbst, nach welcher
+        # Regel sie gerechnet ist — `verworfen` ist die Regelmarke. Ohne Marke
+        # (Altbestand) rechnet der Tag N-92 wie bisher (E6).
+        bilanz = bilanz_aus_stundenrows(
+            stunden_rows, verworfen=(tz.verworfen if tz else None),
+        )
 
         # Grundlast dieser Nacht (ADR-001: Sourcing hier, Formel im Layer).
         # Der Filter ist WOERTLICH der der Monats-/Jahres-Kachel
@@ -253,9 +273,15 @@ async def baue_tage_werte(
         # ⚠ Keine Mindestzahl an Nachtstunden: fehlen sie ganz, liefert
         # `berechne_grundlast` None und die Spalte zeigt „—" (Total-Fall);
         # eine Teilabdeckung bleibt stehen, wie ueberall im Baum.
+        # ⚠ Zählerlücken wie HA (§2, Grundlast-Guard): eine Zeile, deren
+        # Verbrauchs-Achsen mehr als eine reale Stunde tragen, ist keine
+        # Stunden-Stichprobe — sie trüge den Verbrauch einer ganzen Lücke als
+        # „Nachtleistung". R6 lässt `verbrauch_kw` bei verschiedenen Spannen
+        # schon leer; bei gleicher Spanne fällt die Zeile hier heraus.
         nacht_kw = [
             float(r.verbrauch_kw) for r in stunden_rows
             if r.stunde < 5 and r.verbrauch_kw is not None and r.verbrauch_kw > 0
+            and not verbrauch_gebuendelt(r)
         ]
         grundlast_kw = berechne_grundlast(
             nacht_verbrauch_kw=nacht_kw,
@@ -326,8 +352,16 @@ async def baue_tage_werte(
                 autarkie_tag = autarkie_prozent(ev_tag, ev_tag + bilanz.netzbezug_kwh)
             if bilanz.pv_erfasst:
                 evq_tag = eigenverbrauchsquote_prozent(ev_tag, bilanz.erzeugung_kwh)
+        # ⭐ **N-387: der Ladestand jeder Zeile kommt aus ihrer Vorzeile.** Die
+        # Lade-/Entlademengen daneben stammen aus Σ `batterie_kw` über die
+        # Backward-Slots `[Vortag 23:00, 23:00)`. Der SoC der Zeile 0 beschrieb
+        # forward `[00,01)` (Schwerpunkt 00:30) und lag damit **1½ h** hinter
+        # dem Beginn der Mengenreihe, der SoC der Zeile 23 (`[23,24)`,
+        # Schwerpunkt 23:30) ½ h dahinter — der Rand war unsymmetrisch. Mit der
+        # Vorzeile sind es ½ h auf beiden Seiten (Zeile 0 ← Vortag 23 ⇒ 23:30,
+        # Zeile 23 ← Zeile 22 ⇒ 22:30).
         soc_delta = delta_soc_kwh(
-            [r.soc_prozent for r in stunden_rows],
+            [soc_gepaart.get((r.datum, r.stunde)) for r in stunden_rows],
             sum(
                 get_speicher_nutzbare_kapazitaet_kwh(i) or 0
                 for i in speicher_invs if i.ist_aktiv_an(tag)
@@ -402,6 +436,10 @@ async def baue_tage_werte(
             datum=tag,
             stunden_verfuegbar=(tz.stunden_verfuegbar if tz else bilanz.stunden),
             datenquelle=(tz.datenquelle if tz else None),
+            # Zählerlücken wie HA (R4/R9): Markierung + Regelmarke der Tageszeile.
+            verworfen=(tz.verworfen if tz else None),
+            # N-567: Nachtrag nach Nullstunden — benannt, in den Summen enthalten.
+            nachtrag=(tz.nachtrag if tz else None),
             # Energie. `erzeugung` ist None, solange keine Stunde einen PV-Wert
             # trug — eine 0 wäre hier nicht „nichts erzeugt", sondern „nicht
             # gemessen" (`docs/KONZEPT-UNVOLLSTAENDIGE-WERTE.md`). Betrifft

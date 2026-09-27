@@ -133,6 +133,12 @@ class DatenChecker(
             self._check_energieprofil_abdeckung(anlage, monatsdaten, mqtt_zaehler)
         )
         ergebnisse.extend(await self._check_energieprofil_plausibilitaet(anlage))
+        # E7 (Zählerlücken wie HA): Bestandstage ohne Regelmarke + Reparaturweg.
+        ergebnisse.extend(await self._check_bestandstage_ohne_regelmarke(anlage))
+        # Nachträge II: Tage mit mehr Einspeisung als Erzeugung + Entladung.
+        ergebnisse.extend(await self._check_einspeisung_ueber_erzeugung(anlage))
+        # N-567: Nachtrag nach eingefrorenem Zähler — nur benannt (eedc folgt HA).
+        ergebnisse.extend(await self._check_nachtrag_nach_eingefrorenem_zaehler(anlage))
         ergebnisse.extend(await self._check_mqtt_topic_abdeckung(anlage))
         ergebnisse.extend(await self._check_zaehler_ruecksprung(anlage))
         ergebnisse.extend(await self._check_sensor_mapping_lts(anlage))
@@ -148,7 +154,9 @@ class DatenChecker(
         ergebnisse.extend(await self._check_leere_tage_trotz_zaehler(anlage))
         ergebnisse.extend(await self._check_pv_ueber_erfassung(anlage))
         ergebnisse.extend(self._check_wp_arbeitszahl_unplausibel(anlage))
-        ergebnisse.extend(self._check_emob_pool_pflege(anlage))
+        ergebnisse.extend(self._check_emob_pool_pflege(
+            anlage, bloecke=await self._emob_bloecke_fuer_pflege(anlage),
+        ))
         ergebnisse.extend(self._check_emob_pv_ueber_gesamt(anlage))
         ergebnisse.extend(self._check_phev_anteil_unbestimmt(anlage))
         ergebnisse.extend(self._check_emob_sensor_doppelmapping(anlage))

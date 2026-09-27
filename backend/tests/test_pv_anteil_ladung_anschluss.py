@@ -43,6 +43,7 @@ from backend.services.provenance import (
     ABGELEITET_EINSPEISE_DECKUNG_TEILWEISE,
 )
 from backend.tests import factories
+from backend.tests import ha_lts_helfer
 
 ANSCHAFFUNG = date(2024, 1, 1)
 
@@ -220,10 +221,21 @@ async def test_pflege_auf_der_anderen_quelle_zaehlt_NICHT(db):
 
     emob = _fakt(await lade_monats_fakten(db, anlage.id), 2025, 5).emob
 
+    # ⚑ N-555 Stufe 2 (26.09.2026, Konzept Regel 2 Schritt 1 + Regel 3/G1): die Probe hält
+    # ihre Substanz — die **Wallbox** bekommt ihren abgeleiteten PV-Anteil (180/20), die
+    # Pflege am Fahrzeug unterdrückt ihn nicht. Neu ist, was der Topf ist: das Auto trägt
+    # „Heim: PV" (40) — eine eigene Messung, die auch neben der Wallbox zählt; „Heim: Netz"
+    # fehlt und zählt als 0, der alte Gesamtwert 80 (ohne Herkunft) zählt neben der Wallbox
+    # nicht (Regel 2 Schritt 1, Regel 8). Topf = private Heimladung = 40/0; der Rest der
+    # Wallbox (160 = 140 PV / 20 Netz) hat keinen Empfänger. Bis Stufe 1 war der Topf die
+    # Wallbox (180/20); Gernots Entscheid vom 24.08. („der Altwert zählt nicht gegen die
+    # Wallbox") ist mit dem Modellwechsel vom 24.09. für „Heim: PV/Netz" gedreht.
     assert emob.quelle == "wallbox"
-    assert emob.ladung_anteil_abgeleitet is True
-    assert emob.ladung_pv_kwh == pytest.approx(180.0)
-    assert emob.ladung_netz_kwh == pytest.approx(20.0)
+    assert emob.wallbox_summe.pv_kwh == pytest.approx(180.0)
+    assert emob.wallbox_summe.netz_kwh == pytest.approx(20.0)
+    assert emob.ladung_pv_kwh == pytest.approx(40.0)
+    assert emob.ladung_netz_kwh == pytest.approx(0.0)
+    assert (emob.rest_pv_kwh, emob.rest_netz_kwh) == (pytest.approx(140.0), pytest.approx(20.0))
     assert emob.ladung_pv_kwh + emob.ladung_netz_kwh == pytest.approx(
         emob.ladung_kwh
     ), "die Trias bleibt geschlossen (#262)"
@@ -420,11 +432,9 @@ async def test_aggregate_day_schreibt_den_abgeleiteten_ladeanteil(db):
             "punkte": [{"zeit": f"{h:02d}:00", "werte": {}} for h in range(24)],
         }),
     ), patch(
-        "backend.services.snapshot.lts_aggregator.get_hourly_kwh_by_category_lts",
-        new=AsyncMock(return_value=stunden),
-    ), patch(
-        "backend.services.snapshot.lts_aggregator.get_komponenten_tageskwh_lts",
-        new=AsyncMock(return_value={}),
+        # Zählerlücken wie HA (R5): Stunden und Tag aus EINEM Lesezugriff.
+        "backend.services.snapshot.lts_aggregator.lts_tagestabelle",
+        new=AsyncMock(return_value=ha_lts_helfer.lts_tabelle(stunden, {})),
     ), patch(
         "backend.services.sensor_snapshot_service.get_daily_counter_deltas_by_inv",
         new=AsyncMock(return_value={}),
@@ -496,11 +506,9 @@ async def test_aggregate_day_ohne_ladung_laesst_die_spalten_leer(db):
             "punkte": [{"zeit": f"{h:02d}:00", "werte": {}} for h in range(24)],
         }),
     ), patch(
-        "backend.services.snapshot.lts_aggregator.get_hourly_kwh_by_category_lts",
-        new=AsyncMock(return_value=stunden),
-    ), patch(
-        "backend.services.snapshot.lts_aggregator.get_komponenten_tageskwh_lts",
-        new=AsyncMock(return_value={}),
+        # Zählerlücken wie HA (R5): Stunden und Tag aus EINEM Lesezugriff.
+        "backend.services.snapshot.lts_aggregator.lts_tagestabelle",
+        new=AsyncMock(return_value=ha_lts_helfer.lts_tabelle(stunden, {})),
     ), patch(
         "backend.services.sensor_snapshot_service.get_daily_counter_deltas_by_inv",
         new=AsyncMock(return_value={}),
@@ -559,11 +567,9 @@ async def test_aggregate_day_kennzeichnet_eine_unvollstaendige_deckung(db):
             "punkte": [{"zeit": f"{h:02d}:00", "werte": {}} for h in range(24)],
         }),
     ), patch(
-        "backend.services.snapshot.lts_aggregator.get_hourly_kwh_by_category_lts",
-        new=AsyncMock(return_value=stunden),
-    ), patch(
-        "backend.services.snapshot.lts_aggregator.get_komponenten_tageskwh_lts",
-        new=AsyncMock(return_value={}),
+        # Zählerlücken wie HA (R5): Stunden und Tag aus EINEM Lesezugriff.
+        "backend.services.snapshot.lts_aggregator.lts_tagestabelle",
+        new=AsyncMock(return_value=ha_lts_helfer.lts_tabelle(stunden, {})),
     ), patch(
         "backend.services.sensor_snapshot_service.get_daily_counter_deltas_by_inv",
         new=AsyncMock(return_value={}),

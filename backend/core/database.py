@@ -598,12 +598,22 @@ def _migrate_verbrauch_daten_keys_v326(connection) -> None:
     Konsolidierte Pairs (Legacy → Kanon):
       erzeugung_kwh        → pv_erzeugung_kwh        (PV-Modul, BKW)
       heizung_kwh          → heizenergie_kwh         (WP)
-      verbrauch_kwh        → ladung_kwh              (E-Auto, Wallbox)
+      verbrauch_kwh        → ladung_kwh              (Wallbox)
       speicher_ladung_netz_kwh → ladung_netz_kwh     (Speicher Arbitrage)
 
     Achtung: `verbrauch_kwh` ist bei Sonstiges-Investitionen ein eigenes
     legitimes Feld (Verbraucher-Kategorie). Diese Migration prüft daher den
     Investitions-Typ; bei Sonstiges bleibt `verbrauch_kwh` unangetastet.
+
+    ⛔ **Und beim E-Auto ebenfalls — seit N-555 (Konzept Heimladung/Fahrverbrauch,
+    Regel 5).** Hier stand bis 25.09.2026 `'e-auto': {'verbrauch_kwh': 'ladung_kwh'}`.
+    Am E-Auto ist „Verbrauch" der **Fahrverbrauch** (Registry-Hinweis: „der reine
+    Fahrverbrauch"), keine Ladung. Weil diese Funktion bei **jedem** Start läuft (kein
+    `_apply_once`), buchte sie jeden neu erfassten Fahrverbrauch beim nächsten Start in
+    eine Heimladung um und löschte ihn — auch über eine gepflegte Ladung von 0 hinweg
+    (`in (None, '', 0)` unten). Die Spur räumt einmalig
+    `services/migrations/migrate_eauto_fahrverbrauch_rueckbenennung.py`. Für die übrigen
+    Paare gibt es keinen Befund; sie bleiben.
 
     Idempotent: läuft beim ersten Mal echt, danach No-Op.
     """
@@ -621,9 +631,8 @@ def _migrate_verbrauch_daten_keys_v326(connection) -> None:
         'waermepumpe': {
             'heizung_kwh': 'heizenergie_kwh',
         },
-        'e-auto': {
-            'verbrauch_kwh': 'ladung_kwh',
-        },
+        # 'e-auto': absichtlich nicht mehr (N-555, Regel 5) — `verbrauch_kwh` ist
+        # dort der Fahrverbrauch, keine Ladung. Begründung im Docstring.
         'wallbox': {
             'verbrauch_kwh': 'ladung_kwh',
         },
@@ -945,6 +954,45 @@ async def run_migrations(conn):
                 connection.execute(text('ALTER TABLE tages_zusammenfassung ADD COLUMN emob_ladung_pv_abgeleitet_kwh FLOAT'))
             if 'emob_ladung_netz_abgeleitet_kwh' not in existing_columns:
                 connection.execute(text('ALTER TABLE tages_zusammenfassung ADD COLUMN emob_ladung_netz_abgeleitet_kwh FLOAT'))
+            # N-569-Ergänzung: davon aus dem Speicher (Teilmenge des PV-Anteils). Additiv,
+            # Bestand bleibt NULL = keine Aussage.
+            if 'emob_ladung_speicher_abgeleitet_kwh' not in existing_columns:
+                connection.execute(text('ALTER TABLE tages_zusammenfassung ADD COLUMN emob_ladung_speicher_abgeleitet_kwh FLOAT'))
+            # N-547: das Lern-SOLL des Korrekturprofils (rohe, GEKAPPTE, aber
+            # unkorrigierte OpenMeteo-Reihe) — getrennt von der Vorhersage
+            # `pv_prognose_stundenprofil`, gegen die bis 22.09.2026 gelernt
+            # wurde (zirkulär: Faktoren konvergierten auf √r statt r).
+            # ⛔ RÜCKWÄRTS LEER, kein Backfill: Bestandszeilen tragen die
+            # korrigierte Reihe, eine Rückrechnung wäre geraten. Die Bins
+            # behalten dafür ihren alten Faktor, bis das Gate ihrer Stufe mit
+            # NEUEN Datenpunkten erreicht ist (Korrekturprofil-Aggregator).
+            if 'lern_soll_stundenprofil_kwh' not in existing_columns:
+                connection.execute(text('ALTER TABLE tages_zusammenfassung ADD COLUMN lern_soll_stundenprofil_kwh JSON'))
+            if 'lern_soll_kwh' not in existing_columns:
+                connection.execute(text('ALTER TABLE tages_zusammenfassung ADD COLUMN lern_soll_kwh FLOAT'))
+            # Zählerlücken wie HA (R4/R9): `verworfen` ist Markierung UND
+            # Regelmarke. Rein additiv, kein Backfill — Altbestand behält NULL
+            # und rechnet damit weiter nach N-92, bis er neu aggregiert wird
+            # (E6/E7; der Daten-Checker nennt die Tage). Kein Start-Rewrite.
+            if 'verworfen' not in existing_columns:
+                connection.execute(text('ALTER TABLE tages_zusammenfassung ADD COLUMN verworfen JSON'))
+            # N-567: Nachtrag nach Nullstunden (nur benannt, zählt wie in HA). Rein additiv,
+            # kein Backfill — Bestandstage bekommen ihn mit der nächsten Neuaggregation.
+            if 'nachtrag' not in existing_columns:
+                connection.execute(text('ALTER TABLE tages_zusammenfassung ADD COLUMN nachtrag JSON'))
+
+        # N-547: Übergangs-Marker am Korrekturprofil. `lern_basis_pro_bin` sagt
+        # je Bin, ob sein Faktor schon gegen das neue Lern-SOLL gelernt ist
+        # („neu") oder noch der zirkulär gelernte Bestand ist („alt");
+        # `lern_umstellung_am` trägt den Beginn der 365-Tage-Keep-Regel.
+        # NULL bei Bestandszeilen — der Aggregator liest das als „alt" bzw.
+        # setzt das Datum beim ersten Lauf.
+        if 'korrekturprofile' in inspector.get_table_names():
+            existing_columns = {col['name'] for col in inspector.get_columns('korrekturprofile')}
+            if 'lern_basis_pro_bin' not in existing_columns:
+                connection.execute(text('ALTER TABLE korrekturprofile ADD COLUMN lern_basis_pro_bin JSON'))
+            if 'lern_umstellung_am' not in existing_columns:
+                connection.execute(text('ALTER TABLE korrekturprofile ADD COLUMN lern_umstellung_am DATE'))
 
         # v3.6.9: Energieprofil-Revision — vorzeichenbasierte Aggregation, WP/Wallbox separat
         # Altdaten werden gelöscht (fehlerhafte kategorie-basierte Aggregation),
@@ -990,6 +1038,10 @@ async def run_migrations(conn):
             # Aufteilung ab heute; Altbestand bleibt `NULL` = „nicht hingesehen".
             if 'betriebsmodus_je_wp' not in existing_columns:
                 connection.execute(text('ALTER TABLE tages_energie_profil ADD COLUMN betriebsmodus_je_wp JSON'))
+            # Zählerlücken wie HA (R2): Spanne je Achse, nur für n > 1.
+            # Additiv, Altbestand NULL (= jede Achse trägt ihre Stunde).
+            if 'spannen' not in existing_columns:
+                connection.execute(text('ALTER TABLE tages_energie_profil ADD COLUMN spannen JSON'))
             # v3.26.0: Stündliches Wetter (Bewölkung, Niederschlag, WMO-Code)
             # für Wetter-Stratifizierung und Korrekturprofil — siehe KONZEPT-KORREKTURPROFIL.md
             if 'bewoelkung_prozent' not in existing_columns:
@@ -1001,6 +1053,13 @@ async def run_migrations(conn):
 
         # Etappe 3c P1 (KONZEPT-ENERGIEPROFIL-3C.md): Source-Marker auf SensorSnapshot.
         # Diagnostiziert Schreib-Pfad pro Snapshot — Voraussetzung für 3d-Schablone.
+        # N-555 Stufe 3 / N-569: `emob_ladebloecke` entsteht per `create_all`; eine
+        # Entwicklungs-DB, die die Tabelle vor der Spalte `speicher_kwh` bekam, holt sie nach.
+        if 'emob_ladebloecke' in inspector.get_table_names():
+            existing_columns = {col['name'] for col in inspector.get_columns('emob_ladebloecke')}
+            if 'speicher_kwh' not in existing_columns:
+                connection.execute(text('ALTER TABLE emob_ladebloecke ADD COLUMN speicher_kwh FLOAT'))
+
         if 'sensor_snapshots' in inspector.get_table_names():
             existing_columns = {col['name'] for col in inspector.get_columns('sensor_snapshots')}
             if 'quelle' not in existing_columns:
@@ -1177,6 +1236,19 @@ async def _run_data_migrations() -> None:
             migrate_emob_canonical_source,
         )
 
+        # N-555 Stufe 1, Regel 5: herkunftslose E-Auto-`ladung_kwh` sind Umbuchungen
+        # der Startroutine (`_migrate_verbrauch_daten_keys_v326`, bis 25.09.2026) —
+        # zurück in den Fahrverbrauch bzw. entfernt. Grenze 09.05.2026 (Stempel
+        # `legacy:unknown`) im Modul-Docstring. MUSS nach der Initial-Provenance laufen,
+        # sonst sähe sie Zeilen ohne jeden Stempel als Umbuchung.
+        from backend.services.migrations.migrate_eauto_fahrverbrauch_rueckbenennung import (
+            migrate_eauto_fahrverbrauch_rueckbenennung,
+        )
+        await _apply_once(
+            "n555_eauto_fahrverbrauch_rueckbenennung",
+            migrate_eauto_fahrverbrauch_rueckbenennung,
+        )
+
         # Datenquellen-V4 B8: effektive Quelle jedes Feldes explizit machen
         # (§2h HA-first, konservativ Inbound). Additiv/idempotent, kein HTTP →
         # Fundament für den keine-Default-Flip (B8-2).
@@ -1264,6 +1336,9 @@ async def init_db():
     """
     # Importiere alle Models damit sie registriert werden
     from backend.models import anlage, monatsdaten, investition, strompreis, settings as settings_model, pvgis_prognose, activity_log, mqtt_energy_snapshot, mqtt_live_snapshot, tages_energie_profil, mqtt_gateway_mapping, infothek, api_cache, sensor_snapshot, data_provenance_log
+    # N-555 Stufe 3: `emob_ladebloecke` — neue Tabelle, `create_all` legt sie idempotent an
+    # (erzeugt nur Fehlendes; kein ALTER nötig, weil es sie vorher nicht gab).
+    from backend.models import emob_ladeblock  # noqa: F401
 
     async with engine.begin() as conn:
         # Migrationen ausführen

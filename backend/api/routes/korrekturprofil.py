@@ -17,6 +17,7 @@ from pydantic import BaseModel
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.core.berechnungen.spannen import spanne
 from backend.core.exceptions import not_found
 from backend.core.database import get_db
 from backend.models.anlage import Anlage
@@ -128,6 +129,21 @@ class StratifizierungResponse(BaseModel):
     # Schlüssel: "klar.7", "klar.8", ... — JSON-konform und einfach im Frontend
     # zu pivottieren. Nur Stunden 5-21 werden gefüllt (Tageslicht).
     pro_klasse_stunde: dict[str, StratifizierungEintrag]
+    # ── N-547: woher die Faktoren stammen, die dieser Genauigkeit zugrunde
+    # liegen ───────────────────────────────────────────────────────────────
+    # Je Profil-Typ die Bin-Marken `"neu"` (gegen das rohe, gekappte Lern-SOLL
+    # gelernt) oder `"alt"` (noch der zirkulär gelernte Bestand, gehalten bis
+    # das Gate seiner Stufe mit neuen Datenpunkten erreicht ist). Leer, solange
+    # gar kein Profil existiert.
+    #
+    # ⚠ Die Stratifizierung oben ist davon **unberührt** — sie vergleicht
+    # weiter die *Vorhersage* (`pv_prognose_stundenprofil`) mit dem IST und
+    # beantwortet damit „wie gut war eedc?". Diese zwei Felder beantworten die
+    # andere Frage: „woraus hat eedc das gelernt?".
+    lern_basis_pro_bin: dict[str, dict[str, str]] = {}
+    # Frühestes `lern_umstellung_am` der Profil-Zeilen (ISO) — Beginn der
+    # 365-Tage-Übergangsregel. `None`, solange kein Profil existiert.
+    lern_umstellung_am: Optional[str] = None
 
 
 def _aggregiere_eintrag(rel_errors: list[float]) -> StratifizierungEintrag:
@@ -142,6 +158,28 @@ def _aggregiere_eintrag(rel_errors: list[float]) -> StratifizierungEintrag:
         mae_pct=round(mae, 2),
         mbe_pct=round(mbe, 2),
     )
+
+
+async def _lade_lern_herkunft(
+    db: AsyncSession, anlage_id: int,
+) -> tuple[dict[str, dict[str, str]], Optional[str]]:
+    """N-547: Bin-Marken je Profil-Typ + Beginn der Übergangsregel."""
+    res = await db.execute(
+        select(Korrekturprofil).where(
+            and_(
+                Korrekturprofil.anlage_id == anlage_id,
+                Korrekturprofil.investition_id.is_(None),
+            )
+        )
+    )
+    marken: dict[str, dict[str, str]] = {}
+    daten: list[date] = []
+    for profil in res.scalars().all():
+        if profil.lern_basis_pro_bin:
+            marken[profil.profil_typ] = dict(profil.lern_basis_pro_bin)
+        if profil.lern_umstellung_am is not None:
+            daten.append(profil.lern_umstellung_am)
+    return marken, (min(daten).isoformat() if daten else None)
 
 
 @router.get(
@@ -223,6 +261,7 @@ async def stratifizierung_endpoint(
             TagesEnergieProfil.bewoelkung_prozent,
             TagesEnergieProfil.niederschlag_mm,
             TagesEnergieProfil.wetter_code,
+            TagesEnergieProfil.spannen,
         ).where(
             and_(
                 TagesEnergieProfil.anlage_id == anlage_id,
@@ -237,9 +276,11 @@ async def stratifizierung_endpoint(
     # Pro-Tag-Tracking für Empty-State-Diagnose
     tage_mit_klassifikation: set[date] = set()
 
-    for tep_datum, stunde, pv_kw, bw, ns, wc in tep_query.all():
+    for tep_datum, stunde, pv_kw, bw, ns, wc, spannen in tep_query.all():
         if pv_kw is None or pv_kw < 0.05:
             continue  # Nacht / Sensor-Lücke / unter Mess-Schwelle
+        if spanne(spannen, "pv") > 1:
+            continue  # Zählerlücken wie HA (§2): gebündelte Stunde ist keine Stichprobe
         prognose_profil = prognose_pro_tag.get(tep_datum)
         if not prognose_profil:
             continue
@@ -267,6 +308,8 @@ async def stratifizierung_endpoint(
     stunden_total = sum(e.stunden_count for e in pro_klasse.values())
     tage_ohne_wetter = len(prognose_pro_tag) - len(tage_mit_klassifikation)
 
+    lern_basis, lern_umstellung = await _lade_lern_herkunft(db, anlage_id)
+
     return StratifizierungResponse(
         anlage_id=anlage_id,
         tage_zeitraum=tage,
@@ -276,6 +319,8 @@ async def stratifizierung_endpoint(
         tep_tage_ohne_wetter=tep_tage_ohne_wetter,
         pro_klasse=pro_klasse,
         pro_klasse_stunde=pro_klasse_stunde,
+        lern_basis_pro_bin=lern_basis,
+        lern_umstellung_am=lern_umstellung,
     )
 
 

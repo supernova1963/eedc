@@ -7,6 +7,7 @@ Enthält nur reine Daten und Logik ohne I/O.
 
 import logging
 from dataclasses import dataclass
+from datetime import date
 from typing import Callable, Container, Mapping, Optional, Sequence
 
 from backend.core.field_definitions import (
@@ -118,6 +119,7 @@ class TagesverlaufSerie:
 def baue_investitions_serien(
     inv_live_map: dict[str, dict[str, str]],
     investitionen: dict[str, "object"],
+    tag: Optional[date] = None,
 ) -> tuple[list[TagesverlaufSerie], dict[str, list[str]]]:
     """Single Source of Truth für die Investitions-Serien-Selektion des
     Tagesverlaufs (Issue #318, M1).
@@ -139,6 +141,9 @@ def baue_investitions_serien(
         inv_live_map: ``{inv_id: {leistung_w: entity_id, ...}}`` aus
             ``extract_live_config``.
         investitionen: ``{inv_id: Investition}`` (typ/parameter/parent_id/…).
+        tag: der betrachtete Tag — für „Wallbox **in Betrieb**" (N-555 Stufe 2, Konzept
+            Regel 0/8). ``None`` ⇒ die Auswahl des Aufrufers gilt (er hat die
+            Investitionen schon auf seinen Zeitraum gefiltert, `aktiv_im_zeitraum`).
 
     Returns:
         ``(serien, serie_entities)`` — Kern-Serien in stabiler, Pool-deduplizierter
@@ -256,7 +261,17 @@ def baue_investitions_serien(
     # Ladung, die **nicht** über die eigene Wallbox lief (auswärts), fällt damit
     # aus dem Tagesverlauf. Das ist beabsichtigt: sie ist kein Hausstrom und
     # stünde sonst als Senke in einer Bilanz, durch die sie nie geflossen ist.
-    if any(s.kategorie == "wallbox" for s in dedupliziert):
+    # ⭐ N-555 Stufe 2 (Konzept Regel 8, letzte Stelle, die noch „gibt es eine Wallbox"
+    # fragte): die Wallbox muss am betrachteten Tag **in Betrieb** sein (Regel 0: nicht
+    # vor der Anschaffung, nicht nach der Stilllegung). Eine Wallbox, die erst nach dem
+    # Tag gekauft oder vorher stillgelegt wurde, verdrängt das Auto nicht.
+    def _in_betrieb(serie: TagesverlaufSerie) -> bool:
+        inv = investitionen.get(serie.inv_id)
+        if tag is None or inv is None or not hasattr(inv, "ist_aktiv_an"):
+            return True
+        return inv.ist_aktiv_an(tag)
+
+    if any(s.kategorie == "wallbox" and _in_betrieb(s) for s in dedupliziert):
         behalten: list[TagesverlaufSerie] = []
         for serie in dedupliziert:
             if serie.kategorie == "eauto":
@@ -334,6 +349,57 @@ def uebersprungene_investitionen(
 def inv_ids_mit_serie(serien: Sequence[TagesverlaufSerie]) -> set[str]:
     """Die Investitionen, für die {@link baue_investitions_serien} geliefert hat."""
     return {s.inv_id for s in serien}
+
+
+def _legacy_invert_ablage(mapping: dict, field_id: str) -> tuple[Optional[dict], Optional[str]]:
+    """Wo das Legacy-`live_invert` einer Feld-ID liegt: ``(Ablage, Key)`` oder ``(None, None)``.
+
+    Die Zerlegung ist dieselbe wie in `extract_live_config` unten — eine
+    zweite Lesart der Feld-ID hätte hier genau die Drift erzeugt, die N-562
+    behebt.
+    """
+    if not isinstance(field_id, str):
+        return None, None
+    if field_id.startswith("basis_live_"):
+        basis = mapping.get("basis")
+        ablage = basis.get("live_invert") if isinstance(basis, dict) else None
+        return (ablage if isinstance(ablage, dict) else None), field_id[len("basis_live_"):]
+    if field_id.startswith("inv_live_"):
+        inv_id, sep, key = field_id[len("inv_live_"):].partition("_")
+        if not (sep and inv_id.isdigit() and key):
+            return None, None
+        inv_data = (mapping.get("investitionen") or {}).get(inv_id)
+        ablage = inv_data.get("live_invert") if isinstance(inv_data, dict) else None
+        return (ablage if isinstance(ablage, dict) else None), key
+    return None, None
+
+
+def legacy_invert_aktiv(mapping: dict, field_id: str) -> bool:
+    """True, wenn das Feld über ein Legacy-`live_invert` (vor v4) umgekehrt wird.
+
+    ⭐ **N-562 (T89667 #378):** `extract_live_config` unioniert dieses Flag mit
+    dem Store `sensor_mapping.invertieren` — es **wirkt** also. Die Fläche las bis
+    dahin nur den Store und zeigte den Schalter grau, während der Wert weiter
+    umgedreht wurde. Wer wissen will, ob ein Feld umgekehrt ist, fragt beide.
+    """
+    ablage, key = _legacy_invert_ablage(mapping, field_id)
+    return bool(ablage and ablage.get(key))
+
+
+def entferne_legacy_invert(mapping: dict, field_id: str) -> bool:
+    """Entfernt das Legacy-`live_invert` des Feldes; True, wenn eines da war.
+
+    ⭐ **N-562:** Ohne das blieb eine vor v4 gesetzte Umkehr **unabschaltbar** —
+    der Schalter entfernte nur den Store-Eintrag, die Union in
+    `extract_live_config` hielt das Legacy-Flag aktiv, und die Startup-Migration
+    läuft nur einmal (`_apply_once`), räumt also nie nach. Mutiert ``mapping``
+    in-place; der Aufrufer setzt `flag_modified`.
+    """
+    ablage, key = _legacy_invert_ablage(mapping, field_id)
+    if not ablage or key not in ablage:
+        return False
+    war_aktiv = bool(ablage.pop(key))
+    return war_aktiv
 
 
 def extract_live_config(anlage: Anlage) -> tuple[

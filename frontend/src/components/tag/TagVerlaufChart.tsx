@@ -17,7 +17,7 @@ import { EXTRA_SERIEN_FARBEN, PV_MODUL_FARBEN, KATEGORIE_FARBEN, CHART_COLORS, C
 import { pvRestKw, pvSplitKw, wpRestKw, wpSplitKw } from '../../lib/erzeugerSpalten'
 import { useChartTheme } from '../../context/ThemeContext'
 import { useLegendenToggle } from '../../hooks'
-import { erfassteSenken, type SenkenKey } from './TagWerteTabelle'
+import { erfassteSenken, spanneDerZeile, type SenkenKey } from './TagWerteTabelle'
 import type { StundenWert, SerieInfo } from '../../api/energie_profil'
 
 function round2(v: number): number {
@@ -155,6 +155,20 @@ export function zeigtWpRest(daten: StundenWert[], wpKeys: string[]): boolean {
  * 12.09.2026 (WK-09 B1), damit die K1-Wache prüfbar wird — *Σ der Senkenflächen
  * einer Stunde bleibt beim Aufschlüsseln bitgleich*.
  */
+/**
+ * Tooltip-Überschrift einer Stunde — Zählerlücken wie HA (R2, Vorlage §2
+ * „Tagesverlauf-Chart"). Trägt der Balken die Energie mehrerer realer Stunden
+ * (HA hatte die Stunden davor nicht geschrieben), sagt die Überschrift das.
+ */
+export function stundenTooltipLabel(
+  label: unknown, chartDaten: ReadonlyArray<Record<string, number | string>>,
+): string {
+  const text = String(label ?? '')
+  const punkt = chartDaten.find((p) => p.stunde === text)
+  const n = typeof punkt?.spanne === 'number' ? punkt.spanne : 1
+  return n > 1 ? `${text} · enthält ${n} Stunden (Lücke in Home Assistant)` : text
+}
+
 export function baueChartDaten({
   daten, extraErzeuger, extraVerbraucher, erzeugerSerien, pvAufgeschluesselt, zeigePvRest,
   wpSerien = [], wpAufgeschluesselt = false, zeigeWpRest = false,
@@ -186,8 +200,14 @@ export function baueChartDaten({
     // Stelle ginge in eine **gestapelte** Fläche; dafür gibt es im Baum keine
     // Präzedenz und jsdom kann es nicht nachweisen. Wer die Serie anfasst,
     // zieht die Regel mit — s. `TagWerteTabelle.berechneHausverbrauch`.
+    // Zählerlücken wie HA (R2): trägt die Zeile mehr als eine reale Stunde,
+    // merkt sich der Punkt die Spanne, und der Tooltip beschriftet den Balken
+    // (`stundenTooltipLabel`) — sonst läse man die Energie einer Lücke als
+    // Spitze. Die Achse bleibt `h:00`. `?? 0` bleibt (eine fehlende Stunde ist
+    // im Stapel eine Nulllinie).
     const punkt: Record<string, number | string> = {
       stunde:       `${h}:00`,
+      spanne:       spanneDerZeile(s),
       pv:           s?.pv_kw ?? 0,
       bat_pos:      Math.max(0, bat),
       bat_neg:      Math.min(0, bat),
@@ -232,7 +252,13 @@ export function baueChartDaten({
   })
 }
 
-export function TagVerlaufChart({ daten, extraSerien, erzeugerSerien = [], wpSerien = [] }: {
+/** N-566: Default der optionalen Serien-Props — EINE Referenz für alle Renders. Ein `= []` im
+ *  Parameter wäre je Render neu und liefe über `pvRest`/`chartSerien`/`chartDaten` in die
+ *  Memo-Abhängigkeiten (jeder Render rechnete den Chart neu). Dieselbe Bauform wie
+ *  `TagWerteTabelle`, dort mit Effekt und Endlosschleife. */
+const KEINE_SERIEN: SerieInfo[] = []
+
+export function TagVerlaufChart({ daten, extraSerien, erzeugerSerien = KEINE_SERIEN, wpSerien = KEINE_SERIEN }: {
   daten: StundenWert[]
   extraSerien: SerieInfo[]
   /** PV-Strings/BKW mit eigenem Sensor (#350, Rainer). Sie **ersetzen** den
@@ -333,6 +359,7 @@ export function TagVerlaufChart({ daten, extraSerien, erzeugerSerien = [], wpSer
           <ReferenceLine y={0} stroke={achsen.referenz} strokeWidth={1.5} />
           <Tooltip {...eedcTooltipProps({
             unit: ' kW', decimals: 2,
+            labelFormatter: (label) => stundenTooltipLabel(label, chartDaten),
             nameFormatter: (name) => chartSerien.find(cs => cs.dataKey === name)?.label ?? CHART_LABELS[name] ?? name,
             formatter: (v) => Math.abs(v) < 0.001 ? null : `${v > 0 ? '▲' : '▼'} ${fmtZahl(Math.abs(v), 2)} kW`,
           })} />

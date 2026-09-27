@@ -2,7 +2,8 @@
  * Geteilte E-Auto-Charts (IST-`EAutoDashboard` + IA-v4-Hub):
  * - {@link EAutoKmVerlauf}: km pro Monat (Bar)
  * - {@link EAutoLadungVerlauf}: Ladung pro Monat nach Quelle (PV/Netz/Extern, gestapelt)
- * - {@link EAutoMonatsTabelle}: km · kWh · PV · Netz · V2H je Monat
+ * - {@link EAutoMonatsTabelle}: km · kWh · PV · Netz · V2H je Monat (Monate „aus Wallbox-Rest"
+ *   ohne eigene Zeile gekennzeichnet, N-564)
  * - {@link EAutoKostenvergleich}: E-Auto (Strom) vs. Verbrenner (Benzin) + Ersparnis
  * Eine Code-Wahrheit, kein Drift zwischen Dashboard und Hub.
  */
@@ -17,6 +18,58 @@ import { useLegendenToggle, useSchmaleAchse } from '../../hooks'
 import type { InvestitionMonatsdaten, EAutoDashboardResponse } from '../../api/investitionen'
 
 type Zusammenfassung = EAutoDashboardResponse['zusammenfassung']
+
+/**
+ * N-564: eine Zeile, die der Server nur zur Anzeige mitschickt — ein Monat, in dem das Auto
+ * Rest der Wallbox bekommt, aber keine eigene Monatszeile hat (Konzept Heimladung Regel 2
+ * Schritt 3). Sie trägt `ladung_*`, keine km und keine ID; ohne sie ergäbe die Summe der
+ * Tabelle die Kachel „Heimladung" nicht.
+ */
+export function istRestZeile(md: InvestitionMonatsdaten): boolean {
+  return Boolean(md.verbrauch_daten.ladung_aus_rest)
+}
+
+/** Tooltip der Rest-Kennzeichnung — ein Wortlaut für Tabelle und Probe. */
+export const REST_ZEILE_HINWEIS =
+  'Für dieses Auto ist in diesem Monat nichts erfasst. eedc ordnet ihm den Rest der Wallbox zu '
+  + '(Wallbox minus die eigenen Messungen der Autos, nach Kilometern verteilt). '
+  + 'Kilometer und Fahrverbrauch sind nicht erfasst.'
+
+/**
+ * N-555 Stufe 3 (Konzept Heimladung Regel 9): die Heimladung dieses Monats kommt aus den
+ * Ladevorgängen des Fahrzeug-Zählers (Sprung je Vorgang, Stunden der Wallbox für Anteil und
+ * Monat). Die Notiz nennt ihre Zahl — und wie viele davon die Wallbox nicht voll gezählt hat.
+ */
+export function ladevorgaengeNotiz(md: InvestitionMonatsdaten): string | null {
+  if (!md.verbrauch_daten.ladung_aus_bloecken) return null
+  const n = md.verbrauch_daten.ladevorgaenge_bloecke || 0
+  const text = n === 1 ? 'aus 1 Ladevorgang' : `aus ${n} Ladevorgängen`
+  const ungedeckt = md.verbrauch_daten.ladevorgaenge_ungedeckt || 0
+  return ungedeckt > 0 ? `${text}, ${ungedeckt} mit Wallbox-Lücke` : text
+}
+
+/** Tooltip der Ladevorgangs-Notiz — ein Wortlaut für Tabelle und Probe. */
+export const LADEVORGAENGE_HINWEIS =
+  'Menge und PV-Anteil kommen aus den Ladevorgängen des Fahrzeug-Zählers: je Vorgang zählt '
+  + 'sein Sprung, die Stunden der Wallbox liefern PV-Anteil und Monat. „Wallbox-Lücke": die '
+  + 'Wallbox hat weniger gezählt als das Auto — die Menge bleibt die des Autos.'
+
+/**
+ * N-569-Ergänzung (Konzept Heimladung Anhang E): „davon aus dem Speicher" — eine Teilmenge
+ * des PV-Anteils (PV = Direkt + Speicher). Nur mit einem Wert über 0; ohne Speicherzähler
+ * gibt es keine Zeile.
+ */
+export function speicherUnterzeile(prozent: number | null | undefined): string | undefined {
+  if (prozent == null || prozent <= 0) return undefined
+  return `davon aus dem Speicher ${fmtZahl(prozent, 0)} %`
+}
+
+/** Monatszeile: „davon aus dem Speicher x kWh" (Teil der Spalte PV), sonst `null`. */
+export function speicherNotiz(md: InvestitionMonatsdaten): string | null {
+  const kwh = md.verbrauch_daten.ladung_speicher_kwh
+  if (!kwh || kwh <= 0) return null
+  return `davon ${fmtZahl(kwh, 1)} kWh aus dem Speicher`
+}
 
 export function prepEAutoMonate(monatsdaten: InvestitionMonatsdaten[]) {
   return monatsdaten.map((md) => ({
@@ -115,17 +168,42 @@ export function EAutoMonatsTabelle({ monatsdaten }: { monatsdaten: InvestitionMo
         </tr>
       </TableHead>
       <TableBody>
-        {monatsdaten.map((md) => (
-          <tr key={md.id ?? `${md.jahr}-${md.monat}`} className="border-b border-gray-100 dark:border-gray-800">
-            <td className={ZELLE}>{MONAT_KURZ[md.monat]} {md.jahr}</td>
-            <td className={`${ZELLE} text-right`}>{md.verbrauch_daten.km_gefahren || 0}</td>
-            <td className={`${ZELLE} text-right`}>{fmtZahl(md.verbrauch_daten.verbrauch_kwh || 0, 1)}</td>
-            <td className={`${ZELLE} text-right text-green-600`}>{fmtZahl(md.verbrauch_daten.ladung_pv_kwh || 0, 1)}</td>
-            <td className={`${ZELLE} text-right text-red-600`}>{fmtZahl(md.verbrauch_daten.ladung_netz_kwh || 0, 1)}</td>
-            {/* V2H = emobV2h-Identität (cyan), war fälschlich violett (Audit-E). */}
-            <td className={`${ZELLE} text-right text-cyan-600`}>{fmtZahl(md.verbrauch_daten.v2h_entladung_kwh || 0, 1)}</td>
-          </tr>
-        ))}
+        {monatsdaten.map((md) => {
+          // N-564: Monat ohne eigene Zeile — PV/Netz aus dem Rest der Wallbox, km, Fahrverbrauch
+          // und V2H sind nicht erfasst (`—`, A3 Datenlücke). Die Kennzeichnung ist dieselbe
+          // leise Zeilen-Notiz wie „· enthält n h" in der Stundentabelle (Regel 0).
+          const ausRest = istRestZeile(md)
+          const vorgaenge = ladevorgaengeNotiz(md)
+          const speicher = speicherNotiz(md)
+          return (
+            <tr key={md.id ?? `${md.jahr}-${md.monat}`} className="border-b border-gray-100 dark:border-gray-800">
+              <td className={ZELLE}>
+                {MONAT_KURZ[md.monat]} {md.jahr}
+                {ausRest && (
+                  <span className="ml-1 text-[10px] font-normal text-gray-400 dark:text-gray-500" title={REST_ZEILE_HINWEIS}>
+                    · aus Wallbox-Rest
+                  </span>
+                )}
+                {vorgaenge && (
+                  <span className="ml-1 text-[10px] font-normal text-gray-400 dark:text-gray-500" title={LADEVORGAENGE_HINWEIS}>
+                    · {vorgaenge}
+                  </span>
+                )}
+                {speicher && (
+                  <span className="ml-1 text-[10px] font-normal text-gray-400 dark:text-gray-500">
+                    · {speicher}
+                  </span>
+                )}
+              </td>
+              <td className={`${ZELLE} text-right`}>{ausRest ? '—' : (md.verbrauch_daten.km_gefahren || 0)}</td>
+              <td className={`${ZELLE} text-right`}>{ausRest ? '—' : fmtZahl(md.verbrauch_daten.verbrauch_kwh || 0, 1)}</td>
+              <td className={`${ZELLE} text-right text-green-600`}>{fmtZahl(md.verbrauch_daten.ladung_pv_kwh || 0, 1)}</td>
+              <td className={`${ZELLE} text-right text-red-600`}>{fmtZahl(md.verbrauch_daten.ladung_netz_kwh || 0, 1)}</td>
+              {/* V2H = emobV2h-Identität (cyan), war fälschlich violett (Audit-E). */}
+              <td className={`${ZELLE} text-right text-cyan-600`}>{ausRest ? '—' : fmtZahl(md.verbrauch_daten.v2h_entladung_kwh || 0, 1)}</td>
+            </tr>
+          )
+        })}
       </TableBody>
     </Table>
   )

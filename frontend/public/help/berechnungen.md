@@ -524,17 +524,127 @@ E-Mob-Ersparnis     = Benzin_Kosten - Strom_Kosten
 
 > **G20-2 — Aggregat bei mehreren E-Autos = Σ der Einzel-Fahrzeuge:** Die Gesamt-E-Mob-Ersparnis wird als **Summe der pro Fahrzeug** gerechneten Ersparnisse gebildet — jedes E-Auto mit seinem **eigenen** Vergleichsverbrauch (L/100 km) und Benzinpreis. Sie ist NICHT ein Einmal-Lauf über die Gesamt-Kilometer mit dem Parametersatz des ersten Fahrzeugs (das überschätzte die Ersparnis, sobald zwei E-Autos unterschiedliche Vergleichsverbräuche hatten). Bei genau **einem** E-Auto ist das Ergebnis unverändert. Die Per-Fahrzeug-Zeilen (T-Konto) rechneten schon immer je Fahrzeug korrekt; nur das aggregierte Cockpit-Feld ist jetzt symmetrisch dazu.
 
-**Kanonische Heimladungs-Quelle (ab Phase 2a):** `Ladung_gesamt` und `Ladung_PV` der Heimladung kommen strukturell aus **genau einer** Quelle: existiert eine Wallbox-Investition mit Heimladung, ist sie die Quelle (Infrastruktur misst den Stromfluss am Ladepunkt); ohne Wallbox (Steckerlader/Schuko) liefert das E-Auto die Werte. Bei mehreren Wallboxen ist die Heimladung die **Summe** aller Wallbox-Ladepunkte. Diese Regel ist deterministisch (existiert eine Wallbox?), nicht magnitudenabhängig — der frühere Pool-/„größere Heimladung gewinnt"-Mechanismus entfällt. Die km-anteilige Aufteilung auf mehrere Fahrzeuge (Attribution) bleibt unverändert. Zentraler Helper: `get_emob_heimladung_canonical()`.
+**Heimladung je Auto (ab v4.0.51, N-555 Stufe 2):** Die Wallbox ist die **Summe** aller Ladungen an ihr; jedes Auto mit eigener Messung trägt seine eigene Heimladung, die Wallbox den Rest (Regel 2 und 3 unten). Bei mehreren Wallboxen zählt ihre Summe. Die Netzladung **je Fahrzeug** in der Ersparnis ist die Summe seiner Monatsmengen aus dem Entscheid (`EmobFakten.je_auto`), nicht mehr ein km-Anteil an einem gemeinsamen Topf; ein Auto, das geladen hat, aber nicht gefahren ist, trägt seine Stromkosten (Ersparnis negativ statt 0). Zentraler Helper: `entscheide_emob_heimladung()` (`services/eauto_wirtschaftlichkeit.py`; `get_emob_heimladung_canonical()` ist seine Kurzform). *Bis v4.0.50 (Phase 2a, Entscheidung 1):* existierte eine Wallbox mit Heimladung, war sie die einzige Quelle, und Heimlade-Werte am Auto zählten daneben nicht.
+
+#### Heimladung und Fahrverbrauch — zwei verschiedene Mengen (ab N-555)
+
+Am E-Auto gibt es zwei Energiemengen, die leicht zu verwechseln sind:
+
+- **Heimladung** — was zu Hause ins Auto geladen wird. Gemessen an der **Wallbox** („Ladung gesamt", „Ladung PV")
+  und, wo vorhanden, am Auto („Heim: PV", „Heim: Netz", der alte Gesamtwert `ladung_kwh`). Das sind die
+  **Heimlade-Felder** (`core/field_definitions/heimladung.py::HEIMLADE_FELDER`).
+- **Fahrverbrauch** — das Feld **„Verbrauch"** am E-Auto (`verbrauch_kwh`): was das Auto beim Fahren aus seiner
+  Batterie verbraucht. Daraus rechnet eedc die kWh/100 km und beim Plug-in-Hybrid den elektrischen Anteil.
+
+**Regel 1 — der Fahrverbrauch springt nur ein, wenn über die Heimladung nichts bekannt ist:** Er zählt nur dann als
+Heimladung, wenn für die Heimladung **weder ein Wert erfasst** (auch **0** ist ein Wert) **noch** — im laufenden Monat,
+am Tag, in der Stunde — **eine Quelle zugeordnet** ist (HA-Sensor oder angekommene MQTT-Zählerstände; eine Quelle
+„keine" zählt nicht). Dann ist er eine **Schätzung**: ausdrücklich so gekennzeichnet (`quelle = "schaetzung"`), nie
+gespeichert. Abgeschlossene Monate entscheiden nur nach dem gespeicherten Wert; ergänzt *Cockpit → Monat* einen Monat
+ohne Monatsabschluss aus der HA-Statistik, zählt deren Wert wie ein gespeicherter, auch 0, sofern die Statistik Daten
+hat. Die Entscheidung fällt **je Monat**; ein Jahr, eine Übersicht, ein Hub-Zeitraum ist die **Summe seiner Monate**.
+
+**Regel 2 — wer welche Heimladung trägt** (je Monat, ab v4.0.51):
+
+```
+Schritt 1  Jedes Auto mit EIGENER Messung trägt sie — privat und Dienstwagen, auch neben
+           einer Wallbox, unabhängig von den km. Eigene Messung = „Heim: PV", „Heim: Netz"
+           oder „Heim: gesamt" (`ladung_kwh`) mit Wert (auch 0) oder — laufend — Quelle.
+             · „Heim: PV/Netz" gehen vor; ist nur eines erfasst, zählt das andere als 0.
+             · „Heim: gesamt" wird mit dem PV-Anteil der Wallbox im Monat geteilt
+               (ohne Wallbox wie jede Heimladung abgeleitet).
+             · `ladung_kwh` mit Herkunft „legacy:unknown" oder ohne Herkunft ist der ALTE
+               Gesamtwert: er zählt nur ohne Wallbox in Betrieb.
+Schritt 2  Rest = Σ private Wallboxen − Σ eigene Messungen, nie unter 0;
+           Rest-PV = Wallbox-PV − Auto-PV, in [0, Rest]   ⇒  Autos + Rest = Wallbox
+Schritt 3  Der Rest geht nach km an die privaten Autos in Betrieb OHNE eigene Messung
+           (auch ohne Monatszeile; bei 0 km zu gleichen Teilen). Gibt es keines, ist er
+           NICHT ZUGEORDNET (Gast, Verluste): nur Verbrauch, keine Ersparnis — außer es ist
+           gar kein Fahrzeug (privat oder dienstlich) in Betrieb: dann ist die Wallbox das
+           private Auto und der Rest geht in die Heimladung.
+Wallbox leer (kein Wert, keine Quelle)  ⇒ Regel 1 für die Autos ohne Messung (Schätzung)
+Wallbox 0                               ⇒ Rest 0
+Ohne private Wallbox in Betrieb         ⇒ jedes Auto seine Messung (auch der alte Gesamtwert), sonst Regel 1
+```
+
+Beispiel: Wallbox 400 kWh (200 PV / 200 Netz). Auto A misst 100 (70/30), der Dienstwagen „Heim: gesamt" 150
+(Wallbox-Anteil 50 % ⇒ 75/75), Auto B ohne Messung ⇒ Rest 400 − 250 = 150, davon PV 200 − 145 = 55, Netz 95 an B.
+
+Beispiel (gemeldet, Johnny_1993): Wallbox mit HA-Sensor, 0 kWh im September, am Auto nur „Verbrauch" 1.364 kWh ⇒
+Wallbox 0 ⇒ Rest 0 ⇒ Heimladung **0**. Der Verbrauch zählt nur für die kWh/100 km. Eine Schätzung bekommt denselben aus
+der Tagesebene abgeleiteten PV-Anteil wie jede andere Heimladung (s. „PV-Anteil der Heimladung" unten).
+
+**Regel 3 — wozu die Menge zählt, und was „die Heimladung" ist:** Die Heimladung (`EmobFakten.ladung_*`, gelesen von
+Cockpit, CO₂-Bilanz, PV-Anteil der Heimladung, HA-Anlagen-Sensoren, Jahresbericht, Aussichten, Community E-Auto-Seite)
+ist die **Summe der privaten Autos** — eigene Messungen, zugeordneter Rest, Schätzungen (`Σ je_auto`). Daneben stehen
+mit eigenem Namen: die **Messung der Wallbox** (`wallbox_summe` — Energiebilanz, Tag, Stunde, Wallbox-Sichten), der
+**nicht zugeordnete Rest** (`rest_*` bei `rest_zugeordnet = False`) und die **dienstliche Ladung**. Trägt die Wallbox über
+0, gilt `Wallbox = Heimladung + nicht zugeordnet + Dienstwagen gemessen`, solange die Autos die Wallbox nicht übersteigen
+(sonst rechnen sie mit ihren Werten weiter und der Daten-Checker warnt). Die **Wallbox-Sicht** zeigt als kWh die
+Messung der Wallbox, rechnet ihre „Ersparnis gegenüber externem Laden" und die Amortisation aber mit der Heimladung.
+
+Der **Dienstwagen**: mit eigener Messung ist sie seine dienstliche Ladung und fehlt im Rest; an einer **dienstlichen
+Wallbox in Betrieb** ist deren Menge die dienstliche Ladung, Felder und Schätzung des Dienstwagens zählen dann nicht;
+ohne eigene Messung ist sein Fahrverbrauch die Schätzung (als Netzstrom, `EmobFakten.dienstlich_geschaetzt`) und wird
+**nie** vom Rest abgezogen (sie enthält auch das Laden beim Arbeitgeber).
+
+**Ladevorgänge je Auto — Regel 9 (ab v4.0.51, N-555 Stufe 3):** Trägt ein Auto an „Heim: gesamt" einen **Zähler**, der
+am Ende eines Ladevorgangs um dessen Menge springt (evcc-Fahrzeug-Sensor), und hat eine Wallbox in Betrieb einen
+Ladezähler, ordnet die Tagesberechnung jeden Sprung den Stunden der Wallbox zu (`services/emob_ladebloecke.py`, Ablage
+`emob_ladebloecke`, geschrieben aus `aggregate_day`):
+
+```
+Block    vom Sprung rückwärts über die Wallbox-Stunden; aus jeder Stunde, was frühere Blöcke nicht genommen
+         haben — in der Sprungstunde höchstens den Bedarf, davor höchstens Bedarf + 0,05 kWh —, bis
+         Σ ≥ Sprung − 0,05 kWh, höchstens bis zur Stunde des vorigen Sprungs IRGENDEINES Autos (einschließlich).
+         Nullstunden werden übersprungen; eine gemeinsame Stunde wird nach Restmengen geteilt.
+Menge    = der Sprung (gemessen am Auto) — nie die Summe der Wallbox-Stunden.
+PV       = Σ (Blockstunde × PV-Anteil dieser Stunde nach der Einspeise-Deckung) ÷ Σ Blockstunden × Sprung
+           (davon aus dem Speicher ebenso, als Teilmenge);
+           eine gebündelte Stunde (Zählerlücke, n > 1) zählt zur Blockenergie, liefert aber keinen Anteil —
+           ohne ableitbare Stunde teilt der Wallbox-Monatsanteil. Der Anteil ist eine Schätzung derselben
+           Regel wie der PV-Anteil der Heimladung.
+Monat    Anteil eines Monats = Σ Blockstunden, die in ihm BEGINNEN, ÷ Σ Blockstunden, angewandt auf den Sprung.
+           Ein Sprung ohne Blockstunde zählt im Monat des Sprungs.
+Kennzeichen  stunden_gedeckt = Σ Blockstunden ÷ Sprung; unter 0,95 hat die Wallbox den Vorgang nicht voll gezählt.
+           Mikrosprünge bis 0,05 kWh (Standby des Fahrzeug-Zählers) zählen als Menge, nicht als Ladevorgang.
+```
+
+In Regel 2 Schritt 1 ist die Summe der monatsverteilten Sprünge dann die eigene Messung des Autos (Menge **und**
+PV-Anteil) an der Stelle von „Heim: gesamt"; „Heim: PV/Netz" gehen weiter vor. Der Daten-Checker (Regel 7) vergleicht
+dieselbe Größe mit dem Wallbox-Monatswert. **Bedingung:** die Blöcke eines Autos gelten für einen Monat nur, wenn jeder
+Tag des Monats bis gestern, an dem das Auto in Betrieb war, nach dem Lückenhandling gerechnet ist (Tageszeile mit
+Regelmarke); die Blöcke von heute zählen, sobald die heutige Tageszeile existiert. Sonst rechnet der Monat ohne sie. *Grund:* die Blöcke entstehen nur an so gerechneten Tagen; ein Monat mit
+nur einem Teil davon hätte eine zu kleine Menge je Auto und einen zu großen Rest.
+
+**Tag und Stunde** wählen über **eine** Auswahl (`snapshot/komponenten_beitraege.py`): Ist eine Wallbox mit Zähler
+**in Betrieb**, zählt die Wallbox, und die Heimlade-Zähler der Autos zählen nicht zusätzlich — auch nicht in der Stunde.
+Sonst zählt je Auto „Heim: PV" + „Heim: Netz", sonst der alte Gesamtwert, sonst „Heim: PV" allein, und der
+Fahrverbrauch nur, wenn keines davon eine Quelle hat. Gewählt wird nach der **Quelle**, nicht nach den Tagesdaten;
+die Summe der Stunden ergibt den Tag.
 
 **Ø Verbrauch (kWh/100 km) — Quellen-Vorrang:** Die Effizienz-KPI in E-Auto-Dashboard, Monatsbericht und Komponenten-Auswertung kommt aus **einem** Helper (`core/berechnungen/emob.py`, `eauto_effizienz_100km`):
 
 ```
-1. gemessener Fahrverbrauch:  verbrauch_kwh ÷ km × 100     (Vorrang, exakt)
-2. sonst Näherung aus Ladung: Ladung_gesamt ÷ km × 100     (Fallback)
+1. gemessener Fahrverbrauch:  verbrauch_kwh ÷ km × 100                  (Vorrang, exakt)
+2. sonst Näherung aus Ladung: (Heimladung + Extern) ÷ km × 100          (Fallback)
 3. sonst:                     —   (nie 0,0 erfinden)
 ```
 
-Die Ladungs-Näherung **überschätzt** den echten Fahrverbrauch (AC-Ladung an der Wallbox enthält Ladeverluste ~10–15 %, blendet SoC-Drift + nicht erfasste Fremdladung aus) — in der UI als „≈ aus Ladung (inkl. Ladeverluste)" gelabelt. Vorteil: funktioniert auch ohne Verbrauchssensor (den die wenigsten Fahrzeuge liefern). Alle Read-Sites zeigen denselben Wert; das Aggregat rechnet über die **Summen** (Σverbrauch / Σladung / Σkm), nicht über das Mittel der Monats-Prozente. Symmetrie abgesichert durch `test_emob_readsite_symmetrie.py`.
+Die Ladungs-Näherung **überschätzt** den echten Fahrverbrauch (AC-Ladung an der Wallbox enthält Ladeverluste ~10–15 %, blendet SoC-Drift + nicht erfasste Fremdladung aus) — in der UI als „≈ aus Ladung (inkl. Ladeverluste)" gelabelt. Vorteil: funktioniert auch ohne Verbrauchssensor (den die wenigsten Fahrzeuge liefern). Alle Read-Sites zeigen denselben Wert. Symmetrie abgesichert durch `test_emob_readsite_symmetrie.py` und `test_n555_fahrverbrauch_bleibt_fahrverbrauch.py`.
+
+**Zeitraum (Jahr, Übersicht, Hub, Auswertungen) — ab N-557:** Jeder Monat entscheidet für sich (Regel oben), der
+Zeitraum ist die **Summe der Monatswerte geteilt durch die Summe der Kilometer**
+(`eauto_effizienz_zeitraum`; im Client für *Cockpit → Jahr* gespiegelt in `lib/emobEffizienz.ts`). Monate ohne jede
+Energiemenge zählen weder im Zähler noch im Nenner. „gemessen" steht nur, wenn **jeder** Monat mit Kilometern gemessen
+ist, sonst „Näherung über die Ladung". Bis v4.0.50 teilte das Aggregat den Fahrverbrauch der Monate **mit** Sensor
+durch die Kilometer **aller** Monate — mit einem Verbrauchssensor ab Juli also rund die halbe Zahl, beschriftet
+„gemessen"; *Cockpit → Jahr* bildete sogar Heimladung ÷ km.
+
+**„Ladung gesamt" — ab N-557:** Heimladung **plus Extern**, soweit Extern bekannt ist (mit Sensor im laufenden Monat
+sofort, bei Pflege von Hand ab dem Monatsabschluss); darunter „davon extern … kWh". Eine **eigene** Anzeige-Größe
+(`emob_ladung_gesamt_kwh`): die Heimladung (`emob_ladung_kwh`) behält ihre Bedeutung, der **PV-Anteil** bleibt auf
+die Heimladung bezogen, T-Konto, CO₂ und Community rechnen weiter mit ihr. Extern liegt außerhalb der Hausbilanz.
 
 **Hinweis Kraftstoffpreis (ab v3.17.0):** Im Cockpit werden weiterhin die hardcodierten Defaults verwendet. In der **Finanz-Prognose** ([Auswertungen → Finanzen](HANDBUCH_BEDIENUNG.md#41-finanzen)), im **HA-Sensor-Export** und im **PDF-Finanzbericht** wird stattdessen pro Monat der echte Kraftstoffpreis aus `Monatsdaten.kraftstoffpreis_euro` verwendet (Quelle: EU Weekly Oil Bulletin). Fallback auf den statischen `benzinpreis_euro`-Parameter der Komponente wenn kein Monatswert vorhanden.
 
@@ -670,6 +780,82 @@ kostenneutrale Durchleitung (z. B. Backup-Vorhaltung).
 > Komponenten-Hub addiert beide Posten, netzgeladene Energie zählte damit doppelt. Die Formel im
 > Layer zu haben genügt nicht; sie ist erst durchgesetzt, wenn keine Inline-Kopie mehr danebensteht
 > (ADR-001).
+
+#### Welche Stunde gilt — Ladestand, Preis und Menge (N-387, 2026-09-23)
+
+Eine Stundenzeile trägt **zwei Uhren** (SoT `core/berechnungen/slot_konvention.py`): die
+`*_kw`-Spalten meinen das Intervall **vor** ihrer Stunde (`[s-1, s)`, Backward-Konvention #144),
+`soc_prozent`, `strompreis_cent` und `boersenpreis_cent` dagegen das Intervall **ab** ihrer Stunde
+(`[s, s+1)`) — so liefert Home Assistant sie. **Wer beide Hälften verrechnet, nimmt den
+Ladestand bzw. Preis deshalb aus der Zeile davor** (über die Tagesgrenze: aus der Zeile 23 des
+Vortags). Der eine Ort dafür ist `slot_konvention.forward_werte_je_backward_zeile`.
+
+Das betrifft sichtbar:
+
+* **Speicher-Potential** — „Überschuss bei vollem Speicher" zählte bis dahin auch die Einspeisung
+  der Stunde **vor** dem Vollwerden, „Fehlmenge bei leerem Speicher" spiegelbildlich den Netzbezug
+  der Stunde, in der er erst leerlief. Das Fenster lag eine Stunde zu früh.
+* **Effektiver Ladepreis und Entladewert** — die Netzladung einer Stunde zahlte den Preis der
+  Nachbarstunde. Bei einem **Festpreis** ändert das nichts (jede Stunde derselbe Preis); bei einem
+  dynamischen Tarif ist es die volle Differenz zweier Nachbarstunden.
+* **Tageskosten, Monats-Ø-Preis und Eigenverbrauchs-Ersparnis** der Flex-Kaskade
+  ([KONZEPT-FLEX-TARIFE §2](KONZEPT-FLEX-TARIFE.md)) sowie der **§51-Einspeiseerlös**.
+* **Die Stundenliste des Tagesdetails** (`GET /energie-profil/{id}/stunden`, N-553): Sie zeigt
+  keine Rechnung, aber dieselbe Zeile — wer in *Cockpit → Tag → Stundenwerte* die Spalte „SoC"
+  einschaltet, las den Ladestand der Nachbarstunde neben dem Batteriefluss. Die Liste trägt den
+  Ladestand jetzt zur Stunde ihrer Zeile.
+
+> ⭐ **„Stand am Tagesende" ist eine andere Frage und hat deshalb eine eigene Größe** (N-553).
+> Die Kachel *Ladestand* im Speicher-Block fragt „wie voll war der Speicher **zuletzt**", nicht
+> „welcher Stand gehört zu dieser Stunde". Der jüngste Messwert wandert durch die Paarung aus dem
+> Tagesraster (sein Intervall `[23, 24)` liegt backward schon im Folgetag), und am **laufenden**
+> Tag wäre die Kachel damit eine Stunde älter geworden. Die Antwort führt ihn deshalb ungepaart
+> als `soc_zuletzt_prozent` mit. **Spanne** (min/max) ist gegen die Zuordnung unempfindlich und
+> kommt weiter aus der Liste.
+
+> ⛔ **Zwei Stellen paaren bewusst OHNE diese Umkehr, beide gemessen.**
+> (1) Der **Wirkungsgrad am Periodenrand** (`speicher_wirtschaftlichkeit._lese_soc_am_periodenrand`)
+> stellt SoC-Randzeilen gegen **Monatsintegrale**: Zeile 0 liegt ½ h nach dem Periodenbeginn,
+> Zeile 23 ½ h vor dem Ende — symmetrisch; die Vorzeile machte daraus 1½ h und wäre schlechter.
+> (2) Die **Sizing-Kalibrierung** (`speicher_sizing_service._als_sizing_stunde`) bildet eine
+> *Differenz zweier Stundenmittel* und stellt sie einer **einzelnen** Stundenmenge gegenüber:
+> `ΔSoC(s−1 → s) ≈ ½ (b_s + b_{s+1})`, verglichen wird aber `b_s` allein. **Beide Fassungen
+> verfehlen gleichermaßen** — an einer reinen Demo-Reihe (4 800 Stunden, Wahrheit 10,0 kWh je
+> 100 % SoC und Roundtrip 1,00) liefert die Zeilen-Paarung 10,03/11,11 (Roundtrip 1,108), die
+> Vorzeile 12,44/13,62 (1,095); **beide fallen aus dem Plausibilitätsband und ergeben `None`**,
+> die Sicht nimmt dann die gepflegten Werte. Die Paarung ist hier also nicht die Stellschraube.
+> **Die Lösung ist die Formel** — der Hub gehört gegen das *Mittel der zwei angrenzenden
+> Stundenmengen*.
+
+#### Wie die Sizing-Kalibrierung Kapazität und Wirkungsgrad misst (N-552, 23.09.2026)
+
+Der *Größerer Speicher?*-Simulator braucht die **tatsächlich nutzbare** Kapazität und den
+Roundtrip-Wirkungsgrad. eedc misst beides aus der Bewegung des Ladestands: Wo der Speicher in einer
+Stunde deutlich lädt oder entlädt, wird der Hub des Ladestands gegen die bewegte Energie gestellt.
+
+Beide Ladestände sind **Stundenmittel**. Ihre Differenz beschreibt deshalb den Fluss zwischen den
+**Mitten** der beiden Stunden, also je zur Hälfte zwei Wanduhr-Stunden — und genau diese zwei
+halben Stunden stellt eedc dem Hub seit N-552 gegenüber (`½ (b_s + b_{s+1})` bei heutigen Zeilen,
+`½ (b_{s−1} + b_s)` bei Altbestand vor dem 04.06.2026, entschieden je Zeile an ihrer
+Aggregationszeit). Läuft die eine Hälfte in die andere Richtung als die zweite, zählt der Hub nicht:
+dann mischt er zwei Wirkungsgrade.
+
+**Gemessen an einem echten Jahr** (eine Anlage, 356 vollständige Tage): Der Hub folgt der Formel mit
+einer Korrelation von 0,98 (die Einzelstunde vorher: 0,95). Gegen die gemessene Einspeisung und den
+gemessenen Netzbezug weicht die simulierte Anlage jetzt um zusammen 3,3 Prozentpunkte ab statt 4,9;
+der Wirkungsgrad bleibt über Zeiträume und Schwellen stabil bei 72–74 % (vorher 82–88 %). Die
+nutzbare Kapazität hängt weiter am Median der selteneren Entladestunden und kann zwischen Zeiträumen
+um einige Zehntel Kilowattstunden schwanken. Die Mindestschwelle von 10 Prozentpunkten Hub bleibt:
+eine höhere wäre an dieser Anlage minimal besser, halbierte aber die Entladestunden und ließe
+Anlagen mit weniger Daten auf die gepflegten Werte zurückfallen.
+
+> ⛔ **Die Umkehr gilt nicht rückwirkend für jede gespeicherte Zeile.** Der HA-Stundenpfad
+> beschriftete seine Energiemengen bis zum **04.06.2026** selbst *forward* — auf einer Zeile, die
+> damals aggregiert wurde, ist die Paarung innerhalb **derselben** Zeile die richtige. eedc
+> entscheidet das je Zeile an ihrer **Aggregationszeit** (`created_at`, Grenze
+> `slot_konvention.SLOT_PAARUNG_VORZEILE_AB`), nicht an ihrem Datum. **Reparaturweg: neu
+> aggregieren stellt einen alten Tag um** — `aggregate_day` löscht den Tag und schreibt ihn neu,
+> die Zeilen tragen danach die heutige Konvention und werden auch so gepaart.
 
 #### Brutto oder netto — wann welche Kapazität gilt
 
@@ -964,13 +1150,20 @@ gesamte Heimladung galt als Netzstrom.
 2. **Sonst leitet eedc den Anteil aus den eigenen Stundenwerten ab**, Regel **Einspeise-Deckung**:
 
    ```
-   je Stunde:  ungedeckt = max(0, Ladung − Netzbezug − Speicherentladung)
+   je Stunde:  ungedeckt = max(0, Ladung − Netzbezug)          (ab v4.0.51, N-569)
                PV        = min(Ladung, ungedeckt + Einspeisung)
                Netz      = Ladung − PV
+               davon aus dem Speicher = min(Speicherentladung, PV)   (nur Ausweis)
    ```
+   Der Speicheranteil rechnet mit dem **Stunden-Netto** der Batterie (Entladung − Ladung derselben Stunde): lädt und entlädt der
+   Speicher in einer Stunde, untertreibt er (Lab-Fixture 21,7 % netto gegen 24,8 % brutto); der PV-Anteil ist davon unberührt.
 
    Der zweite Summand fängt die Unschärfe der Stundenmittelung auf: Was in derselben Stunde
-   eingespeist wurde, hätte stattdessen laden können.
+   eingespeist wurde, hätte stattdessen laden können. **Die Speicherentladung zählt zur PV-Deckung**
+   (bis v4.0.50 wurde sie abgezogen): der PV-Anteil sagt, wie viel der Ladung nicht aus dem Netz kam,
+   und gespeicherter Eigenstrom ist Eigenstrom. „Davon aus dem Speicher" ist eine **Teilmenge** des
+   PV-Anteils (PV = Direkt + Speicher), gezeigt als Unterzeile im E-Auto-Hub; ohne Speicherzähler gibt
+   es sie nicht, und keine Kosten-, Ersparnis-, CO₂- oder Community-Rechnung liest sie.
 3. **Angewandt wird der Anteil, nicht die Kilowattstunde.** Der abgeleitete Prozentsatz geht auf
    die kanonische Monatsladung — nur so bleibt `Ladung == PV + Netz` exakt geschlossen, auch wenn
    die Tagesspur eine andere Menge kennt als die Monatszeile.
@@ -1011,7 +1204,12 @@ Wert eine Teilsumme, P4).
 | --- | --- | --- |
 | netzbasiert `min(Ladung, Netzbezug)` | 73,8 % | +5,9 pp |
 | netz + Speicherentladung | 60,8 % | −7,2 pp |
-| **Einspeise-Deckung (gebaut)** | **64,7 %** | **−3,2 pp** |
+| Einspeise-Deckung (bis v4.0.50, mit Speicherabzug) | 64,7 % | −3,2 pp |
+
+**Nachgemessen 2026-09-27** (N-569, Lab-Kopie des Recorders, evcc-Solar-%): 15 Ladevorgänge Juni–August
+2026 — mit Speicherabzug 76,0 %, **ohne (gebaut ab v4.0.51) 94,5 %**, evcc 93,5 %; anlagenweit Mai–September
+79,4 → 92,6 %. Feb–Aug ist dort nicht neu messbar; die Zeiträume stehen getrennt. Im Sommer lädt das Auto
+oft aus dem Hausakku — den Fall sah die Messung vom 08.08. kaum.
 
 ⚠ **Keine rückwirkende Berechnung.** Der Wert entsteht beim Aggregieren eines Tages; Zeiträume vor
 diesem Feature tragen `NULL`, und `NULL` heißt „keine Aussage", nicht „keine Sonne".
@@ -2667,6 +2865,10 @@ Die eedc-Prognose ist die korrigierte OpenMeteo-Prognose; der Skalar-Lernfaktor 
 faktor = Σ(IST_kWh) / Σ(EEDC_Roh_Prognose_kWh)
 ```
 
+> ⚠ **Der Skalar-Lernfaktor hier ist der LEGACY-Faktor** (`live_wetter._get_lernfaktor_detail`) und liest `pv_prognose_kwh`, also die **ungekappte** Rohprognose. Die Skalar-Stufe des **Korrekturprofils** (Stufe 4 der Kaskade) rechnet seit N-547 gegen `lern_soll_kwh`, also gegen die **gekappte** Summe.
+>
+> ⭐ **Seit N-551 (2026-09-23) gibt es ihn deshalb ZWEIMAL — einmal je Bezugsgröße.** Ein Faktor, der auf der rohen Prognose gelernt ist, rechnet auf einer an der Wechselrichter-Grenze **gekappten** Reihe die Abregelung ein zweites Mal heraus (an einer Messkopie mit 12-kW-Grenze: 0,809 statt 0,923, **−12,4 %**). Ein bloßer Nenner-Tausch wäre aber falsch gewesen: **fünf** Leser wenden denselben Faktor auf die **rohe** Basis an (Genauigkeits-Tracking, Prognosen-Vergleich, Energieprofil-Tages-SOLL, Tagesprognose, Kanon-Schätzpfad) — sie hätten dann um +14,2 % zu hoch gelegen. Gebaut ist daher: `faktor` bleibt Σ IST / Σ `pv_prognose_kwh`; daneben steht `faktor_gekappt` = Σ IST / Σ `lern_soll_kwh` über die Tage **derselben** Kaskadenstufe, die das Feld tragen (Gate ≥ 7 Tage, sonst kein zweiter Faktor). Den gekappten nimmt **nur** der Kanon-Fallback, also die Stelle, die auf gekappte Slots trifft. Ohne Kappung sind beide Zahlen gleich; an einer Anlage ohne AC-Grenze bewegt sich nichts.
+
 Seit v3.16.15 nutzt eedc eine **saisonale Kaskade** mit den jeweils vorhandenen Daten:
 
 | Stufe | Bedingung | Bezugszeitraum |
@@ -2723,6 +2925,7 @@ Tageshälften (Vormittag/Nachmittag) werden nicht hart bei 12:00 Uhr Clockzeit g
 - **Backward-Slot-Konvention** (siehe §6b): Slot N enthält Energie aus dem Intervall `[N-1, N)`.
 - **Gerade abgeschlossene Stunde (v3.23.0):** wird nicht als Lücke geflaggt — HA Long-Term Statistics schreibt die Stunden-Row erst am Ende der Stunde, das Zeitfenster zwischen Stundenwechsel und HA-Stats-Write (typisch ~5–60 Min) wird mit `<` (statt `<=`) toleriert.
 - **Echte Lücken (>1 h alt)** werden mit ⚠ markiert. Klick auf das Symbol öffnet einen Reparatur-Popover mit „Tag neu berechnen" (`POST /api/energie-profil/{anlage_id}/reaggregate-tag`) und einem Fallback-Link zur [Datenquellen-Zuordnung](HANDBUCH_EINSTELLUNGEN.md#7-datenquellen--feld-zentrische-zuordnung).
+- **Gebündelte Stunde (ab v4.0.51, Zählerlücken wie HA):** trägt eine IST-Stunde die Energie mehrerer realer Stunden (HA hatte davor keine Zeile), steht sie im Stundenvergleich **nicht** als Stichprobe (Slot leer, Stunde in `buendel_stunden`); ihre Energie zählt in der Tagessumme. Als unvollständig gilt der Tag nur noch bei einem **Mitternachtsbündel** der PV (Energie aus dem Vortag) oder bei verworfener PV — nicht mehr bei jeder fehlenden Stunde.
 
 ### 4.2 Langfrist-Prognose (12 Monate)
 
@@ -3020,6 +3223,8 @@ Beispiel: snap[10] = 1500 kWh, snap[11] = None, snap[12] = 1505 kWh
 
 Ränder (h0 fehlend am Tagesanfang, h24 am Tagesende) werden **nicht** extrapoliert — der Wert bleibt None und die betroffene Stunde fällt aus der Delta-Bildung. Tagessumme bleibt in jedem Fall korrekt (`snap[24] − snap[0]`).
 
+> ⚠ **Seit „Zählerlücken wie HA" (v4.0.51) gilt die Interpolation nur noch innen und nur im Zählerstands-Pfad** (Standalone/MQTT ohne HA-Statistik, `snapshot/aggregator.py`). Im HA-Pfad wird nichts aufgefüllt: die Energie einer fehlenden Stunde steht wie im HA-Energie-Dashboard in der Stunde danach (Bündel mit Spanne `n`), und der Rand am Tagesanfang wird über den letzten vorhandenen Stand davor verankert — auch in diesem Pfad, statt die erste Stunde auszulassen. Regeln und Leser: Abschnitt *Zählerlücken wie HA* weiter unten.
+
 **HA-Statistics-Toleranz (v3.20.0, #145):** Reduziert von 120 min auf **10 min**. Wenn die Zielstunde in HA-Statistics noch nicht vorhanden ist, schreibt der Job nichts (statt einen Nachbar-Wert zu liefern, der Slot N als 0 und Slot N+1 als 2-Stunden-Delta entstehen ließ). Der nächste `aggregate_day`-Lauf 15 Min später holt den Wert via Self-Healing nach.
 
 **Restart-Recovery (v3.23.0):** Beim Scheduler-Start läuft `sensor_snapshot_startup_recovery()` im Hintergrund — holt für die letzten 6 Stunden je Anlage HA-Statistics-Snapshots (idempotent dank Upsert) plus für die laufende Stunde einen Live-Snapshot, anschließend `aggregate_today_all`.
@@ -3186,6 +3391,35 @@ Defizit_kWh       = max(0, Verbrauch_kWh + Bat_Ladung - PV)
 
 **Strikte NULL-Semantik:** Wenn ein Zähler nicht gemappt ist, bleibt das zugehörige Feld `NULL` (statt aus Leistungs-Samples zu schätzen). Im Frontend zeigt eedc ein ⚠-Badge bei Datenlücken — siehe Reparatur-Popover in §4.1c.
 
+#### Zählerlücken wie HA (ab v4.0.51)
+
+Fehlt in Home Assistant eine Stundenzeile eines Zählers, zeigt HA die Energie der Lücke in der
+ersten Stunde danach. eedc legt je Stunde genau das ab (G1: Σ Stunden = Tag = HA). SoT der
+Slot-Rechnung ist **eine** Tabelle für Stunde und Tag (`services/snapshot/tages_tabelle.py`, gespeist
+aus `ha_statistics_service.get_hourly_slots_for_day` bzw. im Standalone aus den Snapshots):
+
+```
+Anker(h)      = letzte Zeile mit sum vor Slot h (beliebig weit zurück; R1)
+Slot h        = sum(h) − sum(Anker)              n = reale Stunden seit dem Anker (R2)
+verworfen     wenn Slot < 0 (Rücksprung, R4)
+              oder bei PV/Einspeisung Slot > kWp × 1,5 × Fenster (je Sensor und Achsensumme, R3)
+Fenster       = Stunden seit der letzten Zeile desselben Sensors mit Delta ≠ 0 (ab Anker),
+                nie unter n, der Anteil aus Nullzeilen höchstens 24 h (spannen.deckel_fenster_stunden)
+spannen[achse]= n, nur für n > 1 (TagesEnergieProfil.spannen)
+komponenten_kwh = Σ derselben Geräte-Slots (R5)
+```
+
+- **Stundenverbrauch** (R6) nur, wenn PV, Netzbezug und Einspeisung **dieselbe** Spanne tragen; eine fehlende Batterie zählt 0, eine Batterie mit anderer Spanne ⇒ `None`.
+- **Tagesverbrauch** (R7) nach der HA-Formel über den Tag; `None` nur im Total-Fall. **Eigenverbrauch** = max(0, ΣPV − ΣEinsp). Autarkie = (GV − Netzbezug) / GV. Unterdrückt werden EV/EV-Quote bei `verworfen` auf PV oder Einspeisung, die Autarkie bei `verworfen` auf PV, Netzbezug, Einspeisung oder Batterie.
+- **Monat** (R8, `monatsbilanz_aus_tagen`): faltet Tagesbilanzen; ein Total-Fall-Tag propagiert nicht; EV ebenfalls bei 0 geklemmt.
+- **Regelmarke** (R9): `TagesZusammenfassung.verworfen` ist für jeden neu geschriebenen Tag mindestens `{}`; NULL = Altbestand, der bis zur Neuaggregation N-92 rechnet (Daten-Checker §4.6 nennt ihn).
+- **Monatswert aus der HA-Statistik** (R10, `get_sensor_monatswert`): Σ der Stundenänderungen ab dem letzten Stand **vor** dem Monat, mit derselben Verwerfung (Rücksprung immer, Deckel × Fenster für PV/Einspeisung aus der Anlagen-kWp). Damit zählt die erste Stunde des Monats (N-563), und eine Lücke über die Monatsgrenze landet im Folgemonat.
+- **Stundenzeilen:** jeder Slot mit Zählerwert bekommt eine Zeile, auch ohne Leistungspunkt (dort keine `komponenten`, keine Spitze).
+- **Leser:** Stunde-gegen-Stunde-Auswertungen lassen Zeilen mit `spannen > 1` als Stichprobe aus; Tag-gegen-Tag-Auswertungen (Lernfaktor, Prognose-Genauigkeit, PR-Check) lassen beide Tage um ein Mitternachtsbündel mit Energie aus. Die Energie zählt in jeder Summe. Helfer: `core/berechnungen/spannen.py`.
+- **Eingefrorener Stand:** Liefert HA Stunden mit unverändertem `sum` und danach den Nachtrag in einer Zeile, bleiben die Nullzeilen Nullstunden und die Menge steht in der Nachtragsstunde (n = 1, wie HA). Der Deckel rechnet dort mit dem Fenster seit der letzten Änderung — der Nachtrag bleibt Menge (Lab 24.05.2026: +37 kWh nach drei stillen Stunden). Grenze: nach einer Nacht mit echten Nullen passiert ein Sprung bis Schwelle × (Nullstunden + 1) — am Tag ab dem Anker Vortag 22:00 (Winter ≈ 150 kWh bei 10 kWp), im Monat bis zur Kappe von 24 Stunden (360 kWh); dazwischen verwirft der Tag, der Monat nimmt (benannte Asymmetrie). Der Spike-Checker (§4.7 im Daten-Checker-Handbuch) liest dieselbe Regel.
+- **Daten-Checker:** Tage mit Regelmarke, an denen Σ Einspeisung > Σ PV + Σ Entladung + 0,5 kWh, erscheinen als Hinweis „Einspeisung über Erzeugung" (Entladung ins Netz ist erlaubt).
+- **Benannt:** Die Live-Tageskacheln (`live_history_service`) weichen von *Cockpit → Tag* um jedes Mitternachtsbündel ab. Preise einer gebündelten Stunde: s. [KONZEPT-FLEX-TARIFE](KONZEPT-FLEX-TARIFE.md) [A-6].
+
 **Peaks aus W-Integration (für Spitzenwerte):**
 
 ```
@@ -3299,6 +3533,25 @@ Architektur trennt Counter-Felder strikt von kWh-Feldern in `KUMULATIVE_COUNTER_
 **Day-Ahead-Stundenprofil-Snapshot (v3.23.4, intern):**
 
 Zwei JSON-Felder in `TagesZusammenfassung` (`pv_prognose_stundenprofil`, `solcast_prognose_stundenprofil`) speichern den ersten OpenMeteo-/Solcast-Forecast des Tages als 24-Werte-Liste in kWh (Backward-Slot). First-write-wins: spätere Aufrufe am selben Tag überschreiben das Profil nicht. Reine Hintergrund-Datensammlung für künftige Diagnostik (Korrekturprofil-Konzept). Speicher ~80 KB/Jahr/Anlage.
+
+**Geschrieben wird der Schnappschuss seit N-547 vom Prefetch-Job** (alle 45 min, erster Lauf nach Mitternacht) statt beim ersten Besuch von *Cockpit → Live*. Anlagen ohne täglichen Seitenbesuch bekamen vorher gar keins — und damit nie genug Stunden für die Stufen 1–3 der Kaskade.
+
+#### Das Lern-SOLL des Korrekturprofils (N-547, gebaut 22.09.2026)
+
+⛔ **Wogegen gelernt wird, ist nicht dasselbe wie das, was vorhergesagt wurde.** Bis zum 22.09.2026 las der Korrekturprofil-Aggregator sein SOLL aus `pv_prognose_stundenprofil` — der **korrigierten** Kanon-Ausgabe, also dem Produkt genau der Faktoren, die er gerade lernt. Der gepoolte Quotient `Σ IST / Σ SOLL` folgt dann der Abbildung `f ↦ r/f`, und deren Fixpunkt ist **√r, nicht r**: bei einem wahren Verhältnis r = 0,85 konvergieren die Faktoren auf 0,922 — **+8,5 % an jedem Tag**.
+
+Zwei Felderpaare, zwei Fragen:
+
+| Feld | Frage, die es beantwortet | Inhalt |
+| --- | --- | --- |
+| `pv_prognose_stundenprofil` / `pv_prognose_kwh` | *Was hat eedc vorhergesagt?* (Genauigkeit, Stratifizierung) | korrigiert + gekappt bzw. **roh** für den Tageswert |
+| `lern_soll_stundenprofil_kwh` / `lern_soll_kwh` | *Wogegen darf eedc lernen?* | **roh, unkorrigiert, aber gekappt** (`KanonTag.om_stundenprofil_kwh` / `om_kwh`) |
+
+**Warum gekappt.** Die AC-Grenze des Wechselrichters ist keine Prognoseabweichung, sondern eine physikalische Schranke: oberhalb von ihr *kann* die Anlage nicht liefern. Ein ungekapptes SOLL schriebe diesen Deckel als dauerhaften Fehler in die Mittagsfaktoren.
+
+**Warum der Tageswert `pv_prognose_kwh` roh und UNgekappt bleibt.** Seine drei Leser (Genauigkeits-Tracking, HA-Abweichungs-Ampel, Tages-SOLL im Energieprofil) multiplizieren ihn mit dem Legacy-Lernfaktor; sie erwarten die rohe Lage. Er wurde nur von zwei Schreibern in **zwei verschiedenen** Lagen gefüllt (Prefetch roh, Live korrigiert+gekappt, „letzter gewinnt") — seit N-547 schreiben beide roh (`KanonTag.roh_kwh` = `om_kwh + abregelung_om_kwh`).
+
+**Übergang ohne Bruch (kein Backfill).** Die neuen Felder entstehen ab dem Update; Bestandszeilen bleiben NULL. Damit der erste nächtliche Lauf nicht jeden Bin mit einem leeren Pool überschreibt, gilt je Bin: **der neue Wert ersetzt den alten erst, wenn er das Gate seiner Stufe mit NEUEN Datenpunkten erreicht** (Sonnenstand×Wetter 10 h, Sonnenstand 15 h, Stunde Σ 50 h je Monat, Skalar 7 Tage — dieselben Schwellen, die der Lookup anwendet). Beim Skalar gehören `tage_eingegangen` und `faktor_skalar` zum gehaltenen Wert, sonst fiele Stufe 4 aus. Die Marke je Bin steht in `Korrekturprofil.lern_basis_pro_bin` (`"alt"` | `"neu"`), der Beginn in `lern_umstellung_am`; nach **365 Tagen** endet die Regel (sonst bliebe ein saisonal nie wieder belegter Bin für immer auf seinem alten Wert).
 
 ### Monats-Rollup (rollup_month)
 

@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, timedelta
 from typing import Optional
 
 from sqlalchemy import and_, delete, select
@@ -61,6 +61,10 @@ _PROGNOSE_FELDER_RETTEN: tuple[str, ...] = (
     "pv_prognose_stundenprofil",
     "solcast_prognose_stundenprofil",
     "sfml_prognose_stundenprofil",
+    # N-547: Lern-SOLL des Korrekturprofils — dieselbe Verlustklasse wie
+    # `pv_prognose_stundenprofil` oben, nur mit anderem Inhalt.
+    "lern_soll_stundenprofil_kwh",
+    "lern_soll_kwh",
 )
 
 
@@ -195,6 +199,8 @@ class Zaehlerstunde:
     waermepumpe_kw: Optional[float]
     wallbox_kw: Optional[float]
     batterie_kw: Optional[float]
+    # Zählerlücken wie HA (R2): {achse: n} nur für n > 1, sonst None.
+    spannen: Optional[dict] = None
 
 
 @dataclass(frozen=True)
@@ -248,6 +254,7 @@ def zaehlerwerte_der_stunde(h: int, kontext: StundenKontext) -> Zaehlerstunde:
         # Bilanz-Netto `ladung − entladung`). batt_netto bleibt für die Bilanz-
         # Formel unten (verbrauch) erhalten. SoT: core.berechnungen.batterie_kw_spalte.
         batterie_kw=batterie_kw_spalte(snap_h.get("batterie_netto")),
+        spannen=snap_h.get("spannen") or None,
     )
 
 
@@ -293,10 +300,19 @@ def verrechne_stunde(
     # Leistungspfad). Das hier ist Absicht: eine eigene Sonderregel wäre
     # eine zweite Wahrheit über dieselbe Ladung, und wird N-196 behoben,
     # zieht diese Rechnung ohne Zutun mit.
+    # ⭐ Zählerlücken wie HA (§2): trägt die Ladung, die PV oder der Netzbezug
+    # dieser Zeile mehr als eine reale Stunde, wird die Stunde NICHT abgeleitet
+    # — Netz/Einspeisung gehen als „nicht gedeckt" hinein, damit die Marke
+    # `…teilweise` die Lücke ausweist (P4) statt eine n-Stunden-Menge mit der
+    # Deckung einer einzigen Stunde zu bewerten.
+    from backend.core.berechnungen.spannen import spanne as _spanne
+    _gebuendelt = any(
+        _spanne(zaehler.spannen, a) > 1 for a in ("wallbox", "pv", "netzbezug")
+    )
     akku.lade_stunden.append(stunde_aus_bilanzwerten(
         ladung=zaehler.wallbox_kw,
-        netzbezug=zaehler.netzbezug_kw,
-        einspeisung=zaehler.einspeisung_kw,
+        netzbezug=None if _gebuendelt else zaehler.netzbezug_kw,
+        einspeisung=None if _gebuendelt else zaehler.einspeisung_kw,
         batterie_spalte=zaehler.batterie_kw,
     ))
 
@@ -379,6 +395,8 @@ def baue_stundenzeile(
         batterie_kw=rund(zaehler.batterie_kw, 3),
         waermepumpe_kw=rund(zaehler.waermepumpe_kw, 3),
         wallbox_kw=rund(zaehler.wallbox_kw, 3),
+        # Zählerlücken wie HA (R2): wie viele reale Stunden eine Achse trägt.
+        spannen=zaehler.spannen,
         ueberschuss_kw=rund(ueberschuss, 3),
         defizit_kw=rund(defizit, 3),
         temperatur_c=rund(wetter.temperatur, 1),
@@ -571,6 +589,33 @@ def bucket_nach_slot(
     return stunden_buckets
 
 
+def ergaenze_zaehlerslots(punkte: list, kwh_pro_stunde: Optional[dict]) -> list:
+    """Zählerlücken wie HA (Vorlage §10, O1 → Option A): **jeder Slot mit
+    Zählerwert bekommt eine Stundenzeile**, auch ohne Leistungspunkt.
+
+    Die Stunden-Schleife lief bisher nur über die Slots des Leistungspfads. Hatte
+    die Leistungskurve eine Lücke, der Zähler aber einen Wert (typisch: das
+    Bündel nach einer HA-Lücke, R2), fehlte die Zeile — die Energie stand im
+    Tageswert (`komponenten_kwh`), aber in keiner Stunde, und G1 (Σ Stunden =
+    Tag) hielt in den Zeilen nicht (Lab Anlage 902, 06.11.2025: 4,0 kWh
+    Netzbezug im Tag, 0 in den Stunden). Der ergänzte Punkt trägt leere
+    ``werte`` ⇒ keine Leistungs-`komponenten`, keine Spitze; die kWh-Spalten
+    kommen wie in jeder Zeile aus `kwh_pro_stunde`.
+    """
+    if not kwh_pro_stunde:
+        return punkte
+    vorhanden = {int(p["zeit"].split(":")[0]) for p in punkte}
+    neu = [
+        {"zeit": f"{h:02d}:00", "werte": {}}
+        for h, werte in kwh_pro_stunde.items()
+        if 0 <= h <= 23 and h not in vorhanden
+        and any(v is not None for k, v in (werte or {}).items() if k != "spannen")
+    ]
+    if not neu:
+        return punkte
+    return sorted(punkte + neu, key=lambda p: int(p["zeit"].split(":")[0]))
+
+
 def mittel_je_stunde(stunden_buckets: dict) -> list:
     """Je Slot den Mittelwert jedes Schluessels — das Ergebnis sind die 24 Stundenpunkte."""
     punkte = []
@@ -694,7 +739,9 @@ async def lade_zaehler_und_counter(
 
     Returns:
         ``(invs, invs_by_id, kwh_pro_stunde, kwh_source_label, wp_starts_pro_stunde,
-        wp_betriebsstunden_pro_stunde, komponenten_starts)``
+        wp_betriebsstunden_pro_stunde, komponenten_starts, tages_tabelle)`` —
+        ``tages_tabelle`` ist die `TagesTabelle` des HA- bzw. Snapshot-Pfads
+        (dieselbe Rechnung, `snapshot/tages_tabelle.py`) oder ``None``.
     """
     # ── Zähler-basierte Stunden-kWh (Issue #135 / Etappe 4 v3.31.0) ──────
     # Etappe 4: HA-Statistics-LTS ist Source-of-Truth, wenn verfügbar
@@ -724,34 +771,61 @@ async def lade_zaehler_und_counter(
     )
     invs = inv_result.scalars().all()
     invs_by_id = {str(inv.id): inv for inv in invs}
+    # ⭐ Zählerlücken wie HA (R5): EIN HA-Lesezugriff je Tag — die Slot-Tabelle
+    # trägt die Stundenachsen, `komponenten_kwh` (Σ derselben Werte) und die
+    # verworfenen Mengen. Bis zum Umbau las `komponenten_tagesgesamt_und_peaks`
+    # HA ein zweites Mal über `get_komponenten_tageskwh_lts`.
+    lts_tabelle = None
+    # N-555 Stufe 3 (Konzept 7.2 Anhang D, D-6): die Heimlade-Zähler je Auto werden im
+    # SELBEN Lesezugriff mitgelesen (`zusatz_slots`) — kein zweiter HA-Zugriff. Die
+    # Rechnung der Tabelle sieht sie nicht; der Ladeblock-Hook in `aggregate_day` liest sie.
+    from backend.services import emob_ladebloecke_speicher as _ladebloecke
     try:
-        from backend.services.snapshot.lts_aggregator import get_hourly_kwh_by_category_lts
-        kwh_pro_stunde = await get_hourly_kwh_by_category_lts(
-            db, anlage, invs_by_id, datum,
+        from backend.services.snapshot import lts_aggregator
+        # Ohne Fahrzeug-Zähler ruft der Aggregator die Tabelle genau wie vorher auf.
+        _zusatz_lts = _ladebloecke.fahrzeug_zaehler_lts(anlage, invs_by_id, datum)
+        lts_tabelle = await lts_aggregator.lts_tagestabelle(
+            anlage, invs_by_id, datum,
+            **({"zusatz_schluessel": _zusatz_lts} if _zusatz_lts else {}),
         )
     except Exception as e:
         logger.warning(
             f"Anlage {anlage.id}, {datum}: HA-LTS-Pfad fehlgeschlagen: "
             f"{type(e).__name__}: {e}"
         )
-        kwh_pro_stunde = {}
+        lts_tabelle = None
+    kwh_pro_stunde = lts_tabelle.stunden if lts_tabelle is not None else {}
 
     if kwh_pro_stunde:
         kwh_source_label = "external:ha_statistics:hourly"
+        tages_tabelle = lts_tabelle
     else:
         # Fallback auf Snapshot-Variante (MQTT-/sensor_snapshots-Pfad).
-        # Gleicher Output-Vertrag — nur die Quelle ändert sich.
+        # Gleicher Output-Vertrag — nur die Quelle ändert sich. Seit
+        # „Zählerlücken wie HA" liefert auch sie die ganze Tagestabelle
+        # (Stunden, `komponenten_kwh` im Stundenfenster, verworfene Mengen — E5).
+        tages_tabelle = None
         try:
-            from backend.services.sensor_snapshot_service import get_hourly_kwh_by_category
-            kwh_pro_stunde = await get_hourly_kwh_by_category(
+            from backend.services.snapshot import aggregator as snapshot_aggregator
+            try:
+                _zusatz_snap = {
+                    k: v[1] for k, v in (await _ladebloecke.fahrzeug_zaehler_snapshot(
+                        db, anlage, invs_by_id, datum,
+                    )).items()
+                }
+            except Exception:
+                _zusatz_snap = {}  # ohne Fahrzeug-Zähler rechnet der Tag wie vorher
+            tages_tabelle = await snapshot_aggregator.snapshot_tagestabelle(
                 db, anlage, invs_by_id, datum,
+                **({"zusatz_schluessel": _zusatz_snap} if _zusatz_snap else {}),
             )
         except Exception as e:
             logger.warning(
                 f"Anlage {anlage.id}, {datum}: Snapshot-Fallback fehlgeschlagen: "
                 f"{type(e).__name__}: {e}"
             )
-            kwh_pro_stunde = {}
+            tages_tabelle = None
+        kwh_pro_stunde = tages_tabelle.stunden if tages_tabelle is not None else {}
         kwh_source_label = "auto:monatsabschluss"
 
     # ── Stunden-Counter (Issue #136/#238: WP-Starts + Betriebsstunden pro Stunde) ──
@@ -814,6 +888,7 @@ async def lade_zaehler_und_counter(
     return (
         invs, invs_by_id, kwh_pro_stunde, kwh_source_label,
         wp_starts_pro_stunde, wp_betriebsstunden_pro_stunde, komponenten_starts,
+        tages_tabelle,
     )
 
 
@@ -970,25 +1045,78 @@ async def schreibe_provenance_und_restore(
 
 
 
+async def _boerse_vortag_23(db, anlage_id: int, datum: date) -> Optional[float]:
+    """Boersenpreis der Forward-Stunde 23 des Vortags — der Preis zu Slot 0 (N-387).
+
+    Slot 0 des Tages traegt die Einspeisung von ``[Vortag 23:00, 00:00)``; ihr
+    Preis steht in der **Zeile 23 des Vortags** (``boersenpreis_cent``, forward).
+    Dieselbe Zeile, die ``ha_export_bezugspreis._boerse_slot_null`` fuer die
+    Bezugspreis-Reihe liest — dort ueber ``preis_tag.persistierte_preise``.
+
+    Eine fehlende Vortagszeile ist der Normalfall am ersten Tag einer Anlage und
+    kein Fehler: Slot 0 bleibt dann unbewertet, statt den Preis der falschen
+    Stunde zu nehmen.
+    """
+    from backend.models.tages_energie_profil import TagesEnergieProfil as _TEP
+
+    res = await db.execute(
+        select(_TEP.boersenpreis_cent).where(
+            _TEP.anlage_id == anlage_id,
+            _TEP.datum == datum - timedelta(days=1),
+            _TEP.stunde == 23,
+        )
+    )
+    return res.scalar_one_or_none()
+
+
 def tages_kennzahlen(
     anlage: Anlage, datum: date, invs, akku: TagesAkkumulator, strompreis_stunden,
+    boerse_vortag_23: Optional[float] = None,
 ) -> tuple:
     """Boersenpreis-Tagesaggregation (§51 EEG), Batterie-Vollzyklen, Performance Ratio.
+
+    Args:
+        boerse_vortag_23: Boersenpreis der **forward**-Stunde 23 des Vortags —
+            der Preis, der zur Einspeisung des Backward-Slots 0 gehoert
+            (s. §51 unten). ``None``, wenn der Vortag keine Zeile hat.
 
     Returns:
         ``(boersenpreis_avg, boersenpreis_min, neg_stunden, einsp_neg_kwh, vollzyklen,
         performance_ratio)``
     """
     # ── Börsenpreis-Tagesaggregation ────────────────────────────────────
+    # ⚠ Diese drei Kennzahlen beschreiben den **Preistag** `[00:00, 24:00)` und
+    # werden deshalb NICHT verschoben: `boerse` liegt forward, die Stunden 0..23
+    # sind genau der Kalendertag. Verschieben hieße, den Tages-Ø über
+    # `[Vortag 23, 23)` zu bilden — eine andere Aussage.
     boersen_values = [v for v in (strompreis_stunden.boerse.get(h) for h in range(24)) if v is not None]
     boersenpreis_avg = round(sum(boersen_values) / len(boersen_values), 2) if boersen_values else None
     boersenpreis_min = round(min(boersen_values), 2) if boersen_values else None
     neg_stunden = sum(1 for v in boersen_values if v < 0) if boersen_values else None
 
     # Einspeisung bei negativem Börsenpreis (§51 EEG)
+    #
+    # ⭐ **N-387: hier wird gepaart, also wird umgerechnet.** `einspeisung_pro_stunde[h]`
+    # ist die Energie des Backward-Slots `[h-1, h)`; `boerse[h]` ist der Preis der
+    # Forward-Stunde `[h, h+1)`. Zusammen gehören Slot `h` und Preis `h-1` —
+    # dieselbe Verschiebung wie in `slot_konvention.forward_werte_je_backward_zeile`,
+    # hier nur auf einem Stunden-Dict statt auf Zeilen. Für Slot 0 liefert der
+    # Aufrufer die Stunde 23 des Vortags nach; fehlt sie, bleibt Slot 0 außen vor
+    # (keine stille Nachbar-Übernahme).
+    #
+    # ⚠ **Ohne Bestandsgrenze — und das ist hier richtig.** Der Zeilen-Helfer
+    # prüft je Zeile an ihrer `created_at`, ob sie schon die Backward-Mengen
+    # trägt (`SLOT_PAARUNG_VORZEILE_AB`, für Zeilen vor dem 04.06.2026 gilt die
+    # Zeilen-Paarung). Diese Stelle rechnet dagegen **während** der Aggregation
+    # auf Stunden-Dicts: die Zeilen, die zu dieser Zahl gehören, entstehen im
+    # selben Lauf und tragen damit **immer** die heutige Konvention. Ein
+    # Alt-Wert kann hier gar nicht auftreten — er steckt allenfalls in einer
+    # **persistierten** `einspeisung_neg_preis_kwh` von früher, und die wird
+    # nicht umgerechnet, sondern beim Neu-Aggregieren des Tages neu gebildet
+    # (derselbe Reparaturweg, den CHANGELOG und BERECHNUNGEN nennen).
     einsp_neg = 0.0
     for h in range(24):
-        bp = strompreis_stunden.boerse.get(h)
+        bp = boerse_vortag_23 if h == 0 else strompreis_stunden.boerse.get(h - 1)
         if bp is not None and bp < 0:
             einsp_neg += akku.einspeisung_pro_stunde.get(h, 0.0)
     einsp_neg_kwh = round(einsp_neg, 3) if einsp_neg > 0 else None
@@ -1040,6 +1168,7 @@ async def komponenten_tagesgesamt_und_peaks(
     invs_by_id: dict,
     kwh_source_label: str,
     akku: TagesAkkumulator,
+    tages_tabelle=None,
 ) -> dict:
     """Tagesgesamt je Komponente (HA-LTS -> Snapshot-Fallback) und der Peak-Override aus HA-LTS.
 
@@ -1116,23 +1245,25 @@ async def komponenten_tagesgesamt_und_peaks(
             f"Anlage {anlage.id}, {datum}: Boundary-Diff übersprungen für "
             f"Zukunfts-Tag — keine Daten verfügbar."
         )
-    elif kwh_source_label == "external:ha_statistics:hourly":
+    elif tages_tabelle is not None and (
+        kwh_source_label == "external:ha_statistics:hourly" or datum < date.today()
+    ):
+        # Zählerlücken wie HA (R5b/E5): Σ der in den Stunden verwendeten
+        # Gerätewerte aus DERSELBEN Tagestabelle — kein zweiter Lesezugriff, und
+        # im Snapshot-Pfad dasselbe Stundenfenster wie im HA-Pfad. Der
+        # Snapshot-Pfad bleibt an `datum < heute` gekoppelt (#290 Bug B).
+        boundary_kwh = dict(tages_tabelle.komponenten_kwh)
+        pv_marken.update(tages_tabelle.pv_marken)
+    if not boundary_kwh and datum < date.today() and kwh_source_label == "external:ha_statistics:hourly":
+        # HA-Stunden da, aber kein Tageswert (z. B. PV-Aggregat ohne Erzeuger-
+        # Investition): Rückfall auf die Snapshot-Tabelle — ebenfalls im
+        # Stundenfenster, damit die Regelmarke dieser Zeile stimmt (E5).
         try:
-            from backend.services.snapshot.lts_aggregator import get_komponenten_tageskwh_lts
-            boundary_kwh = await get_komponenten_tageskwh_lts(
-                anlage, invs_by_id, datum, marken_out=pv_marken,
-            )
-        except Exception as e:
-            logger.warning(
-                f"Anlage {anlage.id}, {datum}: Komponenten-Tagesgesamt HA-LTS "
-                f"fehlgeschlagen, Snapshot-Fallback aktiv: {type(e).__name__}: {e}"
-            )
-    if not boundary_kwh and datum < date.today():
-        try:
-            from backend.services.snapshot.aggregator import get_komponenten_tageskwh
-            boundary_kwh = await get_komponenten_tageskwh(
-                db, anlage, invs_by_id, datum, marken_out=pv_marken,
-            )
+            from backend.services.snapshot import aggregator as snapshot_aggregator
+            snap = await snapshot_aggregator.snapshot_tagestabelle(db, anlage, invs_by_id, datum)
+            if snap is not None:
+                boundary_kwh = dict(snap.komponenten_kwh)
+                pv_marken.update(snap.pv_marken)
         except Exception as e:
             logger.warning(
                 f"Anlage {anlage.id}, {datum}: Komponenten-Tagesgesamt aus Snapshots "
@@ -1177,8 +1308,16 @@ def baue_zusammenfassung(
     einsp_neg_kwh,
     vollzyklen,
     performance_ratio,
+    verworfen: Optional[dict] = None,
+    nachtrag: Optional[dict] = None,
 ) -> tuple:
     """PV-Anteil der Heimladung ableiten, die Tageszeile bauen, das TZ-Quell-Label bestimmen.
+
+    ``verworfen``: die verworfenen Mengen des Laufs (R4). ⭐ Die Tageszeile
+    bekommt **immer** mindestens ``{}`` — das ist die Regelmarke (R9): sie
+    sagt jedem Leser, dass dieser Tag nach „Zählerlücken wie HA" gerechnet ist.
+    NULL trägt nur der Altbestand. ``nachtrag``: die Stunden, die nur dank des
+    Deckel-Fensters passiert sind (N-567) — ``None``, wenn es keine gab.
 
     Returns:
         ``(zusammenfassung, lade_anteil, tz_source_label)``
@@ -1222,11 +1361,19 @@ def baue_zusammenfassung(
         boersenpreis_min_cent=boersenpreis_min,
         negative_preis_stunden=neg_stunden,
         einspeisung_neg_preis_kwh=einsp_neg_kwh,
+        # Zählerlücken wie HA (R4 + R9): nie NULL aus diesem Schreiber.
+        verworfen=dict(verworfen or {}),
+        # N-567: benannt, nicht abgezogen — die Menge steht in den Stunden wie in HA.
+        nachtrag=dict(nachtrag) if nachtrag else None,
         emob_ladung_pv_abgeleitet_kwh=(
             lade_anteil.pv_kwh if lade_anteil is not None else None
         ),
         emob_ladung_netz_abgeleitet_kwh=(
             lade_anteil.netz_kwh if lade_anteil is not None else None
+        ),
+        # N-569-Ergänzung: davon aus dem Speicher (Teilmenge, nur Ausweis).
+        emob_ladung_speicher_abgeleitet_kwh=(
+            lade_anteil.speicher_kwh if lade_anteil is not None else None
         ),
         # Preserve-Logik nur bei manueller Reaggregation — Pattern-Adaption
         # v3.32.4 (#290, Audit §4.2). Ursprung: Monatsdaten-Kontext, wo
@@ -1390,6 +1537,9 @@ async def pruefe_invarianten(
             logger.warning(
                 f"Anlage {anlage.id}, {datum}: Achse-2-Komponenten-Drift — {bericht}"
             )
+        elif bericht.details:
+            # Zählerlücken wie HA: toleriert, aber sichtbar (Log-Hinweis).
+            logger.info(f"Anlage {anlage.id}, {datum}: {bericht}")
 
     # Counter-Daily-Drift (Variante 2-light, KONZEPT-COUNTER-DAILY-DRIFT.md):
     # Σ_h TagesEnergieProfil.<feld> muss dem Tages-Boundary-Diff
@@ -1483,12 +1633,32 @@ async def aggregate_day(
     (
         invs, invs_by_id, kwh_pro_stunde, kwh_source_label,
         wp_starts_pro_stunde, wp_betriebsstunden_pro_stunde, komponenten_starts,
+        tages_tabelle,
     ) = await lade_zaehler_und_counter(anlage, datum, db)
+
+    # ── N-555 Stufe 3: Ladeblöcke (Konzept 7.2 Regel 9, Anhang D) ──────────
+    # Direkt nach der Slot-Tabelle des Tages: Blöcke der Sprünge an D bilden und in
+    # `emob_ladebloecke` ersetzen (idempotent je Tag, P9). Die Stunden und Tage dieser
+    # Aggregation berührt der Hook nicht; scheitert er, bleibt der Tag gerechnet und die
+    # Monate rechnen nach Stufe 2 (W-C: ohne Blöcke kein Stufe-3-Wert).
+    try:
+        from backend.services.emob_ladebloecke_speicher import aktualisiere_ladebloecke_des_tages
+        await aktualisiere_ladebloecke_des_tages(
+            db, anlage, datum, invs_by_id, tages_tabelle, kwh_source_label,
+        )
+    except Exception as e:
+        logger.warning(
+            f"Anlage {anlage.id}, {datum}: Ladeblöcke (N-555 Stufe 3) nicht gebildet: "
+            f"{type(e).__name__}: {e}"
+        )
 
     (
         preserved_felder, preserved_quellen,
         preserved_komponenten_kwh, preserved_komponenten_starts,
     ) = await rette_und_loesche(anlage, datum, db)
+
+    # O1 (Vorlage §10): Slots mit Zählerwert, aber ohne Leistungspunkt.
+    punkte = ergaenze_zaehlerslots(punkte, kwh_pro_stunde)
 
     # ── Stundenwerte berechnen + speichern ────────────────────────────────
     akku = TagesAkkumulator()
@@ -1515,10 +1685,13 @@ async def aggregate_day(
     (
         boersenpreis_avg, boersenpreis_min, neg_stunden, einsp_neg_kwh,
         vollzyklen, performance_ratio,
-    ) = tages_kennzahlen(anlage, datum, invs, akku, strompreis_stunden)
+    ) = tages_kennzahlen(
+        anlage, datum, invs, akku, strompreis_stunden,
+        await _boerse_vortag_23(db, anlage.id, datum),
+    )
 
     pv_marken = await komponenten_tagesgesamt_und_peaks(
-        anlage, datum, db, invs_by_id, kwh_source_label, akku,
+        anlage, datum, db, invs_by_id, kwh_source_label, akku, tages_tabelle,
     )
 
     zusammenfassung, lade_anteil, tz_source_label = baue_zusammenfassung(
@@ -1534,6 +1707,8 @@ async def aggregate_day(
         einsp_neg_kwh=einsp_neg_kwh,
         vollzyklen=vollzyklen,
         performance_ratio=performance_ratio,
+        verworfen=(tages_tabelle.verworfen if tages_tabelle is not None else {}),
+        nachtrag=(tages_tabelle.nachtrag if tages_tabelle is not None else None),
     )
 
     await schreibe_provenance_und_restore(

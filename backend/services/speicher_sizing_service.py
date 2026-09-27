@@ -57,6 +57,7 @@ from backend.core.berechnungen.speicher_sizing import (
     sizing_kurve,
 )
 from backend.core.berechnungen.speicher_potential import leer_schwelle_prozent
+from backend.core.berechnungen.slot_konvention import zeile_traegt_backward_kw
 from backend.core.investition_kennwerte import (
     aggregiere_speicher_basis,
     get_speicher_kapazitaet_kwh,
@@ -120,16 +121,43 @@ def _als_sizing_stunde(zeile: TagesEnergieProfil) -> SizingStunde:
     Dieselbe Umbenennung wie in `speicher_potential_service.py`: die Spalten
     heißen `_kw`, tragen aber das Stundenmittel; über eine Stunde integriert ist
     der Zahlenwert derselbe. Der Layer rechnet ausdrücklich in kWh.
+
+    ⛔ **Der Ladestand wird hier NICHT auf die Vorzeile umgerechnet** (N-387) —
+    anders als beim Nachbarn `speicher_potential_service`, der einen Ladestand
+    mit einer Menge derselben Stunde **paart**. `kalibriere_speicher` paart
+    nicht, es bildet eine **Differenz zweier Stundenmittel**. Die beschreibt den
+    Fluss zwischen den Intervall-Mitten, also je zur Hälfte **zwei** Stunden —
+    und genau diese zwei Stunden nimmt der Layer seit N-552 selbst
+    (``½ (b[s] + b[s+1])``, bei Altbestand ``½ (b[s-1] + b[s])``). Eine
+    Verschiebung hier bräche das.
+
+    ⭐ **Was der Layer dafür braucht, ist die Konvention der Energie je Zeile**
+    (``kw_backward``): dieselbe Bestandsgrenze wie N-387, an der
+    Aggregationszeit (``slot_konvention.zeile_traegt_backward_kw``). Gemessen am
+    echten Jahr einer Anlage (23.09.2026): bis Dezember 2025 korreliert der Hub
+    am besten mit ``½ (b[s-1] + b[s])``, ab Januar 2026 mit ``½ (b[s] + b[s+1])``
+    (0,98 gegen 0,95 für die Einzelstunde) — die Zeilen tragen beide
+    Konventionen, und eine Formel für beide wäre auf der Hälfte falsch.
+
+    ⛔ **Hier stand bis N-552 eine Messtabelle „Zeile gegen Vorzeile"** mit dem
+    Schluss, die Paarung entscheide nichts. Das bleibt wahr — die Lösung war die
+    Formel im Layer, nicht die Paarung hier. Messung und Validierung stehen jetzt
+    am Layer (`kalibriere_speicher`).
     """
+    # Zählerlücken wie HA (§2): eine gebündelte Batterie- bzw. Netzbezug-Menge
+    # (mehr als eine reale Stunde) ist keine Stundenmenge — wie `None`.
+    from backend.core.berechnungen.spannen import zeile_gebuendelt
+
     return SizingStunde(
         zeit=datetime.combine(zeile.datum, datetime.min.time())
         + timedelta(hours=zeile.stunde),
         pv_kwh=zeile.pv_kw,
         verbrauch_kwh=zeile.verbrauch_kw,
         soc_prozent=zeile.soc_prozent,
-        batterie_kwh=zeile.batterie_kw,
+        batterie_kwh=None if zeile_gebuendelt(zeile, "batterie") else zeile.batterie_kw,
         einspeisung_kwh=zeile.einspeisung_kw,
-        netzbezug_kwh=zeile.netzbezug_kw,
+        netzbezug_kwh=None if zeile_gebuendelt(zeile, "netzbezug") else zeile.netzbezug_kw,
+        kw_backward=zeile_traegt_backward_kw(zeile),
     )
 
 
@@ -235,14 +263,34 @@ async def lade_sizing_auswertung(
     if not zeilen:
         return leer
 
+    # N-387: hier bleibt die Zeilen-Paarung — die Begründung samt Messung steht
+    # im Docstring von `_als_sizing_stunde`.
     stunden = [_als_sizing_stunde(z) for z in zeilen]
     simulierbar = _vollstaendige_tage(stunden)
     tage_mit_daten = len({z.datum for z in zeilen})
     tage_simuliert = len({z.zeit.date() for z in simulierbar})
 
-    soc_nutzung = messe_soc_nutzung(
-        stunden, [z.soc_je_speicher for z in zeilen], leer_schwelle
-    )
+    # ⚠ **Die Aufschlüsselung nennt nur die HEUTE laufenden Geräte**
+    # (Nachlese 4.0.50, A5). `TagesEnergieProfil.soc_je_speicher` trägt die
+    # Ladestände **aller** Geräte, die den Tag über gemessen wurden — auch die
+    # eines inzwischen ausgebauten. `messe_soc_nutzung` faltet sie ungefiltert
+    # zu `median_je_speicher`, und die Sicht beschriftet daraus „Speicher <id>"
+    # (`v4/SpeicherSizingIST.tsx`). Nach N-546 stand deshalb ein Widerspruch in
+    # einem Block: der Hinweistext hängt an `anzahl_speicher` (gefiltert, „1
+    # Speicher"), die Liste darüber zeigte zwei Zeilen — eine davon für ein
+    # Gerät, das nirgends sonst mehr vorkommt.
+    #
+    # ⭐ **Gefiltert wird der EINGANG, nicht das Ergebnis** — der Layer
+    # (`core/berechnungen/speicher_sizing.messe_soc_nutzung`) bleibt
+    # unverändert: er soll auswerten, was man ihm gibt, und nicht wissen
+    # müssen, welche Investition heute läuft. Dieselbe Arbeitsteilung wie bei
+    # den Kapazitäten oben.
+    laufende_ids = {str(s.id) for s in speicher}
+    soc_je_speicher = [
+        {k: v for k, v in (eintrag or {}).items() if str(k) in laufende_ids} or None
+        for eintrag in (z.soc_je_speicher for z in zeilen)
+    ]
+    soc_nutzung = messe_soc_nutzung(stunden, soc_je_speicher, leer_schwelle)
     kalibrierung = kalibriere_speicher(stunden)
     if kalibrierung is not None:
         basis = kalibrierung

@@ -31,10 +31,12 @@ from backend.core.berechnungen.ust_eigenverbrauch import (
     ust_eigenverbrauch_fuer_anlage,
 )
 from backend.core.berechnungen.waermepumpe_kennzahl import heizwaerme_kwh, waerme_gesamt_kwh
-from backend.core.field_definitions import get_emob_pv_netz_kwh, get_wp_warmwasser_kwh
+from backend.core.field_definitions import get_wp_warmwasser_kwh
 from backend.services.eauto_wirtschaftlichkeit import (
     berechne_eauto_ersparnis_periode,
-    emob_month_share,
+    emob_extern_im_monat,
+    emob_heimladung_im_monat,
+    monate_des_autos,
 )
 from backend.core.wirtschaftlichkeit_defaults import (
     NETZBEZUG_DEFAULT_CENT,
@@ -255,18 +257,23 @@ async def alternativkosten_rueckblick(
     _strompreis_lookup_aus: dict[tuple[int, int], float] = {}
     for ea in e_autos:
         agg = eauto_aggregate[ea.id]
-        for (inv_id, jahr, monat), daten in historische_inv_daten.items():
-            if inv_id != ea.id or not ea.ist_aktiv_im_monat(jahr, monat):
+        inv_id = ea.id
+        # N-555 Stufe 2: auch die Monate ohne Zeile, in denen das Auto Rest der Wallbox
+        # bekommt (`monate_des_autos`, Konzept Regel 2 Schritt 3).
+        for jahr, monat, daten in monate_des_autos(emob_pool_ctx, ea.id, historische_inv_daten):
+            if not ea.ist_aktiv_im_monat(jahr, monat):
                 continue
             km = daten.get("km_gefahren", 0) or 0
-            # N-199: SoT-Helper statt Rohkey (leitet `Total − PV` ab).
-            _, netz = get_emob_pv_netz_kwh(daten)
-            # F-17: kanonische Quelle ist die Wallbox, wenn sie Ladung trägt.
-            share = emob_month_share(emob_pool_ctx, "e-auto", km, jahr, monat)
-            if share is not None:
-                netz = share.netz_kwh
+            # N-199/F-17/N-555: Netz-Anteil DIESES Autos nach dem Entscheid des
+            # Monats (Wallbox-Anteil nach km · eigene Heim-Felder · Schätzung · 0).
+            _, netz = emob_heimladung_im_monat(
+                emob_pool_ctx, inv_id, km, jahr, monat, daten,
+            )
             agg["km"] += km
             agg["netz_kwh"] += netz
+            # N-555 (§12): externe Ladekosten nach der Topf-Regel, wie Hub und HA-Sensor.
+            _, _extern_euro = emob_extern_im_monat(emob_pool_ctx, km, jahr, monat, daten)
+            agg["extern_euro"] = agg.get("extern_euro", 0.0) + _extern_euro
             agg["fahrverbrauch_kwh"] += daten.get("verbrauch_kwh", 0) or 0
             if km > 0:
                 agg.setdefault("km_monate", []).append((jahr, monat, km))
@@ -291,14 +298,20 @@ async def alternativkosten_rueckblick(
 
     for ea in e_autos:
         agg = eauto_aggregate[ea.id]
-        if not agg.get("km_monate"):
+        # ⭐ N-555 Stufe 2 (Konzept Regel 2, E6): hier stand `if not agg.get("km_monate")`
+        # — ein Auto, das geladen hat, aber nie gefahren ist, verlor still seine
+        # Stromrechnung (dasselbe `km > 0`-Tor wie in der Übersicht).
+        if not agg.get("km_monate") and not agg.get("netz_monate"):
             continue
         _erg = berechne_eauto_ersparnis_periode(
-            km_pro_monat=agg["km_monate"],
+            km_pro_monat=agg.get("km_monate", []),
             ladung_netz_kwh_gesamt=agg["netz_kwh"],
-            # Externe Ladekosten sind in dieser Sicht noch nie eingegangen —
-            # beim Umhängen nicht stillschweigend dazunehmen.
-            ladung_extern_euro_gesamt=0.0,
+            # N-555 (§12, Entscheid Gernot 25.09.2026): externe Ladekosten
+            # gehören in die Stromkosten — so rechnen E-Auto-Hub, T-Konto,
+            # Cockpit und die HA-Sensoren. Hier stand bis dahin bewusst 0,0
+            # („noch nie eingegangen"); die bisherige E-Auto-Ersparnis und
+            # damit der ROI-Fortschritt lagen um genau diese Kosten zu hoch.
+            ladung_extern_euro_gesamt=agg.get("extern_euro", 0.0),
             wallbox_strompreis_cent=netzbezug_preis,
             eauto_parameter=inv_by_id_hist.get(ea.id).parameter if inv_by_id_hist.get(ea.id) else ea.parameter,
             monats_benzinpreis_lookup=_benzin_lookup_aus,

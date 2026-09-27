@@ -229,7 +229,18 @@ async def test_ha_export_filtert_den_dienstwagen_aus_der_v2h_bilanz(db):
 
 @pytest.mark.asyncio
 async def test_emob_pool_bleibt_ueber_den_ganzen_zeitraum_gepoolt(db):
-    """**Regressions-Schutz** (vorher grün): einmal global poolen, nicht Σ Monate.
+    """**Umgestellt mit N-555 (25.09.2026): der Zeitraum ist die Summe der Monate.**
+
+    Die Substanz dieser Probe bleibt: je Monat genau EINE Quelle, die Trias
+    geschlossen, km beim E-Auto. Umgestellt ist die Zeitraum-Regel — das Konzept
+    Heimladung/Fahrverbrauch (Fassung 7.1, abgenommen) entscheidet sie: *„Die
+    Entscheidung fällt je Monat und je Auto … Ein Jahr ist die Summe seiner
+    Monate"* (Regel 1) und §6 *„Zeiträume (Jahr, Aussichten, Übersicht): teils
+    einmal über den Zeitraum gepoolt → Summe der Monate"*. Die Wallbox trägt im
+    Mai 0 kWh; das E-Auto trägt „Heim: PV/Netz" (Steckerlader neben einer Wallbox
+    mit 0, Regel 2-Ü Schritt 2) ⇒ Mai 100, Juni Wallbox 120 ⇒ **220**.
+
+    Was hier bis dahin stand (zur Nachvollziehbarkeit):
 
     `get_emob_heimladung_canonical` wählt die Quelle **strukturell**: existiert
     eine Wallbox mit Heimladung, ist sie die Wahrheit — komplett, nicht feldweise
@@ -277,11 +288,17 @@ async def test_emob_pool_bleibt_ueber_den_ganzen_zeitraum_gepoolt(db):
 
     cockpit = await get_cockpit_uebersicht(anlage_id=anlage.id, jahr=None, db=db)
 
-    assert cockpit.emob_ladung_kwh == pytest.approx(120.0), (
-        "der Pool wird EINMAL über den Zeitraum gebildet, nicht je Monat"
+    # ⚑ N-555 Stufe 2 (26.09.2026, Konzept Regel 2 Schritt 1 + Regel 3/G1): das Auto trägt
+    # „Heim: PV/Netz" — eine eigene Messung, die auch neben der Wallbox zählt. Juni: Auto
+    # 50 (30/20) gemessen, Wallbox 120 ⇒ Rest 70 ohne Empfänger (das einzige Auto ist
+    # gemessen) = nicht zugeordnet, nur Verbrauch. Der Topf (private Heimladung) ist
+    # Mai 100 + Juni 50 = **150**. Bis Stufe 1 (Regel 2-Ü) war der Juni die Wallbox (120)
+    # ⇒ 220. Die Substanz — Zeitraum = Summe der Monats-Entscheide, Trias geschlossen, km
+    # beim Auto — bleibt.
+    assert cockpit.emob_ladung_kwh == pytest.approx(150.0), (
+        "der Zeitraum ist die Summe der Monats-Entscheidungen (N-555, Regel 1)"
     )
-    assert cockpit.emob_ladung_kwh != pytest.approx(220.0)
-    # Der PV-Anteil kommt aus derselben Quelle — 90 von 120.
-    assert cockpit.emob_pv_anteil_prozent == pytest.approx(75.0, abs=0.1)
+    # Der PV-Anteil kommt je Monat aus derselben Menge — (60 + 30) von 150.
+    assert cockpit.emob_pv_anteil_prozent == pytest.approx(90 / 150 * 100, abs=0.1)
     # km bleiben beim E-Auto und werden monatsweise summiert.
     assert cockpit.emob_km == pytest.approx(1000.0)
