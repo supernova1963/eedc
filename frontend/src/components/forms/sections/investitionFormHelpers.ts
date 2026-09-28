@@ -9,7 +9,6 @@ import {
   PARAM_WAERMEPUMPE_DEFAULTS,
   PARAM_WALLBOX_DEFAULTS,
   PARAM_BALKONKRAFTWERK_DEFAULTS,
-  PARAM_SONSTIGES_DEFAULTS,
 } from '../../../lib'
 import type { Innengeraet } from '../../../lib/investitionParameter'
 import { hatHeizAchse, hatWarmwasserAchse } from '../../../lib/fieldDefinitions'
@@ -196,9 +195,14 @@ export function getInitialParamData(
         batteriekapazitaet_kwh: paramStr(params.batteriekapazitaet_kwh),
         verbrauch_kwh_100km: paramStr(params.verbrauch_kwh_100km, PARAM_E_AUTO_DEFAULTS.verbrauch_kwh_100km),
         jahresfahrleistung_km: paramStr(params.jahresfahrleistung_km, PARAM_E_AUTO_DEFAULTS.jahresfahrleistung_km),
-        pv_ladeanteil_prozent: paramStr(params.pv_ladeanteil_prozent, PARAM_E_AUTO_DEFAULTS.pv_ladeanteil_prozent),
+        // N-572: bewusst OHNE Default-Argument — die Leser werten die
+        // ANWESENHEIT des Keys aus (PV-Ladeanteil: N-188-Kaskade gepflegt →
+        // gemessen → 60; Benzinpreis: Parameter → EU-Monatspreis → 1,65).
+        // Vorbelegt schrieb jedes Speichern den Default als gepflegten Wert
+        // zurück, auch nach dem Leeren. Wächter: `src/test/n572-*.test.tsx`.
+        pv_ladeanteil_prozent: paramStr(params.pv_ladeanteil_prozent),
         vergleich_verbrauch_l_100km: paramStr(params.vergleich_verbrauch_l_100km, PARAM_E_AUTO_DEFAULTS.vergleich_verbrauch_l_100km),
-        benzinpreis_euro: paramStr(params.benzinpreis_euro, PARAM_E_AUTO_DEFAULTS.benzinpreis_euro),
+        benzinpreis_euro: paramStr(params.benzinpreis_euro),
         // #331: bewusst OHNE Default-Argument — das leere Feld ist die Aussage
         // „dieses Fahrzeug fährt rein elektrisch". Ein vorbelegter Wert würde
         // aus jedem Bestands-BEV beim ersten Speichern einen Hybrid machen.
@@ -292,7 +296,11 @@ export function getInitialParamData(
               warmwasserbedarf_kwh: paramStr(params.warmwasserbedarf_kwh),
             }),
         // Vergleich mit alter Heizung
-        pv_anteil_prozent: paramStr(params.pv_anteil_prozent, PARAM_WAERMEPUMPE_DEFAULTS.pv_anteil_prozent),
+        // N-572: bewusst OHNE Default-Argument — drei Zustände (N-277/N-354):
+        // Key fehlt = nie gepflegt (30 %), `''` = zurückgenommen (fällt aus
+        // dem Prognose-Mittel), Zahl = Wert. Vorbelegt machte das nächste
+        // Speichern aus „zurückgenommen" still wieder eine gepflegte 30.
+        pv_anteil_prozent: paramStr(params.pv_anteil_prozent),
         alter_energietraeger: paramStr(params.alter_energietraeger, PARAM_WAERMEPUMPE_DEFAULTS.alter_energietraeger),
         alter_preis_cent_kwh: paramStr(params.alter_preis_cent_kwh, PARAM_WAERMEPUMPE_DEFAULTS.alter_preis_cent_kwh),
         alternativ_zusatzkosten_jahr: paramStr(params.alternativ_zusatzkosten_jahr, PARAM_WAERMEPUMPE_DEFAULTS.alternativ_zusatzkosten_jahr),
@@ -332,7 +340,17 @@ export function getInitialParamData(
       }
     case 'sonstiges':
       return {
-        kategorie: paramStr(params.kategorie, PARAM_SONSTIGES_DEFAULTS.kategorie),
+        // N-573: bewusst OHNE Default-Argument — leer = „Automatisch (nach den
+        // Monatswerten)", Bauform wie `kopplung` (#351). Die Leser werten
+        // „nicht gepflegt" anders aus als „erzeuger": die Monatsebene ordnet
+        // das Gerät nach seinen Werten ein (N-250,
+        // `core/berechnungen/energie.py::sonstiges_richtung`), die Tages-Σ
+        // (`sonstiges_kwh_je_richtung`) und die Live-Serie
+        // (`live_sensor_config.py`, nur gepflegtes „erzeuger" wird Quelle)
+        // zählen es als Verbraucher. Vorbelegt schrieb das erste Speichern
+        // still „erzeuger" fest — beim Bearbeiten eines Bestandsgeräts ebenso
+        // wie beim Anlegen, wo die erste Option wie eine getroffene Wahl aussah.
+        kategorie: paramStr(params.kategorie),
         beschreibung: paramStr(params.beschreibung),
         // F-77: beide Schluessel fehlten hier — ein Wasserzaehler zeigte beim
         // Oeffnen immer „Gas"/„m³". Bewusst OHNE Default (#397-Muster): der

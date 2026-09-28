@@ -9,7 +9,10 @@ from typing import Optional
 
 from backend.models.anlage import Anlage
 from backend.models.investition import Investition
-from backend.core.investition_kennwerte import get_erzeuger_kwp
+from backend.core.investition_kennwerte import (
+    get_erzeuger_kwp,
+    get_speicher_nutzbare_kapazitaet_kwh,
+)
 from backend.core.investition_parameter import PARAM_E_AUTO
 from datetime import date
 
@@ -23,6 +26,7 @@ from backend.core.betriebsmodus import (
 from backend.core.berechnungen.anlagen_kwp import anlagen_kwp
 from backend.core.berechnungen.energie import PV_KOMPONENTEN_PREFIXE
 from backend.core.berechnungen.erzeuger_traeger import bkw_restwerte
+from backend.services.pv_orientation import ausrichtung_label
 from backend.services.live_sensor_config import (
     TYP_ICON,
     ERZEUGER_TYPEN,
@@ -84,8 +88,9 @@ def build_komponenten(
     # Name; hier weiß der Builder sie ohnehin schon.
     bidirektionale_keys: set[str] = set()
 
-    # Wallbox-Keys sammeln für E-Auto → Wallbox Zuordnung
-    wallbox_keys: list[str] = []
+    # Wallbox-Knoten (Investitions-ID → Komponente) für die E-Auto → Wallbox
+    # Zuordnung nach der Schleife (`_fahrzeug_zuordnung`).
+    wallbox_knoten: dict[str, dict] = {}
 
     # Entity-IDs tracken um Duplikate zu erkennen. WICHTIG: deterministische
     # Wallbox-Priorität (analog Tagesverlauf #318: prioritaet wallbox<eauto).
@@ -113,6 +118,33 @@ def build_komponenten(
         (investitionen.get(iid) and investitionen.get(iid).typ == "wallbox"
          and vals.get("leistung_w") is not None)
         for iid, vals in inv_values.items()
+    )
+
+    # N-575 — V2H hinter der Wallbox: **die Semantik hängt an der erfassten
+    # Topologie, die Buchung am Messpunkt.** Drei Fragen, getrennt erhoben:
+    #
+    # * `hat_wallbox_investition` — ist eine Wallbox ERFASST? `investitionen`
+    #   enthält alle aktiven, auch sensorlose (`live_power_service`,
+    #   `aktiv_jetzt()`). Die Semantik der Heimladung darf nicht am Uptime des
+    #   Wallbox-Sensors hängen, sonst flackerte die EV-Gauge im 5-s-Takt.
+    # * `wallbox_entlaedt` — meldet eine Wallbox LIVE einen negativen Wert?
+    #   Dann bucht sie die V2H-Entladung, und das Auto zeigt nur.
+    # * `hat_v2h_auto` — steht ein V2H-fähiges Auto im Bestand? Nur dann wird
+    #   der Wallbox-Zweig vorzeichentreu (R3); jede andere Installation behält
+    #   den Betrag — auch die mit invertiert angeschlossenem Sensor.
+    hat_wallbox_investition = any(
+        inv.typ == "wallbox" for inv in investitionen.values()
+    )
+    wallbox_entlaedt = any(
+        (investitionen.get(iid) and investitionen.get(iid).typ == "wallbox"
+         and vals.get("leistung_w") is not None and vals.get("leistung_w") < 0)
+        for iid, vals in inv_values.items()
+    )
+    hat_v2h_auto = any(
+        inv.typ == "e-auto"
+        and isinstance(inv.parameter, dict)
+        and bool(inv.parameter.get(PARAM_E_AUTO["V2H_FAEHIG"]))
+        for inv in investitionen.values()
     )
 
     # Per-Investition Komponenten
@@ -296,6 +328,7 @@ def build_komponenten(
                 if val_w <= 0:
                     continue
             kw = val_w / 1000
+            traeger_id, traeger_label = _traeger(inv, inv_id, investitionen, bkw_rest_w)
             komponenten.append({
                 "key": f"pv_{inv_id}",
                 "label": inv.bezeichnung,
@@ -308,6 +341,14 @@ def build_komponenten(
                 # hält die Semantik „nicht ermittelbar" (statt 0 kWp) — das
                 # Frontend blendet die Auslastung dann wie bisher aus.
                 "leistung_kwp": get_erzeuger_kwp(inv) or None,
+                # #341/#348 — Merkmale für die Gruppierung im Client. Reine
+                # Anreicherung: keine Summe und kein Residual liest sie.
+                "typ": typ,
+                "ausrichtung_label": ausrichtung_label(inv),
+                "traeger_id": traeger_id,
+                # #341/#348 A1b: der Name des Trägers, damit die Gruppe im
+                # Client „<Wechselrichter> (n)" heißt statt „PV-Gruppe 1".
+                "traeger_label": traeger_label,
             })
             summe_erzeugung += kw
             pv_total_w += val_w
@@ -324,6 +365,8 @@ def build_komponenten(
                 "erzeugung_kw": round(kw, 3),
                 "verbrauch_kw": None,
                 "leistung_kwp": None,
+                "typ": typ,
+                "kategorie": _sonstiges_kategorie(inv),
             })
             summe_erzeugung += kw
             sonstige_erzeugung_w += val_w
@@ -339,7 +382,14 @@ def build_komponenten(
                 "icon": TYP_ICON.get(typ, "wrench"),
                 "erzeugung_kw": None,
                 "verbrauch_kw": round(kw, 3),
+                # Bewusst NICHT im Response-Modell (`LiveKomponente`) — FastAPI
+                # verwirft das Feld still, und serverseitig liest es niemand
+                # (`abgabe_keys` baut aus den Investitionen neu). Der
+                # Buchungszweig einer Sonstigen kommt für den Client allein
+                # aus `kategorie` (#341/#348).
                 "abgabe": True,
+                "typ": typ,
+                "kategorie": _sonstiges_kategorie(inv),
             })
             summe_verbrauch += kw
             abgabe_w += abs(val_w)
@@ -347,17 +397,59 @@ def build_komponenten(
             kw = abs(val_w) / 1000
             ist_ladung = val_w > 0
             kategorie = TAGESVERLAUF_KATEGORIE.get(typ, "batterie")
-            bidirektionale_keys.add(f"{kategorie}_{inv_id}")
-            komponenten.append({
+            # N-575 — ein V2H-Auto hinter einer ERFASSTEN Wallbox:
+            #
+            # * R1 Laden: die Heimladung ist Hausverbrauch, nie Batterie-Ladung
+            #   — sie wird überwiegend verfahren und kehrt nicht zurück. Liefert
+            #   eine Wallbox live, bucht SIE (das Auto zeigt nur, `parent_key`
+            #   unten); liefert keine, bucht das Auto als gewöhnlicher
+            #   Verbraucher — derselbe Failover wie beim Nicht-V2H-Auto im
+            #   `else`-Zweig.
+            # * R2 Entladen: die Batterie-Rolle verdient nur die gemessene
+            #   Entladung, und sie wird EINMAL gebucht — meldet die Wallbox sie
+            #   (`wallbox_entlaedt`), bucht die Wallbox, und das Auto zeigt nur
+            #   seine Richtung (`erzeugung_kw`, ohne Summe, ohne Rolle).
+            #
+            # Ohne Wallbox-Investition bleibt alles wie F-69: der
+            # vorzeichenbehaftete Auto-Sensor ist dann der einzige Zugang zum
+            # Ladepunkt, und das Auto ist messbar ein Speicher am Hausanschluss.
+            hinter_wallbox = bool(ist_v2h) and hat_wallbox_investition
+            if not hinter_wallbox:
+                traegt_rolle = True
+            elif ist_ladung:
+                traegt_rolle = False
+            else:
+                traegt_rolle = not wallbox_entlaedt
+            if traegt_rolle:
+                bidirektionale_keys.add(f"{kategorie}_{inv_id}")
+            komp_bidi = {
                 "key": f"{kategorie}_{inv_id}",
                 "label": inv.bezeichnung,
                 "icon": TYP_ICON.get(typ, "battery"),
                 "erzeugung_kw": round(kw, 3) if not ist_ladung else None,
                 "verbrauch_kw": round(kw, 3) if ist_ladung else None,
-            })
+                "typ": typ,
+            }
+            # Der Sonstiges-Speicher läuft durch diesen Zweig und heißt
+            # trotzdem `sonstige_<id>` (F-70) — er trägt seine Kategorie wie
+            # die drei anderen Sonstiges-Zweige.
+            if typ == "sonstiges":
+                komp_bidi["kategorie"] = _sonstiges_kategorie(inv)
+            # Kapazität nur am echten Speicher-Knoten (`batterie_*`) — über den
+            # SoT-Helper, nie `inv.leistung_kwp` (Mehrzweckfeld). Sie gewichtet
+            # im Client den Gruppen-Ladestand. (Keyword-Form statt Index-
+            # Zuweisung: der P3-a-Wächter `test_speicher_kapazitaet_sot` sucht
+            # den Parameter-Schlüssel als Zeichenkette und hielte das
+            # gleichnamige Response-Feld für einen Rohzugriff.)
+            if kategorie == "batterie":
+                komp_bidi.update(
+                    kapazitaet_kwh=get_speicher_nutzbare_kapazitaet_kwh(inv) or None,
+                )
+            komponenten.append(komp_bidi)
             if ist_ladung:
-                summe_verbrauch += kw
-            else:
+                if not (hinter_wallbox and hat_wallbox):
+                    summe_verbrauch += kw
+            elif traegt_rolle:
                 summe_erzeugung += kw
 
         else:
@@ -365,12 +457,25 @@ def build_komponenten(
             prefix = LIVE_KEY_PREFIX.get(typ, TAGESVERLAUF_KATEGORIE.get(typ, typ))
             komp_key = f"{prefix}_{inv_id}"
             _modus = (modus_map or {}).get(inv_id_int) if typ == "waermepumpe" else None
-            komponenten.append({
+            # N-575 (R2/R3) — die Wallbox eines V2H-Haushalts meldet eine
+            # Entladung: sie ist dann die QUELLE und bucht mit Batterie-Rolle
+            # (`bat_entladung` ⇒ Eigenverbrauch). Vorzeichentreu NUR bei
+            # `hat_v2h_auto`: sonst bleibt der Betrag der Schutz gegen einen
+            # invertiert angeschlossenen Sensor, und jede Nicht-V2H-Anlage
+            # rechnet bitgleich. Im V2H-Haushalt korrigiert ein invertierter
+            # Sensor über das `invertieren`-Flag seiner Datenquelle.
+            # Der Live-Tagesverlauf derselben Seite zeichnet dieselbe Entladung
+            # bis auf Weiteres als Senke — `live_tagesverlauf_service.py`,
+            # Senken-Betrag; bewusst nicht mitgefixt, Entscheid 28.09.
+            wallbox_quelle = typ == "wallbox" and hat_v2h_auto and val_w < 0
+            if wallbox_quelle:
+                bidirektionale_keys.add(komp_key)
+            komp_sonst = {
                 "key": komp_key,
                 "label": inv.bezeichnung,
                 "icon": wp_icon or TYP_ICON.get(typ, "wrench"),
-                "erzeugung_kw": None,
-                "verbrauch_kw": round(kw, 3),
+                "erzeugung_kw": round(kw, 3) if wallbox_quelle else None,
+                "verbrauch_kw": None if wallbox_quelle else round(kw, 3),
                 # Klartext statt Kanon-Enum: die Deutung gehört in den Kanon,
                 # nicht in eine zweite Tabelle im Client ([[feedback_typ_labels_pattern]]).
                 # Ohne Modus steht hier `None` — kein „—", keine leere Zeile.
@@ -387,14 +492,24 @@ def build_komponenten(
                     if _modus and _modus not in BETRIEBSMODUS_LIVE_OHNE_KLARTEXT
                     else None
                 ),
-            })
+                "typ": typ,
+            }
+            # Vierter Sonstiges-Zweig (Verbraucher, Zähler, fehlende oder
+            # unbekannte Kategorie) — dieselbe Kategorie-Quelle wie oben.
+            if typ == "sonstiges":
+                komp_sonst["kategorie"] = _sonstiges_kategorie(inv)
+            komponenten.append(komp_sonst)
+            # R4 (N-575): richtungsunabhängig — sonst verlören ladende Kinder
+            # bei entladender Wallbox ihren `parent_key` (Layout + Residual).
             if typ == "wallbox":
-                wallbox_keys.append(komp_key)
+                wallbox_knoten[inv_id] = komp_sonst
+            if wallbox_quelle:
+                summe_erzeugung += kw
             # E-Auto nur ausschließen, wenn es tatsächlich unter eine Wallbox
             # gepoolt wird (hat_wallbox → parent_key unten). Ohne Wallbox ist es
             # ein realer Verbraucher und zählt normal (konsistent mit gesamt_senken,
             # das nur parent_key-Kinder ausschließt) — #314-Folge.
-            if not (typ == "e-auto" and hat_wallbox):
+            elif not (typ == "e-auto" and hat_wallbox):
                 summe_verbrauch += kw
 
         # SoC-Gauge pro Investition
@@ -410,13 +525,36 @@ def build_komponenten(
                     "einheit": "%",
                 })
 
-    # E-Auto → Wallbox Zuordnung
-    if wallbox_keys:
-        wb_idx = 0
-        for komp in komponenten:
-            if komp["key"].startswith("eauto_"):
-                komp["parent_key"] = wallbox_keys[wb_idx % len(wallbox_keys)]
-                wb_idx += 1
+    # E-Auto → Wallbox Zuordnung — EINE Quelle für `parent_key` (Layout +
+    # Residual) und `fahrzeuge` (Wallbox-Kachel, #341/#348), auf
+    # Investitions-Ebene statt über die Knotenliste: sie enthält auch die Autos
+    # OHNE eigenen Knoten (nur Ladestand; Leistungssensor mit der Wallbox
+    # geteilt). `parent_key` bekommt weiterhin genau jeder `eauto_`-Knoten,
+    # sobald eine Wallbox live liefert — welcher Wallbox er zugeordnet ist,
+    # ändert keine Summe und kein Residual (beide schließen JEDES Kind aus).
+    if wallbox_knoten:
+        komp_nach_key = {k["key"]: k for k in komponenten}
+        autos = [
+            iid for iid in inv_values
+            if investitionen.get(iid) is not None
+            and investitionen[iid].typ == "e-auto"
+        ]
+        zuordnung = _fahrzeug_zuordnung(list(wallbox_knoten), autos)
+        # Eindeutig nur bei genau EINER live liefernden Wallbox. Bekannte
+        # Grenze: eine zweite, gerade offline Wallbox macht die Zuordnung
+        # scheinbar eindeutig (Vorlage Bau A §A1).
+        zuordnung_art = "eindeutig" if len(wallbox_knoten) == 1 else "geschaetzt"
+        for wb_komp in wallbox_knoten.values():
+            wb_komp["fahrzeuge"] = []
+            wb_komp["fahrzeuge_zuordnung"] = zuordnung_art
+        for auto_id in sorted(autos, key=_id_rang):
+            wb_komp = wallbox_knoten[zuordnung[auto_id]]
+            auto_komp = komp_nach_key.get(f"eauto_{auto_id}")
+            if auto_komp is not None:
+                auto_komp["parent_key"] = wb_komp["key"]
+            wb_komp["fahrzeuge"].append(
+                _fahrzeug(investitionen[auto_id], inv_values[auto_id], auto_komp)
+            )
 
     # PV Gesamt aus Basis (wenn kein individueller PV-Sensor vorhanden).
     # Erzeuger (PV-Module + Balkonkraftwerk) tragen in diesem Live-Keyspace
@@ -461,7 +599,14 @@ def build_komponenten(
             summe_verbrauch += einsp_kw
 
     # Haushalt = Residual
-    gesamt_quellen = sum(k.get("erzeugung_kw") or 0 for k in komponenten)
+    # N-575 (R2): symmetrisch zur Senken-Regel darunter — ein Kind mit
+    # `parent_key`, das KEINE Batterie-Rolle trägt, zeigt nur (die V2H-
+    # Entladung, die die Wallbox schon als Quelle bucht). Ohne den Ausschluss
+    # zählte derselbe Fluss zweimal ins Residual.
+    gesamt_quellen = sum(
+        k.get("erzeugung_kw") or 0 for k in komponenten
+        if not (k.get("parent_key") and k["key"] not in bidirektionale_keys)
+    )
     gesamt_senken = sum(
         k.get("verbrauch_kw") or 0 for k in komponenten
         if not k.get("parent_key")
@@ -584,6 +729,122 @@ def build_komponenten(
         "warmwasser_temperatur_c": warmwasser_temperatur_c,
         "innengeraete": innengeraete_live,
     }
+
+
+# ── Merkmale je Knoten (#341/#348) ──────────────────────────────────────────
+#
+# Reine Anreicherung für die Gruppierung im Client (Vorlage Bau A §A1): keine
+# dieser Funktionen fließt in eine Summe, ein Residual oder eine Gauge. Jedes
+# Feld ist im Response-Modell `LiveKomponente` deklariert — sonst verwürfe
+# FastAPI es still (die Falle, in der `abgabe` bis heute steckt).
+
+#: Parent-Typen, die für PV-Knoten „Träger" sind: der Wechselrichter und — seit
+#: N-536 — das Balkonkraftwerk mit `pv-module`-Kindern.
+_TRAEGER_TYPEN = frozenset({"wechselrichter", "balkonkraftwerk"})
+
+
+def _id_rang(inv_id: str) -> tuple:
+    """Sortierschlüssel nach Investitions-ID — numerisch, wo sie eine Zahl ist.
+
+    Die Keys von `inv_values`/`investitionen` sind `str(inv.id)`; lexikalisch
+    stünde „10" vor „9".
+    """
+    try:
+        return (0, int(inv_id), "")
+    except (TypeError, ValueError):
+        return (1, 0, str(inv_id))
+
+
+def _fahrzeug_zuordnung(wallbox_ids: list[str], auto_ids: list[str]) -> dict[str, str]:
+    """Auto → Wallbox, deterministisch: beide Seiten nach ID sortiert, reihum.
+
+    Das Datenmodell kennt keine Zuordnung Auto → Wallbox
+    (`ERLAUBTE_PARENT_TYPEN` hat keinen E-Auto-Eintrag); bei genau einer
+    Wallbox ist sie trotzdem eindeutig, bei mehreren eine Schätzung, die der
+    Client als solche ausweist (`fahrzeuge_zuordnung`). Deterministisch heißt:
+    unabhängig von der Reihenfolge, in der die Live-Werte ankommen — dieselbe
+    Anlage liefert bei jedem Poll dieselbe Zuordnung.
+    """
+    wallboxen = sorted(wallbox_ids, key=_id_rang)
+    return {
+        auto_id: wallboxen[i % len(wallboxen)]
+        for i, auto_id in enumerate(sorted(auto_ids, key=_id_rang))
+    }
+
+
+def _fahrzeug(inv: Investition, werte: dict[str, float], knoten: Optional[dict]) -> dict:
+    """Ein Auto in der Wallbox-Kachel: Name, Ladestand, Leistung, V2H.
+
+    ``kw`` ist **vorzeichenbehaftet** — positiv lädt das Auto, negativ gibt es
+    ab (V2H) — und kommt aus seinem eigenen Knoten. Ohne Knoten (nur Ladestand;
+    Leistungssensor mit der Wallbox geteilt) ist es ``None``: die Leistung des
+    Autos ist dann nicht getrennt gemessen, nicht 0 (ADR-002/P4).
+    """
+    kw: Optional[float] = None
+    if knoten is not None:
+        if knoten.get("verbrauch_kw") is not None:
+            kw = knoten["verbrauch_kw"]
+        elif knoten.get("erzeugung_kw") is not None:
+            kw = -knoten["erzeugung_kw"]
+    soc = werte.get("soc")
+    return {
+        "investition_id": inv.id,
+        "label": inv.bezeichnung,
+        # Dieselbe Rundung wie die SoC-Gauge desselben Autos.
+        "soc": round(soc, 0) if soc is not None else None,
+        "kw": kw,
+        "v2h": bool(
+            isinstance(inv.parameter, dict)
+            and inv.parameter.get(PARAM_E_AUTO["V2H_FAEHIG"])
+        ),
+    }
+
+
+def _sonstiges_kategorie(inv: Investition) -> Optional[str]:
+    """Die gepflegte Kategorie eines `sonstiges`-Geräts — roh, ``None`` ohne Pflege.
+
+    Der Client leitet daraus den Buchungszweig ab (erzeuger · abgabe · speicher
+    · alles andere als Verbraucher), genau wie die vier Zweige oben.
+    """
+    param = inv.parameter
+    if isinstance(param, dict):
+        kat = param.get("kategorie")
+        if isinstance(kat, str) and kat:
+            return kat
+    return None
+
+
+def _traeger(
+    inv: Investition,
+    inv_id: str,
+    investitionen: dict[str, Investition],
+    bkw_rest_w: dict[str, float],
+) -> tuple[Optional[int], Optional[str]]:
+    """Der Träger eines PV-Knotens: Wechselrichter oder Balkonkraftwerk — ID und Name.
+
+    * Ein `pv-module` mit Parent vom Typ WR oder BKW trägt dessen ID und
+      Bezeichnung.
+    * Der **Rest-Knoten** eines abtretenden Balkonkraftwerks (N-536) trägt
+      seine **eigene** ID und Bezeichnung — sonst landete der Rest getrennt
+      von seinen Modulen.
+    * ⛔ Nie über `parent_key`: das Feld zeichnet im Client eine Linie zum
+      Parent statt zum Haus.
+    * Ein Parent, der nicht in `investitionen` steht (stillgelegt), liefert
+      ``(None, None)`` — die Kachel degradiert definiert auf die letzte Stufe.
+
+    ⭐ ID und Name kommen aus EINER Entscheidung (#341/#348 A1b): das Label ist
+    genau dann gesetzt, wenn die ID es ist — eine Gruppe mit ID, aber ohne
+    Namen, oder ein Name ohne Gruppe, kann so nicht entstehen.
+    """
+    if inv_id in bkw_rest_w:
+        return inv.id, inv.bezeichnung
+    parent_id = inv.parent_investition_id
+    if parent_id is None:
+        return None, None
+    parent = investitionen.get(str(parent_id))
+    if parent is not None and parent.typ in _TRAEGER_TYPEN:
+        return parent_id, parent.bezeichnung
+    return None, None
 
 
 def _innengeraete_live(
