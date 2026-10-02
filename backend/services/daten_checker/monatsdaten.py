@@ -4,6 +4,7 @@ Daten-Checker — Monatsdaten-Vollständigkeit & -Plausibilität (`MonatsdatenCh
 Reiner Move aus dem früheren Modul `daten_checker.py` (Tier-4 Achse C).
 """
 
+from dataclasses import dataclass
 from datetime import date
 from typing import Optional
 
@@ -39,6 +40,7 @@ from .kategorien import (
     LINK_MONATSDATEN,
     MonatsdatenAbdeckung,
     link_monat_erfassen,
+    LINK_ENERGIEPROFIL,
 )
 from backend.core.zahlenformat import fmt_zahl
 
@@ -1532,6 +1534,106 @@ class MonatsdatenChecks:
 
         return ergebnisse
 
+    async def _check_modus_split_nicht_gespeichert(self, anlage: Anlage) -> list[CheckErgebnis]:
+        """N-597: Aufteilung nach Betriebsart, die der Monatsabschluss nicht speichern kann.
+
+        Der Zwilling des Widerspruchs in ``_check_wp_monatsdaten`` („Heiz- und
+        Kühlstrom zusammen größer als der Gesamtverbrauch"): der prüft einen
+        **gespeicherten** Split gegen einen später kleiner gepflegten Monatsstrom.
+        Dieser hier den Fall davor — der Abschluss hat den Split gar nicht erst
+        gespeichert, weil er schon beim Schreiben nicht passte
+        (``modus_split_schreiben.py``: ``teilmengen_passen`` ⇒ ``_entferne_split``,
+        bisher nur eine INFO-Zeile im Log). Die Sichten zeigen danach
+        „nicht aufgeteilt", ohne dass irgendwo stand, warum (ADR-002/P4).
+
+        Gerechnet wird mit genau den Bausteinen des Schreibpfads: dieselbe
+        Faltung (``lade_modus_split_je_monat``, **ein** Aufruf je Anlage),
+        derselbe Monatsstrom (``get_wp_strom_kwh``), dieselbe Invariante
+        (``teilmengen_passen``, Toleranz 0,5 kWh, ohne Monatsstrom ⇒ passt nicht).
+        Der Checker kappt nichts und normiert nichts (Konzept 263 §9).
+
+        Nicht gemeldet: Monate mit gespeichertem Split oder gemessener Betriebsart
+        (zuständig ist der Widerspruchs-Zwilling, dieselbe Unterscheidung wie
+        ``monats_fakten/laden.py``), Monate ohne Monatszeile (dort läuft kein
+        Abschluss), der laufende Monat (er ist nicht abgeschlossen) und Faltungen
+        ohne aufgeteilte Menge (eine Teilmenge 0 geht nicht verloren — dieselbe
+        Schwelle wie der Zwilling).
+        """
+        from backend.core.berechnungen import hat_gemessene_betriebsart
+        from backend.core.berechnungen.modus_split import teilmengen_passen
+        from backend.core.betriebsmodus import MODUS_ABDECKUNG_FELD
+        from backend.services.energie_profil.modus_split_monat import (
+            lade_modus_split_je_monat,
+        )
+
+        waermepumpen = [i for i in anlage.investitionen if i.typ == "waermepumpe"]
+        if not waermepumpen:
+            return []
+        splits = await lade_modus_split_je_monat(self.db, anlage.id)
+        if not splits:
+            return []
+
+        heute = date.today()
+        laufender_monat = (heute.year, heute.month)
+        ergebnisse: list[CheckErgebnis] = []
+        for inv in waermepumpen:
+            name = inv.bezeichnung
+            param = inv.parameter or {}
+            for imd in sorted(inv.monatsdaten, key=lambda z: (z.jahr, z.monat)):
+                schluessel = (imd.jahr, imd.monat)
+                if schluessel >= laufender_monat or not inv.ist_aktiv_im_monat(*schluessel):
+                    continue
+                split = splits.get(schluessel, {}).get(str(inv.id))
+                if split is None or split.aufgeteilt_kwh <= 0:
+                    continue
+                daten = imd.verbrauch_daten or {}
+                if float(daten.get(MODUS_ABDECKUNG_FELD) or 0) > 0 or hat_gemessene_betriebsart(daten):
+                    continue
+                gesamt = get_wp_strom_kwh(daten, param)
+                if teilmengen_passen(split, gesamt if gesamt > 0 else None):
+                    continue
+                monat_str = f"{imd.monat:02d}/{imd.jahr}"
+                teile_str = f"{fmt_zahl(split.aufgeteilt_kwh, 1)} kWh"
+                if gesamt > 0:
+                    meldung = (
+                        f"{name}: Aufteilung nach Betriebsart nicht gespeichert ({monat_str}) — "
+                        f"Heiz-/Kühl-/Warmwasserstrom zusammen {teile_str}, "
+                        f"Monatsstrom {fmt_zahl(gesamt, 1)} kWh"
+                    )
+                    warum = (
+                        "Die gemessenen Stunden ergeben mehr Strom für Heizen, Kühlen und "
+                        "Warmwasser, als im Monatsabschluss für das ganze Gerät eingetragen "
+                        "ist. Eine Teilmenge kann nicht größer sein als das Ganze — deshalb "
+                        "hat eedc die Aufteilung nicht gespeichert, und die Auswertungen "
+                        "zeigen den Monat als „nicht aufgeteilt“."
+                    )
+                else:
+                    meldung = (
+                        f"{name}: Aufteilung nach Betriebsart nicht gespeichert ({monat_str}) — "
+                        f"Heiz-/Kühl-/Warmwasserstrom zusammen {teile_str}, Monatsstrom fehlt"
+                    )
+                    warum = (
+                        "Für diesen Monat ist kein Stromverbrauch des Geräts eingetragen. "
+                        "Die Aufteilung nach Betriebsart ist ein Teil davon — ohne den "
+                        "Gesamtwert speichert eedc sie nicht, und die Auswertungen zeigen "
+                        "den Monat als „nicht aufgeteilt“."
+                    )
+                ergebnisse.append(CheckErgebnis(
+                    kategorie=CheckKategorie.INVESTITIONEN,
+                    schwere=CheckSeverity.WARNING,
+                    meldung=meldung,
+                    details=(
+                        f"{warum} Zwei Wege: Prüfe den Stromverbrauch dieses Monats im "
+                        "Monatsabschluss (stimmt er, oder fehlt ein Zähler?) — oder prüfe "
+                        "unter Einstellungen → Datenquellen, ob die Leistung des Geräts "
+                        "richtig zugeordnet ist. Nach dem Korrigieren den Monat erneut "
+                        "speichern, dann rechnet eedc die Aufteilung neu."
+                    ),
+                    link="/monatsabschluss",
+                    investition_id=inv.id,
+                ))
+        return ergebnisse
+
 
 # ─── Konzept-Wirtschaftlichkeit §8.1 — der Erfassungsort ────────────────────
 #
@@ -1561,10 +1663,347 @@ def _de_euro(betrag: float) -> str:
     return f"{fmt_zahl(betrag, 2)} €"
 
 
+#: Anzeigename je Provenance-Label — Meldungstexte sind Anzeige, und
+#: „external:brightsky" ist kein Wort, das jemand lesen will.
+_ANBIETER_NAMEN = {
+    "external:brightsky": "Bright Sky (DWD)",
+    "external:openmeteo": "Open-Meteo",
+}
+
+
 class ErfassungsortChecks:
     """§8.1 — welche Fehleingabe das Wirtschaftlichkeits-Modell erzeugen kann."""
 
     async def _check_wetterwert_fehlt(
+        self, anlage: Anlage, monatsdaten: list[Monatsdaten]
+    ) -> list[CheckErgebnis]:
+        """Die Kategorie trägt ihre ganze Klasse: alle DREI Wetterwerte.
+
+        ⭐ **Erweitert am 29.09.2026** (Paket „Die Wetterreihe geradeziehen",
+        #395 Punkt 1). Der eigene Kommentar der Kategorie sagte es seit N-426:
+        *„Der Name nennt die Klasse, nicht das eine Feld … heute trägt die
+        Kategorie nur den ersten, weil nur für ihn eine Quelle ohne Netzabruf
+        existiert."* Genau diese Voraussetzung hat sich geändert — mit der
+        Reparatur-Operation ``WETTER_BACKFILL`` gibt es für alle drei einen Weg.
+
+        **Drei Zeilen, drei Fragen:**
+
+        1. *Ø Temperatur fehlt* — unverändert, mit ihrer eigenen Aktion aus der
+           Messreihe (das einzige Feld mit einer Quelle ohne Netzabruf).
+        2. *Strahlung/Sonnenstunden fehlen* — bis hierher hatte kein Checker
+           diese beiden Felder überhaupt gesehen.
+        3. *Die Quelle ist uneinheitlich* — Monate, deren Wetterwert von einem
+           anderen Anbieter stammt als die heutige Wahl. Sonnenstunden zweier
+           Anbieter unterscheiden sich um Faktor 1,6–2,0; ein Jahresvergleich
+           über eine gemischte Reihe ist eine Falschaussage.
+        4. *Die Quelle ist nicht festgehalten* — Monate mit Strahlungswerten,
+           deren Herkunft nirgends steht. **Das ist die Lage jedes Bestands**,
+           und ohne diese Zeile bliebe sie stumm: Zeile 2 schweigt, weil Werte
+           da sind, Zeile 3 schweigt, weil kein Label zum Vergleichen existiert
+           — und der Anwender erführe nie, dass seine Reihe auf zwei Linealen
+           stehen *könnte*. An einer echten Anlage gemessen (39 Monate): 0
+           fehlende Werte, 0 Monate mit Anbieter-Label.
+
+        ⛔ **Keine neue Kategorie** und ⛔ **kein Netzabruf in einer Prüfung**:
+        Zeile 3 und 4 lesen ausschließlich ``source_provenance``.
+
+        ⚠ **Zeile 3 und 4 sind überschneidungsfrei**, und das ist keine
+        Kosmetik: Zwei Zahlen über dieselben Monate kann ein Anwender nicht
+        zusammenzählen. Beide kommen deshalb aus **einer** Einordnung
+        (`_wetterquellen_lage`), die jeden Monat genau einem Fach zuweist.
+        """
+        lage = self._wetterquellen_lage(anlage, monatsdaten)
+        ergebnisse = await self._check_temperatur_fehlt(anlage, monatsdaten)
+        ergebnisse += self._check_strahlungswerte_fehlen(anlage, monatsdaten)
+        ergebnisse += self._check_wetterquelle_uneinheitlich(lage)
+        ergebnisse += self._check_wetterquelle_nicht_festgehalten(lage)
+        return ergebnisse
+
+    # ── Zeile 3: die Quelle einer Reihe ─────────────────────────────────────
+
+    def _erwartetes_wetter_label(self, anlage: Anlage) -> Optional[str]:
+        """Welches Provenance-Label die heutige Wahl der Anlage erzeugen würde.
+
+        ⚠ **Ohne einen einzigen Netzabruf.** ``nutze_brightsky`` ist eine reine
+        Funktion über Land, Koordinaten-Box und Schalter — genau die Regel, die
+        ``auto`` zur Laufzeit anwendet. ``None`` heißt „lässt sich hier nicht
+        sagen" (keine Koordinaten), und dann gibt es keine Zeile: eine Prüfung,
+        die raten muss, schweigt.
+        """
+        from backend.core.config import settings
+        from backend.services.wetter.monatswerte import PROVENANCE_LABEL
+        from backend.services.wetter.orchestrator import nutze_brightsky
+
+        wahl = getattr(anlage, "wetter_provider", None) or "auto"
+        if wahl == "brightsky":
+            return PROVENANCE_LABEL["brightsky"]
+        if wahl == "open-meteo":
+            return PROVENANCE_LABEL["open-meteo"]
+        if not anlage.latitude or not anlage.longitude:
+            return None
+        nutzt_dwd = (
+            nutze_brightsky(anlage.latitude, anlage.longitude, anlage.standort_land)
+            and settings.brightsky_enabled
+        )
+        return PROVENANCE_LABEL["brightsky" if nutzt_dwd else "open-meteo"]
+
+    @dataclass
+    class _WetterquellenLage:
+        """Wie die Wetterwerte einer Anlage über die Quellen verteilt sind.
+
+        Jeder abgeschlossene Monat landet in **höchstens einem** Fach — das ist
+        der Grund, warum diese Einordnung einmal passiert und nicht zweimal.
+        """
+
+        erwartet: Optional[str]
+        #: Trägt ein bekanntes Anbieter-Label, das NICHT die heutige Wahl ist.
+        abweichend: list[Monatsdaten]
+        #: Die fremden Labels, für die Meldung.
+        fremde: set[str]
+        #: Hat Strahlungswerte, aber zu keinem davon ein Anbieter-Label.
+        ohne_label: list[Monatsdaten]
+
+    def _wetterquellen_lage(
+        self, anlage: Anlage, monatsdaten: list[Monatsdaten]
+    ) -> "ErfassungsortChecks._WetterquellenLage":
+        """Ordnet jeden abgeschlossenen Monat genau einem Fach zu.
+
+        ⛔ **Die Ø Temperatur zählt für „ohne Label" NICHT mit**, und das ist
+        der Unterschied zwischen einer Prüfung und einem Fehlalarm: Sie hat
+        legitim keinen Anbieter. Kommt sie aus der eigenen Messreihe, stempeln
+        sowohl die N-426-Aktion als auch der nächtliche Lückenschluss
+        ``manual:form`` — das ist richtig und ändert sich nie. Sie
+        mitzuzählen erzeugte auf **jeder gesunden Anlage** eine Meldung, die
+        sich durch nichts abstellen lässt.
+
+        Für die Abweichung (Zeile 3) zählt sie sehr wohl mit: trägt sie ein
+        **bekanntes** Anbieter-Label, stammt sie aus dem Archiv, und ein
+        fremdes Archiv ist dort dieselbe Aussage wie bei der Strahlung.
+        """
+        from backend.services.wetter.monatswerte import (
+            PROVENANCE_LABEL, WETTER_MONATSFELDER,
+        )
+
+        #: Nur diese beiden tragen eine Anbieter-Pflicht — s. Docstring.
+        strahlungsfelder = ("globalstrahlung_kwh_m2", "sonnenstunden")
+
+        erwartet = self._erwartetes_wetter_label(anlage)
+        bekannt = set(PROVENANCE_LABEL.values())
+        heute = date.today()
+
+        abweichend: list[Monatsdaten] = []
+        fremde: set[str] = set()
+        ohne_label: list[Monatsdaten] = []
+
+        for md in monatsdaten:
+            if (md.jahr, md.monat) >= (heute.year, heute.month):
+                continue
+            prov = md.source_provenance or {}
+
+            gefunden: set[str] = set()
+            for feld in WETTER_MONATSFELDER:
+                quelle = (prov.get(feld) or {}).get("source")
+                if quelle in bekannt:
+                    gefunden.add(quelle)
+
+            anders = {q for q in gefunden if erwartet is not None and q != erwartet}
+            if anders:
+                abweichend.append(md)
+                fremde |= anders
+                continue
+
+            # Ein Feld OHNE Wert ist keine unbekannte Quelle, sondern eine
+            # Lücke — die meldet Zeile 2, und zwar mit einem anderen Weg.
+            hat_wert_ohne_label = any(
+                getattr(md, feld, None) is not None
+                and (prov.get(feld) or {}).get("source") not in bekannt
+                for feld in strahlungsfelder
+            )
+            if hat_wert_ohne_label:
+                ohne_label.append(md)
+
+        return self._WetterquellenLage(
+            erwartet=erwartet, abweichend=abweichend,
+            fremde=fremde, ohne_label=ohne_label,
+        )
+
+    def _check_wetterquelle_uneinheitlich(
+        self, lage: "ErfassungsortChecks._WetterquellenLage"
+    ) -> list[CheckErgebnis]:
+        """Monate, deren Wetterwert von einem ANDEREN Anbieter stammt.
+
+        ⚠ **Was diese Zeile NICHT kann, und das gehört dazu:** Sie sieht nur,
+        was in ``source_provenance`` steht. Ein Wert aus der Zeit vor dieser
+        Lieferung trägt dort ``manual:form`` oder gar nichts — er ist damit
+        **unbekannter**, nicht **anderer** Herkunft, und wird hier nicht
+        gezählt. Eine Prüfung, die eine fehlende Angabe als Abweichung meldete,
+        erzeugte eine Zahl, die niemand nachvollziehen kann. Für genau diese
+        Monate gibt es die Schwester-Zeile `_check_wetterquelle_nicht_festgehalten`.
+        """
+        abweichend, erwartet = lage.abweichend, lage.erwartet
+        if not abweichend or erwartet is None:
+            return []
+
+        def _mm(md: Monatsdaten) -> str:
+            return f"{md.monat:02d}/{md.jahr}"
+
+        beispiele = ", ".join(_mm(md) for md in abweichend[:6])
+        if len(abweichend) > 6:
+            beispiele += f" (+{len(abweichend) - 6} weitere)"
+        namen = ", ".join(sorted(_ANBIETER_NAMEN.get(q, q) for q in lage.fremde))
+
+        return [CheckErgebnis(
+            kategorie=CheckKategorie.WETTERWERT_FEHLT,
+            schwere=CheckSeverity.INFO,
+            meldung=(
+                f"{len(abweichend)} Monat(e) stammen aus einer anderen "
+                "Wetterquelle als die aktuelle Wahl"
+            ),
+            details=(
+                f"Diese Monate tragen Werte von {namen}, während eedc heute "
+                f"{_ANBIETER_NAMEN.get(erwartet, erwartet)} fragt. Die beiden "
+                "messen nicht gleich: bei der Globalstrahlung liegen sie 12–16 % "
+                "auseinander, bei den Sonnenstunden um den Faktor 1,6–2,0. "
+                "Ein Vergleich über mehrere Jahre ist damit nicht aussagekräftig — "
+                "ein Jahr sähe schwach aus, weil die Quelle gewechselt hat, nicht "
+                "weil die Sonne weniger schien. „Wetterreihe nachziehen“ holt "
+                "alle abgeschlossenen Monate von der heute gewählten Quelle; der "
+                "laufende Monat bleibt draußen, weil die Archive ihn noch nicht "
+                f"vollständig haben. Betroffen: {beispiele}."
+            ),
+            # ⛔ Hier steht bewusst KEINE Inline-Aktion, obwohl es die Operation
+            # gibt. Der Nachzug ERSETZT vorhandene Werte — und
+            # `write_with_provenance` verlangt im Docstring ausdrücklich, dass
+            # der Aufrufer dem Anwender vorher sagt, was ersetzt wird. Ein
+            # Ein-Klick-Knopf könnte das nicht; die Vorschau der
+            # Reparatur-Werkbank nennt die Zahl, bevor etwas passiert.
+            link=LINK_ENERGIEPROFIL,
+        )]
+
+    # ── Zeile 3b: die Quelle steht nirgends ─────────────────────────────────
+
+    def _check_wetterquelle_nicht_festgehalten(
+        self, lage: "ErfassungsortChecks._WetterquellenLage"
+    ) -> list[CheckErgebnis]:
+        """Monate mit Strahlungswerten, deren Herkunft nirgends festgehalten ist.
+
+        ⭐ **Warum es diese Zeile braucht — an einer echten Anlage gemessen
+        (39 Monate, 29.09.2026):** Strahlung und Sonnenstunden fehlten in **0**
+        Monaten, also schwieg Zeile 2. **Kein einziger** Monat trug ein
+        Anbieter-Label, also schwieg auch Zeile 3 — sie kann nur vergleichen,
+        was dasteht. Ergebnis: Die Reihe stand weiterhin auf zwei Linealen, das
+        Werkzeug lag bereit, und **nichts sagte es dem Anwender**. Genau diese
+        Lage schließt diese Zeile.
+
+        ⛔ **Sie behauptet NICHT, die Reihe sei gemischt** — das weiß sie nicht
+        und kann es nicht wissen. Sie sagt, dass es sich **nicht mehr sagen
+        lässt**. Der Unterschied ist der ganze Punkt: eine Prüfung, die eine
+        Unkenntnis als Befund ausgibt, wäre dieselbe Falschaussage, gegen die
+        dieses Paket gebaut ist.
+
+        ⛔ **Die Ø Temperatur zählt nicht mit** (Begründung in
+        `_wetterquellen_lage`): sie hat legitim keinen Anbieter, und sie
+        mitzunehmen ergäbe auf jeder gesunden Anlage eine Dauermeldung.
+
+        ⭐ **Sie verstummt von selbst.** Sobald jeder Monat ein Anbieter-Label
+        trägt — nach einem einmaligen Nachzug —, ist die Menge leer und die
+        Zeile verschwindet. Sie ist ein Übergangsbefund für den Bestand, kein
+        Dauerzustand, und niemand muss sie später „abstellen".
+        """
+        ohne = lage.ohne_label
+        if not ohne:
+            return []
+
+        def _mm(md: Monatsdaten) -> str:
+            return f"{md.monat:02d}/{md.jahr}"
+
+        beispiele = ", ".join(_mm(md) for md in ohne[:6])
+        if len(ohne) > 6:
+            beispiele += f" (+{len(ohne) - 6} weitere)"
+
+        return [CheckErgebnis(
+            kategorie=CheckKategorie.WETTERWERT_FEHLT,
+            schwere=CheckSeverity.INFO,
+            meldung=(
+                f"{len(ohne)} abgeschlossene(r) Monat(e) tragen keine "
+                "festgehaltene Wetterquelle"
+            ),
+            details=(
+                "Bei diesen Monaten steht nicht dabei, von welchem Wetterdienst "
+                "Globalstrahlung und Sonnenstunden stammen. **Ob alle aus "
+                "derselben Quelle kommen, lässt sich damit nicht mehr "
+                "feststellen** — und das ist keine Kleinigkeit: Open-Meteo und "
+                "Bright Sky (DWD) messen Sonnenstunden um den Faktor 1,6–2,0 "
+                "verschieden. Stammen einzelne Monate aus der jeweils anderen "
+                "Quelle, sähe ein Jahr schwach aus, weil die Quelle gewechselt "
+                "hat, nicht weil die Sonne weniger schien. "
+                "Ein einmaliges „Wetterreihe nachziehen“ in der "
+                "Reparatur-Werkbank holt alle abgeschlossenen Monate von der an "
+                "der Anlage gewählten Quelle und schreibt sie fest; danach "
+                "verschwindet dieser Hinweis von selbst. Der laufende Monat "
+                "bleibt dabei draußen, weil die Archive ihn noch nicht "
+                f"vollständig haben. Betroffen: {beispiele}."
+            ),
+            # Kein Inline-Knopf, aus demselben Grund wie bei den Nachbarzeilen:
+            # derselbe Lauf ersetzt, was schon dasteht.
+            link=LINK_ENERGIEPROFIL,
+        )]
+
+    # ── Zeile 2: Strahlung und Sonnenstunden ────────────────────────────────
+
+    def _check_strahlungswerte_fehlen(
+        self, anlage: Anlage, monatsdaten: list[Monatsdaten]
+    ) -> list[CheckErgebnis]:
+        """Abgeschlossene Monate ohne Globalstrahlung oder Sonnenstunden.
+
+        ⛔ **Der laufende Monat bleibt draußen** — dieselbe Begründung wie beim
+        Nachzug: die Archive liefern ihn noch nicht vollständig, und eine Zeile,
+        die eine Lücke nennt, für die es heute keinen Weg gibt, ist eine Aufgabe
+        ohne Lösung.
+        """
+        heute = date.today()
+        abgeschlossen = [
+            md for md in monatsdaten
+            if (md.jahr, md.monat) < (heute.year, heute.month)
+        ]
+        offen = [
+            md for md in abgeschlossen
+            if md.globalstrahlung_kwh_m2 is None or md.sonnenstunden is None
+        ]
+        if not offen:
+            return []
+
+        def _mm(md: Monatsdaten) -> str:
+            return f"{md.monat:02d}/{md.jahr}"
+
+        beispiele = ", ".join(_mm(md) for md in offen[:6])
+        if len(offen) > 6:
+            beispiele += f" (+{len(offen) - 6} weitere)"
+
+        return [CheckErgebnis(
+            kategorie=CheckKategorie.WETTERWERT_FEHLT,
+            schwere=CheckSeverity.INFO,
+            meldung=(
+                f"Globalstrahlung oder Sonnenstunden fehlen in "
+                f"{len(offen)} Monat(en)"
+            ),
+            details=(
+                "Beide Größen sagen, wie viel Sonne ein Monat überhaupt hatte — "
+                "ohne sie lässt sich ein schwaches Jahr nicht von einer "
+                "schwachen Anlage unterscheiden. „Wetterreihe nachziehen“ holt "
+                "sie für alle abgeschlossenen Monate von der an der Anlage "
+                "gewählten Quelle. Der laufende Monat bleibt draußen — die "
+                "Archive liefern ihn erst ein paar Tage nach Monatsende. "
+                f"Betroffen: {beispiele}."
+            ),
+            # Kein Inline-Knopf, aus demselben Grund wie oben: derselbe Lauf
+            # ersetzt auch, was schon dasteht.
+            link=LINK_ENERGIEPROFIL,
+        )]
+
+    # ── Zeile 1: die Ø-Temperatur (N-426-Nachtrag, unverändert) ─────────────
+
+    async def _check_temperatur_fehlt(
         self, anlage: Anlage, monatsdaten: list[Monatsdaten]
     ) -> list[CheckErgebnis]:
         """**N-426-Nachtrag** — Monate ohne Ø-Temperatur, und wie viele erreichbar sind.

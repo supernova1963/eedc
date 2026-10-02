@@ -53,6 +53,7 @@ from backend.services.provenance import (
     write_json_subkey_with_provenance,
     write_with_provenance,
 )
+from backend.services.wetter.monatswerte import WETTER_MONATSFELDER
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +73,7 @@ class RepairOperationType(str, Enum):
     REAGGREGATE_TODAY = "reaggregate_today"
     VOLLBACKFILL = "vollbackfill"
     KRAFTSTOFFPREIS_BACKFILL = "kraftstoffpreis_backfill"
+    WETTER_BACKFILL = "wetter_backfill"
     DELETE_MONATSDATEN = "delete_monatsdaten"
     RESET_CLOUD_IMPORT = "reset_cloud_import"
     SOLCAST_REWRITE = "solcast_rewrite"
@@ -312,6 +314,52 @@ async def _plan_reaggregate_day(
     }
 
 
+#: Präfix der Rückgabe von ``_reparatur_aggregat``, wenn der Lauf den Tag stehen lässt (N-596).
+#: Form ``"unveraendert:<LTS-Grund>"`` — ``teile_reparatur_quelle`` trennt beides wieder.
+QUELLE_UNVERAENDERT = "unveraendert"
+
+
+def teile_reparatur_quelle(quelle: str) -> tuple[str, Optional[str]]:
+    """``"unveraendert:keine_daten"`` → ``("unveraendert", "keine_daten")``; sonst ``(quelle, None)``."""
+    art, _, grund = quelle.partition(":")
+    if art == QUELLE_UNVERAENDERT:
+        return art, grund or None
+    return quelle, None
+
+
+def unveraendert_text(lts_grund: Optional[str]) -> str:
+    """Anwender-Satz für einen Tag, den die Werkbank stehen gelassen hat (N-596)."""
+    from backend.services.energie_profil.lts_tagesverlauf import grund_text
+
+    lts = grund_text(lts_grund) if lts_grund else ""
+    return (
+        "Der Tag bleibt unverändert: Home Assistant hat für ihn keine Leistungswerte mehr "
+        "im Verlauf, und auch aus der Langzeitstatistik kam keine Kurve"
+        + (f" ({lts.rstrip('.')})" if lts else "")
+        + ". Die gespeicherten Stunden- und Gerätewerte bleiben deshalb stehen, statt durch "
+        "leere ersetzt zu werden."
+    )
+
+
+async def _tag_gespeichert(anlage, datum: date, db: AsyncSession) -> bool:
+    """Hat der Tag schon eine Tages- oder Stundenzeile?"""
+    tz = await db.scalar(
+        select(func.count(TagesZusammenfassung.id)).where(
+            TagesZusammenfassung.anlage_id == anlage.id,
+            TagesZusammenfassung.datum == datum,
+        )
+    )
+    if tz:
+        return True
+    tep = await db.scalar(
+        select(func.count(TagesEnergieProfil.id)).where(
+            TagesEnergieProfil.anlage_id == anlage.id,
+            TagesEnergieProfil.datum == datum,
+        )
+    )
+    return bool(tep)
+
+
 async def _reparatur_aggregat(
     anlage, datum: date, db: AsyncSession
 ) -> tuple[Any, str]:
@@ -329,9 +377,21 @@ async def _reparatur_aggregat(
     HA-LTS, die auch der Vollbackfill benutzt, und reicht sie durch. Kein zweiter
     Aggregations-Pfad — `aggregate_day` bleibt der einzige Schreiber.
 
+    ⭐ N-596 (#422): Für einen gepurgten Tag liefert die Historie keine leere Liste,
+    sondern das volle Raster OHNE Leistungswert — `aggregate_day` schrieb den Tag
+    damit neu (leere Gerätewerte), und dieser Rückfall griff nie. Seit N-596 steigt
+    ein `MANUAL_REPAIR`-Lauf bei einer Kurve ohne Leistungswert aus (Stufe 1 ⇒
+    `None`), die Langzeitstatistik wird versucht (Stufe 2), und erst wenn auch sie
+    nichts hat, läuft Stufe 3 mit `leere_kurve_erlaubt=True`: ein Tag mit
+    gespeicherten Gerätewerten bleibt stehen, ein Tag ohne wird wie bisher aus den
+    Zählern geschrieben (keine Verschlechterung gegenüber vorher).
+
     Returns:
-        (TagesZusammenfassung | None, quelle) — `quelle` ist „historie", „lts"
-        oder der LTS-Grund, warum auch der Rückfall nichts holen konnte.
+        (TagesZusammenfassung | None, quelle) — `quelle` ist
+        „historie" · „lts" · „zaehler" (aus Zählern neu, ohne Leistungskurve) ·
+        „unveraendert:<LTS-Grund>" (Tag stehen gelassen, s. `teile_reparatur_quelle`)
+        oder — wenn es den Tag noch gar nicht gibt — der LTS-Grund, warum auch der
+        Rückfall nichts holen konnte.
     """
     from backend.services.energie_profil_service import aggregate_day
     from backend.services.energie_profil.source import Source
@@ -346,7 +406,26 @@ async def _reparatur_aggregat(
     verlauf = await lade_tagesverlauf_aus_lts(db, anlage, datum, datum)
     prefetched = verlauf.tage.get(datum)
     if prefetched is None:
-        return None, verlauf.grund if verlauf.grund != "ok" else "keine_daten"
+        lts_grund = verlauf.grund if verlauf.grund != "ok" else "keine_daten"
+        # Stufe 3 (N-596): ohne Leistungskurve — Zähler, sofern der Tag keine
+        # Gerätewerte zu verlieren hat. Nur, wenn Stufe 1 überhaupt an einer Kurve
+        # ohne Leistungswert ausgestiegen sein KANN: ohne Live-Zuordnung liefert
+        # `get_tagesverlauf` gar keine Kurve (dieselbe Bedingung, :292), Stufe 1
+        # ist dann am F-26-Ausstieg gescheitert und Stufe 3 wäre derselbe Lauf.
+        from backend.services.live_sensor_config import extract_live_config
+
+        basis_live, inv_live_map, _, _ = extract_live_config(anlage)
+        if basis_live or inv_live_map:
+            zusammenfassung = await aggregate_day(
+                anlage, datum, db,
+                source=Source.MANUAL_REPAIR,
+                leere_kurve_erlaubt=True,
+            )
+            if zusammenfassung is not None:
+                return zusammenfassung, "zaehler"
+        if await _tag_gespeichert(anlage, datum, db):
+            return None, f"{QUELLE_UNVERAENDERT}:{lts_grund}"
+        return None, lts_grund
 
     zusammenfassung = await aggregate_day(
         anlage, datum, db,
@@ -441,6 +520,11 @@ async def _execute_reaggregate_day(
 
     zusammenfassung, quelle = await _reparatur_aggregat(anlage, datum, db)
     if zusammenfassung is None:
+        art, lts_grund = teile_reparatur_quelle(quelle)
+        if art == QUELLE_UNVERAENDERT:
+            # N-596: kein „ok" mit 0 Stunden — der Tag ist bewusst stehen geblieben,
+            # und die Meldung sagt warum.
+            raise RuntimeError(f"Tag {datum} nicht neu geschrieben — {unveraendert_text(lts_grund)}")
         # Den Grund nennen, nicht raten: „keine Daten gefunden" schickte den
         # Anwender auf eine Fehlersuche bei sich selbst.
         erklaerung = grund_text(quelle) or (
@@ -578,7 +662,8 @@ async def _execute_reaggregate_range(
                     # Trägt jetzt den echten Grund (`keine_live_zuordnung` /
                     # `ha_nicht_verfuegbar` / `keine_daten`) statt pauschal
                     # „keine_daten" — der Bereichs-Lauf lief über Alttage sonst
-                    # komplett ins Leere, ohne zu sagen warum.
+                    # komplett ins Leere, ohne zu sagen warum. N-596: ein stehen
+                    # gelassener Tag meldet sich als „unveraendert:<LTS-Grund>".
                     "grund": quelle,
                 })
             else:
@@ -801,6 +886,195 @@ async def _execute_kraftstoffpreis_backfill(
         summary["monats_fehler"] = info.get("fehler")
 
     return summary
+
+
+# ── Operation: WETTER_BACKFILL ──────────────────────────────────────────────
+
+
+def _abgeschlossene_monate(zeilen: list[Monatsdaten]) -> list[Monatsdaten]:
+    """Alle Monatszeilen AUSSER dem laufenden (und allem danach).
+
+    ⛔ **Der laufende Monat bleibt draußen, und zwar messbar begründet:**
+    ``fetch_brightsky_month`` fragt nur bis gestern und setzt ``tage_gesamt``
+    dann auf den *gestrigen* Tag. Die Abdeckung läse sich als ~100 %, obwohl
+    der Monat halb ist — eedc schriebe eine halbe Monatssumme als ganze fest,
+    und weil der Nachzug überschreibt, stünde sie danach fest.
+    """
+    heute = date.today()
+    return [
+        md for md in zeilen
+        if (md.jahr, md.monat) < (heute.year, heute.month)
+    ]
+
+
+async def _wetter_monate(db: AsyncSession, anlage_id: int) -> list[Monatsdaten]:
+    zeilen = (await db.execute(
+        select(Monatsdaten)
+        .where(Monatsdaten.anlage_id == anlage_id)
+        .order_by(Monatsdaten.jahr, Monatsdaten.monat)
+    )).scalars().all()
+    return _abgeschlossene_monate(list(zeilen))
+
+
+def _hat_wetterwert(md: Monatsdaten) -> bool:
+    return any(
+        getattr(md, feld, None) is not None for feld in WETTER_MONATSFELDER
+    )
+
+
+async def _plan_wetter_backfill(
+    req: RepairOperationRequest, db: AsyncSession
+) -> tuple[dict[str, int], list[str], dict[str, Any]]:
+    """Zieht die ganze Wetterreihe einer Anlage auf die gewählte Quelle nach.
+
+    ⚠ **Die Vorschau zählt DIESELBE Menge, die der Lauf schreibt** — die Lehre,
+    die im Kraftstoff-Plan als Kommentar steht. Sie nennt zusätzlich, wie viele
+    Monate **ersetzt** werden: ``write_with_provenance`` verlangt im Docstring
+    ausdrücklich, dass der Aufrufer dem Anwender vorher sagt, was er überschreibt.
+    """
+    anlage = await _load_anlage(db, req.anlage_id)
+    monate = await _wetter_monate(db, req.anlage_id)
+    belegt = [md for md in monate if _hat_wetterwert(md)]
+
+    estimated = {
+        "monate_gesamt": len(monate),
+        "monate_mit_werten": len(belegt),
+        "monate_ohne_werte": len(monate) - len(belegt),
+    }
+
+    warnings: list[str] = []
+    if not anlage.latitude or not anlage.longitude:
+        warnings.append(
+            "Anlage hat keine Geokoordinaten — ohne sie kann kein Wetterdienst "
+            "gefragt werden. Operation ist No-Op."
+        )
+    elif not monate:
+        warnings.append(
+            "Kein abgeschlossener Monat mit Zählerzeile — Operation ist No-Op. "
+            "Der laufende Monat bleibt bewusst draußen (die Archive liefern ihn "
+            "noch nicht vollständig)."
+        )
+    elif belegt:
+        warnings.append(
+            f"{len(belegt)} Monat(e) tragen bereits Wetterwerte und werden "
+            "ERSETZT — auch von Hand eingetragene. Das ist der Zweck: eine "
+            "Reihe aus zwei Anbietern ist nicht vergleichbar."
+        )
+
+    return (
+        estimated,
+        warnings,
+        {
+            "quelle": getattr(anlage, "wetter_provider", None) or "auto",
+            "land": anlage.standort_land or None,
+            "von": f"{monate[0].jahr}-{monate[0].monat:02d}" if monate else None,
+            "bis": f"{monate[-1].jahr}-{monate[-1].monat:02d}" if monate else None,
+        },
+    )
+
+
+async def _execute_wetter_backfill(
+    req: RepairOperationRequest, db: AsyncSession
+) -> dict[str, Any]:
+    """Holt für jeden abgeschlossenen Monat die Werte der gewählten Quelle.
+
+    **Was geschrieben wird und unter welchem Label:**
+
+    * Globalstrahlung und Sonnenstunden unter dem Label des **tatsächlich
+      liefernden** Anbieters (`external:brightsky` / `external:openmeteo`).
+    * Die Ø-Temperatur über dieselbe Kette wie der Formular-Knopf — die eigene
+      **Messreihe zuerst**. Kommt sie von dort, trägt sie ``manual:form``, das
+      Label, das derselbe Wert schon heute über die Aktion „Temperatur aus
+      Messung übernehmen" bekommt (N-426). Zwei Labels für denselben Wert, je
+      nachdem welchen Knopf jemand gedrückt hat, wären die Drift.
+
+    ⛔ **``benutzer_override=True``** — der im Code vorgesehene Weg für einen
+    vom Anwender **angeordneten** Durchbruch, der die echte Quelle behält.
+    Ohne ihn prallte der Nachzug an jedem ``manual:form``-Wert ab, und genau
+    die sind das Problem: die Vormonats-Vorbelegung hat sie gesetzt, ohne dass
+    jemand sie getippt hätte.
+
+    ⛔ **Ein langjähriges Mittel wird NIE geschrieben.** Liefert kein messendes
+    Archiv (PVGIS-TMY oder die statischen Defaults antworten), bleibt der Monat
+    unberührt und wird gezählt — ein Mittel über viele Jahre machte ein
+    schwaches Jahr unsichtbar, also genau den Fehler, gegen den dieser Nachzug
+    gebaut ist.
+
+    ⚠ **Null Sonnenstunden werden nicht festgeschrieben.** Der
+    Abdeckungs-Wächter (#386) zählt Tage mit ``solar``, nicht mit ``sunshine``;
+    eine Station ohne Sonnenschein-Fühler rutschte mit ``0.0 h`` durch. Ein
+    Monat mit Strahlung und ohne eine einzige Sonnenstunde ist keine Messung,
+    sondern eine Lücke — und eine Lücke nennt der Daten-Checker.
+    """
+    from backend.services.wetter.monatswerte import (
+        loese_monats_wetter,
+        provenance_label,
+    )
+
+    anlage = await _load_anlage(db, req.anlage_id)
+    monate = await _wetter_monate(db, req.anlage_id)
+
+    geschrieben = 0
+    monate_geschrieben = 0
+    ohne_messende_quelle: list[str] = []
+    fehler: list[str] = []
+    je_quelle: dict[str, int] = {}
+
+    for md in monate:
+        try:
+            data = await loese_monats_wetter(db, anlage, md.jahr, md.monat)
+        except Exception as e:  # noqa: BLE001 — ein Monat darf den Lauf nicht töten
+            fehler.append(f"{md.jahr}-{md.monat:02d}: {type(e).__name__}: {e}")
+            continue
+
+        label = provenance_label(data.get("datenquelle"))
+        if label is None:
+            ohne_messende_quelle.append(f"{md.jahr}-{md.monat:02d}")
+            continue
+
+        werte: list[tuple[str, float, str]] = []
+        for feld, schluessel in (
+            ("globalstrahlung_kwh_m2", "globalstrahlung_kwh_m2"),
+            ("sonnenstunden", "sonnenstunden"),
+        ):
+            wert = data.get(schluessel)
+            if wert is None:
+                continue
+            if feld == "sonnenstunden" and not wert > 0:
+                continue
+            werte.append((feld, float(wert), label))
+
+        temperatur = data.get("durchschnittstemperatur_c")
+        if temperatur is not None:
+            werte.append((
+                "durchschnittstemperatur",
+                float(temperatur),
+                "manual:form" if data.get("temperatur_herkunft") == "messung" else label,
+            ))
+
+        vorher = geschrieben
+        for feld, wert, quelle in werte:
+            ergebnis = await write_with_provenance(
+                db, md, feld, wert,
+                source=quelle, writer="wetter_backfill",
+                benutzer_override=True,
+            )
+            if ergebnis.applied:
+                geschrieben += 1
+        if geschrieben > vorher:
+            monate_geschrieben += 1
+            je_quelle[label] = je_quelle.get(label, 0) + 1
+
+    await db.commit()
+    return {
+        "monate_gesamt": len(monate),
+        "monate_geschrieben": monate_geschrieben,
+        "felder_geschrieben": geschrieben,
+        "monate_ohne_messende_quelle": len(ohne_messende_quelle),
+        "ohne_messende_quelle": ohne_messende_quelle[:12],
+        "je_quelle": je_quelle,
+        "fehler": fehler[:12],
+    }
 
 
 # ── Operation: DELETE_MONATSDATEN ───────────────────────────────────────────
@@ -1183,6 +1457,8 @@ async def plan(req: RepairOperationRequest, db: AsyncSession) -> RepairPlan:
         estimated, warnings, op_preview = await _plan_vollbackfill(req, db)
     elif req.operation == RepairOperationType.KRAFTSTOFFPREIS_BACKFILL:
         estimated, warnings, op_preview = await _plan_kraftstoffpreis_backfill(req, db)
+    elif req.operation == RepairOperationType.WETTER_BACKFILL:
+        estimated, warnings, op_preview = await _plan_wetter_backfill(req, db)
     elif req.operation == RepairOperationType.DELETE_MONATSDATEN:
         estimated, warnings, op_preview = await _plan_delete_monatsdaten(req, db)
     elif req.operation == RepairOperationType.RESET_CLOUD_IMPORT:
@@ -1260,6 +1536,8 @@ async def execute(plan_id: UUID, db: AsyncSession) -> RepairResult:
         summary = await _execute_vollbackfill(req, db)
     elif req.operation == RepairOperationType.KRAFTSTOFFPREIS_BACKFILL:
         summary = await _execute_kraftstoffpreis_backfill(req, db)
+    elif req.operation == RepairOperationType.WETTER_BACKFILL:
+        summary = await _execute_wetter_backfill(req, db)
     elif req.operation == RepairOperationType.DELETE_MONATSDATEN:
         summary = await _execute_delete_monatsdaten(req, db)
     elif req.operation == RepairOperationType.RESET_CLOUD_IMPORT:

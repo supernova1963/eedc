@@ -1,11 +1,153 @@
 # Was ist neu
 
-> **Stand:** September 2026 (v4.1.0)
+> **Stand:** Oktober 2026 (v4.1.1)
 > **Diese Seite** zeigt pro Version, was sich für dich als Anwender geändert hat — kürzer als der technische [CHANGELOG](https://github.com/supernova1963/eedc-homeassistant/blob/main/CHANGELOG.md), ausführlicher als die Schnellübersicht-Tabelle in der [Übersicht](BENUTZERHANDBUCH.md#was-ist-neu-seit-v316).
 >
 > **Kein Banner, kein Pop-up:** eedc zeigt diese Liste nicht ungefragt an. HA-App-Nutzer sehen den Changelog ohnehin schon im Add-on-Store, GitHub-Releases haben einen eigenen. Wer wissen will, was neu ist, schaut hier rein — Pull statt Push.
 >
 > **Lesehinweis:** Die jüngsten Versionen stehen oben. Jeder Punkt verlinkt entweder auf die zuständige Hilfe-Sektion oder direkt auf die App-Funktion (sofern erreichbar). Anker-URLs (`?doc=was-ist-neu`) sind teilbar.
+
+---
+
+## v4.1.1 — 2. Oktober 2026
+
+**In dieser Version:** das Speichern eines Monats überschreibt ältere Tage nicht mehr — Gerätewerte und Aufteilung Heizen/Kühlen bleiben · die Verbrauchsprognose gibt es auch für morgen · die Wärmepumpe verschiebt die Verbrauchsprognose nicht mehr in die Nacht · die Wetter-Monatsreihe steht auf einem Lineal, mit neuem Block „Sonnenangebot" · warum eine eingebettete Karte „401" zeigt · ein „—" in einer Kachel zeigt keine Rechnung mehr.
+
+**Speichern eines Monats überschreibt ältere Tage nicht mehr**
+
+**Betrifft dich das?** Ja, wenn du eedc mit Home Assistant betreibst und einem
+Gerät einen Leistungssensor zugeordnet hast — besonders, wenn eedc den Strom
+deiner Wärmepumpe oder Klimaanlage nach Heizen, Kühlen und Warmwasser aufteilt.
+
+**Was war:** Seit Version 4.0.47 rechnet eedc bei jedem Speichern eines Monats
+alle Tage dieses Monats neu. Home Assistant hebt seinen Verlauf standardmäßig
+aber nur rund **zehn Tage** auf. Für ältere Tage bekam eedc deshalb eine
+Leistungskurve ohne einen einzigen Wert — und schrieb den Tag trotzdem neu: Die
+**Gerätewerte je Stunde** wurden leer, ebenso die **Betriebsart**; danach stand
+der Monat auf **„nicht aufgeteilt"**. Ein Gerät, das nur einen Leistungssensor
+und keinen Stromzähler hat (etwa eine Split-Klimaanlage), verlor beim Speichern
+auch seine **Tagesmenge**. Die Gerätewerte je Stunde und die Betriebsart gingen
+ebenso über „Tag neu aggregieren" und „Mehrere Tage neu aggregieren" in der
+Reparatur-Werkbank verloren und über die Knöpfe „Neu aggregieren" im
+Daten-Checker.
+
+**Was jetzt:** Ein Tag, für den Home Assistant keine Leistungswerte mehr hat,
+bleibt beim Speichern eines Monats stehen. Die Reparatur-Werkbank und die Knöpfe
+im Daten-Checker holen die Kurve in diesem Fall aus der **Langzeitstatistik**
+von Home Assistant; hat auch die nichts, bleibt der Tag unverändert, und die
+Meldung sagt dir, warum. Wird ein Tag doch neu geschrieben, bleibt die
+gespeicherte Betriebsart stehen — ebenso Ladestand und Strompreis, wenn deren
+Sensor keine Langzeitstatistik hat.
+
+**Schon betroffen?** Die **Gerätewerte** holst du zurück: *Einstellungen →
+Daten → Energieprofil-Pflege → „Mehrere Tage neu aggregieren"* für die
+betroffenen Tage (höchstens 31 je Lauf) — eedc nimmt sie aus der
+Langzeitstatistik, soweit die den Tag kennt. Die **Betriebsart** kennt die
+Langzeitstatistik nicht; sie kommt nur über eine Sicherung von eedc aus der Zeit
+davor zurück.
+
+**Neu im Daten-Checker:** Passt die Aufteilung eines Monats nicht zum
+eingetragenen Stromverbrauch des Geräts — zusammen mehr als der Monatsstrom,
+oder der Monatsstrom fehlt —, speichert eedc sie nicht. Das geschah bisher
+still; jetzt nennt der Daten-Checker den Monat und beide Zahlen und führt zum
+Monatsabschluss.
+
+→ *[Energieprofil §4](HANDBUCH_ENERGIEPROFIL.md#4-reparatur--pflege)* · *[Daten-Checker §4.14](HANDBUCH_DATEN_CHECKER.md#414-klimaanlage--betriebsmodus)*
+
+**Die Verbrauchsprognose für morgen kommt in Home Assistant an**
+
+**Betrifft dich das?** Ja, wenn du den MQTT-Export nutzt und in Home Assistant über
+die Nacht planst — zum Beispiel den Speicher zur günstigsten Stunde laden willst.
+
+**Was war:** eedc gab die PV-Prognose für morgen aus, den Verbrauch aber nur für
+heute. Wer den Speicher abends so laden wollte, dass er bis zum Morgen reicht,
+kannte nur die eine Hälfte der Rechnung.
+
+**Was jetzt:** Ein neuer Sensor **Verbrauchsprognose morgen**. Er rechnet genau
+wie die Verbrauchsprognose für heute: dein eigenes Profil für den Wochentag von
+morgen — am Freitag also das Wochenend-Profil für Samstag — und den
+Wärmepumpen-Anteil mit der Temperaturvorhersage von morgen. Das Stundenprofil
+reist als Attribut mit, dazu das **Datum**, für das der Wert gilt; so erkennt
+eine Automation nach Mitternacht, ob schon der neue Wert da ist. Ohne eigenes
+Profil für den Tagestyp von morgen gibt es den Sensor nicht — eedc schreibt kein
+Standardprofil in eine Automation.
+
+⭐ **Er startet abgewählt.** Wie jeder Sensor, der mit einem Update dazukommt,
+musst du ihn einmal anhaken: *Einstellungen → Integration → MQTT-Export*, er
+trägt dort die Markierung **„Neu"**.
+
+→ *[Sensor-Referenz §11](SENSOR-REFERENZ.md#anlage-weite-sensoren)*
+
+**Die Wärmepumpe verschiebt die Verbrauchsprognose nicht mehr in die Nacht**
+
+**Betrifft dich das?** Ja, wenn eine Wärmepumpe zu deiner Anlage gehört und eedc
+die Außentemperatur kennt.
+
+**Was war:** eedc korrigiert den Wärmepumpen-Anteil der Verbrauchsprognose mit
+der Temperaturvorhersage. Bisher bekam dabei **jede Stunde** ihren eigenen
+Faktor aus ihrer eigenen Temperatur. Weil es nachts kälter ist als am
+Nachmittag, rechnete eedc die Nachtstunden hoch und die Nachmittage herunter —
+auch an einem Tag, der genau so warm war wie die Woche, aus der dein Profil
+stammt. Den Tagesgang deiner Heizung kennt das Profil aber längst.
+
+**Was jetzt:** Die Korrektur fragt nur noch, ob der **ganze Tag** kälter oder
+wärmer ist als diese Woche, und verteilt das gleichmäßig auf alle Stunden. Bei
+gleichem Wetter bleibt dein Profil, wie es ist. Du siehst die Änderung an der
+Kachel **Verbrauchsprognose** in *Cockpit → Live* und an
+`eedc_verbrauchsprognose_heute_kwh` — und an allem, was darauf aufbaut, etwa der
+Überschuss-Prognose.
+
+→ *Cockpit → Live*
+
+**Sonnenstunden und Globalstrahlung: eine Quelle für die ganze Reihe**
+
+**Betrifft dich das?** Ja, wenn du Monate per CSV importiert und andere über den
+Wetter-Knopf im Monatsabschluss geholt hast — oder wenn du Jahre miteinander
+vergleichst, um zu sehen, ob ein schwaches Jahr am Wetter lag.
+
+**Was war:** Der CSV-Import holte die Wetterwerte immer von Open-Meteo, der Knopf
+im Monatsabschluss von der Quelle, die an deiner Anlage eingestellt ist. Beide
+liefern plausible Zahlen, messen **Sonnenstunden** aber sehr verschieden — für
+denselben Monat und Ort stehen 380 h gegen 232 h. Eine Reihe aus beiden Wegen
+lag damit auf zwei Linealen, und ein Jahresvergleich daraus sagte mehr über die
+Quelle als über die Sonne.
+
+**Was jetzt:** Jeder Weg folgt der eingestellten Quelle, und jeder Wert trägt
+seine Herkunft. Der **Daten-Checker** meldet Monate mit fehlenden Werten oder
+mit einer anderen Quelle, und die **Reparatur-Werkbank** zieht die Reihe mit
+Vorschau auf eine Quelle nach („Wetterreihe nachziehen"). Fehlt einem
+abgeschlossenen Monat ein Wert, füllt eedc die Lücke nachts selbst — ohne etwas
+zu überschreiben. Im Monatsabschluss steht bei den Wetterfeldern nicht mehr der
+Vormonat als Vorschlag.
+
+Neu dazu in *Auswertungen → Prognose-vs-IST*: der Block **„Sonnenangebot"** mit
+Globalstrahlung und Sonnenstunden je Monat — die Antwort auf „war mein Jahr
+schwach, oder meine Anlage?", ohne Performance Ratio.
+
+→ *[Prognosen](HANDBUCH_PROGNOSEN.md)* · *[Daten-Checker](HANDBUCH_DATEN_CHECKER.md)*
+
+**Eingebettete Karte zeigt „401: Unauthorized"**
+
+**Betrifft dich das?** Nur, wenn du eine eedc-Anzeige als Webseiten-Karte in dein
+Home-Assistant-Dashboard eingebettet hast.
+
+**Was war:** Das Handbuch nannte als Auslöser „jede neue Anmeldung". Der
+eigentliche Auslöser ist ein **Neustart von Browser oder Home-Assistant-App** —
+auch wenn du dabei angemeldet bleibst.
+
+**Was jetzt:** Handbuch und Dialog „Link / Einbetten" sagen es so. Abhilfe wie
+bisher: einmal **eedc** in der Seitenleiste öffnen, dann das Dashboard neu laden.
+
+→ *[Bedienung §1.5](HANDBUCH_BEDIENUNG.md#15-eine-eedc-anzeige-im-home-assistant-dashboard)*
+
+**Ein „—" in einer Kachel zeigt keine Rechnung mehr**
+
+**Was war:** Stand in einer Kachel „—", weil eedc einen Wert bewusst zurückhält,
+zeigte der Tooltip darunter trotzdem eine Rechnung mit Zahlen — man konnte sich
+den zurückgehaltenen Wert selbst ausrechnen.
+
+**Was jetzt:** Der Tooltip nennt dann nur noch die Formel. Warum ein Wert fehlt,
+sagt der Daten-Checker.
 
 ---
 

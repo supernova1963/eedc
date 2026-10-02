@@ -82,6 +82,42 @@ _EXTERN_BEFUELLT_FELDER_RETTEN: tuple[str, ...] = (
 )
 
 
+# N-595 (#422): Stundenfelder, deren Quelle VERFÄLLT — gerettet, wenn der neue Lauf
+# für die Stunde nichts liefert. Dieselbe Verlustklasse wie die beiden Listen oben,
+# eine Ebene tiefer (Stundenzeile statt Tageszeile), aber ein anderer Grund: Die
+# Felder oben schreibt ein ZWEITER Schreiber, diese hier schreibt `aggregate_day`
+# selbst — aus Home Assistants Recorder-Verlauf, den HA nach `purge_keep_days`
+# (Standard 10 Tage) löscht.
+#
+# * `betriebsmodus_je_wp` — **immer** nur Recorder (`climate` hat keine LTS,
+#   Konzept 263 D9). Bis N-596 schrieb ein Monatsabschluss am Monatsersten damit
+#   rund zwei Drittel des Monats ohne Betriebsart neu; die Aufteilung Heizen/Kühlen
+#   fiel auf „nicht aufgeteilt". Seit N-596 lässt er Tage, deren Leistungskurve
+#   keinen Wert mehr trägt, stehen (``hole_tagesverlauf``); die Rettung hier greift
+#   weiter, wo ein solcher Tag doch neu geschrieben wird — Werkbank aus der
+#   Langzeitstatistik (die keine Betriebsart kennt) und Tage ohne Gerätewerte.
+# * `soc_prozent` / `soc_je_speicher` / `strompreis_cent` — nur dann, wenn ihr
+#   Sensor keine Langzeitstatistik hat und der History-Fallback greift.
+#
+# ⚠ NICHT `boersenpreis_cent`: externe Quelle, rückwirkend abrufbar — dort gewinnt
+# immer der neue Abruf, auch ein leerer.
+#
+# Regel: **die Quelle gewinnt, wo sie liefert**; gerettet wird nur, was sonst leer
+# bliebe, und nur in Stunden, die der neue Lauf ohnehin schreibt (keine Zeile wird
+# erfunden). Wächter: `test_konformitaet_tep_felder.py` (K3) liest DIESE Konstante.
+_STUNDEN_FELDER_RETTEN: tuple[str, ...] = (
+    "betriebsmodus_je_wp",
+    "soc_prozent",
+    "soc_je_speicher",
+    "strompreis_cent",
+)
+
+# Provenance-Fallback einer geretteten Stunde ohne verwertbaren alten Eintrag —
+# dasselbe Label/derselbe Writer wie der Restore der Tageszeile (#299).
+_PRESERVE_QUELLE = "auto:preserve_restore"
+_PRESERVE_WRITER = "aggregator-preserve"
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 #  Zwei Rundungs-REGELN, die heute gleich aussehen und es nicht sind
 # ═══════════════════════════════════════════════════════════════════════════
@@ -140,6 +176,9 @@ class StundenKontext:
     strompreis_stunden: object
     wp_starts_pro_stunde: dict
     wp_betriebsstunden_pro_stunde: dict
+    # N-595: je Slot die Felder, die ganz aus der Rettung stammen, mit ihrem ALTEN
+    # Provenance-Eintrag (``None`` = keiner verwertbar ⇒ ``auto:preserve_restore``).
+    gerettete_herkunft: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -457,7 +496,88 @@ def verarbeite_stunde(
     )
     db.add(profil)
     seed_tep_provenance(profil, writer=auto_writer, source=kontext.kwh_source_label)
+    # N-595 (S4): ein gerettetes Feld behält seine ALTE Herkunft — es wurde nicht in
+    # diesem Lauf gemessen. Bewusst NACH dem Seed, der es sonst mit dem Lauf-Label
+    # stempelte (dieselbe Reihenfolge-Regel wie der TZ-Restore, #299).
+    herkunft = kontext.gerettete_herkunft.get(h)
+    if herkunft:
+        setze_gerettete_herkunft(profil, herkunft)
     akku.stunden_count += 1
+
+
+def setze_gerettete_herkunft(profil: TagesEnergieProfil, herkunft: dict) -> None:
+    """Je gerettetem Feld den alten Provenance-Eintrag einsetzen (N-595, S4).
+
+    ``herkunft`` = ``{feld: alter_eintrag | None}``. Ohne verwertbaren alten Eintrag
+    (keiner, oder eine Quelle, die ``SOURCE_LABELS`` nicht kennt) steht dort
+    ``auto:preserve_restore`` — wie beim Restore der Tageszeile. Kein Audit-Log je
+    Feld: dieselbe Abwägung wie ``seed_tep_provenance`` (24 Zeilen × n Felder je Tag).
+    """
+    from backend.services.provenance import seed_provenance
+
+    for feld, eintrag in herkunft.items():
+        if getattr(profil, feld, None) is None:
+            continue
+        if eintrag is None:
+            seed_provenance(
+                profil, source=_PRESERVE_QUELLE, writer=_PRESERVE_WRITER, fields=[feld],
+            )
+            continue
+        provenance = dict(profil.source_provenance or {})
+        provenance[feld] = dict(eintrag)
+        profil.source_provenance = provenance
+
+
+#: Schlüssel einer Tageskurve, die KEINE Leistung sind (N-596). Der Börsenpreis-Rückfall in
+#: ``get_tagesverlauf`` schreibt ``strompreis`` in jeden Punkt — auch für einen Tag, den Home
+#: Assistant längst gepurgt hat (aWATTar liefert rückwirkend; gemessen 02.10.2026: 150 von 150
+#: Punkten des 30.08. tragen ihn). Ausdrücklich genannt, weil die Serie dazu nur angehängt wird,
+#: wenn ein Punkt ihn trägt; alle weiteren Overlays erkennt ``kurve_traegt_leistung`` an
+#: ``serien[*].seite == "overlay"``.
+_KURVEN_OVERLAY_SCHLUESSEL: frozenset[str] = frozenset({"strompreis"})
+
+
+def kurve_traegt_leistung(
+    punkte_raw: Optional[list],
+    vortagsrand_raw: Optional[list],
+    serien: Optional[list],
+) -> bool:
+    """Trägt die Kurve irgendwo einen Leistungswert? (N-596)
+
+    ``True``, sobald ein Punkt aus ``punkte_raw`` oder ``vortagsrand_raw`` für einen Schlüssel,
+    der kein Overlay ist, einen Wert ``≠ None`` trägt — auch ``0.0`` (ein Sensor, der null
+    meldet, hat gemessen).
+
+    ⚠ „Liste leer" ist NICHT die Frage: Der HA-Zweig von ``get_tagesverlauf`` liefert für einen
+    vergangenen Tag immer das volle Raster — 144 Punkte und 6 Vortagsrand-Punkte —, auch wenn
+    Home Assistant für den Tag nichts mehr hat. Bis N-596 prüfte ``hole_tagesverlauf`` nur die
+    Länge und schrieb solche Tage mit leerer Kurve neu.
+    """
+    overlay = set(_KURVEN_OVERLAY_SCHLUESSEL) | {
+        s.get("key") for s in (serien or []) if s.get("seite") == "overlay"
+    }
+    for punkt in (*(punkte_raw or ()), *(vortagsrand_raw or ())):
+        for schluessel, wert in ((punkt or {}).get("werte") or {}).items():
+            if schluessel not in overlay and wert is not None:
+                return True
+    return False
+
+
+async def _tag_hat_geraetewerte(anlage: Anlage, datum: date, db: AsyncSession) -> bool:
+    """Trägt mindestens eine gespeicherte Stundenzeile des Tages Gerätewerte (``komponenten``)?
+
+    Leeres Dict und ``NULL`` zählen beide als „keine" — eine Zählerzeile ohne Leistungspunkt
+    schreibt ``{}`` (nur Börsenpreis in ``werte``) bzw. ``NULL`` (``werte`` leer).
+    """
+    zeilen = await db.execute(
+        select(TagesEnergieProfil.komponenten).where(
+            and_(
+                TagesEnergieProfil.anlage_id == anlage.id,
+                TagesEnergieProfil.datum == datum,
+            )
+        )
+    )
+    return any(bool(k) for (k,) in zeilen.all())
 
 
 async def hole_tagesverlauf(
@@ -465,12 +585,32 @@ async def hole_tagesverlauf(
     datum: date,
     db: AsyncSession,
     prefetched_tagesverlauf: Optional[dict],
+    *,
+    source: Optional[Source] = None,
+    leere_kurve_erlaubt: bool = False,
 ) -> Optional[tuple]:
     """Eingang und Rohverlauf — Prefetch-Zweig, Live-Zweig, synthetische Slots.
 
     ⚠ Die beiden fruehen ``return None`` sind Vertrag, nicht Formsache: F-26 (Forum T89667 #142,
     IdleBit) ist an ihrem Verhalten gebaut worden. Sie bleiben hier und werden vom Orchestrator
     als ``None`` weitergereicht.
+
+    ⭐ Dritter früher Ausstieg, dieselbe Semantik (N-596, #422): **Eine Kurve ohne einen
+    einzigen Leistungswert überschreibt keine gespeicherten Gerätewerte.** Nur im Live-Zweig
+    (nicht Prefetch, nicht synthetische Slots, nicht MQTT-Energie ohne Leistungszuordnung);
+    die Kurve trägt keine Leistung, wenn ``kurve_traegt_leistung`` nein sagt — typisch, weil
+    Home Assistant den Tag aus dem Verlauf gelöscht hat (``purge_keep_days``). Dann:
+
+    a) Werkbank (``source.is_manual_repair()``) ohne ``leere_kurve_erlaubt`` ⇒ ``None``: sie
+       versucht zuerst ihren LTS-Rückfall (``repair_orchestrator._reparatur_aggregat``) — auch
+       für einen Tag, der schon leer geschrieben ist (Rückweg).
+    b) sonst, wenn eine gespeicherte Stundenzeile des Tages ``komponenten`` trägt ⇒ ``None``:
+       der Tag bleibt stehen (Monatsabschluss, Scheduler, Archiv-Nachzug, Werkbank nach
+       leerem LTS-Rückfall).
+    c) sonst weiter wie bisher: der Tag wird aus den Zählern geschrieben (N-563 O1). Ein Tag
+       ohne Gerätewerte hat nichts zu verlieren, und eine Anlage, deren Leistungssensoren
+       keine Historie haben (Recorder-Ausschluss, umbenannte Entity), friert sonst nach dem
+       ersten Lauf des Tages ein.
 
     Returns:
         ``(serien, punkte_raw, vortagsrand_raw, synthetische_slots)`` oder ``None``.
@@ -535,6 +675,31 @@ async def hole_tagesverlauf(
         return None
     else:
         synthetische_slots = False
+
+    # ── N-596: Kurve ohne Leistungswert (s. Docstring a/b/c) ──────────────
+    # Nicht bei MQTT-Energie ohne Leistungszuordnung (`has_mqtt_energy` ist nur
+    # dann wahr, s. `ermittle_aggregations_quelle`): dort gibt es keine
+    # Leistungsquelle, die verfallen könnte — die Kurve ist immer leer, und der
+    # Tag kommt wie bisher aus den Zählern (dieselbe Lage wie die synthetischen
+    # Slots, nur dass die Punkte schon da sind).
+    if (
+        prefetched_tagesverlauf is None
+        and not synthetische_slots
+        and not has_mqtt_energy
+        and not kurve_traegt_leistung(punkte_raw, vortagsrand_raw, serien)
+    ):
+        if source is not None and source.is_manual_repair() and not leere_kurve_erlaubt:
+            logger.info(
+                f"Anlage {anlage.id}, {datum}: Leistungskurve ohne Wert "
+                "(HA-Verlauf vermutlich gepurgt) — Werkbank versucht die Langzeitstatistik"
+            )
+            return None
+        if await _tag_hat_geraetewerte(anlage, datum, db):
+            logger.info(
+                f"Anlage {anlage.id}, {datum}: Leistungskurve ohne Wert (HA-Verlauf vermutlich "
+                "gepurgt) — gespeicherte Gerätewerte bleiben stehen, Tag nicht neu geschrieben"
+            )
+            return None
 
     return serien, punkte_raw, vortagsrand_raw, synthetische_slots
 
@@ -892,6 +1057,206 @@ async def lade_zaehler_und_counter(
     )
 
 
+@dataclass
+class GerettetStunden:
+    """Was die alten Stundenzeilen eines Tages vor dem Delete trugen (N-595, S2).
+
+    ``je_feld`` = ``{feld: {slot: wert}}`` für die Felder aus
+    ``_STUNDEN_FELDER_RETTEN``, bereits auf den **Ziel-Slot** des neu geschriebenen
+    Tages gelegt (Betriebsart über ``betriebsmodus_ziel_slot``, die übrigen
+    zeilengleich). ``herkunft`` = ``{(slot, feld): alter_eintrag | None}``.
+    """
+    je_feld: dict = field(default_factory=dict)
+    herkunft: dict = field(default_factory=dict)
+
+    def _slots(self, feld: str) -> dict:
+        return self.je_feld.get(feld, {})
+
+    @property
+    def modus_je_slot(self) -> dict:
+        return self._slots("betriebsmodus_je_wp")
+
+    @property
+    def soc_je_slot(self) -> dict:
+        return self._slots("soc_prozent")
+
+    @property
+    def soc_je_speicher_je_slot(self) -> dict:
+        return self._slots("soc_je_speicher")
+
+    @property
+    def preis_je_slot(self) -> dict:
+        return self._slots("strompreis_cent")
+
+
+def _alter_provenance_eintrag(provenance, feld: str) -> Optional[dict]:
+    """Der alte Eintrag eines Feldes — nur, wenn seine Quelle bekannt ist (#299-Regel)."""
+    eintrag = (provenance or {}).get(feld) if isinstance(provenance, dict) else None
+    if isinstance(eintrag, dict) and eintrag.get("source") in SOURCE_LABELS:
+        return dict(eintrag)
+    return None
+
+
+async def lese_gerettete_stunden(
+    anlage: Anlage, datum: date, db: AsyncSession,
+) -> GerettetStunden:
+    """Die Stundenfelder lesen, deren Quelle verfällt — VOR dem Delete (N-595, S2).
+
+    Gelesen werden die Zeilen des Tages und **Zeile 23 des Vortags**. Letztere nur für
+    die Betriebsart und nur, wenn sie noch **forward** liegt (Altbestand vor N-382):
+    dann meint sie ``[23, 24)`` des Vortags = Slot 0 dieses Tages. Eine backward
+    liegende Zeile 23 des Vortags meint ``[22, 23)`` und gehört nicht hierher —
+    ``betriebsmodus_ziel_slot`` legt sie auf den Vortag, und der wird verworfen.
+
+    Für einen Ziel-Slot, auf den sowohl die Vortagszeile 23 (forward) als auch die
+    eigene Zeile 0 (backward) zeigen — beide meinen ``[Vortag 23, 00)`` —, gewinnt
+    die eigene Zeile: sie gehört zu diesem Tag und ist die jüngere Messung.
+
+    Nur Spalten-Projektion, keine ORM-Objekte: die Zeilen werden gleich danach
+    gelöscht und sollen nicht in der Identity-Map stehen.
+
+    ⚠ **Bekannte Grenze, gemessen (N-595-Bau, 02.10.2026):** Ein Bereichslauf
+    (``backfill_range``, aufsteigend) schreibt Zeile 23 von Tag D neu, bevor Tag D+1
+    sie liest. Liegt sie forward (``created_at`` 19.08.–03.09., Forward-Ära der
+    Betriebsart), fehlt Tag D+1 danach die Betriebsart in **Slot 0** — eine Stunde je
+    Tag ab dem zweiten des Bereichs, höchstens die 16 Tage dieser Ära. Hingenommen
+    und benannt: ein Schreiben über die Tagesgrenze oder ein absteigender Lauf
+    kostete mehr, als die eine Stunde wert ist.
+    """
+    from backend.core.berechnungen.slot_konvention import betriebsmodus_ziel_slot
+
+    tep = TagesEnergieProfil
+    spalten = [getattr(tep, f) for f in _STUNDEN_FELDER_RETTEN]
+    ergebnis = await db.execute(
+        select(
+            tep.datum, tep.stunde, tep.created_at, tep.source_provenance, *spalten,
+        ).where(
+            tep.anlage_id == anlage.id,
+            (tep.datum == datum)
+            | ((tep.datum == datum - timedelta(days=1)) & (tep.stunde == 23)),
+        )
+    )
+    # Vortag zuerst, damit die eigene Zeile denselben Ziel-Slot überschreibt.
+    zeilen = sorted(ergebnis.all(), key=lambda z: (z.datum, z.stunde))
+
+    gerettet = GerettetStunden()
+    for zeile in zeilen:
+        for feld in _STUNDEN_FELDER_RETTEN:
+            wert = getattr(zeile, feld)
+            if wert is None or wert == {}:
+                continue
+            if feld == "betriebsmodus_je_wp":
+                ziel = betriebsmodus_ziel_slot(zeile)
+            elif zeile.datum == datum:
+                ziel = (zeile.datum, zeile.stunde)   # forward bleibt forward (N-387)
+            else:
+                ziel = None                          # Vortag nur für die Betriebsart
+            if ziel is None or ziel[0] != datum:
+                continue
+            slot = ziel[1]
+            gerettet.je_feld.setdefault(feld, {})[slot] = wert
+            gerettet.herkunft[(slot, feld)] = _alter_provenance_eintrag(
+                zeile.source_provenance, feld,
+            )
+    return gerettet
+
+
+def fuehre_gerettete_stunden_zusammen(
+    gerettet: GerettetStunden,
+    *,
+    betriebsmodus_je_stunde: dict,
+    soc_je_stunde: dict,
+    soc_stunden: dict,
+    strompreis_stunden,
+    invs_by_id: dict,
+) -> tuple:
+    """Rettung und neuer Lauf zusammenführen — **die Quelle gewinnt, wo sie liefert** (N-595, S3).
+
+    * Betriebsart je Slot **je Wärmepumpe**: ``{**alt, **neu}`` — liefert der
+      Verlauf nur für ein Gerät, bleibt das andere stehen (Entscheid Gernot
+      02.10.: die Betriebsart ist eine Messung der Vergangenheit und bleibt auch
+      ohne Zuordnung stehen). Alte Schlüssel nur für Geräte, die an diesem Tag
+      noch als ``waermepumpe`` in der Anlage stehen (``invs_by_id``) — keine
+      Waisen einer gelöschten Wärmepumpe.
+    * SoC (Anlagenwert + je Speicher) als **Paar**, Endkundenpreis allein: nur für
+      Slots, in denen der neue Lauf **nichts** hat.
+    * ``boerse`` bleibt unberührt.
+
+    Gibt neue Dicts zurück und verändert die Eingänge nicht. Ein Slot, zu dem die
+    Rettung nichts beiträgt, behält das Objekt des neuen Laufs.
+
+    Returns:
+        ``(betriebsmodus_je_stunde, soc_je_stunde, soc_stunden, strompreis_stunden,
+        gerettete_herkunft)`` — ``gerettete_herkunft`` = ``{slot: {feld: eintrag}}``
+        nur für Felder, die **ganz** aus der Rettung stammen. Ein gemischter
+        Betriebsart-Eintrag (neu + alt) trägt das Label des Laufs.
+    """
+    from backend.services.energie_profil._helpers import StrompreisStunden
+
+    herkunft: dict[int, dict] = {}
+
+    def _merke(slot: int, feld: str) -> None:
+        herkunft.setdefault(slot, {})[feld] = gerettet.herkunft.get((slot, feld))
+
+    # ── Betriebsart ─────────────────────────────────────────────────────────
+    wp_ids = {
+        iid for iid, inv in invs_by_id.items()
+        if (getattr(inv, "typ", None) or "") == "waermepumpe"
+    }
+    modus = dict(betriebsmodus_je_stunde)
+    for slot, alt in gerettet.modus_je_slot.items():
+        # Schlüsseltyp angleichen: der Kontext führt die Investitions-ID als int,
+        # die Spalte als str.
+        alt_gueltig = {
+            int(k): v for k, v in (alt or {}).items()
+            if str(k).isdigit() and str(k) in wp_ids
+        }
+        if not alt_gueltig:
+            continue
+        neu = modus.get(slot) or {}
+        zusammen = {**alt_gueltig, **{_inv_schluessel(k): v for k, v in neu.items()}}
+        if zusammen == neu:
+            continue
+        modus[slot] = zusammen
+        if not neu:
+            _merke(slot, "betriebsmodus_je_wp")
+
+    # ── SoC (Paar) ──────────────────────────────────────────────────────────
+    soc_je = dict(soc_je_stunde)
+    soc = dict(soc_stunden)
+    for slot in set(gerettet.soc_je_slot) | set(gerettet.soc_je_speicher_je_slot):
+        if soc_je.get(slot) or soc.get(slot) is not None:
+            continue                                  # der neue Lauf hat den Slot
+        alt_soc = gerettet.soc_je_slot.get(slot)
+        if alt_soc is not None:
+            soc[slot] = alt_soc
+            _merke(slot, "soc_prozent")
+        alt_je = gerettet.soc_je_speicher_je_slot.get(slot)
+        if alt_je:
+            soc_je[slot] = {_inv_schluessel(k): v for k, v in alt_je.items()}
+            _merke(slot, "soc_je_speicher")
+
+    # ── Endkundenpreis (Sensor) — Börse nie ─────────────────────────────────
+    sensor = dict(strompreis_stunden.sensor)
+    for slot, alt_preis in gerettet.preis_je_slot.items():
+        if slot in sensor or alt_preis is None:
+            continue
+        sensor[slot] = alt_preis
+        _merke(slot, "strompreis_cent")
+    if sensor != strompreis_stunden.sensor:
+        strompreis_stunden = StrompreisStunden(
+            sensor=sensor, boerse=strompreis_stunden.boerse,
+        )
+
+    return modus, soc_je, soc, strompreis_stunden, herkunft
+
+
+def _inv_schluessel(k):
+    """Investitions-ID als int, wo sie eine ist — die Konvention der Kontext-Dicts
+    (``_get_betriebsmodus_history`` / ``_get_soc_history`` führen int, die Spalten str)."""
+    return int(k) if isinstance(k, str) and k.isdigit() else k
+
+
 async def rette_und_loesche(
     anlage: Anlage, datum: date, db: AsyncSession,
 ) -> tuple:
@@ -902,8 +1267,12 @@ async def rette_und_loesche(
 
     Returns:
         ``(preserved_felder, preserved_quellen, preserved_komponenten_kwh,
-        preserved_komponenten_starts)``
+        preserved_komponenten_starts, gerettet_stunden)`` — der fuenfte Wert (N-595)
+        traegt die Stundenfelder aus ``_STUNDEN_FELDER_RETTEN``.
     """
+    # N-595: die Stundenzeilen VOR dem Delete lesen (Rettung + Delete = ein Pfad).
+    gerettet_stunden = await lese_gerettete_stunden(anlage, datum, db)
+
     # ── Alte Daten für diesen Tag löschen (Upsert) ────────────────────────
     # Extern befüllte Felder vor dem Delete-and-Recreate retten — sie werden
     # nicht vom Aggregator gesetzt, sondern asynchron/additiv von anderen
@@ -969,6 +1338,7 @@ async def rette_und_loesche(
     return (
         preserved_felder, preserved_quellen,
         preserved_komponenten_kwh, preserved_komponenten_starts,
+        gerettet_stunden,
     )
 
 
@@ -1572,6 +1942,7 @@ async def aggregate_day(
     *,
     source: Source,
     prefetched_tagesverlauf: Optional[dict] = None,
+    leere_kurve_erlaubt: bool = False,
 ) -> Optional[TagesZusammenfassung]:
     """
     Aggregiert Energiedaten eines Tages und speichert sie persistent.
@@ -1606,9 +1977,15 @@ async def aggregate_day(
             (Der Plan-Text nennt `dict[date, dict]`; da `aggregate_day`
             per-Tag arbeitet, wird die Per-Tag-Form übergeben — der Caller
             schleift über die Range.)
+        leere_kurve_erlaubt: Nur für die Werkbank nach einem leeren LTS-Rückfall (N-596).
+            Trägt die Leistungskurve keinen Wert, steigt ein ``MANUAL_REPAIR``-Lauf sonst
+            immer aus (damit der Rückfall zuerst versucht wird); mit ``True`` gilt für ihn
+            dieselbe Regel wie für alle anderen Aufrufer: Tag mit gespeicherten
+            Gerätewerten bleibt stehen, Tag ohne wird aus den Zählern geschrieben.
 
     Returns:
-        TagesZusammenfassung oder None bei Fehler
+        TagesZusammenfassung oder ``None`` — bei Fehler, ohne Quelle (F-26) oder wenn eine Kurve
+        ohne Leistungswert den Tag stehen lässt (N-596, s. ``hole_tagesverlauf``).
     """
     # Provenance-Writer codiert die Trigger-Quelle (Scheduler / Monatsabschluss /
     # manuelles Reaggregate / Vollbackfill). Source bleibt einheitlich
@@ -1617,7 +1994,10 @@ async def aggregate_day(
 
     sensor_mapping = anlage.sensor_mapping or {}
 
-    rohdaten = await hole_tagesverlauf(anlage, datum, db, prefetched_tagesverlauf)
+    rohdaten = await hole_tagesverlauf(
+        anlage, datum, db, prefetched_tagesverlauf,
+        source=source, leere_kurve_erlaubt=leere_kurve_erlaubt,
+    )
     if rohdaten is None:
         return None
     serien, punkte_raw, vortagsrand_raw, synthetische_slots = rohdaten
@@ -1655,10 +2035,28 @@ async def aggregate_day(
     (
         preserved_felder, preserved_quellen,
         preserved_komponenten_kwh, preserved_komponenten_starts,
+        gerettet_stunden,
     ) = await rette_und_loesche(anlage, datum, db)
 
     # O1 (Vorlage §10): Slots mit Zählerwert, aber ohne Leistungspunkt.
     punkte = ergaenze_zaehlerslots(punkte, kwh_pro_stunde)
+
+    # ── N-595 (#422): gerettete Stundenfelder zusammenführen ──────────────
+    # VOR dem Kontext, damit jeder Leser (Stundenzeile, Vollzyklen über
+    # `akku.soc_values`) dieselben Werte sieht. Die Quelle gewinnt, wo sie
+    # liefert; eine Zeile entsteht nur für Slots aus `punkte` — die Rettung
+    # erfindet keine.
+    (
+        betriebsmodus_je_stunde, soc_je_stunde, soc_stunden, strompreis_stunden,
+        gerettete_herkunft,
+    ) = fuehre_gerettete_stunden_zusammen(
+        gerettet_stunden,
+        betriebsmodus_je_stunde=betriebsmodus_je_stunde,
+        soc_je_stunde=soc_je_stunde,
+        soc_stunden=soc_stunden,
+        strompreis_stunden=strompreis_stunden,
+        invs_by_id=invs_by_id,
+    )
 
     # ── Stundenwerte berechnen + speichern ────────────────────────────────
     akku = TagesAkkumulator()
@@ -1677,6 +2075,7 @@ async def aggregate_day(
         strompreis_stunden=strompreis_stunden,
         wp_starts_pro_stunde=wp_starts_pro_stunde,
         wp_betriebsstunden_pro_stunde=wp_betriebsstunden_pro_stunde,
+        gerettete_herkunft=gerettete_herkunft,
     )
 
     for punkt in punkte:
