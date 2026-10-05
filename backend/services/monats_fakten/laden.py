@@ -29,7 +29,12 @@ from backend.services.energie_profil.monats_aus_tagen import (
     TagesMonatsSumme,
     lade_monats_summen_aus_tagen,
 )
-from backend.services.pv_monatswerte import lade_pv_je_monat, pv_summe_je_monat
+from backend.services.pv_monatswerte import (
+    BkwAnteile,
+    lade_pv_je_monat,
+    pv_summe_je_monat,
+    pv_teilsumme_je_monat,
+)
 from backend.services.monats_fakten.bau import _baue_fakt
 from backend.services.monats_fakten.fakten import MonatsFakt, MonatsSchluessel
 from backend.services.monats_fakten.roh import _RohMonat, _ein_jahr, _im_fenster, _lade_imd, _lade_monatsdaten
@@ -102,9 +107,30 @@ async def lade_monats_fakten(
     # PV über den Read-time-SoT (P7): gemessene Modulwerte + Lücken aus dem
     # Anlagen-Aggregat. NIE die Rohspalte direkt — sie ist entweder eine
     # Teilsumme oder sie überschreibt Messungen.
+    #
+    # N-611: der Anlagenwert steht für ALLE PV-Quellen. Das Balkonkraftwerk geht
+    # hier nicht in die Modul-Auflösung (es kommt in `bau.py` als `bkw_erzeugung`
+    # dazu), sein eigener Wert mindert aber den Anlagenwert, bevor der Rest die
+    # Modul-Lücken füllt — sonst stünde es zweimal in `pv_kwh`. Dafür reicht die
+    # Schicht ihre Investitionen UNGEFILTERT durch; Zeitfilter und Abtretung
+    # entscheidet `lade_pv_je_monat` je Monat (ADR-002/P11, N-386, #123).
+    #
+    # N-621: ein Balkonkraftwerk OHNE eigenen Wert bekommt in einem Monat mit
+    # gespeichertem Anlagenwert seinen kWp-Anteil am Rest — dieselbe Auflösung
+    # wie die Modul-Lücken, nur getrennt zurückgegeben (`bkw_anteile`), damit
+    # `pv_je_modul` bei den Modulen bleibt (F-10). Er geht in `bau.py` als
+    # `bkw_aus_anlagenwert_kwh` in `pv_kwh` und verdrängt im selben Monat den
+    # Rest-Eigenverbrauch (P9, unten in der Faltung) und den BKW-Tageswert.
     pv_module = [i for i in investitionen if i.typ == "pv-module"]
-    pv_je_modul = await lade_pv_je_monat(db, anlage_id, pv_module, jahr=_ein_jahr(von, bis))
+    bkw_anteile: BkwAnteile = {}
+    pv_je_modul = await lade_pv_je_monat(
+        db, anlage_id, pv_module, jahr=_ein_jahr(von, bis), investitionen=investitionen,
+        bkw_anteile=bkw_anteile,
+    )
     pv_summen = pv_summe_je_monat(pv_je_modul)
+    # N-626: die Anzeige-Summe eines Monats mit Modul-Lücke ohne Anlagenwert (die vorhandenen Werte);
+    # `bau.py` nimmt sie erst nach der vollständigen Summe und dem Tageswert.
+    pv_teilsummen = pv_teilsumme_je_monat(pv_je_modul)
 
     # N-266: Balkonkraftwerke, unter denen `pv-module` hängen. Ihre Erzeugung
     # steckt seit E4 in `pv_je_modul` (der BKW-Monatswert füllt dort die Lücken
@@ -153,6 +179,7 @@ async def lade_monats_fakten(
         roh.setdefault((imd.jahr, imd.monat), _RohMonat()).falte(
             inv, daten,
             abgetretene_bkw=abgetretene_bkw_im_monat(imd.jahr, imd.monat),
+            bkw_mit_anlagenanteil=frozenset(bkw_anteile.get((imd.jahr, imd.monat), {})),
             source_provenance=imd.source_provenance,
         )
         if inv.typ == "waermepumpe":
@@ -252,6 +279,7 @@ async def lade_monats_fakten(
         set(monatsdaten_by_ym)
         | set(pv_summen)
         | set(pv_je_modul)
+        | set(bkw_anteile)
         | set(roh)
         # ⚠ Nur mit dem Flag erweitert die Tagesebene die Grundgesamtheit. Wurde
         # sie allein für den Ladeanteil geholt, darf sie KEINE zusätzlichen
@@ -342,7 +370,9 @@ async def lade_monats_fakten(
                 roh.get(schluessel, _RohMonat()),
                 monatsdaten=monatsdaten_by_ym.get(schluessel),
                 pv_modul_summe=pv_summen.get(schluessel),
+                pv_modul_teilsumme=pv_teilsummen.get(schluessel),
                 pv_je_modul=pv_je_modul.get(schluessel, {}),
+                bkw_aus_anlagenwert=bkw_anteile.get(schluessel, {}),
                 investitionen=investitionen,
                 neg_preis_kwh=(neg_preis_je_monat or {}).get(schluessel),
                 tarif_cache=tarif_cache,
@@ -388,6 +418,9 @@ async def _ergaenze_modus_split_ohne_abschluss(
             r = roh.setdefault(schluessel, _RohMonat())
             r.wp_modus_strom_heizen += split.heizen_kwh
             r.wp_modus_strom_kuehlen += split.kuehlen_kwh
+            # N-609: der nachgetragene Kühlanteil gehört auch zur Zeile SEINES Geräts — sonst rechnete die
+            # Gerätezeile mit vollem Strom, die Anlagensumme ohne Kühlstrom (gemessen 115 gegen 124 €).
+            r.wp_je_geraet.setdefault(int(inv_id), [0.0, 0.0, 0.0])[2] += split.kuehlen_kwh
             r.wp_modus_strom_warmwasser += split.warmwasser_kwh
             # ⭐ **SOLL-§9-E7/Option A — auch hier, und hier ist es immer der
             # abgeleitete Zweig.** `lade_modus_split_ohne_abschluss` trägt

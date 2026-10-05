@@ -9,7 +9,6 @@ Reine Datenschicht — keine HTTP-, keine Render-Aufrufe.
 """
 from __future__ import annotations
 
-from collections import defaultdict
 from calendar import monthrange
 from datetime import date, datetime
 from typing import Optional
@@ -19,12 +18,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.berechnungen import (
     PV_ERZEUGER_TYPEN,
+    berechne_spez_ertrag_annualisiert,
+    monatsgewichte_aus_pvgis,
+    PV_QUELLE_FEHLT,
+    PV_QUELLE_VERTEILT,
     FinanzMonatsZeile,
     autarkie_prozent,
     berechne_finanz_aggregat,
     eigenverbrauchsquote_prozent,
-    einspeise_erloes_euro,
     relevante_kosten_aus_investitionen,
+    soll_im_laufmonat,
     spezifischer_ertrag_kwh_kwp,
     vollzyklen as berechne_vollzyklen,
 )
@@ -37,21 +40,29 @@ from backend.core.calculations import (
     CO2_FAKTOR_STROM_KG_KWH,
     co2_wp_ersparnis_kg,
 )
-from backend.core.berechnungen.ust_eigenverbrauch import (
-    UstJahresanteil,
-    bemessungsgrundlage_aus_investitionen,
-    ust_eigenverbrauch_fuer_anlage,
+from backend.core.berechnungen.ergebnis import ErgebnisEingang, berechne_ergebnis, ust_anteil_euro
+from backend.services.ust_satz import (
+    grundgesamtheit as ust_grundgesamtheit,
+    ust_eigenverbrauch_zeitraum,
+    ust_satz_des_jahres,
 )
 from backend.core.wirtschaftlichkeit_defaults import (
     EINSPEISEVERGUETUNG_DEFAULT_CENT,
     NETZBEZUG_DEFAULT_CENT,
 )
 from backend.models.anlage import Anlage
-from backend.models.investition import Investition, InvestitionTyp
+from backend.models.investition import Investition
 from backend.models.monatsdaten import Monatsdaten
 from backend.services.prognose_auswahl import lade_aktive_prognose
+from backend.services.pv_monatswerte import lade_pv_je_monat
 from backend.core.berechnungen.anlagen_kwp import anlagen_kwp
-from backend.core.berechnungen.erzeuger_traeger import erzeuger_traeger
+from backend.core.berechnungen.erzeuger_traeger import (
+    erzeuger_traeger,
+    selbst_tragende_bkw_ids,
+    traeger_im_monat,
+    traeger_zeilen,
+    verteilungsnenner_kwp,
+)
 from backend.core.investition_kennwerte import get_erzeuger_kwp
 from backend.models.strompreis import Strompreis
 
@@ -184,6 +195,11 @@ async def build_jahresbericht_context(
         bis=None if ist_gesamtzeitraum else (jahr, 12),
     )
     fakten_by_ym = {f.schluessel: f for f in fakten}
+    # USt auf den Eigenverbrauch — der EINE Eingang (`services/ust_satz.py`, G1, 03.10.2026): Satz je Kalenderjahr,
+    # angewandt auf die Monate der Grundgesamtheit (abgeschlossen, Erzeuger aktiv). So ist Σ der Monatszeilen der
+    # KPI-Betrag (E6a der Vorlage Ergebnisgrößen) — vorher fehlte die USt in den Zeilen ganz.
+    _ust_saetze = {_j: ust_satz_des_jahres(anlage, investitionen, fakten, _j) for _j in sorted({f.jahr for f in fakten})}
+    _ust_monate = {f.schluessel for _j in _ust_saetze for f in ust_grundgesamtheit(fakten, _j)}
 
     # ── 6. Monatsdaten (Zähler-Werte) ───────────────────────────────────
     if ist_gesamtzeitraum:
@@ -224,13 +240,12 @@ async def build_jahresbericht_context(
     # Dieser Builder übergab den Rest-Term bisher gar nicht: ein BKW, das nur
     # `eigenverbrauch_kwh` führt, fehlte im Jahresbericht komplett, während
     # Cockpit und Aussichten es (unterschiedlich) berücksichtigten.
-    pv_by_year_month = {f.schluessel: f.erzeugung.pv_kwh for f in fakten}
     bkw_rest_ev_by_ym = {f.schluessel: f.bkw.rest_eigenverbrauch_kwh for f in fakten}
 
     # N93: Sonstige Erzeuger (z. B. Mini-BHKW) speisen hinter DENSELBEN
     # Hauszähler — ihre Erzeugung gehört in die EV-/Autarkie-Ableitung, sonst
     # drückt der gemessene Einspeise-Zähler die Bilanz still zu niedrig.
-    # **Bewusst getrennt von `pv_by_year_month`:** die PV-EIGENEN Kennzahlen
+    # **Bewusst getrennt von der PV (`fakt.erzeugung.pv_kwh`):** die PV-EIGENEN Kennzahlen
     # (spezifischer Ertrag, SOLL/IST, String-Vergleich) bleiben rein PV — ein
     # Brennstoff-Erzeuger im PV-Nenner wäre ein stiller Rechenfehler. Genau
     # deshalb trägt die Schicht beide Summen getrennt (`pv_kwh` vs.
@@ -303,10 +318,6 @@ async def build_jahresbericht_context(
     _tarif_cache: dict[date, dict] = {}
     monats_zeilen: list[dict] = []
     finanz_zeilen: list[FinanzMonatsZeile] = []
-    # Dieselben Zeilen, nur nach Kalenderjahr sortiert — für die USt, die je
-    # Jahr rechnet (N-130). `eigenverbrauch_kwh` des Aggregats ist die Summe der
-    # Monatswerte, das Zerlegen ist also exakt und keine Näherung.
-    finanz_zeilen_je_jahr: dict[int, list[FinanzMonatsZeile]] = defaultdict(list)
 
     def _leere_zeile(j: int, m: int) -> dict:
         """Anzeige-Zeile für einen Monat ganz ohne Spur (kein Zähler, kein IMD).
@@ -348,15 +359,24 @@ async def build_jahresbericht_context(
             db, anlage_id, finanz_zeile_eingabe(fakt), tarif_cache=_tarif_cache
         )
         finanz_zeilen.append(zeile)
-        finanz_zeilen_je_jahr[j].append(zeile)
-        # Display aus der Zeile (gleicher Tarif wie der Aggregat-Helper):
-        einsp_eur = einspeise_erloes_euro(
-            einspeisung_kwh=einsp,
-            neg_preis_kwh=fakt.eeg.neg_preis_kwh,
-            verguetung_ct_kwh=zeile.einspeiseverguetung_cent,
-        ).erloes_euro
-        ev_eur = ev * zeile.netzbezug_preis_cent / 100
+        # Display aus der Zeile — über DENSELBEN Aggregat-Helper wie der KPI (eine Zeile), damit Σ Zeilen = KPI auch
+        # bei gemessenen Stundenpreisen gilt (EV-Ersparnis mit dem EV-gewichteten Preis, A-2). Bis 03.10.2026 rechnete
+        # die Zeile `EV × Netzbezugspreis` selbst — bitgleich, solange es keinen eigenen EV-Preis gibt.
+        _fz = berechne_finanz_aggregat([zeile])
+        einsp_eur = _fz.einspeise_erloes_euro
+        ev_eur = _fz.ev_ersparnis_euro
         sonstige_eur = fakt.sonstiges.netto_euro
+        _satz = _ust_saetze.get(j)
+        _ust_m = (
+            ust_anteil_euro(_fz.eigenverbrauch_kwh, _satz.euro_je_kwh)
+            if _satz is not None and (j, m) in _ust_monate else None
+        )
+        # Netto-Ertrag der Zeile = Stufe 1 der Ergebnis-Leiter (mit BKW-Rest, Erlös eigener Satz, Sonstigem, USt) —
+        # bis 03.10.2026 `einsp + ev + sonstige`: Σ der Zeilen wich vom KPI darunter um USt, BKW-Rest und Erzeuger ab.
+        _netto_m = berechne_ergebnis(ErgebnisEingang(
+            einspeise_erloes=einsp_eur, ev_ersparnis=ev_eur, bkw_rest_ersparnis=_fz.bkw_ersparnis_euro,
+            erzeuger_erloes=fakt.sonstiges.einspeise_erloes_euro, sonstige_netto=sonstige_eur, ust_anteil=_ust_m,
+        )).netto_ertrag
         pv_gesamt += pv
         erz_bilanz_gesamt += erzeugung_bilanz
         einsp_gesamt += einsp
@@ -376,7 +396,7 @@ async def build_jahresbericht_context(
             "einsp_erloes_euro": einsp_eur,
             "ev_ersparnis_euro": ev_eur,
             "sonstige_netto_euro": sonstige_eur,
-            "netto_ertrag_euro": einsp_eur + ev_eur + sonstige_eur,
+            "netto_ertrag_euro": _netto_m,
         }
 
     if ist_gesamtzeitraum:
@@ -422,7 +442,6 @@ async def build_jahresbericht_context(
     )
     einspeise_erloes = _finanz.einspeise_erloes_euro
     ev_ersparnis = _finanz.ev_ersparnis_euro
-    netto_ertrag = _finanz.netto_ertrag_euro
 
     investition_gesamt = sum(i.anschaffungskosten_gesamt or 0 for i in investitionen)
     # N-136: über den Layer-SoT, nicht als eigene Form daneben. Hier stand bis
@@ -459,27 +478,16 @@ async def build_jahresbericht_context(
     # Entscheidung für die ungeklemmte Form — und sie hat den Befund N-136
     # dreiundzwanzig Tage lang als gewollt gelesen aussehen lassen. Beide
     # Größen kommen jetzt aus dem Layer (s. `investition_mehrkosten` oben).
-    pv_je_jahr: dict[int, float] = defaultdict(float)
-    for (_j, _m), _pv in pv_by_year_month.items():
-        pv_je_jahr[_j] += _pv
-    ust_jahresanteile = [
-        UstJahresanteil(
-            jahr=_j,
-            eigenverbrauch_kwh=berechne_finanz_aggregat(
-                finanz_zeilen_je_jahr[_j]
-            ).eigenverbrauch_kwh,
-            pv_kwh=pv_je_jahr.get(_j, 0.0),
-            monate=len(finanz_zeilen_je_jahr[_j]),
-        )
-        for _j in sorted(finanz_zeilen_je_jahr)
-    ]
-    ust_eigenverbrauch = ust_eigenverbrauch_fuer_anlage(
-        anlage,
-        jahresanteile=ust_jahresanteile,
-        bemessungsgrundlage_euro=bemessungsgrundlage_aus_investitionen(investitionen),
-        betriebskosten_jahr_euro=betriebskosten_jahr,
-    )
-    netto_ertrag -= ust_eigenverbrauch
+    # G1 (03.10.2026): der Satz aus dem EINEN Eingang `services/ust_satz.py` — im Jahr aktive Investitionen für
+    # Bemessung UND Betriebskosten (Regel 05.06.2026), Grundgesamtheit = abgeschlossene Monate mit aktivem Erzeuger,
+    # Σ der Monats-Eigenverbräuche. Bis dahin: alle Investitionen, alle Fakten-Monate dieses Builders.
+    ust_eigenverbrauch = ust_eigenverbrauch_zeitraum(anlage, investitionen, fakten)
+    # Stufe 1 der Ergebnis-Leiter — dieselbe Funktion wie Übersicht, HA-Sensor und Cockpit → Monat/Jahr.
+    netto_ertrag = berechne_ergebnis(ErgebnisEingang(
+        einspeise_erloes=_finanz.einspeise_erloes_euro, ev_ersparnis=_finanz.ev_ersparnis_euro,
+        bkw_rest_ersparnis=_finanz.bkw_ersparnis_euro, erzeuger_erloes=_finanz.erzeuger_erloes_euro,
+        sonstige_netto=_finanz.sonstige_netto_euro, ust_anteil=ust_eigenverbrauch,
+    )).netto_ertrag
 
     anzahl_monate = len(monats_zeilen)
     betriebskosten_zeitraum = betriebskosten_jahr * anzahl_monate / 12 if anzahl_monate else 0
@@ -598,21 +606,73 @@ async def build_jahresbericht_context(
     # ── 10. String-Vergleich SOLL/IST ───────────────────────────────────
     # Erzeuger, nicht nur `pv-module` (F-10): eine reine Balkonkraftwerk-Anlage
     # bekam hier eine leere Tabelle, obwohl sie seit #367 ein PVGIS-SOLL hat.
-    # Derselbe Schnitt wie im API-Pfad `api/routes/cockpit/pv_strings.py`, damit
-    # PDF und Cockpit dieselben Zeilen zeigen.
+    # Dieselben Zeilen und derselbe Nenner wie Komponenten → PV-Strings
+    # (`api/routes/cockpit/pv_strings.py`) — beide über dieselben Funktionen
+    # des Selektor-Moduls (N-614).
     # N-266: `erzeuger_traeger` — ein Balkonkraftwerk mit Modul-Kindern ist hier
     # keine eigene String-Zeile mehr, seine Kinder sind es. Bliebe es drin,
     # stünde es doppelt in der Tabelle UND verdoppelte den Verteilungsnenner
     # `gesamt_kwp` darunter, sodass jeder String zu wenig SOLL bekäme.
-    pv_module = erzeuger_traeger(
-        [i for i in investitionen if i.typ in PV_ERZEUGER_TYPEN]
-    )
+    # ⛔ N-614: Das gilt je MONAT, nicht für den Berichtszeitraum. Bis 03.10.2026
+    # lief der Selektor hier einmal über alle Erzeuger: ein BKW, dem im
+    # Berichtszeitraum Module zugeordnet wurden, hatte keine Zeile, und seine
+    # Erzeugung aus den Monaten davor fehlte in der Summe des Abschnitts
+    # (gemessen: 930 gegen 1860 kWh der Monatstabelle desselben PDFs).
+    # `struktur` bleibt die Zuordnung über alle Erzeuger des Berichts (zeitblind
+    # wie bisher, Issue #123); welche BKW in welchem Monat noch selbst tragen,
+    # entscheidet `selbst_tragende_bkw_ids` — Zeitfilter vor dem Selektor.
+    erzeuger_alle = [i for i in investitionen if i.typ in PV_ERZEUGER_TYPEN]
+    struktur = erzeuger_traeger(erzeuger_alle)
+    # Die Monate des Berichts — für die Zeilen (welches BKW trägt im Zeitraum
+    # irgendwann selbst) und für den Hinweis „n von N Monaten" unten.
+    bericht_monate = [(j, m) for j in alle_jahre for m in range(1, 13)]
+    selbst_je_monat = {
+        jm: selbst_tragende_bkw_ids(erzeuger_alle, *jm) for jm in bericht_monate
+    }
+    selbst_im_zeitraum = frozenset().union(*selbst_je_monat.values())
+    pv_module = traeger_zeilen(erzeuger_alle, struktur, selbst_im_zeitraum)
     # kWp über den SoT-Dispatcher (Spalte → parameter-JSON, beim BKW
     # `leistung_wp × anzahl`) — sonst ist der SOLL-Verteilungs-Nenner bei
     # `parameter`-gepflegten Modulen eine Teilsumme, und der
     # `or anlage.leistung_kwp`-Fallback greift nur bei Summe 0, nicht bei
     # gemischter Pflege (N73/P3).
-    gesamt_kwp = sum(get_erzeuger_kwp(i) for i in pv_module) or (anlage.leistung_kwp or 1)
+    gesamt_kwp = verteilungsnenner_kwp(struktur, anlage.leistung_kwp)
+    # N-614: je Monat der Nenner der Menge, die trägt — ein BKW, das im Monat
+    # selbst trägt, ersetzt darin seine Kinder (nie beide im Nenner). Ohne
+    # selbst tragendes BKW ist es der Nenner der Struktur (wie PV-Strings).
+    _nenner_cache: dict[tuple[int, int], float] = {}
+
+    def _nenner_im_monat(j: int, m: int) -> float:
+        if (j, m) not in _nenner_cache:
+            selbst = selbst_je_monat.get((j, m))
+            if selbst is None:
+                selbst = selbst_tragende_bkw_ids(erzeuger_alle, j, m)
+            _nenner_cache[(j, m)] = gesamt_kwp if not selbst else verteilungsnenner_kwp(
+                traeger_im_monat(erzeuger_alle, struktur, selbst), anlage.leistung_kwp,
+            )
+        return _nenner_cache[(j, m)]
+
+    # ⛔ N-616: Die Monate, über die eine Zeile verglichen wird, sind die Monate,
+    # in denen SIE einen Wert hat — dieselbe Regel wie Komponenten → PV-Strings
+    # (`_lade_ist_je_modul`: jeder Monat, für den `lade_pv_je_monat` der Zeile
+    # einen gemessenen oder verteilten Wert liefert). Bis 04.10.2026 stand das
+    # volle Jahres-SOLL (× Jahre) gegen das IST der erfassten Monate: im
+    # laufenden Jahr, im Jahr der Inbetriebnahme und im Gesamtzeitraum nannte
+    # jede Zeile eine Abweichung, die nur das Datum maß (gemessen: 2026 mit 6
+    # von 12 Monaten −52 %). „Monat mit Wert" schließt die Abtretung schon ein:
+    # `lade_pv_je_monat` entscheidet je Monat, wer trägt (ADR-002/P11) — ein
+    # BKW hat nach der Abtretung keinen Wert mehr, seine Kinder vor ihrer
+    # Anschaffung keinen, ein stillgelegter String danach keinen. Damit gilt
+    # die Monatsrechnung aus N-614 für jede Anlage, nicht nur für eine mit
+    # spät tragendem Balkonkraftwerk.
+    pv_aufgeloest = await lade_pv_je_monat(
+        db, anlage_id, erzeuger_alle, None if ist_gesamtzeitraum else jahr,
+    )
+    monate_je_zeile: dict[int, list[tuple[int, int]]] = {}
+    for jm, werte in sorted(pv_aufgeloest.items()):
+        for inv_id, w in werte.items():
+            if w.quelle != PV_QUELLE_FEHLT:
+                monate_je_zeile.setdefault(inv_id, []).append(jm)
     # Dieselbe Prognose wie in Abschnitt 4 — sonst widerspräche der
     # String-Vergleich der Monatstabelle desselben PDFs.
     prognose_monate: dict[int, float] = {}
@@ -635,43 +695,92 @@ async def build_jahresbericht_context(
                 }
             except (ValueError, TypeError, KeyError):
                 pass
-    anzahl_jahre = len(alle_jahre) if ist_gesamtzeitraum else 1
+    monate_zeitraum = len(bericht_monate)
 
     string_vergleiche = []
     for inv in pv_module:
         kwp = get_erzeuger_kwp(inv)
-        anteil = kwp / gesamt_kwp if gesamt_kwp else 0
-        # IST je Modul aus der P7-Auflösung (`erzeugung.pv_je_modul`): gemessene
-        # Werte, und wo nur das Anlagen-Aggregat gepflegt ist, dessen
-        # kWp-Verteilung. Die rohe IMD-Summe stand hier bei Aggregat-Pflege auf
-        # 0 — der String-Vergleich zeigte dann 100 % Abweichung nach unten.
-        #
-        # Das Balkonkraftwerk steht NICHT in `pv_je_modul` (dort nur `pv-module`,
-        # weil dessen Σ `pv_module_kwh` in die ROI-Rechnung geht und das BKW
-        # dort eine eigene Zeile hat). Sein IST kommt deshalb aus
-        # `bkw.erzeugung_je_investition` — F-10. Ohne diesen Zweig hätte die
-        # bloße Typ-Erweiterung oben eine Zeile mit **0 kWh IST** erzeugt, also
-        # 100 % Abweichung nach unten: schlimmer als die leere Tabelle vorher.
-        if inv.typ == InvestitionTyp.BALKONKRAFTWERK.value:
-            ist_kwh = sum(
-                f.bkw.erzeugung_je_investition.get(inv.id, 0.0) for f in fakten
-            )
-        else:
-            ist_kwh = sum(
-                w.pv_erzeugung_kwh
-                for f in fakten
-                for modul_id, w in f.erzeugung.pv_je_modul.items()
-                if modul_id == inv.id
-            )
+        # ⛔ N-620: IST je Zeile aus DERSELBEN Auflösung wie Komponenten →
+        # PV-Strings — `lade_pv_je_monat` über Module UND Balkonkraftwerke
+        # (oben, `pv_aufgeloest`). Bis 04.10.2026 kam das IST hier aus den
+        # Monats-Fakten (`erzeugung.pv_je_modul` für Module,
+        # `bkw.erzeugung_je_investition` für BKW). Beide Wege tragen dieselbe
+        # Summe, aber nicht dieselbe Zeile: in einem Monat mit Anlagenwert und
+        # einem BKW ohne eigenen Wert verteilen die Fakten den Rest nur auf die
+        # Module (das BKW ist dort nicht Empfänger), PV-Strings auf Module und
+        # BKW nach kWp (gemessen 2026: Balkon 68 gegen 192,7, WestP 1.726 gegen
+        # 1.602 kWh; Σ beider Sichten 3.976). Der Kommentar oben sagt zu, dass
+        # PDF und PV-Strings dieselben Zeilen zeigen — jetzt auch dieselben
+        # Zahlen. Die Monats-Fakten selbst (`pv_kwh`, `bkw_kwh`, `pv_je_modul`,
+        # P9) bleiben unberührt; nur die Zuordnung je Zeile kommt von hier.
+        # F-10 (das BKW ist eine Erzeuger-Zeile) bleibt damit gewahrt: die
+        # Auflösung liefert ihm seinen eigenen Wert, sonst seinen kWp-Anteil.
+        monate = monate_je_zeile.get(inv.id, [])
+        werte_zeile = [pv_aufgeloest[jm][inv.id] for jm in monate]
+        ist_kwh = sum(w.pv_erzeugung_kwh for w in werte_zeile)
+        # Kennzeichnung wie PV-Strings („geschätzt (kWp-Anteil)"): ein einziger
+        # verteilter Monat macht den Zeitraum verteilt (`_rollup_quelle`).
+        ist_verteilt = any(w.quelle == PV_QUELLE_VERTEILT for w in werte_zeile)
         modul_prognose = prognose_per_modul.get(inv.id)
-        if modul_prognose is not None:
-            prognose_kwh = sum(modul_prognose.values()) * anzahl_jahre
-        else:
-            prognose_kwh = sum(prognose_monate.values()) * anteil * anzahl_jahre
+        # SOLL nur über die Monate der Zeile (N-616), je Monat mit dem kWp-Anteil
+        # an der Menge, die in diesem Monat trägt (N-614), und im Anschaffungs-/
+        # Stilllegungsmonat auf die Laufzeit gekürzt (F-34) — dieselbe Regel wie
+        # Komponenten → PV-Strings. Monate eines Jahres mit demselben Anteil
+        # werden erst summiert und dann einmal mit ihm multipliziert: so ist ein
+        # vollständig erfasstes Jahr Rechenschritt für Rechenschritt die frühere
+        # Jahresformel `Σ PVGIS × Anteil` (bitgleich, nicht nur auf die
+        # angezeigte Stelle).
+        summen_je_anteil: dict[tuple[int, float], float] = {}
+        gekuerzte_monate = 0.0
+        for (j, m) in monate:
+            if modul_prognose is not None:
+                prog, faktor = modul_prognose.get(m, 0), 1.0
+            else:
+                nenner = _nenner_im_monat(j, m)
+                prog, faktor = prognose_monate.get(m, 0), (kwp / nenner if nenner > 0 else 0)
+            voll = prog * faktor
+            gekuerzt = soll_im_laufmonat(voll, inv, j, m)
+            if gekuerzt != voll:
+                gekuerzte_monate += gekuerzt
+            else:
+                summen_je_anteil[(j, faktor)] = summen_je_anteil.get((j, faktor), 0.0) + prog
+        prognose_kwh = 0.0
+        for (_, faktor), summe in summen_je_anteil.items():
+            prognose_kwh += summe * faktor
+        prognose_kwh += gekuerzte_monate
         if prognose_kwh > 0 or ist_kwh > 0:
             abw = ist_kwh - prognose_kwh
             abw_pct = (abw / prognose_kwh * 100) if prognose_kwh > 0 else 0
-            spez = (ist_kwh / kwp / anzahl_jahre) if kwp else 0
+            # Spezifischer Ertrag. Im Einzeljahr Erzeugung ÷ kWp über die Monate
+            # der Zeile, ohne Hochrechnung (wie PV-Strings und die Kopfkennzahl
+            # „Spez. Ertrag (Zeitraum)"). Im Gesamtzeitraum ein Jahreswert — bis
+            # 04.10.2026 ÷ ALLE Jahre des Berichts, sodass jeder später zugebaute
+            # oder früher abgetretene Erzeuger zu niedrig stand. ⛔ Der Jahreswert
+            # kommt aus DER Layer-Formel der Cockpit-Kachel und des HA-Sensors
+            # (`berechne_spez_ertrag_annualisiert`, saisonal gewichtet), je Zeile
+            # aufgerufen: die Monate mit Wert, die eigene Investition, als
+            # Gewichte das Monats-SOLL dieser Zeile (Modul-Prognose, sonst die
+            # PVGIS-Monatswerte der Anlage, ohne beides die 52°N-Verteilung der
+            # Formel). Eine lineare Hochrechnung (Monate ÷ 12) stand hier einen
+            # Bauschritt lang und lag bei wenigen Monaten weit daneben (gemessen
+            # bei wahren 1.000 kWh/kWp: Mai–Sep 1.464, Okt–Feb 468, nur Juni
+            # 1.620). `None` (kein Wert, keine Leistung) zeigt das PDF als „–".
+            if ist_gesamtzeitraum:
+                if modul_prognose is not None:
+                    gewichte = {m: w for m, w in modul_prognose.items() if w and w > 0} or None
+                else:
+                    gewichte = monatsgewichte_aus_pvgis(
+                        pvgis_prognose.monatswerte if pvgis_prognose else None
+                    ) or None
+                spez = berechne_spez_ertrag_annualisiert(
+                    pv_erzeugung_kwh=ist_kwh,
+                    covered_months=set(monate),
+                    investitionen=[inv],
+                    fallback_kwp=kwp,
+                    monatsgewichte=gewichte,
+                )
+            else:
+                spez = (ist_kwh / kwp) if kwp else 0
             string_vergleiche.append({
                 "bezeichnung": inv.bezeichnung,
                 "leistung_kwp": kwp,
@@ -682,7 +791,19 @@ async def build_jahresbericht_context(
                 "abweichung_kwh": abw,
                 "abweichung_prozent": abw_pct,
                 "spezifischer_ertrag": spez,
+                # N-616: über wie viele Monate diese Zeile verglichen wird — das
+                # Template nennt es, wenn es nicht alle des Zeitraums sind.
+                "monate": len(monate),
+                # N-620: IST in mindestens einem Monat nach kWp verteilt, nicht gemessen.
+                "ist_verteilt": ist_verteilt,
             })
+    # Wird mindestens eine Zeile über weniger Monate verglichen als der
+    # Berichtszeitraum hat (laufendes Jahr, Inbetriebnahme, Zubau, Stilllegung,
+    # Lücke), sagt der Abschnitt es — sonst läse man eine Teilsumme als Jahr.
+    string_vergleich_teilzeitraum = any(
+        s["monate"] < monate_zeitraum for s in string_vergleiche
+    )
+    string_vergleich_verteilt = any(s["ist_verteilt"] for s in string_vergleiche)
 
     # ── 11. Charts (Base64 Data-URIs) ───────────────────────────────────
     monats_labels = [z["monat_name"] for z in monats_zeilen]
@@ -817,6 +938,9 @@ async def build_jahresbericht_context(
         },
         "monats_zeilen": monats_zeilen,
         "string_vergleiche": string_vergleiche,
+        "string_vergleich_monate_zeitraum": monate_zeitraum,
+        "string_vergleich_teilzeitraum": string_vergleich_teilzeitraum,
+        "string_vergleich_verteilt": string_vergleich_verteilt,
         "investitionen": [
             {
                 "typ": i.typ,

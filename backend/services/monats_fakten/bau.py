@@ -16,6 +16,8 @@ from backend.core.berechnungen import (
     berechne_verbrauchs_kennzahlen,
     erzeugung_hinter_zaehler_kwh,
 )
+from backend.core.berechnungen.anlagen_kwp import BKW_TYP, PV_MODUL_TYP
+from backend.core.berechnungen.erzeuger_traeger import abgetretene_bkw_ids
 from backend.models.investition import Investition
 from backend.models.monatsdaten import Monatsdaten
 from backend.core.investition_parameter import ist_dienstlich
@@ -28,7 +30,7 @@ from backend.services.emob_ladeanteil import reichere_ladezeilen_an
 from backend.services.energie_profil.monats_aus_tagen import TagesMonatsSumme
 from backend.utils.sonstige_positionen import berechne_md_sonstige_summen
 from backend.services.monats_fakten.fakten import BkwFakten, EegFakten, EmobFakten, ErzeugungFakten, MetaFakten, MonatsFakt, MonatsSchluessel, SonstigesFakten, SonstigesGeraetFakten, SpeicherFakten, TAGESWERT_BKW, TAGESWERT_EMOB_ANTEIL, TAGESWERT_PV, TAGESWERT_SPEICHER, TAGESWERT_ZAEHLER, ZaehlerFakten
-from backend.services.monats_fakten.fakten_wp import WpFakten
+from backend.services.monats_fakten.fakten_wp import WpFakten, WpGeraetFakten
 from backend.services.monats_fakten.roh import _RohMonat, _erzeuger_aktiv
 from backend.services.monats_fakten.tarif import _lade_tarif
 
@@ -42,7 +44,9 @@ async def _baue_fakt(
     monatsdaten: Optional[Monatsdaten],
     pv_modul_summe: Optional[float],
     pv_je_modul: dict[int, PvModulWert],
+    pv_modul_teilsumme: Optional[float] = None,
     investitionen: list[Investition],
+    bkw_aus_anlagenwert: Optional[dict[int, float]] = None,
     neg_preis_kwh: Optional[float],
     tarif_cache: dict[date, dict],
     zeittarif_cache: dict,
@@ -72,27 +76,62 @@ async def _baue_fakt(
         )
         tageswert_gruppen.add(TAGESWERT_ZAEHLER)
 
+    # N-627 (Bauplan PV-Achse T4, Zusatz Master): die Monatsregel gilt auch im Tageswert-Rückfall.
+    # Ein Balkonkraftwerk, dessen Modul-Kinder in diesem Monat aktiv sind, hat seine Erzeugung an
+    # sie abgetreten (ADR-002/P11); sein Tages-Key (der E4-Rest) gehört im Monat zur Gruppe der
+    # Module, nicht zur BKW-Zeile — sonst nennte derselbe Monat vor dem Abschluss BKW 90 / Module
+    # 540 und danach 0 / 630. Eine Umbuchung zwischen den zwei Gruppen; die Summe bleibt.
+    tages_module = tages_bkw = 0.0
+    if tages_summe is not None:
+        _abgetreten = abgetretene_bkw_ids([
+            i for i in investitionen
+            if i.typ in (PV_MODUL_TYP, BKW_TYP) and i.ist_aktiv_im_monat(jahr, monat)
+        ])
+        _abgetreten_tag = sum(
+            v for k, v in (tages_summe.bkw_je_inv or {}).items() if k.isdigit() and int(k) in _abgetreten
+        )
+        tages_module = tages_summe.pv_module_kwh + _abgetreten_tag
+        tages_bkw = max(0.0, tages_summe.bkw_kwh - _abgetreten_tag)
+
     # PV nur, wenn die P7-Auflösung nichts ergab (`None` = kein Modulwert und
     # kein Anlagen-Aggregat). Ein aufgelöster Wert — auch ein teilweise
     # geschätzter — bleibt unangetastet.
-    if pv_modul_summe is None and tages_summe is not None and tages_summe.pv_module_kwh > 0:
-        pv_modul_summe = tages_summe.pv_module_kwh
+    if pv_modul_summe is None and tages_summe is not None and tages_module > 0:
+        pv_modul_summe = tages_module
         pv_vollstaendig = True
         tageswert_gruppen.add(TAGESWERT_PV)
     else:
         pv_vollstaendig = pv_modul_summe is not None or not pv_je_modul
+        # N-626 (Gernot 04.10.2026): fehlt einem Modul der Wert und gibt es keinen Anlagenwert, trägt es
+        # nichts bei — die vorhandenen Werte bleiben in der Summe (vorher fiel die ganze Modulsumme weg:
+        # 90 statt 450). Reihenfolge: vollständige Summe → Tageswert (oben) → Teilsumme. `pv_vollstaendig`
+        # bleibt False — der Hinweis „unvollständig" (`pv_unvollstaendig_hinweis`) und der Daten-Checker
+        # sagen es weiter; `pv_module_kwh` trägt die Teilsumme, sonst blieben Tabelle und ROI leer.
+        if pv_modul_summe is None and pv_modul_teilsumme is not None:
+            pv_modul_summe = pv_modul_teilsumme
 
-    # BKW nur ohne eigene IMD-Zeile im Monat.
+    # N-621: der Anteil der Balkonkraftwerke ohne eigenen Wert am gespeicherten
+    # Anlagenwert (`pv_monatswerte.lade_pv_je_monat`, `bkw_anteile`). Leer ohne
+    # Anlagenwert — dann ist jede Zahl unten dieselbe wie vorher.
+    bkw_anteil = dict(bkw_aus_anlagenwert or {})
+    bkw_aus_anlagenwert_kwh = sum(bkw_anteil.values())
+
+    # BKW nur ohne eigene IMD-Zeile im Monat — und nicht neben einem Anteil am
+    # Anlagenwert (N-621, Tageswert-Vorrang): der gespeicherte Anlagenwert steht
+    # für ALLE PV-Quellen und hat das BKW schon bedacht; der Tageswert käme
+    # obendrauf (gemessen vorher: Anlagenwert 1000, Strings 550 + 380, BKW-Tag
+    # 45 ⇒ mit Tagesebene 975, nach dem Bau sonst 1045).
     bkw_erzeugung = roh.bkw_erzeugung
     if (
         "balkonkraftwerk" not in roh.typen_mit_zeile
+        and not bkw_anteil
         and tages_summe is not None
-        and tages_summe.bkw_kwh > 0
+        and tages_bkw > 0
     ):
-        bkw_erzeugung = tages_summe.bkw_kwh
+        bkw_erzeugung = tages_bkw
         tageswert_gruppen.add(TAGESWERT_BKW)
 
-    pv_kwh = (pv_modul_summe or 0.0) + bkw_erzeugung
+    pv_kwh = (pv_modul_summe or 0.0) + bkw_erzeugung + bkw_aus_anlagenwert_kwh
     erzeugung = ErzeugungFakten(
         pv_module_kwh=pv_modul_summe,
         bkw_kwh=bkw_erzeugung,
@@ -102,6 +141,7 @@ async def _baue_fakt(
         hinter_zaehler_kwh=erzeugung_hinter_zaehler_kwh(pv_kwh, roh.sonstiges_erzeugung),
         pv_je_modul=pv_je_modul,
         pv_vollstaendig=pv_vollstaendig,
+        bkw_aus_anlagenwert_kwh=bkw_aus_anlagenwert_kwh,
     )
 
     # ── PV-Anteil der Heimladung: echter Wert gewinnt, sonst ableiten ──────
@@ -318,6 +358,10 @@ async def _baue_fakt(
         speicher=speicher,
         emob=emob,
         wp=WpFakten(
+            je_geraet={
+                inv_id: WpGeraetFakten(strom_kwh=s, waerme_kwh=w, strom_kuehlen_kwh=k)
+                for inv_id, (s, w, k) in roh.wp_je_geraet.items()
+            },
             strom_kwh=roh.wp_strom,
             strom_mit_ersatz_kwh=roh.wp_strom_mit_ersatz,
             waerme_mit_ersatz_kwh=roh.wp_waerme_mit_ersatz,

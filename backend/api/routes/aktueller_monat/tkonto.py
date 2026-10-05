@@ -12,8 +12,8 @@ from backend.core.berechnungen.waermepumpe_kennzahl import heizwaerme_kwh, waerm
 from backend.core.berechnungen import berechne_speicher_ersparnis
 from backend.services.wp_wirtschaftlichkeit import (
     WP_ERSPARNIS_FORMEL,
-    berechne_wp_ersparnis,
     wp_ersparnis_berechnung,
+    wp_ersparnis_zeile,
 )
 from backend.services.eauto_wirtschaftlichkeit import (
     QUELLE_WALLBOX,
@@ -51,6 +51,8 @@ def _baue_investition_financial(
     monats_benzinpreis: Optional[float],
     emob_pool_attr,
     emob_entscheid=None,
+    ev_p: Optional[float] = None,
+    wp_fakt=None,
 ) -> Optional[InvestitionFinancialDetail]:
     """Baut das T-Konto-Detail (InvestitionFinancialDetail) EINER Investition.
 
@@ -63,6 +65,13 @@ def _baue_investition_financial(
     Relevanz hat (Inclusion-Guard: weder Betriebskosten noch Ersparnis/Erlös/
     sonstige Positionen). Preis-/Pool-Kontext wird vom Aufrufer einmal aufgelöst
     und übergeben.
+
+    ``wp_fakt`` (N-609): die Mengen dieser Wärmepumpe aus den Monats-Fakten
+    (``WpGeraetFakten``) — gibt es sie, rechnet die Zeile damit statt mit der rohen
+    IMD-Zeile. Erst damit liest die Zeile denselben Kühlanteil wie Übersicht und
+    Komponenten-Zeitreihe, auch den nachgetragenen eines Monats ohne Abschluss
+    (gemessen 115 gegen 124 €). Ohne Fakten-Eintrag (laufender Monat ohne Zeile,
+    Einzelaufruf) rechnet sie aus ``data`` wie bisher.
     """
     if not inv.aktiv:
         return None
@@ -88,10 +97,14 @@ def _baue_investition_financial(
         ev_kwh = data.get("eigenverbrauch_kwh") or data.get("pv_erzeugung_kwh")
         einsp_kwh = data.get("einspeisung_kwh")
         if ev_kwh:
-            inv_ersparnis = round(ev_kwh * netz_p / 100, 2)
+            # N-607 (A-2): die Zeile ist ein Teil der Eigenverbrauchs-Ersparnis (T-Konto/Tabelle schneiden sie dort
+            # heraus) und trägt deshalb DENSELBEN Preis — den EV-gewichteten, wenn es ihn gibt.
+            _p = ev_p if ev_p is not None else netz_p
+            inv_ersparnis = round(ev_kwh * _p / 100, 2)
             inv_label = "Eigenverbrauch-Ersparnis"
-            inv_formel = "BKW-Eigenverbrauch × Netzbezugspreis"
-            inv_berechnung = f"{fmt_zahl(ev_kwh, 1)} kWh × {fmt_zahl(netz_p, 2)} ct/kWh"
+            inv_formel = ("BKW-Eigenverbrauch × Ø-Preis der vermiedenen Stunden" if ev_p is not None and ev_p != netz_p
+                          else "BKW-Eigenverbrauch × Netzbezugspreis")
+            inv_berechnung = f"{fmt_zahl(ev_kwh, 1)} kWh × {fmt_zahl(_p, 2)} ct/kWh"
         if einsp_kwh and einsp_kwh > 0:
             inv_erloes = round(einsp_kwh * einsp_p / 100, 2)
             # A6: Formel und eingesetzte Werte in GETRENNTE Felder — beides in
@@ -161,20 +174,27 @@ def _baue_investition_financial(
         # die echte Route (`get_aktueller_monat`): Lage B **0** WP-Zeilen,
         # Lage D eine Zeile mit **33,33 EUR**.
         waerme_total = waerme_gesamt_kwh(data.get("waerme_kwh"), waerme, ww)
-        if waerme_total > 0 and strom is not None:
-            wp_result = berechne_wp_ersparnis(
-                wp_waerme_kwh=waerme_total,
-                wp_strom_kwh=strom,
-                wp_strompreis_cent=wp_p,
-                wp_parameter=inv.parameter,
-                monats_gaspreis_cent=monats_gaspreis,
-                # E-B: Kühlen ersetzt keine Heizung (#263 K-2).
-                # B5/X-5c: über den SoT der Betriebsart-Weiche (F-56) — das
-                # Rohfeld kennt nur den abgeleiteten Split; bei gemessenen
-                # Betriebsart-Zählern stand hier 0 und der Kühlstrom blieb im
-                # Vergleich (dieselbe Klasse wie im Hub am 26.08.).
-                strom_kuehlen_kwh=modus_strom_zeile(data).kuehlen_kwh,
-            )
+        # E-B: Kühlen ersetzt keine Heizung (#263 K-2).
+        # B5/X-5c: über den SoT der Betriebsart-Weiche (F-56) — das
+        # Rohfeld kennt nur den abgeleiteten Split; bei gemessenen
+        # Betriebsart-Zählern stand hier 0 und der Kühlstrom blieb im
+        # Vergleich (dieselbe Klasse wie im Hub am 26.08.).
+        kuehlstrom = modus_strom_zeile(data).kuehlen_kwh
+        if wp_fakt is not None:
+            # N-609: dieselben drei Mengen wie Übersicht und Komponenten-Zeitreihe (Monats-Fakten, P10).
+            waerme_total = wp_fakt.waerme_kwh
+            strom = wp_fakt.strom_kwh or None
+            kuehlstrom = wp_fakt.strom_kuehlen_kwh
+        # N-609: die EINE Zeilenregel (Wärme > 0 und Strom > 0, Parameter des Geräts, Preise des Monats).
+        wp_result = wp_ersparnis_zeile(
+            waerme_kwh=waerme_total,
+            strom_kwh=strom,
+            strom_kuehlen_kwh=kuehlstrom,
+            strompreis_cent=wp_p,
+            parameter=inv.parameter,
+            gaspreis_cent=monats_gaspreis,
+        )
+        if wp_result is not None:
             inv_ersparnis = round(wp_result.ersparnis_euro, 2)
             # #411: Der ersetzte Energietraeger ist gepflegt (Gas · Oel ·
             # Strom-Direktheizung) und wird korrekt verrechnet — die

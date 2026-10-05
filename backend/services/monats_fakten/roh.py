@@ -173,6 +173,8 @@ class _RohMonat:
         #: Zähler trägt, hat keine belastbare Gesamt-Arbeitszahl, auch wenn das
         #: zweite Gerät sauber misst.
         self.wp_abgrenzung: Optional[str] = None
+        #: N-609: je ``Investition.id`` ``[strom, wärme, kühlstrom]`` — dieselben Beiträge wie die Summen.
+        self.wp_je_geraet: dict[int, list[float]] = {}
         self.eauto_ladedaten: list[dict] = []
         #: N-555: dieselben E-Auto-Zeilen je ``Investition.id`` — die eine Funktion
         #: (``entscheide_emob_heimladung``) entscheidet je Auto, und ihre Schätzung
@@ -239,6 +241,7 @@ class _RohMonat:
         data: dict,
         *,
         abgetretene_bkw: frozenset = frozenset(),
+        bkw_mit_anlagenanteil: frozenset = frozenset(),
         source_provenance: dict | None = None,
     ) -> None:
         """Faltet EINE IMD-Zeile ein.
@@ -255,6 +258,13 @@ class _RohMonat:
         ``pv_je_modul``/``pv_module_kwh``, einmal hier in ``bkw_erzeugung``.
         Betroffen wären Autarkie, Eigenverbrauchsquote, CO₂, Finanzen,
         Community-Payload und HA-Export.
+
+        ``bkw_mit_anlagenanteil`` (N-621) sind die IDs der Balkonkraftwerke, die
+        in diesem Monat ihren Anteil am gespeicherten Anlagenwert bekommen
+        (``pv_monatswerte.lade_pv_je_monat``, ``bkw_anteile``). Für sie gilt
+        dasselbe wie für ein abtretendes BKW: ihre Erzeugung geht über einen
+        anderen Weg in die PV-Summe (``ErzeugungFakten.bkw_aus_anlagenwert_kwh``),
+        der Ersatzträger von P9 entfällt.
         """
         b = imd_typ_beitrag(inv, data, source_provenance)
         # Dienstwagen zählen NICHT als Beitrag: sie sind aus dem E-Mob-Pool der
@@ -284,9 +294,20 @@ class _RohMonat:
                 erzeugung_kwh=b.bkw_erzeugung,
                 eigenverbrauch_kwh=b.bkw_eigenverbrauch,
             )
-            if hat_abgetreten:
+            # ⚠ N-621 — P9-Zusatzregel: ein BKW ohne eigene Erzeugung, das in
+            # diesem Monat einen Anteil am gespeicherten Anlagenwert bekommt,
+            # trägt KEINEN Ersatz-Eigenverbrauch. Seine Erzeugung geht über den
+            # Anteil in `pv_kwh` ein, der selbst verbrauchte Teil steckt damit
+            # schon in der Ableitung `PV − Einspeisung − Speicherladung` — ein
+            # zweiter Term wäre die Doppelzählung, gegen die P9 geschrieben ist
+            # (gemessen vorher: Anlagenwert 1000, Strings 550 + 380, BKW-Zeile
+            # nur mit Eigenverbrauch 30 ⇒ PV 930 + Ersatz-EV 30). Dieselbe Form
+            # wie die Abtretung im Absatz darüber, aus demselben Grund. Gilt
+            # für jeden Empfänger des Anteils, auch wenn der Rest 0 ist — der
+            # Anlagenwert sagt dann, dass das BKW nichts erzeugt hat.
+            if hat_abgetreten or inv.id in bkw_mit_anlagenanteil:
                 beitrag = bkw_finanz_beitrag(erzeugung_kwh=None, eigenverbrauch_kwh=None)
-            else:
+            if not hat_abgetreten:
                 self.bkw_erzeugung += b.bkw_erzeugung
             # Je Investition zusätzlich zur Summe (F-10): der String-Vergleich
             # des Jahresbericht-PDF stellt jeden Erzeuger einzeln seinem SOLL
@@ -321,6 +342,11 @@ class _RohMonat:
                 self.speicher_preis_gewicht += b.speicher_arbitrage
 
         elif inv.typ == "waermepumpe":
+            # N-609: die Mengen je Gerät aus DEMSELBEN Beitrag wie die Summen darunter (K3 · D1 · Kühlanteil).
+            _geraet = self.wp_je_geraet.setdefault(inv.id, [0.0, 0.0, 0.0])
+            _geraet[0] += b.wp_strom
+            _geraet[1] += b.wp_waerme
+            _geraet[2] += b.wp_modus_strom_kuehlen
             self.wp_strom += b.wp_strom
             # WK-16d: der Rest der Summanden-Achsen, je Geraet aufgeloest und
             # erst danach summiert — wie die Menge darueber. Auf der

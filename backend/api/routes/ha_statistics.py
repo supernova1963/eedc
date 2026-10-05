@@ -23,7 +23,7 @@ from backend.core.exceptions import bad_request, ha_db_unavailable, not_found
 from backend.api.deps import get_db
 from backend.services.activity_service import log_activity
 from backend.core.field_definitions import FELD_LABELS as _FELD_LABELS_REGISTRY
-from backend.core.field_definitions import ist_heimlade_mengen_feld, ist_zaehler_differenz_feld
+from backend.core.field_definitions import basis_feld_key, ist_heimlade_mengen_feld, ist_zaehler_differenz_feld
 from backend.models.anlage import Anlage
 from backend.models.monatsdaten import Monatsdaten
 from backend.models.investition import Investition, InvestitionMonatsdaten
@@ -35,8 +35,14 @@ from backend.services.ha_statistics_service import (
 )
 from backend.services.import_hauszaehler import warnung_monate_ohne_zaehlerwerte
 from backend.services.monatswert_deckel import deckel_je_sensor
+from backend.core.berechnungen.erzeuger_traeger import erzeuger_traeger
 from backend.core.berechnungen.pv_verteilung import PvModul, QUELLE_GEMESSEN, resolve_pv_je_modul
-from backend.services.pv_monatswerte import lade_pv_je_monat, pv_summe_je_monat
+from backend.services.pv_monatswerte import (
+    bkw_ohne_eigenen_wert,
+    eigene_bkw_erzeugung_kwh,
+    lade_pv_je_monat,
+    pv_summe_je_monat,
+)
 from backend.core.investition_kennwerte import get_pv_kwp
 from backend.services.provenance import ABGELEITET_KWP_ANTEIL
 from backend.services.provenance import (
@@ -113,11 +119,19 @@ class StatusResponse(BaseModel):
 # =============================================================================
 # Mapping: sensor_mapping-Key → DB-Feldname (für Monatsabschluss-Kompatibilität)
 # sensor_mapping nutzt Kurzformen ("einspeisung"), DB hat "einspeisung_kwh"
+#
+# N-622 (04.10.2026): `pv_gesamt` fehlte hier seit v2.5.3 — `/monatswerte` lieferte
+# den Anlagen-PV-Zähler als `feld: "pv_gesamt"`, das Formular „Aus HA laden" sucht
+# die Spalte `pv_erzeugung_kwh` und blieb leer (N-534 wirkte für PV nie). Der Wert
+# ist das Anlagen-Aggregat (ADR-002/P7): das Formular zeigt ihn als eigene Zeile,
+# gespeichert wird nur, was der Anwender dort stehen lässt. Einzige Leser dieser
+# Tabelle: `map_sensor_values_to_fields` für `/monatswerte` und `/alle-monatswerte`.
 # =============================================================================
 
 MAPPING_KEY_TO_DB_FELD = {
     "einspeisung": "einspeisung_kwh",
     "netzbezug": "netzbezug_kwh",
+    "pv_gesamt": "pv_erzeugung_kwh",
     "globalstrahlung": "globalstrahlung_kwh_m2",
     "sonnenstunden": "sonnenstunden",
     "temperatur": "durchschnittstemperatur",
@@ -197,8 +211,16 @@ def map_sensor_values_to_fields(
     inv_liste: list[InvestitionMitFelder] = []
 
     # Basis-Felder
+    # N-622 (Härtung): nur Zählerfelder — dieselbe Regel wie Monatsabschluss-Vorschlag,
+    # Import-Vorschau und Sammelimport (`ist_zaehler_differenz_feld`). Der Wert ist eine
+    # Zählerdifferenz (MAX−MIN); bei einem Preis-Sensor (`basis.strompreis`, Geräte-Feld
+    # `speicher_ladepreis_cent`) wäre er die Monatsspanne und landete im Formular.
+    # Innengeräte-Keys (`…_kwh-3`) werden über `basis_feld_key` aufgelöst, damit sie
+    # hier nicht still herausfallen.
     basis = sensor_mapping.get("basis", {})
     for mapping_key, config in basis.items():
+        if not ist_zaehler_differenz_feld(mapping_key):
+            continue
         if config and config.get("strategie") == "sensor":
             sensor_id = config.get("sensor_id")
             if sensor_id and sensor_id in sensor_values:
@@ -223,6 +245,8 @@ def map_sensor_values_to_fields(
         felder: list[MappedMonatswert] = []
 
         for feld, config in felder_config.items():
+            if not ist_zaehler_differenz_feld(basis_feld_key(feld)):
+                continue
             if config and config.get("strategie") == "sensor":
                 sensor_id = config.get("sensor_id")
                 if sensor_id and sensor_id in sensor_values:
@@ -686,7 +710,58 @@ async def get_import_vorschau(
     pv_summen: dict[tuple[int, int], Optional[float]] = {}
     if ((anlage.sensor_mapping.get("basis") or {}).get("pv_gesamt") or {}).get("sensor_id"):
         pv_module_der_anlage = [inv for inv in investitionen.values() if inv.typ == "pv-module"]
-        pv_summen = pv_summe_je_monat(await lade_pv_je_monat(db, anlage_id, pv_module_der_anlage))
+        # N-621: in einem Monat mit gespeichertem Anlagenwert teilen sich die Module den Rest mit den
+        # Balkonkraftwerken ohne eigenen Wert — deren Anteil gehört zur lokalen Zahl wie in den
+        # Monats-Fakten (`pv_kwh = Module + BKW-Wert + BKW-Anteil`). Ohne ihn fiele die Modul-Summe um
+        # den Anteil, und ein übereinstimmender Monat stünde als Konflikt da (gemessen: Anlagenwert 1000,
+        # Süd 550, West und BKW ohne Wert ⇒ lokal 925 statt 1000).
+        vorschau_bkw_anteile: dict = {}
+        pv_summen = pv_summe_je_monat(await lade_pv_je_monat(
+            db, anlage_id, pv_module_der_anlage, investitionen=list(investitionen.values()),
+            bkw_anteile=vorschau_bkw_anteile,
+        ))
+        # N-611: der Anlagen-PV-Zähler misst ALLE PV-Quellen — verglichen wird er deshalb mit
+        # Module + eigenem Wert der selbst tragenden Balkonkraftwerke, also mit derselben Zahl,
+        # die die Monats-Fakten nennen (`pv_kwh = Module + BKW`). Nur Module verglichen, meldete
+        # die Vorschau nach jedem korrekten Import einen Konflikt in Höhe des BKW-Werts. Ein
+        # unvollständiger Monat (`None`) bleibt „fehlt lokal“ — ein BKW-Wert macht ihn nicht voll.
+        for (j, m), summe in pv_summen.items():
+            if summe is None:
+                continue
+            aktive = [inv for inv in investitionen.values() if inv.ist_aktiv_im_monat(j, m)]
+            pv_summen[(j, m)] = summe + eigene_bkw_erzeugung_kwh(aktive, {
+                inv.id: vorhandene_imd[(inv.id, j, m)].verbrauch_daten
+                for inv in aktive if (inv.id, j, m) in vorhandene_imd
+            }) + sum(vorschau_bkw_anteile.get((j, m), {}).values())
+
+        # N-629: Monate OHNE aktives `pv-module` (eine Anlage nur mit Balkonkraftwerk) haben in der
+        # Modul-Auflösung keinen Eintrag — lokal ist dort, was die Balkonkraftwerke tragen: ihre eigenen
+        # Werte plus ihr Anteil am gespeicherten Anlagenwert, über dieselben Helfer wie oben (P11-Selektor).
+        # Bis 04.10.2026 galt ein solcher abgeschlossener Monat als „fehlt lokal“ und wurde zum Import
+        # vorgeschlagen. ⚠ Monate MIT Modul bleiben bei `pv_summe_je_monat`: eine Modul-Lücke ohne
+        # Anlagenwert bleibt „fehlt lokal → importieren“ (der Import schließt sie) — nicht die
+        # Anzeige-Summe der Monats-Fakten, die dort seit N-626 eine Teilsumme trägt.
+        for (j, m) in sorted(
+            {(jj, mm) for (_i, jj, mm) in vorhandene_imd} | set(vorschau_bkw_anteile)
+        ):
+            if (j, m) in pv_summen:
+                continue
+            aktive = [inv for inv in investitionen.values() if inv.ist_aktiv_im_monat(j, m)]
+            if any(inv.typ == "pv-module" for inv in aktive):
+                continue
+            daten = {
+                inv.id: vorhandene_imd[(inv.id, j, m)].verbrauch_daten
+                for inv in aktive if (inv.id, j, m) in vorhandene_imd
+            }
+            ohne_wert = {inv.id for inv in bkw_ohne_eigenen_wert(aktive, daten)}
+            # Träger der Erzeugung über den P11-Selektor — ohne Modul im Monat sind das alle BKW.
+            mit_wert = [
+                inv for inv in erzeuger_traeger(aktive)
+                if inv.typ == "balkonkraftwerk" and inv.id not in ohne_wert
+            ]
+            anteile = vorschau_bkw_anteile.get((j, m), {})
+            if mit_wert or anteile:
+                pv_summen[(j, m)] = eigene_bkw_erzeugung_kwh(aktive, daten) + sum(anteile.values())
 
     # Jeden Monat analysieren
     monate_status: list[MonatImportStatus] = []
@@ -891,25 +966,45 @@ async def _verteile_anlagen_pv(
     bekommt den Wert als Messung ohne Marke; ab zwei Empfängern trägt jeder Anteil
     ``ABGELEITET_KWP_ANTEIL`` — der Daten-Checker klassifiziert den Monat dann als „verteilt“,
     nicht als „fehlt“. Liefert True, wenn mindestens ein Modulwert geschrieben wurde.
+
+    **N-611 — der Zähler misst alle PV-Quellen.** Rest = Zähler − Σ gemessene Module − Σ eigene
+    Werte der selbst tragenden Balkonkraftwerke, nie unter 0 (`eigene_bkw_erzeugung_kwh`, dieselbe
+    Zahl wie auf der Leseseite). Bis dahin landete der BKW-Wert als Anteil in den Modulwerten und
+    stand danach in `pv_kwh = Module + BKW` ein zweites Mal. Empfänger bleiben nur die Module:
+    ein BKW ohne eigenen Wert bekommt keinen Anteil (der Zählerwert selbst wird nicht gespeichert,
+    P7 — die Familie geht an HA-Bauform S1). **N-621 ändert diesen Weg nicht:** die Leseseite gibt
+    einem BKW ohne eigenen Wert seinen Anteil nur, wo ein Anlagenwert GESPEICHERT ist — nach diesem
+    Import gibt es keinen.
     """
     inv_result = await db.execute(
         select(Investition).where(
-            and_(Investition.anlage_id == anlage_id, Investition.typ == "pv-module")
+            and_(
+                Investition.anlage_id == anlage_id,
+                Investition.typ.in_(("pv-module", "balkonkraftwerk")),
+            )
         )
     )
-    module = [inv for inv in inv_result.scalars().all() if inv.ist_aktiv_im_monat(jahr, monat)]
+    # ADR-002/P11: erst der Zeitfilter, dann der Selektor — ein BKW, das in diesem Monat an
+    # Modul-Kinder abgetreten hat, steht schon in deren Werten und mindert den Zähler nicht.
+    aktive = erzeuger_traeger(
+        [inv for inv in inv_result.scalars().all() if inv.ist_aktiv_im_monat(jahr, monat)]
+    )
+    module = [inv for inv in aktive if inv.typ == "pv-module"]
     if not module:
         return False
     imd_result = await db.execute(
         select(InvestitionMonatsdaten).where(
             and_(
-                InvestitionMonatsdaten.investition_id.in_([inv.id for inv in module]),
+                InvestitionMonatsdaten.investition_id.in_([inv.id for inv in aktive]),
                 InvestitionMonatsdaten.jahr == jahr,
                 InvestitionMonatsdaten.monat == monat,
             )
         )
     )
     imd_map = {imd.investition_id: imd for imd in imd_result.scalars().all()}
+    bkw_eigen = eigene_bkw_erzeugung_kwh(
+        aktive, {inv_id: imd.verbrauch_daten for inv_id, imd in imd_map.items()},
+    )
     # Was gemessen ist, sagt die P7-Auflösung — nicht die Rohspalte: ein gespeicherter
     # Wert mit Zerlegungsmarke (#352) ist eine Lücke, die neu verteilt wird.
     lokal = (await lade_pv_je_monat(db, anlage_id, module, jahr)).get((jahr, monat), {})
@@ -921,7 +1016,7 @@ async def _verteile_anlagen_pv(
         return modulwert.pv_erzeugung_kwh
 
     pv_module = [PvModul(inv.id, get_pv_kwp(inv), _gemessen(inv.id)) for inv in module]
-    aufgeloest = resolve_pv_je_modul(aggregat_kwh=pv_gesamt, module=pv_module)
+    aufgeloest = resolve_pv_je_modul(aggregat_kwh=max(0.0, pv_gesamt - bkw_eigen), module=pv_module)
     luecken = [inv for inv in module if _gemessen(inv.id) is None]
     if not luecken:
         return False

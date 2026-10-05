@@ -2,7 +2,6 @@
 Cockpit Übersicht — Aggregierte KPI-Übersicht für eine Anlage.
 """
 
-from collections import Counter
 from datetime import date
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -35,10 +34,8 @@ from backend.core.berechnungen import (
     vollzyklen as berechne_vollzyklen,
 )
 from backend.core.berechnungen import relevante_kosten_aus_investitionen
-from backend.core.berechnungen.ust_eigenverbrauch import (
-    UstJahresanteil,
-    ust_eigenverbrauch_fuer_anlage,
-)
+from backend.core.berechnungen.ergebnis import ErgebnisEingang, berechne_ergebnis
+from backend.services.ust_satz import ust_eigenverbrauch_zeitraum
 from backend.core.calculations import berechne_co2_bilanz
 from backend.services.strompreis_aggregator import lade_preis_aggregate_je_monat
 from backend.services.finanz_zeilen import baue_finanz_zeile
@@ -58,10 +55,11 @@ from backend.services.monats_fakten import (
     finanz_zeile_eingabe,
     lade_monats_fakten,
     pv_unvollstaendig_hinweis,
+    pv_erzeugungs_monate,
 )
 from backend.core.investition_parameter import ist_dienstlich
 from backend.core.wirtschaftlichkeit_defaults import NETZBEZUG_DEFAULT_CENT
-from backend.services.wp_wirtschaftlichkeit import berechne_wp_ersparnis
+from backend.services.wp_wirtschaftlichkeit import wp_ersparnis_monat
 from backend.services.eauto_wirtschaftlichkeit import (
     berechne_eauto_ersparnis_periode,
     fossil_getankte_liter,
@@ -264,11 +262,9 @@ async def get_cockpit_uebersicht(
     # bzw. über `baue_finanz_zeile` — beide mit dem Monats-Stichtag (ADR-002/P8).
     tarife = await lade_tarife_fuer_anlage(db, anlage_id)
     allgemein_tarif = tarife.get("allgemein")
-    wp_tarif = tarife.get("waermepumpe")
     wallbox_tarif = tarife.get("wallbox")
 
     netzbezug_preis_cent = allgemein_tarif.netzbezug_arbeitspreis_cent_kwh if allgemein_tarif else NETZBEZUG_DEFAULT_CENT
-    wp_preis_cent = wp_tarif.netzbezug_arbeitspreis_cent_kwh if wp_tarif else netzbezug_preis_cent
     wallbox_preis_cent = wallbox_tarif.netzbezug_arbeitspreis_cent_kwh if wallbox_tarif else netzbezug_preis_cent
 
     # Monats-Tarif-Auflösung (ein Cache für den ganzen Request) — geteilt mit
@@ -405,19 +401,18 @@ async def get_cockpit_uebersicht(
     netzbezug = sum(f.zaehler.netzbezug_kwh for f in md_pv)
 
     # PV je Monat über den Read-time-SoT der Schicht: gemessene Modulwerte +
-    # Lücken aus dem Anlagen-Aggregat, plus das BKW (das Aggregat deckt nur
-    # `pv-module` ab). Ersetzt das globale Entweder-oder
+    # Lücken aus dem Anlagen-Aggregat, plus das BKW (das Aggregat steht für alle
+    # PV-Quellen; der eigene BKW-Wert ist vor der Lückenfüllung abgezogen, N-611). Ersetzt das globale Entweder-oder
     # (`pv_erzeugung_inv if pv_erzeugung_inv > 0 else pv_erzeugung_md`), das eine
     # Anlage mit gemischter Historie um ihre Aggregat-Monate brachte.
     pv_erzeugung = sum(f.erzeugung.pv_kwh for f in fakten)
     # Monate, in denen überhaupt PV aufgelöst wurde — gemessen ODER über das
     # Aggregat gefüllt. Ein BKW-Monat ohne erfasste Erzeugung zählt hier nicht
     # mit: er trägt 0 zu `pv_erzeugung` bei und würde als Nenner-Monat den
-    # spezifischen Ertrag verzerren.
-    pv_monate = {
-        f.schluessel for f in fakten
-        if f.erzeugung.pv_je_modul or f.bkw.erzeugung_kwh > 0
-    }
+    # spezifischen Ertrag verzerren. Die Regel steht an EINER Stelle
+    # (`monats_fakten.pv_erzeugungs_monate`, N-621 H1) — der HA-Sensor
+    # „spezifischer Ertrag" fragt dieselbe Funktion.
+    pv_monate = pv_erzeugungs_monate(fakten)
 
     # Netzpunkt-Bilanz: sonstige Erzeuger (z. B. BHKW) speisen hinter denselben
     # Zähler → ihre Erzeugung gehört in die EV/Autarkie-Ableitung, sonst drückt
@@ -609,19 +604,12 @@ async def get_cockpit_uebersicht(
     _wp_abgeleitet = _wpk.abgeleitet
     _wp_herkunft = _wpk.herkunft
     _wp_vorbehalt = _wpk.vorbehalt
-    # Multi-WP: erste WP als Parameter-Referenz (Wirkungsgrad/Gas-Default).
-    # Drift-Audit Domäne A1 / Issue #178: vorher 10ct hartcodiert + ignorierte
-    # User-Param `alter_preis_cent_kwh`.
-    wp_ref_parameter = wp_invs[0].parameter if wp_invs else None
-    wp_ersparnis_result = berechne_wp_ersparnis(
-        wp_waerme_kwh=wp_waerme,
-        wp_strom_kwh=wp_strom,
-        wp_strompreis_cent=wp_preis_cent,
-        wp_parameter=wp_ref_parameter,
-        # E-B: Kühlen ersetzt keine Heizung (#263 K-2).
-        strom_kuehlen_kwh=sum(f.wp.modus_strom_kuehlen_kwh for f in fakten),
-    )
-    wp_ersparnis = wp_ersparnis_result.ersparnis_euro
+    # ⭐ N-609 (04.10.2026): die WP-Ersparnis ist die Σ der Gerätezeilen je Monat — dieselbe Zeile wie im T-Konto
+    # von Cockpit → Monat (N-605), mit den Parametern JEDES Geräts, dem WP-Tarif und dem Gaspreis DES MONATS (P8).
+    # Hier stand bis dahin ein Aggregat über die Jahresmengen mit dem Parametersatz der ERSTEN Wärmepumpe und dem
+    # HEUTIGEN Tarif, ohne Monats-Gaspreis: zwei WP 50 statt 110 €, Tarifwechsel 0 statt 25 €, Gaspreis 25 statt
+    # 65 €, Zusatzkosten 85 statt 105 €. Die Zahl geht in `kumulative_ersparnis` → `jahres_rendite_prozent`.
+    wp_ersparnis = sum(wp_ersparnis_monat(f, inv_by_id) or 0.0 for f in fakten)
 
     emob_invs = [
         i for i in investitionen
@@ -750,7 +738,8 @@ async def get_cockpit_uebersicht(
     # für alle anderen ist er 0 und die Addition hier folgenlos. Den Term ganz
     # wegzulassen (Stand 2026-07-31) ließ genau diese Anlagen ihre Ersparnis
     # verlieren.
-    netto_ertrag = einspeise_erloes + ev_ersparnis + _finanz.bkw_ersparnis_euro
+    # Der Netto-Ertrag selbst entsteht seit 03.10.2026 in der Ergebnis-Leiter (`berechne_ergebnis`, Stufe 1) — weiter
+    # unten, sobald USt, Sonstiges und Erzeuger-Erlös feststehen. Hier stand er als vier Inline-Schritte.
 
     investition_vollkosten = sum(i.anschaffungskosten_gesamt or 0 for i in investitionen)
     # Zugleich die kanonische USt-Bemessungsgrundlage (N-129) — die Formel stand
@@ -775,59 +764,18 @@ async def get_cockpit_uebersicht(
     # rechnen.
     investition_gesamt = investition_mehrkosten
 
-    # N-228: die Jahres-Größe trägt nur **heute aktive** Komponenten (sie geht
-    # in Zukunfts-/USt-Größen), der Zeitraum-Abzug weiter unten dagegen jede
-    # Komponente über IHRE Laufzeit. Bis 2026-08-10 war beides dieselbe,
-    # ungefilterte Summe — eine stillgelegte Komponente kostete rückwirkend
-    # über den ganzen Beobachtungszeitraum weiter.
-    _heute_bk = date.today()
-    betriebskosten_ges = sum(
-        i.betriebskosten_jahr or 0
-        for i in investitionen
-        if i.ist_aktiv_im_monat(_heute_bk.year, _heute_bk.month)
-    )
+    # N-228: die Jahres-Betriebskosten der HEUTE aktiven Komponenten gingen bis 03.10.2026 hier in die USt ein.
+    # Seit dem einen USt-Eingang (`services/ust_satz.py`) zählt je Kalenderjahr, was in DIESEM Jahr aktiv war — der
+    # Zeitraum-Abzug weiter unten trägt jede Komponente ohnehin über IHRE Laufzeit.
 
     steuerliche_beh = getattr(anlage, 'steuerliche_behandlung', None) or 'keine_ust'
-    # N-129 + N-130: Bis 04.08. bekam die USt hier `investition_gesamt` — die
-    # ad-hoc zusammengesetzte Summe darüber, die als einzige Sicht im Baum
-    # NICHT `anschaffungskosten_alternativ` las, sondern die Parameter-Defaults
-    # 35.000/8.000 €. Und sie bekam die PV des ganzen gewählten Zeitraums als
-    # „Jahres-Erzeugung": bei „alle Jahre" stand eine mehrjährige Menge im
-    # Nenner gegen eine Ein-Jahres-AfA ⇒ die USt fiel um den Faktor der
-    # Jahresanzahl zu niedrig aus (Demo-Bestand: 646 € statt 2.447 €).
-    #
-    # Je Kalenderjahr dieselben Eingänge wie die Perioden-Kennzahlen oben:
-    # Zählerwerte aus `md_pv`, Mengen aus `fakten`.
-    monate_je_jahr = Counter(f.jahr for f in fakten)
-    ust_jahresanteile: list[UstJahresanteil] = []
-    for _jahr in sorted(monate_je_jahr):
-        _f_jahr = [f for f in fakten if f.jahr == _jahr]
-        _md_jahr = [f for f in md_pv if f.jahr == _jahr]
-        _pv_jahr = sum(f.erzeugung.pv_kwh for f in _f_jahr)
-        _kz_jahr = berechne_verbrauchs_kennzahlen(
-            pv_erzeugung_kwh=erzeugung_hinter_zaehler_kwh(
-                _pv_jahr, sum(f.sonstiges.erzeugung_kwh for f in _f_jahr)
-            ),
-            einspeisung_kwh=sum(f.zaehler.einspeisung_kwh for f in _md_jahr),
-            netzbezug_kwh=sum(f.zaehler.netzbezug_kwh for f in _md_jahr),
-            speicher_ladung_kwh=sum(f.speicher.ladung_kwh for f in _f_jahr),
-            speicher_entladung_kwh=sum(f.speicher.entladung_kwh for f in _f_jahr),
-            v2h_entladung_kwh=sum(f.emob.v2h_entladung_kwh for f in _f_jahr),
-            abgabe_dritte_kwh=sum(f.sonstiges.abgabe_kwh for f in _f_jahr),
-        )
-        ust_jahresanteile.append(UstJahresanteil(
-            jahr=_jahr,
-            eigenverbrauch_kwh=_kz_jahr.eigenverbrauch_kwh,
-            pv_kwh=_pv_jahr,
-            monate=monate_je_jahr[_jahr],
-        ))
-    ust_eigenverbrauch = ust_eigenverbrauch_fuer_anlage(
-        anlage,
-        jahresanteile=ust_jahresanteile,
-        bemessungsgrundlage_euro=investition_mehrkosten,
-        betriebskosten_jahr_euro=betriebskosten_ges,
-    )
-    netto_ertrag -= ust_eigenverbrauch
+    # USt auf den Eigenverbrauch — seit 03.10.2026 aus dem EINEN Eingang `services/ust_satz.py` (G1/E9, N-601):
+    # je Kalenderjahr die im Jahr aktiven Investitionen (`ist_aktiv_im_zeitraum`, Regel 05.06.2026) für Bemessung UND
+    # Betriebskosten, die abgeschlossenen Monate mit aktivem Erzeuger, Σ der Monats-Eigenverbräuche. Bis dahin nahm
+    # diese Sicht ALLE Investitionen für die Bemessung (#123 ist eine Regel für Mengen, nicht für Kosten), die HEUTE
+    # aktiven für die Betriebskosten und die Perioden-EV — und nannte für dasselbe Jahr eine andere Zahl als die
+    # Monatsreihe (Probe 03.10.: 20,21 € gegen 35,96 €, ohne die inaktive Wallbox beide 18,90 €).
+    ust_eigenverbrauch = ust_eigenverbrauch_zeitraum(anlage, investitionen, fakten)
 
     # #326: BKW-Ersparnis ebenfalls per-Monat (Σ BKW-EV_m × flexpreis_m).
     bkw_ersparnis = _finanz.bkw_ersparnis_euro
@@ -839,7 +787,6 @@ async def get_cockpit_uebersicht(
     # die Netto-Ertrag-Kachel → das Cockpit zeigte eine andere Summe als die
     # Auswertungen. Aufschlagen NACH dem USt-Abzug (USt betrifft nur den
     # Eigenverbrauch, nicht die Finanzpositionen).
-    netto_ertrag += sonstige_netto
 
     # Konzept §9 Weg 2: gepflegte Erlöse einzelner Erzeuger mit **eigenem**
     # Einspeisetarif. Diese Sicht baut ihren Netto-Ertrag selbst aus den
@@ -847,7 +794,16 @@ async def get_cockpit_uebersicht(
     # deshalb hier addiert werden, sonst zeigte das Cockpit eine andere Summe
     # als Auswertungen und HA-Export. Dieselbe Klasse wie #326 eine Zeile höher.
     erzeuger_erloes_gesamt = sum(f.sonstiges.einspeise_erloes_euro for f in fakten)
-    netto_ertrag += erzeuger_erloes_gesamt
+    # Stufe 1 der Ergebnis-Leiter (GLOSSAR „Netto-Ertrag (PV)") — dieselbe Funktion wie Cockpit → Monat/Jahr.
+    # `bkw_ersparnis_euro` trägt nur die BKW-Monate OHNE erfasste Erzeugung (P9); Sonstiges nach der USt, wie bisher.
+    netto_ertrag = berechne_ergebnis(ErgebnisEingang(
+        einspeise_erloes=einspeise_erloes,
+        ev_ersparnis=ev_ersparnis,
+        bkw_rest_ersparnis=_finanz.bkw_ersparnis_euro,
+        erzeuger_erloes=erzeuger_erloes_gesamt,
+        sonstige_netto=sonstige_netto,
+        ust_anteil=ust_eigenverbrauch,
+    )).netto_ertrag
 
     # CO2-Bilanz (DI-2: kanonischer Helper — dieselbe Bilanz wie der HA-Export)
     _co2 = berechne_co2_bilanz(

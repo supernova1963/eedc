@@ -38,6 +38,11 @@ Submodule:
 - `heizgradtage` — Heizgrenze + Heizgradtage je Tag/Monat und die Normierung
   „Menge je Kd" (die EINE Definition für Verbrauchsprognose und
   wetternormierten Vergleich)
+- `ergebnis` — die Ergebnis-Leiter (Netto-Ertrag → vor Betriebskosten →
+  Monats-/Jahresergebnis, mit Herleitung), USt je kWh Eigenverbrauch, SOLL-Erfüllung
+  und die Zeitraum-Faltung von Monatsantworten (Quoten paarweise, N-584) —
+  Paket „Ergebnisgrößen Monat/Jahr in den Layer" (03.10.2026); Wächter
+  `test_ergebnis_leiter_nur_im_layer.py`
 
 Geplant (step-by-step, wenn Konsumenten angefasst werden):
 - `peaks` — Peak-Werte (peak_pv/bezug/einspeisung)
@@ -69,6 +74,7 @@ from backend.core.berechnungen.counter import (
 )
 from backend.core.berechnungen.datenquellen import (
     connector_deckt_monatsanfang,
+    gewinner_je_feld,
     merge_datenquellen,
     mqtt_teilzeitraum_felder,
     teilzeitraum_felder,
@@ -87,6 +93,17 @@ from backend.core.berechnungen.dienstliche_ladekosten import (
 from backend.core.berechnungen.einspeise_erloes import (
     EinspeiseErloes,
     einspeise_erloes_euro,
+)
+from backend.core.berechnungen.ergebnis import (
+    ErgebnisEingang,
+    ErgebnisLeiter,
+    SollErfuellung,
+    berechne_ergebnis,
+    falte_zeitraum,
+    quote_paarweise,
+    soll_erfuellung,
+    ust_anteil_euro,
+    ust_satz_euro_je_kwh,
 )
 from backend.core.berechnungen.finanz_aggregat import (
     FinanzAggregat,
@@ -167,6 +184,7 @@ from backend.core.berechnungen.energie import (
     WALLBOX_KOMPONENTEN_PREFIXE,
     SonstigesTagesSummen,
     batterie_kw_spalte,
+    bkw_gemessen_kwh_je_investition,
     erzeuger_kwh_je_investition,
     erzeugung_hinter_zaehler_kwh,
     sonstiges_kwh_je_richtung,
@@ -270,7 +288,11 @@ from backend.core.berechnungen.erzeuger_traeger import (
     kuerze_bkw_in_werte_map,
     erzeuger_traeger,
     modul_kinder,
+    selbst_tragende_bkw_ids,
+    traeger_im_monat,
+    traeger_zeilen,
     traegt_erzeugungsgroessen_selbst,
+    verteilungsnenner_kwp,
 )
 from backend.core.berechnungen.spez_ertrag import (
     MONATSGEWICHTE_52N,
@@ -341,6 +363,7 @@ from backend.core.berechnungen.monatsfenster import (
     anteilig,
     monatsfenster,
     monatsfenster_investition,
+    soll_im_laufmonat,
 )
 
 __all__ = [
@@ -352,6 +375,7 @@ __all__ = [
     "anteilig",
     "monatsfenster",
     "monatsfenster_investition",
+    "soll_im_laufmonat",
     "MonatsBilanz",
     "TagesBilanz",
     "bilanz_aus_stundenrows",
@@ -375,6 +399,7 @@ __all__ = [
     "pruefe_counter_konsistent",
     "verteile_counter_auf_stunden",
     "connector_deckt_monatsanfang",
+    "gewinner_je_feld",
     "merge_datenquellen",
     "mqtt_teilzeitraum_felder",
     "teilzeitraum_felder",
@@ -393,6 +418,15 @@ __all__ = [
     "FinanzAggregat",
     "FinanzMonatsZeile",
     "berechne_finanz_aggregat",
+    "ErgebnisEingang",
+    "ErgebnisLeiter",
+    "SollErfuellung",
+    "berechne_ergebnis",
+    "falte_zeitraum",
+    "quote_paarweise",
+    "soll_erfuellung",
+    "ust_anteil_euro",
+    "ust_satz_euro_je_kwh",
     "AFA_JAHRE",
     "UstJahresanteil",
     "AmortisationsFortschritt",
@@ -446,6 +480,7 @@ __all__ = [
     "summe_pv_bkw_kwh",
     "summe_pv_anlage_kwh",
     "summe_bkw_kwh",
+    "bkw_gemessen_kwh_je_investition",
     "erzeuger_kwh_je_investition",
     "erzeugung_hinter_zaehler_kwh",
     "SONSTIGES_KOMPONENTEN_PREFIX",
@@ -512,7 +547,11 @@ __all__ = [
     "kuerze_bkw_in_werte_map",
     "erzeuger_traeger",
     "modul_kinder",
+    "selbst_tragende_bkw_ids",
+    "traeger_im_monat",
+    "traeger_zeilen",
     "traegt_erzeugungsgroessen_selbst",
+    "verteilungsnenner_kwp",
     "MONATSGEWICHTE_52N",
     "PV_ERZEUGER_TYPEN",
     "berechne_spez_ertrag_annualisiert",

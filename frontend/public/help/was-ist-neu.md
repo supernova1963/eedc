@@ -1,11 +1,242 @@
 # Was ist neu
 
-> **Stand:** Oktober 2026 (v4.1.1)
+> **Stand:** Oktober 2026 (v4.1.2)
 > **Diese Seite** zeigt pro Version, was sich für dich als Anwender geändert hat — kürzer als der technische [CHANGELOG](https://github.com/supernova1963/eedc-homeassistant/blob/main/CHANGELOG.md), ausführlicher als die Schnellübersicht-Tabelle in der [Übersicht](BENUTZERHANDBUCH.md#was-ist-neu-seit-v316).
 >
 > **Kein Banner, kein Pop-up:** eedc zeigt diese Liste nicht ungefragt an. HA-App-Nutzer sehen den Changelog ohnehin schon im Add-on-Store, GitHub-Releases haben einen eigenen. Wer wissen will, was neu ist, schaut hier rein — Pull statt Push.
 >
 > **Lesehinweis:** Die jüngsten Versionen stehen oben. Jeder Punkt verlinkt entweder auf die zuständige Hilfe-Sektion oder direkt auf die App-Funktion (sofern erreichbar). Anker-URLs (`?doc=was-ist-neu`) sind teilbar.
+
+---
+
+## v4.1.2 — 5. Oktober 2026
+
+**In dieser Version:** Netto-Ertrag, Monats- und Jahresergebnis rechnen überall gleich — mit der Umsatzsteuer bei Regelbesteuerung, mit allen Posten im Tooltip · ein Jahr zeigt keine Autarkie über 100 % mehr · „Hausverbrauch" heißt jetzt Gesamtverbrauch oder Restverbrauch, mit Formel · die PV-Erzeugung mit Strings, Balkonkraftwerk und Gesamtzähler nennt am Tag, im laufenden und im abgeschlossenen Monat dieselben Zahlen (außer nach einem Abschluss über den Statistik-Import)
+
+**Netto-Ertrag, Ergebnis, Jahr: eine Rechnung für alles**
+
+**Betrifft dich das?** Ja, wenn eines davon auf dich zutrifft:
+
+- deine Anlage ist **regelbesteuert** (Umsatzsteuer auf den Eigenverbrauch),
+- in manchen Monaten fehlt der **Netzbezug** — etwa bei einer Volleinspeisung oder
+  einem Monat, den Home Assistant nur teilweise kennt,
+- du hast eine Komponente **nach der PV-Anlage gekauft** oder stillgelegt und für
+  sie Betriebskosten eingetragen.
+
+**Was war:** *Cockpit → Monat* und *Cockpit → Jahr* rechneten den Netto-Ertrag
+anders als die Übersicht, der Jahresbericht und der Sensor in Home Assistant: Die
+Umsatzsteuer auf den Eigenverbrauch fehlte. Für denselben Monat standen so zwei
+Zahlen nebeneinander, zum Beispiel 212,00 € im Monat und 206,30 € in der
+Übersicht. Das Jahr zählte zwölf Monatswerte im Browser zusammen; fehlte in einem
+Monat der Netzbezug, teilte es den Eigenverbrauch aller Monate durch den Verbrauch
+der übrigen — bis zu **198 % Autarkie** —, und die fehlende Stromrechnung zählte
+still als 0 €. Betriebskosten einer Komponente standen auch in Monaten vor ihrer
+Anschaffung im Monatsergebnis.
+
+**Was jetzt:**
+
+- **Ein Netto-Ertrag.** Er enthält überall dieselben Posten: Einspeisung,
+  Eigenverbrauch, den Rest des Balkonkraftwerks, den Erlös eines Geräts mit eigenem
+  Vergütungssatz, sonstige Erträge und Ausgaben — und bei Regelbesteuerung abzüglich
+  der Umsatzsteuer auf den Eigenverbrauch. Darauf bauen **Monats- und
+  Jahresergebnis** auf: plus die Ersparnis von Wärmepumpe und E-Mobilität, minus
+  Stromrechnung und Betriebskosten. Der Tooltip zeigt jeden Posten mit Betrag.
+- **Das Jahr rechnet eedc selbst**, nicht mehr dein Browser. Autarkie und
+  Eigenverbrauchsquote nehmen nur Monate, die beide Werte haben, und sagen, wie viele
+  das sind („aus 8 von 9 Monaten"). Fehlt in einem Monat die Stromrechnung, zeigt das
+  Jahr kein Ergebnis und nennt den Monat, statt eine zu hohe Zahl.
+- **Betriebskosten** zählen ab der Anschaffung und bis zur Stilllegung.
+- In *Auswertungen → Tabelle* enthält der **Netto-Ertrag** jetzt auch die Sonstigen
+  Erträge und Ausgaben (wie im Cockpit); *Auswertungen → Finanzen* zeigt dieselbe
+  Zahl und nennt Sonstige Erträge und Sonderkosten als Bestandteil.
+- Die Komponenten-Finanztabelle endet mit **„Monatsergebnis"** bzw.
+  **„Jahresergebnis"** — dieselbe Zahl wie die Kachel darüber. Bei Regelbesteuerung
+  steht die Umsatzsteuer als Aufwand in der PV-Zeile und im T-Konto als eigene Zeile.
+  Mit einem **Balkonkraftwerk** trägt dessen Zeile nur, was wirklich im
+  Eigenverbrauch steckt; ein Monat, in dem es keinen Erzeugungswert hat, steht als
+  eigene Zeile da.
+
+**Welche Zahlen sich ändern:** Bei regelbesteuerten Anlagen sinkt der Netto-Ertrag in
+*Cockpit → Monat* und *→ Jahr* um die Umsatzsteuer auf den Eigenverbrauch. Wer
+Betriebskosten für eine später gekaufte Komponente eingetragen hat, sieht in den
+Monaten davor ein höheres Monatsergebnis. Hat eine regelbesteuerte Anlage
+deaktivierte oder stillgelegte Komponenten mit Betriebskosten oder einen sonstigen
+Erzeuger (etwa ein BHKW), kann sich der Umsatzsteuer-Anteil — und damit der
+Netto-Ertrag der Übersicht — auch dort, im Jahresbericht und im Sensor einmal
+verschieben — in der Langzeitstatistik von Home Assistant ist
+das ein einmaliger Sprung, kein Messfehler.
+
+→ *[Bedienung §2.3](HANDBUCH_BEDIENUNG.md#23-monat)* · *[Glossar: Netto-Ertrag](GLOSSAR.md#strompreise--tarife)*
+
+**Gesamtverbrauch und Restverbrauch statt „Hausverbrauch"**
+
+**Betrifft dich das?** Ja, wenn du *Cockpit → Live* oder *Cockpit → Tag* benutzt.
+
+**Was war:** Das Wort „Hausverbrauch" stand für zwei verschiedene Zahlen. Die
+Kachel unter dem Energiefluss meinte damit alles, was das Haus verbraucht hat; die
+Stundentabelle in *Cockpit → Tag* meinte den Teil, den kein einzeln erfasstes Gerät
+erklärt. Im Energiefluss hieß derselbe Rest „Haushalt" — und sein Tooltip zeigte
+darunter als „Heute" den Gesamtverbrauch des Tages.
+
+**Was jetzt:** Zwei Wörter für zwei Zahlen, jede mit ihrer Formel im Tooltip:
+
+- **Gesamtverbrauch** = Eigenverbrauch + Netzbezug — die Live-Kachel, die Spalte in
+  der Stundentabelle, die Bilanzen von Tag, Monat und Jahr.
+- **Restverbrauch** = Gesamtverbrauch − separat erfasste Verbraucher (Wärmepumpe,
+  Wallbox, Geräte mit eigenem Zähler) — die Mitte des Energieflusses, der
+  Live-Tagesverlauf, das Verbrauchsprofil, die Stundentabelle und der
+  Stundenverlauf in *Cockpit → Tag*, die Monatsauswertung „Verbrauch nach Kategorie".
+
+Die Zahlen selbst ändern sich nicht. Auch die Meldungen des Daten-Checkers sagen
+jetzt Gesamtverbrauch.
+
+→ *[Glossar](GLOSSAR.md)* · *[Bedienung §2.1 Live](HANDBUCH_BEDIENUNG.md#21-live)*
+
+**Weitere Korrekturen in dieser Version**
+
+- **Dynamischer Tarif:** *Cockpit → Monat* bewertet deinen Eigenverbrauch jetzt mit dem
+  Preis der Stunden, in denen er Netzbezug ersetzt hat (meist mittags) — wie Übersicht und
+  Jahresbericht. Vorher stand dort eine zu hohe Ersparnis. Auch der **Vorjahresvergleich**
+  rechnet die Stromrechnung des Vorjahresmonats jetzt mit denselben gemessenen Preisen wie
+  der Monat selbst.
+- **E-Auto mit Rückspeisung ins Haus (V2H):** *Cockpit → Monat* und *→ Jahr* zählen die
+  Rückspeisung jetzt zum Eigenverbrauch — wie Übersicht und Jahresbericht schon immer.
+  Eigenverbrauch, Autarkie und Ergebnis steigen dort um diesen Anteil.
+- **Strings und Anlagen-PV-Zähler:** Hast du deinen Strings eigene Zähler und zusätzlich einen
+  Zähler für die ganze Anlage zugeordnet, zeigt *Cockpit → Monat* jetzt schon vor dem
+  Monatsabschluss die Summe der Strings — vorher den Anlagenzähler, und die Zahl sprang beim
+  Abschluss. Der Anlagenzähler steht für die ganze Anlage (Strings und Balkonkraftwerk) und
+  füllt nur noch, was die Quellen mit eigenem Zähler nicht erklären. **Im laufenden Monat**
+  wirkt das erst jetzt richtig: Bisher ersetzte *Cockpit → Monat* dort den Anlagenzähler aus
+  Home Assistant durch den Zähler einer einzelnen Quelle — mit Gesamtzähler, Balkonkraftwerk-Zähler
+  und Strings ohne eigenen Zähler standen nach drei Tagen 9 statt 63 kWh da, Eigenverbrauch und
+  Autarkie 0. Jetzt zählt der Anlagenzähler im laufenden Monat genauso wie nach einem Abschluss mit
+  „Aus HA laden" — nicht wie nach dem Statistik-Import, der den Gesamtzähler nicht speichert (dort
+  zeigt der abgeschlossene Monat weiter weniger, im Beispiel 930 statt 1000 kWh).
+- **Cockpit → Tag mit Gesamtzähler:** Hat eine PV-Quelle (etwa dein Balkonkraftwerk) einen
+  eigenen Zähler und deine Anlage zusätzlich einen Gesamtzähler, behält sie am Tag jetzt ihren
+  gemessenen Wert — vorher bekam sie nur ihren Anteil nach Leistung (im Beispiel 1,56 statt
+  3,0 kWh). Nur Quellen ohne eigenen Zähler teilen sich den Rest. Der heutige Tag rechnet sofort
+  so; ältere Tage ändern sich, wenn du sie unter *Einstellungen → Daten → Energieprofil-Pflege*
+  neu berechnen lässt.
+- **PV doppelt am Tag ohne Stundenwerte aus Home Assistant:** Summiert eedc die Leistung deiner
+  Anlage selbst über den Tag und hast du daneben kWh-Zähler für die PV, standen beide Summen im
+  Tag — der laufende Monat zeigte das Doppelte (im Beispiel 126 statt 63 kWh). Jetzt zählen nur die
+  Zähler. Ältere Tage ändern sich durch Neuberechnen.
+- **Balkonkraftwerk mit eigenen PV-Modulen:** Im laufenden Monat und vor dem Monatsabschluss
+  zählte *Cockpit → Monat* den Zähler des Balkonkraftwerks **und** die gemessenen Module darunter
+  (im Beispiel 72 statt 63 kWh). Jetzt gibt das Balkonkraftwerk seine Erzeugung im Monat an seine
+  Module ab — vor und nach dem Abschluss dieselbe Zahl, die Zeile „Balkonkraftwerk" bleibt leer.
+  Ohne eigenen Zähler nennt diese Zeile im laufenden Monat auch keinen geschätzten Anteil mehr.
+- **Ein String ohne Monatswert:** Fehlt einem String der Wert eines Monats und gibt es keinen
+  Gesamtwert, zeigt der abgeschlossene Monat jetzt die Erzeugung der übrigen Strings — vorher fiel
+  die ganze String-Summe weg und es stand nur das Balkonkraftwerk da (im Beispiel 90 statt
+  450 kWh, Eigenverbrauch 0). *Cockpit → Monat* und *→ Jahr* sagen, dass es eine Teilsumme
+  ist: War der String in dem Monat wirklich außer Betrieb, stimmt die Zahl, sonst fehlt seine
+  Erzeugung. Der [Daten-Checker](HANDBUCH_DATEN_CHECKER.md) nennt den Monat.
+- **Statistik-Import, Anlage nur mit Balkonkraftwerk:** Die Vorschau schlug abgeschlossene Monate
+  zum Import vor, obwohl sie Werte hatten. Jetzt erkennt sie den Wert des Balkonkraftwerks.
+- **Balkonkraftwerk neben einem Wert für die ganze Anlage:** Hat dein Balkonkraftwerk einen
+  eigenen Zähler (oder einen eingetragenen Monatswert) und deine Anlage zusätzlich einen
+  PV-Gesamtzähler, zählte ein abgeschlossener Monat das Balkonkraftwerk doppelt — im Beispiel
+  1045 statt 1000 kWh, Eigenverbrauch und Autarkie zu hoch. Jetzt geht der Wert des
+  Balkonkraftwerks zuerst vom Gesamtzähler ab, nur der Rest wird auf die Module ohne eigenen
+  Zähler verteilt. Hat der Statistik-Import solche Monate schon verteilt, zeigt seine Vorschau
+  sie jetzt als Konflikt; ein erneuter Import dieses Monats verteilt sie richtig, wenn mehrere
+  Module keinen eigenen Zähler haben.
+- **Balkonkraftwerk ohne eigenen Wert:** Ist für einen Monat ein PV-Gesamtwert gespeichert
+  (eingetragen oder importiert) und hat dein Balkonkraftwerk keinen eigenen Wert, fehlte seine
+  Erzeugung im abgeschlossenen Monat, sobald alle Strings einen Wert hatten — im Beispiel 930
+  statt 1000 kWh, und die Zahl sprang beim Monatsabschluss. Jetzt bekommt es seinen Anteil
+  nach Leistung, überall so wie in *Komponenten → PV-Strings*; Eigenverbrauch, Autarkie und
+  Ersparnis steigen entsprechend. Im Verlauf steht der Anteil beim Balkonkraftwerk, und der
+  Tooltip sagt „davon geschätzt (kWp-Anteil)"; die Werte des Balkonkraftwerks selbst bleiben die
+  gemessenen. Kommt der Gesamtzähler aus Home Assistant, gilt das jetzt auch nach „Aus HA
+  laden" (nächster Punkt). Nur der Statistik-Import speichert ihn weiterhin nicht — wer so
+  abschließt, gibt dem Balkonkraftwerk einen eigenen Zähler oder trägt seinen Monatswert ein.
+- **„Aus HA laden" übernimmt den PV-Gesamtzähler:** Hast du in Home Assistant einen
+  PV-Gesamtzähler zugeordnet, steht er nach „Aus HA laden" im Formular in einer eigenen Zeile
+  „PV-Gesamtzähler aus Home Assistant" — auch wenn deine Module eigene Werte haben. Gespeichert
+  wird, was in der Zeile steht; ist sie beim Speichern leer, hat der Monat keinen Gesamtwert.
+  Ein schon gespeicherter Gesamtwert steht beim Bearbeiten jetzt immer sichtbar da — auch ohne
+  „Aus HA laden", als „PV-Gesamtwert der Anlage" — und lässt sich ändern oder entfernen; bisher
+  ging er unsichtbar mit, sobald deine Module Werte hatten. Bisher kam der Zähler dort nie an: Mit Strings 550 + 380 kWh,
+  Balkonkraftwerk ohne Zähler und Gesamtzähler 1000 kWh zeigte der abgeschlossene Monat 930
+  statt 1000 kWh, mit einem String ohne eigenen Sensor stand er in Übersicht und Tabelle ganz
+  ohne PV da, mit Balkonkraftwerk-Zähler (45 kWh) und Strings ohne Sensor bei 45 statt 1000 kWh.
+  Jetzt nennt der Monat vor und nach dem Abschluss dieselbe Zahl. Weicht der Gesamtzähler von
+  „PV-Erzeugung (berechnet)" ab, steht er darunter. Einen schon abgeschlossenen Monat ergänzt
+  du über „Aus HA laden" → „Mit HA-Werten fortfahren" → Speichern. „Monat einfügen" und der
+  Statistik-Import schlagen ihn weiterhin nicht vor bzw. speichern ihn nicht.
+- **HA-Sensor „spezifischer Ertrag" mit Balkonkraftwerk:** Hat deine Anlage **nur** ein
+  Balkonkraftwerk, nennt der Sensor jetzt dieselbe Zahl wie die Kachel in *Cockpit → Übersicht*
+  und verschiebt sich dafür einmalig (im Beispiel von 143,75 auf 586,73 kWh/kWp). Dasselbe gilt,
+  wenn in einzelnen Monaten nur dein Balkonkraftwerk einen Wert hat und die Module keinen — etwa
+  bevor die Module dazukamen. Der Sensor kann dadurch sinken (im Beispiel von 821 auf 385); fehlen
+  in solchen Monaten nur die Modulwerte, trag sie nach.
+- **Spezifischer Ertrag in *Auswertungen → Tabelle*:** Mit einem Balkonkraftwerk lag die
+  (standardmäßig ausgeblendete) Spalte „Spez. Ertrag" um dessen Anteil zu hoch — die
+  Erzeugung zählte das Balkonkraftwerk mit, die Nennleistung nicht (im Beispiel 100,0 statt
+  92,6 kWh/kWp). Jetzt nennt die Tabelle denselben Wert wie das Cockpit.
+- **PV-Strings mit nachträglich zugeordneten Modulen:** Hast du deinem Balkonkraftwerk
+  später PV-Module zugeordnet, fehlte in *Komponenten → PV-Strings* und im Abschnitt
+  „String-Vergleich" des Jahresbericht-PDF seine Erzeugung aus der Zeit davor. Jetzt steht das
+  Balkonkraftwerk für diese Monate mit eigener Zeile da, und die Summe stimmt mit dem Cockpit
+  und mit der Monatstabelle des Berichts überein — auch unter *Alle Jahre* und in der
+  Gesamtlaufzeit. Beide Sichten zeigen dieselben Zeilen. Und hast du **alle** Module eines
+  Balkonkraftwerks deaktiviert, zählt unter *Auswertungen → CO₂* seine graue Energie wieder
+  mit, statt ganz zu fehlen — „klimapositiv ab" rückt dadurch etwas nach hinten.
+- **Jahresbericht-PDF, „String-Vergleich":** Jeder String wird nur über die Monate
+  verglichen, in denen er einen Wert hat — im laufenden Jahr, im Jahr der Inbetriebnahme oder
+  nach einem Zubau stand dort bisher das SOLL des ganzen Jahres gegen die erfassten Monate
+  (im Beispiel −52 % statt −2 %). Wie viele Monate es sind, steht an der Zeile. Der
+  spezifische Ertrag im Gesamtzeitraum ist jetzt derselbe saisonal gewichtete Jahreswert wie
+  die Kachel im Cockpit. Und die Werte je String sind
+  dieselben wie unter *Komponenten → PV-Strings*, auch bei einem Balkonkraftwerk ohne eigenen
+  Wert — ein nach kWp verteilter Wert heißt dort wie hier „geschätzt (kWp-Anteil)".
+- **Community:** Ausrichtung, Neigung, Wallbox- und Balkonkraftwerk-Leistung im geteilten
+  Datensatz zählen nur noch die Geräte, die du heute hast — stillgelegte oder ersetzte
+  Geräte verschoben sie bisher (im Beispiel „20°, gemischt" statt „30°, Süd").
+- **Tage vor einer Anschaffung:** Tag-Status, der Daten-Checker-Hinweis zu Tagen ohne Werte
+  und die Vorschauen der Reparatur-Werkbank und von „Tag neu berechnen" nennen für einen Tag
+  nur die Geräte, die es an diesem Tag schon gab.
+- **Vorjahresvergleich:** Der Vergleichswert ist jetzt genau derselbe Monat des Vorjahres,
+  wie du ihn direkt aufrufst — vorher konnte er davon abweichen.
+- **Mehrere Wärmepumpen:** Die Ersparnis in der Kachel ist jetzt die Summe der Geräte —
+  dieselbe Zahl wie im T-Konto darunter.
+- **Speicher mit Netzladung:** Die Komponenten-Finanztabelle zieht die Netzladung nicht mehr
+  doppelt ab; sie steht nur noch als Hinweis an der Speicher-Zeile.
+- **Cockpit → Jahr** nennt einen vergangenen Monat ohne Monatsabschluss in einer Zeile über
+  dem Vergleich — er zählt weiter mit, Übersicht und Jahresbericht zählen ihn nicht.
+- **CSV-Export von *Auswertungen → Finanzen*:** Die Spalte „Netto nach Sonderkosten" entfällt
+  — sie war dieselbe Zahl wie „Netto-Ertrag", der die Sonstigen Positionen jetzt enthält. Die
+  Spalten heißen „Netto-Ertrag PV inkl. Sonstige (€)" und „davon Sonderkosten (€)". Wer die
+  CSV weiterverarbeitet, passt die Spaltennamen an.
+- **Tagesverlauf ohne Home-Assistant-Verlauf** fällt wieder auf MQTT zurück, und der
+  nächtliche Wetter-Nachzug ersetzt keinen vollständigen Tag mehr durch einen teilweise
+  gelöschten.
+- **Gemessen 0 ist 0:** Zeigt dein Zähler aus Home Assistant im laufenden Monat keinen
+  Zuwachs — der Netzbezug in einem autarken Monat oder die Einspeisung bei Nulleinspeisung —,
+  zeigt *Cockpit → Monat* jetzt 0 kWh statt „—" und rechnet weiter: im Beispiel Autarkie
+  100 %, Stromrechnung 0,00 € und Ergebnis 16,20 €, und der Rat „Zähler zuordnen" verschwindet.
+  Dasselbe gilt für einen vergangenen Monat ohne Abschluss — und für einen abgeschlossenen
+  Monat, in dem dein Monatsabschluss bei Balkonkraftwerk, Speicher oder PV-Gesamtzähler 0
+  gespeichert hat: wo dort bisher „—“ stand, steht jetzt 0. Das gilt für Einspeisung,
+  Netzbezug, den PV-Gesamtzähler, Speicher, Balkonkraftwerk, Wallbox und E-Auto; für
+  Wärmepumpe und einzelne Strings noch nicht.
+- **Mehrere Wärmepumpen, eine Ersparnis überall:** Auch im laufenden Monat und in einem Monat
+  ohne Abschluss ist die Wärmepumpen-Ersparnis in *Cockpit → Monat* jetzt die Summe deiner
+  Geräte, jedes mit seinen eigenen Angaben und den Preisen des Monats — im Beispiel mit zwei
+  Wärmepumpen 5,76 € statt 1,44 € im laufenden Monat. Sichtbar wird es im laufenden Monat mit
+  mehreren Wärmepumpen und im Monat ohne Abschluss; trägt eedc den Kühlanteil eines Monats aus
+  dem Betriebsmodus nach, zieht ihn jetzt auch das T-Konto ab (im Beispiel 124 € statt 115 €).
+- **Verbrauchsprognose mit Wärmepumpe:** Warmwasser und Kühlen werden nicht mehr mit der
+  Außentemperatur hoch- oder heruntergerechnet — ein Warmwasser-Zyklus braucht an einem warmen
+  Tag nicht ein Zehntel. Im Beispiel steht an einem Tag mit 16 °C 2,7 statt 0,9 kWh
+  Wärmepumpen-Strom, an einem Tag mit 0 °C 23 statt 27 kWh; nach einer milden Woche bleibt die
+  Prognose bei gleichem Wetter, wie sie ist. Getrennt wird nur, wenn deine Wärmepumpe Warmwasser
+  oder Kühlen je Stunde erkennen lässt (Betriebsmodus-Sensor oder getrennte Leistungssensoren);
+  nach einer milden Lernwoche ändert sich die Prognose für alle Wärmepumpen leicht.
 
 ---
 
@@ -960,7 +1191,9 @@ Formular dahinter blieb leer. Gemeldet von Frank85.
 wie im Monatsabschluss nach kWp auf die aktiven Module verteilt, als Zerlegung
 gekennzeichnet; Module mit eigenem Sensor behalten ihren Messwert. Der Dialog
 zeigt jedes zugeordnete Zählerfeld samt PV-Gesamtzähler und belegt das Formular
-damit vor. **Wer betroffen ist:** einmal die Vorschau des Statistik-Imports
+mit Einspeisung und Netzbezug vor. *(Korrigiert: Hier stand, auch der PV-Gesamtzähler
+werde vorbelegt — das kam erst nach 4.1.1, siehe dort „Aus HA laden" übernimmt den
+PV-Gesamtzähler.)* **Wer betroffen ist:** einmal die Vorschau des Statistik-Imports
 öffnen — die Monate ohne PV stehen dann auf „importieren".
 
 ---

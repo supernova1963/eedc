@@ -88,11 +88,12 @@ export interface MonatsZeitreihe {
   // Formel einsetzt, baut die zweite Engine neu auf.
   einspeise_erloes: number
   // §9 Weg 2 — gepflegter Erlös von Erzeugern mit eigenem Vergütungssatz.
-  // Bewusst NICHT in `einspeise_erloes`/`netto_ertrag` addiert (s. Vertrag in
-  // `api/monatsdaten.ts`); die Sicht nennt ihn nur als Abgrenzung.
+  // NICHT in `einspeise_erloes`, aber IN `netto_ertrag` enthalten (s. Vertrag in
+  // `api/monatsdaten.ts`); die Sicht nennt ihn in der Netto-Herleitung.
   erzeuger_erloes: number
   ev_ersparnis: number
   netzbezug_kosten: number
+  /** Feld der Monatsreihe, Stufe 1 der Ergebnis-Leiter — enthält seit 03.10.2026 auch die Sonstigen Positionen (A1). */
   netto_ertrag: number
   netto_bilanz: number
   /**
@@ -168,7 +169,8 @@ export function createMonatsZeitreihe(
     const autarkie = md.autarkie_prozent ?? calcAutarkie(eigenverbrauch, gesamtverbrauch)
     const evQuote = md.eigenverbrauchsquote_prozent ?? calcEigenverbrauchsquote(eigenverbrauch, erzeugung)
     // F-58: der Monats-Nenner kommt vom Backend (Σ der im Monat aktiven
-    // Module). `anlage?.leistung_kwp` bleibt Fallback für Antworten ohne
+    // Erzeuger MIT Balkonkraftwerk — dieselbe Menge wie `erzeugung`, N-612).
+    // `anlage?.leistung_kwp` bleibt Fallback für Antworten ohne
     // das Feld — Bestandsverhalten, kein zweiter Rechenweg.
     const spezErtrag = calcSpezifischerErtrag(erzeugung, md.anlagen_kwp ?? anlage?.leistung_kwp)
 

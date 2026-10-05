@@ -12,7 +12,8 @@ export interface MonatsdatenCreate {
   monat: number
   einspeisung_kwh: number
   netzbezug_kwh: number
-  pv_erzeugung_kwh?: number
+  /** `null` = gespeicherten Anlagenwert entfernen (N-622), fehlend = unverändert. */
+  pv_erzeugung_kwh?: number | null
   batterie_ladung_kwh?: number
   batterie_entladung_kwh?: number
   batterie_ladung_netz_kwh?: number
@@ -34,7 +35,8 @@ export interface MonatsdatenCreate {
 export interface MonatsdatenUpdate {
   einspeisung_kwh?: number
   netzbezug_kwh?: number
-  pv_erzeugung_kwh?: number
+  /** `null` = gespeicherten Anlagenwert entfernen (N-622), fehlend = unverändert. */
+  pv_erzeugung_kwh?: number | null
   batterie_ladung_kwh?: number
   batterie_entladung_kwh?: number
   batterie_ladung_netz_kwh?: number
@@ -69,8 +71,11 @@ export interface AggregierteMonatsdaten {
   /**
    * `false` = die PV-Achse dieses Monats ist eine **Teilsumme**: mindestens ein
    * aktives Modul ohne Wert und kein Gesamtwert zum Verteilen. Die Zahl bleibt
-   * stehen — eine additive Summe ist richtungssicher zu niedrig und wird
+   * stehen — eine additive Summe ist nie zu hoch (zu niedrig, falls dem Modul
+   * Erzeugung fehlt; war es außer Betrieb, stimmt sie) und wird
    * **beschriftet**, nicht unterdrückt (`KONZEPT-UNVOLLSTAENDIGE-WERTE.md` §3).
+   * Gelesen wird das Feld im Client derzeit nicht; den Hinweis zeigen Cockpit →
+   * Monat und → Jahr über `hinweise` (Backend `pv_unvollstaendig_hinweis`).
    * Fehlt das Feld (alter Server), gilt „vollständig".
    */
   pv_vollstaendig?: boolean
@@ -95,7 +100,9 @@ export interface AggregierteMonatsdaten {
   netzbezug_durchschnittspreis_cent?: number | null
   /**
    * F-58 — Nenner des spezifischen Ertrags DIESES Monats: Σ der im Monat
-   * aktiven PV-Module (ohne Balkonkraftwerk, passend zu `pv_erzeugung_kwh`).
+   * aktiven PV-Erzeuger MIT Balkonkraftwerk, passend zu `pv_erzeugung_kwh`
+   * (Module + BKW). Bis 03.10.2026 ohne BKW — der spezifische Ertrag der
+   * Tabelle lag dann um den BKW-Anteil über dem Cockpit (N-612).
    * null = keine Erzeuger-Investitionen gepflegt.
    *
    * Kommt vom Backend, weil der Client sonst `Anlage.leistung_kwp` nähme —
@@ -119,7 +126,11 @@ export interface AggregierteMonatsdaten {
   // Hieß bis A17 `pv_anlage_kwh` — „PV-Anlage" ist im Produkt überall die
   // GANZE Anlage (inkl. BKW), das Feld meint aber Module OHNE BKW.
   pv_module_kwh: number | null
+  /** Balkonkraftwerk(e): eigene Werte UND (N-621) der Anteil eines BKW ohne eigenen Wert am
+   *  gespeicherten Anlagen-PV-Wert. pv_module_kwh + bkw_kwh == pv_erzeugung_kwh. */
   bkw_kwh: number | null
+  /** N-621: davon aus dem Anlagenwert verteilt (in bkw_kwh enthalten, kein eigenes Segment). */
+  bkw_aus_anlagenwert_kwh: number | null
   // Sonstige Erzeuger (typ `sonstiges` + Kategorie `erzeuger`, z. B. BHKW).
   // NICHT in pv_erzeugung_kwh (die bleibt rein PV), aber Teil der
   // Netzpunkt-Bilanz, aus der direktverbrauch/eigenverbrauch gerechnet sind.
@@ -172,9 +183,10 @@ export interface AggregierteMonatsdaten {
   einspeise_nicht_verguetet_euro: number
   ev_ersparnis_euro: number
   // Konzept §9 Weg 2: Σ der gepflegten Erlöse von Erzeugern mit EIGENEM
-  // Einspeisetarif. Steckt bewusst weder in `einspeise_erloes_euro` noch in
-  // `netto_ertrag_euro` — jene bewerten den Anlagenzähler mit dem einen Satz
-  // der Anlage. Hier nur, damit die Sicht ihre Abgrenzung benennen kann (#402).
+  // Einspeisetarif und der Abgabe an Dritte. Steckt NICHT in `einspeise_erloes_euro`
+  // (Anlagenzähler × der eine Satz der Anlage), WOHL ABER in `netto_ertrag_euro`
+  // (seit 06.09.2026, §9.2; Posten „Erlös eigener Satz" der Ergebnis-Leiter). Einzeln
+  // hier, damit die Sicht ihn in der Netto-Herleitung nennen kann (#402).
   erzeuger_erloes_euro: number
   // Nur für BKW-Monate ohne erfasste Erzeugung besetzt (Datenlücke, ADR-002/P9).
   bkw_ersparnis_euro: number
@@ -182,8 +194,11 @@ export interface AggregierteMonatsdaten {
   ust_eigenverbrauch_euro: number
   // Arbeitspreis × kWh + Grundpreis des Monats.
   netzbezug_kosten_euro: number
-  // Erlös + EV- + BKW-Ersparnis − USt. OHNE „Sonstige Erträge & Ausgaben".
+  // Stufe 1 der Ergebnis-Leiter: Erlös + EV- + BKW-Ersparnis + Erlös eigener Satz + Sonstige Positionen − USt —
+  // dieselbe Zahl wie Cockpit → Monat. Seit 03.10.2026 MIT den Sonstigen Positionen (A1); der Client addiert sie
+  // nirgends mehr selbst.
   netto_ertrag_euro: number
+  // Netto-Ertrag − Netzbezugskosten (eigene Größe der Tabelle; seit A1 über den Netto-Ertrag inkl. Sonstiger).
   netto_bilanz_euro: number
   // Effektiver Arbeitspreis des Monats (Flex-Ø vor Stammdaten-Tarif, P8).
   netzbezug_preis_cent: number

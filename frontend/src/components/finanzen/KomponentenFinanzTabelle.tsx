@@ -8,10 +8,10 @@
  * Summenzeile ist die Block-Kopf-Kennzahl (Kopf == sichtbare Summe).
  *
  * Datenquelle = ausschließlich der `/aktueller-monat`-Payload (Monat: kanonische
- * Antwort, Jahr: Σ-12 über `baueJahrAlsMonat`) — KEINE neuen Berechnungen; die
- * kanonische `netto_ertrag_euro`/`gesamtnettoertrag_euro`, HA-Export und das
- * Jahres-PDF bleiben unangetastet (die Tabellen-Summe ist bewusst eine eigene,
- * komponenten-attribuierte Sicht).
+ * Antwort, Jahr: Kopf der Jahresroute) — KEINE neuen Berechnungen. Seit 03.10.2026
+ * (E2) verteilt die Tabelle dieselben Posten wie die Ergebnis-Leiter auf die
+ * Komponenten (USt auf den Eigenverbrauch als Aufwand der PV-Anlage); die
+ * Ergebniszeile darunter LIEST das Monats-/Jahresergebnis (`ergebnis_euro`).
  *
  * Zeilen-Modell:
  *  - **PV-Anlage** (aus Anlage-Ebene): Erträge = Einspeise-Erlös · Einsparungen =
@@ -31,7 +31,7 @@ import { Table, TableHead, TableBody, TableFoot } from '../ui/Table'
 import { ZELLE, KOPF_ZELLE } from '../ui/tabelleMasse'
 import { GELD_TEXT_CLASS, compareTyp } from '../../lib'
 import type { AktuellerMonatResponse, InvestitionFinancialDetail } from '../../api/aktuellerMonat'
-import { pvEigenverbrauchRestEuro } from './evAufteilung'
+import { bkwAufteilung, pvEigenverbrauchRestEuro } from './evAufteilung'
 
 const num = (v: number) => fmtCalc(v, 2, '—')
 const saldoFarbe = (v: number) => (v >= 0 ? GELD_TEXT_CLASS.netto : GELD_TEXT_CLASS.kosten)
@@ -85,26 +85,53 @@ function zeilenAus(d: AktuellerMonatResponse): FinanzZeile[] {
   if (einspeise != null || ev != null) {
     const evPv = ev != null ? pvEigenverbrauchRestEuro(d) : 0
     const abgezogen = (ev ?? 0) - evPv
+    // USt auf den Eigenverbrauch (Regelbesteuerung) ist ein Aufwand der PV-Anlage — Posten der Ergebnis-Leiter
+    // (E2/G4, 03.10.2026). Ohne ihn wich die Zeile „Monatsergebnis" unten um genau diesen Betrag von der Kachel ab.
+    const ust = d.ust_eigenverbrauch_euro ?? 0
     zeilen.push({
       key: 'pv-anlage',
       label: 'PV-Anlage',
       typ: 'pv-module',
       ertraege: einspeise ?? 0,
       einsparungen: evPv,
-      aufwand: 0,
+      aufwand: ust,
       tooltip: 'Erträge: Einspeise-Erlös (Einspeisung × Vergütung). '
-        + 'Einsparungen: Eigenverbrauch × Netzbezugspreis (vermiedener Netzbezug)'
+        + (d.ev_preis_herkunft === 'ev_gemessen'
+          ? `Einsparungen: Eigenverbrauch × Ø-Preis der vermiedenen Stunden (${fmtCalc(d.ev_preis_cent ?? 0, 2)} ct/kWh)`
+          : 'Einsparungen: Eigenverbrauch × Netzbezugspreis (vermiedener Netzbezug)')
         + (abgezogen > 0
           ? ` — ohne ${fmtCalc(abgezogen, 2)} €, die unten als eigene Zeile stehen.`
-          : '.'),
-      hinweis: abgezogen > 0 ? 'ohne Anteil der Komponenten unten' : undefined,
+          : '.')
+        + (ust > 0 ? ` Aufwand: USt auf den Eigenverbrauch ${fmtCalc(ust, 2)} €${d.ust_herleitung ? ` (${d.ust_herleitung})` : ''}.` : ''),
+      hinweis: [abgezogen > 0 ? 'ohne Anteil der Komponenten unten' : null, ust > 0 ? 'Aufwand = USt auf Eigenverbrauch' : null]
+        .filter(Boolean).join(' · ') || undefined,
     })
   }
 
-  // Speicher-Netzladungs-Kosten (Anlage-Ebene, tatsächliche Ausgabe) fließen in die
-  // Aufwand-Spalte der ERSTEN Speicher-Zeile — sie stecken NICHT im Haus-Netzbezug
-  // (getrennte Messung), also kein Doppelzählen mit der nachrichtlichen Netzbezug-Zeile.
+  // Speicher-Netzladungs-Kosten: NUR AUSWEIS an der ersten Speicher-Zeile, KEIN Aufwand (N-606, 03.10.2026).
+  // Die Netzladung läuft über den Hauszähler und steckt damit schon in der Stromrechnung (`netzbezug_kosten_euro`) —
+  // dieselbe Regel wie das T-Konto (R15-5b: „steckt bereits in diesen Kosten (Hauszähler), KEIN zusätzlicher Posten").
+  // ⛔ Hier stand bis dahin das Gegenteil („stecken NICHT im Haus-Netzbezug (getrennte Messung)") und die Kosten
+  // standen im Aufwand der Speicher-Zeile; die Haushaltsperspektive zog danach die volle Stromrechnung ab — doppelt
+  // (gemessen an r28 + r27: 30 Monate, Σ 290,10 €).
   let netzladungKosten = d.speicher_ladung_netz_kosten_euro ?? 0
+
+  // A2 (03.10.2026): die BKW-Zeile trägt nur den Anteil, der im Eigenverbrauch der Anlage steckt — geklemmt wie die
+  // PV-Restzeile —, der P9-Rest (BKW-Monat ohne Erzeugungswert) steht als eigene Zeile. Dieselbe Regel wie das T-Konto
+  // (`evAufteilung.ts::bkwAufteilung`).
+  const bkw = bkwAufteilung(d)
+  if (bkw.rest !== 0) {
+    zeilen.push({
+      key: 'bkw-ohne-erzeugung',
+      label: 'Balkonkraftwerk — Monat ohne Erzeugungswert',
+      typ: 'balkonkraftwerk',
+      ertraege: 0,
+      einsparungen: bkw.rest,
+      aufwand: 0,
+      tooltip: 'Gemessener BKW-Eigenverbrauch × Netzbezugspreis für ein Balkonkraftwerk ohne erfasste Erzeugung — '
+        + 'er steckt deshalb nicht in der Einsparung der PV-Anlage.',
+    })
+  }
 
   // Komponenten (investitionen_financials), Typ-Reihenfolge.
   const fins: InvestitionFinancialDetail[] = [...(d.investitionen_financials ?? [])].sort(compareTyp)
@@ -113,19 +140,21 @@ function zeilenAus(d: AktuellerMonatResponse): FinanzZeile[] {
     const netzladung = istSpeicher ? netzladungKosten : 0
     if (istSpeicher) netzladungKosten = 0  // nur einmal zuordnen
     const ertraege = (f.erloes_euro ?? 0) + (f.sonstige_ertraege_euro ?? 0)
-    const einsparungen = f.ersparnis_euro ?? 0
-    const aufwand = (f.betriebskosten_monat_euro ?? 0) + (f.sonstige_ausgaben_euro ?? 0) + netzladung
-    if (ertraege === 0 && einsparungen === 0 && aufwand === 0) continue
+    const bkwGekappt = f.typ === 'balkonkraftwerk' && bkw.faktor < 1
+    const einsparungen = (f.ersparnis_euro ?? 0) * (bkwGekappt ? bkw.faktor : 1)
+    const aufwand = (f.betriebskosten_monat_euro ?? 0) + (f.sonstige_ausgaben_euro ?? 0)
+    if (ertraege === 0 && einsparungen === 0 && aufwand === 0 && netzladung === 0) continue
     // Herleitung der kalkulatorischen Einsparung als Tooltip (vorhandene Felder).
     const tooltipTeile: string[] = []
     if (einsparungen !== 0 && f.ersparnis_label) {
       tooltipTeile.push(f.formel ? `${f.ersparnis_label}: ${f.formel}` : f.ersparnis_label)
-      if (f.berechnung) tooltipTeile.push(f.berechnung)
+      if (f.berechnung && !bkwGekappt) tooltipTeile.push(f.berechnung)
     }
-    if (netzladung > 0) tooltipTeile.push(`inkl. Netzladung ${fmtCalc(netzladung, 2)} € (${fmtCalc(d.speicher_ladung_netz_kwh ?? 0, 1)} kWh Netz)`)
+    if (bkwGekappt) tooltipTeile.push(`gekappt auf den Eigenverbrauch der Anlage (Gerät: ${fmtCalc(f.ersparnis_euro ?? 0, 2)} €)`)
+    if (netzladung > 0) tooltipTeile.push(`Netzladung ${fmtCalc(netzladung, 2)} € (${fmtCalc(d.speicher_ladung_netz_kwh ?? 0, 1)} kWh Netz) — steckt in der Stromrechnung, nicht im Aufwand dieser Zeile`)
     const hinweise: string[] = []
     if ((f.betriebskosten_monat_euro ?? 0) > 0) hinweise.push('Betriebskosten anteilig')
-    if (netzladung > 0) hinweise.push('inkl. Netzladung')
+    if (netzladung > 0) hinweise.push(`davon Netzladung ${fmtCalc(netzladung, 2)} € in der Stromrechnung`)
     zeilen.push({
       key: `inv-${f.investition_id}`,
       label: f.bezeichnung,
@@ -138,19 +167,9 @@ function zeilenAus(d: AktuellerMonatResponse): FinanzZeile[] {
     })
   }
 
-  // Sicherung: kein Speicher-Financial-Zeile vorhanden, aber Netzladungs-Kosten da
-  // → eigene Zeile, damit die tatsächliche Ausgabe nicht still verschwindet.
-  if (netzladungKosten > 0) {
-    zeilen.push({
-      key: 'speicher-netzladung',
-      label: 'Speicher — Netzladung',
-      typ: 'speicher',
-      ertraege: 0,
-      einsparungen: 0,
-      aufwand: netzladungKosten,
-      tooltip: `Netzladung ${fmtCalc(netzladungKosten, 2)} € (${fmtCalc(d.speicher_ladung_netz_kwh ?? 0, 1)} kWh Netz × Strompreis)`,
-    })
-  }
+  // Bis 03.10.2026 stand hier eine Sicherungszeile „Speicher — Netzladung" mit den Netzladungs-Kosten als Aufwand,
+  // falls keine Speicher-Zeile existierte. Sie entfällt mit N-606: die Kosten stehen in der Stromrechnung, und eine
+  // Zeile ohne eigenen Betrag wäre Ausweis ohne Gegenstand.
 
   // Anlage-übergreifende Sonstige Positionen — eigene Zeile, nur wenn ≠ 0.
   const aErt = d.anlage_sonstige_ertraege_euro ?? 0
@@ -284,10 +303,10 @@ export function KomponentenFinanzTabelle({ d, zeitraum = 'monat' }: {
       </MobilKarten>
 
       {/* ── G20-4: Haushaltsperspektive (zweite Sicht, NICHT Teil des Komponenten-Saldos) ──
-          Transparente Zusatz-Rechnung: Komponenten-Saldo − Stromrechnung (Netzbezug-Kosten)
-          = Ergebnis nach Stromrechnung. Reine Darstellung, beide Zahlen liegen im Payload
-          (Gernot 2026-07-20, Folge zu G20-1). Nur wenn Netzbezug-Kosten vorhanden. */}
-      {d.netzbezug_kosten_euro != null && (
+          Komponenten-Saldo − Stromrechnung = das Monats-/Jahresergebnis der Ergebnis-Leiter (E2, 03.10.2026).
+          Die Ergebniszeile LIEST `ergebnis_euro` — bis dahin hieß sie „Ergebnis nach Stromrechnung" und war eine
+          eigene Differenz; dass beide Wege auf dieselbe Zahl führen, misst die Probe P8 (Baubericht). */}
+      {d.netzbezug_kosten_euro != null && d.ergebnis_euro != null && (
         <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/40 p-2.5 mt-1">
           <p className="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-1.5">
             Haushaltsperspektive
@@ -302,9 +321,9 @@ export function KomponentenFinanzTabelle({ d, zeitraum = 'monat' }: {
               <dd className="tabular-nums">{num(d.netzbezug_kosten_euro)} €</dd>
             </div>
             <div className="flex items-center justify-between gap-2 border-t border-gray-200 dark:border-gray-700 pt-1 mt-1 font-semibold">
-              <dt className="text-gray-700 dark:text-gray-200">= Ergebnis nach Stromrechnung</dt>
-              <dd className={`tabular-nums ${saldoFarbe(gesamtSaldo - d.netzbezug_kosten_euro)}`}>
-                {num(gesamtSaldo - d.netzbezug_kosten_euro)} €
+              <dt className="text-gray-700 dark:text-gray-200">= {zeitraum === 'jahr' ? 'Jahresergebnis' : 'Monatsergebnis'}</dt>
+              <dd className={`tabular-nums ${saldoFarbe(d.ergebnis_euro)}`}>
+                {num(d.ergebnis_euro)} €
               </dd>
             </div>
           </dl>
