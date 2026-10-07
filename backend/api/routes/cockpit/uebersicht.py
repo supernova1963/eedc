@@ -19,9 +19,7 @@ from backend.models.investition import Investition
 from backend.services.prognose_auswahl import lade_aktive_prognose
 from backend.api.routes.strompreise import lade_tarife_fuer_anlage
 from backend.core.berechnungen import (
-    DienstlicheLadungZeile,
     FinanzMonatsZeile,
-    berechne_dienstliche_ladekosten,
     berechne_finanz_aggregat,
     berechne_spez_ertrag_annualisiert,
     berechne_verbrauchs_kennzahlen,
@@ -34,7 +32,8 @@ from backend.core.berechnungen import (
     vollzyklen as berechne_vollzyklen,
 )
 from backend.core.berechnungen import relevante_kosten_aus_investitionen
-from backend.core.berechnungen.ergebnis import ErgebnisEingang, berechne_ergebnis
+from backend.core.berechnungen.ergebnis import ErgebnisEingang, berechne_ergebnis, quote_paarweise
+from backend.core.berechnungen.pv_verteilung import wandlungsverluste_prozent
 from backend.services.ust_satz import ust_eigenverbrauch_zeitraum
 from backend.core.calculations import berechne_co2_bilanz
 from backend.services.strompreis_aggregator import lade_preis_aggregate_je_monat
@@ -78,6 +77,12 @@ class CockpitUebersichtResponse(BaseModel):
     einspeisung_kwh: float
     direktverbrauch_kwh: float
     eigenverbrauch_kwh: float
+    #: HA-Bauform E4b (N-588 — angezeigt, NICHT bewertet): Wandlungsverluste des Zeitraums (Σ der Monate mit Wert aus
+    #: dem Kanal-Leser), ihr Bezug (Σ String-Zähler derselben Monate) und Prozent (Layer). ``None`` ohne Anlagenzähler
+    #: bzw. ohne einen Monat mit Kanal-Deckung. Trägt die Zeile im PV-Hub (Block „Verlauf", gesamte Historie).
+    wandlungsverluste_kwh: Optional[float] = None
+    wandlungsverluste_bezug_kwh: Optional[float] = None
+    wandlungsverluste_prozent: Optional[float] = None
 
     # Quoten (%)
     autarkie_prozent: float
@@ -375,15 +380,12 @@ async def get_cockpit_uebersicht(
     # ließ dem Dienstwagen netto +22 ct je verschenkter kWh (N-18).
     # Die ENERGIEBILANZ oben bleibt davon unberührt: energetisch ist die Ladung
     # Eigenverbrauch hinter dem Zähler.
-    dienstlich_ladekosten_euro = berechne_dienstliche_ladekosten(
-        DienstlicheLadungZeile(
-            ladung_pv_kwh=f.emob.dienstlich_ladung_pv_kwh,
-            ladung_netz_kwh=f.emob.dienstlich_ladung_netz_kwh,
-            netzbezug_preis_cent=f.tarif.netzbezug_preis_cent,
-            wallbox_preis_cent=f.tarif.wallbox_preis_effektiv_cent,
-        )
-        for f in fakten
-    ).gesamt_euro
+    # ⭐ N-633 (05.10.2026): der Posten kommt aus den Monats-Fakten (`EmobFakten.dienstliche_ladekosten_euro`, dort
+    # über dieselbe Layer-Formel gebildet) — derselbe Wert, den Cockpit → Monat/Jahr, Tabelle und PDF als eigenen
+    # Posten der Ergebnis-Leiter führen. Diese Sicht faltet ihn wie bisher in die Sonstigen Ausgaben (ihr Antwortfeld
+    # `sonstige_netto_euro` trägt ihn, Bestandsproben `test_dienstliche_ladekosten_drei_sichten.py`,
+    # `test_aussichten_finanz_aggregat_symmetrie.py`); der Netto-Ertrag ist in beiden Formen derselbe.
+    dienstlich_ladekosten_euro = sum(f.emob.dienstliche_ladekosten_euro for f in fakten)
     sonstige_ausgaben_gesamt += dienstlich_ladekosten_euro
 
     # Anschaffungsdatum-Grenze: Energiebilanz + Erträge nur über Monate, in denen
@@ -413,6 +415,13 @@ async def get_cockpit_uebersicht(
     # (`monats_fakten.pv_erzeugungs_monate`, N-621 H1) — der HA-Sensor
     # „spezifischer Ertrag" fragt dieselbe Funktion.
     pv_monate = pv_erzeugungs_monate(fakten)
+
+    # HA-Bauform E4b: Wandlungsverluste über die Monate, die Verluste UND Bezug tragen (paarweise wie das Jahr,
+    # `ergebnis.falte_zeitraum`); nur geführt — in keiner Bilanz, Ersparnis oder CO₂-Größe darunter.
+    _q_verluste = quote_paarweise([
+        {"monat": f.monat, "v": f.erzeugung.wandlungsverluste_kwh, "b": f.erzeugung.wandlungsverluste_bezug_kwh}
+        for f in fakten
+    ], "v", "b")
 
     # Netzpunkt-Bilanz: sonstige Erzeuger (z. B. BHKW) speisen hinter denselben
     # Zähler → ihre Erzeugung gehört in die EV/Autarkie-Ableitung, sonst drückt
@@ -572,8 +581,23 @@ async def get_cockpit_uebersicht(
     )
     # D-Sicht 3: EINMAL gebaut — Tabelle und Kasten lesen dieselben Zeilen (R-4).
     _wp_block_geraete = geraete_zeilen(_wp_kennzahlen_je_geraet)
+    # HA-Bauform E4d (Bauplan §8a, Entscheid Master H-4): Strom UND Wärme im Fenster GEMESSEN 0 ⇒ Stufe 3 mit dem
+    # Zeitraum-Grund wie in Cockpit → Monat. Die Summen der Fakten sind `float` mit 0-Default — erst die Marken
+    # `strom_gemessen`/`waerme_gemessen` sagen, ob die 0 gemessen ist; ohne Messung bleibt es bei Stufe 1.
+    from backend.core.berechnungen.waermepumpe_kennzahl import kein_betrieb_grund_der_achsen
+
+    _wp_strom_gemessen = any(f.wp.strom_gemessen for f in fakten)
+    _wp_waerme_gemessen = any(f.wp.waerme_gemessen for f in fakten)
+    _wp_null_gemessen = _wp_strom_gemessen and _wp_waerme_gemessen
+    # Gegenfall (§8a, Nachtrag): eine 0 ohne Marke ist „nicht erfasst" und geht als ``None`` in den Layer — Strom
+    # gemessen 0 bei nicht erfasster Wärme ⇒ Stufe 5 „kein Wärmemengenzähler zugeordnet" statt Stufe 1. Über 0
+    # bleibt jeder Wert, wie er ist.
     _wp_az = systemarbeitszahl(
-        _wpk.waerme_kwh, _wpk.strom_kwh,
+        _wpk.waerme_kwh if (_wpk.waerme_kwh or _wp_waerme_gemessen) else None,
+        _wpk.strom_kwh if (_wpk.strom_kwh or _wp_strom_gemessen) else None,
+        kein_betrieb_grund=(
+            kein_betrieb_grund_der_achsen(achsen_der_anlage(_wp_kennzahlen_je_geraet)) if _wp_null_gemessen else None
+        ),
         waerme_abgeleitet_kwh=_wpk.waerme_abgeleitet_kwh,
         kuehlstrom_kwh=_wpk.funktionsfremd_abzug_kwh,
         strom_ohne_waerme_kwh=_wp_strom_ohne_waerme,
@@ -879,6 +903,9 @@ async def get_cockpit_uebersicht(
         einspeisung_kwh=round(einspeisung, 1),
         direktverbrauch_kwh=round(direktverbrauch, 1),
         eigenverbrauch_kwh=round(eigenverbrauch, 1),
+        wandlungsverluste_kwh=_q_verluste.zaehler,
+        wandlungsverluste_bezug_kwh=_q_verluste.nenner,
+        wandlungsverluste_prozent=wandlungsverluste_prozent(_q_verluste.zaehler, _q_verluste.nenner),
         autarkie_prozent=round(autarkie, 1),
         eigenverbrauch_quote_prozent=round(ev_quote, 1),
         direktverbrauch_quote_prozent=round(dv_quote, 1),

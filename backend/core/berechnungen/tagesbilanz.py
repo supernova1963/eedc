@@ -45,6 +45,33 @@ from backend.core.berechnungen.kennzahlen import (
     autarkie_prozent,
     eigenverbrauchsquote_prozent,
 )
+from backend.core.berechnungen.verbrauch import berechne_verbrauchs_kennzahlen
+
+
+def _eigenverbrauch_kwh(
+    *, pv_kwh: float, einspeisung_kwh: float, netzbezug_kwh: float,
+    speicher_ladung_kwh: float, speicher_entladung_kwh: float,
+) -> float:
+    """Eigenverbrauch eines Zeitfensters — **die eine Formel** (N-635, 05.10.2026).
+
+    Direktverbrauch + Speicher-Entladung, gebildet von
+    ``verbrauch.berechne_verbrauchs_kennzahlen`` (ADR-001: eine Formel an einem
+    Ort). Dieselbe Formel rechnet der Monat (Monats-Fakten) und das
+    HA-Energie-Dashboard (``src/data/energy.ts::computeConsumptionSingle``:
+    ``used_solar`` + ``used_battery``). Bis 05.10.2026 stand hier für Tag und
+    Monat-aus-Tagen ``PV − Einspeisung`` — das zählt die Speicher-**Ladung** als
+    Eigenverbrauch statt der **Entladung**: ΔSoC und Ladeverlust landeten im
+    Eigenverbrauch, der Tag lag dann über seinem Gesamtverbrauch (Matrix-Form
+    M02: 12,0 statt 11,0 kWh bei 11,0 kWh Gesamtverbrauch). Ohne Speicher sind
+    beide Formeln gleich.
+    """
+    return berechne_verbrauchs_kennzahlen(
+        pv_erzeugung_kwh=pv_kwh,
+        einspeisung_kwh=einspeisung_kwh,
+        netzbezug_kwh=netzbezug_kwh,
+        speicher_ladung_kwh=speicher_ladung_kwh,
+        speicher_entladung_kwh=speicher_entladung_kwh,
+    ).eigenverbrauch_kwh
 
 
 class _StundenRow(Protocol):
@@ -70,7 +97,8 @@ class TagesBilanz:
     ueberschuss_kwh: float          # = Σ max(0, pv − verbrauch)
     defizit_kwh: float              # = Σ max(0, verbrauch − pv)
     direktverbrauch_kwh: float      # = Σ min(pv, verbrauch)
-    # = erzeugung − einspeisung (PV-Eigenverbrauch). `None`, wenn keine einzige
+    # = Direktverbrauch + Speicher-Entladung (`_eigenverbrauch_kwh`, N-635); ohne
+    # Speicher = erzeugung − einspeisung. `None`, wenn keine einzige
     # Stunde einen PV-Wert trug: eine Differenz ohne Minuenden ist keine Zahl,
     # sondern eine Lücke (`docs/KONZEPT-UNVOLLSTAENDIGE-WERTE.md`).
     eigenverbrauch_kwh: Optional[float]
@@ -99,6 +127,10 @@ class TagesBilanz:
     verbrauch_erfasst: bool = False
     einspeisung_erfasst: bool = False
     netzbezug_erfasst: bool = False
+    # HA-Bauform E4d (Bauplan §8a, Rest N-585): dieselbe Trennung für den Wärmepumpen-Strom — eine Stunde mit
+    # `waermepumpe_kw is not None` trug einen Wert, auch 0. Eine gemessene 0 ist erfasst (F-5): „kein Betrieb", nicht
+    # „keine Wärmepumpe" — die Anzeige liest dieses Feld, nicht `wp_strom_kwh > 0`.
+    wp_erfasst: bool = False
     # **Abdeckung je Achse in Stunden** (N-92, 2026-08-22). `stunden` oben zählt
     # **Rows**, nicht Feld-Abdeckung — und beantwortet damit die Frage nicht, die
     # eine Differenz stellt: *haben beide Summanden dieselbe Grundlage?* Die
@@ -158,11 +190,17 @@ def bilanz_aus_stundenrows(
       die Energie einer Lücke steht in der Folgestunde. Mengen = Σ Stunden;
       **Gesamtverbrauch nach HA-Formel** (`gesamtverbrauch_ha_formel_kwh`),
       ``None`` nur im **Total-Fall** (PV, Netzbezug oder Einspeisung hat am Tag
-      keinen einzigen Stundenwert; fehlende Batterie = 0). EV = PV −
-      Einspeisung. Unterdrückt werden nur noch: EV/EV-Quote bei Total-Fall
-      oder ``verworfen`` auf pv/einspeisung; Autarkie bei fehlendem
-      Gesamtverbrauch oder ``verworfen`` auf pv/netzbezug/einspeisung/batterie.
-      Teilabdeckung wird nicht mehr unterdrückt — wie in HA (G3).
+      keinen einzigen Stundenwert; fehlende Batterie = 0). **EV = Direkt-
+      verbrauch + Speicher-Entladung** (`_eigenverbrauch_kwh`, N-635) — die
+      Formel des Monats und des HA-Energie-Dashboards (``used_solar`` +
+      ``used_battery``); „EV = PV − Einspeisung, wie HA" galt nur ohne
+      Speicher. Die Batterie trägt dieselbe Regel wie der Gesamtverbrauch
+      daneben: fehlende Batterie = 0, ``verworfen.batterie`` sperrt den
+      Eigenverbrauch nicht (er sperrt nur die Autarkie). Unterdrückt werden
+      nur noch: EV/EV-Quote bei Total-Fall oder ``verworfen`` auf
+      pv/einspeisung; Autarkie bei fehlendem Gesamtverbrauch oder
+      ``verworfen`` auf pv/netzbezug/einspeisung/batterie. Teilabdeckung wird
+      nicht mehr unterdrückt — wie in HA (G3).
 
     Direktverbrauch, Überschuss und Defizit bleiben in beiden Regeln Σ über die
     Stunden mit (R6-)Verbrauchswert — benannte Teilsummen.
@@ -184,6 +222,7 @@ def bilanz_aus_stundenrows(
     batt_lade_sum = 0.0
     batt_entlade_sum = 0.0
     wp_sum = 0.0
+    wp_erfasst = False
     n = 0
 
     for r in rows:
@@ -218,6 +257,7 @@ def bilanz_aus_stundenrows(
             verb_netz_n += 1
         if wp is not None:
             wp_sum += wp
+            wp_erfasst = True
 
         if pv is not None and verbrauch is not None:
             ueberschuss = pv - verbrauch
@@ -274,15 +314,29 @@ def bilanz_aus_stundenrows(
         # für den Gesamtverbrauch). Mehr Einspeisung als PV ist keine Kennzahl,
         # sondern ein Widerspruch der Eingänge (PV-Ausfall bei laufender
         # Einspeisung) — die Quote darf ihn nicht als „−33 %" ausweisen.
+        # Die Klemme sitzt seit N-635 in der Layer-Formel selbst.
         eigenverbrauch = (
-            max(0.0, pv_sum - einspeisung_sum)
+            _eigenverbrauch_kwh(
+                pv_kwh=pv_sum, einspeisung_kwh=einspeisung_sum,
+                netzbezug_kwh=netzbezug_sum,
+                speicher_ladung_kwh=batt_lade_sum,
+                speicher_entladung_kwh=batt_entlade_sum,
+            )
             if pv_erfasst and einspeisung_erfasst
             and "pv" not in verw and "einspeisung" not in verw
             else None
         )
     else:
+        # N-635: dieselbe Formel auch im Altbestand (N-92-Sperre unverändert).
+        # Die Layer-Formel klemmt bei 0 — ein Altbestandstag mit mehr
+        # Einspeisung als PV nennt seither 0 statt einer negativen Zahl.
         eigenverbrauch = (
-            (pv_sum - einspeisung_sum)
+            _eigenverbrauch_kwh(
+                pv_kwh=pv_sum, einspeisung_kwh=einspeisung_sum,
+                netzbezug_kwh=netzbezug_sum,
+                speicher_ladung_kwh=batt_lade_sum,
+                speicher_entladung_kwh=batt_entlade_sum,
+            )
             if pv_erfasst and pv_n == einspeisung_n == pv_ein_n
             else None
         )
@@ -355,6 +409,7 @@ def bilanz_aus_stundenrows(
         verbrauch_erfasst=verbrauch_erfasst,
         einspeisung_erfasst=einspeisung_erfasst,
         netzbezug_erfasst=netzbezug_erfasst,
+        wp_erfasst=wp_erfasst,
         regelmarke=regelmarke,
         verworfen=verw,
     )
@@ -392,7 +447,13 @@ def monatsbilanz_aus_tagen(tage: Iterable[TagesBilanz]) -> MonatsBilanz:
 
     Eingang sind die Tagesbilanzen **so, wie der Tag sie rechnet** (R7 mit
     Regelmarke, N-92 ohne). Mengen = Σ Tage; Verbrauch = Σ Tages-Gesamtverbrauch;
-    EV = Σ PV − Σ Einspeisung (so rechnet HA den Monat). Unterdrückt wird:
+    **EV = die eine Formel aus den Monatssummen** (Direktverbrauch + Entladung,
+    `_eigenverbrauch_kwh`, N-635) — so rechnen HA und die Monats-Fakten den
+    Monat. Σ Tage = Monat gilt, solange an keinem Tag mehr in den Speicher geht,
+    als PV nach der Einspeisung übrig ist (Netzladung): dort klemmt der Tag den
+    Direktverbrauch bei 0, der Monat verrechnet die Netzladung mit dem
+    PV-Überschuss anderer Tage — die benannte Rest-Abweichung (BERECHNUNGEN
+    §Eigenverbrauch). Unterdrückt wird:
 
     * **EV/EV-Quote**, wenn (a) kein Tag einen PV-Wert hat, (b) kein Tag einen
       Einspeisungs-Wert hat, (c) ein Tag ``verworfen.pv`` oder
@@ -429,7 +490,13 @@ def monatsbilanz_aus_tagen(tage: Iterable[TagesBilanz]) -> MonatsBilanz:
     )
     # Vorlage §10: einmal bei 0 geklemmt, wie am Tag — ein PV-toter Tag mit
     # laufender Einspeisung drückt den Monat höchstens auf 0, nicht darunter.
-    ev = None if ev_gesperrt else max(0.0, pv - einsp)
+    # N-635: dieselbe Formel wie am Tag, aus den Summen derselben Tage, die
+    # auch PV und Einspeisung tragen.
+    ev = None if ev_gesperrt else _eigenverbrauch_kwh(
+        pv_kwh=pv, einspeisung_kwh=einsp, netzbezug_kwh=netz,
+        speicher_ladung_kwh=sum(t.speicher_ladung_kwh for t in tage),
+        speicher_entladung_kwh=sum(t.speicher_entladung_kwh for t in tage),
+    )
     aut_gesperrt = (
         gv is None
         or any(({"pv", "netzbezug", "einspeisung", "batterie"} & set(t.verworfen)) for t in tage)

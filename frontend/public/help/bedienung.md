@@ -270,6 +270,15 @@ Die **Tag**-Sicht bringt den feingranularen Stunden-Tag ins Cockpit: ein ausgew�
 - **Tagesbilanz** als Kennzahl-Strip (Summen des Tages)
 - Detail-Sektionen je nach vorhandenen Komponenten
 
+> **Eigenverbrauch des Tages = derselbe wie in Monat, Jahr und Live.** Die Kachel rechnet
+> **Direktverbrauch + Speicher-Entladung** — was das Haus direkt von der PV und aus dem Speicher
+> bezogen hat; der Rechenweg im Tooltip zeigt *(Erzeugung − Einspeisung − Speicherladung) +
+> Speicher-Entladung*, ohne Speicher kurz *Erzeugung − Einspeisung*. Früher hieß die Kachel
+> „PV-Eigenverbrauch · inkl. Speicherladung" und rechnete die Ladung mit: an einem Ladetag lag sie
+> dann über dem Gesamtverbrauch, und die Tage summierten sich nicht zum Monat. Lädt dein Speicher
+> aus dem Netz, kann die Summe der Tage leicht über dem Monatswert liegen — der Monat verrechnet die
+> Netzladung mit dem PV-Überschuss anderer Tage ([Berechnungsreferenz 3.1](BERECHNUNGEN.md#31-energie-bilanz-monatskennzahlen)).
+
 > **Wo steht der Speicher?** Nicht im obersten Kennzahlen-Block, sondern weiter unten im
 > eingeklappten Block **Speicher** — seine Kopfzeile nennt schon ohne Aufklappen geladene kWh,
 > Vollzyklen und Wirkungsgrad. Aufgeklappt stehen dort **Ladung**, **Entladung**,
@@ -314,6 +323,7 @@ Die **Monat**-Sicht ist das Referenz-Muster der Zeit-Achse: ein ausgewählter Mo
 
 - **Kennzahl-Strip** oben — die wichtigsten Monatswerte mit Δ zum Vormonat
 - **Energiebilanz** — PV-Erzeugung, Direktverbrauch, Einspeisung, Netzbezug
+- **Wandlungsverluste** — misst deine Anlage ihre Strings mit eigenen Zählern **und** hat sie einen Anlagenzähler hinter dem Wechselrichter, steht in der Vergleichstabelle unter „PV-Erzeugung" eine Unterzeile, z. B. **„Wandlungsverluste 36,0 kWh (5,7 %)"** — die Prozentzahl bezieht sich auf die Summe der String-Zähler. Der Hinweis an der Zeile: „Differenz zwischen der Summe der String-Zähler (vor dem Wechselrichter) und dem Anlagenzähler (dahinter). Wird angezeigt, nicht bewertet: Ersparnis und CO₂ rechnen weiter mit der Summe der Strings." Ohne Anlagenzähler oder wenn die Strings nicht mehr zählen als der Anlagenzähler, erscheint keine Zeile. Die Zahl kommt aus den Zählerständen (mit Home Assistant aus dessen Langzeitstatistik); ein Monat, den eedc nur aus den Tageswerten kennt, zeigt keine.
 - **Finanzen** — Komponenten-Finanz-Tabelle (Saldo je Komponente) mit Sprung in die volle Finanzrechnung (siehe unten)
 - **Komponenten-Sektionen** — Status je vorhandener Komponente mit kWh-Werten
 - **Datenquellen-Kennzeichnung** — pro Feld ist die Herkunft der Werte sichtbar (HA-Statistik, MQTT, Connector, gespeichert)
@@ -366,6 +376,43 @@ Die **Monat**-Sicht ist das Referenz-Muster der Zeit-Achse: ein ausgewählter Mo
 > Und wenn gar keine Quelle etwas liefert, sagt die leere Kachel jetzt warum: Fahr mit der
 > Maus über das „—", und dort steht, ob für diesen Monat noch überhaupt nichts vorliegt oder
 > ob nur dieser einen Größe die Zuordnung fehlt — samt dem Weg dorthin.
+>
+> **Summen wie das HA-Energie-Dashboard.** Mit Home Assistant rechnet eedc Tag, Monat und Jahr aus den Zählerständen
+> der HA-Langzeitstatistik: die Menge eines Zeitraums ist der Stand am Ende minus der Stand am Anfang — für Netz, PV,
+> Balkonkraftwerk, Speicher, Erzeuger hinter dem Zähler, Wallbox und E-Auto, sonstige Geräte und Wärmepumpe, beim
+> dynamischen Tarif auch für die Kosten. Für jeden Zeitraum entscheidet eedc **einmal**, woher die Zahlen kommen: aus
+> den Zählerständen nur, wenn sie den ganzen Zeitraum für **alle** Größen einer Rechnung abdecken; sonst wie bisher
+> aus den Tages- und Stundenwerten. Was du dabei siehst:
+>
+> * **Dieselben Zahlen wie im Energie-Dashboard** — auch einen Zählersprung, den Home Assistant gebucht hat (ein Sensor
+>   meldet kurz 0 und kehrt zurück). Der [Daten-Checker](HANDBUCH_DATEN_CHECKER.md#48b-zaehlerstaende--sprung-in-home-assistant)
+>   nennt ihn unter *Zählerstände – Sprung in Home Assistant* mit dem Weg zur Korrektur in Home Assistant.
+> * **Wandlungsverluste**, wenn deine Strings eigene Zähler haben und ein Anlagenzähler hinter dem Wechselrichter misst
+>   (Unterzeile unter „PV-Erzeugung", siehe oben).
+> * **Der laufende Monat und Monate ohne Abschluss** nennen dieselben Werte wie nach dem Abschluss (Abschnitte unten).
+> * **Ab dem Monat des Updates** gilt das für alles, was eedc Stunde für Stunde selbst mitrechnet: den Sonnenanteil der
+>   Wallbox-Ladung, den Strom je Betriebsart der Wärmepumpe und die Kosten beim dynamischen Tarif. Frühere Monate rechnet
+>   eedc dafür nicht neu — sie bleiben bei der bisherigen Rechnung.
+> * **Schneller**, je mehr Monate die Zählerstände abdecken: je Monat liest eedc zwei Stände statt aller Stunden.
+>
+> Ohne Home Assistant, vor deinem ersten zugeordneten Zähler und für Größen ohne Langzeitstatistik rechnet eedc wie
+> bisher. Abgeschlossene Monate behalten, was du gespeichert hast.
+
+> **E-Mobilität und Sonstiges ohne Abschluss.** Mit Home Assistant nennt der laufende Monat (und ein vergangener Monat
+> ohne Abschluss) die Ladung deiner Wallbox und deiner E-Autos, ihren Sonnenanteil, die dienstliche Ladung, deine
+> sonstigen Verbraucher und den Strom eines Erzeugers wie BHKW aus den Zählerständen — und zwar dieselben Zahlen, die
+> nach dem Abschluss dastehen. Den Sonnenanteil der Ladung rechnet eedc Stunde für Stunde mit (wie viel der Ladung
+> nicht aus dem Netz kam); er gilt ab dem Monat des Updates; frühere Monate rechnet eedc nicht neu. Hast du einen Erzeuger unter
+> *Sonstiges*, zählt sein Strom damit auch ohne Abschluss in Eigenverbrauch und Autarkie.
+
+> **Wärmepumpe ohne Abschluss.** Mit Home Assistant nennt der laufende Monat (und ein vergangener Monat ohne Abschluss)
+> Strom und Wärme deiner Wärmepumpen, Heizstrom und Warmwasserstrom, Heizwärme und Warmwasser-Wärme, den Strom je
+> Betriebsart (Heizen, Kühlen …) und die Kälte eines Klimageräts aus den Zählerständen — dieselben Zahlen, die nach dem
+> Abschluss dastehen. Hast du den Betriebsmodus zugeordnet, teilt eedc den Strom Stunde für Stunde nach der Betriebsart
+> auf (wie lange das Gerät in der Stunde geheizt, Warmwasser bereitet oder gekühlt hat); die Wärme teilt der
+> Betriebsmodus nicht. Das gilt ab dem Monat des Updates, frühestens ab dem Zeitpunkt, ab dem eedc den Betriebsmodus
+> mitschreibt; frühere Monate rechnet eedc nicht neu. Zeigen Strom und Wärme in einem Monat beide 0, steht dort 0 und
+> *kein Heizbetrieb in diesem Zeitraum* — die Wärmepumpe lief nicht, es fehlt kein Zähler.
 
 Aus dem feingranularen Stunden-Bestand des Monats zeigt die Sicht zusätzlich:
 
@@ -377,7 +424,7 @@ Aus dem feingranularen Stunden-Bestand des Monats zeigt die Sicht zusätzlich:
 
 > **Aus der alten „Energieprofil (Beta)"-Sicht bewusst nicht übernommen:** die Tag×Stunde-Heatmap (kommt später neu gestaltet zurück) und der Wochentag-Wochenvergleich (entfällt — der Ø-gleiche-Wochentag-Rückblick in der Tag-Sicht deckt den Kern).
 
-**Finanzen-Block** — der Monat (und analog [Jahr/Gesamt](#24-jahrgesamt)) trägt einen eigenen Finanzen-Block als **Komponenten-Finanz-Tabelle**: eine Zeile je Komponente (PV-Anlage, Speicher, Wärmepumpe, E-Auto …) mit den Spalten **Erträge** (tatsächliche Zahlungsflüsse), **Einsparungen** (kalkulatorisch — vermiedene Kosten), **Aufwand** und **Saldo**. Die **Summenzeile ist die Block-Kopf-Kennzahl** (Kopf == sichtbare Summe). ⚑ **Die Zeile „PV-Anlage" trägt dabei nur ihren eigenen Anteil an der Eigenverbrauchs-Ersparnis:** Was Speicher, Balkonkraftwerk und die PV-Ladung der Wallbox beitragen, steht in deren eigenen Zeilen und ist oben abgezogen — sonst stünde dieselbe Kilowattstunde zweimal in der Summe. Wo etwas abgezogen wurde, sagt die Zeile es („ohne Anteil der Komponenten unten"), und die Summe stimmt dann mit dem T-Konto in *Auswertungen → Finanzen* überein. Spaltenköpfe und Zeilen zeigen ihre Herleitung im **Tooltip** (Hover/Tipp). Netzbezug-Kosten und Grundgebühr stehen **nachrichtlich** darunter, nicht im Saldo verrechnet. Eine zusätzliche Zeile **„Monatsergebnis"** (im Jahr: „Jahresergebnis") zeigt als **zweite Perspektive** das Haushaltsergebnis — dieselbe Zahl wie die Kachel oben; bei Regelbesteuerung steht die USt auf den Eigenverbrauch als Aufwand der PV-Anlage. Der Komponenten-Saldo bleibt davon unberührt und ist weiterhin die Kopf-Kennzahl. Die **volle Finanzrechnung** (T-Konto je Investition, zeitraum-fähig) und die Finanz-Prognose liegen in [Auswertungen → Finanzen](#41-finanzen); der Block verlinkt direkt dorthin.
+**Finanzen-Block** — der Monat (und analog [Jahr/Gesamt](#24-jahrgesamt)) trägt einen eigenen Finanzen-Block als **Komponenten-Finanz-Tabelle**: eine Zeile je Komponente (PV-Anlage, Speicher, Wärmepumpe, E-Auto …) mit den Spalten **Erträge** (tatsächliche Zahlungsflüsse), **Einsparungen** (kalkulatorisch — vermiedene Kosten), **Aufwand** und **Saldo**. Die **Summenzeile ist die Block-Kopf-Kennzahl** (Kopf == sichtbare Summe). ⚑ **Die Zeile „PV-Anlage" trägt dabei nur ihren eigenen Anteil an der Eigenverbrauchs-Ersparnis:** Was Speicher, Balkonkraftwerk und die PV-Ladung der Wallbox beitragen, steht in deren eigenen Zeilen und ist oben abgezogen — sonst stünde dieselbe Kilowattstunde zweimal in der Summe. Wo etwas abgezogen wurde, sagt die Zeile es („ohne Anteil der Komponenten unten"), und die Summe stimmt dann mit dem T-Konto in *Auswertungen → Finanzen* überein. Spaltenköpfe und Zeilen zeigen ihre Herleitung im **Tooltip** (Hover/Tipp). Netzbezug-Kosten und Grundgebühr stehen **nachrichtlich** darunter, nicht im Saldo verrechnet. Eine zusätzliche Zeile **„Monatsergebnis"** (im Jahr: „Jahresergebnis") zeigt als **zweite Perspektive** das Haushaltsergebnis — dieselbe Zahl wie die Kachel oben; bei Regelbesteuerung steht die USt auf den Eigenverbrauch als Aufwand der PV-Anlage. Lädt ein **Dienstwagen** zu Hause, steht der Strom dafür als eigene Aufwandszeile **„Dienstliche Ladekosten"** in der Tabelle und im T-Konto (Netzanteil zum Wallbox-Tarif, PV-Anteil zum Netzbezugspreis); die Erstattung deines Arbeitgebers pflegst du als sonstigen Ertrag. Der Komponenten-Saldo bleibt davon unberührt und ist weiterhin die Kopf-Kennzahl. Die **volle Finanzrechnung** (T-Konto je Investition, zeitraum-fähig) und die Finanz-Prognose liegen in [Auswertungen → Finanzen](#41-finanzen); der Block verlinkt direkt dorthin.
 
 > **Die Kachel „Ø-Preis Netz" zeigt unter dem Preis die Arbeitspreis-Kosten** (`Netzbezug ×
 > Ø-Preis`) — nicht die Gesamtsumme der Stromrechnung. So geht die Division auf: kWh und €
@@ -425,7 +472,7 @@ Der Finanzen-Block als Komponenten-Finanz-Tabelle erscheint auch in Jahr/Gesamt.
 
 **PV-Verteilung** — ein Balken, der zeigt, wohin der erzeugte Strom geflossen ist (Direktverbrauch / Speicher / Einspeisung). Daneben stehen die Kachel **Grundlast SOLL/IST** und der Hinweis, aus welchen Geräten die PV-Erzeugung stammt.
 
-**Energiebilanz** — PV-Erzeugung, Direktverbrauch, Einspeisung, Netzbezug, dazu der Block **Vergleich (IST/VJ/Ø)**: jede Kennzahl neben ihrem Vorjahreswert und dem Mittel der übrigen Jahre, jeweils mit Differenz.
+**Energiebilanz** — PV-Erzeugung, Direktverbrauch, Einspeisung, Netzbezug, dazu der Block **Vergleich (IST/VJ/Ø)**: jede Kennzahl neben ihrem Vorjahreswert und dem Mittel der übrigen Jahre, jeweils mit Differenz. Unter „PV-Erzeugung" steht dort — wie im Monat — die Unterzeile **„Wandlungsverluste …"**, wenn deine Anlage Strings und einen Anlagenzähler misst: die Summe der Monate des IST-Fensters mit Wert, Prozent bezogen auf die Summe ihrer String-Zähler. Angezeigt, nicht bewertet.
 
 > **Warum weicht der Gesamtverbrauch von meinem Herstellerportal ab?** eedc bilanziert den Verbrauch aus deinen Werten: `Erzeugung − Einspeisung − Speicher-Ladung + Speicher-Entladung + Netzbezug`. Viele Hybrid-Wechselrichter (z. B. E3DC) messen PV und Speicher **DC-seitig**, Einspeisung und Netzbezug aber **AC-seitig** — dann enthält der Gesamtverbrauch die Wandlungsverluste und liegt rund **3–5 % der Erzeugung** über dem „Hausverbrauch" im Portal, das seine Verluste herausrechnet. Beide Werte stimmen: eedc zeigt, was deine Anlage liefern musste (die richtige Basis für Autarkie und Wirtschaftlichkeit — bezahlt werden muss auch der Verlust), das Portal, was die Verbraucher gezogen haben. Details und ein Rechenrezept zum Nachprüfen stehen in der [Berechnungsreferenz 3.1](BERECHNUNGEN.md#31-energie-bilanz-monatskennzahlen).
 
@@ -547,6 +594,7 @@ Der PV-Reiter fasst **Wechselrichter, zugeordnete Module und DC-Speicher** zu ei
 - **Spezifischer Ertrag** (kWh/kWp) — wichtig für Vergleiche
 - **SOLL/IST** gegen die Solarprognose; konsistente Farben (SOLL blau, IST amber, positive Abweichung grün)
 - **Performance Ratio** auf Basis der Global Tilted Irradiance (GTI) — bei steilen Modulen und tiefer Wintersonne realistischer als auf GHI-Basis (verhindert physikalisch unmögliche PR-Werte > 1)
+- **Wandlungsverluste** im Block **„Verlauf"** — eine Zeile unter dem Diagramm über die gesamte Historie, z. B. **„Wandlungsverluste 36,0 kWh (5,7 %)"**: wie viel die String-Zähler zusammen mehr gezählt haben als der Anlagenzähler hinter dem Wechselrichter, in Prozent der String-Summe. Hinweis an der Zeile: „Differenz zwischen der Summe der String-Zähler (vor dem Wechselrichter) und dem Anlagenzähler (dahinter). Wird angezeigt, nicht bewertet: Ersparnis und CO₂ rechnen weiter mit der Summe der Strings." Die Zeile erscheint nur mit Anlagenzähler und einem Wert über 0; sie ist einzeln parkbar.
 
 Bei **Einzel-String-Anlagen** (genau eine PV-Modul-Investition) entfällt die redundante „Stringsumme"-Zeile.
 
@@ -704,9 +752,11 @@ In der Monatstabelle steht ein Monat, in dem das Auto nur einen Anteil am Rest d
 ### 3.7 Balkonkraftwerk
 
 - **Erzeugung** (kWh)
-- **Eigenverbrauch** (kWh)
+- **Eigenverbrauch** (kWh) — der Anteil des Balkonkraftwerks an der Bilanz am Hauszähler: Liefert es 10 % der Erzeugung hinter dem Zähler, trägt es 10 % des Eigenverbrauchs. Einen eingetragenen Eigenverbrauch nimmt eedc nur in einem Monat ohne Erzeugung. Ohne Zählerzeile im Monat (kein Einspeise-/Bezugszähler) ist er nicht ableitbar und steht im Verlauf als „—"
 - **Einspeisung** (kWh, = Erzeugung − Eigenverbrauch, in der Regel unvergütet)
 - optional: gekoppelte Speicher-Nutzung (Ladung/Entladung)
+
+**Verlauf und Vergleich zeigen dieselbe Rechnung wie die Kennzahlen oben:** Die Monate im Diagramm und in der Tabelle ergeben zusammen die Erzeugung und den Eigenverbrauch der Kacheln, und die Eigenverbrauchsquote im Jahresvergleich entsteht aus denselben Monatswerten.
 
 ### 3.8 Sonstiges
 

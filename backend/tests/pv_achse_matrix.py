@@ -123,6 +123,15 @@ class Form:
     gesamt: Optional[float]
     einsp_rate: float = 1.0
     anlage_kwp: float = 10.8
+    #: HA-Bauform E4a-2, neue Formen (``FORMEN_W2``): ``{sensor_id: (Rate | None, ohne_Zeile | None)}`` — gilt für
+    #: HA-Statistik, Standalone-Stände und die Handeingabe; das Soll dieser Formen folgt Weg 2 (``soll_w2``).
+    abweichung: dict = field(default_factory=dict, compare=False)
+    #: Volleinspeiser: die ganze Erzeugung geht ins Netz, physikalisch kein Eigenverbrauch (N-588-Zelle).
+    volleinspeiser: bool = False
+
+    @property
+    def w2(self) -> bool:
+        return self.fid.startswith("W2-")
 
     def geraet(self, name: str) -> Geraet:
         return next(g for g in self.geraete if g.name == name)
@@ -184,6 +193,46 @@ FORMEN: dict[str, Form] = {f.fid: f for f in (
 )}
 
 
+# ── Neue Formen nach Weg 2 (HA-Bauform E4a-2, Auftrag Punkt 6) ────────────────
+#
+# Vorlage ``plans/ha-bauform-werkzeug/probe-weg2/neue_formen.py``. Sie stehen NICHT in ``FORMEN`` (andere Proben
+# iterieren ``FORMEN`` mit ihren eigenen Regeln), sondern in ``FORMEN_W2``; die Abnahme-Matrix nimmt ``MATRIX_FORMEN``.
+
+
+def _v_sued(t):
+    return 2.1 if t.hour in PROD_STUNDEN else 0.0
+
+
+def _v_schatten(t) -> bool:
+    return t.date().day % 3 == 0
+
+
+def _v_west(t):
+    return 0.0 if (t.hour not in PROD_STUNDEN or _v_schatten(t)) else 0.9
+
+
+def _v_ac(t):
+    return round(0.96 * (_v_sued(t) + _v_west(t)), 6)
+
+
+#: L: der Süd-Zähler hat vom 10.06. 08:00 bis 11.06. 13:00 keine Zeile (30 h); seine Menge steht in 11.06. 14:00.
+L_VON, L_BIS = datetime(2026, 6, 10, 8), datetime(2026, 6, 11, 14)
+
+FORMEN_W2: dict[str, Form] = {f.fid: f for f in (
+    Form("W2-V", "Volleinspeiser: AC-Anlagenzähler = Einspeisung, Süd DC gemessen, West ohne, jeder 3. Tag verschattet",
+         (Geraet("Süd", "pv-module", 6.0, 2.1, True), Geraet("West", "pv-module", 4.0, 0.9)), 2.88,
+         einsp_rate=2.88, anlage_kwp=10.0, volleinspeiser=True,
+         abweichung={"sensor.pv_sued": (_v_sued, None), "sensor.pv_gesamt": (_v_ac, None),
+                     "sensor.einsp": (_v_ac, None), "sensor.netz": (lambda _t: 0.4, None)}),
+    Form("W2-L", "wie F05, Süd-Zähler 30 h ohne Zeile (Lücke > 24 h, 10.06. 08:00 – 11.06. 13:00)",
+         (_sued(True), _west(True), _bkw()), 3.5,
+         abweichung={"sensor.pv_sued": (None, lambda t: L_VON <= t < L_BIS)}),
+)}
+
+#: Alle Formen der Abnahme-Matrix.
+MATRIX_FORMEN: dict[str, Form] = {**FORMEN, **FORMEN_W2}
+
+
 # ── Soll aus der Regel ──────────────────────────────────────────────────────
 
 
@@ -221,6 +270,8 @@ def soll_tag(form: Form, tag: date) -> Soll:
     gemessene behalten ihren Wert, die Lücken teilen ``max(0, G − Σ gemessen)`` nach kWp.
     Ohne Anlagenzähler bleibt die Lücke ohne Key.
     """
+    if form.w2:
+        return soll_w2(form, *_tagesfenster_dt(tag))
     je: dict[str, float] = {}
     ohne: set[str] = set()
     gemessen = 0.0
@@ -262,6 +313,8 @@ def soll_monat(form: Form, tage: tuple[date, ...], *, mit_anlagenwert: bool = Tr
     nicht erklären, nach kWp auf Module UND Balkonkraftwerke ohne eigenen Wert.
     ``mit_anlagenwert=False``: der Monat kennt den Anlagenzähler nicht (Lücke ⇒ Teilsumme).
     """
+    if form.w2:
+        return soll_w2(form, _tagesfenster_dt(tage[0])[0], _tagesfenster_dt(tage[-1])[1])
     n = len(tage)
     letzter = tage[-1]
     je: dict[str, float] = {}
@@ -296,12 +349,77 @@ def soll_monat(form: Form, tage: tuple[date, ...], *, mit_anlagenwert: bool = Tr
     return Soll(max(g_monat, gemessen), je, frozenset(ohne))
 
 
+def soll_wandlungsverluste(form: Form, tage: tuple[date, ...]) -> Optional[float]:
+    """HA-Bauform E4b: ``max(0, Σ Geräte − Anlagenzähler)`` des Zeitraums (W2-R3; ``None`` ohne Anlagenzähler) —
+    unabhängig nachgerechnet: Σ der Geräte nach der Regel (``soll_monat``) gegen den Zähler über dieselben Zeilen."""
+    if form.gesamt is None:
+        return None
+    von, bis = _tagesfenster_dt(tage[0])[0], _tagesfenster_dt(tage[-1])[1]
+    az = (zaehler_delta(form, "sensor.pv_gesamt", von, bis) if "sensor.pv_gesamt" in form.abweichung
+          else tagesmenge(form.gesamt) * len(tage))
+    return max(0.0, sum(soll_monat(form, tage).je_geraet.values()) - az)
+
+
 def soll_einspeisung(form: Form, n_tage: int) -> float:
+    if form.w2 and "sensor.einsp" in form.abweichung and n_tage in (30, 3):
+        tage = TAGE_JUNI if n_tage == 30 else TAGE_JULI
+        return zaehler_delta(form, "sensor.einsp", _tagesfenster_dt(tage[0])[0], _tagesfenster_dt(tage[-1])[1])
     return tagesmenge(form.einsp_rate) * n_tage
 
 
-def soll_netzbezug(n_tage: int) -> float:
+def soll_netzbezug(n_tage: int, form: Optional[Form] = None) -> float:
+    if form is not None and form.w2 and "sensor.netz" in form.abweichung and n_tage in (30, 3, 1):
+        return 0.4 * 24 * n_tage
     return NETZ_NACHT * (24 - len(PROD_STUNDEN)) * n_tage
+
+
+# ── Weg 2 als Soll (nur ``FORMEN_W2``) ──────────────────────────────────────
+
+
+def _tagesfenster_dt(tag: date) -> tuple[datetime, datetime]:
+    """Das Tagesfenster des Bestands als Wanduhr ``[Vortag 23:00, 23:00)`` (``kanal/fenster.tagesfenster``)."""
+    t = datetime.combine(tag, datetime.min.time())
+    return t - timedelta(hours=1), t + timedelta(hours=23)
+
+
+def zaehler_delta(form: Form, sid: str, von: datetime, bis: datetime) -> float:
+    """Δ eines Zählers der Form über ``[von, bis)`` wie die Lese-Schicht: Stand vor ``bis`` − Stand vor ``von``, wobei
+    eine Zeile der Stunde ``t`` den Stand am Ende von ``t`` trägt und fehlende Zeilen nichts trägen (ihre Menge steht
+    in der nächsten Zeile). Unabhängig vom Produktcode — Summe der Raten über die Zeilen."""
+    rate, ohne, _key = _reihen(form)[sid]
+    stand, letzter_vor_von, letzter_vor_bis = 0.0, None, None
+    t = REIHE_VON
+    while t < REIHE_BIS:
+        stand += rate(t)
+        if not ohne(t):
+            ende = t + timedelta(hours=1)
+            if ende <= von:
+                letzter_vor_von = stand
+            if ende <= bis:
+                letzter_vor_bis = stand
+        t += timedelta(hours=1)
+    return (letzter_vor_bis or 0.0) - (letzter_vor_von or 0.0)
+
+
+def soll_w2(form: Form, von: datetime, bis: datetime) -> Soll:
+    """Weg 2 (Bauplan §6b, Wortlaut nach H2) unabhängig nachgerechnet: gemessene Geräte tragen ihr Δ (W2-R1, auch
+    über eine Randlücke — Lückentag wie HA), der Rest des Anlagenzählers geht nach kWp auf die Geräte ohne Zähler
+    (W2-R2, Untergrenze 0 einmal je Zeitraum), die PV-Summe ist Σ Geräte (W2-R3). Formen ohne Modul-Kinder."""
+    je: dict[str, float] = {}
+    luecken: list[Geraet] = []
+    for g in form.geraete:
+        if not _aktiv(g, von.date() + timedelta(days=1)):
+            continue
+        if g.zaehler:
+            je[g.name] = zaehler_delta(form, g.sensor_id, von, bis)
+        else:
+            luecken.append(g)
+    if luecken and form.gesamt is not None:
+        rest = max(0.0, zaehler_delta(form, "sensor.pv_gesamt", von, bis) - sum(je.values()))
+        je.update(_kwp_anteile(rest, luecken))
+    elif luecken:
+        return Soll(sum(je.values()), je, frozenset(g.name for g in luecken), vollstaendig=False)
+    return Soll(sum(je.values()), je)
 
 
 # ── Seed ────────────────────────────────────────────────────────────────────
@@ -333,6 +451,9 @@ def _reihen(form: Form) -> dict[str, tuple]:
                 (lambda t: t.hour >= 21 or t.hour <= 5) if g.nachtluecke else nie,
                 g.name,  # wird nach dem Anlegen durch `inv:<id>:pv_erzeugung_kwh` ersetzt
             )
+    for sid, (rate_neu, ohne_neu) in form.abweichung.items():   # neue Formen (E4a-2)
+        rate, ohne, key = reihen[sid]
+        reihen[sid] = (rate_neu or rate, ohne_neu or ohne, key)
     return reihen
 
 
@@ -468,6 +589,8 @@ def _umgebung(svc) -> ExitStack:
     st = ExitStack()
     st.enter_context(patch.object(hss, "_ha_statistics_service", svc))
     st.enter_context(patch.object(am, "datetime", _FesteUhr))
+    # E4a-2: die Uhr der Kanal-Leser (Quellenwahl laufender Tag/Monat) ist dieselbe gestellte Uhr.
+    st.enter_context(patch("backend.services.kanal.bilanz_leser.uhr", lambda: int(JETZT.timestamp())))
     st.enter_context(patch(
         "backend.services.energie_profil._helpers._get_strompreis_stunden",
         new=AsyncMock(return_value=StrompreisStunden(sensor={}, boerse={})),
@@ -503,6 +626,63 @@ async def _neue_db(pfad: str):
 async def _oeffne_db(pfad: str):
     engine = _engine(pfad)
     return engine, async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)()
+
+
+async def fuelle_spiegel(engine, anlage_id: int, svc) -> None:
+    """HA-Bauform E4a-2 (Bestätigung B-1): der Spiegel der HA-Langzeitstatistik, wie ihn das Produkt nach dem Start
+    nachfüllt (``kanal/nachfuellen.nachfuellen_spiegel``) — ohne ihn wählte jede Sicht den Bestand, und die Matrix
+    sähe nicht, was der Anwender mit HA sieht. Ein Seed, kein Soll."""
+    from contextlib import asynccontextmanager
+
+    from backend.services.kanal.nachfuellen import nachfuellen_spiegel
+
+    macher = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+    @asynccontextmanager
+    async def sitzungen():
+        async with macher() as s:
+            yield s
+            await s.commit()
+
+    erg = await nachfuellen_spiegel(sitzungen, anlage_id, jetzt=JETZT, ha_svc=svc)
+    assert erg.fehler == 0 and erg.zeilen > 0, erg
+    await baue_abgeleitete(sitzungen, anlage_id)
+
+
+async def baue_abgeleitete(sitzungen, anlage_id: int) -> int:
+    """HA-Bauform E4c: die abgeleiteten Kanäle (PV-Anteil der Heimladung, ``kanal/abgeleitet.py``) über die ganze
+    Reihe — der Zustand eines Produkts, dessen Stundenlauf seit Beginn der Reihe läuft (der Stundenlauf baut NICHT
+    rückwirkend; ``ab_ts`` setzt die erste Stunde). Ein Seed, kein Soll; ohne Wallbox/E-Auto schreibt er nichts."""
+    from backend.services.kanal.abgeleitet import schreibe_abgeleitete
+    from backend.services.kanal.kosten import schreibe_kosten
+    from backend.services.kanal.modus_strom import schreibe_modus_strom
+
+    async with sitzungen() as s:
+        anlage = (await s.execute(select(Anlage).where(Anlage.id == anlage_id))).scalar_one()
+        n = await schreibe_abgeleitete(s, anlage, JETZT, ab_ts=int(REIHE_VON.timestamp()))
+        # HA-Bauform E4e: die Kosten-Kanäle bei Stundenpreis (nur mit Preis-Kanal, ``kanal/kosten.py``) — aus Spiegel
+        # und Preis-Spiegel, idempotent ab der letzten Zeile.
+        n += await schreibe_kosten(s, anlage, JETZT, ab_ts=int(REIHE_VON.timestamp()))
+        # HA-Bauform E4d: Strom je Betriebsart der Wärmepumpe — braucht die Mitschrift, die erst die Tagesaggregation
+        # schreibt; vor ihr schreibt er nichts (``baue_abgeleitete_nach_tagen``).
+        return n + await schreibe_modus_strom(s, anlage, JETZT, ab_ts=int(REIHE_VON.timestamp()))
+
+
+async def baue_abgeleitete_nach_tagen(engine, anlage_id: int) -> int:
+    """HA-Bauform E4d: die abgeleiteten Kanäle NACH der Tagesaggregation fortschreiben — der Strom je Betriebsart
+    rechnet aus der Betriebsart-Mitschrift (E1), die ``aggregate_day`` schreibt. Idempotent ab der letzten Zeile (der
+    PV-Anteil der Heimladung steht dann schon). Ein Seed, kein Soll."""
+    from contextlib import asynccontextmanager
+
+    macher = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+    @asynccontextmanager
+    async def sitzungen():
+        async with macher() as s:
+            yield s
+            await s.commit()
+
+    return await baue_abgeleitete(sitzungen, anlage_id)
 
 
 async def aggregiere_tage(db: AsyncSession, form: Form, anlage_id: int, tage) -> None:
@@ -570,13 +750,19 @@ async def schreibe_s3_von_hand(db: AsyncSession, form: Form, anlage_id: int, ids
     n = len(TAGE_JUNI)
     nutzlast: dict[str, Any] = {
         "anlage_id": anlage_id, "jahr": JAHR, "monat": JUNI,
-        "einspeisung_kwh": soll_einspeisung(form, n), "netzbezug_kwh": soll_netzbezug(n),
+        "einspeisung_kwh": soll_einspeisung(form, n), "netzbezug_kwh": soll_netzbezug(n, form),
         "geprueft_gegen": {},
     }
     if form.gesamt is not None:
         nutzlast["pv_erzeugung_kwh"] = tagesmenge(form.gesamt) * n
     inv = {str(ids[g.name]): {"pv_erzeugung_kwh": tagesmenge(g.rate) * n, "geprueft_gegen": {}}
            for g in form.geraete if g.zaehler}
+    if form.w2:   # die abgelesenen Monatsmengen der Zähler (Raten je Stunde, E4a-2)
+        von, bis = _tagesfenster_dt(TAGE_JUNI[0])[0], _tagesfenster_dt(TAGE_JUNI[-1])[1]
+        if form.gesamt is not None:
+            nutzlast["pv_erzeugung_kwh"] = zaehler_delta(form, "sensor.pv_gesamt", von, bis)
+        inv = {str(ids[g.name]): {"pv_erzeugung_kwh": zaehler_delta(form, g.sensor_id, von, bis),
+                                  "geprueft_gegen": {}} for g in form.geraete if g.zaehler}
     if inv:
         nutzlast["investitionen_daten"] = inv
     await create_monatsdaten(MonatsdatenCreate.model_validate(nutzlast), None, db)
@@ -650,6 +836,8 @@ async def miss_cockpit_monat(db: AsyncSession, anlage_id: int, monat: int) -> di
     r = await am.get_aktueller_monat(anlage_id=anlage_id, jahr=JAHR, monat=monat, db=db)
     return {"pv": _r(r.pv_erzeugung_kwh), "bkw": _r(r.bkw_erzeugung_kwh), "ev": _r(r.eigenverbrauch_kwh),
             "bkw_ersparnis": _r(getattr(r, "bkw_ersparnis_euro", None)),
+            # Geld-Sichten (Auftrag Achsen-Matrix 2, F13a/N-588): gemessen, nicht bewertet.
+            "ev_ersparnis": _r(getattr(r, "ev_ersparnis_euro", None)),
             "einsp": _r(r.einspeisung_kwh), "netz": _r(r.netzbezug_kwh), "autarkie": _r(r.autarkie_prozent),
             "pv_quelle": ((r.feld_quellen or {}).get("pv_erzeugung_kwh") or {}).get("quelle")
             if isinstance((r.feld_quellen or {}).get("pv_erzeugung_kwh"), dict)
@@ -672,7 +860,9 @@ async def miss_fakten(db: AsyncSession, anlage_id: int, ids: dict[str, int], mon
         je[rev.get(str(i), str(i))] = _r((je.get(rev.get(str(i), str(i))) or 0.0) + v)
     return {"pv": _r(e.pv_kwh), "pv_module": _r(e.pv_module_kwh), "bkw": _r(e.bkw_kwh),
             "bkw_anteil": _r(e.bkw_aus_anlagenwert_kwh), "vollstaendig": e.pv_vollstaendig,
-            "je_geraet": je, "ev": _r(fk[0].kennzahlen.eigenverbrauch_kwh)}
+            "je_geraet": je, "ev": _r(fk[0].kennzahlen.eigenverbrauch_kwh),
+            # HA-Bauform E4b (N-588, nur geführt): Wandlungsverluste aus dem Kanal-Leser.
+            "wandlungsverluste": _r(e.wandlungsverluste_kwh)}
 
 
 async def miss_aggregiert(db: AsyncSession, anlage_id: int, monat: int, *, voll: bool) -> Optional[dict]:
@@ -689,6 +879,7 @@ async def miss_aggregiert(db: AsyncSession, anlage_id: int, monat: int, *, voll:
             "bkw_anteil": _r(z.bkw_aus_anlagenwert_kwh), "ev": _r(z.eigenverbrauch_kwh),
             "einsp": _r(z.einspeisung_kwh), "netz": _r(z.netzbezug_kwh), "autarkie": _r(z.autarkie_prozent),
             "direkt": _r(z.direktverbrauch_kwh), "speicher_ladung": _r(getattr(z, "speicher_ladung_kwh", None)),
+            "ev_ersparnis": _r(getattr(z, "ev_ersparnis_euro", None)),
             "sonstige": _r(getattr(z, "sonstige_erzeugung_kwh", None)),
             # Cockpit → Jahr → Verlauf stapelt `pvAnlage = pv_module_kwh` und `bkw = bkw_kwh`
             # (`JahrVerlaufChart.tsx::baueJahrChartDaten`, :70-71).
@@ -714,7 +905,8 @@ async def miss_uebersicht(db: AsyncSession, anlage_id: int) -> dict:
     u = await get_cockpit_uebersicht(anlage_id=anlage_id, jahr=JAHR, db=db)
     return {"pv": _r(u.pv_erzeugung_kwh), "ev": _r(u.eigenverbrauch_kwh), "autarkie": _r(u.autarkie_prozent),
             "einsp": _r(getattr(u, "einspeisung_kwh", None)), "netz": _r(getattr(u, "netzbezug_kwh", None)),
-            "spez": _r(u.spezifischer_ertrag_kwh_kwp), "bkw": _r(u.bkw_erzeugung_kwh)}
+            "spez": _r(u.spezifischer_ertrag_kwh_kwp), "bkw": _r(u.bkw_erzeugung_kwh),
+            "ev_ersparnis": _r(getattr(u, "ev_ersparnis_euro", None)), "co2": _r(getattr(u, "co2_pv_kg", None))}
 
 
 async def miss_pv_strings(db: AsyncSession, anlage_id: int, ids: dict[str, int]) -> dict:
@@ -794,6 +986,7 @@ async def miss_pdf(db: AsyncSession, anlage_id: int, ids: dict[str, int]) -> dic
     juni = next((z for z in ctx.get("monats_zeilen") or [] if z.get("monat") == JUNI), {})
     sv = {rev_bez.get(s["bezeichnung"], s["bezeichnung"]): _r(s.get("ist_kwh")) for s in ctx.get("string_vergleiche") or []}
     return {"pv": _r(juni.get("pv_erzeugung_kwh")), "ev": _r(juni.get("eigenverbrauch_kwh")),
+            "ev_ersparnis": _r(juni.get("ev_ersparnis_euro")),
             "autarkie": _r(juni.get("autarkie_prozent")), "string_je_geraet": sv,
             "string_summe": _r(sum(v for v in sv.values() if v is not None)) if sv else None}
 
@@ -804,7 +997,42 @@ async def miss_ha_export(db: AsyncSession, anlage_id: int) -> dict:
     anlage = (await db.execute(select(Anlage).where(Anlage.id == anlage_id))).scalar_one()
     werte = {s.definition.key: s.value for s in await calculate_anlage_sensors(db, anlage, skip_jitter=True, jetzt=JETZT)}
     return {"pv": _r(werte.get("pv_erzeugung_gesamt_kwh")), "ev": _r(werte.get("eigenverbrauch_gesamt_kwh")),
-            "autarkie": _r(werte.get("autarkie_prozent")), "spez": _r(werte.get("spezifischer_ertrag_kwh_kwp"))}
+            "autarkie": _r(werte.get("autarkie_prozent")), "spez": _r(werte.get("spezifischer_ertrag_kwh_kwp")),
+            "ev_ersparnis": _r(werte.get("eigenverbrauch_ersparnis_euro")), "co2": _r(werte.get("co2_ersparnis_kg"))}
+
+
+async def miss_bkw_hub(db: AsyncSession, anlage_id: int, ids: dict[str, int]) -> dict:
+    """Komponenten → Balkonkraftwerk → Verlauf (N-638): je BKW die Monatsreihe der Route (Juni und Σ) neben ihren
+    Kopfzahlen, dazu der Anlagen-Kontext des Juni aus den Monats-Fakten — aus ihm folgt das Soll des Eigenverbrauchs
+    (``bkw_eigenverbrauch_anteil``, ADR-001-SoT). Ohne BKW in der Form: ``{}``."""
+    from backend.api.routes.investitionen.dashboard_balkonkraftwerk import get_balkonkraftwerk_dashboard
+    from backend.services.monats_fakten import lade_monats_fakten
+
+    rev = _namen(ids)
+    dashboards = await get_balkonkraftwerk_dashboard(anlage_id=anlage_id, strompreis_cent=None, db=db)
+    if not dashboards:
+        return {}
+    fk = await lade_monats_fakten(db, anlage_id, von=(JAHR, JUNI), bis=(JAHR, JUNI))
+    f = fk[0] if fk else None
+    geraete = {}
+    for ds in dashboards:
+        z, reihe = ds.zusammenfassung, ds.monatsreihe
+        juni = next((w for w in reihe if (w.jahr, w.monat) == (JAHR, JUNI)), None)
+        geraete[rev.get(str(ds.investition.id), ds.investition.bezeichnung)] = {
+            "kopf_erzeugung": z["gesamt_erzeugung_kwh"], "kopf_ev": z["gesamt_eigenverbrauch_kwh"],
+            "kopf_einsp": z["gesamt_einspeisung_kwh"], "monate": len(reihe),
+            "reihe_erzeugung": _r(sum(w.erzeugung_kwh for w in reihe)),
+            "reihe_ev": _r(sum(w.eigenverbrauch_kwh or 0.0 for w in reihe)),
+            "reihe_einsp": _r(sum(w.einspeisung_kwh or 0.0 for w in reihe)),
+            "juni": None if juni is None else {
+                "erzeugung": _r(juni.erzeugung_kwh), "ev": _r(juni.eigenverbrauch_kwh),
+                "ev_quelle": juni.eigenverbrauch_quelle, "einsp": _r(juni.einspeisung_kwh),
+                "einsp_quelle": juni.einspeisung_quelle},
+        }
+    return {"geraete": geraete, "kontext": {
+        "hinter_zaehler": _r(f.erzeugung.hinter_zaehler_kwh) if f else None,
+        "ev_gesamt": _r(f.kennzahlen.eigenverbrauch_kwh) if f else None,
+        "hat_zaehlerzeile": bool(f and f.meta.hat_zaehlerzeile)}}
 
 
 async def miss_community(db: AsyncSession, anlage_id: int) -> dict:
@@ -813,7 +1041,8 @@ async def miss_community(db: AsyncSession, anlage_id: int) -> dict:
     c = await prepare_community_data(db, anlage_id) or {}
     mw = next((m for m in c.get("monatswerte") or [] if m.get("jahr") == JAHR and m.get("monat") == JUNI), {})
     return {"pv": _r(mw.get("ertrag_kwh")), "bkw": _r(mw.get("bkw_erzeugung_kwh")),
-            "ev": _r(mw.get("eigenverbrauch_kwh")), "autarkie": _r(mw.get("autarkie_prozent"))}
+            "ev": _r(mw.get("eigenverbrauch_kwh")), "autarkie": _r(mw.get("autarkie_prozent")),
+            "co2": _r(mw.get("co2_vermieden_kg"))}
 
 
 async def miss_checker(db: AsyncSession, anlage_id: int) -> dict:
@@ -887,6 +1116,7 @@ async def _sichten_nach(db, aid, ids, *, mit_ha: bool) -> dict:
         "komp_verlauf": await miss_komponenten_verlauf(db, aid),
         "pdf": await miss_pdf(db, aid, ids),
         "ha_export": await miss_ha_export(db, aid),
+        "bkw_hub": await miss_bkw_hub(db, aid, ids),
         "community": await miss_community(db, aid),
         "checker": await miss_checker(db, aid),
     }
@@ -909,6 +1139,7 @@ async def messe_ha(form: Form, m: Messung) -> None:
         try:
             aid, ids = await seed_anlage(db, form)
             with _umgebung(svc):
+                await fuelle_spiegel(engine, aid, svc)
                 await aggregiere_tage(db, form, aid, TAGE_JUNI + TAGE_JULI)
                 m.tage["HA"] = await miss_tage(db, aid, ids, TAGE_JUNI + TAGE_JULI)
                 m.laufend["HA"] = await _sichten_laufend(db, aid, ids)

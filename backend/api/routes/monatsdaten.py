@@ -25,6 +25,7 @@ from backend.core.calculations import (
 )
 # Alias: das Response-Feld unten heißt genauso wie die Funktion.
 from backend.core.berechnungen.anlagen_kwp import anlagen_kwp as berechne_anlagen_kwp
+from backend.core.berechnungen.pv_verteilung import wandlungsverluste_prozent
 from backend.core.berechnungen.waermepumpe_kennzahl import (
     abgrenzungs_grund,
     arbeitszahl,
@@ -285,6 +286,11 @@ class AggregierteMonatsdatenResponse(BaseModel):
     pv_module_kwh: Optional[float]  # nur PV-Module
     bkw_kwh: Optional[float]  # Balkonkraftwerk(e): eigene Werte + Anteil am Anlagenwert
     bkw_aus_anlagenwert_kwh: Optional[float] = None  # davon aus dem Anlagenwert verteilt (N-621)
+    # HA-Bauform E4b (N-588 — angezeigt, NICHT bewertet): Wandlungsverluste des Monats aus dem Kanal-Leser
+    # (`max(0, Σ String-Zähler − Anlagenzähler)`), Prozent über `pv_verteilung.wandlungsverluste_prozent`. `None` ohne
+    # Anlagenzähler oder ohne Kanal-Deckung. In keiner Bilanzgröße dieser Zeile enthalten.
+    wandlungsverluste_kwh: Optional[float] = None
+    wandlungsverluste_prozent: Optional[float] = None
     # Sonstige Erzeuger (typ=`sonstiges` + Kategorie `erzeuger`, z. B. BHKW) —
     # NICHT in `pv_erzeugung_kwh` enthalten (die bleibt rein PV), aber Teil der
     # Netzpunkt-Bilanz `erzeugung_hinter_zaehler_kwh` (v3.45.4), aus der
@@ -395,6 +401,9 @@ class AggregierteMonatsdatenResponse(BaseModel):
     # Eigenverbrauch dieses Monats × USt je kWh des Jahres (`services/ust_satz.py`,
     # seit 03.10.2026 der eine Eingang für alle Sichten), damit Σ USt_m == Jahres-USt.
     ust_eigenverbrauch_euro: float
+    # N-633: dienstliche Ladekosten des Monats (Aufwand, positiv) — Posten der Ergebnis-Leiter, bereits in
+    # `netto_ertrag_euro` abgezogen; einzeln hier, damit *Auswertungen → Finanzen* ihn im Rechenweg nennen kann.
+    dienstliche_ladekosten_euro: float = 0.0
     netzbezug_kosten_euro: float
     # Einspeise-Erlös + EV- + BKW-Ersparnis + Erlös eigener Satz + Sonstige Positionen (netto) − USt — die Stufe 1 der
     # Ergebnis-Leiter, dieselbe Zahl wie die Cockpit-Kachel des Monats (GLOSSAR „Netto-Ertrag (PV)"). Bis 03.10.2026
@@ -723,7 +732,9 @@ async def list_monatsdaten_aggregiert(
         netto_ertrag = berechne_ergebnis(ErgebnisEingang(
             einspeise_erloes=finanz.einspeise_erloes_euro, ev_ersparnis=finanz.ev_ersparnis_euro,
             bkw_rest_ersparnis=finanz.bkw_ersparnis_euro, erzeuger_erloes=finanz.erzeuger_erloes_euro,
-            sonstige_netto=f.sonstiges.netto_euro, ust_anteil=ust_eigenverbrauch,
+            sonstige_netto=f.sonstiges.netto_euro,
+            # N-633: derselbe Posten wie Cockpit, Übersicht, PDF und HA-Sensor (Monats-Fakten).
+            dienstliche_ladekosten=f.emob.dienstliche_ladekosten_euro, ust_anteil=ust_eigenverbrauch,
         )).netto_ertrag
 
         # ADR-002/P12: Die Arbeitszahl dieses Monats — aus dem Layer, mit allen
@@ -808,6 +819,10 @@ async def list_monatsdaten_aggregiert(
             bkw_aus_anlagenwert_kwh=(
                 round(f.erzeugung.bkw_aus_anlagenwert_kwh, 1) if hat_pv_imd else None
             ),
+            wandlungsverluste_kwh=f.erzeugung.wandlungsverluste_kwh,
+            wandlungsverluste_prozent=wandlungsverluste_prozent(
+                f.erzeugung.wandlungsverluste_kwh, f.erzeugung.wandlungsverluste_bezug_kwh,
+            ),
             sonstige_erzeugung_kwh=(
                 round(f.erzeugung.sonstige_erzeuger_kwh, 1)
                 if f.sonstiges.hat_erzeuger_zeile else None
@@ -867,6 +882,7 @@ async def list_monatsdaten_aggregiert(
             erzeuger_erloes_euro=round(f.sonstiges.einspeise_erloes_euro, 2),
             bkw_ersparnis_euro=round(finanz.bkw_ersparnis_euro, 2),
             ust_eigenverbrauch_euro=round(ust_eigenverbrauch, 2),
+            dienstliche_ladekosten_euro=round(f.emob.dienstliche_ladekosten_euro, 2),
             netzbezug_kosten_euro=round(netzbezug_kosten, 2),
             netto_ertrag_euro=round(netto_ertrag, 2),
             netto_bilanz_euro=round(netto_ertrag - netzbezug_kosten, 2),

@@ -40,6 +40,13 @@ TAGESWERT_SPEICHER = "speicher"
 #: sondern nur die *Aufteilung* der Heimladung in PV und Netz (N-141 Weg c).
 #: Die Ladungsmenge selbst stammt weiter aus der Monatszeile.
 TAGESWERT_EMOB_ANTEIL = "emob_anteil"
+#: HA-Bauform E4c: die Lademengen (Wallbox/E-Auto) aus der E-Mob-Gruppe der Kanäle, nicht aus einer Monatszeile.
+TAGESWERT_EMOB = "emob"
+#: HA-Bauform E4c: die Sonstiges-Geräte (Verbraucher aus ihrer Gruppe, Erzeuger aus dem Kanal-Monat der Bilanz).
+TAGESWERT_SONSTIGES = "sonstiges"
+#: HA-Bauform E4d: die Wärmepumpen (Strom, Wärme, Betriebsart-Strom, Kälte, Strom je Betriebsart) aus der WP-Gruppe der
+#: Kanäle, nicht aus einer Monatszeile.
+TAGESWERT_WP = "waermepumpe"
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Feldgruppen (KONZEPT-MONATS-FAKTEN.md §3)
@@ -99,6 +106,13 @@ class ErzeugungFakten:
     #: Ertrag. Ein BKW mit Anteil trägt im Monat keinen Ersatz-Eigenverbrauch
     #: (P9-Zusatzregel, ``roh.py::falte``) und keinen Tageswert (``bau.py``).
     bkw_aus_anlagenwert_kwh: float = 0.0
+    #: HA-Bauform E4b (N-588 — geführt, NICHT bewertet): ``max(0, Σ String-Zähler − Anlagenzähler)`` des Monats aus
+    #: dem Kanal-Leser (``services/kanal/bilanz_leser``, W2-R3). ``None`` ohne Anlagenzähler oder ohne Kanal-Deckung
+    #: des Monats — der Bestandspfad (gespeicherte Werte, Tageszeilen) liefert keinen Wert. Geht in keine Bilanz,
+    #: keine Ersparnis und kein CO₂: ``pv_kwh``, Eigenverbrauch und Ergebnis-Leiter bleiben die Σ der Strings.
+    wandlungsverluste_kwh: Optional[float] = None
+    #: Σ der Geräte-Werte desselben Kanal-Monats — Bezug der Prozentangabe (``wandlungsverluste_prozent``).
+    wandlungsverluste_bezug_kwh: Optional[float] = None
 
 @dataclass(frozen=True)
 class BkwFakten:
@@ -199,9 +213,13 @@ class EmobFakten:
     zeigte 0 % neben dem abgeleiteten Anteil derselben Größe.
 
     ``dienstlich_*`` ist der herausgefilterte Anteil — nicht verworfen, sondern
-    getrennt ausgewiesen, weil er als *Ausgabe* (dienstliche Ladekosten) in die
-    Sonstige-Summen gehört. Die Bewertung in Euro bleibt beim Aufrufer, weil sie
-    den Monatstarif braucht (der liegt in ``TarifFakten``).
+    getrennt ausgewiesen, weil er als *Ausgabe* (dienstliche Ladekosten) bewertet
+    wird. Seit N-633 (05.10.2026) bewertet ihn die Schicht selbst
+    (``dienstliche_ladekosten_euro``, Layer-Formel ``berechne_dienstliche_ladekosten``
+    mit den Preisen aus ``TarifFakten`` desselben Monats) — der eine Posten, den alle
+    Sichten lesen. Bis dahin rechneten Übersicht, HA-Export und Aussichten ihn je
+    selbst und falteten ihn in die Sonstigen Positionen; Cockpit → Monat/Jahr,
+    Tabelle und PDF führten ihn gar nicht.
     """
 
     ladung_kwh: float = 0.0
@@ -241,6 +259,12 @@ class EmobFakten:
     #: dieselbe wie vor N-555 (Konzept Regel 2-Ü: Dienstwagen unverändert); das
     #: Kennzeichen sagt nur, dass sie eine Schätzung ist, statt es zu verschweigen.
     dienstlich_geschaetzt: bool = False
+    #: N-633: die dienstlichen Ladekosten des Monats in € (PV-Anteil × Netzbezugspreis +
+    #: Netzanteil × effektiver Wallbox-Preis, ``core/berechnungen/dienstliche_ladekosten.py``),
+    #: ungerundet. Posten „Dienstliche Ladekosten" der Ergebnis-Leiter (Stufe 1, −).
+    #: ⛔ NICHT Teil von ``SonstigesFakten.ausgaben_euro`` — die ist Eingang des
+    #: Kapitaleinsatzes (F-19), der Posten ist laufender Aufwand.
+    dienstliche_ladekosten_euro: float = 0.0
     #: ⭐ N-555 Stufe 2 (Konzept Regel 2/3): die Heimladung JEDES privaten Autos im Monat
     #: (``inv_id → AutoHeimladung``: gemessen, Rest-Anteil nach km, Schätzung oder 0) — aus
     #: der einen Funktion. Wer je Fahrzeug rechnet (Übersicht, Jahresbericht), liest hier.

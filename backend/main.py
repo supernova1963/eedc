@@ -294,6 +294,18 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.debug(f"Kraftstoffpreis-Startlauf nicht gestartet: {e}")
 
+    # HA-Bauform E2: Kanalstatistik aus HAs Langzeitstatistik nachfüllen — einmal je Anlage (Marke
+    # `kanal_nachfuellung`), als Hintergrund-Aufgabe: blockiert weder den Start noch den Stundenlauf
+    # (kurze Schreib-Transaktionen je Block, HA-Abrufe außerhalb). Nicht im Scheduler-Zweig, aus
+    # demselben Grund wie der Kraftstoffpreis-Startlauf darüber; im Demo-Modus nicht.
+    if not _disable_scheduler:
+        try:
+            from backend.services.kanal.nachfuellen import nachfuellen_nach_dem_start
+
+            asyncio.create_task(nachfuellen_nach_dem_start())
+        except Exception as e:
+            logger.debug(f"Kanal-Nachfüllen nicht gestartet: {e}")
+
     # MQTT-Inbound starten (DB-Settings haben Vorrang vor Env-Vars)
     mqtt_inbound = None
     mqtt_cfg = await _load_mqtt_config()
@@ -541,6 +553,24 @@ async def einstellungs_sperre(request: Request, call_next):
             "sperre": True,
         },
     )
+
+
+# =============================================================================
+# Lade-Kontext der Kanal-Leser je lesender Anfrage (HA-Bauform E4f)
+# =============================================================================
+
+
+@app.middleware("http")
+async def kanal_lade_kontext(request: Request, call_next):
+    """Jede GET-Anfrage bekommt EINEN Lade-Kontext der Kanal-Leser (``services/kanal/lade_kontext.py``): Randstände,
+    Stammdaten und Quellenwahl je Gruppe werden in ihr einmal gelesen, nicht je Fakten-Aufruf. Schreibende Methoden
+    bekommen ihn nicht; er überdauert die Anfrage nie."""
+    if request.method != "GET":
+        return await call_next(request)
+    from backend.services.kanal.lade_kontext import lese_anfrage
+
+    with lese_anfrage():
+        return await call_next(request)
 
 
 # =============================================================================

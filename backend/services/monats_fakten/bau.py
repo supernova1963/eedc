@@ -7,6 +7,7 @@ Zeitfilter und Dienstwagen-Filter genau hier).
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import date
 from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -32,7 +33,7 @@ from backend.utils.sonstige_positionen import berechne_md_sonstige_summen
 from backend.services.monats_fakten.fakten import BkwFakten, EegFakten, EmobFakten, ErzeugungFakten, MetaFakten, MonatsFakt, MonatsSchluessel, SonstigesFakten, SonstigesGeraetFakten, SpeicherFakten, TAGESWERT_BKW, TAGESWERT_EMOB_ANTEIL, TAGESWERT_PV, TAGESWERT_SPEICHER, TAGESWERT_ZAEHLER, ZaehlerFakten
 from backend.services.monats_fakten.fakten_wp import WpFakten, WpGeraetFakten
 from backend.services.monats_fakten.roh import _RohMonat, _erzeuger_aktiv
-from backend.services.monats_fakten.tarif import _lade_tarif
+from backend.services.monats_fakten.tarif import _lade_tarif, dienstliche_ladekosten_euro
 
 
 async def _baue_fakt(
@@ -55,6 +56,9 @@ async def _baue_fakt(
     preis_messung: Optional[PreisMessung] = None,
     heimlade_quellen: frozenset = frozenset(),
     bloecke: Optional[dict] = None,
+    verluste_summe: Optional[TagesMonatsSumme] = None,
+    emob_kanal=None,
+    kanal_gruppen: frozenset = frozenset(),
 ) -> MonatsFakt:
     jahr, monat = schluessel
 
@@ -63,7 +67,7 @@ async def _baue_fakt(
     # **Lücken**, sie überschreiben nichts — und zwar feldgruppen-weise, nicht
     # monatsweise: ein Monat, dessen einzige DB-Spur eine Sonstiges-Zeile ist,
     # bekommt dadurch seine PV, statt sie still als 0 zu zeichnen.
-    tageswert_gruppen: set[str] = set()
+    tageswert_gruppen: set[str] = set(kanal_gruppen)
 
     zaehler = ZaehlerFakten(
         einspeisung_kwh=(monatsdaten.einspeisung_kwh or 0.0) if monatsdaten else 0.0,
@@ -142,6 +146,12 @@ async def _baue_fakt(
         pv_je_modul=pv_je_modul,
         pv_vollstaendig=pv_vollstaendig,
         bkw_aus_anlagenwert_kwh=bkw_aus_anlagenwert_kwh,
+        # HA-Bauform E4b: nur geführt — aus dem Kanal-Monat (`verluste_summe`), unabhängig davon, woher die Mengen
+        # dieses Monats kommen; der Bestandspfad liefert keinen Wert.
+        wandlungsverluste_kwh=verluste_summe.wandlungsverluste_kwh if verluste_summe is not None else None,
+        wandlungsverluste_bezug_kwh=(
+            verluste_summe.wandlungsverluste_bezug_kwh if verluste_summe is not None else None
+        ),
     )
 
     # ── PV-Anteil der Heimladung: echter Wert gewinnt, sonst ableiten ──────
@@ -169,10 +179,17 @@ async def _baue_fakt(
         and i.ist_aktiv_im_monat(jahr, monat)
         for i in investitionen
     )
+    # HA-Bauform E4c (N-631): deckt die E-Mob-Gruppe den Monat aus den Kanälen, ist der Anteil der des abgeleiteten
+    # Kanals (Σ Δ abgeleitet / Σ Δ Ladung, `kanal/geraete_leser.py`) — mit UND ohne Abschluss derselbe; sonst die Quote
+    # der Tagesebene wie bisher (Lesart 1). `None` heißt in beiden Fällen „keine Aussage".
+    pv_quote = (
+        emob_kanal.quote if emob_kanal is not None
+        else (tages_summe.abgeleiteter_pv_anteil if tages_summe is not None else None)
+    )
     eauto_ladedaten, wallbox_ladedaten, anteil_abgeleitet = reichere_ladezeilen_an(
         eauto_daten=roh.eauto_ladedaten,
         wallbox_daten=roh.wallbox_ladedaten,
-        quote=tages_summe.abgeleiteter_pv_anteil if tages_summe is not None else None,
+        quote=pv_quote,
         wallbox_in_betrieb=wallbox_in_betrieb,
     )
     if anteil_abgeleitet:
@@ -203,7 +220,7 @@ async def _baue_fakt(
         dienstliche_wallbox_in_betrieb=dienstliche_wallbox_in_betrieb,
         # Nur im laufenden Monat nicht leer (Regel 1: dort zählt auch eine Quelle).
         heimlade_quellen=heimlade_quellen,
-        pv_quote=tages_summe.abgeleiteter_pv_anteil if tages_summe is not None else None,
+        pv_quote=pv_quote,
         # Regel 8 (E5): welches `ladung_kwh` „Heim: gesamt" ist — nach Herkunft.
         heim_gesamt=roh.heim_gesamt_ids,
         # Wessen Quelle ist eine Wallbox-Quelle? (Die Quellen tragen seit Stufe 2 auch
@@ -337,6 +354,13 @@ async def _baue_fakt(
         )
         tageswert_gruppen.add(TAGESWERT_SPEICHER)
 
+    # N-633: der Posten „Dienstliche Ladekosten" — bewertet mit dem Tarif DIESES Monats (P8), über die eine
+    # Layer-Formel. Hier statt im EmobFakten-Aufbau oben, weil der Tarif erst danach geladen ist.
+    # HA-Bauform E4e: dieselbe Bewertung ruft Cockpit → Monat für einen Monat ohne Fakt (`tarif.dienstliche_ladekosten_euro`).
+    emob = replace(emob, dienstliche_ladekosten_euro=dienstliche_ladekosten_euro(
+        emob.dienstlich_ladung_pv_kwh, emob.dienstlich_ladung_netz_kwh, tarif,
+    ))
+
     return MonatsFakt(
         jahr=jahr,
         monat=monat,
@@ -357,86 +381,8 @@ async def _baue_fakt(
         ),
         speicher=speicher,
         emob=emob,
-        wp=WpFakten(
-            je_geraet={
-                inv_id: WpGeraetFakten(strom_kwh=s, waerme_kwh=w, strom_kuehlen_kwh=k)
-                for inv_id, (s, w, k) in roh.wp_je_geraet.items()
-            },
-            strom_kwh=roh.wp_strom,
-            strom_mit_ersatz_kwh=roh.wp_strom_mit_ersatz,
-            waerme_mit_ersatz_kwh=roh.wp_waerme_mit_ersatz,
-            waerme_kwh=roh.wp_waerme,
-            heizung_kwh=roh.wp_heizung,
-            warmwasser_kwh=roh.wp_warmwasser,
-            strom_heizen_kwh=roh.wp_strom_heizen,
-            strom_warmwasser_kwh=roh.wp_strom_warmwasser,
-            heizung_gemessen=roh.wp_heizung_gemessen,
-            warmwasser_gemessen=roh.wp_warmwasser_gemessen,
-            strom_heizen_gemessen=roh.wp_strom_heizen_gemessen,
-            strom_warmwasser_gemessen=roh.wp_strom_warmwasser_gemessen,
-            hat_split=roh.wp_hat_split,
-            waerme_ist_gesamt=roh.wp_waerme_ist_gesamt,
-            modus_strom_heizen_kwh=roh.wp_modus_strom_heizen,
-            modus_strom_kuehlen_kwh=roh.wp_modus_strom_kuehlen,
-            modus_strom_warmwasser_kwh=roh.wp_modus_strom_warmwasser,
-            modus_strom_lueften_kwh=roh.wp_modus_strom_lueften,
-            modus_strom_entfeuchten_kwh=roh.wp_modus_strom_entfeuchten,
-            modus_strom_funktionsfremd_abzug_kwh=(
-                roh.wp_modus_strom_funktionsfremd_abzug
-            ),
-            nutzenergie_kuehlen_kwh=roh.wp_nutzenergie_kuehlen,
-            nutzenergie_lueften_kwh=roh.wp_nutzenergie_lueften,
-            nutzenergie_entfeuchten_kwh=roh.wp_nutzenergie_entfeuchten,
-            modus_abdeckung_h=roh.wp_modus_abdeckung_h,
-            modus_gemessen=roh.wp_modus_gemessen,
-            modus_strom_bezug_kwh=roh.wp_modus_strom_bezug,
-            strom_nicht_aufgeteilt_kwh=roh.wp_strom_nicht_aufgeteilt,
-            waerme_abgeleitet_kwh=roh.wp_waerme_abgeleitet,
-            # `WpFakten` ist `frozen=True` — die Mengen frieren beim Übergang
-            # mit ein, damit ein Leser sie nicht versehentlich fortschreibt.
-            geraete_mit_strom=frozenset(roh.wp_geraete_mit_strom),
-            geraete_mit_waerme=frozenset(roh.wp_geraete_mit_waerme),
-            geraete_e_heizen=frozenset(roh.wp_geraete_e_heizen),
-            geraete_q_heizen=frozenset(roh.wp_geraete_q_heizen),
-            geraete_e_warmwasser=frozenset(roh.wp_geraete_e_warmwasser),
-            geraete_q_warmwasser=frozenset(roh.wp_geraete_q_warmwasser),
-            geraete_e_kuehlen=frozenset(roh.wp_geraete_e_kuehlen),
-            geraete_q_kuehlen=frozenset(roh.wp_geraete_q_kuehlen),
-            geraete_luft_luft=roh.wp_geraete_luft_luft,
-            geraete_luft_wasser=roh.wp_geraete_luft_wasser,
-            abgrenzung_stoerung=roh.wp_abgrenzung,
-        ),
-        sonstiges=SonstigesFakten(
-            erzeugung_kwh=roh.sonstiges_erzeugung,
-            abgabe_kwh=roh.sonstiges_abgabe,
-            verbrauch_kwh=roh.sonstiges_verbrauch,
-            eigenverbrauch_kwh=roh.sonstiges_eigenverbrauch,
-            einspeisung_kwh=roh.sonstiges_einspeisung,
-            bezug_pv_kwh=roh.sonstiges_bezug_pv,
-            bezug_netz_kwh=roh.sonstiges_bezug_netz,
-            einspeise_erloes_euro=roh.sonstiges_einspeise_erloes_euro,
-            je_geraet={
-                inv_id: SonstigesGeraetFakten(
-                    erzeugung_kwh=g["erzeugung"],
-                    verbrauch_kwh=g["verbrauch"],
-                    eigenverbrauch_kwh=g["eigenverbrauch"],
-                    einspeisung_kwh=g["einspeisung"],
-                    bezug_pv_kwh=g["bezug_pv"],
-                    bezug_netz_kwh=g["bezug_netz"],
-                    einspeise_erloes_euro=g.get("einspeise_erloes_euro", 0.0),
-                    hat_einspeise_erloes=bool(g.get("hat_einspeise_erloes")),
-                    abgabe_kwh=g.get("abgabe", 0.0),
-                )
-                for inv_id, g in roh.sonstiges_je_geraet.items()
-            },
-            ertraege_euro=round(ertraege, 2),
-            ausgaben_euro=round(ausgaben, 2),
-            netto_euro=round(ertraege - ausgaben, 2),
-            anlage_ertraege_euro=round(md_summen["ertraege_euro"], 2) if md_summen else 0.0,
-            anlage_ausgaben_euro=round(md_summen["ausgaben_euro"], 2) if md_summen else 0.0,
-            hat_erzeuger_zeile=roh.hat_sonstigen_erzeuger,
-            hat_verbraucher_zeile=roh.hat_sonstigen_verbraucher,
-        ),
+        wp=_wp_fakten(roh),
+        sonstiges=_sonstiges_fakten(roh, md_summen, ertraege, ausgaben),
         tarif=tarif,
         eeg=EegFakten(neg_preis_kwh=neg_preis_kwh),
         kennzahlen=berechne_verbrauchs_kennzahlen(
@@ -460,3 +406,156 @@ async def _baue_fakt(
             tageswert_gruppen=frozenset(tageswert_gruppen),
         ),
     )
+
+
+def _sonstiges_fakten(roh: _RohMonat, md_summen: Optional[dict], ertraege: float, ausgaben: float) -> SonstigesFakten:
+    """Die Sonstiges-Gruppe eines Rohmonats — EINE Stelle für den Fakt und für Zeilen aus den Kanälen
+    (``sonstiges_aus_zeilen``, HA-Bauform E4c)."""
+    return SonstigesFakten(
+        erzeugung_kwh=roh.sonstiges_erzeugung,
+        abgabe_kwh=roh.sonstiges_abgabe,
+        verbrauch_kwh=roh.sonstiges_verbrauch,
+        eigenverbrauch_kwh=roh.sonstiges_eigenverbrauch,
+        einspeisung_kwh=roh.sonstiges_einspeisung,
+        bezug_pv_kwh=roh.sonstiges_bezug_pv,
+        bezug_netz_kwh=roh.sonstiges_bezug_netz,
+        einspeise_erloes_euro=roh.sonstiges_einspeise_erloes_euro,
+        je_geraet={
+            inv_id: SonstigesGeraetFakten(
+                erzeugung_kwh=g["erzeugung"],
+                verbrauch_kwh=g["verbrauch"],
+                eigenverbrauch_kwh=g["eigenverbrauch"],
+                einspeisung_kwh=g["einspeisung"],
+                bezug_pv_kwh=g["bezug_pv"],
+                bezug_netz_kwh=g["bezug_netz"],
+                einspeise_erloes_euro=g.get("einspeise_erloes_euro", 0.0),
+                hat_einspeise_erloes=bool(g.get("hat_einspeise_erloes")),
+                abgabe_kwh=g.get("abgabe", 0.0),
+            )
+            for inv_id, g in roh.sonstiges_je_geraet.items()
+        },
+        ertraege_euro=round(ertraege, 2),
+        ausgaben_euro=round(ausgaben, 2),
+        netto_euro=round(ertraege - ausgaben, 2),
+        anlage_ertraege_euro=round(md_summen["ertraege_euro"], 2) if md_summen else 0.0,
+        anlage_ausgaben_euro=round(md_summen["ausgaben_euro"], 2) if md_summen else 0.0,
+        hat_erzeuger_zeile=roh.hat_sonstigen_erzeuger,
+        hat_verbraucher_zeile=roh.hat_sonstigen_verbraucher,
+    )
+
+
+def _wp_fakten(roh: _RohMonat) -> WpFakten:
+    """Die Feldgruppe Wärmepumpe aus einem Rohmonat — EINE Konstruktion für den Fakt und für Zeilen, die keine
+    Monatszeile sind (HA-Bauform E4d: ``wp_aus_zeilen``)."""
+    return WpFakten(
+        je_geraet={
+            inv_id: WpGeraetFakten(strom_kwh=s, waerme_kwh=w, strom_kuehlen_kwh=k)
+            for inv_id, (s, w, k) in roh.wp_je_geraet.items()
+        },
+        strom_kwh=roh.wp_strom,
+        strom_mit_ersatz_kwh=roh.wp_strom_mit_ersatz,
+        waerme_mit_ersatz_kwh=roh.wp_waerme_mit_ersatz,
+        waerme_kwh=roh.wp_waerme,
+        heizung_kwh=roh.wp_heizung,
+        warmwasser_kwh=roh.wp_warmwasser,
+        strom_heizen_kwh=roh.wp_strom_heizen,
+        strom_warmwasser_kwh=roh.wp_strom_warmwasser,
+        heizung_gemessen=roh.wp_heizung_gemessen,
+        warmwasser_gemessen=roh.wp_warmwasser_gemessen,
+        strom_heizen_gemessen=roh.wp_strom_heizen_gemessen,
+        strom_warmwasser_gemessen=roh.wp_strom_warmwasser_gemessen,
+        strom_gemessen=roh.wp_strom_gemessen,
+        waerme_gemessen=roh.wp_waerme_gemessen,
+        hat_split=roh.wp_hat_split,
+        waerme_ist_gesamt=roh.wp_waerme_ist_gesamt,
+        modus_strom_heizen_kwh=roh.wp_modus_strom_heizen,
+        modus_strom_kuehlen_kwh=roh.wp_modus_strom_kuehlen,
+        modus_strom_warmwasser_kwh=roh.wp_modus_strom_warmwasser,
+        modus_strom_lueften_kwh=roh.wp_modus_strom_lueften,
+        modus_strom_entfeuchten_kwh=roh.wp_modus_strom_entfeuchten,
+        modus_strom_funktionsfremd_abzug_kwh=(
+            roh.wp_modus_strom_funktionsfremd_abzug
+        ),
+        nutzenergie_kuehlen_kwh=roh.wp_nutzenergie_kuehlen,
+        nutzenergie_lueften_kwh=roh.wp_nutzenergie_lueften,
+        nutzenergie_entfeuchten_kwh=roh.wp_nutzenergie_entfeuchten,
+        modus_abdeckung_h=roh.wp_modus_abdeckung_h,
+        modus_gemessen=roh.wp_modus_gemessen,
+        modus_strom_bezug_kwh=roh.wp_modus_strom_bezug,
+        strom_nicht_aufgeteilt_kwh=roh.wp_strom_nicht_aufgeteilt,
+        waerme_abgeleitet_kwh=roh.wp_waerme_abgeleitet,
+        # `WpFakten` ist `frozen=True` — die Mengen frieren beim Übergang
+        # mit ein, damit ein Leser sie nicht versehentlich fortschreibt.
+        geraete_mit_strom=frozenset(roh.wp_geraete_mit_strom),
+        geraete_mit_waerme=frozenset(roh.wp_geraete_mit_waerme),
+        geraete_e_heizen=frozenset(roh.wp_geraete_e_heizen),
+        geraete_q_heizen=frozenset(roh.wp_geraete_q_heizen),
+        geraete_e_warmwasser=frozenset(roh.wp_geraete_e_warmwasser),
+        geraete_q_warmwasser=frozenset(roh.wp_geraete_q_warmwasser),
+        geraete_e_kuehlen=frozenset(roh.wp_geraete_e_kuehlen),
+        geraete_q_kuehlen=frozenset(roh.wp_geraete_q_kuehlen),
+        geraete_luft_luft=roh.wp_geraete_luft_luft,
+        geraete_luft_wasser=roh.wp_geraete_luft_wasser,
+        abgrenzung_stoerung=roh.wp_abgrenzung,
+    )
+
+
+def sonstiges_aus_zeilen(
+    investitionen: list[Investition], schluessel: MonatsSchluessel, zeilen: dict[int, dict],
+) -> SonstigesFakten:
+    """Die Sonstiges-Gruppe eines Monats aus Zeilen ``{inv_id: {feld: kWh}}``, die KEINE Monatszeile sind —
+    HA-Bauform E4c: Cockpit → Monat ohne Abschluss mit den Kalendermonats-Zeilen der Kanäle. Dieselbe Faltung
+    (``_RohMonat.falte`` → ``imd_typ_beitrag``) und dieselbe Gruppe wie der Fakt; Geld trägt eine solche Zeile nicht."""
+    from backend.services.kanal.geraete_leser import herkunft_der_zeile
+
+    roh = _RohMonat()
+    je_id = {i.id: i for i in investitionen}
+    for inv_id, zeile in sorted(zeilen.items()):
+        inv = je_id.get(int(inv_id))
+        if inv is None or inv.typ != "sonstiges" or not inv.ist_aktiv_im_monat(*schluessel) or not zeile:
+            continue
+        roh.falte(inv, zeile, source_provenance=herkunft_der_zeile(zeile))
+    return _sonstiges_fakten(roh, None, 0.0, 0.0)
+
+
+def wp_kanal_zeile(inv: Investition, zeile: dict) -> tuple[dict, dict]:
+    """Eine WP-Zeile aus den Kanälen (HA-Bauform E4d, ``kanal/wp_leser.py``) in der Form, die der Monatsabschluss
+    schriebe — ``(verbrauch_daten, source_provenance)``.
+
+    Die Mengen sind die Kanal-Δ (Herkunft ``kanal``). Dazu, wie der Abschluss (``energie_profil/
+    modus_split_schreiben._schreibe_abgeleitete_waerme``): trägt die Zeile einen abgeleiteten Heizstrom und KEINE
+    gemessene Heizwärme, ist die Heizwärme ``Heizstrom × gepflegte Effizienz`` mit der Marke ``jaz_modus_split``
+    (Konzept Wärme/Klima §8.2: multipliziert ja, geteilt nie) — dieselbe Layer-Funktion
+    (``modus_split.abgeleitete_heizwaerme_kwh``), sonst nennte derselbe Monat vor und nach dem Abschluss eine andere
+    Wärme. Ohne gepflegte Effizienz entsteht keine (nie aus einem Default).
+    """
+    from backend.core.berechnungen.modus_split import REGEL_JAZ_MODUS_SPLIT, abgeleitete_heizwaerme_kwh
+    from backend.core.betriebsmodus import HEIZEN, MODUS_STROM_FELD
+    from backend.services.kanal.geraete_leser import herkunft_der_zeile
+
+    daten = dict(zeile)
+    herkunft = herkunft_der_zeile(daten)
+    heiz_strom = daten.get(MODUS_STROM_FELD[HEIZEN])
+    if "heizenergie_kwh" not in daten and heiz_strom is not None and heiz_strom > 0:
+        waerme = abgeleitete_heizwaerme_kwh(heiz_strom, inv.parameter)
+        if waerme is not None:
+            daten["heizenergie_kwh"] = waerme
+            herkunft["verbrauch_daten.heizenergie_kwh"] = {"source": "kanal", "abgeleitet": REGEL_JAZ_MODUS_SPLIT}
+    return daten, herkunft
+
+
+def wp_aus_zeilen(
+    investitionen: list[Investition], schluessel: MonatsSchluessel, zeilen: dict[int, dict],
+) -> WpFakten:
+    """Die WP-Gruppe eines Monats aus Zeilen ``{inv_id: {feld: kWh}}``, die KEINE Monatszeile sind — HA-Bauform E4d:
+    Cockpit → Monat ohne Abschluss mit den Kalendermonats-Zeilen der Kanäle. Dieselbe Faltung (``_RohMonat.falte`` →
+    ``imd_typ_beitrag``) und dieselbe Konstruktion (``_wp_fakten``) wie der Fakt."""
+    roh = _RohMonat()
+    je_id = {i.id: i for i in investitionen}
+    for inv_id, zeile in sorted(zeilen.items()):
+        inv = je_id.get(int(inv_id))
+        if inv is None or inv.typ != "waermepumpe" or not inv.ist_aktiv_im_monat(*schluessel) or not zeile:
+            continue
+        daten, herkunft = wp_kanal_zeile(inv, zeile)
+        roh.falte(inv, daten, source_provenance=herkunft)
+    return _wp_fakten(roh)

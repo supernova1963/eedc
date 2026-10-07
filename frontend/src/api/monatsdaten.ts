@@ -131,6 +131,9 @@ export interface AggregierteMonatsdaten {
   bkw_kwh: number | null
   /** N-621: davon aus dem Anlagenwert verteilt (in bkw_kwh enthalten, kein eigenes Segment). */
   bkw_aus_anlagenwert_kwh: number | null
+  /** HA-Bauform E4b (N-588 — angezeigt, nicht bewertet): Wandlungsverluste des Monats + Prozent aus dem Layer. */
+  wandlungsverluste_kwh?: number | null
+  wandlungsverluste_prozent?: number | null
   // Sonstige Erzeuger (typ `sonstiges` + Kategorie `erzeuger`, z. B. BHKW).
   // NICHT in pv_erzeugung_kwh (die bleibt rein PV), aber Teil der
   // Netzpunkt-Bilanz, aus der direktverbrauch/eigenverbrauch gerechnet sind.
@@ -192,6 +195,9 @@ export interface AggregierteMonatsdaten {
   bkw_ersparnis_euro: number
   // Bereits in `netto_ertrag_euro` abgezogen; 0 außerhalb der Regelbesteuerung.
   ust_eigenverbrauch_euro: number
+  // N-633: dienstliche Ladekosten (Aufwand, positiv), bereits in `netto_ertrag_euro` abgezogen. Optional für
+  // Antworten vor diesem Feld.
+  dienstliche_ladekosten_euro?: number
   // Arbeitspreis × kWh + Grundpreis des Monats.
   netzbezug_kosten_euro: number
   // Stufe 1 der Ergebnis-Leiter: Erlös + EV- + BKW-Ersparnis + Erlös eigener Satz + Sonstige Positionen − USt —

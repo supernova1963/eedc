@@ -162,6 +162,14 @@ class AktuellerMonatResponse(BaseModel):
     eigenverbrauch_kwh: Optional[float] = None
     direktverbrauch_kwh: Optional[float] = None  # PV direkt verbraucht (ohne Speicher): EV − Speicher-Entladung; günstigster Verbrauch (nur entgangene Einspeisung)
     gesamtverbrauch_kwh: Optional[float] = None
+    #: HA-Bauform E4b (N-588 — angezeigt, NICHT bewertet): Wandlungsverluste = ``max(0, Σ String-Zähler −
+    #: Anlagenzähler)`` aus dem Kanal-Leser; ``None`` ohne Anlagenzähler oder ohne Kanal-Deckung. Steckt in keiner
+    #: Ersparnis, keinem CO₂ und keiner Bilanz — ``pv_erzeugung_kwh`` bleibt die Σ der Strings. ``_bezug_kwh`` ist
+    #: die Σ der String-Zähler desselben Zeitraums, ``_prozent`` = Verluste ÷ Bezug × 100 (Layer,
+    #: ``pv_verteilung.wandlungsverluste_prozent``; im Jahr über die Monate, die beide tragen).
+    wandlungsverluste_kwh: Optional[float] = None
+    wandlungsverluste_bezug_kwh: Optional[float] = None
+    wandlungsverluste_prozent: Optional[float] = None
 
     # Quoten (%)
     autarkie_prozent: Optional[float] = None
@@ -454,6 +462,11 @@ class AktuellerMonatResponse(BaseModel):
     # sonstige_*-Totals enthalten (kein zweiter Posten, R15-5-Muster).
     anlage_sonstige_ertraege_euro: float = 0.0
     anlage_sonstige_ausgaben_euro: float = 0.0
+    #: N-633: dienstliche Ladekosten des Monats (Aufwand, positiv) — eigener Posten der Ergebnis-Leiter (Stufe 1, −),
+    #: aus `EmobFakten.dienstliche_ladekosten_euro`. NICHT in `sonstige_ausgaben_euro` enthalten.
+    dienstliche_ladekosten_euro: float = 0.0
+    #: Eingesetzte Werte dazu („60,0 kWh PV × 30,00 ct/kWh + 30,0 kWh Netz × 30,00 ct/kWh", A6); im Jahr ``None`` (Σ).
+    dienstliche_ladekosten_berechnung: Optional[str] = None
     # ── Ergebnis-Leiter (Paket „Ergebnisgrößen", 03.10.2026; Layer `core/berechnungen/ergebnis.py`) ──
     #: `netto_ertrag_euro` ist seit 03.10.2026 die GLOSSAR-Definition (Stufe 1): + BKW-Rest-Ersparnis + Erlös eigener
     #: Satz + Sonstige Positionen − USt-Anteil auf den Eigenverbrauch (N-601). Das frühere Feld `gesamtnettoertrag_euro`
