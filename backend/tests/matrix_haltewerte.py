@@ -21,7 +21,7 @@ from __future__ import annotations
 from typing import Optional
 
 #: ``(Form, Weg, Invariante, Sicht) → gemessener Wert`` — PV-Matrix, 116 Sichten (E0) + 99 Sichten ``bkw_hub:*``
-#: (N-638, unten eigener Block).
+#: (N-638, unten eigener Block) + 39 Sichten N-640 (letzter Block).
 PV_HALTEWERTE: dict[tuple[str, str, str, str], Optional[float]] = {
     ('F01', 'S3', 'I2', 'cockpit_monat:vor=nach'): None,
     ('F01', 'S3', 'I3', 'cockpit_monat:vor'): None,
@@ -243,9 +243,52 @@ PV_HALTEWERTE: dict[tuple[str, str, str, str], Optional[float]] = {
     ('W2-L', 'S3', 'I4', 'bkw_hub:Balkon:juni_einspeisung'): 0.0,
     ('W2-L', 'S3', 'I4', 'bkw_hub:Balkon:juni_erzeugung'): 0.0,
     ('W2-L', 'S3', 'I4', 'bkw_hub:Balkon:juni_ev'): 0.0,
+    # ── N-640 (Frank85, gemessen 08.10.2026 gegen HEAD 25ca0ec7, Bericht opus-berichte/BAU-N639-N640.md): die drei
+    # Formen N640-1/-2/-3 — `bkw_hub:*` (BKW ohne Zähler, wie oben), S3 vor dem Abschluss (`_U_SA_VOR`) und die
+    # Variante-1-Sichten sind seit dem Entscheid Master 08.10. bewertet (Soll 540), ohne Haltewert.
+    ('N640-1', 'S1', 'I4', 'bkw_hub:Balkon:juni_einspeisung'): 0.0,
+    ('N640-1', 'S1', 'I4', 'bkw_hub:Balkon:juni_erzeugung'): 0.0,
+    ('N640-1', 'S1', 'I4', 'bkw_hub:Balkon:juni_ev'): 0.0,
+    ('N640-1', 'S2', 'I4', 'bkw_hub:Balkon:juni_einspeisung'): 0.0,
+    ('N640-1', 'S2', 'I4', 'bkw_hub:Balkon:juni_erzeugung'): 0.0,
+    ('N640-1', 'S2', 'I4', 'bkw_hub:Balkon:juni_ev'): 0.0,
+    ('N640-1', 'S3', 'I2', 'cockpit_monat:vor=nach'): None,
+    ('N640-1', 'S3', 'I3', 'cockpit_monat:vor'): None,
+    ('N640-1', 'S3', 'I4', 'bkw_hub:Balkon:juni_einspeisung'): 0.0,
+    ('N640-1', 'S3', 'I4', 'bkw_hub:Balkon:juni_erzeugung'): 0.0,
+    ('N640-1', 'S3', 'I4', 'bkw_hub:Balkon:juni_ev'): 0.0,
+    ('N640-1', 'S3', 'I5', 'cockpit_monat:vor'): None,
+    ('N640-1', 'S3', 'I6', 'vor:cockpit_monat'): None,
+    ('N640-2', 'S1', 'I4', 'bkw_hub:Balkon:juni_einspeisung'): 0.0,
+    ('N640-2', 'S1', 'I4', 'bkw_hub:Balkon:juni_erzeugung'): 0.0,
+    ('N640-2', 'S1', 'I4', 'bkw_hub:Balkon:juni_ev'): 0.0,
+    ('N640-2', 'S2', 'I4', 'bkw_hub:Balkon:juni_einspeisung'): 0.0,
+    ('N640-2', 'S2', 'I4', 'bkw_hub:Balkon:juni_erzeugung'): 0.0,
+    ('N640-2', 'S2', 'I4', 'bkw_hub:Balkon:juni_ev'): 0.0,
+    ('N640-2', 'S3', 'I2', 'cockpit_monat:vor=nach'): None,
+    ('N640-2', 'S3', 'I3', 'cockpit_monat:vor'): None,
+    ('N640-2', 'S3', 'I4', 'bkw_hub:Balkon:juni_einspeisung'): 0.0,
+    ('N640-2', 'S3', 'I4', 'bkw_hub:Balkon:juni_erzeugung'): 0.0,
+    ('N640-2', 'S3', 'I4', 'bkw_hub:Balkon:juni_ev'): 0.0,
+    ('N640-2', 'S3', 'I5', 'cockpit_monat:vor'): None,
+    ('N640-2', 'S3', 'I6', 'vor:cockpit_monat'): None,
+    ('N640-3', 'S1', 'I4', 'bkw_hub:Balkon:juni_einspeisung'): 0.0,
+    ('N640-3', 'S1', 'I4', 'bkw_hub:Balkon:juni_erzeugung'): 0.0,
+    ('N640-3', 'S1', 'I4', 'bkw_hub:Balkon:juni_ev'): 0.0,
+    ('N640-3', 'S2', 'I4', 'bkw_hub:Balkon:juni_einspeisung'): 0.0,
+    ('N640-3', 'S2', 'I4', 'bkw_hub:Balkon:juni_erzeugung'): 0.0,
+    ('N640-3', 'S2', 'I4', 'bkw_hub:Balkon:juni_ev'): 0.0,
+    ('N640-3', 'S3', 'I2', 'cockpit_monat:vor=nach'): None,
+    ('N640-3', 'S3', 'I3', 'cockpit_monat:vor'): None,
+    ('N640-3', 'S3', 'I4', 'bkw_hub:Balkon:juni_einspeisung'): 0.0,
+    ('N640-3', 'S3', 'I4', 'bkw_hub:Balkon:juni_erzeugung'): 0.0,
+    ('N640-3', 'S3', 'I4', 'bkw_hub:Balkon:juni_ev'): 0.0,
+    ('N640-3', 'S3', 'I5', 'cockpit_monat:vor'): None,
+    ('N640-3', 'S3', 'I6', 'vor:cockpit_monat'): None,
 }
 
-#: ``(Form, Größe, Weg, Invariante, Sicht) → gemessener Wert`` — Achsen-Matrix, 415 Sichten (E4d: +26).
+#: ``(Form, Größe, Weg, Invariante, Sicht) → gemessener Wert`` — Achsen-Matrix, 415 Sichten (E4d: +26); die 6 Sichten
+#: Hub-Verlauf (letzter Block) sind mit N-645 entfallen.
 ACHSEN_HALTEWERTE: dict[tuple[str, str, str, str, str], Optional[float]] = {
     ('M01', 'netz', 'S3', 'I2', 'autarkie:cockpit_monat:vor=nach'): None,
     ('M01', 'netz', 'S3', 'I2', 'eigenverbrauch:cockpit_monat:vor=nach'): None,
@@ -674,4 +717,7 @@ ACHSEN_HALTEWERTE: dict[tuple[str, str, str, str, str], Optional[float]] = {
     ('M05', 'wp', 'S2', 'I6', 'modus_warmwasser:fakten'): 18.0,
     ('M05', 'wp', 'S2', 'I6', 'modus_warmwasser:uebersicht'): 19.8,
     ('M05', 'wp', 'S2', 'I6', 'modus_warmwasser:zeitreihe'): 18.0,
+    # Sicht „Hub-Verlauf": die sechs Haltewerte `verbrauch_verlauf:Σreihe=kopf` (M07 Pool, M10 Sauna; 0,0 gegen Kopf
+    # 72 / 24) sind mit N-645 entfallen — Fachentscheid Master 09.10.2026, Soll „Verlauf = Kopf" (Segment „nicht
+    # aufgeteilt"); die Sichten sind seither bewertet und grün.
 }
