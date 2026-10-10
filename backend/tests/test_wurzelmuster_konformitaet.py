@@ -1960,6 +1960,174 @@ def test_p9_durchreicher_sind_noch_belegt():
 
 
 # ============================================================================
+# P15 — Geld, USt und CO₂ bewerten den Eigenverbrauch ohne Wandlungsverluste
+# ============================================================================
+#
+# N-588 (Vorlage Fassung 2, 10.10.2026): Die Differenz Σ String-Zähler − Anlagenzähler ist ein Wechselrichterverlust,
+# wenn der Messpunkt-Vertrag hält (`pv_verteilung.wandlungsverluste_grund`); eine dort verlorene kWh hätte niemand
+# gekauft. Die Bilanz trägt sie (F2), die Bewertung nicht — und zwar an JEDER Konstruktions-Stelle: hätte eine
+# Sicht den rohen Eigenverbrauch, nannte sie für dieselbe Anlage eine zweite Zahl (DI-2: eine Eingabe).
+#
+# Der Wächter greift an den zwei Stellen, an denen die Bewertung KONSTRUIERT wird:
+#   * jedes `eigenverbrauch_kwh=` an `berechne_co2_bilanz(` (baumweit, auch eine Stelle, die es heute nicht gibt);
+#   * jede Fortschreibung des `ev`-Postens in `finanz_aggregat.berechne_finanz_aggregat`.
+# Beleg ist der Name `eigenverbrauch_ohne_verluste` im Ausdruck — der Aufruf der Primitive oder eine Größe, die so
+# heißt (Namenskonvention wie P9 `rest_ev`). ⚠ Grenze wie P9: **Form, nicht Herkunft** — eine Variable mit dem Namen,
+# die den Rohwert trägt, käme durch; die Wert-Ebene sichern die Matrix-Zellen `geld:*` (F13a/F13b/F15/W2-V/W2-D/W2-B/
+# W2-B7) und die Proben in `test_n588_wandlungsverluste_bewertung.py`.
+_P15_BELEG = "eigenverbrauch_ohne_verluste"
+_P15_FINANZ = "core/berechnungen/finanz_aggregat.py"
+
+
+def _p15_co2_aufrufe_ohne_beleg(baeume) -> list[str]:
+    treffer: list[str] = []
+    for ort, quelltext, baum in baeume:
+        for knoten in ast.walk(baum):
+            if not isinstance(knoten, ast.Call):
+                continue
+            name = getattr(knoten.func, "id", None) or getattr(knoten.func, "attr", None)
+            if name != "berechne_co2_bilanz":
+                continue
+            for kw in knoten.keywords:
+                if kw.arg == "eigenverbrauch_kwh":
+                    ausdruck = ast.get_source_segment(quelltext, kw.value) or ""
+                    if _P15_BELEG not in ausdruck:
+                        treffer.append(f"{ort}:{kw.value.lineno} → {ausdruck}")
+    return treffer
+
+
+def _p15_ev_posten_ohne_beleg(quelltext: str, baum: ast.Module, ort: str) -> list[str]:
+    """Jede Fortschreibung `ev += …` / `ev = …` in `berechne_finanz_aggregat` braucht den Beleg im Ausdruck — direkt
+    oder über einen lokalen Namen, der aus `eigenverbrauch_ohne_verluste_kwh(` zugewiesen wurde."""
+    treffer: list[str] = []
+    for fn in ast.walk(baum):
+        if not (isinstance(fn, ast.FunctionDef) and fn.name == "berechne_finanz_aggregat"):
+            continue
+        belegte = set()
+        for k in ast.walk(fn):
+            if isinstance(k, ast.Assign) and _P15_BELEG in (ast.get_source_segment(quelltext, k.value) or ""):
+                belegte |= {t.id for t in k.targets if isinstance(t, ast.Name)}
+        for k in ast.walk(fn):
+            if isinstance(k, ast.AugAssign) and isinstance(k.target, ast.Name) and k.target.id == "ev":
+                ausdruck = ast.get_source_segment(quelltext, k.value) or ""
+                namen = {n.id for n in ast.walk(k.value) if isinstance(n, ast.Name)}
+                if _P15_BELEG not in ausdruck and not (namen & belegte):
+                    treffer.append(f"{ort}:{k.lineno} → ev += {ausdruck}")
+    return treffer
+
+
+def _p15_baeume():
+    for pfad, baum in _quelldateien():
+        yield f"backend/{pfad.relative_to(_BACKEND).as_posix()}", pfad.read_text(errors="ignore"), baum
+
+
+def test_p15_co2_bewertet_den_eigenverbrauch_ohne_wandlungsverluste():
+    offen = _p15_co2_aufrufe_ohne_beleg(_p15_baeume())
+    assert offen == [], (
+        f"{len(offen)} CO₂-Konstruktion(en) mit rohem Eigenverbrauch: {offen}\n"
+        "`berechne_co2_bilanz(eigenverbrauch_kwh=…)` bekommt den Eigenverbrauch OHNE die bewertbaren "
+        "Wandlungsverluste (`eigenverbrauch_ohne_verluste_kwh`, ADR-002/P15) — dieselbe Menge wie die Ersparnis."
+    )
+
+
+def test_p15_finanz_aggregat_bewertet_den_eigenverbrauch_ohne_wandlungsverluste():
+    pfad = _BACKEND / _P15_FINANZ
+    quelltext = pfad.read_text()
+    offen = _p15_ev_posten_ohne_beleg(quelltext, ast.parse(quelltext), f"backend/{_P15_FINANZ}")
+    assert offen == [], (
+        f"Der `ev`-Posten des Finanz-Aggregats rechnet ohne Beleg: {offen} — er bewertet "
+        "`eigenverbrauch_ohne_verluste_kwh(...)`, nicht `kz.eigenverbrauch_kwh` (ADR-002/P15)."
+    )
+
+
+def test_p15_findet_die_stellen_ueberhaupt():
+    """Positivkontrolle: der Wächter sieht die fünf Aufrufe `berechne_co2_bilanz(eigenverbrauch_kwh=…)` (Stand 10.10.2026) — sonst prüfte er nichts."""
+    aufrufe = 0
+    for _ort, _q, baum in _p15_baeume():
+        for k in ast.walk(baum):
+            if isinstance(k, ast.Call) and (getattr(k.func, "id", None) or getattr(k.func, "attr", None)) \
+                    == "berechne_co2_bilanz" and any(kw.arg == "eigenverbrauch_kwh" for kw in k.keywords):
+                aufrufe += 1
+    assert aufrufe >= 5, aufrufe
+
+
+# N-647 (B7, 10.10.2026): die zweite Form derselben Klasse — `<Menge> × CO2_FAKTOR_STROM_KG_KWH` außerhalb des Layers.
+# `roi_pv.py` (ROI-Seite) und `core/calculations.py::berechne_monatskennzahlen` rechneten damit `Erzeugung × 0,38`.
+# Baumweit über `api/` und `services/` (der Layer `core/` trägt die Komponenten-Formeln DI-1 und den Kanon selbst):
+# jede solche Multiplikation trägt den Beleg im Ausdruck — oder steht, funktions-granular, in der Klassifikation.
+P15_CO2_FAKTOR_KLASSIFIZIERT: dict[str, str] = {
+    "backend/api/routes/investitionen/roi.py::_bkw_pauschal_beitrag":
+        "synthetische BKW-Pauschale ohne Messung (0,9 kWh/Wp, 80 % EV) — Vorlage N-588 §1 „nicht betroffen“",
+    "backend/api/routes/investitionen/dashboard_sonstiges.py::get_sonstiges_dashboard":
+        "eigene Gerätemessung eines sonstigen Erzeugers (DI-1, Komponenten-Bilanz)",
+    "backend/api/routes/investitionen/dashboard_eauto.py::get_eauto_dashboard":
+        "Netzstrom-CO₂ des E-Autos (Verbraucher-Bilanz, DI-1) — keine Eigenverbrauchs-Bewertung",
+}
+
+
+def _p15_co2_faktor_stellen(baeume) -> list[tuple[str, str, int, str]]:
+    """``(modul, funktion, zeile, ausdruck)`` je `… * CO2_FAKTOR_STROM_KG_KWH` in `api/` und `services/`."""
+    out = []
+    for ort, quelltext, baum in baeume:
+        if not ort.startswith(("backend/api/", "backend/services/", "probe")):
+            continue
+
+        def besuche(knoten, funktion):
+            for kind in ast.iter_child_nodes(knoten):
+                f = kind.name if isinstance(kind, (ast.FunctionDef, ast.AsyncFunctionDef)) else funktion
+                if isinstance(kind, ast.BinOp) and isinstance(kind.op, ast.Mult) and any(
+                        isinstance(s, ast.Name) and s.id == "CO2_FAKTOR_STROM_KG_KWH" for s in (kind.left, kind.right)):
+                    out.append((ort, f, kind.lineno, ast.get_source_segment(quelltext, kind) or ""))
+                besuche(kind, f)
+
+        besuche(baum, "<modul>")
+    return out
+
+
+def _p15_co2_faktor_ohne_beleg(baeume) -> list[str]:
+    return [f"{o}:{z} ({f}) → {a}" for o, f, z, a in _p15_co2_faktor_stellen(baeume)
+            if _P15_BELEG not in a and f"{o}::{f}" not in P15_CO2_FAKTOR_KLASSIFIZIERT]
+
+
+def test_p15_co2_faktor_in_routen_und_services_nur_mit_beleg():
+    offen = _p15_co2_faktor_ohne_beleg(_p15_baeume())
+    assert offen == [], (
+        f"{len(offen)} `× CO2_FAKTOR_STROM_KG_KWH` ohne Beleg: {offen}\n"
+        "Die CO₂-Einsparung der Anlage entsteht in `berechne_co2_bilanz` auf dem Eigenverbrauch ohne Wandlungsverluste "
+        "(ADR-001/DI-2, ADR-002/P15) — eine Route rechnet sie nicht selbst (N-647: `Erzeugung × 0,38`). "
+        "Komponenten-Bilanzen mit eigener Regel (DI-1) gehören klassifiziert in `P15_CO2_FAKTOR_KLASSIFIZIERT`."
+    )
+
+
+def test_p15_co2_faktor_klassifikation_ist_noch_belegt():
+    belegt = {f"{o}::{f}" for o, f, _z, _a in _p15_co2_faktor_stellen(_p15_baeume())}
+    verwaist = set(P15_CO2_FAKTOR_KLASSIFIZIERT) - belegt
+    assert not verwaist, f"Klassifizierte Stellen ohne Fundstelle: {sorted(verwaist)} — Eintrag streichen."
+
+
+def test_p15_co2_faktor_gegenprobe():
+    roh = "def get_x():\n    co2 = erzeugung_jahr * CO2_FAKTOR_STROM_KG_KWH\n"
+    assert _p15_co2_faktor_ohne_beleg([("probe.py", roh, ast.parse(roh))]) == [
+        "probe.py:2 (get_x) → erzeugung_jahr * CO2_FAKTOR_STROM_KG_KWH"]
+    gut = "def get_x():\n    co2 = eigenverbrauch_ohne_verluste_bkw_kwh * CO2_FAKTOR_STROM_KG_KWH\n"
+    assert _p15_co2_faktor_ohne_beleg([("probe.py", gut, ast.parse(gut))]) == []
+
+
+def test_p15_gegenprobe_ein_roher_aufruf_wird_rot():
+    roh_co2 = "berechne_co2_bilanz(eigenverbrauch_kwh=fakt.kennzahlen.eigenverbrauch_kwh)\n"
+    assert _p15_co2_aufrufe_ohne_beleg([("probe.py", roh_co2, ast.parse(roh_co2))]) == [
+        "probe.py:1 → fakt.kennzahlen.eigenverbrauch_kwh"]
+    gut = "berechne_co2_bilanz(eigenverbrauch_kwh=eigenverbrauch_ohne_verluste_kwh(e, v, g))\n"
+    assert _p15_co2_aufrufe_ohne_beleg([("probe.py", gut, ast.parse(gut))]) == []
+    roh_ev = ("def berechne_finanz_aggregat(zeilen):\n    ev = 0.0\n    for z in zeilen:\n"
+              "        ev += kz.eigenverbrauch_kwh * ev_preis / 100\n")
+    assert len(_p15_ev_posten_ohne_beleg(roh_ev, ast.parse(roh_ev), "probe.py")) == 1
+    gut_ev = ("def berechne_finanz_aggregat(zeilen):\n    ev = 0.0\n    for z in zeilen:\n"
+              "        b = eigenverbrauch_ohne_verluste_kwh(e, v, g)\n        ev += b * ev_preis / 100\n")
+    assert _p15_ev_posten_ohne_beleg(gut_ev, ast.parse(gut_ev), "probe.py") == []
+
+
+# ============================================================================
 # P10 — eine Monatszeile wird genau einmal aufbereitet
 # ============================================================================
 #

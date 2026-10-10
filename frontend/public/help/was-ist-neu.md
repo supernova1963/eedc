@@ -1,6 +1,6 @@
 # Was ist neu
 
-> **Stand:** Oktober 2026 (v4.1.2)
+> **Stand:** Oktober 2026 (v4.1.5)
 > **Diese Seite** zeigt pro Version, was sich für dich als Anwender geändert hat — kürzer als der technische [CHANGELOG](https://github.com/supernova1963/eedc-homeassistant/blob/main/CHANGELOG.md), ausführlicher als die Schnellübersicht-Tabelle in der [Übersicht](BENUTZERHANDBUCH.md#was-ist-neu-seit-v316).
 >
 > **Kein Banner, kein Pop-up:** eedc zeigt diese Liste nicht ungefragt an. HA-App-Nutzer sehen den Changelog ohnehin schon im Add-on-Store, GitHub-Releases haben einen eigenen. Wer wissen will, was neu ist, schaut hier rein — Pull statt Push.
@@ -8,6 +8,22 @@
 > **Lesehinweis:** Die jüngsten Versionen stehen oben. Jeder Punkt verlinkt entweder auf die zuständige Hilfe-Sektion oder direkt auf die App-Funktion (sofern erreichbar). Anker-URLs (`?doc=was-ist-neu`) sind teilbar.
 
 ---
+
+## v4.1.5 — 10. Oktober 2026
+
+**Wandlungsverluste kosten kein Geld mehr, das du nie gespart hast:** Misst deine Anlage ihre Strings mit eigenen
+Zählern **und** hat sie einen Anlagenzähler hinter dem Wechselrichter, rechnen Ersparnis, Umsatzsteuer auf den
+Eigenverbrauch und CO₂ jetzt mit dem Eigenverbrauch **ohne** die Wandlungsverluste — eine im Wechselrichter verlorene
+Kilowattstunde hättest du ohne PV-Anlage nie gekauft. Beispiel: 450 kWh Eigenverbrauch, 36 kWh Verluste ⇒ 414 kWh
+bewertet, 124,20 € statt 135,00 €. Bilanz, Autarkie und Eigenverbrauchsquote bleiben, wie sie sind. Mit einem
+DC-gekoppelten Speicher, bei mehr als 10 % Differenz oder wenn der Anlagenzähler dein Balkonkraftwerk nicht mitmisst,
+zieht eedc nichts ab und sagt warum — die neue Daten-Checker-Kategorie **„PV – Messpunkt"** nennt den Grund und den
+Handgriff (z. B. die Speicher-Kopplung eintragen oder, als Volleinspeiser, den AC-Ertragszähler des Wechselrichters als
+„PV gesamt" zuordnen). Ohne Anlagenzähler ändert sich nichts.
+
+**Daten-Checker:** Die Warnung „Rückgang in Home Assistant" sagt jetzt in der Überschrift, dass ein **Zählerstand gefallen**
+ist, statt von einer „negativen Menge" zu sprechen — das wurde als Vorzeichen für Entladen gelesen. Lade-, Entlade- und
+Einspeisezähler laufen nur nach oben; fällt einer, ist das kein Entladen, sondern ein gesunkener Zählerstand.
 
 ## v4.1.4 — 9. Oktober 2026
 
