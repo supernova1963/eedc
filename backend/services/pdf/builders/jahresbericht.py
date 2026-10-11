@@ -59,6 +59,7 @@ from backend.core.berechnungen.erzeuger_traeger import (
     erzeuger_traeger,
     selbst_tragende_bkw_ids,
     traeger_im_monat,
+    soll_nenner_kwp,
     traeger_zeilen,
     verteilungsnenner_kwp,
 )
@@ -284,8 +285,11 @@ async def build_jahresbericht_context(
     wp_waerme = sum(f.wp.waerme_kwh for f in fakten)
     # §9.2 — Abgabe an Dritte über den Berichtszeitraum (kein Eigenverbrauch).
     abgabe_gesamt = sum(f.sonstiges.abgabe_kwh for f in fakten)
-    wp_heizung = sum(f.wp.heizung_kwh for f in fakten)
-    wp_warmwasser = sum(f.wp.warmwasser_kwh for f in fakten)
+    # N-673: eine ungemessene Achse ist „keine Angabe" (None) — die Summe gibt es nur, wenn ein Monat sie misst.
+    wp_heizung = (sum(f.wp.heizung_kwh or 0.0 for f in fakten)
+                  if any(f.wp.heizung_kwh is not None for f in fakten) else None)
+    wp_warmwasser = (sum(f.wp.warmwasser_kwh or 0.0 for f in fakten)
+                     if any(f.wp.warmwasser_kwh is not None for f in fakten) else None)
     wp_strom = sum(f.wp.strom_kwh for f in fakten)
     # N-256: die Grundmenge des fossilen Vergleichs — nur Geräte mit Ersatz.
     wp_waerme_mit_ersatz = sum(f.wp.waerme_mit_ersatz_kwh for f in fakten)
@@ -326,15 +330,22 @@ async def build_jahresbericht_context(
         Sie trägt nur den PVGIS-SOLL-Wert; ohne sie fehlten in der Jahres-
         tabelle Monate, in denen noch nichts erfasst ist. In den Finanz-Zeilen
         taucht sie nicht auf — sie wäre dort eine Zeile aus lauter Nullen.
+
+        N-650 (10.10.2026): die Messgrößen stehen auf ``None`` statt 0 — die
+        Tabelle druckt dafür „–" (`formatierung.LEER`), nicht „0 kWh", „0,0 %"
+        und „0,00 €". Eine 0 ist eine Aussage (ADR-002/P4), ein Monat ohne
+        Erfassung keine. Die Jahressummen laufen über die Fakten (`_zeile_fuer`),
+        nicht über diese Zeile, und bleiben unverändert; die Diagramme lesen
+        ``None`` wie bisher die 0 (`charts.py`: ``v or 0``).
         """
         return {
             "jahr": j, "monat": m,
             "monat_name": f"{MONATSNAMEN[m]} {j}" if ist_gesamtzeitraum else MONATSNAMEN[m],
-            "pv_erzeugung_kwh": 0, "pvgis_prognose_kwh": pvgis_by_month.get(m, 0),
-            "eigenverbrauch_kwh": 0, "einspeisung_kwh": 0, "netzbezug_kwh": 0,
-            "autarkie_prozent": autarkie_prozent(0, 0), "spezifischer_ertrag": 0.0,
-            "einsp_erloes_euro": 0.0, "ev_ersparnis_euro": 0.0,
-            "sonstige_netto_euro": 0, "netto_ertrag_euro": 0.0,
+            "pv_erzeugung_kwh": None, "pvgis_prognose_kwh": pvgis_by_month.get(m, 0),
+            "eigenverbrauch_kwh": None, "einspeisung_kwh": None, "netzbezug_kwh": None,
+            "autarkie_prozent": None, "spezifischer_ertrag": None,
+            "einsp_erloes_euro": None, "ev_ersparnis_euro": None,
+            "sonstige_netto_euro": None, "netto_ertrag_euro": None,
         }
 
     async def _zeile_fuer(fakt) -> dict:
@@ -648,9 +659,14 @@ async def build_jahresbericht_context(
     # `or anlage.leistung_kwp`-Fallback greift nur bei Summe 0, nicht bei
     # gemischter Pflege (N73/P3).
     gesamt_kwp = verteilungsnenner_kwp(struktur, anlage.leistung_kwp)
-    # N-614: je Monat der Nenner der Menge, die trägt — ein BKW, das im Monat
-    # selbst trägt, ersetzt darin seine Kinder (nie beide im Nenner). Ohne
-    # selbst tragendes BKW ist es der Nenner der Struktur (wie PV-Strings).
+    # ⭐ N-661 (Weg C, Gernot 11.10.2026): der SOLL-Nenner je String sind die
+    # kWp, für die die aktive Prognose gerechnet ist (`soll_nenner_kwp`) —
+    # dieselbe Regel wie Komponenten → PV-Strings. Bis dahin standen hier die im
+    # Berichtsjahr aktiven Träger (`aktiv_im_jahr` oben): ein Zubau NACH dem
+    # Berichtsjahr fehlte im Nenner, obwohl die Prognose ihn trägt, und jeder
+    # String bekam zu viel SOLL (gemessen +50 %). Ohne Prognose-kWp gilt der
+    # frühere Nenner — N-614: je Monat der Menge, die trägt (ein BKW, das im
+    # Monat selbst trägt, ersetzt darin seine Kinder, nie beide im Nenner).
     _nenner_cache: dict[tuple[int, int], float] = {}
 
     def _nenner_im_monat(j: int, m: int) -> float:
@@ -658,8 +674,11 @@ async def build_jahresbericht_context(
             selbst = selbst_je_monat.get((j, m))
             if selbst is None:
                 selbst = selbst_tragende_bkw_ids(erzeuger_alle, j, m)
-            _nenner_cache[(j, m)] = gesamt_kwp if not selbst else verteilungsnenner_kwp(
-                traeger_im_monat(erzeuger_alle, struktur, selbst), anlage.leistung_kwp,
+            _nenner_cache[(j, m)] = soll_nenner_kwp(
+                pvgis_prognose,
+                gesamt_kwp if not selbst else verteilungsnenner_kwp(
+                    traeger_im_monat(erzeuger_alle, struktur, selbst), anlage.leistung_kwp,
+                ),
             )
         return _nenner_cache[(j, m)]
 
@@ -919,8 +938,9 @@ async def build_jahresbericht_context(
             "waerme_kwh": (
                 wp_waerme if wp_waerme > 0 or any(f.wp.waerme_gemessen for f in fakten) else None
             ),
-            "heizung_kwh": wp_heizung if wp_heizung > 0 else None,
-            "warmwasser_kwh": wp_warmwasser if wp_warmwasser > 0 else None,
+            # N-673: dieselbe Trennung für die Aufteilung — gemessen (auch 0) ⇒ Wert, ungemessen ⇒ „—".
+            "heizung_kwh": wp_heizung,
+            "warmwasser_kwh": wp_warmwasser,
             "strom_kwh": wp_strom,
             "cop": wp_cop,
             "cop_grund": _wpk.arbeitszahl.grund,

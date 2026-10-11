@@ -25,7 +25,10 @@ import { fmtCalc } from '../components/ui'
 import { formatEnergie, formatEffizienz } from '../lib/einheiten'
 import { MONAT_KURZ, PV_MODUL_FARBEN, PV_MODUL_BG, SONSTIGES_KATEGORIE_LABELS } from '../lib'
 import { CHART_COLORS, ENERGIE_KATEGORIE, KOMPONENTEN_FARBEN, LADEQUELLEN_FARBEN, ROLLEN_BG, SONSTIGES_ERZEUGER_FARBE } from '../lib/colors'
-import { pvVerteiltHerkunft } from '../lib/pvHerkunft'
+import {
+  pvVerteiltHerkunft, PV_MODUL_TEILWEISE_VERTEILT_HINWEIS, KWP_ANTEIL_GESCHAETZT, BKW_KWP_ANTEIL_HINWEIS,
+  BKW_ABGETRETEN_HINWEIS,
+} from '../lib/pvHerkunft'
 import { istZaehlerKategorie } from '../lib/fieldDefinitions'
 import { SPEICHER_KOPPLUNG_LABELS, aufgeloesteSpeicherKopplung, speicherParameter } from '../lib/investitionParameter'
 import { cockpitApi, type PVStringsGesamtlaufzeitResponse } from '../api/cockpit'
@@ -122,6 +125,17 @@ export interface KompGeraet {
   /** Einstellungen-Block: alle verknüpften Investitionen, deren Parameter +
    *  Sensor-/MQTT-Zuordnungen gezeigt werden (PV = WR+Module+Speicher; sonst [inv]). */
   verknuepfteInvs?: Investition[]
+}
+
+/** N-664 / N-671: der Kopf eines Balkonkraftwerks sagt, woher seine Erzeugung kommt, wenn nicht aus der eigenen
+ *  Messung — kWp-Anteil am Anlagenzähler (geschätzt) bzw. an die Modul-Kinder abgetreten. `undefined` ohne beides. */
+export function bkwHerkunftHinweise(
+  z: { erzeugung_aus_anlagenwert_kwh?: number; monate_abgetreten?: number },
+): KompGeraet['hinweise'] {
+  const h: NonNullable<KompGeraet['hinweise']> = []
+  if ((z.erzeugung_aus_anlagenwert_kwh ?? 0) > 0) h.push({ ton: 'info', text: BKW_KWP_ANTEIL_HINWEIS })
+  if ((z.monate_abgetreten ?? 0) > 0) h.push({ ton: 'info', text: BKW_ABGETRETEN_HINWEIS })
+  return h.length ? h : undefined
 }
 
 /** Jahressummen einer Leitkennzahl aus den Monatsdaten (für Block ⑤ dünn). */
@@ -280,6 +294,8 @@ function bauePvTopologie(invs: Investition[]): KompStruktur {
  *  `bezug` gilt nur für den Erzeugungs-Stapel — die Verwendung daneben ist
  *  gemessen. */
 const PV_MODUL_HERKUNFT: WertHerkunft = pvVerteiltHerkunft('Erzeugung je Modul')
+/** N-653: Mischfall (mindestens ein Modul gemessen) — dieselbe Kennzeichnung, Satz sagt „teilweise". */
+const PV_MODUL_HERKUNFT_TEILWEISE: WertHerkunft = pvVerteiltHerkunft('Erzeugung je Modul', PV_MODUL_TEILWEISE_VERTEILT_HINWEIS)
 
 /** Erzeuger, die hinter DEMSELBEN Hauszähler einspeisen, aber keine PV-Module
  *  dieser Karte sind: Balkonkraftwerk und sonstiger Erzeuger (BHKW, `sonstiges`
@@ -362,8 +378,11 @@ function pvVerlauf(
     : kwpAnteil(m, erz)
   // Kennzeichnung datengetrieben: nur wenn das Backend die Werte als verteilt
   // meldet (oder der Fallback greift), ist hier gerechnet statt gemessen.
+  const teilweiseGemessen = (pvStrings?.strings ?? []).some((s) => s.ist_quelle === 'gemessen')
   const herkunft: WertHerkunft | undefined = hatModulwerte
-    ? (pvStrings?.ist_quelle === 'verteilt' ? PV_MODUL_HERKUNFT : undefined)
+    ? (pvStrings?.ist_quelle === 'verteilt'
+        ? (teilweiseGemessen ? PV_MODUL_HERKUNFT_TEILWEISE : PV_MODUL_HERKUNFT)
+        : undefined)
     : PV_MODUL_HERKUNFT
   const bars: VerlaufBar[] = [
     ...module.map((m, i) => ({ key: `m${m.id}`, label: m.bezeichnung, farbe: PV_MODUL_FARBEN[i % PV_MODUL_FARBEN.length], stapel: 'erz' })),
@@ -764,8 +783,18 @@ export const KOMPONENTEN_ADAPTER: Record<string, KompAdapter> = {
         // Schalter. Wer es pflegt, hat `gesamt_heizenergie_kwh` = 0 — dieser Zweig
         // greift dann aus dem zweiten Grund nicht, und die Menge steht als
         // *Wärme erzeugt* in der Kachel.
-        aufteilung: (z.hat_warmwasser_achse !== false
-            && (z.gesamt_heizenergie_kwh > 0 || z.gesamt_warmwasser_kwh > 0)) ? {
+        //
+        // N-682 (11.10.2026, KONZEPT-WAERME-KLIMA K1 + N-673): **Nur mit einer
+        // Heizmenge.** Mit *Wärme gesamt* und einem eigenen Warmwasser-Zähler
+        // ist die Heizwärme „keine Angabe" (N-673) — ihre Summe hier also 0,
+        // und der Balken zeigte „Heizung 0 kWh · Warmwasser 100 %" unter
+        // „Wärme erzeugt 300 kWh". Das ist dieselbe Behauptung wie im B3-Fall,
+        // nur mit dem anderen Zweck: ein Segment allein teilt nichts auf. Die
+        // Menge steht in der Kachel; ein Hinweis „nicht aufgeteilt" kommt nicht
+        // dazu — Abdeckung ist Sache des Daten-Checkers (s. o.). Eine gemessene
+        // Warmwasser-0 neben einer Heizmenge bleibt ein Balken (HANDBUCH
+        // WÄRME/KLIMA: „auch mit dem Wert 0 … eine Messung").
+        aufteilung: (z.hat_warmwasser_achse !== false && z.gesamt_heizenergie_kwh > 0) ? {
           titel: 'Wärme nach Zweck', segmente: [
             { label: 'Heizung', wert: z.gesamt_heizenergie_kwh, farbe: SEG.heizung },
             { label: 'Warmwasser', wert: z.gesamt_warmwasser_kwh, farbe: SEG.warmwasser },
@@ -882,11 +911,18 @@ export const KOMPONENTEN_ADAPTER: Record<string, KompAdapter> = {
   balkonkraftwerk: {
     async fetch(anlageId) {
       const ds = await investitionenApi.getBalkonkraftwerkDashboard(anlageId)
-      return ds.map(({ investition: inv, zusammenfassung: z, monatsdaten: md }) => ({
+      return ds.map(({ investition: inv, zusammenfassung: z, monatsdaten: md, monatsreihe: reihe }) => ({
         inv, label: inv.bezeichnung,
-        monatswerte: md.length,
+        // N-664: ein BKW ohne eigenen Zähler hat keine Zeile, die Monats-Fakten geben ihm trotzdem Monate
+        // (kWp-Anteil) — dann ist der Hub nicht leer und der Leer-Grund (N-247) stünde über gefüllten Blöcken.
+        monatswerte: md.length || reihe.length,
+        // N-664 / N-671: woher die Erzeugung kommt, wenn nicht aus der eigenen Messung.
+        hinweise: bkwHerkunftHinweise(z),
         status: [
-          kpi(BKW_KPI.erzeugung, n0(z.gesamt_erzeugung_kwh), 'kWh'),
+          {
+            ...kpi(BKW_KPI.erzeugung, n0(z.gesamt_erzeugung_kwh), 'kWh'),
+            ...((z.erzeugung_aus_anlagenwert_kwh ?? 0) > 0 ? { subtitle: KWP_ANTEIL_GESCHAETZT } : {}),
+          },
           kpi(BKW_KPI.eigenverbrauch, n0(z.eigenverbrauch_quote_prozent), '%'),
           kpi(BKW_KPI.ersparnis, n0(z.gesamt_ersparnis_euro), '€'),
           kpi(BKW_KPI.spezErtrag, n0(z.spezifischer_ertrag_kwh_kwp), 'kWh/kWp'),
@@ -1053,7 +1089,8 @@ export const KOMPONENTEN_ADAPTER: Record<string, KompAdapter> = {
               einheit,
               bars: [{ key: 'verbrauch', label: 'Verbrauch', farbe: KOMPONENTEN_FARBEN['sonstiges'].hex }],
               rows: monatsverbrauch.map((r) => ({
-                name: `${MONAT_KURZ[r.monat - 1]} ${String(r.jahr).slice(2)}`,
+                // MONAT_KURZ ist 1-basiert (Index 0 = leer) — wie `rowsAusMd` oben (N-648).
+                name: `${MONAT_KURZ[r.monat]} ${String(r.jahr).slice(2)}`,
                 verbrauch: r.verbrauch,
               })),
             } : undefined,

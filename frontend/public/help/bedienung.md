@@ -373,6 +373,10 @@ Die **Monat**-Sicht ist das Referenz-Muster der Zeit-Achse: ein ausgewählter Mo
 > „MQTT (14.–30.09.)". **Hochgerechnet wird nichts** — die Zahl ist, was seit diesem
 > Zeitpunkt gelaufen ist, nicht was der Monat vermutlich bringen wird.
 >
+> Nur am Etikett **„HA-Statistik"** steht kein Zeitraum, weil Home Assistant nicht meldet, seit wann ein Sensor zählt:
+> Legst du einen Sensor in Home Assistant erst mitten im Monat an, ist die Zahl dieses Monats die Menge seit seinem
+> ersten Messwert — ohne Hinweis daneben.
+>
 > Und wenn gar keine Quelle etwas liefert, sagt die leere Kachel jetzt warum: Fahr mit der
 > Maus über das „—", und dort steht, ob für diesen Monat noch überhaupt nichts vorliegt oder
 > ob nur dieser einen Größe die Zuordnung fehlt — samt dem Weg dorthin.
@@ -413,6 +417,10 @@ Die **Monat**-Sicht ist das Referenz-Muster der Zeit-Achse: ein ausgewählter Mo
 > Betriebsmodus nicht. Das gilt ab dem Monat des Updates, frühestens ab dem Zeitpunkt, ab dem eedc den Betriebsmodus
 > mitschreibt; frühere Monate rechnet eedc nicht neu. Zeigen Strom und Wärme in einem Monat beide 0, steht dort 0 und
 > *kein Heizbetrieb in diesem Zeitraum* — die Wärmepumpe lief nicht, es fehlt kein Zähler.
+
+> **Ohne Home Assistant** gilt dasselbe für Zähler, die eedc über MQTT mitschreibt, ab dem ersten Monat, den diese
+> Mitschrift ganz abdeckt; davor — und für die Netzladung deines Speichers auch mit Home Assistant — zählen diese Größen
+> erst mit dem Monatsabschluss.
 
 Aus dem feingranularen Stunden-Bestand des Monats zeigt die Sicht zusätzlich:
 
@@ -467,6 +475,9 @@ Die **Jahr/Gesamt**-Sicht fasst die Anlage über ein ganzes Jahr zusammen — vo
 > der Jahresbericht und der HA-Sensor rechnen nur mit abgeschlossenen Monaten. Kann ein Monat gar nicht berechnet
 > werden, nennt die Zeile ihn ebenfalls; das Jahresergebnis bleibt dann — wie bei einer fehlenden Stromrechnung — leer
 > („—“) und nennt den Monat als fehlenden Posten.
+> **Ohne Home Assistant** zeigt *Cockpit → Monat* einen solchen Monat erst nach dem Abschluss — MQTT-Zählerstände und
+> Tageswerte nimmt die Monatssicht nur für den laufenden Monat, von den übrigen Quellen liefert nur ein Geräte-Connector
+> auch vergangene Monate —, während der Verlauf hier im Jahr ihn schon vorher aus den mitgeschriebenen Werten zeigt.
 
 Der Finanzen-Block als Komponenten-Finanz-Tabelle erscheint auch in Jahr/Gesamt.
 
@@ -736,8 +747,8 @@ Zusätzlich: **JAZ Heizen / JAZ Warmwasser getrennt** (nur wenn du Strom je Funk
 
 - **Gefahrene Kilometer** im Zeitraum
 - **Verbrauch** (kWh)
-- **Ladequellen-Aufteilung** — PV-Ladung (kostenlos), Netz-Ladung (zu Hause), externe Ladung (unterwegs); unter dem PV-Anteil steht **„davon aus dem Speicher"**, wenn ein Speicherzähler existiert (Strom aus dem Hausakku zählt als eigener Strom, ist aber kein Direktverbrauch aus der PV)
-- **Kostenersparnis** gegenüber Benziner/Diesel — auf Basis echter **monatlicher Benzinpreise** aus dem EU Weekly Oil Bulletin (fehlt ein Monatspreis: der am E-Auto eingetragene *Benzinpreis (€/L)*, sonst 1,65 €/L — das Feld ist nicht vorbelegt, ein geleertes Feld bleibt leer)
+- **Ladequellen-Aufteilung** — PV-Ladung, Netz-Ladung (zu Hause), externe Ladung (unterwegs); unter dem PV-Anteil steht **„davon aus dem Speicher"**, wenn ein Speicherzähler existiert (Strom aus dem Hausakku zählt als eigener Strom, ist aber kein Direktverbrauch aus der PV)
+- **Kostenersparnis** gegenüber Benziner/Diesel — auf Basis echter **monatlicher Benzinpreise** aus dem EU Weekly Oil Bulletin (fehlt ein Monatspreis: der am E-Auto eingetragene *Benzinpreis (€/L)*, sonst 1,65 €/L — das Feld ist nicht vorbelegt, ein geleertes Feld bleibt leer). Abgezogen wird der Strom der **ganzen** Ladung: die Netz-Ladung zu ihrem Preis, die PV-Ladung zu dem Preis, mit dem eedc sie schon als Eigenverbrauch gutschreibt — sonst zählte dieselbe Kilowattstunde zweimal. Der PV-Anteil zeigt, woher der Strom kam; er ist kein eigener Geldbetrag
 - **V2H-Entladung** (wenn aktiviert)
 
 In der Monatstabelle steht ein Monat, in dem das Auto nur einen Anteil am Rest der Wallbox bekommt, als eigene Zeile **„aus Wallbox-Rest"** (ohne km) — so ergibt die Tabelle die Kachel „Heimladung". Liegt an „Heim: gesamt" ein Ladezähler je Auto (etwa evccs „Ladevorgänge: Energie [Fzg.]"), steht je Monat **„aus n Ladevorgängen"** dabei, und wie viele davon die Wallbox nicht voll gezählt hat.
@@ -761,6 +772,8 @@ In der Monatstabelle steht ein Monat, in dem das Auto nur einen Anteil am Rest d
 - optional: gekoppelte Speicher-Nutzung (Ladung/Entladung)
 
 **Verlauf und Vergleich zeigen dieselbe Rechnung wie die Kennzahlen oben:** Die Monate im Diagramm und in der Tabelle ergeben zusammen die Erzeugung und den Eigenverbrauch der Kacheln, und die Eigenverbrauchsquote im Jahresvergleich entsteht aus denselben Monatswerten.
+
+**Ohne eigenen Zähler ist die Erzeugung geschätzt:** Hat das Balkonkraftwerk keinen eigenen Erzeugungs-Sensor, zeigt der Reiter seinen Anteil am PV-Gesamtzähler der Anlage nach kWp — dieselbe Zahl wie das Cockpit — und kennzeichnet ihn als **„geschätzt (kWp-Anteil)"**. Hängen PV-Module an dem Balkonkraftwerk, steht seine Erzeugung bei diesen Modulen; der Reiter nennt dann 0 und sagt das dazu.
 
 ### 3.8 Sonstiges
 
@@ -837,7 +850,7 @@ Die Finanz-Sicht ist der Ort für **Erlöse, Einsparungen, Kosten und die Amorti
 > Sonstigen Positionen (seit Oktober 2026; vorher fehlten sie in der Tabelle, und die Finanz-Sicht rechnete sie selbst
 > dazu). Sonstige Erträge und Sonderkosten stehen daneben als eigene Posten — als Bestandteil, nicht als Zuschlag.
 - **T-Konto** — Erlöse und Einsparungen den Kosten gegenübergestellt, mit Vorjahresvergleich (Δ). Auf Mobilgeräten als 2-Spalten-Layout (Label | Wert + Vorjahr + Δ).
-- **Amortisations-Fortschritt** — wie viel % der Investition bereits zurückgeflossen sind (kumuliert, nicht Jahres-Rendite)
+- **Amortisations-Fortschritt** — wie viel % der Investition bereits zurückgeflossen sind (kumuliert, nicht der ROI pro Jahr)
 
 **Mehrkosten-Ansatz für Investitionen:**
 
@@ -845,7 +858,7 @@ Die Finanz-Sicht ist der Ort für **Erlöse, Einsparungen, Kosten und die Amorti
 - **Wärmepumpe:** Kosten minus Gasheizung (konfigurierbar); optional plus jährliche Zusatzkosten der Alt-Heizung (Schornsteinfeger, Wartung, Gaszähler-Grundpreis) und ein monatlich gepflegter Gaspreis (verhindert, dass ein Tarifwechsel rückwirkend die ganze Historie ändert)
 - **E-Auto:** Kosten minus Verbrenner (konfigurierbar)
 
-> **Zwei Amortisations-Sichten:** Hier siehst du den **kumulierten Fortschritt** (Σ Erträge / Investition). Im Cockpit und unter ROI dagegen die **Jahres-Rendite** (Jahres-Ertrag / Investition). Beide sind korrekt, aber für verschiedene Zwecke — der „Sicht"-Tooltip an jeder Anzeige erklärt die Bezugsbasis.
+> **Zwei Amortisations-Sichten:** Hier siehst du den **kumulierten Fortschritt** (Σ Erträge / Investition). Unter *Auswertungen → ROI* dagegen den **ROI pro Jahr** (jährliche Einsparung / Investition) — das Cockpit zeigt keine Rendite. Beide sind korrekt, aber für verschiedene Zwecke — der „Sicht"-Tooltip an jeder Anzeige erklärt die Bezugsbasis.
 
 ### 4.2 ROI
 

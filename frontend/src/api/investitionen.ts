@@ -260,8 +260,10 @@ export interface WpMonatsWert {
   jahr: number
   monat: number
   strom_kwh: number
-  heizung_kwh: number
-  warmwasser_kwh: number
+  /** N-673: `null` = keine Angabe — die Zeile misst keine Heizwärme (z. B. nur ein Gesamt-Wärmezähler). */
+  heizung_kwh: number | null
+  /** N-673: `null` = keine Angabe (kein Warmwasser-Wert in der Zeile). */
+  warmwasser_kwh: number | null
   waerme_kwh: number
 }
 
@@ -689,7 +691,10 @@ export interface WallboxDashboardResponse {
 export interface BkwMonatsWert {
   jahr: number
   monat: number
+  /** N-664/N-671: aus den Monats-Fakten — eigener Wert, sonst kWp-Anteil am Anlagenzähler, 0 wenn abgetreten. */
   erzeugung_kwh: number
+  /** `kwp_anteil` = geschätzt (nicht gemessen) · `abgetreten` = die Modul-Kinder tragen die Erzeugung. */
+  erzeugung_quelle: 'gemessen' | 'kwp_anteil' | 'abgetreten'
   eigenverbrauch_kwh: number | null
   eigenverbrauch_quelle: 'gemessen' | 'anteilig' | 'nicht_bewertbar'
   einspeisung_kwh: number | null
@@ -706,6 +711,10 @@ export interface BalkonkraftwerkDashboardResponse {
   monatsreihe: BkwMonatsWert[]
   zusammenfassung: {
     gesamt_erzeugung_kwh: number
+    /** N-664: davon der kWp-Anteil am Anlagenzähler (nicht gemessen) — Kennzeichen „geschätzt (kWp-Anteil)". */
+    erzeugung_aus_anlagenwert_kwh: number
+    /** N-671: Monate, deren Erzeugung bei den Modul-Kindern steht (der Hub zeigt dort 0). */
+    monate_abgetreten: number
     gesamt_eigenverbrauch_kwh: number
     gesamt_einspeisung_kwh: number
     eigenverbrauch_quote_prozent: number

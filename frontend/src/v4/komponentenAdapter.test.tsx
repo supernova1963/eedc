@@ -31,6 +31,11 @@ vi.mock('../api/monatsdaten', () => ({ monatsdatenApi: { listAggregiert: (...a: 
 
 import { KOMPONENTEN_ADAPTER } from './komponentenAdapter'
 import { verlaufTooltipWert } from './KomponentenVerlaufChart'
+import { MONAT_KURZ } from '../lib'
+import {
+  PV_MODUL_TEILWEISE_VERTEILT_HINWEIS, PV_MODUL_VERTEILT_HERKUNFT, KWP_ANTEIL_GESCHAETZT, BKW_KWP_ANTEIL_HINWEIS,
+  BKW_ABGETRETEN_HINWEIS,
+} from '../lib/pvHerkunft'
 
 const inv = (over = {}) => ({ id: 1, anlage_id: 1, typ: 'x', bezeichnung: 'Gerät A', aktiv: true, ...over })
 const titles = (ks: { title: string }[]) => ks.map((k) => k.title)
@@ -45,12 +50,13 @@ beforeEach(() => {
 /** Antwort von `/cockpit/pv-strings-gesamtlaufzeit` — nur die Felder, die
  *  `pvVerlauf` liest (Modul × Jahr + Herkunft). */
 const pvStringsAntwort = (
-  strings: { id: number; jahr: number; ist: number }[],
+  strings: { id: number; jahr: number; ist: number; quelle?: 'gemessen' | 'verteilt' | 'fehlt' }[],
   ist_quelle: 'gemessen' | 'verteilt' | 'fehlt' = 'gemessen',
 ) => ({
   ist_quelle,
   strings: strings.map((s) => ({
     investition_id: s.id,
+    ist_quelle: s.quelle ?? ist_quelle,
     ist_gesamt_kwh: s.ist,
     jahreswerte: [{ jahr: s.jahr, ist_kwh: s.ist }],
   })),
@@ -322,6 +328,24 @@ describe('KOMPONENTEN_ADAPTER', () => {
     expect(g.hinweise![0].text).toContain('Sonderkosten')
   })
 
+  it('Sonstiges-Zähler (#377): Verlauf beschriftet jeden Monat mit seinem eigenen Namen (N-648)', async () => {
+    getSonstigesDashboard.mockResolvedValue([{
+      investition: inv({ typ: 'sonstiges' }),
+      zusammenfassung: { kategorie: 'zaehler', einheit: 'm³', stand_ende: 1200, differenz: 30,
+        monatsverbrauch: [
+          { jahr: 2026, monat: 1, verbrauch: 12 },
+          { jahr: 2026, monat: 6, verbrauch: 3 },
+          { jahr: 2026, monat: 12, verbrauch: 15 },
+        ] },
+      monatsdaten: [],
+    }])
+    const [g] = await KOMPONENTEN_ADAPTER.sonstiges.fetch(1)
+    expect(g.verlauf?.rows.map((r) => r.name)).toEqual([
+      `${MONAT_KURZ[1]} 26`, `${MONAT_KURZ[6]} 26`, `${MONAT_KURZ[12]} 26`,
+    ])
+    expect(g.verlauf?.rows.map((r) => r.verbrauch)).toEqual([12, 3, 15])
+  })
+
   it('PV-Anlage: cockpit-Übersicht + EV/Einspeisung-Summe aus aggregierten Monaten', async () => {
     getUebersicht.mockResolvedValue({ anlagenleistung_kwp: 9.8, pv_erzeugung_kwh: 38200,
       spezifischer_ertrag_kwh_kwp: 1040, eigenverbrauch_quote_prozent: 54 })
@@ -392,6 +416,24 @@ describe('KOMPONENTEN_ADAPTER', () => {
     // Die gemessene Verwendungs-Aufteilung daneben bleibt UNgekennzeichnet
     const verwendung = g.verlauf?.verteilungen?.find((v) => v.titel === 'Verwendung der Erzeugung')
     expect(verwendung?.herkunft).toBeUndefined()
+  })
+
+  it('PV ④ Verlauf: Mischfall (ein String gemessen, einer verteilt) ⇒ Kennzeichnung mit dem Teilweise-Satz (N-653)', async () => {
+    zweiModule()
+    getPVStringsGesamtlaufzeit.mockResolvedValue(pvStringsAntwort([
+      { id: 11, jahr: 2025, ist: 700, quelle: 'gemessen' },
+      { id: 12, jahr: 2025, ist: 300, quelle: 'verteilt' },
+    ], 'verteilt'))
+    const [g] = await KOMPONENTEN_ADAPTER['pv-module'].fetch(1)
+    expect(g.verlauf?.herkunft?.zustand).toBe('geschaetzt')
+    expect(g.verlauf?.herkunft?.hinweis).toBe(PV_MODUL_TEILWEISE_VERTEILT_HINWEIS)
+    const erzeugung = g.verlauf?.verteilungen?.find((v) => v.titel === 'Erzeugung nach Modul')
+    expect(erzeugung?.herkunft?.hinweis).toBe(PV_MODUL_TEILWEISE_VERTEILT_HINWEIS)
+    // Gegenprobe: alles verteilt behält den bisherigen Satz
+    getPVStringsGesamtlaufzeit.mockResolvedValue(pvStringsAntwort(
+      [{ id: 11, jahr: 2025, ist: 600 }, { id: 12, jahr: 2025, ist: 400 }], 'verteilt'))
+    const [alle] = await KOMPONENTEN_ADAPTER['pv-module'].fetch(1)
+    expect(alle.verlauf?.herkunft?.hinweis).toBe(PV_MODUL_VERTEILT_HERKUNFT.hinweis)
   })
 
   it('PV ④ Verlauf: ohne String-Antwort bleibt die kWp-Zerlegung als Fallback (gekennzeichnet)', async () => {
@@ -812,6 +854,20 @@ describe('KOMPONENTEN_ADAPTER — spezifische Blöcke (Inc. 3b)', () => {
     expect(g.verlauf).toBeUndefined()
   })
 
+  it('WP N-682: Wärme gesamt + nur Warmwasser-Zähler ⇒ kein Balken „Warmwasser 100 %"', async () => {
+    // Gesamt 300 kWh, davon 60 Warmwasser gemessen, Heizung „keine Angabe" (N-673:
+    // die Lebensdauer-Summe ist dann 0). Ein Balken hätte EIN Segment mit 100 %.
+    getWaermepumpeDashboard.mockResolvedValue([{
+      investition: inv({ typ: 'waermepumpe' }),
+      zusammenfassung: { durchschnitt_cop: 3.0, gesamt_waerme_kwh: 300, gesamt_stromverbrauch_kwh: 100,
+        gesamt_heizenergie_kwh: 0, gesamt_warmwasser_kwh: 60, ersparnis_euro: 10, hat_warmwasser_achse: true },
+      monatsdaten: [{ jahr: 2025, monat: 7, verbrauch_daten: { waerme_kwh: 300, warmwasser_kwh: 60 } }],
+    }])
+    const [g] = await KOMPONENTEN_ADAPTER.waermepumpe.fetch(1)
+    expect(g.status.find((k) => k.title === 'Wärme erzeugt')!.value).toContain('300')
+    expect(g.aufteilung).toBeUndefined()
+  })
+
   it('WP N-391: mit gemeinsamem Wärmemengenzähler steht die Menge, aber keine Heizwärme', async () => {
     // Lage B, wie die Route sie seit dem 14.09.2026 liefert: Die Wärme des
     // Geräts steht in `gesamt_waerme_kwh` (3.000), einen Heiz-EINZELwert gibt
@@ -894,11 +950,38 @@ describe('KOMPONENTEN_ADAPTER — spezifische Blöcke (Inc. 3b)', () => {
         eigenverbrauch_quote_prozent: 75, spezifischer_ertrag_kwh_kwp: 900, gesamt_ersparnis_euro: 200,
         hat_speicher: true, speicher_kapazitaet_wh: 2048, speicher_ladung_kwh: 120, speicher_entladung_kwh: 100, speicher_effizienz_prozent: 83 },
       monatsdaten: [],
+      monatsreihe: [],
     }])
     const [g] = await KOMPONENTEN_ADAPTER.balkonkraftwerk.fetch(1)
     expect(g.subKomponente?.titel).toBe('Integrierter Speicher')
     expect(g.subKomponente?.hinweis).toContain('2.048 Wh')
     expect(titles(g.subKomponente!.kpis)).toEqual(['Ladung', 'Entladung', 'Effizienz'])
+  })
+
+  it('N-664: BKW ohne eigenen Zähler — Kopf trägt das Kennzeichen „geschätzt (kWp-Anteil)", der Hub ist nicht leer', async () => {
+    // F04 der PV-Matrix: keine eigene Zeile (`monatsdaten` leer), die Monats-Fakten geben 45 kWh kWp-Anteil.
+    getBalkonkraftwerkDashboard.mockResolvedValue([{
+      investition: inv({ typ: 'balkonkraftwerk' }),
+      zusammenfassung: { gesamt_erzeugung_kwh: 45, erzeugung_aus_anlagenwert_kwh: 45, monate_abgetreten: 0 },
+      monatsdaten: [],
+      monatsreihe: [{ jahr: 2026, monat: 6, erzeugung_kwh: 45, erzeugung_quelle: 'kwp_anteil' }],
+    }])
+    const [g] = await KOMPONENTEN_ADAPTER.balkonkraftwerk.fetch(1)
+    expect(g.monatswerte).toBe(1)
+    expect(g.status[0].subtitle).toBe(KWP_ANTEIL_GESCHAETZT)
+    expect(g.hinweise).toEqual([{ ton: 'info', text: BKW_KWP_ANTEIL_HINWEIS }])
+  })
+
+  it('N-671: abgetretenes BKW — Hinweis auf die Modul-Kinder, kein Kennzeichen „geschätzt"', async () => {
+    getBalkonkraftwerkDashboard.mockResolvedValue([{
+      investition: inv({ typ: 'balkonkraftwerk' }),
+      zusammenfassung: { gesamt_erzeugung_kwh: 0, erzeugung_aus_anlagenwert_kwh: 0, monate_abgetreten: 1 },
+      monatsdaten: [{ jahr: 2026, monat: 6, verbrauch_daten: { pv_erzeugung_kwh: 90 } }],
+      monatsreihe: [{ jahr: 2026, monat: 6, erzeugung_kwh: 0, erzeugung_quelle: 'abgetreten' }],
+    }])
+    const [g] = await KOMPONENTEN_ADAPTER.balkonkraftwerk.fetch(1)
+    expect(g.status[0].subtitle).toBeUndefined()
+    expect(g.hinweise).toEqual([{ ton: 'info', text: BKW_ABGETRETEN_HINWEIS }])
   })
 
   it('Wallbox ② PV/Netz-Aufteilungs-Referenz (aus E-Auto-Ladedaten)', async () => {
@@ -1031,6 +1114,7 @@ describe('KOMPONENTEN_ADAPTER — Wirtschaftlichkeit + „nicht bewertet" (P2/P4
       zusammenfassung: { gesamt_erzeugung_kwh: 800, gesamt_eigenverbrauch_kwh: 700, gesamt_einspeisung_kwh: 100,
         gesamt_ersparnis_euro: 291, co2_ersparnis_kg: 368, eigenverbrauch_quote_prozent: 88, spezifischer_ertrag_kwh_kwp: 1278 },
       monatsdaten: [],
+      monatsreihe: [],
     }])
     const [g] = await KOMPONENTEN_ADAPTER.balkonkraftwerk.fetch(1)
     expect(g.wirtschaftlichkeit?.posten).toHaveLength(1)

@@ -1,6 +1,6 @@
 # Was ist neu
 
-> **Stand:** Oktober 2026 (v4.1.5)
+> **Stand:** Oktober 2026 (v4.1.6)
 > **Diese Seite** zeigt pro Version, was sich für dich als Anwender geändert hat — kürzer als der technische [CHANGELOG](https://github.com/supernova1963/eedc-homeassistant/blob/main/CHANGELOG.md), ausführlicher als die Schnellübersicht-Tabelle in der [Übersicht](BENUTZERHANDBUCH.md#was-ist-neu-seit-v316).
 >
 > **Kein Banner, kein Pop-up:** eedc zeigt diese Liste nicht ungefragt an. HA-App-Nutzer sehen den Changelog ohnehin schon im Add-on-Store, GitHub-Releases haben einen eigenen. Wer wissen will, was neu ist, schaut hier rein — Pull statt Push.
@@ -8,6 +8,51 @@
 > **Lesehinweis:** Die jüngsten Versionen stehen oben. Jeder Punkt verlinkt entweder auf die zuständige Hilfe-Sektion oder direkt auf die App-Funktion (sofern erreichbar). Anker-URLs (`?doc=was-ist-neu`) sind teilbar.
 
 ---
+
+## v4.1.6 — 11. Oktober 2026
+
+**Kleinere Anzeige-Korrekturen:** Monate ohne Werte zeigen in der Monatsleiste und im Jahresbericht einen Strich statt „0 kWh",
+der Zähler-Verlauf unter *Komponenten → Sonstiges* trägt wieder die richtigen Monatsnamen, und mehrere Hinweise (Jahr-Verlauf,
+Ø-Preis mit HT/NT im Jahr, PV-Strings im Mischfall, „PV-Erzeugung (berechnet)") sagen jetzt genau, was die Zahl daneben enthält.
+
+**Daten-Checker, Import und Löschen:** Ein Balkonkraftwerk ohne eigenen Zähler gilt nicht mehr als „PV-Erzeugung fehlt", wenn
+der Anlagenzähler den Monat trägt; die Import-Vorschau zeigt Wandlungsverluste als Hinweis statt als Konflikt; Zähler einzelner
+Innengeräte kommen im Statistik-Import und im Monatsabschluss an; und eine gelöschte Komponente vererbt ihre Messwerte nicht
+mehr an eine neu angelegte. Neu im Daten-Checker: **„PV – Zähler steht"** nennt einen eingefrorenen PV-Gesamtzähler, wenn
+Einspeisung oder String-Zähler weiterlaufen — die Ursache, wenn *Cockpit → Tag* eine negative Autarkie zeigt.
+
+**Daten und Preise:** Scheitert beim stündlichen Mitschreiben das Speichern für eine Anlage, behalten die anderen ihre
+Stunde; eine Wärmepumpe ohne eigenen Tarif rechnet bei flexiblem Strompreis mit deinem Monatsdurchschnitt statt mit dem
+Tarifpreis; ein sonstiger Erzeuger, dessen Wert im Ersatzfeld steht, zeigt ihn auch im abgeschlossenen Monat; und ein
+Monat, in dem die Wärmepumpe nur Strom ohne Wärme verbraucht (Standby), zählt in Cockpit, HA-Sensor und Aussichten
+gleich: eine Zeile mit 0 € Ersparnis. Misst ein einziger Zähler die ganze Wärme, heißen Heizung und Warmwasser in
+allen Sichten „keine Angabe" statt mal „0 kWh", mal Strich. Mit einem Zeittarif (HT/NT) bewertet der Monat deinen
+Eigenverbrauch jetzt wie der Tag mit dem Preis der Stunde, in der er den Bezug vermieden hat — die Tage ergeben
+zusammen die Monats-Ersparnis.
+
+**SOLL und Bilanz:** Das SOLL eines Strings ist jetzt sein Anteil an den kWp, für die die Prognose gerechnet ist — PV-Strings
+und Jahresbericht nennen dieselbe Zahl, auch nach einer Stilllegung oder einem Zubau. Die HA-Sensoren und *Komponenten →
+PV-Anlage* rechnen Eigenverbrauch, Autarkie, Ersparnis und CO₂ nur über Monate mit Einspeise- und Bezugswerten, ebenso
+die CO₂-Einsparung des PV-Stroms in *Auswertungen → CO₂*; ein Monat ohne Monatsabschluss zählt nicht mehr ganz als
+Eigenverbrauch.
+
+**Balkonkraftwerk:** *Komponenten → Balkonkraftwerk* zeigt bei einem Balkonkraftwerk ohne eigenen Zähler denselben
+Anteil am PV-Gesamtzähler wie das Cockpit, gekennzeichnet als „geschätzt (kWp-Anteil)"; hängen PV-Module daran, steht
+seine Erzeugung nur noch bei den Modulen.
+
+**E-Auto:** Solarstrom, den dein E-Auto lädt, zählt nur noch einmal als Ersparnis — als Eigenverbrauch der Anlage. Die
+Ersparnis gegenüber dem Verbrenner zieht jetzt den Strom der ganzen Ladung ab (die PV-Ladung zum selben Preis, mit dem
+eedc sie als Eigenverbrauch gutschreibt), in ROI, Cockpit, Aussichten, Komponenten → E-Auto und den HA-Sensoren. Die
+CO₂-Einsparung des E-Autos rechnet ebenso mit der ganzen Ladung.
+
+**Preis, Wärme, PV-Strings:** Der Jahres-Ø-Preis in *Cockpit → Jahr* nimmt bei dynamischem Tarif je Monat den gemessenen
+Preis und passt damit zu den Kosten darunter, der Balken *Wärme nach Zweck* behauptet ohne Heizwärme-Messung kein
+„Warmwasser 100 %" mehr, und unter *Komponenten → PV-Anlage* warnt der Prognose-Hinweis nach einer Stilllegung nicht mehr
+grundlos, während der „typische Monat" eines Strings nur noch die Monate zählt, in denen er lief.
+
+**Hilfe:** Das Handbuch sagt jetzt, warum am Etikett „HA-Statistik" kein Zeitraum steht, wann ein vergangener Monat ohne
+Home Assistant in *Cockpit → Monat* erscheint, was erst mit dem Monatsabschluss zählt, und warum bei
+*Wärme gesamt* neben einem Warmwasser-Zähler die Heizung im Verlauf leer bleibt.
 
 ## v4.1.5 — 10. Oktober 2026
 

@@ -435,6 +435,12 @@ CO2-Einsparung (kg)      = PV_Erzeugung * 0.38               (VERALTET — s. Ka
 > Wochentag und Uhrzeit, deshalb ist Σ Preis × kWh über die Zellen dieselbe Zahl wie über die Stunden). Alle Monate
 > einer Seite, in denen ein Zeitfenster-Tarif gilt, kommen in EINER Abfrage (vorher je Monat und Tarif eine, an der
 > Prüfkopie 104 je Übersicht). Deckt ein Netzbezugs-Zähler den Monat nicht, gewichten die Stundenzeilen wie bisher.
+> **Die Eigenverbrauchs-Ersparnis** bewertet den vermiedenen Bezug dagegen mit dem HT/NT-Preis **seiner** Stunde
+> (A-2, seit N-669, 11.10.2026): Σ(max(0, PV − Einspeisung) × Fensterpreis) ÷ Σ max(0, PV − Einspeisung) über die
+> Stundenzeilen des Monats — dieselben Zeilen und dieselbe Slot-Regel wie der Tag, deshalb ist die Monats-Ersparnis
+> die Summe der Tage (`strompreis_aggregator.ev_preis_zeitfenster_cent`). Ohne Stundenzeilen bleibt der Bezugs-Ø
+> der Rückfall. Bis dahin nahm der Monat den Bezugs-Ø: Probe Matrix-Form T4 (NT mittags 15 ct, nachts 20 ct, sonst
+> 30 ct) 96,00 € statt 90,00 € = Σ Tage.
 
 **§51 EEG im Einspeise-Erlös:** `Einspeisung_neg_Preis` sind die kWh, die in Stunden
 mit negativem Börsenpreis eingespeist wurden — für betroffene Anlagen entfällt dafür
@@ -676,8 +682,12 @@ Kumulative Ersparnis = Netto-Ertrag + WP-Ersparnis + E-Mob-Ersparnis
                        + BKW-Ersparnis + Sonstige-Netto
                        - Betriebskosten_Zeitraum
 
-Jahres-Rendite (%)  = Kumulative_Ersparnis / Investition_gesamt * 100
+Rendite (%)         = Kumulative_Ersparnis / Investition_gesamt * 100   (Antwortfeld jahres_rendite_prozent)
 ```
+
+> **Das Cockpit zeigt diese Rendite nicht an.** `jahres_rendite_prozent` steht nur in der Antwort von
+> `/cockpit/uebersicht`; keine Sicht liest das Feld. Die Rendite einer Anlage steht unter *Auswertungen → ROI*
+> (ROI pro Jahr = jährliche Einsparung ÷ Kapitaleinsatz, s. „ROI & Amortisation“).
 
 > **Die Einspeisevergütung ist ein flacher Satz — eedc kennt keine EEG-Leistungsstaffel.**
 > `Einspeisevergütung` ist genau der Wert aus dem für den Monat gültigen Tarif
@@ -785,18 +795,32 @@ ohne Monats-Gaspreis. Beispiel (zwei WP, Gas 10 bzw. 16 ct, je 900 kWh Wärme / 
 85 € = **110 €** in Monat, Jahr, Übersicht und Komponenten (vorher Übersicht 50 €); laufender Monat mit zwei WP
 **5,76 €** (vorher 1,44 €). Die Zeilenrundung hält Σ Zeilen = Sicht: fünf Monate à 10,81 € sind 54,05 €, nicht 54,07 €.
 
-Benannte Grenze: Ein Monat mit WP-Strom ohne Wärme (Standby) hat keine Zeile; HA-Export und Aussichten belasten dort
-den Strom (gemessen 25 € gegen 19 €). Proben: `test_n605_wp_ersparnis_aus_geraetezeilen.py`,
-`test_n609_wp_ersparnis_je_geraet.py`.
+**Standby-Monat** (seit N-670, 11.10.2026): Ein Monat mit gemessenem WP-Strom und gemessener Wärme 0 ist eine Zeile
+mit **0 €** (Etikett „Standby", Stromkosten echt, kein Vergleich gegen die Alternative). Dieselbe Regel gilt im
+HA-Sensor je Wärmepumpe und in der Jahresformel `berechne_wp_alternativkosten_ersparnis` (Aussichten, ROI-Fortschritt,
+Jahres-Ersparnis des HA-Exports): ein Monat mit Strom ohne Wärme trägt dort weder Stromkosten noch den Zwölftel
+Zusatzkosten. Bis dahin entstand keine Zeile, und HA-Export und Aussichten zogen den Strom ab (gemessen 25 € gegen
+19 €). Proben: `test_n605_wp_ersparnis_aus_geraetezeilen.py`, `test_n609_wp_ersparnis_je_geraet.py`,
+`test_n670_wp_standby_zeile.py`.
 
 #### E-Mob-Ersparnis im Cockpit
 
 ```
 Benzin_Verbrauch    = Σ(km_gefahren) * 7 / 100    (7 L/100km Annahme)
 Benzin_Kosten       = Benzin_Verbrauch * 1.80      (1.80 EUR/L Annahme)
-Strom_Kosten        = (Ladung_gesamt - Ladung_PV) * Wallbox_Preis / 100
+Strom_Kosten        = Ladung_Netz * Wallbox_Preis / 100
+                    + Ladung_PV   * EV_Preis      / 100   ← seit N-672 (Preis der Eigenverbrauchs-Ersparnis des Monats)
+                    + Kosten_externe_Ladung
 E-Mob-Ersparnis     = Benzin_Kosten - Strom_Kosten
 ```
+
+> ⭐ **Eine kWh ist einmal Geld (N-672, 11.10.2026).** Die PV-Ladung steckt im Eigenverbrauch der Anlage und ist
+> dort schon zum Strompreis gutgeschrieben. Bis dahin stand hier `(Ladung_gesamt − Ladung_PV) × Wallbox_Preis` — die
+> PV-Ladung war „kostenlos" und damit zweimal Geld (an einer Beispielanlage mit 200 kWh PV-Ladung und 30 ct:
+> 399,50 € statt 339,50 € im Jahr). Sie trägt jetzt genau den Preis, zu dem die Eigenverbrauchs-Ersparnis derselben
+> Sicht sie gutschreibt (gepflegt · gemessen · Zeitfenster · Stamm, §3.1); die Netzladung behält den Wallbox-Tarif.
+> „Davon aus PV" bleibt als Menge und Anteil sichtbar — als Information, nicht als eigener Geldposten. Eine Formel
+> für alle Sichten: `core/berechnungen/heimladung_kosten.py`.
 
 **Hinweis:** Dienstliche E-Autos/Wallboxen (`ist_dienstlich = true`) werden NICHT in die E-Mob-Ersparnis eingerechnet. Deren Ladekosten sind ein eigener Posten der Ergebnis-Leiter („Dienstliche Ladekosten", §3.2, seit N-633) — Formel und Begründung stehen in §3.10 unter **Dienstliche Ladekosten** — der PV-Anteil zählt dort zum **Netzbezugspreis**, nicht zur Einspeisevergütung.
 
@@ -1346,6 +1370,8 @@ PV_Anteil            = pv_ladeanteil_prozent / 100
 Netz_Anteil          = 1 - PV_Anteil
 
 Strom_Kosten         = Strom_Bedarf * Netz_Anteil * Strompreis / 100
+                     + Strom_Bedarf * PV_Anteil   * EV_Preis   / 100   ← N-672: PV-Ladung ist nicht kostenlos
+                       (EV_Preis = der Strompreis, mit dem die ROI-Prognose den Eigenverbrauch bewertet)
 Benzin_Verbrauch     = jahresfahrleistung_km * Vergleich_L_100km / 100   ← ALLE Kilometer
 Benzin_Kosten        = Benzin_Verbrauch * Benzinpreis_EUR
 Fossile_Kosten       = km_verbrenner / 100 * Eigener_L_100km * Benzinpreis_EUR
@@ -1357,7 +1383,7 @@ V2H_Einsparung       = V2H_Entladung_kWh * V2H_Preis / 100    (wenn V2H aktiv)
 Jahres-Einsparung    = Benzin_Kosten - Strom_Kosten - Fossile_Kosten + V2H_Einsparung
 
 CO2_Verbrenner       = Benzin_Verbrauch * 2.37
-CO2_E-Auto           = Strom_Bedarf * Netz_Anteil * 0.38
+CO2_E-Auto           = Strom_Bedarf * 0.38        ← N-672: die GANZE Ladung (die PV-CO₂ schreibt den Eigenverbrauch schon gut)
 CO2_Fossil           = km_verbrenner / 100 * Eigener_L_100km * 2.37
 CO2-Einsparung       = CO2_Verbrenner - CO2_E-Auto - CO2_Fossil
 ```
@@ -1403,6 +1429,7 @@ Für jeden historischen Monat:
               ∨ Investition.parameter.benzinpreis_euro  (Fallback statisch)
   Benzin_Kosten_Monat = km_gefahren / 100 * Vergleich_L_100km * Benzinpreis
   Strom_Kosten_Monat  = ladung_netz_kwh * Netzbezug_Preis / 100   # kanonische Heimladungs-Quelle (Wallbox bzw. E-Auto), s. §3.2
+                      + ladung_pv_kwh   * EV_Preis        / 100   # N-672: Preis der Eigenverbrauchs-Ersparnis des Monats
 
 Für Jahresprognose:
   Prognose_Benzinpreis = Ø(Monatsdaten.kraftstoffpreis_euro)  (historischer Durchschnitt)
@@ -2302,7 +2329,7 @@ Wobei `Betriebskosten_Jahr` = `Investition.betriebskosten_jahr` (Wartung, Versic
 
 | Metrik | Wo angezeigt | Formel | Bedeutung |
 |--------|-------------|--------|-----------|
-| **Jahres-Rendite** | Cockpit | Kumul. Ersparnis / Relevante Kosten * 100 | Wie viel % bereits amortisiert (kumuliert) |
+| **Rendite** (`jahres_rendite_prozent`) | keine Anzeige — nur Antwortfeld von `/cockpit/uebersicht` | Kumul. Ersparnis / Relevante Kosten * 100 | Wie viel % bereits amortisiert (kumuliert) |
 | **ROI p.a.** | Auswertungen → ROI (pro Komponente) | Jahres-Einsparung / Relevante Kosten * 100 | Rendite pro Jahr |
 | **Amortisations-Fortschritt** | Auswertungen → ROI (Kachel), Jahresbericht-PDF | Bisherige Erträge / Relevante Kosten * 100 | Kumulierter Fortschritt |
 
@@ -2568,9 +2595,14 @@ addiert, wäre über die Granularitäten nicht summierbar.
 ```
 CO2_PV    = Eigenverbrauch * 0.38                    (vermiedener Netzstrom)
 CO2_WP    = (WP_Wärme / 0.9 * 0.201) - (WP_Strom * 0.38)  (vs. Gasheizung)
-CO2_E-Mob = (Benzin_L * 2.37) - ((Ladung - PV_Ladung) * 0.38)  (vs. Benziner)
+CO2_E-Mob = (Benzin_L * 2.37) - ((Netz_Ladung + PV_Ladung) * 0.38)  (vs. Benziner — die ganze Heimladung, N-672)
 CO2_gesamt = CO2_PV + max(0, CO2_WP) + max(0, CO2_E-Mob)
 ```
+
+> ⭐ **Eine kWh ist einmal CO₂ (N-672, 11.10.2026).** `CO2_PV` schreibt den ganzen Eigenverbrauch als vermiedenen
+> Netzstrom gut — die PV-Ladung des E-Autos steckt darin. Bis dahin stand hier `(Ladung − PV_Ladung) × 0,38`: die
+> PV-Ladung galt zusätzlich als CO₂-frei und zählte doppelt (an einer Beispielanlage mit 200 kWh PV-Ladung 507,5 statt
+> 431,5 kg). Dieselbe Regel wie beim Geld (§3.2) und bei der Wärmepumpe (ganzer WP-Strom, N-459).
 
 > **Kanonische CO₂-Helfer (SoT `core/calculations.py`, DI-1/DI-2):** Diese Bilanz läuft über **genau eine**
 > Helfer-Familie — `berechne_co2_bilanz` (setzt PV + WP + E-Mob zusammen), intern `co2_wp_ersparnis_kg`
@@ -2709,6 +2741,19 @@ SOLL_Monat = PVGISPrognose.module_monatswerte[modul_id][monat].e_m
 kWp_Anteil = Modul_kWp / Gesamt_kWp
 SOLL_Monat = PVGISPrognose.monatswerte[monat].e_m * kWp_Anteil
 ```
+
+`Gesamt_kWp` sind seit 11.10.2026 (N-661) die kWp, für die die aktive Prognose gerechnet ist
+(`PVGISPrognose.gesamt_leistung_kwp`, `core/berechnungen/erzeuger_traeger.py::soll_nenner_kwp`) — in *Komponenten → PV-Strings*,
+*Auswertungen → Prognose* und im Jahresbericht-PDF gleich; vorher die Σ aller je vorhandenen bzw. der im Berichtsjahr
+aktiven Strings, sodass ein stillgelegter String das SOLL der übrigen drückte und ein späterer Zubau es im PDF hob. Nur
+eine Prognose ohne gespeicherte kWp fällt auf die Σ der Strings zurück. Das saisonale Mittel („typischer Monat") der
+Gesamtlaufzeit folgt seit 11.10.2026 (N-683) derselben Regel: das SOLL eines Strings ist das Mittel seines Monats-SOLL
+über die Jahre, in denen er in diesem Monat **aktiv** war (Anschaffung, Stilllegung), mit demselben Nenner wie seine
+Jahreswerte; die Anlagen-Zeile ist je Jahr die Σ der in diesem Monat aktiven Strings, über die Jahre gemittelt. Vorher
+verteilte es über alle je vorhandenen Strings, auch stillgelegte — Süd stand im Juni bei 282,7 statt 424,0 kWh, während
+seine Jahreswerte in derselben Sicht stimmten. Ein String ohne aktiven Monat hat dort kein SOLL (0 wie sein IST-Mittel).
+Der Hinweis über der Sicht, die gespeicherte PVGIS-Prognose passe nicht zur Anlage, vergleicht die Prognose-kWp mit den **heute aktiven** Strings (N-684) —
+nach einer Stilllegung warnt er nicht mehr über eine Prognose, die zur verbliebenen Anlage passt.
 
 Der PDF-Jahresbericht nutzt seit v4.0.1 denselben Weg (vorher verteilte sein String-Vergleich die
 Prognose *immer* nach kWp, obwohl die Pro-Modul-Werte gespeichert sind — bei Ost-West-Dächern ~20–25 %
@@ -3578,7 +3623,7 @@ Herkunft wie einer aus 98 %, aber nicht dieselbe Belastbarkeit.
 - In der [Datenquellen-Zuordnung](HANDBUCH_EINSTELLUNGEN.md#7-datenquellen--feld-zentrische-zuordnung) kann ein HA-Sensor (oder MQTT-Topic) für das Feld `strompreis` zugeordnet werden
 - Im [Monatsdaten-Formular](HANDBUCH_EINSTELLUNGEN.md#51-monatsdaten--monatsabschluss) wird der Ø-Preis als Vorschlag angezeigt und ist dort manuell editierbar
 
-> **Der Jahres-Ø ist mengengewichtet.** Die Jahres-/Gesamt-Kachel „Ø-Preis Netz" (und ebenso die Ø-Einspeisevergütung) rechnet `Σ(Preis_Monat × Menge_Monat) / Σ Menge_Monat` — nicht das arithmetische Mittel der Monatspreise. Gewichtet wird der **effektive** Monatspreis (also der Ø-Bezugspreis vor dem Tarif-Arbeitspreis, dieselbe Kette wie oben); sonst fiele ein Jahr mit dynamischem Tarif auf den Referenzpreis zurück, obwohl die Kosten darunter mit dem Stundenpreis gerechnet sind. Monate ohne Menge fallen aus Zähler und Nenner; gibt es im Zeitraum überhaupt keine Menge, bleibt das arithmetische Mittel als Rückfall stehen, statt die Kachel zu leeren. **Ohne die Gewichtung passte der Kopfwert nicht zu den kWh und Euro darunter** — ein teurer Winter- und ein billiger Sommermonat wogen gleich viel (Forum simon42 #89667/67).
+> **Der Jahres-Ø ist mengengewichtet.** Die Jahres-/Gesamt-Kachel „Ø-Preis Netz" (und ebenso die Ø-Einspeisevergütung) rechnet `Σ(Preis_Monat × Menge_Monat) / Σ Menge_Monat` — nicht das arithmetische Mittel der Monatspreise. Gewichtet wird der **effektive** Monatspreis — das Ergebnis der vollen Kaskade des Monats (abgerechneter Ø → gemessene Stundenpreise → Zeittarif HT/NT → Tarif-Arbeitspreis), also genau der Preis, den die Monatskachel zeigt und mit dem der Monat seine Kosten rechnet. Bis 11.10.2026 übersprang die Jahres-Faltung die gemessene Stufe und setzte für einen Monat ohne Abschluss den Tarifpreis ein (N-680) — der Jahres-Ø passte dann nicht zur Kostenzeile derselben Kachel. Ohne diese Kette fiele ein Jahr mit dynamischem Tarif auf den Referenzpreis zurück, obwohl die Kosten darunter mit dem Stundenpreis gerechnet sind. Monate ohne Menge fallen aus Zähler und Nenner; gibt es im Zeitraum überhaupt keine Menge, bleibt das arithmetische Mittel als Rückfall stehen, statt die Kachel zu leeren. **Ohne die Gewichtung passte der Kopfwert nicht zu den kWh und Euro darunter** — ein teurer Winter- und ein billiger Sommermonat wogen gleich viel (Forum simon42 #89667/67).
 
 ---
 

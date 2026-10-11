@@ -207,6 +207,11 @@ function preisFormel(d: AktuellerMonatResponse): string {
       return 'Ø aus deinem Zeittarif (HT/NT), über den Netzbezug gewichtet' + kosten
     case 'stamm':
       return 'Arbeitspreis aus dem Strompreis-Tarif' + kosten
+    case 'gemischt':
+      // N-655: nur im Jahr — die Faltung (`ergebnis.py::falte_zeitraum`) nennt die Herkunft ihrer Preiswahl;
+      // stammen die Monate aus verschiedenen Stufen, sagt der Satz das statt eine einzige zu behaupten.
+      // N-680: seit die Faltung je Monat den Kaskaden-Preis nimmt, gehört die gemessene Stufe in die Aufzählung.
+      return 'Ø über die Monate — je Monat abgerechneter Ø, gemessene Stundenpreise, Zeittarif (HT/NT) oder Tarif-Arbeitspreis, über den Netzbezug gewichtet' + kosten
     default:
       return d.netzbezug_durchschnittspreis_cent != null
         ? 'Ø-Bezugspreis (dynamischer Tarif, verbrauchsgewichtet)' + kosten

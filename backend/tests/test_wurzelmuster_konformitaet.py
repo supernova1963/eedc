@@ -1462,6 +1462,11 @@ P7_BASELINE_AUSNAHMEN: frozenset[str] = frozenset({
     # aufgelöster Wert beantwortete sie nicht. Eigener Empfängername (`_hat_anlagenwert(vorbestand)`), damit die
     # Freistellung nicht jedes `md` der Datei (Vorschau!) mitnimmt.
     "backend/api/routes/ha_statistics.py::vorbestand",
+    # N-651 (10.10.2026): die BKW-Prüfung des Daten-Checkers fragt je Monat, OB ein Anlagenwert gespeichert ist — mit
+    # ihm trägt ein Balkonkraftwerk ohne eigenen Zähler seinen kWp-Anteil (N-621), „PV-Erzeugung fehlt" wäre ein
+    # Fehlalarm. Diagnose über das Feld (Vorhandensein, keine Menge), dieselbe Rolle wie `vorbestand`; eigener
+    # Empfängername, damit die Freistellung kein anderes `md` der Datei mitnimmt.
+    "backend/services/daten_checker/stammdaten.py::anlagenzeile",
     # Drei Rollen in einer Datei, alle drei gedeckt (Granularität ist
     # `modul::empfänger`, feiner geht die Allowlist nicht). **Zeilennummern
     # bewusst weggelassen** — sie standen hier und waren schon vor dem
@@ -2927,6 +2932,11 @@ P11_AUSNAHMEN: frozenset[str] = frozenset({
     "backend/services/monats_fakten/roh.py::_erzeuger_aktiv",  # „war einer aktiv?"
     "backend/api/routes/monatsabschluss/views.py::get_naechster_monat",
     "backend/api/routes/monatsdaten.py::list_monatsdaten_aggregiert",  # `pv_ziel_aktiv`
+    # N-662 (10.10.2026): keine Σ einer Erzeugung über die Erzeuger-Menge, sondern zwei getrennte ROLLEN je Typ —
+    # die String-Zähler als Gegengröße des Anlagenzählers (nur Module OHNE Balkonkraftwerk-Parent) und der Abzug von der Einspeisung (je
+    # Balkonkraftwerk sein Kanal ODER, abgetreten ohne eigenen, die Kanäle seiner Kinder — nie beide). Eltern und Kind
+    # können sich so nicht doppeln; der Selektor beantwortete die Frage „wer ist ein String?" nicht.
+    "backend/services/daten_checker/datenquelle/zaehler_steht.py::_check_pv_zaehler_steht",
     "backend/services/energie_profil/_helpers.py::_get_tagespeaks_aus_ha_lts",
     # LADEPFAD, keine Summe: holt die Erzeuger-Zeilen aus der DB und reicht sie
     # weiter. Die Menge wird erst in `soll_fuer_monat` gebildet — dort läuft sie

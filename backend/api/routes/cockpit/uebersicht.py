@@ -41,7 +41,7 @@ from backend.core.berechnungen.pv_verteilung import (
 from backend.services.ust_satz import ust_eigenverbrauch_zeitraum
 from backend.core.calculations import berechne_co2_bilanz
 from backend.services.strompreis_aggregator import lade_preis_aggregate_je_monat
-from backend.services.finanz_zeilen import baue_finanz_zeile
+from backend.services.finanz_zeilen import baue_finanz_zeile, ev_preis_je_monat
 from backend.services.waermepumpe_jahreskennzahlen import waermepumpe_jahreskennzahlen
 from backend.services.waermepumpe_kennzahlen_je_geraet import (
     lade_kennzahlen_je_geraet,
@@ -115,8 +115,9 @@ class CockpitUebersichtResponse(BaseModel):
     # Wärmepumpe aggregiert
     wp_waerme_kwh: float
     wp_strom_kwh: float
-    wp_heizung_kwh: float
-    wp_warmwasser_kwh: float
+    #: N-673: ``None`` = keine Angabe (kein Gerät misst die Achse), nicht 0.
+    wp_heizung_kwh: Optional[float] = None
+    wp_warmwasser_kwh: Optional[float] = None
     wp_cop: Optional[float]
     #: Warum es die Zahl nicht gibt (**S3**: „nicht ‚—', sondern der Grund").
     #: Bis 02.09.2026 nahm diese Sicht nur `.wert` — die Sperre wirkte, ihre
@@ -324,15 +325,17 @@ async def get_cockpit_uebersicht(
     # darf nicht wieder durch den Strom geteilt werden — heraus käme exakt die
     # gepflegte JAZ, also eine Zahl, die nichts misst.
     wp_waerme_abgeleitet = sum(f.wp.waerme_abgeleitet_kwh for f in fakten)
-    wp_heizung = sum(f.wp.heizung_kwh for f in fakten)
-    wp_warmwasser = sum(f.wp.warmwasser_kwh for f in fakten)
+    # N-673: eine ungemessene Achse ist „keine Angabe" — die Summe gibt es nur, wenn ein Monat sie misst.
+    wp_heizung = (sum(f.wp.heizung_kwh or 0.0 for f in fakten)
+                  if any(f.wp.heizung_kwh is not None for f in fakten) else None)
+    wp_warmwasser = (sum(f.wp.warmwasser_kwh or 0.0 for f in fakten)
+                     if any(f.wp.warmwasser_kwh is not None for f in fakten) else None)
     bkw_erzeugung = sum(f.bkw.erzeugung_kwh for f in fakten)
     bkw_eigenverbrauch = sum(f.bkw.eigenverbrauch_gemessen_kwh for f in fakten)
     sonstiges_erzeugung = sum(f.sonstiges.erzeugung_kwh for f in fakten)
     sonstiges_verbrauch = sum(f.sonstiges.verbrauch_kwh for f in fakten)
     sonstige_ertraege_gesamt = sum(f.sonstiges.ertraege_euro for f in fakten)
     sonstige_ausgaben_gesamt = sum(f.sonstiges.ausgaben_euro for f in fakten)
-    v2h_entladung = sum(f.emob.v2h_entladung_kwh for f in fakten)
 
     # E-Mobilitäts-Pool: EINE Quelle je Monat liefert die konsistente
     # Heimladungs-Trias (pv + netz == ladung, #262 junky84); externe Lade-Kosten
@@ -438,7 +441,16 @@ async def get_cockpit_uebersicht(
     # der gemessene Einspeise-Zähler die PV-Bilanz still zu niedrig (Konzept
     # Sonstiger Erzeuger). `pv_erzeugung` bleibt rein für PV-Kennzahlen unten
     # (spez. Ertrag/Performance-Ratio/SOLL-IST) — Falle 1 der S1-Übergabe.
-    erzeugung_bilanz = erzeugung_hinter_zaehler_kwh(pv_erzeugung, sonstiges_erzeugung)
+    # ⭐ N-659 (Option A, Gernot 11.10.2026): JEDER Eingang der Bilanz aus derselben Fakten-Menge wie Einspeisung
+    # und Netzbezug (`md_pv`: Zählerzeile + aktiver Erzeuger) — dieselbe Menge wie Ersparnis (unten) und USt
+    # (`ust_satz.grundgesamtheit`) und wie der HA-Export (`ha_export/anlage_energie.py`). Bis dahin kam die PV aus
+    # ALLEN Fakten: ein Monat mit Erzeugung, aber ohne Zählerzeile, zählte ganz als Eigenverbrauch (gemessen 800 statt
+    # 200 kWh, Autarkie 80 statt 50 %), die Ersparnis rechnete ihn nicht. Die ANZEIGE `pv_erzeugung`, der spezifische
+    # Ertrag und die Komponenten-Werte (Speicher, V2H, Sonstiges) bleiben über alle Fakten — eine gemessene Erzeugung
+    # verschwindet nicht, nur weil der Hauszähler fehlt.
+    erzeugung_bilanz = erzeugung_hinter_zaehler_kwh(
+        sum(f.erzeugung.pv_kwh for f in md_pv), sum(f.sonstiges.erzeugung_kwh for f in md_pv),
+    )
 
     # Kanonische Verbrauchs-Kennzahlen über den SoT-Helper (ADR-001) statt der
     # früher hier duplizierten Inline-Formel — inkl. V2H (E-Auto → Haus) als
@@ -447,10 +459,10 @@ async def get_cockpit_uebersicht(
         pv_erzeugung_kwh=erzeugung_bilanz,
         einspeisung_kwh=einspeisung,
         netzbezug_kwh=netzbezug,
-        speicher_ladung_kwh=speicher_ladung,
-        speicher_entladung_kwh=speicher_entladung,
-        v2h_entladung_kwh=v2h_entladung,
-        abgabe_dritte_kwh=sum(f.sonstiges.abgabe_kwh for f in fakten),
+        speicher_ladung_kwh=sum(f.speicher.ladung_kwh for f in md_pv),
+        speicher_entladung_kwh=sum(f.speicher.entladung_kwh for f in md_pv),
+        v2h_entladung_kwh=sum(f.emob.v2h_entladung_kwh for f in md_pv),
+        abgabe_dritte_kwh=sum(f.sonstiges.abgabe_kwh for f in md_pv),
     )
     direktverbrauch = _kz.direktverbrauch_kwh
     eigenverbrauch = _kz.eigenverbrauch_kwh
@@ -689,6 +701,12 @@ async def get_cockpit_uebersicht(
     total_eauto_km = sum(eauto_km_by_inv.values())
     netz_je_inv: dict[int, float] = {}
     netz_pro_monat_je_inv: dict[int, list[tuple[int, int, float]]] = {}
+    # ⭐ N-672 (eine kWh ist einmal Geld): die PV-Ladung jedes Fahrzeugs je Monat — sie trägt den Preis, zu dem die
+    # Eigenverbrauchs-Ersparnis unten (`baue_finanz_zeile`) sie gutschreibt. Bis 11.10.2026 ging nur die Netzladung
+    # hinein, die PV-Ladung war „kostenlos" und stand damit zweimal als Geld im Ergebnis.
+    pv_je_inv: dict[int, float] = {}
+    pv_pro_monat_je_inv: dict[int, list[tuple[int, int, float]]] = {}
+    _pv_monate: dict[tuple[int, int], object] = {}
     for f in fakten:
         for _inv_id, _auto in f.emob.je_auto.items():
             if _auto.netz_kwh:
@@ -696,9 +714,19 @@ async def get_cockpit_uebersicht(
                 netz_pro_monat_je_inv.setdefault(_inv_id, []).append(
                     (f.schluessel[0], f.schluessel[1], _auto.netz_kwh)
                 )
+            if _auto.pv_kwh:
+                pv_je_inv[_inv_id] = pv_je_inv.get(_inv_id, 0.0) + _auto.pv_kwh
+                pv_pro_monat_je_inv.setdefault(_inv_id, []).append(
+                    (f.schluessel[0], f.schluessel[1], _auto.pv_kwh)
+                )
+                _pv_monate[f.schluessel] = f.meta.monatsdaten
+    ev_preis_lookup = await ev_preis_je_monat(
+        db, anlage_id, [(j, m, md) for (j, m), md in _pv_monate.items()],
+        tarif_cache=_tarif_cache, preis_messung=_preis_messung,
+    )
     emob_ersparnis = 0.0
     benzin_verbrauch = 0.0
-    for _inv_id in sorted(set(eauto_km_by_inv) | set(netz_je_inv)):
+    for _inv_id in sorted(set(eauto_km_by_inv) | set(netz_je_inv) | set(pv_je_inv)):
         _km_total = eauto_km_by_inv.get(_inv_id, 0.0)
         _share = _km_total / total_eauto_km if total_eauto_km > 0 else 0.0
         _car_result = berechne_eauto_ersparnis_periode(
@@ -706,6 +734,10 @@ async def get_cockpit_uebersicht(
                 (j, mo, km) for (j, mo), km in eauto_km_pro_monat_by_inv.get(_inv_id, {}).items()
             ],
             ladung_netz_kwh_gesamt=netz_je_inv.get(_inv_id, 0.0),
+            ladung_pv_kwh_gesamt=pv_je_inv.get(_inv_id, 0.0),
+            pv_strompreis_cent=netzbezug_preis_cent,
+            monats_ev_preis_lookup=ev_preis_lookup,
+            pv_pro_monat=pv_pro_monat_je_inv.get(_inv_id) or None,
             ladung_extern_euro_gesamt=emob_extern_euro_total * _share,
             wallbox_strompreis_cent=wallbox_preis_cent,
             eauto_parameter=getattr(inv_by_id.get(_inv_id), "parameter", None),
@@ -841,8 +873,9 @@ async def get_cockpit_uebersicht(
 
     # CO2-Bilanz (DI-2: kanonischer Helper — dieselbe Bilanz wie der HA-Export)
     # N-588 (P15): die Menge hinter der Ersparnis — ohne die bewertbaren Wandlungsverluste der Monate.
+    # N-659: die Verluste derselben Monate wie der Eigenverbrauch (`md_pv`) — wie die Ersparnis.
     eigenverbrauch_ohne_verluste = eigenverbrauch_ohne_verluste_kwh(
-        eigenverbrauch, bewertbare_wandlungsverluste_aus_fakten(fakten), None,
+        eigenverbrauch, bewertbare_wandlungsverluste_aus_fakten(md_pv), None,
     )
     _co2 = berechne_co2_bilanz(
         eigenverbrauch_kwh=eigenverbrauch_ohne_verluste,
@@ -852,6 +885,8 @@ async def get_cockpit_uebersicht(
         wp_strom_kuehlen_kwh=sum(f.wp.modus_strom_kuehlen_kwh for f in fakten),
         emob_km=emob_km,
         emob_netz_ladung_kwh=emob_netz_ladung,
+        # N-672: die PV-Ladung trägt den Strommix wie die Netzladung (eine kWh ist einmal CO₂).
+        emob_pv_ladung_kwh=emob_pv_ladung,
         benzin_verbrauch_liter=benzin_verbrauch,
         # #331: derselbe fossile Anteil, den die Ersparnis oben als eigene
         # Kostenposition trägt — sonst hätten Geld und CO₂ zwei Wahrheiten.
@@ -939,8 +974,8 @@ async def get_cockpit_uebersicht(
         hat_speicher=hat_speicher,
         wp_waerme_kwh=round(wp_waerme, 1),
         wp_strom_kwh=round(wp_strom, 1),
-        wp_heizung_kwh=round(wp_heizung, 1),
-        wp_warmwasser_kwh=round(wp_warmwasser, 1),
+        wp_heizung_kwh=round(wp_heizung, 1) if wp_heizung is not None else None,
+        wp_warmwasser_kwh=round(wp_warmwasser, 1) if wp_warmwasser is not None else None,
         wp_cop=round(wp_cop, 2) if wp_cop else None,
         wp_cop_grund=_wp_az.grund,
         wp_ersparnis_euro=round(wp_ersparnis, 2),

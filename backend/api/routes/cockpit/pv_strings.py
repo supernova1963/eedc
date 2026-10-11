@@ -32,6 +32,7 @@ from backend.core.berechnungen.erzeuger_traeger import (
     erzeuger_traeger,
     selbst_tragende_bkw_ids,
     traeger_im_monat,
+    soll_nenner_kwp,
     traeger_zeilen,
     verteilungsnenner_kwp,
 )
@@ -64,6 +65,17 @@ RANKING_NICHT_MOEGLICH = (
     "spezifischen Ertrag — ein Vergleich einzelner Strings ist mit diesen Werten "
     "nicht möglich. Dafür braucht jedes Modul einen eigenen Erzeugungs-Sensor "
     "(Einstellungen → Sensor-Zuordnung)."
+)
+
+# N-653 (10.10.2026): der Mischfall — ein Teil der Module gemessen, der Rest
+# verteilt. Der Satz oben („Die Werte je Modul sind nicht gemessen …")
+# widerspricht dort den gemessenen Zeilen darüber. Die Regel bleibt (teilweise
+# verteilt ⇒ kein Ranking, Entscheid 26.07.); nur der Satz sagt, was zutrifft.
+RANKING_TEILWEISE_VERTEILT = (
+    "Nicht alle Module haben gemessene Werte — ein Teil ist anteilig nach kWp "
+    "aus der Gesamterzeugung verteilt. Ein Vergleich einzelner Strings ist "
+    "damit nicht möglich. Dafür braucht jedes Modul einen eigenen "
+    "Erzeugungs-Sensor (Einstellungen → Sensor-Zuordnung)."
 )
 
 
@@ -110,12 +122,14 @@ def _ranking(
     Returns:
         ``(bester, schlechtester, hinweis)``. Ist auch nur ein String nicht
         gemessen, bleibt die Platzierung leer und stattdessen steht der
-        Erklärsatz {@link RANKING_NICHT_MOEGLICH} in ``hinweis``.
+        Erklärsatz {@link RANKING_NICHT_MOEGLICH} in ``hinweis`` — im Mischfall
+        (mindestens ein String gemessen) {@link RANKING_TEILWEISE_VERTEILT} (N-653).
     """
     if len(kandidaten) <= 1:
         return None, None, None
     if any(quelle != PV_QUELLE_GEMESSEN for _, _, quelle in kandidaten):
-        return None, None, RANKING_NICHT_MOEGLICH
+        teilweise = any(quelle == PV_QUELLE_GEMESSEN for _, _, quelle in kandidaten)
+        return None, None, RANKING_TEILWEISE_VERTEILT if teilweise else RANKING_NICHT_MOEGLICH
     mit_perf = [(name, perf) for name, perf, _ in kandidaten if perf]
     if not mit_perf:
         return None, None, None
@@ -173,6 +187,19 @@ async def _lade_ist_je_modul(
     return werte, quellen
 
 
+def _heute_aktive_kwp(alle: list, referenzwert: Optional[float], heute: Optional[date] = None) -> float:
+    """Σ kWp der Träger, die HEUTE aktiv sind — die Anlagenleistung, mit der eine Prognose verglichen wird (N-684).
+
+    Erst der Zeitfilter (``ist_aktiv_an``), dann der Selektor (``erzeuger_traeger``) — dieselbe Reihenfolge wie je
+    Monat (N-613, ADR-002/P11). ⛔ Bis 11.10.2026 verglich die Warnung „Prognose passt nicht" gegen ``gesamt_kwp``, die
+    Σ ALLER je vorhandenen Träger: nach einer Stilllegung (Ost 5 kWp still, Prognose richtig für 10 kWp) stand dort
+    „die Anlage hat aktuell 15,0 kWp", und der Rat „neu abrufen" lieferte dieselbe Prognose. Ein Zubau ohne neuen
+    Abruf warnt weiter zu Recht.
+    """
+    heute = heute or date.today()
+    return verteilungsnenner_kwp(erzeuger_traeger([i for i in alle if i.ist_aktiv_an(heute)]), referenzwert)
+
+
 def _pruefe_prognose_plausibilitaet(prognose, gesamt_kwp: float) -> Optional[str]:
     """Diagnose-Wächter für eine stale/oversize PVGIS-Prognose.
 
@@ -185,6 +212,8 @@ def _pruefe_prognose_plausibilitaet(prognose, gesamt_kwp: float) -> Optional[str
     Bewusst KEIN stilles Capping/Skalieren der Werte: wir geben nur einen
     Hinweis-Text zurück, der Nutzer ruft die Prognose neu ab. Diagnose statt
     stillem Eingriff (feedback_grenze_externe_daten_diagnose).
+
+    ``gesamt_kwp`` sind die HEUTE aktiven kWp (``_heute_aktive_kwp``, N-684) — der Text sagt „aktuell".
 
     Rückgabe: Hinweis-Text bei grober kWp-Abweichung (>20 %), sonst None.
     """
@@ -400,12 +429,21 @@ async def get_pv_strings(
             except (ValueError, TypeError):
                 pass
 
-    # Anlagen-Nenner der heutigen Zuordnung (Plausibilität, `anlagen_leistung_kwp`)
-    # und je Monat der Nenner der Menge, die in diesem Monat trägt (N-613):
-    # ohne selbst tragendes BKW ist das dieselbe Zahl.
+    # Anlagen-Nenner der heutigen Zuordnung (`anlagen_leistung_kwp`; die Plausibilität
+    # vergleicht seit N-684 gegen die HEUTE aktiven Träger, `_heute_aktive_kwp`).
+    # ⭐ N-661 (Weg C, Gernot 11.10.2026): der SOLL-Nenner je String sind die kWp,
+    # für die die aktive Prognose gerechnet ist — dieselbe Regel wie im
+    # Jahresbericht-PDF (`soll_nenner_kwp`). Bis dahin stand hier die Σ ALLER
+    # Träger: ein stillgelegter String drückte das SOLL der übrigen (gemessen
+    # −33 %). Ohne Prognose-kWp gilt der frühere Nenner, je Monat der Menge,
+    # die in diesem Monat trägt (N-613).
     gesamt_kwp = verteilungsnenner_kwp(struktur, anlage.leistung_kwp)
     nenner_je_monat = {
-        m: gesamt_kwp if not selbst else verteilungsnenner_kwp(traeger_im_monat(alle, struktur, selbst), anlage.leistung_kwp)
+        m: soll_nenner_kwp(
+            prognose,
+            gesamt_kwp if not selbst
+            else verteilungsnenner_kwp(traeger_im_monat(alle, struktur, selbst), anlage.leistung_kwp),
+        )
         for m, selbst in selbst_je_monat.items()
     }
 
@@ -492,7 +530,7 @@ async def get_pv_strings(
 
     return PVStringsResponse(
         anlage_id=anlage_id, jahr=jahr, hat_prognose=hat_prognose,
-        prognose_warnung=_pruefe_prognose_plausibilitaet(prognose, gesamt_kwp),
+        prognose_warnung=_pruefe_prognose_plausibilitaet(prognose, _heute_aktive_kwp(alle, anlage.leistung_kwp)),
         anlagen_leistung_kwp=gesamt_kwp,
         prognose_gesamt_kwh=round(prognose_gesamt, 1),
         ist_gesamt_kwh=round(ist_gesamt, 1),
@@ -583,11 +621,27 @@ async def get_pv_strings_gesamtlaufzeit(
         (j, m): selbst_tragende_bkw_ids(alle, j, m) for j in jahre for m in range(1, 13)
     }
     pv_module = traeger_zeilen(alle, struktur, frozenset().union(*selbst_je_monat.values()))
+    # N-661 (Weg C): je Monat die kWp der aktiven Prognose — wie die Jahressicht
+    # darüber und das PDF; ohne Prognose-kWp der frühere Nenner (N-613).
     nenner_je_monat = {
-        jm: gesamt_kwp if not selbst else verteilungsnenner_kwp(traeger_im_monat(alle, struktur, selbst), anlage.leistung_kwp)
+        jm: soll_nenner_kwp(
+            prognose,
+            gesamt_kwp if not selbst
+            else verteilungsnenner_kwp(traeger_im_monat(alle, struktur, selbst), anlage.leistung_kwp),
+        )
         for jm, selbst in selbst_je_monat.items()
     }
-    in_struktur = {i.id for i in struktur}
+    # N-683 (Fachentscheid Master, 11.10.2026): das saisonale Mittel zählt je Monat
+    # nur die Träger, die in DIESEM Monat tragen und aktiv sind (Anschaffung,
+    # Stilllegung, `aktiv`) — dieselbe Menge, über die die Jahreswerte darüber ihr
+    # SOLL bilden (`nenner_je_monat`, N-661 Weg C).
+    aktiv_im_monat = {
+        jm: frozenset(i.id for i in traeger_im_monat(alle, struktur, selbst) if i.ist_aktiv_im_monat(*jm))
+        for jm, selbst in selbst_je_monat.items()
+    }
+    # Anlagen-SOLL des typischen Monats: je Jahr Σ der in (Jahr, Monat) aktiven
+    # Träger, dann über die Jahre gemittelt.
+    saisonal_soll_je_jahr: dict[int, dict[int, float]] = {m: {} for m in range(1, 13)}
     # Eine „Familie" für die Jahreszahl des saisonalen Mittels: ein abtretendes
     # BKW und seine Kinder sind EIN Erzeuger, der den Träger gewechselt hat —
     # die Jahre der BKW-Zeile und die der Kinder-Zeilen zählen zusammen, sonst
@@ -616,14 +670,11 @@ async def get_pv_strings_gesamtlaufzeit(
     strings_data = []
     prognose_gesamt_total = 0
     ist_gesamt_total = 0
-    saisonal_agg: dict[int, dict] = {m: {"prognose": 0, "ist_summe": 0, "anzahl": 0} for m in range(1, 13)}
+    saisonal_agg: dict[int, dict] = {m: {"ist_summe": 0, "anzahl": 0} for m in range(1, 13)}
     saisonal_jahre: dict[int, dict[Any, set]] = {m: {} for m in range(1, 13)}
 
     for modul in pv_module:
         modul_kwp = get_erzeuger_kwp(modul)
-        # Saisonal-SOLL („wie fällt der Mai typischerweise aus") gegen die heutige
-        # Zuordnung — er hat kein Jahr, also auch keinen Monats-Nenner.
-        kwp_anteil = modul_kwp / gesamt_kwp if gesamt_kwp > 0 else 0
         params = modul.parameter or {}
         ausrichtung = modul.ausrichtung or params.get("ausrichtung")
         neigung = modul.neigung_grad or params.get("neigung_grad")
@@ -690,10 +741,28 @@ async def get_pv_strings_gesamtlaufzeit(
             # angebrochener Anschaffungsmonat darf dieses Mittel nicht kürzen —
             # er verzerrt bereits den IST-Durchschnitt (`anzahl` zählt ihn voll
             # mit), und beide Seiten zu kürzen hieße, ihn doppelt zu bestrafen.
-            if modul_prognose is not None:
-                prognose_monat = modul_prognose.get(monat, 0)
-            else:
-                prognose_monat = prognose_monate.get(monat, 0) * kwp_anteil
+            #
+            # ⭐ N-683 (Fachentscheid Master, 11.10.2026): das Saisonal-SOLL („wie fällt
+            # der Mai typischerweise aus") ist das Mittel des Monats-SOLL über die
+            # Jahre, in denen der String in diesem Monat aktiv war — mit demselben
+            # Nenner wie seine Jahreswerte (`nenner_je_monat`). ⛔ Bis dahin stand
+            # hier `PVGIS × kWp / gesamt_kwp`, die Σ ALLER je vorhandenen Träger:
+            # nach einer Stilllegung (Ost 5 kWp still, Prognose für 10 kWp) bekam
+            # Süd im Juni 282,7 statt 424,0 kWh, während seine Jahreswerte in
+            # derselben Sicht stimmten. Ein String ohne aktiven Monat hat kein
+            # Saisonal-SOLL (0, wie sein IST-Mittel).
+            soll_je_jahr = {
+                j: (
+                    modul_prognose.get(monat, 0) if modul_prognose is not None
+                    else prognose_monate.get(monat, 0) * (
+                        modul_kwp / nenner_je_monat[(j, monat)] if nenner_je_monat[(j, monat)] > 0 else 0
+                    )
+                )
+                for j in jahre if modul.id in aktiv_im_monat[(j, monat)]
+            }
+            prognose_monat = sum(soll_je_jahr.values()) / len(soll_je_jahr) if soll_je_jahr else 0.0
+            for j, wert in soll_je_jahr.items():
+                saisonal_soll_je_jahr[monat][j] = saisonal_soll_je_jahr[monat].get(j, 0.0) + wert
             ist_summe = string_saisonal[monat]["ist_summe"]
             anzahl = string_saisonal[monat]["anzahl"]
             ist_durchschnitt = ist_summe / anzahl if anzahl > 0 else 0
@@ -703,11 +772,10 @@ async def get_pv_strings_gesamtlaufzeit(
                 ist_durchschnitt_kwh=round(ist_durchschnitt, 1),
                 ist_summe_kwh=round(ist_summe, 1), anzahl_jahre=anzahl,
             ))
-            # Das Anlagen-SOLL des typischen Monats ist das der heutigen Zuordnung:
-            # ein BKW, das seine Größen inzwischen an Kinder abgetreten hat, steht
-            # darin über die Kinder — seine eigene Zeile zählt nur mit ihrem IST.
-            if modul.id in in_struktur:
-                saisonal_agg[monat]["prognose"] += prognose_monat
+            # Das Anlagen-SOLL des typischen Monats steht in `saisonal_soll_je_jahr`
+            # (N-683): je Jahr die in diesem Monat aktiven Träger — ein BKW zählt in
+            # den Monaten, in denen es selbst trägt, seine Kinder in den übrigen
+            # (`traeger_im_monat`), nie beide zugleich.
             saisonal_agg[monat]["ist_summe"] += ist_summe
 
         abweichung_gesamt_pct = ((ist_string_gesamt - prognose_string_gesamt) / prognose_string_gesamt * 100) if prognose_string_gesamt > 0 else None
@@ -730,7 +798,10 @@ async def get_pv_strings_gesamtlaufzeit(
 
     saisonal_aggregiert = []
     for monat in range(1, 13):
-        prognose_s = saisonal_agg[monat]["prognose"]
+        # N-683: Mittel über die Jahre der Σ der im jeweiligen Monat aktiven Träger —
+        # nach einer Stilllegung nicht mehr der volle PVGIS-Monat samt stillgelegtem String.
+        soll_jahre = saisonal_soll_je_jahr[monat]
+        prognose_s = sum(soll_jahre.values()) / len(soll_jahre) if soll_jahre else 0.0
         ist_summe = saisonal_agg[monat]["ist_summe"]
         # Jahre je Erzeuger-Familie, davon das Maximum — ohne abtretendes BKW ist
         # jede Familie eine Zeile und die Zahl dieselbe wie bisher (max der Zeilen).
@@ -751,7 +822,7 @@ async def get_pv_strings_gesamtlaufzeit(
 
     return PVStringsGesamtlaufzeitResponse(
         anlage_id=anlage_id, hat_prognose=hat_prognose,
-        prognose_warnung=_pruefe_prognose_plausibilitaet(prognose, gesamt_kwp),
+        prognose_warnung=_pruefe_prognose_plausibilitaet(prognose, _heute_aktive_kwp(alle, anlage.leistung_kwp)),
         anlagen_leistung_kwp=gesamt_kwp,
         erstes_jahr=erstes_jahr, letztes_jahr=letztes_jahr,
         anzahl_jahre=anzahl_jahre, anzahl_monate=anzahl_monate,
