@@ -1,6 +1,6 @@
 # Was ist neu
 
-> **Stand:** Oktober 2026 (v4.1.6)
+> **Stand:** Oktober 2026 (v4.1.7)
 > **Diese Seite** zeigt pro Version, was sich für dich als Anwender geändert hat — kürzer als der technische [CHANGELOG](https://github.com/supernova1963/eedc-homeassistant/blob/main/CHANGELOG.md), ausführlicher als die Schnellübersicht-Tabelle in der [Übersicht](BENUTZERHANDBUCH.md#was-ist-neu-seit-v316).
 >
 > **Kein Banner, kein Pop-up:** eedc zeigt diese Liste nicht ungefragt an. HA-App-Nutzer sehen den Changelog ohnehin schon im Add-on-Store, GitHub-Releases haben einen eigenen. Wer wissen will, was neu ist, schaut hier rein — Pull statt Push.
@@ -8,6 +8,235 @@
 > **Lesehinweis:** Die jüngsten Versionen stehen oben. Jeder Punkt verlinkt entweder auf die zuständige Hilfe-Sektion oder direkt auf die App-Funktion (sofern erreichbar). Anker-URLs (`?doc=was-ist-neu`) sind teilbar.
 
 ---
+
+## v4.1.7 — 13. Oktober 2026
+
+**MQTT-Check fragt nach deinem Gerät:** Der Daten-Checker erwartet nur noch Topics für Größen, die es an deinem Gerät
+gibt. Ein E-Auto ohne „V2H-fähig“, ein Speicher ohne „Lädt aus dem Netz“ oder eine Wärmepumpe ohne getrennte
+Strommessung stand bisher dauerhaft mit einem Topic wie „…/v2h_entladung_kwh“ unter „erwartet, nie empfangen“, obwohl
+es dafür nichts zu senden gibt. Liefert eine vorhandene Größe bewusst niemand über MQTT, nennt die Meldung jetzt den
+Handgriff: unter *Einstellungen → Datenquellen* auf „Keine“ stellen
+([Daten-Checker §4.8](HANDBUCH_DATEN_CHECKER.md#48-mqtt-topic-abdeckung)).
+
+**V2H am Tag:** Speist dein E-Auto Strom ins Haus zurück (V2H) und ist sein Zähler „V2H Entladung" zugeordnet, zählt
+*Cockpit → Tag* die Rückspeisung jetzt mit — in Eigenverbrauch, Gesamtverbrauch und Autarkie, wie Monat und Jahr es
+schon tun, und als Zeile „V2H-Rückspeisung" im Block E-Mobilität. Die Stundenwerte zeigen sie nicht, der laufende Monat
+zählt sie erst mit dem Abschluss ([Bedienung → Tag](HANDBUCH_BEDIENUNG.md#22-tag)).
+
+**Netzladung im laufenden Monat:** Lädt dein Speicher aus dem Netz, zeigt *Cockpit → Monat* die Netzladung jetzt schon
+vor dem Monatsabschluss — als Summe der abgelaufenen Tage, dieselben Zahlen wie *Cockpit → Tag*, samt Ladepreis und
+Kosten. Beim Überfahren steht „Menge aus Tageswerten"; mit dem Abschluss gilt dein gespeicherter Wert
+([Bedienung → Monat](HANDBUCH_BEDIENUNG.md#23-monat)).
+
+**HA-Korrektur sofort übernehmen:** Nach einer Korrektur in Home Assistant holt der neue Eintrag **„HA-Spiegel jetzt
+abgleichen"** in der Reparatur-Werkbank den Abgleich sofort, statt bis zur Nacht zu warten (der HA-Spiegel ist eedcs
+Kopie der HA-Statistik) — die Tages-Kennzahlen in *Cockpit → Tag*, die daraus kommen, zeigen danach die korrigierten
+Werte. Der Daten-Checker-Befund zu einem Zählersprung in Home Assistant führt mit „Beheben" dorthin
+([Energieprofil → Reparatur & Pflege](HANDBUCH_ENERGIEPROFIL.md#4-reparatur--pflege)).
+
+**Cockpit → Tag mit einer Nachkommastelle:** Kacheln, Energie-Bilanz und Rechenwege zeigen kWh jetzt wie *Cockpit →
+Live* mit einer Nachkommastelle — „0,3 kWh" Netzbezug statt „0 kWh" neben einer Autarkie unter 100 %. Monat und Jahr
+bleiben ganzzahlig ([Bedienung → Tag](HANDBUCH_BEDIENUNG.md#22-tag)).
+
+**MQTT-Check und Wallbox:** Misst deine Wallbox die Ladung, erwartet der Daten-Checker am E-Auto keine Lade- und
+Verbrauchs-Topics mehr ([Daten-Checker §4.8](HANDBUCH_DATEN_CHECKER.md#48-mqtt-topic-abdeckung)).
+
+**Live-Tageswerte aus deinen Zählern:** Hast du Netz-Zähler und einen Kombi-Netzsensor (±) zugeordnet, nimmt
+*Cockpit → Live* Einspeisung, Netzbezug, Eigen- und Gesamtverbrauch für heute und gestern jetzt aus den Zählern —
+dieselbe Zahl wie *Cockpit → Tag*; der Kombi-Sensor bleibt für die Leistung und die Kurve zuständig. Ein sonstiges Gerät
+mit kWh-Zähler zeigt im Energiefluss-Tooltip die gezählte Tagesmenge statt der hochgerechneten, bei Abgabe-Geräten auch
+im Eigenverbrauch heute ([Bedienung → Live](HANDBUCH_BEDIENUNG.md#21-live)).
+
+**Solar-Soll im Energiefluss:** Über dem Haus steht jetzt die PV-Leistung, die die Prognose für die laufende Stunde
+erwartet — die Anzeige blieb bisher immer aus ([Bedienung → Live](HANDBUCH_BEDIENUNG.md#21-live)).
+
+**Solar-Aussicht folgt deiner Prognosequelle:** Hast du Solcast oder Solar Forecast ML gewählt, zeigt die Solar-Aussicht
+in *Cockpit → Live* für Morgen und Übermorgen jetzt die Zahlen dieser Quelle — seit v4.0.36 standen dort die eedc-Zahlen
+unter der Überschrift der Quelle. Wo die Quelle einen Tag nicht abdeckt, steht klein „eedc“ dabei
+([Prognosen → Solcast](HANDBUCH_PROGNOSEN.md#23-solcast--optional-dritte-meinung)).
+
+**Unvollständiger Wetterabruf wird gesagt:** Fällt beim Abruf eine von mehreren PV-Dachflächen aus, steht in *Cockpit →
+Live* ein Hinweis unter dem Wetter und in der Solar-Aussicht, statt einer zu niedrigen Tagesprognose ohne Kommentar; der
+nächste Abruf versucht es neu ([Bedienung → Live](HANDBUCH_BEDIENUNG.md#21-live)). Dasselbe gilt für die Einstrahlung im
+Energieprofil: eine ausgefallene Dachfläche ergibt keine zu hohe Performance Ratio mehr, die Zahl bleibt dann leer.
+
+**Solar-Aussicht sagt, woher Vormittag/Nachmittag kommen:** Liefert deine Prognosequelle für einen Tag nur die
+Tagesmenge — Solcast für Morgen und Übermorgen, Solar Forecast ML ohne Stundenverlauf —, kommt die Aufteilung in
+Vormittag/Nachmittag aus der eedc-Prognose und addiert sich nicht zur Tageszahl der Quelle. Das steht jetzt als „eedc“
+an den beiden Werten. Liefert Solcast für heute gar nichts, schaltet die Solar-Aussicht wie bei Solar Forecast ML
+sichtbar auf die eedc-Prognose um und sagt es, statt die eedc-Zahl unter der Überschrift „Solcast“ zu zeigen
+([Prognosen → Solcast](HANDBUCH_PROGNOSEN.md#23-solcast--optional-dritte-meinung)).
+
+**Ausgefallener Wetter-Nachzug wird nachgeholt:** Fiel beim nächtlichen Nachzug aus dem Wetter-Archiv der Abruf ganz
+oder für eine Dachfläche aus, blieb der Tag bisher dauerhaft ohne Einstrahlung und Performance Ratio. Jetzt holt eedc
+ihn in derselben oder einer der folgenden Nächte nach ([Bedienung → Tag](HANDBUCH_BEDIENUNG.md#22-tag)).
+
+**Keine stille Schätzung aus der Globalstrahlung:** Nach einem unvollständigen Wetterabruf bei mehreren Dachflächen
+konnte die PV-Prognose in *Cockpit → Live* bis zu einer Stunde aus der horizontalen Strahlung gerechnet stehen, ohne
+Hinweis. Jetzt holt eedc die Dachflächen neu und zeigt den Hinweis zum unvollständigen Abruf, bis alle wieder liefern
+([Bedienung → Live](HANDBUCH_BEDIENUNG.md#21-live)).
+
+**Sonnenstunden immer da:** Bei Anlagen mit einer Dachausrichtung fehlten die Sonnenstunden in *Cockpit → Live* bis zu
+einer Stunde, wenn eedc das Wetter vorab im Hintergrund geholt hatte; jetzt holt der Vorababruf dieselben Daten wie die
+Anzeige ([Bedienung → Live](HANDBUCH_BEDIENUNG.md#21-live)).
+
+**Ein Monatspreis für alle Sichten:** Komponenten-Hubs (E-Auto, Wärmepumpe, Speicher, Wallbox, Sonstiges), der
+ROI-Fortschritt in den Aussichten und die HA-Sensoren „Ersparnis vs Benzin", „WP Ersparnis", Jahresersparnis, ROI und
+Amortisation rechnen jetzt mit dem Monatspreis, den auch Cockpit und Daten-Checker nehmen: Monate vor deinem ersten
+eingetragenen Stromtarif mit der Vorbelegung 30 ct (bisher mit dem heutigen Tarif, über MQTT sogar mit dem jüngsten
+Tarif-Eintrag, auch einem Wärmepumpen- oder Wallbox-Tarif), und ein im Monatsabschluss gepflegter Ø-Strompreis gilt ohne
+eigenen Wärmepumpen-Tarif auch für die Wärmepumpe (bisher nur im Cockpit). *Cockpit → Monat und Jahr* zeigen für Monate
+vor dem ersten Tarif jetzt ihre Geldposten — gerechnet mit der Vorbelegung, und unter dem Ø-Preis steht, dass kein Tarif
+hinterlegt ist —, statt „Stromrechnung fehlt". Wer solche Monate oder einen gepflegten Ø ohne eigenen Wärmepumpen-Tarif
+hat, sieht in HA einmalig einen Sprung in der Langzeitstatistik dieser Sensoren. Dazu nennt der Kopf des Jahresberichts
+den Allgemeintarif der Berichtsmonate — bei einem Wechsel im Zeitraum beide Abschnitte — statt des jüngsten
+Tarif-Eintrags, und die Infothek belegt „Stromvertrag" und „Einspeisevertrag" mit dem heute gültigen Tarif vor
+([Einstellungen §2.2](HANDBUCH_EINSTELLUNGEN.md#22-strompreise),
+[Sensor-Referenz §11](SENSOR-REFERENZ.md#11-export-sensoren-eedc--ha)).
+
+**Einmal gerundet:** „Verbrauch (Monat)" eines sonstigen Verbrauchers und „Überschuss-Prognose heute" wurden doppelt
+gerundet (3,46 kWh als 4 statt 3 kWh in HA); jetzt rundet eedc einmal, wie bei allen anderen Sensoren
+([Sensor-Referenz §11](SENSOR-REFERENZ.md#11-export-sensoren-eedc--ha)).
+
+**Jahresbericht rechnet die Finanzen wie Cockpit und Auswertungen:** Die Betriebskosten zählen je Komponente nur über
+ihre aktiven Monate wie in *Cockpit → Jahr* (bisher auch vor der Anschaffung, z. B. 120 statt 20 € bei zwei erfassten
+Monaten). Die „Rendite" ist die von *Cockpit → Übersicht* mit Wärmepumpen- und E-Auto-Ersparnis, der
+„Amortisations-Fortschritt" der von *Auswertungen → ROI*; im Bericht eines einzelnen Jahres gelten beide zum Stand
+31.12. dieses Jahres und teilen nur durch die bis dahin angeschafften Komponenten (bisher standen in der Rendite auch
+später gekaufte im Nenner). An beiden Zeilen steht ihr Bezug. *Cockpit → Jahr* zeigt die Betriebskosten auf den Cent
+genau (100,00 statt 99,96 € bei 100 €/Jahr)
+([Einstellungen → Berichte & Dokumente](HANDBUCH_EINSTELLUNGEN.md#42-berichte--dokumente)).
+
+**Jahresbericht: eine Mehrkosten-Zahl:** Die Zeile „Investition Mehrkosten" nennt den Nenner der Rendite darunter und
+sagt, welche Investitionen er zählt; ebenso sagt „Investition gesamt" jetzt, dass sie die Vollkosten der im Jahr aktiven
+(im Gesamtzeitraum: aller) Investitionen zählt
+([Einstellungen → Berichte & Dokumente](HANDBUCH_EINSTELLUNGEN.md#42-berichte--dokumente)).
+
+**Jahresbericht ohne Speicher-Wirkungsgrad über 100 %:** Passen Lade- und Entlademenge nicht zusammen, steht im Bericht
+jetzt ein Strich wie im Cockpit statt z. B. „110,0 %"; die Ursache nennt der Daten-Checker
+([Einstellungen → Berichte & Dokumente](HANDBUCH_EINSTELLUNGEN.md#42-berichte--dokumente)).
+
+**Import aus eigener Datei: Vorschau gleich Import:** Die Vorschau zeigt jetzt genau, was der Import schreibt. Die
+Einheit (Wh/kWh/MWh) gilt nur für Spalten ohne Einheit im Namen — erkannte Geräte-Spalten wie `Sueddach_kWh` tragen ihre
+Einheit selbst und werden nicht umgerechnet (bisher zeigte die Vorschau ein Tausendstel, geschrieben wurde der Dateiwert).
+Tageszeilen werden zum Monat summiert, eine **0 wird als 0 gespeichert** (auch bei der Übernahme im Portal-Import), Wallbox-Ladung und
+Wallbox-PV-Ladung kommen auf der Wallbox an, eine Spalte zählt nur einmal, auch wenn sie zusätzlich einem Gerät
+zugeordnet ist, sonstige Geräte lassen sich einzeln zuordnen, und eine Vorlage schreibt nicht mehr in eine andere Anlage.
+Jeder Monat wird ganz oder gar nicht geschrieben ([Einstellungen → Import-Assistenten](HANDBUCH_EINSTELLUNGEN.md#65-import-assistenten)).
+
+**Import: eine 0 kommt auch am Wechselrichter an, ein Balkonkraftwerk-Wert zählt einmal:** Ordnest du im Portal- oder
+Cloud-Import eine Quelle einem Wechselrichter zu und meldet sie für einen Monat 0 kWh PV, bekommen seine PV-Module jetzt
+0 — bisher galt der Monat als unvollständig, und der Daten-Checker warnte. Trägt eine CSV-Datei für ein Balkonkraftwerk
+den heutigen Spaltennamen `<Name>_Erzeugung_kWh` und den alten `<Name>_kWh`, gilt der heutige; bisher stand der Wert in
+der Monatssumme doppelt. Auch die Datei-Leser für SMA Sunny Portal, Fronius Solarweb und evcc lesen eine 0 der
+Exportdatei jetzt als Wert (bisher „keine Daten", ein Monat ohne Ertrag stand schon in der Vorschau leer); eine leere
+Zelle oder „-" bleibt eine Lücke ([Einstellungen → Import-Assistenten](HANDBUCH_EINSTELLUNGEN.md#65-import-assistenten)).
+
+**Hubs nehmen die Vergütung des Monats:** Speicher-, E-Auto- (V2H) und Sonstiges-Hub rechnen die Einspeisevergütung
+jetzt wie *Cockpit → Monat* — vor deinem ersten Tarif mit der Vorbelegung 8,2 ct statt der heutigen Vergütung, und eine
+monatlich gepflegte Vergütung gilt auch für V2H und sonstige Geräte (im Beispiel V2H 108,00 statt 88,00 €)
+([Einstellungen → Strompreise](HANDBUCH_EINSTELLUNGEN.md#22-strompreise)).
+
+**Eigener Wallbox-Tarif und HT/NT:** Trägt dein Standard-Tarif Zeitfenster, rechnet ein eigener Wallbox-Tarif jetzt
+überall mit seinem eigenen Preis, statt vom Zeitfenster-Ø des Standard-Tarifs ersetzt zu werden (im Beispiel 772,00
+statt 760,00 € E-Auto-Ersparnis); die HA-Anlagensensoren für Jahresersparnis, ROI und Amortisation springen bei dieser
+Kombination einmalig ([Einstellungen → Strompreise](HANDBUCH_EINSTELLUNGEN.md#22-strompreise)).
+
+**Eine Speicher-0 kommt an:** Meldet die Quelle für einen Monat 0 kWh Speicher-Ladung oder -Entladung, steht jetzt 0 am
+Speicher, statt dass der Daten-Checker den Monat als fehlend meldet („Entladung nicht erfasst") — im Portal- und
+Cloud-Import wie im eigenen Import-Format und im CSV-Import; eine leere Zelle bleibt leer
+([Einstellungen → Import-Assistenten](HANDBUCH_EINSTELLUNGEN.md#65-import-assistenten)).
+
+**ROI-Fortschritt: Tooltip und Kachel rechnen gleich:** Der Tooltip der Kachel „Amortisations-Fortschritt" zeigt jetzt
+die Zahlen, aus denen die Prozent entstehen — Erträge ÷ Kapitaleinsatz ([Bedienung → ROI](HANDBUCH_BEDIENUNG.md#42-roi)).
+
+**Balkonkraftwerk: eine Ersparnis in T-Konto und Hub:** Die Zeile „Balkon" im T-Konto von *Cockpit → Monat* rechnet jetzt
+mit dem Anteil des Balkonkraftwerks am Eigenverbrauch und demselben Preis wie *Komponenten → Balkonkraftwerk*, nicht
+mehr mit der ganzen Erzeugung (im Beispiel 18,82 statt 27,00 €); im Hub sind Einspeisung und Eigenverbrauchsquote die Summe der Monate
+([Bedienung → Balkonkraftwerk](HANDBUCH_BEDIENUNG.md#37-balkonkraftwerk)).
+
+**E-Auto: externe Ladung aus einer Quelle:** Kopf, Verlauf und Jahresvergleich des E-Auto-Hubs zeigen dieselbe externe
+Ladung, je Monat gewählt wie im Cockpit; eine am Auto ohne Kosten erfasste externe Ladung zählt jetzt überall
+([Bedienung → E-Auto](HANDBUCH_BEDIENUNG.md#35-e-auto)).
+
+**ROI der PV-Anlage wie im Cockpit:** Die Zeile PV-System in *Auswertungen → ROI* nimmt den Eigenverbrauch aus derselben
+Rechnung wie das Cockpit — mit BHKW-Strom, ohne an Dritte abgegebene Kilowattstunden, ohne Speicherverluste und ohne den
+Anteil des Balkonkraftwerks, das seine eigene Zeile hat ([Bedienung → ROI](HANDBUCH_BEDIENUNG.md#42-roi)).
+
+**Cockpit → Tag nach einer Statistik-Korrektur:** Fällt die HA-Summe eines String-Zählers, bekommt der String an dem Tag
+seinen Anteil am Anlagenzähler, statt dass die Differenz bei einem anderen Gerät landet
+([Bedienung → Tag](HANDBUCH_BEDIENUNG.md#22-tag)).
+
+**Performance Ratio nach einem Zubau:** Der nächtliche Wetter-Nachzug rechnet die Einstrahlung mit den Dachflächen, die
+an dem Tag in Betrieb waren — eine später zugebaute Fläche mit anderer Ausrichtung verschiebt die Performance Ratio der
+Tage davor nicht mehr ([Bedienung → Tag](HANDBUCH_BEDIENUNG.md#22-tag)).
+
+**Monatsabschluss schlägt eine gemessene 0 vor:** Liefert Home Assistant oder MQTT für einen Monat 0 kWh — Einspeisung,
+Speicher, Wärmepumpe, Wallbox ohne Ladung —, steht im Formular die 0 („0 — kein Zuwachs") statt des Vormonats mit dem
+Abzeichen „geschätzt"; nur PV-Erzeugung und PV-Anteil einer Ladung bleiben ohne 0-Vorschlag
+([Einstellungen → Monatsabschluss](HANDBUCH_EINSTELLUNGEN.md#51-monatsdaten--monatsabschluss)).
+
+**Teilsummen werden gesagt:** *Cockpit → Monat* und *→ Jahr* nennen eine PV-Teilsumme jetzt auch, wenn im Monat eine
+Wallbox-Zeile ohne PV-Anteil steht; und trägt im laufenden Monat der Netzbezugs- oder Einspeisezähler nur einen Teil der
+Tage (etwa nach dem Umbenennen der Entity in Home Assistant), steht ein Hinweis bei den Kacheln — im Beispiel stand
+sonst Autarkie 99,1 % statt 67,6 % ohne Kommentar ([Bedienung → Monat](HANDBUCH_BEDIENUNG.md#23-monat)).
+
+**HA-Sensoren Wärmepumpe je Betriebsart:** „Strom Heizbetrieb", „Strom Warmwasserbetrieb" und „Strom Kühlbetrieb" melden
+bei einer Wärmepumpe mit Betriebsart-Sensor ohne Leistungssensor dieselben Werte wie *Cockpit → Übersicht* — bisher nach
+einem HA-Statistik-Import 0; die Sensoren springen nach dem Update einmalig
+([Sensor-Referenz §11](SENSOR-REFERENZ.md#11-export-sensoren-eedc--ha)).
+
+**Monat ohne erfassten Netzbezug zeigt keine erfundene 0 mehr:** Hat ein Import eine Monatszeile ohne Netzbezug oder
+Einspeisung angelegt (etwa nur mit Wallbox-Daten), zeigte *Cockpit → Monat* bisher 0 kWh und Autarkie 100 % — und
+HA-Statistik und Tageswerte kamen nicht mehr zum Zug. Jetzt greifen sie wieder; ohne Quelle bleibt das Feld leer, und
+der Daten-Checker sagt „Netzbezug nicht erfasst" bzw. „Einspeisung nicht erfasst" samt Handgriff — sein „Beheben"-Link
+öffnet jetzt den Monat (wie bei allen Monatsdaten-Meldungen), und dort steht das Feld leer statt mit 0; liegt ein
+Vorschlag aus der HA-Statistik vor, ist er schon eingesetzt. Eine eingetragene oder importierte 0 bleibt eine 0 — auch
+aus den Cloud-Importern von EcoFlow, Viessmann, Growatt und Hoymiles
+([Bedienung → Monat](HANDBUCH_BEDIENUNG.md#23-monat),
+[Daten-Checker → Monatsdaten](HANDBUCH_DATEN_CHECKER.md#45-monatsdaten--plausibilitaet)).
+
+**Übersicht, Jahresbericht und HA-Sensoren lassen einen solchen Monat weg:** Übersicht, Jahresbericht, HA-Sensoren,
+Community-Upload, *Auswertungen → Tabelle* und *Aussichten → Finanzen* rechneten bei einem Monat ohne erfassten
+Netzbezug oder Einspeisung mit der 0 weiter (Autarkie 100 %, Ersparnis und CO₂ auf die ganze PV-Erzeugung). Jetzt lassen
+sie ihn bei Eigenverbrauch, Autarkie, Ersparnis und CO₂ weg, bis die Werte erfasst sind — seine PV-Erzeugung zählt
+weiter, Tabelle und Jahresbericht zeigen bei ihm „–", der Community-Upload teilt ihn nicht
+([Bedienung → Jahr/Gesamt](HANDBUCH_BEDIENUNG.md#24-jahrgesamt)).
+
+**Seit Mai angelegte Monate bekommen ihre Herkunft zurück:** Seit Mai 2026 ging beim ersten Speichern eines neuen Monats
+im Formular die Angabe „im Formular eingetragen" verloren. Diese Monate bekommen sie beim ersten Start nach dem Update
+für Einspeisung und Netzbezug nachgetragen — eine dort eingetragene 0 bleibt eine 0, und ein HA-Statistik-Import mit
+„Überschreiben" ersetzt die Handwerte nicht mehr; Monate aus dem alten Monatsabschluss-Assistenten (Mai bis Juli 2026)
+mit leer gelassenem Feld nennt der Daten-Checker
+([Daten-Checker → Monatsdaten](HANDBUCH_DATEN_CHECKER.md#45-monatsdaten--plausibilitaet)).
+
+**Tagesverlauf nennt Geräte ohne Leistungssensor:** Zeigt *Cockpit → Live* den Tagesverlauf, steht unter seiner Überschrift
+jetzt „Nicht dargestellt (kein HA-Leistungssensor): …“ mit den Geräten, denen dafür ein Leistungssensor fehlt —
+der Hinweis war seit seiner Einführung nie angekommen. Gibt es gar keine Kurve (keine Leistungs-Zuordnung unter
+*Datenquellen*, etwa mit MQTT-Inbound), fehlte der Block bisher wortlos; jetzt sagt ein Satz an seiner Stelle, warum
+([Bedienung → Live](HANDBUCH_BEDIENUNG.md#21-live)).
+
+**Community-Radar vergleicht denselben Monat:** Im *Performance-Profil* (*Community → Übersicht*) standen Autarkie und
+Eigenverbrauch bisher gegen feste Zahlen (65 % und 45 %), nicht gegen die Community, und dein Wert war der neueste Monat,
+auch der laufende. Jetzt steht dein letzter abgeschlossener Monat gegen den Community-Durchschnitt desselben Monats, und
+unter dem Diagramm steht, welcher Monat es ist („Vergleich: September 2026“). Hat der Community-Server für den Monat keinen
+Durchschnitt, fehlt die Achse, statt mit einer erfundenen Zahl zu stehen ([Bedienung → Community](HANDBUCH_BEDIENUNG.md#52-die-community-reiter)).
+
+**JAZ nach Bauart erscheint:** Der Wärmepumpen-Vergleich nach Bauart (Luft-Wasser, Sole-Wasser, Luft-Luft …) unter
+*Community → Komponenten* war seit v4.0.41 angekündigt, kam aber nie an — eedc reichte die Anfrage nicht an den
+Community-Server weiter. Jetzt steht er über dem Regionalbalken ([Bedienung → Community](HANDBUCH_BEDIENUNG.md#52-die-community-reiter)).
+
+**„—“ statt 0 in den Community-Klassentabellen:** Hat eine Speicher-Kapazitätsklasse weniger als drei Werte, liefert der
+Community-Server bewusst keinen Durchschnitt; die Tabelle zeigte dort 0 Zyklen und 0,0 % Wirkungsgrad. Jetzt steht „—“,
+ebenso in der E-Auto-Tabelle nach Nutzungsintensität. Ein Speicher unter 5 kWh ist in seiner Klasse jetzt auch als „(Du)“
+markiert. Die Community-Beschreibung im Handbuch und auf der Website nennt dazu die Kennzahlen und Achievements, die die
+App wirklich zeigt ([Bedienung → Community](HANDBUCH_BEDIENUNG.md#52-die-community-reiter)).
+
+**Kleinigkeiten:** Der Daten-Checker nennt bei Monaten vor dem ersten Tarif beide Preise der Vorbelegung (30 ct Bezug,
+8,2 ct Einspeisung); eine PVGIS-Prognose mit leerem Monatswert bricht die Finanz-Prognose nicht mehr ab; die Vorschau
+des eigenen Import-Formats zeigt bei zwei Spalten für dasselbe Geräte-Feld nur die, die importiert wird; „PV-Erzeugung
+aus" in *Cockpit → Monat/Jahr* und im Monatsbericht nennt auch das Balkonkraftwerk; und am spezifischen Ertrag im PV-Hub
+steht „hochgerechnet aufs Jahr".
 
 ## v4.1.6 — 11. Oktober 2026
 

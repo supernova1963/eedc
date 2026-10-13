@@ -542,6 +542,25 @@ async def _baue_import_kontext(
     )
 
 
+async def _speicher_nullen(
+    ktx: ImportKontext, bilanz: ImportBilanz, speicher: list,
+    bat_ladung: Optional[float], bat_entladung: Optional[float], jahr: int, monat: int,
+) -> bool:
+    """N-718: eine gelieferte Speicher-0 ist ein Messwert (Regel N-707/N-711) — jeder Speicher bekommt sie als 0,
+    exakt und ohne `abgeleitet`-Marke (eine 0 ist kein Kapazitätsanteil). Leer (None) bleibt leer. Bis 12.10.2026
+    schrieben beide Speicher-Wege nur bei Werten > 0; ein echter Null-Monat (Speicher aus, Defekt) stand als Lücke da
+    (Checker-WARNING «Speicher-Ladung fehlt» bzw. «nicht erfasst»). `True`, wenn etwas geschrieben wurde."""
+    vd = {feld: 0.0 for feld, wert in (("ladung_kwh", bat_ladung), ("entladung_kwh", bat_entladung)) if wert == 0}
+    if not vd or not speicher:
+        return False
+    for inv in speicher:
+        await _upsert_und_merke(
+            bilanz, ktx.db, inv.id, jahr, monat, dict(vd), ktx.ueberschreiben,
+            source=ktx.source, writer=ktx.writer,
+        )
+    return True
+
+
 async def _verteile_ziel_erzeugung(
     ktx: ImportKontext, bilanz: ImportBilanz, monat_input: ApplyMonthInput,
     jahr: int, monat: int,
@@ -562,6 +581,17 @@ async def _verteile_ziel_erzeugung(
         if len(ktx.ziel_pv_module) > 1 and bilanz.erste_runde:
             bilanz.warnungen.extend(w)
         etwas_geschrieben = True
+    elif monat_input.pv_erzeugung_kwh == 0 and ktx.ziel_pv_module:
+        # N-711: eine gelieferte 0 ist ein Messwert (N-707) — die Station hat im Monat nichts erzeugt, also jedes
+        # ihrer Module 0. Die Monatszeile bekommt auf diesem Weg keinen PV-Wert (P7); ohne die Modulzeilen galt der
+        # Monat als unvollständig (Checker-WARNING). Eine 0 ist exakt, kein kWp-Anteil — deshalb ohne
+        # `abgeleitet`-Marke. Leer (None) bleibt leer.
+        for inv in ktx.ziel_pv_module:
+            await _upsert_und_merke(
+                bilanz, ktx.db, inv.id, jahr, monat, {"pv_erzeugung_kwh": 0.0}, ktx.ueberschreiben,
+                source=ktx.source, writer=ktx.writer,
+            )
+        etwas_geschrieben = True
 
     bat_lad = monat_input.batterie_ladung_kwh or 0
     bat_ent = monat_input.batterie_entladung_kwh or 0
@@ -575,6 +605,11 @@ async def _verteile_ziel_erzeugung(
             )
             if len(ktx.ziel_speicher) > 1 and bilanz.erste_runde:
                 bilanz.warnungen.extend(w)
+            # N-718: die andere Seite, als 0 geliefert, kommt ebenfalls an.
+            await _speicher_nullen(
+                ktx, bilanz, ktx.ziel_speicher,
+                monat_input.batterie_ladung_kwh, monat_input.batterie_entladung_kwh, jahr, monat,
+            )
             etwas_geschrieben = True
         elif bilanz.erste_runde:
             bilanz.warnungen.append(
@@ -582,6 +617,12 @@ async def _verteile_ziel_erzeugung(
                 f"'{ktx.ziel.bezeichnung or ktx.ziel.typ}' hängt kein Speicher — "
                 f"sie wurden nicht übernommen."
             )
+    elif await _speicher_nullen(
+        ktx, bilanz, ktx.ziel_speicher,
+        monat_input.batterie_ladung_kwh, monat_input.batterie_entladung_kwh, jahr, monat,
+    ):
+        # N-718: die Station hat im Monat nichts geladen/entladen (N-711 für die Speicherseite).
+        etwas_geschrieben = True
 
     return etwas_geschrieben
 
@@ -732,10 +773,16 @@ async def _verteile_pv(
     jahr: int, monat: int,
 ) -> Optional[float]:
     """PV-Erzeugung auf die Module verteilen; zurück kommt der Anlagenwert für
-    die Monatszeile."""
-    if monat_input.pv_erzeugung_kwh is None or monat_input.pv_erzeugung_kwh <= 0:
+    die Monatszeile.
+
+    N-707: eine gelieferte **0 ist ein Messwert** und steht danach in der
+    Monatszeile (wie die Batterie); nur ein fehlender Wert bleibt leer. Bis
+    12.10.2026 wurde PV 0 hier zu NULL — der Daten-Checker meldete „PV-Erzeugung
+    fehlt", das Cockpit zeigte „—". Eine 0 verteilt nichts auf die Module.
+    """
+    if monat_input.pv_erzeugung_kwh is None or monat_input.pv_erzeugung_kwh < 0:
         return None
-    if not ktx.pv_module:
+    if not ktx.pv_module or monat_input.pv_erzeugung_kwh == 0:
         return monat_input.pv_erzeugung_kwh
     pv_kwh = monat_input.pv_erzeugung_kwh
     if ktx.zuordnung and ktx.zuordnung.pv:
@@ -781,7 +828,12 @@ async def _verteile_batterie(
     bat_ladung_raw = monat_input.batterie_ladung_kwh
     bat_entladung_raw = monat_input.batterie_entladung_kwh
     if not ((bat_ladung_raw or 0) > 0 or (bat_entladung_raw or 0) > 0):
-        return None, None
+        # N-718: eine gelieferte 0 ist ein Messwert — jeder Speicher und die Monatszeile tragen sie (wie der eigene
+        # Format-Import); nur ein fehlender Wert bleibt leer. Bis 12.10.2026 wurde 0/0 hier zu NULL.
+        bat_ladung_null = 0.0 if bat_ladung_raw == 0 else None
+        bat_entladung_null = 0.0 if bat_entladung_raw == 0 else None
+        await _speicher_nullen(ktx, bilanz, ktx.speicher, bat_ladung_null, bat_entladung_null, jahr, monat)
+        return bat_ladung_null, bat_entladung_null
     if not ktx.speicher:
         return bat_ladung_raw, bat_entladung_raw
     if ktx.zuordnung and ktx.zuordnung.batterie:
@@ -798,6 +850,8 @@ async def _verteile_batterie(
         )
         if bilanz.erste_runde:
             bilanz.warnungen.extend(w)
+    # N-718: die andere Seite, als 0 geliefert, kommt ebenfalls an.
+    await _speicher_nullen(ktx, bilanz, ktx.speicher, bat_ladung_raw, bat_entladung_raw, jahr, monat)
     return bat_ladung_raw, bat_entladung_raw
 
 

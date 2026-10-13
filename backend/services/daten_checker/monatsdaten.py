@@ -31,6 +31,7 @@ from backend.models.investition import Investition
 from backend.models.pvgis_prognose import PVGISPrognose
 from backend.services.zaehlerstaende import ist_zaehler_investition
 from backend.services.provenance import ABGELEITET_SUMME_ACHSEN
+from backend.services.monats_fakten import netzfeld_ist_erfasst
 
 from .kategorien import (
     CheckErgebnis,
@@ -64,6 +65,40 @@ PV_MAX_KWH_PRO_KWP = {
 #: eine Frage zu stellen. Sie ist **kein Fehler** (INFO, Fragesatz): eedc weiß
 #: nicht, was am Zähler hängt, und behauptet es nicht.
 _REST_AUFFAELLIG_ANTEIL = 0.25
+
+
+def _netzfelder_nicht_erfasst(
+    kat, prefix: str, md_link: str, *, einspeisung_erfasst: bool, netzbezug_erfasst: bool,
+) -> list[CheckErgebnis]:
+    """Prüfung 0 der Plausibilität: ERROR je Netzfeld ohne erfassten Wert (N-734, ``netzfeld_ist_erfasst``)."""
+    ergebnisse: list[CheckErgebnis] = []
+    for erfasst, feld, folge in (
+        (einspeisung_erfasst, "Einspeisung", "Eigenverbrauch und Autarkie"),
+        (netzbezug_erfasst, "Netzbezug", "Gesamtverbrauch, Autarkie und Stromkosten"),
+    ):
+        if erfasst:
+            continue
+        ergebnisse.append(CheckErgebnis(
+            kategorie=kat, schwere=CheckSeverity.ERROR,
+            meldung=f"{prefix}: {feld} nicht erfasst",
+            details=(
+                f"eedc braucht für jeden Monat einen erfassten Wert für {feld} — auch 0 ist ein Wert. "
+                f"Für diesen Monat steht keiner in der Monatszeile (etwa nach einem Import, der nur "
+                f"Wallbox- oder PV-Werte enthielt). Cockpit → Monat nimmt ihn dann aus der HA-Statistik, "
+                f"sofern dort ein Zähler zugeordnet ist; sonst bleiben {folge} des Monats leer. "
+                # N-736: die Fakten-Sichten nehmen den Monat aus der Bilanz (`meta.netz_erfasst`), statt mit 0 zu rechnen.
+                f"Übersicht, Jahresbericht, HA-Sensoren, Auswertungen → Tabelle und Aussichten → Finanzen "
+                f"lassen den Monat bis dahin aus Eigenverbrauch, Autarkie, Ersparnis und CO₂ heraus (seine "
+                f"PV-Erzeugung zählen sie weiter), der Community-Upload teilt ihn nicht; tragen die Tageswerte "
+                f"des Monats das Feld, können sie es von dort nehmen. "
+                # N-739 (c): zuerst der Weg, der den Messwert holt — der Monatsabschluss zeigt das Feld leer.
+                f"Abhilfe: zuerst den HA-Statistik-Import für diesen Monat (ohne „Überschreiben“ genügt, "
+                f"solange der Monat so gemeldet ist); sonst im Monatsabschluss den gemessenen Wert eintragen "
+                f"— ein leeres Feld ist keine 0."
+            ),
+            link=md_link,
+        ))
+    return ergebnisse
 
 
 class MonatsdatenChecks:
@@ -450,7 +485,8 @@ class MonatsdatenChecks:
                 ergebnisse.append(CheckErgebnis(
                     kategorie=kat, schwere=CheckSeverity.ERROR,
                     meldung=f"{monat:02d}/{jahr} fehlt",
-                    link=f"/monatsabschluss/{anlage.id}/{jahr}/{monat}",
+                    # N-739 (a): Deep-Link öffnet die Erfassung des fehlenden Monats (s. `md_link` unten).
+                    link=link_monat_erfassen(f"{monat:02d}/{jahr}"),
                 ))
             if len(fehlende) > 12:
                 ergebnisse.append(CheckErgebnis(
@@ -582,7 +618,9 @@ class MonatsdatenChecks:
 
         for md in monatsdaten:
             prefix = f"{md.monat:02d}/{md.jahr}"
-            md_link = f"/monatsabschluss/{anlage.id}/{md.jahr}/{md.monat}"
+            # N-739 (a): `/monatsabschluss/…` leitet im v4-Frontend ohne `?erfassen=` auf die Daten-Fläche um
+            # (`App.tsx`, `v3ZuV4Route.ts`) — der Monat öffnete sich nicht; der Deep-Link öffnet seine Erfassung.
+            md_link = link_monat_erfassen(prefix)
 
             # PV-Erzeugung des Monats aus dem Read-time-SoT (Messwerte +
             # Aggregat-Lückenfüllung). `None` heißt „nicht auflösbar", nicht
@@ -590,21 +628,15 @@ class MonatsdatenChecks:
             # dann, statt mit einer Teilsumme oder einer 0 zu rechnen.
             pv_erzeugung = pv_erzeugung_map.get((md.jahr, md.monat))
 
-            # 0. Pflichtfelder nicht befüllt
-            if md.einspeisung_kwh is None:
-                ergebnisse.append(CheckErgebnis(
-                    kategorie=kat, schwere=CheckSeverity.ERROR,
-                    meldung=f"{prefix}: Einspeisung nicht erfasst",
-                    details="Kernfeld – ohne Einspeisung sind Eigenverbrauch und Autarkie nicht berechenbar",
-                    link=md_link,
-                ))
-            if md.netzbezug_kwh is None:
-                ergebnisse.append(CheckErgebnis(
-                    kategorie=kat, schwere=CheckSeverity.ERROR,
-                    meldung=f"{prefix}: Netzbezug nicht erfasst",
-                    details="Kernfeld – ohne Netzbezug sind Gesamtverbrauch und Stromkosten nicht berechenbar",
-                    link=md_link,
-                ))
+            # 0. Pflichtfelder nicht erfasst (N-734). Die Spalten sind NOT NULL mit Default 0 — `is None` konnte nie
+            # auslösen. Eine Zeile, die ein Import nur mit Wallbox- oder PV-Werten angelegt hat, steht mit 0 da, ohne
+            # dass jemand eine 0 geliefert hat; ob geliefert, sagt die Herkunft (`netzfeld_ist_erfasst`, EINE Stelle
+            # mit Cockpit → Monat). Cockpit → Monat zeigt das Feld dann leer bzw. nimmt es aus HA/Tagesebene.
+            einspeisung_erfasst = netzfeld_ist_erfasst(md, "einspeisung_kwh")
+            netzbezug_erfasst = netzfeld_ist_erfasst(md, "netzbezug_kwh")
+            ergebnisse += _netzfelder_nicht_erfasst(
+                kat, prefix, md_link, einspeisung_erfasst=einspeisung_erfasst, netzbezug_erfasst=netzbezug_erfasst,
+            )
             if (
                 hat_speicher
                 and (md.jahr, md.monat) in speicher_aktiv_monate
@@ -814,7 +846,11 @@ class MonatsdatenChecks:
             # Notstromanlage, oder ein zweiter Check, der dieselbe Erklärung
             # bräuchte — ab dem zweiten Abnehmer trägt sich eine
             # Stammdaten-Angabe, für einen Textfall nicht.
-            if md.einspeisung_kwh == 0 and md.netzbezug_kwh == 0:
+            # N-734: nur für zwei ERFASSTE 0 — fehlt die Herkunft, meldet Prüfung 0 „nicht erfasst", sonst doppelt.
+            if (
+                einspeisung_erfasst and netzbezug_erfasst
+                and md.einspeisung_kwh == 0 and md.netzbezug_kwh == 0
+            ):
                 ergebnisse.append(CheckErgebnis(
                     kategorie=kat, schwere=CheckSeverity.WARNING,
                     meldung=f"{prefix}: Einspeisung und Netzbezug sind beide 0",

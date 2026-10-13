@@ -37,13 +37,22 @@ from backend.core.berechnungen.erzeuger_traeger import erzeuger_traeger
 from backend.core.investition_kennwerte import get_erzeuger_kwp
 
 
-async def lade_finanz_eingaenge(*, anlage, anlage_id, db):
+async def lade_finanz_eingaenge(*, anlage, anlage_id, db, stichtag=None):
     """Investitionen laden und nach Typ gruppieren, kWp der heute aktiven Erzeuger, historische Komponenten-Monatswerte
     (IMD im #236-Fenster) mit E-Mob-Anreicherung und Wallbox-Pool, Monatsdaten, Monats-Fakten und die daraus gefalteten
     Summen (PV, Speicher, V2H, Eigenverbrauch; E-Auto-PV und WP-Strom je Gerät).
 
     Aus `get_finanz_prognose` Zeilen 134-327 (Stand vor dem Umzug) byte-identisch herausgeloest — Vorlage 7b.
+
+    ``stichtag`` (N-699, 12.10.2026): der Rückblick „Stand <Stichtag>" — die vier Ladungen enden mit dem Monat des
+    Stichtags: Investitionen mit Anschaffung bis zum Stichtag (Entscheid Master: ein Stand 31.12.2024 kennt kein Auto
+    von 2025 — dieselbe Grenze wie `ist_aktiv_*`), IMD (und damit der E-Mob-Pool), Monatsdaten, Monats-Fakten. Gefiltert
+    wird das geladene Ergebnis, nicht die Abfrage — jede Zeile bis zum Stichtag ist dieselbe wie ohne Stichtag. Ohne
+    Stichtag läuft alles wie bisher. Gerufen vom Jahresbericht-PDF (Fortschritt zum 31.12. des Berichtsjahres).
     """
+    def _bis_stichtag(jahr, monat) -> bool:
+        return stichtag is None or (jahr, monat) <= (stichtag.year, stichtag.month)
+
     # =====================================================================
     # ALLE INVESTITIONEN LADEN — Issue #123: Hybrid-Sicht
     # Historische Aggregation braucht ALLE (auch stillgelegte) Investitionen,
@@ -57,6 +66,10 @@ async def lade_finanz_eingaenge(*, anlage, anlage_id, db):
         )
     )
     alle_investitionen = result.scalars().all()
+    if stichtag is not None:
+        alle_investitionen = [
+            i for i in alle_investitionen if i.anschaffungsdatum is None or i.anschaffungsdatum <= stichtag
+        ]
 
     # Nach Typ gruppieren (alle — auch historische)
     pv_module = [i for i in alle_investitionen if i.typ == "pv-module"]
@@ -94,6 +107,8 @@ async def lade_finanz_eingaenge(*, anlage, anlage_id, db):
         )
         # #236: IMD vor anschaffungs- / nach stilllegungsdatum überspringen
         _imd_objekte = result.scalars().all()
+        if stichtag is not None:
+            _imd_objekte = [imd for imd in _imd_objekte if _bis_stichtag(imd.jahr, imd.monat)]
         for imd in _imd_objekte:
             inv_hist = inv_by_id_hist.get(imd.investition_id)
             if not inv_hist or not inv_hist.ist_aktiv_im_monat(imd.jahr, imd.monat):
@@ -133,6 +148,8 @@ async def lade_finanz_eingaenge(*, anlage, anlage_id, db):
         select(Monatsdaten).where(Monatsdaten.anlage_id == anlage_id)
     )
     monatsdaten = result.scalars().all()
+    if stichtag is not None:
+        monatsdaten = [md for md in monatsdaten if _bis_stichtag(md.jahr, md.monat)]
     monatsdaten_dict = {(md.jahr, md.monat): md for md in monatsdaten}
 
     # =====================================================================
@@ -149,6 +166,8 @@ async def lade_finanz_eingaenge(*, anlage, anlage_id, db):
     # Dienstwagen-Filter und Monatstarif ([[feedback_aggregations_drift]]).
     _preis_messung = await lade_preis_aggregate_je_monat(db, anlage_id)
     fakten = await lade_monats_fakten(db, anlage_id, preis_messung=_preis_messung)
+    if stichtag is not None:
+        fakten = [f for f in fakten if _bis_stichtag(f.jahr, f.monat)]
 
     gesamt_eauto_pv = 0.0
     gesamt_wp_strom = 0.0
@@ -180,7 +199,8 @@ async def lade_finanz_eingaenge(*, anlage, anlage_id, db):
     eigenverbrauch_pro_monat = {
         f.schluessel: f.kennzahlen.eigenverbrauch_kwh
         for f in fakten
-        if f.meta.hat_zaehlerzeile
+        # N-736: und nur mit erfassten Netzfeldern — eine Einspeisung 0 ohne Herkunft ist dieselbe unbelegte Aussage.
+        if f.meta.hat_zaehlerzeile and f.meta.netz_erfasst
     }
     gesamt_ev = sum(eigenverbrauch_pro_monat.values())
 
@@ -298,7 +318,10 @@ async def quoten_und_pvgis(
     pvgis_monatswerte = {}
     if pvgis and pvgis.monatswerte:
         for mw in pvgis.monatswerte:
-            pvgis_monatswerte[mw.get("monat")] = mw.get("e_m", 0)
+            # Handgriff L6 (12.10.2026): `or 0` wie die Nachbarn (`pvgis_soll.py`, Jahresbericht) — ein gespeichertes
+            # `None` (nur aus einer von Hand bearbeiteten Export-Datei) ließ `finanz_prognose.py` (`pv <= 0`,
+            # `sum(...)`) mit `TypeError` abbrechen; `.get(…, 0)` fing nur den fehlenden Schlüssel.
+            pvgis_monatswerte[mw.get("monat")] = mw.get("e_m") or 0
     _loc = locals()  # nur gebundene Namen zurueckgeben — ein bedingt gesetzter Name bleibt sonst UnboundLocal
     return {k: _loc[k] for k in ("anzahl_monate_hist", "avg_hist_ev_quote", "basis_ev_quote", "eauto_pv_monat", "hist_ev_quoten", "pvgis", "pvgis_monatswerte", "speicher_ev_erhohung_monat", "v2h_beitrag_monat", "wp_strom_monat_avg",) if k in _loc}
 

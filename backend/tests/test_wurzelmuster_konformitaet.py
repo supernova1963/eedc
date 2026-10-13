@@ -1460,8 +1460,9 @@ P7_BASELINE_AUSNAHMEN: frozenset[str] = frozenset({
     # fragt vorher, ob dort schon ein Wert steht (Vorbestand bleibt ohne „überschreiben", wie Einspeisung und
     # Netzbezug). Die Frage handelt VOM gespeicherten Feld — Diagnose über das Feld, keine Anlagen-PV; ein
     # aufgelöster Wert beantwortete sie nicht. Eigener Empfängername (`_hat_anlagenwert(vorbestand)`), damit die
-    # Freistellung nicht jedes `md` der Datei (Vorschau!) mitnimmt.
-    "backend/api/routes/ha_statistics.py::vorbestand",
+    # Freistellung nicht jedes `md` der Datei (Vorschau!) mitnimmt. RF-5 (Serie „Funktion vor Datei"): der Schreibweg
+    # des Sammelimports steht seitdem im Schwestermodul `ha_statistics_import.py`.
+    "backend/api/routes/ha_statistics_import.py::vorbestand",
     # N-651 (10.10.2026): die BKW-Prüfung des Daten-Checkers fragt je Monat, OB ein Anlagenwert gespeichert ist — mit
     # ihm trägt ein Balkonkraftwerk ohne eigenen Zähler seinen kWp-Anteil (N-621), „PV-Erzeugung fehlt" wäre ein
     # Fehlalarm. Diagnose über das Feld (Vorhandensein, keine Menge), dieselbe Rolle wie `vorbestand`; eigener
@@ -1678,7 +1679,8 @@ P8_BASELINE_AUSNAHMEN: frozenset[str] = frozenset({
     "backend/api/routes/investitionen/dashboard_eauto.py::get_eauto_dashboard",
     "backend/api/routes/investitionen/dashboard_sonstiges.py::get_sonstiges_dashboard",
     "backend/api/routes/investitionen/dashboard_speicher.py::get_speicher_dashboard",
-    "backend/api/routes/investitionen/dashboard_waermepumpe.py::get_waermepumpe_dashboard",
+    # N-712/N-713 (12.10.2026): `dashboard_waermepumpe.py::get_waermepumpe_dashboard` lädt keinen Tarif mehr ohne
+    # Stichtag — der WP-Preis je Monat kommt aus den Monats-Fakten (`tarife_der_monate`); Eintrag gestrichen.
     "backend/api/routes/investitionen/dashboard_wallbox.py::get_wallbox_dashboard",
     # Heutiger Tarif als Fallback des Perioden-Mappings und für die nach vorn
     # gerichteten Sensor-Werte. Die Historien-Summen daneben lösen je Monat auf
@@ -1694,6 +1696,14 @@ P8_BASELINE_AUSNAHMEN: frozenset[str] = frozenset({
     # `calculate_investition_sensors` durch — dieselbe Rolle wie die Zeile
     # darüber, eine Ebene höher.
     "backend/api/routes/ha_export/sensoren.py::get_all_sensors",   # Vorlage 8 (18.09.2026): ha_export.py → Paket ha_export/
+    # N-693 (12.10.2026): der MQTT-Publisher reicht DIESELBE Tarifzeile wie die REST-Route an
+    # `calculate_investition_sensors` durch — dieselbe Rolle wie die Zeile darüber. Hier stand eine Handquery
+    # „jüngster Eintrag" ohne Verwendung und Stichtag, die dieser Wächter nicht sah (sein blinder Fleck, s. oben).
+    "backend/services/ha_mqtt_sync.py::publish_anlage_sensors",
+    # N-693 (12.10.2026): Infothek-Vorbelegung „Stromvertrag"/„Einspeisevertrag" — sie beschreibt den LAUFENDEN
+    # Vertrag, kein vergangener Monat. Vorher zwei Handqueries „jüngster Eintrag" (einmal ohne Gültigkeitsfenster,
+    # einmal ohne Verwendung), die dieser Wächter nicht sah.
+    "backend/api/routes/infothek.py::get_vorbelegung",
     # Anzeige des aktuellen Tarifs + Komponenten-Kennwerte.
     "backend/api/routes/cockpit/uebersicht.py::get_cockpit_uebersicht",
     # Hochrechnung + ausgewiesener Tarif der Response.
@@ -1837,9 +1847,10 @@ def test_p8_emob_ersparnis_bekommt_die_monatspreise():
         "Periode mit EINEM Skalar — bei einem Tarifwechsel schreibt das die "
         "Historie um (F-18: 41,10 € Drift zwischen Cockpit und Komponenten-Hub "
         "an einer laufenden Box, bei identischer kWh-Basis).\n"
-        "Der Lookup kommt aus `strompreise.monats_strompreis_lookup(...)` oder "
-        "aus den Monats-Fakten (`f.tarif.wallbox_preis_effektiv_cent`, dann "
-        "inklusive Flex-Ø). `monats_strompreis_lookup=None` ist erlaubt, aber "
+        "Der Lookup kommt aus den Monats-Fakten (`f.tarif.wallbox_preis_effektiv_cent` "
+        "bzw. `tarife_der_monate(...)`, inklusive Flex-Ø; die zweite Kaskade "
+        "`strompreise.monats_strompreis_lookup` ist seit N-717 entfernt). "
+        "`monats_strompreis_lookup=None` ist erlaubt, aber "
         "explizit hinzuschreiben — genau wie `monatsdaten=None` bei P8."
     )
 
@@ -2226,13 +2237,14 @@ P10_SCHREIBEN_IMPORT_CHECKER: frozenset[str] = frozenset({
     "backend/services/import_writer.py::zaehle_manuelle_werte",
     # Import / Export / Migration.
     "backend/api/routes/ha_statistics.py::get_import_vorschau",
-    "backend/api/routes/ha_statistics.py::import_ha_statistics",
+    # RF-5: der Sammelimport lädt die Gerätezeile in der Phase, die sie anlegt bzw. einbucht (Schreibweg).
+    "backend/api/routes/ha_statistics_import.py::_schreibe_geraetewerte",
     # HA-Bauform E4b Teil A (06.10.2026, Entscheid H-A2): LÖSCHPFAD. Entfernt die Modulwerte eines Monats, die der
     # Sammelimport früher als Zerlegung des Anlagen-PV-Zählers geschrieben hat (Schreiber `ha_statistics_import` UND
     # Marke `kwp_anteil`) — seit E4b steht der Zähler als Anlagenwert in der Zählerzeile. Liest die Gerätezeilen nur,
     # um ihre PROVENIENZ zu prüfen und den Sub-Key zu entfernen; keine Monatsgröße entsteht. Ersetzt den Eintrag
     # `::_verteile_anlagen_pv` (N-533, der Verteil-Schreibweg ist mit E4b entfallen).
-    "backend/api/routes/ha_statistics.py::_entferne_eigene_zerlegung",
+    "backend/api/routes/ha_statistics_import.py::_entferne_eigene_zerlegung",   # RF-5: Schwestermodul
     "backend/api/routes/import_export/csv_operations.py::export_csv",
     "backend/api/routes/import_export/json_operations.py::_export_anlage_full_impl",
     "backend/services/migrations/migrate_emob_canonical_source.py::migrate_emob_canonical_source",
@@ -2466,6 +2478,12 @@ P10_PER_INVESTITION_PHASE: dict[str, str] = {
     # Blindstelle, gegen die dieser Suchlauf gebaut ist.
     "backend/api/routes/ha_export/investition_sensoren.py::_wp_steuerung_und_plan":
         "backend/api/routes/ha_export/investition_sensoren.py::calculate_investition_sensors",
+    # RF-8 (Serie „Funktion vor Datei"): Phasen des Geraete-Rechners — Faltung der WP-Monatszeilen (Strom, Waerme,
+    # Modus-Teilmengen) und die WP-Ersparnis je Monat. Die Zeilen laedt der Orchestrator selbst.
+    "backend/api/routes/ha_export/investition_sensoren.py::_wp_monatsfaltung":
+        "backend/api/routes/ha_export/investition_sensoren.py::calculate_investition_sensors",
+    "backend/api/routes/ha_export/investition_sensoren.py::_wp_ersparnis_sensor":
+        "backend/api/routes/ha_export/investition_sensoren.py::calculate_investition_sensors",
     # Verschachtelte Phase im E-Auto-Dashboard (E-Auto- und Wallbox-Zeile).
     "backend/api/routes/investitionen/dashboard_eauto.py::_emob_daten_von":
         "backend/api/routes/investitionen/dashboard_eauto.py::get_eauto_dashboard",
@@ -2499,6 +2517,14 @@ P10_PER_INVESTITION_PHASE: dict[str, str] = {
     # (ebenfalls gelistet).
     "backend/services/waermepumpe_kennzahlen_je_geraet.py::mengen_aus_monatszeilen":
         "backend/services/waermepumpe_kennzahlen_je_geraet.py::lade_kennzahlen_je_geraet",
+    # RF-5 (Serie „Funktion vor Datei"): Phasen der HA-Import-Vorschau. Sie vergleichen die vorhandenen
+    # Gerätewerte mit HA (Import-Pfad, `P10_SCHREIBEN_IMPORT_CHECKER`); die Zeilen lädt die Route selbst.
+    "backend/api/routes/ha_statistics.py::_lokale_pv_summen":
+        "backend/api/routes/ha_statistics.py::get_import_vorschau",
+    "backend/api/routes/ha_statistics.py::_vergleiche_investitionen":
+        "backend/api/routes/ha_statistics.py::get_import_vorschau",
+    "backend/api/routes/ha_statistics.py::_bkw_eigene_werte_kwh":
+        "backend/api/routes/ha_statistics.py::get_import_vorschau",
 }
 
 #: **Checker-Pfade ohne Lader** — die Blindstelle aus dem Prüfbericht
@@ -3005,6 +3031,10 @@ P11_AUSNAHMEN: frozenset[str] = frozenset({
     "backend/api/routes/investitionen/schemas.py::leistung_kwp_effektiv",   # Vorlage 5 (18.09.2026): crud.py → schemas.py
     "backend/api/routes/pvgis.py::get_pvgis_modul_prognose",
     "backend/services/pdf/builders/anlagendokumentation.py::_build_investition_tech_grid",
+    # RF-9 (Serie „Funktion vor Datei"): die Komponenten-Auflistung des Jahresberichts — je Investition die
+    # kWp-Spalte der Erzeuger-Typen über `get_erzeuger_kwp`, keine Anlagensumme. Bis RF-9 stand sie in
+    # `build_jahresbericht_context`, das den Selektor (String-Vergleich) selbst rief und damit freigestellt war.
+    "backend/services/pdf/builders/jahresbericht.py::_kontext_investitionen",
 
     # ── 4b. Live-Pfad: eine Entity-Zuordnung, keine Σ einer Größe ──────────
     # ⛔ Hier standen bis N-536 (20.09.2026) VIER Einträge mit der Begründung

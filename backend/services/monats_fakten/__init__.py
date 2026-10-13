@@ -89,7 +89,9 @@ from backend.services.monats_fakten.fakten import (  # noqa: F401 — Re-Export
     MonatsFakt,
 )
 from backend.services.monats_fakten.roh import (  # noqa: F401 — Re-Export
+    NETZFELDER,
     _RohMonat,
+    netzfeld_ist_erfasst,
 )
 from backend.services.monats_fakten.laden import (  # noqa: F401 — Re-Export
     lade_monats_fakten,
@@ -97,6 +99,7 @@ from backend.services.monats_fakten.laden import (  # noqa: F401 — Re-Export
 from backend.services.monats_fakten.tarif import (  # noqa: F401 — Re-Export
     dienstliche_ladekosten_euro,
     tarif_des_monats,
+    tarife_der_monate,
 )
 from backend.services.monats_fakten.bau import (  # noqa: F401 — Re-Export
     sonstiges_aus_zeilen,
@@ -111,6 +114,11 @@ from backend.services.monats_fakten.ableitungen import (  # noqa: F401 — Re-Ex
     pv_erzeugungs_monate,
     pv_unvollstaendig_monate,
     pv_unvollstaendig_hinweis,
+    BKW_ERZEUGUNG_ABGETRETEN,
+    BKW_ERZEUGUNG_GEMESSEN,
+    BKW_ERZEUGUNG_KWP_ANTEIL,
+    BkwMonatsBeitrag,
+    bkw_beitrag_im_monat,
 )
 
 __all__ = [
@@ -136,8 +144,11 @@ __all__ = [
     "MetaFakten",
     "MonatsFakt",
     "_RohMonat",
+    "NETZFELDER",
+    "netzfeld_ist_erfasst",
     "lade_monats_fakten",
     "tarif_des_monats",
+    "tarife_der_monate",
     "dienstliche_ladekosten_euro",
     "sonstiges_aus_zeilen",
     "wp_aus_zeilen",
@@ -149,4 +160,9 @@ __all__ = [
     "pv_erzeugungs_monate",
     "pv_unvollstaendig_monate",
     "pv_unvollstaendig_hinweis",
+    "BKW_ERZEUGUNG_ABGETRETEN",
+    "BKW_ERZEUGUNG_GEMESSEN",
+    "BKW_ERZEUGUNG_KWP_ANTEIL",
+    "BkwMonatsBeitrag",
+    "bkw_beitrag_im_monat",
 ]

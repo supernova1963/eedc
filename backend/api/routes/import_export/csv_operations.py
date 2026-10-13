@@ -38,6 +38,7 @@ from .helpers import (
     _import_investition_monatsdaten_legacy,
     _distribute_legacy_pv_to_modules,
     _distribute_legacy_battery_to_storages,
+    _speicher_nullen_verteilen,
 )
 
 router = APIRouter()
@@ -496,6 +497,12 @@ async def import_csv(
                         source="manual:csv_backup", writer="csv_backup_restore",
                     )
                     warnungen.extend(migration_warnungen)
+                    # N-722: die als 0 gelieferte Seite kommt ebenfalls an (wie N-718 am Portal); leer bleibt leer.
+                    await _speicher_nullen_verteilen(
+                        db, batterie_ladung_explicit, batterie_entladung_explicit, speicher_list,
+                        jahr, monat, ueberschreiben,
+                        source="manual:csv_backup", writer="csv_backup_restore",
+                    )
                     # Für Legacy-Feld in Monatsdaten (Fallback)
                     batterie_ladung = batterie_ladung_explicit
                     batterie_entladung = batterie_entladung_explicit
@@ -524,9 +531,12 @@ async def import_csv(
             # bei UPDATE (Hierarchie + Audit-Log greifen), seed_provenance bei
             # frischer INSERT-Row (kein Audit-Spam — Backup-Restore kann hunderte
             # Zeilen × Felder umfassen).
+            # N-740: die Netzfelder mit dem ROHWERT — eine leere Zelle liefert nichts und
+            # bekommt keinen Stempel (die neue Zeile trägt die NOT-NULL-0 ohne Herkunft,
+            # also «nicht erfasst», N-734; eine vorhandene Zeile behält ihren Wert).
             _CSV_BACKUP_FIELDS_TOP = [
-                ("einspeisung_kwh", einspeisung),
-                ("netzbezug_kwh", netzbezug),
+                ("einspeisung_kwh", einspeisung_raw),
+                ("netzbezug_kwh", netzbezug_raw),
                 ("pv_erzeugung_kwh", pv_erzeugung),
                 ("direktverbrauch_kwh", direktverbrauch),
                 ("eigenverbrauch_kwh", eigenverbrauch),
@@ -543,7 +553,7 @@ async def import_csv(
                 # blockiert external:cloud_import:*, gleichauf mit manual:form
                 # (Last-Writer-Wins).
                 for field_name, value in _CSV_BACKUP_FIELDS_TOP:
-                    if value is not None or field_name in ("einspeisung_kwh", "netzbezug_kwh"):
+                    if value is not None:
                         await write_with_provenance(
                             db, existing_md, field_name, value,
                             source="manual:csv_backup", writer="csv_backup_restore",

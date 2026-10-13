@@ -117,6 +117,11 @@ from backend.core.berechnungen.amortisation import (
 from backend.core.berechnungen.investitionskosten import (
     relevante_kosten_aus_investitionen,
 )
+from backend.core.berechnungen.betriebskosten import (
+    betriebskosten_im_zeitraum,
+    betriebskosten_je_investition,
+    betriebskosten_monatsanteil,
+)
 from backend.core.berechnungen.kapitalrechnung import (
     ErsparnisPosten,
     annahme_dauer_text,
@@ -180,6 +185,7 @@ from backend.core.berechnungen.energie import (
     BATTERIE_KOMPONENTEN_PREFIXE,
     PV_KOMPONENTEN_PREFIXE,
     SONSTIGES_KOMPONENTEN_PREFIX,
+    V2H_KOMPONENTEN_PREFIX,
     WAERMEPUMPE_KOMPONENTEN_PREFIXE,
     WALLBOX_KOMPONENTEN_PREFIXE,
     SonstigesTagesSummen,
@@ -190,6 +196,7 @@ from backend.core.berechnungen.energie import (
     sonstiges_kwh_je_richtung,
     sonstiges_richtung,
     summe_batterie_netto_kwh,
+    summe_v2h_kwh,
     summe_bkw_kwh,
     summe_pv_anlage_kwh,
     summe_pv_bkw_kwh,
@@ -347,6 +354,7 @@ from backend.core.berechnungen.tagesbilanz import (
     TagesBilanz,
     bilanz_aus_stundenrows,
     gesamtverbrauch_ha_formel_kwh,
+    mit_v2h_entladung,
     monatsbilanz_aus_tagen,
 )
 from backend.core.berechnungen.verbrauch import (
@@ -383,6 +391,7 @@ __all__ = [
     "TagesBilanz",
     "bilanz_aus_stundenrows",
     "gesamtverbrauch_ha_formel_kwh",
+    "mit_v2h_entladung",
     "monatsbilanz_aus_tagen",
     "berechne_wp_alternativkosten_ersparnis",
     "alter_wirkungsgrad",
@@ -435,6 +444,9 @@ __all__ = [
     "AmortisationsFortschritt",
     "berechne_amortisations_fortschritt",
     "relevante_kosten_aus_investitionen",
+    "betriebskosten_im_zeitraum",
+    "betriebskosten_je_investition",
+    "betriebskosten_monatsanteil",
     "ErsparnisPosten",
     "annahme_dauer_text",
     "erklaerung_jahres_ersparnis",
@@ -487,6 +499,7 @@ __all__ = [
     "erzeuger_kwh_je_investition",
     "erzeugung_hinter_zaehler_kwh",
     "SONSTIGES_KOMPONENTEN_PREFIX",
+    "V2H_KOMPONENTEN_PREFIX",
     "SonstigesTagesSummen",
     "sonstiges_kwh_je_richtung",
     "sonstiges_richtung",
@@ -496,6 +509,7 @@ __all__ = [
     "summe_wallbox_eauto_kwh",
     "batterie_kw_spalte",
     "summe_batterie_netto_kwh",
+    "summe_v2h_kwh",
     "wert_basis_kwh",
     "assert_tep_tz_konsistent",
     "pruefe_tep_tz_konsistenz",

@@ -38,11 +38,41 @@ export default function SolarAussicht3Tage({ prognose3Tage, wetter, heutePvKwh }
   // Tag i, oder `rueckfall: 'eedc'`, wenn sie so weit nicht reicht.
   const quelleTage = wetter?.prognose_quelle_tage ?? null
   const qTag = (i: number) => quelleTage?.[i] ?? null
+  // N-689: Trägt die Antwort für einen Folgetag KEINE Zahl der gewählten Quelle
+  // (Feld fehlt — bis 11.10.2026 strich das Antwortmodell der Route es immer),
+  // steht dort der Kanon. Dann sagt es der Vermerk, statt still eine eedc-Zahl
+  // unter der Quellen-Überschrift zu zeigen. Trägt sie den Tag, entscheidet
+  // allein dessen `rueckfall`.
+  const fremdeQuelle = wetter?.prognose_quelle != null && wetter.prognose_quelle !== 'eedc'
+  const rueckfallEedc = (i: number) => {
+    const q = qTag(i)
+    return q ? q.rueckfall === 'eedc' : fremdeQuelle && i > 0
+  }
+  // N-695: dieselbe Regel je Teilwert. Hat die gewählte Quelle für einen Tag
+  // kein Stundenprofil (Solcast liefert im Live-Pfad nur heute stündlich, SFML
+  // ohne `forecast`-Attribut an keinem Tag), stehen VM/NM aus dem eedc-Kanon
+  // neben ihrer Tageszahl — und addieren sich nicht zu ihr (#401). Dann steht
+  // „eedc" an den Teilwerten. Trägt schon der Tag den Vermerk, gilt er für die
+  // ganze Zeile.
+  const vmNmEedc = (i: number) => {
+    const q = qTag(i)
+    const teilwertEedc = q ? q.vm_nm_rueckfall === 'eedc' : fremdeQuelle
+    return teilwertEedc && !rueckfallEedc(i)
+  }
   return (
     <div>
       <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
-        Solar-Aussicht{wetter?.prognose_quelle && wetter.prognose_quelle !== 'eedc' && ` (${wetter.prognose_quelle === 'solcast' ? 'Solcast' : 'SFML'})`} <SimpleTooltip text={`Alle Zahlen aus derselben Quelle: ${heuteQuelle}. Wo sie einen Tag nicht abdeckt, steht „eedc" dabei (dann: ${folgetageKanon}). „Heute" zeigt den nachgeführten Wert — bisher gemessen plus erwarteter Rest; die ursprüngliche Tagesprognose steht klein darunter. VM/NM = Split an Solar Noon.`}><Info className="inline w-3 h-3 text-gray-400 dark:text-gray-500 opacity-50 cursor-help" /></SimpleTooltip>
+        Solar-Aussicht{wetter?.prognose_quelle && wetter.prognose_quelle !== 'eedc' && ` (${wetter.prognose_quelle === 'solcast' ? 'Solcast' : 'SFML'})`} <SimpleTooltip text={`Zahlen aus der gewählten Quelle: ${heuteQuelle}. Wo sie einen Tag nicht abdeckt, steht „eedc" am Tag; liefert sie für einen Tag keinen Stundenverlauf, kommt die VM/NM-Aufteilung aus der eedc-Prognose und „eedc" steht an VM/NM — die Teile addieren sich dann nicht zur Tageszahl (eedc-Werte: ${folgetageKanon}). „Heute" zeigt den nachgeführten Wert — bisher gemessen plus erwarteter Rest; die ursprüngliche Tagesprognose steht klein darunter. VM/NM = Split an Solar Noon.`}><Info className="inline w-3 h-3 text-gray-400 dark:text-gray-500 opacity-50 cursor-help" /></SimpleTooltip>
       </h3>
+      {/* N-690 (P4): die eedc-Werte von heute stammen aus einem unvollständigen
+          Wetterabruf — der Satz kommt vom Backend, die Zahl bleibt stehen. Bei
+          einer Fremdquelle steht hier keine eedc-Zahl für heute (die Kurve im
+          Wetter-Widget sagt es dort). */}
+      {wetter?.pv_prognose_hinweis && !fremdeQuelle && (
+        <p className="text-[10px] text-amber-500 dark:text-amber-400 mb-1">
+          {wetter.pv_prognose_hinweis}
+        </p>
+      )}
       {prognose3Tage.some(t => pvVormittagKwh(t) != null) && (
         <div className="grid grid-cols-[auto_1fr_7rem] px-3 mb-0.5">
           <span />
@@ -80,7 +110,8 @@ export default function SolarAussicht3Tage({ prognose3Tage, wetter, heutePvKwh }
             ?? (i === 0 ? (wetter?.pv_prognose_kwh ?? pvErtragKwh(tag))
                         : (q && q.rueckfall == null ? q.kwh : pvErtragKwh(tag)))
           // VM/NM aus derselben Quelle wie die Zahl darüber. Liefert die
-          // gewählte Quelle kein Stundenprofil für diesen Tag, gilt der Kanon.
+          // gewählte Quelle kein Stundenprofil für diesen Tag, gilt der Kanon —
+          // mit Vermerk (`vmNmEedc`, N-695).
           const vmKwh = q?.vm_kwh ?? pvVormittagKwh(tag)
           const nmKwh = q?.nm_kwh ?? pvNachmittagKwh(tag)
           const hasVmNm = vmKwh != null
@@ -161,7 +192,7 @@ export default function SolarAussicht3Tage({ prognose3Tage, wetter, heutePvKwh }
                     — statt still eine eedc-Zahl unter der Überschrift der
                     Fremdquelle zu zeigen (Burkard #401: „Cockpit → Aussicht
                     folgt der Einstellung gar nicht"). */}
-                {q?.rueckfall === 'eedc' && (
+                {rueckfallEedc(i) && (
                   <span className="ml-1 text-[9px] text-gray-400 dark:text-gray-500"
                         title="Die gewählte Prognosequelle liefert für diesen Tag keinen Wert — hier steht die eedc-Prognose.">
                     eedc
@@ -210,6 +241,12 @@ export default function SolarAussicht3Tage({ prognose3Tage, wetter, heutePvKwh }
               <span className="text-right text-xs w-28">
                 {hasVmNm ? (
                   <>
+                    {vmNmEedc(i) && (
+                      <span className="mr-1 text-[9px] text-gray-400 dark:text-gray-500"
+                            title="Die gewählte Prognosequelle liefert für diesen Tag keinen Stundenverlauf — Vormittag/Nachmittag stammen aus der eedc-Prognose und addieren sich deshalb nicht zur Tageszahl.">
+                        eedc
+                      </span>
+                    )}
                     <span className="font-semibold text-amber-500">{fmtZahl(vmKwh!, 1)}</span>
                     <span className="text-gray-400 dark:text-gray-500 mx-0.5">/</span>
                     <span className="font-semibold text-amber-400">{fmtZahl(nmKwh ?? 0, 1)}</span>

@@ -90,6 +90,41 @@ def _parse_datetime(wert) -> Optional["datetime"]:
     return dt
 
 
+# ─── Geräte-Spalten: eine Lese-Regel für v09 und den Custom-Import (N-706/N-708) ─────
+#
+# Bis 12.10.2026 standen Vorzeichen-Regel und Basis-Spalten nur IN v09. Der
+# Custom-Import hat daneben einen zweiten Weg (`inv:`-Slots) und eine Vorschau;
+# beide lasen dieselbe Zelle mit eigener Handschrift — der `inv:`-Slot nahm −77
+# ohne Prüfung an (N-708), die Vorschau rechnete Geräte-Spalten um, die v09 roh
+# schreibt (N-706). Jetzt lesen alle drei über diese Funktionen.
+
+#: Spalten der Standard-CSV, die nie einer Investition gehören — v09 überspringt sie.
+V09_BASIS_SPALTEN: frozenset[str] = frozenset({
+    "Jahr", "Monat", "Einspeisung_kWh", "Netzbezug_kWh",
+    "PV_Erzeugung_kWh", "Batterie_Ladung_kWh", "Batterie_Entladung_kWh",
+    "Globalstrahlung_kWh_m2", "Sonnenstunden", "Notizen",
+})
+
+
+def pruefe_nicht_negativ(wert: Optional[float], spaltenname: str) -> Optional[float]:
+    """Die Vorzeichen-Regel eines Geräte-Werts im Import: negativ ⇒ Zeilenfehler.
+
+    Eine Regel, ein Ort (N-708): v09 und der `inv:`-Slot des Custom-Imports.
+    """
+    if wert is not None and wert < 0:
+        raise ValueError(f"Spalte '{spaltenname}': Wert darf nicht negativ sein ({wert})")
+    return wert
+
+
+def lies_geraete_wert(value: str, feld: dict, spaltenname: str, parse_float):
+    """Eine Zelle einer Geräte-Spalte so, wie v09 sie schreibt: Zähl-Felder (`typ: int`) ganzzahlig und ohne
+    Vorzeichen-Prüfung, alle anderen als Zahl mit `pruefe_nicht_negativ`. `None` = leer bzw. keine Zahl."""
+    if feld.get("typ", "float") == "int":
+        raw = parse_float(value)
+        return None if raw is None else int(raw)
+    return pruefe_nicht_negativ(parse_float(value), spaltenname)
+
+
 async def _upsert_investition_monatsdaten(
     db: AsyncSession,
     investition_id: int,
@@ -137,6 +172,27 @@ async def _upsert_investition_monatsdaten(
     )
 
 
+def _spalte_traegt_suffix(col_name: str, sanitized: str, normalized: str, suffix: str) -> bool:
+    """Trägt die Spalte den Suffix dieser Investition? Dieselben zwei Wege wie das Matching in v09: exakt
+    (`<Bezeichnung>_<Suffix>`) oder über den normalisierten Präfix."""
+    if col_name == f"{sanitized}_{suffix}":
+        return True
+    if not col_name.endswith("_" + suffix):
+        return False
+    prefix = col_name[: -len(suffix) - 1]
+    return prefix == sanitized or _normalize_for_matching(prefix) == normalized
+
+
+def ist_alt_spalte(col_name: str, feld: dict) -> bool:
+    """N-710: trägt die Spalte das Feld nur über seinen Alt-Suffix (`csv_suffix_alt`, z. B. Balkonkraftwerk
+    `<Name>_kWh` neben `<Name>_Erzeugung_kWh`)? Eine solche Spalte gilt nur in einer Zeile, deren Haupt-Spalte leer
+    ist — sonst stünde derselbe Wert zweimal in der Datei. v09 und der Zeilen-Kern des eigenen Formats
+    (`custom_import/_shared.py`) entscheiden mit dieser einen Regel."""
+    alt = feld.get("csv_suffix_alt")
+    haupt = feld.get("csv_suffix")
+    return bool(alt) and col_name.endswith("_" + alt) and not (haupt and col_name.endswith("_" + haupt))
+
+
 async def _import_investition_monatsdaten_v09(
     db: AsyncSession,
     row: dict,
@@ -167,12 +223,6 @@ async def _import_investition_monatsdaten_v09(
     Raises:
         ValueError: Bei negativen Werten in kWh/km/€-Feldern
     """
-    def parse_float_positive(val: str, spaltenname: str):
-        result = parse_float(val)
-        if result is not None and result < 0:
-            raise ValueError(f"Spalte '{spaltenname}': Wert darf nicht negativ sein ({result})")
-        return result
-
     summen = {key: 0.0 for key in IMPORT_SUMMEN_KEYS}
     collected_data: dict[int, dict] = {}
 
@@ -196,24 +246,27 @@ async def _import_investition_monatsdaten_v09(
             if alt:
                 inv_field_entries.append((inv, feld, sanitized, normalized, alt))
 
+    # N-710: die Spalten einer Zeile, die ein Haupt-Suffix trägt und nicht leer ist — je (Investition, Feld). Eine
+    # Spalte mit dem Alt-Suffix desselben Feldes gilt nur, wenn es keine solche gibt (Regel in `ist_alt_spalte`).
+    belegte_hauptfelder = {
+        (inv.id, feld["feld"])
+        for col_name, value in row.items()
+        if value and value.strip() and col_name not in V09_BASIS_SPALTEN
+        for inv, feld, sanitized, normalized, csv_suffix in inv_field_entries
+        if csv_suffix == feld.get("csv_suffix") and _spalte_traegt_suffix(col_name, sanitized, normalized, csv_suffix)
+    }
+
     # known_suffixes aus Registry — längste zuerst für korrektes Matching
     known_suffixes = sorted(
         {entry[4] for entry in inv_field_entries},
         key=len, reverse=True
     )
 
-    # Basis-CSV-Spalten überspringen
-    BASIS_SPALTEN = frozenset({
-        "Jahr", "Monat", "Einspeisung_kWh", "Netzbezug_kWh",
-        "PV_Erzeugung_kWh", "Batterie_Ladung_kWh", "Batterie_Entladung_kWh",
-        "Globalstrahlung_kWh_m2", "Sonnenstunden", "Notizen",
-    })
-
     # ── Spalten matchen und Werte sammeln ────────────────────────────────────
     for col_name, value in row.items():
         if not value or not value.strip():
             continue
-        if col_name in BASIS_SPALTEN:
+        if col_name in V09_BASIS_SPALTEN:
             continue
 
         matched_inv = None
@@ -255,30 +308,27 @@ async def _import_investition_monatsdaten_v09(
 
         # ── Wert parsen ──────────────────────────────────────────────────────
         field_key = matched_feld["feld"]
-        feld_typ = matched_feld.get("typ", "float")
+        # N-710: eine Alt-Suffix-Spalte zählt nicht, wenn die Zeile das Feld schon unter seinem Haupt-Suffix trägt
+        # (alte Vorlage und neuer Name in einer Datei) — sie wird dann auch nicht gelesen.
+        if (matched_inv.id, field_key) in belegte_hauptfelder and ist_alt_spalte(col_name, matched_feld):
+            continue
+        field_value = lies_geraete_wert(value, matched_feld, col_name, parse_float)
+        if field_value is None:
+            continue
 
-        if feld_typ == "int":
-            raw = parse_float(value)
-            if raw is None:
-                continue
-            field_value = int(raw)
-        else:
-            raw = parse_float_positive(value, col_name)
-            if raw is None:
-                continue
-            field_value = raw
+        # ── Für Batch-Speicherung sammeln ────────────────────────────────────
+        if matched_inv.id not in collected_data:
+            collected_data[matched_inv.id] = {}
+        # Bei Duplikat (zwei Spalten für dasselbe Feld): ersten Treffer behalten — und nur ihn ins Aggregat zählen
+        # (N-710: bis 12.10.2026 addierte jede Spalte ihren Wert ins Aggregat, ins Gerät ging nur der erste).
+        if field_key in collected_data[matched_inv.id]:
+            continue
+        collected_data[matched_inv.id][field_key] = field_value
 
         # ── Aggregat-Summe aktualisieren ─────────────────────────────────────
         aggregiert_in = matched_feld.get("aggregiert_in")
         if aggregiert_in and aggregiert_in in summen:
             summen[aggregiert_in] += field_value
-
-        # ── Für Batch-Speicherung sammeln ────────────────────────────────────
-        if matched_inv.id not in collected_data:
-            collected_data[matched_inv.id] = {}
-        # Bei Duplikat (csv_suffix_alt trifft nochmal): ersten Treffer behalten
-        if field_key not in collected_data[matched_inv.id]:
-            collected_data[matched_inv.id][field_key] = field_value
 
     # ── Sonderkosten (Sonderfall: für alle Typen, erzeugen sonstige_positionen)
     for inv in investitionen:
@@ -459,6 +509,44 @@ async def _distribute_legacy_battery_to_storages(
         )
 
     return warnungen
+
+
+async def _speicher_nullen_verteilen(
+    db: AsyncSession,
+    batterie_ladung: Optional[float],
+    batterie_entladung: Optional[float],
+    speicher: list[Investition],
+    jahr: int,
+    monat: int,
+    ueberschreiben: bool,
+    *,
+    source: str,
+    writer: str,
+    on_upsert: Optional[Callable[[UpsertResult], None]] = None,
+) -> bool:
+    """N-722: eine gelieferte Speicher-0 ist ein Messwert (Regel N-707/N-711/N-718) — jeder Speicher bekommt sie.
+
+    Der Verteiler darüber schreibt je Seite nur ``> 0`` (seine Aufrufer reichen ``wert or 0`` durch, eine 0 und eine
+    leere Zelle sind dort nicht zu unterscheiden). Diese Funktion schreibt die Seite, die als **0** geliefert wurde,
+    exakt und ohne ``abgeleitet``-Marke (eine 0 ist kein Kapazitätsanteil); ``None`` (Spalte fehlt/leer) bleibt leer.
+    Bis 12.10.2026 standen Custom- und CSV-Import (Alt-Spalten) mit Ladung 50 / Entladung 0 als «Entladung nicht
+    erfasst» im Daten-Checker und «—» im Speicher-Hub; der Portal-Import gleicht dasselbe seit N-718 mit
+    ``data_import._speicher_nullen`` aus. ``True``, wenn etwas geschrieben wurde.
+    """
+    vd = {
+        feld: 0.0
+        for feld, wert in (("ladung_kwh", batterie_ladung), ("entladung_kwh", batterie_entladung))
+        if wert is not None and wert == 0
+    }
+    if not vd or not speicher:
+        return False
+    for inv in speicher:
+        res = await _upsert_investition_monatsdaten(
+            db, inv.id, jahr, monat, dict(vd), ueberschreiben, source=source, writer=writer,
+        )
+        if on_upsert is not None:
+            on_upsert(res)
+    return True
 
 
 async def _import_investition_monatsdaten_legacy(

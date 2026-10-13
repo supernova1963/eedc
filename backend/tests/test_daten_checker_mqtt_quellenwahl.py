@@ -278,3 +278,245 @@ async def test_auch_die_subscriber_info_weist_nach_integration(db, monkeypatch):
         assert "Daten → Einrichtung" not in (b.details or "")
         assert "Einstellungen → Integration" in (b.details or "")
         assert b.link == LINK_INTEGRATION
+
+
+# ─── #425 (gruaGit): die Wallbox-Regel gilt auch für die Topic-Erwartung ────
+#
+# Der Energieprofil-Check überspringt ein E-Auto, dessen Ladung eine Wallbox mit
+# Ladezähler deckt; der MQTT-Check erwartete dessen Energie-Topics trotzdem —
+# seit v4.0.51 auch „Heim: gesamt" (`ladung_kwh`), für das kein Bestand eine
+# gespeicherte Wahl hat. Gemeldet als „erwartet, nie empfangen".
+#
+# ⚠ Die Probe oben (`test_meldung_traegt_den_vollen_topic_pfad`) legt das Auto
+# mit `typ="e_auto"` an — den Registry-Schlüssel gibt es nicht (`e-auto`), sie
+# prüft damit nichts über das Auto. Hier richtig geschrieben.
+
+from datetime import datetime  # noqa: E402
+
+from backend.services.mqtt_topic_registry import build_expected_topics  # noqa: E402
+
+
+class _CacheAllesDaAusser:
+    """Inbound-Cache, in dem jedes erwartete Topic angekommen ist — außer den
+    genannten. So steht in der „nie empfangen"-Zeile genau, was der Check von
+    den stummen Topics noch erwartet (und die Sechser-Grenze greift nicht).
+
+    Ein FESTER Zeitstempel (keine Prozessuhr, N-167): angekommene Topics gelten
+    damit als „veraltet", nie als „nie empfangen" — geprüft wird nur Letzteres."""
+
+    def __init__(self, anlage_id: int, eintraege: list[dict], stumm: set[tuple]):
+        jetzt = datetime(2026, 1, 1, 12, 0)
+        live: dict = {"basis": {}, "inv": {}}
+        energy: dict = {}
+        for e in eintraege:
+            mk = e["match_key"]
+            if tuple(mk) in stumm or not e.get("topic"):
+                continue
+            if mk[0] == "basis_live":
+                live["basis"][mk[1]] = (1.0, jetzt)
+            elif mk[0] == "inv_live":
+                live["inv"].setdefault(mk[1], {})[mk[2]] = (1.0, jetzt)
+            elif mk[0] == "basis_energy":
+                energy[mk[1]] = (1.0, jetzt)
+            elif mk[0] == "inv_energy":
+                energy[f"inv/{mk[1]}/{mk[2]}"] = (1.0, jetzt)
+        self._live = {anlage_id: live}
+        self._energy = {anlage_id: energy}
+
+    def get_all_live_raw(self):
+        return self._live
+
+    def get_all_energy_raw(self):
+        return self._energy
+
+
+async def _stumm_gemeldet(db, monkeypatch, anlage, stumm: set[tuple], mqtt_zaehler: set[str]) -> str:
+    """Die „nie empfangen"-Zeile, wenn nur `stumm` nicht ankommt.
+
+    ``mqtt_zaehler`` reicht die Menge der angekommenen MQTT-Zählerstände durch, wie
+    der Orchestrator (`DatenChecker.check_anlage`) — ohne Zeitfenster der Prozessuhr."""
+    eintraege = await build_expected_topics(db, anlage)
+
+    class _Service:
+        _running = True
+        cache = _CacheAllesDaAusser(anlage.id, eintraege, stumm)
+
+    monkeypatch.setattr(
+        "backend.services.mqtt_inbound_service.get_mqtt_inbound_service",
+        lambda: _Service(),
+    )
+    befunde = await DatenChecker(db=db)._check_mqtt_topic_abdeckung(anlage, mqtt_zaehler)
+    treffer = [b for b in befunde if "nie empfangen" in b.meldung]
+    return treffer[0].details if treffer else ""
+
+
+async def _anlage_mit_auto(db, *, v2h: bool = False):
+    anlage = Anlage(anlagenname="Haus", leistung_kwp=10.0, sensor_mapping={})
+    db.add(anlage)
+    await db.flush()
+    wb = Investition(anlage_id=anlage.id, typ="wallbox", bezeichnung="WB")
+    auto = Investition(
+        anlage_id=anlage.id, typ="e-auto", bezeichnung="ID3",
+        parameter={"v2h_faehig": True} if v2h else {},
+    )
+    db.add_all([wb, auto])
+    await db.flush()
+    return anlage, wb, auto
+
+
+def _wb_mqtt(wb) -> set[str]:
+    """gruaGits Wallbox: Ladezähler per MQTT, Stände kommen an (`sensor_key` wie
+    `snapshot/reader.mqtt_zaehler_keys`)."""
+    return {f"inv:{wb.id}:ladung_kwh"}
+
+
+def _auto_stumm(auto, *felder_energy, live=()) -> set[tuple]:
+    return (
+        {("inv_energy", str(auto.id), f) for f in felder_energy}
+        | {("inv_live", str(auto.id), f) for f in live}
+    )
+
+
+@pytest.mark.asyncio
+async def test_wallbox_mit_ladezaehler_nimmt_dem_auto_die_ladefelder(db, monkeypatch):
+    """(a) gruaGits Fall: Wallbox misst per MQTT ⇒ Lade-/Verbrauchsfelder am Auto
+    nicht erwartet; Ladestand und km bleiben erwartet."""
+    anlage, wb, auto = await _anlage_mit_auto(db)
+    stumm = _auto_stumm(
+        auto, "ladung_kwh", "ladung_pv_kwh", "ladung_netz_kwh", "verbrauch_kwh",
+        "km_gefahren", live=("soc",),
+    )
+    details = await _stumm_gemeldet(db, monkeypatch, anlage, stumm, _wb_mqtt(wb))
+    pfad = f"/inv/{auto.id}_ID3/"
+    assert f"{pfad}km_gefahren" in details
+    assert f"{pfad}soc" in details
+    for feld in ("ladung_kwh", "ladung_pv_kwh", "ladung_netz_kwh", "verbrauch_kwh"):
+        assert f"{pfad}{feld}" not in details, feld
+
+
+@pytest.mark.asyncio
+async def test_ohne_wallbox_zaehler_bleiben_die_ladefelder_erwartet(db, monkeypatch):
+    """(b) Gegenprobe: dieselbe Anlage, aber die Wallbox liefert keinen Zähler ⇒
+    das Auto trägt seine Ladung selbst, die Felder bleiben erwartet."""
+    anlage, _wb, auto = await _anlage_mit_auto(db)
+    stumm = _auto_stumm(
+        auto, "ladung_kwh", "ladung_pv_kwh", "ladung_netz_kwh", "verbrauch_kwh",
+    )
+    details = await _stumm_gemeldet(db, monkeypatch, anlage, stumm, set())
+    pfad = f"/inv/{auto.id}_ID3/"
+    for feld in ("ladung_kwh", "ladung_pv_kwh", "ladung_netz_kwh", "verbrauch_kwh"):
+        assert f"{pfad}{feld}" in details, feld
+
+
+@pytest.mark.asyncio
+async def test_v2h_bleibt_neben_der_wallbox_erwartet(db, monkeypatch):
+    """(c) Die Rückspeisung misst keine Wallbox: `v2h_entladung_kwh` ohne
+    gespeicherte Wahl bleibt erwartet, auch wenn die Wallbox die Ladung deckt."""
+    anlage, wb, auto = await _anlage_mit_auto(db, v2h=True)
+    stumm = _auto_stumm(auto, "v2h_entladung_kwh", "ladung_kwh")
+    details = await _stumm_gemeldet(db, monkeypatch, anlage, stumm, _wb_mqtt(wb))
+    pfad = f"/inv/{auto.id}_ID3/"
+    assert f"{pfad}v2h_entladung_kwh" in details
+    assert f"{pfad}ladung_kwh" not in details
+
+
+# ─── N-746: erwartet wird nur, was es an diesem Gerät gibt ──────────────────
+#
+# Die Erwartungsliste kommt aus `get_alle_felder_fuer_investition` — ohne
+# Bedingungsfilter, weil die Datenquellen-Fläche und die Migrationen alle Felder
+# brauchen. Der Check nahm sie ungefiltert: ein E-Auto ohne „V2H-fähig" trug
+# dauerhaft „…/v2h_entladung_kwh erwartet, nie empfangen", ein Speicher ohne
+# Netzladung `ladung_netz_kwh`, eine Wärmepumpe ohne getrennte Strommessung
+# `strom_heizen_kwh` und `strom_warmwasser_kwh` — Topics, auf die niemand
+# publizieren soll. Die Frage steht jetzt in der Filterkette des Checks
+# (`groesse_gibt_es_am_geraet`, harte Sorte), nicht in der Registry.
+
+async def _anlage_mit_geraet(db, typ: str, parameter: dict):
+    anlage = Anlage(anlagenname="Haus", leistung_kwp=10.0, sensor_mapping={})
+    db.add(anlage)
+    await db.flush()
+    inv = Investition(
+        anlage_id=anlage.id, typ=typ, bezeichnung="Geraet", parameter=parameter,
+    )
+    db.add(inv)
+    await db.flush()
+    return anlage, inv
+
+
+_GERAETEFRAGE_FAELLE = [
+    pytest.param("e-auto", {"v2h_faehig": True}, ("v2h_entladung_kwh",), id="e-auto-v2h"),
+    pytest.param("speicher", {"laedt_aus_netz": True}, ("ladung_netz_kwh",), id="speicher-netzladung"),
+    pytest.param(
+        "waermepumpe", {"getrennte_strommessung": True},
+        ("strom_heizen_kwh", "strom_warmwasser_kwh"), id="wp-getrennte-strommessung",
+    ),
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("typ, parameter_mit, felder", _GERAETEFRAGE_FAELLE)
+async def test_groesse_ohne_geraet_wird_nicht_erwartet(
+    db, monkeypatch, typ, parameter_mit, felder,
+):
+    """Ohne die Eigenschaft gibt es die Größe am Gerät nicht ⇒ kein erwartetes
+    Topic; mit ihr bleibt sie erwartet (Gegenprobe im selben Test)."""
+    anlage_ohne, inv_ohne = await _anlage_mit_geraet(db, typ, {})
+    stumm = {("inv_energy", str(inv_ohne.id), f) for f in felder}
+    details = await _stumm_gemeldet(db, monkeypatch, anlage_ohne, stumm, set())
+    for feld in felder:
+        assert f"/inv/{inv_ohne.id}_Geraet/{feld}" not in details, feld
+
+    anlage_mit, inv_mit = await _anlage_mit_geraet(db, typ, parameter_mit)
+    stumm = {("inv_energy", str(inv_mit.id), f) for f in felder}
+    details = await _stumm_gemeldet(db, monkeypatch, anlage_mit, stumm, set())
+    for feld in felder:
+        assert f"/inv/{inv_mit.id}_Geraet/{feld}" in details, feld
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("typ, parameter_mit, felder", _GERAETEFRAGE_FAELLE)
+async def test_geraetefrage_nimmt_genau_diese_topics(
+    db, _inbound_laeuft, typ, parameter_mit, felder,
+):
+    """Leerer Cache: der Unterschied zwischen beiden Geräten ist genau die Zahl
+    der Größen, die es nur mit der Eigenschaft gibt — nicht mehr, nicht weniger."""
+    anlage_ohne, _ = await _anlage_mit_geraet(db, typ, {})
+    anlage_mit, _ = await _anlage_mit_geraet(db, typ, parameter_mit)
+    assert await _anzahl(db, anlage_mit) - await _anzahl(db, anlage_ohne) == len(felder)
+
+
+@pytest.mark.asyncio
+async def test_split_klima_erwartet_kein_warmwasser(db, monkeypatch):
+    """Dieselbe Regel, gemessene Reichweite: eine Luft-Luft-Anlage hat keinen
+    Warmwasserkreis (N-304) — `warmwasser_kwh` ist dort kein erwartetes Topic."""
+    anlage, inv = await _anlage_mit_geraet(db, "waermepumpe", {"wp_art": "luft_luft"})
+    details = await _stumm_gemeldet(
+        db, monkeypatch, anlage, {("inv_energy", str(inv.id), "warmwasser_kwh")}, set(),
+    )
+    assert f"/inv/{inv.id}_Geraet/warmwasser_kwh" not in details
+
+
+@pytest.mark.asyncio
+async def test_erweitertes_feld_bleibt_erwartet(db, monkeypatch):
+    """Gegenprobe zur weichen Sorte: ein Betriebsart-Feld an einer
+    Nicht-Luft-Luft-WP ist untypisch, nicht unmöglich (URTEIL_ERWEITERT) —
+    es bleibt erwartet."""
+    anlage, inv = await _anlage_mit_geraet(db, "waermepumpe", {})
+    details = await _stumm_gemeldet(
+        db, monkeypatch, anlage,
+        {("inv_energy", str(inv.id), "betriebsart_strom_heizen_kwh")}, set(),
+    )
+    assert f"/inv/{inv.id}_Geraet/betriebsart_strom_heizen_kwh" in details
+
+
+@pytest.mark.asyncio
+async def test_warntext_nennt_den_handgriff_keine(db, _inbound_laeuft):
+    """Der Ausweg für ein Feld, das man nicht über MQTT liefert, steht in der
+    Meldung selbst — nicht nur im Handbuch (§4.8)."""
+    anlage = Anlage(anlagenname="Haus", leistung_kwp=10.0, sensor_mapping={})
+    db.add(anlage)
+    await db.flush()
+    details = await _betroffene(db, anlage)
+    assert details, "Gegenprobe: ohne Befund prüft dieser Test nichts"
+    assert "Einstellungen → Datenquellen" in details
+    assert "„Keine“" in details

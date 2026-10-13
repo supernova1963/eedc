@@ -391,26 +391,48 @@ async def wetter_nachziehen_bereich(
     invs = list((await db.execute(
         select(Investition).where(Investition.anlage_id == anlage.id)
     )).scalars().all())
-    pv_module = [
-        i for i in invs if i.typ in ("pv-module", "balkonkraftwerk") and (i.aktiv is None or i.aktiv)
-    ]
+    pv_alle = [i for i in invs if i.typ in ("pv-module", "balkonkraftwerk")]
     sonstige_erzeuger_ids = {
         i.id for i in invs
         if i.typ == "sonstiges" and (i.parameter or {}).get("kategorie") == "erzeuger"
     }
 
-    try:
-        je_tag = await _fetch_wetter(
-            anlage, ARCHIVE_URL,
-            {"start_date": tage[0].isoformat(), "end_date": tage[-1].isoformat()},
-            pv_module, timeout=timeout,
-        )
-    except Exception as e:  # noqa: BLE001 — ein Abruf darf den Job nicht kippen
-        logger.warning(
-            "Wetter-Nachzug Anlage %s (%s–%s): Archiv-Abruf fehlgeschlagen: %s: %s",
-            anlage.id, tage[0], tage[-1], type(e).__name__, e,
-        )
-        return {"status": "fehler", "error": str(e), "tage": 0}
+    # ⭐ N-730 (12.10.2026): die Module JE TAG — dieselbe Menge wie `aggregate_day` (`aktiv_am_tag`, Audit §6.4;
+    # In-Memory `ist_aktiv_an`, am Stilllegungstag noch aktiv). Bis dahin ging der ganze Bereich mit allen
+    # `aktiv`-Modulen an Open-Meteo: ein Zubau mit anderer Ausrichtung gewichtete das GTI auch an den Tagen vor seiner
+    # Anschaffung mit, der kWp-Nenner der PR aber nicht (`anlagen_kwp(…, datum)`) — gemessen Süd 6 kWp + West 4 kWp ab
+    # 10.06.: am 01.06. GTI 800 statt 1 000 Wh/m², PR 1,00 statt 0,80. Ein Abruf je Modulmenge (über die Spanne ihrer
+    # Tage), nicht je Tag — im Regelfall bleibt es bei einem.
+    tage_je_menge: dict[tuple[int, ...], list[date]] = {}
+    module_je_menge: dict[tuple[int, ...], list[Investition]] = {}
+    for datum in tage:
+        module = [i for i in pv_alle if i.ist_aktiv_an(datum)]
+        schluessel = tuple(sorted(i.id for i in module))
+        tage_je_menge.setdefault(schluessel, []).append(datum)
+        module_je_menge[schluessel] = module
+
+    je_tag: dict[date, dict[int, dict]] = {}
+    for schluessel, tage_der_menge in tage_je_menge.items():
+        try:
+            # N-690: `streng` — fällt eine Orientierungsgruppe aus, wirft der Abruf,
+            # statt Tage ohne GTI zu liefern. Hier wäre ein fehlendes GTI dauerhaft
+            # (der Altbestand-Marker stünde danach, der Tag käme nie wieder dran);
+            # über den `fehler`-Zweig unten schreibt der Lauf nichts, setzt keinen
+            # Marker, und die nächste Nacht versucht es neu.
+            antwort = await _fetch_wetter(
+                anlage, ARCHIVE_URL,
+                {"start_date": tage_der_menge[0].isoformat(), "end_date": tage_der_menge[-1].isoformat()},
+                module_je_menge[schluessel], timeout=timeout, streng=True,
+            )
+        except Exception as e:  # noqa: BLE001 — ein Abruf darf den Job nicht kippen
+            logger.warning(
+                "Wetter-Nachzug Anlage %s (%s–%s): Archiv-Abruf fehlgeschlagen: %s: %s",
+                anlage.id, tage[0], tage[-1], type(e).__name__, e,
+            )
+            return {"status": "fehler", "error": str(e), "tage": 0}
+        for datum in tage_der_menge:
+            if datum in antwort:
+                je_tag[datum] = antwort[datum]
 
     geschrieben = 0
     ohne_wetter = 0
@@ -467,17 +489,60 @@ async def wetter_altbestand_nachziehen(
     return await wetter_nachziehen_bereich(anlage, db, von, bis)
 
 
+#: N-697: so viele Tage bis einschließlich Grenztag sieht Schritt (1) von
+#: ``wetter_nachzug_all`` nach einem fehlenden GTI durch. Scheitert der Abruf in
+#: einer Nacht, ist der Tag in der nächsten nicht mehr Grenztag — ohne dieses
+#: Fenster käme er nie wieder dran. Sieben Nächte decken einen Ausfall über ein
+#: Wochenende hinaus; ein Tag, für den auch das Archiv kein GTI liefert, fällt
+#: danach aus dem Fenster (höchstens sieben weitere Abrufe, kein Dauerlauf).
+GTI_NACHHOL_TAGE = 7
+
+
+async def _tage_ohne_gti(db: AsyncSession, anlage: Anlage, von: date, bis: date) -> set[date]:
+    """Gespeicherte Tage in ``[von, bis]`` mit Stunden, aber ohne GTI-Summe.
+
+    N-697: das ist der Zustand, den ein (Teil-)Ausfall des Wetterabrufs am
+    Grenztag hinterlässt — ``aggregate_day`` schreibt dann ``gti_summe_wh_m2 =
+    None`` und ``performance_ratio = None`` und meldet trotzdem ``ok``
+    (``_fetch_wetter`` liefert seit N-690 bei einem Teil-Ausfall kein GTI).
+    Leer, wo es gar kein GTI geben kann: ohne Koordinaten oder ohne ein im
+    Fenster aktives PV-Modul/Balkonkraftwerk (die Bestandsfrage beantwortet
+    ``prognose_kanon.pv_invs_im_horizont``, wie für den Fan-out der Prognose).
+    """
+    if not anlage.latitude or not anlage.longitude:
+        return set()
+    from backend.services.prognose_kanon import pv_invs_im_horizont
+    if not await pv_invs_im_horizont(db, anlage, von, bis):
+        return set()
+    return {
+        d for (d,) in (await db.execute(
+            select(TagesZusammenfassung.datum).where(
+                TagesZusammenfassung.anlage_id == anlage.id,
+                TagesZusammenfassung.datum >= von,
+                TagesZusammenfassung.datum <= bis,
+                TagesZusammenfassung.gti_summe_wh_m2.is_(None),
+                TagesZusammenfassung.stunden_verfuegbar > 0,
+            )
+        )).all()
+    }
+
+
 async def wetter_nachzug_all(
     ergebnisse: dict,
     heute: Optional[date] = None,
 ) -> dict:
     """Zweiter Schritt des 02:20-Jobs, NACH ``archiv_nachzug_all``.
 
-    Je Anlage: (1) hat der Vorflug den Grenztag übersprungen oder fand der
-    Aggregator keine Daten, wird seine **Wetterzeile** nachgezogen — sonst
-    bliebe genau der Tag vorläufig, für den der Job da ist; (2) hat die Anlage
-    ihren **Altbestand** noch nicht, wird er einmalig nachgezogen und im
-    Marker festgehalten.
+    Je Anlage: (1) hat der Vorflug den Grenztag übersprungen, fand der
+    Aggregator keine Daten oder brach er ab (``fehler``), wird seine
+    **Wetterzeile** nachgezogen — sonst bliebe genau der Tag vorläufig, für
+    den der Job da ist; ebenso jeder Tag der letzten ``GTI_NACHHOL_TAGE`` bis
+    zum Grenztag, dem das **GTI fehlt** (N-697: ein Wetter-Ausfall am Grenztag
+    meldet ``ok`` und hinterlässt den Tag ohne GTI und Performance Ratio;
+    scheitert auch dieser Abruf, versucht es die nächste Nacht). Das Fenster
+    gilt erst, wenn der Altbestand der Anlage erledigt ist — vorher deckt (2)
+    die älteren Tage. (2) hat die Anlage ihren **Altbestand** noch nicht, wird
+    er einmalig nachgezogen und im Marker festgehalten.
 
     ``ergebnisse`` ist der Rückgabewert von ``archiv_nachzug_all`` — die beiden
     Schritte sind getrennt, damit jener samt seinen Proben unverändert bleibt.
@@ -493,9 +558,16 @@ async def wetter_nachzug_all(
             eintrag: dict = {}
             try:
                 status = (ergebnisse.get(anlage.id) or {}).get("status")
-                if status in ("uebersprungen", "keine_daten"):
+                fenster_von = (
+                    grenztag - timedelta(days=GTI_NACHHOL_TAGE - 1)
+                    if str(anlage.id) in marker else grenztag
+                )
+                nachholen = await _tage_ohne_gti(db, anlage, fenster_von, grenztag)
+                if status in ("uebersprungen", "keine_daten", "fehler"):
+                    nachholen.add(grenztag)
+                if nachholen:
                     eintrag["grenztag"] = await wetter_nachziehen_bereich(
-                        anlage, db, grenztag, grenztag,
+                        anlage, db, min(nachholen), max(nachholen),
                     )
                 if str(anlage.id) not in marker:
                     alt = await wetter_altbestand_nachziehen(

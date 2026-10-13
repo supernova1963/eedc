@@ -176,10 +176,16 @@ FELD_AUSWERTUNGEN: dict[tuple[str, str], tuple[Auswertung, ...]] = {
     (TYP_ANLAGE, "pv_gesamt_kwh"): (
         # ADR-002/**P7**: das Anlagen-Aggregat ist ausschliesslich EINGANG der
         # Modul-Aufloesung — es fuellt die Luecken der Module ohne eigenen Wert.
-        _a(COCKPIT_TAG, "services/snapshot/komponenten_beitraege.py",
-           "loese_pv_tageswerte_auf", "PV_AGGREGAT_BASIS_FELD"),
-        _a(COCKPIT_MONAT, "services/snapshot/aggregator.py",
-           "get_komponenten_tageskwh", "pv_gesamt"),
+        # N-686 (11.10.2026): Leser ist die Tagestabelle des Bestandspfads
+        # (HA-LTS und Snapshot-Fallback, `aggregate_day` →
+        # `TagesZusammenfassung.komponenten_kwh`); Cockpit → Tag liest die Zeile,
+        # Cockpit → Monat ihre Summe (`monats_aus_tagen`). Bis dahin standen hier
+        # `get_komponenten_tageskwh`/`loese_pv_tageswerte_auf` — seit `8db019d8`
+        # (26.09.2026) ohne Produktions-Aufrufer.
+        _a(COCKPIT_TAG, "services/snapshot/tages_tabelle.py",
+           "baue_tagestabelle", "PV_AGGREGAT_BASIS_FELD"),
+        _a(COCKPIT_MONAT, "services/snapshot/tages_tabelle.py",
+           "baue_tagestabelle", "PV_AGGREGAT_BASIS_FELD"),
     ),
     (TYP_ANLAGE, "globalstrahlung_kwh_m2"): (
         _a(COCKPIT_AUSSICHT, "api/routes/aussichten/prognose.py", "get_langfrist_prognose"),
@@ -190,27 +196,31 @@ FELD_AUSWERTUNGEN: dict[tuple[str, str], tuple[Auswertung, ...]] = {
         _a(AUSW_TABELLE, "api/routes/monatsdaten.py", "MonatsdatenBase"),
     ),
     (TYP_ANLAGE, "durchschnittstemperatur"): (
-        # E8 — kWh je Heizgradtag: die Monatsmitteltemperatur ist der Eingang.
-        _a(KOMP_WP, "services/mitteltemperatur.py", "lade_monatsmittel_temperatur"),
+        # Wärme-Verteilung (Jahr) mit Ø-Außentemperatur je Monat: der gepflegte
+        # Monatswert füllt dort die Lücken der Messreihe (Stufe 3). ⛔ NICHT E8 —
+        # die Heizgradtage nehmen ihn ausdrücklich nicht (K-2,
+        # `lade_heizgradtage_je_monat`).
+        _a(KOMP_WP, "services/waerme_verteilung.py", "_monats_temperaturen"),
         _a(AUSW_TABELLE, "api/routes/monatsdaten.py", "list_monatsdaten_aggregiert"),
     ),
 
     # ── Anlagen-Ebene: Preise je Monat (ADR-002/P8) ──────────────────────────
     (TYP_ANLAGE, "netzbezug_durchschnittspreis_cent"): (
         _a(COCKPIT_MONAT, "api/routes/aktueller_monat/__init__.py", "_berechne_monat"),
-        # ADR-002/P8 — der wirksame Arbeitspreis DIESES Monats, nicht der heutige.
-        _a(AUSW_FINANZEN, "services/strompreis_aggregator.py", "wirksamer_arbeitspreis_cent"),
+        # ADR-002/P8 — der wirksame Arbeitspreis DIESES Monats, nicht der heutige;
+        # der gepflegte Monatswert ist Stufe 1 der Auflösung (`aufgeloester_monatspreis`).
+        _a(AUSW_FINANZEN, "services/strompreis_aggregator.py", "_aufgeloester_monatspreis_ungecacht"),
     ),
     (TYP_ANLAGE, "einspeise_durchschnittspreis_cent"): (
         _a(AUSW_FINANZEN, "api/routes/strompreise.py", "resolve_einspeise_preis_cent"),
         _a(AUSW_TABELLE, "api/routes/monatsdaten.py", "list_monatsdaten_aggregiert"),
     ),
     (TYP_ANLAGE, "kraftstoffpreis_euro"): (
-        _a(KOMP_EAUTO, "services/eauto_wirtschaftlichkeit.py", "berechne_eauto_ersparnis"),
+        _a(KOMP_EAUTO, "api/routes/investitionen/dashboard_eauto.py", "get_eauto_dashboard"),
         _a(COCKPIT_JAHR, "api/routes/cockpit/uebersicht.py", "get_cockpit_uebersicht"),
     ),
     (TYP_ANLAGE, "gaspreis_cent_kwh"): (
-        _a(KOMP_WP, "services/wp_wirtschaftlichkeit.py", "berechne_wp_ersparnis"),
+        _a(KOMP_WP, "api/routes/investitionen/dashboard_waermepumpe.py", "get_waermepumpe_dashboard"),
         _a(COCKPIT_MONAT, "api/routes/aktueller_monat/finanzen.py", "finanzen_des_monats"),
     ),
     (TYP_ANLAGE, "strompreis"): (
@@ -222,22 +232,22 @@ FELD_AUSWERTUNGEN: dict[tuple[str, str], tuple[Auswertung, ...]] = {
     # ── Anlagen-Ebene: Live ──────────────────────────────────────────────────
     (TYP_ANLAGE, "einspeisung_w"): (
         _a(COCKPIT_LIVE, "services/live_power_service.py", "LivePowerService._collect_values"),
-        _a(COCKPIT_TAG, "services/live_tagesverlauf_service.py", "get_tagesverlauf"),
+        _a(COCKPIT_TAG, "services/live_tagesverlauf_service.py", "_ha_netz"),
     ),
     (TYP_ANLAGE, "netzbezug_w"): (
         _a(COCKPIT_LIVE, "services/live_power_service.py", "LivePowerService._collect_values"),
-        _a(COCKPIT_TAG, "services/live_tagesverlauf_service.py", "get_tagesverlauf"),
+        _a(COCKPIT_TAG, "services/live_tagesverlauf_service.py", "_ha_netz"),
     ),
     (TYP_ANLAGE, "netz_kombi_w"): (
         _a(COCKPIT_LIVE, "services/live_power_service.py", "LivePowerService._collect_values"),
-        _a(COCKPIT_TAG, "services/live_tagesverlauf_service.py", "get_tagesverlauf"),
+        _a(COCKPIT_TAG, "services/live_tagesverlauf_service.py", "_ha_netz"),
     ),
     (TYP_ANLAGE, "pv_gesamt_w"): (
-        _a(COCKPIT_LIVE, "services/live_komponenten_builder.py", "build_komponenten"),
-        _a(COCKPIT_TAG, "services/live_tagesverlauf_service.py", "get_tagesverlauf"),
+        _a(COCKPIT_LIVE, "services/live_komponenten_builder.py", "_pv_gesamt_aus_basis"),
+        _a(COCKPIT_TAG, "services/live_tagesverlauf_service.py", "_ha_pv_gesamt"),
     ),
     (TYP_ANLAGE, "aussentemperatur_c"): (
-        _a(COCKPIT_LIVE, "api/routes/live_wetter.py", "get_live_wetter"),
+        _a(COCKPIT_LIVE, "api/routes/live_wetter_antwort.py", "_ha_aussentemperatur"),
     ),
 
     # ── PV-Module ────────────────────────────────────────────────────────────
@@ -247,14 +257,12 @@ FELD_AUSWERTUNGEN: dict[tuple[str, str], tuple[Auswertung, ...]] = {
         _a(HA_SENSOREN, "api/routes/ha_export/anlage_energie.py", "monatsfakten_und_energie"),
     ),
     ("pv-module", "leistung_w"): (
-        _a(COCKPIT_LIVE, "services/live_komponenten_builder.py", "build_komponenten"),
+        _a(COCKPIT_LIVE, "services/live_komponenten_builder.py", "_verbuche_investition"),
     ),
 
     # ── Wechselrichter ───────────────────────────────────────────────────────
-    # `pv_erzeugung_kwh` steht bewusst in FELDER_OHNE_AUSWERTUNG_BEKANNT.
-    ("wechselrichter", "leistung_w"): (
-        _a(COCKPIT_LIVE, "services/live_komponenten_builder.py", "build_komponenten"),
-    ),
+    # Beide Felder (`pv_erzeugung_kwh`, `leistung_w`) stehen bewusst in
+    # FELDER_OHNE_AUSWERTUNG_BEKANNT (N-685).
 
     # ── Speicher ─────────────────────────────────────────────────────────────
     ("speicher", "ladung_kwh"): (
@@ -278,10 +286,10 @@ FELD_AUSWERTUNGEN: dict[tuple[str, str], tuple[Auswertung, ...]] = {
         _a(COCKPIT_MONAT, "core/berechnungen/imd_monatsaggregat.py", "imd_typ_beitrag"),
     ),
     ("speicher", "leistung_w"): (
-        _a(COCKPIT_LIVE, "services/live_komponenten_builder.py", "build_komponenten"),
+        _a(COCKPIT_LIVE, "services/live_komponenten_builder.py", "_verbuche_investition"),
     ),
     ("speicher", "soc"): (
-        _a(COCKPIT_LIVE, "services/live_komponenten_builder.py", "build_komponenten"),
+        _a(COCKPIT_LIVE, "services/live_komponenten_builder.py", "_soc_gauge"),
     ),
 
     # ── Wärmepumpe / Klima: Strom ────────────────────────────────────────────
@@ -289,8 +297,8 @@ FELD_AUSWERTUNGEN: dict[tuple[str, str], tuple[Auswertung, ...]] = {
         _a(KOMP_WP, "services/waermepumpe_kennzahlen_je_geraet.py", "mengen_aus_monatszeilen",
            "get_wp_strom_kwh"),
         _a(COCKPIT_MONAT, "core/berechnungen/imd_monatsaggregat.py", "imd_typ_beitrag",
-           "get_wp_strom_kwh"),
-        _a(HA_SENSOREN, "api/routes/ha_export/investition_sensoren.py", "calculate_investition_sensors",
+           "wp_strom_aufteilung"),
+        _a(HA_SENSOREN, "api/routes/ha_export/investition_sensoren.py", "_wp_monatsfaltung",
            "get_wp_strom_kwh"),
     ),
     ("waermepumpe", "strom_heizen_kwh"): (
@@ -308,7 +316,7 @@ FELD_AUSWERTUNGEN: dict[tuple[str, str], tuple[Auswertung, ...]] = {
     ("waermepumpe", "waerme_kwh"): (
         _a(KOMP_WP, "core/berechnungen/waermepumpe_kennzahl.py", "waerme_gesamt_kwh"),
         _a(COCKPIT_MONAT, "core/berechnungen/imd_monatsaggregat.py", "imd_typ_beitrag"),
-        _a(HA_SENSOREN, "api/routes/ha_export/investition_sensoren.py", "calculate_investition_sensors"),
+        _a(HA_SENSOREN, "api/routes/ha_export/investition_sensoren.py", "_wp_monatsfaltung"),
     ),
     ("waermepumpe", "heizenergie_kwh"): (
         _a(KOMP_WP, "core/berechnungen/waermepumpe_kennzahl.py", "heizwaerme_kwh"),
@@ -383,22 +391,22 @@ FELD_AUSWERTUNGEN: dict[tuple[str, str], tuple[Auswertung, ...]] = {
 
     # ── Wärmepumpe / Klima: Live und Zustand ─────────────────────────────────
     ("waermepumpe", "leistung_w"): (
-        _a(COCKPIT_LIVE, "services/live_komponenten_builder.py", "build_komponenten"),
+        _a(COCKPIT_LIVE, "services/live_komponenten_builder.py", "_verbuche_investition"),
     ),
     ("waermepumpe", "leistung_heizen_w"): (
-        _a(COCKPIT_LIVE, "services/live_komponenten_builder.py", "build_komponenten"),
-        _a(COCKPIT_TAG, "services/live_tagesverlauf_service.py", "_get_tagesverlauf_mqtt"),
+        _a(COCKPIT_LIVE, "services/live_komponenten_builder.py", "_wp_leistung_und_icon"),
+        _a(COCKPIT_TAG, "services/live_tagesverlauf_service.py", "_mqtt_wp_split_serien"),
     ),
     ("waermepumpe", "leistung_warmwasser_w"): (
-        _a(COCKPIT_LIVE, "services/live_komponenten_builder.py", "build_komponenten"),
-        _a(COCKPIT_TAG, "services/live_tagesverlauf_service.py", "_get_tagesverlauf_mqtt"),
+        _a(COCKPIT_LIVE, "services/live_komponenten_builder.py", "_wp_leistung_und_icon"),
+        _a(COCKPIT_TAG, "services/live_tagesverlauf_service.py", "_mqtt_wp_split_serien"),
     ),
     ("waermepumpe", "leistung_kuehlen_w"): (
-        _a(COCKPIT_LIVE, "services/live_komponenten_builder.py", "build_komponenten"),
-        _a(COCKPIT_TAG, "services/live_tagesverlauf_service.py", "_get_tagesverlauf_mqtt"),
+        _a(COCKPIT_LIVE, "services/live_komponenten_builder.py", "_wp_leistung_und_icon"),
+        _a(COCKPIT_TAG, "services/live_tagesverlauf_service.py", "_mqtt_wp_split_serien"),
     ),
     ("waermepumpe", "warmwasser_temperatur_c"): (
-        _a(COCKPIT_LIVE, "services/live_komponenten_builder.py", "build_komponenten"),
+        _a(COCKPIT_LIVE, "services/live_komponenten_builder.py", "_warmwasser_temperatur"),
     ),
     ("waermepumpe", "soll_temperatur_c"): (
         _a(COCKPIT_LIVE, "services/live_komponenten_builder.py", "_innengeraete_live"),
@@ -407,14 +415,20 @@ FELD_AUSWERTUNGEN: dict[tuple[str, str], tuple[Auswertung, ...]] = {
         _a(COCKPIT_LIVE, "services/live_komponenten_builder.py", "_innengeraete_live"),
     ),
     ("waermepumpe", "betriebsmodus"): (
-        _a(COCKPIT_LIVE, "services/live_komponenten_builder.py", "build_komponenten"),
-        _a(KOMP_WP, "services/betriebsmodus_live.py", "lade_betriebsmodus_live"),
+        _a(COCKPIT_LIVE, "services/live_komponenten_builder.py", "_buche_verbraucher"),
+        # Der Modus je Stunde aus der Tagesaggregation (`aggregate_day` →
+        # `TagesEnergieProfil.betriebsmodus_je_wp`) trägt den abgeleiteten
+        # Modus-Split, den Komponenten → Wärmepumpe als Strom je Betriebsart zeigt
+        # (`modus_split_schreiben` → `modus_strom_zeile`). N-686: hier stand
+        # `lade_betriebsmodus_live` — das speist nur Live und die HA-Sensoren.
+        _a(KOMP_WP, "services/energie_profil/_helpers.py", "_get_betriebsmodus_history",
+           "modus_quelle"),
     ),
 
     # ── Wärmepumpe: Counter (KUMULATIVE_COUNTER_FELDER) ──────────────────────
     ("waermepumpe", "wp_starts_anzahl"): (
         _a(KOMP_WP, "api/routes/investitionen/dashboard_waermepumpe.py", "get_waermepumpe_dashboard"),
-        _a(JAHRESBERICHT, "services/pdf/builders/jahresbericht.py", "build_jahresbericht_context"),
+        _a(JAHRESBERICHT, "services/pdf/builders/jahresbericht.py", "_wp_zaehler_summen"),   # RF-9: Phase des WP-Counters
     ),
     ("waermepumpe", "wp_betriebsstunden"): (
         _a(KOMP_WP, "api/routes/investitionen/dashboard_waermepumpe.py", "get_waermepumpe_dashboard"),
@@ -424,7 +438,7 @@ FELD_AUSWERTUNGEN: dict[tuple[str, str], tuple[Auswertung, ...]] = {
     ("e-auto", "km_gefahren"): (
         _a(KOMP_EAUTO, "services/eauto_wirtschaftlichkeit.py", "berechne_eauto_ersparnis"),
         _a(COCKPIT_MONAT, "core/berechnungen/imd_monatsaggregat.py", "imd_typ_beitrag"),
-        _a(HA_SENSOREN, "api/routes/ha_export/investition_sensoren.py", "calculate_investition_sensors"),
+        _a(HA_SENSOREN, "api/routes/ha_export/investition_sensoren.py", "_emob_summen"),
     ),
     ("e-auto", "verbrauch_kwh"): (
         _a(KOMP_EAUTO, "api/routes/investitionen/dashboard_eauto.py", "get_eauto_dashboard"),
@@ -456,15 +470,17 @@ FELD_AUSWERTUNGEN: dict[tuple[str, str], tuple[Auswertung, ...]] = {
         _a(COCKPIT_JAHR, "api/routes/cockpit/uebersicht.py", "get_cockpit_uebersicht"),
     ),
     ("e-auto", "v2h_entladung_kwh"): (
+        # #110 V2H-Tageswert: Tagesgröße aus dem Zählerpfad (`v2h_<id>`), in der Tagesbilanz über `mit_v2h_entladung`.
+        _a(COCKPIT_TAG, "services/energie_profil/tage_werte.py", "baue_tage_werte"),
         _a(KOMP_EAUTO, "api/routes/investitionen/dashboard_eauto.py", "get_eauto_dashboard"),
         _a(COCKPIT_JAHR, "api/routes/cockpit/uebersicht.py", "get_cockpit_uebersicht"),
         _a(HA_SENSOREN, "api/routes/ha_export/anlage_energie.py", "monatsfakten_und_energie"),
     ),
     ("e-auto", "leistung_w"): (
-        _a(COCKPIT_LIVE, "services/live_komponenten_builder.py", "build_komponenten"),
+        _a(COCKPIT_LIVE, "services/live_komponenten_builder.py", "_verbuche_investition"),
     ),
     ("e-auto", "soc"): (
-        _a(COCKPIT_LIVE, "services/live_komponenten_builder.py", "build_komponenten"),
+        _a(COCKPIT_LIVE, "services/live_komponenten_builder.py", "_soc_gauge"),
     ),
 
     # ── Wallbox ──────────────────────────────────────────────────────────────
@@ -480,12 +496,13 @@ FELD_AUSWERTUNGEN: dict[tuple[str, str], tuple[Auswertung, ...]] = {
         _a(KOMP_WALLBOX, "api/routes/investitionen/dashboard_wallbox.py", "get_wallbox_dashboard"),
     ),
     ("wallbox", "leistung_w"): (
-        _a(COCKPIT_LIVE, "services/live_komponenten_builder.py", "build_komponenten"),
+        _a(COCKPIT_LIVE, "services/live_komponenten_builder.py", "_verbuche_investition"),
     ),
 
     # ── Balkonkraftwerk ──────────────────────────────────────────────────────
     ("balkonkraftwerk", "pv_erzeugung_kwh"): (
-        _a(KOMP_BKW, "api/routes/investitionen/dashboard_balkonkraftwerk.py", "get_balkonkraftwerk_dashboard"),
+        _a(KOMP_BKW, "api/routes/investitionen/dashboard_balkonkraftwerk.py", "get_balkonkraftwerk_dashboard",
+           "imd_typ_beitrag", "bkw_erzeugung"),
         _a(COCKPIT_MONAT, "core/berechnungen/imd_monatsaggregat.py", "imd_typ_beitrag",
            "get_pv_erzeugung_kwh"),
     ),
@@ -502,7 +519,7 @@ FELD_AUSWERTUNGEN: dict[tuple[str, str], tuple[Auswertung, ...]] = {
         _a(KOMP_BKW, "api/routes/investitionen/dashboard_balkonkraftwerk.py", "get_balkonkraftwerk_dashboard"),
     ),
     ("balkonkraftwerk", "leistung_w"): (
-        _a(COCKPIT_LIVE, "services/live_komponenten_builder.py", "build_komponenten"),
+        _a(COCKPIT_LIVE, "services/live_komponenten_builder.py", "_verbuche_investition"),
     ),
 
     # ── Sonstiges ────────────────────────────────────────────────────────────
@@ -545,7 +562,7 @@ FELD_AUSWERTUNGEN: dict[tuple[str, str], tuple[Auswertung, ...]] = {
            "ZAEHLERSTAND_FELD"),
     ),
     ("sonstiges", "leistung_w"): (
-        _a(COCKPIT_LIVE, "services/live_komponenten_builder.py", "build_komponenten"),
+        _a(COCKPIT_LIVE, "services/live_komponenten_builder.py", "_verbuche_investition"),
     ),
 }
 
@@ -577,10 +594,21 @@ FELDER_OHNE_AUSWERTUNG_BEKANNT: dict[tuple[str, str], str] = {
         "ihre Sichten; der Stand selbst erscheint nur in der CSV-Spalte "
         "`Tachostand`."
     ),
+    ("wechselrichter", "leistung_w"): (
+        "Kein Leser (N-685, gemessen 11.10.2026): Jeder Live-Pfad überspringt den "
+        "Wechselrichter per `SKIP_TYPEN` vor dem Lesen (`live_komponenten_builder`, "
+        "`live_tagesverlauf_service`, `live_history_service`, `live_sensor_config`), "
+        "der Verbrauchsprofil-Pfad liest nur `ERZEUGER_TYPEN`. Die Datenquellen-"
+        "Fläche zeigt den Wechselrichter seit `00b979c69` (27.04.2026) gar nicht "
+        "(`mqtt_topic_registry.build_expected_topics` überspringt `SKIP_TYPEN`). "
+        "Bis dahin stand hier „Cockpit → Live“ — eine Wegbeschreibung, die nie stimmte."
+    ),
 }
 
 #: Obergrenze für die Liste darüber — sie darf **schrumpfen**, nicht wachsen.
-FELDER_OHNE_AUSWERTUNG_MAX: Final[int] = 2
+#: ⚑ 2 → 3 am 11.10.2026 bewusst gehoben (N-685, Entscheid Master): WR-`leistung_w`
+#: hatte nie einen Leser; der Eintrag „Cockpit → Live" war falsch, nicht das Feld neu.
+FELDER_OHNE_AUSWERTUNG_MAX: Final[int] = 3
 
 
 # =============================================================================

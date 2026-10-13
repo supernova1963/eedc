@@ -12,7 +12,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, s
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from backend.core.exceptions import not_found
 from backend.api.deps import get_db
@@ -55,6 +55,7 @@ from backend.services.monats_fakten import (
     TAGESWERT_SPEICHER,
     finanz_zeile_eingabe,
     lade_monats_fakten,
+    netzfeld_ist_erfasst,
 )
 from backend.services.provenance import (
     gepruefte_ableitungen,
@@ -166,9 +167,23 @@ class MonatsdatenResponse(MonatsdatenBase):
     direktverbrauch_kwh: Optional[float]
     eigenverbrauch_kwh: Optional[float]
     gesamtverbrauch_kwh: Optional[float]
+    # N-739 (b): die Netzspalten sind NOT NULL — eine 0 ohne Herkunft ist nicht erfasst (N-734). Das Formular belegt
+    # das Feld dann leer statt mit 0 vor (ungeprüftes Speichern stempelte die 0 sonst als eingetragen).
+    # Nur aus der ORM-Zeile gesetzt; ohne sie (dict) bleibt `True` = Verhalten wie bisher.
+    einspeisung_erfasst: bool = True
+    netzbezug_erfasst: bool = True
 
     class Config:
         from_attributes = True
+
+    @model_validator(mode="wrap")
+    @classmethod
+    def _netzfelder_erfasst(cls, data, handler):
+        antwort = handler(data)
+        if isinstance(data, Monatsdaten):
+            antwort.einspeisung_erfasst = netzfeld_ist_erfasst(data, "einspeisung_kwh")
+            antwort.netzbezug_erfasst = netzfeld_ist_erfasst(data, "netzbezug_kwh")
+        return antwort
 
 
 class MonatsdatenMitKennzahlen(MonatsdatenResponse):
@@ -217,9 +232,11 @@ class AggregierteMonatsdatenResponse(BaseModel):
     #: Liste, und die Zeile **ist** der Monat — ein Satz auf Seitenebene würde
     #: gerade die Information verlieren, welcher Monat gemeint ist.
     pv_vollstaendig: bool = True
-    # Zählerwerte (aus Monatsdaten) — Anlage-weit, bleiben float
-    einspeisung_kwh: float
-    netzbezug_kwh: float
+    # Zählerwerte (aus Monatsdaten) — Anlage-weit. N-736: `None`, wenn der Monat eine Zeile hat, deren Einspeisung oder
+    # Netzbezug nicht erfasst ist (0 ohne Herkunft) — dann sind auch die Bilanz- und Geldfelder unten `None`
+    # (`_ohne_netz_bilanz`); der Monat bleibt als Zeile stehen.
+    einspeisung_kwh: Optional[float]
+    netzbezug_kwh: Optional[float]
     globalstrahlung_kwh_m2: Optional[float]
     sonnenstunden: Optional[float]
     #: Monatsmittel der Außentemperatur (°C) — die zweite Linie des
@@ -353,11 +370,11 @@ class AggregierteMonatsdatenResponse(BaseModel):
     wallbox_ladung_kwh: Optional[float]
     wallbox_ladung_pv_kwh: Optional[float]
     # Berechnet
-    direktverbrauch_kwh: float
-    eigenverbrauch_kwh: float
-    gesamtverbrauch_kwh: float
-    autarkie_prozent: float
-    eigenverbrauchsquote_prozent: float
+    direktverbrauch_kwh: Optional[float]
+    eigenverbrauch_kwh: Optional[float]
+    gesamtverbrauch_kwh: Optional[float]
+    autarkie_prozent: Optional[float]
+    eigenverbrauchsquote_prozent: Optional[float]
     # §51 EEG: kWh, die bei negativem Börsenpreis eingespeist wurden (= fiktiver
     # §51-Abzug-Volumen). Σ der Tages-`einspeisung_neg_preis_kwh` über den Monat
     # (R17/Verlauf, Weg 1). None = Anlage unterliegt nicht §51 (`unterliegt_eeg_51`).
@@ -374,11 +391,11 @@ class AggregierteMonatsdatenResponse(BaseModel):
     #
     # Der Grundpreis steckt in `netzbezug_kosten_euro` (Monatsposten, SoT
     # `berechne_netzbezug_kosten`), nicht im Arbeitspreis.
-    einspeise_erloes_euro: float
+    einspeise_erloes_euro: Optional[float]
     # §51-Diagnose: was der negative Börsenpreis gekostet hat. Der Erlös oben ist
     # bereits gekürzt — ohne diese Zahl wirkt die Kürzung wie ein Fehler.
-    einspeise_nicht_verguetet_euro: float
-    ev_ersparnis_euro: float
+    einspeise_nicht_verguetet_euro: Optional[float]
+    ev_ersparnis_euro: Optional[float]
     #: Konzept §9 Weg 2 — Σ der **gepflegten** Erlöse von Erzeugern mit eigenem
     #: Einspeisetarif (Mieterstrom, Allgemeinstrom, Nachbarhaus) und der Abgabe an
     #: Dritte. Er steckt **nicht** in ``einspeise_erloes_euro`` (der bewertet den
@@ -398,7 +415,7 @@ class AggregierteMonatsdatenResponse(BaseModel):
     # BKW-Monate **ohne** erfasste Erzeugung (Datenlücke): ihr gemessener
     # Eigenverbrauch trägt hier, sonst 0 — sonst zählte derselbe Fluss zweimal
     # (`bkw_finanz_beitrag`, ADR-002/P9).
-    bkw_ersparnis_euro: float
+    bkw_ersparnis_euro: Optional[float]
     # Unentgeltliche Wertabgabe § 3 Abs. 1b UStG, **nur** bei
     # `steuerliche_behandlung == "regelbesteuerung"`, sonst 0,0. Je Monat aus dem
     # Eigenverbrauch dieses Monats × USt je kWh des Jahres (`services/ust_satz.py`,
@@ -407,15 +424,15 @@ class AggregierteMonatsdatenResponse(BaseModel):
     # N-633: dienstliche Ladekosten des Monats (Aufwand, positiv) — Posten der Ergebnis-Leiter, bereits in
     # `netto_ertrag_euro` abgezogen; einzeln hier, damit *Auswertungen → Finanzen* ihn im Rechenweg nennen kann.
     dienstliche_ladekosten_euro: float = 0.0
-    netzbezug_kosten_euro: float
+    netzbezug_kosten_euro: Optional[float]
     # Einspeise-Erlös + EV- + BKW-Ersparnis + Erlös eigener Satz + Sonstige Positionen (netto) − USt — die Stufe 1 der
     # Ergebnis-Leiter, dieselbe Zahl wie die Cockpit-Kachel des Monats (GLOSSAR „Netto-Ertrag (PV)"). Bis 03.10.2026
     # ohne die Sonstigen Positionen; die Finanz-Sicht schlug sie selbst auf (A1). Sie LIEST das Feld seither nur.
-    netto_ertrag_euro: float
+    netto_ertrag_euro: Optional[float]
     # Netto-Ertrag − Netzbezugskosten — eine eigene Größe dieser Tabelle (ohne WP-/E-Mob-Ersparnis, ohne
     # Betriebskosten; Sonstige Positionen seit 03.10.2026 über den Netto-Ertrag MIT), NICHT die Stufe 2 der
     # Ergebnis-Leiter und nicht das T-Konto-Ergebnis (Wächter W1: Ausnahme).
-    netto_bilanz_euro: float
+    netto_bilanz_euro: Optional[float]
     # Der **effektive** Arbeitspreis des Monats: abgerechneter Flex-Ø vor dem
     # Stammdaten-Tarif (`resolve_netzbezug_preis_cent`, ADR-002/**P8**). Ohne
     # gepflegten Tarif der Default aus `wirtschaftlichkeit_defaults` — dass ein
@@ -763,7 +780,7 @@ async def list_monatsdaten_aggregiert(
             ),
         )
 
-        result.append(AggregierteMonatsdatenResponse(
+        result.append(_ohne_netz_bilanz(f, AggregierteMonatsdatenResponse(
             # `md is None` ⇒ Monat ohne Zählerzeile (nur mit
             # `inkl_ohne_zaehlerzeile=true` in der Antwort). Die Zählerwerte
             # kommen ohnehin schon aus der Schicht (`f.zaehler`, dort 0,0), die
@@ -899,9 +916,31 @@ async def list_monatsdaten_aggregiert(
             hat_legacy_daten=hat_legacy,
             legacy_ohne_ziel=legacy_ohne_ziel,
             aus_tageswerten=sorted(aus_tagen) or None,
-        ))
+        )))
 
     return result
+
+
+#: N-736: die Felder der Tabellen-Zeile, die aus Einspeisung/Netzbezug folgen — Zählerwerte, Bilanz und die Geldposten
+#: der Finanz-Zeile. Nicht darunter: PV und Komponenten (bleiben sichtbar), Sonstige Positionen, dienstliche Ladekosten,
+#: Erlös eigener Satz, Tarif und USt (die USt ist für einen Monat außerhalb der Grundgesamtheit schon 0,0).
+_NETZ_ABHAENGIGE_FELDER = (
+    "einspeisung_kwh", "netzbezug_kwh", "direktverbrauch_kwh", "eigenverbrauch_kwh", "gesamtverbrauch_kwh",
+    "autarkie_prozent", "eigenverbrauchsquote_prozent", "eigenverbrauch_ohne_verluste_kwh",
+    "einspeise_erloes_euro", "einspeise_nicht_verguetet_euro", "ev_ersparnis_euro", "bkw_ersparnis_euro",
+    "netzbezug_kosten_euro", "netto_ertrag_euro", "netto_bilanz_euro",
+)
+
+
+def _ohne_netz_bilanz(fakt, zeile: AggregierteMonatsdatenResponse) -> AggregierteMonatsdatenResponse:
+    """⭐ N-736 (12.10.2026): eine Zeile, deren Einspeisung oder Netzbezug nicht erfasst ist (``meta.netz_erfasst``, 0 ohne
+    Herkunft, N-734), zeigt ihre Netz-, Bilanz- und Geldfelder als ``None`` („–") statt der 0 und dem, was aus ihr folgt
+    (Eigenverbrauch = PV, Autarkie 100 %, Ersparnis auf die ganze PV). Die Zeile bleibt in der Liste — sie ist ein
+    Datensatz, den man öffnen und vervollständigen kann. Ein Monat ohne Zeile (``inkl_ohne_zaehlerzeile``) bleibt wie er
+    ist; ein Netzfeld, das die Tagesebene gefüllt hat, gilt als erfasst (``bau._zaehler_fakten``)."""
+    if not fakt.meta.hat_zaehlerzeile or fakt.meta.netz_erfasst:
+        return zeile
+    return zeile.model_copy(update=dict.fromkeys(_NETZ_ABHAENGIGE_FELDER))
 
 
 @router.get("/", response_model=list[MonatsdatenResponse])
@@ -1145,6 +1184,9 @@ async def create_monatsdaten(
             fields=auto_fields,
         )
 
+    # N-735: erst schreiben, dann neu laden — `refresh` ohne `flush` verwarf die eben geseedete Provenance
+    # (seit `e527bfe8`, 09.05.2026: jede Formular-Neuanlage stand ohne `manual:form`-Eintrag in der DB).
+    await db.flush()
     await db.refresh(md)
 
     # Investitions-Monatsdaten speichern (E-Auto km, Speicher Ladung, WP Verbrauch, etc.)

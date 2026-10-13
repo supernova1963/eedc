@@ -26,7 +26,7 @@ import { VerteilungsBalken, GeraeteHinweis, GrundlastSollIstKachel, Monatsprogno
 import { unvollstaendigHerkunft } from '../lib/prognoseHinweise'
 import { zeigeMonatsprognose } from '../lib/sollErfuellung'
 import { Parkbar } from '../components/park'
-import { DATENROLLE, NETZLADUNG_PREIS_HERKUNFT, VERGLEICH_BADGE } from '../lib'
+import { DATENROLLE, NETZLADUNG_AUS_TAGEN, NETZLADUNG_PREIS_HERKUNFT, VERGLEICH_BADGE } from '../lib'
 import { KOMPONENTEN_FARBEN } from '../lib/colors'
 // R3b S7/A5: Datenrollen-Icons aus der SoT-Map (eine Datenrolle = ein Icon).
 import { DATENROLLEN_ICONS } from '../lib/komponentenStyle'
@@ -35,6 +35,7 @@ import { berechnungAus, ergebnisMitLuecken, ergebnisZeile, fehlendHinweis } from
 import type { KpiStripItem } from '../components/blocks'
 import type { AktuellerMonatResponse } from '../api/aktuellerMonat'
 import type { AggregierteMonatsdaten } from '../api/monatsdaten'
+import { pvErzeugerNamen } from './bilanzParkIds'
 
 export interface GleicheMonatStats {
   pv: number | null
@@ -207,11 +208,15 @@ function preisFormel(d: AktuellerMonatResponse): string {
       return 'Ø aus deinem Zeittarif (HT/NT), über den Netzbezug gewichtet' + kosten
     case 'stamm':
       return 'Arbeitspreis aus dem Strompreis-Tarif' + kosten
+    case 'vorbelegung':
+      // N-712: kein Tarif zum Stichtag (vor dem ersten Tarif) — der Monat rechnet mit der Vorbelegung wie die
+      // Monats-Fakten, und die Formel sagt es, statt einen Tarif zu behaupten (P4).
+      return 'Kein Strompreis-Tarif für diesen Zeitraum hinterlegt — gerechnet mit der Vorbelegung' + kosten
     case 'gemischt':
       // N-655: nur im Jahr — die Faltung (`ergebnis.py::falte_zeitraum`) nennt die Herkunft ihrer Preiswahl;
       // stammen die Monate aus verschiedenen Stufen, sagt der Satz das statt eine einzige zu behaupten.
       // N-680: seit die Faltung je Monat den Kaskaden-Preis nimmt, gehört die gemessene Stufe in die Aufzählung.
-      return 'Ø über die Monate — je Monat abgerechneter Ø, gemessene Stundenpreise, Zeittarif (HT/NT) oder Tarif-Arbeitspreis, über den Netzbezug gewichtet' + kosten
+      return 'Ø über die Monate — je Monat abgerechneter Ø, gemessene Stundenpreise, Zeittarif (HT/NT), Tarif-Arbeitspreis oder ohne Tarif die Vorbelegung, über den Netzbezug gewichtet' + kosten
     default:
       return d.netzbezug_durchschnittspreis_cent != null
         ? 'Ø-Bezugspreis (dynamischer Tarif, verbrauchsgewichtet)' + kosten
@@ -234,7 +239,9 @@ export function baueNetzKostenKpis(d: AktuellerMonatResponse): KpiStripItem[] {
       // Strompreis-Mitschrift" — auch dort, wo gar keine Mitschrift beteiligt
       // war (Forum simon42 #89667/56, MartyBr). Ein Etikett, das die Quelle
       // falsch benennt, ist schlimmer als keines.
-      formel: `Ø-Ladepreis der Netzladung (${NETZLADUNG_PREIS_HERKUNFT[d.speicher_ladung_netz_preis_quelle ?? ''] ?? 'Herkunft unbekannt'}) · Kosten = Netzladung × Ladepreis`,
+      formel: `Ø-Ladepreis der Netzladung (${NETZLADUNG_PREIS_HERKUNFT[d.speicher_ladung_netz_preis_quelle ?? ''] ?? 'Herkunft unbekannt'}) · Kosten = Netzladung × Ladepreis`
+        // #427: im laufenden Monat ohne Abschluss kommt die Menge aus den Tagen — die Kachel sagt es.
+        + (d.speicher_ladung_netz_herkunft === 'tageswerte' ? ` · ${NETZLADUNG_AUS_TAGEN}` : ''),
       // Ohne Ladepreis (u. a. bei 0 kWh Netzladung) bleibt die Herleitung leer —
       // „0 kWh × — ct/kWh" wäre keine Rechnung, sondern Rauschen.
       berechnung: d.speicher_ladung_netz_preis_cent != null
@@ -415,11 +422,8 @@ export function MonatBilanz({
     </>
   )
 
-  // Woraus sich die PV-Erzeugung zusammensetzt (Strings + WR) — Aggregations-Hinweis.
-  const pvGeraete = [
-    ...(d.komponenten_geraete?.['pv-module'] ?? []),
-    ...(d.komponenten_geraete?.['wechselrichter'] ?? []),
-  ]
+  // Woraus sich die PV-Erzeugung zusammensetzt (Strings + WR + Balkonkraftwerk) — Aggregations-Hinweis.
+  const pvGeraete = pvErzeugerNamen(d)
 
   // P4/§3: eine PV-Teilsumme bleibt stehen und wird BESCHRIFTET (additive Summe
   // ⇒ richtungssicher zu niedrig). Text kommt aus dem Backend-SoT

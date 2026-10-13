@@ -243,6 +243,69 @@ def test_produzent_liefert_ungerundet():
             f"{name} rundet wieder selbst — Rundung gehört an die "
             f"Serialisierungsgrenze (SensorExportItem / publish_sensor)."
         )
+    # RF-8: die Phasen des Geraete-Rechners liefern ebenso ungerundet.
+    from backend.api.routes.ha_export import investition_sensoren
+
+    for name in ("_roi_basis_sensoren", "_emob_monate", "_emob_summen", "_emob_sensoren", "_emob_sensorwert",
+                 "_emob_ersparnis_eingaenge", "_emob_ersparnis", "_emob_ersparnis_text", "_wp_sensoren",
+                 "_wp_monatsfaltung", "_wp_nachtrag", "_wp_zaehler", "_wp_sensorwert", "_wp_modus_sensor",
+                 "_wp_arbeitszahl_sensor", "_wp_ersparnis_sensor"):
+        assert "round(" not in inspect.getsource(getattr(investition_sensoren, name)), name
+
+
+#: N-694: Hilfsfunktionen, die Sensorwerte UND Attribute bilden. Die Attribute rundet die Grenze nicht, dort ist
+#: `round(` richtig — deshalb prüft der Wächter hier nur das WERT-Argument des Anhänge-Aufrufs, nicht den Rumpf.
+#: (Modul, Funktion, Anhänge-Funktion, Position des Werts.)
+_WERT_STELLEN_DER_HILFSFUNKTIONEN = (
+    ("backend.api.routes.ha_export.investition_sensoren", "_sonstiges_sensoren", "_an", 1),
+    ("backend.api.routes.ha_export.anlage_steuerung", "steuerungs_sensoren", "_anhaengen", 2),
+)
+
+
+def _gerundete_wert_argumente(quelle: str, anhaengen: str, pos: int) -> list[str]:
+    """Die Wert-Argumente von `anhaengen(...)` in `quelle`, die einen `round(`-Aufruf enthalten."""
+    import ast
+    import textwrap
+
+    treffer = []
+    for knoten in ast.walk(ast.parse(textwrap.dedent(quelle))):
+        if not (isinstance(knoten, ast.Call) and getattr(knoten.func, "id", None) == anhaengen):
+            continue
+        wert = knoten.args[pos] if len(knoten.args) > pos else None
+        assert wert is not None, f"{anhaengen}(...) ohne Wert an Position {pos}: {ast.unparse(knoten)[:80]}"
+        if any(isinstance(n, ast.Call) and getattr(n.func, "id", None) == "round" for n in ast.walk(wert)):
+            treffer.append(ast.unparse(wert))
+    return treffer
+
+
+def test_hilfsfunktionen_liefern_den_wert_ungerundet():
+    """N-694: auch die Hilfsfunktionen, in die Sensoren seit S2/S3 gewandert sind, liefern den WERT ungerundet.
+
+    Gemessen am HEAD `ee222ed7`: `_sonstiges_sensoren` (seit S3 von RF-8 U6 bewusst ausgenommen) und
+    `steuerungs_sensoren` rundeten zwei kWh-Sensoren auf eine Stelle vor, die Grenze dann auf null — 3,46 → 4.
+    Die Probe mit Zahlen steht in `test_n694_doppelrundung_export_grenze.py`.
+    """
+    import importlib
+    import inspect
+
+    for modul, funktion, anhaengen, pos in _WERT_STELLEN_DER_HILFSFUNKTIONEN:
+        quelle = inspect.getsource(getattr(importlib.import_module(modul), funktion))
+        assert f"{anhaengen}(" in quelle, f"{funktion} hängt nicht mehr über {anhaengen} an — Wächter nachziehen"
+        gerundet = _gerundete_wert_argumente(quelle, anhaengen, pos)
+        assert not gerundet, (
+            f"{funktion} rundet den Sensorwert vor der Export-Grenze: {gerundet} — Rundung gehört an die "
+            "Serialisierungsgrenze (`runde_exportwert`), sonst wird zweimal gerundet (N-694)."
+        )
+
+
+def test_wert_waechter_sieht_eine_vorrundung():
+    """Sprengsatz des Wächters oben: eine Vorrundung im Wert-Argument fällt auf, eine im Attribut nicht."""
+    quelle = (
+        "def f():\n"
+        "    _an('k', round(x, 1), {'a': round(y, 1)})\n"
+        "    _an('k2', z, {'b': round(y, 1)})\n"
+    )
+    assert _gerundete_wert_argumente(quelle, "_an", 1) == ["round(x, 1)"]
 
 
 # ---------------------------------------------------------------------------

@@ -179,11 +179,16 @@ Eine Gruppenkachel erkennst du an den zwei versetzten Rahmen dahinter („hier l
 5. **Gesamtverbrauch** = Eigenverbrauch + Netzbezug (alles, was das Haus heute verbraucht hat)
 6. **Einspeisung** (PV-Überschuss ins Netz)
 
+**Woher die Tageswerte kommen:** Ist für eine Größe ein Zählerstand (kWh) zugeordnet — PV, Einspeisung, Netzbezug, Speicher (Ladung/Entladung), Wärmepumpe, Wallbox, sonstige Geräte —, liest eedc den Zuwachs dieses Zählers seit Mitternacht; nur ohne Zähler rechnet es die Menge aus der Leistung hoch. Das gilt auch für den „heute"-Wert im Tooltip eines Geräts und auch dann, wenn das Netz über einen Kombi-Sensor (±) zugeordnet ist. Bei kurzen Lastspitzen (etwa einem Heizstab) kann die hochgerechnete Menge deutlich vom Zähler abweichen.
+
 **Tagesverlauf-Diagramm** — Linien-/Flächendiagramm für PV/Verbrauch/Speicher, mit gepunkteter **Strompreis-Linie** auf zweiter Y-Achse:
 
 - Ist ein eigener Strompreis-Sensor als Datenquelle zugeordnet (Tibber, aWATTar, EPEX, eigener Template-Sensor), heißt die Linie „Strompreis".
 - Ohne eigenen Sensor greift automatisch der **EPEX-Börsenpreis** (DE/AT via aWATTar-API) → Linie „Börsenpreis (EPEX)"; auch die frühen Morgenstunden vor dem ersten Sensor-Wert werden so aufgefüllt.
 - Ein Klick auf einen Legenden-Eintrag schaltet die jeweilige Serie ein oder aus.
+
+Das Diagramm braucht eine **Leistungs-Zuordnung** unter *Einstellungen → Datenquellen* (Home Assistant); mit MQTT-Inbound gibt
+es keine Kurve — dann steht an seiner Stelle ein Satz, der das sagt (die Tageswerte kommen weiter aus den Zählern).
 
 **Börsenpreis heute & morgen** — ein eigener Block mit der **Day-Ahead-Kurve** über zwei Tage
 auf einer durchgehenden Zeitachse:
@@ -279,6 +284,14 @@ Die **Tag**-Sicht bringt den feingranularen Stunden-Tag ins Cockpit: ein ausgew�
 > aus dem Netz, kann die Summe der Tage leicht über dem Monatswert liegen — der Monat verrechnet die
 > Netzladung mit dem PV-Überschuss anderer Tage ([Berechnungsreferenz 3.1](BERECHNUNGEN.md#31-energie-bilanz-monatskennzahlen)).
 
+> **V2H — das Auto speist ins Haus zurück.** Hast du an einem V2H-fähigen E-Auto den Zähler **„V2H Entladung"** zugeordnet
+> (*Einstellungen → Datenquellen*, das Feld erscheint nur mit „V2H-fähig"), zählt der Tag die Rückspeisung als dritten
+> Summanden: **Eigenverbrauch = Direktverbrauch + Speicher-Entladung + V2H-Rückspeisung**, und sie steckt genauso in
+> Gesamtverbrauch und Autarkie — wie im Monat. Der Rechenweg im Tooltip nennt sie, sobald der Tag eine trägt; im Block
+> **E-Mobilität** steht sie als Zeile **„V2H-Rückspeisung"**. Die Rückspeisung ist eine **Tagesgröße**: die
+> Stundenwerte-Tabelle und der Stunden-Verlauf zeigen sie nicht, die Summe der Stunden liegt deshalb um sie unter dem
+> Gesamtverbrauch des Tages. Im laufenden Monat zählt V2H erst mit dem Monatsabschluss. Ohne Zähler steht dort „—".
+
 > **Wo steht der Speicher?** Nicht im obersten Kennzahlen-Block, sondern weiter unten im
 > eingeklappten Block **Speicher** — seine Kopfzeile nennt schon ohne Aufklappen geladene kWh,
 > Vollzyklen und Wirkungsgrad. Aufgeklappt stehen dort **Ladung**, **Entladung**,
@@ -320,6 +333,8 @@ Die Datenbasis sind kumulative Zähler-Snapshots (stündlich); die Tages-Werte f
 Die **Monat**-Sicht ist das Referenz-Muster der Zeit-Achse: ein ausgewählter Monat mit Tages-Granularität. Über den Monats-Zeitstrahl navigierst du zu beliebigen Vormonaten.
 
 > **Womit die Sicht aufgeht:** mit dem **laufenden** Monat, solange kein Monatsabschluss offen ist. Fehlt noch ein Abschluss, öffnet sie stattdessen den jüngsten Monat, für den Werte gepflegt sind — dort beginnt der Weg zum offenen Abschluss, und der Knopf „Abschluss starten" steht daneben.
+>
+> **Laufender Monat nach einem Import:** Ein Import des laufenden Monats (Portal, Cloud, eigene Datei) gilt für die importierten Gruppen als Monatsabschluss; Netzbezug und Einspeisung kommen weiter aus der HA-Statistik.
 
 - **Kennzahl-Strip** oben — die wichtigsten Monatswerte mit Δ zum Vormonat
 - **Energiebilanz** — PV-Erzeugung, Direktverbrauch, Einspeisung, Netzbezug
@@ -363,6 +378,10 @@ Die **Monat**-Sicht ist das Referenz-Muster der Zeit-Achse: ein ausgewählter Mo
 > gemessener Monatswert wird nie verdrängt —, und sie sagt, dass sie es war: am
 > Quellen-Etikett steht dann „Tageswerte". Beginnt deine Tages-Aufzeichnung erst mitten im
 > Monat (frisch eingerichtetes Add-on), steht der Zeitraum daneben: „Tageswerte (05.–14.09.)".
+> Trägt nur **dein Netzbezugs- oder Einspeisezähler** einen Teil dieser Tage — etwa weil Home Assistant für eine
+> umbenannte Entity keine Werte mehr hat —, steht über den Kacheln ein Hinweis: „Der Netzbezug ist eine Teilsumme:
+> Tageswerte gibt es dafür nur am 01.07., für die übrigen Größen vom 01.07. bis 03.07. — Gesamtverbrauch und Autarkie
+> rechnen mit diesem Teilwert." Die Zahl bleibt stehen; korrigiere die Zuordnung, dann rechnet der Monat wieder voll.
 > **Das gilt auch für den Block *Wärme/Klima*** — Strom, Wärme, Kälte, Arbeitszahlen und die
 > Tabelle *Zahlen je Gerät* kommen dann aus demselben Leser, aus dem der Verlauf darunter
 > seine Tage zeichnet; Kachel und Verlauf nennen also dieselbe Zahl.
@@ -419,8 +438,15 @@ Die **Monat**-Sicht ist das Referenz-Muster der Zeit-Achse: ein ausgewählter Mo
 > *kein Heizbetrieb in diesem Zeitraum* — die Wärmepumpe lief nicht, es fehlt kein Zähler.
 
 > **Ohne Home Assistant** gilt dasselbe für Zähler, die eedc über MQTT mitschreibt, ab dem ersten Monat, den diese
-> Mitschrift ganz abdeckt; davor — und für die Netzladung deines Speichers auch mit Home Assistant — zählen diese Größen
-> erst mit dem Monatsabschluss.
+> Mitschrift ganz abdeckt; davor zählen diese Größen erst mit dem Monatsabschluss.
+
+> **Netzladung des Speichers im laufenden Monat.** Hat dein Speicher einen Zähler für die Ladung aus dem Netz, nennt der
+> laufende Monat die Netzladung schon vor dem Abschluss — als **Summe der abgelaufenen Tage**, dieselben Zahlen wie in
+> *Cockpit → Tag* (der heutige Tag kommt morgen dazu). Die Kachel **„Batterieladung Netz"** und die Speicher-Zeile
+> „davon aus dem Netz" sagen das beim Überfahren („Menge aus Tageswerten"); der Ladepreis ist derselbe wie am Tag
+> (gewichtet mit deinen Stundenpreisen, sonst dein Arbeitspreis). Mit dem Monatsabschluss gilt der gespeicherte Wert. Ein
+> **vergangener** Monat ohne Abschluss nennt die Netzladung weiterhin erst mit dem Abschluss — ebenso die V2H-Rückspeisung
+> eines E-Autos.
 
 Aus dem feingranularen Stunden-Bestand des Monats zeigt die Sicht zusätzlich:
 
@@ -472,7 +498,11 @@ Die **Jahr/Gesamt**-Sicht fasst die Anlage über ein ganzes Jahr zusammen — vo
 > **Monate ohne Monatsabschluss.** Hat ein vergangener Monat noch keinen Monatsabschluss, rechnet das Jahr ihn mit den
 > Werten aus Home Assistant (bzw. MQTT oder einem Connector) mit und sagt es über dem Vergleich: „1 Monat ohne
 > Monatsabschluss (Sep), Werte aus Home Assistant — Übersicht und Jahresbericht zählen ihn nicht mit." Die Übersicht,
-> der Jahresbericht und der HA-Sensor rechnen nur mit abgeschlossenen Monaten. Kann ein Monat gar nicht berechnet
+> der Jahresbericht und der HA-Sensor rechnen nur mit abgeschlossenen Monaten — und nur mit solchen, deren Einspeisung
+> und Netzbezug erfasst sind: Hat ein Import die Monatszeile ohne diese Werte angelegt (etwa nur mit Wallbox-Daten),
+> zählen Übersicht, Jahresbericht, HA-Sensor, *Auswertungen → Tabelle* und der Community-Upload den Monat bei
+> Eigenverbrauch, Autarkie und Ersparnis nicht mit (die Tabelle zeigt dort „–"), bis das Feld erfasst ist; der
+> Daten-Checker nennt ihn („Netzbezug nicht erfasst"). Kann ein Monat gar nicht berechnet
 > werden, nennt die Zeile ihn ebenfalls; das Jahresergebnis bleibt dann — wie bei einer fehlenden Stromrechnung — leer
 > („—“) und nennt den Monat als fehlenden Posten.
 > **Ohne Home Assistant** zeigt *Cockpit → Monat* einen solchen Monat erst nach dem Abschluss — MQTT-Zählerstände und
@@ -751,6 +781,8 @@ Zusätzlich: **JAZ Heizen / JAZ Warmwasser getrennt** (nur wenn du Strom je Funk
 - **Kostenersparnis** gegenüber Benziner/Diesel — auf Basis echter **monatlicher Benzinpreise** aus dem EU Weekly Oil Bulletin (fehlt ein Monatspreis: der am E-Auto eingetragene *Benzinpreis (€/L)*, sonst 1,65 €/L — das Feld ist nicht vorbelegt, ein geleertes Feld bleibt leer). Abgezogen wird der Strom der **ganzen** Ladung: die Netz-Ladung zu ihrem Preis, die PV-Ladung zu dem Preis, mit dem eedc sie schon als Eigenverbrauch gutschreibt — sonst zählte dieselbe Kilowattstunde zweimal. Der PV-Anteil zeigt, woher der Strom kam; er ist kein eigener Geldbetrag
 - **V2H-Entladung** (wenn aktiviert)
 
+**Externe Ladung:** Kopf, Verlauf, Tabelle und Jahresvergleich zeigen dieselben Werte — je Monat das Paar (kWh, €) mit den höheren Kosten aus dem, was am Auto erfasst ist, und dem Anteil an einer externen Ladung an der Wallbox-Zeile (Altbestand). Haben beide Seiten dieselben Kosten (etwa extern am Auto **ohne** Kosten erfasst), zählt die größere Menge ([Berechnungen §3.4](BERECHNUNGEN.md#34-e-auto-einsparung)).
+
 In der Monatstabelle steht ein Monat, in dem das Auto nur einen Anteil am Rest der Wallbox bekommt, als eigene Zeile **„aus Wallbox-Rest"** (ohne km) — so ergibt die Tabelle die Kachel „Heimladung". Liegt an „Heim: gesamt" ein Ladezähler je Auto (etwa evccs „Ladevorgänge: Energie [Fzg.]"), steht je Monat **„aus n Ladevorgängen"** dabei, und wie viele davon die Wallbox nicht voll gezählt hat.
 
 > **Wo wird die Heimladung erfasst — Wallbox oder E-Auto?** Beides ist möglich, und es zählt nichts doppelt. Die **Wallbox** misst die **Summe** aller Ladungen an ihr. Hat ein Auto eine **eigene Messung** („Heim: PV", „Heim: Netz" oder „Heim: gesamt", auch 0), trägt es diese — auch neben der Wallbox. Der **Rest der Wallbox** geht nach Kilometern an die privaten Autos ohne eigene Messung; gibt es keines, zählt er nur als Verbrauch (Gäste, Verluste). Ein **Dienstwagen** mit eigener Messung zählt dienstlich und fehlt im Rest. **Ohne Wallbox** (z. B. Schuko-Lader) erfasst du die Heimladung direkt am E-Auto. Km, Verbrauch, externe Ladung und V2H stehen immer am E-Auto. Mehr in [Berechnungen §3.4](BERECHNUNGEN.md#34-e-auto-einsparung).
@@ -771,7 +803,9 @@ In der Monatstabelle steht ein Monat, in dem das Auto nur einen Anteil am Rest d
 - **Einspeisung** (kWh, = Erzeugung − Eigenverbrauch, in der Regel unvergütet)
 - optional: gekoppelte Speicher-Nutzung (Ladung/Entladung)
 
-**Verlauf und Vergleich zeigen dieselbe Rechnung wie die Kennzahlen oben:** Die Monate im Diagramm und in der Tabelle ergeben zusammen die Erzeugung und den Eigenverbrauch der Kacheln, und die Eigenverbrauchsquote im Jahresvergleich entsteht aus denselben Monatswerten.
+**Verlauf und Vergleich zeigen dieselbe Rechnung wie die Kennzahlen oben:** Die Monate im Diagramm und in der Tabelle ergeben zusammen die Erzeugung und den Eigenverbrauch der Kacheln, und die Eigenverbrauchsquote im Jahresvergleich entsteht aus denselben Monatswerten. Auch die **Einspeisung** der Kachel ist die Summe der Monate, und die **Eigenverbrauchsquote** zählt nur Monate, in denen eedc den Eigenverbrauch ableiten kann — ein Monat ohne Zählerdaten der Anlage ist „nicht bewertbar" und geht weder als Einspeisung noch in den Nenner der Quote ein.
+
+**Dieselbe Ersparnis im T-Konto:** *Cockpit → Monat → T-Konto*, Zeile „Balkon — Eigenverbrauch-Ersparnis", rechnet mit demselben Anteil am Eigenverbrauch wie dieser Reiter — nicht mit der ganzen Erzeugung — und beide mit dem Preis der Eigenverbrauchs-Ersparnis des Monats (bei dynamischem Tarif der Ø der Stunden, in denen du selbst verbraucht hast). Trägt ein Balkonkraftwerk PV-Module als Kinder, tragen die Kinder die Erzeugung, und die Balkon-Zeile entfällt.
 
 **Ohne eigenen Zähler ist die Erzeugung geschätzt:** Hat das Balkonkraftwerk keinen eigenen Erzeugungs-Sensor, zeigt der Reiter seinen Anteil am PV-Gesamtzähler der Anlage nach kWp — dieselbe Zahl wie das Cockpit — und kennzeichnet ihn als **„geschätzt (kWp-Anteil)"**. Hängen PV-Module an dem Balkonkraftwerk, steht seine Erzeugung bei diesen Modulen; der Reiter nennt dann 0 und sagt das dazu.
 
@@ -888,7 +922,9 @@ Zwei klar getrennte Sichten statt vieler paralleler ROI-Zahlen ohne Bezug:
 | **Amortisations-Fortschritt** | „40,0 % · noch 7.200 € · voraussichtlich 2030" | **Messung** — die Erträge, die deine Anlage seit Inbetriebnahme tatsächlich erwirtschaftet hat |
 
 Beide rechnen gegen **dieselbe** Investitionssumme, deshalb lassen sich die Zahlen ineinander
-überführen. Welche der beiden du gerade liest, steht im ⓘ-Tooltip der Kachel.
+überführen. Welche der beiden du gerade liest, steht im ⓘ-Tooltip der Kachel. Beim Fortschritt zeigt er die Rechnung
+„bisherige Erträge ÷ Kapitaleinsatz" mit genau den Zahlen, aus denen die Prozent entstehen: sonstige Ausgaben und
+Erträge stehen dabei im Kapitaleinsatz, nicht noch einmal bei den Erträgen.
 
 > **Unter welcher Annahme die Dauer gilt.** Der Fortschritt unterstellt nichts — er zählt, was
 > geflossen ist. Eine **Dauer** dagegen muss etwas über die Zukunft unterstellen, und eedc
@@ -1119,7 +1155,7 @@ Oben wählst du einen **Zeitraum** (letzter Monat, letzte 12 Monate, letztes vol
 
 Der Community-Bereich hat **sechs Reiter**: **Übersicht · PV-Ertrag · Komponenten · Regional · Trends · Statistiken**.
 
-**Übersicht** — Radar-Chart (eigene Performance vs. Community auf mehreren Achsen), **Ranking** (Platz X von Y, gesamt und regional) und **Achievements** (Autarkiemeister, Effizienzwunder, Solarprofi, Speicherheld, Klimaschützer, Frühstarter, Vorreiter).
+**Übersicht** — Radar-Chart (eigene Performance vs. Community auf mehreren Achsen), **Ranking** (Platz X von Y, gesamt und regional) und **Achievements** (Solarprofi, Regionalchampion, Autarkiemeister, Effizienzwunder, Wärmekönig, Grüner Fahrer, Dauerbrenner).
 
 **PV-Ertrag** — dein spezifischer Ertrag (kWh/kWp) vs. Community-Durchschnitt, monatlicher Vergleich und ein Histogramm deiner Einordnung in der Verteilung.
 
@@ -1129,11 +1165,11 @@ Der Community-Bereich hat **sechs Reiter**: **Übersicht · PV-Ertrag · Kompone
 
 | Komponente | Kennzahlen |
 |------------|------------|
-| **Speicher** | Zyklen, Effizienz, Autarkie-Beitrag |
-| **Wärmepumpe** | JAZ vs. Community (typ-spezifisch), PV-Anteil |
-| **E-Auto** | km/Monat, Ø kWh/100 km, PV-Anteil |
-| **Wallbox** | Ladung kWh/Monat, PV-Anteil % |
-| **Balkonkraftwerk** | Ertrag kWh/Monat, Anzahl × Wp pro Modul |
+| **Speicher** | Zyklen/Jahr, Wirkungsgrad, Netzlade-Anteil — ohne Community-Vergleich; dazu die Community-Verteilung nach Kapazitätsklasse |
+| **Wärmepumpe** | JAZ vs. Community (gleiche Bauart, wenn bekannt), Stromverbrauch, Wärmeerzeugung; dazu die Community-JAZ nach Bauart und nach Region |
+| **E-Auto** | PV-Ladeanteil vs. Community, Ladung gesamt, Verbrauch kWh/100 km, gefahrene km, V2H-Entladung (falls vorhanden); dazu die Community nach Nutzungsintensität |
+| **Wallbox** | PV-Ladeanteil vs. Community, Ladung gesamt, Ladevorgänge |
+| **Balkonkraftwerk** | Spezifischer Ertrag vs. Community, Erzeugung, Eigenverbrauch % |
 
 **Regional** — interaktive Deutschlandkarte (Farbkodierung nach spezifischem Ertrag; Hover zeigt Bundesland-Details), Bundesland-Tabelle und regionale Einordnung.
 

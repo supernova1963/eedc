@@ -31,7 +31,7 @@ from backend.core.berechnungen import (
     speicher_wirkungsgrad,
     vollzyklen as berechne_vollzyklen,
 )
-from backend.core.berechnungen import relevante_kosten_aus_investitionen
+from backend.core.berechnungen import betriebskosten_im_zeitraum, relevante_kosten_aus_investitionen
 from backend.core.berechnungen.ergebnis import ErgebnisEingang, berechne_ergebnis, quote_paarweise
 from backend.core.berechnungen.pv_verteilung import (
     eigenverbrauch_ohne_verluste_kwh,
@@ -409,7 +409,9 @@ async def get_cockpit_uebersicht(
     # Logik unten ([[feedback_aggregator_symmetrie]]). Der frühere lokale Nachbau
     # `_pv_aktiv_im_monat` ist weg; `meta.erzeuger_aktiv` ist dieselbe Regel an
     # der einen Stelle (ohne registrierten Erzeuger greift sie nicht).
-    md_pv = [f for f in fakten if f.meta.hat_zaehlerzeile and f.meta.erzeuger_aktiv]
+    # ⭐ N-736 (12.10.2026): und nur Monate, deren Netzfelder erfasst sind (`meta.netz_erfasst`) — eine 0 ohne Herkunft
+    # rechnete sonst Eigenverbrauch = PV und Autarkie 100 % (Cockpit → Monat nennt das Feld seit N-734 „nicht erfasst").
+    md_pv = [f for f in fakten if f.meta.hat_zaehlerzeile and f.meta.netz_erfasst and f.meta.erzeuger_aktiv]
 
     einspeisung = sum(f.zaehler.einspeisung_kwh for f in md_pv)
     netzbezug = sum(f.zaehler.netzbezug_kwh for f in md_pv)
@@ -810,7 +812,16 @@ async def get_cockpit_uebersicht(
     investition_vollkosten = sum(i.anschaffungskosten_gesamt or 0 for i in investitionen)
     # Zugleich die kanonische USt-Bemessungsgrundlage (N-129) — die Formel stand
     # hier als Inline-Kopie, jetzt liegt sie im Layer.
-    investition_mehrkosten = relevante_kosten_aus_investitionen(investitionen)
+    # ⭐ N-720 (12.10.2026, Entscheid Master): im EINZELJAHR nur die Investitionen mit Anschaffungsdatum ≤ 31.12. des
+    # Jahres (ohne Datum bleiben sie) — dieselbe Grenze wie der Kapitaleinsatz des Fortschritts zum Stichtag (N-699,
+    # `aussichten/finanz_eingaenge.py`). Bis dahin teilte die Rendite eines Jahres auch durch später gekaufte
+    # Investitionen (T2: 2024 6,7 % auf 15 000 € statt 10,1 % auf 10 000 €; das PDF nannte zwei Kapitalsummen für
+    # dasselbe Jahr). Gesamtzeitraum unverändert. `investitionen` selbst bleibt die volle Liste (#123).
+    investitionen_im_nenner = (
+        [i for i in investitionen if i.anschaffungsdatum is None or i.anschaffungsdatum <= date(jahr, 12, 31)]
+        if jahr else investitionen
+    )
+    investition_mehrkosten = relevante_kosten_aus_investitionen(investitionen_im_nenner)
 
     # N-137/N-134: Hier stand bis 04.08. eine dritte Summe — PV-System voll +
     # WP-/eAuto-Mehrkosten aus `parameter["alternativ_kosten_euro"]` + Sonstiges
@@ -923,13 +934,9 @@ async def get_cockpit_uebersicht(
     # anlagenweiten Jahressumme über den ganzen Zeitraum. Am Dev-Bestand
     # gemessen: 1.291,67 € gegen 725,00 € bei zwei Komponenten mit gepflegten
     # Betriebskosten — der ROI-Fortschritt war entsprechend zu niedrig.
-    betriebskosten_zeitraum = sum(
-        (i.betriebskosten_jahr or 0)
-        * sum(1 for (_j, _m) in alle_monate if i.ist_aktiv_im_monat(_j, _m))
-        / 12
-        for i in investitionen
-        if i.betriebskosten_jahr
-    )
+    # N-699 (12.10.2026): die Regel steht seitdem EINMAL im Layer (`core/berechnungen/betriebskosten.py`) — PDF,
+    # Aussichten und Cockpit → Monat/Jahr rufen dieselbe Funktion.
+    betriebskosten_zeitraum = betriebskosten_im_zeitraum(investitionen, alle_monate)
     # sonstige_netto steckt bereits in netto_ertrag (#326) — hier NICHT erneut
     # addieren, sonst Doppelzählung im ROI. Dasselbe gilt für `bkw_ersparnis`:
     # er ist seit P9 Teil von `netto_ertrag` (und bei mitgeschriebener BKW-

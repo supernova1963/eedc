@@ -44,7 +44,20 @@
       {{ anlage.standort_plz or "" }} {{ anlage.standort_ort or "" }}
     </td></tr>
     {% endif %}
-    {% if tarif.anbieter or tarif.tarifname %}
+    {% if tarif.zeitraeume %}
+    {# N-693: wechselt der Allgemeintarif im Berichtszeitraum, nennt der Kopf jeden Abschnitt — so, wie die
+       Monatszeilen rechnen (Tarif des Monatsersten, ohne Tarif die Vorbelegung). #}
+    <tr><th>Stromtarif</th><td>
+      {% for z in tarif.zeitraeume %}
+      {{ z.von }}{% if z.bis != z.von %}–{{ z.bis }}{% endif %}:
+      {% if z.ohne_tarif %}kein Tarif hinterlegt (Vorbelegung){% elif z.anbieter or z.tarifname %}{{ z.anbieter or "" }}{% if z.tarifname %} – {{ z.tarifname }}{% endif %}{% else %}Tarif ab {{ z.gueltig_ab.strftime("%d.%m.%Y") }}{% endif %}<br>
+      <span class="muted">
+        Bezug {{ fmt_num(z.netzbezug_cent, 2) }} ct/kWh ·
+        Einspeisung {{ fmt_num(z.einspeise_cent, 2) }} ct/kWh
+      </span>{% if not loop.last %}<br>{% endif %}
+      {% endfor %}
+    </td></tr>
+    {% elif tarif.anbieter or tarif.tarifname %}
     <tr><th>Stromtarif</th><td>
       {{ tarif.anbieter or "" }}{% if tarif.tarifname %} – {{ tarif.tarifname }}{% endif %}<br>
       <span class="muted">
@@ -258,8 +271,10 @@
 <h2>Finanz-Übersicht</h2>
 <table>
   <tbody>
-    <tr><th style="width:45%">Investition gesamt</th><td>{{ fmt_eur(kpis.investition_gesamt_euro) }}</td></tr>
-    <tr><th>Investition Mehrkosten (vs. Alternative)</th><td>{{ fmt_eur(kpis.investition_mehrkosten_euro) }}</td></tr>
+    {# Handgriff Triage-4 §2: die Zeile sagt, welche Investitionen sie zählt (Builder `_bestand`: im Einzeljahr `aktiv_im_jahr`, im Gesamtzeitraum alle). #}
+    <tr><th style="width:45%">Investition gesamt<br><span class="muted">{% if ist_gesamtzeitraum %}Vollkosten aller Investitionen{% else %}Vollkosten der im Jahr aktiven Investitionen{% endif %}</span></th><td>{{ fmt_eur(kpis.investition_gesamt_euro) }}</td></tr>
+    {# N-731: die Zeile nennt den Nenner der Rendite (Cockpit → Übersicht) und sagt, welche Investitionen er zählt. #}
+    <tr><th>Investition Mehrkosten (vs. Alternative)<br><span class="muted">{% if ist_gesamtzeitraum %}alle Investitionen, auch stillgelegte{% else %}bis 31.12.{{ jahr }} angeschafft, auch vorher stillgelegte{% endif %} — Nenner der Rendite</span></th><td>{{ fmt_eur(kpis.investition_mehrkosten_euro) }}</td></tr>
     <tr><th>Einspeise-Erlös</th><td>{{ fmt_eur(kpis.einspeise_erloes_euro) }}</td></tr>
     <tr><th>Eigenverbrauchs-Ersparnis{% if kpis.wandlungsverluste_bewertet_kwh and kpis.wandlungsverluste_bewertet_kwh > 0 %}<br><span class="muted">{{ fmt_kwh(kpis.eigenverbrauch_ohne_verluste_kwh) }} Eigenverbrauch ohne {{ fmt_kwh(kpis.wandlungsverluste_bewertet_kwh) }} Wandlungsverluste</span>{% endif %}</th><td>{{ fmt_eur(kpis.ev_ersparnis_euro) }}</td></tr>
     {% if kpis.sonstige_netto_euro %}<tr><th>Sonstige Erträge/Ausgaben</th><td>{{ fmt_eur(kpis.sonstige_netto_euro) }}</td></tr>{% endif %}
@@ -267,8 +282,11 @@
     <tr><th>Netto-Ertrag (vor Betriebskosten)</th><td>{{ fmt_eur(kpis.netto_ertrag_euro) }}</td></tr>
     <tr><th>Betriebskosten anteilig</th><td>{{ fmt_eur(kpis.betriebskosten_zeitraum_euro) }}</td></tr>
     <tr><th>Netto nach Betriebskosten</th><td>{{ fmt_eur(kpis.netto_nach_bk_euro) }}</td></tr>
-    <tr><th>Amortisations-Fortschritt</th><td>{{ fmt_pct(kpis.amortisation_prozent) }}</td></tr>
-    <tr><th>Rendite</th><td>{{ fmt_pct(kpis.rendite_prozent) }}</td></tr>
+    {# N-699: beide Quoten aus der Sicht, die sie definiert — mit ihrem Nenner beschriftet. Die Rendite ist die von
+       Cockpit → Übersicht (Nenner Mehrkosten, Zähler mit WP- und E-Mobilitäts-Ersparnis), der Fortschritt der von
+       Auswertungen → ROI (Nenner Kapitaleinsatz) — im Einzeljahr zum Stand 31.12. Das Template rechnet nichts. #}
+    <tr><th>Amortisations-Fortschritt{% if kpis.amortisation_kapitaleinsatz_euro is not none %}<br><span class="muted">{% if not ist_gesamtzeitraum %}Stand 31.12.{{ jahr }}: {% endif %}bisherige Erträge seit Inbetriebnahme ÷ Kapitaleinsatz {{ fmt_eur(kpis.amortisation_kapitaleinsatz_euro) }} — wie Auswertungen → ROI</span>{% endif %}</th><td>{{ fmt_pct(kpis.amortisation_prozent) }}</td></tr>
+    <tr><th>Rendite<br><span class="muted">(Netto nach Betriebskosten{% if kpis.rendite_wp_ersparnis_euro %} + WP-Ersparnis {{ fmt_eur(kpis.rendite_wp_ersparnis_euro) }}{% endif %}{% if kpis.rendite_emob_ersparnis_euro %} + E-Mobilitäts-Ersparnis {{ fmt_eur(kpis.rendite_emob_ersparnis_euro) }}{% endif %}) ÷ Mehrkosten {{ fmt_eur(kpis.rendite_nenner_euro) }} — wie Cockpit → Übersicht</span></th><td>{{ fmt_pct(kpis.rendite_prozent) }}</td></tr>
   </tbody>
 </table>
 
