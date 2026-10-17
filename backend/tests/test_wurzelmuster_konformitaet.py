@@ -80,7 +80,7 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
-from typing import Iterator
+from typing import Iterator, Optional
 
 from backend.core import field_definitions as fd
 from backend.core import investition_parameter as ip
@@ -1466,8 +1466,9 @@ P7_BASELINE_AUSNAHMEN: frozenset[str] = frozenset({
     # N-651 (10.10.2026): die BKW-Prüfung des Daten-Checkers fragt je Monat, OB ein Anlagenwert gespeichert ist — mit
     # ihm trägt ein Balkonkraftwerk ohne eigenen Zähler seinen kWp-Anteil (N-621), „PV-Erzeugung fehlt" wäre ein
     # Fehlalarm. Diagnose über das Feld (Vorhandensein, keine Menge), dieselbe Rolle wie `vorbestand`; eigener
-    # Empfängername, damit die Freistellung kein anderes `md` der Datei mitnimmt.
-    "backend/services/daten_checker/stammdaten.py::anlagenzeile",
+    # Empfängername, damit die Freistellung kein anderes `md` der Datei mitnimmt. RF-19: die BKW-Prüfung steht seitdem
+    # im Schwestermodul `stammdaten_investitionen.py` (Phase `_check_typ_balkonkraftwerk`).
+    "backend/services/daten_checker/stammdaten_investitionen.py::anlagenzeile",
     # Drei Rollen in einer Datei, alle drei gedeckt (Granularität ist
     # `modul::empfänger`, feiner geht die Allowlist nicht). **Zeilennummern
     # bewusst weggelassen** — sie standen hier und waren schon vor dem
@@ -2076,7 +2077,8 @@ P15_CO2_FAKTOR_KLASSIFIZIERT: dict[str, str] = {
         "synthetische BKW-Pauschale ohne Messung (0,9 kWh/Wp, 80 % EV) — Vorlage N-588 §1 „nicht betroffen“",
     "backend/api/routes/investitionen/dashboard_sonstiges.py::get_sonstiges_dashboard":
         "eigene Gerätemessung eines sonstigen Erzeugers (DI-1, Komponenten-Bilanz)",
-    "backend/api/routes/investitionen/dashboard_eauto.py::get_eauto_dashboard":
+    # RF-16: die CO₂-Zeile steht in der Kopfzahlen-Phase des Orchestrators `get_eauto_dashboard`.
+    "backend/api/routes/investitionen/dashboard_eauto.py::_zusammenfassung":
         "Netzstrom-CO₂ des E-Autos (Verbraucher-Bilanz, DI-1) — keine Eigenverbrauchs-Bewertung",
 }
 
@@ -2499,6 +2501,10 @@ P10_PER_INVESTITION_PHASE: dict[str, str] = {
     # Aufrufer ist `_wp_steuerung_und_plan` (selbst eine Phase, s. o.).
     "backend/services/daten_checker/kuehl_zaehler.py::hat_kuehl_zaehler":
         "backend/services/daten_checker/datenquelle/klima.py::_check_klima_modus_sensor",
+    # RF-26 (Serie „Funktion vor Datei"): Phase des Klima-Checks — WK-06 „Kühlanteil wird geschätzt" befragt die
+    # Zeilen (`modus_strom_zeile`), die der Orchestrator `_check_klima_modus_sensor` lädt; sie bildet keine Monatsgröße.
+    "backend/services/daten_checker/datenquelle/klima.py::_geschaetzter_kuehlanteil":
+        "backend/services/daten_checker/datenquelle/klima.py::_check_klima_modus_sensor",
     # SCHREIBpfad #263/K-2: liest den Gesamtwert der Zeile, in die er schreibt,
     # als Bezugsgröße der Teilmengen-Invariante. Lader ist `_lade_imd` daneben.
     "backend/services/energie_profil/modus_split_schreiben.py::schreibe_modus_split_monat":
@@ -2512,9 +2518,13 @@ P10_PER_INVESTITION_PHASE: dict[str, str] = {
     # WK-16c: die Strom-Verteilung JE GERÄT aus der übergebenen Monatszeile.
     "backend/services/waerme_verteilung.py::_eingabe_aus_monatszeile":
         "backend/services/waerme_verteilung.py::_monatszeilen",
+    # RF-17 (Serie „Funktion vor Datei"): Phase des WP-Hubs — Kosten, Ersparnis und CO₂ je Monat aus den Zeilen,
+    # die der Orchestrator `get_waermepumpe_dashboard` lädt (gelistet in `P10_PER_INVESTITION`).
+    "backend/api/routes/investitionen/dashboard_waermepumpe.py::_bewertung":
+        "backend/api/routes/investitionen/dashboard_waermepumpe.py::get_waermepumpe_dashboard",
     # WK-16a: die Mengen JE GERÄT. Zweiter Aufrufer über
-    # `kennzahlen_aus_monatszeilen` ist `dashboard_waermepumpe.py::get_waermepumpe_dashboard`
-    # (ebenfalls gelistet).
+    # `kennzahlen_aus_monatszeilen` ist `dashboard_waermepumpe.py::_dashboard_einer_wp` (RF-17: Phase des
+    # gelisteten Laders `get_waermepumpe_dashboard`).
     "backend/services/waermepumpe_kennzahlen_je_geraet.py::mengen_aus_monatszeilen":
         "backend/services/waermepumpe_kennzahlen_je_geraet.py::lade_kennzahlen_je_geraet",
     # RF-5 (Serie „Funktion vor Datei"): Phasen der HA-Import-Vorschau. Sie vergleichen die vorhandenen
@@ -2556,7 +2566,8 @@ P10_FALT_SCHREIBEN_IMPORT_CHECKER: frozenset[str] = frozenset({
     "backend/services/daten_checker/monatsdaten.py::_check_erfassungsort_positionen",
     "backend/services/daten_checker/monatsdaten.py::_check_geraetewerte_ohne_monatszeile",
     "backend/services/daten_checker/monatsdaten.py::_check_investition_monatsdaten",
-    "backend/services/daten_checker/monatsdaten.py::_check_monatsdaten_plausibilitaet",
+    # RF-13: die Plausibilität faltet die Speicher-Gerätezeilen in ihrer Phase `_speicher_index`.
+    "backend/services/daten_checker/monatsdaten_plausibilitaet.py::_speicher_index",
     "backend/services/daten_checker/monatsdaten.py::_check_werte_in_nicht_gefuehrten_feldern",
     "backend/services/daten_checker/monatsdaten.py::_check_wp_monatsdaten",
     # N-597: hält die Live-Faltung des Modus-Splits gegen den gepflegten
@@ -2566,7 +2577,8 @@ P10_FALT_SCHREIBEN_IMPORT_CHECKER: frozenset[str] = frozenset({
     # kumulativ, Wechselrichter-Altbestand (#229).
     "backend/services/daten_checker/stammdaten.py::_check_abgabe_kandidat",
     "backend/services/daten_checker/stammdaten.py::_check_bkw_akku_erfassungsweg",
-    "backend/services/daten_checker/stammdaten.py::_check_investitionen",
+    # RF-19: die kumulative Speicher-Faltung steht in der Speicher-Phase von `_check_investitionen`.
+    "backend/services/daten_checker/stammdaten_investitionen.py::_check_typ_speicher",
     "backend/services/daten_checker/stammdaten.py::_check_wechselrichter_pv_altbestand",
     # Wärmepumpe: unplausible Arbeitszahl — prüft dieselben Eingänge wie die
     # Anzeige (Konzept Wärme/Klima 11.5), bildet aber keine Sicht-Größe.
@@ -2957,7 +2969,7 @@ P11_AUSNAHMEN: frozenset[str] = frozenset({
     "backend/main.py::get_database_stats",                 # zählt GERÄTE
     "backend/services/monats_fakten/roh.py::_erzeuger_aktiv",  # „war einer aktiv?"
     "backend/api/routes/monatsabschluss/views.py::get_naechster_monat",
-    "backend/api/routes/monatsdaten.py::list_monatsdaten_aggregiert",  # `pv_ziel_aktiv`
+    "backend/api/routes/monatsdaten.py::_legacy_hinweis",  # `pv_ziel_aktiv`
     # N-662 (10.10.2026): keine Σ einer Erzeugung über die Erzeuger-Menge, sondern zwei getrennte ROLLEN je Typ —
     # die String-Zähler als Gegengröße des Anlagenzählers (nur Module OHNE Balkonkraftwerk-Parent) und der Abzug von der Einspeisung (je
     # Balkonkraftwerk sein Kanal ODER, abgetreten ohne eigenen, die Kanäle seiner Kinder — nie beide). Eltern und Kind
@@ -3454,7 +3466,7 @@ P13_AUSNAHMEN: frozenset[str] = frozenset({
     # Vorlage 2 (18.09.2026): die R2-/SOLL-3.2b-Abgrenzung zog aus dem Endpunkt nach waerme.py.
     "backend/api/routes/aktueller_monat/waerme.py::waerme_klima_monat",
     "backend/api/routes/cockpit/komponenten.py::get_komponenten_zeitreihe",
-    "backend/api/routes/monatsdaten.py::list_monatsdaten_aggregiert",
+    "backend/api/routes/monatsdaten_aggregiert.py::_arbeitszahl_des_monats",
     # B6/Y-2 (05.09.2026): Jahresroute UND PDF-Jahresbericht lesen die Abgrenzung
     # jetzt über EINE Service-Funktion — bis dahin standen beide einzeln hier,
     # mit je eigener Faltung (der Bericht warf den Grund weg).

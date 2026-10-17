@@ -24,7 +24,7 @@ from backend.core.betriebsmodus import MODUS_ABDECKUNG_FELD
 from backend.core.field_definitions import get_wp_strom_kwh, nenner_ist_feine_summe
 from backend.models.investition import Investition
 from backend.services.einspeise_erloes_service import get_neg_preis_einspeisung_je_monat
-from backend.services.energie_profil.modus_split_monat import lade_modus_split_ohne_abschluss
+from backend.services.energie_profil.modus_split_monat import lade_modus_split_mit_kanaelen
 from backend.services.energie_profil.monats_aus_tagen import TagesMonatsSumme
 from backend.services.pv_monatswerte import (
     BkwAnteile,
@@ -435,6 +435,38 @@ async def lade_monats_fakten(
             [k for k in kandidaten if _im_fenster(k, von, bis)],
         )
 
+    # Entscheid Gernot 13.10.2026 (#427): die Speicher-Netzladung im Tageswert-Rückfall — dieselbe Regel wie Ladung/
+    # Entladung in `bau._baue_fakt` (Monat ohne Speicher-Zeile, Tage mit Speicherwert), Menge und Preis aus der einen
+    # Rechenstelle `netzladung_tage.netzladung_aus_tagen`, die auch *Cockpit → Monat* ruft. Geladen nur für genau diese
+    # Monate — ohne Tagesebene (kein Flag, kein Ladeanteil) gibt es keinen Rückfall und keine Abfrage.
+    netzladung_tage: dict = {}
+    _nl_monate = [
+        k for k in kandidaten
+        if _im_fenster(k, von, bis)
+        and (s := tages_summen.get(k)) is not None
+        and "speicher" not in roh.get(k, _RohMonat()).typen_mit_zeile
+        and (s.speicher_ladung_kwh > 0 or s.speicher_entladung_kwh > 0)
+        and any(i.typ == "speicher" and i.ist_aktiv_im_monat(*k) for i in investitionen)
+    ]
+    if _nl_monate:
+        from datetime import datetime as _dt
+
+        from backend.models.anlage import Anlage as _Anlage
+        from backend.services.kanal.bilanz_leser import uhr as _uhr
+        from backend.services.monats_fakten.netzladung_tage import netzladung_aus_tagen
+
+        _nl_anlage = await db.get(_Anlage, anlage_id)
+        # Die Uhr der Schicht ist die der Kanal-Leser (eine Stelle, Proben stellen sie dort).
+        _heute = _dt.fromtimestamp(_uhr()).date()
+        for k in _nl_monate:
+            _nl = await netzladung_aus_tagen(
+                db, _nl_anlage,
+                [i for i in investitionen if i.typ == "speicher" and i.ist_aktiv_im_monat(*k)],
+                k[0], k[1], _heute,
+            )
+            if _nl is not None:
+                netzladung_tage[k] = _nl
+
     fakten: list[MonatsFakt] = []
     for schluessel in sorted(k for k in kandidaten if _im_fenster(k, von, bis)):
         fakten.append(
@@ -453,6 +485,7 @@ async def lade_monats_fakten(
                 tarif_cache=tarif_cache,
                 zeittarif_cache=zeittarif_cache,
                 tages_summe=tages_summen.get(schluessel),
+                netzladung_tage=netzladung_tage.get(schluessel),
                 preis_cache=preis_cache,
                 preis_messung=preis_messung,
                 heimlade_quellen=_laufend_quellen if schluessel == _laufend else frozenset(),
@@ -582,19 +615,12 @@ async def _ergaenze_modus_split_ohne_abschluss(
     Stundenzeilen statt in einer Monatszeile. Das ist nicht die N-121-Falle
     (dort ging es um Monate mit reiner Tagesspur ohne jeden Gerätebezug).
     """
-    # HA-Bauform E4d (Lesart 1): Monate, deren WP-Gruppe die Kanäle decken, aus dem abgeleiteten Kanal — dieselben
-    # zwei Regeln (`kanal_split_ohne_abschluss`); die übrigen unverändert aus der Tagesebene, die gedeckten Monate
-    # lädt der Bestand nicht.
-    gedeckt = frozenset(m for m, z in (wp_kanal or {}).items() if z.kanal)
-    angewandt = await lade_modus_split_ohne_abschluss(
-        db, anlage_id, inv_by_id=inv_by_id, gespeichert=wp_je_monat,
-        von=von, bis=bis, ohne_monate=gedeckt,
+    # HA-Bauform E4d (Lesart 1): Monate, deren WP-Gruppe die Kanäle decken, je Gerät aus dem abgeleiteten Kanal oder —
+    # ohne ihn (V-1) — aus den Stundenzeilen; die übrigen unverändert aus der Tagesebene. Die eine Weiche mit dem
+    # HA-Export (N-727): `lade_modus_split_mit_kanaelen`.
+    angewandt = await lade_modus_split_mit_kanaelen(
+        db, anlage_id, wp_kanal=wp_kanal, inv_by_id=inv_by_id, gespeichert=wp_je_monat, von=von, bis=bis,
     )
-    if gedeckt:
-        from backend.services.energie_profil.modus_split_monat import kanal_split_ohne_abschluss
-
-        for m, je in kanal_split_ohne_abschluss(wp_kanal, inv_by_id=inv_by_id, gespeichert=wp_je_monat).items():
-            angewandt.setdefault(m, {}).update(je)
     for schluessel, je_inv in sorted(angewandt.items()):
         for inv_id, split in je_inv.items():
             r = roh.setdefault(schluessel, _RohMonat())

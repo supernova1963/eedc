@@ -18,7 +18,9 @@ from backend.core.berechnungen import (
     WALLBOX_KOMPONENTEN_PREFIXE,
     geraete_spalte_kw,
 )
-from backend.core.berechnungen.slot_konvention import forward_werte_je_backward_zeile
+from backend.core.berechnungen.slot_konvention import (
+    RASTER_BEGINN, RASTER_ENDE, forward_werte_je_backward_zeile, ist_beginn_raster,
+)
 from backend.core.exceptions import bad_request, not_found
 from backend.api.deps import get_db
 from backend.models.anlage import Anlage
@@ -91,7 +93,8 @@ async def get_stundenwerte(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Gibt die 24 Stundenwerte eines Tages aus TagesEnergieProfil zurück.
+    Gibt die 24 Stundenwerte eines Tages aus TagesEnergieProfil zurück — an einem Tag mit Kanal-Gruppe die Mengen
+    dieser Gruppen aus dem Kanal-Stundentag (HA-Bauform E-S3-2).
 
     Enthält zusätzlich `serien` mit aufgelösten Labels für alle in `komponenten`
     vorkommenden Einträge — damit Sonstiges-Investments (Poolpumpe, Sauna …)
@@ -105,19 +108,30 @@ async def get_stundenwerte(
     # Regel wie in den Rechnungen (N-387, `slot_konvention`). Dafür wird der
     # Vortag mitgeladen: ohne seine Stunde 23 bekäme Slot 0 dieses Tages keinen
     # Wert, und das wäre eine Lücke, die es in den Daten nicht gibt.
+    # HA-Bauform S4 (S4-R-3b): und der Folgetag — an einem Kanal-Tag trägt seine Zeile 0 die Backward-Bahnen der
+    # Stunde 23 (`slot_konvention.bestandszeile_fuer_stundenbeginn`). Eine Abfrage, ein Tag mehr.
     result = await db.execute(
         select(TagesEnergieProfil)
         .where(
             TagesEnergieProfil.anlage_id == anlage_id,
             TagesEnergieProfil.datum >= datum - timedelta(days=1),
-            TagesEnergieProfil.datum <= datum,
+            TagesEnergieProfil.datum <= datum + timedelta(days=1),
         )
         .order_by(TagesEnergieProfil.datum, TagesEnergieProfil.stunde)
     )
     alle = result.scalars().all()
-    soc_je_zeile = forward_werte_je_backward_zeile(alle, "soc_prozent")
-    paare = [(z, soc) for z, soc in zip(alle, soc_je_zeile) if z.datum == datum]
-    rows = [z for z, _ in paare]
+    vortag = [z for z in alle if z.datum < datum]
+    # HA-Bauform E-S3-2: an einem Tag mit Kanal-Gruppe tragen die Mengen der Kanal-Gruppen HAs `change` je Stunde
+    # (Mischzeilen, `energie_profil/kanal_stunden.py`, Stunde = Beginn seit S4); Wetter, Zählwerke und `komponenten`
+    # bleiben aus der Stundenzeile (S3-R6), nach Bahnen gepaart (S4-R-3b). Ohne Kanal-Gruppe: die Stundenzeilen des
+    # Tages unverändert.
+    from backend.services.energie_profil.kanal_stunden import aus_kanal_gruppe, stunden_des_tages
+
+    rows = await stunden_des_tages(db, anlage_id, datum, [z for z in alle if z.datum >= datum])
+    # SoC je Zeile über die EINE Paarung (N-553/N-387): Bestandszeilen aus der Vorzeile (der Vortag liefert Slot 0),
+    # Mischzeilen (Beginn-Raster) zeilengleich — `forward_werte_je_backward_zeile` fragt das Attribut `raster`.
+    soc_je_zeile = forward_werte_je_backward_zeile([*vortag, *rows], "soc_prozent")[len(vortag):]
+    soc_je_stunde = {z.stunde: soc for z, soc in zip(rows, soc_je_zeile)}
 
     # ⭐ **Zwei Fragen, zwei Groessen** (N-553): Die Zeile oben beantwortet
     # „welcher Ladestand gehoert zu DIESER Stunde" — dafuer die Paarung. Die
@@ -175,23 +189,27 @@ async def get_stundenwerte(
             einspeisung_kw=r.einspeisung_kw,
             netzbezug_kw=r.netzbezug_kw,
             batterie_kw=r.batterie_kw,
+            # HA-Bauform S4 E-S4-3 (H-2b): der Rückfall auf den Leistungspfad nur, wenn die Gruppe am Tag die Wahl
+            # `bestand` hat — eine leere Stunde eines Kanal-Tags bleibt leer (ihre Menge steht in der Folgestunde).
             waermepumpe_kw=geraete_spalte_kw(
-                r.waermepumpe_kw, r.komponenten, WAERMEPUMPE_KOMPONENTEN_PREFIXE,
+                r.waermepumpe_kw, None if aus_kanal_gruppe(r, "waermepumpe_kw") else r.komponenten,
+                WAERMEPUMPE_KOMPONENTEN_PREFIXE,
             ),
             wallbox_kw=geraete_spalte_kw(
-                r.wallbox_kw, r.komponenten, WALLBOX_KOMPONENTEN_PREFIXE,
+                r.wallbox_kw, None if aus_kanal_gruppe(r, "wallbox_kw") else r.komponenten, WALLBOX_KOMPONENTEN_PREFIXE,
             ),
             ueberschuss_kw=r.ueberschuss_kw,
             defizit_kw=r.defizit_kw,
             temperatur_c=r.temperatur_c,
             globalstrahlung_wm2=r.globalstrahlung_wm2,
-            soc_prozent=soc,
+            soc_prozent=soc_je_stunde.get(r.stunde),
             komponenten=r.komponenten,
             wp_starts_anzahl=r.wp_starts_anzahl,
             wp_betriebsstunden=r.wp_betriebsstunden,
             spannen=r.spannen or None,
+            raster=RASTER_BEGINN if ist_beginn_raster(r) else RASTER_ENDE,
         )
-        for r, soc in paare
+        for r in rows
     ]
 
     return StundenAntwort(

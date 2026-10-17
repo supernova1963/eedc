@@ -164,13 +164,13 @@ FELD_AUSWERTUNGEN: dict[tuple[str, str], tuple[Auswertung, ...]] = {
     (TYP_ANLAGE, "einspeisung_kwh"): (
         _a(COCKPIT_MONAT, "api/routes/aktueller_monat/__init__.py", "_berechne_monat"),
         _a(COCKPIT_JAHR, "api/routes/cockpit/uebersicht.py", "get_cockpit_uebersicht"),
-        _a(AUSW_TABELLE, "api/routes/monatsdaten.py", "list_monatsdaten_aggregiert"),
+        _a(AUSW_TABELLE, "api/routes/monatsdaten.py", "_monatszeile"),
         _a(HA_SENSOREN, "api/routes/ha_export/anlage_energie.py", "monatsfakten_und_energie"),
     ),
     (TYP_ANLAGE, "netzbezug_kwh"): (
         _a(COCKPIT_MONAT, "api/routes/aktueller_monat/__init__.py", "_berechne_monat"),
         _a(COCKPIT_JAHR, "api/routes/cockpit/uebersicht.py", "get_cockpit_uebersicht"),
-        _a(AUSW_TABELLE, "api/routes/monatsdaten.py", "list_monatsdaten_aggregiert"),
+        _a(AUSW_TABELLE, "api/routes/monatsdaten.py", "_monatszeile"),
         _a(HA_SENSOREN, "api/routes/ha_export/anlage_energie.py", "monatsfakten_und_energie"),
     ),
     (TYP_ANLAGE, "pv_gesamt_kwh"): (
@@ -182,10 +182,12 @@ FELD_AUSWERTUNGEN: dict[tuple[str, str], tuple[Auswertung, ...]] = {
         # Cockpit → Monat ihre Summe (`monats_aus_tagen`). Bis dahin standen hier
         # `get_komponenten_tageskwh`/`loese_pv_tageswerte_auf` — seit `8db019d8`
         # (26.09.2026) ohne Produktions-Aufrufer.
+        # RF-22 (Serie „Funktion vor Datei“): die Auflösung ist die Phase
+        # `_pv_aggregat_aufloesen` von `baue_tagestabelle` (dieselbe Datei).
         _a(COCKPIT_TAG, "services/snapshot/tages_tabelle.py",
-           "baue_tagestabelle", "PV_AGGREGAT_BASIS_FELD"),
+           "_pv_aggregat_aufloesen", "PV_AGGREGAT_BASIS_FELD"),
         _a(COCKPIT_MONAT, "services/snapshot/tages_tabelle.py",
-           "baue_tagestabelle", "PV_AGGREGAT_BASIS_FELD"),
+           "_pv_aggregat_aufloesen", "PV_AGGREGAT_BASIS_FELD"),
     ),
     (TYP_ANLAGE, "globalstrahlung_kwh_m2"): (
         _a(COCKPIT_AUSSICHT, "api/routes/aussichten/prognose.py", "get_langfrist_prognose"),
@@ -201,7 +203,7 @@ FELD_AUSWERTUNGEN: dict[tuple[str, str], tuple[Auswertung, ...]] = {
         # die Heizgradtage nehmen ihn ausdrücklich nicht (K-2,
         # `lade_heizgradtage_je_monat`).
         _a(KOMP_WP, "services/waerme_verteilung.py", "_monats_temperaturen"),
-        _a(AUSW_TABELLE, "api/routes/monatsdaten.py", "list_monatsdaten_aggregiert"),
+        _a(AUSW_TABELLE, "api/routes/monatsdaten.py", "_temperatur_je_monat"),
     ),
 
     # ── Anlagen-Ebene: Preise je Monat (ADR-002/P8) ──────────────────────────
@@ -213,14 +215,14 @@ FELD_AUSWERTUNGEN: dict[tuple[str, str], tuple[Auswertung, ...]] = {
     ),
     (TYP_ANLAGE, "einspeise_durchschnittspreis_cent"): (
         _a(AUSW_FINANZEN, "api/routes/strompreise.py", "resolve_einspeise_preis_cent"),
-        _a(AUSW_TABELLE, "api/routes/monatsdaten.py", "list_monatsdaten_aggregiert"),
+        _a(AUSW_TABELLE, "api/routes/monatsdaten_aggregiert.py", "_zeile_kopf"),
     ),
     (TYP_ANLAGE, "kraftstoffpreis_euro"): (
         _a(KOMP_EAUTO, "api/routes/investitionen/dashboard_eauto.py", "get_eauto_dashboard"),
         _a(COCKPIT_JAHR, "api/routes/cockpit/uebersicht.py", "get_cockpit_uebersicht"),
     ),
     (TYP_ANLAGE, "gaspreis_cent_kwh"): (
-        _a(KOMP_WP, "api/routes/investitionen/dashboard_waermepumpe.py", "get_waermepumpe_dashboard"),
+        _a(KOMP_WP, "api/routes/investitionen/dashboard_waermepumpe.py", "_bewertung"),   # RF-17: Phase des Orchestrators `get_waermepumpe_dashboard`
         _a(COCKPIT_MONAT, "api/routes/aktueller_monat/finanzen.py", "finanzen_des_monats"),
     ),
     (TYP_ANLAGE, "strompreis"): (
@@ -427,11 +429,11 @@ FELD_AUSWERTUNGEN: dict[tuple[str, str], tuple[Auswertung, ...]] = {
 
     # ── Wärmepumpe: Counter (KUMULATIVE_COUNTER_FELDER) ──────────────────────
     ("waermepumpe", "wp_starts_anzahl"): (
-        _a(KOMP_WP, "api/routes/investitionen/dashboard_waermepumpe.py", "get_waermepumpe_dashboard"),
+        _a(KOMP_WP, "api/routes/investitionen/dashboard_waermepumpe.py", "_betriebszaehler"),   # RF-17: Phase des Orchestrators `get_waermepumpe_dashboard`
         _a(JAHRESBERICHT, "services/pdf/builders/jahresbericht.py", "_wp_zaehler_summen"),   # RF-9: Phase des WP-Counters
     ),
     ("waermepumpe", "wp_betriebsstunden"): (
-        _a(KOMP_WP, "api/routes/investitionen/dashboard_waermepumpe.py", "get_waermepumpe_dashboard"),
+        _a(KOMP_WP, "api/routes/investitionen/dashboard_waermepumpe.py", "_betriebszaehler"),   # RF-17: Phase des Orchestrators `get_waermepumpe_dashboard`
     ),
 
     # ── E-Auto ───────────────────────────────────────────────────────────────
@@ -441,38 +443,38 @@ FELD_AUSWERTUNGEN: dict[tuple[str, str], tuple[Auswertung, ...]] = {
         _a(HA_SENSOREN, "api/routes/ha_export/investition_sensoren.py", "_emob_summen"),
     ),
     ("e-auto", "verbrauch_kwh"): (
-        _a(KOMP_EAUTO, "api/routes/investitionen/dashboard_eauto.py", "get_eauto_dashboard"),
+        _a(KOMP_EAUTO, "api/routes/investitionen/dashboard_eauto.py", "_summen_der_monate"),   # RF-16: Phase des Orchestrators `get_eauto_dashboard`
         _a(COCKPIT_MONAT, "core/berechnungen/imd_monatsaggregat.py", "imd_typ_beitrag"),
     ),
     ("e-auto", "ladung_pv_kwh"): (
-        _a(KOMP_EAUTO, "api/routes/investitionen/dashboard_eauto.py", "get_eauto_dashboard"),
+        _a(KOMP_EAUTO, "api/routes/investitionen/dashboard_eauto.py", "_zeile_privat"),   # RF-16: Phase des Orchestrators `get_eauto_dashboard`
         _a(COCKPIT_MONAT, "core/berechnungen/imd_monatsaggregat.py", "imd_typ_beitrag"),
         _a(COCKPIT_JAHR, "api/routes/cockpit/uebersicht.py", "get_cockpit_uebersicht"),
     ),
     ("e-auto", "ladung_netz_kwh"): (
-        _a(KOMP_EAUTO, "api/routes/investitionen/dashboard_eauto.py", "get_eauto_dashboard"),
+        _a(KOMP_EAUTO, "api/routes/investitionen/dashboard_eauto.py", "_zeile_privat"),   # RF-16: Phase des Orchestrators `get_eauto_dashboard`
         _a(COCKPIT_MONAT, "core/berechnungen/imd_monatsaggregat.py", "imd_typ_beitrag"),
         _a(AUSW_FINANZEN, "core/berechnungen/dienstliche_ladekosten.py", "berechne_dienstliche_ladekosten"),
     ),
     # N-555 Stufe 2 (E5): „Heim: gesamt" — gelesen von der einen Funktion (Regel 2
     # Schritt 1), über sie von allen Sichten; am Tag über die Tagesauswahl.
     ("e-auto", "ladung_kwh"): (
-        _a(KOMP_EAUTO, "api/routes/investitionen/dashboard_eauto.py", "get_eauto_dashboard"),
-        _a(COCKPIT_MONAT, "services/eauto_wirtschaftlichkeit.py", "entscheide_emob_heimladung"),
+        _a(KOMP_EAUTO, "api/routes/investitionen/dashboard_eauto.py", "_zeile_privat"),   # RF-16: Phase des Orchestrators `get_eauto_dashboard`
+        _a(COCKPIT_MONAT, "services/eauto_wirtschaftlichkeit.py", "eigene_messung_des_autos"),   # RF-24: liest „Heim: gesamt“ (Regel 2 Schritt 1); gerufen von den Phasen des Orchestrators `entscheide_emob_heimladung`
         _a(COCKPIT_JAHR, "api/routes/cockpit/uebersicht.py", "get_cockpit_uebersicht"),
     ),
     ("e-auto", "ladung_extern_kwh"): (
-        _a(KOMP_EAUTO, "api/routes/investitionen/dashboard_eauto.py", "get_eauto_dashboard"),
+        _a(KOMP_EAUTO, "api/routes/investitionen/dashboard_eauto.py", "_extern_des_monats"),   # RF-16: Phase des Orchestrators `get_eauto_dashboard`
         _a(COCKPIT_MONAT, "api/routes/aktueller_monat/__init__.py", "_berechne_monat"),
     ),
     ("e-auto", "ladung_extern_euro"): (
-        _a(KOMP_EAUTO, "api/routes/investitionen/dashboard_eauto.py", "get_eauto_dashboard"),
+        _a(KOMP_EAUTO, "api/routes/investitionen/dashboard_eauto.py", "_extern_des_monats"),   # RF-16: Phase des Orchestrators `get_eauto_dashboard`
         _a(COCKPIT_JAHR, "api/routes/cockpit/uebersicht.py", "get_cockpit_uebersicht"),
     ),
     ("e-auto", "v2h_entladung_kwh"): (
         # #110 V2H-Tageswert: Tagesgröße aus dem Zählerpfad (`v2h_<id>`), in der Tagesbilanz über `mit_v2h_entladung`.
-        _a(COCKPIT_TAG, "services/energie_profil/tage_werte.py", "baue_tage_werte"),
-        _a(KOMP_EAUTO, "api/routes/investitionen/dashboard_eauto.py", "get_eauto_dashboard"),
+        _a(COCKPIT_TAG, "services/energie_profil/tage_werte.py", "_geld_spalten"),   # RF-20: Phase des Orchestrators `baue_tage_werte` (Finanzzeile; die Tagesgröße entsteht in `_tagesbilanz`)
+        _a(KOMP_EAUTO, "api/routes/investitionen/dashboard_eauto.py", "_summen_der_monate"),   # RF-16: Phase des Orchestrators `get_eauto_dashboard`
         _a(COCKPIT_JAHR, "api/routes/cockpit/uebersicht.py", "get_cockpit_uebersicht"),
         _a(HA_SENSOREN, "api/routes/ha_export/anlage_energie.py", "monatsfakten_und_energie"),
     ),

@@ -318,7 +318,7 @@ class Soll:
     vollstaendig: bool = True
 
 
-def soll_tag(form: Form, tag: date) -> Soll:
+def soll_tag(form: Form, tag: date, weg: Optional[str] = None) -> Soll:
     """Der gespeicherte Tag nach der Regel (Bauplan N-623 Fassung 2 + E4 + Variante B).
 
     Träger sind die Module ohne Elternteil und jedes Balkonkraftwerk; ein Kind mit eigenem
@@ -329,7 +329,7 @@ def soll_tag(form: Form, tag: date) -> Soll:
     Ohne Anlagenzähler bleibt die Lücke ohne Key.
     """
     if form.w2:
-        return soll_w2(form, *_tagesfenster_dt(tag))
+        return soll_w2(form, *_tagesfenster_dt(tag, weg))
     je: dict[str, float] = {}
     ohne: set[str] = set()
     gemessen = 0.0
@@ -362,7 +362,7 @@ def soll_tag(form: Form, tag: date) -> Soll:
     return Soll(max(g_tag, gemessen), je, frozenset(ohne))
 
 
-def soll_monat(form: Form, tage: tuple[date, ...], *, mit_anlagenwert: bool = True) -> Soll:
+def soll_monat(form: Form, tage: tuple[date, ...], *, mit_anlagenwert: bool = True, weg: Optional[str] = None) -> Soll:
     """Ein Monat nach der Regel (Variante B, N-266/E4 Stufe 2, Abtretung je Monat).
 
     Ein BKW, dessen Kinder im Monat aktiv sind, tritt ab: sein Wert ist das Aggregat seiner
@@ -372,7 +372,7 @@ def soll_monat(form: Form, tage: tuple[date, ...], *, mit_anlagenwert: bool = Tr
     ``mit_anlagenwert=False``: der Monat kennt den Anlagenzähler nicht (Lücke ⇒ Teilsumme).
     """
     if form.w2:
-        return soll_w2(form, _tagesfenster_dt(tage[0])[0], _tagesfenster_dt(tage[-1])[1])
+        return soll_w2(form, _tagesfenster_dt(tage[0], weg)[0], _tagesfenster_dt(tage[-1], weg)[1])
     n = len(tage)
     letzter = tage[-1]
     je: dict[str, float] = {}
@@ -416,21 +416,22 @@ def soll_monat(form: Form, tage: tuple[date, ...], *, mit_anlagenwert: bool = Tr
     return Soll(max(g_monat, gemessen), je, frozenset(ohne))
 
 
-def soll_wandlungsverluste(form: Form, tage: tuple[date, ...]) -> Optional[float]:
+def soll_wandlungsverluste(form: Form, tage: tuple[date, ...], weg: Optional[str] = None) -> Optional[float]:
     """HA-Bauform E4b: ``max(0, Σ Geräte − Anlagenzähler)`` des Zeitraums (W2-R3; ``None`` ohne Anlagenzähler) —
     unabhängig nachgerechnet: Σ der Geräte nach der Regel (``soll_monat``) gegen den Zähler über dieselben Zeilen."""
     if form.gesamt is None:
         return None
-    von, bis = _tagesfenster_dt(tage[0])[0], _tagesfenster_dt(tage[-1])[1]
+    von, bis = _tagesfenster_dt(tage[0], weg)[0], _tagesfenster_dt(tage[-1], weg)[1]
     az = (zaehler_delta(form, "sensor.pv_gesamt", von, bis) if "sensor.pv_gesamt" in form.abweichung
           else tagesmenge(form.gesamt) * len(tage))
-    return max(0.0, sum(soll_monat(form, tage).je_geraet.values()) - az)
+    return max(0.0, sum(soll_monat(form, tage, weg=weg).je_geraet.values()) - az)
 
 
-def soll_einspeisung(form: Form, n_tage: int) -> float:
+def soll_einspeisung(form: Form, n_tage: int, weg: Optional[str] = None) -> float:
     if form.w2 and "sensor.einsp" in form.abweichung and n_tage in (30, 3):
         tage = TAGE_JUNI if n_tage == 30 else TAGE_JULI
-        return zaehler_delta(form, "sensor.einsp", _tagesfenster_dt(tage[0])[0], _tagesfenster_dt(tage[-1])[1])
+        return zaehler_delta(form, "sensor.einsp", _tagesfenster_dt(tage[0], weg)[0],
+                             _tagesfenster_dt(tage[-1], weg)[1])
     return tagesmenge(form.einsp_rate) * n_tage
 
 
@@ -443,9 +444,25 @@ def soll_netzbezug(n_tage: int, form: Optional[Form] = None) -> float:
 # ── Weg 2 als Soll (nur ``FORMEN_W2``) ──────────────────────────────────────
 
 
-def _tagesfenster_dt(tag: date) -> tuple[datetime, datetime]:
-    """Das Tagesfenster des Bestands als Wanduhr ``[Vortag 23:00, 23:00)`` (``kanal/fenster.tagesfenster``)."""
+#: Seed-Eigenschaft (HA-Bauform S4, E-S4-3, Patch (a) aus E-S3-4b): der SA-Datenstand trägt Kanäle — seit Nachbau 2
+#: füllt der Seed-Haken ``fuelle_eigene_summe`` wie das Produkt JEDEN Zähler aus den Stundenständen, auch mit HA-Entity
+#: (S4-R-N2); ``fuelle_eigene_summe`` prüft es je Seed. Dann gelten auf SA/S3 die Soll-Regeln, die HA/S1/S2 mit Kanälen tragen
+#: (Kalendertag, BKW-Kinder am Tag, Wandlungsverluste, bewertbare Verluste, Messpunkt).
+SA_KANAELE: bool = True
+
+
+def kanal_wege() -> tuple[str, ...]:
+    """Die Wege, deren Datenstand Kanäle trägt (Datenstände und Schreibwege) — Patch (a) aus E-S3-4b."""
+    return ("HA", "S1", "S2", "SA", "S3") if SA_KANAELE else ("HA", "S1", "S2")
+
+
+def _tagesfenster_dt(tag: date, weg: Optional[str] = None) -> tuple[datetime, datetime]:
+    """Das Tagesfenster als Wanduhr: für einen Kanal-Weg (``kanal_wege()``) der Kalendertag ``[00:00, 24:00)``
+    (``kanal/fenster.tagesfenster`` seit HA-Bauform S4 E-S4-1, R-3), sonst das Fenster des Bestands
+    ``[Vortag 23:00, 23:00)`` (Stundenzeilen, ``slot_konvention.tagesfenster_start_ts``)."""
     t = datetime.combine(tag, datetime.min.time())
+    if weg in kanal_wege():
+        return t, t + timedelta(hours=24)
     return t - timedelta(hours=1), t + timedelta(hours=23)
 
 
@@ -719,6 +736,30 @@ async def fuelle_spiegel(engine, anlage_id: int, svc) -> None:
     erg = await nachfuellen_spiegel(sitzungen, anlage_id, jetzt=JETZT, ha_svc=svc)
     assert erg.fehler == 0 and erg.zeilen > 0, erg
     await baue_abgeleitete(sitzungen, anlage_id)
+
+
+async def fuelle_eigene_summe(engine, anlage_id: int):
+    """HA-Bauform S3, E-S3-4 (wie B-1 für HA): die Kanäle aus den gesäten Stundenständen, wie das Produkt sie nach dem Start
+    nachfüllt (``kanal/nachfuellen.nachfuellen_eigene_summe``), danach die abgeleiteten Kanäle wie der Stundenlauf. Seit
+    Nachbau 2 (HA-Bauform S4, E-S4-3, S4-R-N2) für JEDEN Zähler, auch mit HA-Entity — der SA-Datenstand dieser Matrix ordnet
+    jedem Zähler einen HA-Sensor zu (``seed_anlage``), HA antwortet nicht; jeder bekommt seinen Kanal. Die Seed-Eigenschaft
+    ``SA_KANAELE`` wird hier geprüft. Ein Seed, kein Soll."""
+    from contextlib import asynccontextmanager
+
+    from backend.services.kanal.nachfuellen import nachfuellen_eigene_summe
+
+    macher = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+    @asynccontextmanager
+    async def sitzungen():
+        async with macher() as s:
+            yield s
+            await s.commit()
+
+    erg = await nachfuellen_eigene_summe(sitzungen, anlage_id, jetzt=JETZT)
+    assert erg.fehler == 0 and (erg.gefuellt > 0) == SA_KANAELE, erg
+    await baue_abgeleitete(sitzungen, anlage_id)
+    return erg
 
 
 async def baue_abgeleitete(sitzungen, anlage_id: int) -> int:
@@ -1323,7 +1364,9 @@ async def messe_sa(form: Form, m: Messung) -> None:
             aid, ids = await seed_anlage(db, form)
             await seed_snapshots(db, form, aid, ids)
             with _umgebung(_ha_aus()):
+                await fuelle_eigene_summe(engine, aid)   # E-S3-4: Eigene Summe wie im Produkt ohne HA
                 await aggregiere_tage(db, form, aid, TAGE_JUNI + TAGE_JULI)
+                await baue_abgeleitete_nach_tagen(engine, aid)
                 m.tage["SA"] = await miss_tage(db, aid, ids, TAGE_JUNI + TAGE_JULI)
                 m.laufend["SA"] = await _sichten_laufend(db, aid, ids)
                 m.vor["S3"] = await _sichten_vor(db, aid, ids)

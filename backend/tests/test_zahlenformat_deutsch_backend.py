@@ -49,22 +49,29 @@ BACKEND = Path(__file__).resolve().parents[1]
 #: Verzeichnisse, in denen die Regel heute gilt. Ein Treffer hier ist rot.
 SCHARF = [
     "services/daten_checker",
+    # 2026-10-14: der Checker reicht Texte aus dem Berechnungskern durch
+    # (`invarianten.py::pruefe_speicher_netzladung_kumulativ` → Details der
+    # Warnung «Netzladung übersteigt Gesamtladung (kumulativ)», dort stand
+    # «1500.000 kWh»). Gewächtert wird deshalb auch der Ort, an dem der Text
+    # ENTSTEHT. Ein Verzeichnis, keine Datei — `_sammle` nimmt nur Verzeichnisse.
+    # Beim Scharfschalten 13 Stellen in 3 Dateien umgestellt, danach 0.
+    "core/berechnungen",
 ]
 
-#: Restschuld, gemessen am 2026-09-16 — Zahl darf fallen, nie steigen.
+#: Restschuld, gemessen am 2026-09-16, nachgezogen am 2026-10-15 — Zahl darf fallen, nie steigen.
 #: ⚠ Das sind **Anwendertexte**, keine Logzeilen: Stichprobe ``investitionen/roi.py::get_roi_dashboard``
 #: (``f'{result.km_elektrisch:.0f} km elektrisch'``) steht in der Begründung,
 #: die eine Wärmepumpen-Kachel anzeigt. Die Fläche ist erhoben, aber nicht
 #: beauftragt — wer sie anfasst, zieht die Zahl hier mit herunter.
 NOCH_NICHT_UMGESTELLT = {
-    "api/routes": 79,   # weites Muster, 2026-09-16 (das enge zaehlte 78 — s. MUSTER)
+    "api/routes": 16,   # weites Muster; 2026-09-16: 79 (das enge zaehlte 78 — s. MUSTER), 2026-10-15: 16 (nachgezogen, Entscheid Gernot)
 }
 
 #: Bewusste Ausnahmen, je Stelle begründet (N-234-Präzedenz: Koordinaten).
 #: Form: (relativer Pfad, Zeilennummer-unabhängiges Textstück).
 AUSNAHMEN: list[tuple[str, str]] = [
     # Noch keine. Eine Ausnahme braucht eine Begründung in dieser Liste,
-    # nicht ein `# noqa` an der Fundstelle.
+    # nicht ein `noqa` an der Fundstelle.
 ]
 
 # Jede f-String-Formatierung mit fester Nachkommastelle — ``{x:.2f}``,

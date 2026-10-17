@@ -133,7 +133,7 @@ def _netz(form, tage, weg="HA") -> float:
 
 def _pv(form, tage, weg="HA") -> float:
     # N-586 (E4a-2): der Sprung des Anlagenzählers geht nach W2-R2 als Rest an die Geräte ohne Zähler.
-    s = mx.soll_monat(form.pvform, tuple(tage)).summe + _sprung_kwh(form, "sensor.pv_gesamt", tage, weg)
+    s = mx.soll_monat(form.pvform, tuple(tage), weg=weg).summe + _sprung_kwh(form, "sensor.pv_gesamt", tage, weg)
     return round(s, 6)
 
 
@@ -142,14 +142,14 @@ def _feld(form, typ: str, feld: str, tage, *, name: Optional[str] = None) -> flo
                      if feld in g.felder and (name is None or g.name == name)), 6)
 
 
-def _sonst(form, richtung: str, tage) -> float:
+def _sonst(form, richtung: str, tage, weg: Optional[str] = None) -> float:
     s = 0.0
     for g in form.typ("sonstiges"):
         kat = (g.parameter or {}).get("kategorie")
         if richtung == "erzeugung" and kat == "erzeuger" and form.w2:
             # Weg 2 (W2-E): die Ersatzgruppe nimmt je Zeitraum den ersten Zähler mit Deckung — A deckt jeden Tag (am
             # Lückentag mit seinem Δ, wie HA) — und sein Δ über die Tagesfenster.
-            s += am.w2_menge(g.felder["erzeugung_kwh"], g.ohne.get("erzeugung_kwh"), tuple(tage))
+            s += am.w2_menge(g.felder["erzeugung_kwh"], g.ohne.get("erzeugung_kwh"), tuple(tage), weg)
         elif richtung == "erzeugung" and kat == "erzeuger":
             s += am.menge(g.felder["erzeugung_kwh"], tage)
         elif richtung == "verbrauch" and kat != "erzeuger":
@@ -163,13 +163,6 @@ def ev_regel(hz: float, einsp: float, ladung: float, entladung: float) -> float:
     """``berechne_verbrauchs_kennzahlen`` (BERECHNUNGEN §3.1): EV = Direkt + Entladung."""
     direkt = max(0.0, hz - einsp - ladung) if hz > 0 else 0.0
     return max(0.0, direkt + entladung)
-
-
-#: HA-Bauform E4a-2, Weg 2 (Bauplan §6b, „laufend-Teiltag"): das Monats-Δ der Kanäle reicht bis zum letzten
-#: geschriebenen Stand. Um 00:30 (Matrix-Uhr) ist das die Zeile 03.07. 23:00 — die erste Stunde des Tagesfensters
-#: 04.07., den die Σ der Tage noch nicht zählt. Gilt für die Monats-Fakten (`fakten_tw`), nicht für Cockpit → Monat
-#: (HA-Weg Kalendermonat, ab 1. 00:00 — die zweite Monatsgrenze, E3-Nachtrag 2).
-TEILTAG_STUNDEN = (datetime(2026, 7, 3, 23),)
 
 
 def _stunde(fn, stunden) -> float:
@@ -188,10 +181,10 @@ def _pv_stunden(pvform, stunden) -> float:
 def bilanz_soll(form, tage, weg="HA", *, extra_stunden=()) -> dict:
     """Die Bilanz mit den Mengen der Regel: hinter dem Zähler = PV + Sonstiges-Erzeuger; Speicher = alle
     Speicher (auch der am Balkonkraftwerk). Ein einzelner Tag mit verworfener Stunde nennt EV und Autarkie
-    nicht (Tagesregel R7, ``tagesbilanz.py:160-164``). ``extra_stunden``: Stunden über die Tage hinaus (Teiltag des
-    laufenden Monats aus den Kanälen, E4a-2) — ihre Mengen aus denselben Raten."""
+    nicht (Tagesregel R7, ``tagesbilanz.py:160-164``). ``extra_stunden``: Stunden über die Tage hinaus — ihre Mengen aus
+    denselben Raten (bis S4 E-S4-1 der Teiltag des laufenden Monats; seit R-3 ohne Aufrufer)."""
     pv_h = _pv_stunden(form.pvform, extra_stunden)
-    hz = _pv(form, tage, weg) + pv_h + _sonst(form, "erzeugung", tage) + sum(
+    hz = _pv(form, tage, weg) + pv_h + _sonst(form, "erzeugung", tage, weg) + sum(
         _stunde(g.felder["erzeugung_kwh"], extra_stunden) for g in form.typ("sonstiges")
         if (g.parameter or {}).get("kategorie") == "erzeuger" and "erzeugung_kwh" in g.felder)
     e = _einsp(form, tage, weg) + _stunde(form.einsp, extra_stunden)
@@ -426,7 +419,7 @@ KATALOG: dict[str, list[Menge]] = {
         Menge("erzeugung", {**_alle("sonstiges_erzeugung_kwh", fakten="sonstiges/erzeugung_kwh",
                                     ohne=("tabelle", "jahr_verlauf")),
                             "tabelle": "sonstige_erzeugung_kwh", "jahr_verlauf": "sonstige_erzeugung_kwh"},
-              lambda f, t, w: _sonst(f, "erzeugung", t), tag=lambda d: _p(d, "tw/sonstiges_erzeugung"),
+              lambda f, t, w: _sonst(f, "erzeugung", t, w), tag=lambda d: _p(d, "tw/sonstiges_erzeugung"),
               nur=_hat_feld("sonstiges", "erzeugung_kwh")),
         Menge("verbrauch", {**_alle("sonstiges_verbrauch_kwh", fakten="sonstiges/verbrauch_kwh",
                                     ohne=("tabelle", "jahr_verlauf")),
@@ -440,7 +433,7 @@ KATALOG: dict[str, list[Menge]] = {
         Menge("hinter_zaehler", {"fakten": "erzeugung/hinter_zaehler_kwh", "fakten_tw": "erzeugung/hinter_zaehler_kwh",
                                  "tabelle": "erzeugung_hinter_zaehler_kwh",
                                  "jahr_verlauf": "erzeugung_hinter_zaehler_kwh"},
-              lambda f, t, w: round(_pv(f, t, w) + _sonst(f, "erzeugung", t), 6), nur=_hat_feld("sonstiges", "erzeugung_kwh")),
+              lambda f, t, w: round(_pv(f, t, w) + _sonst(f, "erzeugung", t, w), 6), nur=_hat_feld("sonstiges", "erzeugung_kwh")),
         Menge("geraet", {"cockpit_monat": "sonstiges_geraete/{g}/{richtung}_kwh",
                          "fakten": "sonstiges_je_geraet/{g}/{richtung}_kwh"},
               lambda f, t, w, g=None: _sonst_geraet(f, g, t), geraet=True,
@@ -490,7 +483,7 @@ def _wp_soll(form, menge: str, tage, *, name: Optional[str] = None, stunden=None
     """Wärmepumpe nach K1–K5 (``docs/KONZEPT-WAERME-KLIMA.md`` §3). Was die Kanon-Regeln NICHT festlegen
     (Aufteilung nach dem Etikett bei Gesamtstrom; Wärme-Aufteilung ohne getrennte Wärmezähler), ist
     ``UNKLAR`` — Fachfrage des Masters. ``stunden`` (HA-Bauform E4d): dieselben Mengen über einzelne Stunden statt
-    über Tage — der Teiltag des laufenden Monats der Monats-Fakten (``TEILTAG_STUNDEN``)."""
+    über Tage (bis S4 E-S4-1 für den Teiltag des laufenden Monats gebraucht; seit R-3 ohne Aufrufer)."""
     out = 0.0
     gemessen = False   # N-673: trägt irgendein Gerät die Achse (heizung/warmwasser)?
     for g in form.typ("waermepumpe"):
@@ -567,26 +560,6 @@ def _dienst_soll(form, menge: str, tage) -> float:
         if (g.parameter or {}).get("ist_dienstlich"):
             s += am.menge(g.felder.get(f"ladung_{menge}_kwh", am.null), tage)
     return round(s, 6)
-
-
-def _sonst_teiltag(form, menge: str, stunden) -> float:
-    """E4c: die Mengen der Sonstiges-Gruppe in den Teiltag-Stunden (``TEILTAG_STUNDEN``) aus denselben Raten — der
-    laufende Monat der Monats-Fakten reicht bis zum letzten geschriebenen Stand (wie die Bilanz-Gruppe, E4a-2)."""
-    erz = sum(_stunde(g.felder["erzeugung_kwh"], stunden) for g in form.typ("sonstiges")
-              if (g.parameter or {}).get("kategorie") == "erzeuger" and "erzeugung_kwh" in g.felder)
-    if menge == "erzeugung":
-        return erz
-    if menge == "hinter_zaehler":
-        return erz + _pv_stunden(form.pvform, stunden)
-    if menge == "verbrauch":
-        out = 0.0
-        for g in form.typ("sonstiges"):
-            if (g.parameter or {}).get("kategorie") == "erzeuger":
-                continue
-            f = "verbrauch_sonstig_kwh" if "verbrauch_sonstig_kwh" in g.felder else "verbrauch_kwh"
-            out += _stunde(g.felder[f], stunden) if f in g.felder else 0.0
-        return out
-    return 0.0
 
 
 def _sonst_geraet(form, name, tage) -> float:
@@ -806,16 +779,9 @@ def bewerte(fid: str, groesse: str, weg: str, inv: str, m: am.Messung) -> list[Z
             for s in sichten:
                 if s not in q.pfade:
                     continue
+                # HA-Bauform S4 (E-S4-1, R-3): die Monats-Fakten des laufenden Monats rechnen den Kalendermonat wie Cockpit →
+                # Monat — die Teiltag-Pflege (E4a-2/E4c/E4d: eine Stunde des Folgetags-Tagesfensters) entfällt.
                 soll_s = soll
-                if groesse == "netz" and weg == "HA" and s == "fakten_tw" and q.name in _BIL_SCHLUESSEL:
-                    # E4a-2 (Weg 2, §6b): die Monats-Fakten des laufenden Monats aus den Kanälen tragen den Teiltag.
-                    soll_s = bilanz_soll(form, tage_monat, weg, extra_stunden=TEILTAG_STUNDEN)[_BIL_SCHLUESSEL[q.name]]
-                elif groesse == "sonstiges" and weg == "HA" and s == "fakten_tw" and soll is not UNKLAR:
-                    # E4c: die Sonstiges-Gruppe des laufenden Monats aus den Kanälen trägt denselben Teiltag.
-                    soll_s = round(soll + _sonst_teiltag(form, q.name, TEILTAG_STUNDEN), 6)
-                elif groesse == "wp" and weg == "HA" and s == "fakten_tw" and soll is not UNKLAR and soll is not None:
-                    # E4d: die WP-Gruppe des laufenden Monats aus den Kanälen trägt denselben Teiltag.
-                    soll_s = round(soll + _wp_soll(form, q.name, (), stunden=TEILTAG_STUNDEN), 6)
                 z.append(Zelle(f"{q.name}:{s}", _wert(wurzeln, q, s), "unklar", "unklar")
                          if soll is UNKLAR else _z(f"{q.name}:{s}", _wert(wurzeln, q, s), soll_s))
             if datenstand and q.tag is not None and soll is not UNKLAR:
@@ -1316,7 +1282,8 @@ URSACHE: dict[str, Ursache] = {
         "537/179 in den Juni",
     ),
     "TEILTAG-ZWEI-MONATSGRENZEN": Ursache(
-        "HA-Bauform S4 (R-3 „Kalendertag\")",
+        "HA-Bauform S4 (R-3 „Kalendertag\") — geheilt S4 E-S4-1 (ein Fenster: Kalendertag und Kalendermonat der "
+        "Kanal-Schicht, `kanal/fenster.py`); keine Zelle mehr",
         "Laufender Monat zwischen 00:05 und etwa 01:09 (Matrix-Uhr 00:30): die Monats-Fakten und der Jahr-Verlauf "
         "rechnen den Monat aus den Kanälen über das Tagesfenster-Monatsfenster (ab Vortag 23:00) bis zum letzten "
         "geschriebenen Stand und tragen damit schon die erste Stunde des neuen Tagesfensters (Netzbezug 0,4 kWh); "
@@ -1333,16 +1300,12 @@ URSACHE: dict[str, Ursache] = {
     ),
     "OHNE-ABSCHLUSS": Ursache(
         "Ausgangszustand (Auftrag): ohne Abschluss nicht geführt — seit HA-Bauform E4c für E-Mobilität und Sonstiges, "
-        "seit E4d für die Wärmepumpe mit HA (Kanäle, Wege HA/S1/S2) geheilt; es bleiben Speicher-Netzladung und die "
-        "Wege ohne Kanäle (SA/S3, Lesart 1 — dort auch die Wärmepumpe: Monats-Fakten und Jahr-Verlauf ohne Abschluss "
-        "ohne WP-Mengen, Cockpit → Monat aus der Tagesebene ohne Betriebsart-Strom, Kälte und Heiz-Nutzenergie des "
-        "Klimageräts)",
+        "seit E4d für die Wärmepumpe mit HA (Kanäle, Wege HA/S1/S2), seit Päckchen P (13.10.2026) für die "
+        "Speicher-Netzladung und seit HA-Bauform S4 E-S4-3 (Nachbau 2: der SA-Datenstand trägt Kanäle) für die Wege SA/S3 "
+        "geheilt; keine Zelle mehr",
         "Größen, die im Monat ohne Abschluss nicht aus der Tagesebene gefüllt werden: Wärmepumpen-Mengen und "
-        "-Achsen, Sonstiges, E-Mob-Lademenge, Speicher-Netzladung (Monats-Fakten mit Tageswerten und "
-        "Jahr-Verlauf nennen 0/nichts; Sonstiges auch Cockpit → Monat — die Netzladung dort seit #427 Punkt 2 aus den "
-        "Tagen; E-Mob ohne HA auch Cockpit → Monat). Folge in der Form mit Sonstiges-Erzeuger (M10): Eigenverbrauch, Gesamtverbrauch, Autarkie "
-        "und Erzeugung hinter dem Zähler des Monats ohne Abschluss rechnen ohne das BHKW. Cockpit → Monat nennt "
-        "daneben für WP-Strom/-Wärme und (mit HA) die Lademenge den Wert der Tagesebene",
+        "-Achsen, Sonstiges, E-Mob-Lademenge (Monats-Fakten mit Tageswerten und Jahr-Verlauf nannten 0/nichts). Mit "
+        "Kanälen lesen Monats-Fakten, Jahr-Verlauf und Cockpit → Monat die Gruppen aus ihnen (E4c/E4d, N-750)",
     ),
     "KANDIDAT-EMOB-LAUFEND-NETZ": Ursache(
         "KANDIDAT (nur gezeigt) — N-631, seit HA-Bauform E4c geheilt (eine Aufteilung aus dem abgeleiteten Kanal für "
@@ -1367,218 +1330,28 @@ ROT: dict[str, dict[tuple[str, str, str, str], tuple[str, ...]]] = {
     # N-586: seit HA-Bauform E4a-2 geheilt (Soll umgedreht „Tag = Monat = HA", Bauplan §7; Markierungen entfernt
     # vom Master nach §6a, 06.10.2026) — keine Zelle mehr.
     'N-586': {},
-    'TEILTAG-ZWEI-MONATSGRENZEN': {
-        ('M01', 'netz', 'HA', 'I1'): (
-            'autarkie:fakten_tw', 'autarkie:jahr_verlauf', 'gesamtverbrauch:fakten_tw', 'gesamtverbrauch:jahr_verlauf',
-            'netzbezug:fakten_tw', 'netzbezug:jahr_verlauf',
-        ),
-        ('M03', 'netz', 'HA', 'I1'): (
-            'autarkie:fakten_tw', 'autarkie:jahr_verlauf', 'gesamtverbrauch:fakten_tw', 'gesamtverbrauch:jahr_verlauf',
-            'netzbezug:fakten_tw', 'netzbezug:jahr_verlauf',
-        ),
-        ('M04', 'netz', 'HA', 'I1'): (
-            'autarkie:fakten_tw', 'autarkie:jahr_verlauf', 'gesamtverbrauch:fakten_tw', 'gesamtverbrauch:jahr_verlauf',
-            'netzbezug:fakten_tw', 'netzbezug:jahr_verlauf',
-        ),
-        ('M05', 'netz', 'HA', 'I1'): (
-            'autarkie:fakten_tw', 'autarkie:jahr_verlauf', 'gesamtverbrauch:fakten_tw', 'gesamtverbrauch:jahr_verlauf',
-            'netzbezug:fakten_tw', 'netzbezug:jahr_verlauf',
-        ),
-        ('M06', 'netz', 'HA', 'I1'): (
-            'autarkie:fakten_tw', 'autarkie:jahr_verlauf', 'gesamtverbrauch:fakten_tw', 'gesamtverbrauch:jahr_verlauf',
-            'netzbezug:fakten_tw', 'netzbezug:jahr_verlauf',
-        ),
-        ('M07', 'netz', 'HA', 'I1'): (
-            'autarkie:fakten_tw', 'autarkie:jahr_verlauf', 'gesamtverbrauch:fakten_tw', 'gesamtverbrauch:jahr_verlauf',
-            'netzbezug:fakten_tw', 'netzbezug:jahr_verlauf',
-        ),
-        ('M08', 'netz', 'HA', 'I1'): (
-            'autarkie:fakten_tw', 'autarkie:jahr_verlauf', 'gesamtverbrauch:fakten_tw', 'gesamtverbrauch:jahr_verlauf',
-            'netzbezug:fakten_tw', 'netzbezug:jahr_verlauf',
-        ),
-        ('M09', 'netz', 'HA', 'I1'): (
-            'autarkie:fakten_tw', 'autarkie:jahr_verlauf', 'gesamtverbrauch:fakten_tw', 'gesamtverbrauch:jahr_verlauf',
-            'netzbezug:fakten_tw', 'netzbezug:jahr_verlauf',
-        ),
-        ('M01', 'preis', 'HA', 'I1'): ('kosten:jahr_verlauf',),
-        ('M03', 'preis', 'HA', 'I1'): ('kosten:jahr_verlauf',),
-        ('M04', 'preis', 'HA', 'I1'): ('kosten:jahr_verlauf',),
-        ('M05', 'preis', 'HA', 'I1'): ('kosten:jahr_verlauf',),
-        ('M06', 'preis', 'HA', 'I1'): ('kosten:jahr_verlauf',),
-        ('M07', 'preis', 'HA', 'I1'): ('kosten:jahr_verlauf',),
-        ('M08', 'preis', 'HA', 'I1'): ('kosten:jahr_verlauf',),
-        ('M07', 'sonstiges', 'HA', 'I1'): ('verbrauch:fakten_tw', 'verbrauch:jahr_verlauf'),
-        ('M09', 'preis', 'HA', 'I1'): ('kosten:jahr_verlauf',),
-        ('M10', 'netz', 'HA', 'I1'): (
-            'autarkie:fakten_tw', 'autarkie:jahr_verlauf', 'eigenverbrauch:fakten_tw', 'eigenverbrauch:jahr_verlauf',
-            'gesamtverbrauch:fakten_tw', 'gesamtverbrauch:jahr_verlauf', 'netzbezug:fakten_tw',
-            'netzbezug:jahr_verlauf',
-        ),
-        ('M10', 'netz', 'HA', 'I2'): ('gesamtverbrauch:fakten_tw=Σtage', 'gesamtverbrauch:jahr_verlauf=Σtage'),
-        ('M10', 'sonstiges', 'HA', 'I1'): ('erzeugung:fakten_tw', 'erzeugung:jahr_verlauf'),
-        ('M10', 'preis', 'HA', 'I1'): ('kosten:jahr_verlauf', 'netto_ertrag:jahr_verlauf'),
-        ('M05', 'wp', 'HA', 'I1'): ('strom:fakten_tw', 'strom:jahr_verlauf', 'waerme:fakten_tw'),
-        ('M06', 'wp', 'HA', 'I1'): (
-            'heizung:fakten_tw', 'heizung:jahr_verlauf', 'strom:fakten_tw', 'strom:jahr_verlauf',
-            'strom_heizen:fakten_tw', 'strom_heizen:jahr_verlauf', 'waerme:fakten_tw', 'warmwasser:fakten_tw',
-            'warmwasser:jahr_verlauf',
-        ),
-    },
+    # TEILTAG-ZWEI-MONATSGRENZEN: seit HA-Bauform S4 E-S4-1 geheilt (R-3: Monats-Fakten, Jahr-Verlauf und Cockpit → Monat
+    # rechnen denselben Kalendermonat) — 26 Markierungen entfernt, keine Zelle mehr.
+    'TEILTAG-ZWEI-MONATSGRENZEN': {},
     # N-585-REST: seit HA-Bauform E4d geheilt (Bauplan §8a: eine gemessene 0 ist erfasst; Strom 0 und Wärme 0 = Stufe 3,
     # Mengen 0, Ersparnis 0 €) — keine Zelle mehr. Die Sichten der Wege ohne Kanäle, die die 0 vor dem Abschluss nicht
-    # kennen (Jahr-Verlauf aus den Monats-Fakten, Lesart 1), stehen unter OHNE-ABSCHLUSS.
+    # kannten (Jahr-Verlauf aus den Monats-Fakten, Lesart 1), standen unter OHNE-ABSCHLUSS (geheilt S4 E-S4-3).
     'N-585-REST': {
     },
-    'OHNE-ABSCHLUSS': {
-        ('M02', 'emob', 'S3', 'I2'): (
-            'heim_pv:fakten:tageswert=gespeichert', 'heimladung:fakten:tageswert=gespeichert',
-            'wallbox:fakten:tageswert=gespeichert', 'wallbox:jahr_verlauf:vor=nach',
-        ),
-        ('M02', 'emob', 'SA', 'I1'): ('heimladung:fakten_tw',),
-        ('M04', 'speicher', 'HA', 'I1'): ('netzladung:fakten_tw', 'netzladung:jahr_verlauf',),
-        # #427 Punkt 2 (13.10.2026): Cockpit → Monat (und das Jahr als Σ der Monatsantworten) trägt die Netzladung im
-        # laufenden Monat aus den Tagen — die Zelle `cockpit_monat` ist geheilt. Monats-Fakten mit Tageswerten und der
-        # Verlauf (Lesart 1, N-121) bleiben ohne Abschluss leer; seit Cockpit → Monat den Wert nennt, meldet I6 sie.
-        ('M04', 'speicher', 'HA', 'I3'): ('netzladung:fakten_tw',),
-        ('M04', 'speicher', 'HA', 'I6'): ('netzladung:fakten_tw', 'netzladung:jahr_verlauf',),
-        ('M04', 'speicher', 'S1', 'I2'): (
-            'netzladung:cockpit_monat:vor=nach', 'netzladung:fakten:tageswert=gespeichert',
-            'netzladung:jahr_verlauf:vor=nach',
-        ),
-        ('M04', 'speicher', 'S2', 'I2'): (
-            'netzladung:cockpit_monat:vor=nach', 'netzladung:fakten:tageswert=gespeichert',
-            'netzladung:jahr_verlauf:vor=nach',
-        ),
-        ('M04', 'speicher', 'S3', 'I2'): (
-            'netzladung:fakten:tageswert=gespeichert', 'netzladung:jahr_verlauf:vor=nach',
-        ),
-        ('M04', 'speicher', 'SA', 'I1'): ('netzladung:fakten_tw', 'netzladung:jahr_verlauf',),
-        ('M04', 'speicher', 'SA', 'I3'): ('netzladung:fakten_tw',),
-        ('M04', 'speicher', 'SA', 'I6'): ('netzladung:fakten_tw', 'netzladung:jahr_verlauf',),
-        ('M05', 'wp', 'S3', 'I2'): (
-            'strom:fakten:tageswert=gespeichert', 'strom:jahr_verlauf:vor=nach',
-            'waerme:fakten:tageswert=gespeichert',
-        ),
-        ('M05', 'wp', 'SA', 'I1'): ('strom:fakten_tw', 'strom:jahr_verlauf', 'waerme:fakten_tw',),
-        ('M05', 'wp', 'SA', 'I2'): ('strom:fakten_tw=Σtage', 'strom:jahr_verlauf=Σtage',),
-        ('M05', 'wp', 'SA', 'I3'): ('strom:fakten_tw', 'waerme:fakten_tw',),
-        ('M05', 'wp', 'SA', 'I6'): ('strom:fakten_tw', 'strom:jahr_verlauf', 'waerme:fakten_tw',),
-        ('M06', 'wp', 'S3', 'I2'): (
-            'heizung:fakten:tageswert=gespeichert', 'heizung:jahr_verlauf:vor=nach',
-            'modus_heizen:fakten:tageswert=gespeichert', 'modus_kuehlen:fakten:tageswert=gespeichert',
-            'strom:fakten:tageswert=gespeichert', 'strom:jahr_verlauf:vor=nach',
-            'strom_heizen:fakten:tageswert=gespeichert', 'strom_heizen:jahr_verlauf:vor=nach',
-            'strom_warmwasser:fakten:tageswert=gespeichert', 'strom_warmwasser:jahr_verlauf:vor=nach',
-            'waerme:fakten:tageswert=gespeichert', 'warmwasser:fakten:tageswert=gespeichert',
-            'warmwasser:jahr_verlauf:vor=nach',
-        ),
-        ('M06', 'wp', 'SA', 'I1'): (
-            'heizung:fakten_tw', 'heizung:jahr_verlauf', 'modus_heizen:fakten_tw', 'modus_kuehlen:fakten_tw',
-            'strom:fakten_tw', 'strom:jahr_verlauf', 'strom_heizen:fakten_tw', 'strom_heizen:jahr_verlauf',
-            'strom_warmwasser:fakten_tw', 'strom_warmwasser:jahr_verlauf', 'waerme:fakten_tw',
-            'warmwasser:fakten_tw', 'warmwasser:jahr_verlauf',
-        ),
-        ('M06', 'wp', 'SA', 'I2'): ('strom:fakten_tw=Σtage', 'strom:jahr_verlauf=Σtage',),
-        ('M06', 'wp', 'SA', 'I6'): (
-            'heizung:fakten_tw', 'heizung:jahr_verlauf', 'strom:fakten_tw', 'strom:jahr_verlauf',
-            'strom_heizen:fakten_tw', 'strom_heizen:jahr_verlauf', 'strom_warmwasser:fakten_tw',
-            'strom_warmwasser:jahr_verlauf', 'waerme:fakten_tw', 'warmwasser:fakten_tw', 'warmwasser:jahr_verlauf',
-        ),
-        ('M07', 'sonstiges', 'S3', 'I2'): (
-            'verbrauch:fakten:tageswert=gespeichert', 'verbrauch:jahr_verlauf:vor=nach',
-        ),
-        ('M07', 'sonstiges', 'SA', 'I1'): ('verbrauch:fakten_tw',),
-        ('M07', 'sonstiges', 'SA', 'I2'): (
-            'verbrauch:cockpit_monat=Σtage', 'verbrauch:fakten_tw=Σtage', 'verbrauch:jahr_verlauf=Σtage',
-        ),
-        ('M07', 'sonstiges', 'SA', 'I3'): ('verbrauch:cockpit_monat', 'verbrauch:fakten_tw',),
-        ('M07', 'sonstiges', 'SA', 'I4'): ('geraet:cockpit_monat:Pool',),
-        ('M07', 'sonstiges', 'SA', 'I6'): (
-            'verbrauch:cockpit_jahr', 'verbrauch:cockpit_monat', 'verbrauch:fakten_tw', 'verbrauch:jahr_verlauf',
-        ),
-        ('M08', 'emob', 'S3', 'I2'): ('wallbox:fakten:tageswert=gespeichert', 'wallbox:jahr_verlauf:vor=nach',),
-        ('M08', 'emob', 'SA', 'I1'): ('heimladung:fakten_tw',),
-        ('M09', 'emob', 'S3', 'I2'): (
-            'dienst_netz:fakten:tageswert=gespeichert', 'dienst_pv:fakten:tageswert=gespeichert',
-            'heim_netz:fakten:tageswert=gespeichert', 'heim_pv:fakten:tageswert=gespeichert',
-            'heimladung:fakten:tageswert=gespeichert',
-        ),
-        ('M09', 'emob', 'SA', 'I1'): ('heimladung:fakten_tw',),
-        ('M09', 'emob', 'SA', 'I2'): ('heimladung:cockpit_monat=Σtage',),
-        ('M10', 'netz', 'S3', 'I2'): (
-            'autarkie:fakten:tageswert=gespeichert', 'autarkie:jahr_verlauf:vor=nach',
-            'eigenverbrauch:fakten:tageswert=gespeichert', 'eigenverbrauch:jahr_verlauf:vor=nach',
-            'gesamtverbrauch:fakten:tageswert=gespeichert', 'gesamtverbrauch:jahr_verlauf:vor=nach',
-        ),
-        ('M10', 'netz', 'SA', 'I2'): (
-            'eigenverbrauch:cockpit_monat=Σtage', 'eigenverbrauch:fakten_tw=Σtage',
-            'eigenverbrauch:jahr_verlauf=Σtage', 'gesamtverbrauch:cockpit_monat=Σtage',
-            'gesamtverbrauch:fakten_tw=Σtage', 'gesamtverbrauch:jahr_verlauf=Σtage',
-        ),
-        ('M10', 'netz', 'SA', 'I3'): (
-            'autarkie:cockpit_monat', 'autarkie:fakten_tw', 'eigenverbrauch:cockpit_monat',
-            'eigenverbrauch:fakten_tw', 'gesamtverbrauch:cockpit_monat', 'gesamtverbrauch:fakten_tw',
-        ),
-        ('M10', 'sonstiges', 'S3', 'I2'): (
-            'erzeugung:fakten:tageswert=gespeichert', 'erzeugung:jahr_verlauf:vor=nach',
-            'hinter_zaehler:fakten:tageswert=gespeichert', 'hinter_zaehler:jahr_verlauf:vor=nach',
-            'verbrauch:fakten:tageswert=gespeichert', 'verbrauch:jahr_verlauf:vor=nach',
-        ),
-        ('M10', 'sonstiges', 'SA', 'I1'): ('erzeugung:fakten_tw', 'verbrauch:fakten_tw',),
-        ('M10', 'sonstiges', 'SA', 'I2'): (
-            'erzeugung:cockpit_monat=Σtage', 'erzeugung:fakten_tw=Σtage', 'erzeugung:jahr_verlauf=Σtage',
-            'verbrauch:cockpit_monat=Σtage', 'verbrauch:fakten_tw=Σtage', 'verbrauch:jahr_verlauf=Σtage',
-        ),
-        ('M10', 'sonstiges', 'SA', 'I3'): (
-            'erzeugung:cockpit_monat', 'erzeugung:fakten_tw', 'hinter_zaehler:fakten_tw', 'verbrauch:cockpit_monat',
-            'verbrauch:fakten_tw',
-        ),
-        ('M10', 'sonstiges', 'SA', 'I4'): ('geraet:cockpit_monat:BHKW', 'geraet:cockpit_monat:Sauna',),
-        ('M10', 'sonstiges', 'SA', 'I6'): (
-            'erzeugung:cockpit_jahr', 'erzeugung:cockpit_monat', 'erzeugung:fakten_tw', 'erzeugung:jahr_verlauf',
-            'verbrauch:cockpit_jahr', 'verbrauch:cockpit_monat', 'verbrauch:fakten_tw', 'verbrauch:jahr_verlauf',
-        ),
-        ('M02', 'emob', 'SA', 'I2'): (
-            'heimladung:cockpit_monat=Σtage', 'wallbox:fakten_tw=Σtage', 'wallbox:jahr_verlauf=Σtage',
-        ),
-        ('M02', 'emob', 'SA', 'I3'): (
-            'heim_pv:cockpit_monat', 'heim_pv:fakten_tw', 'heimladung:cockpit_monat', 'heimladung:fakten_tw',
-            'wallbox:fakten_tw',
-        ),
-        ('M02', 'emob', 'SA', 'I6'): ('wallbox:fakten_tw', 'wallbox:jahr_verlauf'),
-        ('M08', 'emob', 'SA', 'I2'): (
-            'heimladung:cockpit_monat=Σtage', 'wallbox:fakten_tw=Σtage', 'wallbox:jahr_verlauf=Σtage',
-        ),
-        ('M08', 'emob', 'SA', 'I3'): (
-            'heim_pv:cockpit_monat', 'heim_pv:fakten_tw', 'heimladung:cockpit_monat', 'heimladung:fakten_tw',
-            'wallbox:fakten_tw',
-        ),
-        ('M08', 'emob', 'SA', 'I6'): ('wallbox:fakten_tw', 'wallbox:jahr_verlauf'),
-        ('M09', 'emob', 'SA', 'I3'): (
-            'dienst_netz:fakten_tw', 'dienst_pv:fakten_tw', 'heim_netz:cockpit_monat', 'heim_netz:fakten_tw',
-            'heim_pv:cockpit_monat', 'heim_pv:fakten_tw', 'heimladung:cockpit_monat', 'heimladung:fakten_tw',
-        ),
-        ('M06', 'wp', 'SA', 'I3'): (
-            'heizung:cockpit_monat', 'heizung:fakten_tw', 'kaelte:cockpit_monat', 'modus_heizen:cockpit_monat',
-            'modus_heizen:fakten_tw', 'modus_kuehlen:cockpit_monat', 'modus_kuehlen:fakten_tw', 'strom:fakten_tw',
-            'strom_heizen:fakten_tw', 'strom_warmwasser:fakten_tw', 'waerme:cockpit_monat', 'waerme:fakten_tw',
-            'warmwasser:fakten_tw',
-        ),
-        ('M06', 'wp', 'SA', 'I4'): ('waerme:cockpit_monat:Klima',),
-        ('M07', 'wp', 'SA', 'I1'): ('strom:jahr_verlauf',),
-        ('M07', 'wp', 'SA', 'I2'): ('strom:jahr_verlauf=Σtage',),
-        ('M07', 'wp', 'SA', 'I5'): ('null:strom:jahr_verlauf',),
-        ('M07', 'wp', 'S3', 'I2'): ('strom:jahr_verlauf:vor=nach',),
-    },
+    # OHNE-ABSCHLUSS: seit HA-Bauform S4 E-S4-3 (Nachbau 2, S4-R-N2) geheilt — der SA-Datenstand trägt Kanäle (der Seed-Haken
+    # `fuelle_eigene_summe` füllt wie das Produkt jeden Zähler aus den Stundenständen, auch mit HA-Entity): Monats-Fakten,
+    # Jahr-Verlauf und Cockpit → Monat lesen die Gruppen ohne Abschluss aus den Kanälen wie auf HA (N-750). Alle
+    # Markierungen der Wege SA/S3 entfernt (Matrix-Lauf E-S4-3, Bericht `opus-berichte/HA-BAUFORM-E-S4-3.md`) — keine Zelle mehr.
+    'OHNE-ABSCHLUSS': {},
     'KANDIDAT-EMOB-LAUFEND-NETZ': {
     },
     # KANDIDAT-WP-ACHSEN-OHNE-ABSCHLUSS (N-630): seit HA-Bauform E4d geheilt (die WP-Gruppe aus den Kanälen in Monats-Fakten
-    # und Cockpit → Monat) — keine Zelle mehr; die Sichten ohne Kanäle (SA) stehen unter OHNE-ABSCHLUSS (Lesart 1).
+    # und Cockpit → Monat) — keine Zelle mehr; die Sichten ohne Kanäle (SA) standen unter OHNE-ABSCHLUSS (geheilt S4 E-S4-3).
     'KANDIDAT-WP-ACHSEN-OHNE-ABSCHLUSS': {
     },
     # E4E-DIENSTLICHE-LADEKOSTEN (N-633): seit HA-Bauform E4e geheilt (Cockpit → Monat ohne Monats-Fakt zieht die
     # dienstlichen Ladekosten wie die Fakten ab: Mengen der einen Entscheidung, Tarif und Bewertung der Schicht) — keine
-    # Zelle mehr. Die Teiltag-Sicht `kosten:jahr_verlauf` derselben Zelle bleibt unter TEILTAG-ZWEI-MONATSGRENZEN.
+    # Zelle mehr. Die Teiltag-Sicht `kosten:jahr_verlauf` derselben Zelle stand unter TEILTAG-ZWEI-MONATSGRENZEN (geheilt S4).
     'E4E-DIENSTLICHE-LADEKOSTEN': {
     },
 }
@@ -1656,13 +1429,14 @@ URSACHE.update({
         "('erzeuger')`), die Sichten führen keinen Verbrauch",
     ),
     "W2-BESTAND-SPEICHER": Ursache(
-        "HA-Bauform S3/S5 (gespeicherte Tageszeilen)",
+        "HA-Bauform S5 (gespeicherte Tageszeilen)",
         "Die Tageszeile schreibt weiter `aggregate_day` (Bestandspfad, Ersatzgruppe am Ausfalltag B mit 6,24); der "
-        "Kanal ersetzt sie nur beim Lesen der Bilanz-Gruppe. Die Sicht liest den gespeicherten Schlüssel roh",
+        "Kanal ersetzt sie nur beim Lesen der Bilanz-Gruppe. Die Sicht liest den gespeicherten Schlüssel roh — auf HA "
+        "und seit Nachbau 2 (HA-Bauform S4 E-S4-3, der SA-Datenstand trägt Kanäle) ebenso auf SA",
     ),
     "W2-SA-BESTAND": Ursache(
-        "Lesart 1 (Bauplan §3b) — Standalone ohne Kanäle",
-        "Der Standalone-Datenstand hat keine Kanäle: die Tage rechnet der Bestand (Ersatzgruppe am Ausfalltag B mit "
+        "Lesart 1 (Bauplan §3b) — Standalone ohne Kanäle — seit HA-Bauform S4 E-S4-3 geheilt (Nachbau 2); keine Zelle mehr",
+        "Der Standalone-Datenstand hatte keine Kanäle: die Tage rechnete der Bestand (Ersatzgruppe am Ausfalltag B mit "
         "6,24 statt Weg 2 A 0 / 12,0)",
     ),
 })
@@ -1675,44 +1449,21 @@ URSACHE["E4E-DIENSTLICHE-LADEKOSTEN"] = Ursache(
     "(12,24 €). Nach dem Abschluss nennen beide dasselbe. Geld — nicht Teil von E4c",
 )
 _ROT_W2: dict[str, dict[tuple[str, str, str, str], tuple[str, ...]]] = {
-    'OHNE-ABSCHLUSS': {
-        ('W2-E', 'netz', 'S3', 'I2'): ('autarkie:fakten:tageswert=gespeichert', 'autarkie:jahr_verlauf:vor=nach', 'eigenverbrauch:fakten:tageswert=gespeichert', 'eigenverbrauch:jahr_verlauf:vor=nach', 'eigenverbrauch:Σtage_juni=fakten', 'gesamtverbrauch:fakten:tageswert=gespeichert', 'gesamtverbrauch:jahr_verlauf:vor=nach', 'gesamtverbrauch:Σtage_juni=fakten'),
-        ('W2-E', 'netz', 'SA', 'I2'): ('eigenverbrauch:cockpit_monat=Σtage', 'eigenverbrauch:fakten_tw=Σtage', 'eigenverbrauch:jahr_verlauf=Σtage', 'gesamtverbrauch:cockpit_monat=Σtage', 'gesamtverbrauch:fakten_tw=Σtage', 'gesamtverbrauch:jahr_verlauf=Σtage'),
-        ('W2-E', 'netz', 'SA', 'I3'): ('autarkie:cockpit_monat', 'autarkie:fakten_tw', 'eigenverbrauch:cockpit_monat', 'eigenverbrauch:fakten_tw', 'gesamtverbrauch:cockpit_monat', 'gesamtverbrauch:fakten_tw'),
-        ('W2-E', 'sonstiges', 'SA', 'I4'): ('geraet:cockpit_monat:BHKW',),
-        ('W2-E', 'sonstiges', 'SA', 'I6'): ('erzeugung:cockpit_jahr', 'erzeugung:cockpit_monat', 'erzeugung:fakten_tw', 'erzeugung:jahr_verlauf'),
-        ('W2-E', 'sonstiges', 'SA', 'I1'): ('erzeugung:fakten_tw',),
-        ('W2-E', 'sonstiges', 'SA', 'I2'): (
-            'erzeugung:cockpit_monat=Σtage', 'erzeugung:fakten_tw=Σtage', 'erzeugung:jahr_verlauf=Σtage',
-        ),
-        ('W2-E', 'sonstiges', 'SA', 'I3'): (
-            'erzeugung:cockpit_monat', 'erzeugung:fakten_tw', 'hinter_zaehler:fakten_tw',
-        ),
-        ('W2-E', 'sonstiges', 'S3', 'I2'): (
-            'erzeugung:fakten:tageswert=gespeichert', 'erzeugung:jahr_verlauf:vor=nach',
-            'erzeugung:Σtage_juni=fakten', 'hinter_zaehler:fakten:tageswert=gespeichert',
-            'hinter_zaehler:jahr_verlauf:vor=nach',
-        ),
-    },
+    # OHNE-ABSCHLUSS (W2-E): seit HA-Bauform S4 E-S4-3 geheilt (Nachbau 2) — keine Zelle mehr.
+    'OHNE-ABSCHLUSS': {},
     'W2-BESTAND-SPEICHER': {
         ('W2-E', 'sonstiges', 'HA', 'I4'): ('geraet:tag:BHKW',),
+        # HA-Bauform S4 E-S4-3 (Nachbau 2): mit Kanälen dieselbe Sicht wie HA — Cockpit → Monat geheilt, die gespeicherte
+        # Tageszeile (`geraet:tag:BHKW` 6,24 statt 6,0, Ausfalltag B) schreibt weiter der Bestand (gemessen, Matrix-Lauf E-S4-3).
+        ('W2-E', 'sonstiges', 'SA', 'I4'): ('geraet:tag:BHKW',),
     },
     'W2-E-KATALOG': {
     },
-    'W2-SA-BESTAND': {
-        ('W2-E', 'netz', 'SA', 'I3'): ('autarkie:tag', 'eigenverbrauch:tag', 'gesamtverbrauch:tag'),
-        ('W2-E', 'sonstiges', 'SA', 'I4'): ('geraet:tag:BHKW',),
-        ('W2-E', 'sonstiges', 'SA', 'I3'): ('erzeugung:tag',),
-    },
-    'TEILTAG-ZWEI-MONATSGRENZEN': {
-        ('W2-E', 'netz', 'HA', 'I1'): (
-            'autarkie:fakten_tw', 'autarkie:jahr_verlauf', 'eigenverbrauch:fakten_tw', 'eigenverbrauch:jahr_verlauf',
-            'gesamtverbrauch:fakten_tw', 'gesamtverbrauch:jahr_verlauf', 'netzbezug:fakten_tw',
-            'netzbezug:jahr_verlauf',
-        ),
-        ('W2-E', 'netz', 'HA', 'I2'): ('gesamtverbrauch:fakten_tw=Σtage', 'gesamtverbrauch:jahr_verlauf=Σtage'),
-        ('W2-E', 'sonstiges', 'HA', 'I1'): ('erzeugung:fakten_tw', 'erzeugung:jahr_verlauf'),
-    },
+    # W2-SA-BESTAND (W2-E): seit HA-Bauform S4 E-S4-3 geheilt (Nachbau 2: der SA-Datenstand trägt Kanäle, die Tage
+    # rechnet Weg 2) — keine Zelle mehr; die gespeicherte Tageszeile von `sonstiges SA I4` steht unter W2-BESTAND-SPEICHER.
+    'W2-SA-BESTAND': {},
+    # TEILTAG-ZWEI-MONATSGRENZEN (W2-E): seit HA-Bauform S4 E-S4-1 geheilt — keine Zelle mehr.
+    'TEILTAG-ZWEI-MONATSGRENZEN': {},
 }
 for _u, _zellen in _ROT_W2.items():
     ROT.setdefault(_u, {}).update(_zellen)

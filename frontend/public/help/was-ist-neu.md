@@ -9,6 +9,99 @@
 
 ---
 
+## v4.1.8 — 17. Oktober 2026
+
+**Stunden aus Home Assistant:** Deckt der HA-Spiegel einen Tag, kommen jetzt auch die **Stunden** von PV, Einspeisung,
+Netzbezug, Speicher, Wärmepumpe und Wallbox aus ihm — jede Stunde ist der Zuwachs, den Home Assistant nennt, und die
+Stunden ergeben zusammen genau den Tag. Eine in Home Assistant fehlende Stunde bleibt leer, ihre Energie steht in der
+Stunde danach („enthält n Stunden"). Das gilt für den Stunden-Verlauf in *Cockpit → Tag*, für Direktverbrauch,
+Überschuss und Defizit der Tage, für Tagesprofil und Top-Stunden in *Cockpit → Monat* und für die Stundenform der
+Wärme-Sichten. Tage älter als zwei Jahre zeigen ihren Stunden-Verlauf wieder, soweit deine HA-Statistik zurückreicht
+([Bedienung → Tag](HANDBUCH_BEDIENUNG.md#22-tag), [Energieprofil §4](HANDBUCH_ENERGIEPROFIL.md#4-reparatur--pflege)).
+
+**Der Tag geht von 0 bis 24 Uhr — wie im HA-Energie-Dashboard:** An Tagen aus dem HA-Spiegel ist der Tag jetzt der
+Kalendertag, und eine Stunde beginnt zur vollen Stunde. Bisher reichte der Tag von 23 Uhr des Vortags bis 23 Uhr. Das
+Bild der Folge: was zwischen 23 und 24 Uhr passiert — die Wallbox lädt nachts, der Speicher zieht günstigen Netzstrom —,
+steht jetzt am selben Tag und nicht mehr am nächsten; jede Tageszahl eines solchen Tages ändert sich deshalb einmal um
+diese eine Stunde (bei PV nachts kaum). *Cockpit → Monat* und der Verlauf in *Cockpit → Jahr* nennen im laufenden Monat
+dieselbe Zahl, *Cockpit → Live* „heute" und *Cockpit → Tag* dasselbe Fenster. Die Stunden sind als Bereich beschriftet
+(„11–12"), auch an Tagen aus den eigenen Stundenwerten, die so bleiben, wie sie gespeichert sind — an der Grenze
+zwischen beiden Tagesarten fehlt deshalb eine Stunde oder sie zählt doppelt
+([Bedienung → Tag](HANDBUCH_BEDIENUNG.md#22-tag)).
+
+**Kein Deckel auf Werten aus Home Assistant:** *Cockpit → Monat*, „Aus HA laden", der Import aus der HA-Statistik und
+der Vorschlag im Monatsabschluss nehmen jetzt die Zahl von Home Assistant, ohne eine hohe Stunde von PV oder Einspeisung
+zu kappen — wie die Tage aus dem HA-Spiegel und das Energie-Dashboard. Ein Sprung in der HA-Statistik steht damit in Tag
+und Monat; hat er das typische Muster (der Sensor fällt kurz auf 0 und kehrt zurück), zeigt ihn der Daten-Checker
+„Zählerstände – Sprung in Home Assistant" mit dem Weg zur Korrektur in Home Assistant ([Daten-Checker §4.8b](HANDBUCH_DATEN_CHECKER.md#48b-zaehlerstaende--sprung-in-home-assistant)). Ein
+MQTT-Zähler, der jede Nacht auf 0 zurückfällt, ergibt über seine eigene Summe richtige Tage, Monate und Jahre; Live
+„heute" und „gestern", Geräte-Tageswerte aus der Zeit davor und der Vorschlag im Monatsabschluss bleiben für ihn ohne
+verlässlichen Wert — die Meldung im Daten-Checker sagt es, und die Empfehlung bleibt, den fortlaufenden Stand zu schicken.
+
+**Eigene Zählerstände vor der HA-Statistik, Werkbank mit klarer Grenze:** Wo die Langzeitstatistik von Home Assistant
+einen Zähler noch nicht führt, nimmt eedc seine eigenen gespeicherten Stundenstände — für jeden Zähler, nur für die Zeit
+vor dem ersten Wert aus Home Assistant. Liegen nur Stände um Mitternacht vor, stimmen die Tage, die Stundenansicht zeigt
+den Tag als eine Spanne. Und verwirfst du mit der Werkbank „Werte vor dem Sensorbeginn verwerfen" ein Feld, gilt es an
+Tagen, die nur der HA-Spiegel trägt, als nicht erfasst; die übrigen Felder bleiben
+([Energieprofil §4](HANDBUCH_ENERGIEPROFIL.md#4-reparatur--pflege)).
+
+**Werkbank: Werte vor dem Sensorbeginn verwerfen:** Hast du einem Feld einen neuen Sensor zugeordnet und der alte hat
+vorher falsche Werte geliefert, kommst du jetzt an diese Werte heran. Die neue Operation der Reparatur-Werkbank verwirft
+für **ein** Feld die Werte vor dem Beginn des neuen Sensors — im HA-Spiegel und in den Stunden- und Tageswerten, nur
+dieses Feld; Wetter, Prognosen, Preise und andere Geräte bleiben stehen, Monate mit Abschluss bleiben unberührt. Die
+Vorschau nennt vorher Sensor, Zeitraum, Tage und Monate; einen Rückweg gibt es nicht
+([Energieprofil §4](HANDBUCH_ENERGIEPROFIL.md#4-reparatur--pflege)).
+
+**Cockpit → Live „PV heute“ wie Cockpit → Tag:** Hat nur ein Teil deiner PV-Module oder Balkonkraftwerke einen eigenen Zähler und ist der Anlagenzähler „PV gesamt“ zugeordnet, verteilt die Live-Kachel jetzt den Rest des Anlagenzählers auf die Erzeuger ohne Zähler — wie der Tag. Bisher zählte sie nur die Einzelzähler und zeigte zu wenig PV und eine zu kleine Autarkie ([Einstellungen → Datenquellen](HANDBUCH_EINSTELLUNGEN.md)).
+
+**Monatsformular speichert die Ø Temperatur:** Die im Formular eingetragene (oder per Auto-Fill geholte) Ø Temperatur fiel beim Speichern bisher still weg; jetzt bleibt sie stehen ([Einstellungen → Monatsabschluss](HANDBUCH_EINSTELLUNGEN.md#51-monatsdaten--monatsabschluss)).
+
+**Cockpit → Monat, wenn Home Assistant gerade nicht antwortet:** Öffnest du den laufenden Monat, während die
+HA-Statistik nicht erreichbar ist (etwa direkt nach einem Neustart von Home Assistant), liest eedc E-Mobilität,
+Sonstiges und Wärmepumpe jetzt trotzdem aus den gespiegelten Zählerständen. Bisher fehlten in diesem Moment der Strom
+eines BHKW im Eigenverbrauch, die Heimladung, die dienstlichen Ladekosten und der Strom je Betriebsart — der Verlauf in
+*Cockpit → Jahr* daneben stimmte ([Bedienung → Monat](HANDBUCH_BEDIENUNG.md#23-monat)).
+
+**Cockpit → Jahr ohne Einspeisungs-Zähler:** Ein Monat ohne Monatsabschluss, dessen Einspeisung oder Netzbezug an
+keinem Tag gemessen wurde (typisch beim Balkonkraftwerk ohne Netz-Zähler), stand in Monatsliste und Verlauf mit
+Eigenverbrauchsquote bzw. Autarkie 100 % und einer Ersparnis auf die ganze Erzeugung da. Jetzt zeigt er seine
+PV-Erzeugung und „–" bei Netzwerten, Eigenverbrauch, Autarkie und Ersparnis — wie der Kopf derselben Seite und
+*Cockpit → Monat*. Der Daten-Checker nennt solche Monate jetzt mit „Einspeisung nicht erfasst (Monat ohne Monatsabschluss)“ und dem Rat, eine Datenquelle zuzuordnen oder den Monat abzuschließen ([Bedienung → Jahr](HANDBUCH_BEDIENUNG.md#24-jahrgesamt), [Daten-Checker §4.5](HANDBUCH_DATEN_CHECKER.md#45-monatsdaten--plausibilitaet)).
+
+**Daten-Checker: zwei neue Hinweise zu Zählern.** Steht dein Anlagenzähler „PV gesamt“ neben einem Balkonkraftwerk mit eigenem Zähler und einem PV-Modul ohne, sagt eine Info, dass eedc ihn als Zähler der ganzen Erzeugung liest — misst er nur den Wechselrichter, gehört er als Erzeugungszähler an das PV-Modul. Und ein Rückgang in der HA-Statistik, der von einem inzwischen ersetzten Sensor stammt, ist jetzt als „Vorgänger-Sensor“ gekennzeichnet, mit dem Weg über die Werkbank „Werte vor dem Sensorbeginn verwerfen“ ([Daten-Checker §4.8c/§4.8d](HANDBUCH_DATEN_CHECKER.md#48d-pv--messpunkt)).
+
+**MQTT-Check erwartet Pflicht und Zugeordnetes:** Der Daten-Checker erwartet ein MQTT-Topic ohne Zuordnung nur noch,
+wenn das Feld Pflicht ist — dieselben Felder, die *Einstellungen → Datenquellen* rot markiert —, und sonst nur Felder,
+denen du MQTT oder ein Gateway als Quelle zugeordnet hast. Eine Luft-Wasser-Wärmepumpe ohne Zuordnungen stand bisher mit
+17 Topics unter „erwartet, nie empfangen“, jetzt mit 3 (Strom und die beiden Wege zur Wärmemenge). Ein optionales Feld,
+das du nie zugeordnet hast, meldet der Check damit nicht mehr
+([Daten-Checker §4.8](HANDBUCH_DATEN_CHECKER.md#48-mqtt-topic-abdeckung)).
+
+**Netzladung vor dem Abschluss überall gleich:** Hat dein Speicher einen Zähler für die Ladung aus dem Netz, zeigt ein
+Monat ohne Abschluss die Netzladung jetzt überall als Summe der abgelaufenen Tage — im Verlauf von *Cockpit → Jahr*
+(bisher 0 kWh) und in *Cockpit → Monat* auch für einen **vergangenen** Monat ohne Abschluss, wo dort Ladung und
+Entladung stehen (bisher erst mit dem Abschluss). Der Ladepreis ist derselbe wie in *Cockpit → Tag*; mit dem Monatsabschluss gilt der gespeicherte Wert
+([Bedienung → Monat](HANDBUCH_BEDIENUNG.md#23-monat)).
+
+**CSV-Import: Alt-Spalten nur noch auf das eine Gerät, jede Zeile ganz oder gar nicht:** Spalten aus dem alten Format
+(`Batterie_Ladung_kWh`, `EAuto_km`, `Wallbox_Ladung_kWh`, `WP_Strom_kWh` …) tragen den Wert der ganzen Komponentenart.
+Bisher landete er mit Haken voll auf dem ersten Gerät — zwei Speicher trugen 50/40 + 15/12 statt 35/28 + 15/12 —, bei
+E-Autos, Wallboxen und Wärmepumpen sogar ohne Haken. Jetzt bleibt die Verteilung der Speicher stehen, eine Spalte des
+Geräts geht immer vor, und bei mehreren E-Autos, Wallboxen oder Wärmepumpen sagt der Import, dass die Alt-Spalte nicht
+zugeordnet wurde. Außerdem lässt eine fehlerhafte Zeile keinen Komponentenwert ohne Monat mehr zurück
+([Einstellungen → Import-Assistenten](HANDBUCH_EINSTELLUNGEN.md#65-import-assistenten)).
+
+**Daten-Checker: Netzladungs-Warnung mit deutschen Zahlen:** Die Details der Warnung „Netzladung übersteigt
+Gesamtladung (kumulativ)“ nannten die beiden Summen als „1500.000 kWh“ — im Deutschen als anderthalb Millionen lesbar.
+Jetzt steht dort „1.500,0 kWh“, wie im Rest des Daten-Checkers
+([Daten-Checker §4.3.3](HANDBUCH_DATEN_CHECKER.md#433-speicher)).
+
+**Aufteilung nach Betriebsart auch ohne Betriebsart-Aufzeichnung:** Trägt deine Wärmepumpe ihre Betriebsart nur in den
+Stundenwerten (die Aufzeichnung „Anteil der Stunde je Betriebsart“ hat für sie nie begonnen), zeigt ein Monat ohne
+Abschluss die Aufteilung in Heizen, Warmwasser und Kühlen jetzt wie seine Tage — in *Cockpit → Monat*, im Jahr, in der
+Übersicht und in den HA-Sensoren je Betriebsart. Bisher fehlte sie dort, sobald der HA-Spiegel den Monat abdeckte
+([Wärme & Klima](HANDBUCH_WAERME_KLIMA.md)).
+
 ## v4.1.7 — 13. Oktober 2026
 
 **MQTT-Check fragt nach deinem Gerät:** Der Daten-Checker erwartet nur noch Topics für Größen, die es an deinem Gerät

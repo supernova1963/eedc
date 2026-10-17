@@ -12,6 +12,9 @@ Punkt 4). Die Proben stehen in ``test_kanal_bilanz_gleichheit.py`` (kein ``test`
   Stand nächst der vollen Stunde), Tage über den echten ``aggregate_day`` ohne HA (Snapshot-Pfad). Die Rohstände
   liegen je Stunde um ``H:59`` und tragen den Stand am Ende der Stunde; ein Zähler ohne Nachtzeilen (F08) meldet in
   den Stunden, in denen er schläft, nichts — wie im HA-Datenstand.
+  Mit ``eigene_summe_aus="sensor_snapshots"`` (HA-Bauform S3, E-S3-4) entsteht die eigene Summe statt aus den Rohständen
+  aus den Stundenständen über das Nachfüllen (``kanal/nachfuellen.nachfuellen_eigene_summe``) — derselbe Seed,
+  dieselben Tage; die Art bleibt ``MQTT``.
 
 **Was verglichen wird** (je Tag und Monat des Datenstands, Feld für Feld):
 
@@ -145,14 +148,17 @@ class Datenstand:
     aid: int
     ids: dict[str, int]
     svc: Any = None
+    #: Nur MQTT: die Zuordnung der Form vor dem Leeren (HA-Bauform S4, E-S4-3: Gleichheit «auch mit HA-Schlüsseln»).
+    zuordnung: Optional[dict] = None
 
 
 @asynccontextmanager
-async def datenstand(matrix: str, fid: str, art: str, *, ha_abweichung: Optional[dict] = None):
+async def datenstand(matrix: str, fid: str, art: str, *, ha_abweichung: Optional[dict] = None,
+                     eigene_summe_aus: str = "mqtt"):
     """Seed → Kanäle → Tageszeilen; ``yield Datenstand``. Wegwerf-Datei je Lauf. ``ha_abweichung`` (nur PV-Matrix,
-    HA): ``{sensor_id: (Rate | None, ohne_Zeile | None)}`` wie ``pv_achse_matrix.seed_ha``."""
-    from backend.services.kanal.nachfuellen import nachfuellen_spiegel
-    from backend.services.kanal.schreiber import schreibe_eigene_summe
+    HA): ``{sensor_id: (Rate | None, ohne_Zeile | None)}`` wie ``pv_achse_matrix.seed_ha``. ``eigene_summe_aus`` (nur
+    MQTT): ``"mqtt"`` (Stundenlauf über die Rohstände) oder ``"sensor_snapshots"`` (Nachfüllen über die Stundenstände)."""
+    from backend.services.kanal.nachfuellen import nachfuellen_eigene_summe, nachfuellen_spiegel
 
     verz = tempfile.mkdtemp(prefix="eedc-kanal-bilanz-")
     try:
@@ -182,30 +188,42 @@ async def datenstand(matrix: str, fid: str, art: str, *, ha_abweichung: Optional
                 svc = mx._ha_aus()
                 aid, ids = await (am.seed_anlage(db, form) if matrix == "achsen" else mx.seed_anlage(db, form))
                 anlage = (await db.execute(select(Anlage).where(Anlage.id == aid))).scalar_one()
+                zuordnung = dict(anlage.sensor_mapping or {})
                 anlage.sensor_mapping = {"basis": {}, "investitionen": {}}
                 flag_modified(anlage, "sensor_mapping")
                 await db.commit()
                 await _seed_mqtt(db, matrix, form, aid, ids)
                 umgebung = am.umgebung(form, svc) if matrix == "achsen" else mx._umgebung(svc)
                 with umgebung:
-                    laeufe = [mx.REIHE_VON + timedelta(hours=1, minutes=5)]
-                    tag = mx.REIHE_VON.date()
-                    while tag < mx.REIHE_BIS.date():
-                        laeufe.append(datetime.combine(tag, datetime.min.time()) + timedelta(hours=21, minutes=5))
-                        tag += timedelta(days=1)
-                    laeufe.append(mx.REIHE_BIS + timedelta(minutes=5))
-                    for zp in laeufe:
-                        await schreibe_eigene_summe(db, anlage, zp)
-                        await db.commit()
+                    if eigene_summe_aus == "sensor_snapshots":
+                        erg = await nachfuellen_eigene_summe(sitzungen, aid, jetzt=mx.JETZT)
+                        assert erg.fehler == 0 and erg.zeilen > 0, erg
+                    else:
+                        await _eigene_summe_tageslauf(db, anlage)
                     await mx.baue_abgeleitete(sitzungen, aid)     # E4c: aus der eigenen Summe, wie im Stundenlauf
                     await mx.aggregiere_tage(db, pf, aid, TAGE)
                     await mx.baue_abgeleitete(sitzungen, aid)     # E4d: Strom je Betriebsart aus der Mitschrift
-            yield Datenstand(matrix, fid, art, db, aid, ids, svc)
+            yield Datenstand(matrix, fid, art, db, aid, ids, svc, zuordnung if art != "HA" else None)
         finally:
             await db.close()
             await engine.dispose()
     finally:
         shutil.rmtree(verz, ignore_errors=True)
+
+
+async def _eigene_summe_tageslauf(db: AsyncSession, anlage) -> None:
+    """Der Stundenlauf über die Rohstände: erster Lauf, dann täglich 21:05, am Ende 04.07. 00:05."""
+    from backend.services.kanal.schreiber import schreibe_eigene_summe
+
+    laeufe = [mx.REIHE_VON + timedelta(hours=1, minutes=5)]
+    tag = mx.REIHE_VON.date()
+    while tag < mx.REIHE_BIS.date():
+        laeufe.append(datetime.combine(tag, datetime.min.time()) + timedelta(hours=21, minutes=5))
+        tag += timedelta(days=1)
+    laeufe.append(mx.REIHE_BIS + timedelta(minutes=5))
+    for zp in laeufe:
+        await schreibe_eigene_summe(db, anlage, zp)
+        await db.commit()
 
 
 # ── Bestand (die heutigen Leser) ────────────────────────────────────────────
@@ -430,6 +448,59 @@ def w2_klasse(ds, ebene: str, wann, feld: str) -> str:
     return "neu"
 
 
+#: HA-Bauform S4 E-S4-1: die Kategorie der Zähler je Monatsfeld (für die Randstunde des Monats, ``rand_monat``).
+_FELD_KATEGORIE = {"einspeisung_kwh": "einspeisung", "netzbezug_kwh": "netzbezug", "speicher_ladung_kwh": "ladung_batterie",
+                   "speicher_entladung_kwh": "entladung_batterie", "pv_module_kwh": "pv", "bkw_kwh": "pv"}
+
+
+async def _change(db, kanaele: dict, key: str, ts: int) -> float:
+    """HAs ``change`` der Kanalzeile ``start_ts = ts`` (0 ohne Zeile) — über die Lese-Schicht auf genau dieser Stunde."""
+    from backend.services.kanal.lesen import stunden_stapel
+
+    k = kanaele.get(key)
+    if k is None:
+        return 0.0
+    st = (await stunden_stapel(db, [k], ts, ts + 3600, jetzt=JETZT_TS)).get(key)
+    w = [x for x in (st.werte if st else []) if x.start_ts == ts and x.change is not None]
+    return float(w[0].change) if w else 0.0
+
+
+async def rand_monat(ds, monat: tuple[int, int]) -> dict[str, float]:
+    """S4-R-3d: die Randstunde des Monats je Monatsfeld — Kalendermonat − Tagesfenster-Monat =
+    ``change(letzter Tag 23:00) − change(letzter Tag des Vormonats 23:00)``; im laufenden Monat endet beides am Soll-Ende
+    des Stundenlaufs (erster Term entfällt). Je Feld ``Σ`` über die Zähler seiner Kategorie (Betrag der Mengen; PV nach
+    Gerätetyp Modul/Balkonkraftwerk), Zählerauswahl wie der Tagespfad (``zaehler_eintraege`` des Monatsersten)."""
+    from backend.services.kanal.bilanz_adapter import zaehler_eintraege
+    from backend.services.kanal.lesen import kanaele_laden, soll_ende
+
+    db, aid = ds.db, ds.aid
+    j, m = monat
+    erster = date(j, m, 1)
+    letzter = (date(j + 1, 1, 1) if m == 12 else date(j, m + 1, 1)) - timedelta(days=1)
+    anlage = (await db.execute(select(Anlage).where(Anlage.id == aid))).scalar_one()
+    invs = {str(i.id): i for i in (await db.execute(select(Investition).where(Investition.anlage_id == aid)))
+            .scalars().all() if i.ist_aktiv_an(erster)}
+    eintraege = await zaehler_eintraege(db, anlage, invs, erster)
+    kanaele = await kanaele_laden(db, aid, {e.schluessel for e in eintraege})
+    ende_ts = int(datetime.combine(letzter, datetime.min.time()).replace(hour=23).timestamp())
+    vor_ts = int(datetime.combine(erster - timedelta(days=1), datetime.min.time()).replace(hour=23).timestamp())
+    laufend = ende_ts + 3600 > soll_ende(JETZT_TS)
+    out = {f: 0.0 for f in _FELD_KATEGORIE}
+    for e in eintraege:
+        for feld, kat in _FELD_KATEGORIE.items():
+            if e.kategorie != kat:
+                continue
+            if kat == "pv":
+                typ = getattr(invs.get(e.sensor_key.split(":", 2)[1]) if e.sensor_key.startswith("inv:") else None,
+                              "typ", None)
+                if (feld == "bkw_kwh") != (typ == "balkonkraftwerk"):
+                    continue
+            rand = (0.0 if laufend else await _change(db, kanaele, e.schluessel, ende_ts)) - await _change(
+                db, kanaele, e.schluessel, vor_ts)
+            out[feld] += rand
+    return out
+
+
 async def probe_w2(ds) -> tuple[list, Counter, Counter]:
     """(Abweichungen von der Referenz, Klassen gegen heute, Zahl der Vergleiche)."""
     from backend.services.kanal import bilanz_leser as bl
@@ -483,9 +554,12 @@ async def probe_w2(ds) -> tuple[list, Counter, Counter]:
         w = bl.als_monatssumme(*m, kz.komposition, jetzt=JETZT_TS)
         r = ref["monate"].get(f"{m[0]}-{m[1]:02d}")
         _v("monat", m, "vorhanden", True, r is not None, 0, "referenz")
+        # HA-Bauform S4 E-S4-1: die Referenz (06.10.) rechnet den Tagesfenster-Monat; der Kanal-Leser den Kalendermonat —
+        # verglichen wird gegen Referenz + Randstunde des Monats (S4-R-3d, ``rand_monat``), nicht angepasst.
+        rand = await rand_monat(ds, m)
         for i, feld in enumerate(MONAT_FELDER):
             if r is not None:
-                _v("monat", m, feld, r[i], getattr(w, feld), W2_TOL, "referenz")
+                _v("monat", m, feld, round(r[i] + rand.get(feld, 0.0), 6), getattr(w, feld), W2_TOL, "referenz")
             if m in ma:
                 _v("monat", m, feld, getattr(ma[m], feld), getattr(w, feld), TOL_B_MONAT, "heute")
         if m in ma:

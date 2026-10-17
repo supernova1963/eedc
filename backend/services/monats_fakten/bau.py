@@ -52,6 +52,7 @@ async def _baue_fakt(
     tarif_cache: dict[date, dict],
     zeittarif_cache: dict,
     tages_summe: Optional[TagesMonatsSumme] = None,
+    netzladung_tage=None,
     preis_cache: Optional[dict] = None,
     preis_messung: Optional[PreisMessung] = None,
     heimlade_quellen: frozenset = frozenset(),
@@ -360,10 +361,14 @@ async def _baue_fakt(
         netzladung_preis_summe_cent_kwh=roh.speicher_preis_summe,
         netzladung_gewicht_kwh=roh.speicher_preis_gewicht,
     )
-    # Speicher nur ohne eigene IMD-Zeile im Monat. Die Netzladung (Arbitrage)
-    # bleibt dabei ungefüllt: sie ist eine **Preis**-Aussage, und die trägt die
-    # Tagesebene nicht — eine 0 daneben wäre keine Messung, sondern eine
-    # Behauptung über einen nie gepflegten Wert.
+    # Speicher nur ohne eigene IMD-Zeile im Monat. Seit dem Entscheid Gernot vom
+    # 13.10.2026 auch die Netzladung (Arbitrage) samt Preis: hier stand bis dahin,
+    # sie sei eine Preis-Aussage, die die Tagesebene nicht trägt (N-121-Lesart).
+    # Seit #427 trägt der Tag beides — Menge aus dem Bereichs-Leser, Preis
+    # TEP-gewichtet (ohne Stundenpreis: Bezugspreis-Rückfall beim Leser, wie am
+    # Tag). `netzladung_tage` kommt aus der einen Rechenstelle
+    # `netzladung_tage.netzladung_aus_tagen` (`laden.py`), die auch *Cockpit →
+    # Monat* ruft. Ohne Netzlade-Zähler bleibt sie ``None`` ⇒ 0 wie bisher.
     if (
         "speicher" not in roh.typen_mit_zeile
         and tages_summe is not None
@@ -372,6 +377,11 @@ async def _baue_fakt(
         speicher = SpeicherFakten(
             ladung_kwh=tages_summe.speicher_ladung_kwh,
             entladung_kwh=tages_summe.speicher_entladung_kwh,
+            netzladung_kwh=netzladung_tage.kwh if netzladung_tage is not None else 0.0,
+            netzladung_preis_summe_cent_kwh=(
+                netzladung_tage.preis_summe_cent_kwh if netzladung_tage is not None else 0.0
+            ),
+            netzladung_gewicht_kwh=netzladung_tage.gewicht_kwh if netzladung_tage is not None else 0.0,
         )
         tageswert_gruppen.add(TAGESWERT_SPEICHER)
 
@@ -420,7 +430,7 @@ async def _baue_fakt(
             hat_zaehlerzeile=monatsdaten is not None,
             netzbezug_erfasst=netzbezug_erfasst,
             einspeisung_erfasst=einspeisung_erfasst,
-            netz_erfasst=netzbezug_erfasst and einspeisung_erfasst,
+            netz_erfasst=monatsdaten is not None and netzbezug_erfasst and einspeisung_erfasst,
             erzeuger_aktiv=_erzeuger_aktiv(investitionen, jahr, monat),
             pv_vollstaendig=erzeugung.pv_vollstaendig,
             aktive_investitionen=tuple(
@@ -438,9 +448,12 @@ def _zaehler_fakten(
     """Die Zählergruppe des Monats und je Netzfeld, ob es **erfasst** ist: ``(zaehler, einspeisung_erfasst,
     netzbezug_erfasst)``. Setzt ``TAGESWERT_ZAEHLER`` in ``tageswert_gruppen``, wenn die Tagesebene gefüllt hat.
 
-    * **Ohne Zeile** füllt die Tagesebene beide Felder wie bisher (N-121); die Flags bleiben ``False`` — sie sagen, ob
-      die **Zeile** (ggf. von der Tagesebene ergänzt) das Feld trägt, und ohne Zeile ist das nie so
-      (``netzfeld_ist_erfasst(None, …)``). ``netz_erfasst`` schließt damit ``hat_zaehlerzeile`` ein.
+    * **Ohne Zeile** füllt die Tagesebene beide Felder wie bisher (N-121). ⭐ **N-751 (16.10.2026):** die Flags sind dann
+      die Marken der Tagesebene (``TagesMonatsSumme.einspeisung_erfasst``/``netzbezug_erfasst``, N-585: mindestens eine
+      Stunde mit Wert) — ein Feld, das kein Tag erfasst hat, bleibt ``0.0`` in der Zahl mit Flag ``False``, wie N-736
+      mit Zeile. Bis dahin waren sie ohne Zeile immer ``False``, und die Sichten mit ``inkl_nur_tageswerte`` rechneten
+      die 0 als Messwert (Eigenverbrauch = PV, Quote 100 %). ``meta.netz_erfasst`` bleibt «Zeile UND beide Felder
+      erfasst» (``_baue_fakt``) und schließt damit ``hat_zaehlerzeile`` weiter ein.
     * ⭐ **N-736 (12.10.2026), mit Zeile:** ein Netzfeld, das die Zeile nicht erfasst (0 ohne Herkunftseintrag,
       ``netzfeld_ist_erfasst``, N-734), füllt die Tagesebene — **nur dieses Feld**, und nur, wenn sie es erfasst; das
       erfasste Feld bleibt. Dieselbe Regel wie *Cockpit → Monat* (``aktueller_monat/quellen_leser.py``), nur ohne die
@@ -453,7 +466,7 @@ def _zaehler_fakten(
         tageswert_gruppen.add(TAGESWERT_ZAEHLER)
         return (
             ZaehlerFakten(einspeisung_kwh=tages_summe.einspeisung_kwh, netzbezug_kwh=tages_summe.netzbezug_kwh),
-            False, False,
+            bool(tages_summe.einspeisung_erfasst), bool(tages_summe.netzbezug_erfasst),
         )
     werte: dict[str, float] = {}
     erfasst: dict[str, bool] = {}

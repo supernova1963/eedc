@@ -72,70 +72,73 @@ def _namen(ds) -> dict[str, str]:
 #: 06.10.2026. ``N-586``: der Sprung steht in Tag und Monat (Deckel fällt, Bauplan §7). ``BKW-Kinder``: die Kinder
 #: ohne Zähler sind die Lücke ihres BKW (W2-R2), das BKW trägt keinen Schlüssel. ``Teiltag``: der laufende Monat reicht
 #: bis zum letzten geschriebenen Stand (Uhr 00:30, eine Stunde des 04.07.). Eine neue Klasse ⇒ rot.
+#: **HA-Bauform S4 E-S4-1 (nachgemessen 16.10.2026, Ablage ``e-s4-1/bilanz_abw.jsonl``):** ``Teiltag`` ist geheilt — der
+#: Kanal-Leser rechnet den laufenden Juli als Kalendermonat; gegen (a) (Σ der Bestandstage) bleibt bei diesen periodischen
+#: Raten keine Abweichung (59 Zellen weg); M03 trägt seine Juli-Abweichung damit nicht mehr doppelt: N-586 20 statt 21.
 #: Feldsatz wie die Probe Weg 2 (Tag: Schlüssel, Marken, Bilanz samt EV-Quote; Monat: Mengen und `bkw_je_inv`/
 #: `bkw_gemessen_je_inv`): Σ 1 224 = BKW-Kinder 1 144 · N-586 21 · Teiltag 59 — PROBE-WEG2 zählt 1 144 / 20 / 60, weil
 #: dort die Teiltag-Stunde des M03-Juli bei „Teiltag" steht; hier fällt jede M03-HA-Abweichung unter N-586.
 W2_KLASSEN: dict[tuple[str, str, str], dict[str, int]] = {
-    ('achsen', 'M01', 'HA'): {'Teiltag': 1},
-    ('achsen', 'M01', 'MQTT'): {'Teiltag': 1},
-    ('achsen', 'M03', 'HA'): {'N-586': 21},
-    ('achsen', 'M03', 'MQTT'): {'Teiltag': 1},
-    ('achsen', 'M04', 'HA'): {'Teiltag': 1},
-    ('achsen', 'M04', 'MQTT'): {'Teiltag': 1},
-    ('achsen', 'M05', 'HA'): {'Teiltag': 1},
-    ('achsen', 'M05', 'MQTT'): {'Teiltag': 1},
-    ('achsen', 'M06', 'HA'): {'Teiltag': 1},
-    ('achsen', 'M06', 'MQTT'): {'Teiltag': 1},
-    ('achsen', 'M07', 'HA'): {'Teiltag': 1},
-    ('achsen', 'M07', 'MQTT'): {'Teiltag': 1},
-    ('achsen', 'M08', 'HA'): {'Teiltag': 1},
-    ('achsen', 'M08', 'MQTT'): {'Teiltag': 1},
-    ('achsen', 'M09', 'HA'): {'Teiltag': 1},
-    ('achsen', 'M09', 'MQTT'): {'Teiltag': 1},
-    ('achsen', 'M10', 'HA'): {'Teiltag': 1},
-    ('achsen', 'M10', 'MQTT'): {'Teiltag': 1},
-    ('pv', 'F01', 'HA'): {'Teiltag': 1},
-    ('pv', 'F01', 'MQTT'): {'Teiltag': 1},
-    ('pv', 'F02', 'HA'): {'Teiltag': 1},
-    ('pv', 'F02', 'MQTT'): {'Teiltag': 1},
-    ('pv', 'F03', 'HA'): {'Teiltag': 1},
-    ('pv', 'F03', 'MQTT'): {'Teiltag': 1},
-    ('pv', 'F04', 'HA'): {'Teiltag': 1},
-    ('pv', 'F04', 'MQTT'): {'Teiltag': 1},
-    ('pv', 'F05', 'HA'): {'Teiltag': 1},
-    ('pv', 'F05', 'MQTT'): {'Teiltag': 1},
-    ('pv', 'F06', 'HA'): {'Teiltag': 1},
-    ('pv', 'F06', 'MQTT'): {'Teiltag': 1},
-    ('pv', 'F07', 'HA'): {'Teiltag': 1},
-    ('pv', 'F07', 'MQTT'): {'Teiltag': 1},
-    ('pv', 'F09a-G', 'HA'): {'BKW-Kinder': 140, 'Teiltag': 1},
-    ('pv', 'F09a-G', 'MQTT'): {'BKW-Kinder': 140, 'Teiltag': 1},
-    ('pv', 'F09a-oG', 'HA'): {'BKW-Kinder': 140, 'Teiltag': 1},
-    ('pv', 'F09a-oG', 'MQTT'): {'BKW-Kinder': 140, 'Teiltag': 1},
-    ('pv', 'F09b-G', 'HA'): {'BKW-Kinder': 107, 'Teiltag': 1},
-    ('pv', 'F09b-G', 'MQTT'): {'BKW-Kinder': 107, 'Teiltag': 1},
-    ('pv', 'F09b-oG', 'HA'): {'BKW-Kinder': 107, 'Teiltag': 1},
-    ('pv', 'F09b-oG', 'MQTT'): {'BKW-Kinder': 107, 'Teiltag': 1},
-    ('pv', 'F09c-G', 'HA'): {'BKW-Kinder': 33, 'Teiltag': 1},
-    ('pv', 'F09c-G', 'MQTT'): {'BKW-Kinder': 33, 'Teiltag': 1},
-    ('pv', 'F09c-oG', 'HA'): {'BKW-Kinder': 33, 'Teiltag': 1},
-    ('pv', 'F09c-oG', 'MQTT'): {'BKW-Kinder': 33, 'Teiltag': 1},
-    ('pv', 'F10', 'HA'): {'BKW-Kinder': 12, 'Teiltag': 1},
-    ('pv', 'F10', 'MQTT'): {'BKW-Kinder': 12, 'Teiltag': 1},
-    ('pv', 'F11', 'HA'): {'Teiltag': 1},
-    ('pv', 'F11', 'MQTT'): {'Teiltag': 1},
-    ('pv', 'F12', 'HA'): {'Teiltag': 1},
-    ('pv', 'F12', 'MQTT'): {'Teiltag': 1},
-    ('pv', 'F13a', 'HA'): {'Teiltag': 1},
-    ('pv', 'F13a', 'MQTT'): {'Teiltag': 1},
-    ('pv', 'F13b', 'HA'): {'Teiltag': 1},
-    ('pv', 'F13b', 'MQTT'): {'Teiltag': 1},
-    ('pv', 'F14', 'HA'): {'Teiltag': 1},
-    ('pv', 'F14', 'MQTT'): {'Teiltag': 1},
-    ('pv', 'F15', 'HA'): {'Teiltag': 1},
-    ('pv', 'F15', 'MQTT'): {'Teiltag': 1},
-    ('pv', 'F16', 'HA'): {'Teiltag': 1},
-    ('pv', 'F16', 'MQTT'): {'Teiltag': 1},
+    ('achsen', 'M01', 'HA'): {},
+    ('achsen', 'M01', 'MQTT'): {},
+    ('achsen', 'M03', 'HA'): {'N-586': 20},
+    ('achsen', 'M03', 'MQTT'): {},
+    ('achsen', 'M04', 'HA'): {},
+    ('achsen', 'M04', 'MQTT'): {},
+    ('achsen', 'M05', 'HA'): {},
+    ('achsen', 'M05', 'MQTT'): {},
+    ('achsen', 'M06', 'HA'): {},
+    ('achsen', 'M06', 'MQTT'): {},
+    ('achsen', 'M07', 'HA'): {},
+    ('achsen', 'M07', 'MQTT'): {},
+    ('achsen', 'M08', 'HA'): {},
+    ('achsen', 'M08', 'MQTT'): {},
+    ('achsen', 'M09', 'HA'): {},
+    ('achsen', 'M09', 'MQTT'): {},
+    ('achsen', 'M10', 'HA'): {},
+    ('achsen', 'M10', 'MQTT'): {},
+    ('pv', 'F01', 'HA'): {},
+    ('pv', 'F01', 'MQTT'): {},
+    ('pv', 'F02', 'HA'): {},
+    ('pv', 'F02', 'MQTT'): {},
+    ('pv', 'F03', 'HA'): {},
+    ('pv', 'F03', 'MQTT'): {},
+    ('pv', 'F04', 'HA'): {},
+    ('pv', 'F04', 'MQTT'): {},
+    ('pv', 'F05', 'HA'): {},
+    ('pv', 'F05', 'MQTT'): {},
+    ('pv', 'F06', 'HA'): {},
+    ('pv', 'F06', 'MQTT'): {},
+    ('pv', 'F07', 'HA'): {},
+    ('pv', 'F07', 'MQTT'): {},
+    ('pv', 'F09a-G', 'HA'): {'BKW-Kinder': 140},
+    ('pv', 'F09a-G', 'MQTT'): {'BKW-Kinder': 140},
+    ('pv', 'F09a-oG', 'HA'): {'BKW-Kinder': 140},
+    ('pv', 'F09a-oG', 'MQTT'): {'BKW-Kinder': 140},
+    ('pv', 'F09b-G', 'HA'): {'BKW-Kinder': 107},
+    ('pv', 'F09b-G', 'MQTT'): {'BKW-Kinder': 107},
+    ('pv', 'F09b-oG', 'HA'): {'BKW-Kinder': 107},
+    ('pv', 'F09b-oG', 'MQTT'): {'BKW-Kinder': 107},
+    ('pv', 'F09c-G', 'HA'): {'BKW-Kinder': 33},
+    ('pv', 'F09c-G', 'MQTT'): {'BKW-Kinder': 33},
+    ('pv', 'F09c-oG', 'HA'): {'BKW-Kinder': 33},
+    ('pv', 'F09c-oG', 'MQTT'): {'BKW-Kinder': 33},
+    ('pv', 'F10', 'HA'): {'BKW-Kinder': 12},
+    ('pv', 'F10', 'MQTT'): {'BKW-Kinder': 12},
+    ('pv', 'F11', 'HA'): {},
+    ('pv', 'F11', 'MQTT'): {},
+    ('pv', 'F12', 'HA'): {},
+    ('pv', 'F12', 'MQTT'): {},
+    ('pv', 'F13a', 'HA'): {},
+    ('pv', 'F13a', 'MQTT'): {},
+    ('pv', 'F13b', 'HA'): {},
+    ('pv', 'F13b', 'MQTT'): {},
+    ('pv', 'F14', 'HA'): {},
+    ('pv', 'F14', 'MQTT'): {},
+    ('pv', 'F15', 'HA'): {},
+    ('pv', 'F15', 'MQTT'): {},
+    ('pv', 'F16', 'HA'): {},
+    ('pv', 'F16', 'MQTT'): {},
 }
 
 
@@ -289,7 +292,7 @@ async def test_neue_formen_kanal_leser_trifft_weg2_und_a_bleibt_der_bestand(matr
         form = am.MATRIX_FORMEN[fid]
         g = form.geraet("BHKW")
         for t in kg.TAGE:
-            soll = am.w2_menge(g.felder["erzeugung_kwh"], g.ohne.get("erzeugung_kwh"), (t,))
+            soll = am.w2_menge(g.felder["erzeugung_kwh"], g.ohne.get("erzeugung_kwh"), (t,), "HA")   # Kanal-Weg: Kalendertag
             assert tage[t].komponenten_kwh.get(f"sonstige_{ids['BHKW']}") == pytest.approx(soll, abs=0.006), t
 
 
@@ -361,7 +364,6 @@ async def test_kalendermonats_wege_nehmen_das_kanal_delta_ohne_rueckspruch_verwu
     from backend.api.routes.monatsabschluss.views import lade_ha_statistik_werte
     from backend.models.anlage import Anlage
     from backend.models.monatsdaten import Monatsdaten
-    from backend.services.monatswert_deckel import deckel_je_sensor
 
     def _einsp(t):
         return -2.0 if t == _RUECKSPRUNG else (1.0 if t.hour in mx.PROD_STUNDEN else 0.0)
@@ -374,10 +376,10 @@ async def test_kalendermonats_wege_nehmen_das_kanal_delta_ohne_rueckspruch_verwu
                     for r in await get_alle_monatswerte(ds.aid, None, None, ds.db)}
             vorschau = next(m for m in (await get_import_vorschau(ds.aid, ds.db)).monate if (m.jahr, m.monat) == (2026, 6))
             anlage = (await ds.db.execute(select(Anlage).where(Anlage.id == ds.aid))).scalar_one()
-            invs = (await ds.db.execute(select(Investition).where(Investition.anlage_id == ds.aid))).scalars().all()
+            # HA-Bauform S4-R-5: ohne Deckel (der Parameter ist weg).
             vorschlag = await lade_ha_statistik_werte(
                 anlage.sensor_mapping["basis"], anlage.sensor_mapping["investitionen"], 2026, 6,
-                deckel_je_sensor=deckel_je_sensor(anlage, invs), db=ds.db, anlage_id=ds.aid)
+                db=ds.db, anlage_id=ds.aid)
             cockpit = await amr.get_aktueller_monat(anlage_id=ds.aid, jahr=2026, monat=6, db=ds.db)
             await import_ha_statistics(ds.aid, ImportRequest(monate=[MonatFeldAuswahl(jahr=2026, monat=6)]), ds.db)
             await ds.db.commit()
@@ -400,8 +402,9 @@ async def test_kalendermonat_ohne_volle_deckung_bleibt_der_ha_leser():
     async with kg.datenstand("pv", "F08a", "HA") as ds:
         with mx._umgebung(ds.svc):
             route = (await get_monatswerte(ds.aid, 2026, 7, ds.db))
-            sids, deckel = await kg.zaehler_sensoren(ds.db, ds.aid)
-            leser = {w.sensor_id: w for w in ds.svc.get_monatswerte(sids, 2026, 7, deckel_je_sensor=deckel).sensoren}
+            sids, _deckel = await kg.zaehler_sensoren(ds.db, ds.aid)
+            # HA-Bauform S4-R-5: die Route ruft den HA-Leser ohne Deckel — die Probe vergleicht mit demselben Aufruf.
+            leser = {w.sensor_id: w for w in ds.svc.get_monatswerte(sids, 2026, 7).sensoren}
     for b in route.basis:
         if b.sensor_id in leser:
             assert b.differenz == pytest.approx(leser[b.sensor_id].differenz), b.feld

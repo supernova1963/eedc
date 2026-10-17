@@ -238,8 +238,9 @@ export const NETZLADUNG_PREIS_HERKUNFT: Record<string, string> = {
 }
 
 /**
- * #427 (Melder rapahl): Herkunft der Netzladungs-MENGE im laufenden Monat ohne Monatsabschluss
- * (Backend `speicher_ladung_netz_herkunft === 'tageswerte'`): die Summe der abgelaufenen Tage,
+ * #427 (Melder rapahl): Herkunft der Netzladungs-MENGE in einem Monat ohne Monatsabschluss — laufend
+ * oder vergangen, seit Päckchen P (13.10.2026) überall dort, wo Cockpit → Monat auch Ladung/Entladung
+ * nennt (Backend `speicher_ladung_netz_herkunft === 'tageswerte'`): die Summe der abgelaufenen Tage,
  * dieselbe Zahl wie Cockpit → Tag. Der Monatsabschluss ersetzt sie.
  */
 export const NETZLADUNG_AUS_TAGEN = 'Menge aus Tageswerten: Summe der abgelaufenen Tage (wie Cockpit → Tag), bis zum Monatsabschluss'
@@ -261,6 +262,18 @@ export const REPARATUR_AENDERUNG_LABELS: Record<string, string> = {
   slots_changed: 'Stundenwerte',
   counter_fields_changed: 'Zählerfelder',
   audit_log_count: 'Audit-Einträge',
+  // HA-Bauform S3, E-S3-5: „Werte vor dem Sensorbeginn verwerfen" (Vorschau · Ergebnis)
+  kanalzeilen: 'Kanalzeilen vor dem Zeitpunkt',
+  bestand_tage: 'Tage mit Werten des Feldes',
+  stundenzeilen: 'Stundenzeilen',
+  tageszeilen: 'Tageszeilen',
+  abschluss_monate: 'Monate mit Abschluss (bleiben)',
+  tage_ohne_werte: 'Tage danach ohne Wert',
+  kanalzeilen_geloescht: 'Kanalzeilen gelöscht',
+  quellen_markiert: 'Quellen markiert',
+  stundenzeilen_geleert: 'Stundenzeilen geleert',
+  tageszeilen_geleert: 'Tageszeilen geleert',
+  felder_geleert: 'Werte geleert',
 }
 
 export const WIRKUNGSGRAD_QUELLE_LABELS: Record<string, string> = {

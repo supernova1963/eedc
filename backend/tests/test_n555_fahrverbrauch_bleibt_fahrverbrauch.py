@@ -729,7 +729,10 @@ def test_rueckbenennung_laeuft_einmalig_nach_der_initial_provenance():
 #: klassifiziert ist — genau die Klasse, die N-555 hatte (neun Aufrufer, die still ersetzten).
 N555_VERBRAUCH_LESESTELLEN: dict[str, str] = {
     # ── die eine Funktion (Regel 6): die Schätzung aus dem Fahrverbrauch ──
-    "backend/services/eauto_wirtschaftlichkeit.py::entscheide_emob_heimladung": "die eine Funktion",
+    # RF-24 (Serie „Funktion vor Datei"): `entscheide_emob_heimladung` ist ein Orchestrator; gelesen wird in zwei Phasen.
+    "backend/services/emob_heimladung_phasen.py::_dienstwagen_ohne_dienstliche_wallbox":
+        "die eine Funktion, Regel 3: Schätzung des Dienstwagens ohne eigene Messung",
+    "backend/services/emob_heimladung_phasen.py::_schaetzung_ohne_wallbox_wert": "die eine Funktion, Regel 1: Schätzung des privaten Autos",
     "backend/services/eauto_wirtschaftlichkeit.py::dienstliche_ladung_der_zeile":
         "die eine Funktion, Dienstwagen (Stufe 1 unverändert)",
     # ── Fahrverbrauch als FAHRVERBRAUCH: kWh/100 km, PHEV-Anteil, CO₂ Strommix ──
@@ -740,7 +743,8 @@ N555_VERBRAUCH_LESESTELLEN: dict[str, str] = {
     # RF-8 (Serie „Funktion vor Datei"): `calculate_investition_sensors` ist ein Orchestrator; gelesen wird in zwei Phasen.
     "backend/api/routes/ha_export/investition_sensoren.py::_emob_summen": "kWh/100-km-Sensor",
     "backend/api/routes/ha_export/investition_sensoren.py::_emob_ersparnis_eingaenge": "PHEV (fahrverbrauch_kwh)",
-    "backend/api/routes/investitionen/dashboard_eauto.py::get_eauto_dashboard": "kWh/100 km, PHEV, CO₂ Strommix",
+    # RF-16 (Serie „Funktion vor Datei"): `get_eauto_dashboard` ist ein Orchestrator; gelesen wird in der Monatsschleife.
+    "backend/api/routes/investitionen/dashboard_eauto.py::_summen_der_monate": "kWh/100 km, PHEV, CO₂ Strommix",
     "backend/services/daten_checker/emob.py::_check_phev_anteil_unbestimmt": "PHEV-Checker",
     # ── Tag und Stunde: die eine Auswahl (Regel 6) ──
     "backend/services/snapshot/komponenten_beitraege.py::eauto_heimlade_felder_nach_quelle":

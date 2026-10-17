@@ -239,10 +239,11 @@ _PREIS, _CO2 = 0.30, 0.38
 
 def _abzug(fid: str, weg: str, tage: tuple) -> float:
     """Die bewertbaren Wandlungsverluste eines Zeitraums nach der Regel: Verluste der Form (unabhängig aus den
-    Zählerreihen, `soll_wandlungsverluste`), wenn der Datenstand Kanäle hat (HA, S1, S2) und der Vertrag hält."""
-    if weg not in ("HA", "S1", "S2") or VERLUSTE_GRUND_SOLL[fid] is not None:
+    Zählerreihen, `soll_wandlungsverluste`), wenn der Datenstand Kanäle hat (`mx.kanal_wege()`: HA, S1, S2 und seit
+    Nachbau 2 SA, S3 — Patch (a) aus E-S3-4b, a-G) und der Vertrag hält."""
+    if weg not in mx.kanal_wege() or VERLUSTE_GRUND_SOLL[fid] is not None:
         return 0.0
-    return mx.soll_wandlungsverluste(mx.MATRIX_FORMEN[fid], tage) or 0.0
+    return mx.soll_wandlungsverluste(mx.MATRIX_FORMEN[fid], tage, weg) or 0.0
 
 
 def _geld_sichten(fid: str, weg: str, nach: dict) -> list[Zelle]:
@@ -299,9 +300,10 @@ def _geld_sichten(fid: str, weg: str, nach: dict) -> list[Zelle]:
 
 
 def _messpunkt_zelle(fid: str, weg: str, nach: dict) -> Zelle:
-    """N-588 F5: welche Regeln der Kategorie „Messpunkt" melden — ohne Kanäle (S3) keine."""
+    """N-588 F5: welche Regeln der Kategorie „Messpunkt" melden — der abgeschlossene Juni mit Kanälen: S1/S2 und, seit der
+    SA-Datenstand Kanäle trägt (Nachbau 2, Patch (a) aus E-S3-4b, a-M), S3."""
     ist = (nach.get("checker") or {}).get("messpunkt")
-    soll = sorted(MESSPUNKT_SOLL[fid]) if weg in ("S1", "S2") else []
+    soll = sorted(MESSPUNKT_SOLL[fid]) if weg in ("S1", "S2") or (mx.SA_KANAELE and weg == "S3") else []
     return Zelle("checker:messpunkt", ist, soll, "ok" if ist == soll else "rot")
 
 
@@ -381,10 +383,11 @@ def _bkw_hub_zellen(form: mx.Form, nach: dict) -> list[Zelle]:
 
 def bewerte(fid: str, weg: str, inv: str, m: mx.Messung) -> list[Zelle]:  # noqa: C901 — eine Tafel, kein Algorithmus
     form = mx.MATRIX_FORMEN[fid]
-    juni = mx.soll_monat(form, mx.TAGE_JUNI)
-    juli = mx.soll_monat(form, mx.TAGE_JULI)
-    e_juni, n_juni = mx.soll_einspeisung(form, 30), mx.soll_netzbezug(30, form)
-    e_juli, n_juli = mx.soll_einspeisung(form, 3), mx.soll_netzbezug(3, form)
+    # HA-Bauform S4 (E-S4-1): die Soll-Fenster der Kanal-Wege sind Kalendertag und Kalendermonat (`kanal_wege()`).
+    juni = mx.soll_monat(form, mx.TAGE_JUNI, weg=weg)
+    juli = mx.soll_monat(form, mx.TAGE_JULI, weg=weg)
+    e_juni, n_juni = mx.soll_einspeisung(form, 30, weg), mx.soll_netzbezug(30, form)
+    e_juli, n_juli = mx.soll_einspeisung(form, 3, weg), mx.soll_netzbezug(3, form)
     z: list[Zelle] = []
 
     # ── Datenstand: Tag und laufender Monat ──
@@ -406,22 +409,25 @@ def bewerte(fid: str, weg: str, inv: str, m: mx.Messung) -> list[Zelle]:  # noqa
                   _z("laufend:jahr_verlauf=Σtage", _pv(lf["verlauf"]), juli_std)]
         elif inv == "I3":
             z += [_tage_zellen("tag:stunden", m, weg, tage, lambda d, t: d["stunden_pv"],
-                               lambda t: mx.soll_tag(form, t).summe),
+                               lambda t: mx.soll_tag(form, t, weg).summe),
+                  # die gespeicherte Tageszeile schreibt der Bestand — Soll im Bestands-Fenster
                   _tage_zellen("tag:keys", m, weg, tage, lambda d, t: d["summe_keys"],
                                lambda t: mx.soll_tag(form, t).summe),
                   _tage_zellen("tag:cockpit", m, weg, tage, lambda d, t: d["tw_erzeugung"],
-                               lambda t: mx.soll_tag(form, t).summe),
+                               lambda t: mx.soll_tag(form, t, weg).summe),
                   _z("laufend:cockpit_monat", _pv(lf["monat"]), juli.summe)]
         elif inv == "I4":
             # HA-Bauform E4a-2 (Weg 2, Bauplan §6b): Cockpit → Tag liest im HA-Datenstand die Kanäle — der Tag folgt
             # der Monatsregel P7 auf das Tages-Δ (W2-R2: die Modul-Kinder eines Balkonkraftwerks sind dessen Lücke, am
             # Tag wie im Monat; das BKW trägt keinen Schlüssel). Die gespeicherte Tageszeile (`tag:keys`) schreibt
-            # weiter der Bestand (Regel E4) — ihr Soll bleibt `soll_tag`; ohne Kanäle (SA) ebenso.
+            # weiter der Bestand (Regel E4) — ihr Soll bleibt `soll_tag`. Seit Nachbau 2 trägt auch SA Kanäle (Patch (a) aus
+            # E-S3-4b, a-B: Cockpit → Tag liest dann die Kanäle).
             def soll_gespeichert(t):
                 return mx.soll_tag(form, t)
 
             def soll_kanal_tag(t):
-                return mx.soll_monat(form, (t,)) if (weg == "HA" and not form.w2) else mx.soll_tag(form, t)
+                kanal = weg == "HA" or (mx.SA_KANAELE and weg == "SA")
+                return mx.soll_monat(form, (t,), weg=weg) if (kanal and not form.w2) else mx.soll_tag(form, t, weg)
 
             def _soll(t, g, quelle):
                 s = quelle(t)
@@ -531,9 +537,10 @@ def bewerte(fid: str, weg: str, inv: str, m: mx.Messung) -> list[Zelle]:  # noqa
               Zelle("fakten:vollstaendig", fk.get("vollstaendig"), juni.vollstaendig,
                     "ok" if fk.get("vollstaendig") == juni.vollstaendig else "rot")]
         if fid in WANDLUNGSVERLUSTE_FORMEN:
-            # E4b: die Verluste kommen aus den Kanälen — mit HA (S1/S2) vor UND nach dem Abschluss; ohne HA (S3, keine
-            # Kanäle) gibt es keinen Wert (der Bestandspfad liefert keinen).
-            v_soll = mx.soll_wandlungsverluste(form, mx.TAGE_JUNI) if weg in ("S1", "S2") else None
+            # E4b: die Verluste kommen aus den Kanälen — mit HA (S1/S2) vor UND nach dem Abschluss; S3 trägt den Wert, seit
+            # der SA-Datenstand Kanäle hat (Nachbau 2, Patch (a) aus E-S3-4b, a-V; ohne Kanäle liefert der Bestand keinen).
+            mit_kanaelen = weg in ("S1", "S2") or (mx.SA_KANAELE and weg == "S3")
+            v_soll = mx.soll_wandlungsverluste(form, mx.TAGE_JUNI, weg) if mit_kanaelen else None
             z += [_z("fakten:wandlungsverluste", fk.get("wandlungsverluste"), v_soll),
                   _z("fakten_tw:wandlungsverluste", (vor["fakten_tw"] or {}).get("wandlungsverluste"), v_soll)]
     elif inv == "I4":
@@ -633,20 +640,27 @@ class Ursache:
 URSACHE: dict[str, Ursache] = {
     # ── HA-Bauform E4a-2: die neuen Formen nach Weg 2 (Markierung bei NEUEN Formen, Freigabe Master 06.10.2026) ──
     "W2-BESTAND-SPEICHER": Ursache(
-        "HA-Bauform S3/S5 (gespeicherte Tages-/Stundenzeilen)",
+        "HA-Bauform S5 (gespeicherte Tages-/Stundenzeilen)",
         "Die gespeicherte Tageszeile (`komponenten_kwh`) und die Stundenzeilen schreibt weiter `aggregate_day` nach den "
         "Regeln des Bestandspfads (#406/N-623, Abgleich, Deckel) — der Kanal ersetzt sie nur beim LESEN (Cockpit → "
-        "Tag, Monat, Fakten, Energieprofil). `tag:keys`/`tag:stunden` lesen die Zeilen roh; Stundenachse bis S3 (D4)",
+        "Tag, Monat, Fakten, Energieprofil). `tag:keys`/`tag:stunden` lesen die Zeilen roh; Stundenachse bis S3 (D4). "
+        "Gilt auf HA und seit Nachbau 2 (HA-Bauform S4 E-S4-3, der SA-Datenstand trägt Kanäle) ebenso auf SA",
     ),
     "W2-SA-BESTAND": Ursache(
-        "Lesart 1 (Bauplan §3b) — Standalone ohne Kanäle",
-        "Der Standalone-Datenstand der Matrix hat keine Kanäle (Seed nur `sensor_snapshots`): die Quellenwahl nimmt den "
-        "Bestand, der Tag rechnet #406/N-623 (Abgleich bzw. kWp-Anteil), nicht Weg 2",
+        "Lesart 1 (Bauplan §3b) — Standalone ohne Kanäle — seit HA-Bauform S4 E-S4-3 geheilt (Nachbau 2); keine Zelle mehr",
+        "Der Standalone-Datenstand der Matrix hatte keine Kanäle (Seed nur `sensor_snapshots`): die Quellenwahl nahm den "
+        "Bestand, der Tag rechnete #406/N-623 (Abgleich bzw. kWp-Anteil), nicht Weg 2",
     ),
     "W2-SA-VOR": Ursache(
-        "wie „Soll unklar\" SA vor dem Abschluss (N-472/N-121)",
-        "Cockpit → Monat sammelt die Tagesebene nur im laufenden Monat; ein vergangener Monat ohne HA hat vor dem "
-        "Abschluss keine PV (dieselbe Lage wie `_U_SA_VOR` der übrigen Formen — dort „Soll unklar\" mit Haltewert)",
+        "wie „Soll unklar\" SA vor dem Abschluss (N-472/N-121, N-677)",
+        "Gemessen E-S4-3 (der SA-Datenstand trägt jetzt Kanäle): Cockpit → Monat liest die Bilanz-Kanäle eines "
+        "vergangenen Monats nur auf dem HA-Weg — `aktueller_monat/quellen_leser.py:95` "
+        "(`_ha_statistik_aus_kanaelen_mit_marke`: `if not ha_stats: return`) ersetzt nur HA-Statistik-Werte durch das "
+        "Kanal-Δ; ohne HA-Statistik bleibt der vergangene Juni vor dem Abschluss ohne PV (die Tagesebene sammelt nur den "
+        "laufenden Monat, N-472). Monats-Fakten und Jahr-Verlauf nennen denselben Monat aus den Kanälen. Dieselbe Lage "
+        "wie `_U_SA_VOR` der übrigen Formen (dort „Soll unklar\" mit Haltewert); Entscheid N-677 (Gernot 10.10.2026): "
+        "die Antwort ist der Monatsabschluss. Die Geräte-/WP-Gruppen sind mit N-750 frei (Zeilen 138/208). "
+        "Konzeptfrage R-11/E6 an Gernot — kein Bau in E-S4-3",
     ),
 }
 
@@ -661,15 +675,17 @@ ROT: dict[str, dict[tuple[str, str, str], tuple[str, ...]]] = {
         ('W2-V', 'HA', 'I4'): ('tag:keys:Süd',),
         ('W2-L', 'HA', 'I3'): ('tag:keys', 'tag:stunden',),
         ('W2-L', 'HA', 'I4'): ('tag:keys:Balkon', 'tag:keys:Süd',),
+        # HA-Bauform S4 E-S4-3 (Nachbau 2): mit Kanälen trägt SA dieselben roten Sichten wie HA — Cockpit → Tag liest die
+        # Kanäle (geheilt), die gespeicherte Tageszeile und die Stundenzeilen schreibt weiter `aggregate_day` (gemessen:
+        # W2-V `tag:keys` 12,1 statt 12,6 an 11 Tagen, W2-L 21,0 statt 30,0 bzw. Süd 13,24/Balkon 1,76 statt 0/15).
+        ('W2-V', 'SA', 'I3'): ('tag:keys', 'tag:stunden',),
+        ('W2-V', 'SA', 'I4'): ('tag:keys:Süd',),
+        ('W2-L', 'SA', 'I3'): ('tag:keys', 'tag:stunden',),
+        ('W2-L', 'SA', 'I4'): ('tag:keys:Balkon', 'tag:keys:Süd',),
     },
-    'W2-SA-BESTAND': {
-        ('W2-V', 'SA', 'I3'): ('tag:cockpit', 'tag:keys', 'tag:stunden',),
-        ('W2-V', 'SA', 'I4'): ('tag:cockpit:Süd', 'tag:cockpit:pv_anlage', 'tag:keys:Süd',),
-        ('W2-L', 'SA', 'I3'): ('tag:cockpit', 'tag:keys', 'tag:stunden',),
-        ('W2-L', 'SA', 'I4'): ('tag:cockpit:Balkon', 'tag:cockpit:Süd', 'tag:cockpit:bkw', 'tag:cockpit:pv_anlage',
-                               'tag:keys:Balkon', 'tag:keys:Süd',),
-        ('W2-L', 'S3', 'I4'): ('fakten_tageswert:bkw', 'fakten_tageswert:module',),
-    },
+    # W2-SA-BESTAND: seit HA-Bauform S4 E-S4-3 geheilt (Nachbau 2) — `W2-L-S3-I4` grün, die Tages-Sichten der vier SA-Zellen
+    # grün; deren gespeicherte Zeilen stehen oben unter W2-BESTAND-SPEICHER. Keine Zelle mehr.
+    'W2-SA-BESTAND': {},
     'W2-SA-VOR': {
         ('W2-V', 'S3', 'I2'): ('cockpit_monat:vor=nach',),
         ('W2-V', 'S3', 'I3'): ('cockpit_monat:vor',),

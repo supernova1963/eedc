@@ -326,7 +326,29 @@ Die **Tag**-Sicht bringt den feingranularen Stunden-Tag ins Cockpit: ein ausgew�
 > aggregieren"** in der Reparatur-Werkbank unter
 > [Einstellungen → Daten](HANDBUCH_EINSTELLUNGEN.md) holst du sie für einen Zeitraum nach.
 
-Die Datenbasis sind kumulative Zähler-Snapshots (stündlich); die Tages-Werte folgen der Backward-Slot-Konvention (Slot N = Energie aus dem Intervall [N−1, N), Industriestandard). Fehlen Snapshots (z. B. durch eine HA-Statistik-Latenz oder einen Add-on-Neustart), weist eedc darauf hin und bietet eine Nachberechnung an — die Pflege dazu liegt unter [Einstellungen → Daten → Energieprofil-Pflege](HANDBUCH_EINSTELLUNGEN.md).
+> **Woher die Stunden kommen.** Mit Home Assistant spiegelt eedc die Langzeitstatistik deiner Zähler Stunde für Stunde
+> (den **HA-Spiegel**). Deckt der Spiegel einen Tag, kommen nicht nur die Tagessummen, sondern auch die **Stunden** von
+> PV, Einspeisung, Netzbezug, Speicher, Wärmepumpe und Wallbox aus ihm: jede Stunde ist genau der Zuwachs, den Home
+> Assistant für sie nennt (wie im HA-Energie-Dashboard), und die Stunden ergeben zusammen den Tag. Fehlt in Home Assistant
+> eine Stunde, steht ihre Energie in der Stunde danach — die ist in Verlauf und Stundenwerte-Tabelle als **„enthält n
+> Stunden"** beschriftet, die leere Stunde davor ist keine 0. **Ladestand, Temperatur, Strahlung, Preise** und die
+> **Aufteilung je Gerät** (sie kommt vom Leistungssensor) liest eedc weiter aus den eigenen Stundenwerten. Deckt der
+> Spiegel einen Tag nicht (kein HA-Sensor, vor dem Beginn der Statistik), rechnet der Tag
+> wie bisher aus den gespeicherten Zählerständen. **Tage älter als zwei Jahre**, deren Stundenwerte eedc nach der
+> Aufbewahrungsfrist gelöscht hat, zeigen ihren Stunden-Verlauf wieder, soweit der Spiegel zurückreicht — dann ohne
+> Ladestand und Wetter.
+>
+> **Welcher Tag, welche Stunde.** Ein Tag aus dem HA-Spiegel ist der **Kalendertag** von 0 bis 24 Uhr — wie im
+> HA-Energie-Dashboard; was zwischen 23 und 24 Uhr passiert (die Wallbox lädt nachts, der Speicher zieht Netzstrom),
+> steht am selben Tag. Jede Stunde ist als **Bereich** beschriftet: „11–12" ist die Stunde von 11 bis 12 Uhr.
+> Tage aus den eigenen Stundenwerten bleiben, wie sie gespeichert sind: ihr Tag reicht von 23 Uhr des Vortags bis 23 Uhr,
+> die erste Stunde heißt dort „23–24" (vom Vortag). Folgt ein solcher Tag auf einen Tag aus dem Spiegel oder
+> umgekehrt, fehlt an der Grenze eine Stunde oder sie zählt doppelt — das betrifft nur diesen Übergang. Der laufende Tag
+> deckt in *Cockpit → Tag* dasselbe Fenster wie „heute" in *Cockpit → Live*. Liegen von einem Zähler für eine Zeit vor
+> der HA-Statistik nur Stände um Mitternacht vor, stimmen die Tagesmengen, und die Stunden zeigen den Tag als eine
+> Spanne („enthält n Stunden").
+
+Die Datenbasis sind kumulative Zähler-Snapshots (stündlich); die gespeicherten Stundenwerte folgen der Backward-Slot-Konvention (Slot N = Energie aus dem Intervall [N−1, N)), die Stunden eines Tages aus dem HA-Spiegel tragen ihren Beginn — beide sind als Bereich beschriftet. Fehlen Snapshots (z. B. durch eine HA-Statistik-Latenz oder einen Add-on-Neustart), weist eedc darauf hin und bietet eine Nachberechnung an — die Pflege dazu liegt unter [Einstellungen → Daten → Energieprofil-Pflege](HANDBUCH_EINSTELLUNGEN.md). An einem Tag aus dem HA-Spiegel ändert eine Nachberechnung die gespeicherten Stundenwerte, nicht die Zahlen aus dem Spiegel; eine falsche Zahl dort korrigierst du in Home Assistant ([Energieprofil §4](HANDBUCH_ENERGIEPROFIL.md#4-reparatur--pflege)).
 
 ### 2.3 Monat
 
@@ -439,14 +461,25 @@ Die **Monat**-Sicht ist das Referenz-Muster der Zeit-Achse: ein ausgewählter Mo
 
 > **Ohne Home Assistant** gilt dasselbe für Zähler, die eedc über MQTT mitschreibt, ab dem ersten Monat, den diese
 > Mitschrift ganz abdeckt; davor zählen diese Größen erst mit dem Monatsabschluss.
+>
+> **Wenn die HA-Statistik gerade nicht antwortet** (Neustart von Home Assistant, Recorder noch nicht bereit), liest der
+> laufende Monat E-Mobilität, Sonstiges und Wärmepumpe trotzdem aus den gespiegelten Zählerständen — dieselben Zahlen
+> wie der Verlauf in *Cockpit → Jahr*. Bis 4.1.7 fehlten in diesem Moment der Strom eines Erzeugers wie BHKW im
+> Eigenverbrauch, die Heimladung, die dienstlichen Ladekosten und der Strom je Betriebsart; ein erneutes Öffnen, sobald
+> Home Assistant wieder da war, zeigte sie wieder. Ein vergangener Monat ohne Abschluss braucht dafür weiterhin die
+> HA-Statistik (oder den Abschluss).
 
-> **Netzladung des Speichers im laufenden Monat.** Hat dein Speicher einen Zähler für die Ladung aus dem Netz, nennt der
-> laufende Monat die Netzladung schon vor dem Abschluss — als **Summe der abgelaufenen Tage**, dieselben Zahlen wie in
-> *Cockpit → Tag* (der heutige Tag kommt morgen dazu). Die Kachel **„Batterieladung Netz"** und die Speicher-Zeile
-> „davon aus dem Netz" sagen das beim Überfahren („Menge aus Tageswerten"); der Ladepreis ist derselbe wie am Tag
-> (gewichtet mit deinen Stundenpreisen, sonst dein Arbeitspreis). Mit dem Monatsabschluss gilt der gespeicherte Wert. Ein
-> **vergangener** Monat ohne Abschluss nennt die Netzladung weiterhin erst mit dem Abschluss — ebenso die V2H-Rückspeisung
-> eines E-Autos.
+> **Netzladung des Speichers vor dem Abschluss.** Hat dein Speicher einen Zähler für die Ladung aus dem Netz, nennt ein
+> Monat ohne Abschluss die Netzladung schon vorher — als **Summe der abgelaufenen Tage**, dieselben Zahlen wie in
+> *Cockpit → Tag* (im laufenden Monat kommt der heutige Tag morgen dazu). Die Kachel **„Batterieladung Netz"** und die
+> Speicher-Zeile „davon aus dem Netz" sagen das beim Überfahren („Menge aus Tageswerten"); der Ladepreis ist derselbe wie
+> am Tag (gewichtet mit deinen Stundenpreisen, sonst dein Arbeitspreis). Das gilt für den laufenden **und** einen
+> **vergangenen** Monat ohne Abschluss: *Cockpit → Monat* zeigt sie dort, wo auch Ladung und Entladung stehen (ohne
+> Home Assistant hat ein vergangener Monat ohne Abschluss dort keine Speicherwerte, also auch keine Netzladung — die
+> Antwort ist der Monatsabschluss); der Verlauf von *Cockpit → Jahr* trägt sie für jeden Monat ohne Speicher-Eintrag mit Tagen, und
+> ein Community-Monatswert, der ohnehin geteilt wird (nur abgeschlossene Monate mit Zählerzeile), nimmt sie wie Ladung
+> und Entladung mit. Mit dem Monatsabschluss gilt der gespeicherte Wert. Die
+> V2H-Rückspeisung eines E-Autos zählt im Monat weiterhin erst mit dem Abschluss.
 
 Aus dem feingranularen Stunden-Bestand des Monats zeigt die Sicht zusätzlich:
 
@@ -502,7 +535,11 @@ Die **Jahr/Gesamt**-Sicht fasst die Anlage über ein ganzes Jahr zusammen — vo
 > und Netzbezug erfasst sind: Hat ein Import die Monatszeile ohne diese Werte angelegt (etwa nur mit Wallbox-Daten),
 > zählen Übersicht, Jahresbericht, HA-Sensor, *Auswertungen → Tabelle* und der Community-Upload den Monat bei
 > Eigenverbrauch, Autarkie und Ersparnis nicht mit (die Tabelle zeigt dort „–"), bis das Feld erfasst ist; der
-> Daten-Checker nennt ihn („Netzbezug nicht erfasst"). Kann ein Monat gar nicht berechnet
+> Daten-Checker nennt ihn („Netzbezug nicht erfasst"). Dasselbe gilt in der Monatsliste und im Verlauf hier für einen
+> Monat **ohne** Monatsabschluss, dessen Einspeisung oder Netzbezug an keinem Tag gemessen wurde (etwa eine Anlage ohne
+> Einspeisungs-Zähler): er zeigt seine PV-Erzeugung, aber „–" bei Netzwerten, Eigenverbrauch, Autarkie und Ersparnis —
+> wie der Kopf darüber und *Cockpit → Monat* —, statt Eigenverbrauchsquote 100 % und eine Ersparnis auf die ganze
+> Erzeugung. Kann ein Monat gar nicht berechnet
 > werden, nennt die Zeile ihn ebenfalls; das Jahresergebnis bleibt dann — wie bei einer fehlenden Stromrechnung — leer
 > („—“) und nennt den Monat als fehlenden Posten.
 > **Ohne Home Assistant** zeigt *Cockpit → Monat* einen solchen Monat erst nach dem Abschluss — MQTT-Zählerstände und
