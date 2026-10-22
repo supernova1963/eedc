@@ -349,6 +349,14 @@ class QuellenChecks:
         tz_list = list(tz_result.scalars().all())
         if not tz_list:
             return []  # Keine Daten — frische Anlage, kein Vergleich nötig
+        # HA-Bauform S5 (E-S5-2, Bauplan §5): die eedc-Seite über die Lesestelle — an einem Kanal-Tag der Bilanz
+        # PV/BKW, Netz und Speicher aus dem HA-Spiegel bzw. den eigenen Zählerständen (wie Cockpit → Tag; der Vergleich
+        # mit HA ergibt dort keinen Befund), alle übrigen Schlüssel und jeder Bestandstag aus der Tageszeile. Lade-Hinweis
+        # (E-S5-3 Nachzug M-1): die zweite Achse liest jeden Geräte-Schlüssel, den HA liefert (Wallbox, E-Auto, Wärmepumpe,
+        # Sonstiges) — alle Gruppen; an einem Kanal-Tag trägt die Tageszeile sie seit S5b nicht mehr.
+        from backend.services.energie_profil.kanal_stunden import KOMPONENTEN_GRUPPEN, komponenten_der_tage
+
+        komp_je_tag = await komponenten_der_tage(self.db, anlage.id, von, bis, gruppen=KOMPONENTEN_GRUPPEN)
 
         inv_result = await self.db.execute(
             select(_Inv).where(_Inv.anlage_id == anlage.id)
@@ -412,7 +420,7 @@ class QuellenChecks:
             # Der Aggregator selbst fällt in genau diesem Fall auf den Snapshot-
             # Pfad zurück (energie_profil/aggregator.py) — der Drift-Check darf
             # die fehlende LTS-Lesbarkeit nicht als Abweichung interpretieren.
-            tz_komp = tz.komponenten_kwh or {}
+            tz_komp = komp_je_tag.get(tz.datum) or {}
             vergleich_keys = {
                 k for k, v in ha_komp.items()
                 if isinstance(v, (int, float))
@@ -469,7 +477,7 @@ class QuellenChecks:
             ha_komp = ha_komp_je_tag.get(tz.datum)
             if not ha_komp:
                 continue
-            tz_komp = tz.komponenten_kwh or {}
+            tz_komp = komp_je_tag.get(tz.datum) or {}
             for k, ha_v in ha_komp.items():
                 if not isinstance(ha_v, (int, float)):
                     continue

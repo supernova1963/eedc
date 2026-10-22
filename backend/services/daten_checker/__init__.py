@@ -133,6 +133,8 @@ class DatenChecker(
         ergebnisse.extend(await self._check_energieprofil_plausibilitaet(anlage))
         # E7 (Zählerlücken wie HA): Bestandstage ohne Regelmarke + Reparaturweg.
         ergebnisse.extend(await self._check_bestandstage_ohne_regelmarke(anlage))
+        # HA-Bauform S5 (S5-E2 b): Tage ohne Kanal-Deckung — INFO, Lesart 1 sichtbar, kein Handgriff.
+        ergebnisse.extend(await self._check_tage_ohne_kanal_deckung(anlage))
         # Nachträge II: Tage mit mehr Einspeisung als Erzeugung + Entladung.
         ergebnisse.extend(await self._check_einspeisung_ueber_erzeugung(anlage))
         # N-567: Nachtrag nach eingefrorenem Zähler — nur benannt (eedc folgt HA).
@@ -217,7 +219,7 @@ class DatenChecker(
 def _ist_bilanz_kanal(key: str, invs_by_id: dict) -> bool:
     """Gehört der Kanal ``basis:<feld>`` bzw. ``inv:<id>:<feld>`` zur Bilanz-Gruppe (``bilanz_adapter.BILANZ_ACHSEN``)?
     Dieselbe Abbildung Feld → Kategorie → Achse wie der Tagespfad (``snapshot/keys._categorize_counter`` →
-    ``spannen.achse_der_kategorie``, wie ``monatswert_deckel.py``). Abgeleitete und Modus-Kanäle gehören nicht dazu."""
+    ``spannen.achse_der_kategorie``, wie bis E-S5-4 der Monats-Deckel). Abgeleitete und Modus-Kanäle gehören nicht dazu."""
     from backend.core.berechnungen.spannen import achse_der_kategorie
     from backend.services.kanal.bilanz_adapter import BILANZ_ACHSEN
     from backend.services.snapshot.keys import _categorize_counter

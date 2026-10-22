@@ -22,8 +22,9 @@ Punkt 4). Die Proben stehen in ``test_kanal_bilanz_gleichheit.py`` (kein ``test`
   Lesers (Mengen, Gesamtverbrauch, Eigenverbrauch, Quoten, Erfasst-Marken) — Bestand = Tageszeile + Stundenzeilen
   über ``bilanz_aus_stundenrows`` wie ``tage_werte.py``.
 * Monat: jedes Feld von ``TagesMonatsSumme`` (``lade_monats_summen_aus_tagen``) außer der E-Mob-Aufteilung.
-* Kalendermonat je Sensor (nur HA): jedes Feld von ``SensorMonatswert`` (``get_monatswerte`` mit dem Deckel des
-  Aufrufers, ``monatswert_deckel.deckel_je_sensor``).
+* Kalendermonat je Sensor (nur HA): jedes Feld von ``SensorMonatswert`` (``get_monatswerte`` — ohne Deckel wie jeder
+  Aufrufer seit S4-R-5; seit HA-Bauform S5 E-S5-4 kennt der Monatsleser keinen Deckel mehr, ``monatswert_deckel.py``
+  ist gestrichen).
 
 **Toleranz.** ``komponenten_kwh`` beidseits ``round(v, 2)`` — 0,005 kWh (halbe Stufe, wie im Symmetrie-Wächter).
 Bilanz und Monat entstehen beidseits aus auf 3 Stellen gerundeten Stundenwerten — 1e-6. Fassung (b) gegen (a): (b)
@@ -82,7 +83,7 @@ MONAT_JE_GERAET = ("bkw_gemessen_je_inv", "bkw_je_inv")
 #: Felder der Monatssumme, die NICHT zur Bilanz-Gruppe gehören (E-Mob-Aufteilung, U5/E4c) — gezählt, nie verglichen.
 MONAT_NICHT_GRUPPE = ("emob_ladung_pv_abgeleitet_kwh", "emob_ladung_netz_abgeleitet_kwh",
                       "emob_ladung_speicher_abgeleitet_kwh")
-SENSOR_FELDER = ("start_wert", "end_wert", "differenz", "verworfen_kwh", "nachtrag_kwh", "intervalle")
+SENSOR_FELDER = ("start_wert", "end_wert", "differenz", "verworfen_kwh", "intervalle")
 
 
 # ── Datenstände ─────────────────────────────────────────────────────────────
@@ -155,7 +156,9 @@ class Datenstand:
 @asynccontextmanager
 async def datenstand(matrix: str, fid: str, art: str, *, ha_abweichung: Optional[dict] = None,
                      eigene_summe_aus: str = "mqtt"):
-    """Seed → Kanäle → Tageszeilen; ``yield Datenstand``. Wegwerf-Datei je Lauf. ``ha_abweichung`` (nur PV-Matrix,
+    """Seed → Kanäle → Tageszeilen; ``yield Datenstand``. Die Tageszeilen schreibt der **Bestands-Algorithmus** (HA-Bauform S5b,
+    E-S5-3: ``aggregiere_tage(ohne_weiche=True)`` — wie ein Tag, der vor S5b geschrieben wurde; die Gleichheitsproben
+    vergleichen die Kanäle mit ihm). Den Schreiber wie im Produkt nimmt ``neu_aggregieren``. Wegwerf-Datei je Lauf. ``ha_abweichung`` (nur PV-Matrix,
     HA): ``{sensor_id: (Rate | None, ohne_Zeile | None)}`` wie ``pv_achse_matrix.seed_ha``. ``eigene_summe_aus`` (nur
     MQTT): ``"mqtt"`` (Stundenlauf über die Rohstände) oder ``"sensor_snapshots"`` (Nachfüllen über die Stundenstände)."""
     from backend.services.kanal.nachfuellen import nachfuellen_eigene_summe, nachfuellen_spiegel
@@ -182,7 +185,7 @@ async def datenstand(matrix: str, fid: str, art: str, *, ha_abweichung: Optional
                     erg = await nachfuellen_spiegel(sitzungen, aid, jetzt=mx.JETZT, ha_svc=svc)
                     assert erg.fehler == 0 and erg.zeilen > 0
                     await mx.baue_abgeleitete(sitzungen, aid)     # E4c: der abgeleitete Kanal wie im Produkt
-                    await mx.aggregiere_tage(db, pf, aid, TAGE)
+                    await mx.aggregiere_tage(db, pf, aid, TAGE, ohne_weiche=True)  # Bestand für die Gleichheit (S5b)
                     await mx.baue_abgeleitete(sitzungen, aid)     # E4d: Strom je Betriebsart aus der Mitschrift
             else:
                 svc = mx._ha_aus()
@@ -201,7 +204,7 @@ async def datenstand(matrix: str, fid: str, art: str, *, ha_abweichung: Optional
                     else:
                         await _eigene_summe_tageslauf(db, anlage)
                     await mx.baue_abgeleitete(sitzungen, aid)     # E4c: aus der eigenen Summe, wie im Stundenlauf
-                    await mx.aggregiere_tage(db, pf, aid, TAGE)
+                    await mx.aggregiere_tage(db, pf, aid, TAGE, ohne_weiche=True)  # Bestand für die Gleichheit (S5b)
                     await mx.baue_abgeleitete(sitzungen, aid)     # E4d: Strom je Betriebsart aus der Mitschrift
             yield Datenstand(matrix, fid, art, db, aid, ids, svc, zuordnung if art != "HA" else None)
         finally:
@@ -209,6 +212,20 @@ async def datenstand(matrix: str, fid: str, art: str, *, ha_abweichung: Optional
             await engine.dispose()
     finally:
         shutil.rmtree(verz, ignore_errors=True)
+
+
+async def neu_aggregieren(ds: Datenstand, tage=TAGE) -> None:
+    """HA-Bauform S5 (E-S5-3, §10h 3): die Tage des Datenstands neu aggregieren — in derselben Umgebung wie beim Aufbau.
+    Seit S5b schreibt ``aggregate_day`` an einem Kanal-Tag keine Mengen; eine Gegenprobe «derselbe Tag ohne Kanalzeilen»
+    lässt den Tag seine Kanal-Deckung verlieren und aggregiert ihn danach neu — wie der Schreiber im Betrieb: die nächste
+    Aggregation schreibt wieder Mengen (Bestandstag)."""
+    from backend.services.kanal import merken
+
+    merken.invalidiere(ds.aid)
+    form = _form(ds.matrix, ds.fid)
+    umgebung = am.umgebung(form, ds.svc) if ds.matrix == "achsen" else mx._umgebung(ds.svc)
+    with umgebung:
+        await mx.aggregiere_tage(ds.db, _pvform(ds.matrix, form), ds.aid, tage)
 
 
 async def _eigene_summe_tageslauf(db: AsyncSession, anlage) -> None:
@@ -256,22 +273,29 @@ async def bestand_tage(db: AsyncSession, aid: int) -> dict[date, BestandTag]:
 
 
 async def bestand_monate(db: AsyncSession, aid: int) -> dict:
-    from backend.services.energie_profil.monats_aus_tagen import lade_monats_summen_aus_tagen
+    """Der heutige Leser des **Bestands**: die Faltung der gespeicherten Tages- und Stundenzeilen. Seit S5b (E-S5-3, H-1 → B)
+    nimmt `lade_monats_summen_aus_tagen` Kanal-Tage aus der Lesestelle — für die Gleichheit «Kanal = Bestand» hier
+    ausdrücklich ohne sie (die Bestandsseite ist die gespeicherte Zeile, `aggregiere_tage(ohne_weiche=True)`)."""
+    from unittest.mock import patch
 
-    return await lade_monats_summen_aus_tagen(db, aid, von=MONATE[0], bis=MONATE[-1])
+    from backend.services.energie_profil import monats_aus_tagen
+
+    async def _keine(*_a, **_k):
+        return {}
+
+    with patch.object(monats_aus_tagen, "_kanal_tage_der_monate", _keine):
+        return await monats_aus_tagen.lade_monats_summen_aus_tagen(db, aid, von=MONATE[0], bis=MONATE[-1])
 
 
-async def zaehler_sensoren(db: AsyncSession, aid: int) -> tuple[list[str], dict[str, float]]:
-    from backend.services.monatswert_deckel import deckel_je_sensor
-
+async def zaehler_sensoren(db: AsyncSession, aid: int) -> list[str]:
+    """Die HA-Entities der Zuordnung (Basis und Investitionen), ohne Doppel."""
     anlage = (await db.execute(select(Anlage).where(Anlage.id == aid))).scalar_one()
-    invs = (await db.execute(select(Investition).where(Investition.anlage_id == aid))).scalars().all()
     m = anlage.sensor_mapping or {}
     sids = [c["sensor_id"] for c in (m.get("basis") or {}).values() if isinstance(c, dict) and c.get("sensor_id")]
     for inv in (m.get("investitionen") or {}).values():
         sids += [c["sensor_id"] for c in ((inv or {}).get("felder") or {}).values()
                  if isinstance(c, dict) and c.get("sensor_id")]
-    return list(dict.fromkeys(sids)), deckel_je_sensor(anlage, invs)
+    return list(dict.fromkeys(sids))
 
 
 # ── Vergleich ───────────────────────────────────────────────────────────────
@@ -374,15 +398,13 @@ async def probe(ds: Datenstand) -> tuple[Bericht, Bericht]:
             continue
         vergleiche_monat(bb, "monat", m, ma[m], mb[m], tol=TOL_B_MONAT, mit_belegdichte=False)
     if ds.art == "HA":
-        sids, deckel = await zaehler_sensoren(db, aid)
+        sids = await zaehler_sensoren(db, aid)
         for jahr, monat in MONATE:
-            soll = {w.sensor_id: w for w in ds.svc.get_monatswerte(sids, jahr, monat, deckel_je_sensor=deckel).sensoren}
+            soll = {w.sensor_id: w for w in ds.svc.get_monatswerte(sids, jahr, monat).sensoren}
             ia = {w.sensor_id: w for w in (await sensor_monatswerte_aus_kanaelen(
-                db, aid, sids, jahr, monat, deckel_je_sensor=deckel, fassung=FASSUNG_WIE_BESTAND,
-                jetzt=JETZT_TS)).sensoren}
+                db, aid, sids, jahr, monat, fassung=FASSUNG_WIE_BESTAND, jetzt=JETZT_TS)).sensoren}
             ib = {w.sensor_id: w for w in (await sensor_monatswerte_aus_kanaelen(
-                db, aid, sids, jahr, monat, deckel_je_sensor=deckel, fassung=FASSUNG_WIE_HA,
-                jetzt=JETZT_TS)).sensoren}
+                db, aid, sids, jahr, monat, fassung=FASSUNG_WIE_HA, jetzt=JETZT_TS)).sensoren}
             for sid in sorted(set(soll) | set(ia)):
                 if sid not in soll or sid not in ia:
                     ba.abweichungen.append(("sensor", (jahr, monat), sid, sid in soll, sid in ia))

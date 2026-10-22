@@ -572,6 +572,8 @@ Nach **HA-Neustart** landet der Sensor in HA-Long-Term-Statistics und steht dami
 
 > **Wichtig:** Die Korrektur wirkt **ab dem Zeitpunkt** der `state_class`-Aktivierung. HA legt LTS-Werte erst ab diesem Moment an — vorher existieren keine Werte zum Holen, auch keine rückwirkende Reparatur. Bestehende leere Tage bleiben leer; ab Aktivierung wird lückenfrei erfasst.
 
+**Ohne eedc-Neustart.** Liest eedc die Statistik über die WebSocket-Verbindung (kein Zugriff auf die Recorder-Datenbank, etwa eedc als eigener Container oder Home Assistant mit MariaDB), sieht es einen Sensor, dessen Statistik erst nach dem Start von eedc beginnt, ohne Neustart, spätestens nach fünf Minuten — wie beim Lesen aus der Datenbank. eedc holt die Liste der Statistik-Sensoren dafür neu, wenn ein zugeordneter Sensor darin fehlt, höchstens einmal je fünf Minuten.
+
 ### Daten-Checker-Kategorie „Sensor-Mapping – HA-Statistics"
 
 Prüft pro Anlage, ob alle in der Datenquellen-Zuordnung verwendeten **kWh-Sensoren** tatsächlich in HA-LTS landen (siehe [Handbuch Daten-Checker §4.9](HANDBUCH_DATEN_CHECKER.md#49-sensor-mapping--ha-statistics)):
@@ -656,6 +658,15 @@ Stufe 1 der Sensorliste sagt, **was ist**. Diese Gruppe sagt, **was jetzt gilt**
 | `eedc_speicher_netzladen_kosten_cent` | ct/kWh | Dasselbe für Strom aus dem Netz: Bezugspreis der laufenden Stunde ÷ Wirkungsgrad. Entsteht nur für Speicher mit „lädt aus dem Netz" |
 | `eedc_speicher_leer_um_ts` | Zeitstempel | Wann der Ladestand nach heutiger Simulation **in den Leerstand übergeht** — derselbe Lauf wie „Speicher voll um". Gibt es keinen solchen Übergang, gibt es den Sensor nicht. ⚠ **Der Zeitpunkt kann in der Vergangenheit liegen:** die Simulation startet bei der zuletzt gemessenen Stunde (`sim_start_stunde`/`sim_start_anteil`), nicht bei „jetzt" — hinkt Home Assistant nach, kann der Übergang in diese Lücke fallen, und der Sensor sagt dann, seit wann der Speicher nach dem Modell leer ist |
 | `eedc_abregelung_heute_kwh` | kWh | Wie viel Erzeugung heute voraussichtlich an der Wechselrichter-Grenze **abgeregelt** wird. Attribute: `skala`, `stundenprofil_kwh`, `rest_heute_kwh`, `grenzen_kw`. ⚠ **In der Skala der Rohprognose** (s. den Hinweis unter der Tabelle). Ohne gepflegte AC-Grenze gibt es ihn nicht — 0 dagegen heißt „heute wird nichts abgeregelt" |
+
+> **An Tagen aus dem HA-Spiegel bzw. den eigenen Zählerständen** (seit S5a) kommen `eedc_ueberschuss_heute_kwh` und
+> `eedc_ueberschuss_jetzt_kw` sowie das Stundenmittel von `eedc_netzbezug_spitze_heute_kw` aus denselben Stunden wie
+> *Cockpit → Tag* — der Überschuss heute ist dort Σ der Stunden aus dem Spiegel, „letzte Stunde" die letzte Stunde, für
+> die Home Assistant schon einen Wert hat. Die Zeitangaben (`seit`, `stunde_von`/`stunde_bis`, `stand`,
+> `stunde_max_mittel`) stehen dann im Kalendertag (Stunde „11–12" = 11:00 bis 12:00), wie die Stundenansicht. Die
+> Netzbezugs-Spitze selbst (Leistung) bleibt die gemessene Spitze des Tages. Eine Stunde, die Home Assistant mit der
+> Menge mehrerer Stunden nachliefert, zählt für „jetzt" nicht (sie ist kein Stundenmittel); ihre Energie steht im
+> Überschuss heute.
 
 **Die Schalter (`binary_sensor`) — an, aus oder nicht verfügbar**
 

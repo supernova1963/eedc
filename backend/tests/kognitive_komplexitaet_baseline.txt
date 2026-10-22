@@ -14,7 +14,7 @@
 60	api/routes/datenquellen.py::get_datenquellen_felder
 82	api/routes/energie_profil/prognose.py::get_tagesprognose
 64	api/routes/energie_profil/tag.py::get_tag_detail
-74	api/routes/energie_profil/waerme.py::get_waerme_verlauf_stunden
+63	api/routes/energie_profil/waerme.py::get_waerme_verlauf_stunden
 79	api/routes/ha_export/anlage_preise_speicher.py::preise_speicher_sensoren
 58	api/routes/ha_export/anlage_sensoren.py::calculate_anlage_sensors
 53	api/routes/ha_export/investition_sensoren.py::_wp_steuerung_und_plan
@@ -29,7 +29,6 @@
 60	api/routes/investitionen/roi_pv.py::pv_einsparung_und_speicher_ist.berechne_pv_einsparung_aus_monatsdaten
 78	api/routes/investitionen/roi_pv.py::pv_systeme_zeilen
 72	api/routes/investitionen/roi_standalone.py::standalone_zeilen
-51	api/routes/prognosen.py::get_prognosen_genauigkeit
 66	core/berechnungen/ergebnis.py::falte_zeitraum
 58	core/berechnungen/tagesbilanz.py::bilanz_aus_stundenrows
 230	core/database.py::run_migrations
