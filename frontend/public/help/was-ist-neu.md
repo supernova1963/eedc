@@ -1,6 +1,6 @@
 # Was ist neu
 
-> **Stand:** Oktober 2026 (v4.1.9)
+> **Stand:** Oktober 2026 (v4.1.10)
 > **Diese Seite** zeigt pro Version, was sich für dich als Anwender geändert hat — kürzer als der technische [CHANGELOG](https://github.com/supernova1963/eedc-homeassistant/blob/main/CHANGELOG.md), ausführlicher als die Schnellübersicht-Tabelle in der [Übersicht](BENUTZERHANDBUCH.md#was-ist-neu-seit-v316).
 >
 > **Kein Banner, kein Pop-up:** eedc zeigt diese Liste nicht ungefragt an. HA-App-Nutzer sehen den Changelog ohnehin schon im Add-on-Store, GitHub-Releases haben einen eigenen. Wer wissen will, was neu ist, schaut hier rein — Pull statt Push.
@@ -8,6 +8,22 @@
 > **Lesehinweis:** Die jüngsten Versionen stehen oben. Jeder Punkt verlinkt entweder auf die zuständige Hilfe-Sektion oder direkt auf die App-Funktion (sofern erreichbar). Anker-URLs (`?doc=was-ist-neu`) sind teilbar.
 
 ---
+
+## v4.1.10 — 24. Oktober 2026
+
+**Daten-Checker: kein „Sprung in Home Assistant“ mehr am PV-Tagesertrag eines nachts abgeschalteten Wechselrichters.**
+Liefert dein Wechselrichter nachts keinen Wert, setzt Home Assistant den Tagesertrag erst in der ersten Stunde mit Werten
+am Morgen auf 0 — nicht um Mitternacht. Die Prüfung erkennt den Tageszähler jetzt auch daran und meldet keinen Sprung
+mehr, wenn die erste helle Stunde nach einem schwachen Tag den Vortag schon fast erreicht. Deine HA-Statistik war in
+diesem Fall richtig; ändern musst du nichts
+([Daten-Checker §4.8b](HANDBUCH_DATEN_CHECKER.md#48b-zaehlerstaende--sprung-in-home-assistant)).
+
+**Wärmepumpe: Heizen und Warmwasser im Balken der Betriebsarten, wenn du sie getrennt misst.** Misst du Strom Heizen
+und Strom Warmwasser getrennt und hast daneben einen Zähler für eine Betriebsart (etwa den Kühlbetrieb) zugeordnet,
+zeigt *Strom-Aufteilung nach Betriebsart* jetzt Heizen und Warmwasser mit deinen gemessenen Werten — bisher stand dort
+Heizen 0 und alles unter „nicht aufgeteilt“. Das gilt für Tag, Monat, Wärme/Klima-Verlauf, Komponenten-Hub,
+Monatsbericht und die HA-Sensoren; deine Arbeitszahlen ändern sich nicht
+([Wärme & Klima](HANDBUCH_WAERME_KLIMA.md#schritt-4--betriebsart-erfassen-optional-aber-lohnend)).
 
 ## v4.1.9 — 22. Oktober 2026
 
