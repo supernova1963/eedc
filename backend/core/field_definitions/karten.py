@@ -25,16 +25,19 @@ SOC_TYPEN: frozenset[str] = frozenset(
 #   1. `live_power_service._states_zu_w` → `normalize_to_w(float(state))` — läuft
 #      über JEDE Live-Zuordnung, alle 5 Sekunden. Ein `climate`-State ergibt dort
 #      garantiert `None`; es wäre ein Dauerabruf ohne Ergebnis.
-#   2. `mqtt_inbound_service` → `float(payload)`. Ein Modus über MQTT ist damit
-#      nicht empfangbar — also wird er auch nicht als Topic **angeboten**, statt
-#      dem Anwender eine Quelle hinzustellen, die nichts liefert (die P-6-Falle:
-#      ein Hinweis bzw. hier ein Angebot, das niemand einlösen kann).
+#   2. `mqtt_inbound_service` war `float(payload)`. Seit HA-Bauform §9
+#      (Standalone-Gleichstand S1, 25.10.2026) hat der Inbound einen
+#      Zustands-Zweig: ein Zustandsfeld landet als roher String im Cache, wird
+#      als Topic angeboten (`…/live/inv/<id>/betriebsmodus`) und erst im Kanon
+#      gedeutet. Das Gateway (float-only) bleibt für Zustandsfelder aus — die
+#      Fläche liest dafür `zustand`.
 #   3. `daten_checker/sensoren.py` prüft Einheiten (kW≠kWh) — ein Feld ohne
 #      Einheit hat dort nichts zu suchen.
 #
 # Statt an jeder dieser Stellen `if key == "betriebsmodus"` zu schreiben, steht
 # die Eigenschaft **am Feld** und wird von hier gelesen. Ein zweites
-# Zustandsfeld erbt damit alle drei Weichen, ohne dass jemand sie sucht.
+# Zustandsfeld erbt damit alle Weichen, ohne dass jemand sie sucht (seit §9
+# auch die des Inbound und des Gateway-Knopfs).
 #
 # ⚠ Die Umkehrung gilt ausdrücklich: was hier NICHT steht, ist eine Zahl. Wer
 # ein Feld ohne `einheit` einträgt, hat damit noch kein Zustandsfeld gebaut.
@@ -96,8 +99,8 @@ def ist_zustand_feld(feld: str, typ: Optional[str] = None) -> bool:
     # #263: Der Key kann eine Innengeräte-Adresse tragen
     # (`betriebsmodus-3`). Die Zustands-Eigenschaft hängt am Feld, nicht am
     # Innengerät — ohne Auflösung liefe eine `climate`-Entität in den
-    # 5-Sekunden-Poller und in ein MQTT-Topic, das `float(payload)` nie
-    # annehmen kann.
+    # 5-Sekunden-Poller, und der MQTT-Inbound (HA-Bauform §9) verwürfe den
+    # Modus-String eines Suffix-Topics als ungültige Zahl.
     basis = basis_feld_key(feld)
     if typ is not None:
         return (typ, basis) in ZUSTAND_LIVE_FELDER
@@ -385,6 +388,12 @@ _SNAPSHOT_OHNE_KOMPONENTEN_BEITRAG: dict[tuple[str, str], str] = {
     # Achsen. Er ist zusätzlich der Gesamtwert ÜBER ihnen (D1); stünde er in der
     # Energiebilanz, zählte dieselbe Wärme zweimal.
     ("waermepumpe", "waerme_kwh"): "thermisch, s. heizenergie_kwh",
+    # P-433-3 S2 (Konvention H-B): der Heizstab hängt hinter dem WP-Zähler — sein Strom steckt in
+    # `stromverbrauch_kwh` bzw. den Summanden. Als eigener Beitrag stünde er in Tages- und Stundenbilanz doppelt.
+    # ⚠ Wortlaut ohne „thermisch": `wp_menge` liest ihn als Strom-Menge.
+    ("waermepumpe", "heizstab_strom_kwh"):
+        "Teilmenge des Gerätestroms (Heizstab hinter dem WP-Zähler, H-B) — als eigener Beitrag "
+        "stünde derselbe Strom in der Tagesbilanz doppelt",
 }
 
 # #263 — die gemessenen Betriebsart-Zähler, aus zwei verschiedenen Gründen:
@@ -421,6 +430,47 @@ _SNAPSHOT_OHNE_KOMPONENTEN_BEITRAG.update({
         for _feld in _BETRIEBSART_NUTZENERGIE_FELDNAMEN
     },
 })
+
+# P-433-2 (Datenquellen Variante C, #431, 24.10.2026) — Betriebsart und Mengenart je Wärmepumpen-Feld.
+#
+# **Betriebsart** ist das Registry-Attribut `betriebsart` (s. `registry.WP_BETRIEBSARTEN`), hier nur zur
+# Karte gefaltet. **Mengenart** trennt die zwei Sorten kWh einer Wärmepumpe — Strom, den sie verbraucht,
+# und Wärme/Kälte, die sie abgibt — und wird NICHT neu getippt: thermisch ist ein Feld genau dann, wenn
+# `_SNAPSHOT_OHNE_KOMPONENTEN_BEITRAG` es mit diesem Grund führt (dieselbe Lesart wie
+# `test_thermische_felder_benennen_ihre_groesse.py`). Beides liest die Zuordnungs-Fläche für den Status
+# im Blockkopf («vollständig» · «fehlt: Strom, Wärme»); der Client hält keine eigene Feldtabelle.
+_WP_TYP = "waermepumpe"
+
+WP_BETRIEBSART_JE_FELD: dict[str, Optional[str]] = {
+    **{f["feld"]: f.get("betriebsart") for f in INVESTITION_FELDER[_WP_TYP]},
+    **{f["key"]: f.get("betriebsart") for f in LIVE_FELDER_INV[_WP_TYP]},
+}
+
+WP_MENGE_STROM: Final[str] = "strom"
+WP_MENGE_WAERME: Final[str] = "waerme"
+
+
+def wp_betriebsart(feld: str) -> Optional[str]:
+    """Betriebsart eines Wärmepumpen-Felds (auch mit Innengeräte-Suffix), sonst ``None``."""
+    return WP_BETRIEBSART_JE_FELD.get(basis_feld_key(feld or ""))
+
+
+#: P-433-3 S2: kWh-Felder, die eine **Teilmenge des Gerätestroms** messen, ohne ihn zu decken — der Heizstab-Zähler
+#: (H-B). Sie tragen keine Mengenart: der Status im Datenquellen-Block «Gerät gesamt» fragt «ist der Strom des Geräts
+#: gedeckt?», und ein zugeordneter Heizstab-Zähler deckt ihn nicht (gemessen 25.10.: ohne diese Ausnahme sagte der
+#: Block einer Wärmepumpe mit getrennter Strommessung «fehlt: Strom» statt «vollständig»).
+WP_TEILMENGE_OHNE_MENGENART: frozenset[str] = frozenset({"heizstab_strom_kwh"})
+
+
+def wp_menge(feld: str) -> Optional[str]:
+    """``strom`` oder ``waerme`` für ein kWh-Feld der Wärmepumpe; ``None`` für Leistung, Temperatur, Zustand —
+    und für eine Teilmenge ohne Deckung ({@link WP_TEILMENGE_OHNE_MENGENART})."""
+    basis = basis_feld_key(feld or "")
+    if not any(f["feld"] == basis for f in INVESTITION_FELDER[_WP_TYP]) or basis in WP_TEILMENGE_OHNE_MENGENART:
+        return None
+    grund = _SNAPSHOT_OHNE_KOMPONENTEN_BEITRAG.get((_WP_TYP, basis), "")
+    return WP_MENGE_WAERME if "thermisch" in grund.lower() else WP_MENGE_STROM
+
 
 def kumulative_zaehler_felder_je_typ() -> dict[str, tuple[str, ...]]:
     """Je Investitionstyp die kWh-Felder, die als **kumulativer Zähler**

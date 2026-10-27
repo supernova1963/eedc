@@ -21,7 +21,22 @@
  * Reine Funktion, damit sie ohne Render prüfbar ist (Bauform `verlaufRestZeilen`).
  */
 import type { AktuellerMonatResponse } from '../api/aktuellerMonat'
+import { fmtZahl } from '../lib'
 import { GROESSE, imKasten, type GroessenName } from './waermeKlimaSicht'
+
+/**
+ * Die **eine** Herleitung einer Arbeitszahl aus Zähler und Nenner, die der Layer benutzt hat (A6) —
+ * «25,6 kWh Wärme ÷ 5,6 kWh Strom». P-433-3 S3-9 (Master 25.10.2026): das Backend liefert die Mengen ungerundet,
+ * formatiert wird **hier**, mit einer Nachkommastelle (Style-Guide C3) — Tag («Je Funktion», «davon Zusatzheizung»)
+ * und Hub (Kennzahl «AZ ohne Zusatzheizung») zeigen für dieselben Mengen denselben Text. `null`, wenn eine Seite
+ * fehlt (gesperrte Zahl: keine Rechnung aus „—").
+ */
+export function herleitungMengen(
+  zaehlerKwh: number | null | undefined, nennerKwh: number | null | undefined, zaehlerName = 'Wärme',
+): string | null {
+  if (zaehlerKwh == null || nennerKwh == null) return null
+  return `${fmtZahl(zaehlerKwh, 1)} kWh ${zaehlerName} ÷ ${fmtZahl(nennerKwh, 1)} kWh Strom`
+}
 
 export type WpFunktion = 'heizen' | 'warmwasser' | 'kuehlen'
 
@@ -36,7 +51,10 @@ export type FunktionsZeile =
    *  aber er soll auch nicht verschwinden. **S3 bleibt damit erfüllt: der Grund
    *  ist da, eine Geste entfernt**, ohne dass der Block wieder mit Texten
    *  vollläuft. */
-  | { art: 'arbeitszahl'; label: string; wert: number | null; tooltip?: string }
+  | { art: 'arbeitszahl'; label: string; wert: number | null; tooltip?: string
+      /** P-433-3 S3: «16,0 kWh Wärme ÷ 3,9 kWh Strom» aus Zähler/Nenner des Layers — nur am Tag (Monat und Jahr
+       *  liefern sie nicht) und nur mit Zahl. */
+      herleitung?: string }
 
 export interface FunktionsGruppe {
   funktion: WpFunktion
@@ -44,8 +62,23 @@ export interface FunktionsGruppe {
   zeilen: FunktionsZeile[]
 }
 
+/** P-433-3 S2 (#432, Tag/Monat/Jahr): die Zeile «davon Zusatzheizung x kWh · AZ ohne Zusatzheizung y (gerechnet)» unter
+ *  den Gruppen — nur mit Heizstab-Zähler (B2). Sie gehört keiner Funktion: der Heizstab-Strom ist eine Teilmenge des
+ *  Gerätestroms (H-B), die Zahl die Hauptzahl ohne ihn. Wert ODER Grund kommen fertig aus dem Layer. */
+export interface ZusatzheizungZeile {
+  kwh: number
+  /** «AZ ohne Zusatzheizung» — `null` heißt gesperrt, der Grund steht dann in `grund`. */
+  az: number | null
+  grund: string | null
+  /** Herkunft («gerechnet: Heizstab mit Wirkungsgrad 1 abgezogen») und Herleitung — beim Überfahren. */
+  hinweis: string | null
+  zaehlerKwh: number | null
+  nennerKwh: number | null
+}
+
 export interface FunktionsGruppen {
   gruppen: FunktionsGruppe[]
+  zusatzheizung?: ZusatzheizungZeile
 }
 
 type Zahl = number | null | undefined
@@ -56,6 +89,8 @@ interface Definition {
   strom: [string, Zahl]
   nutzenergie: [string, Zahl]
   arbeitszahl: [string, Zahl, string | null | undefined]
+  /** Zähler, Nenner und Name des Zählers der Arbeitszahl (P-433-3 S3, Herleitung). */
+  herleitung: [Zahl, Zahl, string]
   /** Unter welchem Bezeichner diese Arbeitszahl im Kasten „Was noch möglich
    *  wäre" stehen kann (D-Sicht). */
   kasten: GroessenName
@@ -70,6 +105,7 @@ function definitionen(d: AktuellerMonatResponse): Definition[] {
       strom: ['Strom Heizen', d.wp_strom_heizen_kwh],
       nutzenergie: ['Heizwärme', d.wp_heizung_kwh],
       arbeitszahl: ['Arbeitszahl · Heizen', d.wp_jaz_heizen, d.wp_jaz_heizen_grund],
+      herleitung: [d.wp_jaz_heizen_zaehler_kwh, d.wp_jaz_heizen_nenner_kwh, 'Wärme'],
       kasten: GROESSE.heizen,
     },
     {
@@ -77,6 +113,7 @@ function definitionen(d: AktuellerMonatResponse): Definition[] {
       strom: ['Strom Warmwasser', d.wp_strom_warmwasser_kwh],
       nutzenergie: ['Warmwasser-Wärme', d.wp_warmwasser_kwh],
       arbeitszahl: ['Arbeitszahl · Warmwasser', d.wp_jaz_warmwasser, d.wp_jaz_warmwasser_grund],
+      herleitung: [d.wp_jaz_warmwasser_zaehler_kwh, d.wp_jaz_warmwasser_nenner_kwh, 'Wärme'],
       kasten: GROESSE.warmwasser,
     },
     {
@@ -86,6 +123,7 @@ function definitionen(d: AktuellerMonatResponse): Definition[] {
       strom: ['Strom Kühlen', d.wp_modus_strom_kuehlen_kwh],
       nutzenergie: ['Kälte', d.wp_kaelte_kwh],
       arbeitszahl: ['Arbeitszahl · Kühlen', d.wp_jaz_kuehlen, d.wp_jaz_kuehlen_grund],
+      herleitung: [d.wp_jaz_kuehlen_zaehler_kwh, d.wp_jaz_kuehlen_nenner_kwh, 'Kälte'],
       kasten: GROESSE.kuehlen,
     },
   ]
@@ -121,6 +159,7 @@ export function wpFunktionsGruppen(d: AktuellerMonatResponse): FunktionsGruppen 
           // nennt sich beim Überfahren. Bei vorhandener Zahl gibt es nichts zu
           // erklären.
           tooltip: (azWert == null && azGrund) ? azGrund : undefined,
+          herleitung: azWert != null ? (herleitungMengen(...def.herleitung) ?? undefined) : undefined,
         }
       : null
     const hatMenge = (def.strom[1] ?? 0) > 0 || (def.nutzenergie[1] ?? 0) > 0
@@ -142,7 +181,21 @@ export function wpFunktionsGruppen(d: AktuellerMonatResponse): FunktionsGruppen 
     if (az) zeilen.push(az)
     gruppen.push({ funktion: def.funktion, titel: def.titel, zeilen })
   }
-  return { gruppen }
+  const zusatzheizung = zusatzheizungZeile(d)
+  return zusatzheizung ? { gruppen, zusatzheizung } : { gruppen }
+}
+
+/** S2: die Zusatzheizung-Zeile aus der Tagesantwort — `undefined` ohne Heizstab-Zähler. */
+function zusatzheizungZeile(d: AktuellerMonatResponse): ZusatzheizungZeile | undefined {
+  if (d.wp_heizstab_kwh == null) return undefined
+  return {
+    kwh: d.wp_heizstab_kwh,
+    az: d.wp_jaz_ohne_zusatzheizung ?? null,
+    grund: d.wp_jaz_ohne_zusatzheizung_grund ?? null,
+    hinweis: d.wp_jaz_ohne_zusatzheizung_hinweis ?? null,
+    zaehlerKwh: d.wp_jaz_ohne_zusatzheizung_zaehler_kwh ?? null,
+    nennerKwh: d.wp_jaz_ohne_zusatzheizung_nenner_kwh ?? null,
+  }
 }
 
 /** E3 (b): Zeigen die Gruppen einen **getrennt gemessenen** Strom (F5), stehen im

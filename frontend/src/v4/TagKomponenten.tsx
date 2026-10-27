@@ -44,7 +44,7 @@ import type { Block } from '../components/blocks'
 import type { ParkApi } from '../components/park'
 import type {
   TagWerte, StundenWert, SerieInfo, TagDetail, VerteilungVerlauf,
-  WaermeVerlaufStunde, WaermeVerlaufStunden,
+  WaermeTemperaturStunden, WaermeVerlaufStunde, WaermeVerlaufStunden,
 } from '../api/energie_profil'
 import type { WaermeVerlaufPunkt } from './waermeVerlauf'
 import { stundenBereich, type StundenRaster } from '../lib/stundenBereich'
@@ -147,12 +147,26 @@ export function baueTagAlsMonat(
     wp_jaz_warmwasser_grund: tagDetail?.wp_jaz_warmwasser_grund ?? null,
     wp_jaz_kuehlen: tagDetail?.wp_jaz_kuehlen ?? null,
     wp_jaz_kuehlen_grund: tagDetail?.wp_jaz_kuehlen_grund ?? null,
+    // P-433-3 S3: Zähler/Nenner je Funktion für die Herleitung in «Je Funktion».
+    wp_jaz_heizen_zaehler_kwh: tagDetail?.wp_jaz_heizen_zaehler_kwh ?? null,
+    wp_jaz_heizen_nenner_kwh: tagDetail?.wp_jaz_heizen_nenner_kwh ?? null,
+    wp_jaz_warmwasser_zaehler_kwh: tagDetail?.wp_jaz_warmwasser_zaehler_kwh ?? null,
+    wp_jaz_warmwasser_nenner_kwh: tagDetail?.wp_jaz_warmwasser_nenner_kwh ?? null,
+    wp_jaz_kuehlen_zaehler_kwh: tagDetail?.wp_jaz_kuehlen_zaehler_kwh ?? null,
+    wp_jaz_kuehlen_nenner_kwh: tagDetail?.wp_jaz_kuehlen_nenner_kwh ?? null,
     // E1b + D-Sicht: dieselben drei Felder wie in Monat und Jahr, aus der
     // Tages-Route. Der Tag kennt sie seit WK-16a — vorher stand hier bei
     // gemischter Ausstattung ein Strich mit dem Grund „nicht alle Geräte
     // melden Wärme".
     wp_jaz_ist_schranke: tagDetail?.wp_jaz_ist_schranke ?? false,
     wp_jaz_schranke_hinweis: tagDetail?.wp_jaz_schranke_hinweis ?? null,
+    // P-433-3 S2: Heizstab-Strom und «AZ ohne Zusatzheizung» — Tag, Monat und Jahr liefern sie (Zeile in «Je Funktion»).
+    wp_heizstab_kwh: tagDetail?.wp_heizstab_kwh ?? null,
+    wp_jaz_ohne_zusatzheizung: tagDetail?.wp_jaz_ohne_zusatzheizung ?? null,
+    wp_jaz_ohne_zusatzheizung_grund: tagDetail?.wp_jaz_ohne_zusatzheizung_grund ?? null,
+    wp_jaz_ohne_zusatzheizung_hinweis: tagDetail?.wp_jaz_ohne_zusatzheizung_hinweis ?? null,
+    wp_jaz_ohne_zusatzheizung_zaehler_kwh: tagDetail?.wp_jaz_ohne_zusatzheizung_zaehler_kwh ?? null,
+    wp_jaz_ohne_zusatzheizung_nenner_kwh: tagDetail?.wp_jaz_ohne_zusatzheizung_nenner_kwh ?? null,
     wp_geraete: tagDetail?.wp_geraete ?? [],
     wp_moeglich: tagDetail?.wp_moeglich ?? [],
     // Bauschnitt 8: die Zeile „Kälte" der Gruppe Kühlen — der Zähler der
@@ -306,6 +320,10 @@ export function baueTagWaermeVerlauf(
     wp_funktion_strom_heizen_kwh: z.wp_funktion_strom_heizen_kwh ?? null,
     wp_funktion_strom_warmwasser_kwh: z.wp_funktion_strom_warmwasser_kwh ?? null,
     wp_funktion_uebrige_kwh: z.wp_funktion_uebrige_kwh ?? null,
+    // P-433-3 S3: der Wärme-Stapel nach Funktion derselben Stunde (Σ = `wp_waerme_kwh`).
+    wp_waerme_heizen_kwh: z.wp_waerme_heizen_kwh ?? null,
+    wp_waerme_warmwasser_kwh: z.wp_waerme_warmwasser_kwh ?? null,
+    wp_waerme_uebrige_kwh: z.wp_waerme_uebrige_kwh ?? null,
   }))
 }
 
@@ -320,6 +338,8 @@ export function baueTagKomponentenUndFinanz(
   wpVerteilung?: VerteilungVerlauf | null,
   /** N-553: jüngster gemessener Ladestand des Tages (`StundenAntwort`). */
   socZuletzt?: number | null,
+  /** P-433-3 S3: Temperaturen je Wärmepumpe und Stunde (eigene Route) — ohne sie fehlt nur das Diagramm. */
+  wpTemperaturen?: WaermeTemperaturStunden | null,
 ): Block[] {
   const d = baueTagAlsMonat(tag, stunden, serien, tagDetail)
   const finanz = finanzTeaserBlock(d, park)
@@ -338,6 +358,7 @@ export function baueTagKomponentenUndFinanz(
           }
         : null,
       wpVerteilung,
+      wpTemperaturen,
     ),
     ...(finanz ? [finanz] : []),
   ]

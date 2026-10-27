@@ -7,6 +7,16 @@
  */
 import { api } from './client'
 
+/** Eine Betriebsart des Kanons mit den rohen States, die eedc ihr zuordnet. */
+export interface BetriebsmodusWerteGruppe {
+  /** Kanon-Wert, z. B. `'heizen'` — `'unbestimmt'` für auto/heat_cool/automatik. */
+  kanon: string
+  /** Klartext der Betriebsart, z. B. `'Heizen'`. */
+  label: string
+  /** Rohe States, z. B. `['heat', 'heizen']`. */
+  werte: string[]
+}
+
 export interface DatenquelleFeld {
   /** Stabile Feld-Kennung (späterer Zuordnungs-Schlüssel). */
   id: string
@@ -21,6 +31,9 @@ export interface DatenquelleFeld {
   standard_topic: string
   /** Nur als HA-Sensor lesbar (Preis-Felder): Gateway/Inbound entfallen. */
   nur_ha?: boolean
+  /** #263 K-2: Zustand statt Zahl (Betriebsmodus) — vom Backend schon immer geliefert, hier nachgetragen (P-433-2).
+   *  Seit HA-Bauform §9 auch über das Inbound-Topic; das Gateway (float-only) entfällt an diesem Feld. */
+  zustand?: boolean
   /** Aktive Quelle. */
   quelle: string
   /** Zugeordnetes Gateway-Quell-Topic (nur bei quelle==='mqtt_gateway'). */
@@ -32,11 +45,12 @@ export interface DatenquelleFeld {
   /** Invert-Modell: Vorzeichen der Zuordnung umkehren (HA/Inbound; am Read
    *  angewendet). Bei Gateway steckt der Sign im Transform-Modal. */
   invertieren: boolean
-  /** Aktueller Wert aus dem MQTT-Inbound-Cache (null = nichts empfangen). */
+  /** Aktueller Wert aus dem MQTT-Inbound-Cache (null = nichts empfangen). Immer eine Zahl:
+   *  ein Zustandsfeld trägt seinen Wert in `wert_text`, auch über MQTT (HA-Bauform §9). */
   wert: number | null
   /**
    * F-53: Roher State eines **Zustandsfelds** (`zustand === true`), z. B.
-   * `'cool'`. Bei Zahlenfeldern immer `null` — dort gilt `wert`.
+   * `'cool'` aus HA oder `'2'` vom MQTT-Topic. Bei Zahlenfeldern immer `null` — dort gilt `wert`.
    * Ein Zustand ist nie numerisch; `wert` bleibt für ihn `null`, und ohne
    * dieses Feld sah eine funktionierende Zuordnung wie ein Ausfall aus (#263).
    */
@@ -47,6 +61,13 @@ export interface DatenquelleFeld {
    * Backend** (`core/betriebsmodus.py`): eine zweite Tabelle hier wäre Drift.
    */
   wert_klartext?: string | null
+  /**
+   * P-433-0 (Konzept #433 E12): die Werte, die eedc an diesem Feld versteht —
+   * nur am Feld „Betriebsmodus“, sonst `null`. **Kommt aus dem Backend**
+   * (`core/betriebsmodus.py::betriebsmodus_werte_je_betriebsart`), abgeleitet
+   * aus der Werte-Tabelle des Kanons: eine getippte Liste hier wäre Drift.
+   */
+  zulaessige_werte?: BetriebsmodusWerteGruppe[] | null
   /** ISO-Zeit des letzten Cache-Werts (null = keiner). */
   wert_zeit: string | null
   /** §2i: diagnostische Zuordnungs-Probleme (leer = sauber). */
@@ -87,6 +108,14 @@ export interface DatenquelleFeld {
    * statt eines Satzes, der nichts nennt.
    */
   ausgewertet_in?: string[]
+  /**
+   * P-433-2 (Variante C, #431): die Betriebsart, zu der ein **Wärmepumpen**-Feld gehört
+   * (`heizen` · `warmwasser` · `kuehlen` · `lueften` · `entfeuchten` · `geraet`) — Registry-Attribut,
+   * vom Backend durchgereicht; an anderen Typen `null`.
+   */
+  betriebsart?: string | null
+  /** P-433-2: `strom` oder `waerme` an kWh-Feldern der Wärmepumpe (Thermisch-SoT des Backends), sonst `null`. */
+  menge?: 'strom' | 'waerme' | null
 }
 
 /** Diagnostisches Zuordnungs-Problem (§2i) — rein informativ, keine Sperre. */
@@ -142,6 +171,10 @@ export interface DatenquelleGruppe {
   titel: string
   typ: string
   felder: DatenquelleFeld[]
+  /** P-433-2, nur Wärmepumpe: Stammdatum `kuehlung_art` (`keine` · `passiv` · `aktiv`). */
+  kuehlung_art?: string
+  /** P-433-2, nur Wärmepumpe: Betriebsarten, die eedc aus einem Betriebsmodus-Sensor ableitet (Kanon). */
+  modus_ableitbar?: string[]
 }
 
 /** Verfügbarkeit der Quell-Achsen (Schritt B Gating). */

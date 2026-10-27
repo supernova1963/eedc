@@ -463,6 +463,8 @@ function CockpitLiveInner({ anlageId }: { anlageId: number | undefined }) {
           summeErzeugung: data.summe_erzeugung_kw,
           summeVerbrauch: data.summe_verbrauch_kw,
           summePv: data.summe_pv_kw,
+          // P-433-1 S1-2: Zeile «gesamt …» am Haus-Kreis (auch im Vollbild, das eedc-card einbettet).
+          verbrauchGesamt: data.verbrauch_gesamt_kw ?? null,
           tagesWerte: data.heute_kwh_pro_komponente ?? undefined,
           gauges: data.gauges,
           netzPufferW: selectedAnlage?.netz_puffer_w ?? 100,
@@ -574,12 +576,13 @@ function CockpitLiveInner({ anlageId }: { anlageId: number | undefined }) {
               </FokusKachel>
             </Parkbar>
           )}
-          {/* Handgriff Triage-4 §3: ohne Kurve fehlte der Block wortlos — die Kurve liest nur die Leistungs-
-              Zuordnung (HA, `live`-Eintrag); eine reine MQTT-Inbound-Anlage erreicht sie nie. Nur nach geladener
-              Antwort und nicht, wenn der Anwender den Block geparkt hat. */}
+          {/* Handgriff Triage-4 §3: ohne Kurve fehlte der Block wortlos. Die Kurve kommt aus der HA-Leistungs-Zuordnung
+              (`live`-Eintrag) oder aus den 5-Minuten-Aufzeichnungen der Inbound-Leistungen — ohne Home Assistant
+              (Standalone-Gleichstand S3), mit Home Assistant ohne Zuordnung und für Geräte ohne HA-Entität (S4,
+              Mischform). Nur nach geladener Antwort und nicht, wenn der Anwender den Block geparkt hat. */}
           {!hatTagesverlauf && tagesverlauf && !park.istGeparkt('live:tagesverlauf') && (
             <Alert type="info">
-              Tagesverlauf: braucht eine Leistungs-Zuordnung unter Datenquellen (Home Assistant); mit MQTT-Inbound keine Kurve.
+              Tagesverlauf: braucht eine Leistungs-Zuordnung unter Datenquellen (Home Assistant) oder Leistungswerte über MQTT-Inbound; die MQTT-Kurve beginnt mit der ersten Aufzeichnung.
             </Alert>
           )}
         </div>

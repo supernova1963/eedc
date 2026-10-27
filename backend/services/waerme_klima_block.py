@@ -51,6 +51,7 @@ from backend.core.berechnungen.waermepumpe_kennzahl import (
     GRUND_KEIN_STROM,
     GRUND_ZEITRAUM,
     HANDGRIFF_JE_GRUND,
+    arbeitszahl_ohne_zusatzheizung,
     deckung_aus_geraeten,
     ist_ausstattungs_grund,
 )
@@ -132,6 +133,11 @@ class WpGeraetZeile(BaseModel):
     waerme_grund: Optional[str] = None
     jaz: Optional[float] = None
     jaz_grund: Optional[str] = None
+    #: P-433-2c: Zähler und Nenner, aus denen der Layer ``jaz`` gebildet hat (``Arbeitszahl.zaehler_kwh/nenner_kwh``,
+    #: ungerundet wie S3-9) — nur gesetzt, wenn ``jaz`` gesetzt ist; für die Herleitung «x kWh Wärme ÷ y kWh Strom».
+    #: Je Funktion gibt es sie je Gerät nicht (die Karte zeigt je Funktion nur die Arbeitszahl).
+    jaz_zaehler_kwh: Optional[float] = None
+    jaz_nenner_kwh: Optional[float] = None
     jaz_heizen: Optional[float] = None
     jaz_heizen_grund: Optional[str] = None
     jaz_warmwasser: Optional[float] = None
@@ -153,6 +159,11 @@ class WpGeraetZeile(BaseModel):
     #: verschwinden lassen; die Gegenrichtung — eine gemessene Zahl still
     #: ausblenden — wäre der teurere Fehler.
     achsen: list[str] = Field(default_factory=lambda: sorted(WAERME_ACHSEN))
+    #: P-433-2c (Karte «Betrieb heute»): Stunden je Betriebsart **dieses Tages** aus der Betriebsart-Mitschrift
+    #: (``core/berechnungen/betriebsstunden.py``) — ``{heizen: 9.4, …}``. **Nur das Tag-Detail setzt es**
+    #: (``energie_profil/tag.py::_mit_betrieb_stunden``); Monat und Jahr liefern ``None``. ``None`` auch ohne
+    #: Mitschrift (kein HA-Modus-Sensor, vor Beginn der Mitschrift). Kein Leerlauf (benannte Grenze des Layers).
+    betrieb_stunden: Optional[dict[str, float]] = None
 
 
 #: Die Namen der Größen, die im Kasten stehen können. **Sie sind Bezeichner,
@@ -235,6 +246,9 @@ def geraete_zeilen(
             ),
             jaz=_r(k.gesamt.wert),
             jaz_grund=k.gesamt.grund,
+            # P-433-2c: dieselben Layer-Werte, aus denen ``jaz`` entstand; ohne Zahl beide None.
+            jaz_zaehler_kwh=k.gesamt.zaehler_kwh if k.gesamt.wert is not None else None,
+            jaz_nenner_kwh=k.gesamt.nenner_kwh if k.gesamt.wert is not None else None,
             jaz_heizen=_r(k.je_funktion.heizen.wert),
             jaz_heizen_grund=k.je_funktion.heizen.grund,
             jaz_warmwasser=_r(k.je_funktion.warmwasser.wert),
@@ -706,3 +720,30 @@ def funktions_eingaenge_der_anlage(
         geraete_q_warmwasser=frozenset(q_w),
         geraete_e_warmwasser=frozenset(e_w),
     )
+
+
+def ohne_zusatzheizung_felder(
+    heizstab_kwh: Optional[float], hauptzahl, *,
+    geraete_mit_strom: Iterable, geraete_mit_heizstab: Iterable,
+) -> dict:
+    """Die Antwortfelder der Ausweis-Zahl „AZ ohne Zusatzheizung" einer ANLAGENWEITEN Sicht (Tag, Monat, Jahr) —
+    P-433-3 S2, eine Stelle für drei Routen. Leer ohne Heizstab-Zähler (B2/B10: fehlt die Größe, fehlt die Zeile).
+
+    Die Zahl entsteht im Layer (``arbeitszahl_ohne_zusatzheizung``) mit der Systemarbeitszahl der Sicht als Eingang.
+    **Geräte-Regel** (Master 25.10.): trägt nicht jede Wärmepumpe mit Strom-Beitrag (``geraete_mit_strom``) einen
+    Heizstab-Zähler (``geraete_mit_heizstab``), gibt es keine Zahl, sondern den Grund «nicht alle Geräte melden
+    Zusatzheizung» — wie bei der Wärme (``GRUND_GERAETE_OHNE_WAERME``). ``wp_heizstab_kwh`` bleibt die Summe der
+    gemessenen. Der Komponenten-Hub rechnet je Gerät und braucht die Regel nicht.
+    """
+    if heizstab_kwh is None:
+        return {}
+    fehlt = {str(i) for i in geraete_mit_strom} - {str(i) for i in geraete_mit_heizstab}
+    az = arbeitszahl_ohne_zusatzheizung(hauptzahl, heizstab_kwh, nicht_alle_geraete=bool(fehlt))
+    return {
+        "wp_heizstab_kwh": round(heizstab_kwh, 2),
+        "wp_jaz_ohne_zusatzheizung": az.wert,
+        "wp_jaz_ohne_zusatzheizung_grund": az.grund,
+        "wp_jaz_ohne_zusatzheizung_hinweis": az.hinweis,
+        "wp_jaz_ohne_zusatzheizung_zaehler_kwh": az.zaehler_kwh,
+        "wp_jaz_ohne_zusatzheizung_nenner_kwh": az.nenner_kwh,
+    }

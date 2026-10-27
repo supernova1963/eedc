@@ -29,6 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.berechnungen.energie import SONSTIGES_KOMPONENTEN_PREFIX
 from backend.core.config import HA_INTEGRATION_AVAILABLE
+from backend.core.field_definitions import ist_zustand_feld
 from backend.models.anlage import Anlage
 from backend.models.investition import Investition
 from backend.utils.investition_filter import aktiv_jetzt
@@ -99,7 +100,15 @@ class LivePowerService:
             mqtt_basis = mqtt_svc.cache.get_live_basis(anlage.id)
             basis_values.update(mqtt_basis)
 
-            mqtt_inv = mqtt_svc.cache.get_all_live_inv(anlage.id)
+            # HA-Bauform §9 (S1-2, Ü8): Zustandsfelder (Betriebsmodus) trägt der Cache als rohen
+            # String — sie gehören nicht in die Leistungswerte (Annotation `float` bleibt wahr). Der
+            # Modus erreicht die Sichten über `betriebsmodus_live`, nicht über diesen Pfad; ohne den
+            # Filter legte auch ein `quellen`-Eintrag (B8-Stempel) den String über
+            # `_apply_quellen_overrides` in `inv_values`.
+            mqtt_inv = {
+                inv_id: {k: v for k, v in values.items() if not ist_zustand_feld(k)}
+                for inv_id, values in mqtt_svc.cache.get_all_live_inv(anlage.id).items()
+            }
             for inv_id, values in mqtt_inv.items():
                 if inv_id not in inv_values:
                     inv_values[inv_id] = {}
@@ -295,14 +304,19 @@ class LivePowerService:
         # Service — dieser Aufruf kostet nicht je Live-Poll einen HA-Abruf; die
         # Begründung steht in `betriebsmodus_live.py`. Ohne Klimagerät bzw. ohne
         # Zuordnung ist er ein DB-Zugriff und liefert {}.
-        from backend.services.betriebsmodus_live import lade_betriebsmodus_live
+        from backend.services.betriebsmodus_live import (
+            lade_betriebsmodus_aktion_live,
+            lade_betriebsmodus_live,
+        )
         modus_map = await lade_betriebsmodus_live(db, anlage)
+        # P-433-1 (E6): die gemessene Ruhe aus demselben Abruf — nur Anzeige.
+        aktion_map = await lade_betriebsmodus_aktion_live(db, anlage)
 
         # Komponenten + Gauges aufbauen
         from backend.services.live_komponenten_builder import build_komponenten
         build_result = build_komponenten(
             anlage, basis_values, inv_values, investitionen, inv_live_map,
-            modus_map=modus_map,
+            modus_map=modus_map, aktion_map=aktion_map,
         )
         komponenten = build_result["komponenten"]
         gauges = build_result["gauges"]
@@ -364,6 +378,7 @@ class LivePowerService:
             "komponenten": komponenten,
             "summe_erzeugung_kw": build_result["summe_erzeugung_kw"],
             "summe_verbrauch_kw": build_result["summe_verbrauch_kw"],
+            "verbrauch_gesamt_kw": build_result["verbrauch_gesamt_kw"],
             "summe_pv_kw": round(pv_total_w / 1000, 3),
             "gauges": gauges,
             "heute_pv_kwh": heute_pv,
@@ -392,6 +407,8 @@ class LivePowerService:
             "komponenten": [],
             "summe_erzeugung_kw": 0,
             "summe_verbrauch_kw": 0,
+            # P-433-1: ohne Sensoren kein Gesamtverbrauch — `None`, keine 0 (P4).
+            "verbrauch_gesamt_kw": None,
             "summe_pv_kw": 0,
             "gauges": [],
             "heute_pv_kwh": None,

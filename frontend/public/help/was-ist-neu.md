@@ -9,6 +9,151 @@
 
 ---
 
+## Unveröffentlicht — kommt mit der nächsten Version
+
+**Daten-Checker: kein falscher „Sprung in Home Assistant“ mehr am PV-Tagesertrag, gleich wann der Wechselrichter seine 0
+schreibt.** Zwei Korrekturen (4.1.9, 4.1.10) hatten den Tageszähler nur an der Stelle seiner 0 erkannt — Mitternacht, dann
+erste Morgenzeile. Schrieb Home Assistant nachts noch eine einzelne Zeile mit dem Vortagswert oder meldete der Wechselrichter
+die 0 schon am Abend, stand die Warnung mit der Anweisung, die HA-Statistik zu ändern, weiter da. Jetzt erkennt eedc den
+Tageszähler an seiner Größe: sein Stand kommt nie über einen Tag hinaus, ein Gesamtzähler liegt weit darüber. Deine
+HA-Statistik war in diesen Fällen richtig, nichts musste korrigiert werden. Einen echten Aussetzer (kurz 0, nächste Stunde
+wieder der alte Stand) meldet die Prüfung weiter, am Tageszähler wie am Gesamtzähler
+([Daten-Checker §4.8b](HANDBUCH_DATEN_CHECKER.md#48b-zaehlerstaende--sprung-in-home-assistant)).
+
+**Cockpit → Live: der Energiefluss sagt mehr, ohne größer zu werden.** Im Haus-Kreis steht unter der Zahl jetzt **„Rest"** —
+die Zahl war schon immer der Verbrauch, den eedc keinem einzeln gezeigten Gerät zuordnen kann. Direkt darunter steht
+**„gesamt …"**: was dein Haus gerade insgesamt verbraucht (nachts also Netzbezug minus das, was der Speicher aus dem Netz
+lädt); ohne Netz-Sensor fehlt die Zeile. Die Netz-Kachel nennt ihre Richtung als Wort („Bezug", „Einspeisung", „Balance"),
+im Lite-Modus zeigt eine kleine Pfeilspitze am Haus, wohin jede Linie fließt, und der Modus einer Wärmepumpe steht als
+farbiger Chip. Meldet Home Assistant, dass deine Wärmepumpe gerade **Leerlauf** hat (Modus Heizen, Verdichter pausiert),
+wird der Chip blass und heißt „Leerlauf" — im Tooltip und im Block „Überblick" steht „Heizen · Leerlauf". eedc leitet
+Ruhe nicht aus einer niedrigen Leistung ab: ohne diese Meldung bleibt es bei „Heizen"
+([Bedienung §2.1](HANDBUCH_BEDIENUNG.md#21-live), [Wärme & Klima → Schritt 4](HANDBUCH_WAERME_KLIMA.md#schritt-4--betriebsart-erfassen-optional-aber-lohnend)).
+
+**Komponenten → Wärmepumpe: neuer Block „Überblick" mit Schaubild und Live-Kacheln.** Ganz oben steht jetzt ein Bild
+einer Wärme/Klima-Anlage, darauf dieselben Kacheln wie im Energiefluss von *Cockpit → Live* — für jeden Wert, dem du einen
+Sensor zugeordnet hast: Leistung und Modus jedes Geräts, Warmwasser-Temperatur, Strom heute, Innengeräte einer Klimaanlage,
+Außentemperatur. Das Bild zeigt immer alle Gerätearten; welche deine Anlage hat, zeigen die Kacheln, und was ohne Sensor ist,
+nennt die Zeile darunter. Die Technik steht oben, die Räume unten: Geräte, Warmwasser, Strom und Außentemperatur in der oberen
+Reihe, Vorlauf · Rücklauf und Wärme heute an Fußbodenheizung oder Heizkörper und die Innengeräte einer Klimaanlage in der
+unteren — würde eine Linie dabei eine andere kreuzen, wechselt die Kachel die Reihe. Am Desktop steht die Wärmepumpe links
+neben dem Technikraum und die Klima-Außeneinheit rechts unter ihrem Objekt, wie Netz und Speicher im Energiefluss, wenn der
+Platz frei bleibt; sonst in ihrer Reihe. Rechts fasst „Auf einen Blick" das gewählte Gerät zusammen — Modus, Leistung, Temperaturen, heute
+Strom, Wärme und Arbeitszahl — und zeigt den Eigenverbrauch der ganzen Anlage. Solange der Block aufgeklappt ist, aktualisiert
+er sich alle 5 Sekunden ([Bedienung §3.4](HANDBUCH_BEDIENUNG.md#34-wärmepumpe),
+[Wärme & Klima → Schaubild](HANDBUCH_WAERME_KLIMA.md#schaubild)).
+
+**Wärmepumpe: „Auf einen Blick" in Karten — mit „Betrieb heute" und der Kachel „Wärme heute".** Rechts neben dem
+Schaubild stehen jetzt Karten statt einer Liste: oben das Gerät mit seiner Leistung groß und daneben der Ring
+„Eigenverbrauch (Anlage)" — eine Zahl der ganzen Anlage, nicht der Wärmepumpe —, darunter Warmwasser, Zusatzheizung,
+Vorlauf, Rücklauf, Spreizung und Außentemperatur. Die Karte „AZ heute" zeigt die Arbeitszahl des Tages groß und darunter,
+womit sie gerechnet ist („23,0 kWh Wärme ÷ 3,3 kWh Strom"), dazu Heizen und Warmwasser einzeln. Neu ist **„Betrieb heute"**:
+wie viele Stunden die Wärmepumpe heute geheizt, Warmwasser bereitet oder gekühlt hat — aus der Mitschrift deines
+Betriebsmodus-Sensors in Home Assistant; Leerlauf zählt dabei zum Modus. Im Bild steht je Gerät die **Wärme heute** am
+Heizkreis, sobald ein Wärmemengenzähler zugeordnet ist. Die Zahlen sind dieselben wie bisher
+([Bedienung §3.4](HANDBUCH_BEDIENUNG.md#34-wärmepumpe), [Wärme & Klima → Schaubild](HANDBUCH_WAERME_KLIMA.md#schaubild)).
+Auch *Einstellungen → Datenquellen* zeigt eine Wärmepumpe jetzt in Karten je Betriebsart — Heizen, Warmwasser, Kühlen mit
+farbiger Kopfzeile, «Gerät gesamt» mit Leistung, Betriebsmodus, Vorlauf und Rücklauf vorn; darunter der Hinweis, dass die
+Betriebsarten aus der Investition folgen, mit dem Link zum Bearbeiten
+([Einstellungen → Datenquellen](HANDBUCH_EINSTELLUNGEN.md#72-die-fläche)).
+
+**Wärmepumpe: Vorlauf, Rücklauf und Zusatzheizung im Überblick.** Unter *Einstellungen → Datenquellen* kannst du jeder
+Wärmepumpe jetzt einen Sensor für **Vorlauf**, **Rücklauf** und die **Leistung der Zusatzheizung** (Heizstab) zuordnen —
+im Block *Gerät gesamt*, gleich welche Bauart. Im Block „Überblick" erscheinen sie als Kacheln („34,2 → 29,1 °C",
+„Zusatzheizung 1.500 W"), „Auf einen Blick" nennt dazu die Spreizung und zeigt „Zusatzheizung aktiv", solange der Heizstab
+läuft. Auch die Warmwasser-Temperatur steht jetzt je Gerät. Die Werte sind reine Anzeige: aus der Heizstab-Leistung rechnet
+eedc keine Menge. Trägt der Sensor in Home Assistant `state_class: measurement`, übernimmt eedc seine Stundenmittel aus der
+Langzeitstatistik — rückwirkend, so weit sie zurückreicht; fehlt das, sagt es der Daten-Checker („Sensor ohne
+Langzeitstatistik"). Über MQTT schreibt eedc die Stundenmittel selbst mit (siehe unten) ([Wärme & Klima → Schritt 6](HANDBUCH_WAERME_KLIMA.md#schritt-6--live-werte-optional),
+[Bedienung §3.4](HANDBUCH_BEDIENUNG.md#34-wärmepumpe)).
+Die Kachel „Vorlauf · Rücklauf" steht am Heizkreis deines Hauses — an der Fußbodenheizung oder am Heizkörper, je nachdem,
+was du am Gerät unter *Vorlauftemperatur* eingetragen hast (ohne Angabe am Hydraulikmodul); stehen viele Kacheln in einer
+Reihe, zeigt sie ganze Grad.
+
+**Wärmepumpe: „AZ ohne Zusatzheizung" neben der Arbeitszahl.** Hat deine Wärmepumpe einen Heizstab und misst du seinen
+Strom als kWh-Zähler, ordne ihn unter *Einstellungen → Datenquellen* dem neuen Feld **Strom Zusatzheizung** zu (Block
+*Gerät gesamt*). eedc zeigt dann neben der Arbeitszahl eine zweite Zahl: dieselbe Rechnung ohne den Heizstab, der Strom
+1 : 1 in Wärme wandelt — in *Cockpit → Tag*, *Monat* und *Jahr* unter „Je Funktion", im Komponenten-Hub als Kennzahl und in der
+Monatstabelle als Spalte. Die Arbeitszahl mit Heizstab bleibt die Hauptzahl; Stromverbrauch, Kosten, Ersparnis und CO₂
+ändern sich nicht. Ohne Zähler erscheint nichts — aus der Heizstab-Leistung rechnet eedc keine Menge hoch
+([Wärme & Klima → Schritt 6a](HANDBUCH_WAERME_KLIMA.md#schritt-6a--strom-zusatzheizung-optional)).
+
+**Cockpit → Tag: Vorlauf und Rücklauf über den Tag, die Wärme nach Funktion.** Hast du deiner Wärmepumpe Vorlauf und
+Rücklauf zugeordnet, zeigt der Block *Wärme/Klima* jetzt das Element **Temperaturen**: Vorlauf und Rücklauf je Stunde mit
+der Spreizung als Fläche dazwischen, dazu die Warmwasser-Temperatur. Darüber steht **Ø Vorlauf und Ø Spreizung der
+Stunden, in denen die Wärmepumpe lief** — die Stillstandsstunden zählen nicht mit. Bei mehreren Wärmepumpen wählst du das
+Gerät über dem Diagramm. Die Stundenwerte holt eedc aus der Langzeitstatistik deiner Sensoren in Home Assistant, auch für
+zurückliegende Tage. Misst du die Wärme getrennt für Heizen und Warmwasser, stapelt der Verlauf in der Sicht „nach Funktion"
+jetzt auch die **Wärme** neben dem Strom — mit einem eigenen Stück „Wärme nicht je Funktion gemessen" für das, was ein
+gemeinsamer Wärmezähler misst. Die Arbeitszahl-Kachel heißt am Tag **„AZ heute"**, und unter „Je Funktion" zeigt jede
+Arbeitszahl beim Überfahren ihre Rechnung. Mit nur einer Wärmepumpe entfällt die Tabelle „Zahlen je Gerät" — sie hätte nur
+die Kacheln wiederholt; der Link in den Komponenten-Hub bleibt
+([Wärme & Klima](HANDBUCH_WAERME_KLIMA.md#wo-die-fläche-in-der-app-erscheint), [Bedienung §2.2](HANDBUCH_BEDIENUNG.md#22-tag)).
+„AZ ohne Zusatzheizung" folgt jetzt im Tag derselben Regel wie im Monat: eine Klimaanlage, die nur gekühlt hat, sperrt die
+Zahl nicht mehr.
+
+**Einstellungen → Datenquellen: die Wärmepumpe nach Betriebsart.** Die Felder einer Wärmepumpe oder Klimaanlage stehen jetzt
+in Blöcken *Gerät gesamt · Heizen · Warmwasser · Kühlen* (bei Klimaanlagen auch *Lüften · Entfeuchten*), jeder mit einem
+Status im Kopf: „vollständig", „fehlt: Strom, Wärme", „aus Betriebsmodus abgeleitet" oder „passiv". So siehst du auf einen
+Blick, welche Betriebsart eedc vollständig misst. Die Blöcke folgen deinem Gerät: eine Brauchwasser-Wärmepumpe hat kein
+*Heizen*, eine Klimaanlage kein *Warmwasser*, und *Kühlen* steht da, wenn dein Gerät kühlt — bei einer Wärmepumpe, sobald
+an ihr die Kühlung (aktiv oder passiv) eingetragen ist, auch ohne Kühlzähler. Was selten vorkommt, bleibt unter „Weitere
+Größen erfassen" erreichbar. Am Zähler „Strom Heizbetrieb" steht jetzt dazu, dass er Vorrang vor „Strom Heizen" hat — wer getrennt misst,
+lässt ihn leer. Andere Gerätetypen sehen aus wie bisher ([Einstellungen §7.2](HANDBUCH_EINSTELLUNGEN.md#72-die-fläche)).
+
+**Komponenten: „Aktueller Status" heißt jetzt „Kennzahlen (gesamte Laufzeit)".** Der Block zeigt Kennzahlen über die
+ganze Laufzeit deiner Komponente, keine Live-Werte — der neue Name sagt das. Deine Reihenfolge, Fokus und geparkte
+Anzeigen bleiben ([Bedienung §3.1](HANDBUCH_BEDIENUNG.md#31-gemeinsamer-aufbau-je-komponente)).
+
+**Betriebsmodus: eedc sagt, welche Werte es versteht — und meldet, wenn dein Sensor etwas anderes liefert.** Am Feld
+„Betriebsmodus" unter *Einstellungen → Datenquellen* steht jetzt die Liste der Texte, die eedc kennt (etwa `heat`/`heizen`,
+`cool`/`kuehlen`, `warmwasser`, `off`/`aus`). Liefert dein zugeordneter Sensor einen anderen Wert, zum Beispiel `heating`
+oder `standby` aus einem eigenen Template-Sensor, nennt der Daten-Checker ihn — solche Stunden zählt eedc als unbestimmt,
+ihr Strom steht unter „nicht aufgeteilt". Der Weg ist ein Template-Sensor in Home Assistant, der deine Werte in die
+Texte der Liste übersetzt ([Wärme & Klima](HANDBUCH_WAERME_KLIMA.md#welchen-sensor-eedc-lesen-kann)).
+
+**Eigener Wärmepumpen-Tarif: der Daten-Checker nennt eine Grenze der Rechnung.** Mit dem Wärmepumpen-Tarif rechnet eedc
+die Stromkosten der Wärmepumpe; die Ersparnis der PV-Anlage bewertet den Strom, den die Wärmepumpe aus deiner PV bezieht,
+aber weiter zum Haushaltstarif — wie groß dieser Anteil ist, weiß eedc nicht. Weichen beide Preise ab, nennt der
+Daten-Checker, um wie viel die Ersparnis höchstens abweichen kann. Deine Zahlen ändern sich nicht
+([Einstellungen §2.2](HANDBUCH_EINSTELLUNGEN.md#22-strompreise)).
+
+**Wärmepumpe ohne Home Assistant: der Betriebsmodus kommt jetzt auch über MQTT.** Wer eedc ohne Home Assistant betreibt
+oder den Modus aus einer anderen Steuerung bekommt, schickt ihn an das eedc-Topic seiner Wärmepumpe
+(`…/live/inv/<gerät>/betriebsmodus`) — als Wort (`heizen`, `warmwasser`, `kuehlen` …) oder als Zahl: **0** Aus, **1** Heizen,
+**2** Warmwasser, **3** Kühlen, **4** Lüften, **5** Entfeuchten. eedc zeigt den Modus dann wie mit einem HA-Sensor im
+Energiefluss und im Wärmepumpen-Hub und schreibt ihn stündlich mit; daraus entstehen „Strom nach Betriebsart" und
+„Betrieb heute". Die Mitschrift beginnt mit dem ersten empfangenen Wert, frühere Tage bleiben ohne Aufteilung; „Leerlauf"
+gibt es nur über Home Assistant. Unter *Einstellungen → Datenquellen* wählst du am Feld „Betriebsmodus" die Quelle
+**Inbound** und siehst dort, was ankommt und wie eedc es versteht. Die Zahlen 0 bis 5 gelten nur über MQTT; an einem
+HA-Sensor bleibt eine Zahl wie bisher „unbestimmt" — sie ist dort ein Rohwert deines Geräts
+([Wärme & Klima → Modus über MQTT](HANDBUCH_WAERME_KLIMA.md#ohne-home-assistant-der-modus-über-mqtt)).
+
+**Ohne Home Assistant: Stundenwerte für Temperaturen, Leistungen und Ladestand aus MQTT.** Was Home Assistant aus seiner
+Langzeitstatistik liefert, schreibt eedc für MQTT jetzt selbst mit: alle 5 Minuten das zeitgewichtete Mittel jedes
+Live-Werts (Vorlauf, Rücklauf, Warmwasser-Temperatur, Leistungen, Zusatzheizung, Ladestand), daraus je Stunde Mittel,
+Minimum und Maximum. Damit bekommst du auch ohne Home Assistant in *Cockpit → Tag* das Temperatur-Diagramm mit Ø Vorlauf
+und Ø Spreizung. Senden bei jeder Änderung genügt — ein Wert gilt, bis der nächste kommt; eine Wärmepumpe, die alle paar
+Minuten an- und ausgeht, ergibt ihren mittleren Verbrauch. Die Stundenwerte beginnen mit der Zuordnung, frühere Tage bleiben
+leer; fällt der Broker aus, bleibt die Zeit eine Lücke. Ist einem Feld ein Home-Assistant-Sensor zugeordnet, gilt weiter
+der; Stundenpreise und Kosten kommen nur aus einem Home-Assistant-Preissensor. Der **Tagesverlauf** aus MQTT zeigt jetzt
+ebenfalls diese 5-Minuten-Mittel statt einzelner Momentanwerte
+([Wärme & Klima → Schritt 6](HANDBUCH_WAERME_KLIMA.md#schritt-6--live-werte-optional)).
+
+**Ohne Home Assistant: der Tagesverlauf auch, wenn deine Werte nur über MQTT kommen.** Schickst du die Leistungen
+deiner Geräte nur an die eedc-Topics, ohne unter *Einstellungen → Datenquellen* etwas zuzuordnen, blieb das Diagramm
+„Tagesverlauf" in *Cockpit → Live* bisher leer. Jetzt zeichnet eedc es aus seinen eigenen 5-Minuten-Aufzeichnungen —
+ab der ersten Aufzeichnung, frühere Stunden bleiben leer. Auch die Stundenwerte je Gerät des Tages entstehen daraus,
+wie bei einer Anlage mit Zuordnung ([Bedienung → Live](HANDBUCH_BEDIENUNG.md#21-live)).
+
+**Mit Home Assistant: der Tagesverlauf auch für Geräte, die nur über MQTT liefern.** Läuft eedc als Home-Assistant-App,
+deine Geräte schicken ihre Leistung aber an die eedc-MQTT-Topics statt über einen Home-Assistant-Sensor, blieb das
+Diagramm „Tagesverlauf" in *Cockpit → Live* leer, und die Stundenwerte des Tages hatten keine Werte je Gerät. Jetzt
+zeichnet eedc diese Geräte aus seinen 5-Minuten-Aufzeichnungen — auch gemischt: Geräte mit Home-Assistant-Sensor kommen
+weiter aus Home Assistant, die übrigen aus MQTT, Netz und Gesamt-PV aus Home Assistant, wenn du sie dort zugeordnet hast.
+Die Kurve beginnt mit der ersten Aufzeichnung; frühere Stunden bleiben leer
+([Bedienung → Live](HANDBUCH_BEDIENUNG.md#21-live)).
+
 ## v4.1.10 — 24. Oktober 2026
 
 **Daten-Checker: kein „Sprung in Home Assistant“ mehr am PV-Tagesertrag eines nachts abgeschalteten Wechselrichters.**
@@ -130,7 +275,7 @@ dieses Feld; Wetter, Prognosen, Preise und andere Geräte bleiben stehen, Monate
 Vorschau nennt vorher Sensor, Zeitraum, Tage und Monate; einen Rückweg gibt es nicht
 ([Energieprofil §4](HANDBUCH_ENERGIEPROFIL.md#4-reparatur--pflege)).
 
-**Cockpit → Live „PV heute“ wie Cockpit → Tag:** Hat nur ein Teil deiner PV-Module oder Balkonkraftwerke einen eigenen Zähler und ist der Anlagenzähler „PV gesamt“ zugeordnet, verteilt die Live-Kachel jetzt den Rest des Anlagenzählers auf die Erzeuger ohne Zähler — wie der Tag. Bisher zählte sie nur die Einzelzähler und zeigte zu wenig PV und eine zu kleine Autarkie ([Einstellungen → Datenquellen](HANDBUCH_EINSTELLUNGEN.md)).
+**Cockpit → Live „PV heute“ wie Cockpit → Tag:** Hat nur ein Teil deiner PV-Module oder Balkonkraftwerke einen eigenen Zähler und ist der Anlagenzähler „PV gesamt“ zugeordnet, verteilt die Live-Kachel jetzt den Rest des Anlagenzählers auf die Erzeuger ohne Zähler — wie der Tag. Bisher zählte sie nur die Einzelzähler und zeigte zu wenig PV und eine zu kleine Autarkie ([Einstellungen → Datenquellen](HANDBUCH_EINSTELLUNGEN.md#72-die-fläche)).
 
 **Monatsformular speichert die Ø Temperatur:** Die im Formular eingetragene (oder per Auto-Fill geholte) Ø Temperatur fiel beim Speichern bisher still weg; jetzt bleibt sie stehen ([Einstellungen → Monatsabschluss](HANDBUCH_EINSTELLUNGEN.md#51-monatsdaten--monatsabschluss)).
 

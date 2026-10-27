@@ -272,6 +272,13 @@ export const CHART_COLORS = {
   // hat (Standby, Steuerung, Umwälzpumpen), während der Modus-Rest nur sagt,
   // dass ein Signal fehlte.
   systemRest: '#4b5563',            // = ROLLEN_BG.system_rest (gray-600)
+  // P-433-3 S3 (#432): das **Temperatur-Diagramm** je Wärmepumpe in Cockpit → Tag. Vorlauf warm (red-600, eine Stufe
+  // dunkler als `wpWaerme`, das in diesem Chart nicht vorkommt), Rücklauf kühl (cyan-600 — nicht `wpWarmwasser`
+  // blue-500, denn die Warmwasser-Linie liegt im selben Bild), die Spreizung als Fläche dazwischen im hellen Ton des
+  // Vorlaufs (red-300, mit Deckkraft gezeichnet). Die Außentemperatur bleibt im Verlauf (`temperatur`).
+  vorlauf: '#dc2626',               // red-600
+  ruecklauf: '#0891b2',             // cyan-600
+  spreizung: '#fca5a5',             // red-300 (Fläche zwischen Vorlauf und Rücklauf)
 }
 
 /** Börsenpreis-Stufen (#335) — EINE Datenrolle (Strompreis), nach Preisniveau abgestuft.
@@ -588,6 +595,12 @@ export const CHART_FLAECHE = {
  *  Datenrolle:** er trägt keine Aussage, nur Lesbarkeit; gezeichnet mit
  *  Deckung 0,4 und nur im hellen Thema (`dark:opacity-0` am Pfad). */
 export const ENERGIEFLUSS_SAUM = '#1e293b' // slate-800
+
+/** Schlagschatten der Energiefluss-Kachel (`ef-card-shadow`, Deckung 0,15) —
+ *  gelesen von `components/live/EnergieFlussDefs.tsx`, das die Kachel-Filter für
+ *  den Energiefluss und den Hub-Block «Überblick» (P-433-2) EINMAL definiert.
+ *  **Infrastruktur wie {@link ENERGIEFLUSS_SAUM}, keine Datenrolle.** */
+export const ENERGIEFLUSS_KACHEL_SCHATTEN = '#000000'
 
 // ─── Komponenten-Identität (Investitionstyp) — kanonische SoT (Regel A) ──────
 /**

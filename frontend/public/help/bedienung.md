@@ -47,7 +47,7 @@ Ganz oben rechts findest du außerdem einen **Theme-Umschalter** (Hell/Dunkel/Sy
 
 ### 1.3 Das Block-Modell: klappen, fokussieren, umsortieren, parken
 
-Fast alle Sichten sind aus **Blöcken** aufgebaut — abgegrenzte Karten wie „Aktueller Status", „Verlauf" oder „Finanzen". Diese Blöcke kannst du an deine Arbeitsweise anpassen:
+Fast alle Sichten sind aus **Blöcken** aufgebaut — abgegrenzte Karten wie „Kennzahlen (gesamte Laufzeit)", „Verlauf" oder „Finanzen". Diese Blöcke kannst du an deine Arbeitsweise anpassen:
 
 - **Ein-/Ausklappen:** Klick auf den Block-Kopf klappt ihn zu oder auf. Zwei Sammelknöpfe klappen alle Blöcke einer Sicht auf einmal auf bzw. zu.
 - **Fokus / Vollbild (⤢):** Über das Vergrößern-Symbol öffnet sich ein Block als konzentrierte Vollbild-Ansicht — nützlich für ein Diagramm oder eine dichte Tabelle. Die Datums-/Zeit-Navigation der Sicht läuft im Fokus oben mit.
@@ -132,13 +132,13 @@ Live zeigt **Echtzeit-Leistungsdaten** deiner gesamten Anlage und aktualisiert s
 
 **Energiefluss-Diagramm** — das zentrale, animierte Element (ähnlich dem HA Energy Dashboard):
 
-- **Haus** in der Mitte als Senke — die Zahl darin ist der **Restverbrauch** (= Gesamtverbrauch − separat erfasste Verbraucher wie Wallbox oder Wärmepumpe); der Tooltip nennt die Formel und darunter den Gesamtverbrauch des Tages
+- **Haus** in der Mitte als Senke — die Zahl darin ist der **Restverbrauch**, darunter steht deshalb das Wort **„Rest"** (= Gesamtverbrauch − separat erfasste Verbraucher wie Wallbox oder Wärmepumpe). Direkt unter dem Kreis steht **„gesamt …"**: was das Haus gerade insgesamt verbraucht (Quellen − Einspeisung − Speicherladung − Abgabe an Dritte; nachts also Netzbezug minus das, was der Speicher aus dem Netz lädt). Ohne Netz-Sensor fehlt diese Zeile, weil die Bilanz dann offen ist. Der Tooltip nennt beide Formeln und darunter den Gesamtverbrauch des Tages
 - **Erzeuger** (PV-Module, Balkonkraftwerk) oben
-- **Netz** links (bidirektional: Bezug / Einspeisung)
+- **Netz** links (bidirektional) — die Kachel nennt die Richtung als Wort: **„Bezug"**, **„Einspeisung"** oder **„Balance"** (innerhalb der Netz-Toleranz aus den Stammdaten)
 - **Speicher** rechts (bidirektional: Laden / Entladen)
 - **Verbraucher** (Wärmepumpe, Wallbox, E-Auto ohne Wallbox, Sonstige — auch ein BHKW) unten
 
-Die **animierten Flusslinien** zeigen Richtung und Stärke: Liniendicke und Animationsgeschwindigkeit steigen mit der Leistung, Farbcodierung nach Komponententyp. Die **Netz-Farbe** wechselt dynamisch: grün (Balance), orange (Einspeisung), rot (Netzbezug). Bei Speichern, bei der Wallbox (Ladestand ihres Autos) und bei E-Autos ohne Wallbox wird der **Ladezustand (SoC)** als Pegel im Knoten dargestellt (rot < 20 %, gelb 20–50 %, grün > 50 %).
+Die **animierten Flusslinien** zeigen Richtung und Stärke: Liniendicke und Animationsgeschwindigkeit steigen mit der Leistung, Farbcodierung nach Komponententyp. Im **Lite-Modus** trägt jede Linie am Haus eine kleine **Pfeilspitze** in ihrer Farbe — ins Haus bei Quellen, hinaus bei Verbrauchern (im Effekt-Modus zeigen die laufenden Punkte die Richtung). Die **Netz-Farbe** wechselt dynamisch: grün (Balance), orange (Einspeisung), rot (Netzbezug). Bei einer **Wärmepumpe oder Klimaanlage** steht der Betriebsmodus als **Chip** in der Farbe der Funktion (Heizen rot, Warmwasser blau, Kühlen hellblau …); meldet Home Assistant **„Leerlauf"** (Gerät steht auf Heizen, der Verdichter pausiert), wird der Chip blass und heißt „Leerlauf", der Tooltip nennt „Heizen · Leerlauf" ([Wärme & Klima → Schritt 4, „Leerlauf behält deinen Modus"](HANDBUCH_WAERME_KLIMA.md#schritt-4--betriebsart-erfassen-optional-aber-lohnend)). Bei Speichern, bei der Wallbox (Ladestand ihres Autos) und bei E-Autos ohne Wallbox wird der **Ladezustand (SoC)** als Pegel im Knoten dargestellt (rot < 20 %, gelb 20–50 %, grün > 50 %).
 
 **Eine Reihe je Bereich.** Erzeuger, Verbraucher und Speicher stehen jeweils in **einer** Reihe (die Speicher in einer Spalte), jede Linie endet am Haus — keine Linie kreuzt eine andere. Die Karte wird dabei **nie höher**, egal wie viele Geräte deine Anlage hat:
 
@@ -187,8 +187,25 @@ Eine Gruppenkachel erkennst du an den zwei versetzten Rahmen dahinter („hier l
 - Ohne eigenen Sensor greift automatisch der **EPEX-Börsenpreis** (DE/AT via aWATTar-API) → Linie „Börsenpreis (EPEX)"; auch die frühen Morgenstunden vor dem ersten Sensor-Wert werden so aufgefüllt.
 - Ein Klick auf einen Legenden-Eintrag schaltet die jeweilige Serie ein oder aus.
 
-Das Diagramm braucht eine **Leistungs-Zuordnung** unter *Einstellungen → Datenquellen* (Home Assistant); mit MQTT-Inbound gibt
-es keine Kurve — dann steht an seiner Stelle ein Satz, der das sagt (die Tageswerte kommen weiter aus den Zählern).
+Woher die Kurve kommt — drei Wege:
+
+- **Mit Home Assistant und Zuordnung** aus den Leistungen, die du unter *Einstellungen → Datenquellen* einem
+  Home-Assistant-Sensor zugeordnet hast — rückwirkend, so weit der Verlauf in Home Assistant reicht.
+- **Mit Home Assistant, Geräte über MQTT (Mischform)**: Liefert ein Gerät seine Leistung nur über die
+  MQTT-Inbound-Topics (kein Home-Assistant-Sensor zugeordnet), zeichnet eedc es aus seinen eigenen MQTT-Aufzeichnungen —
+  neben den Geräten aus Home Assistant im selben Diagramm. Netz, Gesamt-PV und Preis kommen dabei aus Home Assistant,
+  wenn sie dort zugeordnet sind; ist dort gar nichts für Leistung, Netz oder Preis zugeordnet, kommt die ganze Kurve aus
+  MQTT. Ein Gerät mit Home-Assistant-Sensor bleibt bei Home Assistant, auch wenn es zusätzlich über MQTT sendet. Das gilt,
+  solange unter *Einstellungen → Integration → MQTT-Broker* „Daten über MQTT empfangen (Import)" an ist.
+- **Ohne Home Assistant (Standalone, MQTT-Inbound)** aus denselben MQTT-Aufzeichnungen — auch ohne jede Zuordnung unter
+  *Datenquellen*.
+
+Die MQTT-Aufzeichnungen zeigen den Verlauf ab der ersten Aufzeichnung (alle 5 Minuten, 15 Tage aufbewahrt); eine
+Historie von vor dem Einrichten gibt es nicht. Jeder Punkt ist ein **zeitgewichtetes 5-Minuten-Mittel** statt eines
+einzelnen Momentanwerts: eine taktende Wärmepumpe erscheint als ihr mittlerer Verbrauch, nicht als zufällige Spitze oder
+Lücke. Ist Home Assistant bei zugeordneten Leistungen nicht erreichbar oder liefert es für den Tag nichts, zeichnet eedc
+die Kurve ebenfalls aus diesen MQTT-Aufzeichnungen, sofern es welche gibt. Gibt es weder eine Zuordnung noch
+MQTT-Aufzeichnungen, steht an der Stelle der Kurve ein Satz, der das sagt (die Tageswerte kommen weiter aus den Zählern).
 
 **Börsenpreis heute & morgen** — ein eigener Block mit der **Day-Ahead-Kurve** über zwei Tage
 auf einer durchgehenden Zeitachse:
@@ -274,6 +291,12 @@ Die **Tag**-Sicht bringt den feingranularen Stunden-Tag ins Cockpit: ein ausgew�
   (= Gesamtverbrauch − Wärmepumpe − Wallbox − sonstige erfasste Verbraucher); die Formel steht im Tooltip des Spaltenkopfs
 - **Tagesbilanz** als Kennzahl-Strip (Summen des Tages)
 - Detail-Sektionen je nach vorhandenen Komponenten
+- Im Block **Wärme/Klima** heißt die Arbeitszahl-Kachel am Tag **„AZ heute"**; mit zugeordnetem Vorlauf/Rücklauf
+  steht dort das Element **„Temperaturen"** (Vorlauf, Rücklauf, Spreizung und Warmwasser je Stunde, darüber Ø Vorlauf
+  und Ø Spreizung der Betriebsstunden, Gerätewahl ab zwei Wärmepumpen) — einzeln parkbar wie jedes Element
+  ([§1.3](#13-das-block-modell-klappen-fokussieren-umsortieren-parken)); geparkt bleibt es auch, wenn du den Tag wechselst.
+  Die Tabelle **„Zahlen je Gerät"** erscheint erst ab zwei Wärmepumpen
+  ([Wärme & Klima](HANDBUCH_WAERME_KLIMA.md#wo-die-fläche-in-der-app-erscheint))
 
 > **Eigenverbrauch des Tages = derselbe wie in Monat, Jahr und Live.** Die Kachel rechnet
 > **Direktverbrauch + Speicher-Entladung** — was das Haus direkt von der PV und aus dem Speicher
@@ -645,7 +668,8 @@ Jede Komponenten-Sicht bezieht sich auf den **Gesamtzeitraum** (kein Datums-Sele
 
 | Block | Inhalt |
 |-------|--------|
-| **Aktueller Status** | die Kernkennzahlen des Typs (immer offen) |
+| **Überblick** | nur **Wärmepumpe** (weitere Typen folgen): ein Schaubild des Gerätetyps mit den Live-Kacheln deiner Geräte und daneben „Auf einen Blick" — die einzige Live-Fläche im Hub, siehe [§3.4](#34-wärmepumpe) |
+| **Kennzahlen (gesamte Laufzeit)** | die Kernkennzahlen des Typs über die gesamte Laufzeit — keine Live-Werte (immer offen) |
 | **System-Struktur / Zuordnung** | Aufbau und Kopplung (z. B. Wechselrichter → Module/Speicher) bzw. Herkunft der Werte — sofern für den Typ sinnvoll |
 | **Sub-Komponente** | untergeordnete Kennzahlen (z. B. gekoppelter Speicher) — sofern vorhanden |
 | **Verlauf (gesamte Historie)** | Zeitreihe über die komplette Laufzeit, oft mit Verteilungen und Monats-Detailtabelle |
@@ -800,6 +824,29 @@ Angezeigt werden:
 
 ### 3.4 Wärmepumpe
 
+#### Block „Überblick" — das Schaubild mit den Live-Kacheln
+
+Ganz oben steht der Block **„Überblick"**: links ein Bild einer Wärme/Klima-Anlage, darauf **dieselben Kacheln wie im Energiefluss** von *Cockpit → Live* (Symbol, Wert, Modus-Zeile, Name), rechts die Karte **„Auf einen Blick"**. Das Bild zeigt immer alle Gerätearten — welche deine Anlage hat, zeigen die Kacheln ([Wärme & Klima → Schaubild](HANDBUCH_WAERME_KLIMA.md#schaubild)).
+
+- **Nur Werte mit Sensor haben eine Kachel:** Leistung und Modus jedes Geräts, Warmwasser-Temperatur, Strom heute, Innengeräte einer Klimaanlage, dazu die Außentemperatur aus dem Wetterdienst. Was ohne Sensor ist, nennt die Zeile unter dem Bild („Ohne Sensor, deshalb ohne Kachel: …") mit dem Link zu *Einstellungen → Datenquellen*.
+- **Vorlauf · Rücklauf und Zusatzheizung** je Gerät: eine Kachel „34,2 → 29,1 °C" (bei fünf und mehr Kacheln in der Reihe ganze Grad, „34 → 29 °C") am Heizkreis nach der Angabe *Vorlauftemperatur* des Geräts — Fußbodenheizung, Heizkörper, ohne Angabe das Hydraulikmodul — und eine Kachel „Zusatzheizung" mit der Leistung des Heizstabs, sobald der Sensor zugeordnet ist. Sie stehen **nicht** in der Zeile „Ohne Sensor …" — viele Geräte liefern sie nicht. Die Warmwasser-Temperatur steht ebenfalls je Gerät.
+- **Wärme heute** je Gerät: eine Kachel mit der Wärme des Tages am selben Heizkreis-Objekt wie „Vorlauf · Rücklauf" — sobald ein Wärmemengenzähler zugeordnet ist; auch sie steht nicht in der Zeile „Ohne Sensor …".
+- **Technik oben, Räume unten:** oben stehen Außentemperatur, Geräte, Warmwasser, Zusatzheizung und Strom heute, unten Vorlauf · Rücklauf und Wärme heute an Fußbodenheizung oder Heizkörper (ohne diese Angabe oben am Hydraulikmodul) und die Innengeräte einer Klimaanlage. Eine Kachel wechselt die Reihe, wenn ihre Linie sonst eine andere kreuzte. Am Handy gilt das je Reihe (drei oder vier Kacheln je nach Breite), der Rest kommt in eine Gruppe.
+- **Zwei Plätze neben dem Haus (Desktop):** wie Netz und Speicher im Energiefluss steht die Gerätekachel der Wärmepumpe links neben dem Technikraum und die Klima-Außeneinheit rechts unter ihrem Objekt — wenn der Platz frei bleibt (keine Linie kreuzt und keine läuft durch ihn); sonst in ihrer Reihe. Ist der rechte Platz belegt, endet die untere Reihe eine Kachel früher. Auf dem Telefon zwei Reihen.
+- **Kacheln aller Geräte, Karte des gewählten:** Hast du mehrere Wärmepumpen, stehen alle im Bild — zwei Geräte derselben Art am selben Bildobjekt als Gruppe „Wärmepumpen (2)" mit der Summe der Leistung; die Karte rechts gehört zum Gerät, das du im Geräte-Selektor gewählt hast.
+- **„Auf einen Blick"** besteht aus bis zu drei Karten für das gewählte Gerät:
+  - **Gerätekarte:** Name und Modus, die **Leistung jetzt** groß und daneben der Ring **„Eigenverbrauch (Anlage)"** — die Eigenverbrauchsquote der ganzen Anlage inklusive Speicher-Entladung, dieselbe Zahl wie in *Cockpit → Live*, **kein Wert der Wärmepumpe**. Darunter Warmwasser, Zusatzheizung, Vorlauf, Rücklauf, Spreizung (Vorlauf − Rücklauf, nur mit beiden) und Außentemperatur. Fehlen Vorlauf und Rücklauf, sagt eine graue Zeile „Vorlauf und Rücklauf erscheinen hier, sobald zugeordnet". Meldet die Zusatzheizung mehr als 0 W, steht neben dem Modus der gedämpfte Hinweis „Zusatzheizung aktiv".
+  - **„AZ heute":** die Arbeitszahl des Tages groß, darunter, womit sie gerechnet ist („23,0 kWh Wärme ÷ 3,3 kWh Strom") und je Funktion die Arbeitszahl („Heizen 7,20 · Warmwasser 5,90", nur mit Zahl); dazu Strom und Wärme heute. Gibt es heute keine Arbeitszahl, heißt die Karte „Heute" und nennt nur Strom und Wärme; der Grund steht im Tooltip der Überschrift.
+  - **„Betrieb heute":** wie viele Stunden das Gerät heute geheizt, Warmwasser bereitet, gekühlt, gelüftet oder entfeuchtet hat — aus der Mitschrift des Betriebsmodus-Sensors. Nur Betriebsarten mit Stunden; ein passiv kühlendes Gerät nennt „Kühlen passiv"; stand das Gerät den ganzen Tag, steht dort „Heute kein Betrieb".
+  Eine Zeile oder Karte ohne Wert entfällt; Kosten und CO₂ stehen in den Blöcken darunter.
+- **Tooltip:** Antippen oder Überfahren einer Kachel nennt Name, Leistung, Modus, heute kWh und die Herkunft („Live-Snapshot", „HA-LTS (Tageszähler)", „Wetterdienst").
+- **Am Handy** haben Kacheln und Schrift dieselbe Größe wie im Energiefluss bei gleicher Breite; passt eine Reihe nicht, werden Kacheln gruppiert („Innengeräte (3)", „Weitere (2)"; nach „Weitere" gehen zuerst Außentemperatur, dann Zusatzheizung, dann Vorlauf · Rücklauf) — Antippen öffnet die Liste unter dem Bild. Die Karte steht unter dem Bild.
+- Der Block steht auch dann zuoberst, wenn du die Reihenfolge der Blöcke früher geändert hast; danach kannst du ihn wie jeden Block verschieben, zuklappen oder seine zwei Teile parken.
+
+> **Benannte Grenzen.** Solange der Block **aufgeklappt** und der Tab **sichtbar** ist, fragt er die Live-Werte alle **5 Sekunden** ab (Wetter und Tageswerte alle 5 Minuten) — ein zweiter Abfrage-Pfad neben *Cockpit → Live*. Zugeklappt, ganz geparkt oder im Hintergrund fragt er nichts. Der Tooltip nennt die **Entität** des Sensors nicht; welche zugeordnet ist, steht im Block „Einstellungen" und unter *Einstellungen → Datenquellen*. Im **Demo-Modus** stammen die Heute-Werte (Wärme, Arbeitszahl, Betrieb heute, Kachel „Wärme heute") vom echten Tag. **„Betrieb heute"** gibt es nur mit einem Betriebsmodus-Sensor aus Home Assistant und erst ab dem Tag, an dem eedc die Betriebsart mitschreibt; **Leerlauf** zählt nicht getrennt — eine Stunde „Heizen · Leerlauf" zählt als Heizen. Die Kachel **„Wärme heute"** kommt aus den Tageswerten (alle 5 Minuten), nicht aus der Live-Abfrage.
+
+#### Kennzahlen
+
 Kennzahl-Reihenfolge (durchgängig gleich über Cockpit, diesen Reiter und die Auswertungen):
 
 1. **JAZ** (Jahresarbeitszahl) — Wärme ÷ Strom über den Zeitraum (orange)
@@ -807,7 +854,7 @@ Kennzahl-Reihenfolge (durchgängig gleich über Cockpit, diesen Reiter und die A
 3. **Strom** (kWh) — verbrauchter Strom der Wärmepumpe (gelb)
 4. **Ersparnis** (€) — gegenüber der Alternative (Gas/Öl) (grün)
 
-Zusätzlich: **JAZ Heizen / JAZ Warmwasser getrennt** (nur wenn du Strom je Funktion getrennt misst — sonst steht dort der Grund statt einer Zahl), Saison-/Monatsvergleich, Detailtabellen mit JAZ pro Monat sowie — optional pro Wärmepumpe — die **Kompressor-Starts** (über einen kumulativen Zähler-Sensor).
+Zusätzlich: **JAZ Heizen / JAZ Warmwasser getrennt** (nur wenn du Strom je Funktion getrennt misst — sonst steht dort der Grund statt einer Zahl), Saison-/Monatsvergleich, Detailtabellen mit JAZ pro Monat sowie — optional pro Wärmepumpe — die **Kompressor-Starts** (über einen kumulativen Zähler-Sensor). Mit einem Heizstab-Zähler (*Strom Zusatzheizung*) kommt die Kennzahl **AZ ohne Zusatzheizung** dazu — gerechnet, mit der Herleitung beim Überfahren — und in der Monatstabelle eine gleichnamige Spalte ([Wärme & Klima, Schritt 6a](HANDBUCH_WAERME_KLIMA.md#schritt-6a--strom-zusatzheizung-optional)).
 
 **Verlauf und Monatstabelle zeigen dieselbe Rechnung wie die Kennzahlen oben:** Strom, Heizung, Warmwasser und Wärme je Monat ergeben zusammen die Kacheln. Misst das Gerät kein Warmwasser für sich, heißt die Fläche „Wärme" und trägt die ganze Wärme — auch bei einem gemeinsamen Wärmezähler für Heizung und Warmwasser. Die erwartete Heizsaison in *Cockpit → Aussicht* entsteht aus denselben Monatswerten.
 

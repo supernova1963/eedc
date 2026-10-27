@@ -73,6 +73,58 @@ def _tageswert_grund_kombiniert(
     key, grund = gewinner
     return tageswert_grund_text(grund, key)
 
+
+def _ohne_zusatzheizung_tag(detail, werte_je_inv, wp_strom_je_inv, wp_jaz_tag, beitrag_je_inv) -> dict:
+    """P-433-3 S2: die Felder der Ausweis-Zahl „AZ ohne Zusatzheizung" des Tages — eigene Phase, damit
+    ``get_tag_detail`` nicht wächst. Geräte, die für die Geräte-Regel zählen, gegen Geräte mit Heizstab-Tageswert.
+
+    S3-8 (Master 25.10.2026): «zählt» heißt wie im Monat **Strom nach Abzug von Kühlen, Lüften, Entfeuchten > 0**
+    (``zaehlt_fuer_geraete_regel``, Mengen des Tages-Stapels je Gerät) — eine Klimaanlage, die nur gekühlt hat,
+    sperrt die Zahl nicht mehr."""
+    from backend.core.berechnungen.waermepumpe_kennzahl import zaehlt_fuer_geraete_regel
+    from backend.services.waerme_klima_block import ohne_zusatzheizung_felder
+
+    def _fremd(inv_id: str) -> float:
+        b = beitrag_je_inv.get(inv_id)
+        return (b.kuehlen_kwh + b.lueften_kwh + b.entfeuchten_kwh) if b is not None else 0.0
+
+    return ohne_zusatzheizung_felder(
+        detail.get("wp_heizstab_kwh"), wp_jaz_tag,
+        geraete_mit_strom=[i for i, kwh in wp_strom_je_inv.items() if zaehlt_fuer_geraete_regel(kwh, _fremd(i))],
+        geraete_mit_heizstab=werte_je_inv.get("wp_heizstab_kwh") or {},
+    )
+
+
+def _herleitung_je_funktion(az_funktion, az_kuehlen) -> dict:
+    """P-433-3 S3 (#432): Zähler und Nenner der drei Arbeitszahlen je Funktion — die Zahlen, aus denen der Layer
+    ``wert`` **tatsächlich** gebildet hat (``Arbeitszahl.zaehler_kwh/nenner_kwh``, nur mit Wert gesetzt), für die
+    Herleitung in «Je Funktion». Eigene Phase, damit ``get_tag_detail`` nicht wächst; der Client rechnet nichts nach."""
+    return {
+        f"wp_jaz_{name}_{teil}_kwh": getattr(az, f"{teil}_kwh")
+        for name, az in (("heizen", az_funktion.heizen), ("warmwasser", az_funktion.warmwasser),
+                         ("kuehlen", az_kuehlen))
+        for teil in ("zaehler", "nenner")
+    }
+
+
+async def _mit_betrieb_stunden(db, anlage, investitionen_by_id, datum, zeilen: list) -> list:
+    """P-433-2c (Karte «Betrieb heute»): die Gerätezeilen des Tages mit ``betrieb_stunden`` — Stunden je Betriebsart aus
+    der Betriebsart-Mitschrift (Tagesleser ``kanal_stunden.wp_betriebsart_anteile_je_stunde``, Formel
+    ``core/berechnungen/betriebsstunden.stunden_je_betriebsart``). Eigene Phase, damit ``get_tag_detail`` nicht wächst;
+    nur der Tag setzt das Feld (Monat/Jahr ``None``). Ein Gerät ohne Mitschrift behält ``None``."""
+    from backend.core.berechnungen.betriebsstunden import stunden_je_betriebsart
+    from backend.services.energie_profil.kanal_stunden import wp_betriebsart_anteile_je_stunde
+
+    if not zeilen:
+        return zeilen
+    anteile = await wp_betriebsart_anteile_je_stunde(db, anlage, investitionen_by_id, datum)
+    return [
+        z.model_copy(update={"betrieb_stunden": stunden_je_betriebsart(anteile[str(z.investition_id)])})
+        if str(z.investition_id) in anteile else z
+        for z in zeilen
+    ]
+
+
 @router.get("/{anlage_id}/tag-detail", response_model=TagDetailResponse)
 async def get_tag_detail(
     anlage_id: int,
@@ -814,7 +866,10 @@ async def get_tag_detail(
     # dieselben Zeilen (R-4). Zwei Aufrufe nebeneinander wären zwei Wahrheiten
     # über dieselbe Frage, und die Dedup-Regel des Kastens hinge dann an einer
     # zweiten Liste.
-    _wp_block_geraete = geraete_zeilen(_wp_kennzahlen_je_geraet)
+    # P-433-2c: am Tag tragen die Zeilen zusätzlich die Stunden je Betriebsart (Phase, nicht im Block-Bauer).
+    _wp_block_geraete = await _mit_betrieb_stunden(
+        db, anlage, investitionen_by_id, datum, geraete_zeilen(_wp_kennzahlen_je_geraet),
+    )
 
     # ── Aktive Geräte je Typ (Namen) für die „aggregiert aus …"-Hinweise ──
     #
@@ -888,8 +943,14 @@ async def get_tag_detail(
         # Quotienten den Tag nie erreichte (N-348).
         wp_jaz_kuehlen=wp_az_kuehlen_tag.wert,
         wp_jaz_kuehlen_grund=wp_az_kuehlen_tag.grund,
+        # P-433-3 S3: Zähler/Nenner je Funktion für die Herleitung (A6), aus denselben Layer-Objekten.
+        **_herleitung_je_funktion(wp_az_funktion_tag, wp_az_kuehlen_tag),
         wp_jaz_ist_schranke=wp_jaz_tag.ist_schranke,
         wp_jaz_schranke_hinweis=wp_jaz_tag.schranke_hinweis,
+        # P-433-3 S2: Heizstab-Strom und „AZ ohne Zusatzheizung" — nur mit Zähler (B2); Geräte-Regel: jede
+        # Wärmepumpe mit Strom-Beitrag des Tages trägt einen Heizstab-Zähler (sonst Grund).
+        **_ohne_zusatzheizung_tag(detail, _tagesdetail.werte_je_inv, wp_strom_je_inv, wp_jaz_tag,
+                                  _wp_beitrag_je_inv),
         wp_geraete=_wp_block_geraete,
         # D-Sicht 1: Der Tag kennt einen Grund mehr als Monat und Jahr — den
         # der **Wärme** (W-18: „für diesen Tag keine Zählerstände"). Er gehört

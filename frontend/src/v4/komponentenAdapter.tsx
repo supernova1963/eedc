@@ -46,6 +46,7 @@ import type { KpiStripItem } from '../components/blocks'
 import type { VerteilungSegment, WertHerkunft } from '../components/blocks'
 import type { VerlaufBar, VerlaufRow } from './KomponentenVerlaufChart'
 import type { Investition } from '../types'
+import { herleitungMengen } from './wpFunktionsGruppen'
 
 /** Datenrollen→bg-Klassen für Aufteilungs-Segmente — SoT in `lib/colors.ts`. */
 const SEG = ROLLEN_BG
@@ -691,6 +692,22 @@ export const KOMPONENTEN_ADAPTER: Record<string, KompAdapter> = {
           // `color` wird von `unbewertet` auf 'gray' überschrieben — die
           // Farbrolle der Kennzahl gilt nur, wo es eine Zahl gibt.
           sek.push(unbewertet({ title: label, icon, color: farbe }, grund))
+        }
+      }
+      // P-433-3 S2 (#432, E-P3-5): «AZ ohne Zusatzheizung» — die Ausweis-Zahl NEBEN der JAZ, nur mit Heizstab-Zähler
+      // (B2). Wert ODER Grund, Zähler/Nenner und der Herkunfts-Satz kommen fertig aus dem Layer (H-B bleibt die
+      // Hauptzahl, Ersparnis und CO₂ lesen sie nicht).
+      if (z.gesamt_heizstab_kwh != null) {
+        if (z.jaz_ohne_zusatzheizung != null) {
+          sek.push(k('AZ ohne Zusatzheizung', formatEffizienz(z.jaz_ohne_zusatzheizung).wert, undefined, 'orange', WP_KPI.jaz.icon, {
+            subtitle: z.jaz_ohne_zusatzheizung_hinweis ?? undefined,
+            formel: '(Wärme − Heizstab-Strom) ÷ (Strom − Heizstab-Strom)',
+            // P-433-3 S3-9: dieselbe Herleitung wie am Tag («Je Funktion»), eine Formatierungsstelle.
+            berechnung: herleitungMengen(z.jaz_ohne_zusatzheizung_zaehler_kwh, z.jaz_ohne_zusatzheizung_nenner_kwh)
+              ?? undefined,
+          }))
+        } else if (z.jaz_ohne_zusatzheizung_grund) {
+          sek.push(unbewertet({ title: 'AZ ohne Zusatzheizung', icon: WP_KPI.jaz.icon, color: 'orange' }, z.jaz_ohne_zusatzheizung_grund))
         }
       }
       jazJeFunktion(z.jaz_heizen, z.jaz_heizen_grund, 'JAZ Heizen', 'orange', Flame, 'Heizwärme ÷ Strom Heizen',

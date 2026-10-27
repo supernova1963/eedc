@@ -14,6 +14,7 @@
 4. [Kategorien im Detail](#4-kategorien-im-detail)
    1. [Stammdaten](#41-stammdaten)
    2. [Strompreise](#42-strompreise)
+   2a. [Strompreise – eigener Wärmepumpen-Tarif](#42a-eigener-waermepumpen-tarif)
    3. [Investitionen](#43-investitionen)
    4. [Monatsdaten – Vollständigkeit](#44-monatsdaten--vollstaendigkeit)
    5. [Monatsdaten – Plausibilität](#45-monatsdaten--plausibilitaet)
@@ -31,7 +32,9 @@
    12. [Zeitzone – Abweichung zu Home Assistant](#412-zeitzone--abweichung-zu-home-assistant)
    13. [Sonstige Positionen – der Erfassungsort](#413-sonstige-positionen--der-erfassungsort)
    14. [Klimaanlage – Betriebsmodus](#414-klimaanlage--betriebsmodus)
+   14a. [Betriebsmodus – unbekannter Wert](#414a-betriebsmodus--unbekannter-wert)
    15. [Sensor-Zuordnung – Leistung ↔ Energie verwechselt](#415-sensor-zuordnung--leistung--energie)
+   15a. [Sensor ohne Langzeitstatistik](#415a-sensor-ohne-langzeitstatistik)
    16. [Quellen-Konflikte](#416-quellen-konflikte)
    17. [Datenquellen-Drift zu Home Assistant](#417-datenquellen-drift)
    18. [PV-Doppelerfassung (Verdacht)](#418-pv-doppelerfassung)
@@ -105,12 +108,13 @@ Einzelne Befunde haben über Releases hinweg ihre Stufe gewechselt. Beispiele:
 
 ## 3. Verfügbarkeit nach Installationsvariante <a name="3-verfuegbarkeit-nach-installationsvariante"></a>
 
-eedc prüft **33 Kategorien** (Stand 10.10.2026; bis dahin stand hier 26 — die Zahl war mit den jüngeren Kategorien nicht mitgewachsen; die 33. ist *PV – Zähler steht*). Die meisten greifen in jeder Installation identisch; **zehn** hängen an Voraussetzungen, die je nach Installation gegeben sind oder nicht — sie sind unten fett markiert. Die Kategorie *Datenquelle – aktiver Pfad* trägt zwei Befund-Familien (Zeile 12 und die Statusmeldungen der Datenquellen) und steht deshalb nur einmal in der Tabelle.
+eedc prüft **36 Kategorien** (Stand 25.10.2026; dazugekommen ist *Sensor ohne Langzeitstatistik*, am 24.10.2026 *Strompreise – eigener Wärmepumpen-Tarif* und *Betriebsmodus – unbekannter Wert*; am 10.10.2026 waren es 33, davor stand hier 26 — die Zahl war mit den jüngeren Kategorien nicht mitgewachsen). Die meisten greifen in jeder Installation identisch; **zwölf** hängen an Voraussetzungen, die je nach Installation gegeben sind oder nicht — sie sind unten fett markiert. Die Kategorie *Datenquelle – aktiver Pfad* trägt zwei Befund-Familien (Zeile 12 und die Statusmeldungen der Datenquellen) und steht deshalb nur einmal in der Tabelle.
 
 | # | Kategorie | HA Add-on | Standalone (Docker / native) |
 |---|-----------|-----------|------------------------------|
 | 1 | Stammdaten (§4.1) | greift | greift |
 | 2 | Strompreise (§4.2) | greift | greift |
+| 2a | Strompreise – eigener Wärmepumpen-Tarif (§4.2a) | greift | greift |
 | 3 | Investitionen (§4.3) | greift | greift |
 | 4 | Monatsdaten – Vollständigkeit (§4.4) | greift | greift |
 | 5 | Messwerte ohne Monatszeile (§4.4a) | greift | greift |
@@ -130,7 +134,9 @@ eedc prüft **33 Kategorien** (Stand 10.10.2026; bis dahin stand hier 26 — die
 | 14 | Sonstige Positionen – wiederkehrend (§4.13) | greift | greift |
 | 15 | Sonstige Positionen – Doppelerfassung (§4.13) | greift | greift |
 | 16 | Klimaanlage – Betriebsmodus (§4.14) | greift | greift |
+| 16a | **Betriebsmodus – unbekannter Wert** (§4.14a) | greift | **wird übersprungen** (der Wert kommt aus HA) |
 | 17 | **Sensor-Zuordnung – Leistung ↔ Energie** (§4.15) | greift | **wird übersprungen** (Einheit kommt aus HA) |
+| 17a | **Sensor ohne Langzeitstatistik** (§4.15a) | greift | **wird übersprungen** (`state_class` kommt aus HA; über MQTT schreibt eedc die Stundenmittel selbst mit) |
 | 18 | Quellen-Konflikte (§4.16) | greift | greift |
 | 19 | **Datenquellen-Drift zu HA** (§4.17) | greift | **wird übersprungen** (keine Vergleichsseite) |
 | 20 | PV-Doppelerfassung (§4.18) | greift | greift |
@@ -201,6 +207,18 @@ Im **Standalone-Betrieb** kommen die Werte über MQTT (`eedc/<anlage>/…`-Topic
 | **Einspeisevergütung ungewöhnlich: X,X ct/kWh (Tarifname)** | ⚠️ WARNING | Wert außerhalb 0–30 ct/kWh. Negative Werte oder zweistellige Vergütungen sind seit den 2010er Jahren untypisch. | Einstellungen → Stammdaten → Strompreise → Tarif öffnen, Vergütung prüfen. Bei dynamischen Vergütungsmodellen (Direktvermarktung) eine sinnvolle Schätzung eintragen. |
 | **N Tarif(e) rechnen die Einspeisung mit 0 ct/kWh** | ℹ️ INFO | Mindestens ein Tarif trägt **0 ct/kWh**, und in seinem Gültigkeitszeitraum ist Einspeisung erfasst — der Einspeise-Erlös dieser Monate bleibt damit 0 € (Cockpit, ROI, Jahresbericht). Der Fall entsteht regelmäßig, weil ein neuer Tarif seit v4.0.10 mit 0 startet: eedc rät den EEG-Satz bewusst nicht. **Die Zeile fordert nichts** — sie sagt, womit gerechnet wird; was du einträgst, wird gerechnet. **Ab 50 kWh/Jahr** erfasster Einspeisung; darunter (Nulleinspeisungs-Systeme mit reiner Regelungstoleranz) schweigt sie ganz. | Wer eine Vergütung bekommt: Einstellungen → Stammdaten → Strompreise → Tarif öffnen, Satz aus dem Vergütungsbescheid eintragen; bei gestaffelter Vergütung den nach kWp gewichteten **Mischsatz** (eedc rechnet flat, siehe [Einstellungen §2.2](HANDBUCH_EINSTELLUNGEN.md#22-strompreise)). **Ist deine Einspeisung tatsächlich unvergütet** (Nulleinspeisung, Volleinspeisung ohne Vergütung, ausgelaufene EEG-Förderung), **ist 0 richtig und nichts zu tun**. |
 | **N Strompreis-Tarif(e) vorhanden** | ✅ OK | Mindestens ein allgemeiner Tarif vorhanden — Anzahl ist informativ. | – |
+
+---
+
+### 4.2a Strompreise – eigener Wärmepumpen-Tarif <a name="42a-eigener-waermepumpen-tarif"></a>
+
+**Was wird geprüft:** Gilt im laufenden Monat ein Tarif mit Verwendung *Wärmepumpe*, dessen Arbeitspreis vom Standard-Tarif abweicht — und hat die Wärmepumpe in den letzten zwölf abgeschlossenen Monaten Strom verbraucht?
+
+**Warum das zählt:** Mit dem Wärmepumpen-Tarif rechnet eedc die Stromkosten der Wärmepumpe. Die Eigenverbrauchs-Ersparnis der PV-Anlage bewertet dagegen jede selbst genutzte kWh zum Haushaltstarif — auch den Teil, den die Wärmepumpe aus der eigenen PV bezogen hat, denn wie groß dieser Teil ist, weiß eedc nicht. Bei zwei verschiedenen Preisen steht die Ersparnis deshalb um *PV-Anteil der Wärmepumpe × Tarifdifferenz* verschoben; ob nach oben oder unten, hängt davon ab, wo Netzbezug und Einspeisung gemessen werden ([Berechnungen, „Mit eigenem Wärmepumpen-Tarif"](BERECHNUNGEN.md#mit-eigenem-wärmepumpen-tarif--eine-benannte-grenze-n-767)).
+
+| Meldung | Severity | Bedeutung | Behebung |
+|---------|----------|-----------|----------|
+| **Eigener Wärmepumpen-Tarif (x ct gegen y ct): die Ersparnis der letzten 12 Monate kann um bis zu Z € abweichen** | ℹ️ INFO | Z ist die **Obergrenze**: WP-Strom der letzten zwölf abgeschlossenen Monate × Tarifdifferenz — so viel wäre es, wenn die Wärmepumpe nur PV-Strom bezogen hätte. Real ist es der PV-Anteil davon. Verglichen werden die Arbeitspreise des Monats so, wie eedc sie rechnet (mit HT/NT-Fenstern gewichtet). | **Nichts zu tun** — eedc ändert dafür keine Zahl, und es gibt nichts zu reparieren; die Meldung sagt, wo die Rechnung eine Grenze hat. Ohne eigenen Wärmepumpen-Tarif (oder mit gleichem Preis) erscheint sie nicht. |
 
 ---
 
@@ -568,13 +586,17 @@ in einer Stunde auf seinen alten Stand zurück, hält Home Assistant das für ei
 Zurückkehren den ganzen Zählerstand als Zuwachs dieser Stunde. Dieser Sprung steht dann in Tag, Monat und Jahr — in
 eedc wie in Home Assistant, seit dem zweiten Paket der HA-Bauform auch in der Stunde des Tagesverlaufs. Ein Zähler, der
 nach dem Zurücksetzen wieder hochzählt (ein neuer Zähler nach einem Tausch), ist kein Befund: dort entsteht kein Sprung.
-Ein Zähler, der an mehreren Tagen zu Beginn seines Tages auf 0 geht — um Mitternacht oder, bei einem nachts
-abgeschalteten Wechselrichter, in der ersten Stunde mit Werten (PV-Tagesertrag, Utility-Meter „heute") —, ist ein
-Tageszähler und kein Befund, auch wenn seine erste Stunde am Morgen den Vortag schon fast erreicht. Geht er im Prüffenster
-nur an einem einzigen Tag zu Tagesbeginn auf 0, ist er von einem Aussetzer nicht zu unterscheiden und kann noch gemeldet
-werden; ein Aussetzer zu einer anderen Stunde wird auch bei einem Tageszähler gemeldet. Ein fortlaufender Zähler, dessen
-erste Morgenstunde an zwei Tagen des Prüffensters als letzten Stand eine 0 trägt, gilt deshalb ebenfalls als Tageszähler
-und wird an diesen Tagesanfängen nicht mehr gemeldet. **Grenze:** die Prüfung erkennt
+Ein **Tageszähler** (PV-Tagesertrag, Utility-Meter „heute") ist kein Befund, auch wenn seine erste helle Stunde nach einem
+schwachen Vortag den Vortag schon fast erreicht. eedc erkennt ihn an zwei Merkmalen, eines genügt: Er geht an mindestens
+zwei Tagen des Prüffensters in der ersten Statistikzeile seines Tages auf 0 — um Mitternacht oder, bei einem nachts
+abgeschalteten Wechselrichter, in der ersten Stunde mit Werten. Oder sein Stand vor der 0 ist höchstens das Dreifache seines
+größten Tageszuwachses im Prüffenster: ein Tageszähler kommt nie über einen Tag hinaus, ein Gesamtzähler liegt weit darüber,
+gleich wo seine 0 im Stundenraster steht (letzte Abendzeile, einzelne Nachtzeile, zweite Morgenzeile). Am Tageszähler ist nur
+noch der **Aussetzer** ein Befund: eine 0 mitten im Tag, auf die der alte Stand in der unmittelbar nächsten Stunde
+zurückkommt — dann hat Home Assistant den Tag doppelt gebucht. **Grenzen:** ein Gesamtzähler mit weniger als drei Tagen
+eigener Historie und ein Monatszähler in seinen ersten drei Tagen gelten als Tageszähler (ihr Phantom wäre entsprechend
+klein); ein Aussetzer über zwei oder mehr Stunden am Tageszähler ist von einem Tagesbeginn nach einer Lücke nicht zu trennen
+und wird nicht gemeldet. Die Prüfung erkennt außerdem
 nur dieses Muster (Rücksetzen und Rückkehr). Springt die HA-Summe ohne Rücksetzen, meldet weder sie noch die
 Spitzen-Prüfung (§4.7) an einem Tag aus dem HA-Spiegel etwas.
 
@@ -824,7 +846,7 @@ Hintergrund und die verworfenen Alternativen: [Berechnungen §3.6](BERECHNUNGEN.
 
 > **Der Hinweis erscheint nur bei Wärmepumpenart *Luft-Luft*.** Ob ein Gerät überhaupt kühlen kann, hängt an seiner Bauart — eine Luft-Wasser-Wärmepumpe bekäme sonst einen Hinweis auf eine Aufteilung, die es bei ihr nicht gibt. **Das Feld selbst bietet eedc trotzdem jeder Wärmepumpe an**: Es gibt Luft-Wasser-Geräte mit Kühlfunktion, und wer eines hat, findet den Betriebsmodus auf der Datenquellen-Fläche.
 
-> **Der Betriebsmodus ist nur als HA-Sensor zuordenbar, nicht über MQTT.** Er ist ein Zustand, kein Messwert — der MQTT-Weg von eedc nimmt ausschließlich Zahlen entgegen. Die Fläche blendet die MQTT-Optionen für dieses eine Feld deshalb aus, statt eine Quelle anzubieten, die nichts liefern könnte.
+> **Der Betriebsmodus geht auch über MQTT — als Inbound, nicht über das Gateway.** Er ist ein Zustand, kein Messwert: eedc nimmt am Modus-Topic ein Wort oder einen Zahlencode (0–5) entgegen ([Wärme & Klima, „Ohne Home Assistant: der Modus über MQTT"](HANDBUCH_WAERME_KLIMA.md#ohne-home-assistant-der-modus-über-mqtt)). Das Gateway reicht nur Zahlen weiter und steht an diesem Feld nicht zur Wahl. Bis Oktober 2026 war der Modus nur als HA-Sensor zuordenbar. Über MQTT beginnt die Aufteilung mit dem ersten empfangenen Wert — auch hier nicht rückwirkend.
 
 
 > **Was du nach der Zuordnung siehst** (seit 2026-08-19): Unter *Komponenten → Wärme/Klima* steht
@@ -852,6 +874,20 @@ Hintergrund: [Issue #263](https://github.com/supernova1963/eedc-homeassistant/is
 
 ---
 
+### 4.14a Betriebsmodus – unbekannter Wert <a name="414a-betriebsmodus--unbekannter-wert"></a>
+
+**Was wird geprüft:** Liefert der zugeordnete Betriebsmodus-Sensor einer Wärmepumpe oder Klimaanlage gerade einen Wert, den eedc kennt?
+
+**Warum das zählt:** eedc versteht eine feste Liste von Texten (Werte-Tabelle im Handbuch [Wärme & Klima](HANDBUCH_WAERME_KLIMA.md#welchen-sensor-eedc-lesen-kann); dieselbe Liste steht in *Einstellungen → Datenquellen* am Feld „Betriebsmodus"). Ein anderer Wert — etwa `heating`, `standby` oder `pool` aus einem eigenen Prioritäts-Sensor — zählt als *unbestimmt*: Der Strom dieser Stunden steht unter „nicht aufgeteilt", ohne dass es sonst jemand sagt.
+
+| Meldung | Severity | Bedeutung | Behebung |
+|---------|----------|-----------|----------|
+| **„\[Gerät\]": Betriebsmodus-Sensor liefert „wert" — diesen Wert kennt eedc nicht** | ℹ️ INFO | Der Sensor meldet beim Prüfen diesen Wert; die Meldung nennt den Sensor und die Liste der Werte, die eedc versteht. | In Home Assistant einen **Template-Sensor** anlegen, der aus deinen Werten einen der Texte der Tabelle macht (Vorlage im Handbuch Wärme & Klima, Schritt 4, Weg B), und ihn unter *Einstellungen → Datenquellen* zuordnen. Die Aufteilung beginnt mit dem neuen Sensor; Stunden davor bleiben, wie sie sind. |
+
+> **Wann die Meldung schweigt:** ohne Verbindung zu Home Assistant, wenn der Sensor gerade `unknown` oder `unavailable` meldet (kein Wert ist kein falscher Wert), bei `auto`, `heat_cool` und `automatik` (eedc kennt sie und zählt sie bewusst als unbestimmt — das Gerät entscheidet dort selbst) und wenn das Gerät mehrere verschiedene Modus-Quellen hat (dann nennt §4.14 den Fall). Geprüft wird der Wert, den der Sensor **jetzt** meldet: Ein Wert, der nur zeitweise auftaucht, fällt auf, wenn er beim Prüfen ansteht.
+
+---
+
 ### 4.15 Sensor-Zuordnung – Leistung ↔ Energie verwechselt <a name="415-sensor-zuordnung--leistung--energie"></a>
 
 **Was wird geprüft:** Steht in jedem Feld ein Sensor der passenden Art — ein **Leistungssensor** (W/kW) dort, wo eedc eine Momentanleistung erwartet, und ein **kWh-Zähler** dort, wo es eine Energiemenge erwartet? Verglichen wird die in Home Assistant hinterlegte Einheit, nicht der Wert.
@@ -866,6 +902,20 @@ Hintergrund: [Issue #263](https://github.com/supernova1963/eedc-homeassistant/is
 | **Energie-Slot „\[Feld\]" trägt einen Leistungssensor (Einheit W)** | ⚠️ WARNING | Ein Leistungssensor steht in einem kWh-Feld. eedc fällt auf eine Näherung zurück (Integration über die Zeit) — ungenauer und anfällig für Lücken. | *Einstellungen → Datenquellen*, einen kumulativen kWh-Zähler wählen. |
 
 > **Nur diese eine Verwechslung wird gemeldet.** Ladestand (%), Temperatur (°C), Preis (ct/kWh) und Kilometer bleiben ungeprüft: Dort sind mehrere Einheiten legitim, und eine Meldung wäre öfter falsch als richtig. **Ohne HA-Verbindung** wird die Kategorie still übersprungen — die Einheit kommt aus Home Assistant.
+
+---
+
+### 4.15a Sensor ohne Langzeitstatistik <a name="415a-sensor-ohne-langzeitstatistik"></a>
+
+**Was wird geprüft:** Trägt ein zugeordneter **Vorlauf-**, **Rücklauf-** oder **Zusatzheizungs-Sensor** einer Wärmepumpe in Home Assistant `state_class: measurement`? Gelesen wird der aktuelle Zustand des Sensors, je aktiver Wärmepumpe.
+
+**Warum das zählt:** Den aktuellen Wert zeigt eedc aus dem Sensor-Zustand — live und im Überblick des Wärmepumpen-Hubs. **Stündliche Mittelwerte** übernimmt eedc dagegen aus der Langzeitstatistik von Home Assistant (rückwirkend, so weit sie zurückreicht), und die führt HA nur für Sensoren mit `state_class: measurement`. Ohne sie bleibt der Tagesverlauf dieser Werte leer, ohne dass es sonst jemand sagt.
+
+| Meldung | Severity | Bedeutung | Behebung |
+|---------|----------|-----------|----------|
+| **„\[Gerät\]": n Sensor(en) ohne Langzeitstatistik — Live ja, Tagesverlauf nein** | ℹ️ INFO | Die Meldung nennt je Sensor das Feld und die Entität. | In Home Assistant `state_class: measurement` ergänzen (per `customize`, HA-Neustart nötig) oder einen Template-Sensor anlegen, der es mitbringt, und ihn unter *Einstellungen → Datenquellen* zuordnen. Ab dann übernimmt eedc die Stundenmittel aus der Statistik; Stunden, für die HA keine geführt hat, bleiben leer. Oder: den Wert über MQTT liefern (Quelle **Inbound** statt des HA-Sensors) — dann entstehen die Stundenmittel aus der 5-Minuten-Mitschrift von eedc, ab der Zuordnung, nicht rückwirkend. |
+
+> **Wann die Meldung schweigt:** ohne Verbindung zu Home Assistant, wenn HA den Sensor gerade nicht liefert, an stillgelegten Geräten und für Felder, deren Quelle MQTT ist — dort schreibt eedc die Stundenmittel selbst aus seiner 5-Minuten-Mitschrift, eine Langzeitstatistik braucht es nicht ([Wärme & Klima, Schritt 6](HANDBUCH_WAERME_KLIMA.md#schritt-6--live-werte-optional)). Ist einem Feld ein HA-Sensor **und** dasselbe MQTT-Topic zugeordnet, gilt der HA-Sensor — fehlt ihm die Langzeitstatistik, bleibt die Meldung, und eedc schreibt das Topic nicht stattdessen mit. Die Warmwasser-Temperatur prüft diese Kategorie nicht.
 
 ---
 

@@ -42,14 +42,14 @@ Das hat einen Preis, den du kennen solltest: **eedc kann nicht wissen, ob dein G
 | Ort | Was dort steht |
 |-----|----------------|
 | **Cockpit → Live** | Momentanleistung gesamt und je Funktion, Betriebsmodus, Warmwasser-Temperatur |
-| **Cockpit → Tag** | Block *Wärme/Klima*: Arbeitszahl (auch je Funktion und für das **Kühlen**, sobald ein Kältemengenzähler zugeordnet ist — am Gerät oder je Innengerät), Wärme, Strom, Kompressor-Starts, die **Liste je Funktion** und die Betriebsart-Aufteilung — **alles tagesgenau**. Dazu ein **Verlauf je Stunde**: Strom nach Betriebsart gestapelt, gemessene Wärme als Linie, mit Kältemengenzähler die **gemessene Kälte als eigene Linie**, Außentemperatur auf der zweiten Achse. Jedes Gerät bleibt dabei in seinen eigenen Stunden. Die Stunden ergeben zusammen genau die Aufteilung darunter; was sich keiner Stunde zuordnen lässt, steht darunter als *„Strom / Wärme / Kälte ohne Stundenzuordnung"*; eine Arbeitszahl je Stunde gibt es bewusst nicht (Wärme und Strom derselben Stunde gehören nicht zusammen). Mit **getrennten Stromzählern für Heizen und Warmwasser** schaltet ein Wähler über dem Verlauf zwischen *nach Betriebsart* und *nach Funktion* um — nie beides zugleich, weil Betriebsarten Ausschnitte und Funktionen Summanden des Stroms sind; der Titel nennt die gerade gestapelte Größe. Im **Stundenverlauf** des Tages (dem Butterfly-Chart darüber, nicht in diesem Block) erscheint die Wärmepumpe getrennt nach *Heizen* und *Warmwasser*, wenn du beide **Leistungs**-Sensoren zugeordnet hast **und** *Leistung gesamt* leer bleibt — dieselben zwei Flächen wie in *Cockpit → Live* ([Schritt 6](#schritt-6--live-werte-optional)) |
+| **Cockpit → Tag** | Block *Wärme/Klima*: Arbeitszahl (auch je Funktion und für das **Kühlen**, sobald ein Kältemengenzähler zugeordnet ist — am Gerät oder je Innengerät), Wärme, Strom, Kompressor-Starts, die **Liste je Funktion** und die Betriebsart-Aufteilung — **alles tagesgenau**. Dazu ein **Verlauf je Stunde**: Strom nach Betriebsart gestapelt, gemessene Wärme als Linie, mit Kältemengenzähler die **gemessene Kälte als eigene Linie**, Außentemperatur auf der zweiten Achse. Jedes Gerät bleibt dabei in seinen eigenen Stunden. Die Stunden ergeben zusammen genau die Aufteilung darunter; was sich keiner Stunde zuordnen lässt, steht darunter als *„Strom / Wärme / Kälte ohne Stundenzuordnung"*; eine Arbeitszahl je Stunde gibt es bewusst nicht (Wärme und Strom derselben Stunde gehören nicht zusammen). Mit **getrennten Stromzählern für Heizen und Warmwasser** schaltet ein Wähler über dem Verlauf zwischen *nach Betriebsart* und *nach Funktion* um — nie beides zugleich, weil Betriebsarten Ausschnitte und Funktionen Summanden des Stroms sind; der Titel nennt die gerade gestapelte Größe. In der Sicht *nach Funktion* steht neben dem Strom auch die **gemessene Wärme als Stapel**: Heizwärme und Warmwasser-Wärme aus deinen getrennten Wärmezählern, darüber **„Wärme nicht je Funktion gemessen“** — die Wärme eines gemeinsamen Wärmemengenzählers oder eines Geräts ohne Aufteilung. Der Stapel ist genau so hoch wie die Wärme-Linie der anderen Sicht; ohne getrennte Wärmezähler bleibt die Wärme eine Linie. Die Arbeitszahl-Kachel heißt am Tag **„AZ heute“**, und in **Je Funktion** zeigt jede Arbeitszahl beim Überfahren ihre Rechnung („12,0 kWh Wärme ÷ 3,0 kWh Strom“). Mit zugeordnetem **Vorlauf/Rücklauf** kommt das Element **Temperaturen** dazu: Vorlauf und Rücklauf je Stunde mit der Spreizung als Fläche dazwischen, dazu die Warmwasser-Temperatur; darüber **Ø Vorlauf und Ø Spreizung über die Betriebsstunden** (Stunden mit Heiz-/Warmwasser-Modus, ohne Modus-Sensor die Stunden mit Strom über dem Tagesminimum) — nicht je Funktion. Bei mehreren Wärmepumpen wählst du das Gerät über dem Diagramm; die Legende nennt die Werte der letzten Stunde. Die Stundenwerte stammen aus der **Langzeitstatistik** deines Sensors in Home Assistant (`state_class: measurement`), rückwirkend, so weit sie reicht; kommen die Werte über **MQTT** (Standalone), schreibt eedc die Stundenmittel selbst aus seiner 5-Minuten-Mitschrift — ab der Zuordnung, nicht rückwirkend ([Schritt 6](#schritt-6--live-werte-optional)). Ein HA-Sensor ohne Langzeitstatistik steht unter dem Diagramm als „keine Stundenwerte“. Die Tabelle **Zahlen je Gerät** erscheint erst ab zwei Wärmepumpen — bei einer wiederholt sie nur die Kacheln; der Link in den Hub bleibt. Im **Stundenverlauf** des Tages (dem Butterfly-Chart darüber, nicht in diesem Block) erscheint die Wärmepumpe getrennt nach *Heizen* und *Warmwasser*, wenn du beide **Leistungs**-Sensoren zugeordnet hast **und** *Leistung gesamt* leer bleibt — dieselben zwei Flächen wie in *Cockpit → Live* ([Schritt 6](#schritt-6--live-werte-optional)) |
 | **Cockpit → Monat** | derselbe Block auf Monatsbasis, dazu die Arbeitszahlen je Funktion und ein **Verlauf je Tag** (dieselbe Darstellung wie am Tag, mit Kälte-Linie) |
 | **Cockpit → Jahr** | Jahressummen, dieselben Kennzahlen wie im Monat — Arbeitszahl mit Grund und Heizstab-Satz, je Funktion, Kühlen, Aufteilung nach Betriebsart mit Restmenge — über das Jahr **neu gerechnet** (nicht gemittelt), ein **Verlauf je Monat** (Strom, gemessene Wärme und Kälte), Block *CO₂-Bilanz* |
 | **PDF-Jahresbericht** | dieselben Kennzahlen wie *Cockpit → Jahr* aus derselben Rechnung — Arbeitszahl mit Grund, je Funktion, Kühlen, Herkunft einer geschätzten Wärme, Vorbehalt an der CO₂-Zeile (seit 05.09.2026; vorher stand dort eine Arbeitszahl ohne Grund und nichts je Funktion) |
 | **Auswertungen → CO₂ · Cockpit → Jahr (CO₂-Bilanz) · PDF-Monatsbericht** | die CO₂-Einsparung der Wärmepumpe trägt denselben Vorbehalt wie die Ersparnis, wenn die Wärme geschätzt ist oder ein zweiter Erzeuger am Wärmezähler hängt; der Monatsbericht nennt die Herkunft einer geschätzten Wärme mit denselben Worten wie der Hub (seit 05.09.2026) |
-| **Komponenten → Wärmepumpe** | je Gerät einzeln: Status, Verlauf, Monats-/Saisonvergleich, Kostenvergleich gegen Gas/Öl |
+| **Komponenten → Wärmepumpe** | zuoberst der Block **„Überblick"** — das [Schaubild](#schaubild) mit den Live-Kacheln deiner Geräte und „Auf einen Blick"; darunter je Gerät einzeln: Kennzahlen, Verlauf, Monats-/Saisonvergleich, Kostenvergleich gegen Gas/Öl |
 | **Auswertungen → CO₂** | Einsparung inkl. Wärmepumpen-Anteil |
-| **Einstellungen → Datenquellen** | die Zuordnung der Zähler ([§5](#5-sensoren-zuordnen-schritt-für-schritt)) |
+| **Einstellungen → Datenquellen** | die Zuordnung der Zähler ([§5](#5-sensoren-zuordnen-schritt-für-schritt)), je Wärmepumpe in Blöcken nach Betriebsart mit Status im Kopf ([Einstellungen §7.2](HANDBUCH_EINSTELLUNGEN.md#72-die-fläche)) |
 
 > **Im Verlauf steht nur gemessene Wärme.** Ist die Wärme aus Strom × Arbeitszahl geschätzt, hätte
 > ihre Linie genau die Form der Stromfläche darunter — sie sähe aus wie eine zweite Messung und
@@ -70,6 +70,31 @@ Das hat einen Preis, den du kennen solltest: **eedc kann nicht wissen, ob dein G
 > Kälte je Funktion mit.
 
 > **Der Block *Wärme/Klima* im Cockpit fasst alle Geräte zusammen**, der Komponenten-Hub zeigt sie **einzeln**. Das ist kein Widerspruch, sondern der wichtigste Unterschied auf dieser Fläche — siehe [§8](#8-häufige-missverständnisse).
+
+### Schaubild
+
+*Komponenten → Wärmepumpe*, Block **„Überblick"**: ein Bild einer Wärme/Klima-Anlage — Luft-Wasser-Außeneinheit, Wärmepumpen-Schrank mit Erdsonden, Puffer- und Warmwasserspeicher, Warmwasser-Wärmepumpe, Split-Klimaanlage mit Innengeräten, Zählerreihe. **Das Bild zeigt immer alle Gerätearten, deine Anlage zeigen die Kacheln.** Eine Kachel steht an dem Objekt, das ihr Gerät im Bild darstellt, und hat eine kurze Linie dorthin:
+
+| Wert | steht am Objekt |
+|------|-----------------|
+| Leistung und Modus einer Luft-Wasser-Wärmepumpe | Außengerät |
+| … einer Sole- oder Grundwasser-Wärmepumpe | Wärmepumpen-Schrank im Technikraum |
+| … einer Brauchwasser-Wärmepumpe | Warmwasser-Wärmepumpe auf dem Speicher |
+| … einer Split-Klimaanlage | Klima-Außeneinheit an der Hauswand; ihre Innengeräte an den Innengeräten im Bild (ab dem vierten als Gruppe „Innengeräte (n)") |
+| Warmwasser-Temperatur (je Gerät) | Warmwasserspeicher |
+| Vorlauf · Rücklauf (je Gerät) | dem Heizkreis des Hauses nach deiner Angabe *Vorlauftemperatur* am Gerät: „35 °C (Fußbodenheizung)“ ⇒ Fußbodenheizung im Wohnbereich, „55 °C (Heizkörper)“ ⇒ Heizkörper im Schlafzimmer, ohne Angabe ⇒ Hydraulikmodul an der Rückwand |
+| Wärme heute (je Gerät, aus den Tageswerten) | demselben Heizkreis-Objekt wie Vorlauf · Rücklauf |
+| Zusatzheizung (Heizstab, je Gerät) | Pufferspeicher mit Heizstab |
+| Strom heute | Stromzähler |
+| Außentemperatur (Wetterdienst) | Himmel |
+
+**Technik oben, Räume unten:** In der oberen Kachelreihe steht die Technik — Außentemperatur, Leistung und Modus der Geräte, Warmwasser, Zusatzheizung, Strom heute; in der unteren die Räume — Vorlauf · Rücklauf und Wärme heute an Fußbodenheizung oder Heizkörper und die Innengeräte einer Klimaanlage samt der Gruppe „Innengeräte (n)". Ohne Angabe der Heizflächen stehen Vorlauf · Rücklauf und Wärme heute oben am Hydraulikmodul. Die Reihe richtet sich nach der Art des Objekts, nicht danach, wo es im Bild liegt — **eine Kachel wechselt die Reihe, wenn ihre Linie sonst eine andere kreuzte**.
+
+**Zwei Plätze neben dem Haus:** Wie Netz und Speicher im Energiefluss stehen am Desktop zwei Kacheln seitlich: **die Gerätekachel der Wärmepumpe links neben dem Technikraum, die Klima-Außeneinheit rechts unter ihrem Objekt — wenn der Platz frei bleibt; sonst in ihrer Reihe.** Links steht eine Wärmepumpe an der Außeneinheit, sonst am Technik-Schrank, sonst am Warmwasserspeicher — in dieser Rangfolge, gleich in welcher Reihenfolge du die Geräte angelegt hast —, zusammen mit weiteren Geräten derselben Bauart als „Wärmepumpen (n)"; ein Gerät anderer Bauart bleibt oben. Bleibt der Platz für das erste Gerät nicht frei, versucht eedc das nächste. Frei bleibt ein Platz, solange seine Linie keine andere kreuzt und keine Linie durch ihn läuft — die Warmwasser-Wärmepumpe etwa bleibt oben, wenn eine Zusatzheizung angezeigt wird. Ist der rechte Platz belegt, endet die untere Reihe eine Kachel früher. Die linke Kachel überdeckt die Ecke des Technikraums, durchscheinend wie im Energiefluss. Auf dem Telefon zwei Reihen.
+
+Welche Bauart dein Gerät hat, entscheidet hier **nur den Ort** der Kachel — ob es eine Kachel gibt, entscheidet allein der zugeordnete Sensor. Werte ohne Sensor nennt die Zeile unter dem Bild („Ohne Sensor, deshalb ohne Kachel: …") mit dem Weg zu *Einstellungen → Datenquellen*. Der Modus kommt vom Betriebsmodus-Sensor (dieselben Wörter wie im Energiefluss, als Chip in der Farbe der Funktion); kühlt das Gerät passiv, steht dort „Kühlen (passiv)", meldet es „Leerlauf", steht „Heizen · Leerlauf" (siehe *„Leerlauf behält deinen Modus"*). **Vorlauf, Rücklauf und Zusatzheizung** haben eine Kachel, sobald ihr Sensor zugeordnet ist („34,2 → 29,1 °C", „Zusatzheizung 1.500 W"); fehlt er, steht dafür nichts in der Zeile „Ohne Sensor …" — sie sind Zusatzangaben, die viele Geräte nicht liefern. Rechts daneben steht **„Auf einen Blick"** mit bis zu drei Karten: die **Gerätekarte** (Leistung jetzt groß, daneben der Ring „Eigenverbrauch (Anlage)" — eine Zahl der ganzen Anlage, keine der Wärmepumpe — und darunter Warmwasser, Zusatzheizung, Vorlauf, Rücklauf, **Spreizung** in K und Außentemperatur; neben dem Modus „Zusatzheizung aktiv", solange der Heizstab mehr als 0 W meldet), **„AZ heute"** (die Arbeitszahl des Tages mit „x kWh Wärme ÷ y kWh Strom" und je Funktion) und **„Betrieb heute"** (Stunden je Betriebsart aus der Mitschrift des Betriebsmodus-Sensors). Die Kachel **„Wärme heute“** braucht einen Wärmemengenzähler und steht, wie Vorlauf, nicht in der Zeile „Ohne Sensor …“. Gemessen werden Vorlauf und Rücklauf an der Wärmepumpe; die Kachel steht am Heizkreis, damit das Bild sagt, welche Heizflächen dein Haus hat (Fußbodenheizung typisch 30–35 °C, Heizkörper 50–70 °C) — die Karte nennt sie mit („Vorlauf (Fußbodenheizung)“). Stehen fünf oder mehr Kacheln in einer Reihe, werden die Kacheln schmaler; dann zeigt „Vorlauf · Rücklauf“ ganze Grad („34 → 29 °C“), Tooltip und Karte behalten die Nachkommastelle.
+
+> **Benannte Grenzen.** Die **Warmwasser-Temperatur** steht in der Zeile „Ohne Sensor …" unabhängig von der Bauart — auch an einer Klimaanlage ohne Warmwasser, solange ihr kein Sensor zugeordnet ist. Sie steht je Gerät; nur eine Wärmepumpe **ohne Leistungssensor** hat keinen eigenen Live-Wert — dann zeigt der Überblick, wie bisher, die Warmwasser-Temperatur der ersten Wärmepumpe mit Sensor, solange kein Gerät eine eigene liefert. Dasselbe gilt für Vorlauf, Rücklauf und Zusatzheizung: ohne Leistungssensor des Geräts erscheinen sie nicht. Eine Klimaanlage sieht im Bild auch Erdsonden und Speicher (ein Bild je Gerätetyp). Heizkreise je Raum kennt eedc nicht; die Angabe am Gerät gilt für das ganze Haus. **„Betrieb heute“** gibt es nur mit einem Betriebsmodus-Sensor aus Home Assistant oder dem Betriebsmodus über MQTT (siehe [Schritt 4](#schritt-4--betriebsart-erfassen-optional-aber-lohnend)) und erst ab Beginn der Mitschrift; Leerlauf-Stunden nennt eedc nicht — die Mitschrift zählt eine Stunde „Heizen · Leerlauf“ als Heizen.
 
 ---
 
@@ -240,6 +265,9 @@ Das ist die unangenehmste Eigenschaft dieser Fläche und zugleich ihre wichtigst
 | **Strom nicht getrennt je Funktion gemessen** | Betrifft nur die Arbeitszahlen *Heizen* und *Warmwasser*. Ein Betriebsmodus-Sensor ersetzt die getrennte Messung hier **nicht** — siehe den Kasten unter dieser Tabelle. | getrennte Strommessung einschalten und zuordnen |
 | **Wärme nicht je Funktion gemessen** | Das Gegenstück auf der Wärmeseite: Deine Wärme steht unter *Wärme gesamt*, kommt also aus **einem** Zähler über Heizung und Warmwasser. Die Menge stimmt, aber sie lässt sich nicht auf die beiden Funktionen aufteilen. | so lassen — oder einen zweiten Wärmemengenzähler setzen und dann *Heizwärme* und *Warmwasser-Wärme* getrennt pflegen |
 | **kein Kältemengenzähler zugeordnet** | Betrifft nur die Arbeitszahl *Kühlen*. | Kältemengenzähler zuordnen — oder es bleibt so |
+| **Zusatzheizung größer als der Gerätestrom** | Betrifft nur die Zahl *AZ ohne Zusatzheizung* ([Schritt 6a](#schritt-6a--strom-zusatzheizung-optional)): Der Heizstab-Zähler meldet mindestens so viel Strom wie die ganze Wärmepumpe. Ein Heizstab **hinter** dem WP-Zähler kann das nicht — vermutlich hat er einen eigenen Zähler am Hausnetz oder ist falsch zugeordnet. | Zuordnung *Strom Zusatzheizung* prüfen — ein Heizstab mit eigenem Zähler am Hausnetz gehört unter *Sonstiges* |
+| **nicht alle Geräte melden Zusatzheizung** | Nur *AZ ohne Zusatzheizung* im Cockpit: Mehrere Wärmepumpen haben Strom verbraucht, aber nicht jede hat einen Heizstab-Zähler — der Abzug wäre unvollständig. | „Strom Zusatzheizung“ an jeder Wärmepumpe zuordnen — oder jedes Gerät im Komponenten-Hub ansehen |
+| **Wärme nicht größer als die Zusatzheizung** | Ebenfalls nur *AZ ohne Zusatzheizung*: Zieht eedc die Wärme des Heizstabs ab (Strom × 1), bleibt keine Wärme der Wärmepumpe übrig. | Zuordnung *Strom Zusatzheizung* und Wärmemengenzähler prüfen |
 | **keine Kälte abgegeben in diesem Zeitraum** | Nur am **Tag**: Der Kältemengenzähler ist zugeordnet und meldet **null**, obwohl Kühlstrom geflossen ist — typisch, wenn das Gerät im Kühlmodus stand und pausierte (die Stunde zählt dann zum Kühlen, siehe *„Leerlauf behält deinen Modus"*). | nichts. **Nicht mit *kein Kältemengenzähler zugeordnet* verwechseln** — dort fehlt die Messung, hier ist sie da und sagt null |
 
 > ### ⚑ Warum ein Betriebsmodus-Sensor keine Arbeitszahl *Heizen* ergibt — die Kühlzahl aber schon
@@ -369,9 +397,9 @@ Alles läuft über **Einstellungen → Datenquellen**. Dort steht je Gerät eine
 
 | Art | Felder oben | Nicht angeboten (aber erreichbar) |
 |-----|-------------|-----------------------------------|
-| **Luft-Wasser / Sole-Wasser / Grundwasser** | Stromverbrauch, Heizwärme, Warmwasser, Wärme gesamt | Betriebsart-Zähler (Kühlen, Lüften, Entfeuchten) |
-| **Luft-Luft (Klimaanlage)** | Stromverbrauch, Wärme gesamt, Betriebsart-Zähler | Warmwasser — den Kreis gibt es dort nicht |
-| **Brauchwasser (nur Warmwasser)** | Stromverbrauch, Warmwasser, Wärme gesamt | Heizwärme, Strom Heizen |
+| **Luft-Wasser / Sole-Wasser / Grundwasser** | Stromverbrauch, Heizwärme, Warmwasser, Wärme gesamt; **kühlt** das Gerät (am Gerät *Kühlung* aktiv oder passiv eingetragen), dazu *Strom Kühlbetrieb*, *Nutzenergie Kühlbetrieb* und *Leistung Kühlen* | Betriebsart-Zähler Lüften, Entfeuchten, Heizen; ohne eingetragene Kühlung auch die drei Kühl-Felder |
+| **Luft-Luft (Klimaanlage)** | Stromverbrauch, Wärme gesamt, Betriebsart-Zähler, Leistung Kühlen | Warmwasser — den Kreis gibt es dort nicht; *Leistung Warmwasser* und *Warmwasser-Temperatur* liegen unter „Weitere Größen erfassen" |
+| **Brauchwasser (nur Warmwasser)** | Stromverbrauch, Warmwasser, Wärme gesamt | Heizwärme, Strom Heizen, Leistung Heizen; ohne eingetragene Kühlung die Kühl-Felder |
 
 > ⚑ ***Wärme gesamt* ist der Platz für EINEN gemeinsamen Wärmemengenzähler** und steht deshalb bei jeder Bauart — welche Zähler es gibt, sagt deine Anlage, nicht die Bauart. Mit **getrennten** Zählern lässt du das Feld leer und trägst *Heizwärme* und *Warmwasser-Wärme* ein; mit **einem** Zähler ist es umgekehrt.
 
@@ -477,21 +505,21 @@ Es gibt **zwei Wege**, und **gemessen schlägt abgeleitet**:
 >
 > Ein gewöhnlicher `sensor.` geht genauso, er muss aber einen dieser **Texte** liefern:
 >
-> | Home-Assistant-Schreibweise | deutsch | eedc versteht es als |
-> |---|---|---|
-> | `heat` | `heizen` | Heizen |
-> | `dhw` · `hot_water` · `water_heating` | `warmwasser` · `brauchwasser` · `trinkwasser` | Warmwasser |
-> | `cool` | `kuehlen` · `kühlen` | Kühlen |
-> | `dry` | `entfeuchten` | Entfeuchten |
-> | `fan_only` | `lueften` · `lüften` | Lüften |
-> | `off` | `aus` | Aus |
-> | `auto` · `heat_cool` | `automatik` | *unbestimmt* — das Gerät lief, die Seite ist nicht zuordenbar |
+> | Home-Assistant-Schreibweise | deutsch | Zahlencode (nur über MQTT) | eedc versteht es als |
+> |---|---|---|---|
+> | `heat` | `heizen` | `1` | Heizen |
+> | `dhw` · `hot_water` · `water_heating` | `warmwasser` · `brauchwasser` · `trinkwasser` | `2` | Warmwasser |
+> | `cool` | `kuehlen` · `kühlen` | `3` | Kühlen |
+> | `dry` | `entfeuchten` | `5` | Entfeuchten |
+> | `fan_only` | `lueften` · `lüften` | `4` | Lüften |
+> | `off` | `aus` | `0` | Aus |
+> | `auto` · `heat_cool` | `automatik` | — | *unbestimmt* — das Gerät lief, die Seite ist nicht zuordenbar |
 >
-> Groß-/Kleinschreibung ist egal.
+> Groß-/Kleinschreibung ist egal. Die **Zahlencodes** gelten **nur über MQTT** — für Steuerungen, die den Modus dort nur als Zahl schicken (siehe *„Ohne Home Assistant: der Modus über MQTT"* unten); über MQTT darf ein Code auch als `1.0` kommen. An einem Home-Assistant-Sensor ist eine Zahl kein Code (siehe unten). Dieselbe Liste steht in *Einstellungen → Datenquellen* direkt am Feld „Betriebsmodus". **Liefert dein zugeordneter Sensor einen Wert, der hier nicht steht** (etwa `heating`, `standby` oder `pool` aus einem eigenen Prioritäts-Sensor), **meldet der Daten-Checker ihn** — mit dem Wert und dieser Liste.
 >
 > ⚑ **Warmwasser kennt Home Assistant nicht als Betriebsmodus** — es führt die Trinkwassererwärmung in einer eigenen Gerätegruppe. Eine `climate`-Entität allein sagt dir also meist nur *heizen/kühlen*. Wenn deine Wärmepumpe Warmwasser macht, ist der Template-Sensor unten der Weg dorthin.
 >
-> ⛔ **Eine Zahl reicht nicht.** Manche Integrationen liefern den Modus als **Rohwert** — Viessmann zum Beispiel als `sensor.…_hk1_mode_raw` mit dem Wert `1`. Was `1` bedeutet, weiß nur dein Gerät; eedc rät es nicht und zeigt deshalb **„Unbestimmt"**. Dasselbe gilt für jeden anderen Text, den die Tabelle nicht kennt.
+> ⛔ **Eine Zahl reicht nicht.** Manche Integrationen liefern den Modus als **Rohwert** — Viessmann zum Beispiel als `sensor.…_hk1_mode_raw` mit dem Wert `1`. Was `1` bedeutet, weiß nur dein Gerät; eedc rät es nicht und zeigt deshalb **„Unbestimmt"**. Dasselbe gilt für jeden anderen Text, den die Tabelle nicht kennt. Die Zahlencodes der Tabelle gelten nur über MQTT — an einem Home-Assistant-Sensor bleibt eine Zahl ein Rohwert.
 >
 > **Der Ausweg ist ein Template-Sensor in Home Assistant**, der aus dem, was du hast, einen der Texte oben macht. Hast du **Leistungssensoren je Funktion**, brauchst du die Codierung deines Geräts gar nicht:
 >
@@ -520,6 +548,33 @@ Es gibt **zwei Wege**, und **gemessen schlägt abgeleitet**:
 > ⚠ **Das ist etwas anderes als das Feld *Strom Warmwasser***, auch wenn beide dieselbe Energie meinen können. *Strom Warmwasser* ist ein **eigener Zähler** und ein Summand: Heizen + Warmwasser ergeben zusammen deinen Gesamtverbrauch. Die Zeile im Balken ist eine **Teilmenge** des Gesamtverbrauchs, aus mitgeschriebenen Stunden. **Addiere sie nie.**
 >
 > ⚠ **Weg B wirkt nur ab jetzt.** Die Aufteilung entsteht aus mitgeschriebenen Stunden — **rückwirkend gibt es sie nicht**. Deshalb steht unter dem Balken, wie viele Stunden eedc tatsächlich mitgelesen hat.
+
+> ### Ohne Home Assistant: der Modus über MQTT
+>
+> Läuft eedc ohne Home Assistant (Standalone) oder kommt der Modus aus einer anderen Steuerung, schickst du ihn an das
+> eedc-Topic deiner Wärmepumpe:
+>
+> ```
+> eedc/<anlage-id>_<anlage>/live/inv/<geräte-id>_<gerät>/betriebsmodus  →  2
+> ```
+>
+> Als Wert gehen die Wörter **oder** die Zahlencodes aus der Tabelle oben (`0` Aus · `1` Heizen · `2` Warmwasser ·
+> `3` Kühlen · `4` Lüften · `5` Entfeuchten). Das genaue Topic steht in *Einstellungen → Datenquellen* (Liste „MQTT-Topics"
+> und am Feld „Betriebsmodus", Quelle **Inbound**). Senden bei jeder Änderung genügt — eedc hält den letzten Wert, bis ein
+> neuer kommt (retained ist empfohlen, dann kennt eedc den Modus auch gleich nach einem Neustart).
+>
+> eedc macht daraus dasselbe wie aus einem HA-Sensor: den Modus im Live-Bild, den Modus-Sensor für Home Assistant, und
+> **je abgeschlossener Stunde die Mitschrift** (Anteil der Stunde je Modus, aus 5-Minuten-Fenstern) — daraus „Strom nach
+> Betriebsart" und „Betrieb heute".
+>
+> **Benannte Grenzen:**
+> - **Nicht rückwirkend:** Die Mitschrift beginnt mit dem ersten empfangenen Wert. Home Assistant kennt die Vergangenheit, MQTT nicht.
+> - **Ab dem ersten vollen Tag:** *Cockpit → Tag* liest die Betriebsart-Aufteilung („Strom nach Betriebsart") nur aus der Mitschrift, wenn sie den ganzen Tag deckt — am Tag der Zuordnung zeigt die Tagessicht sie deshalb noch nicht, ab dem Folgetag schon. „Betrieb heute" im Hub-Überblick zählt dagegen jede mitgeschriebene Stunde sofort.
+> - **Kein „Leerlauf":** Leerlauf ist eine Messung von Home Assistant (die *Aktuelle Aktion*), kein Modus — über MQTT gibt es ihn nicht.
+> - **Broker-Ausfall:** Die Zeit ohne Verbindung bleibt eine Lücke. Verstummt nur dein Absender, während der Broker läuft, hält eedc seinen letzten Wert (wie Home Assistant ohne Verfügbarkeits-Meldung).
+> - **Kein Gateway:** Das MQTT-Gateway (ein fremdes Topic umschreiben) reicht nur Zahlen weiter und steht an diesem Feld nicht zur Wahl — publiziere direkt auf das eedc-Topic.
+> - **Keine Topic-Überwachung:** Die Prüfung „Topic sendet nicht" im Daten-Checker lässt das Modus-Topic aus — ein Modus, der sich stundenlang nicht ändert, ist kein Ausfall.
+> - **HA-Sensor geht vor:** Ist dem Gerät ein Betriebsmodus-Sensor aus Home Assistant zugeordnet, liest eedc nur ihn — und dort gelten die Zahlencodes nicht (siehe *„Eine Zahl reicht nicht"*).
 
 > ### Mehrere Innengeräte — eedc braucht **eine** Aussage über die Anlage
 >
@@ -587,6 +642,15 @@ Es gibt **zwei Wege**, und **gemessen schlägt abgeleitet**:
 > **Was weiterhin *nicht aufgeteilt* bleibt:** Leerlauf, während **keine** Richtung eingestellt
 > ist — also bei *Automatik* (`heat_cool`) oder wenn dein Gerät gar keinen Modus meldet. Dann
 > gibt es nichts, worauf eedc zurückfallen könnte, und geraten wird nicht.
+>
+> **Im Live-Bild sichtbar:** Meldet die Aktuelle Aktion **Leerlauf**, zeigen der Energiefluss
+> (*Cockpit → Live*) und der Block „Überblick" der Wärmepumpe den Modus-Chip blass — in der Kachel
+> steht „Leerlauf" (das Symbol zeigt den Modus weiter), im Tooltip und in „Auf einen Blick"
+> „Heizen · Leerlauf". Der Modus selbst bleibt „Heizen", auch im HA-Sensor und im MQTT-Topic des
+> Betriebsmodus. Kommt der Modus über MQTT herein, gibt es keinen Leerlauf — er ist eine Messung von
+> Home Assistant. ⚠ **eedc leitet keine Ruhe aus der Leistung ab:** Meldet deine Integration keine
+> Aktuelle Aktion, bleibt eine Wärmepumpe mit 8 W im Modus „Heizen" — eine Schwelle würde Ruhe aus
+> dem Messrauschen erfinden.
 
 > ### Zähler schlagen den Betriebsmodus
 >
@@ -630,7 +694,18 @@ Es gibt **zwei Wege**, und **gemessen schlägt abgeleitet**:
 
 ### Schritt 6 — Live-Werte (optional)
 
-*Leistung gesamt*, *Leistung Heizen*, *Leistung Warmwasser*, *Leistung Kühlen* (alle in W), *Warmwasser-Temperatur*, *Betriebsmodus*, *Soll-* und *Raumtemperatur*.
+*Leistung gesamt*, *Leistung Heizen*, *Leistung Warmwasser*, *Leistung Kühlen* (alle in W), *Warmwasser-Temperatur*, *Vorlauf*, *Rücklauf*, *Leistung Zusatzheizung* (W), *Betriebsmodus*, *Soll-* und *Raumtemperatur*.
+
+**Vorlauf, Rücklauf und Zusatzheizung** (im Block *Gerät gesamt*, an jeder Bauart) erscheinen im Überblick des Hubs *Komponenten → Wärmepumpe* je Gerät. Sie sind reine Anzeige: Aus der Zusatzheizungs-Leistung entsteht **keine** Menge, und sie wird zu keiner Summe addiert — sie ist ein Teil der Geräteleistung. **Stündliche Mittelwerte:** Trägt der Sensor in Home Assistant `state_class: measurement`, übernimmt eedc seine Stundenmittel aus der Langzeitstatistik von Home Assistant — **rückwirkend, so weit diese Statistik zurückreicht**, nicht erst ab der Zuordnung. Fehlt das `state_class`, sagt es der [Daten-Checker](HANDBUCH_DATEN_CHECKER.md#415a-sensor-ohne-langzeitstatistik) („Live ja, Tagesverlauf nein").
+
+> **MQTT und Standalone — die Stundenmittel aus der eigenen Mitschrift.** Kommen diese Werte über MQTT (Quelle **Inbound** in *Einstellungen → Datenquellen*, Topics `…/live/inv/<geräte-id>_<gerät>/vorlauf_temperatur_c`, `ruecklauf_temperatur_c`, `warmwasser_temperatur_c`, `heizstab_leistung_w`, `leistung_w` …), schreibt eedc die Stundenmittel selbst: Alle 5 Minuten hält es das **zeitgewichtete Mittel** des Fensters fest (ein Wert gilt bis zur nächsten Nachricht — senden bei jeder Änderung genügt), daraus entsteht je abgeschlossener Stunde Mittel, Minimum und Maximum — dasselbe, was Home Assistant aus seinen 5-Minuten-Statistiken macht. Damit gibt es auch ohne Home Assistant das Temperatur-Diagramm, Ø Vorlauf und Ø Spreizung. Dasselbe gilt in der Home-Assistant-App für ein Gerät, das seine Werte nur über MQTT schickt (Mischform): seine Leistung erscheint dann auch im Tagesverlauf in *Cockpit → Live*, neben den Geräten aus Home Assistant ([Bedienung → Live](HANDBUCH_BEDIENUNG.md#21-live)).
+>
+> **Benannte Grenzen:**
+> - **Nicht rückwirkend:** Die Mitschrift beginnt mit der Zuordnung (dem ersten empfangenen Wert); Tage davor bleiben ohne Stundenmittel. Home Assistant kennt die Vergangenheit, MQTT nicht.
+> - **Ab dem ersten vollen Tag:** Ø Vorlauf und Ø Spreizung im Kopf des Temperatur-Diagramms brauchen die Betriebsstunden aus Zähler und Mitschrift des ganzen Tages — am Tag der Zuordnung bleiben sie leer, die Stundenwerte des Diagramms stehen ab der ersten vollen Stunde.
+> - **Auflösung 5 Minuten:** Jede 5-Minuten-Zeile gehört zu der Stunde, in der sie endet.
+> - **Broker-Ausfall:** Die Zeit ohne Verbindung bleibt eine Lücke — die Stunde ist dann das Mittel der übrigen Minuten, nichts wird aufgefüllt. Verstummt nur dein Absender, während der Broker läuft, hält eedc seinen letzten Wert.
+> - **HA-Sensor geht vor:** Ist dem Feld ein Sensor aus Home Assistant zugeordnet, gilt nur er — auch wenn er keine Langzeitstatistik hat und dasselbe Topic über MQTT kommt (dann meldet der Daten-Checker ihn). Ein Kanal bekommt nie Werte aus zwei Quellen zugleich.
 
 Die Leistungsfelder erscheinen in *Cockpit → Live*: Unter dem Gerät steht *Leistung gesamt*, und wo du sie nicht misst, die Summe der Betriebsarten — das Symbol wechselt dann mit der stärksten von ihnen. Im Tagesverlauf bekommt jede gemessene Betriebsart ihre eigene Fläche. **Mengen entstehen daraus nicht** — Stromverbrauch, Wärme, Kälte und alle Arbeitszahlen kommen aus den kWh-Zählern.
 
@@ -663,6 +738,20 @@ Die Leistungsfelder erscheinen in *Cockpit → Live*: Unter dem Gerät steht *Le
 > ⚑ **Was diese Wahl berührt — und was nicht.** Deine **Mengen** kommen aus den kWh-Zählern und bleiben unberührt: Stromverbrauch, Wärme, Kosten, CO₂, Ersparnis und die **Arbeitszahlen für Heizen, Warmwasser und gesamt**. Die **Aufteilung nach Betriebsart** entsteht dagegen aus dem Leistungspfad — eedc liest dort die *Form* der Stunden ab und legt die Zählermenge darauf. Welchen Leistungssensor du zuordnest, kann deshalb verschieben, wie viel Strom dem Heizen, Kühlen oder Warmwasser zugerechnet wird, und damit auch die **Arbeitszahl Kühlen** (ihr Nenner ist genau dieser Anteil). Wenn dein Gerät im Kühlbetrieb läuft und du nur *Leistung Heizen* und *Leistung Warmwasser* zugeordnet hast, tragen die Kühlstunden im Leistungspfad nichts — ordne dann **Leistung Kühlen** dazu (oder statt der Aufteilung **Leistung gesamt**).
 
 > ⛔ **Watt ist keine Kilowattstunde.** Ein Leistungssensor gehört **nie** in ein kWh-Feld. Die Stundenwerte eines Leistungssensors ergeben zwar eine plausible Zahl — sie speist aber nicht die Zählerpfade, aus denen der Block *Wärme/Klima* entsteht. Liefert dein Gerät **nur** Leistung, baue in Home Assistant unter *Helfer → Integral-Sensor* (Riemannsche Summe) einen kWh-Zähler daraus.
+
+### Schritt 6a — Strom Zusatzheizung (optional)
+
+Viele Wärmepumpen haben einen **Heizstab** (Zusatz- oder Notheizung) eingebaut, der hinter ihrem Stromzähler hängt: Sein Strom steckt im Stromverbrauch der Wärmepumpe, seine Wärme im Wärmemengenzähler. Die Arbeitszahl, die eedc zeigt, beschreibt deshalb die **ganze Anlage** samt Heizstab — und bleibt die Hauptzahl (siehe [§3](#3-was-eedc-bewusst-nicht-sagt): eine Zahl nahe 1 ist kein Fehler).
+
+Misst du den Heizstab-Strom zusätzlich als **kumulativen kWh-Zähler**, ordne ihn dem Feld **Strom Zusatzheizung** zu (Block *Gerät gesamt*, an jeder Bauart). Dann zeigt eedc **daneben** eine zweite Zahl, **„AZ ohne Zusatzheizung“**: Wärme und Strom der Hauptzahl, beide um den Heizstab-Strom gekürzt — der Heizstab wandelt Strom 1 : 1 in Wärme. Sie steht in *Cockpit → Tag*, *Monat* und *Jahr* unter **Je Funktion** („davon Zusatzheizung 0,4 kWh · AZ ohne Zusatzheizung 4,57 (gerechnet)“), im Hub *Komponenten → Wärmepumpe* als Kennzahl mit der Rechnung beim Überfahren und in der **Monatstabelle** als eigene Spalte. „gerechnet“ heißt: Die Zahl ist abgeleitet, nicht gemessen.
+
+- **Nichts sonst ändert sich.** Stromverbrauch, Wärme, Kosten, Ersparnis, CO₂, die Community-Werte und die Sensoren in Home Assistant bleiben, wie sie sind — der Heizstab-Strom ist ein Teil des Gerätestroms und wird nie dazugezählt.
+- **Nur mit Zähler.** Aus der *Leistung Zusatzheizung* (W) rechnet eedc keine Menge hoch. Liefert dein Gerät nur die Leistung, baue in Home Assistant unter *Helfer → Integral-Sensor* (Riemannsche Summe) einen kWh-Zähler daraus; ein Zähler mit täglichem Reset ist kein kumulativer Zähler.
+- **Eigener Zähler am Hausnetz?** Dann ist der Heizstab ein eigener Verbraucher (*Sonstiges*), und dieses Feld bleibt leer. Ist der Heizstab-Strom größer als der Gerätestrom, sagt es die Zahl („Zusatzheizung größer als der Gerätestrom“).
+- **Mehrere Wärmepumpen:** Im Cockpit rechnet eedc über die ganze Anlage. Die Zahl gibt es dort nur, wenn **jede** Wärmepumpe, die im Zeitraum **Heiz- oder Warmwasserstrom** verbraucht hat (Strom nach Abzug von Kühlen, Lüften und Entfeuchten — in Tag, Monat und Jahr nach derselben Regel), einen Heizstab-Zähler trägt — sonst steht „nicht alle Geräte melden Zusatzheizung“, und die Kilowattstunden des Heizstabs stehen trotzdem da. Im Komponenten-Hub hat jedes Gerät seine eigene Zahl.
+- **Erbt die Gründe der Hauptzahl.** Gibt es die Arbeitszahl nicht (z. B. Fremdanteil auf dem Zähler, Wärme gerechnet), gibt es auch die zweite Zahl nicht — mit demselben Grund. Eine Zahl mit „≥“ (Systemarbeitszahl als untere Schranke) bekommt keine zweite.
+
+> **Benannte Grenzen der Zahl ohne Zusatzheizung.** (1) Im **laufenden Monat** ohne Monatsabschluss zeigt *Cockpit → Monat* die Zeile noch nicht — die Tagesebene führt den Heizstab-Zähler nicht, erst der Monatsabschluss (oder der Kanal-Monat) trägt ihn. (2) Die Hauptzahl kann in Monat und Jahr aus der Vier-Quellen-Auflösung kommen (gepflegt, gemessen, Kanal, Bestand), der Heizstab kommt immer aus den Monats-Fakten; beide beschreiben denselben Zeitraum, aber nicht zwingend dieselbe Quelle. (3) Ordnest du den Zähler **mitten im Zeitraum** zu, zählt der Heizstab nur die Monate mit Zähler: Die Zahl ohne Zusatzheizung liegt dann zwischen der Hauptzahl und dem wahren Wert ohne Heizstab, bis der Zeitraum ganz gedeckt ist.
 
 ### Schritt 7 — Den Daten-Checker fragen
 

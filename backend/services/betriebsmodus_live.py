@@ -22,12 +22,18 @@ hingesehen", `unbestimmt` heißt „hingesehen, Seite nicht zuordenbar"
 (`core/betriebsmodus.normalisiere_betriebsmodus`, ADR-002/P4). Wer die beiden
 zusammenwirft, macht aus einer fehlenden Zuordnung eine Aussage über das Gerät.
 
-⚠ **Der Modus kommt heute nur aus Home Assistant.** Der 5-Sekunden-Live-Pfad kann
-ihn nicht liefern (`live_sensor_config.py` schließt Zustandsfelder aus — dort
-landet jeder Wert in `normalize_to_w(float(state))`), und über MQTT-Inbound gibt
-es ihn nicht (`mqtt_topic_registry.py`: ein Zustandsfeld bekommt bewusst **kein**
-Topic, weil der Inbound-Parser `float(payload)` ist). Wer MQTT-only fährt, hat
-keinen Modus — und bekommt dann auch keinen Sensor statt einer erfundenen Null.
+⚠ **Zwei Quellen, eine Regel: Home Assistant, sonst MQTT** (HA-Bauform §9,
+Standalone-Gleichstand S1, 25.10.2026). Der 5-Sekunden-Live-Pfad liefert den Modus
+nicht (`live_sensor_config.py` schließt Zustandsfelder aus — dort landet jeder Wert
+in `normalize_to_w(float(state))`). Gelesen wird er hier: aus HA für jedes Gerät mit
+einer Modus-Entität im ``live``-Block (`_erhebe_ha`), aus dem MQTT-Inbound-Cache für
+jedes **übrige** Gerät (`_erhebe_mqtt`: Topic `…/live/inv/<id>/betriebsmodus`,
+Kanon-Wort oder Zahlencode). **HA gewinnt über die ``live``-Entität, nie über einen
+``quellen``-Eintrag** — der B8-Stempel `mqtt_inbound_standard` liegt auf jedem Feld
+ohne HA-Sensor und sagt nichts über HA. Eine ausdrückliche Wahl «keine» schließt
+MQTT aus wie im Leistungspfad (C2a). Über MQTT gibt es keine Aktion (kein
+«Leerlauf», E-SG-2). Wer weder HA-Modus noch MQTT-Topic hat, hat keinen Modus —
+und bekommt dann auch keinen Sensor statt einer erfundenen Null.
 
 ⚠ **`hvac_action` VERFEINERT den eingestellten Modus, wo sie da ist** — dieselbe
 Vorrangregel wie im Historien-Zweig. Sie schlägt ihn, wo sie eine **Richtung**
@@ -47,7 +53,14 @@ from typing import Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.core.betriebsmodus import modus_quelle, normalisiere_betriebsmodus
+from backend.core.betriebsmodus import (
+    MODUS_FELD_KEY,
+    betriebsmodus_aktion,
+    modus_aus_zustaenden,
+    modus_quelle,
+    normalisiere_betriebsmodus,
+)
+from backend.core.field_definitions import basis_feld_key
 from backend.models.investition import Investition
 from backend.utils.investition_filter import aktiv_jetzt
 
@@ -80,10 +93,11 @@ logger = logging.getLogger(__name__)
 # 5-Sekunden-Abrufliste. Der Ausschluss dort war richtig und bleibt.
 _TAKT_SEKUNDEN = 60.0
 
-#: ``anlage_id → (monotone Zeit, Ergebnis)``. Bewusst HIER und nicht beim
-#: Aufrufer: ein Caller, der den Takt selbst wählen müsste, wählt ihn früher
-#: oder später falsch — und dann ist der Entscheid oben wieder offen.
-_cache: dict[int, tuple[float, dict[int, str]]] = {}
+#: ``anlage_id → (monotone Zeit, Kanon je Gerät, Aktion je Gerät)``. Bewusst HIER
+#: und nicht beim Aufrufer: ein Caller, der den Takt selbst wählen müsste, wählt
+#: ihn früher oder später falsch — und dann ist der Entscheid oben wieder offen.
+#: Die Aktion (P-433-1, «Leerlauf») kommt aus DEMSELBEN Abruf: kein zweiter Takt.
+_cache: dict[int, tuple[float, dict[int, str], dict[int, str]]] = {}
 
 
 def cache_leeren() -> None:
@@ -143,18 +157,40 @@ async def lade_betriebsmodus_live(
     Returns:
         ``{investition_id: Kanon-Wert}`` aus `BETRIEBSMODUS_KANON`.
     """
+    return (await _im_takt(db, anlage))[0]
+
+
+async def lade_betriebsmodus_aktion_live(
+    db: AsyncSession, anlage
+) -> dict[int, str]:
+    """Die gemessene Aktion je Gerät neben dem Kanon-Wert — ``{investition_id: "leerlauf"}``.
+
+    P-433-1 (Konzept #433 E6): `idle` lässt den Kanon-Wert stehen (#399) und
+    erscheint in den Live-Sichten als Zusatz «· Leerlauf». ⛔ **Nur für die
+    Anzeige** — HA-Sensor und MQTT-Topic lesen `lade_betriebsmodus_live` und
+    sehen den Kanon-Wert unverändert. Derselbe Abruf, derselbe 60-s-Takt.
+    """
+    return (await _im_takt(db, anlage))[1]
+
+
+async def _im_takt(db: AsyncSession, anlage) -> tuple[dict[int, str], dict[int, str]]:
+    """Kanon und Aktion je Gerät aus dem Takt-Cache, sonst frisch erhoben."""
     jetzt = time.monotonic()
     treffer = _cache.get(anlage.id)
     if treffer is not None and (jetzt - treffer[0]) < _TAKT_SEKUNDEN:
-        return treffer[1]
+        return treffer[1], treffer[2]
 
-    ergebnis = await _erhebe(db, anlage)
-    _cache[anlage.id] = (jetzt, ergebnis)
-    return ergebnis
+    modi, aktionen = await _erhebe(db, anlage)
+    _cache[anlage.id] = (jetzt, modi, aktionen)
+    return modi, aktionen
 
 
-async def _erhebe(db: AsyncSession, anlage) -> dict[int, str]:
-    """Die eigentliche Erhebung — ohne Takt, damit der Takt eine Stelle hat."""
+async def _erhebe(db: AsyncSession, anlage) -> tuple[dict[int, str], dict[int, str]]:
+    """Die eigentliche Erhebung — ohne Takt, damit der Takt eine Stelle hat.
+
+    Erst die Geräte mit HA-Modus-Entität (`_erhebe_ha`), dann die übrigen über MQTT
+    (`_erhebe_mqtt`). Ein HA-Gerät fällt nie auf MQTT zurück, auch nicht ohne HA.
+    """
     result = await db.execute(
         select(Investition.id).where(
             Investition.anlage_id == anlage.id,
@@ -164,25 +200,87 @@ async def _erhebe(db: AsyncSession, anlage) -> dict[int, str]:
     )
     inv_ids = set(result.scalars().all())
     if not inv_ids:
-        return {}
+        return {}, {}
 
     entity_map = _entity_zu_investitionen(anlage.sensor_mapping, inv_ids)
-    if not entity_map:
+    modi, aktionen = await _erhebe_ha(entity_map)
+    ha_ids = {inv_id for ids in entity_map.values() for inv_id in ids}
+    modi.update(_erhebe_mqtt(anlage, inv_ids - ha_ids))
+    return modi, aktionen
+
+
+#: Die ``quellen``-Wahlen, unter denen der Modus aus dem Inbound-Cache gelesen wird.
+_QUELLEN_MQTT: frozenset[str] = frozenset({"mqtt_inbound_standard", "mqtt_gateway"})
+
+
+def mqtt_modus_geraete(anlage, inv_ids: set[int]) -> set[int]:
+    """Die Geräte unter ``inv_ids``, deren Modus aus MQTT kommen darf — die eine Regel für Live und Mitschrift.
+
+    Ausgeschlossen: ein Gerät mit HA-Modus-Entität im ``live``-Block (`modus_quelle`, HA gewinnt) und ein Gerät,
+    dessen Modus-Feld per ``quellen`` ausdrücklich auf HA oder «keine» steht (C2a, wie
+    `live_power_service._apply_quellen_overrides`). Kein Eintrag oder Inbound/Gateway ⇒ MQTT.
+    """
+    from backend.services.live_sensor_config import extract_quellen_live
+
+    _qb, quellen_inv, _ha = extract_quellen_live(anlage)
+    mapping = anlage.sensor_mapping if isinstance(anlage.sensor_mapping, dict) else {}
+    invs = mapping.get("investitionen") or {}
+    out: set[int] = set()
+    for inv_id in inv_ids:
+        eintrag = invs.get(str(inv_id))
+        if isinstance(eintrag, dict) and modus_quelle(eintrag.get("live")) is not None:
+            continue
+        gewaehlt = {
+            tup[0] for key, tup in (quellen_inv.get(str(inv_id)) or {}).items()
+            if basis_feld_key(key) == MODUS_FELD_KEY
+        }
+        if gewaehlt - _QUELLEN_MQTT:
+            continue
+        out.add(inv_id)
+    return out
+
+
+def _erhebe_mqtt(anlage, inv_ids: set[int]) -> dict[int, str]:
+    """Der Modus der Geräte ohne HA-Modus aus dem MQTT-Inbound-Cache (HA-Bauform §9, S1-4).
+
+    Mehrere Modus-Keys eines Geräts (Innengeräte-Suffix): gleicher Kanon-Wert ⇒ eine Aussage,
+    verschiedene ⇒ das Gerät fehlt (`modus_aus_zustaenden`, N-340). Keine Aktion.
+    """
+    if not inv_ids:
         return {}
+    from backend.services.mqtt_inbound_service import get_mqtt_inbound_service
+
+    svc = get_mqtt_inbound_service()
+    if svc is None:
+        return {}
+    werte = svc.cache.get_all_live_inv(anlage.id)
+    ergebnis: dict[int, str] = {}
+    for inv_id in mqtt_modus_geraete(anlage, inv_ids):
+        modus = modus_aus_zustaenden(werte.get(str(inv_id)))
+        if modus is not None:
+            ergebnis[inv_id] = modus
+    return ergebnis
+
+
+async def _erhebe_ha(entity_map: dict[str, list[int]]) -> tuple[dict[int, str], dict[int, str]]:
+    """Modus und Aktion der Geräte mit HA-Modus-Entität — ohne Entität kein HA-Abruf."""
+    if not entity_map:
+        return {}, {}
 
     from backend.services.ha_state_service import get_ha_state_service
 
     ha_service = get_ha_state_service()
     if not ha_service.is_available:
-        return {}
+        return {}, {}
 
     try:
         zustaende = await ha_service.get_zustand_states_batch(list(entity_map))
     except Exception as e:  # pragma: no cover — Soft-fail, die Sicht bleibt ohne Modus
         logger.warning("Betriebsmodus (live) nicht lesbar: %s", e)
-        return {}
+        return {}, {}
 
     ergebnis: dict[int, str] = {}
+    aktionen: dict[int, str] = {}
     for entity, ids in entity_map.items():
         roh = zustaende.get(entity)
         if not roh:
@@ -190,6 +288,9 @@ async def _erhebe(db: AsyncSession, anlage) -> dict[int, str]:
         modus = normalisiere_betriebsmodus(*roh)
         if modus is None:
             continue
+        aktion = betriebsmodus_aktion(modus, roh[1])
         for inv_id in ids:
             ergebnis[inv_id] = modus
-    return ergebnis
+            if aktion is not None:
+                aktionen[inv_id] = aktion
+    return ergebnis, aktionen

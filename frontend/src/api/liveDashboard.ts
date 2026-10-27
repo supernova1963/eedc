@@ -20,6 +20,13 @@ export interface LiveKomponente {
    */
   betriebsmodus?: string | null
   betriebsmodus_label?: string | null
+  /**
+   * P-433-1 (Konzept #433 E6): die gemessene Aktion NEBEN dem Kanon-Wert — heute nur
+   * `leerlauf` aus `hvac_action: idle`. Der Kanon-Wert bleibt (`heizen` bleibt `heizen`);
+   * der Klartext kommt wie beim Modus vom Backend. Anzeige: `ui/ModusChip.tsx::modusKlartext`.
+   */
+  betriebsmodus_aktion?: 'leerlauf' | null
+  betriebsmodus_aktion_label?: string | null
   // ── #341/#348: Merkmale für die Gruppierung im Energiefluss (Bau A) ──
   // Reine Anreicherung, alle optional: fehlen sie (älteres Backend), fällt die
   // Gruppierung auf ihre letzte Stufe. Leser: `components/live/energieFlussLayout.ts`.
@@ -39,6 +46,19 @@ export interface LiveKomponente {
   fahrzeuge?: LiveFahrzeug[] | null
   /** Nur `wallbox_*`: „eindeutig" bei genau einer live liefernden Wallbox, sonst „geschaetzt". */
   fahrzeuge_zuordnung?: 'eindeutig' | 'geschaetzt' | null
+  // ── P-433-3 S1 (#432): Gerätewerte einer Wärmepumpe — reine Anzeige (Hub-Überblick) ──
+  // Nur `waermepumpe_*`, `null`/fehlend ohne Zuordnung. Das anlagenweite
+  // `warmwasser_temperatur_c` der Antwort bleibt daneben (erste WP mit Wert).
+  /** Vorlauftemperatur in °C. */
+  vorlauf_c?: number | null
+  /** Rücklauftemperatur in °C. */
+  ruecklauf_c?: number | null
+  /** Spreizung Vorlauf − Rücklauf in K — vom Backend gerechnet (Layer `temperatur.spreizung_k`), der Client zeigt sie nur. */
+  spreizung_k?: number | null
+  /** Warmwasser-Temperatur DIESES Geräts in °C. */
+  warmwasser_c?: number | null
+  /** Leistung der Zusatzheizung (Heizstab) in W — ein Teil von `verbrauch_kw`, nie dazu addiert. */
+  heizstab_w?: number | null
 }
 
 /**
@@ -83,6 +103,11 @@ export interface LiveDashboardResponse {
   summe_erzeugung_kw: number
   summe_verbrauch_kw: number
   summe_pv_kw: number
+  /**
+   * P-433-1 (Konzept #433 E7 a): was das Haus jetzt verbraucht — Σ Quellen − Einspeisung
+   * − Σ Speicherladung − Abgabe. `null`/fehlend ohne Netzwert (oder älteres Backend).
+   */
+  verbrauch_gesamt_kw?: number | null
 
   gauges: LiveGauge[]
 
@@ -245,6 +270,8 @@ export interface MqttTopic {
   beschreibung?: string | null
   anlage: string
   typ: string
+  /** Zustand statt Zahl (Betriebsmodus, HA-Bauform §9). */
+  zustand?: boolean
 }
 
 export interface MqttTopicsResponse {
@@ -253,7 +280,8 @@ export interface MqttTopicsResponse {
 
 export interface MqttCacheWert {
   topic: string
-  wert: number
+  /** Zahl; ein Zustandsfeld (Betriebsmodus) trägt den rohen Text (HA-Bauform §9). */
+  wert: number | string
   zeitpunkt: string
   kategorie: 'live' | 'energy'
 }

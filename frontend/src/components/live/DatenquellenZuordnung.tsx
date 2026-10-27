@@ -9,6 +9,11 @@
  * mit einer Feld-Tabelle in 3 Abschnitten nach Einheit: Energie (kWh) · Leistung
  * (W) · Sonstige.
  *
+ * **Wärmepumpe: Blöcke nach Betriebsart** (P-433-2 S2, Variante C #431): statt der Abschnitte nach
+ * Einheit je ein Block «Gerät gesamt» · «Heizen» · «Warmwasser» · «Kühlen» · «Lüften» · «Entfeuchten»
+ * mit Status im Kopf; Blockbildung und Status stehen als reine Funktionen in
+ * `datenquellenBetriebsart.ts`. Die Feld-Zeile und «Weitere Größen erfassen» bleiben dieselben.
+ *
  * Pro Feld genau EINE Quelle (§2d). Drei Quellen-Buttons ersetzen das alte Select:
  * HA-Sensor (Supervisor ODER Remote-Token, transparent — Schritt B) · MQTT-Gateway
  * (vorhandener Picker) · MQTT-Inbound (Standard-Topic, direkt). Aktiver Button =
@@ -22,9 +27,10 @@
  * fälschlich amber (§2b1).
  */
 import { useState, useEffect, useCallback, useMemo } from 'react'
+import { Link } from 'react-router-dom'
 import type { LucideIcon } from 'lucide-react'
 import { Gauge, Home, Waypoints, Rss, Info, Ban, ArrowUpDown, AlertTriangle, ChevronRight, ChevronDown } from 'lucide-react'
-import { Alert, Button } from '../ui'
+import { Alert, Button, Card } from '../ui'
 import FormSection from '../ui/FormSection'
 import { BlockShell } from '../blocks/BlockShell'
 import type { Block } from '../blocks/types'
@@ -41,16 +47,46 @@ import { formatDatum } from '../../lib/datum'
 import { plural, mitAnzahl } from '../../lib/plural'
 import { TYP_ICON_STYLE } from '../../pages/InvestitionenTeile'
 import {
+  betriebsartBloecke, blockStatus, investitionIdDerGruppe, statusAufschluesselung, statusKontext,
+} from './datenquellenBetriebsart'
+import { funktionsKopf } from '../../lib/funktionsFarben'
+import {
   datenquellenApi,
   VERBINDUNG_GEAENDERT_EVENT,
   type DatenquelleGruppe,
   type DatenquelleFeld,
+  type BetriebsmodusWerteGruppe,
   type DatenquellenVerfuegbarkeit,
   type GatewayQuelleConfig,
   type HistorieHinweis,
 } from '../../api/datenquellen'
 
 const VERFUEGBARKEIT_DEFAULT: DatenquellenVerfuegbarkeit = { ha: false, ha_quelle: null, mqtt: false }
+
+/** Ziel der Werte-Tabelle des Betriebsmodus (Handbuch Wärme & Klima, Schritt 4, Weg B). */
+const HANDBUCH_BETRIEBSMODUS_WERTE = '/hilfe?doc=waerme-klima#welchen-sensor-eedc-lesen-kann'
+
+/**
+ * P-433-0 (Konzept #433 E12): die Werte, die eedc am Feld „Betriebsmodus“
+ * versteht — **sichtbar am Feld**, nicht hinter dem Info-Knopf, weil der
+ * Anwender seinen Template-Sensor danach baut. Die Liste kommt fertig aus dem
+ * Backend (Kanon `core/betriebsmodus.py`); hier wird nur gesetzt.
+ */
+function ZulaessigeWerte({ gruppen }: { gruppen: BetriebsmodusWerteGruppe[] }) {
+  const verstanden = gruppen.filter((g) => g.kanon !== 'unbestimmt')
+  const unbestimmt = gruppen.find((g) => g.kanon === 'unbestimmt')
+  return (
+    <p className="mt-1 max-w-prose text-xs text-gray-500 dark:text-gray-400">
+      <span className="font-medium">eedc versteht:</span>{' '}
+      {verstanden.map((g) => `${g.label} (${g.werte.join(', ')})`).join(' · ')}
+      {unbestimmt && `; als unbestimmt gezählt: ${unbestimmt.werte.join(', ')}`}
+      {'. Andere Werte zählen als unbestimmt — '}
+      <Link to={HANDBUCH_BETRIEBSMODUS_WERTE} className="text-primary-700 dark:text-primary-300 hover:underline">
+        Werte-Tabelle im Handbuch
+      </Link>
+    </p>
+  )
+}
 
 // Quell-Kennungen (SoT backend datenquellen.py). HA-Sensor deckt beide HA-Wege
 // (ha_app = Supervisor, ha_connector = Remote-Token) → EINE Spalte (§2b1).
@@ -88,6 +124,9 @@ const ERWEITERT_HINWEIS =
   'Diese Größen gibt es an diesem Gerätetyp selten — eedc erwartet sie nicht. '
   + 'Wer einen passenden Zähler hat, ordnet ihn hier zu; ab dann steht die Größe '
   + 'oben bei den anderen.'
+/** Typ, dessen Geräte nach Betriebsart statt nach Einheit gegliedert werden (Variante C). */
+const TYP_NACH_BETRIEBSART = 'waermepumpe'
+
 function abschnittVon(einheit: string): Abschnitt {
   if (einheit === 'kWh') return 'kwh'
   if (einheit === 'W') return 'w'
@@ -370,6 +409,7 @@ export default function DatenquellenZuordnung() {
           }`}>
             {istText}
           </div>
+          {f.zulaessige_werte && f.zulaessige_werte.length > 0 && <ZulaessigeWerte gruppen={f.zulaessige_werte} />}
           {hinweisOffen && f.hinweis && (
             <p className={`mt-1 max-w-prose text-xs ${offenePflicht ? STATUS_TEXT_CLASS.kritisch : 'text-gray-500 dark:text-gray-400'}`}>
               {f.hinweis}
@@ -452,7 +492,9 @@ export default function DatenquellenZuordnung() {
             neu wählbar (ohne Verbindung sinnlos); umschaltbar bleibt „Keine".
             Zusätzlich feldbezogen: `nur_ha` (Preis-Felder) blendet MQTT aus —
             eedc liest sie ausschließlich als HA-Sensor, ein Gateway-Eintrag
-            wäre ein Versprechen ohne Leser (Backend riegelt gleichlautend ab). */}
+            wäre ein Versprechen ohne Leser (Backend riegelt gleichlautend ab).
+            `zustand` (Betriebsmodus, HA-Bauform §9) blendet nur das Gateway aus:
+            es reicht Zahlen weiter, kein Zustandswort — Inbound bleibt. */}
         <div className="flex flex-wrap items-center gap-1.5 sm:flex-nowrap sm:flex-shrink-0">
           {verfuegbarkeit.ha && (
             <QuelleButton
@@ -463,7 +505,7 @@ export default function DatenquellenZuordnung() {
               onClick={() => waehleHa(f)}
             />
           )}
-          {verfuegbarkeit.mqtt && !f.nur_ha && (
+          {verfuegbarkeit.mqtt && !f.nur_ha && !f.zustand && (
             <QuelleButton
               icon={Waypoints}
               label="Gateway"
@@ -494,26 +536,12 @@ export default function DatenquellenZuordnung() {
     )
   }
 
-  // Feld-Abschnitte (kWh/W/Sonstige) — leere Abschnitte weglassen. Danach die
-  // vierte Stufe: „Weitere Größen erfassen" (R1, s. ERWEITERT_TITEL).
-  const abschnitte = (gruppeId: string, felder: DatenquelleFeld[]) => {
-    const buckets: Record<Abschnitt, DatenquelleFeld[]> = { kwh: [], w: [], sonstige: [] }
-    const erweitert: DatenquelleFeld[] = []
-    for (const f of felder) {
-      if (f.erweitert) erweitert.push(f)
-      else buckets[abschnittVon(f.einheit)].push(f)
-    }
+  // Die vierte Stufe: „Weitere Größen erfassen" (R1, s. ERWEITERT_TITEL) — dieselbe für
+  // Einheiten-Abschnitte und Betriebsart-Blöcke.
+  const erweiterung = (gruppeId: string, erweitert: DatenquelleFeld[]) => {
     const offen = offeneErweiterung.has(gruppeId)
     return (
       <>
-        {ABSCHNITT_ORDER.filter((k) => buckets[k].length > 0).map((k) => (
-          <div key={k}>
-            <div className="pt-2 pb-0.5 text-xs font-medium uppercase tracking-wide text-gray-400 dark:text-gray-500">
-              {ABSCHNITT_TITEL[k]}
-            </div>
-            <div className="divide-y divide-gray-100 dark:divide-gray-800">{buckets[k].map(feldZeile)}</div>
-          </div>
-        ))}
         {erweitert.length > 0 && (
           <div>
             <Button
@@ -536,6 +564,78 @@ export default function DatenquellenZuordnung() {
           </div>
         )}
       </>
+    )
+  }
+
+  // Feld-Abschnitte (kWh/W/Sonstige) — leere Abschnitte weglassen. Danach die
+  // vierte Stufe: „Weitere Größen erfassen" (R1, s. ERWEITERT_TITEL).
+  const abschnitte = (gruppeId: string, felder: DatenquelleFeld[]) => {
+    const buckets: Record<Abschnitt, DatenquelleFeld[]> = { kwh: [], w: [], sonstige: [] }
+    const erweitert: DatenquelleFeld[] = []
+    for (const f of felder) {
+      if (f.erweitert) erweitert.push(f)
+      else buckets[abschnittVon(f.einheit)].push(f)
+    }
+    return (
+      <>
+        {ABSCHNITT_ORDER.filter((k) => buckets[k].length > 0).map((k) => (
+          <div key={k}>
+            <div className="pt-2 pb-0.5 text-xs font-medium uppercase tracking-wide text-gray-400 dark:text-gray-500">
+              {ABSCHNITT_TITEL[k]}
+            </div>
+            <div className="divide-y divide-gray-100 dark:divide-gray-800">{buckets[k].map(feldZeile)}</div>
+          </div>
+        ))}
+        {erweiterung(gruppeId, erweitert)}
+      </>
+    )
+  }
+
+  // P-433-2 (Variante C, #431): eine Wärmepumpe nach Betriebsart — Block je Betriebsart mit Status im
+  // Kopf, darin dieselbe Feld-Zeile; erweiterte Felder bleiben in „Weitere Größen erfassen".
+  // P-433-2c C-6 (Mockup «Datenquellen Wärmepumpe Variante C»): jeder Block ist eine Karte mit getönter Kopfzeile in
+  // der Farbe seiner Betriebsart (`funktionsKopf`, «Gerät gesamt» neutral); Feld-Zeile und Status unverändert. Unter den
+  // Karten sagt eine Zeile, woher die Betriebsarten kommen — mit dem Weg zur Investition.
+  const betriebsartAbschnitte = (g: DatenquelleGruppe) => {
+    const ctx = statusKontext(g)
+    const invId = investitionIdDerGruppe(g)
+    return (
+      <div className="space-y-3 pt-2">
+        {betriebsartBloecke(g).map((b) => {
+          const st = blockStatus(b, ctx)
+          return (
+            <Card key={b.betriebsart} padding="none" className="overflow-hidden">
+            <div data-betriebsart={b.betriebsart} data-block={b.betriebsart}>
+              <div
+                className={`flex items-baseline justify-between gap-2 px-3 py-2 border-b border-gray-200 dark:border-gray-700 ${funktionsKopf(b.betriebsart)}`}
+                data-block-kopf
+              >
+                <span className="text-sm font-medium text-gray-700 dark:text-gray-200">{b.titel}</span>
+                {st && (
+                  <span
+                    className={`text-xs ${st.zeichen === '●' ? STATUS_TEXT_CLASS.ok : 'text-gray-500 dark:text-gray-400'}`}
+                    title={statusAufschluesselung(b.alleFelder.filter((f) => f.menge != null && !f.erweitert))}
+                    data-blockstatus
+                  >
+                    {st.zeichen ? `${st.zeichen} ` : ''}{st.text}
+                  </span>
+                )}
+              </div>
+              <div className="divide-y divide-gray-100 dark:divide-gray-800 px-3">{b.felder.map(feldZeile)}</div>
+            </div>
+            </Card>
+          )
+        })}
+        <p className="text-xs text-gray-500 dark:text-gray-400" data-betriebsart-fusszeile>
+          Welche Betriebsarten ein Gerät hat (Heizen, Warmwasser, Kühlen, Lüften …), folgt aus der Investition: Art und
+          Funktionen unter{' '}
+          {invId != null
+            // Hash-Link wie `EditLink` im Hub (`#/einstellungen/komponenten`), Deep-Link `?bearbeiten=` öffnet das Gerät.
+            ? <a href={`#/einstellungen/komponenten?bearbeiten=${invId}`} className="text-primary-700 dark:text-primary-300 hover:underline">Investition bearbeiten</a>
+            : 'Investition bearbeiten'}. Hier werden nur Sensoren zugeordnet.
+        </p>
+        {erweiterung(g.id, g.felder.filter((f) => f.erweitert))}
+      </div>
     )
   }
 
@@ -597,7 +697,7 @@ export default function DatenquellenZuordnung() {
                   defaultOpen={tc.geraete.length === 1}
                   statusSlot={geraetBadge(g)}
                 >
-                  {abschnitte(g.id, g.felder)}
+                  {g.typ === TYP_NACH_BETRIEBSART ? betriebsartAbschnitte(g) : abschnitte(g.id, g.felder)}
                 </FormSection>
               ))}
             </div>

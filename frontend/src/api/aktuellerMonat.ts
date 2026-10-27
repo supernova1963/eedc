@@ -74,6 +74,10 @@ export interface WpGeraetZeile {
   waerme_grund?: string | null
   jaz?: number | null
   jaz_grund?: string | null
+  /** P-433-2c: Zähler und Nenner, aus denen das Backend `jaz` gebildet hat (ungerundet, nur mit Zahl) — für die
+   *  Herleitung über `herleitungMengen`; der Client teilt nicht. */
+  jaz_zaehler_kwh?: number | null
+  jaz_nenner_kwh?: number | null
   jaz_heizen?: number | null
   jaz_heizen_grund?: string | null
   jaz_warmwasser?: number | null
@@ -88,6 +92,9 @@ export interface WpGeraetZeile {
    *  Tooltip — „gilt nicht" ist kein Mangel); gilt sie, steht dort „—" mit
    *  dem Grund als Tooltip. */
   achsen?: string[] | null
+  /** P-433-2c: Stunden je Betriebsart **dieses Tages** aus der Betriebsart-Mitschrift (`{heizen: 9.4, …}`) — nur
+   *  das Tag-Detail liefert es; Monat/Jahr und Geräte ohne HA-Modus-Sensor `null`. Kein Leerlauf. */
+  betrieb_stunden?: Record<string, number> | null
 }
 
 /** Eine Zeile des Kastens „Was noch möglich wäre" (D-Sicht 1) — **eine je
@@ -284,11 +291,27 @@ export interface AktuellerMonatResponse {
    *  Quotient über einen Zeitraum. */
   wp_jaz_kuehlen?: number | null
   wp_jaz_kuehlen_grund?: string | null
+  /** P-433-3 S3: Zähler/Nenner je Funktion — nur der Tag liefert sie (`tag-detail`, über `baueTagAlsMonat`). */
+  wp_jaz_heizen_zaehler_kwh?: number | null
+  wp_jaz_heizen_nenner_kwh?: number | null
+  wp_jaz_warmwasser_zaehler_kwh?: number | null
+  wp_jaz_warmwasser_nenner_kwh?: number | null
+  wp_jaz_kuehlen_zaehler_kwh?: number | null
+  wp_jaz_kuehlen_nenner_kwh?: number | null
   /** E1b — siehe {@link WpGeraetZeile}. */
   wp_jaz_ist_schranke?: boolean | null
   /** Der EINE Satz unter der Schranke: „Klimaanlage: Strom ohne Wärmemessung
    *  enthalten". Fertig formuliert aus dem Layer. */
   wp_jaz_schranke_hinweis?: string | null
+  /** P-433-3 S2 (#432, Tag/Monat/Jahr): gemessener Heizstab-Strom (Teilmenge des Gerätestroms, H-B) und die Ausweis-Zahl
+   *  «AZ ohne Zusatzheizung» aus dem Layer — Wert ODER Grund, dazu Zähler/Nenner und der Herkunfts-Satz
+   *  («gerechnet: …»). Alle `null` ohne Heizstab-Zähler. Der Client rechnet nichts nach. */
+  wp_heizstab_kwh?: number | null
+  wp_jaz_ohne_zusatzheizung?: number | null
+  wp_jaz_ohne_zusatzheizung_grund?: string | null
+  wp_jaz_ohne_zusatzheizung_hinweis?: string | null
+  wp_jaz_ohne_zusatzheizung_zaehler_kwh?: number | null
+  wp_jaz_ohne_zusatzheizung_nenner_kwh?: number | null
   /** D-Sicht 3: die Kennzahlen **je Gerät**, im Block selbst. */
   wp_geraete?: WpGeraetZeile[] | null
   /** D-Sicht 1: was die Ausstattung nicht hergibt — **einmal je Sicht**, mit
