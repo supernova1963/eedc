@@ -29,6 +29,25 @@ export function fmtZahl(n: number | null | undefined, nk = 0, fallback = FALLBAC
   return n.toLocaleString('de-DE', { minimumFractionDigits: nk, maximumFractionDigits: nk })
 }
 
+/**
+ * Dauer in Sekunden → «2 h 10 min» / «45 min» (P-433-2b K1: Sitzungsdauer und Restzeit am Ladepunkt). Reine
+ * Anzeige-Umformung wie die W/kW-Stufe — gerundet auf volle Minuten, Minuten zweistellig neben Stunden
+ * («6 h 01 min», Blatt §1a). Ohne Wert oder negativ ⇒ `fallback`.
+ */
+export function fmtDauer(sekunden: number | null | undefined, fallback = FALLBACK): string {
+  if (sekunden === null || sekunden === undefined || !Number.isFinite(sekunden) || sekunden < 0) return fallback
+  const minuten = Math.round(sekunden / 60)
+  const stunden = Math.floor(minuten / 60)
+  const rest = minuten % 60
+  return stunden > 0 ? `${stunden} h ${String(rest).padStart(2, '0')} min` : `${rest} min`
+}
+
+/** Dauer in **Stunden** → «2 h 36 min» (Lab rc13, Gernot 28.10.2026: Zeitwerte nie als Dezimalzahl). Für Stunden-Mengen
+ *  aus dem Backend («Betrieb heute», Betriebsstunden am Tag, Ø Laufzeit je Start); Summen über viele Tage bleiben ganze h. */
+export function fmtStundenDauer(stunden: number | null | undefined, fallback = FALLBACK): string {
+  return stunden === null || stunden === undefined ? fallback : fmtDauer(stunden * 3600, fallback)
+}
+
 export interface FmtWert {
   /** formatierte Zahl (ohne Einheit), z. B. „2,00". */
   wert: string

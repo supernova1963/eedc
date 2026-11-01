@@ -1209,31 +1209,222 @@ async def wp_betriebsart_anteile_je_stunde(db: AsyncSession, anlage, invs_by_id:
     Stunde früher (die Zeile 23:00 des Vortags ist Slot 0, ``_slot_der_mittelzeile``). Schlüssel ist der ``start_ts`` der
     Zeile, damit in der Herbst-Doppelstunde **beide** Zeilen zählen (Summe, kein Mittel — die Stunden sind Zeit). Nur
     aktive Wärmepumpen; ein Gerät ohne eine Zeile fehlt. Die Mitschrift schreibt HA mit Betriebsmodus-Sensor und, seit
-    HA-Bauform §9 (Standalone-Gleichstand S1), das MQTT-Modus-Topic über den Stundenlauf (ab Zuordnung, nicht rückwirkend)."""
-    from backend.core.betriebsmodus import BETRIEBSMODUS_KANON
-    from backend.models.kanal import ART_MEAN
-    from backend.services.kanal.fenster import tagesfenster
-    from backend.services.kanal.katalog import modus_kanal_key
-    from backend.services.kanal.lesen import kanaele_laden, stundenmittel_stapel
+    HA-Bauform §9 (Standalone-Gleichstand S1), das MQTT-Modus-Topic über den Stundenlauf (ab Zuordnung, nicht rückwirkend).
 
-    wps = [i for i, inv in invs_by_id.items()
-           if getattr(inv, "typ", None) == "waermepumpe" and inv.ist_aktiv_an(datum)]
-    keys = {modus_kanal_key(i, m): (i, m) for i in wps for m in BETRIEBSMODUS_KANON}
-    kanaele = [k for k in (await kanaele_laden(db, anlage.id, keys)).values() if k.art == ART_MEAN]
-    if not kanaele:
-        return {}
-    raster = RASTER_BEGINN if GRUPPE_WP in (await kanal_stundentag(db, anlage.id, datum)).gruppen else RASTER_ENDE
+    Seit P-433-2b K3 eine Hülle von ``zustand_anteile_je_stunde`` (bitgleich)."""
+    from backend.core.betriebsmodus import BETRIEBSMODUS_KANON, MODUS_FELD_KEY
+    from backend.services.kanal.katalog import modus_kanal_key
+
+    return await zustand_anteile_je_stunde(
+        db, anlage, invs_by_id, datum,
+        typ="waermepumpe", feld=MODUS_FELD_KEY, kanon=BETRIEBSMODUS_KANON, key=modus_kanal_key,
+    )
+
+
+#: Raster-Gruppe je Typ (B12): der Tag einer Mitschrift liegt im Raster der Kanal-Gruppe des Geräts.
+_RASTER_GRUPPE_JE_TYP: dict[str, str] = {"waermepumpe": GRUPPE_WP, "wallbox": GRUPPE_EMOB, "e-auto": GRUPPE_EMOB}
+
+
+async def _tag_raster(db: AsyncSession, anlage, datum: date, typ: str) -> tuple[str, int, int]:
+    """``(raster, von, bis)`` des Tages für die Mitschrift eines Typs — Kanal-Tag der Gruppe ⇒ Beginn-Raster
+    ``[D 00:00, D+1 00:00)``, sonst Bestandstag (eine Stunde früher)."""
+    from backend.services.kanal.fenster import tagesfenster
+
+    gruppe = _RASTER_GRUPPE_JE_TYP.get(typ, GRUPPE_WP)
+    raster = RASTER_BEGINN if gruppe in (await kanal_stundentag(db, anlage.id, datum)).gruppen else RASTER_ENDE
     von, bis = tagesfenster(datum)
     if raster != RASTER_BEGINN:
         von, bis = von - 3600, bis - 3600
+    return raster, von, bis
+
+
+async def zustand_anteile_je_stunde(
+    db: AsyncSession, anlage, invs_by_id: Mapping[str, Any], datum: date, *, typ: str, feld: str,
+    kanon: Sequence[str], key,
+) -> dict[str, dict[int, dict[str, float]]]:
+    """Die Zustands-Mitschrift eines Felds je Gerät des Typs ``typ`` eines Tages (P-433-2b K3, Bauplan K3-6):
+    ``{inv_id: {start_ts: {wert: anteil}}}`` aus den Mittelwert-Kanälen ``key(inv_id, wert)`` für jeden Wert aus
+    ``kanon`` — der Körper von ``wp_betriebsart_anteile_je_stunde`` (Begründung zu Raster und ``start_ts`` dort), typoffen.
+    Raster je Typ (`_RASTER_GRUPPE_JE_TYP`: Wärmepumpe ⇒ WP-Gruppe, Wallbox/E-Auto ⇒ E-Mob-Gruppe). ``feld`` nennt das
+    Feld (Lesbarkeit der Aufrufer); die Schlüssel kommen aus ``key``."""
+    from backend.models.kanal import ART_MEAN
+    from backend.services.kanal.lesen import kanaele_laden, stundenmittel_stapel
+
+    del feld  # die Schlüssel trägt `key`
+    geraete = [i for i, inv in invs_by_id.items()
+               if getattr(inv, "typ", None) == typ and inv.ist_aktiv_an(datum)]
+    keys = {key(i, m): (i, m) for i in geraete for m in kanon}
+    kanaele = [k for k in (await kanaele_laden(db, anlage.id, keys)).values() if k.art == ART_MEAN]
+    if not kanaele:
+        return {}
+    raster, von, bis = await _tag_raster(db, anlage, datum, typ)
     out: dict[str, dict[int, dict[str, float]]] = {}
-    for key, sm in (await stundenmittel_stapel(db, kanaele, von, bis)).items():
-        inv_id, modus = keys[key]
+    for k, sm in (await stundenmittel_stapel(db, kanaele, von, bis)).items():
+        inv_id, modus = keys[k]
         for ts, (mean, _mi, _ma) in sm.werte.items():
             if 0 <= _slot_der_mittelzeile(ts, datum, raster) < 24:
                 out.setdefault(inv_id, {}).setdefault(int(ts), {})[modus] = mean
     return out
 
+
+async def zustand_wechsel_je_tag(
+    db: AsyncSession, anlage, invs_by_id: Mapping[str, Any], datum: date, *, typ: str, feld: str, wert: str,
+) -> dict[str, int]:
+    """Übergänge nach ``wert`` je Gerät eines Tages (P-433-2b K3, D4 «Ladevorgänge heute») aus dem Wechsel-Zähler
+    ``wechsel:inv:<id>:<feld>:<wert>`` — Σ Zuwachs der Stunden des Tages über ``lesen.stunden_stapel`` (Tagesfenster und
+    Raster wie ``zustand_anteile_je_stunde``). Die erste Zeile eines Kanals hat keinen Vorstand; ihr Zuwachs ist ihr Stand
+    (der Schreiber beginnt bei 0, ``schreiber._schreibe_wechsel``). Ein Gerät ohne Zeile am Tag fehlt (keine Aussage)."""
+    from backend.models.kanal import ART_SUM
+    from backend.services.kanal.katalog import wechsel_kanal_key
+    from backend.services.kanal.lesen import kanaele_laden, stunden_stapel
+
+    geraete = [i for i, inv in invs_by_id.items()
+               if getattr(inv, "typ", None) == typ and inv.ist_aktiv_an(datum)]
+    keys = {wechsel_kanal_key(i, feld, wert): i for i in geraete}
+    kanaele = [k for k in (await kanaele_laden(db, anlage.id, keys)).values() if k.art == ART_SUM]
+    if not kanaele:
+        return {}
+    raster, von, bis = await _tag_raster(db, anlage, datum, typ)
+    out: dict[str, int] = {}
+    for k, st in (await stunden_stapel(db, kanaele, von, bis)).items():
+        tag = [w for w in st.werte if 0 <= _slot_der_mittelzeile(w.start_ts, datum, raster) < 24]
+        if tag:
+            out[keys[k]] = _wechsel_summe(tag)
+    return out
+
+
+def _wechsel_summe(tag: Sequence[Any]) -> int:
+    """Die Σ-Regel des Wechsel-Zählers über die Stunden EINES Tages (K3, D4): Zuwachs je Stunde, die erste Zeile eines
+    Kanals (ohne Vorstand) mit ihrem Stand — eine Stelle für ``zustand_wechsel_je_tag`` und ``zustand_wechsel_der_tage``."""
+    return int(round(sum(w.change if w.change is not None else w.wert for w in tag)))
+
+
+def _fahrt_summe(tag: Sequence[Any]) -> float:
+    """Die Σ-Regel der Fahrt-Felder über die Stunden EINES Tages (K4-2, E-K4-4): Zuwachs je Stunde, eine Zeile ohne
+    Vorstand zählt 0 — eine Stelle für ``fahrt_je_tag`` und ``fahrt_der_tage``."""
+    return sum(w.change for w in tag if w.change is not None)
+
+
+async def _raster_der_tage(db: AsyncSession, anlage, von: date, bis: date, typ: str) -> dict[date, tuple[str, int, int]]:
+    """``_tag_raster`` für jeden Tag ``von`` … ``bis`` über EINEN Bereichs-Leser (``kanal_stundentage``, je Tag und
+    Gruppe dieselbe Wahl wie ``kanal_stundentag``) — Tabellen-Spalten 28.10.2026."""
+    from backend.services.kanal.fenster import tagesfenster
+
+    gruppe = _RASTER_GRUPPE_JE_TYP.get(typ, GRUPPE_WP)
+    tage = await kanal_stundentage(db, anlage.id, von, bis, gruppen=(gruppe,))
+    out: dict[date, tuple[str, int, int]] = {}
+    tag = von
+    while tag <= bis:
+        t = tage.get(tag)
+        raster = RASTER_BEGINN if t is not None and gruppe in t.gruppen else RASTER_ENDE
+        a, b = tagesfenster(tag)
+        out[tag] = (raster, a, b) if raster == RASTER_BEGINN else (raster, a - 3600, b - 3600)
+        tag += timedelta(days=1)
+    return out
+
+
+async def _stunden_je_tag(db: AsyncSession, anlage, kanaele: Sequence[Any], von: date, bis: date, typ: str,
+                          ) -> dict[date, dict[str, list]]:
+    """``{datum: {kanal_key: [Stundenwert, …]}}`` — die Stunden jedes Tages ``von`` … ``bis`` im Raster des Tages
+    (``_tag_raster``/``_slot_der_mittelzeile``) aus EINEM ``stunden_stapel`` über das ganze Fenster. Der Zuwachs einer
+    Zeile ist im Bereich derselbe wie im Tagesaufruf (``stunden_stapel``: «vorige Stand, auch vor ``von``»); geprüft
+    Tag für Tag von ``test_tabellen_spalten.py``."""
+    import bisect
+
+    from backend.services.kanal.lesen import stunden_stapel
+
+    raster = await _raster_der_tage(db, anlage, von, bis, typ)
+    lo = min(a for _r, a, _b in raster.values())
+    hi = max(b for _r, _a, b in raster.values())
+    out: dict[date, dict[str, list]] = {}
+    for k, st in (await stunden_stapel(db, kanaele, lo, hi)).items():
+        werte = sorted(st.werte, key=lambda w: w.start_ts)
+        starts = [w.start_ts for w in werte]
+        for tag, (r, a, b) in raster.items():
+            zeilen = [w for w in werte[bisect.bisect_left(starts, a):bisect.bisect_left(starts, b)]
+                      if 0 <= _slot_der_mittelzeile(w.start_ts, tag, r) < 24]
+            if zeilen:
+                out.setdefault(tag, {})[k] = zeilen
+    return out
+
+
+async def zustand_wechsel_der_tage(
+    db: AsyncSession, anlage, invs_by_id: Mapping[str, Any], von: date, bis: date, *, typ: str, feld: str, wert: str,
+) -> dict[date, dict[str, int]]:
+    """``zustand_wechsel_je_tag`` für jeden Tag ``von`` … ``bis`` — ``{datum: {inv_id: Übergänge}}`` über EINEN
+    Stunden-Stapel (Tabellen-Spalten 28.10.2026, Auftrag «kein N+1»). Dieselbe Σ-Regel (``_wechsel_summe``), dasselbe
+    Raster je Tag, dieselbe Laufzeit-Regel (nur Geräte, die an DEM Tag aktiv sind)."""
+    from backend.models.kanal import ART_SUM
+    from backend.services.kanal.katalog import wechsel_kanal_key
+    from backend.services.kanal.lesen import kanaele_laden
+
+    geraete = {i: inv for i, inv in invs_by_id.items()
+               if getattr(inv, "typ", None) == typ and inv.ist_aktiv_im_zeitraum(von, bis)}
+    keys = {wechsel_kanal_key(i, feld, wert): i for i in geraete}
+    kanaele = [k for k in (await kanaele_laden(db, anlage.id, keys)).values() if k.art == ART_SUM]
+    if not kanaele:
+        return {}
+    out: dict[date, dict[str, int]] = {}
+    for tag, je_kanal in (await _stunden_je_tag(db, anlage, kanaele, von, bis, typ)).items():
+        for k, zeilen in je_kanal.items():
+            if geraete[keys[k]].ist_aktiv_an(tag):
+                out.setdefault(tag, {})[keys[k]] = _wechsel_summe(zeilen)
+    return out
+
+
+
+#: P-433-2b K4 (K4-2): die Fahrt-Felder des E-Autos und ihr Ausgabe-Name — `km_gefahren` (Kanal-Art `stand`,
+#: Tachostand) und `verbrauch_kwh` (`sum`, Fahrverbrauch-Zähler).
+_FAHRT_FELDER: dict[str, str] = {"km_gefahren": "km", "verbrauch_kwh": "verbrauch_kwh"}
+
+
+async def fahrt_je_tag(db: AsyncSession, anlage, invs_by_id: Mapping[str, Any],
+                       datum: date) -> dict[str, dict[str, float]]:
+    """Gefahrene km und Fahrverbrauch je aktivem E-Auto eines Tages (P-433-2b K4, K4-2):
+    ``{inv_id: {"km": …, "verbrauch_kwh": …}}`` als Σ Zuwachs der Stunden des Tages aus ``inv:<id>:km_gefahren`` bzw.
+    ``inv:<id>:verbrauch_kwh`` über ``lesen.stunden_stapel`` (Tagesfenster und Raster der E-Mob-Gruppe wie
+    ``zustand_wechsel_je_tag``). ⛔ **Anders als der Wechsel-Zähler zählt eine Zeile ohne Vorstand (``change is None``,
+    erste Zeile des Kanals) 0** — ihr ``wert`` ist ein Tachostand bzw. Zählerstand, keine Tagesmenge (E-K4-4). Nur
+    abgeschlossene Stunden (die laufende hat noch keine Zeile). Ein Feld ohne Zeile am Tag fehlt (keine Aussage)."""
+    from backend.services.kanal.lesen import kanaele_laden, stunden_stapel
+
+    geraete = [i for i, inv in invs_by_id.items()
+               if getattr(inv, "typ", None) == "e-auto" and inv.ist_aktiv_an(datum)]
+    keys = {f"inv:{i}:{feld}": (i, name) for i in geraete for feld, name in _FAHRT_FELDER.items()}
+    kanaele = list((await kanaele_laden(db, anlage.id, keys)).values())
+    if not kanaele:
+        return {}
+    raster, von, bis = await _tag_raster(db, anlage, datum, "e-auto")
+    out: dict[str, dict[str, float]] = {}
+    for k, st in (await stunden_stapel(db, kanaele, von, bis)).items():
+        tag = [w for w in st.werte if 0 <= _slot_der_mittelzeile(w.start_ts, datum, raster) < 24]
+        if tag:
+            inv_id, name = keys[k]
+            out.setdefault(inv_id, {})[name] = _fahrt_summe(tag)
+    return out
+
+
+async def fahrt_der_tage(db: AsyncSession, anlage, invs_by_id: Mapping[str, Any], von: date,
+                         bis: date) -> dict[date, dict[str, dict[str, float]]]:
+    """``fahrt_je_tag`` für jeden Tag ``von`` … ``bis`` — ``{datum: {inv_id: {"km": …, "verbrauch_kwh": …}}}`` über
+    EINEN Stunden-Stapel (Tabellen-Spalten 28.10.2026, Auftrag «kein N+1»). Dieselbe Σ-Regel (``_fahrt_summe``), dasselbe
+    Raster je Tag, nur E-Autos, die an DEM Tag aktiv sind. Benannte Grenze wie im Tag (K4-N1): am Tag der Rückkehr nach
+    einer Zählerlücke trägt «Gefahren» den Sprung."""
+    from backend.services.kanal.lesen import kanaele_laden
+
+    geraete = {i: inv for i, inv in invs_by_id.items()
+               if getattr(inv, "typ", None) == "e-auto" and inv.ist_aktiv_im_zeitraum(von, bis)}
+    keys = {f"inv:{i}:{feld}": (i, name) for i in geraete for feld, name in _FAHRT_FELDER.items()}
+    kanaele = list((await kanaele_laden(db, anlage.id, keys)).values())
+    if not kanaele:
+        return {}
+    out: dict[date, dict[str, dict[str, float]]] = {}
+    for tag, je_kanal in (await _stunden_je_tag(db, anlage, kanaele, von, bis, "e-auto")).items():
+        for k, zeilen in je_kanal.items():
+            inv_id, name = keys[k]
+            if geraete[inv_id].ist_aktiv_an(tag):
+                out.setdefault(tag, {}).setdefault(inv_id, {})[name] = _fahrt_summe(zeilen)
+    return out
 
 # ── Tageskennzahlen und Tagesmengen aus den Kanal-Stunden (HA-Bauform S5, E-S5-3, Bauplan §10h 1/§4 S5-R2) ─────────
 #

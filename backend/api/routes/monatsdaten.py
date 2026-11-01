@@ -43,6 +43,8 @@ from backend.services.monats_fakten import (
     TAGESWERT_BKW,
     TAGESWERT_PV,
     TAGESWERT_SPEICHER,
+    grundpreis_des_monats,
+    komponenten_anteile_des_fakts,
     lade_monats_fakten,
     netzfeld_ist_erfasst,
 )
@@ -64,6 +66,9 @@ from backend.api.routes.monatsdaten_aggregiert import (
     _zeile_erzeugung,
     _zeile_komponenten,
     _zeile_bilanz_und_geld,
+    _zeile_emob_zusatz,
+    _zeile_wp_zusatz,
+    wp_funktionen_des_monats,
 )
 
 logger = logging.getLogger(__name__)
@@ -460,6 +465,26 @@ class AggregierteMonatsdatenResponse(BaseModel):
     # `aggregation: 'none'`. Er steht in dieser Antwort nur, damit die
     # Tabellen-Sicht ihn als eigene Spalte zeigen kann.
     zaehler_stand: Optional[dict[str, float]] = None
+    # ── Tabellen-Spalten (28.10.2026, `monatsdaten_aggregiert._zeile_emob_zusatz`/`_zeile_wp_zusatz`) ──
+    # Mengen ohne Gemessen-Marke «nur mit Wert» wie Cockpit → Monat; ``None`` ⇒ «—».
+    eauto_fahrverbrauch_kwh: Optional[float] = None
+    #: Layer ``eauto_effizienz_100km`` (gemessener Fahrverbrauch vor Heim + Extern), ``None`` ohne Basis.
+    eauto_verbrauch_kwh_100km: Optional[float] = None
+    eauto_v2h_entladung_kwh: Optional[float] = None
+    emob_ladung_extern_kwh: Optional[float] = None
+    emob_ladung_extern_euro: Optional[float] = None
+    emob_ladevorgaenge: Optional[float] = None
+    #: Betriebsart-Strom — Teilmengen von ``wp_strom_kwh``, nur mit Aufteilung (``hat_modus_split``).
+    wp_strom_kuehlen_kwh: Optional[float] = None
+    wp_strom_lueften_kwh: Optional[float] = None
+    wp_strom_entfeuchten_kwh: Optional[float] = None
+    wp_strom_nicht_aufgeteilt_kwh: Optional[float] = None
+    wp_kaelte_kwh: Optional[float] = None
+    #: Zusatzheizung (Heizstab) — Teilmenge von ``wp_strom_kwh``, nur gemessen.
+    wp_heizstab_kwh: Optional[float] = None
+    wp_jaz_heizen: Optional[float] = None
+    wp_jaz_warmwasser: Optional[float] = None
+    wp_jaz_kuehlen: Optional[float] = None
 
     class Config:
         from_attributes = True
@@ -718,6 +743,7 @@ async def _monatszeile(kx: _TabellenKontext, f) -> AggregierteMonatsdatenRespons
     hat_legacy, legacy_ohne_ziel = _legacy_hinweis(f, md, kx.inv_rows, speicher_ladung, speicher_entladung)
     finanz, netzbezug_kosten, ust_eigenverbrauch, netto_ertrag = await _finanzen_des_monats(kx, f, netzbezug)
     _wp_az = _arbeitszahl_des_monats(f)
+    _wp_funktionen = await wp_funktionen_des_monats(kx, f, typen)
 
     return _ohne_netz_bilanz(f, AggregierteMonatsdatenResponse(
         **_zeile_kopf(kx, f, md, einspeisung, netzbezug),
@@ -727,6 +753,8 @@ async def _monatszeile(kx: _TabellenKontext, f) -> AggregierteMonatsdatenRespons
             f, finanz, ust_eigenverbrauch=ust_eigenverbrauch, netzbezug_kosten=netzbezug_kosten,
             netto_ertrag=netto_ertrag, hat_legacy=hat_legacy, legacy_ohne_ziel=legacy_ohne_ziel, aus_tagen=aus_tagen,
         ),
+        **_zeile_emob_zusatz(f, typen),
+        **_zeile_wp_zusatz(f, typen, _wp_funktionen),
     ))
 
 
@@ -906,6 +934,7 @@ async def get_monatsdaten(monatsdaten_id: int, db: AsyncSession = Depends(get_db
         db, md.anlage_id, von=(md.jahr, md.monat), bis=(md.jahr, md.monat),
     )), None)
     pv_kwh = _fakt.erzeugung.pv_kwh if _fakt is not None else None
+    _anteile = komponenten_anteile_des_fakts(_fakt, md.netzbezug_kwh or 0.0)
 
     # Kennzahlen berechnen
     kennzahlen = berechne_monatskennzahlen(
@@ -924,7 +953,8 @@ async def get_monatsdaten(monatsdaten_id: int, db: AsyncSession = Depends(get_db
             md,
             strompreis.netzbezug_arbeitspreis_cent_kwh if strompreis else NETZBEZUG_DEFAULT_CENT,
         ),
-        grundpreis_euro_monat=strompreis.grundpreis_euro_monat or 0 if strompreis else 0,
+        # N-769: Σ der Grundpreise aller gültigen Tarife (allgemein + eigener WP-/Wallbox-Tarif) — die eine Bildungsstelle.
+        grundpreis_euro_monat=grundpreis_des_monats(tarife).summe_euro,
         # F-58: Nenner des spezifischen Ertrags in den Monatskennzahlen —
         # Σ der im Monat aktiven Erzeuger statt des gepflegten Referenzwerts.
         #
@@ -952,6 +982,10 @@ async def get_monatsdaten(monatsdaten_id: int, db: AsyncSession = Depends(get_db
         ),
         wandlungsverluste_kwh=_fakt.erzeugung.wandlungsverluste_kwh if _fakt is not None else None,
         verluste_grund=_fakt.erzeugung.verluste_grund if _fakt is not None else None,
+        # N-770/N-771: die gemessenen Anteile zum WP-/Wallbox-Tarif aus derselben Bildungsstelle wie Cockpit und Tabelle.
+        netzbezug_anteile=_anteile.stromrechnung_anteile() if _anteile is not None else (),
+        wp_pv_kwh=_anteile.wp_pv_kwh if _anteile is not None else None,
+        wp_tarif_cent=_anteile.wp_cent if _anteile is not None else None,
     )
 
     response = MonatsdatenMitKennzahlen.model_validate(md)

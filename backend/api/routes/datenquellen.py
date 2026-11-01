@@ -42,10 +42,12 @@ from backend.core.betriebsmodus import (
     betriebsmodus_klartext,
     betriebsmodus_werte_je_betriebsart,
 )
+from backend.core import zustands_kanon
 from backend.core.feld_auswertungen import sichten_fuer
 from backend.core.field_definitions import (
     anlage_typen_mit_kontext,
     basis_feld_key,
+    ist_text_feld,
     ist_zustand_feld,
     wp_betriebsart,
     wp_menge,
@@ -186,7 +188,9 @@ _HA_UNITS = {
 _HA_DEVICE_CLASSES = {"energy", "power", "battery", "temperature", "distance", "monetary"}
 
 
-def _ha_sensor_relevant(state: dict, filter_energy: bool, zustand: bool = False) -> bool:
+def _ha_sensor_relevant(
+    state: dict, filter_energy: bool, zustand: bool = False, domaenen: tuple[str, ...] | None = None,
+) -> bool:
     """Gehört diese HA-Entity in den Picker für dieses Feld?
 
     ⚠ **`zustand=True` ist keine Bequemlichkeit, sondern die Bedingung dafür,
@@ -205,7 +209,10 @@ def _ha_sensor_relevant(state: dict, filter_energy: bool, zustand: bool = False)
     if zustand:
         # Zustandsfelder: `climate.` UND `sensor.`, und der Energie-Filter
         # greift nicht — ein Modus hat weder Einheit noch device_class.
-        return eid.startswith("climate.") or eid.startswith("sensor.")
+        # P-433-2b K1: ein Feld mit `ha_domaenen` (Registry) nennt seine Domains selbst — der evcc-Lademodus ist ein
+        # `select`, der Standort ein `device_tracker`.
+        erlaubt = domaenen or ("climate", "sensor")
+        return any(eid.startswith(f"{d}.") for d in erlaubt)
     if not eid.startswith("sensor."):
         return False
     if not filter_energy:
@@ -589,7 +596,28 @@ def _zulaessige_werte(eintrag: dict, quelle: str = QUELLE_KEINE) -> list[dict] |
     """
     if eintrag.get("zustand") and basis_feld_key(eintrag.get("feld", "")) == MODUS_FELD_KEY:
         return betriebsmodus_werte_je_betriebsart(codes=_ist_mqtt_quelle(quelle))
+    # P-433-2b K1: die Zustandsfelder der E-Mobilität tragen ihre Tabelle aus `core/zustands_kanon.py` (dieselbe Form).
+    if eintrag.get("zustand") and eintrag.get("feld") in zustands_kanon.ZUSTANDS_FELDER:
+        return zustands_kanon.werte_je_kanon(eintrag["feld"], codes=_ist_mqtt_quelle(quelle))
+    # P-433-2b K2a: ein Textfeld (Fahrzeug am Ladepunkt) hat keinen Kanon und damit keine Werte-Tabelle.
     return None
+
+
+def _wert_klartext(eintrag: dict, wert_text: str | None, quelle: str) -> str | None:
+    """F-53: die Deutung des rohen Zustands im Kanon **seines** Felds — Betriebsmodus oder E-Mobilität (K1).
+
+    Ein E-Mob-Wert, den eedc nicht kennt, hat keinen Klartext (``None`` — kein «Unbestimmt» wie beim Modus); die
+    Fläche zeigt dann den Rohwert allein.
+
+    P-433-2b K2a: ein **Textfeld** (`ist_text_feld`, Fahrzeug am Ladepunkt) hat keinen Kanon und damit keine Deutung
+    — ``None``; die Fläche zeigt den Text selbst (leer als «(leer)»).
+    """
+    feld = eintrag.get("feld", "")
+    if not wert_text or ist_text_feld(feld):
+        return None
+    if feld in zustands_kanon.ZUSTANDS_FELDER:
+        return zustands_kanon.klartext_roh(feld, wert_text, codes=_ist_mqtt_quelle(quelle))
+    return betriebsmodus_klartext(wert_text, codes=_ist_mqtt_quelle(quelle))
 
 
 _TYP_WP = "waermepumpe"
@@ -699,6 +727,53 @@ async def _standard_topic_suffix(db: AsyncSession, anlage: Anlage, field_id: str
     return None
 
 
+
+async def setze_gateway_quellen(db: AsyncSession, anlage: Anlage, zeilen) -> tuple[int, list[str]]:
+    """Setzt für frisch angelegte Gateway-Zeilen (Preset-Apply, P-433-2b K4-8) die Quelle ihres Feldes auf
+    ``mqtt_gateway`` — dieselbe Schreibform wie ``set_feld_quelle`` (``quellen[field_id] = {quelle, mapping_id}`` +
+    ``uebernehme_quelle_ins_mapping`` + Historie-Vermerk bei echter Änderung), damit die Fläche «Gateway» mit Topic zeigt
+    statt «Inbound».
+
+    Die Feld-ID kommt **rückwärts** aus der Topic-Registry (dieselbe Quelle wie ``_standard_topic_suffix``): das Feld,
+    dessen Standard-Topic-Suffix in ID-Form (``ziel_key_ohne_namen`` — der Suffix trägt den Namensteil ``{id}_{name}``,
+    das Preset nicht) gleich dem ``ziel_key`` der Zeile ist (``live/inv/{id}/<feld>`` → ``inv_live_{id}_…``,
+    ``energy/inv/{id}/<feld>`` → ``inv_energy_{id}_…``). Eine Zeile ohne passendes Feld behält ihre Zeile, die Quelle
+    bleibt unverändert; ihr ``ziel_key`` steht in der Rückgabe.
+
+    Returns:
+        ``(gesetzte Felder, ziel_keys ohne Feld)``. ``flag_modified``/Commit macht der Aufrufer.
+    """
+    from backend.services.datenquellen_mapping_sync import uebernehme_quelle_ins_mapping
+    from backend.services.datenquellen_resolver import ziel_key_ohne_namen
+
+    invs = sort_investitionen_nach_typ((await db.execute(
+        select(Investition).where(Investition.anlage_id == anlage.id, aktiv_am_tag(date.today()))
+    )).scalars().all())
+    feld_je_suffix: dict[str, str] = {}
+    for e in await build_expected_topics(db, anlage, investitionen=invs):
+        parts = e["topic"].split("/", 2)
+        if len(parts) == 3:
+            feld_je_suffix.setdefault(ziel_key_ohne_namen(parts[2]), _feld_id(e["match_key"]))
+    mapping = dict(anlage.sensor_mapping or {})
+    quellen = dict(mapping.get(QUELLEN_KEY) or {})
+    gesetzt, ohne, geaendert = 0, [], []
+    for row in zeilen:
+        field_id = feld_je_suffix.get(ziel_key_ohne_namen(row.ziel_key))
+        if field_id is None:
+            ohne.append(row.ziel_key)
+            continue
+        neu = {"quelle": QUELLE_GATEWAY, "mapping_id": row.id}
+        if ist_echte_aenderung(quellen.get(field_id), neu):
+            geaendert.append(field_id)
+        quellen[field_id] = neu
+        uebernehme_quelle_ins_mapping(mapping, field_id, QUELLE_GATEWAY, None)
+        gesetzt += 1
+    mapping[QUELLEN_KEY] = quellen
+    for field_id in geaendert:
+        await _historie_vermerken(db, anlage, mapping, field_id)
+    anlage.sensor_mapping = mapping
+    return gesetzt, ohne
+
 async def _basis_preis_eintraege(db: AsyncSession, anlage_id: int) -> list[dict]:
     """Preis-Slots der Anlage im Eintrags-Shape der Fläche — HA-only.
 
@@ -746,6 +821,34 @@ async def _basis_preis_eintraege(db: AsyncSession, anlage_id: int) -> list[dict]
             "nur_ha": True,
         })
     return eintraege
+
+
+async def _nach_eigenem_tarif(db: AsyncSession, anlage_id: int, eintraege: list[dict]) -> list[dict]:
+    """N-770/N-771 (Bauplan F1): ein Feld mit ``tarif_verwendung`` (Netzbezug zum WP-/Wallbox-Tarif) ist ohne EIGENEN
+    Tarif dieser Verwendung **erweitert** — es steht hinter „Weitere Größen erfassen" (R1: mit Quelle rückt es vor, die
+    Fläche wertet ``erweitert and quelle == keine``). Mit eigenem Tarif steht es in der ersten Reihe (Block «Gerät
+    gesamt» bzw. kWh-Abschnitt der Wallbox). Die Tarife werden nur geladen, wenn ein solches Feld vorkommt."""
+    if not any(e.get("tarif_verwendung") for e in eintraege):
+        return eintraege
+    from backend.api.routes.strompreise import lade_tarife_fuer_anlage
+    from backend.core.field_definitions.auswahl import tarif_label
+    from backend.services.monats_fakten.tarif import tarif_verwendungen_der_flaeche
+
+    eigene = tarif_verwendungen_der_flaeche(await lade_tarife_fuer_anlage(db, anlage_id))
+    return [
+        {**e, "erweitert": True} if e.get("tarif_verwendung") and e["tarif_verwendung"] not in eigene
+        else _mit_tarif_label(e, tarif_label(e, eigene))
+        for e in eintraege
+    ]
+
+
+def _mit_tarif_label(e: dict, label: "str | None") -> dict:
+    """F12 (E6): unter dem gemeinsamen Tarif «Wärmepumpe und Wallbox» trägt das Feld an der WP das Label
+    «Netzbezug zum WP-/Wallbox-Tarif (gemeinsamer Zähler)» (``auswahl.tarif_label``); sonst unverändert."""
+    if label is None:
+        return e
+    alt = e.get("feld_label") or ""
+    return {**e, "feld_label": label, "label": str(e.get("label") or alt).replace(alt, label, 1) if alt else label}
 
 
 def ohne_nicht_zuordenbare(eintraege: list[dict], quellen: dict) -> list[dict]:
@@ -889,9 +992,10 @@ async def get_ha_sensoren(
     # nirgendwo anders. Der Typ schärft die Antwort, wo er mitkommt; ohne ihn
     # entscheidet der Feld-Key allein (s. `ist_zustand_feld`).
     ist_zustand = bool(feld) and ist_zustand_feld(feld, inv_typ or None)
+    domaenen = _ha_domaenen(feld, inv_typ) if ist_zustand else None
     sensoren: list[HaSensor] = []
     for st in resp.json():
-        if not _ha_sensor_relevant(st, filter_energy, zustand=ist_zustand):
+        if not _ha_sensor_relevant(st, filter_energy, zustand=ist_zustand, domaenen=domaenen):
             continue
         attrs = st.get("attributes", {}) or {}
         sensoren.append(HaSensor(
@@ -910,6 +1014,19 @@ async def get_ha_sensoren(
         vorschlaege=[HaVorschlag(**v) for v in assistenz["vorschlaege"]],
         warnungen=assistenz["warnungen"],
     )
+
+
+def _ha_domaenen(feld: str | None, inv_typ: str | None) -> tuple[str, ...] | None:
+    """Die HA-Domains eines Zustandsfelds aus der Registry (`ha_domaenen`, P-433-2b K1) — ``None`` ⇒ Standard."""
+    from backend.core.field_definitions import LIVE_FELDER_INV
+
+    basis = basis_feld_key(feld or "")
+    typen = [inv_typ] if inv_typ else list(LIVE_FELDER_INV)
+    for typ in typen:
+        for f in LIVE_FELDER_INV.get(typ or "", []):
+            if f["key"] == basis and f.get("ha_domaenen"):
+                return tuple(f["ha_domaenen"])
+    return None
 
 
 # --- Takt-Check beim Waehlen (#343 Baustein B, D2) ---------------------------
@@ -1001,6 +1118,8 @@ async def get_datenquellen_felder(anlage_id: int, db: AsyncSession = Depends(get
     # ließe sich nicht mehr entfernen — dieselbe Falle, die `bedingung_anlage`
     # schon einmal gestellt hat (s. `get_felder_fuer_investition`).
     eintraege = ohne_nicht_zuordenbare(eintraege, quellen)
+    # N-770/N-771 (F1): «Netzbezug zum WP-/Wallbox-Tarif» in der ersten Reihe nur mit eigenem Tarif (heute).
+    eintraege = await _nach_eigenem_tarif(db, anlage_id, eintraege)
 
     # Vereinheitlichter Invert-Store (quellen-unabhängig, feld-/wert-level).
     invert_store = (anlage.sensor_mapping or {}).get("invertieren") or {}
@@ -1284,13 +1403,16 @@ async def get_datenquellen_felder(anlage_id: int, db: AsyncSession = Depends(get
             # Quellen anzubieten, die kein Leser abfragt — die Preis-Slots
             # (kommen nur über HA herein). Zustandsfelder sind es seit
             # HA-Bauform §9 (S1-3) nicht mehr: der Inbound hält ihren rohen
-            # String; nur das Gateway (float-only) blendet die Fläche an
-            # `zustand` aus.
+            # String; das Gateway blendet die Fläche nur am Betriebsmodus aus
+            # (D3) — an den übrigen Zustandsfeldern reicht es seit P-433-2b K2b
+            # den Text weiter (`mqtt_gateway_service._als_text`).
             "nur_ha": bool(e.get("nur_ha")),
             # Zustand statt Zahl (#263 K-2): steuert den Entity-Picker — für
             # diese Felder ist auch die `climate.`-Domain zulässig, und der
-            # Energie-Filter greift nicht; seit §9 auch: kein Gateway-Knopf.
+            # Energie-Filter greift nicht; am Betriebsmodus kein Gateway-Knopf (D3).
             "zustand": bool(e.get("zustand")),
+            # P-433-2b K1: Datenquellen-Abschnitt aus der Registry («zustand» ⇒ «Zustand & Sitzung»), sonst nach Einheit.
+            "abschnitt": e.get("abschnitt"),
             "quelle": q,
             # Gateway-Quell-Topic (falls zugeordnet) für die UI-Anzeige.
             "gateway_topic": gateway_topics.get(eintrag.get("mapping_id")),
@@ -1328,7 +1450,7 @@ async def get_datenquellen_felder(anlage_id: int, db: AsyncSession = Depends(get
             # werden. Der Kanon-SoT ist `core/betriebsmodus.py`, nicht der Client.
             "wert_text": wert_text,
             # HA-Bauform §9 (Entscheid H1 = A): die Zahlencodes gelten nur für einen Wert über MQTT.
-            "wert_klartext": betriebsmodus_klartext(wert_text, codes=_ist_mqtt_quelle(q)) if wert_text else None,
+            "wert_klartext": _wert_klartext(e, wert_text, q),
             # P-433-0 (Konzept #433 E12): die Werte, die eedc an diesem Feld
             # versteht — sichtbar am Feld, damit der Anwender seinen
             # Template-Sensor danach bauen kann. **Aus dem Kanon abgeleitet**

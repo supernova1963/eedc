@@ -32,8 +32,11 @@ export interface DatenquelleFeld {
   /** Nur als HA-Sensor lesbar (Preis-Felder): Gateway/Inbound entfallen. */
   nur_ha?: boolean
   /** #263 K-2: Zustand statt Zahl (Betriebsmodus) — vom Backend schon immer geliefert, hier nachgetragen (P-433-2).
-   *  Seit HA-Bauform §9 auch über das Inbound-Topic; das Gateway (float-only) entfällt an diesem Feld. */
+   *  Seit HA-Bauform §9 auch über das Inbound-Topic. Seit P-433-2b K2b reicht das Gateway an ein Zustandsfeld den
+   *  Text weiter (ohne Faktor/Offset); nur am Betriebsmodus bleibt der Gateway-Knopf aus (D3). */
   zustand?: boolean
+  /** P-433-2b K1: Datenquellen-Abschnitt aus der Registry — `'zustand'` ⇒ «Zustand & Sitzung», sonst nach Einheit. */
+  abschnitt?: string | null
   /** Aktive Quelle. */
   quelle: string
   /** Zugeordnetes Gateway-Quell-Topic (nur bei quelle==='mqtt_gateway'). */

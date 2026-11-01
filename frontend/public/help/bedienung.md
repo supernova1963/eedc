@@ -160,6 +160,7 @@ Eine Gruppenkachel erkennst du an den zwei versetzten Rahmen dahinter („hier l
 
 - **Eine Wallbox:** Die Kachel nennt das Auto mit Ladestand („ID.4 52 %"), der Pegel ist sein Ladestand. Hängen mehrere Autos an dieser Wallbox, zeigt sie das eine, das gerade lädt; lädt keines (oder mehr als eines), stehen die Ladestände nebeneinander („64 · 81 %"), ohne Pegel.
 - **Zwei oder mehr Wallboxen** (die gerade Werte liefern): Die Kacheln zeigen kein Auto. Der Tooltip und die Liste nennen alle Autos mit Ladestand und sagen dazu: „Welches Auto an welcher Wallbox lädt, weiß eedc noch nicht."
+- **Die Steuerung meldet das Fahrzeug** (Feld „Fahrzeug am Ladepunkt", z. B. evcc): Dann zeigt die Kachel dieser Wallbox genau das gemeldete Auto, auch bei mehreren Wallboxen — wie bei einer einzigen Wallbox. Die anderen Wallboxen nennen dieses Auto nicht mehr; bleibt genau eine ohne Meldung, gilt die Zuordnung dort ebenfalls als eindeutig ([§3.6](#36-wallbox)).
 - **V2H:** Gibt ein Auto Strom ins Haus ab, nennt der Tooltip die Leistung („entlädt 2,00 kW (V2H)"); hängt es allein an der einzigen Wallbox, steht in der Kachel zusätzlich „· entlädt".
 - **Ohne Wallbox** (keine erfasst oder keine liefert gerade Werte) behält jedes E-Auto seine eigene Kachel; mehrere bündelt eedc bei Platzmangel als „E-Autos".
 
@@ -521,10 +522,33 @@ Aus dem feingranularen Stunden-Bestand des Monats zeigt die Sicht zusätzlich:
 > **Die Kachel „Ø-Preis Netz" zeigt unter dem Preis die Arbeitspreis-Kosten** (`Netzbezug ×
 > Ø-Preis`) — nicht die Gesamtsumme der Stromrechnung. So geht die Division auf: kWh und €
 > der Unterzeile ergeben den Preis darüber. Der **Grundpreis** steht in der Herleitung
-> (Tipp/Hover) mit der Gesamtsumme daneben, und im Finanzen-Block darunter sind weiterhin
+> (Tipp/Hover) mit der Gesamtsumme daneben — mit eigenem Wärmepumpen- oder Wallbox-Tarif die Summe aller Grundpreise
+> samt Aufteilung je Tarif ([Einstellungen §2.2](HANDBUCH_EINSTELLUNGEN.md#22-strompreise)) —, und im Finanzen-Block darunter sind weiterhin
 > die vollen Netzbezug-Kosten ausgewiesen. Bei einem **flexiblen Tarif** ist der Ø-Preis der
 > verbrauchsgewichtete Monatsdurchschnitt; mit ihm rechnen dann auch Kosten und
 > Eigenverbrauchs-Ersparnis dieses Monats.
+>
+> **Mit Netzbezug zum WP- oder Wallbox-Tarif** (Feld an der Komponente, nur mit eigenem Tarif — [Einstellungen
+> §2.2](HANDBUCH_EINSTELLUNGEN.md#22-strompreise)) rechnet die Herleitung den Netzbezug in Teilen: „117,9 kWh × 30,0 ct/kWh
+> + 256,0 kWh × 22,0 ct/kWh (Wärmepumpe)"; die Unterzeile nennt dann diese Summe, der Preis darüber bleibt der
+> Haushaltspreis. Der Netto-Ertrag nennt den PV-Strom der Wärmepumpe, den eedc zum WP-Tarif bewertet („davon 170,7 kWh
+> PV-Strom der Wärmepumpe zum WP-Tarif 22,0 ct/kWh"). Ist eine Menge größer als Gerätestrom oder Netzbezug, steht
+> „begrenzt" dabei. Die Unterzeile der Kachel sagt dann „Kosten = (Netzbezug − Netzbezug zum Komponenten-Tarif) ×
+> Haushaltspreis + …"; trägt dein Haushaltstarif Zeitfenster (HT/NT), steht im Rest der über diesen Rest gewichtete Preis.
+>
+> **E-Mobilität mit „Netzbezug zum Wallbox-Tarif":** Dieser Zähler des Versorgers **ist** dann die Netzladung deiner
+> Wallbox — auch wenn evcc einen anderen PV-/Netz-Anteil meldet; PV-Ladung = Ladung − Netzladung. E-Mob-Ersparnis und
+> Heimladekosten rechnen damit, die Herleitung der Wallbox-Zeile (und eines E-Autos, das seine Heimladung aus der Wallbox
+> bekommt) nennt „Netzladung: Zähler des Versorgers". Ein E-Auto, das seine Heimladung selbst misst, behält seine eigene
+> Aufteilung — der Zähler teilt dann den Rest der Wallbox.
+> Weichen evcc und Zähler ab, sagt es der Daten-Checker. Ohne das Feld gilt wie bisher evcc bzw. die Tagesquote. Im
+> **Monat der Zuordnung** (der Sensor beginnt mitten im Monat) gilt der Teilwert nicht: dort bleibt die Netzladung evcc
+> bzw. die Tagesquote, ab dem ersten vollen Monat der Zähler.
+>
+> **Wärmepumpe und Wallbox mit gemeinsamem Zähler** (Tarif-Verwendung „Wärmepumpe und Wallbox"): die Netzladung der
+> E-Mobilität bleibt evcc bzw. die Tagesquote — der gemeinsame Zähler misst beide Geräte zusammen und teilt nicht je
+> Gerät. Die Stromrechnung rechnet den gemeinsamen Netzbezug zum gemeinsamen Tarif; die Kachel nennt den Anteil
+> „Wärmepumpe und Wallbox, gemeinsamer Zähler" ([Wärme & Klima, Schritt 6b](HANDBUCH_WAERME_KLIMA.md#schritt-6b--netzbezug-zum-wp-tarif-optional-nur-mit-eigenem-wärmepumpen-tarif)).
 
 > **Die Ergebnis-Leiter in vier Zeilen** (Netto-Ertrag und Monatsergebnis rechnet eedc für Monat, Jahr und Gesamt gleich):
 >
@@ -668,7 +692,7 @@ Jede Komponenten-Sicht bezieht sich auf den **Gesamtzeitraum** (kein Datums-Sele
 
 | Block | Inhalt |
 |-------|--------|
-| **Überblick** | nur **Wärmepumpe** (weitere Typen folgen): ein Schaubild des Gerätetyps mit den Live-Kacheln deiner Geräte und daneben „Auf einen Blick" — die einzige Live-Fläche im Hub, siehe [§3.4](#34-wärmepumpe) |
+| **Überblick** | **Wärmepumpe**, **E-Auto** und **Wallbox**: ein Schaubild des Gerätetyps mit Live-Kacheln und daneben „Auf einen Blick" — die einzige Live-Fläche im Hub, siehe [§3.4](#34-wärmepumpe), [§3.5](#35-e-auto), [§3.6](#36-wallbox) |
 | **Kennzahlen (gesamte Laufzeit)** | die Kernkennzahlen des Typs über die gesamte Laufzeit — keine Live-Werte (immer offen) |
 | **System-Struktur / Zuordnung** | Aufbau und Kopplung (z. B. Wechselrichter → Module/Speicher) bzw. Herkunft der Werte — sofern für den Typ sinnvoll |
 | **Sub-Komponente** | untergeordnete Kennzahlen (z. B. gekoppelter Speicher) — sofern vorhanden |
@@ -841,7 +865,8 @@ Ganz oben steht der Block **„Überblick"**: links ein Bild einer Wärme/Klima-
   Eine Zeile oder Karte ohne Wert entfällt; Kosten und CO₂ stehen in den Blöcken darunter.
 - **Tooltip:** Antippen oder Überfahren einer Kachel nennt Name, Leistung, Modus, heute kWh und die Herkunft („Live-Snapshot", „HA-LTS (Tageszähler)", „Wetterdienst").
 - **Am Handy** haben Kacheln und Schrift dieselbe Größe wie im Energiefluss bei gleicher Breite; passt eine Reihe nicht, werden Kacheln gruppiert („Innengeräte (3)", „Weitere (2)"; nach „Weitere" gehen zuerst Außentemperatur, dann Zusatzheizung, dann Vorlauf · Rücklauf) — Antippen öffnet die Liste unter dem Bild. Die Karte steht unter dem Bild.
-- Der Block steht auch dann zuoberst, wenn du die Reihenfolge der Blöcke früher geändert hast; danach kannst du ihn wie jeden Block verschieben, zuklappen oder seine zwei Teile parken.
+- Der Block steht auch dann zuoberst, wenn du die Reihenfolge der Blöcke früher geändert hast; danach kannst du ihn wie jeden Block verschieben oder zuklappen.
+- **Einzeln parken:** Schaubild, Gerätekarte, „Heute" und „Betrieb" sind einzeln parkbar (Rechtsklick bzw. oben lange drücken). Ist das Schaubild geparkt, stehen die offenen Karten nebeneinander in voller Breite (ab Tablet-Breite); sind alle Karten geparkt, nimmt das Schaubild die volle Breite; ist alles geparkt, was gerade zu sehen ist, verschwindet der Block. *Benannte Grenze:* ein ausgeblendeter Block fragt nichts ab — bekommt „Heute" oder „Betrieb" erst später am Tag Werte, erscheint die Karte beim nächsten Aufruf der Seite. Wer vor dieser Version „Auf einen Blick" als Ganzes geparkt hatte, findet die drei Karten geparkt; der Chip „Auf einen Blick" auf dem Parkplatz holt alle drei zurück.
 
 > **Benannte Grenzen.** Solange der Block **aufgeklappt** und der Tab **sichtbar** ist, fragt er die Live-Werte alle **5 Sekunden** ab (Wetter und Tageswerte alle 5 Minuten) — ein zweiter Abfrage-Pfad neben *Cockpit → Live*. Zugeklappt, ganz geparkt oder im Hintergrund fragt er nichts. Der Tooltip nennt die **Entität** des Sensors nicht; welche zugeordnet ist, steht im Block „Einstellungen" und unter *Einstellungen → Datenquellen*. Im **Demo-Modus** stammen die Heute-Werte (Wärme, Arbeitszahl, Betrieb heute, Kachel „Wärme heute") vom echten Tag. **„Betrieb heute"** gibt es nur mit einem Betriebsmodus-Sensor aus Home Assistant und erst ab dem Tag, an dem eedc die Betriebsart mitschreibt; **Leerlauf** zählt nicht getrennt — eine Stunde „Heizen · Leerlauf" zählt als Heizen. Die Kachel **„Wärme heute"** kommt aus den Tageswerten (alle 5 Minuten), nicht aus der Live-Abfrage.
 
@@ -864,6 +889,68 @@ Zusätzlich: **JAZ Heizen / JAZ Warmwasser getrennt** (nur wenn du Strom je Funk
 
 ### 3.5 E-Auto
 
+**Überblick (oberster Block, seit der nächsten Version).** Wie bei der Wärmepumpe steht ganz oben der Block „Überblick" —
+links das **Schaubild „Fahrzeug"**, rechts „Auf einen Blick" für das gewählte Auto (Handy: untereinander; ist das Schaubild
+geparkt, stehen die Karten nebeneinander in voller Breite). **Auf einen Blick: E-Auto, Heute und Betrieb sind einzeln parkbar**
+— wie bei der Wärmepumpe ([§3.4](#34-wärmepumpe), auch die benannte Grenze).
+
+**Schaubild „Fahrzeug".** Ein durchscheinendes Auto an einer Säulen-Wallbox vor dem Haus; daran **dieselben Kacheln wie im
+Energiefluss** — für das Auto, das du im Geräte-Selektor gewählt hast (die Szene gehört dem gewählten Gerät; ein anderes Auto
+wählst du oben im Selektor, die Kacheln wechseln mit):
+
+- **Laden** an der Säule (Desktop links neben dem Bild): die gemessene Lade- bzw. Entladeleistung des Autos, darunter sein
+  Zustand als Chip („Lädt", „Verbunden" …) bzw. „entlädt (V2H)"; ohne eigene Leistungsmessung steht nur der Zustand („Lädt DC").
+  Der Tooltip nennt „an ‹Wallbox›" (nur wenn eedc die Zuordnung kennt) bzw. „ohne Wallbox".
+- **Ladestand** am Akku im Unterboden: „62 %" mit Füllstand, darunter Ziel · Restzeit („90 % · noch 1 h 20 min").
+- **Reichweite** am Cockpit („312 km", darunter „Stand 23.044 km"; ohne Reichweite nur der **Kilometerstand**).
+- **Gefahren heute** am Vorderrad („42 km", darunter der Fahrverbrauch „7,8 kWh"; ohne km nur „Fahrverbrauch heute").
+- **Standort** an der Terrasse („Zu Hause" / „Unterwegs" — nur die Zone aus Home Assistant).
+- Was als Grundbestand fehlt, nennt die Zeile unter dem Bild („Ohne Sensor, deshalb ohne Kachel: Ladestand ‹Auto›");
+  Laden, Reichweite, Fahrt und Standort sind Zusatzangaben und stehen dort nicht.
+
+„Auf einen Blick" für das gewählte Auto:
+
+- **Gerätekarte:** der **Ladestand groß** mit einer Leiste und der **Zielmarke** („Ziel 80 %"), daneben die **Reichweite**;
+  rechts der Ring „Eigenverbrauch (Anlage)" (die Zahl gehört der Anlage, nicht dem Auto). Darunter **Ort** („an ‹Wallbox›",
+  nur wenn eedc die Zuordnung kennt, siehe unten), **Standort** („Zu Hause" / „Unterwegs" — nur die Zone aus Home Assistant,
+  nie eine Position), **Ladeleistung** (nur mit eigenem Leistungssensor am Auto; bei V2H „Entlädt ins Haus") und
+  **Ziel · Restzeit** („90 % · noch 1 h 20 min") und der **Kilometerstand** („23.037 km" — der Stand des zugeordneten
+  km-Zählers, siehe unten). Ein **Zustands-Chip** („Lädt", „Verbunden", „Nicht verbunden", „Lädt DC",
+  „Fertig", „Fehler") steht **nur, wenn das Auto an keiner Wallbox steht** — an der Wallbox sagt es deren Chip, eine Aussage
+  je Fläche. Ein Dienstwagen (Stammdatum) trägt den Chip „Dienstwagen".
+- **„Heute":** Ladung heute (nur mit eigenem Zähler bzw. Leistungssensor am Auto und ohne Wallbox, die die Ladung schon
+  zählt — sonst stünde die Wallbox-Energie zweimal da), PV-Ladung heute „(Anlage)" (der PV-Anteil aller Ladungen der Anlage
+  aus den Tageswerten), **„Gefahren heute"** (km) und **„Fahrverbrauch heute"** (kWh) — der Zuwachs von km-Zähler bzw.
+  Fahrverbrauch-Zähler über die abgeschlossenen Stunden des Tages. Keine Kopfzahl: kWh je 100 km eines einzelnen Tages wären
+  Rauschen, die Effizienz steht im Block „Kennzahlen".
+- **„Betrieb heute":** wie viele Stunden das Auto heute **geladen** hat („Lädt", „Lädt DC") oder **verbunden** stand, und wie
+  lange es **zu Hause** bzw. **unterwegs** war — aus der stündlichen Mitschrift von „Ladezustand (Fahrzeug)" und „Zu Hause".
+  Nur Werte mit Stunden; „Nicht verbunden", „Fertig" und „Fehler" sind kein Betrieb. Die Karte fehlt, solange keines der
+  beiden Felder mitgeschrieben wird; die Grenzen stehen unter §3.6.
+- Fehlt jedes der neuen Felder, sagt die Fußzeile „Zustand, Reichweite und Ziel erscheinen hier, sobald zugeordnet"
+  ([Einstellungen §7.10](HANDBUCH_EINSTELLUNGEN.md#710-zustand-und-sitzung-e-mobilität)).
+
+> **Welches Auto an welcher Wallbox?** Liefert genau **eine** Wallbox live, ist die Zuordnung eindeutig (das ladende Auto,
+> sonst das einzige). Liefern **zwei**, kennt eedc sie nicht — die Karten sagen das („Welches Auto an welcher Wallbox lädt,
+> weiß eedc noch nicht") und nennen keinen Ort. eedc schließt nicht aus „Auto verbunden" und „Wallbox verbunden" auf eine
+> Verbindung. **Meldet die Steuerung das Fahrzeug** (evcc, openWB — Feld „Fahrzeug am Ladepunkt" an der Wallbox) und trägt
+> das Auto dieselbe **„Kennung in der Steuerung"** (Stammdaten, Groß/Klein egal), steht es eindeutig „an ‹Wallbox›", auch
+> bei mehreren Wallboxen. Steht an der einzigen Wallbox ein Gast oder ein fremdes Fahrzeug, hat das Auto keinen Ort und
+> trägt seinen eigenen Zustands-Chip. Die Kennung selbst erscheint nicht in der Karte, nur in den Einstellungen. **Benannte Grenzen:** ein
+> Auto, das nur einen Zustand und keine Zahl meldet, erscheint erst mit einem Zahlwert (Ladestand, Reichweite …). Die Werte der
+> Fahrzeug-Integrationen kommen je nach Hersteller alle 10–30 min.
+
+> **Kilometerstand und Fahrt heute — benannte Grenzen.** Der **Kilometerstand** kommt nur vom zugeordneten **km-Zähler**
+> (Feld „Gefahrene km", Auto-Integration oder OBD; aus Home Assistant oder per MQTT), nie aus dem von Hand eingetragenen
+> Tachostand der Monatsdaten, und ist bis zu 60 s alt. **„Gefahren heute"** und **„Fahrverbrauch heute"** zählen nur
+> **abgeschlossene Stunden** (die laufende fehlt) und beginnen mit dem ersten stündlichen Lauf nach der Zuordnung, nicht
+> rückwirkend; die erste Stunde eines neuen Zählers zählt 0 (ihr Stand ist ein Tachostand, keine Tagesmenge). Ein Zähler, der
+> selten meldet (manche Integrationen stündlich oder nur bei Zündung), zeigt die Fahrt erst, wenn der Stand springt. Meldet
+> der Kilometerzähler tage- oder wochenlang nicht und dann wieder, steht die gesamte Strecke der Lücke am Tag der Rückkehr in
+> „Gefahren heute" (in der Stunde der nächsten Meldung; wie Home Assistant) — dasselbe gilt für den Fahrverbrauch. Aus Home
+> Assistant liest eedc den Zähler über die Zuordnung unter *Einstellungen → Datenquellen*; eine ältere Zuordnung, die nur im
+> Sensor-Mapping steht, zählt bis zum erneuten Zuordnen nicht.
+
 - **Gefahrene Kilometer** im Zeitraum
 - **Verbrauch** (kWh)
 - **Ladequellen-Aufteilung** — PV-Ladung, Netz-Ladung (zu Hause), externe Ladung (unterwegs); unter dem PV-Anteil steht **„davon aus dem Speicher"**, wenn ein Speicherzähler existiert (Strom aus dem Hausakku zählt als eigener Strom, ist aber kein Direktverbrauch aus der PV)
@@ -877,6 +964,98 @@ In der Monatstabelle steht ein Monat, in dem das Auto nur einen Anteil am Rest d
 > **Wo wird die Heimladung erfasst — Wallbox oder E-Auto?** Beides ist möglich, und es zählt nichts doppelt. Die **Wallbox** misst die **Summe** aller Ladungen an ihr. Hat ein Auto eine **eigene Messung** („Heim: PV", „Heim: Netz" oder „Heim: gesamt", auch 0), trägt es diese — auch neben der Wallbox. Der **Rest der Wallbox** geht nach Kilometern an die privaten Autos ohne eigene Messung; gibt es keines, zählt er nur als Verbrauch (Gäste, Verluste). Ein **Dienstwagen** mit eigener Messung zählt dienstlich und fehlt im Rest. **Ohne Wallbox** (z. B. Schuko-Lader) erfasst du die Heimladung direkt am E-Auto. Km, Verbrauch, externe Ladung und V2H stehen immer am E-Auto. Mehr in [Berechnungen §3.4](BERECHNUNGEN.md#34-e-auto-einsparung).
 
 ### 3.6 Wallbox
+
+**Überblick (oberster Block, seit der nächsten Version).** Links das **Schaubild „Ladepunkt"**, rechts „Auf einen Blick"
+(Handy: untereinander; ist das Schaubild geparkt, stehen die Karten nebeneinander in voller Breite). **Auf einen Blick: Wallbox,
+Heute und Betrieb sind einzeln parkbar** — wie bei der Wärmepumpe ([§3.4](#34-wärmepumpe), auch die benannte Grenze).
+
+**Schaubild „Ladepunkt".** Der Blick in die offene Garage: Wandbox an der Rückwand, Zählerkasten an der Hauswand, ein Auto
+angesteckt. Die Kacheln gehören der Wallbox, die du im Geräte-Selektor gewählt hast (eine weitere Wallbox wählst du oben im
+Selektor, die Kacheln wechseln mit):
+
+- **Wallbox** an der Wandbox (Desktop links neben dem Bild): **genau die Kachel aus dem Energiefluss** — Leistung, darunter
+  der Zustands-Chip („Wartet · PV", „Kein Fahrzeug" …) bzw. beim Laden das Auto („ID.4 52 %"), Füllstand wie dort; der
+  Tooltip nennt Zustand, Tageswert, die Autos und — falls die Steuerung es meldet — „Gastfahrzeug".
+- **Ladung heute** am Zählerkasten („14,7 kWh"), darunter **„PV-Anteil 67 %"** nur, wenn deine Wallbox Ladung **und**
+  PV-Ladung misst (derselbe Wert wie die Kopfzahl der Karte „PV-Anteil heute"; eedc teilt nicht selbst).
+- **Sitzung** am Stecker („9,8 kWh", darunter die Dauer; ohne Fahrzeug „letzte Sitzung", solange der Sensor den Wert hält).
+- **Das Auto** am Autodach: Name, Ladestand mit Füllstand, darunter das Ziel („Ziel 80 %") oder „lädt 7.400 W" (Leistung wie im Energiefluss: unter 10 kW in Watt) — **nur, wenn
+  eedc weiß, welches Auto an dieser Wallbox steht** (eine einzige Wallbox, oder die Steuerung meldet es) und das Auto einen
+  Ladestand meldet. Bei „weiß eedc noch nicht" und bei einem Gast steht kein Auto im Bild — der Tooltip der Wallbox sagt es.
+  Stehen mehrere deiner Autos eindeutig an der Wallbox, steht das zuerst angelegte einzeln, die übrigen in der Gruppe
+  „E-Autos (n)".
+- Was als Grundbestand fehlt, nennt die Zeile unter dem Bild („Leistung ‹Wallbox›", „Ladung heute ‹Wallbox›"); Sitzung und
+  Auto sind Zusatzangaben und stehen dort nicht.
+
+„Auf einen Blick" für die gewählte Wallbox:
+
+- **Gerätekarte:** Name und **ein Chip** mit dem gemessenen Zustand und dem Lademodus dahinter — „Lädt · PV", „Wartet · PV",
+  „Verbunden", „Fertig", „Kein Fahrzeug", „Gesperrt", „Fehler" (der Lademodus nur bei „Lädt"/„Wartet"). Die Farbe des Punkts
+  ist die der Funktion (Lädt in der Wallbox-Farbe, Wartet gelb, Fehler rot, sonst grau); die Karte selbst wechselt ihre Farbe
+  nie. Darunter die **Ladeleistung groß** (bei Rückspeisung „Abgabe ins Haus"), der Ring „Eigenverbrauch (Anlage)", je Auto eine
+  **Fahrzeugzeile** „Smart #1 · 62 % · 312 km · Lädt" mit Ladestand-Leiste und Zielmarke, **Ziel · Restzeit** und eine Fußzeile
+  „3 Phasen · 16 A · 9,8 kWh in dieser Sitzung · 2 h 10 min" (jeder Teil nur mit Feld; bei „Kein Fahrzeug" „letzte Sitzung
+  12,4 kWh", solange der Sensor den Wert hält). Ist an der Wallbox eine **Adresse der Hersteller-Oberfläche** eingetragen
+  (Stammdaten, z. B. evcc), steht der Link „Hersteller-Oberfläche öffnen" darunter — eedc öffnet nur die Seite, es schaltet nichts.
+- **„PV-Anteil heute" / „Heute":** misst deine Wallbox die geladene Menge **und** den PV-Anteil davon (ein eigener
+  PV-Ladezähler, etwa beim SMA eCharger), steht oben groß der **PV-Anteil heute** („67 %") mit der Herleitung
+  („9,8 kWh PV ÷ 14,7 kWh") — beide Zahlen aus den Tageswerten dieser Wallbox, nichts geschätzt. Darunter Ladung heute
+  (Tageswert aus dem Zähler, ohne ihn aus der Live-Leistung — derselbe Wert wie im Energiefluss) und PV-Ladung heute „(Anlage)". Fehlt eine der
+  beiden Mengen oder ist der PV-Wert größer als die Ladung (Zähler-Drift), heißt die Karte „Heute" und hat keine Kopfzahl.
+  evcc liefert keinen PV-Ladezähler — seinen Solaranteil zeigt eedc nicht. Misst die Wallbox „Heim: PV" und „Heim: Netz"
+  getrennt, aber keinen Gesamtzähler, gibt es keinen Tageswert der Wallbox und damit keine Kopfzahl.
+- **„Betrieb heute":** wie viele Stunden die Wallbox heute **geladen** hat, **verbunden** war, **gewartet** hat oder **fertig**
+  stand („Lädt 3 h 12 min · Verbunden 5 h 42 min · Wartet 30 min") und darunter **„Ladevorgänge heute: n"** — die Wechsel nach „Lädt"
+  aus einem anderen bekannten Zustand. Grundlage ist die **stündliche Mitschrift** des Ladezustands (Anteil jeder Stunde je
+  Zustand), nicht die Leistung. „Kein Fahrzeug", „Gesperrt" und „Fehler" sind kein Betrieb; war den ganzen Tag kein Fahrzeug
+  da, steht „Heute kein Betrieb". Die Farbe des Punkts ist die der Funktion wie am Chip (Lädt in der Wallbox-Farbe, Wartet
+  gelb, sonst grau).
+- **Zustand nur gemessen:** ohne zugeordneten Ladezustand gibt es keinen Chip — eedc schließt nie aus der Leistung auf „lädt".
+  Ohne jedes der neuen Felder sagt die Fußzeile „Zustand, Sitzung und Ladestrom erscheinen hier, sobald zugeordnet"
+  ([Einstellungen §7.10](HANDBUCH_EINSTELLUNGEN.md#710-zustand-und-sitzung-e-mobilität)).
+
+**Welches Auto hängt dran — die Steuerung meldet es (seit der nächsten Version).** Ordnest du das Feld **„Fahrzeug am
+Ladepunkt"** zu (evcc `select.evcc_…_vehicle_name`, openWB „Angeschlossenes Fahrzeug") und trägst am E-Auto die
+**„Kennung in der Steuerung"** ein, nennt die Karte genau das gemeldete Auto — auch bei mehreren Wallboxen, mit dem Tooltip
+„gemeldet von der Steuerung" und bei einem Firmenwagen als „Dienstwagen ‹Name›". Daneben gibt es zwei weitere Zeilen:
+
+- **„Gastfahrzeug lädt" / „Gastfahrzeug verbunden"** — die Steuerung meldet **kein** Fahrzeug (evcc `null`), während eines
+  verbunden ist, wartet, lädt oder fertig ist. Kein Auto deiner Anlage steht dann an dieser Wallbox; die Monatsrechnung ändert
+  sich dadurch nicht (die Ladung bleibt Verbrauch der Wallbox ohne Ersparnis, wie bisher).
+- **„Fahrzeug der Steuerung unbekannt"** — die Steuerung meldet einen Namen, den keines deiner Autos als Kennung trägt. Die
+  Fußzeile sagt „Kennung am E-Auto eintragen — Daten-Checker"; der Daten-Checker nennt den gemeldeten Namen.
+
+Die übrigen Autos verteilen sich auf die Wallboxen **ohne** solche Meldung: bleibt genau eine, steht dort „eindeutig" ihr
+Auto; bleiben mehrere, sagt die Karte wie bisher „weiß eedc noch nicht". **Benannte Grenzen:** einen Gast erkennt eedc nur
+mit einer Steuerung, die Fahrzeuge erkennt (evcc, openWB) — go-eCharger, SMA und Easee melden keinen Namen, dann gibt es
+weder Gast noch Hinweis; ein **leerer `input_text`** in Home Assistant ist von „nicht verfügbar" nicht zu unterscheiden und
+gilt nicht als Gast (evcc liefert das Wort `null`); eine falsch gepflegte Kennung zeigt „unbekannt", nie ein anderes Auto.
+
+Derselbe Chip steht in *Cockpit → Live* an der Wallbox-Kachel, wenn sie **nicht** lädt („Wartet · PV", „Verbunden", gedämpft bei
+„Kein Fahrzeug" und „Fertig"); lädt sie, zeigt die Kachel wie bisher ihr Auto, und der Tooltip nennt „Zustand: Lädt · PV".
+**Benannte Grenzen:** Zustand und Lademodus sind bis zu 60 s alt (derselbe Takt wie der Modus einer Wärmepumpe); Zustand und
+Sitzung erscheinen nur an einer Wallbox mit Leistungssensor; Lademodus und Ziel sind Angaben der Steuerung — eedc zeigt sie
+und bewertet sie nicht; der Solaranteil, den evcc je Sitzung rechnet, ist kein eedc-PV-Anteil und erscheint nicht.
+
+**Benannte Grenzen der Schaubilder „Ladepunkt" und „Fahrzeug".** Die Bilder zeigen je **ein** Gerät — weitere Wallboxen
+oder Autos erreichst du über den Selektor, nicht im Bild. Ein Auto an mehreren live liefernden Wallboxen ohne Meldung der
+Steuerung steht in keinem Bild (Satz im Tooltip der Wallbox); ein Gast ebenso nicht. „An ‹Wallbox›" steht nur bei eindeutiger
+Zuordnung. Der PV-Anteil steht nur gemessen; die PV-Ladung der Anlage steht nur in der Karte. Lade- und Entladeleistung am
+Auto gibt es nur mit eigener Leistungsmessung des Autos. Die Reichweite aus evcc kommt vom Ladepunkt, also nur, solange das
+Auto dort steht; der Standort ist nur die Zone aus Home Assistant. Die Kacheln sind halbdurchsichtig und dürfen Stoßstange
+und Kabel überdecken.
+
+**Benannte Grenzen „Betrieb heute" (Wallbox und E-Auto).** Die Mitschrift beginnt **mit der Zuordnung** und ist nicht
+rückwirkend (Home Assistant führt für Zustände keine Langzeitstatistik); geschrieben wird nur eine **abgeschlossene** Stunde.
+Über MQTT zählt eedc in 5-Minuten-Fenstern mit der Halteregel „ein Zustand gilt bis zur nächsten Meldung"; fällt der Broker
+aus, bleibt die Stunde leer, und nach einem Neustart zählt sie erst ab der nächsten Meldung (ein leerer retained Payload
+löscht die Nachricht am Broker). Der erste Wert nach einem Neustart ist **kein** Ladevorgang. Ein Wert, den eedc nicht kennt (etwa eine andere
+Zone als „zu Hause“/„unterwegs“ beim Auto, ein fremder Status der Wallbox), zählt zu **keinem** Wert — die Summe der Stunden
+kann deshalb unter der Tageslänge liegen. Für evcc über Home Assistant
+(drei Binär-Sensoren, „Option A") verschränkt eedc die drei Verläufe zu einem Ladezustand — ohne „lädt" bzw. „freigegeben"
+nur „Verbunden"/„Kein Fahrzeug"; ein zugeordneter Ladezustand geht immer vor. Welches Fahrzeug oder ob ein Gast geladen hat,
+wird je Stunde **nicht** mitgeschrieben. Die Tageswerte haben keinen Demo-Schalter: im Demo-Modus zeigt die Karte den echten
+Tag (meist also keine Karte). Mehr in [Berechnungen → Stunden je Zustand](BERECHNUNGEN.md#stunden-je-zustand).
 
 - **Geladene Energie** (kWh) — die **Messung dieser Wallbox**, also alles, was an ihr geladen wurde (auch Gäste und Dienstwagen)
 - **Ladevorgänge** (Anzahl)
@@ -1217,6 +1396,47 @@ Der interaktive Überblick über alle Monatswerte in einer sortierbaren Tabelle 
 > Ein Gerät mit der Kategorie *Speicher* bleibt in der Tagesansicht außen vor: dort gibt es je
 > Gerät nur **eine** Zahl, und die ist bei einem Speicher ein Saldo aus Laden und Entladen — sie
 > ließe sich weder der Erzeugung noch dem Verbrauch zuschlagen.
+
+> **E-Mobilität und Wärme/Klima als Spalten (seit Oktober 2026).** Der Spalten-Picker führt dazu weitere Spalten,
+> alle **nicht voreingestellt**. Jede Zahl ist dieselbe, die eedc an anderer Stelle schon zeigt — die Tabelle rechnet
+> nichts selbst.
+>
+> | Gruppe | Monatsansicht | Tagesansicht |
+> | --- | --- | --- |
+> | **E-Auto** | Gefahren (km), **Fahrverbrauch**, **Verbrauch (kWh/100 km)**, E-Auto-Ladung, **Ladung extern** (kWh und €), **V2H-Entladung**, **Ladevorgänge**, Wallbox-Ladung, Wallbox-PV-Ladung, Wallbox-PV-Anteil | Gefahren (km), **Fahrverbrauch**, **V2H-Entladung**, **Ladevorgänge**, **Wallbox-Ladung** |
+> | **Wärmepumpe** | Strom, Strom Heizen/WW, Wärme (gesamt/Heizen/WW), JAZ, **JAZ Heizen**, **JAZ WW**, **JAZ Kühlen**, **Strom Kühlen/Lüften/Entfeuchten**, **Strom nicht aufgeteilt**, **Kälte**, **Zusatzheizung** | Strom, **Wärme**, **Strom Kühlen/Lüften/Entfeuchten**, **Strom nicht aufgeteilt**, **Kälte**, **Zusatzheizung**, **Starts**, **Betriebszeit (min)** |
+> | **Speicher** | Ladung, Entladung, Effizienz, **Netzladung** | Ladung, Entladung, Effizienz, **Vollzyklen (Entladung)** |
+> | Weitere | **Ø Außentemperatur**, **Dienstliche Ladekosten** (Finanzen), Abgabe an Dritte | **Temperatur min**, **Börsenpreis min**, **Abgabe an Dritte** |
+>
+> - **Verbrauch (kWh/100 km)** ist dieselbe Kennzahl wie im E-Auto-Hub: gemessener Fahrverbrauch, sonst die Ladung
+>   (zu Hause + extern) je Kilometer. Die Summenzeile ist **Σ Menge ÷ Σ km** — kein Durchschnitt der Monatswerte;
+>   ein Monat mit Kilometern, aber ohne Energiemenge, zählt dabei nicht mit.
+> - **Fahrverbrauch, V2H, Ladung extern, Ladevorgänge und Kälte** stehen im Monat **nur mit Wert** wie in
+>   *Cockpit → Monat*: ein Monat mit 0 zeigt „—". Der Betriebsart-Strom (Kühlen, Lüften, Entfeuchten, nicht
+>   aufgeteilt) steht nur, wenn deine Wärmepumpe ihn aufteilt (Betriebsart-Zähler oder Betriebsmodus-Signal), die
+>   **Zusatzheizung** nur mit einem Heizstab-Zähler. Die Arbeitszahlen je Funktion sind dieselben wie in
+>   *Cockpit → Monat*; wie bei der JAZ gibt es darunter **keine Summenzeile** — ein Quotient wird nicht gemittelt.
+> - **Am Tag zählen nur private Geräte** — ein Dienstwagen und eine dienstliche Wallbox stehen nicht in der Summe,
+>   genau wie im Monat. Die Tageswerte von E-Auto und Wallbox kommen aus der Mitschrift (Kilometerstand,
+>   Fahrverbrauch, Ladezustand); ohne sie steht „—". ⚠ **Nach einer Lücke im Kilometerstand** trägt der Tag der
+>   Rückkehr den ganzen Sprung — dieselbe Regel wie die Karte „Heute" im E-Mobilitäts-Hub.
+> - **Wärme, Kälte, Strom nach Betriebsart und Zusatzheizung am Tag** — Wärme, Kälte und Strom sind dieselben
+>   Tageswerte wie im Verlauf von *Cockpit → Monat*:
+>   die Wärme nur **gemessen** (ohne Wärmemengenzähler „—", auch wenn der Monat eine aus Strom × Arbeitszahl
+>   abgeleitete Wärme zeigt), der Strom nach Betriebsart nur an Tagen mit Aufteilung. Die **Zusatzheizung** am Tag ist
+>   dieselbe Zahl wie in *Cockpit → Tag* — nur mit einem Heizstab-Zähler, sonst „—". Für jeden Tag des gewählten
+>   Zeitraums muss eedc dafür sehr viele Stundendatensätze durchsuchen und zusammenfassen — ist eine dieser Spalten
+>   eingeblendet, steht deshalb statt der Tabelle eine Lade-Anzeige, bis alles gerechnet ist (bei einem Jahr einige
+>   Sekunden); erst dann ist auch der CSV-Export da. Ohne diese Spalten lädt die Tabelle so schnell wie bisher.
+> - **Starts und Betriebszeit** sind die Tageszähler deines Herstellers, summiert über die Wärmepumpen wie in
+>   *Cockpit → Monat*; die Betriebszeit steht in ganzen Minuten. Eine Monatsspalte gibt es dafür nicht — die
+>   Summe über den Monat steht in *Cockpit → Monat*.
+> - **„Vollzyklen (Entladung)"** ist Entladung ÷ Kapazität des Tages — nicht dasselbe wie die **SoC-Hübe** unter
+>   „Tagesdetail" (Hub des Ladestands).
+> - **Nur in der Tagesansicht (*Cockpit → Tag*)** stehen die Arbeitszahlen des Tages (gesamt und je Funktion), die
+>   Wärme und der Strom für Heizen und Warmwasser getrennt sowie die gemessene PV-Ladung und
+>   der PV-Anteil der Wallbox des Tages. Sie entstehen dort aus Lesern für **einen** Tag; über ein ganzes Jahr gelesen
+>   wäre die Tabelle zu langsam bzw. bräuchte einen zweiten Rechenweg neben der Tagesansicht.
 
 > Kompakte Werte-Blöcke sind zusätzlich direkt in Cockpit- und Komponenten-Sichten eingebettet; die volle Werkbank mit Picker und Export liegt hier.
 

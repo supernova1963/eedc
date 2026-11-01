@@ -14,9 +14,9 @@ import { CHART_COLORS, COLORS, ENERGIEFLUSS_SAUM, KATEGORIE_FARBEN, SOLAR_INTENS
 import { useChartTheme } from '../../context/ThemeContext'
 import EnergieFlussBackground from './EnergieFlussBackground'
 import EnergieFlussKachel, { IconElement, modusZeile, type ZweiteZeile } from './EnergieFlussKachel'
-import { modusKlartext } from '../ui/ModusChip'
+import { ladezustandKlartext, modusKlartext } from '../ui/ModusChip'
 import {
-  RAHMEN_CHIP_HOEHE, W_DEFAULT, flowPath, layoutEnergieFluss, pfeilspitze,
+  RAHMEN_CHIP_HOEHE, W_DEFAULT, flowPath, ladezustandZeile, layoutEnergieFluss, pfeilspitze,
   type BuehnenMass, type GezeichneterKnoten, type KachelAuto,
 } from './energieFlussLayout'
 import { verbergeTouchTooltip } from '../../hooks/useTouchTitleTooltip'
@@ -269,8 +269,9 @@ export function zeichenBudget(nodeW: number, fontSize: number): number {
  * ein Auto „ID.4 52 %" (entlädt es — V2H —, mit „· entlädt"); mehrere, von
  * denen keines eindeutig lädt, die Ladestände nebeneinander „64 · 81 %".
  * Der Name weicht zuerst, Ladestand und Richtung nie.
+ * Exportiert für die Szene «Ladepunkt» im Hub-Überblick (P-433-2b S1b, `emobKachelAnker.ts`) — dieselbe Zeile.
  */
-function autoZeile(auto: KachelAuto, max: number): string {
+export function autoZeile(auto: KachelAuto, max: number): string {
   if (auto.art === 'ladestaende') {
     return auto.autos.map(a => (a.soc != null ? String(a.soc) : '–')).join(' · ') + ' %'
   }
@@ -280,8 +281,9 @@ function autoZeile(auto: KachelAuto, max: number): string {
   return rest ? kuerzeMitSuffix(a.label, ' ' + rest, max) : kuerzeMitSuffix(a.label, '', max)
 }
 
-/** Eine Tooltip-Zeile je Auto: Ladestand und — gemessen — lädt/entlädt. */
-function autoTip(a: LiveFahrzeug): string {
+/** Eine Tooltip-Zeile je Auto: Ladestand und — gemessen — lädt/entlädt. Exportiert für die Szenen der E-Mobilität
+ *  (P-433-2b S1b, `emobKachelAnker.ts`). */
+export function autoTip(a: LiveFahrzeug): string {
   const soc = a.soc != null ? `${a.soc} %` : 'Ladestand unbekannt'
   const kw = a.kw ?? 0
   const richtung = kw > 0 ? `, lädt ${fmtZahl(kw, 2)} kW` : kw < 0 ? `, entlädt ${fmtZahl(-kw, 2)} kW (V2H)` : ''
@@ -319,8 +321,8 @@ export function nennleistungKwp(k: LiveKomponente): number | null {
   return k.leistung_kwp != null && k.leistung_kwp > 0 ? k.leistung_kwp : null
 }
 
-/** SoC Farbe: rot < 20%, gelb 20-50%, grün > 50% */
-function socColor(pct: number): string {
+/** SoC Farbe: rot < 20%, gelb 20-50%, grün > 50%. Exportiert für den Pegel der Szenen der E-Mobilität (P-433-2b S1b). */
+export function socColor(pct: number): string {
   if (pct < 20) return STATUS_COLORS.kritisch
   if (pct < 50) return STATUS_COLORS.warnung
   return STATUS_COLORS.ok
@@ -407,8 +409,11 @@ export default function EnergieFluss({
   const { nodeW: NODE_W, hausR: HAUS_R } = dims
   // Alle Autos an allen Wallboxen — bei „geschätzt" (≥ 2 Wallboxen) listet jede
   // Wallbox ALLE, denn die Zuordnung reihum ist nur eine Annahme (Plan §1.4a).
+  // P-433-2b K2a (W4): nur die Autos der „geschätzt"-Kacheln — ein von der Steuerung gemeldetes Auto steht an
+  // seiner Wallbox „eindeutig" und nicht noch einmal in der Liste der anderen.
   const alleAutos = [...new Map(
-    nodes.flatMap(n => n.fahrzeuge ?? []).map(f => [f.investition_id, f] as const),
+    nodes.filter(n => n.fahrzeugeZuordnung === 'geschaetzt')
+      .flatMap(n => n.fahrzeuge ?? []).map(f => [f.investition_id, f] as const),
   ).values()].sort((a, b) => a.investition_id - b.investition_id)
   const haushalt = komponenten.find(k => k.key === 'haushalt')
   // PV-Knoten-Anzahl: bei nur einem PV-String ist die Summe redundant
@@ -775,7 +780,12 @@ export default function EnergieFluss({
           // dort hängen seit P-433-2 beide an derselben Prop `zweiteZeile`).
           // P-433-1: die Netz-Kachel trägt ihre Richtung als Text (S1-3, Farbe = Netz-Farbe), die
           // Modus-Zeile ist ein Chip (S1-4, `modusZeile` — dieselbe Regel wie im Hub-Überblick).
-          const zweite: ZweiteZeile | null = node.kachelAuto
+          // P-433-2b K1 (K-12): ein gemessener Ladezustand ≠ «lädt» steht als Chip an der Wallbox-Kachel; lädt sie,
+          // bleibt die Auto-Zeile. Ohne Ladezustand ist `zustandsChip` `null` und die Kachel bitgleich.
+          const zustandsChip = !mitglieder ? ladezustandZeile(k, achsen.referenz) : null
+          const zweite: ZweiteZeile | null = zustandsChip
+            ? zustandsChip
+            : node.kachelAuto
             ? { text: autoZeile(node.kachelAuto, zeichenBudget(NODE_W, dims.socFontSize)), fill: hasSoc ? socColor(soc) : null }
             : hasSoc
               ? { text: `${soc} %`, fill: socColor(soc) }
@@ -814,6 +824,9 @@ export default function EnergieFluss({
           // der 13-Uhr-Kommentar in `prognosen.py` (N-331).
           const betrieb = modusKlartext(k)
           if (betrieb) tipParts.push(`Betrieb: ${betrieb}`)
+          // P-433-2b K1: der gemessene Ladezustand der Wallbox (mit Lademodus) — auch bei «lädt», wo die Zeile das Auto zeigt.
+          const ladezustand = ladezustandKlartext(k)
+          if (ladezustand) tipParts.push(`Zustand: ${ladezustand}`)
           if (auslastungPct !== null) tipParts.push(`Auslastung: ${fmtZahl(auslastungPct, 0)} % von ${fmtZahl(k.leistung_kwp, 1)} kWp`)
           // Netz: Bezug + Einspeisung separat anzeigen + Farberklärung
           if (k.key === 'netz') {

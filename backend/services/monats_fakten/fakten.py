@@ -242,6 +242,16 @@ class EmobFakten:
     ladung_kwh: float = 0.0
     ladung_pv_kwh: float = 0.0
     ladung_netz_kwh: float = 0.0
+    #: N-771 (30.10.2026): Σ gemessener **Netzbezug zum Wallbox-Tarif** aller Wallboxen (privat und dienstlich) — Teilmenge
+    #: der Ladung, nur für die Stromrechnung (``tarif.komponenten_anteile``); ``None`` = nicht gemessen (F3 wie an der WP).
+    #: ⚠ Nicht ``ladung_netz_kwh``: die ist eedcs Zuteilung (N-569), dies die abgerechnete Menge.
+    wallbox_netz_eigener_tarif_kwh: Optional[float] = None
+    #: … und die Ladung ALLER Wallboxen des Monats — die Obergrenze der Klemme (F7).
+    wallbox_ladung_alle_kwh: float = 0.0
+    #: F12 (E6, F12a = A): die Netzladung der Wallbox-Zeilen nach der bisherigen Regel (Zähler des Versorgers, evcc-Wert,
+    #: sonst Tagesquote; ``reader.get_emob_pv_netz_kwh`` über die angereicherten Zeilen, privat und dienstlich) — N_wb im
+    #: gemeinsamen Zähler (``tarif.komponenten_anteile``). Keine eigene Zuteilung; ohne Wallbox-Zeile 0.
+    wallbox_netzladung_kwh: float = 0.0
     #: Steht die Aufteilung ``ladung_pv_kwh``/``ladung_netz_kwh`` so in den
     #: Monatsdaten, oder ist sie aus der Tagesebene **abgeleitet** (N-141 Weg c)?
     #: Eine Wallbox misst ihren PV-Anteil nicht; fehlt er, galt bisher die ganze
@@ -424,6 +434,26 @@ class SonstigesFakten:
     je_geraet: dict[int, SonstigesGeraetFakten] = field(default_factory=dict)
 
 @dataclass(frozen=True)
+class NetzanteilPreise:
+    """N-770/N-771 F6 (Bauplan §2): die Zeitfenster-Preise (HT/NT) eines Monats, wenn der Kanal des Felds «Netzbezug zum
+    WP-/Wallbox-Tarif» den Monat deckt (``monats_fakten/tarif.py::_netzanteil_preise``) — ``komponenten_anteile`` setzt
+    sie ein, sobald es den Anteil der Verwendung ansetzt.
+
+    * ``komponente_cent``: ``((verwendung, ct), …)`` — der Komponenten-Tarif über N gewichtet statt über den Haus-Netzbezug.
+    * ``haushalt_rest_cent``: ``((verwendungen, ct), …)`` — der Haushaltstarif über (Netzbezug − Σ N) der angesetzten
+      Verwendungen gewichtet (je Teilmenge, weil eine Verwendung ohne gemessenes N den Rest nicht kürzt)."""
+
+    komponente_cent: tuple[tuple[str, float], ...] = ()
+    haushalt_rest_cent: tuple[tuple[frozenset, float], ...] = ()
+
+    def komponente(self, verwendung: str) -> Optional[float]:
+        return dict(self.komponente_cent).get(verwendung)
+
+    def haushalt_rest(self, verwendungen) -> Optional[float]:
+        return dict(self.haushalt_rest_cent).get(frozenset(verwendungen))
+
+
+@dataclass(frozen=True)
 class TarifFakten:
     """Die Preise, die für **diesen** Monat galten (ADR-002/**P8**).
 
@@ -450,10 +480,23 @@ class TarifFakten:
     netzbezug_preis_herkunft: Optional[str] = None
     netzbezug_stammpreis_cent: float = NETZBEZUG_DEFAULT_CENT
     einspeiseverguetung_cent: float = EINSPEISEVERGUETUNG_DEFAULT_CENT
+    #: N-769: Σ der Grundpreise ALLER im Monat gültigen Tarife — allgemein plus ein EIGENER WP-/Wallbox-Tarif
+    #: (``tarif.grundpreis_des_monats``); gehört nur in die Stromrechnung.
     grundpreis_euro_monat: float = 0.0
     wp_preis_cent: float = NETZBEZUG_DEFAULT_CENT
     wallbox_preis_cent: float = NETZBEZUG_DEFAULT_CENT
     wallbox_preis_effektiv_cent: float = NETZBEZUG_DEFAULT_CENT
+    #: N-770/N-771: gilt im Monat ein EIGENER WP- bzw. Wallbox-Tarif (nicht der Rückfall auf den allgemeinen)? Nur dann
+    #: rechnet die Stromrechnung einen gemessenen Netzbezug zum Komponenten-Tarif mit dessen Preis (``komponenten_anteile``).
+    wp_eigener_tarif: bool = False
+    wallbox_eigener_tarif: bool = False
+    #: F12 (N-770/N-771 E6): gilt ein GEMEINSAMER Tarif für Wärmepumpe und Wallbox (Verwendung ``waermepumpe_wallbox``,
+    #: ``tarif.komponenten_tarif_gemeinsam``)? Dann trägt das Feld an der WP den gemeinsamen Netzbezug N_g, und
+    #: ``komponenten_anteile`` rechnet einen Anteil ``waermepumpe_wallbox`` (F12a = A). ``wp_eigener_tarif`` ist dann
+    #: ``True``, ``wallbox_eigener_tarif`` ``False`` (ein Feld an der Wallbox zählt nicht).
+    komponenten_tarif_gemeinsam: bool = False
+    #: N-770/N-771 F6: die HT/NT-Preise über N bzw. (Netzbezug − N), wenn der Kanal des Felds den Monat deckt; sonst ``None``.
+    netzanteil_preise: Optional[NetzanteilPreise] = None
     kraftstoffpreis_euro: Optional[float] = None
     gaspreis_cent_kwh: Optional[float] = None
 

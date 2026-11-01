@@ -133,8 +133,9 @@ Das ist eine bewusste Grenze und keine Lücke, die noch geschlossen wird. Eine F
 Verwalte deine Stromtarife als Tabelle mit Gültigkeitszeiträumen — die Basis jeder Einsparungsberechnung:
 
 - Mehrere Tarife mit **Gültigkeitszeitraum** möglich.
-- **Spezialtarife:** Jeder Tarif kann einer Verwendung zugeordnet werden — Standard, Wärmepumpe oder Wallbox. Ohne Spezialtarif nutzt eedc automatisch den Standard-Tarif für die Komponente — und pflegst du im Monatsabschluss einen **Ø-Strompreis**, gilt dieser Ø dann auch für Wärmepumpe und Wallbox (sie hängen am Hauszähler). Aktive Spezialtarife stehen in der Info-Box oben. Ein **eigener Wallbox-Tarif** rechnet mit seinem eigenen Arbeitspreis bzw. seinen eigenen Zeitfenstern — die HT/NT-Fenster des Standard-Tarifs gelten für ihn nicht.
-- **Eigener Wärmepumpen-Tarif — was eedc damit rechnet und was nicht:** Mit dem Tarif rechnet eedc die **Stromkosten der Wärmepumpe** (Komponenten-Hub, Cockpit, HA-Sensoren). Die **PV-Seite** bleibt beim Standard-Tarif: Die Eigenverbrauchs-Ersparnis bewertet jede selbst genutzte kWh zum Haushaltstarif — auch den Teil, den die Wärmepumpe aus der eigenen PV bezogen hat, denn wie groß dieser Teil ist, weiß eedc nicht. Die Ersparnis kann dadurch um höchstens *WP-Strom × Tarifdifferenz* abweichen; der Daten-Checker nennt den Betrag für die letzten zwölf Monate. Herleitung und Vorzeichen: [Berechnungen, „Mit eigenem Wärmepumpen-Tarif"](BERECHNUNGEN.md#mit-eigenem-wärmepumpen-tarif--eine-benannte-grenze-n-767).
+- **Wärmepumpe und Wallbox (gemeinsamer Zähler):** Hängen beide Geräte hinter **einem** Unterzähler mit **einem** Tarif (z. B. §14a Modul 2 mit der Wallbox am Wärmepumpen-Zähler), wähle diese Verwendung — der Tarif gilt dann für Wärmepumpe **und** Wallbox, sein Grundpreis zählt in der Stromrechnung einmal. Den gemeinsamen Netzbezug trägt das Feld **„Netzbezug zum WP-/Wallbox-Tarif (gemeinsamer Zähler)"** an der Wärmepumpe (Datenquellen, §7.2); an der Wallbox wird das Feld dann nicht angeboten. Ein eigener Wärmepumpen- oder Wallbox-Tarif zum selben Stichtag hat Vorrang für sein Gerät — dann ist es kein gemeinsamer Zähler mehr (der Daten-Checker sagt es). Was eedc rechnet: [Wärme & Klima, Schritt 6b](HANDBUCH_WAERME_KLIMA.md#schritt-6b--netzbezug-zum-wp-tarif-optional-nur-mit-eigenem-wärmepumpen-tarif).
+- **Spezialtarife:** Jeder Tarif kann einer Verwendung zugeordnet werden — Standard, Wärmepumpe, Wallbox oder Wärmepumpe und Wallbox (gemeinsamer Zähler). Ohne Spezialtarif nutzt eedc automatisch den Standard-Tarif für die Komponente — und pflegst du im Monatsabschluss einen **Ø-Strompreis**, gilt dieser Ø dann auch für Wärmepumpe und Wallbox (sie hängen am Hauszähler). Aktive Spezialtarife stehen in der Info-Box oben. Ein **eigener Wallbox-Tarif** rechnet mit seinem eigenen Arbeitspreis bzw. seinen eigenen Zeitfenstern — die HT/NT-Fenster des Standard-Tarifs gelten für ihn nicht. **Der Grundpreis eines Spezialtarifs** (zweiter Zähler) gehört zur Stromrechnung: Die Netzbezug-Kosten in *Cockpit → Monat/Jahr*, *Auswertungen → Tabelle*, der Übersicht und im PDF-Monatsbericht tragen die Grundpreise **aller** im Monat gültigen Tarife (Standard plus Wärmepumpe/Wallbox), „davon Grundgebühr" nennt dann die Aufteilung je Tarif (z. B. „Standard 14,00 € · Wärmepumpe 10,00 €"). Er steht nur dort, nicht zusätzlich in der Wärmepumpen- oder E-Mobilitäts-Ersparnis. Ohne Spezialtarif zählt nur der Grundpreis des Standard-Tarifs (einmal). Bis Version 4.1.11 ging der Grundpreis eines Spezialtarifs in keine Zahl ein.
+- **Eigener Wärmepumpen- oder Wallbox-Tarif — was eedc damit rechnet:** Mit dem Tarif rechnet eedc die **Stromkosten der Wärmepumpe** bzw. die **Netzladung** der E-Mobilität (Komponenten-Hub, Cockpit, HA-Sensoren), und sein Grundpreis steht in der Stromrechnung. Für die **Stromrechnung** und die **Eigenverbrauchs-Ersparnis** braucht eedc zusätzlich die Menge, die dein Versorger zum Komponenten-Tarif abrechnet: das Feld **„Netzbezug zum WP-Tarif"** an der Wärmepumpe bzw. **„Netzbezug zum Wallbox-Tarif"** an der Wallbox (Datenquellen, §7.2; in einer Zählerkaskade *Z1-Bezug minus Z2-Bezug*, [Wärme & Klima, Schritt 6b](HANDBUCH_WAERME_KLIMA.md#schritt-6b--netzbezug-zum-wp-tarif-optional-nur-mit-eigenem-wärmepumpen-tarif)). Ist es gemessen, rechnet die Stromrechnung diese Menge zum Komponenten-Tarif und den Rest zum Haushaltstarif (auch je Tag und Stunde, mit HT/NT über genau diese Stunden), die Eigenverbrauchs-Ersparnis bewertet den PV-Strom der Wärmepumpe zum WP-Tarif, und an der Wallbox ist der gemessene Wert die Netzladung (vor evcc). Ohne das Feld bleibt die **PV-Seite** beim Standard-Tarif: Stromrechnung und Ersparnis können dann zusammen um höchstens *WP-Strom × Tarifdifferenz* abweichen; der Daten-Checker nennt den Betrag für die letzten zwölf Monate. ⚠ **Paralleler Zähler** (Wärmepumpe oder Wallbox mit eigenem Zähler neben dem Hauszähler, nicht hinter der PV): dann ist der **Netzbezug der Anlage die Summe beider Zähler** — ordne unter *Datenquellen → Netzbezug* einen Sensor zu, der beide enthält (z. B. ein Template-Sensor). Sonst fehlt der Bezug des Geräts im Netzbezug; der Daten-Checker erkennt den Fall am selben Sensor in Gerätemenge und Feld. Herleitung: [Berechnungen, „Mit eigenem Wärmepumpen-Tarif"](BERECHNUNGEN.md#mit-eigenem-wärmepumpen-tarif--netzbezug-zum-wp-tarif-oder-grenze-n-767-n-770).
 - **Monate vor deinem ersten Tarif:** Liegen erfasste Monate vor dem „Gültig ab" deines ältesten Tarifs, rechnet eedc sie mit der **Vorbelegung** — **30 ct/kWh** für den Netzbezug, **8,2 ct/kWh** für die Einspeisung — überall gleich: Cockpit (Übersicht, Monat, Jahr), Komponenten-Hubs, Aussichten, Jahresbericht und HA-Sensoren. In *Cockpit → Monat* steht dann unter dem Ø-Preis „Kein Strompreis-Tarif für diesen Zeitraum hinterlegt — gerechnet mit der Vorbelegung", und der Daten-Checker meldet die Monate als Fehler. Der Handgriff: beim ältesten Tarif das „Gültig ab" auf den Beginn deiner Daten setzen — alle Sichten rechnen sofort neu.
 - **Zeitfenster (HT/NT):** Jeder Tarif kann Fenster mit abweichendem Arbeitspreis tragen (Uhrzeit, Wochentage, Preis) — siehe den Kasten unten.
 - **Zählergebühr-Tarif:** Neben Grundgebühr lässt sich eine separate Zählergebühr erfassen; Grund- und Zählergebühren werden im Cockpit (Monat/Jahr) getrennt ausgewiesen.
@@ -792,7 +793,7 @@ Die Zuordnung spiegelt die Struktur von **Einstellungen → Komponenten**:
 - **Ein Block je Investitionstyp** (mit den farbigen Typ-Icons und einer Zusammenfassung wie „3 Geräte · 2 Felder noch ohne Quelle"), dazu ganz oben ein Zusatz-Block **„Anlage / Zähler"** für die Basis-Felder (Einspeisung, Netzbezug, Wetter).
 - Darunter je Gerät eine einklappbare Sektion mit einem Rollup-Badge.
 - Die Felder je Gerät sind in drei Abschnitte nach Einheit gegliedert: **Energie-Sensoren (kWh)**, **Leistung-Sensoren (W)**, **Sonstige Sensoren** (SoC in %, Temperatur, km, €, Ladevorgänge). Leere Abschnitte entfallen.
-- **Ausnahme Wärmepumpe/Klimaanlage — Blöcke nach Betriebsart.** Hier stehen die Felder in Blöcken **Gerät gesamt** · **Heizen** · **Warmwasser** · **Kühlen** · **Lüften** · **Entfeuchten**, jeder als eigene Karte mit einer Kopfzeile in der Farbe seiner Betriebsart (Gerät gesamt grau). Im Block **Gerät gesamt** stehen zuerst Leistung gesamt, Betriebsmodus, Vorlauf, Rücklauf, Leistung Zusatzheizung, Strom Zusatzheizung und Wärme gesamt, danach Stromverbrauch und Raumtemperaturen; in den übrigen Blöcken kWh vor W vor den übrigen. Die Warmwasser-Temperatur steht im Block **Warmwasser**. Unter den Karten steht, woher die Betriebsarten kommen: aus Art und Funktionen der Investition — der Link **„Investition bearbeiten"** öffnet sie unter *Einstellungen → Komponenten*; hier werden nur Sensoren zugeordnet. Welche Blöcke erscheinen, folgt dem Gerät: ein Block steht da, sobald ein Feld seiner Betriebsart in der ersten Reihe steht. Was in der ersten Reihe steht, entscheiden Bauart und Stammdaten — eine Brauchwasser-Wärmepumpe hat keinen Block **Heizen**, eine Klimaanlage keinen Block **Warmwasser**, und den Block **Kühlen** hat ein Gerät, das kühlt: jede Klimaanlage und jede Wärmepumpe, an der du unter *Einstellungen → Komponenten* die Kühlung (aktiv oder passiv) eingetragen hast, auch ohne Kühlzähler. Felder, die es an deinem Gerät selten gibt (etwa der Kühlzähler an einer Luft-Wasser-Wärmepumpe ohne eingetragene Kühlung), liegen wie bisher unter **„Weitere Größen erfassen"** und rücken in ihren Block, sobald sie eine Quelle haben. **Vorlauf**, **Rücklauf** und **Leistung Zusatzheizung** stehen an jeder Wärmepumpe im Block **Gerät gesamt** — reine Anzeige im Überblick des Wärmepumpen-Hubs; ihre Stundenmittel übernimmt eedc aus der Langzeitstatistik von Home Assistant, wenn der Sensor `state_class: measurement` trägt ([Wärme & Klima, Schritt 6](HANDBUCH_WAERME_KLIMA.md#schritt-6--live-werte-optional)). Dort steht auch **Strom Zusatzheizung** (kWh, kumulativer Zähler des Heizstabs hinter dem WP-Zähler): Er ändert keine Menge und trägt allein die Zahl „AZ ohne Zusatzheizung“ neben der Arbeitszahl ([Wärme & Klima, Schritt 6a](HANDBUCH_WAERME_KLIMA.md#schritt-6a--strom-zusatzheizung-optional)). ⚑ Wie jeder neu zugeordnete Wärmepumpen-Zähler zählt er zu den Zählern, die eedc für die Stundenwerte der Wärmepumpe voraussetzt: Solange seine Stundenreihe einen Monat nicht vollständig deckt — typisch im Monat der Zuordnung —, liest eedc die Wärmepumpe dieses Monats aus dem bisherigen Bestand (Monatsabschluss bzw. Tageswerte), nicht aus den Stundenwerten. Die Zahlen bleiben dieselben, nur ihre Quelle wechselt erst mit dem ersten voll gedeckten Monat.
+- **Ausnahme Wärmepumpe/Klimaanlage — Blöcke nach Betriebsart.** Hier stehen die Felder in Blöcken **Gerät gesamt** · **Heizen** · **Warmwasser** · **Kühlen** · **Lüften** · **Entfeuchten**, jeder als eigene Karte mit einer Kopfzeile in der Farbe seiner Betriebsart (Gerät gesamt grau). Im Block **Gerät gesamt** stehen zuerst Leistung gesamt, Betriebsmodus, Vorlauf, Rücklauf, Leistung Zusatzheizung, Strom Zusatzheizung und Wärme gesamt, danach Stromverbrauch und Raumtemperaturen; in den übrigen Blöcken kWh vor W vor den übrigen. Die Warmwasser-Temperatur steht im Block **Warmwasser**. Unter den Karten steht, woher die Betriebsarten kommen: aus Art und Funktionen der Investition — der Link **„Investition bearbeiten"** öffnet sie unter *Einstellungen → Komponenten*; hier werden nur Sensoren zugeordnet. Welche Blöcke erscheinen, folgt dem Gerät: ein Block steht da, sobald ein Feld seiner Betriebsart in der ersten Reihe steht. Was in der ersten Reihe steht, entscheiden Bauart und Stammdaten — eine Brauchwasser-Wärmepumpe hat keinen Block **Heizen**, eine Klimaanlage keinen Block **Warmwasser**, und den Block **Kühlen** hat ein Gerät, das kühlt: jede Klimaanlage und jede Wärmepumpe, an der du unter *Einstellungen → Komponenten* die Kühlung (aktiv oder passiv) eingetragen hast, auch ohne Kühlzähler. Felder, die es an deinem Gerät selten gibt (etwa der Kühlzähler an einer Luft-Wasser-Wärmepumpe ohne eingetragene Kühlung), liegen wie bisher unter **„Weitere Größen erfassen"** und rücken in ihren Block, sobald sie eine Quelle haben. **Vorlauf**, **Rücklauf** und **Leistung Zusatzheizung** stehen an jeder Wärmepumpe im Block **Gerät gesamt** — reine Anzeige im Überblick des Wärmepumpen-Hubs; ihre Stundenmittel übernimmt eedc aus der Langzeitstatistik von Home Assistant, wenn der Sensor `state_class: measurement` trägt ([Wärme & Klima, Schritt 6](HANDBUCH_WAERME_KLIMA.md#schritt-6--live-werte-optional)). Dort steht auch **Strom Zusatzheizung** (kWh, kumulativer Zähler des Heizstabs hinter dem WP-Zähler): Er ändert keine Menge und trägt allein die Zahl „AZ ohne Zusatzheizung“ neben der Arbeitszahl ([Wärme & Klima, Schritt 6a](HANDBUCH_WAERME_KLIMA.md#schritt-6a--strom-zusatzheizung-optional)). Mit **eigenem Wärmepumpen-Tarif** steht dort zuletzt **Netzbezug zum WP-Tarif** (kWh, die Menge, die der Versorger zum WP-Tarif abrechnet) — ohne eigenen Tarif liegt es unter „Weitere Größen erfassen“, weil es dann nichts bewirkt. Es ändert keine Menge, nur die Preise in Stromrechnung und Eigenverbrauchs-Ersparnis ([Wärme & Klima, Schritt 6b](HANDBUCH_WAERME_KLIMA.md#schritt-6b--netzbezug-zum-wp-tarif-optional-nur-mit-eigenem-wärmepumpen-tarif)). Dieselbe Regel gilt an der **Wallbox** für **Netzbezug zum Wallbox-Tarif** (kWh-Abschnitt mit eigenem Wallbox-Tarif, sonst „Weitere Größen erfassen“). Mit dem Tarif **„Wärmepumpe und Wallbox (gemeinsamer Zähler)“** heißt das Feld an der Wärmepumpe **Netzbezug zum WP-/Wallbox-Tarif (gemeinsamer Zähler)** und trägt den gemeinsamen Netzbezug beider Geräte; an der Wallbox liegt es dann unter „Weitere Größen erfassen“, weil es dort nicht zählt. ⚑ Wie jeder neu zugeordnete Wärmepumpen-Zähler zählt er zu den Zählern, die eedc für die Stundenwerte der Wärmepumpe voraussetzt: Solange seine Stundenreihe einen Monat nicht vollständig deckt — typisch im Monat der Zuordnung —, liest eedc die Wärmepumpe dieses Monats aus dem bisherigen Bestand (Monatsabschluss bzw. Tageswerte), nicht aus den Stundenwerten. Die Zahlen bleiben dieselben, nur ihre Quelle wechselt erst mit dem ersten voll gedeckten Monat. Für den **Netzbezug zum WP-/Wallbox-Tarif** selbst gilt im Monat der Zuordnung zusätzlich: sein Monatswert ist eine Teilmenge, und eedc rechnet diesen Monat **ohne** ihn (auch mit einem von Hand eingetragenen Wert — der Monatsabschluss unterscheidet ihn nicht vom übernommenen Vorschlag); ab dem ersten vollen Monat gilt er ([Wärme & Klima, Schritt 6b](HANDBUCH_WAERME_KLIMA.md#schritt-6b--netzbezug-zum-wp-tarif-optional-nur-mit-eigenem-wärmepumpen-tarif)).
 - **Status im Blockkopf** (nur Wörter, keine Arbeitszahl): **● vollständig** — Strom und Wärme der Betriebsart sind gedeckt · **⊘ fehlt: Strom, Wärme** (oder nur eines davon) · **Σ aus Betriebsmodus abgeleitet** — kein eigener Stromzähler, aber ein Betriebsmodus-Sensor und ein Gesamtstromzähler: eedc teilt den Strom selbst auf · **passiv** — das Gerät kühlt passiv und hat keinen Kühlzähler. Gedeckt heißt: ein Feld hat einen Sensor (●) oder wird durch ein anderes gedeckt (Σ — etwa „Wärme gesamt", wenn die Heizwärme zugeordnet ist). Ein Block nur mit Leistung oder Temperatur hat keinen Status. Fährst du über den Status, nennt er die Felder dahinter.
 - **Der Betriebsart-Zähler im Block Heizen** („Strom Heizbetrieb") hat Vorrang vor „Strom Heizen": misst er dasselbe, zählt eedc nur ihn. Wer Heizen und Warmwasser getrennt misst, lässt ihn leer — so steht es auch in seinem Hinweis.
 - Am Feld **„Betriebsmodus"** (Wärmepumpe/Klimaanlage) steht, welche Werte eedc versteht — etwa `heat`/`heizen`, `cool`/`kuehlen`, `warmwasser`, `off`/`aus`, mit der Quelle **Inbound** zusätzlich die Zahlencodes `0`–`5` (sie gelten nur über MQTT) — mit einem Link auf die Werte-Tabelle im Handbuch [Wärme & Klima](HANDBUCH_WAERME_KLIMA.md#welchen-sensor-eedc-lesen-kann). Andere Werte zählen als unbestimmt; liefert dein Sensor so einen Wert, meldet es der Daten-Checker.
@@ -828,7 +829,7 @@ Der Zähler im Block-Kopf („2 Felder noch ohne Quelle") zählt **nur die offen
 
 **Quellen-Wahl (Buttons):** Je Feld ist immer genau eine Quelle aktiv (gefüllter Button):
 
-- **HA-Sensor**, **Gateway**, **Inbound** — erscheinen nur, wenn die zugehörige Verbindung besteht (ohne HA-Verbindung kein HA-Button; ohne MQTT-Broker keine Gateway-/Inbound-Buttons). Eine bestehende Zuordnung bleibt sichtbar, auch wenn die Verbindung gerade fehlt. Am Feld **„Betriebsmodus"** gibt es **Inbound**, aber kein **Gateway**: Das Gateway reicht nur Zahlen weiter, der Modus ist ein Wort oder ein Code ([Wärme & Klima, „Ohne Home Assistant: der Modus über MQTT"](HANDBUCH_WAERME_KLIMA.md#ohne-home-assistant-der-modus-über-mqtt)). Über Inbound zeigt die Wert-Spalte, was ankommt und wie eedc es versteht — etwa „Warmwasser (2)".
+- **HA-Sensor**, **Gateway**, **Inbound** — erscheinen nur, wenn die zugehörige Verbindung besteht (ohne HA-Verbindung kein HA-Button; ohne MQTT-Broker keine Gateway-/Inbound-Buttons). Eine bestehende Zuordnung bleibt sichtbar, auch wenn die Verbindung gerade fehlt. Am Feld **„Betriebsmodus"** gibt es **Inbound**, aber kein **Gateway**: Der Modus kommt als Wort oder Code über das eedc-eigene Topic (an den Zustandsfeldern der E-Mobilität reicht das Gateway seit der nächsten Version den Text weiter, [§7.10](#710-zustand-und-sitzung-e-mobilität)) ([Wärme & Klima, „Ohne Home Assistant: der Modus über MQTT"](HANDBUCH_WAERME_KLIMA.md#ohne-home-assistant-der-modus-über-mqtt)). Über Inbound zeigt die Wert-Spalte, was ankommt und wie eedc es versteht — etwa „Warmwasser (2)".
 - **Keine** — der **einzige** Weg, eine Zuordnung wieder zu entfernen.
 
 > **Ein Klick auf die aktive Quelle löscht sie nicht.** Er öffnet die Zuordnung — den Picker mit dem bereits hinterlegten Sensor als Vorauswahl. Bis v4.0.0 bedeutete derselbe Knopf zweierlei (bei inaktiver Quelle „auswählen", bei aktiver „Zuordnung verwerfen", ohne Rückfrage); wer nur nachsehen wollte, welcher Sensor hinterlegt ist, verlor ihn. Entfernt wird ausschließlich über **Keine**.
@@ -910,6 +911,164 @@ Damit HA-Sensoren bzw. MQTT-Topics überhaupt wählbar sind, muss die jeweilige 
 | **MQTT-Gateway** (Topic-Mapping) | die „Gateway"-Quelle je Feld (Fremd-Topic mit Transform) |
 
 Bestehende Zuordnungen wurden **verlustfrei** übernommen (HA-first: hatte ein Feld einen HA-Sensor, wurde HA die Quelle; ein etwaiges paralleles MQTT-Mapping wurde nur deaktiviert, nicht gelöscht).
+
+### 7.10 Zustand und Sitzung (E-Mobilität)
+
+*Seit der nächsten Version.* An **Wallbox** und **E-Auto** gibt es einen eigenen Abschnitt **„Zustand & Sitzung"**. Er füllt
+den Block „Überblick" im Komponenten-Hub ([Bedienung §3.5](HANDBUCH_BEDIENUNG.md#35-e-auto),
+[§3.6](HANDBUCH_BEDIENUNG.md#36-wallbox)) und den Zustands-Chip an der Wallbox-Kachel im Energiefluss. Alle Felder sind
+optional und stehen zunächst unter „Weitere Größen erfassen"; mit einer Quelle rücken sie in den Abschnitt. Sein Kopf sagt,
+was die Zuordnung ermöglicht: **„Zustands-Chip: zugeordnet"** oder **„Zustands-Chip: fehlt"** — an der Wallbox auch
+**„Zustands-Chip: zugeordnet (aus connected/charging/enabled)"**, wenn statt eines Ladezustands „evcc: Fahrzeug verbunden"
+eine Quelle hat.
+
+| Gerät | Feld | Art | Wofür |
+| --- | --- | --- | --- |
+| Wallbox | Ladezustand | Zustand, **mitgeschrieben** | Chip „Lädt · Wartet · Verbunden · Fertig · Kein Fahrzeug · Gesperrt · Fehler"; Karte „Betrieb heute" mit „Ladevorgänge heute" |
+| Wallbox | Lademodus | Zustand | steht im Chip hinter „Lädt"/„Wartet" (PV · Smart · Schnell · Plan · Eco · Aus) |
+| Wallbox | Fahrzeug am Ladepunkt | Text | welches Auto angeschlossen ist (Treffer mit der Kennung am E-Auto), „Gastfahrzeug", „Fahrzeug der Steuerung unbekannt" |
+| Wallbox | evcc: Fahrzeug verbunden · evcc: lädt · evcc: Laden freigegeben | Zustand (an/aus) | nur ohne Ladezustand-Sensor: eedc setzt daraus den Ladezustand-Chip zusammen (siehe unten, „evcc: Ladezustand aus drei Binär-Sensoren") |
+| Wallbox | Energie dieser Sitzung · Dauer dieser Sitzung | kWh · s | Fußzeile „9,8 kWh in dieser Sitzung · 2 h 10 min" |
+| Wallbox | Ladestrom · Aktive Phasen | A · Anzahl | Fußzeile „3 Phasen · 16 A" |
+| Wallbox, E-Auto | Ladeziel · Restzeit | % · min | Zielmarke an der Ladestand-Leiste, „Ziel 90 % · noch 1 h 20 min" |
+| E-Auto | Ladezustand (Fahrzeug) | Zustand, **mitgeschrieben** | eigener Chip, wenn das Auto an keiner Wallbox steht; Karte „Betrieb heute" (Laden) |
+| E-Auto | Reichweite | km | neben dem Ladestand |
+| E-Auto | Zu Hause | Zustand, **mitgeschrieben** | „Zu Hause" / „Unterwegs" (Zone, nie eine Position); Karte „Betrieb heute" (Standort) |
+
+**Gespeichert wird kein Momentwert und nichts gerechnet:** eedc liest die Werte live aus deiner Integration (Home Assistant oder
+MQTT), zeigt sie und vergisst sie wieder. Keine Monatsmenge, keine Kosten. **Ausnahme — die Mitschrift** (seit der nächsten
+Version): für **Ladezustand**, **Ladezustand (Fahrzeug)** und **Zu Hause** schreibt eedc ab der Zuordnung je abgeschlossener
+Stunde mit, **welchen Anteil der Stunde** der Zustand welchen Wert hatte — dieselbe Mitschrift wie beim Betriebsmodus einer
+Wärmepumpe. Daraus entsteht die Karte „Betrieb heute" ([Bedienung §3.6](HANDBUCH_BEDIENUNG.md#36-wallbox)). Aus Home
+Assistant liest eedc dafür die State-History der Entität; über MQTT die 5-Minuten-Fenster des eedc-Topics. **Option A**
+(evcc über drei Binär-Sensoren) ist in beiden Wegen enthalten: ohne Ladezustand-Entität verschränkt eedc die drei Verläufe zu
+einem Ladezustand; ein zugeordneter Ladezustand geht vor. Nicht rückwirkend — die Mitschrift beginnt mit der Zuordnung.
+Lademodus, Fahrzeug am Ladepunkt und die evcc-Felder selbst werden nicht mitgeschrieben. ⚠ **Einheiten:** eedc rechnet hier nicht
+um. SMA und go-e melden die Sitzung in **Wh**, evcc die Restzeit in **Sekunden** — stelle in Home Assistant die Anzeigeeinheit
+des Sensors auf kWh bzw. Minuten (Sensor → Einstellungen → Einheit). Über das MQTT-Gateway rechnet der Faktor um (das Preset
+„evcc Ladepunkt" setzt ihn, siehe unten).
+
+**Die Zustände sind ein fester Kanon.** Am Feld steht, welche Werte eedc versteht; ein anderer Wert ergibt **keinen Chip** (eedc
+rät nicht), und der Daten-Checker nennt ihn („E-Mobilität – unbekannter Zustand"). Groß-/Kleinschreibung ist egal; die
+Zahlencodes (go-eCharger) gelten nur über MQTT.
+
+| Ladezustand (Wallbox) | versteht eedc |
+| --- | --- |
+| Kein Fahrzeug | `kein_fahrzeug`, `not_connected` · MQTT `1` |
+| Verbunden | `verbunden`, `sleep_mode` |
+| Wartet | `wartet` · MQTT `3` |
+| Lädt | `laedt`, `active_mode` · MQTT `2` |
+| Fertig | `fertig` · MQTT `4` |
+| Gesperrt | `gesperrt`, `station_locked` |
+| Fehler | `fehler`, `station_fault` · MQTT `0`, `5` |
+
+| Lademodus (Wallbox) | versteht eedc |
+| --- | --- |
+| Aus | `aus`, `off`, `charge_stop` |
+| PV | `pv`, `smart_charging` |
+| Smart | `smart`, `minpv` |
+| Schnell | `schnell`, `now`, `boost_charging` · MQTT `3` |
+| Plan | `plan` · MQTT `5` |
+| Eco | `eco` · MQTT `4` |
+
+| Ladezustand (Fahrzeug) | versteht eedc |
+| --- | --- |
+| Nicht verbunden | `nicht_verbunden`, `not_connected` |
+| Verbunden | `verbunden`, `plugged_not_charging`, `plugged_in`, `waiting_for_charging` |
+| Lädt | `laedt`, `charging` |
+| Lädt DC | `laedt_dc`, `dc_connected`, `dc_charging` |
+| Fertig | `fertig`, `complete`, `fully_charged`, `finished_fully_charged`, `finished_not_full`, `target_reached` |
+| Fehler | `fehler`, `error` |
+
+| Zu Hause (E-Auto) | versteht eedc |
+| --- | --- |
+| Zu Hause | `zu_hause`, `home` |
+| Unterwegs | `unterwegs`, `not_home` |
+
+| evcc: Fahrzeug verbunden · evcc: lädt · evcc: Laden freigegeben (Wallbox) | versteht eedc |
+| --- | --- |
+| an (Verbunden · Lädt · Freigegeben) | `an`, `on`, `true` · MQTT `1` |
+| aus (Nicht verbunden · Lädt nicht · Nicht freigegeben) | `aus`, `off`, `false` · MQTT `0` |
+
+Belegt sind die Werte an **SMA EV Charger** (`smaev`: `sensor.…_status_ladevorgang`, Drehschalter, Betriebsart), **evcc**
+(`select.evcc_…_mode`, Sitzung, Strom, Phasen, Ladelimit, Restzeit, Reichweite), **Smart #1** (`smarthashtag`:
+`sensor.smart_ladesanschluss` oder `sensor.smart_ladezustand`, Reichweite, Ladeziel, `device_tracker.smart_…`) und
+**go-eCharger** (`car`, `wh`, `amp`, `pnp`); der HA-Picker schlägt diese Sensoren vor. Bekannte Werte ohne Aussage (Smart
+`not_charging`, `default`, `invalid`) ergeben keinen Chip und keinen Hinweis.
+
+**evcc: Ladezustand aus drei Binär-Sensoren (seit der nächsten Version).** evcc meldet den Ladezustand nicht in einem
+Sensor, sondern in dreien (`binary_sensor.evcc_<ladepunkt>_connected`, `…_charging`, `…_enabled`; über MQTT
+`evcc/loadpoints/<n>/connected`, `…/charging`, `…/enabled` mit `true`/`false`). Ordne sie den drei Feldern „evcc: Fahrzeug
+verbunden", „evcc: lädt" und „evcc: Laden freigegeben" zu (der HA-Picker schlägt sie vor) und lass den **Ladezustand leer** —
+eedc setzt den Chip daraus zusammen:
+
+| verbunden | lädt | freigegeben | Chip |
+| --- | --- | --- | --- |
+| aus | – | – | Kein Fahrzeug |
+| an | an | – | Lädt |
+| an | aus oder fehlt | aus | Wartet |
+| an | aus oder fehlt | an oder fehlt | Verbunden |
+
+Ein zugeordneter Ladezustand, der einen Wert liefert, **geht immer vor** — die drei Felder sind nur für Anlagen ohne
+Ladezustand-Sensor. Ohne „verbunden" gibt es keinen Chip; ohne „lädt" nie „Lädt", ohne „freigegeben" nie „Wartet"; „Fertig"
+kennen die drei Sensoren nicht. Die Ziffern `1`/`0` gelten nur über MQTT — eine Ziffer aus einem HA-Sensor ist ein unbekannter
+Wert (Daten-Checker).
+
+**Weg B — jede andere Integration:** ein Template-Sensor in Home Assistant, der genau eines der Kanon-Wörter liefert. So lässt
+sich auch eine Steuerung abbilden, die wie evcc mehrere Binär-Sensoren meldet (Beispiel; für evcc selbst reichen die drei
+Felder oben):
+
+```yaml
+template:
+  - sensor:
+      - name: "Carport Ladezustand"
+        state: >
+          {% if is_state('binary_sensor.evcc_carport_connected', 'off') %}kein_fahrzeug
+          {% elif is_state('binary_sensor.evcc_carport_charging', 'on') %}laedt
+          {% elif is_state('binary_sensor.evcc_carport_enabled', 'off') %}wartet
+          {% else %}verbunden{% endif %}
+```
+
+**Ohne Home Assistant: evcc über MQTT (seit der nächsten Version).** Das MQTT-Gateway reicht an die Zustandsfelder der
+E-Mobilität (Ladezustand, Lademodus, Fahrzeug am Ladepunkt, die drei evcc-Felder) den Text unverändert weiter — im
+Gateway-Picker entfallen dort Faktor und Offset, die Vorschau zeigt den Text. Ein Wort auf einem Zahlenfeld bleibt ein
+Transform-Fehler. Für einen evcc-Ladepunkt gibt es das Preset **„evcc Ladepunkt"** mit allen Zeilen auf einmal (auch den Zählerstand der Wallbox als Grundlage der Monatsmenge, nur mit Lademeter).
+Am Feld „Betriebsmodus" bleibt das Gateway aus.
+
+**„Preset anwenden …" (seit der nächsten Version).** Unter *Einstellungen → Datenquellen* steht an jedem Gerät, für das es
+ein Geräte-Preset gibt, der Knopf **„Preset anwenden …"** (an der Wallbox „evcc Ladepunkt" und „go-eCharger", am Speicher
+„sonnenBatterie", an einem sonstigen Verbraucher die Steckdosen von Shelly, Tasmota und Zigbee2MQTT); an „Anlage / Zähler"
+stehen die Presets ohne Gerät (Shelly 3EM, OpenDTU, Victron …). Der Dialog zeigt Name, Hersteller, Beschreibung und Anleitung,
+die Variablen mit ihrer Vorgabe (beim evcc-Preset Prefix „evcc" und Ladepunkt „1") und die Zeilen, die angelegt werden
+(Topic → Inhalt). **„Anwenden"** legt die Gateway-Zuordnungen an und stellt die Felder auf **„Gateway"** mit dem Topic.
+⚠ Vorhandene Gateway-Zuordnungen **derselben Felder** ersetzt das Preset — der Dialog sagt es vorher; andere Felder bleiben,
+wie sie sind. Ein Preset legt nur an; eine einzelne Zeile änderst du danach wie gewohnt im Gateway-Picker des Feldes (Topics,
+Faktoren und Grenzen: [MQTT-Inbound](MQTT_INBOUND.md#zustand-und-sitzung-der-e-mobilitaet-ab-der-naechsten-version)). Ohne
+MQTT-Broker gibt es keinen Knopf.
+
+Für openWB, Easee, Wallbox, Tesla Wall Connector, Alfen, Zaptec, Keba und Heidelberg sowie die Fahrzeug-Integrationen von
+Tesla, VW/Skoda, Renault, Kia und Toyota gilt derselbe Weg; welche Rohwerte sie melden, steht in ihrer Integrations-Doku. Ein
+Standort-Sensor mit eigenen Zonennamen („Arbeit") braucht ebenfalls einen Template-Sensor (`zu_hause` · `unterwegs`).
+
+**Fahrzeug am Ladepunkt — ein Text, kein Kanon (seit der nächsten Version).** Das Feld nimmt den Namen, den deine Steuerung
+für das angeschlossene Fahrzeug meldet: bei **evcc** `select.evcc_<ladepunkt>_vehicle_name` (die Option `null` heißt „kein
+oder unbekanntes Fahrzeug"; der HA-Picker schlägt den Sensor vor), bei **openWB** das „Angeschlossene Fahrzeug", über MQTT
+das Topic `…/live/inv/<id>_<wallbox>/fahrzeug_am_ladepunkt`. Am E-Auto trägst du unter *Investitionen* die **„Kennung in der
+Steuerung"** ein — genau den Namen, den die Steuerung für dieses Auto meldet (höchstens 80 Zeichen; Groß-/Kleinschreibung und
+Randleerzeichen sind egal, sonst keine Umdeutung). Dann gilt:
+
+| Die Steuerung meldet … | die Wallbox-Karte zeigt |
+| --- | --- |
+| den Namen, den ein E-Auto als Kennung trägt | genau dieses Auto, auch bei mehreren Wallboxen (Tooltip „gemeldet von der Steuerung") |
+| nichts (evcc `null`, leerer Text) und ein Fahrzeug ist verbunden, wartet, lädt oder ist fertig | „Gastfahrzeug lädt" bzw. „Gastfahrzeug verbunden" |
+| nichts, und kein Fahrzeug hängt dran (oder kein Ladezustand zugeordnet) | wie ohne dieses Feld |
+| einen Namen, den kein E-Auto trägt | „Fahrzeug der Steuerung unbekannt"; der Daten-Checker nennt den Namen („E-Mobilität – Fahrzeug der Steuerung unbekannt") |
+| gar keine Antwort (Sensor nicht verfügbar, MQTT-Topic nie empfangen) | wie ohne dieses Feld |
+
+In der Zuordnung steht der empfangene Text als Wert; kommt er leer an, steht dort „(leer)". Es gibt **keine Werte-Tabelle**
+und keinen Hinweis „unbekannter Zustand" — ein Name ist kein Zustand. **Benannte Grenzen:** einen Gast gibt es nur mit einer
+Steuerung, die Fahrzeuge erkennt; ein leerer `input_text` in Home Assistant ist von „nicht verfügbar" nicht zu
+unterscheiden und gilt nicht als Gast; nichts davon wird gespeichert, eine Gast-Ladung erscheint nicht als eigene Menge.
 
 ---
 

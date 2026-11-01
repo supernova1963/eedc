@@ -324,6 +324,12 @@ FELD_AUSWERTUNGEN: dict[tuple[str, str], tuple[Auswertung, ...]] = {
         _a(COCKPIT_MONAT, "api/routes/aktueller_monat/__init__.py", "_ohne_zusatzheizung_monat", "heizstab_kwh"),
         _a(COCKPIT_JAHR, "api/routes/cockpit/uebersicht.py", "_ohne_zusatzheizung_zeitraum", "heizstab_kwh"),
     ),
+    # N-770: der Netzbezug zum WP-Tarif — Stromrechnung und Eigenverbrauchs-Ersparnis (P = S − N zum WP-Tarif) über die
+    # Tarif-Fakten (`komponenten_anteile`), gelesen an der einen Lesetür.
+    ("waermepumpe", "netzbezug_eigener_tarif_kwh"): (
+        _a(COCKPIT_MONAT, "core/berechnungen/imd_monatsaggregat.py", "imd_typ_beitrag", "NETZBEZUG_EIGENER_TARIF_FELD"),
+        _a(COCKPIT_JAHR, "services/monats_fakten/tarif.py", "komponenten_anteile", "netz_eigener_tarif_kwh"),
+    ),
 
     # ── Wärmepumpe / Klima: Wärme (D1) ───────────────────────────────────────
     ("waermepumpe", "waerme_kwh"): (
@@ -452,7 +458,9 @@ FELD_AUSWERTUNGEN: dict[tuple[str, str], tuple[Auswertung, ...]] = {
         # Modus-Split, den Komponenten → Wärmepumpe als Strom je Betriebsart zeigt
         # (`modus_split_schreiben` → `modus_strom_zeile`). N-686: hier stand
         # `lade_betriebsmodus_live` — das speist nur Live und die HA-Sensoren.
-        _a(KOMP_WP, "services/energie_profil/_helpers.py", "_get_betriebsmodus_history",
+        # P-433-2b K3: `_get_betriebsmodus_history` ist eine Hülle von `_get_zustand_history`; die Zuordnung liest
+        # seitdem `_zustand_quellen` (dieselbe Zeile `modus_quelle(val.get("live"))`).
+        _a(KOMP_WP, "services/energie_profil/_helpers.py", "_zustand_quellen",
            "modus_quelle"),
     ),
 
@@ -513,6 +521,25 @@ FELD_AUSWERTUNGEN: dict[tuple[str, str], tuple[Auswertung, ...]] = {
     ("e-auto", "soc"): (
         _a(COCKPIT_LIVE, "services/live_komponenten_builder.py", "_soc_gauge"),
     ),
+    # P-433-2b K1 (Blatt §2/§5a): was das Fahrzeug selbst meldet — Hub-Überblick E-Auto (und die Fahrzeugzeile der
+    # Wallbox-Karte). Reine Anzeige, nichts gespeichert (K-1).
+    # P-433-2b K3: Fahrzeug-Ladezustand und Standort werden mitgeschrieben — Karte «Betrieb heute» (Tag-Detail
+    # `emob_betrieb`, ein generischer Leser über `MITSCHRIFT_LIVE_FELDER`).
+    ("e-auto", "ladezustand_fahrzeug"): (
+        _a(KOMP_EAUTO, "services/live_komponenten_builder.py", "_fahrzeug_emob"),
+        _a(KOMP_EAUTO, "api/routes/energie_profil/tag.py", "_mit_emob_betrieb", "MITSCHRIFT_LIVE_FELDER",
+           "stunden_je_zustand"),
+    ),
+    ("e-auto", "reichweite_km"): (_a(KOMP_EAUTO, "services/live_komponenten_builder.py", "_fahrzeug_emob"),),
+    ("e-auto", "ziel_ladestand_prozent"): (
+        _a(KOMP_EAUTO, "services/live_komponenten_builder.py", "_fahrzeug_emob"),
+    ),
+    ("e-auto", "restzeit_min"): (_a(KOMP_EAUTO, "services/live_komponenten_builder.py", "_fahrzeug_emob"),),
+    ("e-auto", "zu_hause"): (
+        _a(KOMP_EAUTO, "services/live_komponenten_builder.py", "_fahrzeug_emob"),
+        _a(KOMP_EAUTO, "api/routes/energie_profil/tag.py", "_mit_emob_betrieb", "MITSCHRIFT_LIVE_FELDER",
+           "stunden_je_zustand"),
+    ),
 
     # ── Wallbox ──────────────────────────────────────────────────────────────
     ("wallbox", "ladung_kwh"): (
@@ -526,9 +553,49 @@ FELD_AUSWERTUNGEN: dict[tuple[str, str], tuple[Auswertung, ...]] = {
     ("wallbox", "ladevorgaenge"): (
         _a(KOMP_WALLBOX, "api/routes/investitionen/dashboard_wallbox.py", "get_wallbox_dashboard"),
     ),
+    # N-771: der Netzbezug zum Wallbox-Tarif — gelesen an der einen Lesetür, bewertet in der Stromrechnung (Cockpit →
+    # Monat/Jahr über die Tarif-Fakten `komponenten_anteile`).
+    ("wallbox", "netzbezug_eigener_tarif_kwh"): (
+        _a(COCKPIT_MONAT, "core/berechnungen/imd_monatsaggregat.py", "imd_typ_beitrag", "NETZBEZUG_EIGENER_TARIF_FELD"),
+        _a(COCKPIT_JAHR, "services/monats_fakten/tarif.py", "komponenten_anteile", "wallbox_netz_eigener_tarif_kwh"),
+    ),
     ("wallbox", "leistung_w"): (
         _a(COCKPIT_LIVE, "services/live_komponenten_builder.py", "_verbuche_investition"),
     ),
+    # P-433-2b K1 (Blatt §1/§5a): Zustand und Sitzung am Ladepunkt — Hub-Überblick Wallbox; der Ladezustand auch als
+    # Chip an der Energiefluss-Kachel (K-12). Reine Anzeige, nichts gespeichert (K-1).
+    ("wallbox", "ladezustand"): (
+        _a(KOMP_WALLBOX, "services/live_komponenten_builder.py", "_wallbox_emob_werte"),
+        _a(COCKPIT_LIVE, "services/live_komponenten_builder.py", "_wallbox_emob_werte"),
+        # P-433-2b K3: «Betrieb heute» der Wallbox mit «Ladevorgänge heute» (D4).
+        _a(KOMP_WALLBOX, "api/routes/energie_profil/tag.py", "_mit_emob_betrieb", "MITSCHRIFT_LIVE_FELDER",
+           "stunden_je_zustand", "WECHSEL_FELDER"),
+    ),
+    ("wallbox", "lademodus"): (
+        _a(KOMP_WALLBOX, "services/live_komponenten_builder.py", "_wallbox_emob_werte"),
+        _a(COCKPIT_LIVE, "services/live_komponenten_builder.py", "_wallbox_emob_werte"),
+    ),
+    # P-433-2b K2a (Bauplan K2 E1, Blatt §4): der Fahrzeugname der Steuerung — welches Auto an DIESER Wallbox steht
+    # (Treffer mit der Kennung), Gast, «Fahrzeug der Steuerung unbekannt». Hub-Überblick Wallbox und Wallbox-Kachel im
+    # Energiefluss (dieselbe `fahrzeuge`-Liste). Reine Anzeige, `parent_key` und Summen bleiben unberührt (K2-5).
+    ("wallbox", "fahrzeug_am_ladepunkt"): (
+        _a(KOMP_WALLBOX, "services/live_komponenten_builder.py", "_fahrzeug_anzeige_zuordnung"),
+        _a(COCKPIT_LIVE, "services/live_komponenten_builder.py", "_fahrzeug_anzeige_zuordnung"),
+    ),
+    # P-433-2b K2b Option A (Bauplan K2 K2-7): die drei evcc-Rollen-Felder ergeben den Ladezustand der Wallbox, wenn
+    # kein Ladezustand-Sensor zugeordnet ist — Chip im Hub-Überblick und an der Energiefluss-Kachel (wie `ladezustand`).
+    **{("wallbox", _feld): (
+        _a(KOMP_WALLBOX, "services/betriebsmodus_live.py", "_kombiniere_option_a"),
+        _a(COCKPIT_LIVE, "services/betriebsmodus_live.py", "_kombiniere_option_a"),
+    ) for _feld in ("evcc_verbunden", "evcc_laedt", "evcc_freigegeben")},
+    ("wallbox", "sitzung_kwh"): (_a(KOMP_WALLBOX, "services/live_komponenten_builder.py", "_wallbox_sitzung"),),
+    ("wallbox", "sitzung_dauer_s"): (_a(KOMP_WALLBOX, "services/live_komponenten_builder.py", "_wallbox_sitzung"),),
+    ("wallbox", "ladestrom_a"): (_a(KOMP_WALLBOX, "services/live_komponenten_builder.py", "_wallbox_sitzung"),),
+    ("wallbox", "phasen_aktiv"): (_a(KOMP_WALLBOX, "services/live_komponenten_builder.py", "_wallbox_sitzung"),),
+    ("wallbox", "ziel_ladestand_prozent"): (
+        _a(KOMP_WALLBOX, "services/live_komponenten_builder.py", "_wallbox_sitzung"),
+    ),
+    ("wallbox", "restzeit_min"): (_a(KOMP_WALLBOX, "services/live_komponenten_builder.py", "_wallbox_sitzung"),),
 
     # ── Balkonkraftwerk ──────────────────────────────────────────────────────
     ("balkonkraftwerk", "pv_erzeugung_kwh"): (

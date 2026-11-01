@@ -187,7 +187,8 @@ async def build_expected_topics(
             # dem Zustands-Zweig (`mqtt_inbound_service._wert_aus_payload`) hält der
             # Cache den rohen String, und `normalisiere_betriebsmodus` versteht
             # Kanon-Wort und Zahlencode. `zustand` bleibt die Weiche für die Leser:
-            # die Fläche blendet das Gateway aus (float-only), der Abdeckungs-Check
+            # die Fläche blendet am Betriebsmodus das Gateway aus (D3; an den übrigen
+            # Zustandsfeldern reicht es seit P-433-2b K2b den Text weiter), der Abdeckungs-Check
             # (#134, `daten_checker/sensoren.py`) überwacht das Topic weiter nicht
             # (ein on-change-Modus wäre nach 2 min dauernd «veraltet»).
             ist_zustand = bool(live_feld.get("zustand"))
@@ -213,6 +214,8 @@ async def build_expected_topics(
                 "bedarf": get_feld_bedarf(inv.typ, live_feld["key"], inv.parameter)[0],
                 "bedarf_gruppe": get_feld_bedarf(inv.typ, live_feld["key"], inv.parameter)[1],
                 "erweitert": bool(live_feld.get("erweitert")),
+                # P-433-2b K1: Datenquellen-Abschnitt aus der Registry («zustand» ⇒ «Zustand & Sitzung»).
+                "abschnitt": live_feld.get("abschnitt"),
                 "gruppe_id": gruppe_id,
                 "gruppe_titel": gruppe_titel,
             })
@@ -266,6 +269,9 @@ async def build_expected_topics(
                 # entscheidet, ob das Feld in der ersten Reihe steht oder hinter
                 # „Weitere Größen erfassen".
                 "erweitert": bool(feld.get("erweitert")),
+                # N-770/N-771 (F1): ohne eigenen Tarif dieser Verwendung stellt die Fläche das Feld hinter „Weitere
+                # Größen erfassen" (`routes/datenquellen.py::_nach_eigenem_tarif`). Roh durchgereicht wie `bedingung`.
+                "tarif_verwendung": feld.get("tarif_verwendung"),
                 # Geräteklassen-Verletzung: die Größe gibt es an dieser Bauart
                 # NICHT. Die Fläche nimmt sie heraus, solange keine Quelle
                 # zugeordnet ist — mit Quelle bleibt sie sichtbar und damit

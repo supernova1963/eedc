@@ -339,8 +339,8 @@ Vorzeichenkorrekturen, oder das Zusammenfassen mehrerer Entitäten zu einer.
 | `ladung_kwh` | Heim: gesamt | kWh | Kumulativ oder Tagessensor | Zu Hause in dieses Auto geladene Energie **gesamt** — für einen Zähler am Auto, der PV und Netz nicht trennt (z. B. evcc „Ladevorgänge: Energie [Fzg.]“; er springt am Ende jedes Ladevorgangs um dessen Menge). Neben einer Wallbox mit Ladezähler ordnet eedc jeden solchen Sprung den Stunden der Wallbox zu: die Menge bleibt der Sprung, PV-Anteil und Monat kommen aus den Stunden des Vorgangs ([Berechnungen, Ladevorgänge je Auto](BERECHNUNGEN.md)). Ohne diese Zuordnung (Monatswert von Hand, Monat nicht ganz neu gerechnet) wird mit dem PV-Anteil der Wallbox im Monat geteilt, ohne Wallbox wie „Heim: PV“ abgeleitet. Mit „Heim: PV“/„Heim: Netz“ leer lassen. Ein alter Wert in diesem Feld aus der Zeit vor v4.0.51 mit „Herkunft unbekannt“ zählt neben einer Wallbox nicht. | Komponenten → E-Auto · Cockpit → Monat · Auswertungen → Finanzen |
 | `ladung_extern_kwh` | Externe Ladung | kWh | — | Extern geladene Energie (Autobahn, Arbeit). Manuell erfassen. Optional. | Komponenten → E-Auto · Cockpit → Monat |
 | `ladung_extern_euro` | Externe Ladekosten | € | — | Kosten der externen Ladung. Manuell. Optional. | Komponenten → E-Auto · Cockpit → Jahr |
-| `verbrauch_kwh` | Verbrauch gesamt | kWh | Kumulativ oder Tagessensor | Gefahrener Energieverbrauch des E-Autos (reiner **Fahrverbrauch**), für die kWh/100 km-Effizienz mit `km_gefahren` verrechnet und beim Plug-in-Hybrid für den elektrischen Anteil. **Keine Ladung:** Als Heimladung setzt eedc ihn nur als ausdrücklich gekennzeichnete **Schätzung** ein, wenn für die Heimladung weder ein Wert (auch 0) noch — im laufenden Monat — eine Quelle bekannt ist ([Berechnungen, Heimladung und Fahrverbrauch](BERECHNUNGEN.md)). Hat die Wallbox einen Sensor und im Monat 0 kWh geladen, ist die Heimladung 0. Optional — fehlt der Wert, nähert eedc die kWh/100 km aus der geladenen Energie (Heim + Extern) an (inkl. Ladeverluste). | Komponenten → E-Auto · Cockpit → Monat |
-| `km_gefahren` | Gefahrene km | km | Kumulativ oder Tagessensor | Gefahrene Kilometer im Monat. Sensor (Auto-Integration, OBD) oder manuell. Ohne Sensor: im Monatsabschluss den **Tachostand** eintragen — eedc rechnet die Differenz zum Vormonat und schlägt sie hier vor. | Komponenten → E-Auto · Cockpit → Monat · HA-Sensoren |
+| `verbrauch_kwh` | Verbrauch gesamt | kWh | Kumulativ oder Tagessensor | Gefahrener Energieverbrauch des E-Autos (reiner **Fahrverbrauch**), für die kWh/100 km-Effizienz mit `km_gefahren` verrechnet und beim Plug-in-Hybrid für den elektrischen Anteil. **Keine Ladung:** Als Heimladung setzt eedc ihn nur als ausdrücklich gekennzeichnete **Schätzung** ein, wenn für die Heimladung weder ein Wert (auch 0) noch — im laufenden Monat — eine Quelle bekannt ist ([Berechnungen, Heimladung und Fahrverbrauch](BERECHNUNGEN.md)). Hat die Wallbox einen Sensor und im Monat 0 kWh geladen, ist die Heimladung 0. Optional — fehlt der Wert, nähert eedc die kWh/100 km aus der geladenen Energie (Heim + Extern) an (inkl. Ladeverluste). Mit kumulativem Zähler zusätzlich **„Fahrverbrauch heute"** (Karte „Heute", Zuwachs der abgeschlossenen Stunden; seit der nächsten Version). | Komponenten → E-Auto · Cockpit → Monat |
+| `km_gefahren` | Gefahrene km | km | Kumulativ oder Tagessensor | Gefahrene Kilometer im Monat. Sensor (Auto-Integration, OBD) oder manuell. Ohne Sensor: im Monatsabschluss den **Tachostand** eintragen — eedc rechnet die Differenz zum Vormonat und schlägt sie hier vor. **Mit Zähler** (seit der nächsten Version): live als **Kilometerstand** an der E-Auto-Karte (bis 60 s alt) und stündlich als Kanal — aus HA gespiegelt (Datenquellen-Wahl HA), sonst die MQTT-Mitschrift — für **„Gefahren heute"** (Karte „Heute", nur abgeschlossene Stunden). | Komponenten → E-Auto · Cockpit → Monat · HA-Sensoren |
 | `v2h_entladung_kwh` | V2H Entladung | kWh | Kumulativ oder Tagessensor | Vehicle-to-Home Entladung. Nur bei V2H-fähigem Fahrzeug. Optional. Am Tag eine Tagesgröße (Eigenverbrauch, Gesamtverbrauch, Autarkie), keine Stunde; im Monat ab dem Abschluss. | Cockpit → Tag · Komponenten → E-Auto · Cockpit → Jahr · HA-Sensoren |
 
 ### Live-Dashboard
@@ -349,6 +349,16 @@ Vorzeichenkorrekturen, oder das Zusammenfassen mehrerer Entitäten zu einer.
 |------|-------|---------|-----------|-------------|-----------------|
 | `leistung_w` | Ladeleistung | W | Momentan | Aktuelle Ladeleistung. ≥ 0 (Laden) oder bidirektional bei V2H (negativ = Entladung ins Haus). ⚠️ Wenn gleicher Sensor wie Wallbox: wird automatisch dedupliziert. | Cockpit → Live |
 | `soc` | Ladezustand | % | Momentan | State of Charge des Fahrzeugakkus. 0–100%. | Cockpit → Live |
+| `ladezustand_fahrzeug` | Ladezustand (Fahrzeug) | — (Zustand) | Zustand | Was das Auto meldet: `nicht_verbunden` · `verbunden` · `laedt` · `laedt_dc` · `fertig` · `fehler` (Werte-Tabelle: [Einstellungen §7.10](HANDBUCH_EINSTELLUNGEN.md#710-zustand-und-sitzung-e-mobilität)). Chip an der Auto-Karte, nur ohne Wallbox-Zuordnung; **stündlich mitgeschrieben** (Karte „Betrieb heute", ab Zuordnung). *Ab der nächsten Version.* | Komponenten → E-Auto |
+| `reichweite_km` | Reichweite | km | Momentan | Restreichweite. evcc nur, solange das Auto am Ladepunkt hängt. *Ab der nächsten Version.* | Komponenten → E-Auto |
+| `ziel_ladestand_prozent` | Ladeziel | % | Momentan | Zielmarke der Ladestand-Leiste. *Ab der nächsten Version.* | Komponenten → E-Auto |
+| `restzeit_min` | Restzeit | min | Momentan | Verbleibende Ladezeit laut Fahrzeug. *Ab der nächsten Version.* | Komponenten → E-Auto |
+| `zu_hause` | Zu Hause | — (Zustand) | Zustand | `device_tracker` des Autos: `home` ⇒ zu Hause, `not_home` ⇒ unterwegs; nur die Zone; **stündlich mitgeschrieben** (Karte „Betrieb heute", Standort). *Ab der nächsten Version.* | Komponenten → E-Auto |
+
+> Die fünf Zustands- und Sitzungsfelder (und die neun an der Wallbox, darunter das Textfeld „Fahrzeug am Ladepunkt") sind
+> **reine Anzeige**: eedc liest sie live, speichert sie nicht und rechnet nicht mit ihnen (kein Kanal, keine Monatsmenge).
+> Keine Einheiten-Umrechnung. Das Gegenstück zum Textfeld der Wallbox ist kein Sensor, sondern das Stammdatum
+> **„Kennung in der Steuerung"** am E-Auto (Einstellungen → Investitionen).
 
 ### MQTT Energy Topics
 
@@ -369,7 +379,7 @@ Vorzeichenkorrekturen, oder das Zusammenfassen mehrerer Entitäten zu einer.
 
 | Feld | Label | Einheit | Sensortyp | Beschreibung | Ausgewertet in |
 |------|-------|---------|-----------|-------------|-----------------|
-| `ladung_kwh` | Ladung gesamt | kWh | Kumulativ oder Tagessensor | Gesamte von der Wallbox abgegebene Ladeenergie im Monat. | Komponenten → Wallbox · Cockpit → Monat |
+| `ladung_kwh` | Ladung gesamt | kWh | Kumulativ oder Tagessensor | Gesamte von der Wallbox abgegebene Ladeenergie im Monat. evcc über MQTT: das Gateway-Preset „evcc Ladepunkt" legt `chargeTotalImport` (kWh-Zählerstand, nur mit Lademeter) unter `energy/` ab ([MQTT-Inbound](MQTT_INBOUND.md)). *Preset ab der nächsten Version.* | Komponenten → Wallbox · Cockpit → Monat |
 | `ladung_pv_kwh` | Ladung PV | kWh | Kumulativ oder Tagessensor | Anteil aus PV. Optional — manche Wallboxen messen das separat. | Komponenten → Wallbox · Cockpit → Monat |
 | `ladevorgaenge` | Ladevorgänge | Anzahl | Kumulativ oder Tagessensor | Anzahl der Ladevorgänge. Optional. | Komponenten → Wallbox |
 
@@ -378,6 +388,18 @@ Vorzeichenkorrekturen, oder das Zusammenfassen mehrerer Entitäten zu einer.
 | Feld | Label | Einheit | Sensortyp | Beschreibung | Ausgewertet in |
 |------|-------|---------|-----------|-------------|-----------------|
 | `leistung_w` | Ladeleistung | W | Momentan | Aktuelle Wallbox-Ladeleistung. Muss ≥ 0 sein. | Cockpit → Live |
+| `ladezustand` | Ladezustand | — (Zustand) | Zustand | `kein_fahrzeug` · `verbunden` · `wartet` · `laedt` · `fertig` · `gesperrt` · `fehler`; SMA `smaev`-Werte, über MQTT die go-e-Codes 0–5 ([Einstellungen §7.10](HANDBUCH_EINSTELLUNGEN.md#710-zustand-und-sitzung-e-mobilität)). Chip im Überblick und an der Energiefluss-Kachel; **stündlich mitgeschrieben** (Karte „Betrieb heute" mit „Ladevorgänge heute", ab Zuordnung; ohne Ladezustand aus den drei evcc-Feldern verschränkt). *Ab der nächsten Version.* | Komponenten → Wallbox · Cockpit → Live |
+| `lademodus` | Lademodus | — (Zustand) | Zustand | `aus` · `pv` · `smart` · `schnell` · `plan` · `eco`; evcc `select.…_mode`, SMA. *Ab der nächsten Version.* | Komponenten → Wallbox · Cockpit → Live |
+| `fahrzeug_am_ladepunkt` | Fahrzeug am Ladepunkt | — (Text) | Text | Fahrzeugname der Steuerung (evcc `select.…_vehicle_name`, openWB). Treffer mit der „Kennung in der Steuerung" eines E-Autos ⇒ genau dieses Auto; leer bei angestecktem Fahrzeug ⇒ „Gastfahrzeug"; fremder Name ⇒ „Fahrzeug der Steuerung unbekannt" + Daten-Checker ([Einstellungen §7.10](HANDBUCH_EINSTELLUNGEN.md#710-zustand-und-sitzung-e-mobilität)). Kein Kanon, keine Werte-Tabelle. *Ab der nächsten Version.* | Komponenten → Wallbox · Cockpit → Live |
+| `evcc_verbunden` | evcc: Fahrzeug verbunden | — (Zustand) | Zustand | `an` · `aus` (HA `binary_sensor.evcc_…_connected` on/off, MQTT `connected` true/false, über MQTT auch 1/0). Nur nötig ohne Ladezustand-Sensor: mit „evcc: lädt" und „evcc: Laden freigegeben" setzt eedc den Ladezustand zusammen; ein gemessener Ladezustand geht vor ([Einstellungen §7.10](HANDBUCH_EINSTELLUNGEN.md#710-zustand-und-sitzung-e-mobilität)). *Ab der nächsten Version.* | Komponenten → Wallbox · Cockpit → Live |
+| `evcc_laedt` | evcc: lädt | — (Zustand) | Zustand | `an` · `aus` (HA `binary_sensor.evcc_…_charging`, MQTT `charging`). Teil von Option A — ohne dieses Feld nie „Lädt". *Ab der nächsten Version.* | Komponenten → Wallbox · Cockpit → Live |
+| `evcc_freigegeben` | evcc: Laden freigegeben | — (Zustand) | Zustand | `an` · `aus` (HA `binary_sensor.evcc_…_enabled`, MQTT `enabled`). Verbunden, aber nicht freigegeben ⇒ „Wartet"; ohne dieses Feld nie „Wartet". *Ab der nächsten Version.* | Komponenten → Wallbox · Cockpit → Live |
+| `sitzung_kwh` | Energie dieser Sitzung | kWh | Momentan | Seit dem Anstecken geladen. ⚠ SMA/go-e/evcc-MQTT liefern Wh — eedc rechnet nicht um (das Gateway-Preset „evcc Ladepunkt" setzt Faktor 0,001, [MQTT-Inbound](MQTT_INBOUND.md)). *Ab der nächsten Version.* | Komponenten → Wallbox |
+| `sitzung_dauer_s` | Dauer dieser Sitzung | s | Momentan | Ladedauer der laufenden Sitzung. *Ab der nächsten Version.* | Komponenten → Wallbox |
+| `ladestrom_a` | Ladestrom | A | Momentan | *Ab der nächsten Version.* | Komponenten → Wallbox |
+| `phasen_aktiv` | Aktive Phasen | Anzahl | Momentan | *Ab der nächsten Version.* | Komponenten → Wallbox |
+| `ziel_ladestand_prozent` | Ladeziel | % | Momentan | Ladelimit der Steuerung (evcc `effective_limit_soc`). *Ab der nächsten Version.* | Komponenten → Wallbox |
+| `restzeit_min` | Restzeit | min | Momentan | ⚠ evcc meldet Sekunden — Anzeigeeinheit in HA auf Minuten stellen (das Gateway-Preset „evcc Ladepunkt" setzt Faktor 1/60). *Ab der nächsten Version.* | Komponenten → Wallbox |
 
 ### MQTT Energy Topics
 

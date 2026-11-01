@@ -24,11 +24,16 @@ O4      ``OPTIONALE_FELDER``                                        kein Kanal
 O6      Investitionsfeld mit Einheit ``€``                          kein Kanal
 O5      Investitionsfeld ``nur_manuell``                            kein Kanal
 —       Stand-Feld (``stand: True``)                                ``stand`` · Spiegel/Mitschrift
-O7      Feld in ``MQTT_STAND_ZAEHLER_FELDER``                       ``stand`` · Mitschrift
+O7      Feld in ``MQTT_STAND_ZAEHLER_FELDER``                       ``stand`` · Spiegel/Mitschrift
 O9      Feld in ``KUMULATIVE_COUNTER_FELDER``                       ``stand`` · Spiegel/Mitschrift
 —       Energie-Einheit (kWh, Wh, MWh)                              ``sum`` · Spiegel/Mitschrift
+A-L     Live-Feld ``nur_live`` (Zustand/Sitzung E-Mobilität, K1)   kein Kanal (reine Anzeige, K-1)
+—       Live-Feld ``mitschrift`` (Zustand mit Kanon, K3)            ``mean`` „Anteil der Stunde je Wert"
+                                                                    · Mitschrift, ``zustand:inv:{id}:<feld>:{wert}``
 —       Live-Feld ``zustand`` (Betriebsart)                         ``mean`` „Anteil der Stunde je
                                                                     Betriebsart" · Mitschrift
+W       ``zustands_kanon.WECHSEL_FELDER`` (D4, K3)                  ``sum`` Wechsel-Zähler · Mitschrift,
+                                                                    ``wechsel:inv:{id}:<feld>:<wert>``
 —       Live-/Preis-Feld mit Einheit W · kW · % · °C · ct/kWh       ``mean`` · Spiegel/Mitschrift
 ======  ==========================================================  ==============================
 
@@ -70,6 +75,7 @@ from backend.models.kanal import (
     FAMILIE_MITSCHRIFT,
     FAMILIE_SPIEGEL,
 )
+from backend.core.zustands_kanon import WECHSEL_FELDER
 from backend.services.snapshot.keys import (
     BASIS_ZAEHLER_FELDER,
     KUMULATIVE_COUNTER_FELDER,
@@ -90,7 +96,16 @@ AUSNAHME_ABSCHLUSS = "abschluss_ohne_sensor"
 #: hätte V2H über die Gruppe getragen, und im Übergangsmonat einer MQTT-Anlage wäre die ganze Gruppe auf ``bestand``
 #: gefallen (Bericht V2H-TAG, Stand 1). Entscheid Master 13.10.2026 (O2): Kanal, Kanalgruppe und Monat bleiben.
 AUSNAHME_TAGESGROESSE = "tagesgroesse_ohne_kanal"
-AUSNAHME_KLASSEN: frozenset[str] = frozenset({AUSNAHME_SNAPSHOT, AUSNAHME_ABSCHLUSS, AUSNAHME_TAGESGROESSE})
+#: P-433-2b K1 (Bauplan E1, Leitsatz K-1 «Registry-Feld = Vertrag, Wert live, nichts gespeichert»): ein Live-Feld mit
+#: ``nur_live`` (Zustand und Sitzung an Wallbox und E-Auto) ist reine Anzeige im Überblick — kein Kanal, keine
+#: Mitschrift, kein Mittel im MQTT-Snapshot. Ohne die Klasse gäbe die Mittelwert-Regel dem Ladeziel (``%``) einen
+#: ``mean``-Kanal und die Zustands-Regel dem Lademodus eine Betriebsart-Mitschrift unter ``modus:``; die Sitzungs-kWh,
+#: Sekunden, Ampere und Minuten fielen durch jede Regel. Seit P-433-2b K3 tragen Ladezustand, Fahrzeug-Ladezustand und
+#: Standort ``mitschrift`` statt ``nur_live`` (Zweig «Zustand ⇒ Mitschrift „Anteil der Stunde je Wert“»).
+AUSNAHME_NUR_LIVE = "nur_live_anzeige"
+AUSNAHME_KLASSEN: frozenset[str] = frozenset({
+    AUSNAHME_SNAPSHOT, AUSNAHME_ABSCHLUSS, AUSNAHME_TAGESGROESSE, AUSNAHME_NUR_LIVE,
+})
 
 #: (typ, feld) → Grund der Klasse ``AUSNAHME_TAGESGROESSE``. Gilt für beide Listen, in denen das Feld steht
 #: (``INVESTITION_FELDER`` und ``KUMULATIVE_ZAEHLER_FELDER``); der Schreiber lässt es still aus (``zaehler_art``
@@ -170,6 +185,9 @@ L_ZAEHLER = "KUMULATIVE_ZAEHLER_FELDER"
 L_COUNTER = "KUMULATIVE_COUNTER_FELDER"
 L_BASIS_ZAEHLER = "BASIS_ZAEHLER_FELDER"
 L_MQTT_STAND = "MQTT_STAND_ZAEHLER_FELDER"
+#: P-433-2b K3 (D4): die Wechsel-Zähler aus ``core/zustands_kanon.WECHSEL_FELDER`` — eine eigene Liste, damit der
+#: Ladezustand je Liste genau eine Zuweisung hat (Anteils-Kanal unter ``LIVE_FELDER_INV``, Zähler hier).
+L_WECHSEL = "WECHSEL_FELDER"
 
 
 @dataclass(frozen=True)
@@ -238,9 +256,12 @@ def _regel_investition(
                           grund="Stand-Feld (F-58) ⇒ stand: Δ des Standes, ohne Reset-Regel",
                           schluessel=sk, e1=True)
     if feld in stand_mqtt:
-        return _zuweisung(liste, typ, feld, art=ART_STAND, familien=(FAMILIE_MITSCHRIFT,),
-                          grund="O7: kommt heute nur über MQTT; ein späterer HA-Sensor ist ein "
-                                "Spiegel desselben Kanals", schluessel=sk, e1=True)
+        # P-433-2b K4 (K4-3, Halt H2): Katalog-Korrektur — der Spiegel liest die Familien nicht, er folgt der
+        # `counter_map` (`snapshot/writer._build_counter_map`); ein Zähler mit `quellen`-Wahl HA wurde schon vorher
+        # gespiegelt. Benannte Grenze (vorbestehend, alle Zähler): eine Zuordnung nur über `felder` ohne `quellen`
+        # steht nicht in der `counter_map` und wird nicht gespiegelt.
+        return _zuweisung(liste, typ, feld, art=ART_STAND, familien=_SPIEGEL_ODER_MITSCHRIFT,
+                          grund="O7: Spiegel bei HA-Entität, sonst MQTT-Mitschrift", schluessel=sk, e1=True)
     if feld in counter.get(typ, ()):
         return _regel_counter(liste, typ, feld)
     if einheit_klasse(einheit) == "energie":
@@ -270,6 +291,29 @@ def _regel_mean(liste: str, typ: Optional[str], feld: str, einheit: str, schlues
     return None
 
 
+def _regel_live_inv(typ: str, f: Mapping) -> Optional[KanalZuweisung]:
+    """Die Regel eines Live-Felds am Gerät (Reihenfolge = Vorrang): ``nur_live`` ⇒ Ausnahme (K1) · ``mitschrift`` ⇒
+    Zustands-Mitschrift (K3; nur ein Zustand MIT Kanon, sonst keine Regel — der Wächter meldet das Feld) · ``zustand``
+    ⇒ Betriebsart-Mitschrift · sonst die Mittelwert-Regel."""
+    key = f["key"]
+    if f.get("nur_live"):
+        return _zuweisung(L_LIVE_INV, typ, key, ausnahme=AUSNAHME_NUR_LIVE,
+                          grund="P-433-2b K1 (K-1): Wert live aus der Integration, nichts gespeichert — reine "
+                                "Anzeige im Hub-Überblick", schluessel=f"inv:{{id}}:{key}")
+    if f.get("mitschrift"):
+        if not (f.get("zustand") and f.get("kanon")):
+            return None
+        return _zuweisung(L_LIVE_INV, typ, key, art=ART_MEAN, familien=(FAMILIE_MITSCHRIFT,),
+                          grund="Zustand ⇒ Mitschrift „Anteil der Stunde je Wert“ (K3)",
+                          schluessel=f"zustand:inv:{{id}}:{key}:{{wert}}", e1=True)
+    if f.get("zustand"):
+        return _zuweisung(L_LIVE_INV, typ, key, art=ART_MEAN, familien=(FAMILIE_MITSCHRIFT,),
+                          grund="Betriebsart ⇒ Mitschrift „Anteil der Stunde je Betriebsart“ "
+                                "(climate hat keine Langzeitstatistik, W2)",
+                          schluessel="modus:inv:{id}:{betriebsart}", e1=True)
+    return _regel_mean(L_LIVE_INV, typ, key, f.get("einheit", ""), f"inv:{{id}}:{key}")
+
+
 def kanal_katalog(
     *,
     basis_felder: Sequence[Mapping] = BASIS_FELDER,
@@ -283,6 +327,7 @@ def kanal_katalog(
     kumulative_counter_felder: Mapping[str, Sequence[str]] = KUMULATIVE_COUNTER_FELDER,
     basis_zaehler_felder: Sequence[str] = BASIS_ZAEHLER_FELDER,
     mqtt_stand_zaehler_felder: Iterable[str] = MQTT_STAND_ZAEHLER_FELDER,
+    wechsel_felder: Mapping[tuple[str, str], str] = WECHSEL_FELDER,
 ) -> tuple[list[KanalZuweisung], list[tuple[str, Optional[str], str]]]:
     """Den Katalog aus den Listen ableiten.
 
@@ -344,15 +389,7 @@ def kanal_katalog(
     # Live-Felder je Gerät
     for typ, felder in live_felder_inv.items():
         for f in felder:
-            key = f["key"]
-            if f.get("zustand"):
-                z = _zuweisung(L_LIVE_INV, typ, key, art=ART_MEAN, familien=(FAMILIE_MITSCHRIFT,),
-                               grund="Betriebsart ⇒ Mitschrift „Anteil der Stunde je Betriebsart“ "
-                                     "(climate hat keine Langzeitstatistik, W2)",
-                               schluessel="modus:inv:{id}:{betriebsart}", e1=True)
-            else:
-                z = _regel_mean(L_LIVE_INV, typ, key, f.get("einheit", ""), f"inv:{{id}}:{key}")
-            _nimm(z, L_LIVE_INV, typ, key)
+            _nimm(_regel_live_inv(typ, f), L_LIVE_INV, typ, f["key"])
 
     for f in basis_live_felder:
         key = f["key"]
@@ -391,6 +428,10 @@ def kanal_katalog(
         _nimm(_zuweisung(L_MQTT_STAND, None, feld, art=ART_STAND, familien=(FAMILIE_MITSCHRIFT,),
                          grund="O7: Stand ohne kWh-Semantik, heute nur MQTT", schluessel=_inv_schluessel(feld),
                          e1=True), L_MQTT_STAND, None, feld)
+    for (typ, feld), wert in sorted(wechsel_felder.items()):
+        _nimm(_zuweisung(L_WECHSEL, typ, feld, art=ART_SUM, familien=(FAMILIE_MITSCHRIFT,),
+                         grund=f"Wechsel-Zähler (D4, K3): Übergänge nach „{wert}“ je Stunde, als fortlaufende Summe",
+                         schluessel=f"wechsel:inv:{{id}}:{feld}:{wert}", e1=True), L_WECHSEL, typ, feld)
     return out, ohne
 
 
@@ -498,3 +539,15 @@ def ist_tagesgroesse_ohne_kanal(sensor_key: str, inv_typ: Optional[str]) -> bool
 def modus_kanal_key(inv_id: int | str, betriebsart: str) -> str:
     """Schlüssel eines Betriebsart-Mitschrift-Kanals (Bauplan §2): ``modus:inv:<id>:<betriebsart>``."""
     return f"modus:inv:{inv_id}:{betriebsart}"
+
+
+def zustand_kanal_key(inv_id: int | str, feld: str, wert: str) -> str:
+    """Schlüssel eines Zustands-Mitschrift-Kanals (P-433-2b K3, K3-2): ``zustand:inv:<id>:<feld>:<wert>`` — «Anteil der
+    Stunde, in der das Feld diesen Kanon-Wert hatte» (``mean``, 0 … 1). Der Betriebsmodus behält ``modus_kanal_key``."""
+    return f"zustand:inv:{inv_id}:{feld}:{wert}"
+
+
+def wechsel_kanal_key(inv_id: int | str, feld: str, wert: str) -> str:
+    """Schlüssel eines Wechsel-Zählers (P-433-2b K3, D4): ``wechsel:inv:<id>:<feld>:<wert>`` — Übergänge nach ``wert``
+    als fortlaufende Summe (``sum``; Zuwachs der Stunde = Zahl der Übergänge in ihr)."""
+    return f"wechsel:inv:{inv_id}:{feld}:{wert}"

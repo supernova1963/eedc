@@ -19,7 +19,10 @@ import { SimpleTooltip } from '../components/ui/FormelTooltip'
 import ScrollSchatten from '../components/ui/ScrollSchatten'
 import { BlockShell, BlockStackSkeleton, HerkunftZeile, KpiStrip, VerteilungsBalken, type Block, type KpiStripItem } from '../components/blocks'
 import { ParkProvider, ParkFuss, Parkbar, usePark, type ParkApi } from '../components/park'
-import { BLOCK_IDENTITAET, STATUS_COLORS, STATUS_ICONS, formatDatum, jaNein, fmtZahl, PARAM_PV_MODULE, LEGACY_KWP_KEY } from '../lib'
+import {
+  BLOCK_IDENTITAET, STATUS_COLORS, STATUS_ICONS, formatDatum, jaNein, fmtZahl, PARAM_PV_MODULE, LEGACY_KWP_KEY,
+  parameterAnzeigeName, parameterWertLabel,
+} from '../lib'
 import { KOMPONENTEN_IDENTITAET } from '../lib/komponentenStyle'
 import { datenquellenApi, type DatenquelleGruppe } from '../api/datenquellen'
 import { BarChart3, ClipboardCheck, Cpu, Euro, ExternalLink, FileText, Image as BildIcon, Layers, Network, Paperclip, Radio, Settings, SlidersHorizontal, Zap } from 'lucide-react'
@@ -29,7 +32,8 @@ import { KomponentenVerlaufChart } from './KomponentenVerlaufChart'
 import { KomponentenMonatsTabelle } from './KomponentenMonatsTabelle'
 import { KomponentenVergleich } from './KomponentenVergleich'
 import HubLeerGrund from './HubLeerGrund'
-import UeberblickBlock, { UEBERBLICK_PARK_IDS } from '../components/komponenten/ueberblick/UeberblickBlock'
+import UeberblickBlock, { UeberblickBlockEmob } from '../components/komponenten/ueberblick/UeberblickBlock'
+import { ueberblickGeparkt } from '../components/komponenten/ueberblick/ueberblickPark'
 import { infothekApi } from '../api/infothek'
 import { KATEGORIE_CONFIG } from '../config/infothekKategorien'
 import { datenCheckerApi, type CheckErgebnis } from '../api/datenChecker'
@@ -65,12 +69,16 @@ function paramFelder(inv: Investition): { label: string; wert: string }[] {
   if (inv.anschaffungskosten_gesamt != null) felder.push({ label: 'Anschaffungskosten', wert: `${fmtCalc(inv.anschaffungskosten_gesamt, 0)} €` })
   for (const [k, v] of Object.entries(inv.parameter ?? {})) {
     if (v == null || typeof v === 'object' || STAMM_DUBLETTEN.has(k)) continue
-    // de-DE-Anzeige: Boolean → Ja/Nein, Zahl → Tausenderpunkt, sonst roh (Enum/Text).
+    // de-DE-Anzeige: Boolean → Ja/Nein, Zahl → Tausenderpunkt, Enum → Klartext der Options-Liste, sonst roh.
     // Nachkommastellen aus dem Wert, gedeckelt auf 2 — ein fester `nk = 0` machte
     // aus 8,4 eine 8 (N119). Der Dump kennt die Größe nicht, darf also nicht runden.
+    // Name und Enum-Klartext aus der einen Label-Quelle (`lib/investitionParameter.ts::PARAMETER_LABELS`,
+    // Kosmetik rc13); ohne Eintrag die Ableitung aus dem Schlüssel bzw. der rohe Wert.
     const nk = typeof v === 'number' ? Math.min(2, (String(v).split('.')[1] ?? '').length) : 0
-    const wert = typeof v === 'boolean' ? jaNein(v) : typeof v === 'number' ? fmtZahl(v, nk) : String(v)
-    felder.push({ label: k.replace(/_/g, ' '), wert })
+    const wert = typeof v === 'boolean' ? jaNein(v)
+      : typeof v === 'number' ? fmtZahl(v, nk)
+      : parameterWertLabel(inv.typ, k, String(v)) ?? String(v)
+    felder.push({ label: parameterAnzeigeName(inv.typ, k), wert })
   }
   return felder
 }
@@ -563,8 +571,8 @@ function WirtschaftlichkeitInhalt({ w, kpis }: {
 
 type MeldeBlock = (block: string, ids: string[]) => void
 
-/** Typen mit Block «Überblick» (Konzept #433 Stufe 2; E-Mobilität folgt mit P-433-2b). */
-export const UEBERBLICK_TYPEN: readonly string[] = ['waermepumpe']
+/** Typen mit Block «Überblick» (Konzept #433 Stufe 2; E-Mobilität seit P-433-2b K1, Schaubild seit S1b). */
+export const UEBERBLICK_TYPEN: readonly string[] = ['waermepumpe', 'wallbox', 'e-auto']
 /** Neue Block-IDs, die vorn in eine gespeicherte Reihenfolge kommen (E-P2-7). */
 export const VORANSTELLEN: string[] = ['ueberblick']
 
@@ -581,22 +589,31 @@ export function geraetBloecke(g: KompGeraet, typ: string, anlageId: number, park
   // zerlegt (Phase 2, Gernot 2026-07-09): das Composite MELDET seine real gerenderten
   // Park-IDs hoch (`gemeldet[key]`). Block ausblenden, sobald ALLE gemeldeten geparkt
   // sind — solange nichts gemeldet ist (Block noch nie geöffnet), bleibt er sichtbar.
-  const regVerstecken = (key: string) => {
+  // `geparkt` (S1c): der Überblick bildet die alte Park-ID `el:ueberblick-karte` auf seine drei Karten ab.
+  const regVerstecken = (key: string, geparkt: (id: string) => boolean = istGeparkt) => {
     const ids = gemeldet[key]
-    return ids != null && ids.length > 0 && ids.every(istGeparkt)
+    return ids != null && ids.length > 0 && ids.every(geparkt)
   }
   const bloecke: Block[] = []
 
   // Überblick (#433 Stufe 2, P-433-2): oberster Block — Panorama mit den
   // Energiefluss-Kacheln links, «Auf einen Blick» rechts. Summary statisch: der
   // Live-Poll lebt im Inhalt und läuft zugeklappt nicht (W10).
-  if (UEBERBLICK_TYPEN.includes(typ) && g.inv.id > 0 && !alleGeparkt([...UEBERBLICK_PARK_IDS])) {
+  // P-433-2b S1b: Wallbox und E-Auto tragen ihre Szene («Ladepunkt» / «Fahrzeug») — dieselben Park-IDs wie Wärme/Klima.
+  // S1c: Schaubild und jede Karte einzeln parkbar; Heute/Betrieb erscheinen nur mit Werten, deshalb meldet der Block
+  // seine gerenderten IDs hoch (Muster `regVerstecken`, Schlüssel je Gerät) — ohne Meldung bleibt er sichtbar.
+  const emob = typ === 'wallbox' || typ === 'e-auto'
+  const ueberblickKey = `ueberblick:${g.inv.id}`
+  if (UEBERBLICK_TYPEN.includes(typ) && g.inv.id > 0 && !regVerstecken(ueberblickKey, (id) => ueberblickGeparkt(istGeparkt, id))) {
     const geraete = (alleInvs ?? [g.inv]).filter((inv) => inv.id > 0)
+    const meldeParkIds = (ids: string[]) => melde(ueberblickKey, ids)
     bloecke.push({
       id: 'ueberblick', title: 'Überblick', icon: BildIcon,
       summary: `Schaubild · ${g.inv.bezeichnung}`,
       defaultOpen: true,
-      render: () => <UeberblickBlock anlageId={anlageId} geraete={geraete} inv={g.inv} />,
+      render: () => emob
+        ? <UeberblickBlockEmob anlageId={anlageId} geraete={geraete} inv={g.inv} meldeParkIds={meldeParkIds} />
+        : <UeberblickBlock anlageId={anlageId} geraete={geraete} inv={g.inv} meldeParkIds={meldeParkIds} />,
     })
   }
 

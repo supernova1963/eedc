@@ -60,6 +60,7 @@ from backend.core.field_definitions import (
     ist_zaehler_kategorie,
     get_speicher_netzladung_kwh,
     get_wp_heizenergie_kwh,  # noqa: F401  (Re-Export fuer Altaufrufer)
+    netzladung_des_zaehlers,
     wp_strom_aufteilung,
 )
 from backend.core.investition_parameter import abgrenzung_stoerung
@@ -231,6 +232,11 @@ class ImdTypBeitrag:
     #: Ersparnis und CO₂ lesen ihn nicht. ``wp_heizstab_gemessen`` trennt eine gemessene 0 von „kein Zähler".
     wp_heizstab: float = 0.0
     wp_heizstab_gemessen: bool = False
+    #: N-770: der gemessene **Netzbezug zum WP-Tarif** dieser Zeile (Feld ``netzbezug_eigener_tarif_kwh``) — die Menge,
+    #: die der Versorger zum eigenen WP-Tarif abrechnet; eine Teilmenge des Gerätestroms wie der Heizstab. Gelesen von der
+    #: Stromrechnung und der Eigenverbrauchs-Ersparnis (``monats_fakten/tarif.py::komponenten_anteile``).
+    wp_netz_eigener_tarif: float = 0.0
+    wp_netz_eigener_tarif_gemessen: bool = False
 
     # E-Mobilität (Skalar-Summen; Heimladungs-Pool bleibt separat)
     eauto_km: float = 0.0
@@ -239,6 +245,9 @@ class ImdTypBeitrag:
     eauto_ladung_pv_netz: float = 0.0     # ladung_pv + ladung_netz (/aggregiert)
     wallbox_ladung: float = 0.0
     wallbox_ladung_pv: float = 0.0
+    #: N-771: der gemessene **Netzbezug zum Wallbox-Tarif** dieser Zeile — Teilmenge der Ladung, nur für die Stromrechnung.
+    wallbox_netz_eigener_tarif: float = 0.0
+    wallbox_netz_eigener_tarif_gemessen: bool = False
 
     # Sonstiges
     sonstiges_erzeugung: float = 0.0
@@ -270,6 +279,10 @@ class ImdTypBeitrag:
     #: §9.2 — an Dritte abgegebene kWh (Kategorie „abgabe"); keine Erzeugung,
     #: keine Einspeisung, wird vom Eigenverbrauch abgezogen.
     sonstiges_abgabe: float = 0.0
+
+
+#: N-770/N-771: das Registry-Feld «Netzbezug zum WP-Tarif» bzw. «… zum Wallbox-Tarif» — ein Name für beide Typen.
+NETZBEZUG_EIGENER_TARIF_FELD = "netzbezug_eigener_tarif_kwh"
 
 
 def _f(data: dict, key: str) -> float:
@@ -472,6 +485,8 @@ def imd_typ_beitrag(
             wp_abgrenzung=abgrenzung_stoerung(params),
             wp_heizstab=_f(data, "heizstab_strom_kwh"),
             wp_heizstab_gemessen=_hat(data, "heizstab_strom_kwh"),
+            wp_netz_eigener_tarif=_f(data, NETZBEZUG_EIGENER_TARIF_FELD),
+            wp_netz_eigener_tarif_gemessen=_hat(data, NETZBEZUG_EIGENER_TARIF_FELD),
         )
 
     if typ == "e-auto":
@@ -487,7 +502,11 @@ def imd_typ_beitrag(
         return ImdTypBeitrag(
             typ=typ,
             wallbox_ladung=_f(data, "ladung_kwh"),
-            wallbox_ladung_pv=_f(data, "ladung_pv_kwh"),
+            # N-771 F11: mit gemessenem Netzbezug zum Wallbox-Tarif ist die PV-Ladung Ladung − N (der Zähler schlägt evcc).
+            wallbox_ladung_pv=(_zaehler[0] if (_zaehler := netzladung_des_zaehlers(data, _f(data, "ladung_kwh")))
+                               is not None else _f(data, "ladung_pv_kwh")),
+            wallbox_netz_eigener_tarif=_f(data, NETZBEZUG_EIGENER_TARIF_FELD),
+            wallbox_netz_eigener_tarif_gemessen=_hat(data, NETZBEZUG_EIGENER_TARIF_FELD),
         )
 
     if typ == "sonstiges":

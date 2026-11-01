@@ -245,6 +245,16 @@ class CheckKategorie(str, Enum):
     # `_check_sensor_mapping_einheit`); ohne HA, bei `unknown`/`unavailable` und für die bewusst unbestimmten Zustände
     # (`auto`, `heat_cool`, `automatik`) keine Meldung. Kein Reparatur-Knopf — der Weg ist ein Template-Sensor in HA.
     KLIMA_MODUS_WERT = "klima_modus_wert"
+    # P-433-2b K1 (Blatt §5a, E12-Muster von KLIMA_MODUS_WERT): ein zugeordneter Zustand der E-Mobilität (Ladezustand,
+    # Lademodus, Fahrzeug-Ladezustand, Standort) liefert einen Wert, der nicht in der Werte-Tabelle steht
+    # (`core/zustands_kanon.py`). eedc zeigt dann keinen Chip — still, ohne diesen Hinweis. INFO je Gerät und Feld mit
+    # der Werte-Liste aus dem Kanon; gelesen wird der aktuelle Wert (HA-State bzw. MQTT-Inbound-Cache).
+    EMOB_ZUSTAND_WERT = "emob_zustand_wert"
+    # P-433-2b K2a (Bauplan K2 K2-10, P8 / #431-Prinzip): die Steuerung meldet am Ladepunkt einen Fahrzeugnamen
+    # (`fahrzeug_am_ladepunkt`), den kein E-Auto der Anlage als «Kennung in der Steuerung» trägt. Die Wallbox-Karte sagt
+    # dann nur «Fahrzeug der Steuerung unbekannt» (D2: Rohtext nicht auf der Karte); hier stehen Rohtext und Handgriff.
+    # INFO je Wallbox, gelesen wird der aktuelle Wert; ein leerer Text (Gast) meldet nichts.
+    EMOB_KENNUNG_UNBEKANNT = "emob_kennung_unbekannt"
     # N-767 (24.10.2026): ein eigener Wärmepumpen-Tarif, dessen Arbeitspreis vom allgemeinen abweicht. eedc bewertet
     # jede Eigenverbrauchs-kWh zum Haushaltstarif — auch die, die die Wärmepumpe verbraucht hat; ihr PV-Anteil ist
     # unbekannt. Benannte Grenze (BERECHNUNGEN, Kasten „Der WP-Strom trägt den vollen Netztarif"), keine Zahl wird

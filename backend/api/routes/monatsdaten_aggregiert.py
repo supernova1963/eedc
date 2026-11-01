@@ -13,10 +13,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.core.berechnungen.anlagen_kwp import anlagen_kwp as berechne_anlagen_kwp
 from backend.core.berechnungen.pv_verteilung import wandlungsverluste_prozent
 from backend.core.berechnungen.waermepumpe_kennzahl import abgrenzungs_grund, arbeitszahl
-from backend.core.berechnungen import berechne_finanz_aggregat, berechne_netzbezug_kosten
+from backend.core.berechnungen import berechne_finanz_aggregat, eauto_effizienz_100km
 from backend.core.berechnungen.ergebnis import ErgebnisEingang, berechne_ergebnis, ust_anteil_euro
 from backend.services.finanz_zeilen import baue_finanz_zeile
-from backend.services.monats_fakten import finanz_zeile_eingabe
+from backend.services.monats_fakten import finanz_zeile_eingabe, komponenten_anteile_des_fakts, stromrechnung_euro
 
 
 @dataclass
@@ -56,8 +56,11 @@ async def _finanzen_des_monats(kx: _TabellenKontext, f, netzbezug: float) -> tup
         [finanz_zeile],
         erzeuger_erloes_euro=f.sonstiges.einspeise_erloes_euro,
     )
-    netzbezug_kosten = berechne_netzbezug_kosten(
-        netzbezug, f.tarif.netzbezug_preis_cent, f.tarif.grundpreis_euro_monat
+    # N-770 E2: die eine Bildungsstelle der Stromrechnung (`monats_fakten.stromrechnung_euro`).
+    netzbezug_kosten = stromrechnung_euro(
+        netzbezug, f.tarif.netzbezug_preis_cent, f.tarif.grundpreis_euro_monat,
+        # N-770/N-771: der gemessene Netzbezug zum WP-/Wallbox-Tarif zu dessen Preis.
+        komponenten_anteile_des_fakts(f, netzbezug),
     )
     _satz = kx._ust_saetze.get(f.jahr)
     _ust = (
@@ -273,4 +276,76 @@ def _zeile_bilanz_und_geld(
         hat_legacy_daten=hat_legacy,
         legacy_ohne_ziel=legacy_ohne_ziel,
         aus_tageswerten=sorted(aus_tagen) or None,
+    )
+
+
+# ── Tabellen-Spalten (Auftrag 28.10.2026): E-Mobilität und Wärme/Klima für *Auswertungen → Tabellen* ────────────────
+# Keine neue Formel: Mengen kommen aus den Monats-Fakten, Kennzahlen aus den Funktionen, die sie heute schon für eine
+# andere Sicht liefern. Die Mengen ohne Gemessen-Marke in den Fakten folgen der Regel von *Cockpit → Monat*
+# (`aktueller_monat/komponenten.py`: «nur mit Wert», `> 0`, sonst «—»), der Betriebsart-Split nur mit Aufteilung
+# (`hat_modus_split`), die Zusatzheizung nur gemessen (`heizstab_kwh` ist `None` ohne Zähler).
+
+
+def _mit_wert(wert: float, stellen: int = 1):
+    """Eine Menge «nur mit Wert» wie in *Cockpit → Monat* — 0 ⇒ ``None`` (die Fakten führen keine Gemessen-Marke)."""
+    return round(wert, stellen) if wert > 0 else None
+
+
+async def wp_funktionen_des_monats(kx: _TabellenKontext, f, typen) -> tuple:
+    """Arbeitszahl Heizen, Warmwasser, Kühlen des Monats — ``(heizen, warmwasser, kuehlen)``, ohne Wärmepumpe ``None``.
+
+    Dieselbe Faltung wie Cockpit → Jahr und der PDF-Jahresbericht (``waermepumpe_jahreskennzahlen``), über EINEN Monat,
+    mit den Wärme-Achsen der im Monat aktiven Geräte (``achsen_der_anlage``, R-2) — gemessen gleich *Cockpit → Monat*
+    für jeden Monat der Demo-Kopien (``~/.claude/plans/ha-bauform-werkzeug/tabellen-spalten/mess_quellen.py``, 73 Monate,
+    0 Diff). Eine Abfrage je Monat mit Wärmepumpe (``lade_kennzahlen_je_geraet``)."""
+    if "waermepumpe" not in typen:
+        return None, None, None
+    from backend.services.waermepumpe_jahreskennzahlen import waermepumpe_jahreskennzahlen
+    from backend.services.waermepumpe_kennzahlen_je_geraet import lade_kennzahlen_je_geraet
+    from backend.services.waerme_klima_block import achsen_der_anlage
+
+    wp_invs = [i for i in kx.inv_rows if i.typ == "waermepumpe" and i.ist_aktiv_im_monat(f.jahr, f.monat)]
+    if not wp_invs:
+        return None, None, None
+    kz = await lade_kennzahlen_je_geraet(kx.db, kx.anlage_id, wp_invs, von=(f.jahr, f.monat), bis=(f.jahr, f.monat))
+    wpk = waermepumpe_jahreskennzahlen([f], wp_invs, waerme_achsen=achsen_der_anlage(kz))
+    return wpk.je_funktion.heizen.wert, wpk.je_funktion.warmwasser.wert, wpk.kuehlen.wert
+
+
+def _zeile_emob_zusatz(f, typen) -> dict[str, Any]:
+    """Felder der Zeile, Teil 5a: E-Mobilität über die Heimladung hinaus (Fahrverbrauch, kWh/100 km, V2H, extern,
+    Ladevorgänge). kWh/100 km über den Layer ``eauto_effizienz_100km`` mit denselben Eingängen wie Cockpit → Komponenten
+    und Übersicht (gemessener Fahrverbrauch vor Heim + Extern, N-557)."""
+    emob = f.emob
+    hat_auto = "e-auto" in typen
+    hat_emob = hat_auto or "wallbox" in typen
+    eff = eauto_effizienz_100km(emob.fahrverbrauch_kwh, emob.ladung_kwh + emob.extern_kwh, emob.km)
+    return dict(
+        eauto_fahrverbrauch_kwh=_mit_wert(emob.fahrverbrauch_kwh) if hat_auto else None,
+        eauto_verbrauch_kwh_100km=round(eff.wert, 2) if hat_auto and eff.wert is not None else None,
+        eauto_v2h_entladung_kwh=_mit_wert(emob.v2h_entladung_kwh) if hat_auto else None,
+        emob_ladung_extern_kwh=_mit_wert(emob.extern_kwh) if hat_emob else None,
+        emob_ladung_extern_euro=_mit_wert(emob.extern_euro, 2) if hat_emob else None,
+        emob_ladevorgaenge=_mit_wert(emob.ladevorgaenge, 0) if hat_emob else None,
+    )
+
+
+def _zeile_wp_zusatz(f, typen, funktionen: tuple) -> dict[str, Any]:
+    """Felder der Zeile, Teil 5b: Wärme/Klima über Strom/Wärme/JAZ hinaus — Betriebsart-Strom (Teilmengen von
+    ``wp_strom_kwh``), Kälte, Zusatzheizung, Arbeitszahl je Funktion."""
+    wp = f.wp
+    if "waermepumpe" not in typen:
+        return {}
+    split = wp.hat_modus_split
+    heizen, warmwasser, kuehlen = funktionen
+    return dict(
+        wp_strom_kuehlen_kwh=round(wp.modus_strom_kuehlen_kwh, 1) if split else None,
+        wp_strom_lueften_kwh=round(wp.modus_strom_lueften_kwh, 1) if split else None,
+        wp_strom_entfeuchten_kwh=round(wp.modus_strom_entfeuchten_kwh, 1) if split else None,
+        wp_strom_nicht_aufgeteilt_kwh=round(wp.modus_nicht_aufgeteilt_kwh, 1) if split else None,
+        wp_kaelte_kwh=_mit_wert(wp.nutzenergie_kuehlen_kwh),
+        wp_heizstab_kwh=round(wp.heizstab_kwh, 1) if wp.heizstab_kwh is not None else None,
+        wp_jaz_heizen=heizen,
+        wp_jaz_warmwasser=warmwasser,
+        wp_jaz_kuehlen=kuehlen,
     )

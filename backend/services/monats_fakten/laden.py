@@ -166,13 +166,16 @@ async def lade_monats_fakten(
     #: (jahr, monat) → {investition_id_als_string: „der Nenner dieser Zeile ist
     #: die feine Summe"} — dieselbe Buchführung, andere Frage (N-462).
     wp_nenner_fein: dict[MonatsSchluessel, dict[str, bool]] = {}
+    # N-771 Rest 1 (E6): der Zuordnungsmonat des Felds je Wallbox (eine Abfrage nur, wenn eine Wallbox-Zeile das Feld
+    # trägt) — dort ist das Feld auch an der E-Mob-Zeile nicht die Netzladung (`reader.netzladung_des_zaehlers`).
+    _wb_zuordnung = await _wallbox_zuordnungsmonate(db, anlage_id, imd_rows, inv_by_id)
     for imd in imd_rows:
         inv = inv_by_id.get(imd.investition_id)
         # #153/#155/#236/#308: vor Anschaffung / nach Stilllegung / deaktiviert
         # zählt nichts — der EINE Ort, an dem dieser Filter gilt.
         if inv is None or not inv.ist_aktiv_im_monat(imd.jahr, imd.monat):
             continue
-        daten = imd.verbrauch_daten or {}
+        daten = _daten_mit_auskunft(imd, inv, _wb_zuordnung)
         roh.setdefault((imd.jahr, imd.monat), _RohMonat()).falte(
             inv, daten,
             abgetretene_bkw=abgetretene_bkw_im_monat(imd.jahr, imd.monat),
@@ -333,6 +336,10 @@ async def lade_monats_fakten(
     # Anfrage einmal laden".
     for m, marken in wp_gruppen.items():
         kanal_gruppen.setdefault(m, set()).update(marken)
+
+    # N-770/N-771 F10 (Entscheid Gernot 31.10.2026): im Zuordnungsmonat des Felds «Netzbezug zum WP-/Wallbox-Tarif»
+    # (sein Kanal beginnt im Monat) ist der Monatswert eine Teilmenge ⇒ der Monat gilt als nicht gemessen.
+    await _zuordnungsmonate_nicht_gemessen(db, anlage_id, roh, investitionen)
 
     verluste_summen: dict[MonatsSchluessel, TagesMonatsSumme] = tages_summen
     from backend.services.kanal.bilanz_leser import hat_anlagenzaehler_kanal, kanal_monate
@@ -495,7 +502,17 @@ async def lade_monats_fakten(
                 kanal_gruppen=frozenset(kanal_gruppen.get(schluessel, ())),
             )
         )
-    return fakten
+    # N-770/N-771 F6: HT/NT über N bzw. (Netzbezug − N) — nur in Monaten, die den Netzbezug zum Komponenten-Tarif messen
+    # (sonst derselbe Fakt, keine Abfrage).
+    return await _mit_netzanteil_preisen(db, anlage_id, fakten, tarif_cache)
+
+
+async def _mit_netzanteil_preisen(db: AsyncSession, anlage_id: int, fakten: list, tarif_cache: dict) -> list:
+    """N-770/N-771 F6 je Fakt (``tarif.mit_netzanteil_preisen``) — eigene Phase (Komplexitäts-Wächter)."""
+    from backend.services.monats_fakten.tarif import mit_netzanteil_preisen
+
+    return [await mit_netzanteil_preisen(db, anlage_id, f, tarif_cache.get(date(f.jahr, f.monat, 1)) or {})
+            for f in fakten]
 
 
 def _falte_kanal_gruppen(roh, geraete, tages_summen, inv_by_id, *, offen):
@@ -552,6 +569,59 @@ def _falte_kanal_gruppen(roh, geraete, tages_summen, inv_by_id, *, offen):
         if any(gefaltet):
             gruppen.setdefault(m, set()).add(TAGESWERT_SONSTIGES)
     return emob_kanal, gruppen
+
+async def _wallbox_zuordnungsmonate(db: AsyncSession, anlage_id: int, imd_rows, inv_by_id) -> dict:
+    """N-771 Rest 1 (E6): ``wallbox_id → Zuordnungsmonat`` des Felds aus den geladenen Zeilen
+    (``kanal/netzanteil_leser.zuordnungsmonate_der_wallboxen`` — ohne Wallbox-Zeile mit Feld keine Abfrage)."""
+    from backend.services.kanal.netzanteil_leser import zuordnungsmonate_der_wallboxen
+
+    return await zuordnungsmonate_der_wallboxen(db, anlage_id, [
+        (imd.investition_id, imd.verbrauch_daten) for imd in imd_rows
+        if getattr(inv_by_id.get(imd.investition_id), "typ", None) == "wallbox"
+    ])
+
+
+def _daten_mit_auskunft(imd, inv, wb_zuordnung: dict) -> dict:
+    """Die Zeile einer IMD, wie die Faltung sie liest — an einer Wallbox im Zuordnungsmonat ihres Felds mit der Auskunft
+    (``netzanteil_leser.mit_zuordnungsauskunft``, N-771 Rest 1); sonst ``verbrauch_daten`` selbst."""
+    daten = imd.verbrauch_daten or {}
+    if not wb_zuordnung or inv.typ != "wallbox":
+        return daten
+    from backend.services.kanal.netzanteil_leser import mit_zuordnungsauskunft
+
+    return mit_zuordnungsauskunft(daten, inv.id, (imd.jahr, imd.monat), wb_zuordnung)
+
+
+async def _zuordnungsmonate_nicht_gemessen(db: AsyncSession, anlage_id: int, roh: dict, investitionen) -> None:
+    """N-770/N-771 F10 (Bauplan §2c, Entscheid Gernot 31.10.2026): der **Zuordnungsmonat** des Felds «Netzbezug zum
+    WP-/Wallbox-Tarif» — der Kalendermonat, in dem sein Kanal beginnt (``kanal/netzanteil_leser.beginn_je_geraet``; dort
+    hat der Kanal keinen Stand vor dem Monatsbeginn, ``lesen.py`` Regel (a)) — gilt als **nicht gemessen**: der Monatswert
+    der Abschluss-Zeile ist eine Teilmenge, und ein zu kleines N machte den PV-Anteil P = S − N zu groß. Dieselbe Regel
+    wie bei jedem neu zugeordneten Zähler (Handbuch Einstellungen §7.2). Ein Monat OHNE Kanal (Hand, CSV, vor dem Kanal)
+    bleibt mit seinem Monatswert gemessen (E2-Wirkung).
+
+    ⚑ **Benannte Grenze — der Handwert im Zuordnungsmonat:** Gernot 31.10.: «ein von Hand eingetragener Monatswert im
+    Zuordnungsmonat gilt (Herkunft der Abschluss-Zeile prüfen); ist das nicht billig, als Grenze benennen». Die Herkunft
+    unterscheidet ihn nicht: der Monatsabschluss stempelt JEDES gesendete Feld ``manual:form``
+    (``monatsabschluss/wizard.py``, ``write_json_subkey_with_provenance(..., source="manual:form")``) — den getippten Wert
+    und den übernommenen HA-Statistik-Vorschlag (die Teilmenge) gleich. Deshalb gilt der Zuordnungsmonat ohne Ausnahme
+    als nicht gemessen.
+
+    Abfrage nur, wenn eine Monatszeile das Feld überhaupt trägt (sonst bitgleich, keine SQL-Anweisung mehr)."""
+    if not any(r.wp_netz_eigener_tarif_gemessen or r.wallbox_netz_eigener_tarif_gemessen for r in roh.values()):
+        return
+    from backend.services.kanal.netzanteil_leser import beginn_je_geraet, monat_der_stunde
+
+    typ_je_inv = {i.id: i.typ for i in investitionen if i.typ in ("waermepumpe", "wallbox")}
+    for inv_id, ts in (await beginn_je_geraet(db, anlage_id, typ_je_inv)).items():
+        r = roh.get(monat_der_stunde(ts))
+        if r is None:
+            continue
+        if typ_je_inv[inv_id] == "waermepumpe":
+            r.wp_netz_eigener_tarif_luecke = True
+        else:
+            r.wallbox_netz_eigener_tarif_luecke = True
+
 
 def _falte_wp_kanal(roh, wp_kanal, inv_by_id, wp_je_monat, wp_nenner_fein, *, offen) -> dict[MonatsSchluessel, set[str]]:
     """HA-Bauform E4d: die Zeilen der WP-Gruppe aus den Kanälen in die Rohmonate falten.

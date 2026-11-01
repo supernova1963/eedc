@@ -1,6 +1,6 @@
 # Was ist neu
 
-> **Stand:** Oktober 2026 (v4.1.10)
+> **Stand:** November 2026 (v4.1.12)
 > **Diese Seite** zeigt pro Version, was sich für dich als Anwender geändert hat — kürzer als der technische [CHANGELOG](https://github.com/supernova1963/eedc-homeassistant/blob/main/CHANGELOG.md), ausführlicher als die Schnellübersicht-Tabelle in der [Übersicht](BENUTZERHANDBUCH.md#was-ist-neu-seit-v316).
 >
 > **Kein Banner, kein Pop-up:** eedc zeigt diese Liste nicht ungefragt an. HA-App-Nutzer sehen den Changelog ohnehin schon im Add-on-Store, GitHub-Releases haben einen eigenen. Wer wissen will, was neu ist, schaut hier rein — Pull statt Push.
@@ -10,6 +10,135 @@
 ---
 
 ## Unveröffentlicht — kommt mit der nächsten Version
+
+## v4.1.12 — 1. November 2026
+
+**Komponenten → Wallbox und E-Auto: neuer Block „Überblick" — was am Ladepunkt gerade geschieht.** Ganz oben steht jetzt
+„Auf einen Blick" (daneben das Schaubild, siehe unten). An der Wallbox sagt **ein Chip**, was los ist — „Lädt · PV",
+„Wartet · PV", „Verbunden", „Kein Fahrzeug" —, darunter die Ladeleistung, dein Auto mit Ladestand, Reichweite und einer
+Leiste mit Zielmarke, und eine Zeile „3 Phasen · 16 A · 9,8 kWh in dieser Sitzung · 2 h 10 min". Am E-Auto steht der
+Ladestand groß mit Ziel und Reichweite, wo es steht („an ‹Wallbox›", „Zu Hause"/„Unterwegs") und, wenn du es als
+Dienstwagen führst, ein Chip. Dafür gibt es in *Einstellungen → Datenquellen* den neuen Abschnitt **„Zustand & Sitzung"**:
+Ladezustand, Lademodus, Sitzung, Ladestrom, Phasen, Ladeziel, Restzeit, Reichweite, Standort — alles optional, alles nur
+angezeigt, nichts gespeichert. Den Zustand zeigt eedc nur, wenn ein Sensor ihn meldet; aus der Leistung schließt es nie auf
+„lädt". Welche Werte eedc versteht (SMA EV Charger, evcc, Smart, go-eCharger) und wie du jede andere Integration mit einem
+Template-Sensor anbindest, steht am Feld und im Handbuch. Derselbe Chip erscheint in *Cockpit → Live* an der Wallbox-Kachel,
+wenn sie nicht lädt ([Bedienung §3.6](HANDBUCH_BEDIENUNG.md#36-wallbox),
+[Einstellungen §7.10](HANDBUCH_EINSTELLUNGEN.md#710-zustand-und-sitzung-e-mobilität)).
+
+**Wallbox: welches Auto angeschlossen ist — auch bei mehreren Wallboxen — und „Gastfahrzeug".** Meldet deine
+Ladesteuerung, welches Fahrzeug am Ladepunkt hängt (evcc, openWB), ordnest du das in *Einstellungen → Datenquellen* dem
+neuen Feld **„Fahrzeug am Ladepunkt"** zu und trägst am E-Auto (*Einstellungen → Investitionen*) die **„Kennung in der
+Steuerung"** ein — den Namen, unter dem die Steuerung dein Auto führt. Dann nennt die Wallbox-Karte genau dieses Auto, auch
+wenn zwei Wallboxen gleichzeitig laden, und ein Firmenwagen heißt dort „Dienstwagen ‹Name›". Meldet die Steuerung kein
+Fahrzeug, obwohl eines angesteckt ist, steht dort „Gastfahrzeug lädt". Einen Namen, den keines deiner Autos trägt, zeigt
+die Karte als „Fahrzeug der Steuerung unbekannt" — der Daten-Checker nennt den Namen und sagt, wo du ihn einträgst. Ohne
+Fahrzeugerkennung (go-eCharger, SMA, Easee) bleibt alles wie bisher; erraten wird nichts
+([Bedienung §3.6](HANDBUCH_BEDIENUNG.md#36-wallbox),
+[Einstellungen §7.10](HANDBUCH_EINSTELLUNGEN.md#710-zustand-und-sitzung-e-mobilität)).
+
+**evcc: der Ladezustand-Chip ohne Template-Sensor.** evcc meldet den Zustand am Ladepunkt in drei Schaltern — verbunden,
+lädt, freigegeben. Die ordnest du jetzt direkt den drei neuen Feldern **„evcc: Fahrzeug verbunden"**, **„evcc: lädt"** und
+**„evcc: Laden freigegeben"** zu (der Sensor-Vorschlag findet sie), und eedc zeigt daraus „Lädt", „Wartet", „Verbunden"
+oder „Kein Fahrzeug" — der Umweg über einen eigenen Template-Sensor entfällt. Hast du schon einen Ladezustand-Sensor, gilt
+weiter er. Ohne Home Assistant reicht das MQTT-Gateway an diese Felder (und an Lademodus und Fahrzeugname) jetzt den Text
+weiter; für einen evcc-Ladepunkt gibt es dafür das Preset „evcc Ladepunkt", das Leistung, Sitzung, Restzeit, Phasen,
+Lademodus, Zustand, Fahrzeugname und den Zählerstand der Wallbox mit den richtigen Einheiten anlegt (in den Datenquellen über „Preset anwenden …")
+([Einstellungen §7.10](HANDBUCH_EINSTELLUNGEN.md#710-zustand-und-sitzung-e-mobilität)).
+
+**Wallbox und E-Auto: „Betrieb heute".** Die dritte Karte in „Auf einen Blick" sagt, wie viele Stunden die Wallbox heute
+geladen hat, verbunden war, gewartet hat oder fertig stand — und wie oft heute ein Ladevorgang begann („Ladevorgänge
+heute: 2"). Am E-Auto stehen die Stunden „Lädt" und „Verbunden" und, wenn du den Standort zugeordnet hast, wie lange es zu
+Hause und unterwegs war. Dafür schreibt eedc ab jetzt für Ladezustand, Ladezustand des Fahrzeugs und Standort mit, welchen
+Anteil jeder Stunde welcher Zustand hatte — aus Home Assistant und ebenso über MQTT, auch für evcc mit den drei Schaltern.
+Die Karte beginnt mit dem Tag der Zuordnung, nicht rückwirkend ([Bedienung §3.6](HANDBUCH_BEDIENUNG.md#36-wallbox),
+[Berechnungen → Stunden je Zustand](BERECHNUNGEN.md#stunden-je-zustand)).
+
+**Wallbox und E-Auto: Kilometerstand, Fahrt heute und PV-Anteil heute.** Hast du am E-Auto einen Kilometerzähler
+zugeordnet (Auto-Integration oder OBD), zeigt die Gerätekarte den **Kilometerstand**, und die Karte „Heute" sagt, wie weit
+das Auto heute **gefahren** ist und wie viel Strom es dafür **verbraucht** hat (Fahrverbrauch-Zähler) — aus den
+abgeschlossenen Stunden des Tages. An der Wallbox trägt die Karte „Heute" jetzt groß den **PV-Anteil heute** mit der
+Herleitung („9,8 kWh PV ÷ 14,7 kWh") — nur, wenn deine Wallbox beides misst: die geladene Menge und den PV-Anteil davon.
+Geschätzt wird hier nichts. **Presets wieder in der Oberfläche:** unter *Einstellungen → Datenquellen* gibt es an der
+Wallbox (und an Speicher und Steckdosen) den Knopf „Preset anwenden …" — etwa „evcc Ladepunkt": Variablen prüfen,
+anwenden, und die Felder stehen auf „Gateway". Vorhandene Gateway-Zuordnungen derselben Felder ersetzt das Preset
+([Bedienung §3.5](HANDBUCH_BEDIENUNG.md#35-e-auto), [Einstellungen §7.10](HANDBUCH_EINSTELLUNGEN.md#710-zustand-und-sitzung-e-mobilität),
+[Berechnungen → PV-Anteil heute](BERECHNUNGEN.md#pv-anteil-heute)).
+
+**Wallbox und E-Auto: das Schaubild — „Ladepunkt" und „Fahrzeug".** Neben „Auf einen Blick" steht jetzt ein Bild mit den
+Kacheln aus dem Energiefluss, wie bei der Wärmepumpe. An der **Wallbox** blickst du in die offene Garage: an der Wandbox
+die Wallbox-Kachel, am Zählerkasten „Ladung heute" (mit dem PV-Anteil, wenn deine Wallbox ihn misst), am Stecker die
+laufende Sitzung und am Auto sein Ladestand — wenn eedc weiß, welches Auto dort steht. Am **E-Auto** siehst du ein
+durchscheinendes Auto an der Säule: „Laden" mit der Leistung und dem Zustand, den Ladestand am Akku, die Reichweite am
+Cockpit, „Gefahren heute" am Vorderrad und den Standort. Das Bild gehört dem Gerät, das du oben im Selektor gewählt hast —
+eine andere Wallbox oder ein anderes Auto wählst du dort. Was fehlt, nennt die Zeile unter dem Bild mit dem Weg zu den
+Datenquellen ([Bedienung §3.5](HANDBUCH_BEDIENUNG.md#35-e-auto), [Bedienung §3.6](HANDBUCH_BEDIENUNG.md#36-wallbox)).
+
+**Überblick: Gerät, Heute und Betrieb einzeln parken.** In „Auf einen Blick" an Wärmepumpe, Wallbox und E-Auto parkst du
+jetzt jede Karte für sich — Rechtsklick oder oben lange drücken, wie im Cockpit. Ist das Schaubild geparkt, stehen die
+übrigen Karten nebeneinander; sind alle Karten geparkt, nimmt das Schaubild die volle Breite. Hattest du „Auf einen Blick"
+als Ganzes geparkt, bleiben die drei Karten geparkt; der Chip „Auf einen Blick" auf dem Parkplatz holt alle drei zurück
+([Bedienung §3.4](HANDBUCH_BEDIENUNG.md#34-wärmepumpe)).
+
+**Komponenten: lesbare Einstellungen, keine Nullen ohne Aussage.** Der Block „Einstellungen" nennt die Parameter jetzt
+so wie das Formular — „Max. Ladeleistung (kW)" statt „max ladeleistung kw", „Wärmepumpenart: Luft/Wasser" statt
+„luft_wasser" —, und die Wallbox-Karte zeigt Phasen, Ladestrom und Restzeit nur, wenn sie über 0 liegen.
+
+**Zeiten als Stunden und Minuten.** „Betrieb heute" an Wärmepumpe, Wallbox und E-Auto, die Betriebsstunden eines Tages,
+„Ø Laufzeit/Start" und die Sonnenstunden in *Cockpit → Live* zeigen eine Dauer jetzt als „2 h 36 min" statt „2,6 h".
+
+**Auswertungen → Tabelle: neue Spalten für E-Mobilität und Wärme/Klima.** Im Spalten-Picker findest du jetzt im Monat
+den **Fahrverbrauch**, den **Verbrauch in kWh/100 km** (in der Summenzeile über alle km gerechnet), die **Ladung extern**
+(kWh und €), **V2H**, die **Ladevorgänge**, die **Arbeitszahlen Heizen, Warmwasser und Kühlen**, den Strom **nach
+Betriebsart** (Kühlen, Lüften, Entfeuchten, nicht aufgeteilt), die **Kälte**, die **Zusatzheizung**, die
+**Speicher-Netzladung**, die **Ø Außentemperatur** und die **dienstlichen Ladekosten**. Am Tag kommen **Gefahren (km)**,
+**Fahrverbrauch**, **Wallbox-Ladung**, **Ladevorgänge**, **V2H**, die **Starts** und die **Betriebszeit** der Wärmepumpe
+(in Minuten), die **Vollzyklen** des Speichers, **Temperatur min**, **Börsenpreis min** und die **Abgabe an Dritte** dazu,
+außerdem die **Wärme**, die **Kälte**, der **Strom nach Betriebsart** und die **Zusatzheizung** der Wärmepumpe je Tag — sind diese eingeblendet,
+zeigt die Tabelle eine Lade-Anzeige, bis alle Tage gerechnet sind (bei einem Jahr einige Sekunden).
+Alles ist abwählbar und nicht voreingestellt; jede Zahl ist dieselbe wie in Cockpit und Hub. Die Arbeitszahlen eines
+einzelnen Tages stehen weiterhin in *Cockpit → Tag* ([Bedienung §4.5](HANDBUCH_BEDIENUNG.md#45-tabelle-werte-werkbank)).
+
+**Stromrechnung mit dem Grundpreis deines Wärmepumpen- oder Wallbox-Tarifs.** Hast du für die Wärmepumpe oder die
+Wallbox einen zweiten Zähler mit eigenem Tarif eingetragen, zählt sein Grundpreis jetzt mit: Die Netzbezug-Kosten in
+*Cockpit → Monat/Jahr*, *Auswertungen → Tabelle*, der Übersicht und im PDF-Monatsbericht tragen die Grundpreise aller
+Tarife, die im Monat gelten, und „davon Grundgebühr" nennt die Aufteilung („Standard 14,00 € · Wärmepumpe 10,00 €").
+Bisher fehlte er — die Stromrechnung stand um ihn zu niedrig, das Monatsergebnis um ihn zu hoch. Ohne eigenen Tarif ändert
+sich nichts ([Einstellungen §2.2](HANDBUCH_EINSTELLUNGEN.md#22-strompreise)).
+
+**Netzbezug zum WP- und Wallbox-Tarif: Stromrechnung und Ersparnis mit beiden Tarifen genau.** Hast du für die
+Wärmepumpe oder die Wallbox einen eigenen Tarif, rechnet dein Versorger einen Teil deines Netzbezugs zu diesem Tarif ab —
+welchen, wusste eedc bisher nicht und rechnete den ganzen Netzbezug zum Haushaltstarif. Neu gibt es an der Wärmepumpe das
+optionale Feld **„Netzbezug zum WP-Tarif"** und an der Wallbox **„Netzbezug zum Wallbox-Tarif"** (*Einstellungen →
+Datenquellen*, mit eigenem Tarif in der ersten Reihe, sonst unter „Weitere Größen erfassen"; auch im Monatsabschluss und
+als CSV-Spalte). Ordnest du die Menge zu — in einer Zählerkaskade *Z1-Bezug minus Z2-Bezug* als Template-Sensor —, rechnet
+die Stromrechnung diesen Teil zum Komponenten-Tarif und den Rest zum Haushaltstarif, und die Eigenverbrauchs-Ersparnis
+bewertet den PV-Strom der Wärmepumpe zum WP-Tarif. Die Herleitung der Ø-Preis-Kachel nennt die Teile („117,9 kWh × 30,0
+ct + 256,0 kWh × 22,0 ct (Wärmepumpe)"). Ohne das Feld oder ohne eigenen Tarif ändert sich nichts.
+
+Mit einer Langzeitstatistik des Sensors in Home Assistant (bzw. einer eigenen Summe auf MQTT) rechnet auch **Cockpit →
+Tag** jede Stunde mit beiden Tarifen — die Summe der Tage ist der Monat, auch mit HT/NT-Tarif. Der **laufende Monat**
+rechnet schon vor dem Monatsabschluss mit dem Feld. An der **Wallbox** ist der gemessene Wert jetzt deine Netzladung —
+auch wenn evcc einen anderen Anteil meldet; die E-Mob-Ersparnis rechnet damit. **Prognose und Wirtschaftlichkeit**
+nehmen den gemessenen PV-Anteil deiner Wärmepumpe der letzten zwölf Monate. Der **Daten-Checker** (jetzt „Strompreise –
+eigener WP-/Wallbox-Tarif") rät dir, das Feld zuzuordnen, wo es fehlt, und warnt bei unplausiblen Werten, bei einer
+Abweichung zu evcc und bei einem parallelen Zähler, der im Netzbezug der Anlage fehlt. Im Monat der Zuordnung rechnet eedc
+noch ohne das Feld — sein Wert deckt dort nur einen Teil des Monats ([Wärme & Klima, Schritt 6b](HANDBUCH_WAERME_KLIMA.md#schritt-6b--netzbezug-zum-wp-tarif-optional-nur-mit-eigenem-wärmepumpen-tarif),
+[Einstellungen §2.2](HANDBUCH_EINSTELLUNGEN.md#22-strompreise)). Das gilt an der Wallbox auch für die Netzladung: im
+Monat der Zuordnung bleibt sie evcc bzw. die Tagesquote. Im **laufenden Monat** rechnet die Stromrechnung jetzt auch den
+Teil der Wallbox zum Wallbox-Tarif, sobald ihr Sensor den Monat deckt.
+
+**Wärmepumpe und Wallbox hinter einem gemeinsamen Zähler.** Hängt die Wallbox am Zähler der Wärmepumpe und rechnet dein
+Versorger beide zu einem Tarif ab (z. B. §14a Modul 2), wählst du unter *Einstellungen → Strompreise* die neue Verwendung
+**„Wärmepumpe und Wallbox (gemeinsamer Zähler)"**. Der Tarif gilt dann für beide Geräte, sein Grundpreis zählt einmal, und
+das Feld an der Wärmepumpe heißt **„Netzbezug zum WP-/Wallbox-Tarif (gemeinsamer Zähler)"** — dort trägst du den
+gemeinsamen Netzbezug ein (*Zähler vor beiden Geräten minus Zähler danach*). eedc rechnet die Stromrechnung damit genau
+und teilt den gemeinsamen Netzbezug für die Ersparnis wie zwei getrennte Zähler: die Wallbox mit ihrer Netzladung (evcc
+bzw. Tagesquote), die Wärmepumpe mit dem Rest. Je Tag rechnet die Stromrechnung stundengenau, die Ersparnis ohne diese
+Teilung — der Monat trägt den genauen Wert; der Daten-Checker nennt die Monate und warnt, wenn ein eigener Tarif daneben
+Vorrang hat oder an der Wallbox ein Wert steht, der dort nicht zählt ([Wärme & Klima, Schritt 6b](HANDBUCH_WAERME_KLIMA.md#schritt-6b--netzbezug-zum-wp-tarif-optional-nur-mit-eigenem-wärmepumpen-tarif)).
+
+## v4.1.11 — 27. Oktober 2026
 
 **Daten-Checker: kein falscher „Sprung in Home Assistant“ mehr am PV-Tagesertrag, gleich wann der Wechselrichter seine 0
 schreibt.** Zwei Korrekturen (4.1.9, 4.1.10) hatten den Tageszähler nur an der Stelle seiner 0 erkannt — Mitternacht, dann

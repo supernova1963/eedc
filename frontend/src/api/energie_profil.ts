@@ -208,6 +208,33 @@ export interface TagWerte {
    * Bilanz. Fehlt ein Eintrag, wurde an dem Tag nichts abgelesen.
    */
   zaehler_stand?: Record<string, number> | null
+  /** §9.2 — an Dritte abgegebene kWh des Tages (Backend `sonstiges_abgabe`); `null` = keine Abgabe gemessen. */
+  sonstiges_abgabe?: number | null
+  // ── Tabellen-Spalten (28.10.2026, Backend `tage_werte_zusatz.py`) — private, am Tag aktive Geräte; `null` = an dem
+  // Tag kein Wert. Optional: ältere Server liefern die Felder nicht.
+  /** Σ Wallbox-Ladung (Betrag), dieselbe Mischung wie die Karte «Heute» im Hub. */
+  wallbox_ladung?: number | null
+  /** Σ gefahrene km — am Tag der Rückkehr nach einer Zählerlücke trägt der Wert den Sprung (Lückenregel). */
+  eauto_km?: number | null
+  eauto_fahrverbrauch?: number | null
+  /** Σ Ladevorgänge (Übergänge nach «lädt») an den Wallboxen. */
+  ladevorgaenge?: number | null
+  /** Wärmepumpen-Starts und Betriebszeit in ganzen Minuten (Tagessumme wie Cockpit → Monat). */
+  wp_starts?: number | null
+  wp_betriebszeit_min?: number | null
+  // ── Wärmepumpen-Tagesreihe (29.10.2026) — nur mit `mitWaerme` (Query `mit_waerme=true`), sonst `null`; dieselben
+  // Werte wie Cockpit → Monat (Route `waerme-verlauf`). Teuer über lange Zeiträume.
+  /** Σ gemessene Wärme des Tages; ohne Wärmemengenzähler `null`. */
+  wp_waerme?: number | null
+  /** Gemessene Kälte des Tages. */
+  wp_kaelte?: number | null
+  /** Betriebsart-Strom — nur an Tagen mit Aufteilung. */
+  wp_strom_kuehlen?: number | null
+  wp_strom_lueften?: number | null
+  wp_strom_entfeuchten?: number | null
+  wp_strom_nicht_aufgeteilt?: number | null
+  /** Gemessener Heizstab-Strom (Zusatzheizung) des Tages — dieselbe Zahl wie Cockpit → Tag; ohne Zähler `null`. */
+  wp_heizstab?: number | null
 }
 
 /**
@@ -242,6 +269,37 @@ export interface TagStatus {
  * D1 „maximal erheben"). Ein Aufruf je gewähltem Tag (`getTagDetail`). Felder
  * `null` = Sensor nicht gemappt / keine Daten → Frontend lässt sie weg.
  */
+/** P-433-2b K3: Stunden je Zustand eines Geräts und Felds am Tag — fertig aus dem Backend (Layer
+ *  `betriebsstunden.stunden_je_zustand`, Klartext `zustands_kanon.LABEL`); der Client rechnet nichts. */
+export interface EmobBetriebZeile {
+  investition_id: number
+  typ: string
+  /** `ladezustand` (Wallbox) · `ladezustand_fahrzeug` · `zu_hause` (E-Auto) */
+  feld: string
+  /** `{wert: Stunden}` in Lese-Reihenfolge der Karte, 0,1 h; eine gemessene 0 steht da. */
+  stunden: Record<string, number>
+  labels: Record<string, string>
+  /** «Ladevorgänge heute» (nur Wallbox, nur mit Zähler-Zeile). */
+  wechsel: number | null
+}
+
+/** P-433-2b K4: die Tagesmengen eines Geräts für die Karten «Heute» — fertig aus dem Backend (Kopfzahl über den Layer
+ *  `pv_anteil_gemessen_prozent`, Fahrt aus den Kanal-Stunden); jeder Wert nur mit Wert, der Client rechnet nichts. */
+export interface EmobHeuteZeile {
+  investition_id: number
+  typ: string
+  /** Wallbox: Tageswert des Ladezählers · E-Auto: nur ohne deckende Wallbox. */
+  ladung_kwh?: number | null
+  /** Wallbox: gemessener PV-Ladezähler des Tages. */
+  ladung_pv_kwh?: number | null
+  /** Wallbox: Kopfzahl «PV-Anteil heute», nur mit beiden gemessenen Mengen. */
+  pv_anteil_prozent?: number | null
+  /** E-Auto: Gefahren heute (km). */
+  km?: number | null
+  /** E-Auto: Fahrverbrauch heute (kWh). */
+  fahrverbrauch_kwh?: number | null
+}
+
 export interface TagDetail {
   datum: string
   wp_strom_heizen_kwh: number | null
@@ -331,6 +389,12 @@ export interface TagDetail {
   speicher_effektiver_ladepreis_quelle: string | null
   emob_ladung_pv_kwh: number | null
   emob_ladung_netz_kwh: number | null
+  /** P-433-2b K3 — «Betrieb heute» der Wallboxen und E-Autos: je Gerät und mitgeschriebenem Zustandsfeld eine Zeile
+   *  (nur Tag). Fehlt bei älteren Backends. */
+  emob_betrieb?: EmobBetriebZeile[]
+  /** P-433-2b K4 — Tagesmengen je Wallbox/E-Auto (Kopfzahl PV-Anteil, Gefahren/Fahrverbrauch heute). Fehlt bei
+   *  älteren Backends. */
+  emob_heute?: EmobHeuteZeile[]
   /** #263/T2 — Aufteilung Heizen/Kühlen DIESES Tages, anlagenweite Σ.
    *  `null` heißt „kein Modus-Signal an diesem Tag" ⇒ der Block fehlt ganz,
    *  statt drei Nullen zu zeigen (ADR-002/P4). Der Rest kommt aus dem
@@ -807,8 +871,10 @@ export const energieProfilApi = {
   getTage: (anlageId: number, von: string, bis: string): Promise<TagesZusammenfassung[]> =>
     api.get(`/energie-profil/${anlageId}/tage?von=${von}&bis=${bis}`),
 
-  getTageWerte: (anlageId: number, von: string, bis: string): Promise<TagWerte[]> =>
-    api.get(`/energie-profil/${anlageId}/tage-werte?von=${von}&bis=${bis}`),
+  /** `mitWaerme`: zusätzlich die Wärmepumpen-Tagesreihe (s. `TagWerte.wp_waerme` …) — nur anfragen, wenn eine dieser
+   *  Spalten eingeblendet ist; ohne ihn bleibt die URL wie bisher. */
+  getTageWerte: (anlageId: number, von: string, bis: string, mitWaerme = false): Promise<TagWerte[]> =>
+    api.get(`/energie-profil/${anlageId}/tage-werte?von=${von}&bis=${bis}${mitWaerme ? '&mit_waerme=true' : ''}`),
 
   /** Die Tagesreihe des Wärme/Klima-Verlaufs. Zeitraum max. 31 Tage. */
   /** Verteilung & Verlauf (WK-16c) — **eine** Route für alle drei Sichten.

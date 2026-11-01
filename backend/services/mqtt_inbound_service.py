@@ -47,8 +47,14 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional, Union
 
+from backend.core import zustands_kanon
 from backend.core.betriebsmodus import MODUS_FELD_KEY, modus_aus_zustaenden
-from backend.core.field_definitions import basis_feld_key, ist_zustand_feld
+from backend.core.field_definitions import (
+    MITSCHRIFT_FELD_KEYS,
+    basis_feld_key,
+    ist_text_feld,
+    ist_zustand_feld,
+)
 from backend.services.activity_service import log_activity
 
 logger = logging.getLogger(__name__)
@@ -88,6 +94,10 @@ class ZustandsFenster:
     seit: float
     modus: Optional[str] = None
     haltezeit: dict[str, float] = field(default_factory=dict)
+    #: P-433-2b K3 (D4, E-K3-1): Übergänge **nach** einem Wert im Fenster — nur von einem anderen, bekannten Wert
+    #: (``None → laedt`` nach einem Neustart oder einer Antwort ohne Zustand zählt nicht). Der Modus-Pfad liest das
+    #: Feld nicht (`modus_anteile_abschliessen` nimmt nur die Anteile).
+    wechsel: dict[str, int] = field(default_factory=dict)
 
     def _halten(self, jetzt: float) -> None:
         if self.modus is not None and jetzt > self.seit:
@@ -97,6 +107,8 @@ class ZustandsFenster:
     def neuer_modus(self, modus: Optional[str], jetzt: float) -> None:
         """Der bisherige Modus hielt bis ``jetzt``; ab hier gilt ``modus``."""
         self._halten(jetzt)
+        if modus is not None and self.modus is not None and modus != self.modus:
+            self.wechsel[modus] = self.wechsel.get(modus, 0) + 1
         self.modus = modus
 
     def abschliessen(self, jetzt: float) -> dict[str, float]:
@@ -108,8 +120,15 @@ class ZustandsFenster:
             if laenge > 0 else {}
         )
         self.haltezeit = {}
+        self.wechsel = {}
         self.beginn = jetzt
         return anteile
+
+    def abschliessen_mit_wechsel(self, jetzt: float) -> tuple[dict[str, float], dict[str, int]]:
+        """``(anteile, wechsel)`` des Fensters — die Form der Zustands-Mitschrift (P-433-2b K3); ``abschliessen``
+        bleibt die Form des Modus-Pfads (rückwärtskompatibel, Bauplan K3 E2)."""
+        wechsel = dict(self.wechsel)
+        return self.abschliessen(jetzt), wechsel
 
 
 @dataclass
@@ -167,14 +186,20 @@ def _adresse(topic: str) -> Optional[tuple[int, str, Optional[str], str]]:
     return int(m.group(1)), m.group(2), m.group(3), m.group(4)
 
 
-def _wert_aus_payload(ist_zustand: bool, payload, topic: str) -> Optional[LiveWert]:
+def _wert_aus_payload(ist_zustand: bool, payload, topic: str, ist_text: bool = False) -> Optional[LiveWert]:
     """Payload → Cache-Wert: roher getrimmter String bei einem Zustandsfeld, sonst ``float``.
 
     ``None`` heißt verwerfen — ein leerer Zustand (gelöschter retained-Wert) wie eine Zahl, die keine ist.
+
+    P-433-2b K2a (Bauplan K2 E2, Gegenprüfung G2): **die eine Weiche «leer ist ein Wert»** — nur für ein Textfeld
+    (`ist_text_feld`, heute `fahrzeug_am_ladepunkt`). Dort heißt ein leerer Payload «die Steuerung kennt kein
+    Fahrzeug» (evcc publiziert `nil` als leeren String) und wird als ``""`` abgelegt — sonst bliebe der letzte Name
+    im Cache stehen (ohne TTL) und ein Gast wäre über MQTT nie zu erkennen. Der Modus-Pfad bleibt unverändert: ein
+    leerer Betriebsmodus wird weiter verworfen (`test_standalone_s1_betriebsmodus_mqtt.py`).
     """
     if ist_zustand:
         roh = str(payload).strip() if payload is not None else ""
-        return roh or None
+        return roh if (roh or ist_text) else None
     try:
         return float(payload)
     except (ValueError, TypeError):
@@ -191,6 +216,7 @@ class MqttInboundCache:
       _live[anlage_id]["inv"][inv_id][key] = (wert, timestamp)   # wert: float, bei Zustand der rohe String
       _energy[anlage_id][key] = (wert, timestamp)
       _modus_fenster[(anlage_id, inv_id)] = ZustandsFenster       # Haltezeit je Modus (HA-Bauform §9)
+      _zustand_fenster[(anlage_id, inv_id, feld)] = ZustandsFenster  # Haltezeit je Kanon-Wert (P-433-2b K3)
       _mittel_fenster[(anlage_id, inv_id|None, key)] = MittelFenster # Integral je Zahlen-Key (HA-Bauform §9, G3)
     """
 
@@ -200,6 +226,8 @@ class MqttInboundCache:
         self._message_count = 0
         self._last_message_at: Optional[datetime] = None
         self._modus_fenster: dict[tuple[int, str], ZustandsFenster] = {}
+        #: P-433-2b K3 (K3-4): ein Fenster **je Feld** (nicht je Gerät — Sprengsatz S6), für jedes Mitschrift-Feld.
+        self._zustand_fenster: dict[tuple[int, str, str], ZustandsFenster] = {}
         self._mittel_fenster: dict[tuple[int, Optional[str], str], MittelFenster] = {}
         #: Lebt die Verbindung zum Broker? True nach dem Subscribe, False nach einem Verbindungsverlust
         #: (E-SG-9). Ohne Verbindung schreibt der Snapshot keine Zeile.
@@ -215,7 +243,7 @@ class MqttInboundCache:
             return
         anlage_id, category, inv_id, key = adresse
         ist_zustand = category == "live" and bool(inv_id) and ist_zustand_feld(key)
-        wert = _wert_aus_payload(ist_zustand, payload, topic)
+        wert = _wert_aus_payload(ist_zustand, payload, topic, ist_text=ist_zustand and ist_text_feld(key))
         if wert is None:
             return
 
@@ -230,6 +258,8 @@ class MqttInboundCache:
                 self._mittel_fortschreiben(anlage_id, inv_id, key, float(wert), t)
             elif basis_feld_key(key) == MODUS_FELD_KEY:
                 self._modus_fortschreiben(anlage_id, inv_id, t)
+            else:
+                self._zustand_nach_nachricht(anlage_id, inv_id, key, t)
         elif category == "energy":
             if anlage_id not in self._energy:
                 self._energy[anlage_id] = {}
@@ -251,6 +281,33 @@ class MqttInboundCache:
             self._modus_fenster[(anlage_id, inv_id)] = ZustandsFenster(beginn=jetzt, seit=jetzt, modus=modus)
         else:
             fenster.neuer_modus(modus, jetzt)
+
+    def _zustand_nach_nachricht(self, anlage_id: int, inv_id: str, key: str, jetzt: float) -> None:
+        """P-433-2b K3: eine Nachricht auf einem Mitschrift-Feld schreibt dessen Fenster fort; eine auf einem
+        evcc-Rollen-Feld (Option A) das Fenster des ``ladezustand`` — derselbe Wert wie im Live-Leser."""
+        if key in MITSCHRIFT_FELD_KEYS:
+            self._zustand_fortschreiben(anlage_id, inv_id, key, jetzt)
+        elif key in zustands_kanon.OPTION_A_FELDER:
+            self._zustand_fortschreiben(anlage_id, inv_id, zustands_kanon.LADEZUSTAND, jetzt)
+
+    def _zustand_fortschreiben(self, anlage_id: int, inv_id: str, feld: str, jetzt: float) -> None:
+        """Der Kanon-Wert des Felds nach dieser Nachricht, über den Gerätecache (Muster `_modus_fortschreiben`).
+
+        ``ladezustand``: der gemessene zuerst, sonst Option A aus den drei evcc-Werten (`ladezustand_aus_werten`, eine
+        Regel mit dem Live-Leser); jedes andere Feld: `normalisiere(feld, roh, codes=True)` (MQTT kennt die Codes).
+        """
+        roh = self.get_live_inv(anlage_id, inv_id)
+        if feld == zustands_kanon.LADEZUSTAND:
+            werte = {f: zustands_kanon.normalisiere(f, roh.get(f), codes=True)
+                     for f in (zustands_kanon.LADEZUSTAND, *zustands_kanon.OPTION_A_FELDER)}
+            wert = zustands_kanon.ladezustand_aus_werten(werte)
+        else:
+            wert = zustands_kanon.normalisiere(feld, roh.get(feld), codes=True)
+        fenster = self._zustand_fenster.get((anlage_id, inv_id, feld))
+        if fenster is None:
+            self._zustand_fenster[(anlage_id, inv_id, feld)] = ZustandsFenster(beginn=jetzt, seit=jetzt, modus=wert)
+        else:
+            fenster.neuer_modus(wert, jetzt)
 
     def _mittel_fortschreiben(self, anlage_id: int, inv_id: Optional[str], key: str, wert: float, jetzt: float) -> None:
         """Das Integral dieses Keys: der alte Wert hielt bis ``jetzt``, ab hier gilt ``wert`` (G3)."""
@@ -294,9 +351,24 @@ class MqttInboundCache:
                 out.setdefault(anlage_id, {})[inv_id] = anteile
         return out
 
+    def zustand_anteile_abschliessen(
+        self, jetzt: Optional[float] = None,
+    ) -> dict[int, dict[str, dict[str, tuple[dict[str, float], dict[str, int]]]]]:
+        """Schließt jedes Zustands-Fenster bei ``jetzt`` ab (P-433-2b K3):
+        ``{anlage_id: {inv_id: {feld: (anteile, wechsel)}}}``. Aufrufer der 5-Minuten-Snapshot; ein Fenster ohne
+        gezählte Zeit fehlt (wie beim Modus)."""
+        t = time.time() if jetzt is None else jetzt
+        out: dict[int, dict[str, dict[str, tuple[dict[str, float], dict[str, int]]]]] = {}
+        for (anlage_id, inv_id, feld), fenster in self._zustand_fenster.items():
+            anteile, wechsel = fenster.abschliessen_mit_wechsel(t)
+            if anteile:
+                out.setdefault(anlage_id, {}).setdefault(inv_id, {})[feld] = (anteile, wechsel)
+        return out
+
     def verbinden(self) -> None:
-        """Nach dem Subscribe: Verbindung lebt; Modus- und Zahlen-Fenster beginnen neu (E-SG-9)."""
+        """Nach dem Subscribe: Verbindung lebt; Modus-, Zustands- und Zahlen-Fenster beginnen neu (E-SG-9)."""
         self._modus_fenster.clear()
+        self._zustand_fenster.clear()
         self._mittel_fenster.clear()
         self.verbunden = True
 
@@ -304,6 +376,7 @@ class MqttInboundCache:
         """Nach einem Verbindungsverlust oder Stopp: keine Snapshot-Zeilen, bis die Verbindung zurück ist."""
         self.verbunden = False
         self._modus_fenster.clear()
+        self._zustand_fenster.clear()
         self._mittel_fenster.clear()
 
     def get_live_basis(self, anlage_id: int) -> dict[str, float]:
@@ -354,6 +427,8 @@ class MqttInboundCache:
             count = 0
             for schluessel in [s for s in self._modus_fenster if s[0] == anlage_id]:
                 del self._modus_fenster[schluessel]
+            for schluessel in [s for s in self._zustand_fenster if s[0] == anlage_id]:
+                del self._zustand_fenster[schluessel]
             for schluessel in [s for s in self._mittel_fenster if s[0] == anlage_id]:
                 del self._mittel_fenster[schluessel]
             if anlage_id in self._live:
@@ -373,6 +448,7 @@ class MqttInboundCache:
         self._live.clear()
         self._energy.clear()
         self._modus_fenster.clear()
+        self._zustand_fenster.clear()
         self._mittel_fenster.clear()
         self._message_count = 0
         self._last_message_at = None

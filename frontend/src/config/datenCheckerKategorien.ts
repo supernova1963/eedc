@@ -59,8 +59,13 @@ export const KATEGORIE_LABELS: Record<string, string> = {
   klima_modus_sensor: 'Klimaanlage – Betriebsmodus',
   // P-433-0 (Konzept #433 E12 b): der zugeordnete Modus-Sensor liefert einen Wert, den eedc nicht kennt.
   klima_modus_wert: 'Betriebsmodus – unbekannter Wert',
-  // N-767: eigener Wärmepumpen-Tarif — der PV-Anteil der Wärmepumpe wird zum Haushaltstarif bewertet.
-  wp_eigener_tarif: 'Strompreise – eigener Wärmepumpen-Tarif',
+  // P-433-2b K1 (E12-Muster): Ladezustand, Lademodus, Fahrzeug-Ladezustand oder Standort mit unbekanntem Wert.
+  emob_zustand_wert: 'E-Mobilität – unbekannter Zustand',
+  // P-433-2b K2a (K2-10): die Steuerung meldet ein Fahrzeug, dessen Kennung kein E-Auto trägt.
+  emob_kennung_unbekannt: 'E-Mobilität – Fahrzeug der Steuerung unbekannt',
+  // N-767/N-770/N-771: eigener WP-/Wallbox-Tarif — Netzbezug zum Komponenten-Tarif fehlt, geklemmt, evcc weicht ab,
+  // paralleler Zähler (eine Kategorie für beide Komponenten: dieselbe Ursache, dasselbe Feld).
+  wp_eigener_tarif: 'Strompreise – eigener WP-/Wallbox-Tarif',
   pv_ueber_erfassung: 'PV – Doppelerfassungs-Verdacht',
   // N-588 (F5): Anlagenzähler gegen String-Zähler — ob eedc die Wandlungsverluste bewerten darf, und warum nicht.
   messpunkt: 'PV – Messpunkt (Anlagenzähler und Strings)',
@@ -115,6 +120,8 @@ export const KATEGORIE_REIHENFOLGE: string[] = [
   'soc_nur_ein_speicher',
   'klima_modus_sensor',
   'klima_modus_wert',
+  'emob_zustand_wert',
+  'emob_kennung_unbekannt',
   'pv_ueber_erfassung',
   'messpunkt',
   'pv_zaehler_steht',

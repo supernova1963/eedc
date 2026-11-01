@@ -49,6 +49,20 @@ def get_feld_hinweise() -> dict[str, dict[str, str]]:
 
     return result
 
+#: F12 (N-770/N-771 E6): die Marke in ``eigene_tarife`` für einen gemeinsamen Tarif «Wärmepumpe und Wallbox» und das
+#: Label des Felds an der Wärmepumpe dann (es trägt den gemeinsamen Netzbezug N_g).
+TARIF_GEMEINSAM: Final = "waermepumpe_wallbox"
+TARIF_LABEL_GEMEINSAM: Final = "Netzbezug zum WP-/Wallbox-Tarif (gemeinsamer Zähler)"
+
+
+def tarif_label(feld: dict, eigene_tarife) -> Optional[str]:
+    """F12: das Label des Felds «Netzbezug zum WP-Tarif» unter einem gemeinsamen Tarif für Wärmepumpe und Wallbox
+    (``eigene_tarife`` trägt dann die Marke ``waermepumpe_wallbox``) — sonst ``None`` (das Label der Registry gilt)."""
+    if eigene_tarife and TARIF_GEMEINSAM in eigene_tarife and feld.get("tarif_verwendung") == "waermepumpe":
+        return TARIF_LABEL_GEMEINSAM
+    return None
+
+
 def get_felder_fuer_investition(
     typ: str,
     parameter: Optional[dict],
@@ -56,6 +70,7 @@ def get_felder_fuer_investition(
     belegte_felder: Optional[set[str]] = None,
     jahr: Optional[int] = None,
     monat: Optional[int] = None,
+    eigene_tarife: Optional[set[str]] = None,
 ) -> list[dict]:
     """
     Gibt die relevanten Felder für eine Investition zurück (Bedingungen aufgelöst).
@@ -84,6 +99,9 @@ def get_felder_fuer_investition(
         jahr, monat: Der betrachtete Monat (Monatsabschluss) — „in Betrieb" einer
                      verdrängenden Investition gilt dann für ihn (N-555 Stufe 2,
                      Konzept Regel 0). Ohne: heute.
+        eigene_tarife: N-770/N-771 (F1) — die Verwendungen mit EIGENEM Tarif im Monat (``waermepumpe``, ``wallbox``).
+                       Ein Feld mit ``tarif_verwendung`` außerhalb dieser Menge ist **erweitert** (nur mit Beleg
+                       sichtbar, R1). ``None`` (Import, CSV, Checker) ⇒ kein Filter.
 
     Returns:
         Liste von Feld-Dicts ohne "bedingung"-Keys (bereits aufgelöst)
@@ -111,7 +129,7 @@ def get_felder_fuer_investition(
     # relevant, gehören nicht in die Eingabe-Antwort.
     SKIP_KEYS = {"bedingung", "weich", "bedingung_anlage", "label_wenn",
                  "nur_manuell", "nur_bestand", "je_innengeraet",
-                 "label_je_innengeraet"}
+                 "label_je_innengeraet", "tarif_verwendung"}
     belegt = belegte_felder or set()
 
     for feld in alle_felder:
@@ -142,6 +160,9 @@ def get_felder_fuer_investition(
         urteil = bedingungs_urteil(bedingung, feld.get("weich"), bedingungs_werte)
         if urteil == URTEIL_NEIN:
             continue
+        # N-770/N-771 (F1): der Netzbezug zum Komponenten-Tarif ohne eigenen Tarif ist untypisch (wirkungslos) — R1.
+        if eigene_tarife is not None and feld.get("tarif_verwendung") not in (None, *eigene_tarife):
+            urteil = URTEIL_ERWEITERT
         if urteil == URTEIL_ERWEITERT and basis_feld_key(feld["feld"]) not in belegt:
             # Erweitert und unbelegt: die Größe ist an diesem Gerät untypisch und
             # nichts deutet darauf hin, dass es sie gibt. Sie bleibt erreichbar —
@@ -152,7 +173,7 @@ def get_felder_fuer_investition(
         aufgeloest = dict(feld)
         if urteil == URTEIL_ERWEITERT:
             aufgeloest["erweitert"] = True
-        aufgeloest["label"] = _label_aufgeloest(feld, bedingungs_werte)
+        aufgeloest["label"] = tarif_label(feld, eigene_tarife) or _label_aufgeloest(feld, bedingungs_werte)
         result.append(aufgeloest)
 
     # #263 — je Innengerät eine Kopie, VOR dem Abstreifen der Steuer-Schlüssel:

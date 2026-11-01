@@ -53,6 +53,7 @@ from typing import Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.core import zustands_kanon
 from backend.core.betriebsmodus import (
     MODUS_FELD_KEY,
     betriebsmodus_aktion,
@@ -60,7 +61,7 @@ from backend.core.betriebsmodus import (
     modus_quelle,
     normalisiere_betriebsmodus,
 )
-from backend.core.field_definitions import basis_feld_key
+from backend.core.field_definitions import ZUSTAND_LIVE_FELDER, basis_feld_key, ist_text_feld
 from backend.models.investition import Investition
 from backend.utils.investition_filter import aktiv_jetzt
 
@@ -93,11 +94,41 @@ logger = logging.getLogger(__name__)
 # 5-Sekunden-Abrufliste. Der Ausschluss dort war richtig und bleibt.
 _TAKT_SEKUNDEN = 60.0
 
-#: ``anlage_id → (monotone Zeit, Kanon je Gerät, Aktion je Gerät)``. Bewusst HIER
+#: ``anlage_id → (monotone Zeit, Kanon je Gerät, Aktion je Gerät, E-Mob-Zustand je (Gerät, Feld))``. Bewusst HIER
 #: und nicht beim Aufrufer: ein Caller, der den Takt selbst wählen müsste, wählt
 #: ihn früher oder später falsch — und dann ist der Entscheid oben wieder offen.
-#: Die Aktion (P-433-1, «Leerlauf») kommt aus DEMSELBEN Abruf: kein zweiter Takt.
-_cache: dict[int, tuple[float, dict[int, str], dict[int, str]]] = {}
+#: Die Aktion (P-433-1, «Leerlauf») kommt aus DEMSELBEN Abruf: kein zweiter Takt. Seit P-433-2b K1 stehen hier auch
+#: die Zustände der E-Mobilität (Ladezustand, Lademodus, Fahrzeug-Ladezustand, Standort) — im selben Takt, mit einem
+#: eigenen gebündelten HA-Abruf für alle E-Mob-Felder (neben dem des Modus).
+#: Seit P-433-2b K4 dazu die Zählerstände der E-Mobilität je Gerät (Kilometerstand, `lade_staende_live`).
+_cache: dict[int, tuple[float, dict[int, str], dict[int, str], dict[tuple[int, str], str], dict[int, float]]] = {}
+
+#: P-433-2b K1 (Bauplan E2): die Typen, die ein Zustandsfeld haben — abgeleitet aus der Registry
+#: (`ZUSTAND_LIVE_FELDER`), nicht getippt. Bis K1 stand an der Abfrage `typ == "waermepumpe"`.
+_ZUSTAND_TYPEN: frozenset[str] = frozenset(typ for typ, _feld in ZUSTAND_LIVE_FELDER)
+#: Die Zustandsfelder der E-Mobilität je Typ — alle außer dem Betriebsmodus (der hat seinen eigenen Pfad oben): die
+#: Kanon-Felder (`zustands_kanon.ZUSTANDS_FELDER`) und seit P-433-2b K2a die Textfelder (`ist_text_feld`, heute
+#: `fahrzeug_am_ladepunkt`) — derselbe Takt, derselbe gebündelte HA-Abruf, dieselbe Quellen-Regel.
+_EMOB_ZUSTAENDE: dict[str, tuple[str, ...]] = {
+    typ: tuple(sorted(
+        feld for t, feld in ZUSTAND_LIVE_FELDER
+        if t == typ and (feld in zustands_kanon.ZUSTANDS_FELDER or ist_text_feld(feld, typ))
+    ))
+    for typ in _ZUSTAND_TYPEN
+}
+
+
+def _emob_wert(feld: str, typ_text: bool, roh, *, codes: bool) -> Optional[str]:
+    """Ein Rohwert der E-Mobilität → Kanon-Wert (Kanon-Feld) bzw. Text (Textfeld, ``""`` = leer), sonst ``None``.
+
+    P-433-2b K2a (Bauplan K2 E2, W1): ein Textfeld bekommt ``""`` nur aus einer **Antwort** — der Aufrufer reicht
+    ``None`` durch, wenn keine Quelle geantwortet hat (HA-State fehlt/``unavailable``, kein MQTT-Cache-Eintrag), und
+    ``zustands_kanon.text(None)`` bleibt ``None``. Der Zuordnungs-Default «ohne HA-Entität ⇒ MQTT» erfindet so keinen
+    leeren Text und damit keinen Gast.
+    """
+    if typ_text:
+        return zustands_kanon.text(feld, roh)
+    return zustands_kanon.normalisiere(feld, roh, codes=codes)
 
 
 def cache_leeren() -> None:
@@ -173,40 +204,256 @@ async def lade_betriebsmodus_aktion_live(
     return (await _im_takt(db, anlage))[1]
 
 
-async def _im_takt(db: AsyncSession, anlage) -> tuple[dict[int, str], dict[int, str]]:
-    """Kanon und Aktion je Gerät aus dem Takt-Cache, sonst frisch erhoben."""
+async def lade_zustaende_live(db: AsyncSession, anlage) -> dict[tuple[int, str], str]:
+    """Die Zustände der E-Mobilität je ``(investition_id, feld)`` als Kanon-Wert (P-433-2b K1, Bauplan E2).
+
+    Felder: Wallbox ``ladezustand``/``lademodus``, E-Auto ``ladezustand_fahrzeug``/``zu_hause`` (Kanon
+    `core/zustands_kanon.py`). Dieselbe Regel wie beim Modus: HA über die ``live``-Entität des Felds, sonst MQTT
+    (Topic ``…/live/inv/<id>/<feld>``, Kanon-Wort oder Zahlencode); ``quellen`` «keine» oder HA schließt MQTT aus.
+    Ein fremder Wert, ``unknown``/``unavailable`` oder ein Gerät ohne Zuordnung **fehlt** (kein Chip, nie geraten).
+    Derselbe 60-s-Takt wie der Modus, ein gebündelter HA-Abruf für alle E-Mob-Felder (benannte Grenze: der Chip ist
+    bis zu 60 s alt).
+
+    P-433-2b K2a: dazu das Textfeld Wallbox ``fahrzeug_am_ladepunkt`` als **Text** (getrimmt, ≤ 80 Zeichen;
+    ``""`` heißt «die Steuerung hat geantwortet und kennt kein Fahrzeug», nie «keine Quelle»). Ohne Antwort fehlt
+    der Eintrag.
+
+    P-433-2b K2b (Option A): eine Wallbox ohne gemessenen ``ladezustand`` bekommt ihn aus den evcc-Rollen-Feldern
+    ``evcc_verbunden``/``evcc_laedt``/``evcc_freigegeben`` (`_kombiniere_option_a`); ein gemessener geht vor.
+    """
+    return (await _im_takt(db, anlage))[2]
+
+
+async def lade_staende_live(db: AsyncSession, anlage) -> dict[int, float]:
+    """Der Kilometerstand je E-Auto — ``{investition_id: km}`` (P-433-2b K4, K4-1).
+
+    Rohwert des Zählers, der am E-Auto auf ``km_gefahren`` zugeordnet ist: HA über die Entität des Felds
+    (``felder.km_gefahren.sensor_id`` bzw. ``quellen``-Wahl HA, ``get_sensor_states_batch``), sonst MQTT aus dem
+    Energie-Cache des Inbound (``inv/<id>/km_gefahren``); ``quellen`` «keine» schließt beides aus, ``quellen`` MQTT
+    schließt HA aus. ⛔ **Nie** aus dem Monatsfeld ``km_stand`` (Handeingabe) und nie aus ``Monatsdaten``. Derselbe
+    60-s-Takt wie Modus und Zustände (benannte Grenze: bis zu 60 s alt). Ein Auto ohne Zähler bzw. ohne Wert fehlt.
+    """
+    return (await _im_takt(db, anlage))[3]
+
+
+async def _im_takt(
+    db: AsyncSession, anlage,
+) -> tuple[dict[int, str], dict[int, str], dict[tuple[int, str], str], dict[int, float]]:
+    """Kanon, Aktion, E-Mob-Zustände und Zählerstände aus dem Takt-Cache, sonst frisch erhoben."""
     jetzt = time.monotonic()
     treffer = _cache.get(anlage.id)
     if treffer is not None and (jetzt - treffer[0]) < _TAKT_SEKUNDEN:
-        return treffer[1], treffer[2]
+        return treffer[1], treffer[2], treffer[3], treffer[4]
 
-    modi, aktionen = await _erhebe(db, anlage)
-    _cache[anlage.id] = (jetzt, modi, aktionen)
-    return modi, aktionen
+    modi, aktionen, zustaende, staende = await _erhebe(db, anlage)
+    _cache[anlage.id] = (jetzt, modi, aktionen, zustaende, staende)
+    return modi, aktionen, zustaende, staende
 
 
-async def _erhebe(db: AsyncSession, anlage) -> tuple[dict[int, str], dict[int, str]]:
+async def _erhebe(
+    db: AsyncSession, anlage,
+) -> tuple[dict[int, str], dict[int, str], dict[tuple[int, str], str], dict[int, float]]:
     """Die eigentliche Erhebung — ohne Takt, damit der Takt eine Stelle hat.
 
     Erst die Geräte mit HA-Modus-Entität (`_erhebe_ha`), dann die übrigen über MQTT
     (`_erhebe_mqtt`). Ein HA-Gerät fällt nie auf MQTT zurück, auch nicht ohne HA.
+
+    P-433-2b K1: die Abfrage nimmt jede Investition eines Typs mit Zustandsfeld (`_ZUSTAND_TYPEN`); der Modus-Pfad
+    bekommt davon nur die Wärmepumpen (bitgleich zu vorher), die E-Mobilität ihren eigenen (`_erhebe_emob`).
     """
     result = await db.execute(
-        select(Investition.id).where(
+        select(Investition.id, Investition.typ).where(
             Investition.anlage_id == anlage.id,
-            Investition.typ == "waermepumpe",
+            Investition.typ.in_(sorted(_ZUSTAND_TYPEN)),
             aktiv_jetzt(),
         )
     )
-    inv_ids = set(result.scalars().all())
+    typ_je_id = {inv_id: typ for inv_id, typ in result.all()}
+    inv_ids = {inv_id for inv_id, typ in typ_je_id.items() if typ == "waermepumpe"}
+    emob = {inv_id: typ for inv_id, typ in typ_je_id.items() if _EMOB_ZUSTAENDE.get(typ)}
+    zustaende = await _erhebe_emob(anlage, emob)
+    staende = await _erhebe_staende(anlage, emob)
     if not inv_ids:
-        return {}, {}
+        return {}, {}, zustaende, staende
 
     entity_map = _entity_zu_investitionen(anlage.sensor_mapping, inv_ids)
     modi, aktionen = await _erhebe_ha(entity_map)
     ha_ids = {inv_id for ids in entity_map.values() for inv_id in ids}
     modi.update(_erhebe_mqtt(anlage, inv_ids - ha_ids))
-    return modi, aktionen
+    return modi, aktionen, zustaende, staende
+
+
+# ── Zählerstände der E-Mobilität (P-433-2b K4, K4-1) ─────────────────────────
+
+#: Das Zählerfeld des Kilometerstands am E-Auto (Registry ``km_gefahren``, Kanal-Art ``stand``).
+_KM_FELD = "km_gefahren"
+
+
+def _stand_quellen(anlage, emob: dict[int, str]) -> tuple[dict[str, list[int]], list[int]]:
+    """Je E-Auto die Quelle des km-Zählers: ``(entity → [inv_id], [inv_id über MQTT])`` — die Regel von
+    ``_emob_quellen`` am Energie-Feld ``inv_energy_<id>_km_gefahren``: HA-Entität vor MQTT, ``quellen`` entscheidet."""
+    from backend.services.datenquellen_resolver import ha_entity_fuer_feld
+    from backend.services.snapshot.keys import QUELLE_HA_ENERGY
+
+    mapping = anlage.sensor_mapping if isinstance(anlage.sensor_mapping, dict) else {}
+    quellen = mapping.get("quellen") if isinstance(mapping.get("quellen"), dict) else {}
+    ha: dict[str, list[int]] = {}
+    mqtt: list[int] = []
+    for inv_id in sorted(i for i, typ in emob.items() if typ == "e-auto"):
+        field_id = f"inv_energy_{inv_id}_{_KM_FELD}"
+        eintrag = quellen.get(field_id) if isinstance(quellen.get(field_id), dict) else {}
+        wahl = eintrag.get("quelle")
+        entity = (eintrag.get("entity_id") if wahl in QUELLE_HA_ENERGY else None) or \
+            ha_entity_fuer_feld(field_id, mapping, {}, {})
+        if wahl in _QUELLEN_MQTT or (wahl is None and not entity):
+            mqtt.append(inv_id)
+        elif entity and (wahl is None or wahl in QUELLE_HA_ENERGY):
+            ha.setdefault(entity, []).append(inv_id)
+    return ha, mqtt
+
+
+async def _erhebe_staende(anlage, emob: dict[int, str]) -> dict[int, float]:
+    """Die Kilometerstände — HA (ein gebündelter Abruf), dann MQTT aus dem Energie-Cache des Inbound."""
+    if not emob:
+        return {}
+    ha, mqtt = _stand_quellen(anlage, emob)
+    ergebnis: dict[int, float] = {}
+    if ha:
+        from backend.services.ha_state_service import get_ha_state_service
+
+        ha_service = get_ha_state_service()
+        if ha_service.is_available:
+            try:
+                staende = await ha_service.get_sensor_states_batch(list(ha))
+            except Exception as e:  # pragma: no cover — Soft-fail, die Karte bleibt ohne Kilometerstand
+                logger.warning("Kilometerstand (live) nicht lesbar: %s", e)
+                staende = {}
+            for entity, ids in ha.items():
+                roh = staende.get(entity)
+                for inv_id in ids if roh else ():
+                    ergebnis[inv_id] = float(roh[0])
+    if mqtt:
+        from backend.services.mqtt_inbound_service import get_mqtt_inbound_service
+
+        svc = get_mqtt_inbound_service()
+        energie = svc.cache.get_energy_data(anlage.id) if svc is not None else {}
+        for inv_id in mqtt:
+            wert = energie.get(f"inv/{inv_id}/{_KM_FELD}")
+            if wert is not None:
+                ergebnis[inv_id] = float(wert)
+    return ergebnis
+
+
+# ── E-Mobilität (P-433-2b K1, Bauplan E2) ────────────────────────────────────
+
+
+def _emob_quellen(anlage, emob: dict[int, str]) -> tuple[dict[str, list[tuple[int, str]]], list[tuple[int, str]]]:
+    """Je Zustandsfeld der E-Mobilität: HA-Entität (``live``-Block) oder MQTT — die Modus-Regel, je Feld.
+
+    Returns:
+        ``(entity → [(inv_id, feld)], [(inv_id, feld) über MQTT])``. Ein Feld mit HA-Entität liest nur HA; ohne sie
+        MQTT, außer ``quellen`` wählt ausdrücklich HA oder «keine» (C2a, wie `mqtt_modus_geraete`).
+    """
+    from backend.services.live_sensor_config import extract_quellen_live
+
+    _qb, quellen_inv, _ha = extract_quellen_live(anlage)
+    mapping = anlage.sensor_mapping if isinstance(anlage.sensor_mapping, dict) else {}
+    invs = mapping.get("investitionen") or {}
+    ha: dict[str, list[tuple[int, str]]] = {}
+    mqtt: list[tuple[int, str]] = []
+    for inv_id, typ in sorted(emob.items()):
+        eintrag = invs.get(str(inv_id))
+        live = (eintrag.get("live") if isinstance(eintrag, dict) else None) or {}
+        gewaehlt = quellen_inv.get(str(inv_id)) or {}
+        for feld in _EMOB_ZUSTAENDE[typ]:
+            entity = live.get(feld) if isinstance(live, dict) else None
+            if isinstance(entity, str) and entity:
+                ha.setdefault(entity, []).append((inv_id, feld))
+            elif feld not in gewaehlt or gewaehlt[feld][0] in _QUELLEN_MQTT:
+                mqtt.append((inv_id, feld))
+    return ha, mqtt
+
+
+async def _erhebe_emob(anlage, emob: dict[int, str]) -> dict[tuple[int, str], str]:
+    """Die Zustände der E-Mobilität — erst HA (ein gebündelter Abruf), dann MQTT aus dem Inbound-Cache."""
+    if not emob:
+        return {}
+    ha, mqtt = _emob_quellen(anlage, emob)
+    ergebnis = await _erhebe_emob_ha(ha)
+    ergebnis.update(_erhebe_emob_mqtt(anlage, mqtt))
+    return _kombiniere_option_a(ergebnis)
+
+
+def _kombiniere_option_a(ergebnis: dict[tuple[int, str], str]) -> dict[tuple[int, str], str]:
+    """Option A (P-433-2b K2b, Bauplan K2 §1 K2-7): der Ladezustand einer Wallbox aus den drei evcc-Rollen-Feldern.
+
+    Je Wallbox mit ``evcc_verbunden`` und **ohne** gemessenen ``ladezustand`` (``(inv, "ladezustand")`` fehlt — nicht
+    zugeordnet, keine Antwort, ``unknown`` oder fremder Wert):
+
+    * ``evcc_verbunden`` aus ⇒ ``kein_fahrzeug``
+    * verbunden ∧ ``evcc_laedt`` an ⇒ ``laedt``
+    * verbunden ∧ ``evcc_freigegeben`` aus ⇒ ``wartet``
+    * sonst verbunden ⇒ ``verbunden``
+
+    ⛔ **Ein gemessener Ladezustand geht immer vor** (Sprengsatz S7) — Option A ersetzt den Template-Sensor (Weg B),
+    sie überstimmt keinen Sensor. Fehlt ``evcc_laedt`` bzw. ``evcc_freigegeben``, gibt es kein «lädt» bzw. kein
+    «wartet» (benannte Grenze); ohne ``evcc_verbunden`` gibt es keinen Ladezustand, nie geraten. «Fertig» kennt Option A
+    nicht. Die drei Rollen-Werte bleiben im Ergebnis (die Datenquellen-Fläche und der Checker lesen sie selbst).
+
+    P-433-2b K3 (Bauplan K3-4): die Regel selbst steht an **einem** Ort, ``zustands_kanon.ladezustand_aus_werten`` —
+    dieselbe Funktion rechnet das Fenster der MQTT-Mitschrift und die Verschränkung des HA-Verlaufs.
+    """
+    for inv_id in [i for i, feld in ergebnis if feld == "evcc_verbunden"]:
+        if (inv_id, zustands_kanon.LADEZUSTAND) in ergebnis:
+            continue
+        werte = {feld: ergebnis.get((inv_id, feld)) for feld in ("evcc_verbunden", "evcc_laedt", "evcc_freigegeben")}
+        zustand = zustands_kanon.ladezustand_aus_werten(werte)
+        if zustand is not None:
+            ergebnis[(inv_id, zustands_kanon.LADEZUSTAND)] = zustand
+    return ergebnis
+
+
+async def _erhebe_emob_ha(ha: dict[str, list[tuple[int, str]]]) -> dict[tuple[int, str], str]:
+    """Zustände aus HA — ohne Entität kein Abruf; die Ziffer eines HA-Sensors ist kein Code (``codes=False``)."""
+    if not ha:
+        return {}
+    from backend.services.ha_state_service import get_ha_state_service
+
+    ha_service = get_ha_state_service()
+    if not ha_service.is_available:
+        return {}
+    try:
+        zustaende = await ha_service.get_zustand_states_batch(list(ha))
+    except Exception as e:  # pragma: no cover — Soft-fail, die Sicht bleibt ohne Zustand
+        logger.warning("Zustände E-Mobilität (live) nicht lesbar: %s", e)
+        return {}
+    ergebnis: dict[tuple[int, str], str] = {}
+    for entity, ziele in ha.items():
+        roh = zustaende.get(entity)
+        for inv_id, feld in ziele:
+            wert = _emob_wert(feld, ist_text_feld(feld), roh[0] if roh else None, codes=False)
+            if wert is not None:
+                ergebnis[(inv_id, feld)] = wert
+    return ergebnis
+
+
+def _erhebe_emob_mqtt(anlage, ziele: list[tuple[int, str]]) -> dict[tuple[int, str], str]:
+    """Zustände aus dem MQTT-Inbound-Cache (roher String, `mqtt_inbound_service`), Kanon-Wort oder Zahlencode."""
+    if not ziele:
+        return {}
+    from backend.services.mqtt_inbound_service import get_mqtt_inbound_service
+
+    svc = get_mqtt_inbound_service()
+    if svc is None:
+        return {}
+    werte = svc.cache.get_all_live_inv(anlage.id)
+    ergebnis: dict[tuple[int, str], str] = {}
+    for inv_id, feld in ziele:
+        # Ein fehlender Cache-Eintrag ist ``None`` (keine Antwort), ein abgelegter leerer Text ``""`` (Antwort leer).
+        wert = _emob_wert(feld, ist_text_feld(feld), (werte.get(str(inv_id)) or {}).get(feld), codes=True)
+        if wert is not None:
+            ergebnis[(inv_id, feld)] = wert
+    return ergebnis
 
 
 #: Die ``quellen``-Wahlen, unter denen der Modus aus dem Inbound-Cache gelesen wird.

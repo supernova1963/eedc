@@ -283,6 +283,11 @@ async def _baue_fakt(
         ladung_kwh=pool.ladung_kwh,
         ladung_pv_kwh=pool.pv_kwh,
         ladung_netz_kwh=pool.netz_kwh,
+        wallbox_netz_eigener_tarif_kwh=roh.netz_eigener_tarif_kwh("wallbox"),
+        wallbox_ladung_alle_kwh=roh.wallbox_ladung_alle,
+        # F12 (E6, F12a = A): N_wb des gemeinsamen Zählers = die Netzladung der Wallbox-Zeilen nach der bisherigen Regel.
+        wallbox_netzladung_kwh=wallbox_netzladung_der_zeilen(
+            [*wallbox_ladedaten, *(roh.dienstlich_je_inv[i] for i in sorted(roh.dienstliche_wallbox_ids))]),
         ladung_anteil_abgeleitet=anteil_abgeleitet,
         extern_kwh=pool.extern_kwh,
         extern_euro=pool.extern_euro,
@@ -535,6 +540,8 @@ def _wp_fakten(roh: _RohMonat) -> WpFakten:
         strom_warmwasser_kwh=roh.wp_strom_warmwasser,
         # P-433-3 S2: ohne gemessenen Heizstab-Zähler keine Angabe (None), eine gemessene 0 bleibt 0 (N-673-Bauform).
         heizstab_kwh=roh.wp_heizstab if roh.wp_heizstab_gemessen else None,
+        # N-770 (F3): nur, wenn jedes Gerät mit Strom > 0 ihn misst.
+        netz_eigener_tarif_kwh=roh.netz_eigener_tarif_kwh("waermepumpe"),
         heizung_gemessen=roh.wp_heizung_gemessen,
         warmwasser_gemessen=roh.wp_warmwasser_gemessen,
         strom_heizen_gemessen=roh.wp_strom_heizen_gemessen,
@@ -574,6 +581,41 @@ def _wp_fakten(roh: _RohMonat) -> WpFakten:
         geraete_luft_wasser=roh.wp_geraete_luft_wasser,
         abgrenzung_stoerung=roh.wp_abgrenzung,
     )
+
+
+def wallbox_netzladung_der_zeilen(zeilen) -> float:
+    """F12 (N-770/N-771 E6, F12a = A): Σ Netzladung der Wallbox-Zeilen nach der bisherigen Regel — derselbe SoT-Leser wie
+    der Pool (``reader.get_emob_pv_netz_kwh``: Zähler des Versorgers außerhalb des Zuordnungsmonats, evcc-Wert, sonst
+    Gesamt − PV auf den angereicherten Zeilen der Tagesquote). N_wb im gemeinsamen Zähler (``tarif._anteile_gemeinsam``)."""
+    from backend.core.field_definitions import get_emob_pv_netz_kwh
+
+    return sum(get_emob_pv_netz_kwh(z)[1] for z in zeilen if z)
+
+
+def wallbox_aus_zeilen(
+    investitionen: list[Investition], schluessel: MonatsSchluessel, zeilen: dict[int, dict], *,
+    quote: Optional[float] = None,
+) -> tuple[float, Optional[float], float]:
+    """N-771 Rest 2 (E6): ``(Ladung aller Wallboxen, Netzbezug zum Wallbox-Tarif, Netzladung nach Regel)`` eines Monats
+    aus Zeilen ``{inv_id: {feld: kWh}}``, die KEINE Monatszeile sind — *Cockpit → Monat* ohne Abschluss mit den
+    Kalendermonats-Zeilen der E-Mob-Gruppe aus den Kanälen. Dieselbe Faltung (``_RohMonat.falte`` → ``imd_typ_beitrag``,
+    F3 und Rückfall wie im Fakt) und dieselbe Größe wie ``EmobFakten.wallbox_ladung_alle_kwh`` /
+    ``wallbox_netz_eigener_tarif_kwh`` / ``wallbox_netzladung_kwh`` — kein zweiter Rechenweg; die Bildungsstelle des
+    Anteils bleibt ``tarif.komponenten_anteile``. ``quote``: der PV-Anteil des abgeleiteten Kanals der Gruppe — auf die
+    Zeilen ohne eigene Aufteilung angewandt wie im Fakt (``reichere_ladezeilen_an``), bevor die Netzladung gelesen wird."""
+    from backend.services.kanal.geraete_leser import herkunft_der_zeile
+
+    roh = _RohMonat()
+    je_id = {i.id: i for i in investitionen}
+    gefaltet = []
+    for inv_id, zeile in sorted(zeilen.items()):
+        inv = je_id.get(int(inv_id))
+        if inv is None or inv.typ != "wallbox" or not inv.ist_aktiv_im_monat(*schluessel) or not zeile:
+            continue
+        roh.falte(inv, zeile, source_provenance=herkunft_der_zeile(zeile))
+        gefaltet.append(zeile)
+    _ea, angereichert, _ = reichere_ladezeilen_an(eauto_daten=[], wallbox_daten=gefaltet, quote=quote)
+    return roh.wallbox_ladung_alle, roh.netz_eigener_tarif_kwh("wallbox"), wallbox_netzladung_der_zeilen(angereichert)
 
 
 def sonstiges_aus_zeilen(

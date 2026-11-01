@@ -572,7 +572,7 @@ Es gibt **zwei Wege**, und **gemessen schlägt abgeleitet**:
 > - **Ab dem ersten vollen Tag:** *Cockpit → Tag* liest die Betriebsart-Aufteilung („Strom nach Betriebsart") nur aus der Mitschrift, wenn sie den ganzen Tag deckt — am Tag der Zuordnung zeigt die Tagessicht sie deshalb noch nicht, ab dem Folgetag schon. „Betrieb heute" im Hub-Überblick zählt dagegen jede mitgeschriebene Stunde sofort.
 > - **Kein „Leerlauf":** Leerlauf ist eine Messung von Home Assistant (die *Aktuelle Aktion*), kein Modus — über MQTT gibt es ihn nicht.
 > - **Broker-Ausfall:** Die Zeit ohne Verbindung bleibt eine Lücke. Verstummt nur dein Absender, während der Broker läuft, hält eedc seinen letzten Wert (wie Home Assistant ohne Verfügbarkeits-Meldung).
-> - **Kein Gateway:** Das MQTT-Gateway (ein fremdes Topic umschreiben) reicht nur Zahlen weiter und steht an diesem Feld nicht zur Wahl — publiziere direkt auf das eedc-Topic.
+> - **Kein Gateway:** Das MQTT-Gateway (ein fremdes Topic umschreiben) steht an diesem Feld nicht zur Wahl — publiziere direkt auf das eedc-Topic. (Den Text eines Fremd-Topics reicht es nur an die Zustandsfelder der E-Mobilität weiter.)
 > - **Keine Topic-Überwachung:** Die Prüfung „Topic sendet nicht" im Daten-Checker lässt das Modus-Topic aus — ein Modus, der sich stundenlang nicht ändert, ist kein Ausfall.
 > - **HA-Sensor geht vor:** Ist dem Gerät ein Betriebsmodus-Sensor aus Home Assistant zugeordnet, liest eedc nur ihn — und dort gelten die Zahlencodes nicht (siehe *„Eine Zahl reicht nicht"*).
 
@@ -752,6 +752,79 @@ Misst du den Heizstab-Strom zusätzlich als **kumulativen kWh-Zähler**, ordne i
 - **Erbt die Gründe der Hauptzahl.** Gibt es die Arbeitszahl nicht (z. B. Fremdanteil auf dem Zähler, Wärme gerechnet), gibt es auch die zweite Zahl nicht — mit demselben Grund. Eine Zahl mit „≥“ (Systemarbeitszahl als untere Schranke) bekommt keine zweite.
 
 > **Benannte Grenzen der Zahl ohne Zusatzheizung.** (1) Im **laufenden Monat** ohne Monatsabschluss zeigt *Cockpit → Monat* die Zeile noch nicht — die Tagesebene führt den Heizstab-Zähler nicht, erst der Monatsabschluss (oder der Kanal-Monat) trägt ihn. (2) Die Hauptzahl kann in Monat und Jahr aus der Vier-Quellen-Auflösung kommen (gepflegt, gemessen, Kanal, Bestand), der Heizstab kommt immer aus den Monats-Fakten; beide beschreiben denselben Zeitraum, aber nicht zwingend dieselbe Quelle. (3) Ordnest du den Zähler **mitten im Zeitraum** zu, zählt der Heizstab nur die Monate mit Zähler: Die Zahl ohne Zusatzheizung liegt dann zwischen der Hauptzahl und dem wahren Wert ohne Heizstab, bis der Zeitraum ganz gedeckt ist.
+
+### Schritt 6b — Netzbezug zum WP-Tarif (optional, nur mit eigenem Wärmepumpen-Tarif)
+
+Hast du für die Wärmepumpe einen **eigenen Tarif** (Einstellungen → Strompreise, Verwendung *Wärmepumpe*), rechnet dein
+Versorger einen Teil deines Netzbezugs zu diesem Tarif ab. Welcher Teil das ist, kann eedc nicht wissen — die Wärmepumpe
+läuft auch mit PV-Strom. Mit dem Feld **„Netzbezug zum WP-Tarif"** gibst du eedc genau diese Menge, und dann rechnet es
+beide Tarife genau:
+
+- die **Stromrechnung** = Rest des Netzbezugs × Haushaltstarif + Netzbezug zum WP-Tarif × WP-Tarif (+ alle Grundpreise),
+- die **Eigenverbrauchs-Ersparnis** bewertet den PV-Strom der Wärmepumpe (Stromverbrauch minus Netzbezug zum WP-Tarif)
+  zum WP-Tarif statt zum Haushaltstarif — er hätte ja nur den WP-Tarif gekostet.
+
+Die WP-Kosten und die WP-Ersparnis bleiben, wie sie sind (Stromverbrauch × WP-Tarif). Ohne das Feld bleibt alles wie
+bisher; der Daten-Checker nennt dann die mögliche Abweichung.
+
+**Welcher Sensor gehört hinein?** Die Regel für jeden Aufbau: **Zähler vor dem Gerät minus Zähler nach dem Gerät** — der
+Bezug, der den Zähler vor der Wärmepumpe passiert, aber nicht mehr den Zähler dahinter. So passt sie auch zu
+Doppelkaskaden in beliebiger Reihenfolge (etwa Wärmepumpe und Wallbox hintereinander, jede mit eigenem Tarif).
+
+- **Zählerkaskade** (Z1 am Netzanschluss für alles, Z2 dahinter für Haus, Wallbox und PV, die Wärmepumpe zwischen Z1
+  und Z2): Netzbezug und Einspeisung kommen von **Z1**. Der Netzbezug zum WP-Tarif ist **Z1-Bezug minus Z2-Bezug** — als
+  Template-Sensor in Home Assistant. Gib ihm `state_class: total` und **nicht** `total_increasing`: die zwei Zähler melden
+  zeitversetzt, die Differenz kann kurz kleiner werden, und `total_increasing` läse jede solche Abnahme als Zähler-Reset.
+  Der **Stromverbrauch** der Wärmepumpe ist in dieser Kaskade Z1 minus Z2 *saldiert* (Bezug minus Einspeisung beider
+  Zähler) — ein eigener Template-Sensor.
+- **Eigener WP-Zähler parallel zum Hauszähler** (die Wärmepumpe hängt nicht hinter der PV und bekommt nie PV-Strom):
+  derselbe Sensor wie „Stromverbrauch" — dann ist der ganze WP-Strom Netzbezug zum WP-Tarif. ⚠ **Dann muss der
+  Netzbezug der Anlage diesen Zähler enthalten: Netzbezug der Anlage = Summe beider Zähler** (Hauszähler + WP-Zähler,
+  z. B. ein Template-Sensor). Liest eedc nur den Hauszähler, fehlt der WP-Bezug im Netzbezug, und eedc begrenzt den
+  Anteil zum WP-Tarif auf den Netzbezug. Der Daten-Checker erkennt den parallelen Zähler am selben Sensor und sagt es.
+- **eedc braucht Z1.** Wer nur Z2 (den Hauszähler hinter der Wärmepumpe) liest, kann das Feld nicht bilden — dann fehlt
+  Netzbezug und Einspeisung der Wärmepumpe schon in der Bilanz (die Grenze seit N-767).
+
+Das Feld steht im Block **Gerät gesamt**, sobald ein eigener WP-Tarif gilt; sonst unter **„Weitere Größen erfassen"**. Im
+Monatsabschluss steht es ebenfalls nur mit eigenem Tarif (oder wenn schon ein Wert da ist). **Mehrere Wärmepumpen:** der
+Tarif gilt allen; trage den Wert an jeder ein, die im Monat Strom verbraucht hat — fehlt er an einer, rechnet eedc den
+Monat ohne Messung. Ist die Menge größer als der Stromverbrauch der Wärmepumpe oder als dein ganzer Netzbezug, rechnet
+eedc mit dem kleineren Wert und sagt es im Tooltip der Ø-Preis-Kachel („begrenzt"); der Daten-Checker nennt den Monat.
+
+**Tag, Stunde, HT/NT.** Hat der Sensor eine Langzeitstatistik in Home Assistant (bzw. auf MQTT eine eigene Summe), kennt
+eedc den Netzbezug zum WP-Tarif je Stunde: *Cockpit → Tag* und die Tageswerte rechnen dann jede Stunde mit dem Rest zum
+Haushaltstarif und dem Anteil zum WP-Tarif, die Summe der Tage ist der Monat. Trägt dein Haushalts- oder WP-Tarif
+Zeitfenster (HT/NT), gewichtet eedc sie mit genau diesen Stunden. Liegt der Wert nur als **Monatswert** vor (von Hand,
+CSV, Monate vor dem Sensor), rechnet der Monat genau, die Tage aber ohne die Aufteilung — die Summe der Tage liegt dann
+über dem Monat.
+
+**Der Monat der Zuordnung.** Weil das Feld zu den Zählern zählt, die eedc für die Stundenwerte der Wärmepumpe voraussetzt,
+liest eedc im Monat der Zuordnung und in Monaten vor dem Sensor die ganze Wärmepumpe aus dem Bestand (Monatsabschluss bzw.
+Tageswerte) — die bestehende Regel für jeden neuen WP-Zähler. Im **Monat der Zuordnung** selbst deckt der Sensor nur einen
+Teil des Monats; eedc rechnet diesen Monat deshalb **ohne** den Netzbezug zum WP-Tarif (sonst wäre der PV-Anteil der
+Wärmepumpe zu groß). ⚑ Das gilt auch für einen Wert, den du dort von Hand einträgst — eedc kann ihn im Monatsabschluss
+nicht von einem übernommenen Vorschlag unterscheiden. Ab dem ersten vollen Monat gilt das Feld. Der **laufende Monat**
+ohne Monatsabschluss rechnet mit dem Feld, sobald der Sensor den Monat deckt — an der Wärmepumpe wie an der Wallbox. An
+der **Wallbox** gilt der Monat der Zuordnung auch für die Netzladung: dort nimmt eedc in diesem Monat die bisherige Regel
+(evcc-Wert bzw. Tagesquote), nicht den Teilwert; ab dem ersten vollen Monat ist der Zähler die Netzladung.
+
+**Prognose und Wirtschaftlichkeit** (Aussichten, ROI) rechnen mit dem **gemessenen** PV-Anteil deiner Wärmepumpe der
+letzten zwölf abgeschlossenen Monate; ohne Messung wie bisher.
+
+**Wärmepumpe und Wallbox hinter einem Unterzähler (§14a Modul 2).** Hängt die Wallbox am Zähler der Wärmepumpe und
+rechnet dein Versorger beide zu **einem** Tarif ab, lege den Tarif mit der Verwendung **„Wärmepumpe und Wallbox
+(gemeinsamer Zähler)"** an (Einstellungen → Strompreise) — keinen eigenen WP- und keinen eigenen Wallbox-Tarif daneben (ein
+eigener hätte für sein Gerät Vorrang). Dann heißt das Feld an der Wärmepumpe **„Netzbezug zum WP-/Wallbox-Tarif
+(gemeinsamer Zähler)"**: trage den **gemeinsamen** Netzbezug ein — *Zähler vor beiden Geräten minus Zähler danach*, als
+Template-Sensor mit `state_class: total` (wie oben). An der Wallbox bleibt das Feld leer (es würde dort nicht zählen; der
+Daten-Checker warnt). eedc rechnet damit die Stromrechnung genau: Rest des Netzbezugs × Haushaltstarif + gemeinsamer
+Netzbezug × gemeinsamer Tarif, der Grundpreis des gemeinsamen Tarifs einmal. Für die Eigenverbrauchs-Ersparnis teilt eedc
+den gemeinsamen Netzbezug wie zwei getrennte Zähler: der Wallbox-Teil ist ihre Netzladung, wie eedc sie ohnehin kennt
+(evcc-Wert bzw. Tagesquote), der Rest gehört der Wärmepumpe, und deren PV-Strom (Stromverbrauch minus ihr Teil) zählt zum
+gemeinsamen Tarif. ⚑ Zwei Grenzen: die Netzladung der E-Mobilität bleibt evcc bzw. die Tagesquote (der gemeinsame Zähler
+teilt nicht je Gerät; ist sie größer als der gemeinsame Netzbezug, begrenzt eedc sie und der Daten-Checker sagt es), und
+**je Tag** rechnet die Stromrechnung mit den Stunden des Sensors, die Eigenverbrauchs-Ersparnis aber ohne die Teilung —
+dafür fehlen Stundenwerte der Netzladung; der Monat trägt den genauen Wert, der Daten-Checker nennt die Monate.
 
 ### Schritt 7 — Den Daten-Checker fragen
 
@@ -952,6 +1025,10 @@ also nicht um.
 > weiß eedc je Gerät nicht (dafür bräuchte es eine Zuteilungsannahme, und die wäre
 > erfunden). Die Zahl beantwortet *„was hat mich dieser Betrieb gekostet"*, nicht
 > *„was steht auf meiner Stromrechnung"*.
+>
+> Mit **eigenem Wärmepumpen-Tarif** und dem Feld *Netzbezug zum WP-Tarif* ([Schritt 6b](#schritt-6b--netzbezug-zum-wp-tarif-optional-nur-mit-eigenem-wärmepumpen-tarif))
+> rechnet die **Stromrechnung** im Cockpit den Teil, den dein Versorger zum WP-Tarif abrechnet, mit diesem Tarif — die
+> Kosten hier bleiben trotzdem die des ganzen Gerätestroms.
 
 ### Temperatur und Wettersymbol
 

@@ -36,6 +36,8 @@ import { BlockShell } from '../blocks/BlockShell'
 import type { Block } from '../blocks/types'
 import DatenquellenGatewayPicker from './DatenquellenGatewayPicker'
 import DatenquellenHaPicker from './DatenquellenHaPicker'
+import DatenquellenPresetDialog, { presetsFuerAnlage, presetsFuerTyp } from './DatenquellenPresetDialog'
+import { liveDashboardApi, type MqttPreset } from '../../api/liveDashboard'
 import DatenquellenTopicListe from './DatenquellenTopicListe'
 import { useSelectedAnlage } from '../../hooks'
 import { TYP_LABELS } from '../../lib/constants'
@@ -65,6 +67,8 @@ const VERFUEGBARKEIT_DEFAULT: DatenquellenVerfuegbarkeit = { ha: false, ha_quell
 
 /** Ziel der Werte-Tabelle des Betriebsmodus (Handbuch Wärme & Klima, Schritt 4, Weg B). */
 const HANDBUCH_BETRIEBSMODUS_WERTE = '/hilfe?doc=waerme-klima#welchen-sensor-eedc-lesen-kann'
+/** P-433-2b K1: Ziel der Werte-Tabellen der E-Mobilität (Handbuch Einstellungen §7.10, Weg B). */
+const HANDBUCH_EMOB_WERTE = '/hilfe?doc=einstellungen#710-zustand-und-sitzung-e-mobilität'
 
 /**
  * P-433-0 (Konzept #433 E12): die Werte, die eedc am Feld „Betriebsmodus“
@@ -72,7 +76,7 @@ const HANDBUCH_BETRIEBSMODUS_WERTE = '/hilfe?doc=waerme-klima#welchen-sensor-eed
  * Anwender seinen Template-Sensor danach baut. Die Liste kommt fertig aus dem
  * Backend (Kanon `core/betriebsmodus.py`); hier wird nur gesetzt.
  */
-function ZulaessigeWerte({ gruppen }: { gruppen: BetriebsmodusWerteGruppe[] }) {
+function ZulaessigeWerte({ gruppen, emob = false }: { gruppen: BetriebsmodusWerteGruppe[]; emob?: boolean }) {
   const verstanden = gruppen.filter((g) => g.kanon !== 'unbestimmt')
   const unbestimmt = gruppen.find((g) => g.kanon === 'unbestimmt')
   return (
@@ -80,8 +84,9 @@ function ZulaessigeWerte({ gruppen }: { gruppen: BetriebsmodusWerteGruppe[] }) {
       <span className="font-medium">eedc versteht:</span>{' '}
       {verstanden.map((g) => `${g.label} (${g.werte.join(', ')})`).join(' · ')}
       {unbestimmt && `; als unbestimmt gezählt: ${unbestimmt.werte.join(', ')}`}
-      {'. Andere Werte zählen als unbestimmt — '}
-      <Link to={HANDBUCH_BETRIEBSMODUS_WERTE} className="text-primary-700 dark:text-primary-300 hover:underline">
+      {/* P-433-2b K1: ein fremder Zustand der E-Mobilität wird nicht gezählt, sondern nicht angezeigt (kein Chip). */}
+      {emob ? '. Andere Werte zeigt eedc nicht an — ' : '. Andere Werte zählen als unbestimmt — '}
+      <Link to={emob ? HANDBUCH_EMOB_WERTE : HANDBUCH_BETRIEBSMODUS_WERTE} className="text-primary-700 dark:text-primary-300 hover:underline">
         Werte-Tabelle im Handbuch
       </Link>
     </p>
@@ -95,14 +100,17 @@ const Q_GATEWAY = 'mqtt_gateway'
 const Q_KEINE = 'keine'
 const Q_HA = new Set(['ha_app', 'ha_connector'])
 
-// Feld-Abschnitte nach Einheit (§2b1): kWh · W · Rest.
-type Abschnitt = 'kwh' | 'w' | 'sonstige'
+// Feld-Abschnitte nach Einheit (§2b1): kWh · W · Rest — seit P-433-2b K1 dazu «Zustand & Sitzung» (Registry-Attribut
+// `abschnitt`, nicht aus der Einheit geraten: die kWh einer Ladesitzung ist kein Zähler der Energiebilanz).
+type Abschnitt = 'kwh' | 'w' | 'zustand' | 'sonstige'
+const ABSCHNITT_ZUSTAND = 'zustand'
 const ABSCHNITT_TITEL: Record<Abschnitt, string> = {
   kwh: 'Energie-Sensoren (kWh)',
   w: 'Leistung-Sensoren (W)',
+  zustand: 'Zustand & Sitzung',
   sonstige: 'Sonstige Sensoren',
 }
-const ABSCHNITT_ORDER: Abschnitt[] = ['kwh', 'w', 'sonstige']
+const ABSCHNITT_ORDER: Abschnitt[] = ['kwh', 'w', 'zustand', 'sonstige']
 
 // R1 (SOLL Wärme/Klima §3.2a) — die vierte Stufe unter den drei Einheiten-
 // Abschnitten. Hier stehen Größen, die es an dieser Bauart **geben kann, aber
@@ -127,10 +135,42 @@ const ERWEITERT_HINWEIS =
 /** Typ, dessen Geräte nach Betriebsart statt nach Einheit gegliedert werden (Variante C). */
 const TYP_NACH_BETRIEBSART = 'waermepumpe'
 
-function abschnittVon(einheit: string): Abschnitt {
+function abschnittVon(einheit: string, abschnitt?: string | null): Abschnitt {
+  if (abschnitt === ABSCHNITT_ZUSTAND) return 'zustand'
   if (einheit === 'kWh') return 'kwh'
   if (einheit === 'W') return 'w'
   return 'sonstige'
+}
+
+/** Der Feld-Key des Betriebsmodus — Spiegel von `core/betriebsmodus.py::MODUS_FELD_KEY` (auch `betriebsmodus-3`). */
+const MODUS_FELD_KEY = 'betriebsmodus'
+/** P-433-2b K2b (D3): am Betriebsmodus gibt es keinen Gateway-Knopf; jedes andere Feld, auch ein Zustand, hat ihn. */
+export function istModusFeld(feld: string): boolean {
+  return feld.replace(/-\d+$/, '') === MODUS_FELD_KEY
+}
+
+/** P-433-2b K2a: Anzeige eines leer angekommenen Texts (Textfeld «Fahrzeug am Ladepunkt»). */
+export const TEXT_LEER = '(leer)'
+
+/** P-433-2b K2b: das Rollen-Feld, ohne das Option A keinen Ladezustand ergibt (Registry `evcc_verbunden`). */
+const OPTION_A_CHIP_FELD = 'evcc_verbunden'
+
+/**
+ * P-433-2b K1 (#431-Prinzip): der Kopf des Abschnitts «Zustand & Sitzung» sagt, was die Zuordnung ermöglicht —
+ * «Zustands-Chip: zugeordnet» oder «Zustands-Chip: fehlt». Maßgeblich ist das **erste** Zustandsfeld des Abschnitts
+ * in Registry-Reihenfolge (Wallbox: Ladezustand, E-Auto: Ladezustand des Fahrzeugs); auch ein noch erweitertes Feld
+ * zählt mit. `null` ohne Zustandsfeld. P-433-2b K2b (Option A): ohne Ladezustand-Quelle reicht an der Wallbox
+ * «evcc: Fahrzeug verbunden» — dann «Zustands-Chip: zugeordnet (aus connected/charging/enabled)».
+ */
+export function zustandsChipStatus(felder: DatenquelleFeld[]): string | null {
+  const chipFeld = felder.find((f) => f.abschnitt === ABSCHNITT_ZUSTAND && f.zustand)
+  if (!chipFeld) return null
+  // P-433-2b K2b (Option A): der Chip entsteht auch aus «evcc: Fahrzeug verbunden» (+ lädt/freigegeben), wenn kein
+  // Ladezustand zugeordnet ist — das Backend setzt ihn dann zusammen (`_kombiniere_option_a`); ein Ladezustand geht vor.
+  if (chipFeld.quelle !== Q_KEINE) return 'Zustands-Chip: zugeordnet'
+  const optionA = felder.find((f) => f.feld === OPTION_A_CHIP_FELD)
+  if (optionA != null && optionA.quelle !== Q_KEINE) return 'Zustands-Chip: zugeordnet (aus connected/charging/enabled)'
+  return 'Zustands-Chip: fehlt'
 }
 
 // Mehr geänderte Felder werden im Historie-Hinweis nicht einzeln benannt; darüber
@@ -165,6 +205,9 @@ export default function DatenquellenZuordnung() {
   // Server (Vermerk in `sensor_mapping`) und überlebt damit einen Reload — der
   // Anwender ändert eine Zuordnung und kommt Tage später wieder.
   const [historieHinweis, setHistorieHinweis] = useState<HistorieHinweis | null>(null)
+  // P-433-2b K4 (K4-7): die Geräte-Presets des Gateways (nur mit MQTT) und der offene «Preset anwenden…»-Dialog.
+  const [presets, setPresets] = useState<MqttPreset[]>([])
+  const [presetZiel, setPresetZiel] = useState<{ investitionId: number | null; titel: string; liste: MqttPreset[] } | null>(null)
   // Aufgeklappte „Weitere Größen erfassen"-Abschnitte, je Gerät (R1).
   // **Zugeklappt als Default:** die Fläche soll kurz bleiben — der Sinn der
   // vierten Stufe ist, dass ein untypisches Feld erreichbar ist, nicht dass es
@@ -226,6 +269,25 @@ export default function DatenquellenZuordnung() {
       })
       .catch(() => {})
   }, [selectedAnlageId])
+
+  // P-433-2b K4: Presets nur mit MQTT-Broker (ohne ihn gibt es kein Gateway). Ein Fehler lässt die Knöpfe weg.
+  useEffect(() => {
+    if (!verfuegbarkeit.mqtt) { setPresets([]); return }
+    liveDashboardApi.getGatewayPresets().then(setPresets).catch(() => setPresets([]))
+  }, [verfuegbarkeit.mqtt])
+
+  // «Preset anwenden…» — ein Knopf je Gerät mit passendem Preset bzw. an der Anlage (Basis-Block). Nicht im Kopf
+  // der FormSection: deren `statusSlot` sitzt im Klapp-Knopf, ein Knopf im Knopf wäre ungültiges HTML.
+  const presetKnopf = (liste: MqttPreset[], investitionId: number | null, titel: string) => (
+    liste.length > 0 && (
+      <div className="mb-2 flex justify-end">
+        <Button type="button" variant="ghost" size="sm" data-preset-knopf={investitionId ?? 'anlage'}
+          onClick={() => setPresetZiel({ investitionId, titel, liste })}>
+          Preset anwenden …
+        </Button>
+      </div>
+    )
+  )
 
   // MQTT-Broker- oder HA-Verbindungs-Block gespeichert → Verfügbarkeit neu laden,
   // damit HA-/Gateway-/Inbound-Optionen ohne F5 ein-/ausblenden.
@@ -358,7 +420,10 @@ export default function DatenquellenZuordnung() {
       // Deckungsgleich (deutscher Template-Sensor) ⇒ nur einmal.
       const roh = f.wert_text
       const klar = f.wert_klartext
-      wertText = klar && klar.toLowerCase() !== roh.toLowerCase() ? `${klar} (${roh})` : (klar ?? roh)
+      // P-433-2b K2a: ein Textfeld (Fahrzeug am Ladepunkt) kann leer ANKOMMEN — «die Steuerung kennt kein Fahrzeug».
+      // Eine leere grüne Zelle sähe aus wie ein Darstellungsfehler; sie heißt «(leer)».
+      wertText = roh === '' ? TEXT_LEER
+        : klar && klar.toLowerCase() !== roh.toLowerCase() ? `${klar} (${roh})` : (klar ?? roh)
       wertTone = 'text-green-700 dark:text-green-400'
     } else if (wertQuelleLiest && f.wert != null) {
       // Auf 2 Nachkommastellen runden (HA-Rohstates haben oft viele Stellen).
@@ -409,7 +474,9 @@ export default function DatenquellenZuordnung() {
           }`}>
             {istText}
           </div>
-          {f.zulaessige_werte && f.zulaessige_werte.length > 0 && <ZulaessigeWerte gruppen={f.zulaessige_werte} />}
+          {f.zulaessige_werte && f.zulaessige_werte.length > 0 && (
+            <ZulaessigeWerte gruppen={f.zulaessige_werte} emob={f.abschnitt === ABSCHNITT_ZUSTAND} />
+          )}
           {hinweisOffen && f.hinweis && (
             <p className={`mt-1 max-w-prose text-xs ${offenePflicht ? STATUS_TEXT_CLASS.kritisch : 'text-gray-500 dark:text-gray-400'}`}>
               {f.hinweis}
@@ -493,8 +560,9 @@ export default function DatenquellenZuordnung() {
             Zusätzlich feldbezogen: `nur_ha` (Preis-Felder) blendet MQTT aus —
             eedc liest sie ausschließlich als HA-Sensor, ein Gateway-Eintrag
             wäre ein Versprechen ohne Leser (Backend riegelt gleichlautend ab).
-            `zustand` (Betriebsmodus, HA-Bauform §9) blendet nur das Gateway aus:
-            es reicht Zahlen weiter, kein Zustandswort — Inbound bleibt. */}
+            Das Gateway reicht seit P-433-2b K2b an ein Zustandsfeld den Text weiter
+            (Weiche am Zielfeld im Backend); nur am Betriebsmodus bleibt der Knopf aus
+            (D3, Gernot 27.10.2026: Modus über MQTT nur als Inbound-Topic, HA-Bauform §9). */}
         <div className="flex flex-wrap items-center gap-1.5 sm:flex-nowrap sm:flex-shrink-0">
           {verfuegbarkeit.ha && (
             <QuelleButton
@@ -505,7 +573,7 @@ export default function DatenquellenZuordnung() {
               onClick={() => waehleHa(f)}
             />
           )}
-          {verfuegbarkeit.mqtt && !f.nur_ha && !f.zustand && (
+          {verfuegbarkeit.mqtt && !f.nur_ha && !istModusFeld(f.feld) && (
             <QuelleButton
               icon={Waypoints}
               label="Gateway"
@@ -570,18 +638,22 @@ export default function DatenquellenZuordnung() {
   // Feld-Abschnitte (kWh/W/Sonstige) — leere Abschnitte weglassen. Danach die
   // vierte Stufe: „Weitere Größen erfassen" (R1, s. ERWEITERT_TITEL).
   const abschnitte = (gruppeId: string, felder: DatenquelleFeld[]) => {
-    const buckets: Record<Abschnitt, DatenquelleFeld[]> = { kwh: [], w: [], sonstige: [] }
+    const buckets: Record<Abschnitt, DatenquelleFeld[]> = { kwh: [], w: [], zustand: [], sonstige: [] }
     const erweitert: DatenquelleFeld[] = []
     for (const f of felder) {
       if (f.erweitert) erweitert.push(f)
-      else buckets[abschnittVon(f.einheit)].push(f)
+      else buckets[abschnittVon(f.einheit, f.abschnitt)].push(f)
     }
+    const chipStatus = zustandsChipStatus(felder)
     return (
       <>
         {ABSCHNITT_ORDER.filter((k) => buckets[k].length > 0).map((k) => (
           <div key={k}>
             <div className="pt-2 pb-0.5 text-xs font-medium uppercase tracking-wide text-gray-400 dark:text-gray-500">
               {ABSCHNITT_TITEL[k]}
+              {k === 'zustand' && chipStatus && (
+                <span className="ml-2 normal-case tracking-normal" data-zustand-status>{chipStatus}</span>
+              )}
             </div>
             <div className="divide-y divide-gray-100 dark:divide-gray-800">{buckets[k].map(feldZeile)}</div>
           </div>
@@ -685,7 +757,7 @@ export default function DatenquellenZuordnung() {
       defaultOpen: istBasis,
       render: () => (
         istBasis
-          ? <div>{abschnitte(tc.geraete[0].id, tc.geraete[0].felder)}</div>
+          ? <div>{presetKnopf(presetsFuerAnlage(presets), null, tc.label)}{abschnitte(tc.geraete[0].id, tc.geraete[0].felder)}</div>
           : (
             <div className="space-y-2">
               {tc.geraete.map((g) => (
@@ -697,6 +769,7 @@ export default function DatenquellenZuordnung() {
                   defaultOpen={tc.geraete.length === 1}
                   statusSlot={geraetBadge(g)}
                 >
+                  {presetKnopf(presetsFuerTyp(presets, g.typ), investitionIdDerGruppe(g), g.titel)}
                   {g.typ === TYP_NACH_BETRIEBSART ? betriebsartAbschnitte(g) : abschnitte(g.id, g.felder)}
                 </FormSection>
               ))}
@@ -706,8 +779,8 @@ export default function DatenquellenZuordnung() {
     }
     // ⛔ JEDER Zustand, den `render` liest, MUSS hier stehen — sonst friert die
     // render-Closure ihn ein (BlockShell rendert die memoisierten Blöcke). Das
-    // sind heute drei: `verfuegbarkeit` (Button-Gating), `offeneHinweise` (Q3)
-    // und `offeneErweiterung` (R1, über `abschnitte`).
+    // sind heute vier: `verfuegbarkeit` (Button-Gating), `offeneHinweise` (Q3),
+    // `offeneErweiterung` (R1, über `abschnitte`) und seit P-433-2b K4 `presets` (Knopf «Preset anwenden …»).
     //
     // ⚠ Die Liste kann sich NICHT selbst prüfen: `exhaustive-deps` verlangt hier
     // `abschnitte` und `geraetBadge` — bei jedem Render neu gebaute Funktionen,
@@ -720,7 +793,7 @@ export default function DatenquellenZuordnung() {
     // Verhaltenstest `DatenquellenZuordnung.erweiterung.test.tsx` hält das Auf-
     // klappen fest, wenn die Erinnerung wieder nicht reicht.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [cluster, verfuegbarkeit, offeneHinweise, offeneErweiterung])
+  }), [cluster, verfuegbarkeit, offeneHinweise, offeneErweiterung, presets])
 
   if (loading) return <p className="text-sm text-gray-500 dark:text-gray-400">wird geladen …</p>
   if (fehler) return <p className="text-sm text-red-600 dark:text-red-400">{fehler}</p>
@@ -751,8 +824,21 @@ export default function DatenquellenZuordnung() {
           anlageId={selectedAnlageId}
           feldLabel={gatewayFeld.einheit ? `${gatewayFeld.label} (${gatewayFeld.einheit})` : gatewayFeld.label}
           initialTopic={gatewayFeld.gateway_topic}
+          zustand={gatewayFeld.zustand}
           onClose={() => setGatewayFeld(null)}
           onSpeichern={speichereGateway}
+        />
+      )}
+
+      {presetZiel && selectedAnlageId != null && (
+        <DatenquellenPresetDialog
+          isOpen
+          anlageId={selectedAnlageId}
+          investitionId={presetZiel.investitionId}
+          titel={presetZiel.titel}
+          presets={presetZiel.liste}
+          onClose={() => setPresetZiel(null)}
+          onAngewendet={() => { setPresetZiel(null); neuLaden() }}
         />
       )}
 

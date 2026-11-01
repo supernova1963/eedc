@@ -109,6 +109,7 @@ from backend.core.berechnungen.finanz_aggregat import (
     FinanzAggregat,
     FinanzMonatsZeile,
     berechne_finanz_aggregat,
+    bewerte_eigenverbrauch,
 )
 from backend.core.berechnungen.amortisation import (
     AmortisationsFortschritt,
@@ -175,7 +176,7 @@ from backend.core.berechnungen.modus_split import (
     teilmengen_passen,
     unbekannte_modi,
 )
-from backend.core.berechnungen.netzbezug_kosten import berechne_netzbezug_kosten
+from backend.core.berechnungen.netzbezug_kosten import berechne_netzbezug_kosten, klemme_netzanteil
 from backend.core.berechnungen.kennzahlen import (
     autarkie_prozent,
     eigenverbrauchsquote_prozent,
@@ -247,6 +248,7 @@ from backend.core.berechnungen.pv_anteil_ladung import (
     REGEL_EINSPEISE_DECKUNG,
     AbgeleiteterLadeAnteil,
     leite_pv_anteil_ab,
+    pv_anteil_gemessen_prozent,
 )
 from backend.core.berechnungen.pv_verteilung import (
     QUELLE_FEHLT as PV_QUELLE_FEHLT,
@@ -426,9 +428,11 @@ __all__ = [
     "einspeise_erloes_euro",
     "AbgeleiteterLadeAnteil",
     "leite_pv_anteil_ab",
+    "pv_anteil_gemessen_prozent",
     "REGEL_EINSPEISE_DECKUNG",
     "FinanzAggregat",
     "FinanzMonatsZeile",
+    "bewerte_eigenverbrauch",
     "berechne_finanz_aggregat",
     "ErgebnisEingang",
     "ErgebnisLeiter",
@@ -479,6 +483,7 @@ __all__ = [
     "unbekannte_modi",
     "imd_typ_beitrag",
     "berechne_netzbezug_kosten",
+    "klemme_netzanteil",
     "autarkie_prozent",
     "eigenverbrauchsquote_prozent",
     "spezifischer_ertrag_kwh_kwp",

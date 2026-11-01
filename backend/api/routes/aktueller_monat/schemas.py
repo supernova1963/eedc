@@ -559,8 +559,25 @@ class AktuellerMonatResponse(BaseModel):
     #: er zwangsläufig klein (die Abdeckung misst gegen den vollen Monat).
     netzbezug_preis_abdeckung: Optional[float] = None
     # G19-1 K3 (R19-3): Grundgebühr des Monats — steckt bereits in
-    # netzbezug_kosten_euro (reiner Ausweis, kein zweiter Posten).
+    # netzbezug_kosten_euro (reiner Ausweis, kein zweiter Posten). N-769: Σ aller gültigen Tarife (allgemein + eigener
+    # WP-/Wallbox-Tarif, `monats_fakten.grundpreis_des_monats`).
     grundgebuehr_euro: Optional[float] = None
+    #: N-769: die Grundgebühr je Verwendung (``allgemein``/``waermepumpe``/``wallbox`` → €), nur wenn ein eigener
+    #: Komponenten-Tarif beiträgt — sonst ``None``. Im Jahr Σ je Verwendung (``falte_zeitraum``).
+    grundgebuehr_aufteilung: Optional[dict[str, float]] = None
+    #: N-770/N-771: der gemessene Netzbezug zum Komponenten-Tarif — je Anteil ``verwendung`` (``waermepumpe``/``wallbox``),
+    #: ``kwh`` (angesetzt, geklemmt), ``cent``, ``euro``, ``gemessen_kwh``, ``geklemmt``; die Stromrechnung ist dann
+    #: ``(Netzbezug − Σ kWh) × Haushaltspreis + Σ euro + Grundgebühr``. ``None`` ohne eigenen Tarif bzw. ohne Messung.
+    #: Im Jahr Σ je Verwendung (``falte_zeitraum``).
+    netzbezug_anteile: Optional[list[dict]] = None
+    #: N-770: der PV-Anteil der Wärmepumpe, den die Eigenverbrauchs-Ersparnis zum WP-Tarif statt zum Haushaltspreis
+    #: bewertet (kWh), und dieser Preis — ``None`` ohne gemessenen Netzbezug zum WP-Tarif.
+    ev_ersparnis_wp_tarif_kwh: Optional[float] = None
+    ev_ersparnis_wp_tarif_cent: Optional[float] = None
+    #: N-770 F6 (E3): der Haushaltspreis des Rests (Netzbezug − Σ kWh), wenn der Haushaltstarif Zeitfenster (HT/NT) trägt
+    #: und der Kanal des Felds den Monat deckt — dann über den Rest gewichtet statt über den ganzen Netzbezug; ``None``
+    #: sonst (der Rest trägt den Haushaltspreis der Kopfzahl).
+    netzbezug_rest_preis_cent: Optional[float] = None
     # G19-1 K3: jährliche Zähler-/Messstellengebühr vom Tarif — reiner Ausweis
     # in der Jahresaufstellung, NICHT in Kosten/Netto-Ertrag verrechnet.
     zaehlergebuehr_euro_jahr: Optional[float] = None

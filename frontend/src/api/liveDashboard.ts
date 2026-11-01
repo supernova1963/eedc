@@ -46,6 +46,15 @@ export interface LiveKomponente {
   fahrzeuge?: LiveFahrzeug[] | null
   /** Nur `wallbox_*`: „eindeutig" bei genau einer live liefernden Wallbox, sonst „geschaetzt". */
   fahrzeuge_zuordnung?: 'eindeutig' | 'geschaetzt' | null
+  // ── P-433-2b K2a: was die Steuerung über das Fahrzeug am Ladepunkt sagt (Textfeld `fahrzeug_am_ladepunkt`) ──
+  // Reine Anzeige; kein drittes Zuordnungswort (K2-6) — ein Treffer, ein Gast und ein unbekanntes Fahrzeug heißen
+  // «eindeutig» mit `fahrzeuge_quelle: 'steuerung'`.
+  /** `'steuerung'`, wenn `fahrzeuge` (bzw. Gast/unbekannt) aus der Fahrzeugerkennung der Steuerung kommt. */
+  fahrzeuge_quelle?: 'steuerung' | null
+  /** Die Steuerung kennt kein Fahrzeug, aber eines hängt dran — «Gastfahrzeug». */
+  gast?: boolean
+  /** Die Steuerung nennt ein Fahrzeug, das kein E-Auto als Kennung trägt (Name im Daten-Checker, nicht hier). */
+  fahrzeug_unbekannt?: boolean
   // ── P-433-3 S1 (#432): Gerätewerte einer Wärmepumpe — reine Anzeige (Hub-Überblick) ──
   // Nur `waermepumpe_*`, `null`/fehlend ohne Zuordnung. Das anlagenweite
   // `warmwasser_temperatur_c` der Antwort bleibt daneben (erste WP mit Wert).
@@ -59,6 +68,27 @@ export interface LiveKomponente {
   warmwasser_c?: number | null
   /** Leistung der Zusatzheizung (Heizstab) in W — ein Teil von `verbrauch_kw`, nie dazu addiert. */
   heizstab_w?: number | null
+  // ── P-433-2b K1 (Konzept #433, E-Mobilität): Zustand und Sitzung am Ladepunkt — reine Anzeige ──
+  // Nur `wallbox_*`, `null`/fehlend ohne Zuordnung. Gemessen, nie aus kW abgeleitet (K-2); die Klartexte kommen vom
+  // Backend-Kanon (`core/zustands_kanon.py`), der Client führt keine zweite Tabelle.
+  ladezustand?: string | null
+  ladezustand_label?: string | null
+  lademodus?: string | null
+  lademodus_label?: string | null
+  /** Laufende (oder letzte) Sitzung: kWh und Dauer in s — Werte der Steuerung. */
+  sitzung?: LiveSitzung | null
+  ladestrom_a?: number | null
+  phasen_aktiv?: number | null
+  /** Ladeziel der Steuerung in %. */
+  ziel_prozent?: number | null
+  /** Restzeit der Steuerung in min. */
+  restzeit_min?: number | null
+}
+
+/** Die Sitzung am Ladepunkt (P-433-2b K1). */
+export interface LiveSitzung {
+  kwh: number | null
+  dauer_s: number | null
 }
 
 /**
@@ -72,6 +102,19 @@ export interface LiveFahrzeug {
   /** kW, vorzeichenbehaftet: positiv lädt, negativ gibt ab (V2H); `null` = nicht getrennt gemessen. */
   kw: number | null
   v2h: boolean
+  // ── P-433-2b K1: was das Fahrzeug selbst meldet (Builder `_fahrzeug_emob`), jeder Wert einzeln optional ──
+  reichweite_km?: number | null
+  /** Ladezustand des Fahrzeugs (Kanon `ladezustand_fahrzeug`) und Klartext. */
+  ladezustand?: string | null
+  ladezustand_label?: string | null
+  ziel_prozent?: number | null
+  restzeit_min?: number | null
+  /** Zone: `true` zu Hause, `false` unterwegs, `null` ohne Zuordnung. */
+  zu_hause?: boolean | null
+  /** Stammdatum `ist_dienstlich`. */
+  dienstwagen?: boolean
+  /** P-433-2b K4: Kilometerstand des zugeordneten km-Zählers (ganze km), nur mit Wert. */
+  km_stand?: number | null
 }
 
 export interface LiveGauge {
@@ -130,6 +173,8 @@ export interface LiveDashboardResponse {
    * Wert ankommt.
    */
   innengeraete?: LiveInnengeraet[] | null
+  /** P-433-2b K1: Autos an keiner live liefernden Wallbox (Hub-Karte E-Auto); Autos an einer Wallbox stehen dort. */
+  fahrzeuge_ohne_wallbox?: LiveFahrzeug[] | null
 }
 
 export interface WetterStunde {
@@ -316,6 +361,8 @@ export interface PresetVariable {
   label: string
   placeholder: string
   hinweis: string
+  /** P-433-2b K2b: gilt, wenn die Variable leer bleibt (z. B. evcc-Prefix «evcc»). */
+  vorgabe?: string
 }
 
 export interface PresetMappingInfo {
@@ -336,8 +383,20 @@ export interface MqttPreset {
   beschreibung: string
   anleitung: string
   erfordert_investition: boolean
+  /** P-433-2b K4: Investitionstypen, an deren Gerät die Datenquellen-Fläche den Knopf zeigt (Backend `MqttPreset.typen`). */
+  typen?: string[]
   variablen: PresetVariable[]
   mappings: PresetMappingInfo[]
+}
+
+/** Antwort von «Preset anwenden» (P-433-2b K4-8: ersetzt je `ziel_key`, setzt die Quelle Gateway). */
+export interface PresetApplyResponse {
+  preset_id: string
+  erstellt: number
+  mappings: Record<string, unknown>[]
+  ersetzt?: number
+  quelle_gesetzt?: number
+  ohne_feld?: string[]
 }
 
 export interface GatewayMappingCreate {
@@ -392,6 +451,8 @@ export interface TestTopicResult {
 export interface TransformTestResult {
   erfolg: boolean
   wert?: number
+  /** P-433-2b K2b: Text bei einem Zustandsfeld (`als_text`) — unverändert, ohne Faktor/Offset. */
+  wert_text?: string
   ziel_payload?: string
   fehler?: string
 }
@@ -517,7 +578,7 @@ export const liveDashboardApi = {
 
   testGatewayTransform: (data: {
     payload: string; payload_typ?: string; json_pfad?: string | null;
-    array_index?: number | null; faktor?: number; offset?: number; invertieren?: boolean
+    array_index?: number | null; faktor?: number; offset?: number; invertieren?: boolean; als_text?: boolean
   }) =>
     api.post<TransformTestResult>('/live/mqtt/gateway/test-transform', data),
 
@@ -527,7 +588,7 @@ export const liveDashboardApi = {
     api.get<MqttPreset[]>('/live/mqtt/gateway/presets'),
 
   applyGatewayPreset: (data: { preset_id: string; anlage_id: number; variablen: Record<string, string>; investition_id?: number }) =>
-    api.post<{ preset_id: string; erstellt: number; mappings: Record<string, unknown>[] }>(
+    api.post<PresetApplyResponse>(
       '/live/mqtt/gateway/presets/apply', data,
     ),
 }

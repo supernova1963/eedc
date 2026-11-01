@@ -767,6 +767,33 @@ class TagWerteResponse(BaseModel):
     # ⚠ Er wird in dieser Zeile **nirgends mitsummiert** und geht in keine
     # Bilanzgröße ein — die Spalten tragen `aggregation: 'none'`.
     zaehler_stand: Optional[dict[str, float]] = None
+    # ── Tabellen-Spalten (28.10.2026, `services/energie_profil/tage_werte_zusatz.py`) — private, am Tag aktive Geräte;
+    # ``None`` ⇒ an dem Tag kein Wert. Gleiche Schlüssel wie die Monatsspalten gleicher Bedeutung.
+    #: Σ Wallbox-Ladung (Betrag), dieselbe Mischung wie ``emob_heute`` im Tag-Detail.
+    wallbox_ladung: Optional[float] = None
+    #: Σ gefahrene km / Fahrverbrauch der E-Autos (``kanal_stunden.fahrt_der_tage``) — am Tag der Rückkehr nach einer
+    #: Zählerlücke trägt «Gefahren» den Sprung (Lückenregel, K4-N1).
+    eauto_km: Optional[float] = None
+    eauto_fahrverbrauch: Optional[float] = None
+    #: Σ Übergänge nach «lädt» an den Wallboxen (``kanal_stunden.zustand_wechsel_der_tage``).
+    ladevorgaenge: Optional[float] = None
+    #: Wärmepumpen-Starts und Betriebszeit (ganze Minuten) des Tages — Tagessumme wie *Cockpit → Monat*.
+    wp_starts: Optional[int] = None
+    wp_betriebszeit_min: Optional[int] = None
+    # ── Wärmepumpen-Tagesreihe (Auftrag 29.10.2026, nur mit ``?mit_waerme=true``, sonst ``None``) — dieselben Werte
+    # wie *Cockpit → Monat* (``waerme_verlauf.lade_waerme_verlauf``, Route ``waerme-verlauf``).
+    #: Σ gemessene Wärme (Heizen + Warmwasser, Vorrang Gesamtzähler je Gerät); ohne Wärmemengenzähler ``None``.
+    wp_waerme: Optional[float] = None
+    #: Gemessene Kälte des Tages, nie Teil der Wärme.
+    wp_kaelte: Optional[float] = None
+    #: Betriebsart-Strom des Tagesstapels — alle vier nur mit Aufteilung am Tag (Alles-oder-nichts wie im Verlauf).
+    wp_strom_kuehlen: Optional[float] = None
+    wp_strom_lueften: Optional[float] = None
+    wp_strom_entfeuchten: Optional[float] = None
+    wp_strom_nicht_aufgeteilt: Optional[float] = None
+    #: Gemessener Heizstab-Strom (Zusatzheizung) des Tages, Σ über die Geräte — dieselbe Zahl wie *Cockpit → Tag*
+    #: (``wp_heizstab_kwh``, ``waerme_verlauf.lade_heizstab_je_tag``); ohne Heizstab-Zähler ``None`` (29.10.2026).
+    wp_heizstab: Optional[float] = None
 
 
 class TagStatusResponse(BaseModel):
@@ -788,6 +815,39 @@ class TagStatusResponse(BaseModel):
     link: Optional[str] = None
     aktion_kind: Optional[str] = None
     aktion_label: Optional[str] = None
+
+
+class EmobBetriebZeile(BaseModel):
+    """P-433-2b K3 (Bauplan K3-7, Karte «Betrieb heute» E-Mobilität): Stunden je Zustand eines Geräts und Felds am Tag.
+
+    ``stunden`` = ``{wert: h}`` in Lese-Reihenfolge der Karte (``zustands_kanon.WERTE_MIT_STUNDEN[feld]``), 0,1 h, aus
+    der Zustands-Mitschrift (Layer ``betriebsstunden.stunden_je_zustand``) — eine gemessene 0 bleibt stehen; ``labels`` =
+    Klartext je Wert (``zustands_kanon.LABEL``, der Client führt keine zweite Tabelle); ``wechsel`` = Übergänge nach
+    «lädt» am Tag (D4 «Ladevorgänge heute»), nur an der Wallbox und nur mit Zähler-Zeile."""
+    investition_id: int
+    typ: str
+    feld: str
+    stunden: dict[str, float]
+    labels: dict[str, str] = Field(default_factory=dict)
+    wechsel: Optional[int] = None
+
+
+
+class EmobHeuteZeile(BaseModel):
+    """P-433-2b K4 (K4-5, Karten «Heute» E-Mobilität): die Tagesmengen eines Geräts — jeder Wert nur mit Wert (P4).
+
+    Wallbox: ``ladung_kwh`` (Tageswert ``wallbox_<id>`` aus ``komponenten_der_tage``), ``ladung_pv_kwh`` (gemessener
+    PV-Ladezähler, nur ohne Grund), ``pv_anteil_prozent`` (Layer ``pv_anteil_gemessen_prozent``, nur mit beiden Mengen).
+    E-Auto: ``km`` / ``fahrverbrauch_kwh`` (Σ Zuwachs der Kanal-Stunden ``inv:<id>:km_gefahren`` / ``verbrauch_kwh``,
+    ``kanal_stunden.fahrt_je_tag``), ``ladung_kwh`` aus ``eauto_<id>`` nur ohne deckende Wallbox. Mengen auf 0,1
+    gerundet, Anteil ganzzahlig. Der Client rechnet nichts."""
+    investition_id: int
+    typ: str
+    ladung_kwh: Optional[float] = None
+    ladung_pv_kwh: Optional[float] = None
+    pv_anteil_prozent: Optional[int] = None
+    km: Optional[float] = None
+    fahrverbrauch_kwh: Optional[float] = None
 
 
 class TagDetailResponse(BaseModel):
@@ -918,6 +978,12 @@ class TagDetailResponse(BaseModel):
     # E-Mobilität PV-/Netz-Anteil der Ladung — Tages-Boundary-Diff (nur bei Sensor).
     emob_ladung_pv_kwh: Optional[float] = None
     emob_ladung_netz_kwh: Optional[float] = None
+    #: P-433-2b K3: «Betrieb heute» der Wallboxen und E-Autos — je Gerät und Mitschrift-Feld eine Zeile, nur Geräte mit
+    #: mindestens einer Zeile der Mitschrift (nur der Tag; Monat/Jahr kennen das Feld nicht).
+    emob_betrieb: list[EmobBetriebZeile] = Field(default_factory=list)
+    #: P-433-2b K4: Tagesmengen je Wallbox/E-Auto für die Karten «Heute» (Kopfzahl PV-Anteil, Gefahren/Fahrverbrauch
+    #: heute) — eine Zeile nur mit mindestens einem Wert (nur der Tag).
+    emob_heute: list[EmobHeuteZeile] = Field(default_factory=list)
     # Aufteilung Heizen/Kühlen des Tages (#263/T2) — anlagenweite Σ über alle
     # Wärmepumpen, wie die übrigen WP-Felder hier. `None` heißt „kein
     # Modus-Signal an diesem Tag": der Block erscheint dann gar nicht, statt

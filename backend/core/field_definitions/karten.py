@@ -29,8 +29,9 @@ SOC_TYPEN: frozenset[str] = frozenset(
 #      (Standalone-Gleichstand S1, 25.10.2026) hat der Inbound einen
 #      Zustands-Zweig: ein Zustandsfeld landet als roher String im Cache, wird
 #      als Topic angeboten (`…/live/inv/<id>/betriebsmodus`) und erst im Kanon
-#      gedeutet. Das Gateway (float-only) bleibt für Zustandsfelder aus — die
-#      Fläche liest dafür `zustand`.
+#      gedeutet. Das Gateway reicht seit P-433-2b K2b an ein Zustandsfeld den
+#      Text unverändert weiter (`mqtt_gateway_service._als_text`), außer am
+#      Betriebsmodus (D3) — die Fläche liest dafür `zustand`.
 #   3. `daten_checker/sensoren.py` prüft Einheiten (kW≠kWh) — ein Feld ohne
 #      Einheit hat dort nichts zu suchen.
 #
@@ -51,6 +52,45 @@ ZUSTAND_LIVE_FELDER: frozenset[tuple[str, str]] = frozenset(
 # Nur die Feld-Keys — für die Pfade, die ihren Investitionstyp nicht kennen
 # (der Live-Poller sieht `{inv_id: {key: entity}}` ohne Typ-Kontext).
 ZUSTAND_FELD_KEYS: frozenset[str] = frozenset(key for _, key in ZUSTAND_LIVE_FELDER)
+
+# P-433-2b K2a (Bauplan K2 §1 K2-3, Gegenprüfung G1): die Feldart **Text** — ein Zustandsfeld (`zustand: True`, es
+# erbt alle Weichen oben) ohne Kanon, das einen freien Text trägt (`text: True`): heute der Fahrzeugname, den die
+# Steuerung am Ladepunkt meldet. Dieselbe Bauform wie `ZUSTAND_LIVE_FELDER` — Eigenschaft am Feld, abgeleitete Menge,
+# ein Leser (`ist_text_feld`) —, **keine getippte Liste daneben**. Ein Text ist nie ohne `zustand`: sonst liefe er in
+# den 5-s-Poller (`float(state)`) und der Inbound verwürfe ihn als ungültige Zahl (Wächter in
+# `test_p433_2b_k2a_fahrzeug.py`). Was ein Textfeld anders macht als ein Kanon-Zustand: kein Kanon, keine
+# Werte-Tabelle, kein Checker «fremder Wert», und **leer ist ein Wert** (Inbound-Weiche `_wert_aus_payload`).
+TEXT_LIVE_FELDER: frozenset[tuple[str, str]] = frozenset(
+    (typ, f["key"])
+    for typ, felder in LIVE_FELDER_INV.items()
+    for f in felder
+    if f.get("zustand") and f.get("text")
+)
+
+#: Nur die Feld-Keys der Textfelder — für die Pfade ohne Typ-Kontext (MQTT-Inbound).
+TEXT_FELD_KEYS: frozenset[str] = frozenset(key for _, key in TEXT_LIVE_FELDER)
+
+# P-433-2b K3 (Bauplan K3 §1 K3-1): **die eine Regel der Zustands-Mitschrift** — jedes Zustandsfeld mit Kanon, das die
+# Registry als `mitschrift: True` ausweist, bekommt die Betriebsart-Mitschrift («Anteil der Stunde je Kanon-Wert»,
+# Kanal `zustand:inv:<id>:<feld>:<wert>`). Dieselbe Bauform wie `TEXT_LIVE_FELDER` — Eigenschaft am Feld, abgeleitete
+# Menge, **keine getippte Liste daneben**. Der Betriebsmodus trägt die Mitschrift implizit über seinen eigenen,
+# byte-gleichen Pfad (`modus:inv:<id>:<betriebsart>`) und steht deshalb nicht hier. Ein `mitschrift`-Feld ohne
+# `zustand` oder ohne `kanon` fällt heraus (und der Wächter in `test_p433_2b_k3_mitschrift.py` meldet es): ohne Kanon
+# gibt es keine Werte, deren Anteil man zählen könnte (das Textfeld bleibt deshalb `nur_live`).
+def mitschrift_live_felder(live_felder_inv) -> frozenset[tuple[str, str]]:
+    """Die Ableitung selbst — eine Funktion, damit der Wächter sie auf einer Registry-Kopie mit Probefeld fährt."""
+    return frozenset(
+        (typ, f["key"])
+        for typ, felder in live_felder_inv.items()
+        for f in felder
+        if f.get("mitschrift") and f.get("zustand") and f.get("kanon")
+    )
+
+
+MITSCHRIFT_LIVE_FELDER: frozenset[tuple[str, str]] = mitschrift_live_felder(LIVE_FELDER_INV)
+
+#: Nur die Feld-Keys der Mitschrift-Felder — für die Pfade ohne Typ-Kontext (MQTT-Inbound, 5-Minuten-Snapshot).
+MITSCHRIFT_FELD_KEYS: frozenset[str] = frozenset(key for _, key in MITSCHRIFT_LIVE_FELDER)
 
 def einheit_fuer(feld: str, investition=None) -> str:
     """Die Einheit, die neben diesem Wert stehen soll — **der eine Leser** (#377).
@@ -105,6 +145,24 @@ def ist_zustand_feld(feld: str, typ: Optional[str] = None) -> bool:
     if typ is not None:
         return (typ, basis) in ZUSTAND_LIVE_FELDER
     return basis in ZUSTAND_FELD_KEYS
+
+def ist_mitschrift_feld(feld: str, typ: Optional[str] = None) -> bool:
+    """Wird dieses Zustandsfeld mitgeschrieben (P-433-2b K3)? — siehe `MITSCHRIFT_LIVE_FELDER`; Bauform `ist_text_feld`."""
+    basis = basis_feld_key(feld)
+    if typ is not None:
+        return (typ, basis) in MITSCHRIFT_LIVE_FELDER
+    return basis in MITSCHRIFT_FELD_KEYS
+
+def ist_text_feld(feld: str, typ: Optional[str] = None) -> bool:
+    """Ist dieses Live-Feld ein **Text** (Zustandsfeld ohne Kanon)? — siehe `TEXT_LIVE_FELDER`.
+
+    Bauform `ist_zustand_feld`: der Innengeräte-Suffix wird aufgelöst, `typ` schärft die Antwort, wo der Aufrufer ihn
+    hat (der MQTT-Inbound kennt nur den Feld-Key).
+    """
+    basis = basis_feld_key(feld)
+    if typ is not None:
+        return (typ, basis) in TEXT_LIVE_FELDER
+    return basis in TEXT_FELD_KEYS
 
 def build_feld_labels() -> dict[str, str]:
     """
@@ -394,6 +452,14 @@ _SNAPSHOT_OHNE_KOMPONENTEN_BEITRAG: dict[tuple[str, str], str] = {
     ("waermepumpe", "heizstab_strom_kwh"):
         "Teilmenge des Gerätestroms (Heizstab hinter dem WP-Zähler, H-B) — als eigener Beitrag "
         "stünde derselbe Strom in der Tagesbilanz doppelt",
+    # N-770/N-771: der Netzbezug zum Komponenten-Tarif ist eine Teilmenge des Gerätestroms bzw. der Ladung (der Anteil,
+    # den der Versorger zum WP-/Wallbox-Tarif abrechnet) — als eigener Beitrag stünde er in der Tagesbilanz doppelt.
+    # ⚠ Wortlaut ohne „thermisch" (wie der Heizstab): die Mengenart nimmt ihn über `WP_TEILMENGE_OHNE_MENGENART` heraus.
+    ("waermepumpe", "netzbezug_eigener_tarif_kwh"):
+        "Teilmenge des Gerätestroms (Netzanteil zum WP-Tarif, N-770) — als eigener Beitrag "
+        "stünde derselbe Strom in der Tagesbilanz doppelt",
+    ("wallbox", "netzbezug_eigener_tarif_kwh"):
+        "Teilmenge von ladung_kwh (Netzanteil zum Wallbox-Tarif, N-771), s. ladung_pv_kwh",
 }
 
 # #263 — die gemessenen Betriebsart-Zähler, aus zwei verschiedenen Gründen:
@@ -459,7 +525,9 @@ def wp_betriebsart(feld: str) -> Optional[str]:
 #: (H-B). Sie tragen keine Mengenart: der Status im Datenquellen-Block «Gerät gesamt» fragt «ist der Strom des Geräts
 #: gedeckt?», und ein zugeordneter Heizstab-Zähler deckt ihn nicht (gemessen 25.10.: ohne diese Ausnahme sagte der
 #: Block einer Wärmepumpe mit getrennter Strommessung «fehlt: Strom» statt «vollständig»).
-WP_TEILMENGE_OHNE_MENGENART: frozenset[str] = frozenset({"heizstab_strom_kwh"})
+#: N-770: dazu der Netzbezug zum WP-Tarif — eine Teilmenge, die den Gerätestrom nicht deckt (sonst sagte der Block
+#: «Gerät gesamt» mit diesem Zähler allein «vollständig»).
+WP_TEILMENGE_OHNE_MENGENART: frozenset[str] = frozenset({"heizstab_strom_kwh", "netzbezug_eigener_tarif_kwh"})
 
 
 def wp_menge(feld: str) -> Optional[str]:

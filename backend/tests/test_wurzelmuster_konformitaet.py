@@ -1670,6 +1670,9 @@ P8_BASELINE_AUSNAHMEN: frozenset[str] = frozenset({
     "backend/api/routes/strompreise.py::get_aktueller_strompreis_fuer",
     # Entscheidet, ob die Preis-Felder angeboten werden (Vertragsart heute).
     "backend/api/routes/datenquellen.py::_basis_preis_eintraege",
+    # N-770/N-771 (F1): ob «Netzbezug zum WP-/Wallbox-Tarif» in der ersten Reihe steht — eigener Tarif heute (Feld-
+    # struktur der Zuordnungsfläche, wie die Preis-Felder darüber); der Monatsabschluss fragt mit Stichtag.
+    "backend/api/routes/datenquellen.py::_nach_eigenem_tarif",
     # Spaltenstruktur von Vorlage und Export nach heutiger Vertragsart.
     "backend/api/routes/import_export/csv_operations.py::get_csv_template_info",
     "backend/api/routes/import_export/csv_operations.py::export_csv",
@@ -2200,6 +2203,14 @@ _P10_SCHICHT = "backend/services/monats_fakten/"   # seit Vorlage 10 (19.09.2026
 P10_SCHREIBEN_IMPORT_CHECKER: frozenset[str] = frozenset({
     # Die P7-Auflösung selbst — die Schicht ruft sie, sie ist ihr Unterbau.
     "backend/services/pv_monatswerte.py::lade_pv_je_monat",
+    # N-771 F11 (E4, 31.10.2026): der Checker vergleicht in den ROHEN Wallbox-Zeilen den gepflegten evcc-Anteil mit dem
+    # gemessenen Netzbezug zum Wallbox-Tarif — die Schicht gibt nur das Ergebnis (der Zähler gewinnt), nicht den
+    # überstimmten evcc-Wert; dieselbe Begründung wie `daten_checker/emob.py::_check_emob_pv_ueber_gesamt` (N-201).
+    "backend/services/daten_checker/wp_tarif.py::_evcc_weicht_ab",
+    # F12 (N-770/N-771 E6, 31.10.2026): der Checker sucht in den ROHEN Wallbox-Zeilen ein Feld «Netzbezug zum
+    # Wallbox-Tarif», das unter dem gemeinsamen Tarif nicht zählt — die Schicht trägt es dann nicht in die Stromrechnung
+    # (`wallbox_eigener_tarif` ist falsch), sie kann es also nicht melden; dieselbe Begründung wie die Zeile darüber.
+    "backend/services/daten_checker/wp_tarif.py::_feld_an_wallbox_unter_gemeinsam",
     # Stufe 2 derselben Auflösung (N-266): die Monatswerte der Balkonkraftwerke,
     # unter denen `pv-module` hängen. Sie werden hier ausdrücklich **nicht**
     # summiert, sondern je Elternteil vorgehalten, damit `lade_pv_je_monat`
