@@ -20,7 +20,7 @@
  * die Kachel als Ganzes (`transform`), nie ihre Maße einzeln.
  */
 import type React from 'react'
-import { Sun, Zap, Battery, Car, Flame, Wrench, Home, Plug, Heater, Droplets, Snowflake, Fan, Waves, Thermometer } from 'lucide-react'
+import { Sun, Zap, Battery, Car, Flame, Wrench, Home, Plug, Heater, Droplets, Snowflake, Fan, Waves, Thermometer, Tags } from 'lucide-react'
 import { useChartTheme } from '../../context/ThemeContext'
 import type { LiveKomponente } from '../../api/liveDashboard'
 import { funktionsFarbe } from '../../lib/funktionsFarben'
@@ -44,6 +44,8 @@ const ICON_MAP: Record<string, React.ElementType> = {
   // P-433-2: die Wert-Kachel „Außentemperatur" im Hub-Überblick — kein
   // Backend-Name, der Live-Builder liefert dieses Symbol nie.
   thermometer: Thermometer,
+  // Themen-Kacheln (4.2.0 TH-E2): eine Wert-Kachel je Thema im Hub-Überblick — kein Backend-Name.
+  tags: Tags,
 }
 
 /** Render Lucide Icon als React-Element */
@@ -60,7 +62,7 @@ export function IconElement({ name, size, color, className }: { name: string; si
  */
 export interface ZweiteZeile {
   text: string
-  /** `null` ⇒ graue Klasse statt Farbe. */
+  /** `null` ⇒ graue Klasse statt Farbe; mit Pegel an der Kachel gilt keins von beiden (Text neutral). */
   fill: string | null
   chip?: { farbe: string; gedaempft: boolean } | null
 }
@@ -267,13 +269,17 @@ export default function EnergieFlussKachel({
           />
         )
       })()}
+      {/* Liegt ein Pegel an, steht der Text neutral wie die Wert-Zeile: Schrift in der Pegel-/Chip-Farbe
+          über der gleichfarbigen Füllung war im Hellmodus kontrastarm (Gernot 1.11.2026, Galerie 4.2.0, Weg 1);
+          das Chip-Rechteck behält seine Funktionsfarbe, ohne Pegel bleibt die Zeile farbig wie bisher. */}
       {zweiteZeile && (
         <text
           x={x} y={y + dims.kwFontSize + 2}
           textAnchor="middle"
           style={{ fontSize: `${dims.socFontSize}px` }}
-          className={zweiteZeile.fill ? 'font-semibold' : 'font-semibold fill-gray-500 dark:fill-gray-400'}
-          fill={zweiteZeile.fill ?? undefined}
+          className={pegel ? 'font-semibold fill-gray-900 dark:fill-white'
+            : zweiteZeile.fill ? 'font-semibold' : 'font-semibold fill-gray-500 dark:fill-gray-400'}
+          fill={pegel ? undefined : zweiteZeile.fill ?? undefined}
         >
           {zweiteZeile.text}
         </text>

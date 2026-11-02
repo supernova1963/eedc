@@ -29,6 +29,9 @@
  *  - **R** «Gefahren heute» (zweite Zeile Fahrverbrauch) bzw. nur «Fahrverbrauch heute» — aus dem Tag-Detail;
  *  - **H** «Standort» «Zu Hause»/«Unterwegs» (HA-Zone).
  *
+ * **Themen** (4.2.0 TH-E2): in beiden Szenen je Thema des gewählten Geräts mit Wert eine Kachel am HIMMEL (vorher
+ * Reserve, E-2b-28), Rollenfarbe des Geräts (`themenKacheln.ts`, Rang 3 ⇒ bei voller Reihe zuerst in «Weitere»).
+ *
  * ⛔ **Der Client rechnet nichts** (ADR-002/P12): PV-Anteil nur `pv_anteil_prozent`, Fahrt nur `km`/`fahrverbrauch_kwh`,
  * jede Zahl kommt fertig aus dem Backend und wird hier nur formatiert. Reine Funktionen — kein Hook, kein Abruf.
  */
@@ -44,6 +47,7 @@ import { computeDims, ladezustandZeile, wallboxKachelAuto } from '../../live/ene
 import type { ZweiteZeile } from '../../live/EnergieFlussKachel'
 import { ladezustandKlartext } from '../../ui/ModusChip'
 import type { KachelErgebnis, UeberblickKachel } from './kachelAnker'
+import { baueThemenKacheln } from './themenKacheln'
 import {
   FAHRZEUG_UNBEKANNT, GAST_LAEDT, GAST_VERBUNDEN, LADUNG_TAG_TOOLTIP, LADUNG_TOOLTIP, TOOLTIP_STEUERUNG,
   alleAutosAnWallboxen, eautoKnoten, fahrzeugImLive, herleitungPvAnteil, heuteZeile, ladungHeute, sitzungsTeile,
@@ -75,6 +79,24 @@ const AUTO_ZEILE_BUDGET = (() => {
   const d = computeDims(3)
   return zeichenBudget(d.nodeW, d.socFontSize)
 })()
+
+/** Zeichenbudget der zweiten Zeile in den engsten Dims (`computeDims(5)`; ab fünf Kacheln je Reihe gleich, aus der
+ *  Layout-SoT, nicht getippt) — so passt die Zeile in jeder Reihenbreite (Dims(4) und Dims(5) beide 13 Zeichen). */
+const ENGSTE_ZWEITE_ZEILE_BUDGET = (() => {
+  const d = computeDims(5)
+  return zeichenBudget(d.nodeW, d.socFontSize)
+})()
+
+/**
+ * Die zweite Zeile der Reichweite-Kachel: «Stand ‹km› km», wenn sie ins Budget der engsten Dims passt, sonst nur
+ * «‹km› km» (Nachlauf 4.2.0 K2: «Stand 23.037 km» hat 15 Zeichen, Budget 13 ⇒ «23.037 km»). Der Tooltip behält
+ * «Kilometerstand ‹km› km».
+ */
+export function kmStandZeile(stand: number): string {
+  const km = `${fmtZahl(stand, 0)} km`
+  const voll = `Stand ${km}`
+  return voll.length <= ENGSTE_ZWEITE_ZEILE_BUDGET ? voll : km
+}
 
 /** Pegel eines Ladestands — wie der SoC-Pegel im Energiefluss (kräftig, 0,3). */
 function socPegel(soc: number): NonNullable<UeberblickKachel['pegel']> {
@@ -228,6 +250,7 @@ export function baueLadepunktKacheln({ inv, geraete, live, tag, referenz }: Emob
     if (sitzung) kacheln.push(sitzung)
     kacheln.push(...ladepunktFahrzeuge(k))
   }
+  kacheln.push(...baueThemenKacheln(live?.themen, inv, 'HIMMEL', FARBE_WALLBOX))
   return { kacheln, ohneSensor: live ? ohneSensor : [] }
 }
 
@@ -286,7 +309,7 @@ function ladenKachel(
   }
 }
 
-/** C — «Reichweite» (zweite Zeile «Stand …») bzw. nur «Kilometerstand»; `null` ohne beides. */
+/** C — «Reichweite» (zweite Zeile Kilometerstand, {@link kmStandZeile}) bzw. nur «Kilometerstand»; `null` ohne beides. */
 function reichweiteKachel(inv: Investition, f: LiveFahrzeug | null): UeberblickKachel | null {
   const rw = f?.reichweite_km ?? null
   const stand = f?.km_stand ?? null
@@ -299,7 +322,7 @@ function reichweiteKachel(inv: Investition, f: LiveFahrzeug | null): UeberblickK
   ].join('\n')
   return rw != null
     ? wertKachel(`wert-reichweite-${inv.id}`, 'C', 'Reichweite', 'car', FARBE_EAUTO, `${fmtZahl(rw, 0)} km`,
-      stand != null ? `Stand ${fmtZahl(stand, 0)} km` : null, tip, inv.id)
+      stand != null ? kmStandZeile(stand) : null, tip, inv.id)
     : wertKachel(`wert-reichweite-${inv.id}`, 'C', 'Kilometerstand', 'car', FARBE_EAUTO, `${fmtZahl(stand!, 0)} km`, null, tip, inv.id)
 }
 
@@ -356,5 +379,6 @@ export function baueFahrzeugKacheln({ inv, live, tag, referenz }: EmobKachelEing
     kacheln.push(wertKachel(`wert-standort-${inv.id}`, 'H', 'Standort', 'home', FARBE_EAUTO, ort, null,
       `${inv.bezeichnung}\nStandort: ${ort}\nQuelle: HA-Zone`, inv.id))
   }
+  kacheln.push(...baueThemenKacheln(live?.themen, inv, 'HIMMEL', FARBE_EAUTO))
   return { kacheln, ohneSensor: live ? ohneSensor : [] }
 }

@@ -700,6 +700,7 @@ def _normiert(res: dict, namen: dict[int, str]) -> dict:
 
 # N-603 (03.10.2026): das Label des Restverbrauchs-Knotens heißt „Restverbrauch" (bis dahin „Haushalt") — die
 # einzige bewusste Änderung an diesem Abzug (drei Stellen); Schlüssel und Werte unverändert.
+# Themen-Kacheln (4.2.0, TH-E1 §1.4): die Antwort trägt `themen` — ohne Themen `None` (drei Stellen, sonst nichts).
 _VORHER: dict = {'k1_haus': {'anlage_id': 1,
              'anlage_name': 'Merkmale',
              'verfuegbar': True,
@@ -800,7 +801,8 @@ _VORHER: dict = {'k1_haus': {'anlage_id': 1,
              'gestern_eigenverbrauch_kwh': None,
              'heute_kwh_pro_komponente': None,
              'warmwasser_temperatur_c': None,
-             'innengeraete': None},
+             'innengeraete': None,
+             'themen': None},
  'k2_emobilitaet': {'anlage_id': 1,
                     'anlage_name': 'Merkmale',
                     'verfuegbar': True,
@@ -913,7 +915,8 @@ _VORHER: dict = {'k1_haus': {'anlage_id': 1,
                     'gestern_eigenverbrauch_kwh': None,
                     'heute_kwh_pro_komponente': None,
                     'warmwasser_temperatur_c': None,
-                    'innengeraete': None},
+                    'innengeraete': None,
+                    'themen': None},
  'k3_sonstige_bkw_v2h': {'anlage_id': 1,
                          'anlage_name': 'Merkmale',
                          'verfuegbar': True,
@@ -1041,7 +1044,8 @@ _VORHER: dict = {'k1_haus': {'anlage_id': 1,
                          'gestern_eigenverbrauch_kwh': None,
                          'heute_kwh_pro_komponente': None,
                          'warmwasser_temperatur_c': None,
-                         'innengeraete': None}}
+                         'innengeraete': None,
+                         'themen': None}}
 
 
 @pytest.mark.parametrize("name", list(KONSTELLATIONEN))
@@ -1114,6 +1118,8 @@ async def test_demo_knoten_nehmen_die_ids_der_anlage(db):
     assert auto["parent_key"] == f"wallbox_{ids['wallbox']}"
     assert {k.get("traeger_id") for k in daten["komponenten"] if k["key"].startswith("pv_")} >= {ids["wechselrichter"]}
     assert len(daten["komponenten"]) == len({k["key"] for k in daten["komponenten"]}), "kein Key doppelt"
+    # Galerie 4.2.0: die Demo-Themen hängen an denselben Geräten wie die Knoten (WP, Wallbox, erstes E-Auto).
+    assert {t["investition_id"] for t in daten["themen"]} == {ids["waermepumpe"], ids["wallbox"], ids["e-auto"]}
     # Der Tagesverlauf derselben Demo nennt dieselben Knoten.
     tv = await get_tagesverlauf(anlage.id, demo=True, db=db)
     tv = tv if isinstance(tv, dict) else tv.model_dump()
@@ -1128,3 +1134,6 @@ async def test_demo_ohne_investitionen_behaelt_die_festen_keys(db):
     alt = _schluessel(live_dashboard._generate_demo_data(anlage.id, "Demo"))
     assert neu == alt
     assert {"waermepumpe_5", "batterie_3", "eauto_4", "wallbox_6", "wallbox_11", "soc_12"} <= neu
+    # Ohne Investitionen behalten auch die Demo-Themen ihre festen Geräte-IDs.
+    themen = (await get_live_data(anlage.id, demo=True, db=db))["themen"]
+    assert {t["investition_id"] for t in themen} == {5, 6, 4}
