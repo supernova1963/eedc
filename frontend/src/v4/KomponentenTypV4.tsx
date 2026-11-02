@@ -32,7 +32,9 @@ import { KomponentenVerlaufChart } from './KomponentenVerlaufChart'
 import { KomponentenMonatsTabelle } from './KomponentenMonatsTabelle'
 import { KomponentenVergleich } from './KomponentenVergleich'
 import HubLeerGrund from './HubLeerGrund'
-import UeberblickBlock, { UeberblickBlockEmob } from '../components/komponenten/ueberblick/UeberblickBlock'
+import UeberblickBlock, { SCHAUBILD_FOKUS_ID, UeberblickBlockEmob, type UeberblickBlockProps } from '../components/komponenten/ueberblick/UeberblickBlock'
+import { FokusFehltOverlay } from '../components/blocks/FokusFehlt'
+import { useDeepLinkFokus } from '../hooks/useDeepLinkFokus'
 import { ueberblickGeparkt } from '../components/komponenten/ueberblick/ueberblickPark'
 import { infothekApi } from '../api/infothek'
 import { KATEGORIE_CONFIG } from '../config/infothekKategorien'
@@ -571,6 +573,42 @@ function WirtschaftlichkeitInhalt({ w, kpis }: {
 
 type MeldeBlock = (block: string, ids: string[]) => void
 
+/**
+ * Nachlauf 4.2.1 N5: der Zusatz für «Link / Einbetten» — `{ geraet: '<investition_id>' }` nur bei ≥ 2 Geräten des Typs
+ * (mit echter ID), damit eine Dashboard-Karte das gewählte Gerät zeigt; bei einem Gerät bleibt die Adresse wie bisher,
+ * bestehende Karten werden nicht länger. Gelesen wird der Parameter über `useDeepLinkFokus().geraetId`.
+ */
+export function geraetEinbettenZusatz(g: KompGeraet, alleInvs: Investition[] | undefined): Record<string, string> | undefined {
+  const mehrere = (alleInvs ?? [g.inv]).filter((inv) => inv.id > 0).length >= 2
+  return mehrere && g.inv.id > 0 ? { geraet: String(g.inv.id) } : undefined
+}
+
+/** N5: Index des Geräts aus `?geraet=` — ohne Angabe oder bei unbekannter ID still das erste (kein Hinweis-Overlay). */
+export function aktivAusDeepLink(geraete: KompGeraet[], geraetId: number | null): number {
+  if (geraetId == null) return 0
+  const i = geraete.findIndex((d) => d.inv.id === geraetId)
+  return i >= 0 ? i : 0
+}
+
+/**
+ * Inhalt des Blocks «Überblick» aus einer Hand — für `Block.render(fokus)` (N2: `vollbild`) und für den Deep-Link
+ * `?fokus=ueberblick:schaubild` (N3: `schaubildDeepLink`). Meldet unter `ueberblick:<inv.id>` an das Block-Gate (S1c).
+ */
+function ueberblickInhalt(
+  g: KompGeraet, typ: string, anlageId: number, melde: MeldeBlock, alleInvs: Investition[] | undefined,
+  modus: Pick<UeberblickBlockProps, 'vollbild' | 'schaubildDeepLink'>,
+) {
+  const props: UeberblickBlockProps = {
+    anlageId,
+    geraete: (alleInvs ?? [g.inv]).filter((inv) => inv.id > 0),
+    inv: g.inv,
+    meldeParkIds: (ids) => melde(`ueberblick:${g.inv.id}`, ids),
+    einbettenZusatz: geraetEinbettenZusatz(g, alleInvs),
+    ...modus,
+  }
+  return typ === 'wallbox' || typ === 'e-auto' ? <UeberblickBlockEmob {...props} /> : <UeberblickBlock {...props} />
+}
+
 /** Typen mit Block «Überblick» (Konzept #433 Stufe 2; E-Mobilität seit P-433-2b K1, Schaubild seit S1b).
  *  Spiegel im Backend: `backend/utils/investition_filter.py:UEBERBLICK_TYPEN` (Themen-Kacheln 4.2.0 — dieselben Typen
  *  haben den Block «Themen» in den Datenquellen; Probe `backend/tests/test_themen_store.py`). */
@@ -604,18 +642,14 @@ export function geraetBloecke(g: KompGeraet, typ: string, anlageId: number, park
   // P-433-2b S1b: Wallbox und E-Auto tragen ihre Szene («Ladepunkt» / «Fahrzeug») — dieselben Park-IDs wie Wärme/Klima.
   // S1c: Schaubild und jede Karte einzeln parkbar; Heute/Betrieb erscheinen nur mit Werten, deshalb meldet der Block
   // seine gerenderten IDs hoch (Muster `regVerstecken`, Schlüssel je Gerät) — ohne Meldung bleibt er sichtbar.
-  const emob = typ === 'wallbox' || typ === 'e-auto'
+  // Nachlauf 4.2.1 N2: im Block-Fokus (`fokus`) füllt das Schaubild die Höhe.
   const ueberblickKey = `ueberblick:${g.inv.id}`
   if (UEBERBLICK_TYPEN.includes(typ) && g.inv.id > 0 && !regVerstecken(ueberblickKey, (id) => ueberblickGeparkt(istGeparkt, id))) {
-    const geraete = (alleInvs ?? [g.inv]).filter((inv) => inv.id > 0)
-    const meldeParkIds = (ids: string[]) => melde(ueberblickKey, ids)
     bloecke.push({
       id: 'ueberblick', title: 'Überblick', icon: BildIcon,
       summary: `Schaubild · ${g.inv.bezeichnung}`,
       defaultOpen: true,
-      render: () => emob
-        ? <UeberblickBlockEmob anlageId={anlageId} geraete={geraete} inv={g.inv} meldeParkIds={meldeParkIds} />
-        : <UeberblickBlock anlageId={anlageId} geraete={geraete} inv={g.inv} meldeParkIds={meldeParkIds} />,
+      render: (fokus) => ueberblickInhalt(g, typ, anlageId, melde, alleInvs, { vollbild: fokus }),
     })
   }
 
@@ -836,21 +870,30 @@ function KomponentenTypInner({ typ, anlageId }: { typ: string; anlageId: number 
 
   const adapter = KOMPONENTEN_ADAPTER[typ]
   const ident = KOMPONENTEN_IDENTITAET[typ]
+  // FD-1/N3/N5: Deep-Link der Adresse (Instanz-Memo, je Mount einmal gelesen). `geraetId` (N5) wählt nach dem Laden
+  // das Gerät mit dieser Investitions-ID, sonst das erste.
+  const deep = useDeepLinkFokus()
+  const deepGeraetId = deep.geraetId
 
   useEffect(() => {
     if (!anlageId || !adapter) { setLoading(false); return }
     let ab = false
     setLoading(true); setError(null); setAktiv(0)
     adapter.fetch(anlageId)
-      .then((gs) => { if (!ab) setGeraete(gs) })
+      .then((gs) => { if (!ab) { setGeraete(gs); setAktiv(aktivAusDeepLink(gs, deepGeraetId)) } })
       .catch(() => { if (!ab) setError('Fehler beim Laden der Komponente') })
       .finally(() => { if (!ab) setLoading(false) })
     return () => { ab = true }
-  }, [anlageId, adapter, typ, retryKey])
+  }, [anlageId, adapter, typ, retryKey, deepGeraetId])
 
   const g = geraete[aktiv]
   const alleInvs = useMemo(() => geraete.map((d) => d.inv), [geraete])
   const bloecke = useMemo(() => (g ? geraetBloecke(g, typ, anlageId ?? 0, park, gemeldet, melde, alleInvs) : []), [g, typ, anlageId, park, gemeldet, melde, alleInvs])
+  // N3 (Nachlauf 4.2.1): `?fokus=ueberblick:schaubild` ist keine Block-ID — die BlockShell zeigte dafür «gibt es
+  // nicht». Der Hub rendert an ihrer Stelle das Schaubild-Vollbild des gewählten Geräts, solange der Block
+  // «Überblick» da ist und das Schaubild nicht geparkt (Muster `liveFokusVorhanden`), sonst den Hinweis (FD-5).
+  const schaubildDeepLink = deep.deepLink && deep.fokusId === SCHAUBILD_FOKUS_ID
+  const schaubildDa = bloecke.some((b) => b.id === 'ueberblick') && !ueberblickGeparkt(park.istGeparkt, 'el:ueberblick-schaubild')
 
   if (!anlageId) return <Hinweis text="Noch keine Anlage gewählt." />
   if (!adapter) return <Hinweis text={`Für „${ident?.label ?? typ}" gibt es noch keine Hub-Sicht.`} />
@@ -901,7 +944,16 @@ function KomponentenTypInner({ typ, anlageId }: { typ: string; anlageId: number 
       {g && g.monatswerte === 0 && anlageId != null && g.inv.id > 0 && (
         <HubLeerGrund anlageId={anlageId} investitionId={g.inv.id} />
       )}
-      <BlockShell key={`komp-${typ}-${g?.inv.id ?? aktiv}`} persistKey={`v4-komponenten-${typ}`} bloecke={bloecke} sortierbar voranstellen={VORANSTELLEN} />
+      {schaubildDeepLink && g
+        ? (schaubildDa
+            ? ueberblickInhalt(g, typ, anlageId, melde, alleInvs, { schaubildDeepLink: true })
+            : <FokusFehltOverlay fokusId={SCHAUBILD_FOKUS_ID} />)
+        : (
+          <BlockShell
+            key={`komp-${typ}-${g?.inv.id ?? aktiv}`} persistKey={`v4-komponenten-${typ}`} bloecke={bloecke} sortierbar voranstellen={VORANSTELLEN}
+            einbettenZusatz={g ? geraetEinbettenZusatz(g, alleInvs) : undefined}
+          />
+        )}
 
       {/* Element-Park-Fuß (SLICE 1): Hinweiszeile + „Geparkt (n)". Inert ohne Provider. */}
       <ParkFuss />
