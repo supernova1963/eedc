@@ -240,6 +240,11 @@ interface EnergieFlussProps {
 /** Tooltip des „Gesamtleistung"-Chips (#341) — bei BHKW-Anlagen die Abgrenzung des Werts. */
 export const TIP_GESAMTLEISTUNG = 'Summe aller PV-Erzeuger (ohne Batterie/Netz)'
 
+/** Tooltip-Satz zum Soll der laufenden Stunde — EIN Wortlaut für PV-Kachel und Chip (Gernot 5.11.2026). */
+export function sollTipZeile(sollText: string): string {
+  return `Soll (Prognose der laufenden Stunde): ${sollText}`
+}
+
 /** Tooltip-Satz bei ≥ 2 Wallboxen (Plan §1.4a) — eedc kennt die Zuordnung Auto → Wallbox noch nicht. */
 export const SATZ_ZUORDNUNG_UNBEKANNT = 'Welches Auto an welcher Wallbox lädt, weiß eedc noch nicht.'
 
@@ -421,13 +426,25 @@ export default function EnergieFluss({
   // „Gesamtleistung" im Rahmen über der PV-Reihe statt über dem Haus.
   const pvCount = komponenten.filter(k => k.key.startsWith('pv_')).length
 
+  // Soll der laufenden Stunde (N-691, Wert aus `CockpitLiveV4`) — Träger ist die PV, nicht das Haus
+  // (Entscheid Gernot 5.11.2026; bis dahin stand «Solar Soll» nackt über dem Haus, auf der Linie PV → Haus).
+  // Dieselbe Zählung wie der Chip: genau ein PV-Erzeuger ⇒ zweite Zeile seiner Kachel; mehrere ⇒ am
+  // «Gesamtleistung»-Chip (fehlt der Chip, entfällt das Soll — kein eigener Träger, keine Layout-Fläche).
+  const sollText = pvSollKw != null && pvSollKw > 0 ? `~${fmtZahl(pvSollKw, 1)} kW` : null
+  const sollAnKachel = sollText != null && pvCount === 1
+  const sollAmChip = sollText != null && pvCount > 1
+  // Rückfall (Nachtrag Gernot 5.11.2026, Lab rc24 Winterborn: nur eine Wärmepumpe als Live-Knoten): ohne
+  // PV-Knoten gibt es weder Kachel noch Chip — dann steht «Solar Soll» als Pille über dem Haus. Nie neben Kachel/Chip.
+  const sollUeberHaus = sollText != null && pvCount === 0
+
   // „Gesamtleistung"-Rahmen + Chip (#341 Rainer, Bau A §A6). Bedingung wie die
   // frühere „Solarleistung"-Zeile: Summe > 0 und mehr als ein PV-Knoten (über
   // die Komponenten, nicht über die gezeichneten Kacheln — eine gruppierte
   // Anlage behält ihre Summe). Den Platz (+14 Einheiten) hält das Layout
   // unabhängig vom Wert frei, damit das Bild nicht springt.
   const gesamt = summePv > 0 && pvCount > 1 && gesamtRahmen ? (() => {
-    const text = `Gesamtleistung ${formatPower(summePv)}`
+    const text = `Gesamtleistung ${formatPower(summePv)}${sollAmChip ? ` · Soll ${sollText}` : ''}`
+    const tip = sollAmChip ? `${TIP_GESAMTLEISTUNG}\n${sollTipZeile(sollText!)}` : TIP_GESAMTLEISTUNG
     const font = dims.socFontSize + 1
     // Breite geschätzt wie `zeichenBudget` (0,62 em je Zeichen, die breiteste
     // gängige Schrift) plus 7 Einheiten Innenrand je Seite (Muster).
@@ -438,7 +455,7 @@ export default function EnergieFluss({
     const x = breite <= gesamtRahmen.breite - 20
       ? gesamtRahmen.x + 10
       : Math.min(Math.max(2, gesamtRahmen.x + gesamtRahmen.breite / 2 - breite / 2), W - breite - 2)
-    return { text, font, breite, x }
+    return { text, tip, font, breite, x }
   })() : null
 
   // N-603 (03.10.2026): „Restverbrauch" statt „Haushalt", mit Formel. ⚠ Die Heute-Zeile ist NICHT der Rest:
@@ -692,7 +709,8 @@ export default function EnergieFluss({
           >
             Rest
           </text>
-          {/* P-433-1 S1-2: «gesamt …» direkt UNTER dem Kreis, als Gegenstück zum «Solar Soll» darüber —
+          {/* P-433-1 S1-2: «gesamt …» direkt UNTER dem Kreis (bis 5.11.2026 Gegenstück zum «Solar Soll» darüber,
+              das seitdem an der PV steht) —
               im Kreis ist neben Symbol, Zahl und «Rest» kein Platz (gemessen, Bericht P-433-1 H1).
               Chip-Form (wie «Gesamtleistung»), damit die Zeile auf jedem Hintergrund lesbar bleibt. */}
           {verbrauchGesamt != null && (() => {
@@ -726,31 +744,48 @@ export default function EnergieFluss({
           })()}
         </g>
 
-        {/* PV-Soll — oberhalb des Hauses. Bis Bau A §A6 stand darüber noch
-            „Solarleistung"; die Summe ist in den „Gesamtleistung"-Chip über
-            der PV-Reihe gezogen, das Soll rückt auf ihren Platz direkt über
-            dem Haus (vorher dort, wenn die Summe fehlte — bei einem PV-Knoten
-            oder nachts). */}
-        {pvSollKw != null && pvSollKw > 0 && (
-          <text
-            data-solar-soll
-            x={CX} y={CY - HAUS_R - 8}
-            textAnchor="middle"
-            style={{ fontSize: `${dims.socFontSize - 1}px` }}
-            className={bgVariant === 'sunset'
-              ? 'fill-purple-800 dark:fill-purple-400'
-              : bgVariant === 'alps'
-                ? 'fill-indigo-800 dark:fill-indigo-300'
-                // „Haus" (Bau B, Regel D): der Text steht nackt auf dem Bild —
-                // hell dunkel wie bei Alpen (6,4:1 statt 2,55:1 mit purple-500),
-                // dunkel der Bestand.
-                : bgVariant === 'haus'
-                  ? 'fill-indigo-800 dark:fill-purple-400'
-                  : 'fill-purple-500 dark:fill-purple-400'}
-          >
-            Solar Soll ~{fmtZahl(pvSollKw, 1)} kW
-          </text>
-        )}
+        {/* Rückfall ohne PV-Knoten (Nachtrag 5.11.2026): «Solar Soll» als Pille über dem Haus — Form wie der
+            «gesamt …»-Chip darunter (weiße Fläche, damit es auf jedem Hintergrund lesbar bleibt), Text und Rand
+            lila in den Farben des früheren nackten Soll-Texts je Hintergrund. Eigener Tooltip, deshalb neben
+            und nicht in der Haus-Gruppe. Eine Linie PV → Haus, auf der es läge, gibt es hier nicht. */}
+        {sollUeberHaus && (() => {
+          const text = `Solar Soll ${sollText}`
+          const font = dims.socFontSize - 1
+          const breite = text.length * 0.62 * font + 10
+          const hoehe = font + 5
+          const oben = CY - HAUS_R - 4 - hoehe
+          const tip = sollTipZeile(sollText!)
+          const [textKlasse, randKlasse] = bgVariant === 'sunset'
+            ? ['fill-purple-800 dark:fill-purple-400', 'stroke-purple-800 dark:stroke-purple-400']
+            : bgVariant === 'alps'
+              ? ['fill-indigo-800 dark:fill-indigo-300', 'stroke-indigo-800 dark:stroke-indigo-300']
+              // „Haus" (Bau B, Regel D): hell dunkel wie bei Alpen, dunkel der Bestand.
+              : bgVariant === 'haus'
+                ? ['fill-indigo-800 dark:fill-purple-400', 'stroke-indigo-800 dark:stroke-purple-400']
+                : ['fill-purple-500 dark:fill-purple-400', 'stroke-purple-500 dark:stroke-purple-400']
+          return (
+            <g data-solar-soll="" className="cursor-default" data-title={tip}>
+              <title>{tip}</title>
+              <rect
+                x={CX - breite / 2} y={oben}
+                width={breite} height={hoehe}
+                rx={hoehe / 2}
+                className={`fill-white dark:fill-gray-800 ${randKlasse}`}
+                fillOpacity={0.92}
+                strokeOpacity={0.5}
+                strokeWidth={1}
+              />
+              <text
+                x={CX} y={oben + hoehe / 2 + font * 0.35}
+                textAnchor="middle"
+                style={{ fontSize: `${font}px` }}
+                className={`font-semibold ${textKlasse}`}
+              >
+                {text}
+              </text>
+            </g>
+          )
+        })()}
 
         {/* Komponenten-Knoten — Einzelkacheln und Gruppen (Bau A §A4).
             Seit §A5 ist eine GRUPPENkachel ein Knopf (Klick, Enter, Leertaste)
@@ -770,8 +805,9 @@ export default function EnergieFluss({
           const hasSoc = soc != null
 
           // Trägt dieser Knoten zwischen kW-Wert und Gerätename eine ZWEITE
-          // Zeile? Das sind SoC (Speicher), Betriebsmodus (Wärmepumpe) und seit
-          // Bau A die Auto-Zeile der Wallbox — nie zwei davon am selben Gerät,
+          // Zeile? Das sind SoC (Speicher), Betriebsmodus (Wärmepumpe), seit
+          // Bau A die Auto-Zeile der Wallbox und seit 5.11.2026 das Soll der
+          // einzigen PV-Kachel — nie zwei davon am selben Gerät,
           // deshalb teilen sie sich den Platz.
           // ⭐ Die Frage steht hier EINMAL, weil ihre Antwort an ZWEI Stellen
           // gebraucht wird: für die Zeile selbst und für die Verschiebung des
@@ -783,6 +819,9 @@ export default function EnergieFluss({
           // P-433-2b K1 (K-12): ein gemessener Ladezustand ≠ «lädt» steht als Chip an der Wallbox-Kachel; lädt sie,
           // bleibt die Auto-Zeile. Ohne Ladezustand ist `zustandsChip` `null` und die Kachel bitgleich.
           const zustandsChip = !mitglieder ? ladezustandZeile(k, achsen.referenz) : null
+          // Soll an der PV-Kachel (Gernot 5.11.2026): nur bei genau einem PV-Erzeuger, nie an einer Gruppe.
+          // Text neutral (`fill: null`) — mit Auslastungs-Pegel zeichnet die Kachel ihn ohnehin neutral.
+          const sollHier = sollAnKachel && k.key.startsWith('pv_') && !mitglieder
           const zweite: ZweiteZeile | null = zustandsChip
             ? zustandsChip
             : node.kachelAuto
@@ -791,9 +830,11 @@ export default function EnergieFluss({
               ? { text: `${soc} %`, fill: socColor(soc) }
               : k.key === 'netz'
                 ? { text: NETZ_RICHTUNG_TEXT[netzRichtung(k, netzPufferW)], fill: isActive ? color : achsen.referenz }
-                : !mitglieder
-                  ? modusZeile(k, isActive, achsen.referenz)
-                  : null
+                : sollHier
+                  ? { text: `Soll ${sollText}`, fill: null, solarSoll: true }
+                  : !mitglieder
+                    ? modusZeile(k, isActive, achsen.referenz)
+                    : null
 
           // PV-Auslastung: Ist-Leistung / installierte kWp (bei der PV-Gruppe
           // Σ kW / Σ kWp — die Summe ist `null`, sobald einem Mitglied die kWp fehlt)
@@ -828,6 +869,7 @@ export default function EnergieFluss({
           const ladezustand = ladezustandKlartext(k)
           if (ladezustand) tipParts.push(`Zustand: ${ladezustand}`)
           if (auslastungPct !== null) tipParts.push(`Auslastung: ${fmtZahl(auslastungPct, 0)} % von ${fmtZahl(k.leistung_kwp, 1)} kWp`)
+          if (sollHier) tipParts.push(sollTipZeile(sollText!))
           // Netz: Bezug + Einspeisung separat anzeigen + Farberklärung
           if (k.key === 'netz') {
             const bezug = tagesWerte?.netz_bezug
@@ -915,8 +957,8 @@ export default function EnergieFluss({
             kingcap1: fett, leicht größer, kräftige PV-Farbe); der Tooltip
             grenzt den Wert ab (bei BHKW-Anlagen zählt der Erzeuger nicht mit). */}
         {gesamt && gesamtRahmen && (
-          <g data-gesamtleistung className="cursor-default" data-title={TIP_GESAMTLEISTUNG}>
-            <title>{TIP_GESAMTLEISTUNG}</title>
+          <g data-gesamtleistung data-solar-soll={sollAmChip ? '' : undefined} className="cursor-default" data-title={gesamt.tip}>
+            <title>{gesamt.tip}</title>
             <rect
               x={gesamt.x} y={gesamtRahmen.y - RAHMEN_CHIP_HOEHE / 2}
               width={gesamt.breite} height={RAHMEN_CHIP_HOEHE}

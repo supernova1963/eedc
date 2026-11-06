@@ -7,7 +7,8 @@ Geraetesicht mit der Tabelle je Geraet und dem einen Kasten (D-Sicht).
 # `plans/skript-golden-master-aktueller-monat.py` (alte gegen neue Antworten, bitgleich).
 import logging
 from datetime import date
-from typing import Optional
+from dataclasses import dataclass
+from typing import Any, Optional
 from backend.services.waerme_klima_block import achsen_der_anlage, geraete_zeilen, was_noch_moeglich
 from backend.core.berechnungen.waermepumpe_kennzahl import (
     als_arbeitszahl,
@@ -35,6 +36,10 @@ async def komponenten_detail(*, _wp_abgrenzung_je_funktion, _wp_funktion, _wp_ke
     """Komponenten-Detail aus den Monats-Fakten (ADR-002/P10, C1d): Speicher, Waermepumpe je Modus, BKW, E-Mob, Sonstiges.
 
     Aus `get_aktueller_monat` Zeilen 834-1150 (Stand vor dem Umzug) byte-identisch herausgeloest — Vorlage 2.
+
+    **Phasenform (RF-48, 5.11.2026, Bauform RF-1):** Kopf (die Teile des Monats-Fakts, `typen_mit_zeile`) · Kontext
+    `_DetailKontext` · `_speicher_detail` (async: Netzladung #427, η F-22, effektiver Ladepreis) · `_wp_detail`
+    (Modus-Split, Arbeitszahlen Kühlen und je Funktion). Signatur und die 34 Schlüssel der Rückgabe sind unverändert.
     """
     # ── Komponenten-Detail aus den Monats-Fakten (ADR-002/P10, C1d) ──
     # Bis C1d lief hier eine eigene `InvestitionMonatsdaten`-Batch mit fünf
@@ -62,7 +67,52 @@ async def komponenten_detail(*, _wp_abgrenzung_je_funktion, _wp_funktion, _wp_ke
     #: von „gar keine Daten" (P4). Vorher leistete das die Frage, ob die
     #: IMD-Batch für den Typ etwas hergab.
     typen_mit_zeile = monats_fakt.meta.typen_mit_zeile if monats_fakt else frozenset()
+    ctx = _DetailKontext(
+        _wp_abgrenzung_je_funktion=_wp_abgrenzung_je_funktion, _wp_funktion=_wp_funktion,
+        _wp_kennzahlen_je_geraet=_wp_kennzahlen_je_geraet, anlage_id=anlage_id, db=db, fenster=fenster,
+        investitionen=investitionen, jahr=jahr, monat=monat, speicher_entladung=speicher_entladung,
+        speicher_ladung=speicher_ladung, wp_abgrenzung_verletzt=wp_abgrenzung_verletzt, wp_arbeitszahl=wp_arbeitszahl,
+        wp_waerme_abgeleitet_kwh=wp_waerme_abgeleitet_kwh, anlage=anlage, heute=heute, mf_speicher=mf_speicher,
+        mf_wp=mf_wp, typen_mit_zeile=typen_mit_zeile,
+    )
+    _speicher = await _speicher_detail(ctx)
+    _wp = _wp_detail(ctx)
+    _loc = {**locals(), **_speicher, **_wp}  # nur gebundene Namen zurueckgeben — ein bedingt gesetzter Name bleibt sonst UnboundLocal
+    return {k: _loc[k] for k in ("mf_bkw", "mf_emob", "mf_sonstiges", "mf_wp", "speicher_auslastung", "speicher_auslastungs_basis", "speicher_eff_ladepreis", "speicher_eff_ladepreis_quelle", "speicher_ersparnis", "speicher_imd_ladepreis", "speicher_kapazitaet", "speicher_ladung_netz", "speicher_ladung_netz_herkunft", "speicher_soc_drift_flag", "speicher_vollzyklen", "speicher_wirkungsgrad", "speicher_wirkungsgrad_quelle", "wp_az_funktion", "wp_az_kuehlen", "wp_heizung", "wp_modus_abdeckung", "wp_modus_bezug", "wp_modus_entfeuchten", "wp_modus_gemessen", "wp_modus_heizen", "wp_modus_kuehlen", "wp_modus_lueften", "wp_modus_rest", "wp_modus_warmwasser", "wp_nutz_entfeuchten", "wp_nutz_lueften", "wp_strom_heizen", "wp_strom_warmwasser", "wp_warmwasser",) if k in _loc}
 
+
+@dataclass
+class _DetailKontext:
+    """Kontext von `komponenten_detail` (RF-48): die Eingänge des Endpunkts, die die Phasen lesen, und die Teile des
+    Monats-Fakts aus dem Kopf. `monats_fakt`/`wp_fakten` selbst liest nur der Kopf, `ist_aktueller_monat` niemand."""
+
+    _wp_abgrenzung_je_funktion: Any
+    _wp_funktion: Any
+    _wp_kennzahlen_je_geraet: Any
+    anlage_id: Any
+    db: Any
+    fenster: Any
+    investitionen: Any
+    jahr: int
+    monat: int
+    speicher_entladung: Any
+    speicher_ladung: Any
+    wp_abgrenzung_verletzt: Any
+    wp_arbeitszahl: Any
+    wp_waerme_abgeleitet_kwh: Any
+    anlage: Any
+    heute: Any
+    mf_speicher: Any
+    mf_wp: Any
+    typen_mit_zeile: Any
+
+
+async def _speicher_detail(ctx: _DetailKontext) -> dict:
+    """Speicher (F-24 Monatsfilter, Kapazität brutto, Netzladung aus der Zeile sonst aus den Tagen #427, η F-22,
+    Vollzyklen, Auslastung mit laufendem Monat, effektiver Ladepreis) — die 13 `speicher_*`-Namen."""
+    investitionen, jahr, monat, mf_speicher = ctx.investitionen, ctx.jahr, ctx.monat, ctx.mf_speicher
+    typen_mit_zeile, heute, speicher_ladung, speicher_entladung = ctx.typen_mit_zeile, ctx.heute, ctx.speicher_ladung, ctx.speicher_entladung
+    db, anlage, anlage_id, fenster = ctx.db, ctx.anlage, ctx.anlage_id, ctx.fenster
     # Speicher: Kapazität, Arbitrage-Ladung, Wirkungsgrad, Vollzyklen, Auslastung
     speicher_ladung_netz = None
     #: #427 Punkt 2: woher die Netzladung kommt, wenn nicht aus der Monatszeile (`NETZLADUNG_HERKUNFT_TAGE`).
@@ -262,7 +312,20 @@ async def komponenten_detail(*, _wp_abgrenzung_je_funktion, _wp_funktion, _wp_ke
                     "aktueller_monat: effektiver-Ladepreis-Lookup fehlgeschlagen "
                     "(anlage=%s, %s/%s): %s", anlage_id, jahr, monat, e,
                 )
+    return {
+        "speicher_ladung_netz": speicher_ladung_netz, "speicher_ladung_netz_herkunft": speicher_ladung_netz_herkunft, "speicher_wirkungsgrad": speicher_wirkungsgrad,
+        "speicher_vollzyklen": speicher_vollzyklen, "speicher_kapazitaet": speicher_kapazitaet, "speicher_auslastungs_basis": speicher_auslastungs_basis,
+        "speicher_auslastung": speicher_auslastung, "speicher_ersparnis": speicher_ersparnis, "speicher_soc_drift_flag": speicher_soc_drift_flag,
+        "speicher_wirkungsgrad_quelle": speicher_wirkungsgrad_quelle, "speicher_eff_ladepreis": speicher_eff_ladepreis, "speicher_eff_ladepreis_quelle": speicher_eff_ladepreis_quelle,
+        "speicher_imd_ladepreis": speicher_imd_ladepreis,
+    }
 
+
+def _wp_detail(ctx: _DetailKontext) -> dict:
+    """Wärmepumpe: Heizung/Warmwasser-Split, Modus-Split (#263 K-2), Arbeitszahl Kühlen (W-5) und je Funktion (W-4,
+    N-479, R-2) über die Layer-Funktionen — die 17 `wp_*`-Namen."""
+    _wp_funktion, mf_wp, _wp_abgrenzung_je_funktion, wp_waerme_abgeleitet_kwh = ctx._wp_funktion, ctx.mf_wp, ctx._wp_abgrenzung_je_funktion, ctx.wp_waerme_abgeleitet_kwh
+    wp_abgrenzung_verletzt, _wp_kennzahlen_je_geraet, wp_arbeitszahl = ctx.wp_abgrenzung_verletzt, ctx._wp_kennzahlen_je_geraet, ctx.wp_arbeitszahl
     # WP: Heizung/Warmwasser-Split (Wärme + bei getrennter Strommessung auch Strom, #191)
     wp_heizung = None
     wp_warmwasser = None
@@ -382,14 +445,25 @@ async def komponenten_detail(*, _wp_abgrenzung_je_funktion, _wp_funktion, _wp_ke
         achsen=achsen_der_anlage(_wp_kennzahlen_je_geraet),
         gesamt=als_arbeitszahl(wp_arbeitszahl),
     )
-    _loc = locals()  # nur gebundene Namen zurueckgeben — ein bedingt gesetzter Name bleibt sonst UnboundLocal
-    return {k: _loc[k] for k in ("mf_bkw", "mf_emob", "mf_sonstiges", "mf_wp", "speicher_auslastung", "speicher_auslastungs_basis", "speicher_eff_ladepreis", "speicher_eff_ladepreis_quelle", "speicher_ersparnis", "speicher_imd_ladepreis", "speicher_kapazitaet", "speicher_ladung_netz", "speicher_ladung_netz_herkunft", "speicher_soc_drift_flag", "speicher_vollzyklen", "speicher_wirkungsgrad", "speicher_wirkungsgrad_quelle", "wp_az_funktion", "wp_az_kuehlen", "wp_heizung", "wp_modus_abdeckung", "wp_modus_bezug", "wp_modus_entfeuchten", "wp_modus_gemessen", "wp_modus_heizen", "wp_modus_kuehlen", "wp_modus_lueften", "wp_modus_rest", "wp_modus_warmwasser", "wp_nutz_entfeuchten", "wp_nutz_lueften", "wp_strom_heizen", "wp_strom_warmwasser", "wp_warmwasser",) if k in _loc}
+    return {
+        "wp_heizung": wp_heizung, "wp_warmwasser": wp_warmwasser, "wp_strom_heizen": wp_strom_heizen,
+        "wp_strom_warmwasser": wp_strom_warmwasser, "wp_modus_heizen": wp_modus_heizen, "wp_modus_kuehlen": wp_modus_kuehlen,
+        "wp_modus_warmwasser": wp_modus_warmwasser, "wp_modus_lueften": wp_modus_lueften, "wp_modus_entfeuchten": wp_modus_entfeuchten,
+        "wp_nutz_lueften": wp_nutz_lueften, "wp_nutz_entfeuchten": wp_nutz_entfeuchten, "wp_modus_rest": wp_modus_rest,
+        "wp_modus_abdeckung": wp_modus_abdeckung, "wp_modus_gemessen": wp_modus_gemessen, "wp_modus_bezug": wp_modus_bezug,
+        "wp_az_kuehlen": wp_az_kuehlen, "wp_az_funktion": wp_az_funktion,
+    }
 
 
 def geraete_sicht(*, _wp_kennzahlen_je_geraet, get_val, emob_entscheid=None, investitionen, mf_bkw, mf_emob, mf_sonstiges, netzbezug_preis_effektiv_cent, speicher_eff_ladepreis, speicher_imd_ladepreis, speicher_ladung_netz, wp_arbeitszahl, wp_az_funktion, wp_az_kuehlen):
     """D-Sicht: die Tabelle je Geraet und der EINE Kasten; Sonstiges-Geraete, E-Mob-Mengen, BKW-Eigenverbrauch.
 
     Aus `get_aktueller_monat` Zeilen 1151-1278 (Stand vor dem Umzug) byte-identisch herausgeloest — Vorlage 2.
+
+    **Phasenform (RF-68, 5.11.2026, Bauform RF-1):** D-Sicht (Tabelle je Gerät, der EINE Kasten) · `_emob_mengen`
+    (PV/Netz/Extern/V2H aus dem kanonischen Pool C1d, der Entscheid der Route N-555/N-557) · BKW-Eigenverbrauch ·
+    `_sonstiges_summen` und `_sonstiges_geraete` (Liste je Gerät, Richtung N-250) · R15-1 Kosten der Speicher-Netzladung.
+    Signatur und die 15 Schlüssel der Rückgabe sind unverändert; die Gerätesicht rechnet nicht (Layer-Aufrufe).
     """
     # ── D-Sicht: die Tabelle je Gerät und der EINE Kasten ──────────────────
     #
@@ -408,6 +482,39 @@ def geraete_sicht(*, _wp_kennzahlen_je_geraet, get_val, emob_entscheid=None, inv
     ], wp_block_geraete)
 
     # E-Mobilität: PV/Netz/Extern-Split + V2H
+    emob_pv, emob_ladung_netz, emob_ladung_extern, emob_v2h = _emob_mengen(get_val, mf_emob, emob_entscheid)
+
+    # BKW: Eigenverbrauch
+    bkw_eigenverbrauch = None
+    if mf_bkw is not None and mf_bkw.eigenverbrauch_gemessen_kwh > 0:
+        bkw_eigenverbrauch = round(mf_bkw.eigenverbrauch_gemessen_kwh, 2)
+
+    # Sonstiges: erzeuger + verbraucher aggregieren
+    (
+        sonstiges_erzeugung, sonstiges_eigenverbrauch, sonstiges_einspeisung,
+        sonstiges_verbrauch, sonstiges_bezug_pv, sonstiges_bezug_netz,
+    ) = _sonstiges_summen(mf_sonstiges)
+    sonstiges_geraete = _sonstiges_geraete(mf_sonstiges, investitionen)
+
+    # (`netzbezug_durchschnittspreis` wird oben mit der Monatszeile geladen —
+    #  er geht in die Netzbezugskosten ein und muss dort schon vorliegen.)
+
+    # R15-1 (Rainer-Kostenkacheln): Kosten der Speicher-Netzladung.
+    # Preis-Kette TEP-effektiv → IMD-Ø (Handeingabe) → Bezugspreis
+    # (Ø-Monatspreis vor festem Tarif) — Berechnungs-Layer-Helper.
+    netzladung_kosten = berechne_netzladung_kosten(
+        speicher_ladung_netz,
+        eff_ladepreis_cent=speicher_eff_ladepreis,
+        imd_preis_cent=speicher_imd_ladepreis,
+        netzbezug_preis_cent=netzbezug_preis_effektiv_cent,
+    )
+    _loc = locals()  # nur gebundene Namen zurueckgeben — ein bedingt gesetzter Name bleibt sonst UnboundLocal
+    return {k: _loc[k] for k in ("bkw_eigenverbrauch", "emob_ladung_extern", "emob_ladung_netz", "emob_pv", "emob_v2h", "netzladung_kosten", "sonstiges_bezug_netz", "sonstiges_bezug_pv", "sonstiges_eigenverbrauch", "sonstiges_einspeisung", "sonstiges_erzeugung", "sonstiges_geraete", "sonstiges_verbrauch", "wp_block_geraete", "wp_block_moeglich",) if k in _loc}
+
+
+def _emob_mengen(get_val, mf_emob, emob_entscheid):
+    """E-Mobilität (RF-68): PV/Netz/Extern-Split + V2H — Rückgabe ``(emob_pv, emob_ladung_netz, emob_ladung_extern,
+    emob_v2h)``, je ``None`` ohne Menge über 0."""
     emob_pv = get_val("emob_pv_ladung_kwh")
     emob_ladung_netz = None
     emob_ladung_extern = None
@@ -437,13 +544,12 @@ def geraete_sicht(*, _wp_kennzahlen_je_geraet, get_val, emob_entscheid=None, inv
         emob_ladung_netz = round(_pool.netz_kwh, 2) if _pool.netz_kwh > 0 else None
         if _pool.extern_kwh > 0:
             emob_ladung_extern = round(_pool.extern_kwh, 2)
+    return emob_pv, emob_ladung_netz, emob_ladung_extern, emob_v2h
 
-    # BKW: Eigenverbrauch
-    bkw_eigenverbrauch = None
-    if mf_bkw is not None and mf_bkw.eigenverbrauch_gemessen_kwh > 0:
-        bkw_eigenverbrauch = round(mf_bkw.eigenverbrauch_gemessen_kwh, 2)
 
-    # Sonstiges: erzeuger + verbraucher aggregieren
+def _sonstiges_summen(mf_sonstiges):
+    """Sonstiges (RF-68): die sechs Summen der Gruppe aus dem Monats-Fakt, je ``None`` ohne Menge über 0 — Rückgabe
+    ``(erzeugung, eigenverbrauch, einspeisung, verbrauch, bezug_pv, bezug_netz)``."""
     sonstiges_erzeugung = None
     sonstiges_eigenverbrauch = None
     sonstiges_einspeisung = None
@@ -451,6 +557,27 @@ def geraete_sicht(*, _wp_kennzahlen_je_geraet, get_val, emob_entscheid=None, inv
     sonstiges_bezug_pv = None
     sonstiges_bezug_netz = None
 
+    if mf_sonstiges is not None:
+        if mf_sonstiges.erzeugung_kwh > 0:
+            sonstiges_erzeugung = round(mf_sonstiges.erzeugung_kwh, 2)
+        if mf_sonstiges.eigenverbrauch_kwh > 0:
+            sonstiges_eigenverbrauch = round(mf_sonstiges.eigenverbrauch_kwh, 2)
+        if mf_sonstiges.einspeisung_kwh > 0:
+            sonstiges_einspeisung = round(mf_sonstiges.einspeisung_kwh, 2)
+        if mf_sonstiges.verbrauch_kwh > 0:
+            sonstiges_verbrauch = round(mf_sonstiges.verbrauch_kwh, 2)
+        if mf_sonstiges.bezug_pv_kwh > 0:
+            sonstiges_bezug_pv = round(mf_sonstiges.bezug_pv_kwh, 2)
+        if mf_sonstiges.bezug_netz_kwh > 0:
+            sonstiges_bezug_netz = round(mf_sonstiges.bezug_netz_kwh, 2)
+    return (
+        sonstiges_erzeugung, sonstiges_eigenverbrauch, sonstiges_einspeisung,
+        sonstiges_verbrauch, sonstiges_bezug_pv, sonstiges_bezug_netz,
+    )
+
+
+def _sonstiges_geraete(mf_sonstiges, investitionen) -> list[SonstigesGeraet]:
+    """Sonstiges (RF-68): die Liste je Gerät in Investitions-Reihenfolge (leer ohne Monats-Fakt-Gruppe)."""
     sonstiges_geraete: list[SonstigesGeraet] = []
     if mf_sonstiges is not None:
         if mf_sonstiges.erzeugung_kwh > 0:
@@ -516,19 +643,5 @@ def geraete_sicht(*, _wp_kennzahlen_je_geraet, get_val, emob_entscheid=None, inv
                         eigenverbrauch_kwh=_v(g.eigenverbrauch_kwh),
                         einspeisung_kwh=_v(g.einspeisung_kwh),
                     ))
-
-    # (`netzbezug_durchschnittspreis` wird oben mit der Monatszeile geladen —
-    #  er geht in die Netzbezugskosten ein und muss dort schon vorliegen.)
-
-    # R15-1 (Rainer-Kostenkacheln): Kosten der Speicher-Netzladung.
-    # Preis-Kette TEP-effektiv → IMD-Ø (Handeingabe) → Bezugspreis
-    # (Ø-Monatspreis vor festem Tarif) — Berechnungs-Layer-Helper.
-    netzladung_kosten = berechne_netzladung_kosten(
-        speicher_ladung_netz,
-        eff_ladepreis_cent=speicher_eff_ladepreis,
-        imd_preis_cent=speicher_imd_ladepreis,
-        netzbezug_preis_cent=netzbezug_preis_effektiv_cent,
-    )
-    _loc = locals()  # nur gebundene Namen zurueckgeben — ein bedingt gesetzter Name bleibt sonst UnboundLocal
-    return {k: _loc[k] for k in ("bkw_eigenverbrauch", "emob_ladung_extern", "emob_ladung_netz", "emob_pv", "emob_v2h", "netzladung_kosten", "sonstiges_bezug_netz", "sonstiges_bezug_pv", "sonstiges_eigenverbrauch", "sonstiges_einspeisung", "sonstiges_erzeugung", "sonstiges_geraete", "sonstiges_verbrauch", "wp_block_geraete", "wp_block_moeglich",) if k in _loc}
+    return sonstiges_geraete
 

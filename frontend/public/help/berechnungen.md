@@ -166,10 +166,26 @@ und zum Verständnis der Datenflüsse.
 >
 > - **Tag, Anlagenzähler trägt ihn** (nicht jeder Erzeuger misst den ganzen Tag): ein Erzeuger mit eigenem Zähler behält seinen **Tageswert** (Σ seiner brauchbaren Stunden-Slots; ein Balkonkraftwerk mit Modul-Kindern den Rest nach ihnen, E4). Gemessen ist er, wenn kein Slot verworfen wurde, kein Tagesreset vorliegt und die Anlagen-Energie seiner Stunden ohne eigenen Slot plus seine Bündel-Energie höchstens **1 %** des Tages ist (`DAEMMERUNGSREST_ANTEIL`, eine Setzung). Die übrigen Träger teilen den Rest nach kWp (Marke `kwp_anteil`); übersteigen die Messungen den Anlagenzähler — oder misst jeder, aber mit anderer Summe —, werden sie gemeinsam auf ihn skaliert. Σ Tages-Keys = Σ Stunden. Layer: `core/berechnungen/pv_tages_praezedenz.py` (`gemessene_tageswerte`, `loese_aggregat_tag_auf`). Bis dahin bekam im Aggregat-Fall jeder Erzeuger nur den kWp-Anteil (seit v4.0.51; gespeicherte Tage heilen durch „Tag neu aggregieren" bzw. die Reparatur-Werkbank).
 > - **Tag ohne HA-Stundenwerte:** liefert die Zählertabelle die PV-Achse, stehen in `komponenten_kwh` nur ihre PV-Keys — eine Leistungs-Summe der Kurve (`pv_gesamt`, `pv_<bkw>` neben `bkw_<bkw>`) fällt heraus (seit v3.26.8 stand sie daneben und zählte doppelt).
-> - **Laufender Monat (Cockpit → Monat):** die Quellen-Präzedenz steht in `core/berechnungen/datenquellen.py::gewinner_je_feld`; Merge und Teilzeitraum-Marke entstehen beide daraus. Ein Anlagenzähler aus der HA-Monatsstatistik oder MQTT ab Monatsbeginn misst den Monat bis jetzt und geht durch die P7-Auflösung (Quellen mit eigenem Wert gewinnen, er füllt den Rest). Ersetzbar bleiben Tagesebene, MQTT-Rückfall, Connector ohne Abdeckung und im laufenden Monat auch der gespeicherte Zwischenstand und der Connector mit Abdeckung. Die eigene BKW-Zeile aus der Tagesebene nennt nur gemessene Tageswerte (`energie.bkw_gemessen_kwh_je_investition`).
+> - **Laufender Monat (Cockpit → Monat):** die Quellen-Präzedenz steht in `core/berechnungen/datenquellen.py::gewinner_je_feld`; Merge und Teilzeitraum-Marke entstehen beide daraus. Ein Anlagenzähler aus der HA-Monatsstatistik oder MQTT ab Monatsbeginn misst den Monat bis jetzt und geht durch die P7-Auflösung (Quellen mit eigenem Wert gewinnen, er füllt den Rest; N-587, seit 03.10.2026 — vorher sperrte er als Direktwert die Strings, die Zahl sprang mit dem Abschluss, gemessen 1000 statt 930 kWh). Grundgesamtheit sind die aktiven `pv-module` **und** Balkonkraftwerke (`erzeuger_traeger`, ein BKW mit Modul-Kindern tritt an sie ab); nur die Quellen HA-Statistik und MQTT, ein gespeicherter Wert (`gespeichert`) bleibt unberührt, ebenso der Connector mit Abdeckung (#361). Der abgeschlossene Monat liest den Zähler seit N-611 genauso (`pv_monatswerte.lade_pv_je_monat`). Code-Ort `aktueller_monat/aggregation.py::_anlagen_pv_zaehler` (Formel unten). Ersetzbar bleiben Tagesebene, MQTT-Rückfall, Connector ohne Abdeckung und im laufenden Monat auch der gespeicherte Zwischenstand und der Connector mit Abdeckung. Die eigene BKW-Zeile aus der Tagesebene nennt nur gemessene Tageswerte (`energie.bkw_gemessen_kwh_je_investition`).
+>
+>   ```
+>   PV-Achse (Monat) = Σ gemessene Quellen + max(0, Anlagenzähler − Σ gemessene Quellen)   (Rest nach kWp auf die Quellen ohne Wert)
+>   ```
+>
 > - **Gemessene 0 (Cockpit → Monat, laufend und ohne Abschluss, seit 04.10.2026):** hat eine Quelle im Monat **gemessen**, gilt ihr Wert auch, wenn er 0 ist — für Einspeisung, Netzbezug und den Anlagen-PV-Zähler sowie die Gerätefelder von Speicher, Balkonkraftwerk, Wallbox und E-Auto. Gemessen heißt bei der HA-Statistik mindestens **ein Intervall** (`SensorMonatswert.intervalle ≥ 1`: Anker + eine Zeile oder zwei Zeilen — eine einzelne Zeile misst nichts), bei der Tagesebene mindestens eine Stunde mit Wert (`TagesMonatsSumme.einspeisung_erfasst`/`netzbezug_erfasst`, nur diese zwei Felder). Ein nicht zugeordneter Zähler und einer ohne Zeilen im Monat bleiben `None` mit Grund. Auch im abgeschlossenen Monat mit Abschluss wirkt sie, wenn die gespeicherte Zeile für das Feld 0 trägt (Balkonkraftwerk, Speicher, Anlagen-PV-Zähler): das Feld zeigt dann 0,0 mit Herkunft Home Assistant statt „kein Wert“; eine gespeicherte Zahl über 0 wird nie verdrängt. Beispiel: Netzbezug-Zähler flach, drei Juli-Tage ⇒ Netzbezug 0,0 · Gesamtverbrauch 42,0 · Autarkie 100 % · Stromrechnung 0,00 € · Ergebnis 16,20 € (vorher alles „—“ und der Rat „Zähler zuordnen“). ⛔ **Nicht** für Wärmepumpe und einzelne Strings: eine WP-0 bräuchte eine Darstellungsregel für „kein Betrieb“, eine String-0 neben dem Anlagenzähler nähme dem String seinen Rest — beide bleiben bei „über 0“. Benannt: ein eingefrorener Sensor mit weiterlaufenden Zeilen ist 0 (wie HA ihn zeigt); im laufenden Monat schlägt eine HA-0 den gespeicherten Zwischenstand wie jeder HA-Wert. Proben: `test_n585_gemessene_null.py`.
-> - **Balkonkraftwerk mit Modul-Kindern:** der Monat tritt ab, in jeder Form — laufend, ohne Abschluss, abgeschlossen und im Tageswert-Rückfall der Monats-Fakten (`pv_verteilung.bkw_kinder_luecken_kwh`, Stufe 2 von P7). Der Tag bleibt bei E4.
+> - **Balkonkraftwerk mit Modul-Kindern:** der Monat tritt ab, in jeder Form — laufend, ohne Abschluss, abgeschlossen und im Tageswert-Rückfall der Monats-Fakten (`pv_verteilung.bkw_kinder_luecken_kwh`, Stufe 2 von P7; N-627, seit 04.10.2026). Gezählt werden nur Kinder, die im Monat aktiv sind (ADR-002/P11); der BKW-Wert füllt ihre Lücken (`max(0, BKW − Σ gemessene Kinder)` nach kWp), gemessene Kinder gewinnen, und das BKW trägt danach weder die PV-Achse noch eine eigene Zeile (vorher 66,6 / 72 statt 63 kWh im Monat ohne Abschluss). Code-Ort `aktueller_monat/aggregation.py::_bkw_abtretung`. Der Tag bleibt bei E4.
 > - **Modul ohne Wert, kein Gesamtwert:** die **Anzeige-Summe** nimmt die vorhandenen Werte (`pv_monatswerte.pv_teilsumme_je_monat`, `pv_vollstaendig=False`, Hinweis „Teilsumme"; der Daten-Checker nennt den Monat). Die **Prüf-Summe** `pv_summe_je_monat` bleibt `None` — Daten-Checker-PV-Map, Import-Vorschau und `gesamt_pv_kwh` prüfen nur vollständige Monate (Gernot 04.10.2026; N42 gilt nur noch für die Prüf-Leser).
+> - **Tageswert-Rückfall der Monats-Fakten** (`services/monats_fakten/bau.py`, Phasen von `_baue_fakt`; N-121/N-627/N-626/N-725): ergibt die P7-Auflösung für einen Monat **nichts** (`None` — kein Modulwert, kein Anlagenwert) und ist die Tagesebene geladen (mit `inkl_nur_tageswerte` oder für den Ladeanteil, `laden.py::_tagesebene`), trägt die **Modulsumme der Tage**: die Tages-Keys der Module plus die Tages-Keys der Balkonkraftwerke, die im Monat an aktive Modul-Kinder abgetreten haben (`abgetretene_bkw_ids` über die aktiven `pv-module`/`balkonkraftwerk`; N-627 — eine Umbuchung zwischen den beiden Gruppen, die Summe bleibt). Ein aufgelöster Wert, auch ein teilweise geschätzter, wird nie überschrieben; erst danach nimmt der Monat die Teilsumme der vorhandenen Modulwerte (N-626). Reihenfolge: **vollständige Summe → Tageswert → Teilsumme**. `pv_vollstaendig` folgt den Modulen auch im Rückfall (N-725): wahr nur, wenn die P7-Summe vollständig war oder der Monat gar keinen Modulwert trägt (der laufende Monat) — ein Monat mit Modul-Lücke bleibt „Teilsumme", auch wenn die Tagesebene die Zahl liefert (vorher hieß dieselbe Teilsumme „vollständig", kein Hinweis, der Daten-Checker prüfte gegen sie). Code-Ort `_pv_aus_tagen`.
+>
+>   **BKW-Rest (N-640):** trägt der Monat weder eine BKW-Zeile noch einen BKW-Anteil am Anlagenwert (N-621), kommt die BKW-Erzeugung aus den Tagen (`Tages_BKW` = BKW-Tages-Keys ohne die abgetretenen). Ist ein Teil davon nur ein kWp-Anteil am Anlagenzähler der Tage (Balkonkraftwerk ohne eigenen kWh-Zähler, Tages-Key mit Marke `kwp_anteil`, N-628) und kommen die Module aus **gespeicherten, vollständigen** Monatswerten (nicht aus den Tagen), bekommt das Balkonkraftwerk den Rest des Anlagenzählers:
+>
+>   ```
+>   BKW_Monat = Tageswert_BKW_gemessen + max(0, Σ Tages_Module + Σ Tages_BKW − Modulsumme_Monat − Tageswert_BKW_gemessen)
+>     Tages_Module           = Tages-Keys der Module + abgetretene BKW-Tages-Keys (N-627)
+>     Tageswert_BKW_gemessen = min(Tages_BKW, Σ BKW-Tages-Keys ohne kwp_anteil)
+>   ```
+>
+>   Kommen die Module selbst aus den Tagen oder sind sie nur eine Teilsumme, bleibt der Tageswert (dann sind beide Seiten Anteile derselben Tage). Ein Ergebnis 0 setzt keine Tageswert-Marke. Ohne die Regel stand der Anteil obendrauf (Frank85: 215,2 = 161,4 + 53,8 gegen den Gesamtzähler 161,4). Code-Ort `_bkw_rest`; `pv_kwh = Modulsumme + BKW + BKW-Anteil am Anlagenwert` steht in `_erzeugung` (N-621), dort auch die Wandlungsverluste aus dem Kanal-Monat (N-588).
 
 > **Seit 2026-07-31 ist die Lesequelle nicht mehr `lade_pv_je_monat`, sondern eine Schicht darüber:** `services/monats_fakten/::lade_monats_fakten` (ADR-002/**P10**, [Konzept](KONZEPT-MONATS-FAKTEN.md)). Sie liefert die **ganze** Monatszeile kanonisch aufgelöst — die PV ist darin ein Feld (`erzeugung.pv_module_kwh` bzw. `erzeugung.pv_kwh`), daneben stehen Zähler, Speicher, E-Mobilität, Wärmepumpe, Sonstiges, Tarif, §51 und die Verbrauchs-Kennzahlen. Sie **ruft** `lade_pv_je_monat` (die P7-Regel bleibt unverändert), wendet aber zusätzlich **einmal** alle Zeitfilter (`aktiv` · Anschaffung · Stilllegung) und den Dienstwagen-Filter an. Wer eine abgeleitete Monatsgröße auswertet, nimmt sie von dort; `lade_pv_je_monat` direkt zu rufen bleibt richtig, wo **nur** die Pro-Modul-PV gebraucht wird (String-Vergleich, PV-Diagnose). Ausgenommen sind Schreib-, Import- und Checker-Pfade — die Schicht ist reines Lesen.
 >
@@ -639,6 +655,11 @@ Die Felder derselben Antwort:
 > ⚠ **Die pauschale BKW-Schätzung ist davon unberührt und bleibt eine Schätzung** (0,9 kWh/Wp,
 > 80 % Eigenverbrauch). Sie greift nur noch für ein Balkonkraftwerk ohne Modul-Kinder — dort, wo
 > keine gemessenen Modulwerte existieren. Melder: Issue #381 (azywietz-web).
+>
+> Ist gar keine Leistung gepflegt (weder `leistung_kwp` noch `parameter.kwp`/`leistung_kwp` noch
+> `leistung_wp × anzahl`, `get_bkw_kwp` = 0), rechnet die Pauschale mit **800 Wp**, und die Zeile nennt
+> diese Leistung im Hinweis („Balkonkraftwerk 800 Wp") — eine Annahme, keine Messung (Register N-273;
+> `roi.py::_bkw_pauschal_beitrag`, Anzeige `roi_standalone.py::_bkw_bewertung`).
 
 **Auch die PDF-Berichte rechnen so.** Der Jahresbericht leitete Eigenverbrauch, Autarkie und
 EV-Quote bis v4.0.0 allein aus der PV-Erzeugung ab, während der Einspeise-Zähler daneben die Summe
@@ -790,6 +811,32 @@ Monat zwischen Inbetriebnahme und heute, der gemessene Mengen trägt — auch oh
   der gemittelten Mengen, nicht das Mittel der Prozente.
 * Kopfzahl = das Jahr bis heute (inkl. laufendem Monat); Vergleich, Vorjahr, Ø-Jahr nur über abgeschlossene Monate.
 
+Die übrigen Faltungsregeln, die eine eigene Formel tragen (M = Monate des Zeitraums):
+
+```
+η Speicher (Jahr)        = speicher_wirkungsgrad(Σ_M Ladung, Σ_M Entladung)      Quelle „fenster_lang"
+                           (eine Quote der Jahressummen — kein Mittel der Monats-η)
+Netzbezug-Preis (Ø)      = Σ(Preis_m × Netzbezug_m) ÷ Σ Netzbezug_m               Preis_m = Kaskaden-Preis des
+                           über die Monate mit Preis UND Menge; Σ Menge = 0        Monats (N-680)
+                           ⇒ ungewichtetes Mittel der Monatspreise
+Einspeise-Preis (Ø)      = Σ(Preis_m × Einspeisung_m) ÷ Σ Einspeisung_m          dieselbe Regel
+…_durchschnittspreis     = der gewichtete Ø oben, nur wenn ein Monat ihn trägt, sonst None
+Grundlast-Anteil         = Σ Grundlast_kWh ÷ Σ Gesamtverbrauch_m × 100           Nenner NUR über Monate mit
+                                                                                  Grundlast; Nenner 0 ⇒ None
+Grundlast (kW)           = Mittel der Monate
+WP nicht aufgeteilt      = Übersicht des Jahres (P12), sonst
+                           max(0, Σ WP-Strom − Σ Modus Heizen − Σ Kühlen − Σ Warmwasser)
+Quote paarweise          = Σ Zähler ÷ Σ Nenner × 100, Nenner 0 ⇒ None
+```
+
+Die WP-Kennzahlen (JAZ, Gründe, Geräte, Kälte) kommen aus der Übersicht des Jahres, ohne sie bleiben nur die Mengen.
+Investitions-Finanzzeilen werden je Investition summiert (Identität vom ersten Vorkommen, die Monats-Formeln entfallen;
+zwei fehlende Erlöse bleiben fehlend), sonstige Geräte je Kategorie und Bezeichnung (0 ⇒ kein Wert). **Code-Ort:**
+`falte_zeitraum` setzt die Antwort aus den Teilstücken seiner Phasen zusammen (RF-52) — `_falte_kopf_und_bilanz` (Mengen,
+Autarkie/EV-Quote/Wandlungsverluste paarweise) · `_falte_speicher` (η, Auslastung, Netzlade-Preis) · `_falte_wp` ·
+`_falte_emob_bkw_sonstiges` · `_falte_leiter_und_soll` (Leiter, SOLL) · `_falte_preise` (gewichtete Preise, Grundgebühr) ·
+`_falte_grundlast_und_details`; gerundet wird erst am Rand der Jahresroute (`services/jahres_aggregat.py::runde_rand`).
+
 
 **Endpoint:** `GET /api/cockpit/uebersicht/{anlage_id}` in `cockpit.py`
 
@@ -802,7 +849,7 @@ Einspeise-Erlös     = Σ(Einspeisung) * Einspeisevergütung / 100
 EV-Ersparnis        = Σ(PV_Eigenverbrauch * EV_Preis) / 100         (s. Hinweis; je Monat der EV-gewichtete Ø, sonst Netzbezug_Preis)
 Netto-Ertrag        = Einspeise-Erlös + EV-Ersparnis + Erlös_eigener_Satz
                       [- USt_Eigenverbrauch]
-BKW-Ersparnis       = Σ(BKW_Eigenverbrauch) * Netzbezug_Preis / 100
+BKW-Ersparnis       = Σ(BKW_Rest_Eigenverbrauch * EV_Preis) / 100   (P9: nur BKW-Monate ohne erfasste Erzeugung; Preis wie EV-Ersparnis, A-2)
 Sonstige-Netto      = Σ(sonstige_ertraege) - Σ(sonstige_ausgaben)
 
 Betriebskosten_Zeitraum = Σ_Komponente Betriebskosten_Jahr × aktive_Monate_im_Zeitraum / 12
@@ -814,6 +861,19 @@ Kumulative Ersparnis = Netto-Ertrag + WP-Ersparnis + E-Mob-Ersparnis
 Rendite (%)         = Kumulative_Ersparnis / Investition_gesamt * 100   (Antwortfeld jahres_rendite_prozent)
                       Investition_gesamt im Einzeljahr: nur Investitionen mit Anschaffung ≤ 31.12. (N-720)
 ```
+
+> **`BKW_Rest_Eigenverbrauch` entsteht in der Faltung der Monats-Fakten** (`monats_fakten/roh.py::_RohMonat._falte_bkw`,
+> ADR-002/P9): je BKW-Zeile entscheidet `bkw_finanz_beitrag`, welcher Wert die Finanz-Zeile trägt — mit erfasster
+> Erzeugung die Erzeugung (Rest 0, der selbst verbrauchte Teil steckt in `PV − Einspeisung − Speicherladung`), ohne sie
+> der gemessene Eigenverbrauch. Für ein Balkonkraftwerk, das an Modul-Kinder abgetreten hat (N-266), und für eines mit
+> Anteil am gespeicherten Anlagenwert (N-621) entfällt er ganz — seine Erzeugung steht über die Kinder bzw. den Anteil
+> schon in der PV-Summe:
+>
+> ```
+> BKW_Rest_Eigenverbrauch(Monat) = Σ_BKW-Zeilen  ( 0                     wenn abgetreten oder Anteil am Anlagenwert
+>                                                 0                     wenn Erzeugung > 0
+>                                                 Eigenverbrauch_gemessen sonst )
+> ```
 
 > **Betriebskosten des Zeitraums — die Laufzeit-Regel (N-228), eine Funktion.** Jede Komponente trägt ihre
 > gepflegten Betriebskosten nur über **ihre** aktiven Monate des Zeitraums (Anschaffung bis Stilllegung), ungerundet:
@@ -917,6 +977,24 @@ Rendite (%)         = Kumulative_Ersparnis / Investition_gesamt * 100   (Antwort
 > Bug". Sie war einer: ein Vorjahr mit fehlender Stromrechnung zählte sie als 0. Seit der Ergebnis-Leiter folgt das
 > Vorjahr derselben Regel wie der Monat; das Feld `gesamtnettoertrag_euro` ist entfallen.)*
 
+> **Die Zeile „Balkonkraftwerk" im T-Konto (Cockpit → Monat/Jahr, N-724/N-607, seit 12.10.2026).**
+>
+> ```
+> BKW-Zeile (Ersparnis) = Anteil_bewertet × EV_Preis / 100      (EV_Preis: EV-gewichteter Ø des Monats, sonst Netzbezug_Preis)
+> Anteil_bewertet       = bkw_beitrag_im_monat(…).anteil_bewertet (an Modul-Kinder abgetreten ⇒ 0; ohne Zählerzeile nicht bewertbar)
+> BKW-Zeile (Erlös)     = Einspeisung_BKW × Einspeisevergütung / 100
+> ```
+>
+> Die Ersparnis ist ein **Teil** der Eigenverbrauchs-Ersparnis — T-Konto und Komponenten-Tabelle schneiden sie dort
+> heraus, sie ist kein zweiter Posten — und trägt deshalb deren Preis (N-607). Den bewerteten Anteil an der Hausbilanz
+> rechnet dieselbe Stelle wie *Komponenten → Balkonkraftwerk* (`services/monats_fakten/ableitungen.py::bkw_beitrag_im_monat`
+> ⇒ `core/berechnungen/bkw_finanz.py::bkw_eigenverbrauch_anteil`, ADR-002/P9, ohne bewertbare Wandlungsverluste N-588):
+> ein an Modul-Kinder abgetretenes Gerät (ADR-002/P11) trägt 0, ohne Zählerzeile ist der Anteil nicht bewertbar (P4) —
+> keine 0 und nie die ganze Erzeugung. Ohne Monats-Fakt (Einzelaufruf) trägt nur ein gemessener Eigenverbrauch der
+> Zeile. Bis 12.10.2026 stand im T-Konto `(eigenverbrauch_kwh or pv_erzeugung_kwh) × Netzbezug_Preis`: gemessen 27,00 €
+> gegen 18,82 € im Hub für denselben Monat, und ein abgetretenes Gerät trug weiter 27,00 €. Code-Ort
+> `aktueller_monat/tkonto.py::_bkw_zeile`; Probe `test_n724_bkw_hub_gleich_tkonto.py`.
+
 > **Anschaffungsdatum-Grenze auch im Vorjahres-Vergleich (DI-5/DI-2-C):** Der Trend-Pfeil zum Vorjahr
 > zieht die Vorjahres-Werte **symmetrisch** zum laufenden Monat — WP- und E-Mob-Ersparnis fließen nur
 > für im jeweiligen Vorjahresmonat **aktive** Komponenten ein (`ist_aktiv_im_monat`, also innerhalb
@@ -961,8 +1039,8 @@ Zusatzkosten. Bis dahin entstand keine Zeile, und HA-Export und Aussichten zogen
 #### E-Mob-Ersparnis im Cockpit
 
 ```
-Benzin_Verbrauch    = Σ(km_gefahren) * 7 / 100    (7 L/100km Annahme)
-Benzin_Kosten       = Benzin_Verbrauch * 1.80      (1.80 EUR/L Annahme)
+Benzin_Verbrauch    = Σ(km_gefahren) * Vergleichsverbrauch / 100   (Parameter des Autos, Default 7,5 L/100 km)
+Benzin_Kosten       = Benzin_Verbrauch * Benzinpreis               (Kraftstoffpreis des Monats, sonst Parameter, sonst 1,65 €/L)
 Strom_Kosten        = Ladung_Netz * Wallbox_Preis / 100
                     + Ladung_PV   * EV_Preis      / 100   ← seit N-672 (Preis der Eigenverbrauchs-Ersparnis des Monats)
                     + Kosten_externe_Ladung
@@ -1083,8 +1161,9 @@ Block    vom Sprung rückwärts über die Wallbox-Stunden; aus jeder Stunde, was
          Σ ≥ Sprung − 0,05 kWh, höchstens bis zur Stunde des vorigen Sprungs IRGENDEINES Autos (einschließlich).
          Nullstunden werden übersprungen; eine gemeinsame Stunde wird nach Restmengen geteilt.
 Menge    = der Sprung (gemessen am Auto) — nie die Summe der Wallbox-Stunden.
-PV       = Σ (Blockstunde × PV-Anteil dieser Stunde nach der Einspeise-Deckung) ÷ Σ Blockstunden × Sprung
-           (davon aus dem Speicher ebenso, als Teilmenge);
+PV       = Σ (Blockstunde × PV-Anteil dieser Stunde nach der Einspeise-Deckung) ÷ Σ ableitbare Blockstunden × Sprung
+           (ableitbar = Anteil bekannt und keine gebündelte Stunde; davon aus dem Speicher ebenso, als Teilmenge,
+           höchstens der PV-Teil);
            eine gebündelte Stunde (Zählerlücke, n > 1) zählt zur Blockenergie, liefert aber keinen Anteil —
            ohne ableitbare Stunde teilt der Wallbox-Monatsanteil. Der Anteil ist eine Schätzung derselben
            Regel wie der PV-Anteil der Heimladung.
@@ -1093,6 +1172,11 @@ Monat    Anteil eines Monats = Σ Blockstunden, die in ihm BEGINNEN, ÷ Σ Block
 Kennzeichen  stunden_gedeckt = Σ Blockstunden ÷ Sprung; unter 0,95 hat die Wallbox den Vorgang nicht voll gezählt.
            Mikrosprünge bis 0,05 kWh (Standby des Fahrzeug-Zählers) zählen als Menge, nicht als Ladevorgang.
 ```
+
+Code-Orte (RF-80): `emob_ladebloecke.py::bilde_ladebloecke` sammelt die Blöcke über `_wallbox_achse` (mehrfach genannte
+Stunden summiert, Stunden ≤ 0 fallen weg, Restmenge nach den schon gespeicherten Blöcken), `_spruenge_nach_zeit`
+(Reihenfolge nach Zeit, dann Auto; ein Sprung ≤ 0 bildet keinen Block und setzt keine Schranke), `_block_rueckwaerts`
+(Zeile «Block») und `_block_anteile` (Zeilen «Menge», «PV», «Kennzeichen»).
 
 In Regel 2 Schritt 1 ist die Summe der monatsverteilten Sprünge dann die eigene Messung des Autos (Menge **und**
 PV-Anteil) an der Stelle von „Heim: gesamt"; „Heim: PV/Netz" gehen weiter vor. Der Daten-Checker (Regel 7) vergleicht
@@ -1197,7 +1281,7 @@ Vollzyklen = Entladung_kWh ÷ Kapazität_brutto_kWh
 
 **SoT:** `core/berechnungen/speicher.py::vollzyklen`. Alle Sichten rufen ihn auf —
 Komponenten-Hub (`investitionen/dashboard_*.py`), Cockpit Tag (`energie_profil/tage_werte.py`),
-Monat/Jahr (`aktueller_monat.py`) und **Cockpit-Übersicht (`cockpit/uebersicht.py`)**,
+Monat/Jahr (`aktueller_monat/komponenten.py::_speicher_detail`) und **Cockpit-Übersicht (`cockpit/uebersicht.py`)**,
 PDF-Jahresbericht, HA-Sensor `speicher_zyklen`.
 Gewächtert von `backend/tests/test_speicher_zyklen_kapazitaets_basis.py` (inkl. Drei-Pfad-Symmetrie),
 `test_tage_werte_symmetrie.py` und `test_speicher_kanon_symmetrie.py`.
@@ -1226,7 +1310,7 @@ Auslastung [%]     = Entladung_kWh ÷ Auslastungs-Basis × 100
 ```
 
 **SoT:** `core/berechnungen/speicher.py::auslastungs_basis_kwh` + `auslastung_prozent`.
-Geliefert von `aktueller_monat.py` (Felder `speicher_auslastungs_basis_kwh` /
+Geliefert von `aktueller_monat/komponenten.py::_speicher_detail` (Felder `speicher_auslastungs_basis_kwh` /
 `speicher_auslastung_prozent`), angezeigt in *Cockpit → Monat* und *→ Jahr*.
 
 **Warum die Basis ein eigenes Feld ist:** Auslastungen mehrerer Monate lassen sich **nicht
@@ -1255,7 +1339,7 @@ Ersparnis = PV-Anteil   × (Netzbezug − Einspeisevergütung) / 100
 ```
 
 **SoT:** `core/berechnungen/speicher_wirtschaftlichkeit.py::berechne_speicher_ersparnis`.
-Aufrufer: T-Konto (`aktueller_monat/tkonto.py::_baue_investition_financial`), Speicher-Dashboard und
+Aufrufer: T-Konto (`aktueller_monat/tkonto.py::_speicher_zeile`), Speicher-Dashboard und
 Sonstiges-Speicher (`investitionen/dashboard_sonstiges.py`), Aussichten.
 **Beide Preise je Monat aus den Monats-Fakten** (`TarifFakten.netzbezug_preis_cent` und `einspeiseverguetung_cent`:
 #392-Monatssatz → Tarif des Monats → Vorbelegung 8,2 ct), in T-Konto und Hubs dieselben — auch für V2H und den
@@ -1273,12 +1357,64 @@ erbracht. Die entgangene Vergütung ist eine reale Gegenposition (Drift-Audit A3
 gilt für sie nicht. Ihr Vorteil ist `Netzbezug − Ladepreis`; ohne gepflegten Ladepreis ist sie
 kostenneutrale Durchleitung (z. B. Backup-Vorhaltung).
 
+**Der Ladepreis eines Monats ist verbrauchsgewichtet** — die Faltung der Monats-Fakten
+(`monats_fakten/roh.py::_RohMonat._falte_speicher`) summiert je Speicher-Zeile Preis × Menge und Menge, der Ø entsteht
+erst beim Lesen (`SpeicherFakten.netzladung_preis_cent`):
+
+```
+Ladepreis_Monat = Σ (Ladepreis_Zeile × Netzladung_Zeile) / Σ Netzladung_Zeile
+                  nur Zeilen mit Ladepreis > 0 und Netzladung > 0; Σ Gewicht = 0 ⇒ None (Leser fallen auf den Bezugspreis)
+```
+
+Zwei Speicher mit 100 kWh zu 10 ct und 10 kWh zu 30 ct ergeben 11,8 ct, nicht das Mittel 20 ct. Ohne Speicher-Zeile
+trägt der Tageswert-Rückfall dieselben zwei Felder TEP-gewichtet aus den Tagen (#427, §6b).
+
 > ⚠ **Zwei Fundstellen wichen bis zum 2026-08-04 ab** — beide sichtbar: `aktueller_monat.py`
 > rechnete `Entladung × Netzbezug` (bei 30/8 ct **36 % zu hoch**), `dashboard_speicher.py` (damals `dashboards.py`) den Spread
 > **inline** auf der gesamten Entladung *und* wies den Arbitrage-Gewinn zusätzlich aus — der
 > Komponenten-Hub addiert beide Posten, netzgeladene Energie zählte damit doppelt. Die Formel im
 > Layer zu haben genügt nicht; sie ist erst durchgesetzt, wenn keine Inline-Kopie mehr danebensteht
 > (ADR-001).
+
+#### Preis- und Speicher-Sensoren des HA-Exports (Stufe 3b)
+
+Neun anlagenweite Sensoren für Automationen in Home Assistant — **Momentwerte je kWh** der laufenden Stunde, keine
+Monats- oder Jahresgröße. Rechenort `api/routes/ha_export/anlage_preise_speicher.py::preise_speicher_sensoren` (eine
+Phase von `calculate_anlage_sensors`; sie lädt nichts — Bezugspreis-Reihen und Wirkungsgrade je Speicher holt der
+Orchestrator vorher, weil die Steuerungs-Sensoren dieselben brauchen). Die Formeln darunter liegen im Layer
+(`core/berechnungen/preis_reihe.py`, `speicher_kosten.py`). `Slot` = die laufende Stunde in Backward-Konvention
+(`jetzt_stunde + 1`).
+
+```
+Bezugspreis jetzt     = (1 + USt) × Börsenpreis_Slot + Aufschlag     dynamischer Tarif mit ableitbarem Aufschlag
+                      = Börsenpreis_Slot                              dynamisch ohne Aufschlag (Näherung, „unvollständig")
+                      = Arbeitspreis des Zeitfensters / des Tarifs    Zeitfenster / Festpreis
+Einspeisevergütung    = Vergütung des Tarifs bzw. gepflegter Monatswert
+Eigenverbrauch-Wert   = Bezugspreis jetzt − Einspeisevergütung        NUR bei vollständigem Bezugspreis (Flex P-5)
+η Anlage              = min(η je Speicher)                            None, sobald EIN Speicher weder gemessenen noch
+                                                                      gepflegten Wirkungsgrad hat (kein Vorgabewert)
+Speicherstrom-Kosten  = Einspeisevergütung ÷ η Anlage                 entgangene Vergütung je entnommener kWh
+Netzladekosten        = Bezugspreis jetzt ÷ η Anlage                  nur wenn ein Speicher „lädt aus dem Netz" hat
+Leer um               = Ende des ersten Slots NACH dem Sim-Start mit SoC_vorher > 2 % und SoC ≤ 2 %
+Reicht bis Mitternacht= kein solcher Übergang UND End-SoC (letzter Slot des Tages) > 2 %
+Abregelung heute      = Σ_Stunden (Rohprognose − an der Wechselrichter-Grenze gekappt)   Skala der Rohprognose
+Einspeisung unerwünscht (§51) = Börsenpreis_Stunde < 0  UND  PV-Prognose_Slot > 0
+```
+
+* **Kein Wert ⇒ kein Sensor** (ADR-002/P4): fehlt ein Eingang (Vergütung, η, Bezugspreise, SoC-Reihe, AC-Grenze,
+  Börsenpreis der Stunde), entsteht der Sensor nicht — eine 0 wäre in HA eine Messung. Ausnahme in die andere Richtung:
+  Abregelung **0** ist ein Wert („heute wird nichts abgeregelt").
+* Die beiden Speicher-Sensoren und die Abregelung/§51 laufen auch ohne Bezugspreise; Bezugspreis, Vergütung und
+  Eigenverbrauch-Wert nur mit ihnen. «Leer um» und «reicht» kommen aus **einem** Simulationslauf
+  (`_leer_um_und_reicht`, Start beim zuletzt gemessenen Ladestand, V1) — «leer um» darf deshalb in der Vergangenheit
+  liegen. §51 ist **nicht tarifgebunden**: es zählt die Börse, nicht der eigene Bezugspreis.
+* **Abgrenzung zum Spread oben:** der Spread bewertet die **Ersparnis** einer entladenen kWh über einen Monat
+  (Bezug − Vergütung bzw. Bezug − Ladepreis). Die Speicherstrom-Kosten sind der **Preis** einer entnommenen kWh jetzt
+  (Vergütung ÷ η) — eine andere Größe für eine andere Frage (lohnt es, jetzt aus dem Speicher zu verbrauchen?).
+* **Code-Ort je Phase (RF-51):** `_bezugspreis_jetzt` (Bezugspreis, Vergütung; Formeltext `_bezug_berechnung`) ·
+  `_eigenverbrauchswert` · `_speicher_kosten` (η Anlage, Speicherstrom, Netzladen) · `_speicher_reichweite` (leer um,
+  reicht bis Mitternacht) · `_abregelung_und_51`. Anwender-Wortlaut und Attribute:
+  [SENSOR-REFERENZ §11](SENSOR-REFERENZ.md#11-export-sensoren-eedc--ha).
 
 #### Welche Stunde gilt — Ladestand, Preis und Menge (N-387, 2026-09-23)
 
@@ -1516,6 +1652,12 @@ Zwei Pfade, in dieser Reihenfolge:
 > Deshalb wird er ausgewiesen **und gekennzeichnet**. Unterdrückt wird nur, was
 > nachweislich falsch ist: über 100 % kann kein Speicher.
 
+> **In *Cockpit → Monat*** (`aktueller_monat/komponenten.py::_speicher_detail`) wird die Funktion für den Kalendermonat
+> gerufen (`fenster_monate=1`, nie das lange Fenster), nur mit Ladung **und** Entladung > 0. Liefert sie keinen Wert
+> (kein SoC am Rand), steht der rohe Quotient, wenn er ≤ 100 % ist (`roh-unkorrigiert`); schlägt die Ermittlung fehl,
+> gibt es **keinen** rohen Rückfall, sondern den Grund `nicht-ermittelbar`. `speicher_soc_drift_flag` heißt seit F-22
+> „kein belastbarer η" (Probe `test_rf47_aktueller_monat_phasen.py`).
+
 > **Der Layer-SoT `speicher_effizienz_prozent` klemmt bewusst NICHT**
 > („Diagnose statt stillem Cap"). Die Diagnose ist der Daten-Checker: meldet ein
 > Speicher **kumulativ** mehr Entladung als Ladung, ist das kein Carry-over mehr,
@@ -1632,6 +1774,20 @@ Für Jahresprognose:
   Prognose_Benzinpreis = Ø(Monatsdaten.kraftstoffpreis_euro)  (historischer Durchschnitt)
                        ∨ Investition.parameter.benzinpreis_euro  (Fallback)
 ```
+
+In der **ROI-Sicht** ([Auswertungen → ROI](HANDBUCH_BEDIENUNG.md#42-roi)) rechnet die E-Auto-Zeile mit **einem**
+Preis für die Jahres-Prognose, aufgelöst in dieser Rangfolge (`services/eauto_wirtschaftlichkeit.py::resolve_eauto_benzinpreis`,
+die Quelle steht im Detail als `benzinpreis_quelle`):
+
+```
+Benzinpreis_ROI = Query benzinpreis_euro (Slider)                         → "slider"
+                ∨ Investition.parameter.benzinpreis_euro (gepflegt)        → "parameter"
+                ∨ letzter Monatsdaten.kraftstoffpreis_euro der Anlage     → "monatsdaten"
+                ∨ 1,65 €/L                                                → "default"
+```
+
+Die Antwort nennt daneben `benzinpreis_hinweis_euro` = letzter Monatspreis; fehlt er, 1,65 €/L
+(`roi_eingaenge.py::_kraftstoffpreise`).
 
 **Datenquelle:** EU Weekly Oil Bulletin (Euro-Super 95, inkl. Steuern, wöchentlich, History seit 2005). Befüllung durch den Scheduler-Job (**täglich 06:00 + Startlauf**), den Reparatur-Pfad „Kraftstoffpreise nachpflegen" oder den Backfill-Endpoint. Fehlt der Monatswert, rechnet die Kette mit dem Investitions-Parameter bzw. 1,65 €/L weiter — der Daten-Checker meldet offene Monate deshalb als eigene Kategorie. Das Feld *Benzinpreis (€/L)* am E-Auto ist seit 27.09.2026 (N-572) nicht mehr mit 1,65 vorbelegt: ein geleertes Feld bleibt beim nächsten Speichern leer, und es gilt der Monatspreis bzw. 1,65 €/L. Wer dort eine Zahl einträgt, legt den Preis fest — in der ROI-Sicht (`resolve_eauto_benzinpreis`) hat sie Vorrang vor dem jüngsten Monatspreis.
 
@@ -1866,6 +2022,28 @@ invertiert angeschlossener Wallbox-Sensor im V2H-Haushalt gehört deshalb über 
 > 0,5 kWh im Monat bzw. 0,05 kWh im Tag. Liegt der Gesamtzähler weiter darunter, tragen die Achsen
 > und der Daten-Checker meldet den Widerspruch.
 >
+> **Was der Daten-Checker aus derselben Auflösung fragt** (`services/daten_checker/monatsdaten.py`,
+> Phasen von `MonatsdatenChecks._check_wp_monatsdaten`, RF-50):
+>
+> ```
+> Widerspruch   (Warnung) : gesamtzaehler_zu_klein                         — Toleranz wie oben
+> Rest-Frage    (INFO)    : Rest_kWh > 0,25 × Menge_kWh, nur wenn Σ Achsen > 0  (_REST_AUFFAELLIG_ANTEIL;
+>                                                                            genau 25 % fragt nicht)
+> Modus-Teilmengen (Warnung): Σ modus_strom_* > get_wp_strom_kwh + 0,5 kWh (#263 K-2)
+> Wärme-Teile   (Warnung) : Heizwärme (D1-Weiche) + Warmwasser-Wärme > waerme_kwh + 0,5 kWh (N-391)
+> ```
+>
+> Die Rest-Frage ist **kein Fehler** — Standby, Steuerung und Umwälzpumpen laufen auf keiner Achse;
+> ein Viertel trennt „Systemverbrauch" von „da hängt vermutlich noch etwas anderes am Zähler". Eine
+> Zeile, deren Achsen nichts tragen (nur Gesamtzähler, oder nur eine gemessene 0), hat keine
+> Aufteilung und deshalb keine Frage. **Fehlende Monate je Messmodus** (`_wp_fehlende_monate`): ohne
+> getrennte Strommessung fehlt `stromverbrauch_kwh`; mit getrennter Strommessung fehlen beide Achsen
+> ⇒ **eine** Meldung („Strom Heizen/Warmwasser", an einer Klimaanlage ohne Warmwasser-Seite „Strom
+> Heizen"), fehlt nur **eine** Achse ⇒ je Seite eine Meldung, aber nur, wenn die Wärme dieser Seite
+> erfasst ist (sonst zählte jede reine Heiz-Anlage zwölf Lücken im Jahr). Heizwärme fehlt nur, wenn
+> weder `heizenergie_kwh` noch `waerme_kwh` steht (Gruppe `wp_waerme`). Wortlaut und Handgriffe:
+> [HANDBUCH_DATEN_CHECKER §4.3.7](HANDBUCH_DATEN_CHECKER.md#437-wärmepumpe).
+>
 > ⛔ **Bis zum 14.09.2026 galt eine erste Stufe davor:** War die feine Aufteilung vollständig,
 > wurde der Gesamtzähler verworfen — *„sonst zählte derselbe Strom zweimal"*. Der Satz stimmte für
 > die Doppelzählung und war für die Menge falsch; was der Gesamtzähler **mehr** misst, fiel aus
@@ -2030,6 +2208,11 @@ CO2-Einsparung        = CO2_alt - CO2_WP
 >
 > **Heute gilt Punkt (1) überall.** Der fossile Vergleich rechnet auf beiden Seiten mit **den Geräten, die etwas ersetzt haben** — dieselbe Grundmenge im Zähler wie im Abzug. Die Mengen der Anlage (Stromverbrauch, gelieferte Wärme) bleiben davon unberührt; kleiner wird allein die **Grundmenge des Vergleichs**. SoT sind die Teilmengen `WpFakten.waerme_mit_ersatz_kwh` / `strom_mit_ersatz_kwh` aus der Monats-Fakten-Schicht (ADR-002/P10).
 >
+> **Faltung der Teilmengen** (`monats_fakten/roh.py::_RohMonat._falte_wp`, N-256): je WP-Zeile gehen Strom und Wärme
+> zusätzlich in die `*_mit_ersatz`-Summen, wenn das Gerät eine Heizung ersetzt hat (`not ersetzt_keine_heizung(ersetzter
+> Energieträger)`; ein ungesetztes Feld zählt wie bisher als ersetzt) — keine Aufteilung je Gerät, zwei Summen neben den
+> Anlagenmengen: `strom_mit_ersatz = Σ_{Geräte mit Ersatz} Strom`, `waerme_mit_ersatz = Σ_{Geräte mit Ersatz} Wärme`.
+>
 > ⭐ **Warum Teilsummen und keine Sperre.** Die *Arbeitszahl* wird bei gemischten Bauarten gesperrt, weil ein Quotient über zwei Maßstäbe keine Aussage hat. Eine *CO₂-Menge* dagegen ist additiv — für sie genügt die Teilsumme. **Kennzahlen trennen wir je Bauart, Mengen summieren wir.**
 
 
@@ -2150,8 +2333,14 @@ SoT: `core/berechnungen/modus_split.py` (rein) · `services/energie_profil/modus
 >   gespeicherte Aufteilung, kommt die Ergänzung im gedeckten Monat aus dem Kanal (dieselben Regeln wie oben), sonst aus
 >   der Tagesebene — und die Tagesebene lädt gedeckte Monate gar nicht mehr.
 > * **Beginn:** ein neuer Kanal beginnt beim ersten Lauf mit dem laufenden Monat, frühestens mit der Betriebsart-
->   Mitschrift; frühere Monate rechnet eedc nicht neu. Geschrieben wird eine Stunde erst, wenn die Mitschrift sie erreicht
->   hat; hört die Mitschrift auf, bleibt der Kanal stehen und der Monat rechnet wie bisher.
+>   Mitschrift; frühere Monate rechnet eedc nicht neu. Geschrieben wird eine Stunde erst, wenn die Mitschrift **und jeder
+>   Strom-Kanal des Geräts** sie erreicht haben (ein neuer Kanal zudem erst ab einer Stunde, in der jeder Strom-Kanal einen
+>   Vorstand hat); hört die Mitschrift auf, bleibt der Kanal stehen und der Monat rechnet wie bisher.
+> * **Code-Orte (RF-56):** `schreibe_modus_strom` ist der eine Schreibweg (beide Einstiege, Rückgabe = geschriebene
+>   Zeilen) und ruft die Phasen `_modus_strom_kontext` (Geräte mit Mitschrift ohne Betriebsart-Zähler, Fenster bis zur
+>   Stunde vor dem Lauf) · `_modus_strom_eingaenge` (Stand je Gerät, Beginn/`aufbaubar_ab`, Strom-Kanäle) ·
+>   `_modus_strom_stunden` (die Schreibbedingungen oben) · `_modus_strom_stunde` (der Formelblock oben je Stunde) ·
+>   `_modus_strom_schreiben` (Kanäle, `aufbaubar_ab` = erste Stunde, Quelle `modus_anteil_je_stunde`).
 > * **Der Monatsabschluss schreibt im gedeckten Monat dieselbe Aufteilung** (`modus_split_schreiben.kanal_split_des_monats`):
 >   Strom je Betriebsart und Abdeckung kommen aus dem abgeleiteten Kanal, derselbe Monat nennt vor und nach dem
 >   Abschluss dieselben Zahlen. Deckt die WP-Gruppe den Monat nicht, schreibt er die Aufteilung der Tagesebene
@@ -2210,6 +2399,34 @@ derselbe wie dort — **E7/Option A**, also der **Abzug** und nicht die Menge.
 > unverändert nur, wo Zähler und Nenner dasselbe Gerät und dieselbe Funktion
 > meinen. Die Systemzahl ist eine dritte Größe mit eigenem Namen, und im Block
 > steht die Zahl **je Gerät** direkt daneben.
+
+**In *Cockpit → Monat*** (`api/routes/aktueller_monat/waerme.py::waerme_klima_monat`) gelten drei Regeln, die nur
+diese Sicht braucht — sie ist die einzige mit Vier-Quellen-Auflösung und laufendem Monat zugleich:
+
+```text
+Zeitraum versetzt   ⇔ genau EINE von {wp_waerme_kwh, wp_strom_kwh} misst nur einen Ausschnitt des Monats (Teilzeitraum)
+Kennzahl je Gerät   = Zeile des Geräts, wenn sie eine Menge trägt (Strom > 0 oder Wärme > 0)
+                      sonst Kanal-Zeile des Geräts (Faltung wie eine Monatszeile)
+                      sonst Tagesmengen des Geräts im Monat
+Funktions-Eingänge  = Monatszeile, wenn sie eine Menge trägt — sonst Faltung derselben Geräte-Mengen (S5)
+```
+
+* **Zeitraum-Versatz** (SOLL §4.2 Fall 3, #361): Der Quotient wäre einer aus zwei Zeiträumen — `GRUND_ZEITRAUM`
+  sperrt die Systemzahl (keine Schranke, die Richtung ist unbekannt) und jede Funktion (§3.5d). Messen beide Seiten
+  denselben Ausschnitt, gibt es keinen Versatz. Bewusst **nicht** aus „Tagen mit Wert" erkannt: das kann „das Gerät
+  stand" nicht von „der Sensor fehlte" unterscheiden.
+* **Ersatz leerer Gerätekennzahlen** (HA-Bauform E4d, N-472/A-5): Den Dienst `lade_kennzahlen_je_geraet` speisen die
+  Monatszeilen, die es im laufenden Monat nicht gibt — die Tabelle *Zahlen je Gerät* blieb leer, während Kachel und
+  Verlauf darüber dieselben Tage zeigten. Ersetzt wird nur, was leer ist; die Kanal-Zeile geht der Tagesebene vor.
+* **S5 anlagenweit** (WK-16i, N-503): Die Eingänge der Funktions-Arbeitszahlen und die Deckung je Funktion kamen bis
+  15.09.2026 nur aus den Monats-Fakten — im laufenden Monat stand deshalb „Strom nicht getrennt je Funktion gemessen"
+  über einer Tabelle mit 5,58 und 3,32. Die Faltung der Geräte-Mengen steht an einer Stelle
+  (`services/waerme_klima_block.py::funktions_eingaenge_der_anlage`).
+
+Die Systemarbeitszahl bekommt die **sperrende** Kette ohne die beiden Schranken-Glieder (Bauarten gemischt, Geräte
+ohne Wärme): Anwender-Angabe, Zeitraum-Versatz, verschiedene Geräte. Code-Orte seit RF-67 (5.11.2026): die
+Phase `_wp_abgrenzung` (R2-Lagen, S5, SOLL §3.2b, Schranken-Eingang, sperrende Kette), `_kennzahlen_aus_kanal_zeilen`
+und `_kennzahlen_aus_tagesebene`; Proben `test_rf67_aktueller_monat_pv_strings_phasen.py`.
 
 #### 3.5b-H Die **Arbeitszahl ohne Zusatzheizung** — Ausweis-Zahl neben der Hauptzahl (P-433-3, 25.10.2026)
 
@@ -2452,9 +2669,9 @@ JAZ` anbietet (bzw. SCOP/COP je Funktion nach `effizienz_modus`). Seit B1 gilt d
 
 | Feld | Basis-Strom | Sprosse | wenn nicht … |
 | --- | --- | --- | --- |
-| **Heizwärme** | gemessener Heizbetrieb `betriebsart_strom_heizen_kwh` | F4 | … dann `strom_heizen_kwh` (getrennte Messung, F5) |
-| | | | … dann `stromverbrauch_kwh` (F2) — **nur ohne fremde Spur** in der Zeile: kein gemessener Kühl-/Lüft-/Entfeucht-Strom, keine Kältemenge, kein getrennter Warmwasser-Strom. Sonst **kein Vorschlag** |
-| **Warmwasser-Wärme** | `strom_warmwasser_kwh` (getrennte Messung, F5) | F5 | ohne getrennte Strommessung **kein Vorschlag** — die Menge steckt im Heizwärme-Vorschlag (Gesamtwärme landet unter „Heizwärme", N-391) |
+| **Heizwärme** | gemessener Heizbetrieb `betriebsart_strom_heizen_kwh` | F4 | … dann `strom_heizen_kwh` (getrennte Messung, F5), sonst **kein Vorschlag** |
+| **Warmwasser-Wärme** | `strom_warmwasser_kwh` (getrennte Messung, F5) | F5 | ohne getrennte Strommessung **kein Vorschlag** — die Menge steckt im Vorschlag *Wärme gesamt* |
+| **Wärme gesamt** (`waerme_kwh`) | `stromverbrauch_kwh` (F2) — **nur ohne getrennte Strommessung und ohne fremde Spur** in der Zeile: kein gemessener Kühl-/Lüft-/Entfeucht-Strom, keine Kältemenge, kein getrennter Warmwasser-Strom | F2 | sonst **kein Vorschlag**. Seit N-391 (14.09.2026) steht der F2-Zweig hier und nicht mehr unter *Heizwärme*, und er braucht die gepflegte **JAZ** — eine Funktions-Arbeitszahl (SCOP/COP) auf dem Gesamtstrom ergäbe eine Menge, die keine Funktion beschreibt |
 
 **Der Vorschlag trägt die Marke `jaz_vorschlag`** (`REGEL_JAZ_VORSCHLAG`, zweite Regel neben
 `jaz_modus_split`): der Client meldet sie beim Übernehmen zurück (`abgeleitet_felder`), die
@@ -2471,6 +2688,32 @@ der Dienst `E_gesamt × JAZ` — 254 kWh Kühlstrom wurden 889 kWh „Warmwasser
 Lesestelle als Messung. ⚠ **Die Bauart entscheidet hier nichts** (R1, ADR-002/P13): ob der
 Gesamtstrom der Heizstrom ist, sagt die Beleglage der Zeile, nicht `wp_art`. Proben:
 `test_waerme_vorschlag_b1.py`.
+
+**Alle berechneten Vorschläge des Monatsabschlusses** (`vorschlag_service.py::VorschlagService._get_berechnete_werte`,
+nur an einem Gerätefeld, `investition_id` gesetzt; die Liste sortiert `get_vorschlaege` nach Konfidenz — Vormonat 80,
+Vorjahr 70, Ø 12 Monate 50):
+
+```
+Wärme (Heiz-/WW-/Gesamt) = round(Basis-Strom × Arbeitszahl, 1)          Konfidenz 60 · berechnung · Marke jaz_vorschlag
+    Arbeitszahl:  Wärme gesamt → jaz (N-391)
+                  Heiz/WW: effizienz_modus gesamt_jaz (Default) → jaz · scop → scop_heizung | scop_warmwasser
+                           getrennte_cops → cop_heizung | cop_warmwasser · anderer Modus → keine
+                  keine oder 0 ⇒ kein Vorschlag
+Gesamtstrom (stromverbrauch_kwh) = round(strom_heizen_kwh + strom_warmwasser_kwh, 1)
+                                   nur bei getrennter Strommessung und beiden Werten   Konfidenz 95 · berechnung
+Speicher-Ladepreis (speicher_ladepreis_cent) = round(effektiver Ladepreis des Monats, 2)   (#264, R15-2)
+    stundengewichtet aus Netzladung × Strompreis-Mitschrift, Fenster Monatserster … Monatsletzter (`speicher_wirtschaftlichkeit.berechne_effektiver_ladepreis`)
+    Konfidenz 90 bei Quelle dyn-tarif | boersenpreis, sonst 55 (Text nennt dann die Abdeckung in %)
+    ohne Preis oder bei einem Fehler im Lesen: kein Vorschlag (der Abschluss stirbt nie daran)
+km aus Tachostand (km_gefahren) = round(km_stand − km_stand des Vormonats, 0)        Konfidenz 95 · berechnung
+    nur mit beiden Ständen und Ende ≥ Anfang — ein rückwärts laufender Stand gibt keinen Vorschlag (#407, #396)
+km aus Jahresfahrleistung       = round(jahresfahrleistung_km / 12, 0)                Konfidenz 30 · parameter
+    nur bei gepflegter Jahresfahrleistung > 0
+```
+
+Code-Orte (RF-84, 5.11.2026): `_wp_vorschlaege` (Wärme mit `_arbeitszahl`, Gesamtstrom) · `_speicher_ladepreis` ·
+`_eauto_km` (Tachostand, Jahresfahrleistung). Proben: `test_vorschlag_ladepreis_r15_2.py`, `test_407_tachostand.py`,
+`test_rf83_community_vorschlag_korrektur_phasen.py`.
 #### 3.5d Arbeitszahl je Funktion und die Arbeitszahl Kühlen (W-4 · W-5)
 
 ⛔ **Dieser Abschnitt fehlte bis zum 27.08.2026 vollständig** — beide Größen waren gebaut und in
@@ -2520,6 +2763,13 @@ WP-Zähler ließ die Gesamtzahl mit Begründung verschwinden, während „JAZ He
 danebenstand — *dieselbe Anlage, zwei Aussagen*. Dazu stand dort eine **0**, wo „unbekannt"
 gemeint war (ADR-002/P4).
 
+> **Die Bauart-Zählung der Monats-Fakten** (`monats_fakten/roh.py::_RohMonat._falte_wp`): je WP-Zeile mit
+> Strom > 0 zählt das Gerät als Split-Klimaanlage (`ist_luft_luft_waermepumpe`) **oder** als klassische Wärmepumpe —
+> `WpFakten.geraete_luft_luft` / `geraete_luft_wasser`; beide > 0 ⇒ `bauarten_gemischt`. Gezählt wird je Zeile, also je
+> Gerät und Monat; ein stillstehendes Zweitgerät sperrt nichts. Der Zähler bleibt bewusst bei „Strom > 0" und nicht bei
+> der Geräte-Regel des Nenners (`zaehlt_fuer_geraete_regel`, nach Abzug des funktionsfremden Stroms): er zählt
+> Stammdaten, nicht den Nenner — ein reines Kühlgerät bleibt ein Gerät der Anlage.
+
 > **Warum die Arbeitszahl Kühlen nicht „SEER" heißt** (Entscheid, 26.08.2026): SEER ist eine
 > genormte Größe aus definierten Prüfstandsbedingungen. Was eedc bildet, ist der Quotient zweier
 > Zähler über einen Zeitraum. Sie „SEER" zu nennen behauptete eine Vergleichbarkeit mit
@@ -2529,6 +2779,28 @@ gemeint war (ADR-002/P4).
 > **Warum keine geschätzte Kältemenge:** Aus einem angenommenen Wirkungsgrad käme genau der
 > Faktor zurück, mit dem gerechnet wurde — dieselbe Zirkularität, die §3.5c für die abgeleitete
 > Heizwärme beschreibt, nur auf der Kälte-Achse.
+
+> **Die Tageszahlen von *Cockpit → Tag*** (`api/routes/energie_profil/tag.py::get_tag_detail`, Phasen seit RF-71). Neben
+> den vier Arbeitszahlen trägt die Tag-Antwort drei Größen, deren Regel nur dort steht:
+>
+> ```text
+> Tages-SOLL PV         = round(pv_prognose_kwh × Lernfaktor(openmeteo), 1); ohne Prognose oder ohne Lernfaktor die
+>                         Prognose selbst (None bleibt None)                                  — Phase _tages_soll_pv
+> Netzbezugspreis (Tag) = Slot-Ø des Tages (lade_slot_kosten_je_tag → mittel_cent), sonst der Arbeitspreis des Monats
+>                         (baue_finanz_zeile mit der Monatsdaten-Zeile; bei dynamischem Tarif ihr abgerechneter Monats-Ø);
+>                         Herkunft = die des Slot-Tags, ohne Slot-Tag None (SOLL P-2; dieselbe Quelle wie die
+>                         Tages-Tabelle, sonst die F-18-Klasse)                                — Phase _tag_preis
+> Nenner je Funktion    = Strom Heizen bzw. Warmwasser aus der Faltung funktions_eingaenge_der_anlage, wo sie > 0 trägt,
+>                         sonst der Tageswert samt seiner None-heit (_nenner_der_funktion — nur die Faltung kennt die
+>                         Ein-Achsen-Regel R-4); Zähler = die Tagessumme (aufgelöste Heizwärme D1, Warmwasser)
+>                                                                                            — Phase _funktions_deckung
+> ```
+>
+> Code-Orte je Phase: `_tag_laden` (Tageseingänge `tages_eingaenge`, W-18-Grund, Ladepreis) · `_wp_strom_je_geraet`
+> (R-4/N-482/N-491, Tages-Stapel) · `_waerme_tag` (D1 je Gerät, N-391b) · `_geraete_mengen` (D-Sicht 3, Schranken-Eingang) ·
+> `_funktions_deckung` (§3.2b, Kühlen beidseitig) · `_abgrenzung_tag` (R2/Bauart nur über Geräte mit Strom des Tages, §4.2 Fall 1
+> und N-441 aus den Monats-Fakten des Monats, je Funktion) · `_schranke_und_kasten` (E1b: die Gegenrichtung am Tag gezählt,
+> W-18-Kurzformen, Systemarbeitszahl) · `_arbeitszahl_je_funktion` (N-348, Kühlen) · `_antwort`. Proben: `test_rf71_tag_phasen.py`.
 
 #### 3.5e Anzeige-Regeln der Betriebsart-Aufteilung (W-17 · W-17b · W-18)
 
@@ -2578,6 +2850,56 @@ Fenster-Summe wird **neu gerechnet, nie gemittelt** (SOLL §5), und ein Monat ge
 Verbrauchshistorie (mit dem Monat ihres Beginns) · kein getrennt gemessener Heizstrom · Fenster ohne
 Heizgradtage. **Eine normierte Arbeitszahl gibt es nicht** — sie ist bereits ein Quotient.
 
+#### 3.5g Steuerungs-Sensoren der Wärmepumpe (HA-Export E2/P4/P7/P8)
+
+**Orchestrator:** `api/routes/ha_export/investition_sensoren.py::_wp_steuerung_und_plan` (je Wärmepumpe, gerufen von
+`_wp_sensoren`; Phasen seit RF-76, 5.11.2026) · **gemeinsamer Eingang:** der Fenster-Kontext
+`services/ha_export_fenster.py::FensterKontext` (einmal je Anlage aus Prognose, Preis und Bezugspreisen) · **Formeln:**
+`core/berechnungen/fenster.py` (`bestes_fenster`, `kosten_profil`, `verteile_auf_guenstigste`) über
+`ha_export_fenster.fenster_fuer_menge` · **Anwender-Referenz:** `docs/SENSOR-REFERENZ.md`, «Stufe 3 je Gerät — Fenster mit
+Betrag». Hier wird **kein** Fenster gerechnet — die Phasen sagen nur, welche Menge, welche Dauer und welche Frist für
+dieses Gerät gilt. Slots liegen auf der backward-Achse (Slot `h` deckt `[h−1, h)`, s. «Backward-Slot-Konvention»).
+
+| Phase (Code-Ort) | Sensor | Regel |
+|---|---|---|
+| E2 `_warmwasser_betrieb` | `wp_warmwasserbetrieb` | an, wenn der live gelesene Betriebsmodus (`modus_map`, #398) Warmwasser ist; ohne Modus-Zuordnung **kein** Sensor |
+| P4 `_warmwasser_fenster` | `wp_warmwasser_fenster_ab` | s. Formelblock; ohne Menge oder ohne Fenster kein Sensor |
+| P7 `_heizfenster` | `wp_heizfenster_stunden` | günstigste Stunden der erwarteten Heizzeit; ohne WP-Stundenprofil (N-332) oder ohne Verteilung kein Sensor |
+| P8 `_kuehlfenster` | `wp_kuehlfenster_ab` | Kühl-Zähler **und** Kühlstrom-Menge; Frist = Spitzen-Slot der Temperatur |
+
+Ohne Fenster-Kontext (kein Preis **und** kein Überschuss) entsteht nur E2.
+
+```
+P4  Monate     = die letzten 3 abgeschlossenen Monate (_MENGE_MONATE)
+    Menge      = Σ wp_strom_warmwasser (imd_typ_beitrag, gemessen)        wenn ein Monat gemessen ist UND Σ > 0
+               = Σ modus_strom_zeile(…).warmwasser_kwh (abgeleitet)       sonst                        # F-56
+    je_Tag     = Menge ÷ Σ Kalendertage dieser Monate (nur Monate mit Zeile)
+    Fenster    = fenster_fuer_menge(ctx, je_Tag, dauer_h = 2,
+                                    frist_slot = min(24, ctx.frist_slot oder 24))                     # N-544
+    kosten_cent             = round(Fenster.kosten_cent_kwh × je_Tag)
+    ersparnis_cent_vs_jetzt = round(−Fenster.delta_vs_jetzt × je_Tag)      (None ohne Vergleich)
+
+P7  Heizzeit   = Slots i mit WP-Profil[i] > 0 und i ≥ ctx.jetzt_slot
+    Verteilung = verteile_auf_guenstigste(ctx.kosten, WP-Profil, Heizzeit)  # gleiche Menge, günstigere Stunden
+    Wert       = Anzahl der gewählten Slots;  guenstige_heizstunden = "(h−1) % 24 : 00" je Slot h  # N-544: Beginn
+    ersparnis_cent_vs_profil = round(Verteilung.ersparnis_cent);  heizzeit_stunden = |Heizzeit|
+
+P8  Bedingung  = kuehl_je_monat nicht leer  ∧  hat_kuehl_zaehler(Gerät, Zeilen, Mapping, Quellen)   # Zähler, keine Kältemenge
+    je_Tag     = Σ Kühlstrom der letzten 3 abgeschlossenen Monate ÷ Σ Kalendertage derer davon mit Kühlstrom-Eintrag
+    Spitze     = Slot der höchsten Temperatur in ctx.temperatur_c[0 … 24]
+    Fenster    = fenster_fuer_menge(ctx, je_Tag, dauer_h = 2, frist_slot = Spitze)
+                 nur wenn je_Tag > 0 und Spitze ≥ ctx.jetzt_slot                                    # N-544: Frist = Spitze
+    temperatur_max_um = "Spitze % 24 : 00" (Zeitpunkt, kein Slot-Beginn); ueberschuss_kwh_im_fenster = Σ Überschuss[ab … bis)
+```
+
+**Warum je Gerät und nicht aus den Monats-Fakten:** `WpFakten.strom_warmwasser_kwh` ist eine anlagenweite Summe über
+alle Wärmepumpen; P4 liest deshalb die Gerätezeilen über `imd_typ_beitrag`, dieselbe Lesetür, die die Monats-Fakten
+benutzen (P10-Eintrag `_warmwasser_fenster` in `P10_PER_INVESTITION_PHASE`, Lader `calculate_investition_sensors`).
+`herkunft` sagt dem Anwender, ob die Menge gemessen oder abgeleitet ist — beides trägt das Fenster. **Kosten** sind der
+effektive Ø-Preis des Fensters (Überschuss eingerechnet, Preis der Verwendung) × Menge, **Ersparnis** der Abstand zum
+Kostenwert des laufenden Slots (`ctx.jetzt_slot`) × Menge. P7 ist eine Obergrenze: wie weit eine Verschiebung trägt, entscheidet die Regelung
+der Wärmepumpe (`verteile_auf_guenstigste`, Docstring).
+
 ### 3.6 ROI & Amortisation
 
 **Funktion:** `berechne_roi()` in `core/calculations.py`
@@ -2597,6 +2919,27 @@ Amortisation (Jahre) = Relevante_Kosten / Netto_Einsparung
 ```
 
 Wobei `Betriebskosten_Jahr` = `Investition.betriebskosten_jahr` (Wartung, Versicherung etc., Default: 0).
+
+**Gesamt-Zeile** (Auswertungen → ROI, `investitionen/roi.py::_gesamt_zeile`, seit N-774 am 4.11.2026):
+
+```
+Gesamt_Einsparung          = Σ angezeigte Jahres-Einsparung der Zeilen (− USt bei Regelbesteuerung, §3.7)
+Betriebskosten_unbewertet  = Σ Betriebskosten_Jahr der Zeilen mit detail.nicht_bewertet
+Gesamt-ROI (%)             = (Gesamt_Einsparung − Betriebskosten_unbewertet) / Gesamt_Kapitaleinsatz * 100
+Gesamt-Amortisation (J.)   = Gesamt_Kapitaleinsatz / (Gesamt_Einsparung − Betriebskosten_unbewertet)
+```
+
+Eine **nicht bewertete** Zeile (Wärmepumpe ohne Wärmebedarf, Wallbox/Sonstiges ohne „Ertrag/Jahr") zeigt in der Spalte
+*Jahres-Einsparung* „—" und trägt **0** zur Spaltensumme `gesamt_jahres_einsparung` bei — nicht `0 − Betriebskosten` (N-258:
+eine Zahl in der Einsparungs-Spalte behauptete sonst eine negative Ersparnis eines Geräts, das eedc gar nicht bewertet). Ihre
+Betriebskosten fallen trotzdem an: sie gehen als eigenes Argument `betriebskosten_jahr` in den Gesamt-`berechne_roi` und als
+negative Zeile `ErsparnisZeile(Zeilenjahr, −Betriebskosten)` in die Kalender-Treppe, damit Dauer und Break-Even-Jahr dieselbe
+Rechnung meinen. Bewertete Zeilen tragen ihre Betriebskosten schon in ihrer Netto-Einsparung und werden **nicht** noch einmal
+abgezogen. Die Annahme-Zeile `amortisation_annahme` („inkl. N €/Jahr Betriebskosten") nennt die Summe **aller** Zeilen
+(`gesamt_betriebskosten`) und stimmt damit mit der Zahl überein. ⚠ Bis N-774 fehlten die Kosten unbewerteter Zeilen im
+Gesamt-ROI, in der Dauer und in der Treppe, während die Annahme-Zeile sie mitnannte (Demo r28, Mini-BHKW 300 €/Jahr:
+19,7 statt 20,9 Jahre). PV-System- und Orphan-Zeilen (`roi_pv.py`) kennen kein `nicht_bewertet`. Gesichert durch
+`test_n774_gesamt_roi_betriebskosten_unbewertet.py` (**Probe**, mit Gegenfall ohne unbewertete Zeilen).
 
 **WICHTIG - Zwei verschiedene ROI-Metriken:**
 
@@ -2667,6 +3010,13 @@ Wobei `Betriebskosten_Jahr` = `Investition.betriebskosten_jahr` (Wartung, Versic
 >
 > Die Unterscheidung kostet **keine zusätzliche Pflege**: `typ: ertrag|ausgabe`
 > wird beim Erfassen ohnehin gewählt, und der Ort sagt die Häufigkeit.
+>
+> **Anlagenweite Positionen** (Monatsabschluss ohne Komponente) haben **keine** Investition und stehen
+> deshalb auf keiner ROI-Zeile: sie wirken nur auf die Gesamt-Zahlen — `gesamt_sonstige_ausgaben_euro`/
+> `gesamt_sonstige_ertraege_euro`, Gesamt-Kapitaleinsatz, Gesamt-ROI und die Kalender-Treppe im Jahr
+> ihres Monats (Bauschritt 4). Gelesen über die Monats-Fakten (`sonstiges.anlage_ausgaben_euro`/
+> `anlage_ertraege_euro`, ohne die schon gezählten Beträge der Komponenten); Code
+> `investitionen/roi_eingaenge.py::_anlagenweite_positionen` und `roi.py::_gesamt_zeile`.
 >
 > **Und der Kapitaleinsatz ist nicht die USt-Bemessungsgrundlage.** Die bleibt
 > bei den reinen Mehrkosten (§ 3 Abs. 1b UStG, [§3.7](#37-umsatzsteuer-auf-eigenverbrauch)) —
@@ -3036,6 +3386,9 @@ Abweichung gegenüber dem Cockpit).
 
 **Faire Vergleichsbasis (ab v2.3.2):**
 SOLL wird NUR für Monate gezählt, die auch IST-Daten haben. Verhindert aufgeblähten SOLL bei Teil-Jahren.
+In *Komponenten → PV-Strings* (Jahressicht) trägt ein Monat ohne IST-Wert die Zeile mit SOLL **0** (keine Abweichung,
+keine Performance Ratio) und geht nicht in das Jahres-SOLL des Strings ein (`api/routes/cockpit/pv_strings.py::_string_im_jahr`,
+seit RF-70).
 Seit 04.10.2026 (N-616) gilt das auch im Abschnitt „String-Vergleich" des Jahresbericht-PDF — vorher stand dort
 je String das SOLL des ganzen Jahres (im Gesamtzeitraum × Jahre) gegen die erfassten Monate. Beide Sichten
 nehmen „Monat mit Wert" aus derselben Auflösung (`lade_pv_je_monat`, Quelle gemessen oder verteilt) und kürzen
@@ -3360,6 +3713,19 @@ Spez. Ertrag (kWh/kWp) = IST_Jahr / Modul_kWp
 Ertragsanteil und spezifischer Ertrag bleiben. Die Sicht zeigt sie seit v4.0.9 auch an — bis dahin
 brach sie ohne Prognose vollständig ab und verbarg damit auch die gemessenen Werte (#350).
 
+**Bester und schwächster String** (`api/routes/cockpit/pv_strings.py::_ranking`, beide Sichten):
+
+```
+Platzierung nur, wenn ≥ 2 Strings UND jeder String durchgängig gemessen (Quelle des Zeitraums = gemessen)
+bester        = String mit der höchsten Performance Ratio des Zeitraums
+schwächster   = String mit der niedrigsten — nur, wenn mindestens zwei Strings eine Performance Ratio tragen
+```
+
+Strings ohne Performance Ratio (ohne Prognose, ohne SOLL) oder mit 0 zählen nicht mit; trägt keiner eine, bleibt die Platzierung
+leer, ohne Hinweis. Ist auch nur ein String verteilt statt gemessen, steht statt der Platzierung der Erklärsatz —
+im Mischfall (mindestens ein String gemessen) der Satz „Nicht alle Module haben gemessene Werte …" (N-653), sonst
+„Die Werte je Modul sind nicht gemessen …" (A4/E3, s. oben „Der kWp-Anteil ist ein Prognose-, kein Ertragsschlüssel").
+
 ### 3.10 Sonstige Positionen
 
 **Utility:** `utils/sonstige_positionen.py`
@@ -3422,6 +3788,45 @@ Dienstlich_Ladekosten = Netz_kWh * Wallbox_Preis + PV_kWh * Netzbezugspreis
 > **SoT:** `core/berechnungen/dienstliche_ladekosten.py` (ADR-001). Seit N-633 (05.10.2026) ruft ihn **eine** Stelle: die Monats-Fakten-Schicht (`services/monats_fakten/bau.py`, mit dem Tarif des Monats), Feld `EmobFakten.dienstliche_ladekosten_euro`. Daraus lesen alle Sichten — Cockpit → Monat und → Jahr, Auswertungen → Tabelle/Finanzen, Monats- und Jahresbericht als Posten der Leiter, Cockpit → Übersicht, Aussichten/Finanz-Prognose und der HA-Sensor `netto_ertrag_euro` als Abzug in ihren Sonstigen Positionen. Seit HA-Bauform E4e rechnet *Cockpit → Monat* den Posten auch für einen Monat **ohne** Monats-Fakt (laufender Monat ohne Abschluss) wie die Schicht — Mengen aus derselben Entscheidung (`entscheide_emob_heimladung`), Tarif und Bewertung über `monats_fakten.tarif_des_monats` und `dienstliche_ladekosten_euro` (im Beispiel 12,24 € → 10,44 €, gleich dem Jahresverlauf). Bis dahin riefen die letzten drei die Formel je selbst, und die ersten führten den Posten gar nicht (104,40 € gegen 122,40 €); der HA-Export zog die Kosten bis 2026-07-31 **gar nicht** ab und stand damit über der Kachel, auf die er sich bezieht. Hinweis an der Zeile (wortgleich in Backend und Oberfläche): „Strom für den Dienstwagen: Netzanteil zum Wallbox-Tarif, PV-Anteil zum Netzbezugspreis. Die Erstattung des Arbeitgebers steht unter den sonstigen Erträgen."
 
 ---
+
+### 3.11 Community-Datensatz: abgeleitete Stammdaten
+
+Der Datensatz, den eedc an den Community-Server schickt (`services/community_service.py::prepare_community_data`,
+Aufrufer: Vorschau/Teilen `api/routes/community.py`, Monatsabschluss, nächtliches Nachsenden), beschreibt die
+**heutige Ausstattung** der Anlage. Der Server rechnet nichts nach — jede Zahl hier geht so in den Benchmark ein, wie
+eedc sie bildet. Schlüssel, Namen und Rundungen sind der Vertrag mit `eedc-community` (Kopf des Datensatzes,
+`monatswerte` je Monat nach `backend/schemas.py::MonatswertInput`).
+
+```
+Region          = Land (AT/CH/IT) | Bundesland aus der PLZ (DE) | "XX"
+kwp             = round(Anlagen-kWp, 1)
+Jetzt-Menge     = Investitionen mit ist_aktiv_an(heute)                               (F-24, N-617)
+speicher_kwh    = round(Σ Brutto-Kapazität der heute aktiven Speicher, 1)  | None bei 0  (F-24)
+wallbox_kw      = max Ladeleistung der heute aktiven Wallboxen             | None bei 0  (N-617)
+bkw_wp          = Σ je heute aktivem Balkonkraftwerk:
+                    Σ kWp der heute aktiven Modul-Kinder × 1000, falls es Kinder hat     (E5, N-266)
+                    sonst leistung_wp × anzahl (anzahl fehlt oder 0 ⇒ 1)
+                  | None bei 0
+neigung_grad    = int(Ø Neigung der Erzeuger)        Erzeuger = Selektor(Jetzt-Menge ∩ {pv-module, balkonkraftwerk})
+ausrichtung     = ein Erzeuger mit „Ost-West"                       ⇒ "ost-west"
+                  sonst Azimute (Kompass, 180 = Süd) mit Spanne > 45°:
+                      einer in 60–120° UND einer in 240–300°        ⇒ "ost-west", sonst "gemischt"
+                  sonst Label von int(Ø Azimut)  (8 Sektoren à 45°)
+                  ohne Erzeuger: 30° und "süd" (Defaults)
+sonstiges       = die ersten 3 nicht leeren Bezeichnungen der Sonstiges-Geräte, mit „, " verbunden
+hat_* / wp_art  = alle erfassten Geräte (ohne Zeitfilter); wp_art und kuehlung_art der ersten Wärmepumpe
+installation_jahr = Jahr des Installationsdatums, sonst das laufende Jahr
+soll_jahr_kwh   = round(Jahresertrag der aktiven PVGIS-Prognose, 1)  | None ohne aktive Prognose oder bei 0 (#387)
+```
+
+Die Monatswerte kommen aus den **Monats-Fakten** (ADR-002/P10, `_monatswert` je Fakt mit seinen Filtern — u. a. ohne
+Zählerzeile bzw. erfasste Netzfelder und ohne PV kein Monatswert); `monate_vollstaendig` sagt dem Server, dass der Datensatz alle teilbaren
+Monate trägt (N18-2). Die Ausstattungs-Merkmale `hat_*` und `wp_art` laufen bewusst ohne Zeitfilter — sie öffnen auf
+dem Server den Vergleich der historischen Monatswerte (N-617, Abgrenzung im Test `test_n617_community_stammdaten_heute.py`).
+
+Code-Orte (RF-83, 5.11.2026): `_stammdaten` (Region, Investitionen, `hat_*`, Sonstiges, Stichtag und Jetzt-Menge) ·
+`_speicher_und_wallbox` · `_bkw_wp` · `_neigung_ausrichtung` · `_payload` (Schlüssel-Reihenfolge, Installationsjahr,
+Wärmepumpen-Art) · `_monatswerte` (SOLL-Jahr, Monatswerte).
 
 ## 4. Prognosen (Aussichten)
 
@@ -3575,8 +3980,29 @@ Der Prognosen-Tab vergleicht vier Quellen pro Tag/Stunde:
 |---|---|
 | **OpenMeteo (OM)** | Wetterbasierte Roh-Prognose aus GTI × kWp × (1 − System_Losses). **Auch die Stundenkurve „OpenMeteo (roh)" fächert seit v4.0.1 je Orientierungsgruppe auf** — vorher rechnete sie die Gesamtleistung so, als hinge sie an *einer* Dachfläche (Neigung/Ausrichtung der zufällig ersten PV-Zeile, sonst stillschweigend 35° Süd), während der OM-**Tageswert** derselben Spalte längst auffächerte. Kurve, Summenzeile und Tageswert sind jetzt deckungsgleich. |
 | **eedc (kalibriert)** | die anlagenspezifisch korrigierte Prognose. Legende und Beschriftung sagen seit v4.0.1 „eedc (kalibriert)" statt „eedc (OpenMeteo × Faktor)" — korrigiert wird **pro Stunden-Slot auf der Energie**, nicht mit einem Tagesfaktor. |
-| **Solcast** | Optionale dritte Quelle, entweder Solcast-API (Free/Paid Key) oder HA-Sensor (BJReplay-Integration). 30-Min-Buckets werden per `ceil(bucket_ende)` dem Backward-Slot zugeordnet. |
+| **Solcast** | Optionale dritte Quelle, entweder Solcast-API (Free/Paid Key) oder HA-Sensor (BJReplay-Integration). 30-Min-Buckets werden per `ceil(bucket_ende)` dem Backward-Slot zugeordnet — die API liefert `period_end` (`backward_slot_aus_period_end`), die HA-Integration `period_start` (`backward_slot_aus_period_start`: volle Stunde des Beginns + 1 h; für 30-Min-Buckets derselbe Slot). Der HA-Pfad im Einzelnen: Absatz „Solcast über die HA-Integration" unten. |
 | **IST** | Tatsächlich gemessener Tageswert aus den Stunden-Snapshots (siehe §6b) |
+
+**Solcast über die HA-Integration** (`solcast_service.py::_fetch_solcast_ha_auto`, Cache 5 min): die sieben
+Tages-Sensoren (heute … Tag 7, gefunden über `ha_integration_aufloeser.py`) werden in einem Abruf gelesen; je Sensor:
+
+```
+Tageswert_d      = State des Sensors, 1 Nachkommastelle (unknown/unavailable/leer/keine Zahl ⇒ der Tag fehlt)
+p10_d / p90_d    = Attribut estimate10 / estimate90, 1 Nachkommastelle; fehlt oder leer ⇒ 0
+Slot_d[s]        = Σ pv_estimate × 0,5 über die 30-Min-Buckets aus detailedForecast (Leistung in kW → Energie in kWh),
+                   s = backward_slot_aus_period_start(period_start); ein Bucket zählt nur, wenn sein Slot auf den Tag
+                   SEINES Sensors fällt (#357) — 23:00/23:30 gehören zu Slot 0 des Folgetags und fallen dort weg
+                   (p10/p90 ebenso aus pv_estimate10/pv_estimate90; fehlt ein Wert ⇒ 0); Slots auf 2 Stellen
+Stundenprofil_d  nur, wenn ein Slot ≠ 0; Heute-Sicht hourly_kw = Profil von heute, sonst 24 × 0
+Morgen           = der zweite gelesene Tag der Liste (ist der Morgen-Sensor nicht lesbar, der nächste lesbare); ohne ihn 0
+```
+
+Der Auflöser `ha_integration_aufloeser.py::loese_integration_auf` rechnet nicht: er ordnet die Entitäten der
+Integration je Rolle in drei Stufen zu (unique_id → Anzeigename → Entity-ID-Muster, der erste Treffer bleibt; RF-78:
+`_stufe_unique_id`, `_stufe_name`, `_stufe_muster`). Ohne Heute-Sensor (nicht gefunden oder nicht lesbar) liefert der
+Pfad keine Prognose. `period_start` ohne Zeitzone
+gilt als Europe/Berlin. Code-Orte (RF-77): Phasen `_lese_states`, `_tageswerte_aus_states`, `_stundenprofil_aus_detail`,
+`_heute_morgen`.
 
 #### Abweichung und Σ-Zeile im Stundenvergleich (ab v4.0.6)
 
@@ -3621,6 +4047,36 @@ Die aktive Stufe wird im Status-Banner und im KPI-Card-Header angezeigt.
 **Restzeit-Banner (v3.22.0):** Wenn die 7-Tage-Schwelle noch nicht erreicht ist, zeigt das Banner: „X von 7 Tagen, noch Y Tage" — Y berücksichtigt nur Tage mit gültiger Prognose UND IST > 0.5 kWh, also dieselbe Filterregel wie der Faktor selbst.
 
 **Persistierung:** Lernfaktor pro Quelle separat gecacht. Backfill-Kandidat-Felder (`pv_prognose_kwh`, Solcast-Tageswerte) werden seit v3.16.14 alle 45 Min automatisch aus dem **Prefetch-Job** in `TagesZusammenfassung` geschrieben — vorher hing die Persistierung als Nebeneffekt am Dashboard-Besuch und der Lernfaktor konnte ohne Nutzer-Interaktion nicht berechnet werden.
+
+#### Das Korrekturprofil: vier Stufen aus den Stundenpaaren (`korrekturprofil_aggregator.py`)
+
+Der nächtliche Aggregator (`aggregiere_korrekturprofil_anlage`, Aufrufer Scheduler und `POST …/korrekturprofil`)
+lernt je Anlage vier Profile; der Lookup nimmt die feinste Stufe, die ihr Gate erreicht. SOLL ist das **Lern-SOLL**
+(gekappt, unkorrigiert, N-547, siehe §6b), IST die Stundenzeile bzw. an einem Kanal-Tag die Mischzeile (S5-R1).
+
+```
+Lookback           = 730 Tage vor dem Stichtag (Default heute)
+Stunden-Stichprobe = Stunde mit Day-Ahead-Snapshot des Tages, IST ≥ 0,05 kW und SOLL ≥ 0,05 kWh,
+                     PV-Spanne der Zeile = 1 (eine Zählerlücken-Stunde fällt aus, bleibt in jeder Summe — §6b, §2)
+Faktor(Bin)        = clamp(Σ IST / Σ SOLL, 0,5, 1,3), gerundet 0,001;  Σ SOLL < 1 kWh ⇒ kein Faktor
+Stufe 1  sonnenstand_wetter : Bin (Azimut, Elevation, Wetterklasse klar|diffus|wechselhaft); Sonne über dem Horizont
+                              und Wetterklasse bestimmbar
+Stufe 2  stunde (Variante A): Zelle (Monat, Stunde) — die Stunde braucht keinen Sonnenstand (Dämmerung zählt);
+                              Saisonbin-Kaskade je Zelle: Monat ≥ 15 Stunden-Tage → Quartal ≥ 15 → Gesamt (letzte
+                              30 Tage) ≥ 7, sonst keine Zelle — der Schlüsselraum bleibt Monat 1–12
+Stufe 3  sonnenstand        : Bin (Azimut, Elevation), Sonne über dem Horizont
+Stufe 4  skalar (O1+O2)     : je Tag q = Σ IST / lern_soll_kwh; Gewicht = SOLL × 1,30 für Tage < 30 Tage alt, sonst × 1;
+                              je int(n × 0,1) kleinste und größte q fallen weg (Trim); Faktor = clamp(Σ q·w / Σ w, 0,5, 1,3)
+Status             = "skipped" ohne Koordinaten oder wenn keine Stufe einen Wert hat; sonst Zählungen und
+                     tage_eingegangen = Tage mit Sonnenstand-Stichprobe, ohne solche die Skalar-Tage
+```
+
+Dieselbe Kaskade Monat → Quartal → 30 Tage mit 15/15/7 trägt der Skalar-Lernfaktor oben; hier gilt sie je
+(Monat, Stunde)-Zelle. Bestandsprofile wechseln je Bin erst auf das neue Lern-SOLL, wenn das Gate der Stufe mit
+neuen Datenpunkten erreicht ist (Keep-Regel N-547, §6b). Code-Orte (RF-85, 5.11.2026): `_tage_und_snapshots`
+(Lookback, Snapshots, Filter; `_akkumuliere` füllt die Pools) · `_stufe_sonnenstand_wetter` und
+`_stufe_sonnenstand` (beide über `_flache_faktoren`) · `_stufe_stunde` (Kaskade `_stunde_zelle`) · `_stufe_skalar`
+· `_ergebnis`.
 
 #### Genauigkeits-Tracking: MAE + MBE getrennt (v3.22.0, #151)
 
@@ -3930,6 +4386,32 @@ PV-Einsparung wird proportional nach kWp auf Module verteilt:
 > Speicherverluste als Eigenverbrauch (im Beispiel 36 € zu viel; jetzt ergibt PV-Zeile + Speicher-Zeile die
 > Cockpit-Ersparnis). ⚑ Nicht abgezogen ist die V2H-Rückspeisung, die zusätzlich parametrisch in der E-Auto-Zeile steht.
 
+#### Speicher-Anteil aus dem PV-Topf (F-37, seit v4.0.20)
+
+Der PV-Topf (`Eigenverbrauch × Strompreis + Einspeisung × Vergütung`) enthält schon alles, was durch einen Speicher
+lief — was in den Akku ging und wieder heraus, wurde nicht eingespeist. Deshalb bekommt jeder Speicher seinen PV-Anteil
+**aus** dem Topf, nicht daneben (Zerlegung statt Addition, dieselbe Doktrin wie `aussichten/finanz_zerlegung.py`):
+
+```
+Speicher_PV_€   = Σ pv_anteil_euro      aller Speicher der Anlage   (`_speicher_roi`, IST- oder Prognose-Modus)
+Speicher_CO2_kg = Σ co2_einsparung_kg   aller Speicher der Anlage
+PV_Topf_€'      = max(0, PV_Topf_€  − Speicher_PV_€)
+PV_CO2_kg'      = max(0, PV_CO2_kg  − Speicher_CO2_kg)
+Modul_Einsparung = PV_Topf_€' · (Modul_kWp / Gesamt_kWp)          (Gesamt_kWp inkl. Module ohne Träger)
+```
+
+| Feld | Quelle |
+|------|--------|
+| `pv_anteil_euro` | `berechne_speicher_ersparnis` — nur der PV-Anteil; der **Netz-Anteil** (Arbitrage) steckt nicht im Eigenverbrauch und wird nicht gekürzt |
+| Speicher | **alle** Speicher der Anlage — DC am Träger (Systemzeile) und eigenständige AC-Speicher (eigene Zeile), die Kürzung steht vor beiden |
+| `Modul_kWp` | `get_pv_kwp` (ADR-002/P3-a); ein Modul ohne Nennleistung bekommt 0 € und 0 kg |
+
+Die Klemmung bei 0 greift bei dünner oder widersprüchlicher Datenlage, wenn der zugerechnete Speicher-Anteil über der
+ganzen PV-Ersparnis liegt: die Module stehen dann mit 0 statt einer negativen Zeile, und die Summe der Zeilen liegt nicht
+über der physikalischen Menge. Bis v4.0.19 stand der Speicher-Spread **neben** dem Topf (gemeldete Anlage #381: 55,9 ct
+für eine Kilowattstunde, 895,64 € statt 723,89 €). Code: `api/routes/investitionen/roi_pv.py::_f37_speicher_aus_pv_topf`
+(Phase von `pv_systeme_zeilen`, RF-43). Gesichert durch `test_roi_summe_symmetrie_f37.py`.
+
 ### Hochrechnung bei unvollständigen Jahren
 
 ```
@@ -4001,7 +4483,7 @@ Industriestandard für Energie: HA Energy Dashboard, SolarEdge, SMA, Fronius, Ti
 
 **Migration auf Backward (v3.20.0):**
 - `sensor_snapshot_service.get_hourly_kwh_by_category`: Delta `snap[h] − snap[h-1]` → Slot h (vorher: `snap[h+1] − snap[h]` → Slot h)
-- `solcast_service` (API + HA-Sensor): 30-Min-Buckets per `ceil(bucket_ende)` → richtigen Backward-Slot. Ein Bucket am Tagesübergang `[23:00, 23:30)` heute landet damit korrekt in Slot 0 des **Folgetags**, nicht in Slot 0 von heute.
+- `solcast_service` (API + HA-Sensor): 30-Min-Buckets per `ceil(bucket_ende)` → richtigen Backward-Slot (API über `period_end`, HA-Sensor über `period_start` + 1 h, s. §4.1c). Ein Bucket am Tagesübergang `[23:00, 23:30)` heute landet damit korrekt in Slot 0 des **Folgetags**, nicht in Slot 0 von heute.
 - **Nach Update auf v3.20.0 nötig:** einmal „Verlauf nachberechnen + überschreiben" auslösen, damit alle historischen Stundenwerte umverteilt werden. Tagessummen und alle abgeleiteten Kennzahlen (Autarkie, PR, Lernfaktor) sind konventionsunabhängig korrekt.
 
 #### Tageswerte: Zähler und Bezug aus einem Fenster
@@ -4026,6 +4508,12 @@ Typ `[00:00, 24:00)` (`for_day_total`) — dieselbe Regel N-444, angewandt auf d
 | Speicher | Σ der Ladung aus den Stundenzeilen (`batterie_kw`) | **immer** `[Vortag 23:00, 23:00)` |
 | Wallbox / E-Auto | Σ der Ladeserien aus den Stundenzeilen (`komponenten`) | **immer** `[Vortag 23:00, 23:00)` |
 | alles Übrige | kein Tages-Bezug hinterlegt | `[00:00, 24:00)` |
+
+Der Leser je Tag ist `services/snapshot/aggregator.py::get_tagesdetail_kwh` (Phasen seit RF-72): `_fenster_je_typ` fragt
+`tagesfenster_fuer` je Gerät, `_typ_summe` überspringt das E-Auto mit Wallbox-Parent oder mit deckender Wallbox (N-555,
+`_wallbox_deckt`) und summiert je Ausgabe-Key über die Geräte des Typs, `_geraet_oder_innengeraete` liest Gerätefeld und
+Innengerät-Kopien (Gerätefeld ODER Σ der Kopien, nie addiert), `_merke_grund`/`_gruende` führen den W-18-Grund (der
+aussagekräftigste gewinnt; ein Grund nur für Keys ohne Wert). Proben: `test_rf71_tag_phasen.py`.
 
 Betroffen sind die Detailwerte in *Cockpit → Tag*: die Netzladung des Speichers („davon aus dem Netz
 (Arbitrage)") und die PV-/Netz-Anteile der E-Mobilität. Sie standen bis dahin in `[00:00, 24:00)`,
@@ -4103,6 +4591,26 @@ Intervall `[Vortag 23:00, 00:00)` trägt. Gepinnt in
 `tests/test_verbrauchsprofil_slot_konvention.py` — je eine Regression pro Fallback-Pfad plus ein
 Symmetrie-Test „gleiche Wirklichkeit, drei Messarten ⇒ **ein** Profil"
 (`feedback_aggregator_symmetrie`).
+
+**Die Stunde im HA-Pfad** (`live_verbrauchsprofil_service.py::_profil_from_ha`, Phasen `_history_je_sensor`,
+`_stunden_mittel`, `_verbrauch_und_wp_anteil`, `_profil_ergebnis`): je Sensor das arithmetische Mittel seiner
+History-Punkte im Intervall `[h_start, h_end)` des Slots, in kW:
+
+```
+PV_h          = Σ Mittel(PV-Sensor) / 1000       leistung_w der aktiven pv-module/balkonkraftwerk; ohne einen pv_gesamt_w
+Bezug_h       = Mittel(netzbezug_w) / 1000        Einspeisung_h = Mittel(einspeisung_w) / 1000
+  Kombi-Sensor (nur ohne beide): Mittel ≥ 0 ⇒ Bezug_h = Mittel / 1000, sonst Einspeisung_h = |Mittel| / 1000
+Verbrauch_h   = max(0, PV_h + Bezug_h − Einspeisung_h)
+WP_h          = Σ |Mittel(WP-Sensor)| / 1000      (wp_werktag / wp_wochenende nur, wenn ein WP-Sensor zugeordnet ist)
+Profil[slot]  = Mittel der Stichproben je Slot, 3 Stellen    Werktag = Slot-Datum Mo–Fr, Wochenende = Sa–So
+```
+
+Ein Sensor ohne Punkt in der Stunde trägt dort 0 bei; ob die Stunde überhaupt zählt, entscheidet der Netz-Beleg (N-46,
+unten). Die Temperatur-Mittel je Stunde (`aussentemperatur_c`) ergeben über den Tag die Heizgradtage der Lernwoche
+`referenz_hdd_kd` (N-593, wie im DB-Pfad). **N-536:** Die Entity eines Balkonkraftwerks entfällt aus der PV-Summe genau
+dann, wenn **jedes** seiner `pv-module`-Kinder selbst einen Leistungssensor hat (`bkw_kinder_decken_vollstaendig`); fehlt
+einem Kind die Zuordnung, bleibt das Gerät drin — sonst verlöre das Profil die einzige Quelle dieses Kindes, und der
+Rest-Anteil, den es dann zu viel trägt, ist dieselbe Teil-Deckung wie im Tagespfad.
 
 #### Temperaturkorrektur des Wärmepumpen-Anteils (N-593, N-594)
 
@@ -4251,6 +4759,21 @@ nach denselben Regeln wie die Tagessummen:
   Kälte, Funktions-Strom) eine Zeile hat, `None` (`waerme._verteile_linie`; der Funktions-Stapel ist dort ganz leer); die
   Folgestunde mit der Spanne trägt die Energie, Σ Stunden = Balken. Bestandstage unverändert. Der Betriebsart-Stapel
   verteilt weiter über die Modus-Form (die Modus-Spur der Stundenzeile hat in einer Spannen-Stunde eine Form, H-2a).
+  Die Stunden-Route `/waerme-verlauf-stunden` (`api/routes/energie_profil/waerme.py::get_waerme_verlauf_stunden`, Phasen
+  RF-58: `_waerme_tag` · `_stunden_verteilung` · `_waerme_linie_d1` · `_funktions_stapel` · `_antwort`) trägt je Slot `h`
+  zwei Stapel nebeneinander, nie überlagert:
+
+  ```
+  Wärme-Linie(h)      = Σ je Gerät nach D1 (N-391b): Gesamt-Wärmezähler, wo er den Tageswert trug, sonst Heizen + WW
+  Wärme-Stapel(h)     = heizen, warmwasser (Summanden-Formen der Achsen-Geräte), übrige = max(0, Linie − heizen − ww)
+                        — alle drei auf 3 Stellen; ohne Linien-Wert keine Segmente (P-433-3 S3)
+  Funktions-Stapel(h) = heizen = Linie strom_heizen_kwh, warmwasser = Linie strom_warmwasser_kwh,
+                        übrige  = round(max(0, Gesamt(h) − heizen − warmwasser), 3),  Gesamt(h) = wp_strom_kwh des Slots
+                                  (die Zählerspalte, Σ = Kachel «Strom verbraucht»)
+                        Gesamt(h) fehlt ⇒ übrige = None (keine Aussage, nicht 0); Funktions-Stapel nur, wenn ein
+                        Funktions-Zähler am TAG einen Wert > 0 trägt; Stunde ohne eigene Zeile an einem WP-Kanal-Tag ⇒
+                        heizen/warmwasser None (S5-R5)
+  ```
 * **Wärme-Verlauf (Tagesreihe, Beiträge, Monatsmengen) an einem WP-Kanal-Tag (W-3, S5a):** Modus-Split und gemessene
   Betriebsart-Zähler kommen wie in *Cockpit → Tag* aus den Kanälen (`kanal_stunden.wp_modus_der_kanal_tage`: Σ der
   abgeleiteten Kanäle «Strom je Betriebsart» im Kalendertag, Abdeckung `modus_abdeckung_h`, Bezug der Kanal-Strom; die
@@ -4326,6 +4849,14 @@ Defizit_kWh       = max(0, Verbrauch_kWh + Bat_Ladung - PV)
 
 **Strikte NULL-Semantik:** Wenn ein Zähler nicht gemappt ist, bleibt das zugehörige Feld `NULL` (statt aus Leistungs-Samples zu schätzen). Im Frontend zeigt eedc ein ⚠-Badge bei Datenlücken — siehe Reparatur-Popover in §4.1c.
 
+**Leistungskurve älterer Tage** (`services/energie_profil/lts_tagesverlauf.py::lade_tagesverlauf_aus_lts`, Vollbackfill und
+Reparatur-Werkbank): beschafft für Tage außerhalb der HA-Historie die Stunden-Leistungen aus der Langzeitstatistik (ein
+gebündelter Read ab dem Vortag, Serien je Tag über `baue_investitions_serien`, Vorzeichen-Invertierung, Vortagsrand
+Stunde 23) und **rechnet nichts** — Mengen, Peaks und Bilanz bildet `aggregate_day`. Auch die Serienwahl
+`live_sensor_config.py::baue_investitions_serien` (Live-Kurve und LTS-Kurve) rechnet nicht: sie wählt je Investition
+die Serien, behält je Entity eine (#227, Wallbox vor E-Auto) und lässt bei einer am Tag in Betrieb befindlichen Wallbox
+die E-Auto-Serie weg (#356, N-555) — Phasen `_serien_je_investition`, `_pool_schutz`, `_emob_quelle` (RF-79).
+
 #### Zählerlücken wie HA (ab v4.0.51)
 
 Fehlt in Home Assistant eine Stundenzeile eines Zählers, zeigt HA die Energie der Lücke in der
@@ -4344,6 +4875,50 @@ spannen[achse]= n, nur für n > 1 (TagesEnergieProfil.spannen)
 komponenten_kwh = Σ derselben Geräte-Slots (R5)
 ```
 
+Die Slot-Tabelle selbst (`get_hourly_slots_for_day`, Phasen `_slot_fenster`, `_anker_vor_fenster`, `_slot_werte`):
+
+```
+Fenster       = HA-Zeilen mit start_ts in [Vortag 22:00 − 5 min, heute 22:00 + 5 min], Index über lts_boundary_index
+                (−1 … 23); sum NULL ist keine Zeile; zwei Zeilen auf einem Index (Herbst-Doppelstunde) ⇒ die spätere
+Stand         = sum × Faktor(Einheit des Zählers)      Wh 0,001 · kWh 1 · MWh 1000 · GWh 10⁶; ohne/unbekannt 1
+Anker(h)      = höchster belegter Index < h (W1, über den Index, nicht den Zeitstempel);
+                sonst Index −1, sonst die letzte Zeile mit sum vor dem Fenster (SQL eine Abfrage,
+                WebSocket rückwärts über 1 · 8 · 32 · 128 · 1024 Tage)
+Slot h        = round(Stand(h) − Stand(Anker), 3)      n = 1 bei Slot h = 0 (R2), sonst max(1, round(Δstart_ts / 3600))
+kein Anker    ⇒ der erste belegte Slot bleibt leer (die Reihe beginnt im Fenster) — benannte Abweichung zu HA,
+                das dort 0 als Anker nimmt und die erste Stunde zeigt
+```
+
+Die Einheit wird **beim Lesen** umgerechnet (Fenster und Anker), die Differenz entsteht in kWh. Lesefehler (SQL oder
+WebSocket) ⇒ Warnung im Log und ein leeres Ergebnis für alle Zähler des Tages.
+
+**Tageswert je Gerät aus der Standreihe** (Bereichs-Leser `services/snapshot/bereichs_leser.py::lade_tageswerte_je_geraet`,
+Wärme/Klima-Verlauf je Tag und Speicher-Netzladung im Monats-Rückfall; dieselbe Regel wie `get_tagesdetail_kwh` für einen
+Tag, hier über einen Bereich mit **einer** Standreihe je Zähler):
+
+```
+Fenster(tag)  = [00:00, 24:00); an den Rückwärts-Tagen des Aufrufers [Vortag 23:00, 23:00) (N-435: die Tageszeile trägt
+                ihren WP-Strom aus den HA-LTS-Slots)                                     — Phase _tagesfenster
+Ränder        = die Menge aller Fenster-Enden; benachbarte Tage mit gleichem Fenster teilen ihren Rand
+Reihe         = EINE Abfrage je Zähler über [erster Rand − 5 min, letzter Rand + 5 min] (Snapshot-Tabelle)
+Stand(Rand)   = der Stand der Reihe, der dem Rand am nächsten liegt (±5 min); fehlt er, die Heilungs-Kaskade get_snapshot
+                (HA-Langzeitstatistik → MQTT-Backup, schreibt zurück) — nur für die fehlenden Ränder
+Anker (R1)    = fehlt Stand(Beginn) und ist Stand(Ende) da: der letzte Stand der Reihe vor dem Beginn, sonst der letzte
+                Stand beliebig weit zurück (letzter_stand_vor); die Energie der Lücke gehört zu diesem Tag (wie HA)
+Tageswert     = tageswert_aus_reihe(Anker bzw. Stand(Beginn), Stand(Ende), Stände dazwischen) = max(0, Ende − Anfang);
+                Rücksprung (Randdifferenz < −Toleranz oder fallende Folge, auch ein Tagesreset) ⇒ kein Tag
+                                                                                          — Phase _randstaende
+Gerät         = Gerätefeld ODER Σ der Innengerät-Kopien (geraetefeld_oder_innengeraete, nie addiert); laufen mehrere
+                (typ, feld) eines Geräts in denselben Ausgabe-Key, addieren sie sich       — Phase _auffalten
+übersprungen  = Gerät None · E-Auto mit Parent (die Wallbox misst die Ladung, sonst Doppelzählung) · Feld ohne Zähler
+                (feld_hat_zaehler, auch Quelle «keine»)                                   — Phase _geraete_aufloesung
+```
+
+Ein Tag ohne Anfangs- oder Endstand und ein Tag mit Rücksprung **fehlen** im Ergebnis `{datum: {ausgabe_key: {inv_id: kWh}}}`
+— keine 0 als Platzhalter (ADR-002/P4); der Rücksprung steht als Debug-Zeile im Log. Die Hülle `lade_tageswerte_je_feld`
+summiert die Geräte. Proben: `test_waerme_verlauf_bereichs_leser.py`, `test_zaehlerluecken_waerme_leser.py`,
+`test_rf56_kanal_leser_phasen.py`.
+
 - **Stundenverbrauch** (R6) nur, wenn PV, Netzbezug und Einspeisung **dieselbe** Spanne tragen; eine fehlende Batterie zählt 0, eine Batterie mit anderer Spanne ⇒ `None`.
 - **Tagesverbrauch** (R7) nach der HA-Formel über den Tag; `None` nur im Total-Fall. **Eigenverbrauch** = max(0, ΣPV − ΣEinsp − ΣLadung) + ΣEntladung (seit N-635, 05.10.2026; vorher max(0, ΣPV − ΣEinsp), s. §3.1). Eine fehlende Batterie zählt 0, `verworfen` auf der Batterie sperrt den Eigenverbrauch nicht (wie beim Gesamtverbrauch). Autarkie = (GV − Netzbezug) / GV. Unterdrückt werden EV/EV-Quote bei `verworfen` auf PV oder Einspeisung, die Autarkie bei `verworfen` auf PV, Netzbezug, Einspeisung oder Batterie.
 - **Monat** (R8, `monatsbilanz_aus_tagen`): faltet Tagesbilanzen; ein Total-Fall-Tag propagiert nicht; EV mit derselben Formel aus den Summen der Tage (Rest-Abweichung an Tagen mit Netzladung, §3.1).
@@ -4355,6 +4930,60 @@ komponenten_kwh = Σ derselben Geräte-Slots (R5)
 - **Daten-Checker:** Tage mit Regelmarke, an denen Σ Einspeisung > Σ PV + Σ Entladung + 0,5 kWh, erscheinen als Hinweis „Einspeisung über Erzeugung" (Entladung ins Netz ist erlaubt).
 - **Benannt:** Die Live-Tageskacheln (`live_history_service`) weichen von *Cockpit → Tag* um jedes Mitternachtsbündel ab. Preise einer gebündelten Stunde: s. [KONZEPT-FLEX-TARIFE](KONZEPT-FLEX-TARIFE.md) [A-6].
 
+**Tagesbilanz aus den Stundenzeilen** (`core/berechnungen/tagesbilanz.py::bilanz_aus_stundenrows`, Layer ADR-001; Tag, Monat aus
+Stunden, Kanal-Tag, Zeitraum) — Σ über die Zeilen, eine Stunde ohne Wert (`NULL`) zählt **nicht** als 0:
+
+```
+Mengen        = Σ pv_kw · Σ verbrauch_kw · Σ einspeisung_kw · Σ netzbezug_kw · Σ waermepumpe_kw (je Achse nur Stunden mit Wert;
+                *_erfasst = mindestens eine Stunde, *_stunden = Abdeckung je Achse)       — Phase _stunden_summen
+Speicher      = Ladung Σ max(0, −batterie_kw) · Entladung Σ max(0, batterie_kw)              — Phase _stunden_summen
+nur Stunden mit PV UND Verbrauch:
+Überschuss    = Σ max(0, PV − V)    Defizit = Σ max(0, V − PV)    Direktverbrauch = Σ min(PV, V)  — Phase _stunden_summen
+Regelmarke (R9) = verworfen ist nicht None (auch {} — Tag der neuen Regel); sonst N-92 (Altbestand, Monatsfaltung roh)
+R7  Gesamtverbrauch = gesamtverbrauch_ha_formel_kwh (PV + Netzbezug + Entladung − Einspeisung − Ladung, einmal ≥ 0)
+                      nur ohne Total-Fall (PV, Netzbezug und Einspeisung je ≥ 1 Stunde), sonst None (Anzeige «—»)
+    Eigenverbrauch  = _eigenverbrauch_kwh (Direktverbrauch + Entladung, N-635) bei PV und Einspeisung erfasst und
+                      ohne verworfen.pv / verworfen.einspeisung                              — Phase _eigenverbrauch_je_regel
+    Autarkie        = (GV − Netzbezug) / GV × 100 bei GV > 0 und ohne verworfen auf pv/netzbezug/einspeisung/batterie
+N-92 Eigenverbrauch = dieselbe Formel, nur bei PV erfasst und GLEICHER Abdeckung pv_stunden = einspeisung_stunden
+                      = Stunden mit beiden (Teilabdeckung PV 24 h / Einspeisung 18 h ⇒ None statt 48 − 18 = 30)
+    Autarkie        = (Σ V − Σ Netzbezug) / Σ V × 100 bei Σ V > 0, Netzbezug erfasst und gleicher Abdeckung
+                      verbrauch_stunden = netzbezug_stunden = Stunden mit beiden               — Phase _autarkie_je_regel
+EV-Quote      = min(100, EV / Σ PV × 100) nur bei PV erfasst, EV nicht None und Σ PV > 0 (sonst None, nicht 0 %)
+Speicher-Eff. = Entladung / Ladung × 100 nur bei Ladung > 0,1 kWh (sonst None)              — Phase _bilanz_aus_summen
+V2H (#110)    = nur mit Regelmarke über mit_v2h_entladung (Summand in GV und EV, dieselben Sperren)
+```
+
+Eine Differenz ohne gemeinsame Grundlage wird unterdrückt, nicht beschriftet (`KONZEPT-UNVOLLSTAENDIGE-WERTE.md` §3). Die
+Phasen lesen die Zeilen genau einmal (ein Iterator genügt). Proben: `test_tagesbilanz_pv_nicht_erfasst.py`, `test_v2h_tageswert.py`,
+`test_n635_eine_eigenverbrauchs_formel.py`, `test_rf73_tagesbilanz_lts_phasen.py`.
+
+**Drift-Prüfung Datenquellen (Daten-Checker)** — die gespeicherten Tageswerte gegen HAs Tageswert aus der
+Langzeitstatistik (`snapshot/lts_aggregator.get_komponenten_tageskwh_lts`, je Tag **ein** Lesen für beide Achsen). Nur mit
+HA-Statistik; im Standalone keine Zeile.
+
+```
+Fenster       = die 90 Tage bis gestern mit Tageszeile; eedc-Seite je Tag über die Lesestelle
+                (kanal_stunden.komponenten_der_tage — an einem Kanal-Tag PV/Netz/Speicher aus dem Spiegel)
+aktiv(tag)    = Investitionen mit ist_aktiv_an(tag); die HA-Seite liest nur deren Sensoren (N-64)
+Achse 1 (PV)  Σ_eedc, Σ_HA = Σ der positiven Werte über die PV-/BKW-Keys, die der LTS-Read für den Tag liefern konnte
+              (#311: nicht gelesen ≠ 0); kein lesbarer PV-Key oder Σ_eedc ≤ 0 ∧ Σ_HA ≤ 0 ⇒ kein Vergleich —
+              eine Seite 0 gegen die andere > 0 IST ein Vergleich
+Achse 2       je übriger Key einzeln (Wallbox, E-Auto, Wärmepumpe, Sonstiges, Einspeisung, Netzbezug; nie batterie_*),
+              nur wenn beide Seiten > 0 (sonst Lücke ⇒ «fehlende Tageswerte», N-201)
+Δ             = |Σ_eedc − Σ_HA|
+Drift         wenn Δ ≥ 2 kWh ∧ Δ / max(Σ_eedc, Σ_HA) ≥ 5 %          (beide Achsen, beide Schwellen zugleich)
+Ausgabe       Achse 1: je Drift-Tag eine Zeile, |Δ| absteigend, höchstens 20; der Rest als «… plus N weitere Tag(e)»
+              Achse 2: je Komponente EINE Zeile — Zahl der Drift-Tage, der Tag mit dem größten |Δ| als Beleg und
+              Reparatur-Ziel; die Komponente mit dem größten |Δ| zuerst
+```
+
+Reihenfolge der Zeilen: die PV-Tage, dann die Komponenten, zuletzt die Rest-Zeile; ohne Drift eine OK-Zeile. Die Meldung
+nennt `HA − eedc` mit Vorzeichen und den Anteil an `max(Σ_eedc, Σ_HA)`. Ein Lesefehler an einem Tag nimmt den Tag aus beiden
+Achsen. Code: `services/daten_checker/datenquelle/quellen.py::QuellenChecks._check_datenquelle_drift` (Phasen
+`_drift_pv_achse`, `_drift_komponenten_achse`, `_drift_tageszeilen`, `_drift_komponentenzeilen`, RF-64). Meldungen und
+Behebung: [HANDBUCH_DATEN_CHECKER §4.17](HANDBUCH_DATEN_CHECKER.md#417-datenquellen-drift).
+
 **Peaks aus W-Integration (für Spitzenwerte):**
 
 ```
@@ -4364,6 +4993,35 @@ Peak_Einspeisung_kW     = max(W-Sample) / 1000
 ```
 
 Peaks brauchen die Leistungssamples — die kWh-Aggregation läuft separat über die Snapshots.
+
+**Peaks aus der HA-Langzeitstatistik (Vorrang, Etappe 5 v3.31.0):** Liefert HA für die Leistungssensoren je Stunde
+`statistics.min`/`statistics.max` (Sensoren mit `has_mean`, in kW umgerechnet von `get_hourly_minmax_sensor_data`), ersetzt
+`aggregate_day` jeden der drei Peaks, für den dieser Pfad einen Wert hat; sonst bleibt der Wert aus den W-Samples oben:
+
+```
+PV-Sensoren   = leistung_w der pv-module/balkonkraftwerk-Investitionen; ohne einen davon pv_gesamt_w
+                außer der Entity eines Balkonkraftwerks, dessen pv-module-Kinder ALLE selbst messen (N-775)
+BKW teilgedeckt (ein Teil seiner Kinder misst): je Stunde max_h(BKW) → max(0, max_h(BKW) − Σ max_h(messende Kinder))
+Netz-Sensoren = netzbezug_w / einspeisung_w; netz_kombi_w nur, wenn beide fehlen
+live_invert   : min' = −max, max' = −min                      (Basis- oder Investitions-Flag)
+
+Peak_PV_kW          = max über h=0…23 von Σ max_h(PV-Sensor)  nur positive max_h; Stunde ohne einen zählt nicht
+Peak_Netzbezug_kW   = max über h von max_h(netzbezug_w)       nur > 0
+Peak_Einspeisung_kW = max über h von max_h(einspeisung_w)     nur > 0
+  Kombi-Sensor:  Peak_Netzbezug_kW = max über h von max_h > 0,  Peak_Einspeisung_kW = max über h von |min_h < 0|
+```
+
+Σ max je Stunde ist bei mehreren PV-Sensoren eine **obere Schranke** (die Einzelspitzen können in verschiedene Minuten
+der Stunde fallen). **Balkonkraftwerk mit Modul-Kindern (N-775, Regel N-536):** das BKW zählt nie neben seinen Kindern —
+messen alle Kinder, wird seine Entity nicht gelesen (`bkw_kinder_decken_vollstaendig`); misst nur ein Teil, trägt es je
+Stunde den Rest (`bkw_restwerte`, unverteilt). Bis N-775 standen BKW und Kinder beide in der Summe (0,8 + 0,4 + 0,4 ⇒ 1,6 statt
+0,8 kW). Die Elternschaft lädt der Pfad nur, wenn ein BKW und ein Modul beide einen Leistungssensor haben; als Kind zählt
+nur ein Modul, das am Tag aktiv war (`aktiv_am_tag` — der Selektor läuft nach dem Zeitfilter). Kein Sensor, Statistik nicht erreichbar, Lesefehler oder leere Antwort ⇒ alle drei `None` und der
+W-Sample-Wert bleibt. Code: `services/energie_profil/_helpers.py::_get_tagespeaks_aus_ha_lts` (Phasen
+`_lts_sensoren_je_rolle`, `_peak_pv_aus_lts`, `_peak_netz_aus_lts`; Invert-Tausch in `_PeakKontext.slot_for`; Eltern-Regel in
+`_pv_elternschaft`, `_bkw_teil_deckung`, `_bkw_rest_der_stunde`), Aufrufer
+`aggregator.py` am Ende des Stundenteils; geschrieben als `peak_pv_kw`/`peak_netzbezug_kw`/`peak_einspeisung_kw` der
+Tageszusammenfassung (unten).
 
 **Zusätzliche Daten pro Stunde:**
 

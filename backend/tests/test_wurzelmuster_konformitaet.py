@@ -1675,7 +1675,9 @@ P8_BASELINE_AUSNAHMEN: frozenset[str] = frozenset({
     "backend/api/routes/datenquellen.py::_nach_eigenem_tarif",
     # Spaltenstruktur von Vorlage und Export nach heutiger Vertragsart.
     "backend/api/routes/import_export/csv_operations.py::get_csv_template_info",
-    "backend/api/routes/import_export/csv_operations.py::export_csv",
+    # RF-60 (5.11.2026): der Export lädt den Tarif in seiner Kopf-Phase (bis dahin `::export_csv`) — dieselbe Ladung, die
+    # nur die Spalten Durchschnittspreis/Einspeisevergütung entscheidet; die Zahl je Zeile kommt aus den Monatsdaten.
+    "backend/api/routes/import_export/csv_operations.py::_export_spalten",
     # ROI-/Wirtschaftlichkeits-Prognose NACH VORN (Ø-Jahreswert). Vorlage 5 (18.09.2026): crud.py → roi.py;
     # Vorlage 5b (18.09.2026): die Tarif-Ladung zog mit dem Kopf des Endpunkts nach roi_eingaenge.py.
     "backend/api/routes/investitionen/roi_eingaenge.py::lade_roi_eingaenge",
@@ -1688,14 +1690,20 @@ P8_BASELINE_AUSNAHMEN: frozenset[str] = frozenset({
     "backend/api/routes/investitionen/dashboard_wallbox.py::get_wallbox_dashboard",
     # Heutiger Tarif als Fallback des Perioden-Mappings und für die nach vorn
     # gerichteten Sensor-Werte. Die Historien-Summen daneben lösen je Monat auf
-    # (`wp_preis_by_periode` / `wallbox_preis_by_periode`, beide mit Stichtag).
+    # (`wp_preis_by_periode` / `wallbox_preis_by_periode` aus `tarife_der_monate`, seit N-712/N-713;
+    # bis dahin je Monat mit Stichtag).
     # ⛔ `calculate_investition_sensors` stand bis 05.09.2026 (B5/X-1) mit
     # derselben Begründung hier — sie war für die Wärmepumpe falsch: der
     # Ersparnis-Sensor je Gerät bewertete ALLE Monate mit dem heutigen WP-Tarif
     # (gemessen: Juli mit dem Septemberpreis). Die Ausnahme zählte den Lader,
     # nicht, was mit dem Tarif geschah — dieselbe Lücke wie bei P8/S4 oben.
     # Seit X-1 lädt die Funktion je Monat mit Stichtag; der Eintrag ist weg.
-    "backend/api/routes/ha_export/anlage_sensoren.py::calculate_anlage_sensors",   # Vorlage 8 (18.09.2026): ha_export.py → Paket ha_export/
+    # Vorlage 8 (18.09.2026): ha_export.py → Paket ha_export/. RF-75 (5.11.2026): der Anlagen-Rechner lädt den heutigen
+    # Tarif in seiner Kopf-Phase (bis dahin `::calculate_anlage_sensors`) — dieselbe Ladung (N-200, SoT
+    # `lade_tarife_fuer_anlage`), die Fallback und die nach vorn gerichteten Sensor-Werte trägt; die Historien-Summen
+    # lösen weiter je Monat auf (`historische_komponenten`: `wp_preis_by_periode` / `wallbox_preis_by_periode` aus
+    # `tarife_der_monate`).
+    "backend/api/routes/ha_export/anlage_sensoren.py::_anlage_eingaenge",
     # N-200: seit dem SoT-Umbau sichtbar. Die Route reicht den Tarif nur an
     # `calculate_investition_sensors` durch — dieselbe Rolle wie die Zeile
     # darüber, eine Ebene höher.
@@ -2258,7 +2266,11 @@ P10_SCHREIBEN_IMPORT_CHECKER: frozenset[str] = frozenset({
     # um ihre PROVENIENZ zu prüfen und den Sub-Key zu entfernen; keine Monatsgröße entsteht. Ersetzt den Eintrag
     # `::_verteile_anlagen_pv` (N-533, der Verteil-Schreibweg ist mit E4b entfallen).
     "backend/api/routes/ha_statistics_import.py::_entferne_eigene_zerlegung",   # RF-5: Schwestermodul
-    "backend/api/routes/import_export/csv_operations.py::export_csv",
+    # RF-60 (5.11.2026): der CSV-Export lädt die Gerätezeilen in seiner Lade-Phase (bis dahin `::export_csv`) als Map
+    # `(investition_id, jahr, monat) → verbrauch_daten`; die Zeilen-Phase `_export_zeilen` schreibt daraus je Gerät und
+    # Spalte den gespeicherten Wert (Fallback-Key, Dezimal-Komma, Sonderkosten-Netto der EINEN Zeile) — ein Backup der
+    # Rohzeilen, keine Monatsgröße über Geräte. Sie trägt keinen Marker und braucht keinen Phasen-Eintrag.
+    "backend/api/routes/import_export/csv_operations.py::_export_laden",
     "backend/api/routes/import_export/json_operations.py::_export_anlage_full_impl",
     "backend/services/migrations/migrate_emob_canonical_source.py::migrate_emob_canonical_source",
     # N-555 (25.09.2026): einmalige Rückbenennung der Startroutine-Umbuchungen —
@@ -2464,7 +2476,7 @@ _P10_FALT_SICHTFELD: tuple[str, ...] = ("backend/api/", "backend/services/")
 #:
 #: ⚠ **Der Name sagt `PER_INVESTITION`, die Kategorie ist weiter.** Ein Lader
 #: darf auch aus `P10_SCHREIBEN_IMPORT_CHECKER` kommen oder in der Schicht
-#: liegen — drei Einträge unten sind genau das (Schreib- und Löschpfade). Die
+#: liegen — mehrere Einträge unten sind genau das (Schreib- und Löschpfade; gezählt 3.11.2026: 13 von 26). Die
 #: gemeinsame Aussage ist nicht „per Investition", sondern: **diese Funktion
 #: lädt nicht, sie bekommt.** Wer den Lader verschiebt, verschiebt die Phase mit.
 #:
@@ -2478,7 +2490,14 @@ P10_PER_INVESTITION_PHASE: dict[str, str] = {
     # übergebenen `verbrauch_daten`. Einziger Lader ist der Haupt-Pfad (Cockpit → Monat);
     # bis 03.10.2026 rief auch `aktueller_monat/vergleich.py::_load_vorjahr` die Funktion
     # mit eigener IMD-Ladung — seit N-610 rechnet das Vorjahr über die Monatsfunktion.
-    "backend/api/routes/aktueller_monat/tkonto.py::_baue_investition_financial":
+    # RF-47 (5.11.2026): `_baue_investition_financial` ist ein Orchestrator (Kopf, Kontext `_ZeilenKontext`, Typ-Weiche,
+    # Abschluss) und lädt nichts. Gefaltet wird die übergebene Zeile `ctx.data` des Lader-Aufrufs — dieselbe Zeile wie
+    # bisher — in zwei Phasen: `_wp_zeile` (Marker `modus_strom_zeile`, `imd_typ_beitrag`) und `_bkw_zeile`
+    # (Marker `imd_typ_beitrag`; bis 5.11. unter dem Alias `_imd_typ_beitrag` importiert, den dieser Suchlauf nicht
+    # sieht — der Alias ist entfernt, damit der Wächter die Phase sieht).
+    "backend/api/routes/aktueller_monat/tkonto.py::_wp_zeile":
+        "backend/api/routes/aktueller_monat/finanzen.py::t_konto_je_investition",
+    "backend/api/routes/aktueller_monat/tkonto.py::_bkw_zeile":
         "backend/api/routes/aktueller_monat/finanzen.py::t_konto_je_investition",
     # Vorlage 8b: Phase des Anlagen-Rechners. Faltet `historische_inv_daten`,
     # das die Lade-Phase eine Zeile vorher gebaut hat (WP-Ersparnis, CO₂).
@@ -2487,9 +2506,14 @@ P10_PER_INVESTITION_PHASE: dict[str, str] = {
     # Die eMob-Mengen EINER Zeile für die Geräte-Sensoren.
     "backend/api/routes/ha_export/investition_sensoren.py::_emob_daten":
         "backend/api/routes/ha_export/investition_sensoren.py::calculate_investition_sensors",
-    # E2/P4/P7/P8 einer Wärmepumpe. Der Docstring dieser Funktion benannte die
+    # E2/P4/P7/P8 einer Wärmepumpe. Der Docstring von `_wp_steuerung_und_plan` benannte die
     # Blindstelle, gegen die dieser Suchlauf gebaut ist.
-    "backend/api/routes/ha_export/investition_sensoren.py::_wp_steuerung_und_plan":
+    # RF-76 (5.11.2026): `_wp_steuerung_und_plan` ist ein Orchestrator (Kontext `_WpSteuerKontext`, Phasen E2/P4/P7/P8)
+    # und faltet nichts mehr selbst. Den Marker trägt allein die P4-Phase `_warmwasser_fenster` (Ø-Warmwasserstrom
+    # der letzten drei Monate über `imd_typ_beitrag`/`modus_strom_zeile` aus `.verbrauch_daten` der übergebenen
+    # Zeilen — dieselben Zeilen wie bisher); E2 `_warmwasser_betrieb`, P7 `_heizfenster` und P8 `_kuehlfenster`
+    # tragen keinen (P8 reicht die Zeilen an `hat_kuehl_zaehler` weiter, s. unten).
+    "backend/api/routes/ha_export/investition_sensoren.py::_warmwasser_fenster":
         "backend/api/routes/ha_export/investition_sensoren.py::calculate_investition_sensors",
     # RF-8 (Serie „Funktion vor Datei"): Phasen des Geraete-Rechners — Faltung der WP-Monatszeilen (Strom, Waerme,
     # Modus-Teilmengen) und die WP-Ersparnis je Monat. Die Zeilen laedt der Orchestrator selbst.
@@ -2509,7 +2533,7 @@ P10_PER_INVESTITION_PHASE: dict[str, str] = {
         "backend/api/routes/investitionen/dashboard_eauto.py::get_eauto_dashboard",
     # CHECKER-Phase: beantwortet „führt dieses Gerät einen Kühl-Zähler?" über
     # übergebene Zeilen. Der Lader ist der Datenquellen-Check daneben; zweiter
-    # Aufrufer ist `_wp_steuerung_und_plan` (selbst eine Phase, s. o.).
+    # Aufrufer ist `_kuehlfenster`, die P8-Phase von `_wp_steuerung_und_plan` (RF-76; s. o.).
     "backend/services/daten_checker/kuehl_zaehler.py::hat_kuehl_zaehler":
         "backend/services/daten_checker/datenquelle/klima.py::_check_klima_modus_sensor",
     # RF-26 (Serie „Funktion vor Datei"): Phase des Klima-Checks — WK-06 „Kühlanteil wird geschätzt" befragt die
@@ -2552,6 +2576,31 @@ P10_PER_INVESTITION_PHASE: dict[str, str] = {
         "backend/api/routes/ha_statistics.py::get_import_vorschau",
     "backend/api/routes/ha_statistics.py::_bkw_eigene_werte_kwh":
         "backend/api/routes/ha_statistics.py::get_import_vorschau",
+    # RF-42 (3.11.2026): Phasen der Einmal-Migration Phase 2a (Heimladung E-Auto → Wallbox; Boot über
+    # `_apply_once("phase_2a_emob_canonical_source")`, seit v3.36.0). Lader ist der Orchestrator
+    # `migrate_emob_canonical_source` (`P10_SCHREIBEN_IMPORT_CHECKER`, «Import / Export / Migration»), die beiden
+    # `select` sind dort geblieben. SCHREIBPFAD wie `modus_split_schreiben`: `_eauto_seite` summiert die E-Auto-
+    # Heimladung EINES Monats über die Gerätezeilen — dieselbe Summe, die die Schicht als `EmobFakten.eauto_summe`
+    # bildet (`summiere_emob_quelle`, gleicher Leser `get_emob_pv_netz_kwh`) — aber nur als Entscheidungsgröße
+    # («höherer Wert gewinnt»), die in die Wallbox-Zeile GESCHRIEBEN und nirgends ausgeliefert wird. Durch die Schicht
+    # geführt käme die Migration an die Zeilen nicht heran, in die sie schreibt und aus denen sie räumt (`MonatsFakt`
+    # trägt Mengen, keine Zeilen). Nicht gelistet und damit gewächtert: `_eautos_und_wallboxen`, `_protokolliere`.
+    # (Gegenprüfung Fable 3.11.2026: Eintragung richtig, Kommentar faktentreu gemacht.)
+    # Sammelt die Monate, in denen ein aktives E-Auto Heimladung trägt (liest je Zeile, summiert nicht).
+    "backend/services/migrations/migrate_emob_canonical_source.py::_monate_mit_eauto_heimladung":
+        "backend/services/migrations/migrate_emob_canonical_source.py::migrate_emob_canonical_source",
+    # Summiert die E-Auto-Seite EINES Monats über die übergebenen Zeilen — die Entscheidungsgröße des Schreibpfads.
+    "backend/services/migrations/migrate_emob_canonical_source.py::_eauto_seite":
+        "backend/services/migrations/migrate_emob_canonical_source.py::migrate_emob_canonical_source",
+    # Schreibt die E-Auto-Trias in die Wallbox-Zeile (legt sie ggf. an).
+    "backend/services/migrations/migrate_emob_canonical_source.py::_schreibe_eauto_trias_in_wallbox":
+        "backend/services/migrations/migrate_emob_canonical_source.py::migrate_emob_canonical_source",
+    # Räumt die Heim-Keys der E-Auto-Zeilen (Löschpfad).
+    "backend/services/migrations/migrate_emob_canonical_source.py::_raeume_eauto_heim_keys":
+        "backend/services/migrations/migrate_emob_canonical_source.py::migrate_emob_canonical_source",
+    # Entscheidet einen Monat: liest die Wallbox-Zeile, vergleicht mit der E-Auto-Summe, ruft Schreiben und Räumen.
+    "backend/services/migrations/migrate_emob_canonical_source.py::_konsolidiere_monat":
+        "backend/services/migrations/migrate_emob_canonical_source.py::migrate_emob_canonical_source",
 }
 
 #: **Checker-Pfade ohne Lader** — die Blindstelle aus dem Prüfbericht
@@ -2619,7 +2668,8 @@ _P10_ZEILE_ERLAUBT: frozenset[str] = frozenset({
     _P10_SCHICHT,
     # Der Builder selbst nimmt die Eingabe entgegen.
     "backend/services/finanz_zeilen.py",
-    # Tages-Pfad (§4). Vorlage 4 (18.09.2026): die Zeile entsteht in `get_tag_detail`, heute `tag.py`.
+    # Tages-Pfad (§4). Vorlage 4 (18.09.2026): die Zeile entsteht in `get_tag_detail`, heute `tag.py`;
+    # RF-71 (5.11.2026): in dessen Phase `_tag_preis`.
     "backend/api/routes/energie_profil/tag.py",
     "backend/services/energie_profil/tage_werte.py",
 })
@@ -2992,7 +3042,16 @@ P11_AUSNAHMEN: frozenset[str] = frozenset({
     # Balkonkraftwerk sein Kanal ODER, abgetreten ohne eigenen, die Kanäle seiner Kinder — nie beide). Eltern und Kind
     # können sich so nicht doppeln; der Selektor beantwortete die Frage „wer ist ein String?" nicht.
     "backend/services/daten_checker/datenquelle/zaehler_steht.py::_check_pv_zaehler_steht",
-    "backend/services/energie_profil/_helpers.py::_get_tagespeaks_aus_ha_lts",
+    # RF-53 (5.11.2026): bis dahin stand hier `_helpers.py::_get_tagespeaks_aus_ha_lts`; die Typ-Menge
+    # `pv_typ = {"pv-module", "balkonkraftwerk"}` steht seitdem in seiner Auswahl-Phase. Sie WÄHLT nur die
+    # Leistungs-Entities (`leistung_w` je Investition, sonst `pv_gesamt_w`) und summiert nichts; die Σ max je
+    # Stunde bildet die Phase `_peak_pv_aus_lts` über genau diese Auswahl.
+    # N-775 (5.11.2026): die Auswahl läuft seitdem durch `bkw_kinder_decken_vollstaendig` (die Entity eines BKW,
+    # dessen Kinder alle messen, entfällt) und ist damit auch über `_P11_SELEKTOR_AUFRUFE` gedeckt; die Teil-Deckung
+    # kürzt `_bkw_rest_der_stunde` über `bkw_restwerte`. Bis dahin zählten BKW und messende Kinder beide (die
+    # Abfrage lud keine Elternschaft). Der Eintrag bleibt, weil `test_p11_ausnahmen_sind_alle_erreichbar` ihn
+    # nicht als tot meldet (die Funktion bildet die Menge weiter); er ist seit N-775 redundant zum Selektor-Aufruf.
+    "backend/services/energie_profil/_helpers.py::_lts_sensoren_je_rolle",
     # LADEPFAD, keine Summe: holt die Erzeuger-Zeilen aus der DB und reicht sie
     # weiter. Die Menge wird erst in `soll_fuer_monat` gebildet — dort läuft sie
     # durch den Selektor, und zwar NACH dem Zeitfilter. Den Selektor schon beim
@@ -3027,7 +3086,9 @@ P11_AUSNAHMEN: frozenset[str] = frozenset({
     "backend/services/snapshot/keys.py::_categorize_counter",
     "backend/services/snapshot/komponenten_beitraege.py::investition_beitraege",
     "backend/core/database.py::_migrate_connector_field_inv_map_backfill",
-    "backend/services/daten_checker/energieprofil.py::_check_energieprofil_abdeckung",
+    # RF-65 (5.11.2026): bis dahin stand hier `::_check_energieprofil_abdeckung`. Die Typ-Menge liegt seitdem in der
+    # Phase `_abdeckung_je_investition`, die den Selektor ruft (`traegt_erzeugungsgroessen_selbst`, F-39) — der
+    # Suchlauf stellt sie damit selbst frei; der Eintrag war schon am HEAD nicht tragend (Nachmessung 5.11.) und entfällt.
     "backend/services/daten_checker/monatsdaten.py::_check_monatsdaten_vollstaendigkeit",
     "backend/services/daten_checker/stammdaten.py::_check_stammdaten",
     # Prüft JE GERÄT (Ausrichtung, kWp, Kosten gepflegt?) und bildet keine
@@ -3478,10 +3539,17 @@ P13_AUSNAHMEN: frozenset[str] = frozenset({
     # Feldangebot. `bauarten_gemischt` kommt aus den Stammdaten (monats_fakten)
     # und wird an `abgrenzungs_grund` gereicht — P12 hält, dass daraus nie eine
     # rohe Division wird.
-    "backend/services/monats_fakten/roh.py::falte",               # zählt luft_luft/luft_wasser je Block
-    "backend/api/routes/energie_profil/tag.py::get_tag_detail",   # dieselbe Frage je Tag (Vorlage 4: views.py → tag.py)
+    "backend/services/monats_fakten/roh.py::_falte_wp",           # zählt luft_luft/luft_wasser je Block (RF-62: Phase von `_RohMonat.falte`)
+    # RF-71 (5.11.2026): `get_tag_detail` ist ein Orchestrator und liest die Bauart nicht mehr; beide Ketten, die
+    # `bauarten_gemischt` lesen (`abgrenzungs_grund` der Block-Lage — Bauarten des Tages über `ist_luft_luft_waermepumpe`,
+    # nur Geräte mit Strom des Tages —, `abgrenzung_je_funktion` nach SOLL §3.2b), stehen in der Phase `_abgrenzung_tag`
+    # — dieselbe Abgrenzung einer Kennzahl wie bisher, kein Feldangebot.
+    "backend/api/routes/energie_profil/tag.py::_abgrenzung_tag",  # dieselbe Frage je Tag (Vorlage 4: views.py → tag.py)
     # Vorlage 2 (18.09.2026): die R2-/SOLL-3.2b-Abgrenzung zog aus dem Endpunkt nach waerme.py.
-    "backend/api/routes/aktueller_monat/waerme.py::waerme_klima_monat",
+    # RF-67 (5.11.2026): `waerme_klima_monat` ist ein Orchestrator und liest die Bauart nicht mehr; beide Ketten, die
+    # `bauarten_gemischt` lesen (`abgrenzungs_grund` der anlagenweiten Lage, `abgrenzung_je_funktion` nach SOLL §3.2b),
+    # stehen in der Phase `_wp_abgrenzung` — dieselbe Abgrenzung einer Kennzahl wie bisher, kein Feldangebot.
+    "backend/api/routes/aktueller_monat/waerme.py::_wp_abgrenzung",
     "backend/api/routes/cockpit/komponenten.py::get_komponenten_zeitreihe",
     "backend/api/routes/monatsdaten_aggregiert.py::_arbeitszahl_des_monats",
     # B6/Y-2 (05.09.2026): Jahresroute UND PDF-Jahresbericht lesen die Abgrenzung
@@ -3508,7 +3576,10 @@ P13_AUSNAHMEN: frozenset[str] = frozenset({
     # tot und die Liste ist damit um einen Leser kürzer.
 
     # ── 3. Stammdatum: die Bauart reist als Eigenschaft ──────────────────────
-    "backend/services/community_service.py::prepare_community_data",
+    # RF-83 (5.11.2026): `prepare_community_data` ist ein Orchestrator und liest die Bauart nicht mehr; die Wärmepumpen-
+    # Art der ersten Wärmepumpe (`PARAM_WAERMEPUMPE["WP_ART"]`) und ihr Schlüssel `wp_art` im Datensatz stehen in der Phase
+    # `_payload` — dieselbe Eigenschaft wie bisher, der Server nimmt sie für den fairen JAZ-Vergleich und rechnet nichts.
+    "backend/services/community_service.py::_payload",
 
     # ── 2b. Hinweis-Auswahl: die Bauart schlägt vor, die Beleglage ergänzt ────
     # B2 (05.09.2026): `_check_klima_modus_sensor` bietet den Modus-Hinweis an

@@ -7,7 +7,59 @@ und dieses Projekt folgt [Semantic Versioning](https://semver.org/lang/de/).
 
 ---
 
-## [Unreleased]
+## [4.2.2] - 2026-11-06
+
+Fehlerbehebungen und zwei Melder-Wünsche aus dem simon42-Forum: der laufende Tag ohne Home-Assistant-Statistik zählt mit den Zählern, „PV heute“ im Live zählt Erzeuger ohne Zähler mit, der Gesamt-ROI zieht die Betriebskosten nicht bewerteter Geräte ab, der Tages-Peak zählt ein Balkonkraftwerk nicht doppelt, die Einrichtung im Standalone-Betrieb bekommt die Energie-Dashboard-Vorschläge; neu die Tagesspalten „Strom Heizbetrieb/Warmwasserbetrieb“ in der Tabelle und der Daten-Checker-Hinweis bei doppelt zugeordnetem Heizstrom; das Solar-Soll steht an der PV. Dazu intern: alle 25 verbliebenen Funktionen über der Komplexitätsschwelle 50 nach Bauform RF-1 geschnitten (Golden Master je Funktion, verhaltensgleich), die Baseline des Wächters ist leer.
+
+### Fixed
+
+- **Laufender Tag ohne Home-Assistant-Statistik (Standalone, MQTT, MQTT-Geräte neben HA): die Tagesmenge kommt aus den
+  Zählerständen, nicht aus der Leistungskurve.** Bisher zeigte der laufende Tag — und mit ihm der laufende Monat — für heute
+  die aufsummierte Leistung (an der Wärmepumpe etwa 2,0 statt 2,75 kWh); erst am Folgetag stand der Zählerwert da.
+- **Einrichtung im Standalone-Betrieb mit Home-Assistant-Verbindung: die Vorschläge aus dem Energie-Dashboard kommen an.**
+  Bisher blieb der Integrations-Schritt bei „Vorschläge werden geladen …“ stehen; jetzt holt eedc sie über die Verbindung,
+  und lässt sich nichts abrufen, sagt der Schritt das in einem Satz.
+- **Energie-Dashboard mit mehreren Solar-Quellen:** eedc schlägt dann keinen PV-Gesamtzähler mehr vor (bisher nahm es still
+  die letzte Quelle). Der Integrations-Schritt sagt, dass weitere Netz-, Solar- oder Batteriequellen unter
+  *Einstellungen → Datenquellen* zugeordnet werden.
+- **Cockpit → Live, „PV heute/gestern": Erzeuger mit nur einem Leistungssensor zählen mit, auch wenn ein anderer Erzeuger
+  einen Zähler hat.** Bisher fiel zum Beispiel ein Balkonkraftwerk ohne Zähler neben einem Wechselrichter mit Zähler aus der
+  Summe, wenn kein PV-Gesamtzähler der Anlage zugeordnet war (gesät: 57,0 statt 62,7 kWh); sein Wert stand nur im Tooltip.
+  Jetzt zählt jeder Erzeuger mit seiner Messung — Zähler, wo einer misst, sonst die Leistung. Mit PV-Gesamtzähler bleibt es,
+  wie es war.
+- **Auswertungen → ROI: Gesamt-ROI und Amortisation ziehen auch die Betriebskosten eines nicht bewerteten Geräts ab.**
+  Eine Wärmepumpe ohne gepflegten Wärmebedarf oder ein Gerät unter *Sonstiges* ohne „Ertrag/Jahr“ zeigt in seiner Zeile weiter
+  „—“, seine Kosten/Jahr fehlten aber bisher in Gesamt-ROI, Amortisationsdauer und Break-Even-Jahr — obwohl der Satz darunter
+  „inkl. … €/Jahr Betriebskosten“ sie mitnannte. Jetzt sind sie abgezogen (Demo-Anlage mit Mini-BHKW, 300 €/Jahr: 19,7 → 20,9 Jahre).
+- **Cockpit → Tag, „Peak PV": ein Balkonkraftwerk zählt nicht mehr zusätzlich zu seinen messenden Modulen.** Hat ein
+  Balkonkraftwerk einen eigenen Leistungssensor und seine Module (als Kinder angelegt) ebenfalls, stand im Tages-Peak die
+  Summe aus beiden (etwa 1,6 statt 0,8 kW). Jetzt zählt die Leistung einmal — messen alle Module, zählen die Module, sonst
+  das Balkonkraftwerk mit dem Anteil, den seine Module nicht messen. Gespeicherte Tage zeigen den richtigen Wert, sobald
+  sie neu berechnet werden (Reparatur-Werkbank).
+- **Einstellungen → „Demo-Daten laden“ nennt die richtige Zahl der angelegten Geräte** (11 statt 10).
+
+### Added
+
+- **Daten-Checker: „Strom Heizbetrieb“ und „Strom Heizen“ an derselben Wärmepumpe beide belegt** — Hinweis, dass der
+  Betriebsart-Zähler Vorrang hat und „Strom Heizen“ nicht gezählt wird; wer getrennt misst, lässt den Betriebsart-Zähler leer.
+- **Auswertungen → Tabelle, Tagesansicht: Spalten „Strom Heizbetrieb“ und „Strom Warmwasserbetrieb“** (Gruppe Wärmepumpe,
+  nicht voreingestellt, auch im CSV-Export). Sie zeigen die Betriebsart-Aufteilung des Tages — dieselben Zahlen wie der Verlauf
+  in *Cockpit → Monat* und die Home-Assistant-Sensoren gleichen Namens, nur an Tagen mit Aufteilung. Es ist eine Teilmenge des
+  Wärmepumpen-Stroms aus mitgeschriebenen Betriebsart-Stunden, nicht der Wert getrennter Zähler („WP Strom Heizen/WW“ der
+  Monatsansicht) — die beiden nicht addieren.
+
+### Changed
+
+- **Texte nennen die heutigen Orte:** „Einstellungen → Datenquellen“ statt „Sensor-Mapping“, „Einstellungen → Home
+  Assistant“ oder „Einstellungen → MQTT“ (Live-Hinweis, Willkommen, Statistik-Import, Monatsabschluss, Sicherung, Anlage
+  löschen, Prognose-Vergleich, Daten-Checker-Kategorien „Datenquellen – HA-Statistics“ und „Datenquellen – Einheiten“).
+- **Live-Tagesverlauf:** der Untertitel heißt „10-Min-Durchschnitte aus den Live-Daten“ (die Werte kommen aus Home Assistant
+  oder über MQTT), der Hinweis zu nicht gezeigten Geräten „kein Leistungssensor zugeordnet“.
+- **Cockpit → Live, Energiefluss: das Soll der laufenden Stunde steht an der PV statt über dem Haus.** Bisher stand
+  „Solar Soll ~3,9 kW“ als Text über dem Haus, genau auf der Linie von der PV zum Haus. Jetzt steht es bei einem PV-Erzeuger
+  als zweite Zeile in seiner Kachel („Soll ~3,9 kW“), bei mehreren am Schild „Gesamtleistung … · Soll ~3,9 kW“; ohne
+  PV-Leistungssensor (keine PV-Kachel im Energiefluss) steht es als Schild „Solar Soll ~3,9 kW“ über dem Haus. Der Tooltip
+  sagt, dass es die Prognose für die laufende Stunde ist.
 
 ## [4.2.1] - 2026-11-02
 
@@ -55,12 +107,11 @@ Abschluss der Komponenten-Visualisierung (Hub-Überblick Wärmepumpe · Wallbox 
   von der alten ID `el:ueberblick-karte` mitgedeckt; mit ihr ab `xl` vier Karten nebeneinander) mit Tooltip
   „‹Entität bzw. Topic› · Stand hh:mm". Live-Antwort: neues Feld `themen[].eintraege[].kennung` (`entity_id` bzw.
   Inbound-Topic).
-- **Demo-Modus: Themen und Standort in den Hub-Schaubildern** — `GET /api/live/{id}?demo=true` trägt feste Demo-Themen je
-  Gerätetyp (Wärmepumpe „Anlagenstatus" und „Service", Wallbox „Ladepunkt", E-Auto „Fahrzeugzustand" und „Klima"; Form wie
-  im echten Pfad, auf die Geräte der Anlage umgeschrieben wie die Knoten) und an beiden Demo-Autos den Standort „Zu Hause".
-  Der echte Live-Pfad bleibt unberührt. Galerie: Hub-Bilder neu mit Themen-Kacheln, dazu E-Auto am Handy, Wallbox mit
-  geparktem Schaubild und die Datenquellen je Hub-Gerät mit dem Block „Themen" (`scripts/galerie-screenshots.mjs` legt die
-  Themen der Datenquellen-Bilder per API in der Demo-Kopie an).
+- **Demo-Modus: Themen und Standort in den Hub-Schaubildern** — die Demo zeigt an Wärmepumpe, Wallbox und E-Auto feste
+  Beispiel-Themen (Wärmepumpe „Anlagenstatus" und „Service", Wallbox „Ladepunkt", E-Auto „Fahrzeugzustand" und „Klima") und
+  an beiden Demo-Autos den Standort „Zu Hause". Deine eigenen Live-Werte sind davon nicht berührt. Die Galerie auf der
+  Website hat neue Bilder dazu: die Hub-Schaubilder mit Themen-Kacheln, das E-Auto am Handy, die Wallbox mit geparktem
+  Schaubild und die Datenquellen je Gerät mit dem Block „Themen".
 
 ### Changed
 

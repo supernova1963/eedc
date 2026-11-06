@@ -1,6 +1,6 @@
 # Was ist neu
 
-> **Stand:** November 2026 (v4.2.1)
+> **Stand:** November 2026 (v4.2.2)
 > **Diese Seite** zeigt pro Version, was sich für dich als Anwender geändert hat — kürzer als der technische [CHANGELOG](https://github.com/supernova1963/eedc-homeassistant/blob/main/CHANGELOG.md), ausführlicher als die Schnellübersicht-Tabelle in der [Übersicht](BENUTZERHANDBUCH.md#was-ist-neu-seit-v316).
 >
 > **Kein Banner, kein Pop-up:** eedc zeigt diese Liste nicht ungefragt an. HA-App-Nutzer sehen den Changelog ohnehin schon im Add-on-Store, GitHub-Releases haben einen eigenen. Wer wissen will, was neu ist, schaut hier rein — Pull statt Push.
@@ -9,7 +9,25 @@
 
 ---
 
-## Unveröffentlicht — kommt mit der nächsten Version
+## v4.2.2 — 6. November 2026
+
+**Standalone und MQTT: der laufende Tag zählt mit den Zählern.** Ohne Statistik aus Home Assistant nahm eedc für heute die aufsummierte Leistung eines Geräts statt seines Zählers — an der Wärmepumpe etwa 2,0 statt 2,75 kWh, und der laufende Monat zeigte diese Zahl, bis am nächsten Tag der Zählerwert kam. Jetzt steht schon heute die Menge aus den Zählerständen da. [Handbuch Energieprofil §4](HANDBUCH_ENERGIEPROFIL.md#4-reparatur--pflege)
+
+**Cockpit → Live: „PV heute" zählt das Balkonkraftwerk ohne Zähler mit.** Hat ein Wechselrichter einen Zähler und ein Balkonkraftwerk nur einen Leistungssensor, fehlte das Balkonkraftwerk bisher in der PV-Summe der Live-Kachel (sein Wert stand nur im Tooltip) — sofern kein PV-Gesamtzähler der Anlage zugeordnet war. Jetzt zählt jeder Erzeuger mit seiner Messung: der Zähler, wo einer misst, sonst die Leistung. [Handbuch Bedienung §2.1](HANDBUCH_BEDIENUNG.md#21-live)
+
+**Einrichtung im Standalone-Betrieb mit Home Assistant: die Sensor-Vorschläge kommen an.** Wer im Integrations-Schritt seine Home-Assistant-Instanz verbindet, bekommt jetzt die Vorschläge aus dem Energie-Dashboard — bisher blieb dort „Vorschläge werden geladen …“ stehen. eedc schlägt je Feld eine Quelle vor; hat dein Energie-Dashboard mehrere Solar-Quellen, schlägt es keinen PV-Gesamtzähler vor, und weitere Quellen ordnest du unter Einstellungen → Datenquellen zu. [Handbuch Installation §3](HANDBUCH_INSTALLATION.md#erst-setup-integration)
+
+**Daten-Checker: Heizstrom doppelt zugeordnet.** Sind an einer Wärmepumpe „Strom Heizbetrieb“ und „Strom Heizen“ beide belegt, sagt der Daten-Checker jetzt, dass nur der Betriebsart-Zähler zählt — wer Heizen und Warmwasser getrennt misst, lässt ihn leer. [Handbuch Daten-Checker §4.3.7](HANDBUCH_DATEN_CHECKER.md#437-wärmepumpe)
+
+**Auswertungen → Tabelle: Strom für Heizen und Warmwasser je Tag.** In der Tagesansicht gibt es zwei neue Spalten unter „Wärmepumpe“: **Strom Heizbetrieb** und **Strom Warmwasserbetrieb** — die Betriebsart-Aufteilung des Tages, dieselben Zahlen wie der Verlauf in Cockpit → Monat und die gleichnamigen Sensoren in Home Assistant, auch im CSV-Export. Sie sind nicht voreingestellt; du blendest sie über „Spalten“ ein. Wichtig: das ist eine Teilmenge des Wärmepumpen-Stroms aus mitgeschriebenen Stunden, nicht der Wert getrennter Zähler wie „WP Strom Heizen/WW“ in der Monatsansicht — die beiden nicht addieren. [Handbuch Bedienung §4.5](HANDBUCH_BEDIENUNG.md#45-tabelle-werte-werkbank)
+
+**Auswertungen → ROI: die Betriebskosten eines nicht bewerteten Geräts zählen im Gesamt mit.** Steht bei einer Wärmepumpe ohne Wärmebedarf oder einem Gerät unter Sonstiges ohne „Ertrag/Jahr" in der Zeile „—", fehlten seine Kosten/Jahr bisher in Gesamt-ROI, Amortisationsdauer und Break-Even-Jahr — obwohl der Satz darunter „inkl. … €/Jahr Betriebskosten" sie nannte. Jetzt sind sie abgezogen; die Zeile des Geräts zeigt weiter „—", und die Summe der Spalte bleibt die Summe der Zeilen. An der Demo-Anlage (Mini-BHKW mit 300 €/Jahr) wird aus 19,7 Jahren 20,9. [Handbuch Bedienung §4.2](HANDBUCH_BEDIENUNG.md#42-roi)
+
+**Cockpit → Tag: „Peak PV" zählt ein Balkonkraftwerk nicht doppelt.** Hat dein Balkonkraftwerk einen eigenen Leistungssensor und haben seine Module (als Kinder des Balkonkraftwerks angelegt) ebenfalls einen, stand im Tages-Peak bisher die Summe aus beiden — etwa 1,6 statt 0,8 kW. Jetzt zählt die Leistung einmal: messen alle Module, zählen die Module; misst nur ein Teil, zählt das Balkonkraftwerk mit dem Anteil, den seine Module nicht messen. Schon gespeicherte Tage zeigen den richtigen Wert, sobald sie neu berechnet werden. [Handbuch Bedienung §2.2](HANDBUCH_BEDIENUNG.md#22-tag)
+
+**Cockpit → Live: das Soll der laufenden Stunde steht an der PV.** Im Energiefluss stand „Solar Soll ~3,9 kW“ bisher über dem Haus, mitten auf der Linie von der PV zum Haus, und war schwer zu lesen. Jetzt trägt es die PV selbst: Hast du einen PV-Erzeuger, steht es als zweite Zeile in seiner Kachel („Soll ~3,9 kW“); hast du mehrere, steht es auf dem Schild „Gesamtleistung … · Soll ~3,9 kW“ über der PV-Reihe; ohne PV-Leistungssensor steht es als Schild über dem Haus („Solar Soll ~3,9 kW“). Der Tooltip nennt die Herkunft: die Prognose für die laufende Stunde. [Handbuch Bedienung §2.1](HANDBUCH_BEDIENUNG.md#21-live)
+
+**Texte mit den heutigen Orten:** Hinweise, die noch „Sensor-Mapping“ oder alte Einstellungs-Seiten nannten, zeigen jetzt auf Einstellungen → Datenquellen; der Live-Tagesverlauf nennt keine Quelle mehr, die nicht stimmen muss.
 
 ## v4.2.1 — 2. November 2026
 

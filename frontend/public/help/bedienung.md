@@ -165,7 +165,7 @@ Eine Gruppenkachel erkennst du an den zwei versetzten Rahmen dahinter („hier l
 - **V2H:** Gibt ein Auto Strom ins Haus ab, nennt der Tooltip die Leistung („entlädt 2,00 kW (V2H)"); hängt es allein an der einzigen Wallbox, steht in der Kachel zusätzlich „· entlädt".
 - **Ohne Wallbox** (keine erfasst oder keine liefert gerade Werte) behält jedes E-Auto seine eigene Kachel; mehrere bündelt eedc bei Platzmangel als „E-Autos".
 
-**„Gesamtleistung" über der PV-Reihe.** Zeigt der Energiefluss mehr als einen PV-Erzeuger (mehrere Strings, ein Balkonkraftwerk neben dem Dach …), fasst ein feiner Rahmen die PV-Kacheln zusammen, und ein Schild darauf nennt die **Gesamtleistung** aller PV-Erzeuger — ohne Speicher und Netz, und ohne ein BHKW. Das gilt auch, wenn eedc die PV-Kacheln gerade gruppiert. Bei nur einem PV-Erzeuger entfällt beides, weil seine Kachel denselben Wert schon zeigt; nachts, wenn die Summe 0 ist, ebenfalls. Direkt über dem Haus steht das **Solar-Soll** — die PV-Leistung, die die Prognose für die aktuelle Stunde erwartet (sofern eine vorliegt).
+**„Gesamtleistung" über der PV-Reihe.** Zeigt der Energiefluss mehr als einen PV-Erzeuger (mehrere Strings, ein Balkonkraftwerk neben dem Dach …), fasst ein feiner Rahmen die PV-Kacheln zusammen, und ein Schild darauf nennt die **Gesamtleistung** aller PV-Erzeuger — ohne Speicher und Netz, und ohne ein BHKW. Das gilt auch, wenn eedc die PV-Kacheln gerade gruppiert. Bei nur einem PV-Erzeuger entfällt beides, weil seine Kachel denselben Wert schon zeigt; nachts, wenn die Summe 0 ist, ebenfalls. Das **Soll** — die PV-Leistung, die die Prognose für die laufende Stunde erwartet (sofern eine vorliegt) — steht mit auf diesem Schild („Gesamtleistung 8,2 kW · Soll ~3,9 kW“), bei nur einem PV-Erzeuger als zweite Zeile in seiner Kachel („Soll ~3,9 kW“), ohne PV-Leistungssensor als Schild über dem Haus („Solar Soll ~3,9 kW“).
 
 > **E-Auto an der Wallbox, auch mit V2H:** Hinter einer Wallbox bucht die Wallbox. Lädt das Auto, zählt die Ladung einmal — als Verbrauch der Wallbox —, und das Auto erscheint in ihrer Kachel (siehe oben). Speist ein V2H-fähiges Auto ins Haus zurück, zählt die Entladung einmal wie eine Speicher-Entladung in Autarkie und Eigenverbrauch: gebucht von der Wallbox, wenn sie den negativen Wert misst — dann fließt ihre Linie zum Haus —, sonst vom Auto. Mit einem V2H-fähigen Auto liest eedc die Wallbox deshalb **mit Vorzeichen**: Zeigt sie beim **Laden** einen negativen Wert, ist ihr Sensor andersherum angeschlossen — dann unter **Einstellungen → Datenquellen** am Leistungswert der Wallbox **„Vorzeichen umkehren" (⇅)** einschalten.
 
@@ -181,7 +181,7 @@ Eine Gruppenkachel erkennst du an den zwei versetzten Rahmen dahinter („hier l
 5. **Gesamtverbrauch** = Eigenverbrauch + Netzbezug (alles, was das Haus heute verbraucht hat)
 6. **Einspeisung** (PV-Überschuss ins Netz)
 
-**Woher die Tageswerte kommen:** Ist für eine Größe ein Zählerstand (kWh) zugeordnet — PV, Einspeisung, Netzbezug, Speicher (Ladung/Entladung), Wärmepumpe, Wallbox, sonstige Geräte —, liest eedc den Zuwachs dieses Zählers seit Mitternacht; nur ohne Zähler rechnet es die Menge aus der Leistung hoch. Das gilt auch für den „heute"-Wert im Tooltip eines Geräts und auch dann, wenn das Netz über einen Kombi-Sensor (±) zugeordnet ist. Bei kurzen Lastspitzen (etwa einem Heizstab) kann die hochgerechnete Menge deutlich vom Zähler abweichen.
+**Woher die Tageswerte kommen:** Ist für eine Größe ein Zählerstand (kWh) zugeordnet — PV, Einspeisung, Netzbezug, Speicher (Ladung/Entladung), Wärmepumpe, Wallbox, sonstige Geräte —, liest eedc den Zuwachs dieses Zählers seit Mitternacht; nur ohne Zähler rechnet es die Menge aus der Leistung hoch. Das gilt auch für den „heute"-Wert im Tooltip eines Geräts und auch dann, wenn das Netz über einen Kombi-Sensor (±) zugeordnet ist. Die **PV-Erzeugung** ist die Summe ihrer Erzeuger, jeder mit seiner Messung: der Zuwachs seines Zählers, und wo ein Erzeuger (etwa ein Balkonkraftwerk) nur einen Leistungssensor hat, die daraus hochgerechnete Menge; ist ein PV-Gesamtzähler der Anlage zugeordnet, gilt dessen Zuwachs als Summe. Bei kurzen Lastspitzen (etwa einem Heizstab) kann die hochgerechnete Menge deutlich vom Zähler abweichen.
 
 **Tagesverlauf-Diagramm** — Linien-/Flächendiagramm für PV/Verbrauch/Speicher, mit gepunkteter **Strompreis-Linie** auf zweiter Y-Achse:
 
@@ -1219,7 +1219,9 @@ Erträge stehen dabei im Kapitaleinsatz, nicht noch einmal bei den Erträgen.
 >
 > **Willst du mit Instandhaltung rechnen**, trag sie bei der Komponente als **Kosten/Jahr** ein.
 > Dann steht dort „inkl. 200,00 €/Jahr Betriebskosten, ohne weitere Instandhaltung" — der Betrag
-> ist in der Zahl bereits abgezogen. Aus deiner bisherigen Reparatur-Historie rechnet eedc
+> ist in der Zahl bereits abgezogen. Das gilt auch für ein Gerät, das eedc **nicht bewertet**
+> (Wärmepumpe ohne Wärmebedarf, *Sonstiges* ohne „Ertrag/Jahr"): seine Betriebskosten stehen nicht
+> in seiner Zeile — dort steht „—" —, zählen aber in Gesamt-ROI, Amortisation und Break-Even-Jahr. Aus deiner bisherigen Reparatur-Historie rechnet eedc
 > **keine** Reparatur-Rate hoch: bei ein bis zwei Ereignissen wäre das eine Zahl, die sich jedes
 > Jahr ändert, ohne dass etwas passiert ist.
 
@@ -1420,7 +1422,7 @@ Der interaktive Überblick über alle Monatswerte in einer sortierbaren Tabelle 
 > | Gruppe | Monatsansicht | Tagesansicht |
 > | --- | --- | --- |
 > | **E-Auto** | Gefahren (km), **Fahrverbrauch**, **Verbrauch (kWh/100 km)**, E-Auto-Ladung, **Ladung extern** (kWh und €), **V2H-Entladung**, **Ladevorgänge**, Wallbox-Ladung, Wallbox-PV-Ladung, Wallbox-PV-Anteil | Gefahren (km), **Fahrverbrauch**, **V2H-Entladung**, **Ladevorgänge**, **Wallbox-Ladung** |
-> | **Wärmepumpe** | Strom, Strom Heizen/WW, Wärme (gesamt/Heizen/WW), JAZ, **JAZ Heizen**, **JAZ WW**, **JAZ Kühlen**, **Strom Kühlen/Lüften/Entfeuchten**, **Strom nicht aufgeteilt**, **Kälte**, **Zusatzheizung** | Strom, **Wärme**, **Strom Kühlen/Lüften/Entfeuchten**, **Strom nicht aufgeteilt**, **Kälte**, **Zusatzheizung**, **Starts**, **Betriebszeit (min)** |
+> | **Wärmepumpe** | Strom, Strom Heizen/WW, Wärme (gesamt/Heizen/WW), JAZ, **JAZ Heizen**, **JAZ WW**, **JAZ Kühlen**, **Strom Kühlen/Lüften/Entfeuchten**, **Strom nicht aufgeteilt**, **Kälte**, **Zusatzheizung** | Strom, **Wärme**, **Strom Heizbetrieb**, **Strom Warmwasserbetrieb**, **Strom Kühlen/Lüften/Entfeuchten**, **Strom nicht aufgeteilt**, **Kälte**, **Zusatzheizung**, **Starts**, **Betriebszeit (min)** |
 > | **Speicher** | Ladung, Entladung, Effizienz, **Netzladung** | Ladung, Entladung, Effizienz, **Vollzyklen (Entladung)** |
 > | Weitere | **Ø Außentemperatur**, **Dienstliche Ladekosten** (Finanzen), Abgabe an Dritte | **Temperatur min**, **Börsenpreis min**, **Abgabe an Dritte** |
 >
@@ -1444,15 +1446,23 @@ Der interaktive Überblick über alle Monatswerte in einer sortierbaren Tabelle 
 >   Zeitraums muss eedc dafür sehr viele Stundendatensätze durchsuchen und zusammenfassen — ist eine dieser Spalten
 >   eingeblendet, steht deshalb statt der Tabelle eine Lade-Anzeige, bis alles gerechnet ist (bei einem Jahr einige
 >   Sekunden); erst dann ist auch der CSV-Export da. Ohne diese Spalten lädt die Tabelle so schnell wie bisher.
+> - **Strom Heizbetrieb und Strom Warmwasserbetrieb** (nur Tagesansicht) sind die Betriebsart-Aufteilung des Tages
+>   aus demselben Balken wie Kühlen, Lüften und Entfeuchten — dieselben Zahlen wie der Verlauf in *Cockpit → Monat*
+>   und wie die Home-Assistant-Sensoren *Strom Heizbetrieb* / *Strom Warmwasserbetrieb*. ⚠ **Das ist etwas anderes
+>   als „WP Strom Heizen/WW" der Monatsansicht.** Die Monatsspalten sind deine **getrennten Zähler** — Summanden:
+>   Heizen + Warmwasser ergeben den Gesamtstrom. Die Tagesspalten sind eine **Teilmenge** des Gesamtstroms aus
+>   mitgeschriebenen Betriebsart-Stunden. **Addiere sie nie** — sonst zählt derselbe Strom doppelt.
 > - **Starts und Betriebszeit** sind die Tageszähler deines Herstellers, summiert über die Wärmepumpen wie in
 >   *Cockpit → Monat*; die Betriebszeit steht in ganzen Minuten. Eine Monatsspalte gibt es dafür nicht — die
 >   Summe über den Monat steht in *Cockpit → Monat*.
 > - **„Vollzyklen (Entladung)"** ist Entladung ÷ Kapazität des Tages — nicht dasselbe wie die **SoC-Hübe** unter
 >   „Tagesdetail" (Hub des Ladestands).
 > - **Nur in der Tagesansicht (*Cockpit → Tag*)** stehen die Arbeitszahlen des Tages (gesamt und je Funktion), die
->   Wärme und der Strom für Heizen und Warmwasser getrennt sowie die gemessene PV-Ladung und
->   der PV-Anteil der Wallbox des Tages. Sie entstehen dort aus Lesern für **einen** Tag; über ein ganzes Jahr gelesen
->   wäre die Tabelle zu langsam bzw. bräuchte einen zweiten Rechenweg neben der Tagesansicht.
+>   Werte deiner **getrennten Zähler** für Heizen und Warmwasser (Strom und Wärme je Funktion) sowie die gemessene
+>   PV-Ladung und der PV-Anteil der Wallbox des Tages. Sie entstehen dort aus Lesern für **einen** Tag; über ein ganzes
+>   Jahr gelesen wäre die Tabelle zu langsam bzw. bräuchte einen zweiten Rechenweg neben der Tagesansicht. Die
+>   **Betriebsart-Aufteilung** (Heizbetrieb, Warmwasserbetrieb, Kühlen, Lüften, Entfeuchten, nicht aufgeteilt) steht
+>   dagegen auch in der Tagestabelle — siehe oben.
 
 > Kompakte Werte-Blöcke sind zusätzlich direkt in Cockpit- und Komponenten-Sichten eingebettet; die volle Werkbank mit Picker und Export liegt hier.
 
