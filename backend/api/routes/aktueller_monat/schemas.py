@@ -9,9 +9,12 @@ Pakets, ohne einen Zyklus zu bilden.
 
 from datetime import datetime
 from typing import NamedTuple, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
 from backend.services.waerme_klima_block import WpGeraetZeile, WpMoeglichZeile
 from backend.core.berechnungen import anteilig, autarkie_prozent, einspeise_erloes_euro
+from backend.core.berechnungen import bkw_finanz as _bkw
+from backend.core.berechnungen import pv_anteil_ladung as _pv_anteil
+from backend.core.berechnungen import speicher_bilanz as _speicher
 from backend.services.wp_wirtschaftlichkeit import wp_ersparnis_berechnung
 
 
@@ -103,6 +106,13 @@ class SonstigesGeraet(BaseModel):
     verbrauch_kwh: Optional[float] = None
     bezug_pv_kwh: Optional[float] = None
     bezug_netz_kwh: Optional[float] = None
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def pv_anteil_prozent(self) -> Optional[float]:
+        """PV-Anteil des Bezugs (Päckchen Z-Client): aus den zwei Feldern DIESER Zeile, so wie die Antwort sie trägt
+        (Monat gerundet, Jahr nach `runde_rand`) — der Client zeigt. Layer `bezug_pv_anteil_prozent`."""
+        return _pv_anteil.bezug_pv_anteil_prozent(self.bezug_pv_kwh, self.bezug_netz_kwh)
 
 
 class ErgebnisPostenWert(BaseModel):
@@ -236,6 +246,71 @@ class AktuellerMonatResponse(BaseModel):
     # (Spread-SoT), aufgesammelt statt zweitgerechnet.
     speicher_ersparnis_euro: Optional[float] = None
     hat_speicher: bool = False
+
+    # Päckchen BB (9.11.2026, Z-Client-Halt H1): Bilanz, Verlust, Wirkungsverluste und Solar-Anteil des Speichers aus
+    # den Feldern DIESER Antwort (Monat, Jahr-Kopf nach der Faltung, Jahr-Monate) — Layer `speicher_bilanz`; bis dahin
+    # rechnete der Client sie (`KomponentenSektionen.tsx`, `JahrSpeicherTabelle.tsx`).
+    def _speicher_wirkungsverluste(self):
+        # Preis-Regel der Kachel: «kein Preis» heißt weder Einspeise- noch Tarif-Bezugspreis; gerechnet wird mit dem
+        # Ø-Bezugspreis des Monats, wo es ihn gibt (flexibler Tarif), sonst mit dem Tarif.
+        bezug = (self.netzbezug_durchschnittspreis_cent if self.netzbezug_durchschnittspreis_cent is not None
+                 else self.netzbezug_preis_cent)
+        return _speicher.speicher_wirkungsverluste(
+            self.speicher_ladung_kwh, self.speicher_entladung_kwh, self.speicher_ladung_netz_kwh,
+            self.einspeise_preis_cent, bezug,
+            ein_preis_bekannt=self.einspeise_preis_cent is not None or self.netzbezug_preis_cent is not None,
+        )
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def speicher_bilanz_kwh(self) -> Optional[float]:
+        """Entladung − Ladung (Zeile «Bilanz» der Speicher-Details)."""
+        return _speicher.speicher_bilanz_kwh(self.speicher_ladung_kwh, self.speicher_entladung_kwh)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def speicher_verlust_kwh(self) -> Optional[float]:
+        """Ladung − Entladung, nie < 0."""
+        return _speicher.speicher_verlust_kwh(self.speicher_ladung_kwh, self.speicher_entladung_kwh, nur_positiv=True)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def speicher_netzladung_anteil_prozent(self) -> Optional[float]:
+        """Netz-Anteil der Ladung in %, auf 100 gekappt — nur mit Wirkungsverlusten (sonst `None`)."""
+        wv = self._speicher_wirkungsverluste()
+        return wv.anteil_netz * 100 if wv is not None else None
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def speicher_netzladung_anteil_gekappt(self) -> Optional[bool]:
+        """N-444/K2: der Netz-Anteil lief über 100 % und wurde begrenzt — der Client nennt den Grund."""
+        wv = self._speicher_wirkungsverluste()
+        return wv.gekappt if wv is not None else None
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def speicher_verlust_pv_kwh(self) -> Optional[float]:
+        wv = self._speicher_wirkungsverluste()
+        return wv.verlust_pv_kwh if wv is not None else None
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def speicher_verlust_netz_kwh(self) -> Optional[float]:
+        wv = self._speicher_wirkungsverluste()
+        return wv.verlust_netz_kwh if wv is not None else None
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def speicher_wirkungsverluste_euro(self) -> Optional[float]:
+        """Opportunitätskosten des Roundtrips: Verlust × (PV-Anteil × Einspeisepreis + Netz-Anteil × Bezugspreis)."""
+        wv = self._speicher_wirkungsverluste()
+        return wv.euro if wv is not None else None
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def speicher_solaranteil_prozent(self) -> Optional[float]:
+        """Solar-Anteil der Ladung (Spalte der Speicher-Tabelle in *Cockpit → Jahr*); ohne Netzladung `None`."""
+        return _speicher.speicher_solaranteil_prozent(self.speicher_ladung_kwh, self.speicher_ladung_netz_kwh)
 
     # Komponenten — Wärmepumpe
     wp_strom_kwh: Optional[float] = None
@@ -426,10 +501,30 @@ class AktuellerMonatResponse(BaseModel):
     emob_verbrauch_basis_kwh: Optional[float] = None
     hat_emobilitaet: bool = False
 
+    # Päckchen BB2 (9.11.2026, Z-Client-Halt H2): «PV-Anteil (Heim)» des Blocks E-Mobilität aus den zwei Feldern DIESER
+    # Antwort (Monat, Jahr-Kopf nach der Faltung, Jahr-Monate) — Layer `pv_anteil_ladung`; bis dahin rechnete der
+    # Client ihn (`KomponentenSektionen.tsx`). Der Tag trägt dasselbe Feld am Tagesdetail.
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def emob_pv_anteil_prozent(self) -> Optional[float]:
+        return _pv_anteil.pv_anteil_prozent(self.emob_ladung_pv_kwh, self.emob_ladung_kwh)
+
     # Komponenten — BKW
     bkw_erzeugung_kwh: Optional[float] = None
     bkw_eigenverbrauch_kwh: Optional[float] = None
     hat_balkonkraftwerk: bool = False
+
+    # Päckchen Z-Client (9.11.2026): Einspeisung und EV-Quote des Balkonkraftwerks aus den zwei Feldern DIESER Antwort
+    # (Monat, Jahr-Kopf nach der Faltung, Jahr-Monate) — Layer `bkw_finanz`; bis dahin rechnete der Client sie.
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def bkw_einspeisung_kwh(self) -> Optional[float]:
+        return _bkw.bkw_einspeisung_kwh(self.bkw_erzeugung_kwh, self.bkw_eigenverbrauch_kwh)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def bkw_eigenverbrauch_quote_prozent(self) -> Optional[float]:
+        return _bkw.bkw_eigenverbrauch_quote_prozent(self.bkw_erzeugung_kwh, self.bkw_eigenverbrauch_kwh)
 
     # Komponenten — Sonstiges
     sonstiges_erzeugung_kwh: Optional[float] = None    # Erzeuger-Typ

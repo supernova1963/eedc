@@ -600,11 +600,24 @@ export interface SpeicherMonatsWert {
   vollzyklen: number | null
 }
 
+/** Ein Jahr der Speicher-Jahresbilanz (Päckchen BB): Σ der `monatsreihe`, Verlust = Ladung − Entladung, nie < 0 —
+ *  im Backend gefaltet (Layer `speicher_bilanz`), der Client zeigt. */
+export interface SpeicherJahresWert {
+  jahr: number
+  pv_ladung_kwh: number
+  netzladung_kwh: number
+  entladung_kwh: number
+  ladung_gesamt_kwh: number
+  verlust_kwh: number
+}
+
 export interface SpeicherDashboardResponse {
   investition: Investition
   monatsdaten: InvestitionMonatsdaten[]
-  /** N-641/N-642: Hub-Verlauf und Jahresbilanz lesen diese Reihe, nicht `monatsdaten[].verbrauch_daten`. */
+  /** N-641/N-642: der Hub-Verlauf liest diese Reihe, nicht `monatsdaten[].verbrauch_daten`. */
   monatsreihe: SpeicherMonatsWert[]
+  /** Päckchen BB: die Jahresbilanz (Block «Vergleich»), aufsteigend nach Jahr. */
+  jahresbilanz: SpeicherJahresWert[]
   zusammenfassung: {
     gesamt_ladung_kwh: number
     gesamt_entladung_kwh: number
@@ -639,6 +652,11 @@ export interface SpeicherDashboardResponse {
     eta_degradation_alarm?: boolean
     // Invariante: Σentladung > Σladung kumulativ (physikalisch unmöglich).
     durchsatz_inkonsistent?: boolean
+    // Päckchen BB (Layer `speicher_bilanz`, aus den gerundeten Feldern darüber): Kachel «Verlust» (Ladung − Entladung,
+    // ungeklemmt), «Netzladung-Kosten» (Netzladung × Ø-Ladepreis, ohne Preis null), Segment «PV-Ladung».
+    verlust_kwh: number
+    netzladung_kosten_euro: number | null
+    pv_ladung_kwh: number
   }
   // Gleitende 12-Monats-Effizienz (carry-over-immun) — siehe SpeicherBlock.
   effizienz_verlauf: { jahr: number; monat: number; effizienz_prozent: number | null; fenster_monate: number }[]
@@ -747,6 +765,10 @@ export interface BalkonkraftwerkDashboardResponse {
     ersparnis_eigenverbrauch_euro: number
     erloes_einspeisung_euro: number
     gesamt_ersparnis_euro: number
+    /** Päckchen Z2: «entgangener Erlös» der unvergüteten Einspeisung (Hinweis, kein Posten) — Backend rechnet
+     *  `gesamt_einspeisung_kwh × entgangener_erloes_annahme_cent ÷ 100` (Layer `BKW_UNVERGUETET_ANNAHME_CENT`). */
+    entgangener_erloes_euro: number
+    entgangener_erloes_annahme_cent: number
     // CO2
     co2_ersparnis_kg: number
     anzahl_monate: number
@@ -765,13 +787,24 @@ export interface SonstigesMonatsWert {
   nicht_aufgeteilt_kwh: number
 }
 
+/** #443/N-785: ein Monat eines Geräts der Kategorie *Abgabe an Dritte* — aus den Monats-Fakten des Backends. */
+export interface SonstigesAbgabeMonat {
+  jahr: number
+  monat: number
+  abgabe_kwh: number
+  /** gepflegter Erlös des Monats; `null`, wenn keiner gepflegt ist (eine gepflegte 0 bleibt 0). */
+  erloes_euro: number | null
+}
+
 export interface SonstigesDashboardResponse {
   investition: Investition
   monatsdaten: InvestitionMonatsdaten[]
   /** N-645: Verlauf und Vergleich eines Verbrauchers lesen diese Reihe; leer für Erzeuger, Speicher und Zähler. */
   monatsreihe: SonstigesMonatsWert[]
+  /** #443/N-785: Verlauf und Vergleich eines Abgabe-Geräts lesen diese Reihe; leer für jede andere Kategorie. */
+  abgabe_monatsreihe?: SonstigesAbgabeMonat[]
   zusammenfassung: {
-    kategorie: 'erzeuger' | 'verbraucher' | 'speicher' | 'zaehler'
+    kategorie: 'erzeuger' | 'verbraucher' | 'abgabe' | 'speicher' | 'zaehler'
     beschreibung: string
     // Erzeuger-Felder
     gesamt_erzeugung_kwh?: number
@@ -809,6 +842,12 @@ export interface SonstigesDashboardResponse {
     /** `false` = nicht bewertbar, nicht bloß unbekannt. */
     bewertet?: boolean
     nicht_bewertet_grund?: string
+    // Abgabe-Felder (#443/N-785) — ohne `ersparnis_*`/`co2_*`: eine Abgabe ist kein Eigenverbrauch.
+    gesamt_abgabe_kwh?: number
+    /** Σ der gepflegten Erlöse; `null`, wenn kein Monat einen trägt. */
+    erloes_abgabe_euro?: number | null
+    monate_mit_erloes?: number
+    monate_mit_abgabe?: number
     // Gemeinsame Felder
     gesamt_ersparnis_euro?: number
     co2_ersparnis_kg?: number

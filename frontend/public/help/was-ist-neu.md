@@ -1,6 +1,6 @@
 # Was ist neu
 
-> **Stand:** November 2026 (v4.2.2)
+> **Stand:** November 2026 (v4.2.3)
 > **Diese Seite** zeigt pro Version, was sich für dich als Anwender geändert hat — kürzer als der technische [CHANGELOG](https://github.com/supernova1963/eedc-homeassistant/blob/main/CHANGELOG.md), ausführlicher als die Schnellübersicht-Tabelle in der [Übersicht](BENUTZERHANDBUCH.md#was-ist-neu-seit-v316).
 >
 > **Kein Banner, kein Pop-up:** eedc zeigt diese Liste nicht ungefragt an. HA-App-Nutzer sehen den Changelog ohnehin schon im Add-on-Store, GitHub-Releases haben einen eigenen. Wer wissen will, was neu ist, schaut hier rein — Pull statt Push.
@@ -8,6 +8,64 @@
 > **Lesehinweis:** Die jüngsten Versionen stehen oben. Jeder Punkt verlinkt entweder auf die zuständige Hilfe-Sektion oder direkt auf die App-Funktion (sofern erreichbar). Anker-URLs (`?doc=was-ist-neu`) sind teilbar.
 
 ---
+
+## v4.2.3 — 10. November 2026
+
+**Daten-Checker: «Aus Home Assistant neu übernehmen» behebt eine Abweichung zu Home Assistant.** Zeigte der Daten-Checker einen Tag mit einem anderen Wert als in Home Assistant — etwa einen Zählersprung, den du in Home Assistant schon korrigiert hattest —, half „Tag reparieren" nicht: der Knopf baute den Tag aus derselben Kopie der Statistik neu auf, die den alten Wert trug. Jetzt trägt die Zeile den Knopf **„Aus Home Assistant neu übernehmen"**: er holt die Statistik neu und baut den Tag danach auf, der Tag zeigt dann, was Home Assistant zeigt. Dieselbe Hilfe bieten die Meldungen zu Zählersprung und Rückgang in der Home-Assistant-Statistik. eedc übernimmt nur, was Home Assistant hat, und löscht nichts. → [Daten-Checker: Drift zu Home Assistant](HANDBUCH_DATEN_CHECKER.md#417-datenquellen-drift)
+
+**«Tag reparieren» auch ohne Leistungskurve.** Hatte Home Assistant für einen Tag keine Leistungswerte mehr (älter als die Aufbewahrung des Verlaufs, oder kein Leistungssensor), ließ die Reparatur einen Tag mit falschem Gerätewert stehen — etwa einen Zählersprung, den du in Home Assistant schon korrigiert hattest. Jetzt schreiben „Tag reparieren", „Aus Home Assistant neu übernehmen" und *„Tag neu aggregieren"* die Gerätewerte aus der Zählerstatistik von Home Assistant neu; der gespeicherte Leistungsverlauf bleibt stehen, und die Rückmeldung sagt das. → [Daten-Checker: Reparatur-Werkzeuge](HANDBUCH_DATEN_CHECKER.md#reparatur-werkzeuge-in-der-energieprofil-pflege)
+
+**Komponenten → Sonstiges: Abgabe an Dritte mit eigener Sicht.** Ein Gerät der Kategorie „Abgabe an Dritte" (Mieterstrom, Allgemeinstrom, Nachbarhaus) erschien unter *Komponenten → Sonstiges* bisher als Erzeuger ohne Erzeugung bzw. mit Nullen. Jetzt zeigt es die **Abgabe** (kWh), den **Erlös** (Summe deiner gepflegten Erlöse, sonst „nicht bewertet") und die **Monate** mit Abgabe, dazu die Abgabe je Monat und Jahr und den Posten „Erlös aus der Abgabe". Im Monatsabschluss hat ein Abgabe-Gerät jetzt das Feld **„Abgabe (kWh)"** — ein zugeordneter Sensor füllt es vor. Monate vor der Umstellung tragen ihren Wert noch im Feld *Erzeugung*; trag ihn unter *Einstellungen → Daten → Monatsdaten* ins Feld „Abgabe (kWh)" nach. [Handbuch Bedienung §3.8](HANDBUCH_BEDIENUNG.md#38-sonstiges)
+
+**Daten-Checker: alte Werte nach einem Wechsel der Kategorie unter *Sonstiges*.** Hast du ein Gerät zum Beispiel von „Erzeuger" auf „Abgabe an Dritte" umgestellt, stehen die alten Monate noch im Feld *Erzeugung* — eedc liest das Feld für die neue Kategorie nicht, der Wert zählt in keiner Bilanz. Der Daten-Checker nennt dir jetzt diese Monate (eine Meldung je Feld) und bietet „Wert entfernen" an; bei „Abgabe an Dritte" steht an *Erzeugung* oder *Verbrauch* dabei, wie du die Menge vorher ins Feld „Abgabe (kWh)" überträgst. eedc löscht und verschiebt nichts von allein. [Handbuch Daten-Checker](HANDBUCH_DATEN_CHECKER.md)
+
+**Daten-Checker: «Beheben» führt bis zur Reparatur-Werkbank.** Befunde wie die Wetterquellen-Prüfung, deren Handgriff in der Reparatur-Werkbank liegt, klappen die Energieprofil-Pflege auf und springen jetzt bis zur Werkbank — auch beim zweiten Klick. Ebenso der Knopf „Zur Reparatur-Werkbank" auf der Datenquellen-Seite. [Handbuch Daten-Checker](HANDBUCH_DATEN_CHECKER.md)
+
+**HA-Sensor eines sonstigen Verbrauchers: PV-Anteil wie im Cockpit.** Das Attribut `pv_anteil_prozent` teilt jetzt den PV-Bezug durch PV- plus Netz-Bezug, wie die Kachel „PV-Anteil" im Cockpit — vorher durch den Verbrauch. Gleich, solange beide Bezüge den Verbrauch ganz aufteilen.
+
+**PV-Prognose «Rest heute»: eedc lernt aus dem Vormittag.** Bisher sagte «Rest heute» bis zum Abend, was die Prognose vom Morgen für die übrigen Stunden erwartete — auch an einem Nebeltag, an dem längst klar war, dass es weniger wird. Jetzt vergleicht eedc das bisher Erzeugte mit der Prognose bis zur selben Stunde und führt den Rest nach: gedämpft, solange erst wenig vom Tag vorbei ist, und höchstens auf das 0,4- bis 1,6-Fache. Trifft der Tag die Prognose, ändert sich nichts. In *Cockpit → Live* steht unter „verbleibend" ein Satz, um wie viel der Rest gesenkt oder angehoben ist; die HA-Sensoren «Rest heute» und «heute (nachgeführt)» tragen den nachgeführten Wert und das Attribut `nachfuehr_faktor`. «PV-Prognose heute» und sein Stundenprofil bleiben die Prognose vom Morgen. [Handbuch Prognosen §5.3](HANDBUCH_PROGNOSEN.md#rest-heute--nachgeführt-aus-dem-gemessenen-vormittag)
+
+**Prognose: an Tagen aus dem HA-Spiegel liegt jede gemessene Stunde auf ihrer Prognose.** An diesen Tagen stand die gemessene Kurve im Stundenvergleich unter *Auswertungen → Prognose* eine Stunde vor der Prognose (der Mittag um 12 statt 13 Uhr), und die Abweichungs-Ampel der HA-Sensoren meldete am Vormittag zu viel — an einem klaren Tag um 12:30 +95 % statt +16 %. Das gelernte Verbrauchsprofil (gestrichelte Verbrauchsprognose im Live-Chart, «PV-Überschuss heute», «Speicher voll um») lag an diesen Tagen ebenfalls eine Stunde zu früh. Jetzt stimmt die Zuordnung. [Handbuch Prognosen §8](HANDBUCH_PROGNOSEN.md#8-bekannte-probleme--fehlerbilder)
+
+**Wallbox und E-Auto über MQTT: die Ladung zählt einmal.** Schicken Wallbox und E-Auto ihre Ladeleistung je über ein eigenes MQTT-Topic, stand die Ladung im Tagesverlauf (*Cockpit → Live*) bisher zweimal im Stapel — ebenso, wenn die Wallbox über Home Assistant und das Auto über MQTT misst. Jetzt trägt sie die Wallbox, wie über Home Assistant. Acht Felder, die eedc aus MQTT nie verarbeitet hat (Eigenverbrauch des Balkonkraftwerks, externe Ladung des E-Autos, Eigenverbrauch, Einspeisung, Erlös und PV-/Netz-Anteil sonstiger Geräte), bieten auf der Datenquellen-Seite kein MQTT mehr an — sie kommen wie bisher von Hand oder aus einem Home-Assistant-Sensor in den Monatsabschluss. Stand dort nur die automatische Vorbelegung „Inbound“, steht jetzt „Keine“; eine selbst angelegte Gateway-Zuordnung bleibt, bis du sie auf „Keine“ stellst. Der Daten-Checker mahnt ihre Topics nicht mehr an. Hängt derselbe Leistungssensor an Wallbox und E-Auto, warnt die Datenquellen-Seite nicht mehr vor einer Doppelzählung: eedc zählt ihn einmal. [MQTT-Inbound](MQTT_INBOUND.md#topics-je-gerätetyp)
+
+**Cockpit → Tag: die E-Mobilität an jedem Ladetag.** Der Block „E-Mobilität" erschien bisher nur an Tagen, an denen die Wallbox einen Leistungsverlauf lieferte — kannte nur der Ladezähler die Ladung, fehlte er, obwohl die Karte „Heute" im E-Mobilitäts-Hub die Zahl zeigte. Jetzt nimmt eedc die Ladung des Tages aus dem Ladezähler, sonst aus dem Leistungsverlauf, und zählt wie im Monat deine privaten Geräte; der PV-Anteil steht daneben. Mit einem Kilometer-Sensor am E-Auto zeigt der Block auch die Strecke des Tages. [Handbuch Bedienung §2.2](HANDBUCH_BEDIENUNG.md#22-tag)
+
+**Auswertungen → ROI: die V2H-Ersparnis wie im Komponenten-Hub.** Entlädt dein E-Auto ins Haus (V2H) und hast du dafür eine Jahresmenge, aber keinen eigenen Entladepreis hinterlegt, bewertet die ROI-Prognose (auch im PDF-Finanzbericht) diese Energie jetzt mit dem Abstand Bezugspreis − Einspeisevergütung, wie der Komponenten-Hub und die Aussichten — vorher mit dem vollen Bezugspreis, die Ersparnis war damit zu hoch. Ein hinterlegter Entladepreis gilt wie bisher. [Handbuch Bedienung §4.2](HANDBUCH_BEDIENUNG.md#42-roi)
+
+**Auswertungen → Prognose: die Genauigkeit vergleicht, was eedc gezeigt hat — Day-Ahead oder abends.** Im Genauigkeits-Tracking stand als eedc-Prognose eines vergangenen Tages bisher die OpenMeteo-Prognose mal dem *heutigen* Lernfaktor — eine Zahl, die eedc an dem Tag nie angezeigt hat, und daneben Solcast mit dem Abendwert, den Solcast tagsüber per Satellit nachführt. Jetzt steht in der eedc-Spalte die Prognose, die eedc angezeigt hat, und ein neuer Umschalter **„Zeitpunkt: Day-Ahead | Abend"** legt fest, welchen Stand alle Quellen zeigen: Day-Ahead (Standard) ist der Stand in der Nacht und vergleicht gleich lange Vorlaufzeiten, Abend der nach Sonnenuntergang eingefrorene. Fehlt ein Stand — den eedc-Abendstand zeichnet eedc erst ab dieser Version auf —, steht dort „nicht erhoben". Die Abweichungs-Ampel der HA-Sensoren nimmt denselben Day-Ahead-Stand. Ein Solcast-Tagesprofil ohne Daten speichert eedc nicht mehr als 0 kWh. [Handbuch Prognosen §6](HANDBUCH_PROGNOSEN.md#6-genauigkeits-tracking-mae--bias)
+
+**Auswertungen → Prognose: der Stand um die Mittagszeit, eine Empfehlung und eine Korrektur, die sich selbst prüft.** Das Genauigkeits-Tracking kennt einen dritten Zeitpunkt, **„Mittag"**: eedc hält um 12 Uhr fest, was jede Quelle für den Tag sagt — eedc mit dem bis dahin gemessenen Ertrag plus dem nachgeführten Rest, Solcast mit seiner Satelliten-Nachführung, OpenMeteo mit dem Modelllauf. Ältere Tage zeigen dort „nicht erhoben". Unter den Kennzahlen steht jetzt, welche Quelle an deiner Anlage zum gewählten Zeitpunkt am besten trifft (ab 14 Tagen) — und, wenn das Solcast ist und du es noch nicht nutzt, wo du es wählen kannst. Außerdem prüft eedc seine gelernte Korrektur jeden Tag gegen die rohe Wetterprognose: war sie in den letzten 30 Tagen deutlich schlechter, zeigt eedc bis auf Weiteres die rohe Prognose und sagt es in einer Kopfzeile; gelernt wird weiter, und die Korrektur kommt von selbst zurück, sobald sie wieder hilft. [Handbuch Prognosen §6](HANDBUCH_PROGNOSEN.md#6-genauigkeits-tracking-mae--bias)
+
+**Kleinere Anzeigen richtiggestellt.** Hat ein PV-String in einem Jahr noch gar keine Werte (vor seiner Anschaffung), sagt die String-Auswertung jetzt genau das, statt von „anteilig verteilten" Werten zu sprechen. Die Fußzeile „Solar-Anteil" der Speicher-Tabelle in *Cockpit → Jahr* zeigt bei 0 kWh Netzladung 100 % wie die Monatszeilen. Und fehlt in *Cockpit → Tag* das Tagesdetail (Ladefehler), steht dort ein Hinweis statt still leerer Speicher- und E-Mobilitäts-Blöcke.
+
+**Ältere Tage neu berechnet: das Balkonkraftwerk zählt nicht doppelt.** Berechnet eedc einen Tag aus der Langzeitstatistik von Home Assistant neu (Vollbackfill, Reparatur-Werkbank) und hat dein Balkonkraftwerk einen eigenen Leistungssensor und seine Module (als Kinder angelegt) ebenfalls, standen bisher beide in der Stundenkurve — etwa 1,6 statt 0,8 kW. Jetzt trägt das Balkonkraftwerk nur, was seine Module nicht messen, wie im Live-Tagesverlauf; fehlt den Modulen eine Stunde, zählt das Balkonkraftwerk sie. Schon gespeicherte Tage ändern sich erst, wenn sie neu berechnet werden. [Handbuch Energieprofil §4](HANDBUCH_ENERGIEPROFIL.md#4-reparatur--pflege)
+
+**Cockpit → Live, Prognose-Vergleich: „Morgen“ bei Solcast über Home Assistant ist wirklich morgen.** War der Morgen-Sensor der Solcast-Integration gerade nicht lesbar, zeigte eedc unter „Morgen“ den Wert von übermorgen. Jetzt bleibt „Morgen“ dann leer, und übermorgen steht nur dort, wo es hingehört. [Handbuch Prognosen §2.3](HANDBUCH_PROGNOSEN.md#23-solcast--optional-dritte-meinung)
+
+**Daten-Checker: Heizen/Warmwasser zugeordnet, der Schalter aber aus.** Hast du an der Wärmepumpe „Strom Heizen“ oder „Strom Warmwasser“ zugeordnet und den Schalter „Getrennte Strommessung (Heizen / Warmwasser)“ nicht eingeschaltet, zählt eedc diese Zähler nicht als Aufteilung — Heizen bleibt leer, der ganze Strom steht unter „nicht aufgeteilt“. Der Daten-Checker sagt das jetzt und nennt den Weg: Einstellungen → Komponenten → deine Wärmepumpe → bearbeiten. [Handbuch Daten-Checker §4.3.7](HANDBUCH_DATEN_CHECKER.md#437-wärmepumpe)
+
+**Daten-Checker: Felder heißen wie an ihrem Gerät.** Die Meldung zur Langzeitstatistik nannte den WP-Tarif-Zähler einer Wärmepumpe „Netzbezug zum Wallbox-Tarif“. Jetzt trägt jedes Feld den Namen, den es an seinem Gerät hat — an der Wärmepumpe „Netzbezug zum WP-Tarif“, an PV-Modulen „PV-Erzeugung“, am Speicher „Ladung“ und „Netzladung“, wie auf der Datenquellen-Seite. Das gilt auch für die Meldungen zu Zählerstand-Rücksprüngen, zur Sensor-Einheit und für die Werkbank „Verwerfen vor Quellbeginn“.
+
+**Auswertungen → Tabelle: „WP Wärme“ je Monat wie im Cockpit.** Misst deine Wärmepumpe die Wärme mit einem gemeinsamen Wärmemengenzähler (oder nur die Heizwärme), zeigt die Monatsspalte „WP Wärme“ jetzt die gemessene Wärme statt „—“ — dieselbe Zahl wie *Cockpit → Monat*; mit mehreren Wärmepumpen zählt auch die mit dem Gesamtzähler mit.
+
+**Neu in der Hilfe: «Größen».** Eine Übersicht aller Größen von eedc — was du zuordnest oder einträgst, was eedc je Monat daraus bildet, welche Spalten die Werte-Tabelle zeigt und welche Sensoren eedc an Home Assistant meldet —, je Größe eine Zeile mit Einheit und Herkunft. Sie wird aus dem Programm erzeugt und ist damit immer auf dem Stand der Version. [Übersicht der Größen](UEBERSICHT-GROESSEN.md)
+
+**Sensor-Referenz vollständig.** Die Tabellen der Sensor-Referenz — welche Felder du zuordnen kannst und welche Sensoren eedc an Home Assistant meldet — kommen jetzt ebenfalls aus dem Programm: jedes Feld und jeder Export-Sensor steht darin, mit demselben Hinweis und derselben Liste „ausgewertet in“ wie auf der Datenquellen-Seite. Die MQTT-Topics je Gerät findest du in MQTT-Inbound. [Sensor-Referenz](SENSOR-REFERENZ.md)
+
+**MQTT-Inbound vollständig, jetzt in der Hilfe.** Schickst du Werte per MQTT an eedc, findest du je Gerätetyp eine Tabelle mit jedem Topic, das eedc erwartet — auch den Feldern, für die es kein Topic gibt. Je Topic steht, was du senden sollst (Zählerstand, Momentanwert, Zustand mit allen Wörtern und Codes, die eedc versteht) und was eedc daraus macht. Felder, deren Wert eedc aus MQTT nicht verarbeitet, stehen dort als „kein MQTT-Topic — Monatsabschluss“. [MQTT-Inbound](MQTT_INBOUND.md#topics-je-gerätetyp)
+
+**Berechnungsreferenz aufgeräumt.** Die Berechnungsreferenz beschreibt jetzt die Regeln, nach denen eedc rechnet, und wo eine Zahl bewusst fehlt — ohne die Entwicklungsgeschichte, die bisher darin stand. Wo ein Satz nicht mehr zum Programm passte, ist er richtiggestellt; an deinen Zahlen ändert das nichts. Welche Größen es gibt und wo ihre Regel steht, findest du in der Übersicht der Größen. [Berechnungsreferenz](BERECHNUNGEN.md)
+
+**Feld-Hinweise und Daten-Checker: genauer, was eedc mit deinen Werten tut.** Die Hinweise unter den Eingabefeldern sagen jetzt mehr: Wetterwerte holt eedc in Deutschland von Bright Sky (DWD), sonst von Open-Meteo, und nur in ein leeres Feld; die Speicher-Ladung schließt die Netzladung ein; den Ø-Ladepreis schlägt der Monatsabschluss vor; an der Ladeleistung des E-Autos steht, dass eedc sie neben einer Wallbox einmal zählt, an der Wallbox. Steht unter „Wärme gesamt“ einer Wärmepumpe eine 0, während Heizwärme und Warmwasser-Wärme Werte tragen, meldet der Daten-Checker das jetzt — eedc rechnet dann mit den Einzelwerten, und meist hat der Wärmemengenzähler im Monat nichts geliefert. In der Sensor-Referenz sind zwei Aussagen richtiggestellt (Vormittag/Nachmittag-Prognose, E-Auto-Ladeleistung). [Sensor-Referenz](SENSOR-REFERENZ.md)
+
+**Website: Verweise zwischen den Doku-Seiten funktionieren.** Auf der eedc-Website führten Verweise von einer Doku-Seite auf eine andere — etwa aus der Berechnungsreferenz ins Handbuch — ins Leere. Jetzt öffnen sie die Website-Seite an der richtigen Stelle; Verweise auf Konzept-Dokumente ohne eigene Website-Seite führen zur Quelle auf GitHub. In der Hilfe im Programm funktionierten diese Verweise schon.
+
+**Handbuch: Wandtablet und „Tag reparieren“.** Die eedc-Karte läuft bei Anwendern auch im Fully Kiosk Browser auf einem Android-Wandtablet, mit einem eingeschränkten Home-Assistant-Benutzer — das steht jetzt im Handbuch. Im Daten-Checker starten Kategorien ohne Fehler und Warnungen zugeklappt; die Drift-Prüfung mit ihrem Knopf „Tag reparieren“ findest du also erst nach einem Klick auf ihre Kategorie. An Tagen aus dem HA-Spiegel ändert dieser Knopf nichts an den Werten aus dem Spiegel: Hast du einen Wert in Home Assistant korrigiert, übernimmt eedc ihn beim nächtlichen Abgleich um 02:45 — oder sofort mit „HA-Spiegel jetzt abgleichen“ in der Reparatur-Werkbank. [Handbuch Daten-Checker §4.17](HANDBUCH_DATEN_CHECKER.md#417-datenquellen-drift)
+
+**Referenzen: MQTT-Inbound und Sensor-Referenz genauer.** Die Abschnitte zu Zustand und Sitzung der E-Mobilität und zu den Themen je Gerät tragen kein „ab der nächsten Version“ mehr (seit 4.2.0 da), und die Sensor-Referenz sagt jetzt klar, wann ein Tagessensor passt: als Tageswert-Feld (etwa „Ladung heute“ am Speicher) ja, als Zählerstand über MQTT nein — dort liefert eedc nach dem nächtlichen Rücksprung keinen Wert; über Home Assistant ist beides in Ordnung.
+
+**Daten-Checker: Tage aus dem HA-Spiegel sind die aktuelle Quelle.** Bekommst du deine Tage aus dem gespiegelten Home-Assistant-Zähler, meldet die Kategorie «Datenquellen – Status» jetzt OK statt dauerhaft „Aggregate aus älterer Quelle“ — der Hinweis hätte sich nie von selbst erledigt.
 
 ## v4.2.2 — 6. November 2026
 
@@ -11598,7 +11656,7 @@ Wer „Sonstiges" für andere Verbraucher (Pool, Sauna, Werkstatt) oder Erzeuger
 
 - **Funktionsumfang bleibt identisch.** Es ist ein Bugfix- und UX-Polish-Release — keine neue Architektur-Etappe, keine neuen Konzepte. Was du bisher gewohnt bist, funktioniert weiter wie zuvor.
 
-→ [Auswertung → Energieprofil](HANDBUCH_BEDIENUNG.md#42-auswertung) · [Cockpit](HANDBUCH_BEDIENUNG.md#41-cockpit)
+→ [Auswertung → Energieprofil](HANDBUCH_BEDIENUNG.md#8-anhang-wo-ist-x-hin) · [Cockpit](HANDBUCH_BEDIENUNG.md#2-cockpit--die-zeit-achse)
 
 ---
 
@@ -11620,7 +11678,7 @@ Wer „Sonstiges" für andere Verbraucher (Pool, Sauna, Werkstatt) oder Erzeuger
 - **Bestandsdaten gehen nicht verloren.** Beim ersten App-Start nach Update werden vorhandene Werte einmalig als Quelle „Legacy unbekannt" markiert. Sie bleiben sichtbar und nutzbar; jeder neue Schreiber gewinnt automatisch gegen sie.
 - **Cloud-Import-Buttons bleiben sichtbar und nutzbar.** Sie laden weiter Werte — die Hierarchie greift nur, wenn du an derselben Stelle bereits einen manuellen Wert hast. Bei leeren Feldern landet der Cloud-Wert wie zuvor direkt.
 
-→ [Auswertung → Energieprofil → Datenverwaltung](HANDBUCH_BEDIENUNG.md#42-auswertung)
+→ [Auswertung → Energieprofil → Datenverwaltung](HANDBUCH_EINSTELLUNGEN.md#52-energieprofil-pflege)
 
 ---
 
@@ -11644,7 +11702,7 @@ Wer „Sonstiges" für andere Verbraucher (Pool, Sauna, Werkstatt) oder Erzeuger
 - **Historische komponenten_kwh-Tagessummen werden nicht stillschweigend umgeschrieben.** Der Reaggregate-Knopf pro Tag liefert auf Wunsch den HA-konformen Boundary-Diff-Wert.
 - **Resnap-Backend war seit v3.26.6 schon da.** Was neu ist, ist die UX-Trennung im Frontend — die `mit_resnap=true/false`-Auswahl gab es serverseitig schon.
 
-→ [Auswertung → Energieprofil](HANDBUCH_BEDIENUNG.md#42-auswertung)
+→ [Auswertung → Energieprofil](HANDBUCH_BEDIENUNG.md#8-anhang-wo-ist-x-hin)
 
 ### UX-Bündel aus Forum-Beobachtungen *(v3.26.7)*
 
@@ -11662,7 +11720,7 @@ Wer „Sonstiges" für andere Verbraucher (Pool, Sauna, Werkstatt) oder Erzeuger
 >
 > Jetzt holt der Backfill zwei Range-Calls: Open-Meteo Archive für ältere Tage, Open-Meteo Forecast (mit Reanalyse-Approximation für die Vergangenheit) für die jüngsten Tage. Der nächtliche Tagesabschluss-Aggregator (`aggregate_day`) verwendet denselben Routing-Cutoff. Damit ist die Lücke der letzten 5 Tage strukturell geschlossen — Empty-State-Ghost und „0 geladen" sollten nach einem Klick verschwinden.
 
-→ [Aussichten → Prognosen-Vergleich](HANDBUCH_BEDIENUNG.md#43-aussichten)
+→ [Aussichten → Prognosen-Vergleich](HANDBUCH_BEDIENUNG.md#43-prognose-genauigkeit-gegen-ist)
 
 ### Hotfix: Korrekturprofil-Skalar wirkt sofort, auch ohne Stundenprofile *(v3.26.3)*
 
@@ -11670,7 +11728,7 @@ Wer „Sonstiges" für andere Verbraucher (Pool, Sauna, Werkstatt) oder Erzeuger
 >
 > Jetzt schreibt der Aggregator den Skalar unabhängig vom Stundenprofil; Sonnenstand- und Wetter-Bins bleiben leer, solange die Stundenprofile reinwachsen — und füllen sich automatisch über die nächsten Wochen. Die Heatmap-Card erklärt das jetzt explizit, wenn nur die Skalar-Stufe vorhanden ist.
 
-→ [Aussichten → Prognosen-Vergleich](HANDBUCH_BEDIENUNG.md#43-aussichten)
+→ [Aussichten → Prognosen-Vergleich](HANDBUCH_BEDIENUNG.md#43-prognose-genauigkeit-gegen-ist)
 
 ### Päckchen 2: Stündliches Korrekturprofil scharf *(v3.26.2)*
 
@@ -11689,7 +11747,7 @@ Wer „Sonstiges" für andere Verbraucher (Pool, Sauna, Werkstatt) oder Erzeuger
 - **Anlage ohne Day-Ahead-Snapshots oder Koordinaten** → Aggregator wird übersprungen, Live-Pfad bleibt auf dem klassischen Skalar.
 - **Tagesrest-Pfad konzeptionell wie bisher:** eedc fragt frische Forecasts und multipliziert mit dem Faktor — neu ist nur, dass der Faktor jetzt pro Stunde aus dem Profil kommt statt einem globalen Skalar.
 
-→ [Aussichten → Prognosen-Vergleich](HANDBUCH_BEDIENUNG.md#43-aussichten)
+→ [Aussichten → Prognosen-Vergleich](HANDBUCH_BEDIENUNG.md#43-prognose-genauigkeit-gegen-ist)
 
 ### Hotfix: Wetter-Backfill-Button erscheint jetzt zuverlässig *(v3.26.1)*
 
@@ -11697,7 +11755,7 @@ Wer „Sonstiges" für andere Verbraucher (Pool, Sauna, Werkstatt) oder Erzeuger
 >
 > Wenn die Stratifizierungs-Tabelle nach dem Backfill leer bleibt, weil noch keine Day-Ahead-Stundenprofile gespeichert sind, sagt das die Card jetzt explizit — die nachgeladenen Wetter-Daten dienen dann als Vorbereitung für Päckchen 2.
 
-→ [Aussichten → Prognosen-Vergleich](HANDBUCH_BEDIENUNG.md#43-aussichten)
+→ [Aussichten → Prognosen-Vergleich](HANDBUCH_BEDIENUNG.md#43-prognose-genauigkeit-gegen-ist)
 
 ### Päckchen 1: Daten-Layer für stündliches Korrekturprofil *(v3.26.0)*
 
@@ -11718,7 +11776,7 @@ Wer „Sonstiges" für andere Verbraucher (Pool, Sauna, Werkstatt) oder Erzeuger
 - **Tagesrest-Prognose im Live-Dashboard** läuft genauso wie bisher: aktuelle Open-Meteo-Forecast × Lernfaktor (Legacy). Wird nicht durch die neue O12-Variante beeinflusst.
 - **Ohne IST-Vergleich keine Stratifizierung.** Die Wetter-Stratifizierungs-Card erscheint erst, wenn eedc genug Tage mit gleichzeitiger Day-Ahead-Prognose und IST-Stundenwerten gefunden hat — typisch wenige Tage nach Aktivierung.
 
-→ [Aussichten → Prognosen-Vergleich](HANDBUCH_BEDIENUNG.md#43-aussichten)
+→ [Aussichten → Prognosen-Vergleich](HANDBUCH_BEDIENUNG.md#43-prognose-genauigkeit-gegen-ist)
 
 ---
 
@@ -11728,7 +11786,7 @@ Wer „Sonstiges" für andere Verbraucher (Pool, Sauna, Werkstatt) oder Erzeuger
 
 > 🩹 **Kleine UI-Politur (#193 detLAN)** — Wer die Tab-Header-Zeile auf den Seiten **Auswertungen**, **Aussichten** und **Community** schmal hatte (Smartphone, geteiltes Browser-Fenster, HA Companion-App), sah unter den Tab-Buttons eine permanente graue Bildlaufleiste. Sie ist weg. Die Tabs lassen sich weiterhin horizontal wischen, scrollen oder per Touch/Wheel verschieben — die statische Scrollbar-Spur darunter ist nur kosmetisch entfernt.
 
-→ [Auswertungen](HANDBUCH_BEDIENUNG.md#42-auswertungen) · [Aussichten](HANDBUCH_BEDIENUNG.md#43-aussichten)
+→ [Auswertungen](HANDBUCH_BEDIENUNG.md#4-auswertungen--die-wie-achse) · [Aussichten](HANDBUCH_BEDIENUNG.md#25-aussicht)
 
 ### Vollbackfill nur noch additiv + Wärmepumpe-Strom-Splits + Monatsberichte-Scroll *(v3.25.22)*
 
@@ -11739,7 +11797,7 @@ Wer „Sonstiges" für andere Verbraucher (Pool, Sauna, Werkstatt) oder Erzeuger
 > - **Monatsbericht: Wärmepumpe-Strom-Aufteilung Heizung/Warmwasser sichtbar.** Wer in der Wärmepumpe-Investition die getrennte Strommessung aktiviert hat, sieht im Monatsbericht jetzt unter „Stromverbrauch" zwei „davon"-Zeilen — Heizung und Warmwasser. Konsistent zur bereits vorhandenen Wärme-Aufteilung darunter. Anlagen ohne getrennte Messung sehen die Zeilen weiter nicht. (#191 rapahl, der war Ideengeber für die getrennte Strommessung)
 > - **Monatsbericht: Scroll-Position bleibt beim Monatswechsel.** Wer die Wärmepumpe-Sektion aufgeschlagen hat und auf einen anderen Monat klickt, bleibt jetzt an der Wärmepumpe — die rechte Inhaltsspalte springt nicht mehr ungewollt an den Seitenanfang. Der Sprung an den Seitenanfang bei einem Wechsel des Hauptmenü-Punktes (Cockpit → Aussichten etc.) bleibt natürlich erhalten. (#182 detLAN-Folge zu v3.25.21)
 
-→ [Daten → Energieprofil](HANDBUCH_EINSTELLUNGEN.md) · [Cockpit → Monatsberichte](HANDBUCH_BEDIENUNG.md#41-cockpit)
+→ [Daten → Energieprofil](HANDBUCH_EINSTELLUNGEN.md) · [Cockpit → Monatsberichte](HANDBUCH_BEDIENUNG.md#23-monat)
 
 ### Reihenfolge korrigiert + Stammdaten sortiert + Monatsberichte-Spalte bleibt stehen *(v3.25.21)*
 
@@ -11750,7 +11808,7 @@ Wer „Sonstiges" für andere Verbraucher (Pool, Sauna, Werkstatt) oder Erzeuger
 > - **Monatsberichte: linke Monats-Spalte bleibt jetzt wirklich stehen.** v3.25.13 hatte einen Wheel-Bubble-Bug behoben, das Verhalten beim Klick auf einen alten Monat blieb aber kaputt — die rechte Inhalts-Spalte verschob sich, ältere Monate (2023) waren ohne Umweg nicht erreichbar. Jetzt ist die Monats-Spalte ein eigener, oben klebender Scroll-Container — ältere Monate erreichst du per Wheel direkt in der Spalte, und die rechte Seite bleibt unverrückbar.
 > - **Schreibweise „Gefahrene km"** statt „km gefahren" — wirkt einheitlich im Statistik-Import, in der E-Auto-Σ-Kachel und im Sensor-Mapping.
 
-→ [Cockpit → Monatsberichte](HANDBUCH_BEDIENUNG.md#41-cockpit) · [Stammdaten → Investitionen](HANDBUCH_EINSTELLUNGEN.md)
+→ [Cockpit → Monatsberichte](HANDBUCH_BEDIENUNG.md#23-monat) · [Stammdaten → Investitionen](HANDBUCH_EINSTELLUNGEN.md)
 
 ### Daten-Checker: keine Fehlalarme mehr für Strompreis-Sensor und Dienstwagen-E-Autos *(v3.25.20)*
 
@@ -11773,7 +11831,7 @@ Wer „Sonstiges" für andere Verbraucher (Pool, Sauna, Werkstatt) oder Erzeuger
 > - **Kraftstoff-Box bedingt** — Der Hinweis „Kraftstoffpreise nachpflegen" erscheint nur noch, wenn mindestens eine E-Auto-Investition gepflegt ist; sonst ist die Information für die Anlage irrelevant. Wirkt in **Daten → Monatsdaten** und in **Daten → Energieprofil**. (#188 rapahl)
 > - **Sensor-Mapping „keine HA-Statistik"-Badge** — erscheint nur noch bei kumulativen kWh-Sensoren, wo eine Long-Term-Statistik tatsächlich gebraucht wird. Bei Live-Leistungs-Sensoren (W), SoC-Werten (%) oder Temperaturen (°C) ist der Badge weg — die werden direkt aus dem HA-State gelesen, da gibt es keine Statistik-Voraussetzung. (Joachim-PN nach Wattpilot-Mapping)
 
-→ [Auswertungen → Energieprofil](HANDBUCH_BEDIENUNG.md#42-auswertungen)
+→ [Auswertungen → Energieprofil](HANDBUCH_BEDIENUNG.md#8-anhang-wo-ist-x-hin)
 
 ### „Tag neu aggregieren" mit Vorschau-Tabelle vor Übernahme *(v3.25.18)*
 
@@ -11783,7 +11841,7 @@ Wer „Sonstiges" für andere Verbraucher (Pool, Sauna, Werkstatt) oder Erzeuger
 >
 > **Außerdem im Bündel** — drei kleine UX-Items aus dem detLAN-Pakt: Tagesdetail-Pfeile blättern bis einschließlich heute (rollierend aktualisiert, vorher endete bei gestern). Der `Lade…`-Hinweis am Datums-Picker erscheint nur noch, wenn der Fetch länger als 250 ms braucht — kein Aufploppen-und-Weg-Flash mehr. Reihenfolge im Sensor-Mapping-Wizard: Wallbox steht jetzt vor E-Auto (konsistent zum Cockpit, fest installierte Komponente vor mobilem Verbraucher).
 
-→ [Auswertungen → Energieprofil](HANDBUCH_BEDIENUNG.md#42-auswertungen)
+→ [Auswertungen → Energieprofil](HANDBUCH_BEDIENUNG.md#8-anhang-wo-ist-x-hin)
 
 ### „Tag neu aggregieren" repariert prä-#184-Spikes jetzt wirklich *(v3.25.17)*
 
@@ -11801,13 +11859,13 @@ Wer „Sonstiges" für andere Verbraucher (Pool, Sauna, Werkstatt) oder Erzeuger
 
 Bei reinen MQTT-Standalone-Setups ohne direkten HA-State-Zugriff fällt der Read auf die Statistics- bzw. den jüngsten Snapshot zurück — höchstens eine Stunde alt.
 
-→ [Cockpit → Wärmepumpe](HANDBUCH_BEDIENUNG.md#41-cockpit)
+→ [Cockpit → Wärmepumpe](HANDBUCH_BEDIENUNG.md#34-wärmepumpe)
 
 ### Tagesdetail-Ansicht: Vor/Zurück-Pfeile zum Blättern *(v3.25.15)*
 
 > ✨ **Sichtbar in Auswertungen → Energieprofil → Tagesdetail** — Neben dem Datums-Eingabefeld stehen jetzt links und rechts kleine Chevron-Buttons (`<` `>`) zum Blättern um einen Tag. Genau das, was die Monats-Ansicht schon hat — die beiden Tabs sind nun symmetrisch in der Bedienung. Der „nächster Tag"-Button wird automatisch deaktiviert, sobald gestern erreicht ist (heute hat noch keinen abgeschlossenen Energieprofil-Tag).
 
-→ [Auswertungen → Energieprofil](HANDBUCH_BEDIENUNG.md#42-auswertungen)
+→ [Auswertungen → Energieprofil](HANDBUCH_BEDIENUNG.md#8-anhang-wo-ist-x-hin)
 
 ### WP-Kompressor-Starts: Σ Lebensdauer wächst nicht mehr im Tagesverlauf zu hoch *(v3.25.14)*
 
@@ -11817,7 +11875,7 @@ Fix: heutiger Tag wird konsistent aus der TagesZusammenfassung-Aggregation ausge
 
 Bei reinen MQTT-Standalone-Setups ohne direkten Live-State-Zugriff fehlt der heutige Anteil bis zum Tagesabschluss — das ist bewusst so, lieber konservativ als doppelt gezählt.
 
-→ [Cockpit → Wärmepumpe](HANDBUCH_BEDIENUNG.md#41-cockpit)
+→ [Cockpit → Wärmepumpe](HANDBUCH_BEDIENUNG.md#34-wärmepumpe)
 
 ### Sensor-Zuordnung-Zusammenfassung: Großschreibung, Reihenfolge, Sensor-IDs nicht mehr abgeschnitten *(v3.25.14)*
 
@@ -11825,7 +11883,7 @@ Bei reinen MQTT-Standalone-Setups ohne direkten Live-State-Zugriff fehlt der heu
 
 Behoben: Investitions-Typen jetzt mit deutschen Labels (`(E-Auto)`, `(PV-Module)`, `(Wärmepumpe)`, …), Feldnamen mit Akronym-Behandlung (`PV-Erzeugung (kWh)`, `Kompressor-Starts`, `Kilometer gefahren`), Investitions-Karten in fester Reihenfolge (PV → Wechselrichter → Speicher → BKW → WP → E-Auto → Wallbox → Sonstiges) statt API-Reihenfolge, und die Sensor-ID-Truncation greift nur noch auf schmalen Viewports — auf Desktop wird die volle ID angezeigt.
 
-→ [Sensor-Zuordnung](HANDBUCH_EINSTELLUNGEN.md#11-ha-sensor-zuordnung-add-on)
+→ [Sensor-Zuordnung](HANDBUCH_EINSTELLUNGEN.md#7-datenquellen--feld-zentrische-zuordnung)
 
 ### MQTT-Export: Kategorien mit deutschen Labels und passenden Icons *(v3.25.14)*
 
@@ -11833,7 +11891,7 @@ Behoben: Investitions-Typen jetzt mit deutschen Labels (`(E-Auto)`, `(PV-Module)
 
 Behoben: alle Kategorien haben jetzt deutsche Labels und sprechende Icons (Anlage 🏠, Quoten 📊, Investition 💼, Wärmepumpe 🔥, Speicher 🔋, E-Auto 🚗, Wallbox 🔌, Status ⚙️). Anzeige-Reihenfolge: Anlage zuerst, dann Auswertungs-Pyramide (Energie / Quoten / Finanzen / Umwelt), dann Investitions-Aspekte, Status zuletzt. Investitions-Sensoren-Block analog sortiert. Card-Border-Radius-Bug behoben.
 
-→ [HA-Sensor-Export](HANDBUCH_EINSTELLUNGEN.md#13-ha-sensor-export)
+→ [HA-Sensor-Export](HANDBUCH_EINSTELLUNGEN.md#63-mqtt-export)
 
 ### Wärmepumpe: „Heizenergie" → „Heizwärme" mit Tooltips elektrisch / thermisch *(v3.25.14)*
 
@@ -11847,7 +11905,7 @@ Konsistent über alle Stellen umgestellt: das Eingabefeld heißt jetzt **„Heiz
 
 Wer beim Hovern über das Eingabefeld zusätzlich den HTML-Tooltip sehen möchte: derselbe Text steht auch dort. Der Backend-Schlüssel `heizenergie_kwh` und der CSV-Suffix `_Heizung_kWh` bleiben unverändert — bestehende CSV-Templates und Imports funktionieren weiter.
 
-→ [Monatsdaten erfassen](HANDBUCH_BEDIENUNG.md#43-monatsdaten)
+→ [Monatsdaten erfassen](HANDBUCH_BEDIENUNG.md#6-daten-erfassen-im-alltag)
 
 ### WP-Kompressor-Starts-Baseline bleibt nach Investitionen-Speichern erhalten *(v3.25.13)*
 
@@ -11857,7 +11915,7 @@ Hintergrund: das Investitionen-Form sammelte beim Speichern nur die im Form sich
 
 Der Fix mergt jetzt das `parameter`-Objekt mit dem bestehenden statt es zu ersetzen — Wizard-Keys bleiben erhalten. **Nach dem Update einmalig Sensor-Zuordnung → Speichern & Abschließen**, dann ist die Baseline neu gesetzt und bleibt von da an stabil.
 
-→ [Cockpit → Wärmepumpe](HANDBUCH_BEDIENUNG.md#41-cockpit)
+→ [Cockpit → Wärmepumpe](HANDBUCH_BEDIENUNG.md#34-wärmepumpe)
 
 ### Mobile-Ansicht der Monatsberichte vollständig scrollbar *(v3.25.13)*
 
@@ -11865,7 +11923,7 @@ Der Fix mergt jetzt das `parameter`-Objekt mit dem bestehenden statt es zu erset
 
 Vorher endete der Scroll-Bereich bei aufgeklappter Energie-Bilanz an der Finanzen-Sektion — alles darunter war zwar im DOM gerendert, aber außerhalb des Layout-Scroll-Bereichs. Auf Desktop war die Ansicht unbeeinflusst, weil dort der Sticky-Sidebar-Layout-Pfad greift.
 
-→ [Cockpit → Monatsberichte](HANDBUCH_BEDIENUNG.md#41-cockpit)
+→ [Cockpit → Monatsberichte](HANDBUCH_BEDIENUNG.md#23-monat)
 
 ### iOS-Smartphones / kleine Viewports: kein „Durchscrollen" mehr bis zur HA-Titelleiste *(v3.25.13)*
 
@@ -11900,7 +11958,7 @@ Ein neuer SoT-Helper `get_wp_strom_kwh` ist jetzt der einzige Lese-Pfad. Bei akt
 > Den Schritt „Sensor-Zuordnung → Zusammenfassung" gibt es außerdem nicht mehr — die Zuordnung
 > steht heute unter *Einstellungen → Datenquellen*.
 
-→ [Cockpit → Wärmepumpe](HANDBUCH_BEDIENUNG.md#41-cockpit)
+→ [Cockpit → Wärmepumpe](HANDBUCH_BEDIENUNG.md#34-wärmepumpe)
 
 ### Energiefluss-Tile: kleinere Optik-Korrekturen *(v3.25.13)*
 
@@ -11909,7 +11967,7 @@ Zwei Detail-Fixes im Live-Dashboard:
 - **Sunset-/Alps-Hintergründe:** die Effekt-Layer (Sonnenstrahlen, Atmosphären-Bögen, Sterne, Aurora) ragten bisher in die abgerundeten Tile-Ecken hinein. Jetzt sauber an den Border-Radius geclippt.
 - **Mittlere Fensterbreite (Notebook-Standard 1024–1280 px):** der Energiefluss zentrierte sich vertikal mit Lücken oberhalb und unterhalb, weil die Heute-Box rechts höher war als das SVG-Aspect-Ratio. Das Side-by-Side-Layout greift jetzt erst ab 1280 px Fensterbreite — im Notebook-Standard stapelt Heute-Box unter dem Energiefluss.
 
-→ [Live-Dashboard → Energiefluss](HANDBUCH_BEDIENUNG.md#3-live-dashboard)
+→ [Live-Dashboard → Energiefluss](HANDBUCH_BEDIENUNG.md#21-live)
 
 ### Sonstige Erträge im Monatsbericht-T-Konto sichtbar + Monatsergebnis korrigiert *(v3.25.11)*
 
@@ -11919,7 +11977,7 @@ Bisher wurden im Monatsabschluss-Wizard erfasste Positionen vom Typ „Ertrag" a
 
 Jetzt wertet der Backend-Pfad `sonstige_positionen` typ-unabhängig pro Investition aus, das Frontend zeigt im T-Konto pro Investition eigene HABEN-Zeilen („Tiguan Hybrid — Sonstige Erträge 35,00 €") und SOLL-Zeilen („Tiguan Hybrid — Sonstige Ausgaben"). Das Monatsergebnis im Card-Header rechnet `Gesamt-Nettoertrag − Betriebskosten + Sonstige Netto`. Wer Erträge erfasst hat, sieht den korrekten Wert ab dem nächsten Cockpit-Aufruf — alte Monate werden automatisch neu berechnet, kein Eingriff nötig.
 
-→ [Monatsabschluss → T-Konto](HANDBUCH_BEDIENUNG.md#10-monatsabschluss)
+→ [Monatsabschluss → T-Konto](HANDBUCH_BEDIENUNG.md#23-monat)
 
 ### Pool-Doppelzählung Wallbox/E-Auto im Cockpit entschärft *(v3.25.11)*
 
@@ -11933,7 +11991,7 @@ Bei Anlagen mit Dienstwagen + Privatauto an gemeinsamer Wallbox bleibt eine Rest
 
 > ⚠ **Nachträglich richtiggestellt (September 2026):** Die Übergangslösung „pro Feld die größere Quelle“ ist abgelöst. Seit Juni 2026 bestimmt eine feste Regel die Heimlade-Quelle, und seit September 2026 folgt ihr auch die letzte Stelle mit der Größer-Regel, der laufende Monat in *Cockpit → Monat*. Heute ist die Wallbox die Summe aller Ladungen an ihr, jedes Auto mit eigener Messung trägt diese, der Rest der Wallbox geht an die Autos ohne eigene Messung — und ein Dienstwagen mit eigener Messung zählt dienstlich statt privat.
 
-→ [Monatsbericht → E-Mobilität](HANDBUCH_BEDIENUNG.md#10-monatsabschluss)
+→ [Monatsbericht → E-Mobilität](HANDBUCH_BEDIENUNG.md#23-monat)
 
 ### Selbsthilfe gegen Counter-Spikes im Tagesprofil *(v3.25.11)*
 
@@ -11947,7 +12005,7 @@ Drei aufeinander abgestimmte Selbsthilfe-Wege:
 
 Alte Tage älter als 14 Tage können nur in Hourly-Granularität repariert werden, weil HA selbst die 5-Min-Statistik nur ~10–14 Tage zurück bereithält.
 
-→ [Daten-Checker → Energieprofil-Plausibilität](HANDBUCH_DATEN_CHECKER.md) | [Energieprofil → Tag neu aggregieren](HANDBUCH_BEDIENUNG.md#7-auswertung)
+→ [Daten-Checker → Energieprofil-Plausibilität](HANDBUCH_DATEN_CHECKER.md) | [Energieprofil → Tag neu aggregieren](HANDBUCH_EINSTELLUNGEN.md#52-energieprofil-pflege)
 
 ### Daten-Checker-Falsch-Warnung „Komponenten ohne kWh-Zähler-Abdeckung" für E-Autos *(v3.25.11)*
 
@@ -11967,7 +12025,7 @@ Verursacht wurde der Bug durch eine Fehlinterpretation von HA's API-Konvention; 
 
 **Was du tun kannst:** Nichts — der Fix wirkt automatisch ab dem nächsten Snapshot. Wer die Vergangenheit korrigieren will, kann den neuen Resnap-Endpoint `POST /api/diagnostics/resnap-snapshots?days=7` aufrufen (regeneriert die letzten 7 Tage). Für Tage älter als 14 Tage steht nur die Hourly-Korrektur zur Verfügung; die 5-Min-Granularität limitiert HA selbst auf ~10–14 Tage. Der reguläre `Vollbackfill aus HA Statistics` (Datenverwaltung) bleibt unverändert nutzbar — dieser nutzt eine andere Quelle (mean-Werte) und war vom Bug nicht betroffen.
 
-→ [Energieprofil-Auswertung](HANDBUCH_BEDIENUNG.md#7-auswertung)
+→ [Energieprofil-Auswertung](HANDBUCH_BEDIENUNG.md#8-anhang-wo-ist-x-hin)
 
 ### Drift-Audit-Initiative abgeschlossen *(als Teil von v3.25.10 ausgeliefert)*
 
@@ -11989,13 +12047,13 @@ Korrekt ist das Spread-Modell, weil der gespeicherte Strom ohne Speicher als Ein
 
 Im Speicher-Dashboard war außerdem das Formel-Label ungenau („Ersparnis = Entladung × Strompreis") — passt jetzt zur tatsächlichen Berechnung.
 
-→ [Aussichten-Tab](HANDBUCH_BEDIENUNG.md#5-aussichten--prognose) | [Speicher-Dashboard](HANDBUCH_BEDIENUNG.md#33-speicher-dashboard)
+→ [Aussichten-Tab](HANDBUCH_BEDIENUNG.md#25-aussicht) | [Speicher-Dashboard](HANDBUCH_BEDIENUNG.md#33-speicher)
 
 ### Cockpit-E-Auto-Ersparnis liest jetzt deine gepflegten Werte *(v3.25.8)*
 
 Cockpit → Übersicht und Cockpit → Monatsberichte hatten bisher 7 L/100 km Vergleichsverbrauch und 1,80 €/L Benzinpreis hartcodiert — selbst wenn du im E-Auto-Formular andere Werte hinterlegt hattest, wurden die ignoriert. Aussichten und PDF haben deine Eingaben schon respektiert; Cockpit zog deshalb 7–9 % höhere Ersparnis-Werte. Jetzt rufen alle Stellen denselben Helper auf, kanonische Defaults sind 7,5 L/100 km und 1,65 €/L (entspricht den Voreinstellungen im Formular).
 
-→ [Investitionen pflegen → E-Auto](HANDBUCH_BEDIENUNG.md#11-investitionen-pflegen)
+→ [Investitionen pflegen → E-Auto](HANDBUCH_EINSTELLUNGEN.md#3-komponenten)
 
 ### Drei stille Datenfehler bei Anlagen mit historischem Backfill behoben *(v3.25.8)*
 
@@ -12015,19 +12073,19 @@ Der WP-Ersparnis-Bug aus #178 (v3.25.7) hat eine systematische Inventur aller In
 
 Vor v3.25.7 zeigten Cockpit → Monatsberichte, Cockpit → Übersicht, Cockpit → Wärmepumpe und Auswertungen → Komponenten teils unterschiedliche WP-Ersparnis-Werte für dieselbe Anlage (z. B. 7 € / 61 € / 77 € / 61 €). Ursache: vier Code-Pfade mit unterschiedlichen hartcodierten Defaults und teils falschen Param-Keys, sodass gepflegte Werte für „alter Heizungspreis" oder „alter Energieträger" stillschweigend ignoriert wurden. Jetzt rufen alle vier denselben Helper auf — der Wert ist konsistent. Issue [#178](https://github.com/supernova1963/eedc-homeassistant/issues/178), detLAN-Bericht.
 
-→ [Cockpit-Wärmepumpe](HANDBUCH_BEDIENUNG.md#36-wärmepumpe-dashboard)
+→ [Cockpit-Wärmepumpe](HANDBUCH_BEDIENUNG.md#34-wärmepumpe)
 
 ### Wärmepumpe: Hersteller-Lebensdauer-Counter im Cockpit *(v3.25.3)*
 
 Wärmepumpen-Hersteller wie Nibe oder Viessmann liefern einen Counter „Kompressor-Starts gesamt" — die echte Lebensdauer-Zahl ab Werks-Inbetriebnahme, oft 4-stellig im Auslieferungszustand. eedc zählt seit v3.24.0 selbst über Snapshot-Differenzen — das hat den 4-stelligen Sockel aber nicht abgebildet, sodass das WP-Cockpit unter „Σ Kompressor-Starts" eine viel zu kleine Zahl zeigte (z. B. 87 statt 5.234). Beim nächsten Speichern im Sensor-Mapping-Wizard eicht eedc die Hersteller-Baseline jetzt einmalig (`baseline = sensor.gesamt − Σ eedc-Tagesdifferenzen seit Anschaffung`) und addiert sie beim Anzeigen wieder dazu. Der Tooltip auf der Kachel zeigt die Zerlegung Hersteller-Baseline + eedc-seit-Aktivierung + höchste Tagessumme. Selbstkorrigierend bei jedem Wizard-Rerun. Issue [#173](https://github.com/supernova1963/eedc-homeassistant/issues/173), detLAN-Vorschlag.
 
-→ [Bedienung §3.6 Wärmepumpe](HANDBUCH_BEDIENUNG.md#36-wärmepumpe-dashboard)
+→ [Bedienung §3.6 Wärmepumpe](HANDBUCH_BEDIENUNG.md#34-wärmepumpe)
 
 ### Auf-/Zuklappen + Sortierung jetzt in allen Cockpit-Dashboards *(v3.25.3)*
 
 Die seit v3.21.0 im Auswertungs-Tab vorhandene Mechanik zum Einklappen einzelner Sektionen und zum Drag-and-Drop-Umsortieren ist jetzt auch in den Dashboards Cockpit → PV-Anlage, Cockpit → Wärmepumpe und Monatsabschluss aktiv. Reihenfolge wird pro Anlage gespeichert (ein User mit zwei Anlagen kann sie unterschiedlich anordnen). Verhalten ist 1:1 identisch zur Auswertungs-Implementierung, nur jetzt überall verfügbar. Issue [#175](https://github.com/supernova1963/eedc-homeassistant/issues/175), detLAN-Vorschlag.
 
-→ [Bedienung §3 Cockpit](HANDBUCH_BEDIENUNG.md#3-cockpit-dashboards)
+→ [Bedienung §3 Cockpit](HANDBUCH_BEDIENUNG.md#3-komponenten--die-was-achse)
 
 ### WP-Kompressor-Starts: Slot 23:00 + Tageswerte rückwirkend reparieren *(v3.25.2)*
 
@@ -12037,13 +12095,13 @@ Bei Wärmepumpen mit Kompressor-Starts-Sensor ohne `state_class` (typisch lokale
 
 Innerhalb der Wechselrichter-Karte unter „Cockpit → PV-Anlage → PV-Komponenten" werden Module und Speicher jetzt nebeneinander in zwei Spalten dargestellt (Desktop) — auf Smartphone-Breite weiterhin gestapelt. Wirkt für typische Anlagen-Konfigurationen ausgewogener als das vertikale Layout aus v3.24.6. Issue [#172](https://github.com/supernova1963/eedc-homeassistant/issues/172), detLAN-Mockup.
 
-→ [Bedienung §3.4 PV-Anlage](HANDBUCH_BEDIENUNG.md#34-pv-anlage-dashboard)
+→ [Bedienung §3.4 PV-Anlage](HANDBUCH_BEDIENUNG.md#32-pv-anlage)
 
 ### Hilfe-Seite: Inhaltsverzeichnis-Links und Browser-Zurück funktionieren wieder *(v3.25.1)*
 
 In der seit v3.24.2 verfügbaren In-App-Hilfe sprangen Klicks auf die Inhaltsverzeichnis-Einträge (z. B. „2. Installation" am Anfang von *Teil I: Installation & Einrichtung*) aus der Hilfe-Seite heraus statt zur Sektion zu scrollen — die Hilfe-Seite verschwand komplett. Das war ein technischer Konflikt zwischen den Anker-Links im TOC und der App-internen Navigation. Behoben: Inhaltsverzeichnisse, Querverweise zwischen Hilfe-Dokumenten und der Browser-Zurück-Knopf funktionieren jetzt erwartungsgemäß. Rainer-PN.
 
-→ [Bedienung §9 Hilfe](HANDBUCH_BEDIENUNG.md#9-hilfe-in-der-app)
+→ [Bedienung §9 Hilfe](HANDBUCH_BEDIENUNG.md#7-hilfe-in-der-app)
 
 ### Mehrere ROI- und Aussichten-Werte rechnen jetzt mit deinen tatsächlichen Eingaben *(v3.25.0)*
 
@@ -12058,7 +12116,7 @@ Hinter den Kulissen war das `parameter`-JSON, in dem Investitionen ihre typ-spez
 
 Eine einmalige DB-Migration räumt die Drift in deiner bestehenden Datenbank automatisch auf. **Sichtbare Auswirkung für dich:** Wenn du eine der oben genannten Optionen aktiviert oder eingegeben hattest, siehst du ab v3.25.0 plötzlich neue Werte im ROI, im Aussichten-Tab und im Wallbox-Dashboard. Die alten Werte waren Default-Anzeigen, nicht deine Werte.
 
-→ [Bedienung §3 Cockpit](HANDBUCH_BEDIENUNG.md#3-cockpit-dashboards) · [Bedienung §7 Aussichten](HANDBUCH_BEDIENUNG.md#7-aussichten-prognosen)
+→ [Bedienung §3 Cockpit](HANDBUCH_BEDIENUNG.md#3-komponenten--die-was-achse) · [Bedienung §7 Aussichten](HANDBUCH_BEDIENUNG.md#25-aussicht)
 
 ---
 
@@ -12068,7 +12126,7 @@ Eine einmalige DB-Migration räumt die Drift in deiner bestehenden Datenbank aut
 
 Im „Cockpit → PV-Anlage → PV-Komponenten"-Block las das Frontend die Speicher-Kapazität unter dem falschen Schlüssel — gepflegte Daten waren da, blieben aber unsichtbar. Behoben. Zusätzlich werden Module und Speicher jetzt in eigenen, beschrifteten Sub-Sektionen innerhalb der Wechselrichter-Karte dargestellt (statt in einem gemischten Grid), und Speicher ohne Wechselrichter-Zuordnung tauchen in einem separaten Block am Ende auf statt stillschweigend zu verschwinden. Issue [#172](https://github.com/supernova1963/eedc-homeassistant/issues/172).
 
-→ [Bedienung §3.4 PV-Anlage](HANDBUCH_BEDIENUNG.md#34-pv-anlage-dashboard)
+→ [Bedienung §3.4 PV-Anlage](HANDBUCH_BEDIENUNG.md#32-pv-anlage)
 
 ### Diese Seite — „Was ist neu" als Pull-Variante *(v3.24.5)*
 
@@ -12078,19 +12136,19 @@ Die Seite, die du gerade liest. Statt eines Banner-Pop-ups nach Update gibt es e
 
 Das Benutzerhandbuch ist jetzt direkt in eedc verfügbar — ohne Browser-Wechsel und ohne Ingress-Login-Probleme in der HA-Companion-App. Acht kuratierte Dokumente in drei Kategorien (*Einstieg* / *Handbuch* / *Referenz*), Sidebar am Desktop, Dropdown auf dem Smartphone. URL-Parameter `?doc=<slug>` macht Direktlinks teilbar (z. B. `?doc=bedienung#7-aussichten-prognosen`). Discussion [#130](https://github.com/supernova1963/eedc-homeassistant/discussions/130).
 
-→ [Bedienung §9 Hilfe](HANDBUCH_BEDIENUNG.md#9-hilfe-in-der-app)
+→ [Bedienung §9 Hilfe](HANDBUCH_BEDIENUNG.md#7-hilfe-in-der-app)
 
 ### Wärmepumpe: Kompressor-Starts als Verschleiß- und Auslegungs-Indikator *(v3.24.0 Counter / v3.24.4 Tiles)*
 
 Optionaler Total-Increasing-Sensor im Sensor-Mapping erfasst die Kompressor-Starts der Wärmepumpe (z. B. aus der lokalen „Nibe Heat Pump"-Integration). Cockpit → Monatsberichte zeigt die höchste Tagessumme des Monats als Verschleiß-Indikator („wie heftig hat die WP an ihrem schlechtesten Tag getaktet"), Cockpit → Wärmepumpe zeigt die Σ Starts seit Anschaffung als Auslegungs-Indikator. Stunden-/Tages-Detail in der Energieprofil-Tabelle. Issue [#136](https://github.com/supernova1963/eedc-homeassistant/issues/136), [#169](https://github.com/supernova1963/eedc-homeassistant/issues/169).
 
-→ [Sensor-Referenz §4](SENSOR-REFERENZ.md) · [Bedienung §3.6 Wärmepumpe](HANDBUCH_BEDIENUNG.md#36-wärmepumpe-dashboard)
+→ [Sensor-Referenz §4](SENSOR-REFERENZ.md) · [Bedienung §3.6 Wärmepumpe](HANDBUCH_BEDIENUNG.md#34-wärmepumpe)
 
 ### Sensor-Mapping: Sensoren ohne HA-Statistics sichtbar machen *(v3.24.1)*
 
 Sensoren ohne `state_class` (z. B. Nibe-Roh-Counter) lassen sich jetzt über einen Fallback-Link „Alle Sensoren ohne Filter anzeigen" auswählen. Die Auswahl wird mit einem amber-farbenen **„ohne Statistik"**-Badge markiert. Begleitend prüft der Daten-Checker eine neue Kategorie *Sensor-Mapping HA-Statistics* — kWh-Felder ohne LTS sind kritisch (Korrektur-Werkzeuge greifen nicht), Counter-Felder unproblematisch. Damit ist der Sensor-Mapping-Wizard auch für nicht-Standard-Integrationen nutzbar.
 
-→ [Einstellungen §3 Sensor-Mapping](HANDBUCH_EINSTELLUNGEN.md#3-sensor-mapping) · [Einstellungen §8 Daten-Checker](HANDBUCH_EINSTELLUNGEN.md#8-daten-checker)
+→ [Einstellungen §3 Sensor-Mapping](HANDBUCH_EINSTELLUNGEN.md#7-datenquellen--feld-zentrische-zuordnung) · [Einstellungen §8 Daten-Checker](HANDBUCH_EINSTELLUNGEN.md#53-daten-checker)
 
 ### state_class-Hinweise auf den richtigen Hebel umgestellt *(v3.24.3)*
 
@@ -12104,7 +12162,7 @@ Im Wizard-Banner und Daten-Checker-Hinweisen stand bisher „vergangene Tage ble
 
 Cockpit-Sub-Tabs jetzt in der Reihenfolge **Übersicht → Monatsberichte → PV-Anlage → Balkonkraftwerk → Speicher → Wärmepumpe → Wallbox → E-Auto → Sonstiges** (Erzeuger oben, Speicher in der Mitte, Verbraucher unten). Wärmepumpen-KPIs nutzen über alle vier Render-Stellen (Cockpit-Übersicht, WP-Dashboard, Auswertung, Monatsabschluss) dieselbe Reihenfolge **JAZ → Wärme → Strom → Ersparnis** mit identischen Icons (Thermometer / Flame / Zap / TrendingUp). Anlagenname als Tab-Titel (kein redundantes „Wärmepumpe"-Echo).
 
-→ [Bedienung §3 Cockpit](HANDBUCH_BEDIENUNG.md#3-cockpit-dashboards)
+→ [Bedienung §3 Cockpit](HANDBUCH_BEDIENUNG.md#3-komponenten--die-was-achse)
 
 ### Aggregate ignorieren Daten vor dem Anschaffungsdatum *(v3.23.0–v3.23.1)*
 
@@ -12114,7 +12172,7 @@ Cockpit- und Auswertungs-Aggregate für Wärmepumpe / Speicher / Wallbox / E-Aut
 
 Toggle **„Kompakt / Diagnostisch"** in der Genauigkeits-Tracking-Card. Der Diagnostisch-Modus splittet die Streuung pro Quelle (OpenMeteo / eedc / Solcast) in „darüber"-und „darunter"-Boxen — Ø-Über-/Unterschätzung in Prozent plus Anzahl Tage. Damit sichtbar, ob ein systematischer Hebel vorliegt („bei dichten Wolken zu hoch, bei klarem Himmel zu niedrig") oder reine Streuung. Issue [#151](https://github.com/supernova1963/eedc-homeassistant/issues/151).
 
-→ [Bedienung §7.2 Prognosen](HANDBUCH_BEDIENUNG.md#72-prognosen)
+→ [Bedienung §7.2 Prognosen](HANDBUCH_BEDIENUNG.md#43-prognose-genauigkeit-gegen-ist)
 
 ### Reparatur-Popover bei IST-Datenlücken im Prognosen-Tab *(v3.23.0)*
 
@@ -12124,7 +12182,7 @@ Klick auf das ⚠ neben einem Tageswert öffnet jetzt einen Popover statt eines 
 
 Tageswerte-Kacheln im Live-Dashboard in Energie-Logik-Reihenfolge: **PV → Batterie → Eigenverbrauch (Quellen-Σ) → Netzbezug → Hausverbrauch → Einspeisung**. Eigenverbrauchs-Quote ist jetzt auf 100 % gecappt (vorher konnten ev/pv > 100 % rechnen, wenn Batterie-Entladung aus Vortagen einfloss). Issue [#157](https://github.com/supernova1963/eedc-homeassistant/issues/157).
 
-→ [Bedienung §2 Live Dashboard](HANDBUCH_BEDIENUNG.md#2-live-dashboard)
+→ [Bedienung §2 Live Dashboard](HANDBUCH_BEDIENUNG.md#21-live)
 
 ---
 
@@ -12154,7 +12212,7 @@ Der Hinweis „eedc-Prognose nicht verfügbar" zeigt jetzt zusätzlich, wie viel
 
 Auswertung → Energieprofil → Monat hat jetzt eine prominente **Tage-Tabelle** als eigene Sektion: pro Tag eine Zeile mit Heatmap-Zellfarben, Negativpreis-Tage mit amber-Streifen + §51-Badge, sticky Σ-Monat-Footer mit Spalten-Aggregat. Alle Sektionen unter `<CollapsibleSection>` mit localStorage-Persistenz pro Anker. Issue [#148](https://github.com/supernova1963/eedc-homeassistant/issues/148).
 
-→ [Bedienung §5.8 Energieprofil](HANDBUCH_BEDIENUNG.md#58-energieprofil-tab-beta)
+→ [Bedienung §5.8 Energieprofil](HANDBUCH_BEDIENUNG.md#8-anhang-wo-ist-x-hin)
 
 ### Pro-Tag-Reaggregation per Knopf
 
@@ -12211,7 +12269,7 @@ Die Stunden-kWh in den Tagesprofilen werden jetzt als **Differenz kumulativer Z�
 
 > **Empfohlene Aktion nach Update:** Einstellungen → Energieprofil → „Verlauf nachberechnen" mit aktiver „Überschreiben"-Option auslösen (1–5 Min Laufzeit), damit historische Tagesprofile aus den Zählern statt aus Leistungs-Schätzung stammen.
 
-→ [Einstellungen §10 Energieprofile-Hintergrund](HANDBUCH_EINSTELLUNGEN.md#10-energieprofile--hintergrund)
+→ [Einstellungen §10 Energieprofile-Hintergrund](HANDBUCH_EINSTELLUNGEN.md#9-hintergrund-energieprofile--snapshot-architektur)
 
 ### Daten-Checker: Neue Kategorie „Energieprofil – Zähler-Abdeckung"
 
@@ -12229,7 +12287,7 @@ Drei Performance-Verbesserungen am Energiefluss-Diagramm für iPad und Mobile-Sa
 
 Neue Seite **Einstellungen → Energieprofil** bündelt die anlage-spezifischen Auswertungen und Datenverwaltungs-Aktionen. Datenbestand-Kacheln (Stundenwerte/Tagessummen/Monatswerte, Abdeckung, Zeitraum), Tages-Tabelle mit Jahr/Monat-Selektor und Spalten-Selektor in Gruppen (Peak-Leistungen, Tages-Summen, Performance, Wetter, §51-Börsenpreise). Aktionen: Vollbackfill aus HA-Statistik, Kraftstoffpreis-Backfill, Energieprofil-Daten löschen — anlage-spezifisch statt global. Tab-Konsolidierung: `Monatsabschluss` aus der Einstellungen-Tab-Leiste entfernt (Dropdown-Eintrag bleibt). Issue [#133](https://github.com/supernova1963/eedc-homeassistant/issues/133).
 
-→ [Einstellungen §1.6 Energieprofil-Seite](HANDBUCH_EINSTELLUNGEN.md#16-energieprofil-seite)
+→ [Einstellungen §1.6 Energieprofil-Seite](HANDBUCH_EINSTELLUNGEN.md#52-energieprofil-pflege)
 
 ---
 
@@ -12241,7 +12299,7 @@ Statt statischem `benzinpreis_euro`-Parameter werden jetzt **echte monatliche Kr
 
 > **Hinweis:** Die E-Auto-Ersparnis kann sich gegenüber früheren Versionen verändern — nach oben oder unten, je nachdem ob der reale Preis über oder unter dem konfigurierten Wert lag.
 
-→ [Einstellungen §1.4 Monatsdaten](HANDBUCH_EINSTELLUNGEN.md#14-monatsdaten)
+→ [Einstellungen §1.4 Monatsdaten](HANDBUCH_EINSTELLUNGEN.md#51-monatsdaten--monatsabschluss)
 
 ---
 
@@ -12251,19 +12309,19 @@ Statt statischem `benzinpreis_euro`-Parameter werden jetzt **echte monatliche Kr
 
 Neuer Tab **„Prognosen"** in Aussichten als Evaluierungs-Cockpit für das Zusammenspiel von OpenMeteo, eedc (kalibriert mit Lernfaktor), Solcast und IST. KPI-Matrix Heute/Morgen/Übermorgen mit VM/NM-Split, Stundenprofil-Chart mit p10/p90-Konfidenzband, 24h- und 7-Tage-Vergleichstabellen, Genauigkeits-Tracking. Solcast wird über einen Toggle im Sensor-Mapping-Wizard aktiviert — entweder API-Zugang (Free/Paid) oder via HA-Integration BJReplay. L1/L2-Cache überlebt Neustarts.
 
-→ [Bedienung §7.2 Prognosen](HANDBUCH_BEDIENUNG.md#72-prognosen)
+→ [Bedienung §7.2 Prognosen](HANDBUCH_BEDIENUNG.md#43-prognose-genauigkeit-gegen-ist)
 
 ### Dynamischer Strompreis — Sensor-Mapping + EPEX-Börsenpreis *(v3.16.0)*
 
 Neues optionales Feld **„Strompreis (dynamischer Tarif)"** im Sensor-Mapping unter Basis-Sensoren — Tibber, aWATTar, EPEX oder eigener Template-Sensor zuordnen. EPEX Day-Ahead-Preise (DE/AT) werden zusätzlich automatisch via aWATTar-API geholt — als Overlay im Tagesverlauf, auch ohne eigenen Sensor. MQTT-Topic `eedc/{id}/live/strompreis_ct` für Standalone-Docker-Nutzer.
 
-→ [Einstellungen §3 Sensor-Mapping](HANDBUCH_EINSTELLUNGEN.md#3-sensor-mapping)
+→ [Einstellungen §3 Sensor-Mapping](HANDBUCH_EINSTELLUNGEN.md#7-datenquellen--feld-zentrische-zuordnung)
 
 ### Saisonaler Lernfaktor (MOS-Kaskade) *(v3.16.15)*
 
 Der Lernfaktor nutzt jetzt eine saisonale Kaskade: **Monatsfaktor** (≥15 Tage gleicher Kalendermonat) → **Quartalsfaktor** (≥15 Tage) → **30-Tage-Fenster** (≥7 Tage, bisheriges Verhalten). Bei wachsendem Datenbestand wird die Kalibrierung automatisch präziser. Im Prognosen-Tab wird die aktive Stufe angezeigt.
 
-→ [Berechnungen §4.1c Prognose-Genauigkeit](BERECHNUNGEN.md#41c-prognose-genauigkeit-mae-mbe-asymmetrie)
+→ [Berechnungen §4.1c Prognose-Genauigkeit](BERECHNUNGEN.md#41c-prognose-vergleich-auswertungen--prognose)
 
 ### Stündliche Strompreis-Mitschrift im Energieprofil
 

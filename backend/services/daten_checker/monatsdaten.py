@@ -21,6 +21,7 @@ from backend.core.field_definitions import (
     groesse_gibt_es_am_geraet,
     wp_strom_aufteilung,
 )
+from .nicht_gefuehrte_felder import label_je_feld_nicht_gefuehrt, text_sonstiges_totes_feld
 from backend.core.berechnungen.erzeuger_traeger import erzeuger_traeger
 from backend.core.investition_kennwerte import get_erzeuger_kwp
 from backend.core.monats_luecken import ermittle_start_anker
@@ -705,19 +706,20 @@ class MonatsdatenChecks(MonatsdatenPlausibilitaetChecks):
         durch ein anderes Gerät, z. B. Heimladung bei vorhandener Wallbox) —
         dort gewinnt ein anderer Weg, die Größe existiert weiter.
 
+        ⭐ ***Sonstiges* (N-789, #443).** Dort ist die Registry ein Dict je
+        Kategorie, und die Regel kehrte bis 10.11.2026 leer zurück — Alt-Monate
+        in ``erzeugung_kwh`` an einem Abgabe-Gerät (rilmor-mhrs) zählten in keiner
+        Bilanz, ohne Hinweis. Kandidaten sind hier alle dem Helfer bekannten
+        Sonstiges-Felder (``SONSTIGES_FELDER_BEKANNT``; Label des ersten Treffers,
+        Rückfall kanonisches Geschwister bzw. Schlüssel), sobald die Kategorie
+        gepflegt ist; ob
+        ein Feld tot ist, entscheidet allein ``groesse_gibt_es_am_geraet`` (der
+        Lesepfad der Kategorie) — keine zweite Regel.
+
         Eine ``0`` löst nichts aus: sie ist keine Aussage über das Gerät und
         rechnet nirgends mit.
         """
-        felder = INVESTITION_FELDER.get(inv.typ)
-        if not isinstance(felder, list):
-            return []
-        # Nur Felder mit harter Bedingung können am Gerät fehlen — alle anderen
-        # spart die Lesetür unten ohnehin aus, die Vorprüfung hält den Lauf kurz.
-        label_je_feld = {
-            f["feld"]: f.get("label", f["feld"])
-            for f in felder
-            if isinstance(f, dict) and f.get("bedingung")
-        }
+        label_je_feld = label_je_feld_nicht_gefuehrt(inv.typ, param)
         if not label_je_feld:
             return []
 
@@ -743,7 +745,12 @@ class MonatsdatenChecks(MonatsdatenPlausibilitaetChecks):
             if len(labels) > 6:
                 monate_str += f" (+{len(labels) - 6} weitere)"
 
-            if inv.typ == "waermepumpe" and basis_feld_key(key) == "warmwasser_kwh":
+            if inv.typ == "sonstiges":
+                # N-789 (#443): die Kategorie entscheidet, nicht ein Schalter.
+                meldung, details = text_sonstiges_totes_feld(
+                    name, basis_feld_key(key), label, len(labels), monate_str, param.get("kategorie"),
+                )
+            elif inv.typ == "waermepumpe" and basis_feld_key(key) == "warmwasser_kwh":
                 # Der Ursprungsfall (N-379): die Klimaanlage. Der Kühlbetrieb ist
                 # das wahrscheinlichste Ziel des Werts — als Angebot, nicht als Urteil.
                 meldung = (
@@ -801,7 +808,8 @@ class MonatsdatenChecks(MonatsdatenPlausibilitaetChecks):
 
         **Phasenform (RF-50, 5.11.2026, Bauform RF-1):** Kopf (erwartete Monate, Registry-Antworten B2, `imd_map`) ·
         `_wp_modus_widerspruch` (#263 K-2: Σ Betriebsart-Strom > Gesamtstrom) · `_wp_waerme_widerspruch` (N-391:
-        Gesamtwärme < Heizwärme + Warmwasser-Wärme) · `_wp_gesamtzaehler_achsen` (WK-16d: Gesamtzähler < Σ Achsen,
+        Gesamtwärme < Heizwärme + Warmwasser-Wärme) · `_wp_waerme_gesamt_null` (Päckchen T: «Wärme gesamt» = gemessene 0
+        neben Achsen > 0,5 kWh) · `_wp_gesamtzaehler_achsen` (WK-16d: Gesamtzähler < Σ Achsen,
         Rest > 25 %; N-578-Handgriff) · `_wp_fehlende_monate` (fehlende Strom-/Wärme-Monate je Messmodus, OK-Zeile).
         Die Reihenfolge der Aufrufe ist die Reihenfolge der Meldungen.
         """
@@ -849,6 +857,7 @@ class MonatsdatenChecks(MonatsdatenPlausibilitaetChecks):
         )
         self._wp_modus_widerspruch(ctx)
         self._wp_waerme_widerspruch(ctx)
+        self._wp_waerme_gesamt_null(ctx)
         self._wp_gesamtzaehler_achsen(ctx)
         self._wp_fehlende_monate(ctx)
         return ergebnisse
@@ -966,6 +975,50 @@ class MonatsdatenChecks(MonatsdatenPlausibilitaetChecks):
                 link=link_monat_erfassen(waerme_widerspruch[0]),
                 investition_id=inv.id,
             ))
+
+    @staticmethod
+    def _wp_waerme_gesamt_null(ctx: _WpMonatsKontext) -> None:
+        """«Wärme gesamt» = gemessene 0 neben Heizwärme (D1-Weiche) + Warmwasser-Wärme > 0,5 kWh ⇒ eine Warnung mit der Monatsliste.
+
+        Zwilling von `_wp_waerme_widerspruch`, der genau bei 0 schweigt (``if not _gesamt_waerme``). D1 wertet eine gemessene
+        0 bewusst nicht als Gesamtwert und rechnet mit den Achsen (`waerme_gesamt_kwh`, `geraete_mit_gesamtwaerme`;
+        Entscheid 8.11.2026, Layer unverändert): ein Gesamtzähler ohne neuen Stand im Monat (eingefroren, Statistik-Lücke, erst
+        seit kurzem zugeordnet) ergibt Δ = 0, die Achsen tragen dann die bessere Zahl. Die Meldung sagt dem Anwender, dass
+        sein Gesamtzähler im Monat nichts geliefert hat — eigene Meldung, weil die Details des Zwillings («eedc rechnet mit
+        der Gesamtwärme») bei 0 nicht stimmen. ``None`` (kein Wert) bleibt still; Toleranz 0,5 kWh wie beim Zwilling.
+        """
+        inv, name, param, ergebnisse, kat, imd_map = ctx.inv, ctx.name, ctx.param, ctx.ergebnisse, ctx.kat, ctx.imd_map
+        null_monate: list[str] = []
+        for (jahr, monat), daten in sorted(imd_map.items()):
+            _gesamt_waerme = daten.get("waerme_kwh")
+            if _gesamt_waerme is None or float(_gesamt_waerme) != 0.0:
+                continue
+            _teile = ((heizwaerme_kwh(daten) or 0.0)
+                      + get_wp_warmwasser_kwh(daten, param))
+            if _teile > 0.5:
+                null_monate.append(f"{monat:02d}/{jahr}")
+        if not null_monate:
+            return
+        _monate = ", ".join(null_monate[:6])
+        if len(null_monate) > 6:
+            _monate += f" … (+{len(null_monate) - 6})"
+        ergebnisse.append(CheckErgebnis(
+            kategorie=kat, schwere=CheckSeverity.WARNING,
+            meldung=(
+                f"{name}: „Wärme gesamt“ ist 0, Heizwärme + Warmwasser-Wärme sind größer ({_monate})"
+            ),
+            details=(
+                "In diesen Monaten steht unter „Wärme gesamt“ eine 0, während Heizwärme und "
+                "Warmwasser-Wärme Werte tragen. eedc rechnet hier mit den beiden Einzelwerten. "
+                "Häufigster Grund: Der Wärmemengenzähler hat im Monat keinen neuen Stand geliefert "
+                "(keine Statistik in Home Assistant, eingefroren oder erst seit kurzem zugeordnet). "
+                "Prüf bitte im Monatsabschluss, ob der Zähler Werte liefert: Misst EIN Zähler Heizung "
+                "und Warmwasser zusammen, gehört sein Monatswert unter „Wärme gesamt“; mit getrennten "
+                "Zählern bleibt das Feld leer."
+            ),
+            link=link_monat_erfassen(null_monate[0]),
+            investition_id=inv.id,
+        ))
 
     @staticmethod
     def _wp_gesamtzaehler_achsen(ctx: _WpMonatsKontext) -> None:

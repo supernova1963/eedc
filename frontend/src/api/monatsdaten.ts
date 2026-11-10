@@ -156,11 +156,19 @@ export interface AggregierteMonatsdaten {
   speicher_ladung_kwh: number | null
   speicher_entladung_kwh: number | null
   speicher_netzladung_kwh: number | null
+  /** Päckchen Y: Round-Trip-η des Monats aus dem Layer (`speicher_wirkungsgrad`), aus Ladung/Entladung dieser Zeile —
+   *  `null` ohne Speicher, unter der Mindest-Ladung oder über 100 % (nicht ermittelbar). */
+  speicher_effizienz_prozent?: number | null
   wp_strom_kwh: number | null
   wp_strom_heizen_kwh: number | null  // #191: nur befüllt wenn getrennte_strommessung
   wp_strom_warmwasser_kwh: number | null  // #191: nur befüllt wenn getrennte_strommessung
   wp_heizung_kwh: number | null
   wp_warmwasser_kwh: number | null
+  /**
+   * Wärme des Monats nach Regel D1 (Gesamtwert vor Summanden, je Gerät) — fertig aus den Monats-Fakten (N-778).
+   * `null` = keine Wärmepumpe aktiv oder keine Wärme gemessen. Optional: ältere Server liefern das Feld nicht.
+   */
+  wp_waerme_kwh?: number | null
   /**
    * Arbeitszahl des Monats — fertig aus dem Layer (ADR-002/P12).
    * `null` heisst „keine Kennzahl"; `wp_arbeitszahl_grund` sagt warum.
@@ -171,6 +179,9 @@ export interface AggregierteMonatsdaten {
   eauto_km: number | null
   wallbox_ladung_kwh: number | null
   wallbox_ladung_pv_kwh: number | null
+  /** Päckchen Z-Client: PV-Anteil der Wallbox-Ladung = die zwei Felder darüber (Layer `pv_anteil_prozent`).
+   *  Optional: ältere Server liefern das Feld nicht. */
+  wallbox_pv_anteil_prozent?: number | null
   // ── Tabellen-Spalten (28.10.2026) — fertig aus dem Backend (`monatsdaten_aggregiert._zeile_emob_zusatz`/
   // `_zeile_wp_zusatz`). Mengen ohne Gemessen-Marke «nur mit Wert» wie Cockpit → Monat; `null` = «—».
   // Optional: ältere Server liefern die Felder nicht.

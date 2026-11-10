@@ -13,6 +13,7 @@ from backend.core.zahlenformat import fmt_zahl
 from backend.core.berechnungen import heizwaerme_ist_abgeleitet
 from backend.core.berechnungen.imd_monatsaggregat import imd_typ_beitrag
 from backend.core.berechnungen.fenster import verteile_auf_guenstigste
+from backend.core.berechnungen.pv_anteil_ladung import pv_anteil_prozent
 from backend.services.daten_checker.kuehl_zaehler import hat_kuehl_zaehler
 from backend.core.berechnungen.waermepumpe_kennzahl import (
     abgrenzungs_grund,
@@ -368,7 +369,7 @@ async def _emob_sensorwert(
             zusatz = {"quelle": effizienz.quelle}
     elif key == "e_auto_pv_anteil_prozent":
         if s.gesamt_ladung > 0:
-            value = s.gesamt_pv_ladung / s.gesamt_ladung * 100
+            value = pv_anteil_prozent(s.gesamt_pv_ladung, s.gesamt_ladung)  # Layer, Päckchen Z1b
             berechnung = f"{fmt_zahl(s.gesamt_pv_ladung, 0)} / {fmt_zahl(s.gesamt_ladung, 0)} × 100"
     elif key == "e_auto_ersparnis_vs_benzin_euro":
         if s.gesamt_km > 0:
@@ -1355,6 +1356,7 @@ async def _sonstiges_sensoren(*, db, investition, sensor_values, fenster_ctx):
     Laufzeit-Filter. Eine eigene Faltung über `InvestitionMonatsdaten` wäre die
     Klasse hinter der Drift-Inventur vom 31.07.2026.
     """
+    from backend.core.berechnungen.pv_anteil_ladung import bezug_pv_anteil_prozent
     from backend.services.ha_export_fenster import fenster_fuer_menge
     from backend.services.monats_fakten import lade_monats_fakten
     from backend.services.ha_sensors_export import SONSTIGES_SENSOREN
@@ -1392,10 +1394,11 @@ async def _sonstiges_sensoren(*, db, investition, sensor_values, fenster_ctx):
         (laufend.sonstiges.je_geraet or {}).get(investition.id) if laufend else None
     )
     if geraet is not None and geraet.verbrauch_kwh > 0:
-        pv_anteil = (
-            round(geraet.bezug_pv_kwh / geraet.verbrauch_kwh * 100, 1)
-            if geraet.verbrauch_kwh > 0 else None
-        )
+        # Päckchen DD (10.11.2026, Entscheid Gernot): dieselbe Definition wie die Cockpit-Kachel «PV-Anteil» —
+        # PV-Bezug ÷ (PV-Bezug + Netz-Bezug) über den Layer. Bis dahin teilte das Attribut durch den Verbrauch; gleich,
+        # solange Verbrauch = PV + Netz (gezählt: 0 abweichende Geräte-Monate auf den Kopien, Produktiv ohne Gerät).
+        pv_anteil = bezug_pv_anteil_prozent(geraet.bezug_pv_kwh, geraet.bezug_netz_kwh)
+        pv_anteil = round(pv_anteil, 1) if pv_anteil is not None else None
         # N-694: der Wert ungerundet — die Export-Grenze rundet ihn einmal (kWh auf 0 Stellen). Hier stand
         # `round(…, 1)`: 3,46 → 3,5 → 4 statt 3, rund 5 % der Werte um genau 1 kWh daneben. Die Attribute rundet
         # die Grenze nicht, sie bleiben hier gerundet.

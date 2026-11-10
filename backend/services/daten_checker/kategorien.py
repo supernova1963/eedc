@@ -360,7 +360,27 @@ LINK_INTEGRATION = "/einstellungen/integration"
 # `MonatsdatenTeile.tsx:344`). Beide tragen einen Query, den die Seite liest —
 # deshalb wirkt die Navigation auch von der Seite auf sich selbst.
 LINK_MONATSDATEN = "/einstellungen/daten?block=monatsdaten"
-LINK_ENERGIEPROFIL = "/einstellungen/daten?block=energieprofil"
+# #440 (gruaGit, 10.11.2026): `&karte=werkbank` springt im aufgeklappten Block zur Reparatur-Werkbank
+# (`data-karte="werkbank"`, `useKarteAnspringen`). Jede Meldung mit diesem Link nennt als Handgriff eine Operation
+# der Werkbank (Tag/Bereich neu aggregieren, Wetterreihe nachziehen, Wetterquelle festhalten, Benzinpreise,
+# HA-Spiegel); die Werkbank liegt am Ende des Blocks — ohne Sprung sah der Klick auf «Beheben» wirkungslos aus.
+LINK_ENERGIEPROFIL = "/einstellungen/daten?block=energieprofil&karte=werkbank"
+
+# N-790 (ottokar, simon42 PN T95600): der Handgriff der Befunde «eedc ≠ Home Assistant» an einer Anlage mit HA-Spiegel —
+# Drift (beide Achsen), Zählersprung, Rückgang. Der Knopf ruft `POST /api/energie-profil/{id}/spiegel-abgleich-tag`
+# (Abgleich mit der HA-Statistik, danach der Tag neu aufgebaut); «Tag reparieren» allein liest an einem Kanal-Tag
+# denselben Spiegel, der die Abweichung trägt.
+AKTION_SPIEGEL_ABGLEICH_TAG = "spiegel_abgleich_tag"
+LABEL_SPIEGEL_ABGLEICH_TAG = "Aus Home Assistant neu übernehmen"
+
+
+def aktion_spiegel_abgleich_tag(anlage_id: int, datum) -> dict:
+    """Die drei Aktionsfelder eines ``CheckErgebnis`` für «Aus Home Assistant neu übernehmen» (``datum``: ``date``)."""
+    return {
+        "action_kind": AKTION_SPIEGEL_ABGLEICH_TAG,
+        "action_params": {"anlage_id": anlage_id, "datum": datum.isoformat()},
+        "action_label": LABEL_SPIEGEL_ABGLEICH_TAG,
+    }
 
 
 def link_monat_erfassen(label: str) -> str:

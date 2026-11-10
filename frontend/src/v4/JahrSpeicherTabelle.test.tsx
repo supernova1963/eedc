@@ -7,7 +7,7 @@
  */
 import { describe, it, expect } from 'vitest'
 import {
-  baueSpeicherZeilen, summiereSpeicher, auslastungAus, solarAnteil, jahrSpeicherParkIds,
+  baueSpeicherZeilen, summiereSpeicher, auslastungAus, solarAnteilFuss, jahrSpeicherParkIds,
 } from './JahrSpeicherTabelle'
 import type { AktuellerMonatResponse } from '../api/aktuellerMonat'
 import { aktuellerMonat } from '../test/factories'
@@ -51,15 +51,26 @@ describe('Auslastung', () => {
   })
 })
 
-describe('Solar-Anteil', () => {
-  it('rechnet den Netz-Rest heraus', () => {
-    expect(solarAnteil(1000, 250)).toBeCloseTo(75, 1)
+describe('Solar-Anteil (Päckchen BB: aus dem Backend)', () => {
+  it('die Monatszeile zeigt das Feld der Antwort — der Client rechnet nicht', () => {
+    // 42 lässt sich aus 1000/250 nicht ableiten: stünde hier eine Rechnung, käme 75 heraus.
+    const [z] = baueSpeicherZeilen([
+      monat(1, { speicher_ladung_kwh: 1000, speicher_entladung_kwh: 900, speicher_ladung_netz_kwh: 250, speicher_solaranteil_prozent: 42 }),
+    ])
+    expect(z.solaranteil).toBe(42)
   })
 
-  it('ist ohne erfasste Netzladung unbekannt statt 100 %', () => {
-    // Eine Anlage, die die Netzladung gar nicht pflegt, hat nicht „0 % Netz" —
-    // sie hat keine Angabe. 100 % wäre eine Behauptung (P4).
-    expect(solarAnteil(1000, null)).toBeNull()
+  it('ohne Feld (keine Netzladung erfasst) unbekannt statt 100 %', () => {
+    const [z] = baueSpeicherZeilen([monat(1, { speicher_ladung_kwh: 1000, speicher_entladung_kwh: 900 })])
+    expect(z.solaranteil).toBeNull()
+  })
+
+  it('die Fußzeile liest den Jahr-Kopf wie die Zeile: gemessene 0 ⇒ 100 %, kein Wert ⇒ «—»', () => {
+    expect(solarAnteilFuss(monat(1, { speicher_ladung_netz_kwh: 250, speicher_solaranteil_prozent: 75 }))).toBe(75)
+    // Päckchen CC: gemessene 0 kWh Netzladung ⇒ 100 % wie die Monatszeile (ADR-002/P4), kein Wert ⇒ «—».
+    expect(solarAnteilFuss(monat(1, { speicher_ladung_netz_kwh: 0, speicher_solaranteil_prozent: 100 }))).toBe(100)
+    expect(solarAnteilFuss(monat(1, { speicher_ladung_netz_kwh: null, speicher_solaranteil_prozent: null }))).toBeNull()
+    expect(solarAnteilFuss(null)).toBeNull()
   })
 })
 

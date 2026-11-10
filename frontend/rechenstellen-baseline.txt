@@ -1,0 +1,25 @@
+# Rechenstellen im Client (Gestalten E/E E-E E*G E*L E/P G/E, Sichten/Hooks, ohne einheit/rundung) — darf nur schrumpfen.
+# Neu schreiben: cd eedc/frontend && node scripts/check-rechenstellen.mjs --baseline. Format: schluessel<TAB>gestalt
+components/aussicht/AussichtTeile.tsx::TagesPrognose::/::kwh,maxKwh	E/E
+components/aussicht/AussichtTeile.tsx::TagesPrognose::/::kwh,maxKwh	E/E
+components/live/EnergieFluss.tsx::EnergieFluss::/::(k.erzeugung_kw??0),k.leistung_kwp	E/P
+components/live/EnergieFluss.tsx::netzRichtung::-::bezugKw,einspeisungKw	E-E
+components/live/GruppenListeOverlay.tsx::GruppenListeOverlay::/::(m.erzeugung_kw??0),kwp	E/P
+components/live/SolarAussicht3Tage.tsx::SolarAussicht3Tage::-::ursprungKwh,kopfKwh	E-E
+components/live/SolarAussicht3Tage.tsx::SolarAussicht3Tage::-::wetter.pv_prognose_heute_rollend_kwh!,wetter.pv_prognose_kwh!	E-E
+components/tag/TagVerlaufChart.tsx::baueChartDaten::-::(s?.netzbezug_kw??0),(s?.einspeisung_kw??0)	E-E
+components/waermepumpe/WaermepumpeModusSplit.tsx::WaermepumpeModusSplit::-::bezug,(z.gesamt_stromverbrauch_kwh||0)	E-E
+pages/StrompreiseTeile.tsx::StrompreisAktuellInfo::-::aktuellerStandard.netzbezug_arbeitspreis_cent_kwh,sp.netzbezug_arbeitspreis_cent_kwh	E-E
+pages/community/CommunityPVErtragTeile.tsx::usePVErtragDaten::-::spez_ertrag_anlage,spez_ertrag_durchschnitt	E-E
+pages/community/CommunityPVErtragTeile.tsx::usePVErtragDaten::-::spez_ertrag_anlage,spez_ertrag_durchschnitt	E-E
+pages/community/CommunityPVErtragTeile.tsx::usePVErtragDaten::-::spez_ertrag_anlage,spez_ertrag_region	E-E
+pages/community/CommunityRegionalTeile.tsx::RegionenTabelle::-::b.durchschnitt_spez_ertrag,a.durchschnitt_spez_ertrag	E-E
+pages/community/CommunityRegionalTeile.tsx::RegionenTabelle::-::b.durchschnitt_spez_ertrag,a.durchschnitt_spez_ertrag	E-E
+pages/community/CommunityRegionalTeile.tsx::useRegionalDaten::-::spez_ertrag_anlage,spez_ertrag_region	E-E
+pages/community/CommunityRegionalTeile.tsx::useRegionalDaten::-::spez_ertrag_region,spez_ertrag_durchschnitt	E-E
+pages/community/CommunityTrendsTeile.tsx::useTrendsDaten::-::ertragLetzt,ertragVorletzt	E-E
+v4/KomponentenSektionen.tsx::WaermeVerlaufElement::-::v.bezugKwh,v.stromKwh	E-E
+v4/KomponentenSektionen.tsx::baueKomponentenBloecke::-::d.wp_modus_strom_bezug_kwh!,d.wp_strom_kwh!	E-E
+v4/SpeicherSizingIST.tsx::Befund::-::punkt.kapazitaet_kwh,d.basis_kapazitaet_kwh	E-E
+v4/waermeVerteilung.ts::verteilungHinweise::-::v.aufgeteilt_kwh,v.verlauf_kwh	E-E
+v4/waermeVerteilung.ts::verteilungHinweise::-::v.menge_kwh,v.aufgeteilt_kwh	E-E

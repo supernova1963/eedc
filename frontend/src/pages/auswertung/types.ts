@@ -8,7 +8,6 @@ import {
   COLORS, CHART_COLORS, TYP_COLORS,
   calcSpezifischerErtrag,
 } from '../../lib'
-import { speicherWirkungsgrad } from '../../lib/speicherWirkungsgrad'
 
 // Re-Export für Rückwärtskompatibilität (bestehende Imports brechen nicht)
 export { COLORS, CHART_COLORS, TYP_COLORS, TYP_LABELS }
@@ -202,23 +201,21 @@ export function createMonatsZeitreihe(
     const spezErtrag = calcSpezifischerErtrag(erzeugung, md.anlagen_kwp ?? anlage?.leistung_kwp)
 
     // Speicher: null = keine Speicher-Komponente aktiv (Backend liefert null).
-    // Der η kommt aus dem Spiegel des Layer-SoT (N-252) — hier steht er je
-    // EINZELNEM Monat, also in genau dem Fall, in dem der Ladestand-Übertrag
-    // über die Monatsgrenze am stärksten wirkt. Ohne SoC-Messung ist ein
-    // Quotient über 100 % deshalb kein Wert, sondern eine fehlende Aussage.
+    // Päckchen Y (Y3): der η kommt fertig aus der Antwort (Layer `speicher_wirkungsgrad`, N-252). Bis dahin stand hier
+    // der Client-Spiegel `speicherWirkungsgrad(ladung, entladung)` (`lib/speicherWirkungsgrad.ts`, aufgelöst) — dieselbe
+    // Regel (über 100 % ohne SoC-Messung kein Wert), jetzt an einer Stelle.
     const speicher_ladung = md.speicher_ladung_kwh
     const speicher_entladung = md.speicher_entladung_kwh
-    const speicher_effizienz = (speicher_ladung != null && speicher_entladung != null)
-      ? speicherWirkungsgrad(speicher_ladung, speicher_entladung).prozent
-      : null
+    const speicher_effizienz = md.speicher_effizienz_prozent ?? null
 
-    // Wärmepumpe: null = WP in dem Monat nicht aktiv. Wenn auch nur eines
-    // der Komponenten-Felder null ist, gilt der ganze Block als nicht aktiv.
+    // Wärmepumpe: null = WP in dem Monat nicht aktiv bzw. nicht gemessen.
     const wp_heizung = md.wp_heizung_kwh
     const wp_warmwasser = md.wp_warmwasser_kwh
-    const wp_waerme = (wp_heizung != null && wp_warmwasser != null)
-      ? wp_heizung + wp_warmwasser
-      : null
+    // N-778 (7.11.2026): die Wärme kommt fertig aus der Antwort (Regel D1, Gesamtwert vor Summanden).
+    // **Bis dahin stand hier `wp_heizung + wp_warmwasser`** (nur wenn beide gesetzt) — ein Gesamt-
+    // Wärmemengenzähler fehlte damit: «—» bei einer Wärmepumpe nur mit Gesamtzähler, eine zu kleine Summe
+    // neben einem zweiten Gerät mit Aufteilung, während Cockpit → Monat die Wärme zeigte.
+    const wp_waerme = md.wp_waerme_kwh ?? null
     const wp_strom = md.wp_strom_kwh
     // ADR-002/P12 (02.09.2026): Die Arbeitszahl kommt fertig aus der Antwort.
     // **Bis dahin stand hier `calcCOP(wp_waerme, wp_strom)`** — eine eigene
@@ -237,12 +234,11 @@ export function createMonatsZeitreihe(
     // E-Auto: null = kein aktives E-Auto.
     const eauto_km = md.eauto_km
     const eauto_ladung = md.eauto_ladung_kwh
-    // Wallbox-Durchsatz + PV-Anteil (PV-Anteil ableitbar aus den beiden Roh-Feldern).
+    // Wallbox-Durchsatz + PV-Anteil. Päckchen Z-Client: der PV-Anteil kommt fertig aus der Antwort (Layer
+    // `pv_anteil_ladung.pv_anteil_prozent` auf den zwei Feldern der Zeile) — bis dahin stand hier die Quote.
     const wallbox_ladung = md.wallbox_ladung_kwh
     const wallbox_pv_ladung = md.wallbox_ladung_pv_kwh
-    const wallbox_pv_anteil = (wallbox_pv_ladung != null && wallbox_ladung != null && wallbox_ladung > 0)
-      ? (wallbox_pv_ladung / wallbox_ladung) * 100
-      : null
+    const wallbox_pv_anteil = md.wallbox_pv_anteil_prozent ?? null
     const eauto_pv_anteil = wallbox_pv_anteil // gleicher PV-Anteil (Wallbox = Lade-Pfad des E-Autos)
 
     // CO₂: nachgeschlagen, nicht gerechnet (N-21). Der Kanon steht im Backend

@@ -12,7 +12,7 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import datetime, date, timedelta
-from typing import Optional, List
+from typing import Literal, Optional, List
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -40,7 +40,7 @@ from backend.services.prognose_service import berechne_pv_ertrag_tag
 from backend.services.solcast_service import get_solcast_forecast, get_solcast_status
 from backend.services.solar_forecast_service import _solar_noon_hour
 from backend.services.prognose_kanon import kanon_tagesprognose, pv_invs_im_horizont
-from backend.api.routes.live_wetter import _get_lernfaktor, _get_lernfaktor_detail
+from backend.api.routes.live_wetter import _get_lernfaktor_detail
 from backend.services.pv_orientation import resolve_system_losses
 from backend.services.prognose_adapter import (
     StundenProfil,
@@ -51,6 +51,11 @@ from backend.services.prognose_adapter import (
     solcast_profil,
 )
 from backend.services.prognose_router import resolve_prognose_quelle
+from backend.services.prognose_genauigkeit_service import (
+    ZEITPUNKT_STANDARD,
+    Zeitpunkt,
+    prognosen_zum_zeitpunkt,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -263,6 +268,19 @@ class GenauigkeitsResponse(BaseModel):
     anzahl_ausreisser: int = 0
     # Schwelle in % (für UI-Text)
     ausreisser_schwelle_prozent: float = 50.0
+    #: N-782: welcher Prognosestand je Quelle in `tage` und den Kennzahlen steht —
+    #: ``day_ahead`` (gespeicherte Stundenprofile), ``mittag`` (Stand ab 12:00, Päckchen CC) oder ``abend``
+    #: (eingefrorene Abendstände).
+    zeitpunkt: Zeitpunkt = ZEITPUNKT_STANDARD
+    #: Päckchen CC (Quellen-Empfehlung): die Quelle mit der kleinsten MAE zu diesem Zeitpunkt unter denen mit mindestens
+    #: 14 Tagen Werten (eedc, OpenMeteo, Solcast — SFML nicht, Tom-HA-Regel); ``None`` bei zu wenig Tagen.
+    beste_quelle: Optional[Literal["eedc", "openmeteo", "solcast"]] = None
+    beste_quelle_mae_prozent: Optional[float] = None
+    #: Päckchen CC: die in der Anlage gewählte Prognosequelle (``eedc``/``solcast``/``sfml``, Einstellung) — für den Satz
+    #: «kann als Quelle gewählt werden».
+    prognose_quelle: Optional[str] = None
+    #: Päckchen CC: Wächter «Korrektur nur, wenn sie hilft» — ``{ausgesetzt, mae_kaskade_prozent, mae_roh_prozent, tage}``.
+    korrektur_status: Optional[dict] = None
 
 
 # =============================================================================
@@ -886,7 +904,7 @@ async def _ist_heute(db: AsyncSession, anlage_id: int, heute: date, now: datetim
     _kanal = [heute] if any(ist_beginn_raster(r) for r in ist_rows) else []
     # M-1 Hinweis H-1 (E-S5-2): ohne Marke `{}` wie vor S5 (die Lesestelle liefert nur Tage mit Marke).
     _tz_heute_verworfen = (await verworfen_der_tage(db, anlage_id, heute, heute, kanal=_kanal)).get(heute) or {}
-    ist_p = ist_profil(ist_rows, jetzt_stunde=now.hour, datum=heute,
+    ist_p = ist_profil(ist_rows, datum=heute,
                        verworfen=_tz_heute_verworfen)
     ist_stundenprofil = _profil_zu_eintraegen(ist_p)
     ist_heute_kwh = ist_p.tageswert_kwh  # roh/ungerundet — für verbleibend-Rechnung
@@ -1129,15 +1147,24 @@ async def get_prognosen_genauigkeit(
         default=False,
         description="Ausreißer-Tage (große Abweichung) aus MAE/MBE ausschließen (#296 #9, Default aus)",
     ),
+    zeitpunkt: Zeitpunkt = Query(
+        default=ZEITPUNKT_STANDARD,
+        description="Welcher Prognosestand je Quelle: day_ahead (gespeicherte Stundenprofile, Stand bis 00:45) "
+                    "oder abend (eingefrorene Abendstände) — N-782",
+    ),
     db: AsyncSession = Depends(get_db),
 ):
     """
     Genauigkeits-Tracking: Prognose vs. IST für die letzten N Tage.
 
-    Nutzt TagesZusammenfassung:
-    - pv_prognose_kwh (OpenMeteo) vs. IST (aus komponenten_kwh)
-    - solcast_prognose_kwh vs. IST
+    Die Prognosewerte je Quelle und Zeitpunkt kommen aus
+    ``prognose_genauigkeit_service.prognosen_zum_zeitpunkt`` (N-782): die eedc-Spalte ist die
+    Prognose, die eedc an dem Tag gezeigt hat — nicht mehr OpenMeteo × heutiger Lernfaktor.
+    Tage-Liste, MAE/MBE, Asymmetrie und Ausreißer-Markierung rechnen mit den Werten des gewählten
+    Zeitpunkts.
     """
+    # Direktaufrufe ohne Parameter (Tests) bekommen das Query-Objekt — alles außer "abend"/"mittag" ist Day-Ahead.
+    zeitpunkt = zeitpunkt if zeitpunkt in ("abend", "mittag") else ZEITPUNKT_STANDARD
     result = await db.execute(select(Anlage).where(Anlage.id == anlage_id))
     anlage = result.scalar_one_or_none()
     if not anlage:
@@ -1184,9 +1211,6 @@ async def get_prognosen_genauigkeit(
         bew = sum(bews) / len(bews) if bews else None
         wetter_pro_tag[d] = wetter_symbol_aus_tag(mittag_code, bew, _nieder.get(d))
 
-    # Lernfaktor für EEDC-Genauigkeit (immer OpenMeteo-basiert)
-    lernfaktor = await _get_lernfaktor(anlage_id, db, quelle="openmeteo")
-
     eintraege = []
     om_signed = []  # vorzeichenbehaftete relative Fehler (Prognose - IST) / IST * 100
     eedc_signed = []
@@ -1215,21 +1239,14 @@ async def get_prognosen_genauigkeit(
     for tz in tage_daten:
         ist_kwh = ist_je_tag.get(tz.datum)
 
-        # Prognose-Kanon §6: der Tracking-Vergleichswert ist der
-        # konvergenz-gefrorene `pv_prognose_final_kwh` (Fallback auf den
-        # rollenden `pv_prognose_kwh`, solange ein Tag noch nicht final ist) —
-        # damit der Tagesabschluss nicht aus einem Mid-Correction-Snapshot
-        # gerechnet wird (Rainer-Sonderbefund §6).
-        forecast_kwh = (
-            tz.pv_prognose_final_kwh
-            if tz.pv_prognose_final_kwh is not None
-            else tz.pv_prognose_kwh
-        )
-
-        # EEDC = OpenMeteo × Lernfaktor (historisch)
-        eedc_kwh = None
-        if lernfaktor is not None and forecast_kwh and forecast_kwh > 0:
-            eedc_kwh = forecast_kwh * lernfaktor
+        # N-782: die Werte des gewählten Zeitpunkts je Quelle — Day-Ahead aus den gespeicherten
+        # first-write-Stundenprofilen, Abend aus den eingefrorenen Tageswerten (Prognose-Kanon §6:
+        # OpenMeteo `pv_prognose_final_kwh`, Fallback rollend). Bis N-782 stand hier für eedc
+        # `forecast_kwh × lernfaktor` mit dem HEUTIGEN Skalar, rückwirkend für alle Tage.
+        prog = prognosen_zum_zeitpunkt(tz, zeitpunkt)
+        forecast_kwh = prog.openmeteo_kwh
+        eedc_kwh = prog.eedc_kwh
+        solcast_kwh = prog.solcast_kwh
 
         # Vorzeichenbehaftete relative Tagesfehler je Quelle (nur bei brauchbarem IST)
         # ⭐ Seit 21.09.2026 aus dem Layer (`relativer_tagesfehler_prozent`): die
@@ -1239,7 +1256,7 @@ async def get_prognosen_genauigkeit(
         # galt hier fuer alle drei Quellen gemeinsam und gilt dort ebenso.
         om_err = relativer_tagesfehler_prozent(forecast_kwh, ist_kwh)
         eedc_err = relativer_tagesfehler_prozent(eedc_kwh, ist_kwh)
-        sc_err = relativer_tagesfehler_prozent(tz.solcast_prognose_kwh, ist_kwh)
+        sc_err = relativer_tagesfehler_prozent(solcast_kwh, ist_kwh)
 
         abweichungen = [abs(e) for e in (om_err, eedc_err, sc_err) if e is not None]
         ist_ausreisser = bool(abweichungen) and max(abweichungen) > AUSREISSER_SCHWELLE
@@ -1250,8 +1267,8 @@ async def get_prognosen_genauigkeit(
             datum=tz.datum.isoformat(),
             openmeteo_kwh=round(forecast_kwh, 1) if forecast_kwh is not None else None,
             eedc_kwh=round(eedc_kwh, 1) if eedc_kwh is not None else None,
-            solcast_kwh=round(tz.solcast_prognose_kwh, 1) if tz.solcast_prognose_kwh is not None else None,
-            sfml_kwh=round(tz.sfml_prognose_kwh, 1) if tz.sfml_prognose_kwh is not None else None,
+            solcast_kwh=round(solcast_kwh, 1) if solcast_kwh is not None else None,
+            sfml_kwh=round(prog.sfml_kwh, 1) if prog.sfml_kwh is not None else None,
             ist_kwh=round(ist_kwh, 1) if ist_kwh is not None else None,
             wetter_symbol=wetter_pro_tag.get(tz.datum),
             temperatur_max_c=round(tz.temperatur_max_c) if tz.temperatur_max_c is not None else None,
@@ -1298,4 +1315,28 @@ async def get_prognosen_genauigkeit(
         anzahl_tage=len(eintraege),
         anzahl_ausreisser=anzahl_ausreisser,
         ausreisser_schwelle_prozent=AUSREISSER_SCHWELLE,
+        zeitpunkt=zeitpunkt,
+        **await _empfehlung_und_status(db, anlage, eedc_signed, om_signed, sc_signed),
     )
+
+
+async def _empfehlung_und_status(db: AsyncSession, anlage, eedc_signed, om_signed, sc_signed) -> dict:
+    """Päckchen CC: Quellen-Empfehlung (Layer ``beste_quelle``), gewählte Quelle und Wächter-Stand für Block ④."""
+    from backend.core.berechnungen.prognose_genauigkeit import beste_quelle
+    from backend.services.prognose_korrektur_nutzen import korrektur_nutzen
+
+    # eedc zuerst: bei gleicher MAE empfiehlt eedc keinen Wechsel.
+    beste = beste_quelle({"eedc": eedc_signed, "openmeteo": om_signed, "solcast": sc_signed})
+    nutzen = await korrektur_nutzen(db, anlage.id, date.today())
+    return {
+        "beste_quelle": beste[0] if beste else None,
+        "beste_quelle_mae_prozent": beste[1] if beste else None,
+        # die GEWÄHLTE Quelle (Einstellung), nicht die nach einem Rückfall wirksame — der Satz nennt die Einstellung.
+        "prognose_quelle": getattr(anlage, "prognose_quelle", None) or "eedc",
+        "korrektur_status": {
+            "ausgesetzt": nutzen.ausgesetzt,
+            "mae_kaskade_prozent": nutzen.mae_kaskade_prozent,
+            "mae_roh_prozent": nutzen.mae_roh_prozent,
+            "tage": nutzen.tage,
+        },
+    }

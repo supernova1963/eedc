@@ -1029,6 +1029,20 @@ def _migrate_tages_zusammenfassung_spalten(connection, inspector) -> None:
         connection.execute(text('ALTER TABLE tages_zusammenfassung ADD COLUMN pv_prognose_final_kwh FLOAT'))
     if 'pv_prognose_final_at' not in existing_columns:
         connection.execute(text('ALTER TABLE tages_zusammenfassung ADD COLUMN pv_prognose_final_at VARCHAR(40)'))
+    # N-782: Abendstand der eedc-Prognose (Kanon) fürs Genauigkeits-Tracking.
+    # Rückwärts leer (NULL = «nicht erhoben»), kein Backfill: der Kanon-Tageswert
+    # rollt, ein früherer Abendstand ist nirgends aufgezeichnet.
+    if 'pv_prognose_eedc_final_kwh' not in existing_columns:
+        connection.execute(text('ALTER TABLE tages_zusammenfassung ADD COLUMN pv_prognose_eedc_final_kwh FLOAT'))
+    # Päckchen CC: Stand «Mittag» je Quelle (first-write ab 12:00) und die Kaskaden-Reihe des Korrektur-Wächters.
+    # Rückwärts leer (NULL = «nicht erhoben»), kein Backfill.
+    for _spalte, _typ in (
+        ('pv_prognose_eedc_mittag_kwh', 'FLOAT'), ('pv_prognose_om_mittag_kwh', 'FLOAT'),
+        ('solcast_mittag_kwh', 'FLOAT'), ('sfml_mittag_kwh', 'FLOAT'),
+        ('pv_prognose_kaskade_stundenprofil', 'JSON'),
+    ):
+        if _spalte not in existing_columns:
+            connection.execute(text(f'ALTER TABLE tages_zusammenfassung ADD COLUMN {_spalte} {_typ}'))
     # N-141 Weg (c): abgeleiteter PV-/Netz-Anteil der Heimladung.
     # Rein additiv — Bestandszeilen bleiben NULL, und NULL heißt
     # „keine Aussage". Damit gibt es KEINE rückwirkende Änderung an
@@ -1484,6 +1498,16 @@ async def _run_data_migrations() -> None:
         await _apply_once(
             "datenquellen_v4_quellen_ins_mapping",
             migriere_quellen_ins_mapping,
+        )
+
+        # N-780 (Päckchen U): Inbound-Stempel an Energie-Feldern ohne Leser (B8/Pass 1) auf „Keine" — der Wert wurde nie
+        # gelesen; Gateway- und HA-Zuordnungen bleiben. Idempotent, kein HTTP.
+        from backend.services.migrations.migrate_ohne_leser_inbound_stempel import (
+            ohne_leser_inbound_stempel_auf_keine,
+        )
+        await _apply_once(
+            "n780_ohne_leser_inbound_stempel_auf_keine",
+            ohne_leser_inbound_stempel_auf_keine,
         )
 
         # N-545: Die Sensor-Definitionen eines NEUEN Pakets starten bei einer

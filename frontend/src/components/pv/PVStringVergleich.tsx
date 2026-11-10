@@ -19,7 +19,7 @@ import ChartTooltip from '../ui/ChartTooltip'
 import { useLegendenToggle } from '../../hooks'
 import { Parkbar } from '../park'
 import { HerkunftZeile } from '../blocks'
-import { pvVerteiltHerkunft } from '../../lib/pvHerkunft'
+import { pvVergleichHerkunft } from '../../lib/pvHerkunft'
 import { cockpitApi, type PVStringsGesamtlaufzeitResponse } from '../../api/cockpit'
 import { SOLL_IST_COLORS, STRING_COLORS, CHART_HOVER_CURSOR, PROGNOSE_DASH, xAchse, achsenEinheit, ACHSEN_MARGIN_TOP, fmtZahl, formatProzent } from '../../lib'
 import { mitAnzahl } from '../../lib/plural'
@@ -313,7 +313,7 @@ export function PVStringVergleich({ anlageId, embed = false, melde }: Props) {
           Wortlaut-SoT aus `lib/pvHerkunft`. Dieselbe Zeile wie am Verlauf-Chart. */}
       {(data.ist_quelle === 'verteilt' || data.vergleich_hinweis) && (
         <Parkbar id="info:pv-herkunft" titel="Herkunft der Werte">
-          <HerkunftZeile herkunft={pvVerteiltHerkunft('IST je Modul', data.vergleich_hinweis)} />
+          <HerkunftZeile herkunft={pvVergleichHerkunft('IST je Modul', data.vergleich_hinweis, data.vergleich_grund)} />
         </Parkbar>
       )}
 
@@ -576,7 +576,7 @@ export function PVStringVergleich({ anlageId, embed = false, melde }: Props) {
                   : []),
                 {
                   label: 'kWh/kWp',
-                  wert: data.anlagen_leistung_kwp > 0 ? fmtZahl(data.ist_gesamt_kwh / data.anlagen_leistung_kwp, 0) : '—',
+                  wert: data.spezifischer_ertrag_zeitraum_kwh_kwp != null ? fmtZahl(data.spezifischer_ertrag_zeitraum_kwh_kwp, 0) : '—',
                 },
               ]}
             />
@@ -666,7 +666,7 @@ export function PVStringVergleich({ anlageId, embed = false, melde }: Props) {
                     verschieden gewichtet — ein Mittelwert daraus wäre erfunden. */}
                 {hatPrognose && <td className={`${ZELLE} text-right text-gray-400 dark:text-gray-500`}>—</td>}
                 <td className={`${ZELLE} text-right text-gray-600 dark:text-gray-400`}>
-                  {data.anlagen_leistung_kwp > 0 ? fmtZahl(data.ist_gesamt_kwh / data.anlagen_leistung_kwp, 0) : '—'}
+                  {data.spezifischer_ertrag_zeitraum_kwh_kwp != null ? fmtZahl(data.spezifischer_ertrag_zeitraum_kwh_kwp, 0) : '—'}
                 </td>
               </tr>
             </TableFoot>

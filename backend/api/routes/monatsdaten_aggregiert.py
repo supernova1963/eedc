@@ -12,6 +12,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from backend.core.berechnungen.anlagen_kwp import anlagen_kwp as berechne_anlagen_kwp
 from backend.core.berechnungen.pv_verteilung import wandlungsverluste_prozent
+from backend.core.berechnungen.speicher_wirkungsgrad import speicher_wirkungsgrad
 from backend.core.berechnungen.waermepumpe_kennzahl import abgrenzungs_grund, arbeitszahl
 from backend.core.berechnungen import berechne_finanz_aggregat, eauto_effizienz_100km
 from backend.core.berechnungen.ergebnis import ErgebnisEingang, berechne_ergebnis, ust_anteil_euro
@@ -220,6 +221,13 @@ def _zeile_komponenten(
         speicher_netzladung_kwh=(
             round(f.speicher.netzladung_kwh, 1) if hat_speicher_imd else None
         ),
+        # Päckchen Y (Y3): der η des Monats aus dem Layer (N-252) statt aus dem Client-Spiegel
+        # `lib/speicherWirkungsgrad.ts` (aufgelöst). Aus den Mengen DIESER Zeile (auf 0,1 kWh gerundet) und ungerundet, damit er zu
+        # Ladung/Entladung daneben passt und die Anzeige sich nicht bewegt (Probe: bitgleich zum Client auf r27/r28).
+        speicher_effizienz_prozent=(
+            speicher_wirkungsgrad(round(speicher_ladung, 1), round(speicher_entladung, 1)).prozent
+            if hat_speicher_imd else None
+        ),
         wp_strom_kwh=round(f.wp.strom_kwh, 1) if "waermepumpe" in typen else None,
         wp_strom_heizen_kwh=round(f.wp.strom_heizen_kwh, 1) if f.wp.hat_split else None,
         wp_strom_warmwasser_kwh=(
@@ -230,6 +238,11 @@ def _zeile_komponenten(
                         if "waermepumpe" in typen and f.wp.heizung_kwh is not None else None),
         wp_warmwasser_kwh=(round(f.wp.warmwasser_kwh, 1)
                            if "waermepumpe" in typen and f.wp.warmwasser_kwh is not None else None),
+        # N-778: die Wärme nach D1 fertig aus den Fakten (`WpFakten.waerme_kwh`), wie Cockpit → Monat und der Hub —
+        # der Client summiert die Achsen nicht mehr. Ohne Messung `None` (Marke `waerme_gemessen`, K1: nur eine
+        # gemessene 0 ist 0); über 0 bleibt jeder Wert, wie er ist (dieselbe Lesart wie `cockpit/uebersicht.py`).
+        wp_waerme_kwh=(round(f.wp.waerme_kwh, 1)
+                       if "waermepumpe" in typen and (f.wp.waerme_gemessen or f.wp.waerme_kwh > 0) else None),
         wp_arbeitszahl=_wp_az.wert if "waermepumpe" in typen else None,
         wp_arbeitszahl_grund=_wp_az.grund if "waermepumpe" in typen else None,
         eauto_ladung_kwh=round(eauto.ladung_kwh, 1) if "e-auto" in typen else None,

@@ -390,8 +390,20 @@ export interface TagDetail {
   speicher_ladung_netz_kwh: number | null
   speicher_effektiver_ladepreis_cent: number | null
   speicher_effektiver_ladepreis_quelle: string | null
+  /** Päckchen Z-Client: Kosten der Netzladung des Tages = Menge × Ø-Ladepreis (die zwei Felder darüber, Layer
+   *  `speicher_wirtschaftlichkeit.netzladung_kosten_euro`), fertig aus dem Backend; `null` ohne Preis. */
+  speicher_ladung_netz_kosten_euro?: number | null
   emob_ladung_pv_kwh: number | null
   emob_ladung_netz_kwh: number | null
+  /** Päckchen BB2 (N-783) — Ladung des Tages für den Block «E-Mobilität»: Zählerpfad vor Leistungspfad (Rückfall),
+   *  private Geräte wie der Monat; ungerundet, `null` ohne Ladung. Fehlt bei älteren Backends. */
+  emob_ladung_kwh?: number | null
+  /** Woher `emob_ladung_kwh` stammt (`zaehler` | `leistung`), `null` ohne Wert. */
+  emob_ladung_quelle?: 'zaehler' | 'leistung' | null
+  /** PV-Anteil (Heim) der Tagesladung in %, ungerundet (Layer `pv_anteil_ladung`). */
+  emob_pv_anteil_prozent?: number | null
+  /** Gefahrene km des Tages (Σ der privaten E-Autos), ungerundet; `null` ohne Kilometer-Kanal. */
+  emob_km?: number | null
   /** P-433-2b K3 — «Betrieb heute» der Wallboxen und E-Autos: je Gerät und mitgeschriebenem Zustandsfeld eine Zeile
    *  (nur Tag). Fehlt bei älteren Backends. */
   emob_betrieb?: EmobBetriebZeile[]
@@ -432,6 +444,16 @@ export interface TagDetail {
   /** Woher der Preis daneben stammt (H-1): `gemessen` · `gemischt` ·
    *  `abgerechnet` (über den Monat verteilt) · `vertrag` · `keine`. */
   netzbezug_preis_herkunft?: 'gemessen' | 'gemischt' | 'abgerechnet' | 'vertrag' | 'keine' | null
+  /** Päckchen BB: Speicher-Bilanz und Wirkungsverluste des Tages (Layer `speicher_bilanz`, Ladung/Entladung aus der
+   *  Tag-Zeile von `tage-werte`) — dieselben Felder wie die Monatssicht; `baueTagAlsMonat` reicht sie durch. */
+  speicher_bilanz_kwh?: number | null
+  speicher_wirkungsverluste_euro?: number | null
+  speicher_verlust_pv_kwh?: number | null
+  speicher_verlust_netz_kwh?: number | null
+  speicher_netzladung_anteil_prozent?: number | null
+  speicher_netzladung_anteil_gekappt?: boolean | null
+  /** SOLL-Erreichung des Tages in % = Erzeugung (`tage-werte`) ÷ `soll_pv_kwh`; ohne Erzeugung `null`. */
+  soll_erreichung_prozent?: number | null
   /** Welche **Geräte** hinter den anlagenweiten Tagessummen stecken, je Typ.
    *  Speist den `GeraeteHinweis` („Aggregiert aus: …"), der ab zwei Geräten
    *  erscheint — dieselbe Form wie in Monat und Jahr.
@@ -610,6 +632,9 @@ export interface TagesPrognose {
    *  die Verbrauchsprognose fehlt (< 3 vollständige Tage, frische Installation).
    *  Der Grund steht dann in `hinweise`; die Anzeige zeigt „—". */
   verbrauch_summe_kwh: number | null
+  /** Päckchen Z-Client: «Netto» des Tages = PV − Verbrauch (Überschuss +, Defizit −; Layer `kennzahlen.netto_kwh`
+   *  auf den zwei Summen darüber), fertig aus dem Backend; `null` ohne Verbrauchsprognose. */
+  netto_summe_kwh?: number | null
   netzbezug_summe_kwh: number | null
   einspeisung_summe_kwh: number | null
   eigenverbrauch_kwh: number | null
@@ -691,6 +716,10 @@ export interface ReaggregateTagResponse {
   komponenten_geschrieben: number
   /** Namen der Komponenten, für die der Lauf nichts schreiben konnte. */
   komponenten_ohne_wert: string[]
+  /** N-791: woher der Lauf schrieb (`historie` · `lts` · `zaehler` · `zaehler_erhalt`). Fehlt bei älteren Backends. */
+  quelle?: string | null
+  /** N-791: Satz in Anwender-Sprache zur Quelle (nur `zaehler_erhalt`) — das Backend baut ihn, der Client zeigt ihn. */
+  quelle_text?: string | null
 }
 
 /**

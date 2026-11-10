@@ -20,7 +20,7 @@ from backend.core.berechnungen import (
 )
 from backend.core.berechnungen.spannen import verbrauch_gebuendelt, zeile_gebuendelt
 from backend.core.berechnungen.slot_konvention import (
-    RASTER_BEGINN, RASTER_ENDE, forward_werte_je_backward_zeile, ist_beginn_raster,
+    RASTER_BEGINN, RASTER_ENDE, backward_slot_der_zeile, forward_werte_je_backward_zeile, ist_beginn_raster,
 )
 from backend.core.exceptions import bad_request, not_found
 from backend.api.deps import get_db
@@ -83,6 +83,36 @@ async def get_komponenten_serien(
             serien.append(SerieInfo(**info))
     return serien
 
+async def zeilen_der_stunden_sicht(db: AsyncSession, anlage_id: int, datum: date) -> tuple[list, list]:
+    """Die Stundenzeilen, die ``/stunden`` zeigt: ``(vortag, rows)`` — aus ``get_stundenwerte`` herausgelöst (Päckchen
+    BB2, N-783), damit der Leistungspfad-Rückfall der Tagesladung im Tag-Detail (``tag.py::_emob_ladung_tag``) dieselbe
+    Zeilenmenge liest wie die Stundentabelle und bis dahin der Client.
+
+    N-553: der Ladestand jeder Zeile kommt aus ihrer **Vorzeile** — dieselbe Regel wie in den Rechnungen (N-387,
+    `slot_konvention`). Dafür wird der Vortag mitgeladen: ohne seine Stunde 23 bekäme Slot 0 dieses Tages keinen Wert,
+    und das wäre eine Lücke, die es in den Daten nicht gibt. HA-Bauform S4 (S4-R-3b): und der Folgetag — an einem
+    Kanal-Tag trägt seine Zeile 0 die Backward-Bahnen der Stunde 23 (`slot_konvention.bestandszeile_fuer_stundenbeginn`).
+    Eine Abfrage, ein Tag mehr. HA-Bauform E-S3-2: an einem Tag mit Kanal-Gruppe tragen die Mengen der Kanal-Gruppen
+    HAs `change` je Stunde (Mischzeilen, `energie_profil/kanal_stunden.py`, Stunde = Beginn seit S4); Wetter, Zählwerke
+    und `komponenten` bleiben aus der Stundenzeile (S3-R6), nach Bahnen gepaart (S4-R-3b). Ohne Kanal-Gruppe: die
+    Stundenzeilen des Tages unverändert."""
+    from backend.services.energie_profil.kanal_stunden import stunden_des_tages
+
+    result = await db.execute(
+        select(TagesEnergieProfil)
+        .where(
+            TagesEnergieProfil.anlage_id == anlage_id,
+            TagesEnergieProfil.datum >= datum - timedelta(days=1),
+            TagesEnergieProfil.datum <= datum + timedelta(days=1),
+        )
+        .order_by(TagesEnergieProfil.datum, TagesEnergieProfil.stunde)
+    )
+    alle = result.scalars().all()
+    vortag = [z for z in alle if z.datum < datum]
+    rows = await stunden_des_tages(db, anlage_id, datum, [z for z in alle if z.datum >= datum])
+    return vortag, rows
+
+
 @router.get("/{anlage_id}/stunden", response_model=StundenAntwort)
 async def get_stundenwerte(
     anlage_id: int,
@@ -101,30 +131,9 @@ async def get_stundenwerte(
     if not result.scalar_one_or_none():
         raise not_found("Anlage", anlage_id)
 
-    # N-553: der Ladestand jeder Zeile kommt aus ihrer **Vorzeile** — dieselbe
-    # Regel wie in den Rechnungen (N-387, `slot_konvention`). Dafür wird der
-    # Vortag mitgeladen: ohne seine Stunde 23 bekäme Slot 0 dieses Tages keinen
-    # Wert, und das wäre eine Lücke, die es in den Daten nicht gibt.
-    # HA-Bauform S4 (S4-R-3b): und der Folgetag — an einem Kanal-Tag trägt seine Zeile 0 die Backward-Bahnen der
-    # Stunde 23 (`slot_konvention.bestandszeile_fuer_stundenbeginn`). Eine Abfrage, ein Tag mehr.
-    result = await db.execute(
-        select(TagesEnergieProfil)
-        .where(
-            TagesEnergieProfil.anlage_id == anlage_id,
-            TagesEnergieProfil.datum >= datum - timedelta(days=1),
-            TagesEnergieProfil.datum <= datum + timedelta(days=1),
-        )
-        .order_by(TagesEnergieProfil.datum, TagesEnergieProfil.stunde)
-    )
-    alle = result.scalars().all()
-    vortag = [z for z in alle if z.datum < datum]
-    # HA-Bauform E-S3-2: an einem Tag mit Kanal-Gruppe tragen die Mengen der Kanal-Gruppen HAs `change` je Stunde
-    # (Mischzeilen, `energie_profil/kanal_stunden.py`, Stunde = Beginn seit S4); Wetter, Zählwerke und `komponenten`
-    # bleiben aus der Stundenzeile (S3-R6), nach Bahnen gepaart (S4-R-3b). Ohne Kanal-Gruppe: die Stundenzeilen des
-    # Tages unverändert.
-    from backend.services.energie_profil.kanal_stunden import aus_kanal_gruppe, stunden_des_tages
+    from backend.services.energie_profil.kanal_stunden import aus_kanal_gruppe
 
-    rows = await stunden_des_tages(db, anlage_id, datum, [z for z in alle if z.datum >= datum])
+    vortag, rows = await zeilen_der_stunden_sicht(db, anlage_id, datum)
     # SoC je Zeile über die EINE Paarung (N-553/N-387): Bestandszeilen aus der Vorzeile (der Vortag liefert Slot 0),
     # Mischzeilen (Beginn-Raster) zeilengleich — `forward_werte_je_backward_zeile` fragt das Attribut `raster`.
     soc_je_zeile = forward_werte_je_backward_zeile([*vortag, *rows], "soc_prozent")[len(vortag):]
@@ -240,7 +249,10 @@ async def get_wochenmuster(
 
     Aggregiert TagesEnergieProfil-Werte über den Zeitraum und berechnet
     pro Wochentag (0=Mo … 6=So) × Stunde den Mittelwert.
-    Basis für den Wochenvergleich-Chart im Energieprofil-Tab.
+
+    ``stunde`` ist der **Backward-Slot** (Slot ``h`` = ``[h-1, h)``, wie die Stundenzeile): an einem Kanal-Tag legt
+    ``slot_konvention.backward_slot_der_zeile`` die Mischzeile auf ihren Slot (N-786). ⚠ Die Route hat derzeit keinen
+    Konsumenten im Client (``api/energie_profil.ts::getWochenmuster`` wird nicht gerufen, gemessen 10.11.2026).
     """
     result = await db.execute(select(Anlage).where(Anlage.id == anlage_id))
     if not result.scalar_one_or_none():
@@ -263,8 +275,14 @@ async def get_wochenmuster(
     tage_set: dict[tuple[int, int], set] = defaultdict(set)
 
     for r in rows:
-        wt = r.datum.weekday()
-        key = (wt, r.stunde)
+        # N-786 (Päckchen DD, 10.11.2026): EINE Zelle = EIN Backward-Slot. Eine Mischzeile eines Kanal-Tags (Zeile h =
+        # [h, h+1)) liegt auf Slot h+1, ihre Stunde 23 auf Slot 0 des Folgetags (Wochentag wechselt); die Bestandszeile
+        # bleibt, wie sie ist. Bis dahin mischte die Zelle beide Raster, wenn das Fenster Kanal- und Bestandstage trug.
+        tag, slot = backward_slot_der_zeile(r)
+        if tag > bis:
+            continue        # Stunde 23 des letzten Kanal-Tags gehört zu Slot 0 nach dem Fenster (wie bei der Stundenzeile)
+        wt = tag.weekday()
+        key = (wt, slot)
         # M-1 (a): eine gebündelte Zeile (Spanne > 1 auf der Achse des Felds) wertet das Feld nicht; ein Tag zählt in
         # `anzahl_tage`, wenn die Stunde ein gewertetes Feld trägt — oder gar keins und kein gebündeltes (wie bisher).
         gewertet = verworfen = False
@@ -278,7 +296,7 @@ async def get_wochenmuster(
             acc[key][field].append(val)
             gewertet = True
         if gewertet or not verworfen:
-            tage_set[key].add(r.datum)
+            tage_set[key].add(tag)
 
     punkte: list[WochenmusterPunkt] = []
     for (wt, stunde) in sorted(acc.keys()):

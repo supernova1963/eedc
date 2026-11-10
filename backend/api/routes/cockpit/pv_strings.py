@@ -25,7 +25,7 @@ from typing import Any, Iterable, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from pydantic import BaseModel
+from pydantic import BaseModel, computed_field
 
 from backend.core.exceptions import not_found
 from backend.core.berechnungen.erzeuger_traeger import (
@@ -50,6 +50,7 @@ from backend.models.investition import Investition
 from backend.services.prognose_auswahl import lade_aktive_prognose
 from backend.services.pv_monatswerte import lade_pv_je_monat
 from backend.core.berechnungen import soll_im_laufmonat
+from backend.core.berechnungen.kennzahlen import spezifischer_ertrag_kwh_kwp
 from backend.api.routes.cockpit._shared import MONATSNAMEN
 
 router = APIRouter()
@@ -78,6 +79,19 @@ RANKING_TEILWEISE_VERTEILT = (
     "damit nicht möglich. Dafür braucht jedes Modul einen eigenen "
     "Erzeugungs-Sensor (Einstellungen → Sensor-Zuordnung)."
 )
+
+# Päckchen CC (Kleineres aus BB4): ein String hat im Zeitraum GAR KEINEN Wert (`fehlt`, etwa vor seiner Anschaffung),
+# verteilt ist nichts. Die Sperre bleibt — ohne Werte aller Strings gibt es keine Platzierung —, aber der Satz oben
+# («ein Teil ist anteilig verteilt») stimmte dort nicht (r28/r27 2023). `{zeitraum}`: «in diesem Jahr» / «im Zeitraum».
+RANKING_NICHT_ALLE_WERTE = (
+    "Nicht alle Module haben {zeitraum} Werte (etwa vor ihrer Anschaffung) — eine Platzierung einzelner Strings "
+    "ist damit nicht möglich."
+)
+
+#: Päckchen CC: warum es keine Platzierung gibt — die Anzeige wählt danach ihr Zeichen (kWp-Anteil oder «offen»).
+VERGLEICH_GRUND_VERTEILT = "verteilt"
+VERGLEICH_GRUND_TEILWEISE_VERTEILT = "teilweise_verteilt"
+VERGLEICH_GRUND_NICHT_ALLE_WERTE = "nicht_alle_werte"
 
 
 
@@ -114,29 +128,38 @@ def _rollup_quelle(quellen: Iterable[str]) -> str:
 
 def _ranking(
     kandidaten: list[tuple[str, Optional[float], str]],
-) -> tuple[Optional[str], Optional[str], Optional[str]]:
+    *,
+    zeitraum: str = "in diesem Jahr",
+) -> tuple[Optional[str], Optional[str], Optional[str], Optional[str]]:
     """Bester/schwächster String — nur bei durchgängig gemessenen IST-Werten.
 
     Args:
         kandidaten: ``[(bezeichnung, performance_ratio, ist_quelle), …]``.
+        zeitraum: Zeitangabe im Satz «Nicht alle Module haben … Werte» (Jahresroute / Laufzeit).
 
     Returns:
-        ``(bester, schlechtester, hinweis)``. Ist auch nur ein String nicht
-        gemessen, bleibt die Platzierung leer und stattdessen steht der
-        Erklärsatz {@link RANKING_NICHT_MOEGLICH} in ``hinweis`` — im Mischfall
-        (mindestens ein String gemessen) {@link RANKING_TEILWEISE_VERTEILT} (N-653).
+        ``(bester, schlechtester, hinweis, grund)``. Ist auch nur ein String nicht
+        gemessen, bleibt die Platzierung leer und stattdessen steht ein Erklärsatz in
+        ``hinweis``, je Fall: ist ein String nach kWp verteilt, {@link RANKING_NICHT_MOEGLICH} —
+        im Mischfall (mindestens ein String gemessen) {@link RANKING_TEILWEISE_VERTEILT} (N-653);
+        ist nichts verteilt, aber ein String ohne jeden Wert (``fehlt``), {@link RANKING_NICHT_ALLE_WERTE}
+        (Päckchen CC). ``grund`` benennt den Fall (``VERGLEICH_GRUND_*``) für die Anzeige.
     """
     if len(kandidaten) <= 1:
-        return None, None, None
-    if any(quelle != PV_QUELLE_GEMESSEN for _, _, quelle in kandidaten):
-        teilweise = any(quelle == PV_QUELLE_GEMESSEN for _, _, quelle in kandidaten)
-        return None, None, RANKING_TEILWEISE_VERTEILT if teilweise else RANKING_NICHT_MOEGLICH
+        return None, None, None, None
+    quellen = [quelle for _, _, quelle in kandidaten]
+    if any(quelle != PV_QUELLE_GEMESSEN for quelle in quellen):
+        if PV_QUELLE_VERTEILT not in quellen:
+            return None, None, RANKING_NICHT_ALLE_WERTE.format(zeitraum=zeitraum), VERGLEICH_GRUND_NICHT_ALLE_WERTE
+        if PV_QUELLE_GEMESSEN in quellen:
+            return None, None, RANKING_TEILWEISE_VERTEILT, VERGLEICH_GRUND_TEILWEISE_VERTEILT
+        return None, None, RANKING_NICHT_MOEGLICH, VERGLEICH_GRUND_VERTEILT
     mit_perf = [(name, perf) for name, perf, _ in kandidaten if perf]
     if not mit_perf:
-        return None, None, None
+        return None, None, None, None
     sortiert = sorted(mit_perf, key=lambda x: x[1] or 0, reverse=True)
     schlechtester = sortiert[-1][0] if len(sortiert) > 1 else None
-    return sortiert[0][0], schlechtester, None
+    return sortiert[0][0], schlechtester, None, None
 
 
 async def _lade_ist_je_modul(
@@ -290,6 +313,16 @@ class PVStringsResponse(BaseModel):
     # bei verteilten Werten keine Platzierung gibt (None = Ranking gültig).
     ist_quelle: str = PV_QUELLE_FEHLT
     vergleich_hinweis: Optional[str] = None
+    #: Päckchen CC: der Fall hinter `vergleich_hinweis` — ``verteilt`` · ``teilweise_verteilt`` · ``nicht_alle_werte``.
+    vergleich_grund: Optional[str] = None
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def spezifischer_ertrag_kwh_kwp(self) -> Optional[float]:
+        """Spezifischer Ertrag des Jahres über alle Strings (Päckchen BB4) = IST gesamt ÷ Anlagen-kWp (Layer
+        `kennzahlen.spezifischer_ertrag_kwh_kwp`, ungerundet) — Kachel «Spez. Ertrag Ø» und Fußzeile der String-Tabelle;
+        bis dahin rechnete der Client (`PvStringsTeile.tsx`). Ohne kWp `None`."""
+        return spezifischer_ertrag_kwh_kwp(self.ist_gesamt_kwh, self.anlagen_leistung_kwp)
 
 
 class PVStringJahreswert(BaseModel):
@@ -310,6 +343,16 @@ class PVStringSaisonalwert(BaseModel):
     anzahl_jahre: int
 
 
+class PVStringMonatSumme(BaseModel):
+    """Ein Kalendermonat eines Strings, **summiert** über alle Jahre der Laufzeit (Päckchen BB4) — der Monatsverlauf
+    «Summe aller Jahre» in *Auswertungen → Prognose*. SOLL je Jahr wie die Jahressicht (`_string_jahreswert`: nur
+    Monate mit IST, F-34 im Lauf-Monat), nicht das Saisonal-Mittel."""
+    monat: int
+    monat_name: str
+    prognose_summe_kwh: float
+    ist_summe_kwh: float
+
+
 class PVStringGesamtlaufzeit(BaseModel):
     investition_id: int
     bezeichnung: str
@@ -326,6 +369,10 @@ class PVStringGesamtlaufzeit(BaseModel):
     ist_quelle: str = PV_QUELLE_FEHLT
     jahreswerte: list[PVStringJahreswert]
     saisonalwerte: list[PVStringSaisonalwert]
+    #: Päckchen BB4: IST − SOLL der Laufzeit (kWh), wie `abweichung_jahr_kwh` der Jahressicht.
+    abweichung_gesamt_kwh: float = 0.0
+    #: Päckchen BB4: je Kalendermonat Σ SOLL/IST über die Jahre (Monatsverlauf «Summe aller Jahre»).
+    monatswerte_summe: list[PVStringMonatSumme] = []
 
 
 class PVStringsGesamtlaufzeitResponse(BaseModel):
@@ -342,12 +389,22 @@ class PVStringsGesamtlaufzeitResponse(BaseModel):
     ist_gesamt_kwh: float
     abweichung_gesamt_kwh: float
     abweichung_gesamt_prozent: Optional[float]
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def spezifischer_ertrag_zeitraum_kwh_kwp(self) -> Optional[float]:
+        """Spezifischer Ertrag der Laufzeit (Päckchen Z-Client) = IST gesamt ÷ Anlagen-kWp, **nicht** aufs Jahr
+        normiert (anders als der Export-Sensor `spezifischer_ertrag_kwh_kwp`); Layer `spezifischer_ertrag_kwh_kwp`."""
+        return spezifischer_ertrag_kwh_kwp(self.ist_gesamt_kwh, self.anlagen_leistung_kwp)
+
     strings: list[PVStringGesamtlaufzeit]
     saisonal_aggregiert: list[PVStringSaisonalwert]
     bester_string: Optional[str]
     schlechtester_string: Optional[str]
     ist_quelle: str = PV_QUELLE_FEHLT
     vergleich_hinweis: Optional[str] = None
+    #: Päckchen CC: der Fall hinter `vergleich_hinweis` — ``verteilt`` · ``teilweise_verteilt`` · ``nicht_alle_werte``.
+    vergleich_grund: Optional[str] = None
 
 
 # RF-70 (5.11.2026, Bauform RF-1): die Route ist ein Orchestrator — Kopf (Anlage, Erzeuger ohne aktiv-Filter #123 mit
@@ -459,7 +516,7 @@ async def get_pv_strings(
 
     abweichung_gesamt = ist_gesamt - prognose_gesamt
     abweichung_gesamt_pct = (abweichung_gesamt / prognose_gesamt * 100) if prognose_gesamt > 0 else None
-    bester_string, schlechtester_string, vergleich_hinweis = _ranking(
+    bester_string, schlechtester_string, vergleich_hinweis, vergleich_grund = _ranking(
         [(s.bezeichnung, s.performance_ratio_jahr, s.ist_quelle) for s in strings_data]
     )
 
@@ -473,7 +530,7 @@ async def get_pv_strings(
         abweichung_gesamt_prozent=round(abweichung_gesamt_pct, 1) if abweichung_gesamt_pct is not None else None,
         strings=strings_data, bester_string=bester_string, schlechtester_string=schlechtester_string,
         ist_quelle=_rollup_quelle([s.ist_quelle for s in strings_data]),
-        vergleich_hinweis=vergleich_hinweis,
+        vergleich_hinweis=vergleich_hinweis, vergleich_grund=vergleich_grund,
     )
 
 
@@ -655,8 +712,8 @@ async def get_pv_strings_gesamtlaufzeit(
 
     abweichung_gesamt = ist_gesamt_total - prognose_gesamt_total
     abweichung_gesamt_pct = (abweichung_gesamt / prognose_gesamt_total * 100) if prognose_gesamt_total > 0 else None
-    bester_string, schlechtester_string, vergleich_hinweis = _ranking(
-        [(s.bezeichnung, s.performance_ratio_gesamt, s.ist_quelle) for s in strings_data]
+    bester_string, schlechtester_string, vergleich_hinweis, vergleich_grund = _ranking(
+        [(s.bezeichnung, s.performance_ratio_gesamt, s.ist_quelle) for s in strings_data], zeitraum="im Zeitraum",
     )
 
     return PVStringsGesamtlaufzeitResponse(
@@ -672,7 +729,7 @@ async def get_pv_strings_gesamtlaufzeit(
         strings=strings_data, saisonal_aggregiert=saisonal_aggregiert,
         bester_string=bester_string, schlechtester_string=schlechtester_string,
         ist_quelle=_rollup_quelle([s.ist_quelle for s in strings_data]),
-        vergleich_hinweis=vergleich_hinweis,
+        vergleich_hinweis=vergleich_hinweis, vergleich_grund=vergleich_grund,
     )
 
 
@@ -782,11 +839,14 @@ def _string_gesamtlaufzeit(ctx: _LaufzeitKontext, sammler: _SaisonalSammler, mod
     string_saisonal: dict[int, dict] = {m: {"ist_summe": 0, "anzahl": 0} for m in range(1, 13)}
     modul_prognose = ctx.prognose_per_modul.get(modul.id)
     modul_quellen: list[str] = []
+    soll_summe_je_monat: dict[int, float] = {m: 0 for m in range(1, 13)}
 
     for jahr in ctx.jahre:
-        jahreswert, prognose_jahr, ist_jahr = _string_jahreswert(
+        jahreswert, prognose_jahr, ist_jahr, soll_je_monat = _string_jahreswert(
             ctx, sammler, modul, modul_kwp, modul_prognose, jahr, string_saisonal,
         )
+        for monat, soll in soll_je_monat.items():
+            soll_summe_je_monat[monat] += soll
         jahreswerte.append(jahreswert)
         # Jahre ohne PV-Quelle zählen für den Modul-Rollup nicht mit (sonst
         # zöge ein leeres Jahr die Herkunft der Laufzeit auf „fehlt").
@@ -797,7 +857,8 @@ def _string_gesamtlaufzeit(ctx: _LaufzeitKontext, sammler: _SaisonalSammler, mod
 
     saisonalwerte = _string_saisonalwerte(ctx, sammler, modul, modul_kwp, modul_prognose, string_saisonal)
 
-    abweichung_gesamt_pct = ((ist_string_gesamt - prognose_string_gesamt) / prognose_string_gesamt * 100) if prognose_string_gesamt > 0 else None
+    abweichung_gesamt = ist_string_gesamt - prognose_string_gesamt
+    abweichung_gesamt_pct = (abweichung_gesamt / prognose_string_gesamt * 100) if prognose_string_gesamt > 0 else None
     perf_ratio_gesamt = (ist_string_gesamt / prognose_string_gesamt) if prognose_string_gesamt > 0 else None
     spez_ertrag = (ist_string_gesamt / modul_kwp) if modul_kwp > 0 else None
     return PVStringGesamtlaufzeit(
@@ -811,6 +872,14 @@ def _string_gesamtlaufzeit(ctx: _LaufzeitKontext, sammler: _SaisonalSammler, mod
         spezifischer_ertrag_kwh_kwp=round(spez_ertrag, 0) if spez_ertrag is not None else None,
         ist_quelle=_rollup_quelle(modul_quellen),
         jahreswerte=jahreswerte, saisonalwerte=saisonalwerte,
+        abweichung_gesamt_kwh=round(abweichung_gesamt, 1),
+        monatswerte_summe=[
+            PVStringMonatSumme(
+                monat=m, monat_name=MONATSNAMEN[m], prognose_summe_kwh=round(soll_summe_je_monat[m], 1),
+                ist_summe_kwh=round(string_saisonal[m]["ist_summe"], 1),
+            )
+            for m in range(1, 13)
+        ],
     ), prognose_string_gesamt, ist_string_gesamt
 
 
@@ -818,7 +887,8 @@ def _string_jahreswert(ctx: _LaufzeitKontext, sammler: _SaisonalSammler, modul, 
                        string_saisonal: dict[int, dict]):
     """Ein Jahr eines Strings: SOLL, IST, Herkunft und die Saisonal-Zählung (RF-31).
 
-    Rückgabe ``(PVStringJahreswert, prognose_jahr, ist_jahr)``; schreibt ``string_saisonal`` und
+    Rückgabe ``(PVStringJahreswert, prognose_jahr, ist_jahr, soll_je_monat)`` — ``soll_je_monat`` das SOLL je Monat mit
+    IST (Päckchen BB4: Σ über die Jahre = Monatsverlauf «Summe aller Jahre»); schreibt ``string_saisonal`` und
     ``sammler.saisonal_jahre`` fort.
     """
     md_by_inv, ist_quellen, nenner_je_monat = ctx.md_by_inv, ctx.ist_quellen, ctx.nenner_je_monat
@@ -827,14 +897,14 @@ def _string_jahreswert(ctx: _LaufzeitKontext, sammler: _SaisonalSammler, modul, 
     # dann summiert — sonst trüge das Anschaffungsjahr denselben
     # schiefen Vergleich wie die Monatssicht.
     if modul_prognose is not None:
-        prognose_jahr = sum(
-            soll_im_laufmonat(modul_prognose.get(m, 0), modul, jahr, m)
+        soll_je_monat = {
+            m: soll_im_laufmonat(modul_prognose.get(m, 0), modul, jahr, m)
             for m in months_with_data_year
-        )
+        }
     else:
         # N-613: je Monat der Nenner der Menge, die in diesem Monat trägt.
-        prognose_jahr = sum(
-            soll_im_laufmonat(
+        soll_je_monat = {
+            m: soll_im_laufmonat(
                 ctx.prognose_monate.get(m, 0) * (
                     modul_kwp / nenner_je_monat[(jahr, m)]
                     if nenner_je_monat[(jahr, m)] > 0 else 0
@@ -842,7 +912,9 @@ def _string_jahreswert(ctx: _LaufzeitKontext, sammler: _SaisonalSammler, modul, 
                 modul, jahr, m,
             )
             for m in months_with_data_year
-        )
+        }
+    # BB4: dieselbe Summe in derselben Reihenfolge wie bis dahin der Generator über `months_with_data_year`.
+    prognose_jahr = sum(soll_je_monat.values())
     ist_jahr = sum(md_by_inv.get(modul.id, {}).get(jahr, {}).get(m, 0) for m in range(1, 13))
     abweichung_pct = ((ist_jahr - prognose_jahr) / prognose_jahr * 100) if prognose_jahr > 0 else None
     perf_ratio = (ist_jahr / prognose_jahr) if prognose_jahr > 0 else None
@@ -862,7 +934,7 @@ def _string_jahreswert(ctx: _LaufzeitKontext, sammler: _SaisonalSammler, modul, 
             string_saisonal[monat]["ist_summe"] += ist_monat
             string_saisonal[monat]["anzahl"] += 1
             sammler.saisonal_jahre[monat].setdefault(_familie(modul, ctx.abgetreten), set()).add(jahr)
-    return jahreswert, prognose_jahr, ist_jahr
+    return jahreswert, prognose_jahr, ist_jahr, soll_je_monat
 
 
 def _string_saisonalwerte(ctx: _LaufzeitKontext, sammler: _SaisonalSammler, modul, modul_kwp, modul_prognose,

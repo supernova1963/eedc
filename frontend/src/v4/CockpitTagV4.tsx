@@ -297,7 +297,8 @@ function CockpitTagInner({ anlageId }: { anlageId: number | undefined }) {
       const kpiItems = baueTagKpis(tag, vortag, tagDetail?.soll_pv_kwh, {
         kwh: tagDetail?.speicher_ladung_netz_kwh,
         preis_cent: tagDetail?.speicher_effektiver_ladepreis_cent,
-      }, tagDetail?.netzbezug_preis_cent, tagDetail?.netzbezug_preis_herkunft).map((k) => ({
+        kosten_euro: tagDetail?.speicher_ladung_netz_kosten_euro,
+      }, tagDetail?.netzbezug_preis_cent, tagDetail?.netzbezug_preis_herkunft, tagDetail?.soll_erreichung_prozent).map((k) => ({
         ...k,
         parkId: `kpi:${k.title.toLowerCase().replace(/[^a-z0-9]+/gi, '-')}`,
       }))
@@ -392,6 +393,14 @@ function CockpitTagInner({ anlageId }: { anlageId: number | undefined }) {
 
         <div className="flex-1 min-w-0 space-y-4">
           <TagHeader datum={angezeigterTag} laedtTag={laedtTag} laufend={istHeute} tag={tag} onReload={laden} reloading={reloading} />
+
+          {/* Päckchen CC: `tag-detail` wird mit `.catch` geladen — fehlt es bei vorhandener Tag-Zeile, fehlen Speicher-Bilanz,
+              Wirkungsverluste und E-Mobilität im Hub. Das sagt die Sicht, statt still leere Blöcke zu zeigen. */}
+          {!error && !loading && tag && !tagDetail && (
+            <p className="text-xs text-amber-700 dark:text-amber-400">
+              Tagesdetail nicht geladen — Speicher und E-Mobilität ohne Werte. Neu laden über den Knopf im Kopf.
+            </p>
+          )}
 
           {error ? (
             // B8-Fehler-Baustein (S15): refetch räumt error ab + refetcht alle Quellen.

@@ -7,7 +7,7 @@
 import { api } from './client'
 
 // =============================================================================
-// Kurzfrist-Prognose Types
+// Tages-Prognose Types (Prognosen → Vergleich, `openmeteo_tage`)
 // =============================================================================
 
 export interface TagesPrognose {
@@ -23,22 +23,6 @@ export interface TagesPrognose {
   niederschlag_mm: number | null
   bewoelkung_prozent: number | null
   wetter_symbol: string
-}
-
-export interface KurzfristPrognose {
-  anlage_id: number
-  anlagenname: string
-  anlagenleistung_kwp: number
-  prognose_zeitraum: {
-    von: string | null
-    bis: string | null
-  }
-  summe_kwh: number
-  durchschnitt_kwh_tag: number
-  tageswerte: TagesPrognose[]
-  datenquelle: string
-  abgerufen_am: string
-  system_losses_prozent: number
 }
 
 // =============================================================================
@@ -71,6 +55,9 @@ export interface LangfristPrognose {
     bis: string | null
   }
   jahresprognose_kwh: number
+  /** Päckchen Z-Client: spezifischer Ertrag der Prognose = Jahresprognose ÷ kWp (Layer
+   *  `kennzahlen.spezifischer_ertrag_kwh_kwp`); `null` ohne kWp. */
+  spezifischer_ertrag_zeitraum_kwh_kwp?: number | null
   monatswerte: MonatsPrognose[]
   trend_analyse: TrendAnalyse
   datenquellen: string[]
@@ -113,30 +100,6 @@ export interface TrendAnalyseResponse {
   saisonale_muster: SaisonaleMuster
   degradation: Degradation
   datenquellen: string[]
-}
-
-// =============================================================================
-// Wetter-Vorhersage Types
-// =============================================================================
-
-export interface WetterVorhersageTag {
-  datum: string
-  temperatur_max_c: number | null
-  temperatur_min_c: number | null
-  niederschlag_mm: number | null
-  sonnenstunden: number | null
-  bewoelkung_prozent: number | null
-  wetter_symbol: string
-}
-
-export interface WetterVorhersage {
-  anlage_id: number
-  standort: {
-    latitude: number
-    longitude: number
-  }
-  tage: WetterVorhersageTag[]
-  abgerufen_am: string
 }
 
 // =============================================================================
@@ -407,20 +370,38 @@ export interface GenauigkeitsResponse {
   anzahl_tage: number
   anzahl_ausreisser?: number
   ausreisser_schwelle_prozent?: number
+  // N-782: welcher Prognosestand je Quelle in `tage` und den Kennzahlen steht
+  zeitpunkt?: GenauigkeitsZeitpunkt
+  // Päckchen CC: Quellen-Empfehlung — die Quelle mit der kleinsten MAE zu diesem Zeitpunkt (≥ 14 Tage Werte), im Backend gewählt
+  beste_quelle?: 'eedc' | 'openmeteo' | 'solcast' | null
+  beste_quelle_mae_prozent?: number | null
+  // Päckchen CC: die in der Anlage gewählte Prognosequelle (Einstellung)
+  prognose_quelle?: string | null
+  // Päckchen CC: Wächter «Korrektur nur, wenn sie hilft» (letzte 30 Tage, Day-Ahead)
+  korrektur_status?: KorrekturStatus | null
 }
+
+/** Päckchen CC: Stand des Wächters «Korrektur nur, wenn sie hilft» — `ausgesetzt` ⇒ eedc zeigt die Rohprognose. */
+export interface KorrekturStatus {
+  ausgesetzt: boolean
+  mae_kaskade_prozent: number | null
+  mae_roh_prozent: number | null
+  tage: number
+}
+
+/**
+ * Zeitpunkt des Genauigkeits-Trackings (N-782): `day_ahead` = gespeicherte
+ * Stundenprofile (eedc/OpenMeteo/Solcast bis 00:45, SFML beim ersten Aufruf der
+ * Live-Sicht), `mittag` = Stand beim ersten Lauf ab 12:00 (Päckchen CC),
+ * `abend` = nach Sonnenuntergang eingefrorene Tageswerte.
+ */
+export type GenauigkeitsZeitpunkt = 'day_ahead' | 'mittag' | 'abend'
 
 // =============================================================================
 // API Functions
 // =============================================================================
 
 export const aussichtenApi = {
-  /**
-   * Holt die Kurzfrist-PV-Prognose (7-16 Tage).
-   */
-  async getKurzfristPrognose(anlageId: number, tage: number = 14): Promise<KurzfristPrognose> {
-    return api.get<KurzfristPrognose>(`/aussichten/kurzfristig/${anlageId}?tage=${tage}`)
-  },
-
   /**
    * Holt die Langfrist-PV-Prognose (Monate).
    */
@@ -433,13 +414,6 @@ export const aussichtenApi = {
    */
   async getTrendAnalyse(anlageId: number, jahre: number = 3): Promise<TrendAnalyseResponse> {
     return api.get<TrendAnalyseResponse>(`/aussichten/trend/${anlageId}?jahre=${jahre}`)
-  },
-
-  /**
-   * Holt die reine Wettervorhersage ohne PV-Berechnung.
-   */
-  async getWetterVorhersage(anlageId: number, tage: number = 7): Promise<WetterVorhersage> {
-    return api.get<WetterVorhersage>(`/aussichten/wetter/${anlageId}?tage=${tage}`)
   },
 
   /**
@@ -459,8 +433,11 @@ export const aussichtenApi = {
   /**
    * Holt das Genauigkeits-Tracking (Prognose vs. IST).
    */
-  async getPrognosenGenauigkeit(anlageId: number, tage: number = 30, ausreisserAusblenden: boolean = false): Promise<GenauigkeitsResponse> {
-    return api.get<GenauigkeitsResponse>(`/aussichten/prognosen/${anlageId}/genauigkeit?tage=${tage}&ausreisser_ausblenden=${ausreisserAusblenden}`)
+  async getPrognosenGenauigkeit(
+    anlageId: number, tage: number = 30, ausreisserAusblenden: boolean = false,
+    zeitpunkt: GenauigkeitsZeitpunkt = 'day_ahead',
+  ): Promise<GenauigkeitsResponse> {
+    return api.get<GenauigkeitsResponse>(`/aussichten/prognosen/${anlageId}/genauigkeit?tage=${tage}&ausreisser_ausblenden=${ausreisserAusblenden}&zeitpunkt=${zeitpunkt}`)
   },
 
   /**

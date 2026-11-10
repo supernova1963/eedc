@@ -13,10 +13,11 @@
  * `sm:hidden`) und dass die Karten dieselben Zahlen tragen wie die Tabelle.
  * Der Hinweistext selbst darf nirgends mehr vorkommen — das ist die Zusage.
  *
- * Dazu N-128: die relative Abweichung ist gekappt.
+ * Dazu N-128: die relative Abweichung ist gekappt, und N-782: der Zeitpunkt-Umschalter des
+ * Genauigkeits-Trackings samt «nicht erhoben» (Backend-Seite: `test_genauigkeit_zeitpunkt.py`).
  */
 import { describe, it, expect } from 'vitest'
-import { render } from '@testing-library/react'
+import { render, fireEvent, within } from '@testing-library/react'
 
 import {
   PvgKpiMatrix, Pvg7TageTabelle, PvgGenauigkeitsTracking, PrognoseVergleichVM,
@@ -64,9 +65,11 @@ const vmVon = (over: Partial<PrognosenVergleich> = {}, g?: GenauigkeitsResponse)
   genauigkeit: g ?? genauigkeit(),
   genauigkeitsTage: 7,
   genauigkeitsModus: 'kompakt',
+  genauigkeitsZeitpunkt: 'day_ahead',
   ausreisserAusblenden: false,
   setGenauigkeitsTage: () => {},
   setGenauigkeitsModus: () => {},
+  setGenauigkeitsZeitpunkt: () => {},
   setAusreisserAusblenden: () => {},
   anlageId: 1,
   reload: () => {},
@@ -165,5 +168,73 @@ describe('N-128 — die relative Abweichung ist gekappt', () => {
 
     expect(container.textContent).toContain('(5 %)')
     expect(container.textContent).not.toContain('> 999 %')
+  })
+})
+
+describe('N-782 — Genauigkeits-Tracking: Zeitpunkt «Day-Ahead | Abend»', () => {
+  it('zeigt den Umschalter mit Day-Ahead als gewähltem Stand und reicht den Wechsel an das VM', () => {
+    const gesetzt: string[] = []
+    const v = { ...vmVon(), setGenauigkeitsZeitpunkt: (z: string) => gesetzt.push(z) } as unknown as PrognoseVergleichVM
+    const { getByRole } = render(<PvgGenauigkeitsTracking vm={v} />)
+    const gruppe = getByRole('group', { name: 'Zeitpunkt' })
+    expect(within(gruppe).getByRole('button', { name: 'Day-Ahead' }).getAttribute('aria-pressed')).toBe('true')
+    fireEvent.click(within(gruppe).getByRole('button', { name: 'Abend' }))
+    expect(gesetzt).toEqual(['abend'])
+  })
+
+  it('erklärt, was die zwei Zeitpunkte messen — und hängt die eedc-Spalte an keinen Lernfaktor', () => {
+    const { container } = render(<PvgGenauigkeitsTracking vm={vmVon({ eedc_lernfaktor: null })} />)
+    expect(container.textContent).toContain('Day-Ahead = Stand in der Nacht')
+    expect(container.textContent).toContain('per Satellit')
+    expect(container.textContent).not.toContain('Lernfaktor noch nicht verfügbar')
+  })
+
+  it('zeigt einen Tag ohne aufgezeichneten Stand als «nicht erhoben», in Tabelle und Karte', () => {
+    const g = genauigkeit({
+      tage: [
+        { datum: '2026-08-04', openmeteo_kwh: 11.0, eedc_kwh: null, solcast_kwh: 10.2, ist_kwh: 10.5, ist_ausreisser: false },
+      ],
+    } as Partial<GenauigkeitsResponse>)
+    const { container } = render(<PvgGenauigkeitsTracking vm={vmVon({}, g)} />)
+    expect(breitContainer(container)?.textContent).toContain('nicht erhoben')
+    expect(mobilText(container)).toContain('nicht erhoben')
+  })
+})
+
+describe('Päckchen CC — Zeitpunkt «Mittag», Quellen-Empfehlung, Korrektur-Wächter', () => {
+  it('bietet «Mittag» als dritten Zeitpunkt an und erklärt ihn', () => {
+    const gesetzt: string[] = []
+    const v = { ...vmVon(), setGenauigkeitsZeitpunkt: (z: string) => gesetzt.push(z) } as unknown as PrognoseVergleichVM
+    const { getByRole, container } = render(<PvgGenauigkeitsTracking vm={v} />)
+    fireEvent.click(within(getByRole('group', { name: 'Zeitpunkt' })).getByRole('button', { name: 'Mittag' }))
+    expect(gesetzt).toEqual(['mittag'])
+    expect(container.textContent).toContain('Mittag = der Stand um 12 Uhr')
+  })
+
+  it('nennt die beste Quelle aus dem Backend und den Weg zu Solcast, wenn Solcast nicht gewählt ist', () => {
+    const g = genauigkeit({ beste_quelle: 'solcast', beste_quelle_mae_prozent: 12.8, eedc_mae_prozent: 15.5, prognose_quelle: 'eedc' })
+    const { container } = render(<PvgGenauigkeitsTracking vm={vmVon({}, g)} />)
+    expect(container.textContent).toContain('Zum Zeitpunkt Day-Ahead trifft an dieser Anlage Solcast am besten (MAE 12,8 % gegen eedc 15,5 %).')
+    expect(container.textContent).toContain('Solcast kann unter Einstellungen')
+  })
+
+  it('ohne Zusatz, wenn eedc vorn ist oder Solcast schon gewählt — ohne Empfehlung kein Satz', () => {
+    const vorn = render(<PvgGenauigkeitsTracking vm={vmVon({}, genauigkeit({ beste_quelle: 'eedc', beste_quelle_mae_prozent: 6.0 }))} />)
+    expect(vorn.container.textContent).toContain('trifft an dieser Anlage eedc am besten (MAE 6,0 %).')
+    vorn.unmount()
+    const gewaehlt = render(<PvgGenauigkeitsTracking vm={vmVon({}, genauigkeit({ beste_quelle: 'solcast', beste_quelle_mae_prozent: 5.0, prognose_quelle: 'solcast' }))} />)
+    expect(gewaehlt.container.textContent).not.toContain('Solcast kann unter Einstellungen')
+    gewaehlt.unmount()
+    const ohne = render(<PvgGenauigkeitsTracking vm={vmVon()} />)
+    expect(ohne.container.textContent).not.toContain('am besten')
+  })
+
+  it('zeigt die Kopfzeile des Wächters nur, wenn die Korrektur ausgesetzt ist', () => {
+    const aus = genauigkeit({ korrektur_status: { ausgesetzt: true, mae_kaskade_prozent: 24.0, mae_roh_prozent: 21.0, tage: 30 } })
+    const { container, unmount } = render(<PvgGenauigkeitsTracking vm={vmVon({}, aus)} />)
+    expect(container.textContent).toContain('Korrektur ausgesetzt — die letzten 30 Tage war die Korrektur schlechter als OpenMeteo roh (MAE 24,0 % gegen 21,0 %)')
+    unmount()
+    const an = genauigkeit({ korrektur_status: { ausgesetzt: false, mae_kaskade_prozent: 18.0, mae_roh_prozent: 21.0, tage: 30 } })
+    expect(render(<PvgGenauigkeitsTracking vm={vmVon({}, an)} />).container.textContent).not.toContain('Korrektur ausgesetzt')
   })
 })

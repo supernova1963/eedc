@@ -59,6 +59,7 @@ from backend.core.berechnungen.prognose_korrektur import (
     KorrigiertesTagesprofil,
     korrigiere_tagesprofil,
 )
+from backend.core.berechnungen.prognose_korrektur_nutzen import KorrekturNutzen
 from backend.models.investition import Investition
 from backend.services.prognose_auswahl import lade_aktive_prognose
 from backend.models.tages_energie_profil import TagesEnergieProfil
@@ -116,6 +117,10 @@ class KanonTag:
     abregelung_om_stundenprofil_kwh: Optional[list] = None
     #: `{grenz_id: kW}` — die Grenzen, an denen gekappt wurde.
     grenzen_kw: Optional[dict] = None
+    #: Päckchen CC (Wächter «Korrektur nur, wenn sie hilft»): die 24 Export-Slots der **Kaskaden**-Reihe — immer gerechnet,
+    #: auch wenn der Wächter die Korrektur aussetzt und `profil` dann die Rohreihe trägt. Persistiert als
+    #: `pv_prognose_kaskade_stundenprofil`, damit der Wächter weiter gegen die Kaskade messen kann. `None` ohne Stundenprofil.
+    kaskade_stundenprofil_kwh: Optional[list] = None
 
     @property
     def roh_kwh(self) -> Optional[float]:
@@ -149,9 +154,12 @@ class KanonPrognose:
     """Kanonische Prognose über mehrere Tage. ``tage[i]`` = heute + i Tage."""
 
     tage: list[Optional[KanonTag]]
-    rest_heute_kwh: Optional[float]    # laufende Stunde anteilig + Σ Slots danach (#339)
+    #: Rest des Tages: laufende Stunde anteilig + Σ Slots danach (#339), **nachgeführt** — × `nachfuehr_faktor` aus dem
+    #: gemessenen Vormittag (Päckchen CC, `core/berechnungen/prognose_nachfuehrung.py`); `rest_modell_kwh` ist der
+    #: ungedämpfte Modell-Rest.
+    rest_heute_kwh: Optional[float]
     ist_bisher_kwh: Optional[float]    # IST heute bis jetzt (TagesEnergieProfil)
-    heute_rollend_kwh: Optional[float]  # ist_bisher + rest_heute
+    heute_rollend_kwh: Optional[float]  # ist_bisher + rest_heute (nachgeführt)
     skalar_fallback: Optional[float]   # Legacy-Lernfaktor (Diagnose/Fallback)
     #: ⭐ **Bis zu welchem Backward-Slot `ist_bisher_kwh` reicht** (N-544,
     #: 22.09.2026) — der höchste Slot, der einen Messwert beigesteuert hat, oder
@@ -166,6 +174,17 @@ class KanonPrognose:
     #: vergleicht er 13 IST-Stunden gegen 14 SOLL-Stunden und meldet morgens
     #: eine Abweichung, die es nicht gibt.
     ist_bisher_bis_slot: Optional[int] = None
+    #: Päckchen CC: hat der Wächter die Korrektur ausgesetzt (Faktor 1,0 auf allen Slots des Horizonts)?
+    korrektur_ausgesetzt: bool = False
+    #: Päckchen CC: der Wächter-Stand (beide MAE der letzten 30 Tage, Tage, Zustand) — `None`, wenn er nicht lief.
+    korrektur_nutzen: Optional[KorrekturNutzen] = None
+    #: Päckchen CC (Nachführung «Rest heute»): der Faktor `f = clip(1 + (r − 1)·√w, 0,4, 1,6)` aus IST bisher gegen
+    #: SOLL bis zur IST-Grenze — 1,0 ohne IST-Messung oder unterhalb der Schwellen; `None` ohne Stundenprofil.
+    nachfuehr_faktor: Optional[float] = None
+    #: Päckchen CC: Σ Prognose-Slots bis einschließlich `ist_bisher_bis_slot` (N-544-Regel) — `None` ohne Grenze/Profil.
+    soll_bisher_kwh: Optional[float] = None
+    #: Päckchen CC: der Rest aus dem Modell (#339, ungedämpft) — `rest_heute_kwh` = dieser × `nachfuehr_faktor`.
+    rest_modell_kwh: Optional[float] = None
 
 
 # Untergrenze des Kanon-Horizonts: so viele Tage, wie der weitest blickende
@@ -401,6 +420,8 @@ async def kanon_tagesprognose(
     # mit 12-kW-Grenze −12,4 %). `None`, solange zu wenige Tage ein
     # `lern_soll_kwh` tragen — dann bleibt es beim bisherigen Verhalten.
     skalar_gekappt = await _get_lernfaktor_gekappt(anlage.id, db)
+    # Päckchen CC: Wächter «Korrektur nur, wenn sie hilft» — je Tag einmal gemessen (Tagescache im Service).
+    nutzen = await _korrektur_nutzen(db, anlage.id, heute)
 
     # #347/#354: AC-Grenze. Sie kann dem Erzeuger selbst gehören (BKW) oder
     # dem Wechselrichter, dem er zugeordnet ist (PV-String) — beides löst
@@ -415,12 +436,30 @@ async def kanon_tagesprognose(
         tagesdaten=tagesdaten, invs=invs, gruppen=gruppen, gewichte=gewichte,
         by_datum=by_datum, skalar=skalar, skalar_gekappt=skalar_gekappt,
         grenzen=grenzen, kappung_aktiv=kappung_aktiv,
+        korrektur_ausgesetzt=bool(nutzen is not None and nutzen.ausgesetzt),
     )
     tage: list[Optional[KanonTag]] = []
     for offset in range(days):
         tage.append(await _kanon_tag(db, anlage, kx, offset))
 
-    return await _prognose_mit_heute(db, anlage, heute, tage, skalar)
+    prognose = await _prognose_mit_heute(db, anlage, heute, tage, skalar)
+    prognose.korrektur_ausgesetzt = kx.korrektur_ausgesetzt
+    prognose.korrektur_nutzen = nutzen
+    return prognose
+
+
+async def _korrektur_nutzen(db, anlage_id: int, heute: date) -> Optional[KorrekturNutzen]:
+    """Der Wächter-Stand (Päckchen CC) — ``None``, wenn er nicht ermittelt werden konnte (dann gilt die Korrektur).
+
+    Aufruf über das Modul (``pkn.korrektur_nutzen``) — Monkeypatch-fähig wie ``_get_lernfaktor``.
+    """
+    from backend.services import prognose_korrektur_nutzen as pkn
+
+    try:
+        return await pkn.korrektur_nutzen(db, anlage_id, heute)
+    except Exception as e:  # der Kanon darf am Wächter nicht sterben
+        logger.warning("Korrektur-Wächter übersprungen (Anlage %s): %s: %s", anlage_id, type(e).__name__, e)
+        return None
 
 
 @dataclass
@@ -439,6 +478,8 @@ class _KanonKontext:
     skalar_gekappt: Optional[float]
     grenzen: dict
     kappung_aktiv: bool
+    #: Päckchen CC: Wächter «Korrektur nur, wenn sie hilft» — `True` ⇒ Faktor 1,0 auf allen Tagen des Horizonts.
+    korrektur_ausgesetzt: bool = False
 
 
 @dataclass
@@ -762,9 +803,15 @@ async def _korrigierter_tag(
         # N-551: `om_slots` sind die **gekappten** Slots ⇒ der Rückfall für
         # Stunden ohne Korrekturprofil ist der auf der gekappten Basis
         # gelernte Faktor (sonst der bisherige Roh-Faktor).
-        profil = korrigiere_tagesprofil(
+        kaskade = korrigiere_tagesprofil(
             s.om_slots, faktoren,
             fallback_faktor=kx.skalar_gekappt if kx.skalar_gekappt is not None else kx.skalar,
+        )
+        # Päckchen CC: Wächter «Korrektur nur, wenn sie hilft» — ausgesetzt ⇒ Faktor 1,0 (die gekappte Rohreihe).
+        # Die Kaskade ist trotzdem gerechnet; sie reist als `kaskade_stundenprofil_kwh` zur Persistenz.
+        profil = (
+            korrigiere_tagesprofil(s.om_slots, [None] * 24, fallback_faktor=None)
+            if kx.korrektur_ausgesetzt else kaskade
         )
         eedc_kwh = profil.tageswert_kwh
         om_kwh = round(sum(s.om_slots), 1)
@@ -774,14 +821,14 @@ async def _korrigierter_tag(
     else:
         # OpenMeteo-Schätzpfad (Tagessumme ohne Hourly): Tages-Ertrag ×
         # Skalar, kein Profil (bisheriges Verhalten, eedc_prognose_service).
-        profil = None
+        profil = kaskade = None
         # ⚠ **Hier bleibt der ROHE Faktor** (N-551): `pv_ertrag_sum` ist der
         # ungekappte OpenMeteo-Tagesertrag — dieselbe Basis, auf der der
         # Skalar gelernt wurde. Der gekappte Faktor gehört nur dorthin, wo
         # die Reihe selbst gekappt ist (Stundenpfad oben).
-        eedc_kwh = (
-            round(s.pv_ertrag_sum * (kx.skalar or 1.0), 1) if s.pv_ertrag_sum else None
-        )
+        # Päckchen CC: ausgesetzte Korrektur ⇒ auch hier Faktor 1,0.
+        faktor = 1.0 if kx.korrektur_ausgesetzt else (kx.skalar or 1.0)
+        eedc_kwh = round(s.pv_ertrag_sum * faktor, 1) if s.pv_ertrag_sum else None
         om_kwh = round(s.pv_ertrag_sum, 1) if s.pv_ertrag_sum else None
         vm_kwh = nm_kwh = None
 
@@ -803,6 +850,7 @@ async def _korrigierter_tag(
             [round(v, 3) for v in s.abregelung_slots] if (kappen and s.has_hourly) else None
         ),
         grenzen_kw=(s.grenzen_kw or None) if kappen else None,
+        kaskade_stundenprofil_kwh=list(kaskade.stundenprofil_export_kwh) if kaskade is not None else None,
     )
 
 
@@ -811,7 +859,7 @@ async def _prognose_mit_heute(
 ) -> KanonPrognose:
     """Die Tage plus die rollenden „heute"-Größen (IST bisher, Rest, nachgeführt)."""
     # Rollende „heute"-Größen aus den korrigierten Slots + IST.
-    rest_heute = ist_bisher = heute_rollend = None
+    rest_heute = ist_bisher = heute_rollend = ist_roh = None
     ist_bis_slot: Optional[int] = None
     heute_tag = tage[0] if tage else None
     if heute_tag is not None:
@@ -828,12 +876,15 @@ async def _prognose_mit_heute(
         from backend.services.energie_profil.kanal_stunden import stunden_der_tage
 
         ist_zeilen = await stunden_der_tage(db, anlage.id, heute, heute, felder=("pv_kw",))
-        ist_p = ist_profil(ist_zeilen, jetzt_stunde=now.hour, datum=heute)
-        ist_bisher = round(ist_p.tageswert_kwh or 0.0, 1)
+        ist_p = ist_profil(ist_zeilen, datum=heute)
+        ist_roh = ist_p.tageswert_kwh or 0.0
+        ist_bisher = round(ist_roh, 1)
         # N-544: bis wohin reicht diese Summe? Der hoechste Slot, der einen
         # Messwert beigesteuert hat — `ist_profil` summiert jede Zeile mit
         # `pv_kw`, unabhaengig von `now.hour`. Wer eine SOLL-Summe daneben
         # stellt (P6), braucht genau diese Grenze und nicht die Uhr.
+        # N-784: `ist_profil` legt die Mischzeilen eines Kanal-Tags auf den
+        # Backward-Slot — die Grenze ist damit an jedem Tag ein Backward-Index.
         ist_bis_slot = max(
             [h for h, v in enumerate(ist_p.slots_kw) if v is not None]
             # Zählerlücken wie HA: ein gebündelter Slot trägt Energie in der
@@ -841,14 +892,10 @@ async def _prognose_mit_heute(
             + list(ist_p.buendel_stunden),
             default=None,
         )
+    nf = _Nachfuehrung()
     if heute_tag is not None and heute_tag.profil is not None:
-        slots = heute_tag.profil.stunden_kwh
-        # #339: laufende Stunde anteilig nach verstrichenen Minuten. Backward-
-        # Konvention (#144): Slot N = Energie [N-1, N), also ist slots[now.hour]
-        # bereits abgelaufen und slots[now.hour + 1] die laufende Stunde. Ohne den
-        # frac-Term sinkt der Rest nur einmal je Stunde in EINEM Sprung (bei
-        # kleinen Anlagen 5–8 kWh) statt gleichmäßig.
-        rest_heute = rest_aus_slots(slots, now)
+        nf = _nachfuehrung(heute_tag.profil.stunden_kwh, now, ist_roh, ist_bis_slot)
+        rest_heute = nf.rest_kwh
         heute_rollend = round((ist_bisher or 0.0) + rest_heute, 1)
 
     return KanonPrognose(
@@ -858,6 +905,49 @@ async def _prognose_mit_heute(
         heute_rollend_kwh=heute_rollend,
         skalar_fallback=skalar,
         ist_bisher_bis_slot=ist_bis_slot,
+        nachfuehr_faktor=nf.faktor,
+        soll_bisher_kwh=nf.soll_bisher_kwh,
+        rest_modell_kwh=nf.rest_modell_kwh,
+    )
+
+
+@dataclass
+class _Nachfuehrung:
+    """Ergebnis von `_nachfuehrung` — ohne Stundenprofil alles `None`."""
+    rest_kwh: Optional[float] = None
+    rest_modell_kwh: Optional[float] = None
+    faktor: Optional[float] = None
+    soll_bisher_kwh: Optional[float] = None
+
+
+def _nachfuehrung(slots, now, ist_roh: Optional[float], ist_bis_slot: Optional[int]) -> _Nachfuehrung:
+    """Rest heute aus dem Modell (#339) und nachgeführt aus dem gemessenen Vormittag (Päckchen CC, Variante K).
+
+    #339: laufende Stunde anteilig nach verstrichenen Minuten. Backward-Konvention (#144): Slot N = Energie [N-1, N),
+    also ist slots[now.hour] bereits abgelaufen und slots[now.hour + 1] die laufende Stunde. Ohne den frac-Term sinkt
+    der Rest nur einmal je Stunde in EINEM Sprung (bei kleinen Anlagen 5–8 kWh) statt gleichmäßig.
+
+    Nachführung: SOLL bisher = Σ Slots bis einschließlich der IST-Grenze (N-544, `soll_bisher_kwh` — dieselbe Summe wie
+    die Abweichungs-Ampel), SOLL Tag = Σ Slots, `f = nachfuehr_faktor(IST, SOLL bisher, SOLL Tag)` mit dem ungerundeten
+    IST (`ist_roh`); ohne IST-Messung (`ist_bis_slot is None`) ist `f = 1,0` und der Rest bleibt das Modell. Formeln im
+    Layer `core/berechnungen/prognose_nachfuehrung.py`.
+    """
+    from backend.core.berechnungen.prognose_nachfuehrung import (
+        nachfuehr_faktor,
+        rest_nachgefuehrt_kwh,
+        soll_bisher_kwh,
+    )
+
+    rest_modell = rest_aus_slots(slots, now)
+    soll_bisher = soll_bisher_kwh(slots, ist_bis_slot)
+    faktor = nachfuehr_faktor(
+        ist_roh if ist_bis_slot is not None else None, soll_bisher, sum(float(v or 0.0) for v in slots),
+    )
+    return _Nachfuehrung(
+        rest_kwh=rest_nachgefuehrt_kwh(rest_modell, faktor),
+        rest_modell_kwh=rest_modell,
+        faktor=round(faktor, 3),
+        soll_bisher_kwh=round(soll_bisher, 2) if soll_bisher is not None else None,
     )
 
 

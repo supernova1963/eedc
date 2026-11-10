@@ -40,15 +40,24 @@ describe('baueTagKpis — Kosten-Kacheln', () => {
   })
 
   it('zeigt 0,00 € wenn ein Ladepreis bekannt ist, aber nichts geladen wurde', () => {
-    const k = kachel(baueTagKpis(tag(), null, null, { kwh: 0, preis_cent: 22.5 }), 'Batterieladung Netz')!
+    const k = kachel(baueTagKpis(tag(), null, null, { kwh: 0, preis_cent: 22.5, kosten_euro: 0 }), 'Batterieladung Netz')!
     expect(k.value).toBe('0,00')
     expect(k.subtitle).toBe('0,0 kWh · Ø 22,5 ct/kWh')
   })
 
   it('rechnet bei echter Netzladung wie bisher', () => {
-    const k = kachel(baueTagKpis(tag(), null, null, { kwh: 2.5, preis_cent: 22.5 }), 'Batterieladung Netz')!
+    // Päckchen Z-Client: die Kosten kommen aus `tagDetail.speicher_ladung_netz_kosten_euro` (Layer
+    // `netzladung_kosten_euro`: 2,5 kWh × 22,5 ct = 0,5625 €) — der Client zeigt sie und nennt die Faktoren.
+    const k = kachel(baueTagKpis(tag(), null, null, { kwh: 2.5, preis_cent: 22.5, kosten_euro: 0.5625 }), 'Batterieladung Netz')!
     expect(k.value).toBe('0,56')
     expect(k.ergebnis).toBe('= 0,56 €')
+    expect(k.berechnung).toBe('2,5 kWh × 22,5 ct/kWh')
+  })
+
+  it('Päckchen Z-Client: der Client rechnet die Kosten nicht selbst — ohne Backend-Feld „—"', () => {
+    const k = kachel(baueTagKpis(tag(), null, null, { kwh: 2.5, preis_cent: 22.5 }), 'Batterieladung Netz')!
+    expect(k.value).toBe('—')
+    expect(k.ergebnis).toBeUndefined()
   })
 
   it('ohne Speicher (kwh null / kein tagDetail) bleibt die Kachel aus', () => {
@@ -58,7 +67,7 @@ describe('baueTagKpis — Kosten-Kacheln', () => {
 
   it('„Ø-Preis Netz" entfällt ohne Netzbezug — 0 ÷ 0 ist kein Preis', () => {
     expect(kachel(baueTagKpis(tag({ netzbezug: 0 }), null), 'Ø-Preis Netz')).toBeUndefined()
-    const mitBezug = kachel(baueTagKpis(tag({ netzbezug: 4, netzbezug_kosten: 1.2 }), null), 'Ø-Preis Netz')!
+    const mitBezug = kachel(baueTagKpis(tag({ netzbezug: 4, netzbezug_kosten: 1.2 }), null, null, undefined, 30), 'Ø-Preis Netz')!
     expect(mitBezug.value).toBe('30,0')
   })
 
@@ -67,12 +76,28 @@ describe('baueTagKpis — Kosten-Kacheln', () => {
     // 31,6 ct/kWh, während dieselbe Seite mit ~29,5 ct rechnete. Der Quotient
     // erbte die Rundung der beiden Zahlen, aus denen er gebildet wurde.
     const t = tag({ netzbezug: 0.19, netzbezug_kosten: 0.06 })
-    expect(kachel(baueTagKpis(t, null), 'Ø-Preis Netz')!.value).toBe('31,6')
     const k = kachel(baueTagKpis(t, null, null, undefined, 29.53), 'Ø-Preis Netz')!
     expect(k.value).toBe('29,5')
     expect(k.formel).toContain('Netzbezugspreis des Tages')
     // Die Menge daneben bleibt die gemessene — nur der Preis kommt vom Tarif.
     expect(k.subtitle).toBe('0,2 kWh · 0,06 €')
+  })
+})
+
+describe('Päckchen BB — Tag-Felder aus dem Backend, kein Rückfall', () => {
+  it('ohne Tagesdetail (kein Tarif) zeigt „Ø-Preis Netz" „—" statt Kosten ÷ Menge aus gerundeten Werten (Z-Client H3)', () => {
+    const k = kachel(baueTagKpis(tag({ netzbezug: 0.19, netzbezug_kosten: 0.06 }), null), 'Ø-Preis Netz')!
+    expect(k.value).toBe('—')
+    expect(k.subtitle).toBe('0,2 kWh · 0,06 €')
+  })
+
+  it('die SOLL-Erreichung kommt aus dem Tagesdetail — der Client teilt nicht', () => {
+    // 77 ist aus 8 kWh ÷ 40 kWh nicht ableitbar: stünde hier die alte Rechnung, käme 20 % heraus.
+    const mit = kachel(baueTagKpis(tag({ erzeugung: 8 }), null, 40, undefined, null, undefined, 77), 'PV-Erzeugung')!
+    expect(mit.subtitle).toContain('SOLL 40,0 kWh · 77 %')
+    const ohne = kachel(baueTagKpis(tag({ erzeugung: 8 }), null, 40), 'PV-Erzeugung')!
+    expect(ohne.subtitle).toContain('SOLL 40,0 kWh')
+    expect(ohne.subtitle).not.toContain('%')
   })
 })
 

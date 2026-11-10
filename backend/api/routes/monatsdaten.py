@@ -12,7 +12,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, s
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, computed_field, model_validator
 
 from backend.core.exceptions import not_found
 from backend.api.deps import get_db
@@ -26,6 +26,8 @@ from backend.core.calculations import (
 # Alias: das Response-Feld unten heißt genauso wie die Funktion.
 from backend.core.berechnungen.anlagen_kwp import anlagen_kwp as berechne_anlagen_kwp
 from backend.core.berechnungen.pv_verteilung import wandlungsverluste_prozent
+from backend.core.berechnungen.pv_anteil_ladung import pv_anteil_prozent
+from backend.core.berechnungen.energie import direktverbrauch_legacy_kwh, eigenverbrauch_legacy_kwh
 from backend.services.ust_satz import grundgesamtheit as ust_grundgesamtheit, ust_satz_des_jahres
 from backend.services.strompreis_aggregator import lade_preis_aggregate_je_monat
 from backend.utils.sonstige_positionen import ist_gueltige_position
@@ -353,12 +355,20 @@ class AggregierteMonatsdatenResponse(BaseModel):
     speicher_ladung_kwh: Optional[float]  # Summe alle Speicher
     speicher_entladung_kwh: Optional[float]  # Summe alle Speicher
     speicher_netzladung_kwh: Optional[float]  # Anteil Netzladung an speicher_ladung_kwh (R17/Verlauf)
+    #: Päckchen Y: Round-Trip-η des Monats (Layer `speicher_wirkungsgrad`, ohne ΔSoC) aus den beiden Mengen der Zeile;
+    #: ``None`` ohne Speicher, unter der Mindest-Ladung oder über 100 % (nicht ermittelbar).
+    speicher_effizienz_prozent: Optional[float] = None
     # Aggregiert aus InvestitionMonatsdaten - Wärmepumpe
     wp_strom_kwh: Optional[float]
     wp_strom_heizen_kwh: Optional[float]  # Nur > 0 wenn getrennte_strommessung=True (#191)
     wp_strom_warmwasser_kwh: Optional[float]  # Nur > 0 wenn getrennte_strommessung=True (#191)
     wp_heizung_kwh: Optional[float]
     wp_warmwasser_kwh: Optional[float]
+    # N-778 (7.11.2026): die gemessene Wärme des Monats nach Regel D1 (Gesamtwert vor Summanden, je Gerät) —
+    # `WpFakten.waerme_kwh`. Bis dahin addierte der Client `wp_heizung_kwh + wp_warmwasser_kwh` und verlor so
+    # einen Gesamt-Wärmemengenzähler («—» bzw. eine zu kleine Summe neben Cockpit → Monat). `None` = keine
+    # Wärmepumpe aktiv oder keine Wärme gemessen; eine gemessene 0 bleibt 0.
+    wp_waerme_kwh: Optional[float] = None
     # ── Arbeitszahl je Monat (ADR-002/P12, 02.09.2026) ───────────────────────
     # Bis dahin rechnete der **Client** sie selbst
     # (`pages/auswertung/types.ts`: `calcCOP(wp_waerme, wp_strom)`) — dieselbe
@@ -377,6 +387,15 @@ class AggregierteMonatsdatenResponse(BaseModel):
     # Aggregiert aus InvestitionMonatsdaten - Wallbox
     wallbox_ladung_kwh: Optional[float]
     wallbox_ladung_pv_kwh: Optional[float]
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def wallbox_pv_anteil_prozent(self) -> Optional[float]:
+        """PV-Anteil der Wallbox-Ladung (Päckchen Z-Client) aus den zwei Feldern dieser Zeile, so wie sie die Antwort
+        trägt (auf 0,1 kWh gerundet) — Spalte «Wallbox PV-Anteil» der Werte-Tabelle; ungerundet, die Tabelle rundet
+        und mittelt (`aggregation: 'avg'`). Layer `pv_anteil_prozent`."""
+        return pv_anteil_prozent(self.wallbox_ladung_pv_kwh, self.wallbox_ladung_kwh)
+
     # Berechnet
     direktverbrauch_kwh: Optional[float]
     eigenverbrauch_kwh: Optional[float]
@@ -433,9 +452,10 @@ class AggregierteMonatsdatenResponse(BaseModel):
     # `netto_ertrag_euro` abgezogen; einzeln hier, damit *Auswertungen → Finanzen* ihn im Rechenweg nennen kann.
     dienstliche_ladekosten_euro: float = 0.0
     netzbezug_kosten_euro: Optional[float]
-    # Einspeise-Erlös + EV- + BKW-Ersparnis + Erlös eigener Satz + Sonstige Positionen (netto) − USt — die Stufe 1 der
-    # Ergebnis-Leiter, dieselbe Zahl wie die Cockpit-Kachel des Monats (GLOSSAR „Netto-Ertrag (PV)"). Bis 03.10.2026
-    # ohne die Sonstigen Positionen; die Finanz-Sicht schlug sie selbst auf (A1). Sie LIEST das Feld seither nur.
+    # Einspeise-Erlös + EV- + BKW-Ersparnis + Erlös eigener Satz + Sonstige Positionen (netto) − Dienstliche
+    # Ladekosten (N-633) − USt — die Stufe 1 der Ergebnis-Leiter (`berechne_ergebnis`, `monatsdaten_aggregiert.py`),
+    # dieselbe Zahl wie die Cockpit-Kachel des Monats (GLOSSAR „Netto-Ertrag (PV)"); die Finanz-Sicht liest das Feld
+    # und schlägt nichts selbst auf (A1).
     netto_ertrag_euro: Optional[float]
     # Netto-Ertrag − Netzbezugskosten — eine eigene Größe dieser Tabelle (ohne WP-/E-Mob-Ersparnis, ohne
     # Betriebskosten; Sonstige Positionen seit 03.10.2026 über den Netto-Ertrag MIT), NICHT die Stufe 2 der
@@ -941,8 +961,9 @@ async def get_monatsdaten(monatsdaten_id: int, db: AsyncSession = Depends(get_db
         einspeisung_kwh=md.einspeisung_kwh,
         netzbezug_kwh=md.netzbezug_kwh,
         pv_erzeugung_kwh=pv_kwh or 0,
-        batterie_ladung_kwh=md.batterie_ladung_kwh or 0,
-        batterie_entladung_kwh=md.batterie_entladung_kwh or 0,
+        # Speicher aus den Monats-Fakten (P10), nicht aus den Legacy-Spalten `md.batterie_*`, die kein Service mehr schreibt.
+        batterie_ladung_kwh=(_fakt.speicher.ladung_kwh or 0) if _fakt is not None else 0,
+        batterie_entladung_kwh=(_fakt.speicher.entladung_kwh or 0) if _fakt is not None else 0,
         # #392: Monatswert der variablen Vergütung vor dem Stammwert —
         # dieselbe Bauform wie der Flex-Ø beim Netzbezug darunter.
         einspeiseverguetung_cent=resolve_einspeise_preis_cent(
@@ -1047,8 +1068,9 @@ async def create_monatsdaten(
 
     # Berechnete Felder (werden berechnet wenn pv_erzeugung vorhanden)
     if md.pv_erzeugung_kwh is not None:
-        md.direktverbrauch_kwh = max(0, md.pv_erzeugung_kwh - md.einspeisung_kwh - (md.batterie_ladung_kwh or 0))
-        md.eigenverbrauch_kwh = md.direktverbrauch_kwh + (md.batterie_entladung_kwh or 0)
+        md.direktverbrauch_kwh = direktverbrauch_legacy_kwh(
+            md.pv_erzeugung_kwh, md.einspeisung_kwh, (md.batterie_ladung_kwh or 0))
+        md.eigenverbrauch_kwh = eigenverbrauch_legacy_kwh(md.direktverbrauch_kwh, (md.batterie_entladung_kwh or 0))
         md.gesamtverbrauch_kwh = md.eigenverbrauch_kwh + md.netzbezug_kwh
     elif md.einspeisung_kwh > 0 or md.netzbezug_kwh > 0:
         # Fallback: Gesamtverbrauch kann geschätzt werden
@@ -1303,11 +1325,11 @@ async def update_monatsdaten(
     # geschlagen, schlägt aber legacy:unknown und fallback.
     new_computed: dict[str, Optional[float]] = {}
     if md.pv_erzeugung_kwh is not None:
-        new_computed["direktverbrauch_kwh"] = max(
-            0, md.pv_erzeugung_kwh - md.einspeisung_kwh - (md.batterie_ladung_kwh or 0)
+        new_computed["direktverbrauch_kwh"] = direktverbrauch_legacy_kwh(
+            md.pv_erzeugung_kwh, md.einspeisung_kwh, (md.batterie_ladung_kwh or 0)
         )
-        new_computed["eigenverbrauch_kwh"] = (
-            new_computed["direktverbrauch_kwh"] + (md.batterie_entladung_kwh or 0)
+        new_computed["eigenverbrauch_kwh"] = eigenverbrauch_legacy_kwh(
+            new_computed["direktverbrauch_kwh"], (md.batterie_entladung_kwh or 0)
         )
         new_computed["gesamtverbrauch_kwh"] = new_computed["eigenverbrauch_kwh"] + md.netzbezug_kwh
     elif md.einspeisung_kwh > 0 or md.netzbezug_kwh > 0:

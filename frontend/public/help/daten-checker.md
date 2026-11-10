@@ -27,6 +27,7 @@
    8d. [PV – Messpunkt (Anlagenzähler und Strings)](#48d-pv--messpunkt)
    8e. [PV – Zähler steht](#48e-pv--zaehler-steht)
    9. [Datenquellen – HA-Statistics](#49-sensor-mapping--ha-statistics)
+   9a. [Datenquellen – Status](#49a-datenquellen--status)
    10. [Energieprofil – fehlende Tageswerte](#410-energieprofil--fehlende-tageswerte)
    11. [Geräte-Connector ohne Monatswert](#411-geraete-connector-ohne-monatswert)
    12. [Zeitzone – Abweichung zu Home Assistant](#412-zeitzone--abweichung-zu-home-assistant)
@@ -66,7 +67,7 @@ Die Prüfung läuft pro Anlage, ist nicht zeitgesteuert und liest immer den aktu
 
 - **KPI-Karten** oben: Gesamtzahl Fehler / Warnungen / Hinweise / OK über alle Kategorien.
 - **Monatsdaten-Abdeckung**: Fortschrittsbalken „X von Y Monaten erfasst" ab Installationsdatum bis Vormonat.
-- **Klappbare Kategorie-Sektionen**: Jede Kategorie zeigt im Kopf eine Sammel-Bewertung (z. B. *„2 Warnungen, 1 Hinweis"* oder *OK*) und enthält die Einzelbefunde.
+- **Klappbare Kategorie-Sektionen**: Jede Kategorie zeigt im Kopf eine Sammel-Bewertung (z. B. *„2 Warnungen, 1 Hinweis"* oder *OK*) und enthält die Einzelbefunde. Kategorien mit Fehlern oder Warnungen starten aufgeklappt, alle anderen zugeklappt — auch solche, die nur Hinweise tragen, selbst wenn daran ein Reparatur-Knopf steht (etwa die Drift-Prüfung [§4.17](#417-datenquellen-drift)). Der Kopf nennt die Zahl der Hinweise; ein Klick darauf öffnet die Kategorie.
 - **Befund-Zeilen** mit Symbol (Severity), Meldung, optionalen Details und „Beheben"-Link zur betroffenen Stelle (Datenquellen, Monatsdaten, Komponenten-Formular usw.).
 
 > Der Daten-Checker umfasst inzwischen mehr Kategorien als die hier dokumentierten Kern-Kategorien (u. a. Datenquelle-Drift, Daten-Quellen-Konflikte, Batterie-Vorzeichen-Historie, PV-Doppelerfassungs-Verdacht, E-Mobilität-Pool-Pflege, Plug-in-Hybrid ohne bestimmbaren Fahranteil). Sie folgen derselben Severity- und „Beheben"-Logik. Eine vollständige Dokumentation dieser jüngeren Kategorien ist ein separater Redaktions-Schritt (kein Bestandteil des reinen IA-Umbaus).
@@ -108,7 +109,7 @@ Einzelne Befunde haben über Releases hinweg ihre Stufe gewechselt. Beispiele:
 
 ## 3. Verfügbarkeit nach Installationsvariante <a name="3-verfuegbarkeit-nach-installationsvariante"></a>
 
-eedc prüft **36 Kategorien** (Stand 25.10.2026; dazugekommen ist *Sensor ohne Langzeitstatistik*, am 24.10.2026 *Strompreise – eigener Wärmepumpen-Tarif* und *Betriebsmodus – unbekannter Wert*; am 10.10.2026 waren es 33, davor stand hier 26 — die Zahl war mit den jüngeren Kategorien nicht mitgewachsen). Die meisten greifen in jeder Installation identisch; **zwölf** hängen an Voraussetzungen, die je nach Installation gegeben sind oder nicht — sie sind unten fett markiert. Die Kategorie *Datenquelle – aktiver Pfad* trägt zwei Befund-Familien (Zeile 12 und die Statusmeldungen der Datenquellen) und steht deshalb nur einmal in der Tabelle.
+eedc prüft **38 Kategorien** (Stand 9.11.2026, gezählt an `CheckKategorie`; seit 9.11.2026 führt die Tabelle alle 38 — am 25.10.2026 stand hier 36, am 10.10.2026 33, davor 26 — die Zahl war mit den jüngeren Kategorien nicht mitgewachsen). Die meisten greifen in jeder Installation identisch; **vierzehn** hängen an Voraussetzungen, die je nach Installation gegeben sind oder nicht — sie sind unten fett markiert. Die Kategorie *Datenquelle – aktiver Pfad* trägt zwei Befund-Familien (Zeile 12 und die Statusmeldungen der Datenquellen, Zeile 12a) und zählt deshalb einmal.
 
 | # | Kategorie | HA Add-on | Standalone (Docker / native) |
 |---|-----------|-----------|------------------------------|
@@ -130,6 +131,7 @@ eedc prüft **36 Kategorien** (Stand 25.10.2026; dazugekommen ist *Sensor ohne L
 | 10 | **Datenquellen – HA-Statistics** (§4.9) | greift | **wird übersprungen** (keine HA-LTS verfügbar) |
 | 11 | Energieprofil – fehlende Tageswerte (§4.10) | greift | greift |
 | 12 | Geräte-Connector ohne Monatswert (§4.11) | greift | greift |
+| 12a | Datenquelle – aktiver Pfad: Status (§4.9a) | greift — OK, wenn die Tageswerte aus der HA-Statistik oder dem HA-Spiegel (Kanal) kommen, sonst ein Hinweis mit der Quelle | greift als Hinweis „Standalone-Modus aktiv“ (keine HA-Verbindung) |
 | 13 | **Zeitzone – Abweichung zu HA** (§4.12) | greift | **wird übersprungen** (keine HA-Verbindung) |
 | 14 | Sonstige Positionen – wiederkehrend (§4.13) | greift | greift |
 | 15 | Sonstige Positionen – Doppelerfassung (§4.13) | greift | greift |
@@ -148,6 +150,8 @@ eedc prüft **36 Kategorien** (Stand 25.10.2026; dazugekommen ist *Sensor ohne L
 | 26 | Verbrauchszähler – Zählerstände (§4.23) | greift | greift |
 | 27 | Vergleichspreise – Ø Benzinpreis (§4.24) | greift | greift |
 | 28 | Wetterwerte – fehlende Monatswerte (§4.25) | greift | greift |
+| 29 | **E-Mobilität – unbekannter Zustand** ([Einstellungen §7.10](HANDBUCH_EINSTELLUNGEN.md#710-zustand-und-sitzung-e-mobilität)) | nur wenn ein Zustand der E-Mobilität (Ladezustand, Lademodus, Fahrzeug-Ladezustand, Standort) zugeordnet ist — gelesen wird der aktuelle HA-Zustand | nur wenn ein Zustand zugeordnet ist — gelesen wird der letzte MQTT-Wert |
+| 30 | **E-Mobilität – Fahrzeug der Steuerung unbekannt** ([Einstellungen §7.10](HANDBUCH_EINSTELLUNGEN.md#710-zustand-und-sitzung-e-mobilität)) | nur wenn „Fahrzeug am Ladepunkt“ an einer Wallbox zugeordnet ist | nur wenn „Fahrzeug am Ladepunkt“ zugeordnet ist (MQTT) |
 
 ### Was bedeutet „wird übersprungen"?
 
@@ -330,9 +334,11 @@ Im **Standalone-Betrieb** kommen die Werte über MQTT (`eedc/<anlage>/…`-Topic
 | **\[Name\]: Gesamtzähler kleiner als die Summe der Achsen (Monate)** | ⚠️ WARNING | Bei getrennter Strommessung mit **zusätzlichem** Gesamtzähler: *Strom Heizen* und *Strom Warmwasser* sind Teile des Gesamtverbrauchs und können zusammen nicht mehr sein. Meist misst der Gesamtzähler nur einen Teil des Geräts (nur das Außengerät, nur einen Stromkreis) — oder eine der Achsen zählt fremden Verbrauch mit. **eedc rechnet in diesen Monaten mit der Summe der Achsen**, damit nichts verloren geht. ⚠ Nur diese Richtung ist ein Fehler; ein **höherer** Gesamtzähler ist der Normalfall (Standby, Steuerung, Umwälzpumpen). | Im Monatsabschluss prüfen, welcher Zähler welchen Wert liefert. Stammt der Gesamtwert aus dem Monatsformular, nennt die Meldung zusätzlich den Handgriff: Feld *Stromverbrauch* leeren und speichern — dann rechnet eedc die Summe neu. |
 | **\[Name\]: Der Gesamtzähler misst deutlich mehr als die Achsen — misst er nur die Wärmepumpe? (Monate)** | ℹ️ INFO | Mehr als ein Viertel des Verbrauchs liegt weder auf *Strom Heizen* noch auf *Strom Warmwasser*; eedc führt diese Menge als **„nicht aufgeteilt"**. **Das ist oft richtig** — Standby, Steuerung und Umwälzpumpen laufen auf keiner der beiden Achsen. Es kann aber auch heißen, dass am Gesamtzähler noch etwas anderes hängt. **Eine Frage, kein Fehler:** eedc weiß nicht, was am Zähler hängt, und behauptet es nicht. | *Einstellungen → Datenquellen*, den Gesamtzähler prüfen. Stimmt er, ist nichts zu tun — der Hinweis bleibt als Auskunft stehen. Stammt der Gesamtwert aus dem Monatsformular, kann er auch ein stehen gebliebener alter Stand sein; dann Feld *Stromverbrauch* im Monatsabschluss leeren und speichern. |
 | **\[Name\]: „Strom Heizbetrieb“ und „Strom Heizen“ beide belegt** | ⚠️ WARNING | Am Gerät sind der Betriebsart-Zähler **„Strom Heizbetrieb“** und der Summand **„Strom Heizen“** zugeordnet (HA-Sensor oder MQTT). Der Betriebsart-Zähler hat Vorrang — „Strom Heizen“ wird nicht gezählt. Misst er wirklich den Heizbetrieb, ist das richtig; liegt dort ein anderer Zähler (etwa der Kühlbetrieb), zeigt eedc unter Heizen dessen Wert. **Nur Heizen:** Warmwasser hat keinen Betriebsart-Zähler, Kühlen keinen Summanden — dort gibt es diese Doppelbelegung nicht. | Wer Heizen und Warmwasser getrennt misst, lässt den Betriebsart-Zähler unter *Einstellungen → Datenquellen* leer (Quelle „keine“). Misst er den Heizbetrieb, ist nichts zu tun. |
+| **\[Name\]: Strom Heizen/Warmwasser zugeordnet, aber „Getrennte Strommessung“ ist aus** | ⚠️ WARNING | Am Gerät ist **„Strom Heizen“** oder **„Strom Warmwasser“** zugeordnet (HA-Sensor oder MQTT), der Schalter **„Getrennte Strommessung (Heizen / Warmwasser)“** an der Komponente ist aber aus. Diese beiden Zähler zählt eedc nur mit Schalter als Teile des Wärmepumpen-Stroms; ohne ihn rechnet es den Strom allein aus dem Gesamtzähler — Heizen und Warmwasser bleiben leer, der ganze Strom steht unter „nicht aufgeteilt“. eedc schaltet nicht selbst um: der Schalter sagt, wie du misst. | *Einstellungen → Komponenten → \[Name\] → bearbeiten*: „Getrennte Strommessung“ einschalten. Nutzt du bewusst nur den Gesamtzähler, löse stattdessen die Zuordnung von „Strom Heizen“/„Strom Warmwasser“ unter *Einstellungen → Datenquellen*. |
 | **\[Name\]: Heizwärme fehlt in N Monat(en)** | ℹ️ INFO | Die abgegebene Wärmemenge fehlt — ohne sie gibt es für diese Monate keine gemessene JAZ und keinen COP-Vergleich. Der Stromverbrauch bleibt vollständig erfasst, die Stromauswertung ist unberührt. | **Mit Wärmemengenzähler:** Werte nachtragen. **Ohne Wärmemengenzähler bleibt der Hinweis stehen** — und das ist Absicht: eedc zeigt bei JAZ/COP dann „—" statt einer Scheinzahl. Der Hinweis sagt dir, *warum* dort ein Strich steht. |
 | **\[Name\]: Warmwasser-Wärme in N Monat(en) gespeichert — eine Split-Klimaanlage hat keinen Warmwasserkreis** | ℹ️ INFO | An einem Gerät der Art **Luft-Luft (Klimaanlage)** steht ein Warmwasser-Wert. Solche Geräte haben keinen Warmwasserkreis; eedc bietet das Feld dort seit 2026 nicht mehr an, ältere Einträge blieben aber stehen — und sind im Monatsabschluss deshalb **nicht mehr erreichbar**. **Der Wert zählt nicht als Wärme des Geräts** — sonst stünde dort eine Ersparnis gegenüber der Heizung, die das Gerät nie erzeugt hat. | Stammt der Wert aus dem **Kühlbetrieb**, trag ihn unter *Nutzenergie Kuehlbetrieb* ein — daraus rechnet eedc die **Arbeitszahl Kühlen**. Den gespeicherten Wert selbst entfernst du mit dem Knopf **„Wert entfernen"** direkt an der Meldung; er nimmt alle genannten Monate mit und fragt vorher nach. eedc löscht und verschiebt nichts von allein. |
 | **\[Name\]: \[Feld\] in N Monat(en) gespeichert — dieses Gerät führt das Feld nicht mehr** | ℹ️ INFO | Dasselbe für **jedes** Feld, das an einer Einstellung des Geräts hängt: Netzladung an einem Speicher ohne „lädt aus dem Netz", V2H-Entladung an einem E-Auto ohne V2H, Speicherwerte an einem Balkonkraftwerk ohne Speicher, getrennte Ströme Heizen/Warmwasser nach Abschalten der getrennten Strommessung. Wird der Schalter zurückgestellt, verschwindet das Feld aus dem Monatsabschluss — ein vorher gespeicherter Wert bleibt in der Zeile und ist nicht mehr erreichbar. Eine **0** meldet der Checker nicht. | Stimmt die Einstellung: **„Wert entfernen"** an der Meldung. Soll der Wert weiter zählen: die Einstellung am Gerät zurückstellen — dann erscheint das Feld wieder im Monatsabschluss. Ein Feld, das das Gerät führt, lässt sich über den Knopf **nicht** entfernen (das Backend weist es ab) — es gehört im Monatsabschluss geleert. |
+| **\[Name\]: \[Feld\] in N Monat(en) gespeichert — ein Gerät der Kategorie «\[Kategorie\]» führt das Feld nicht** | ℹ️ INFO | Dasselbe für ein Gerät unter **Sonstiges**: Was es führt, hängt an der **Kategorie** (Erzeuger, Verbraucher, Speicher, Abgabe an Dritte, Zähler). Nach einem Wechsel der Kategorie bleiben die alten Werte in der Zeile stehen — eedc liest sie für die neue Kategorie nicht mehr, **der Wert zählt in keiner Bilanz**. Beispiel: ein Gerät, das früher als **Erzeuger** erfasst war und jetzt **„Abgabe an Dritte“** ist, trägt seine alten Monate noch im Feld *Erzeugung*; Verlauf und Bilanz zeigen dort 0. Gemeldet wird nur, was **kein** Rechenweg der Kategorie liest — ein Erzeuger ohne *Erzeugung*, aber mit *Verbrauch*, liest diesen Wert als Erzeugung und bleibt still; ohne gepflegte Kategorie liest eedc alle Felder. Eine Meldung je Feld, nicht je Monat; eine **0** meldet der Checker nicht. | **Abgabe an Dritte, Feld *Erzeugung* oder *Verbrauch*:** Stammt der Wert aus der Zeit vor der Umstellung, trag die Menge unter *Einstellungen → Daten → Monatsdaten* ins Feld **„Abgabe (kWh)“** ein und entferne den alten Wert mit **„Wert entfernen“** an der Meldung. **Andere Kategorien und Teilgrößen** (Eigenverbrauch, Einspeisung, PV-/Netz-Anteil — auch an einem Abgabe-Gerät): Stimmt die Kategorie, **„Wert entfernen“**; soll der Wert weiter zählen, die Kategorie zurückstellen — dann liest eedc das Feld wieder. eedc löscht und verschiebt nichts von allein. |
 
 > **Gefragt wird nur nach Größen, die eedc an deinem Gerät erwartet — und das steht in der Feld-Registry, nicht in der Bauart.** Die Wärmepumpenart darf dort **vorschlagen**: Bei **Luft-Luft (Klimaanlage)** ist die Heizwärme optional statt Pflicht (ein Wärmemengenzähler ist dort praktisch nie vorhanden), einen Warmwasserkreis gibt es gar nicht — der Checker verlangt deshalb weder die monatliche Heizwärme noch die Tages-Zusatzzähler aus §4.6 und erwartet bei getrennter Strommessung nur „Strom Heizen". Bei einer **Brauchwasser-Wärmepumpe** ist umgekehrt die Heizseite zurückgestuft: gefragt wird nach Warmwasser, nicht nach Heizwärme oder Heizstrom. Der **Stromverbrauch** bleibt überall Pflicht, die Stromauswertung funktioniert vollständig; JAZ/COP zeigen „—" mit Grund statt einer Scheinzahl. Eine Wärmepumpe **ohne** eingetragene Art gilt als klassische Wärmepumpe — eine fehlende Angabe schaltet die Erwartung nicht ab. Wer an seiner Klimaanlage doch einen Wärmemengenzähler hat, ordnet ihn weiterhin zu; die Registry nimmt nichts weg, sie stuft nur zurück.
 >
@@ -620,8 +626,9 @@ Spitzen-Prüfung (§4.7) an einem Tag aus dem HA-Spiegel etwas.
 
 **Reparatur in Home Assistant:** *Entwicklerwerkzeuge → Statistik* → den Sensor suchen → beim Symbol „Wert anpassen"
 die genannte Stunde wählen und den Zuwachs auf die echte Menge setzen. eedc gleicht die korrigierte Statistik beim
-nächtlichen Abgleich (02:45) von selbst ab — oder sofort: der **„Beheben"**-Knopf des Befunds führt in die
-Energieprofil-Pflege, dort in der Reparatur-Werkbank **„HA-Spiegel jetzt abgleichen"** wählen. Hast du einen betroffenen Monat schon gespeichert („Aus HA laden" oder
+nächtlichen Abgleich (02:45) von selbst ab — oder sofort mit dem Knopf **„Aus Home Assistant neu übernehmen"** am
+Befund: er holt die Statistik aus Home Assistant neu (derselbe Lauf wie „HA-Spiegel jetzt abgleichen" in der
+Reparatur-Werkbank) und baut danach den Tag des ersten genannten Funds neu auf. Hast du einen betroffenen Monat schon gespeichert („Aus HA laden" oder
 Import), übernimm ihn danach im Monatsabschluss neu — ein gespeicherter Monat ändert sich nicht von allein.
 
 ---
@@ -651,11 +658,12 @@ steigt die Summe.
 
 **Reparatur in Home Assistant:** wie beim Sprung — *Entwicklerwerkzeuge → Statistik* → den Sensor suchen → beim Symbol
 „Wert anpassen" die genannte Stunde wählen und die Menge auf den echten Wert setzen. eedc gleicht die korrigierte
-Statistik beim nächtlichen Abgleich (02:45) von selbst ab. Einen Monat, den du mit dem Rückgang schon gespeichert hast
+Statistik beim nächtlichen Abgleich (02:45) von selbst ab — oder sofort mit dem Knopf **„Aus Home Assistant neu
+übernehmen"** am Befund (wie beim Sprung, §4.8b). Einen Monat, den du mit dem Rückgang schon gespeichert hast
 („Aus HA laden" oder Import), übernimm danach im Monatsabschluss neu — ein gespeicherter Monat ändert sich nicht von
 allein. Lädst du einen solchen Monat mit „Aus HA laden" in einen Monat, der schon Daten hat, nennt der Vergleichsdialog die
-Felder mit negativem Wert unter „Rückgang in Home Assistant" und denselben Weg. eedc verwirft den Rückgang nicht selbst und hat keinen Reparatur-Knopf dafür: die Quelle ist die Statistik in
-Home Assistant.
+Felder mit negativem Wert unter „Rückgang in Home Assistant" und denselben Weg. eedc verwirft den Rückgang nicht selbst: die Quelle ist die Statistik in
+Home Assistant, und der Knopf übernimmt nur, was Home Assistant hat.
 
 **Sensor ersetzt?** Stammt ein Rückgang von einem Sensor, den du inzwischen durch einen neuen ersetzt hast, zählen seine Werte weiter, und die Meldung kennzeichnet ihn mit „(Vorgänger-Sensor, zugeordnet bis TT.MM.JJJJ)“. Statt in Home Assistant zu korrigieren, kannst du dann mit der Werkbank-Operation „Werte vor dem Sensorbeginn verwerfen“ seine Werte vor dem Beginn des neuen Sensors entfernen (*Einstellungen → Daten → Energieprofil-Pflege*, [Energieprofil §4](HANDBUCH_ENERGIEPROFIL.md#4-reparatur--pflege)); die Meldung verschwindet dann.
 
@@ -741,6 +749,25 @@ Der Sensor-Picker in den Datenquellen zeigt alle Sensoren ohne harten Filter —
 | **Alle N kWh-Sensor(en) in HA-Long-Term-Statistics verfügbar** | ✅ OK | Jeder zugeordnete kWh-Sensor liefert LTS — Reparatur-Werkzeuge wirken auf alle Felder. | – |
 
 > **Wichtige Lektion:** Frühere Hinweistexte sagten „vergangene Tage bleiben leer". Das ist irreführend, weil HA-Long-Term-Statistics ohnehin erst ab Aktivierung von `state_class` angelegt werden — vor der Aktivierung existieren keine Werte zum Holen, egal auf welchem Weg du den Zähler in Ordnung bringst. Der eigentliche Schmerzpunkt ist daher: ohne `state_class` **wirken die Reparatur-Werkzeuge in der Energieprofil-Pflege nicht**. Ab Aktivierung läuft's lückenfrei, davor bleibt's leer.
+
+---
+
+### 4.9a Datenquellen – Status (Kategorie „Datenquelle – aktiver Pfad“) <a name="49a-datenquellen--status"></a>
+
+> **Variantenhinweis:** Die Kategorie meldet in beiden Varianten genau einen Befund: welcher Weg die Tages- und Stundenwerte zuletzt
+> geschrieben hat. Im **HA Add-on** ist das die HA-Langzeitstatistik oder der HA-Spiegel (Kanal-Tag), im **Standalone-Betrieb** der
+> Snapshot-Pfad.
+
+**Was wird geprüft:** die Herkunft der jüngsten Tageszeile mit Stundenwerten (die häufigste Quelle ihrer Felder) und ob Home Assistant
+erreichbar ist.
+
+| Meldung | Severity | Bedeutung | Behebung |
+|---------|----------|-----------|----------|
+| **HA-Statistics als Source-of-Truth aktiv** | ✅ OK | Die Tageswerte kommen direkt aus der HA-Langzeitstatistik; Σ Stunden = Tag. | – |
+| **HA-Spiegel (Kanal) als Quelle aktiv** | ✅ OK | Tag und Stunde kommen aus dem gespiegelten HA-Zähler (Kanal-Tag); Σ Stunden = Tag. | – |
+| **Noch keine Tageswerte aggregiert** | ℹ️ INFO | HA ist erreichbar, aber es gibt noch keine Tageszeile mit Stundenwerten — direkt nach der Einrichtung normal. | Bleibt es dabei: die kWh-Zähler in Einstellungen → Datenquellen zuordnen; zurückliegende Tage holt „Lücken aus HA-LTS nachfüllen". |
+| **HA-Statistics-Pfad bereit, Aggregate aus älterer Quelle** | ℹ️ INFO | Die jüngste Tageszeile stammt aus einem anderen Weg (z. B. `auto:monatsabschluss`); die Meldung nennt Datum und Quelle. | Den Tag neu aggregieren (Reparatur-Werkbank) — danach gilt die HA-Quelle. |
+| **Standalone-Modus aktiv (kein HA-LTS)** | ℹ️ INFO | Keine HA-Langzeitstatistik erreichbar; die Werte entstehen aus den 5-Minuten-Snapshots. | Standalone: keine Aktion. HA Add-on: HA-Verbindung prüfen. |
 
 ---
 
@@ -950,7 +977,7 @@ Hintergrund: [Issue #263](https://github.com/supernova1963/eedc-homeassistant/is
 
 > **Variantenhinweis:** Nur mit HA-Verbindung. Ohne sie gibt es keine Vergleichsseite, die Kategorie wird still übersprungen.
 
-**Was wird geprüft:** Stimmt das, was eedc für die letzten 90 Tage gespeichert hat, noch mit dem überein, was Home Assistant für denselben Tag ausweist? Geprüft werden **zwei Achsen**: die **PV-Tagessumme** über alle Erzeuger, und **jede andere zugeordnete Komponente einzeln** — Wallbox, E-Auto, Wärmepumpe, Sonstiges, dazu Einspeisung und Netzbezug.
+**Was wird geprüft:** Stimmt das, was eedc für die letzten 90 Tage gespeichert hat, noch mit dem überein, was Home Assistant für denselben Tag ausweist? Geprüft werden **zwei Achsen**: die **PV-Tagessumme** über alle PV-Module und Balkonkraftwerke, und **jede andere zugeordnete Komponente einzeln** — Wallbox, E-Auto, Wärmepumpe, Sonstiges, dazu Einspeisung und Netzbezug.
 
 **Warum das zählt:** eedc hat seine Tageswerte über die Zeit aus verschiedenen Quellen aufgebaut. Ältere Tage können auf einem Stand stehen, den ein heutiger Abruf anders beantwortet. Diese Werte tragen nicht nur die Energiebilanz, sondern auch Wirtschaftlichkeit und CO₂ — eine Abweichung an der Wallbox kostet genauso wie eine an der PV.
 
@@ -960,17 +987,19 @@ Hintergrund: [Issue #263](https://github.com/supernova1963/eedc-homeassistant/is
 
 | Meldung | Severity | Bedeutung | Behebung |
 |---------|----------|-----------|----------|
-| **N Tag(e) weichen von HA-Statistics ab** (PV) | ℹ️ INFO | Für diese Tage liegen eedc und HA bei der **PV-Tagessumme** um **mindestens 2 kWh und mindestens 5 %** auseinander. Beide Schwellen zusammen, damit Rundungs-Unterschiede still bleiben. Die Details nennen je Tag beide Zahlen. | Je Tag steht ein Knopf **„Tag reparieren"** daneben — er holt den Tag frisch aus HA. Massen-Reparaturen gibt es bewusst nur in der Reparatur-Werkbank, damit sie aktiv gewählt werden. |
-| **\[Gerät\]: N Tag(e) weichen von HA-Statistics ab** | ℹ️ INFO | Dieselbe Frage für **eine** Komponente, mit denselben beiden Schwellen. **Ein Eintrag je Gerät**, nicht je Tag — genannt wird der Tag mit der größten Abweichung, samt beider Zahlen. | Der Knopf **„Tag reparieren"** rechnet den genannten Tag neu. Für alle Tage des Geräts: Reparatur-Werkbank. |
+| **N Tag(e) weichen von HA-Statistics ab** (PV) | ℹ️ INFO | Für diese Tage liegen eedc und HA bei der **PV-Tagessumme** um **mindestens 2 kWh und mindestens 5 %** auseinander. Beide Schwellen zusammen, damit Rundungs-Unterschiede still bleiben. Die Details nennen je Tag beide Zahlen. | Je Tag steht ein Knopf daneben (die Kategorie startet zugeklappt, weil Drift ein Hinweis ist — siehe [§1](#aufbau-der-ergebnis-fläche)). Liest eedc deine Anlage aus der Statistik von Home Assistant (HA-Spiegel), heißt er **„Aus Home Assistant neu übernehmen"**: er holt die Statistik neu und baut den Tag danach auf — der Tag zeigt dann, was Home Assistant zeigt. Hast du in Home Assistant korrigiert, ist das der Weg. An einem Tag, den eedc nicht aus dem HA-Spiegel liest (ältere Tage, ein Gerät ohne Kanal), steht in der Zeile: der Knopf holt die Zählerstatistik dieses Tages neu und baut Tag und Gerätewerte — ein gespeicherter Leistungsverlauf bleibt stehen. Ohne HA-Spiegel heißt er **„Tag reparieren"** und baut den Tag neu auf wie *„Tag neu aggregieren"* in der Reparatur-Werkbank ([§5.6](#56-counter-spike-im-tagesprofil-reparieren)). Massen-Reparaturen gibt es bewusst nur in der Reparatur-Werkbank, damit sie aktiv gewählt werden. |
+| **\[Gerät\]: N Tag(e) weichen von HA-Statistics ab** | ℹ️ INFO | Dieselbe Frage für **eine** Komponente, mit denselben beiden Schwellen. **Ein Eintrag je Gerät**, nicht je Tag — genannt wird der Tag mit der größten Abweichung, samt beider Zahlen. | Derselbe Knopf wie in der PV-Zeile, für den genannten Tag: **„Aus Home Assistant neu übernehmen"** holt die Statistik neu (das korrigiert jeden Tag aus dem HA-Spiegel, nicht nur den genannten) und baut den Tag danach auf; ohne HA-Spiegel **„Tag reparieren"** — für alle Tage des Geräts dann die Reparatur-Werkbank. |
 | **Keine signifikanten Abweichungen zu HA-Statistics (letzte 90 Tage)** | ✅ OK | eedc und HA sind sich auf beiden Achsen einig. | — |
 
-> **Tage aus dem HA-Spiegel bzw. den eigenen Zählerständen:** dort nimmt eedc PV, Einspeisung, Netzbezug und Speicher selbst aus dem Spiegel — die eedc-Seite des Vergleichs *ist* dann die Zahl von Home Assistant, eine Abweichung der alten gespeicherten Tageszeile wird nicht mehr gemeldet (*Cockpit → Tag* zeigt sie ohnehin nicht). Geräte ohne Kanal (Wallbox, E-Auto, Wärmepumpe) vergleicht die Prüfung wie bisher.
+> **Tage aus dem HA-Spiegel bzw. den eigenen Zählerständen:** dort nimmt eedc PV, Einspeisung, Netzbezug und Speicher selbst aus dem Spiegel — die eedc-Seite des Vergleichs *ist* dann die Zahl von Home Assistant, eine Abweichung der alten gespeicherten Tageszeile wird nicht mehr gemeldet (*Cockpit → Tag* zeigt sie ohnehin nicht). Wallbox, E-Auto, Wärmepumpe und sonstige Geräte kommen an einem solchen Tag ebenfalls aus ihren Kanälen, wenn sie dort welche haben; nur ein Gerät ohne Kanal-Wert liest die Prüfung aus der gespeicherten Tageszeile. Was aus dem Spiegel kommt, schreibt eedc nicht in die Tageszeile — deshalb ändert ein Neu-Aggregieren daran nichts; an einer Anlage mit HA-Spiegel trägt die Zeile darum „Aus Home Assistant neu übernehmen" (zuerst der Abgleich mit Home Assistant, dann der Tag).
+>
+> **Nach einer Korrektur in Home Assistant** (etwa unter *Entwicklerwerkzeuge → Statistik*) trägt der Spiegel bis zum nächtlichen Abgleich um 02:45 noch den alten Stand. So lange bleibt der Drift-Eintrag stehen; danach verschwindet er von selbst. Sofort geht es mit **„Aus Home Assistant neu übernehmen"** an der Zeile (oder „HA-Spiegel jetzt abgleichen" in der Reparatur-Werkbank, [§6](#reparatur-werkzeuge-in-der-energieprofil-pflege) — dort ohne den Tag neu aufzubauen).
 >
 > **Verglichen wird nur, was HA für den Tag auch liefern konnte.** Ein Zähler ohne Summen-Spalte (§4.9) taucht hier nicht als Lücke auf — sonst meldete der Vergleich Phantom-Drift und böte einen Knopf an, der korrekte Werte mit 0 überschreibt.
 >
-> **Und nur, was auf beiden Seiten einen Wert hat.** Liefert HA einen Wert und die gespeicherte Tageszeile nicht, ist das eine **Lücke** und gehört §4.10 *Energieprofil – fehlende Tageswerte* — kein zweiter Turm über denselben Sachverhalt. Der **Speicher** (`batterie_*`) steht in keiner der beiden Achsen: Sein Tages-Netto darf legitim ~0 sein, und sein Vorzeichen hat mit §4.21 *Batterie-Vorzeichen in der Historie* eine eigene Prüfung.
+> **Und je Gerät nur, was auf beiden Seiten einen Wert hat.** Liefert HA für ein Gerät einen Wert und die gespeicherte Tageszeile nicht, ist das eine **Lücke** und gehört §4.10 *Energieprofil – fehlende Tageswerte* — kein zweiter Turm über denselben Sachverhalt. Die PV-Tagessumme vergleicht die Prüfung dagegen, sobald eine der beiden Seiten mehr als 0 kWh trägt. Der **Speicher** (`batterie_*`) steht in keiner der beiden Achsen: Sein Tages-Netto darf legitim ~0 sein, und sein Vorzeichen hat mit §4.21 *Batterie-Vorzeichen in der Historie* eine eigene Prüfung.
 >
-> **Höchstens 20 PV-Tage, und je Tag nur, was an diesem Tag in Betrieb war.** Die PV-Zeilen stehen nach der Größe der Abweichung; die 20 größten erscheinen einzeln, der Rest gesammelt als **„… plus N weitere Tag(e) mit Drift"** mit dem Weg in die Reparatur-Werkbank. Die HA-Seite liest an jedem Tag nur die Sensoren der Komponenten, die an diesem Tag in Betrieb waren (Anschaffung, Stilllegung, „aktiv") — ein später angeschafftes oder stillgelegtes Modul erzeugt so keine Abweichung, die kein „Tag reparieren" auflösen könnte.
+> **Höchstens 20 PV-Tage, und je Tag nur, was an diesem Tag in Betrieb war.** Die PV-Zeilen stehen nach der Größe der Abweichung; die 20 größten erscheinen einzeln, der Rest gesammelt als **„… plus N weitere Tag(e) mit Drift"** mit dem Weg in die Reparatur-Werkbank. Die HA-Seite liest an jedem Tag nur die Sensoren der Komponenten, die an diesem Tag in Betrieb waren (Anschaffung, Stilllegung, „aktiv") — ein später angeschafftes oder stillgelegtes Modul erzeugt so keine Abweichung, die kein Knopf auflösen könnte.
 
 ---
 
@@ -1293,6 +1322,8 @@ Nach jedem Schritt: Daten-Checker erneut prüfen.
 3. Bestätigen — der Lauf zieht zuerst die SensorSnapshots des Tages frisch aus HA-Statistics und baut danach Tagesprofil + Tageszusammenfassung neu.
 4. Der Spike ist danach weg, vorausgesetzt der zugrunde liegende kWh-Zähler hat den fraglichen Stundenslot in HA-LTS plausibel.
 
+> **Ohne Leistungskurve.** Liegt der Tag außerhalb der Aufbewahrung des Home-Assistant-Verlaufs (oder hat die Anlage keinen Leistungssensor) und hat auch die Langzeitstatistik keine Leistungskurve, schreibt „Tag neu aggregieren“ die Gerätewerte und Stunden-kWh trotzdem aus der **Zählerstatistik** von Home Assistant neu; der gespeicherte Leistungsverlauf und die Tagesspitzen bleiben stehen. Eigene Zählerstände von eedc nimmt der Lauf dafür nicht — sie tragen oft genau den Sprung, den du in Home Assistant korrigiert hast. Hat auch die Zählerstatistik nichts, bleibt der Tag unverändert.
+
 > **Stundenwerte und Tages-Kennzahlen sind zwei Wege.** „Tag neu aggregieren“ baut Stundenwerte und Tageszeile neu. Die Tages-Kennzahlen der Energiebilanz (Netzbezug, Einspeisung, PV, Speicher) liest eedc, wo er den Tag deckt, aus dem **HA-Spiegel**, einer Kopie der HA-Langzeitstatistik, ohne Deckel wie das HA-Energie-Dashboard. Steht der Sprung in HAs Statistik selbst (§4.8b), hilft das Neu-Aggregieren dort nicht: in HA korrigieren, dann übernimmt der nächtliche Abgleich (02:45) die Korrektur — oder sofort **„HA-Spiegel jetzt abgleichen“** in der Werkbank.
 
 **Vorgehen für mehrere Tage / längere Bereiche:**
@@ -1337,7 +1368,7 @@ Diese Werkzeuge laufen über die **Reparatur-Werkbank** unter Einstellungen → 
 |---------|-------|---------------|
 | **Lücken aus HA-LTS nachfüllen** | Holt fehlende Tage aus HA-LTS für zugeordnete kWh-Felder (additiv, bestehende Tage bleiben unverändert). | §4.9 OK für betroffene Sensoren |
 | **Mehrere Tage neu aggregieren** | Zieht Snapshots des Bereichs aus HA-LTS frisch (Resnap) **und** baut Tages-/Monats-Aggregate neu. Repariert Counter-Spikes wie aus §4.7. | §4.9 OK |
-| **Tag neu aggregieren** | Wie *Mehrere Tage neu aggregieren*, aber für einen einzelnen Tag. | §4.9 OK |
+| **Tag neu aggregieren** | Wie *Mehrere Tage neu aggregieren*, aber für einen einzelnen Tag. Hat Home Assistant für den Tag keine Leistungswerte mehr (Verlauf gelöscht oder kein Leistungssensor) und auch die Langzeitstatistik keine Kurve, schreibt der Lauf die Gerätewerte aus der Zählerstatistik von Home Assistant neu und lässt den gespeicherten Leistungsverlauf stehen — die Rückmeldung sagt: „Gerätewerte aus der Home-Assistant-Statistik neu geschrieben; der gespeicherte Leistungsverlauf blieb stehen." Nur wenn auch die Zählerstatistik nichts hat, bleibt der Tag unverändert, und die Meldung sagt warum. | §4.9 OK |
 | **HA-Spiegel jetzt abgleichen** | Gleicht den HA-Spiegel (Quelle der Tages- und Monats-Kennzahlen der Energiebilanz) sofort mit der HA-Statistik ab — derselbe Lauf wie nachts um 02:45. Nach einer Korrektur in HA (§4.8b). Stundenwerte und Tageszeile baut er nicht neu. | HA-Betrieb |
 | **Kraftstoffpreise nachpflegen** | Holt EU-Oil-Bulletin-Preise für E-Auto- und Verbrenner-Vergleich rückwirkend. | unabhängig von §4.9 |
 
@@ -1346,7 +1377,7 @@ Diese Werkzeuge laufen über die **Reparatur-Werkbank** unter Einstellungen → 
 ### Wo erscheint der Daten-Checker noch?
 
 - **In-App-Hilfe** (Menüpunkt Hilfe): Diese Doku ist dort als kuratiertes Hilfe-Dokument verfügbar.
-- **„Beheben"-Links innerhalb der App**: Befund-Zeilen verlinken direkt zur betroffenen Einstellungs-Kachel — kein Suchen in den Kategorien nötig.
+- **„Beheben"-Links innerhalb der App**: Befund-Zeilen verlinken direkt zur betroffenen Einstellungs-Kachel — kein Suchen in den Kategorien nötig. Befunde, deren Handgriff in der **Reparatur-Werkbank** liegt (Wetterreihe nachziehen, Tag neu aggregieren, HA-Spiegel abgleichen …), klappen die Energieprofil-Pflege auf **und springen bis zur Werkbank** an ihrem Ende — auch beim zweiten Klick, wenn du den Block inzwischen wieder zugeklappt hast; andere Blöcke bleiben, wie du sie gelassen hast.
 - **Komponenten-Achse**: Jede [Komponenten-Sicht](HANDBUCH_BEDIENUNG.md#3-komponenten--die-was-achse) hat einen Block **Daten-Qualität** mit den offenen Daten-Checker-Befunden genau dieser Komponente und Sprung zur Reparatur-Werkbank.
 - **Aktivitäten-Log** (Einstellungen → System → Protokolle, Tab *Aktivitäten*): Bestimmte Befund-Kategorien (z. B. Connector-Test-Ergebnisse) finden sich auch dort historisch.
 

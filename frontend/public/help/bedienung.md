@@ -105,7 +105,7 @@ Jede Anzeige mit einem ⤢ hat eine solche Adresse — die Liste oben sind nur d
   url: <Adresse aus „Link / Einbetten">
   ```
 
-  Geprüft haben wir die eedc-Karte im Browser; in der Home-Assistant-App auf Handy oder Tablet steht die Prüfung noch aus.
+  Geprüft haben wir die eedc-Karte im Browser. Anwender nutzen sie auf einem Android-Wandtablet im **Fully Kiosk Browser**, auch mit einem **eingeschränkten Home-Assistant-Benutzer** — die Karte braucht keine Administrator-Rechte. In der Home-Assistant-App auf Handy oder Tablet ist sie weiter ungeprüft; ebenso die freie Kiosk-App [Kiosk Satellite](https://kiosksatellite.com), eine Alternative zu Fully Kiosk.
 - **Bleibst du bei der Webseiten-Karte:** nach einem Neustart einmal **eedc** in der Seitenleiste öffnen und das Dashboard neu laden. Danach hält die Verbindung — im Test war eine Karte auch nach einer Viertelstunde ohne geöffnetes Panel noch erreichbar und ließ sich neu laden. Zeigt die Karte stattdessen einen eedc-Fehler wie „nicht erreichbar", ist das Add-on gerade nicht da (Neustart, Update); sie holt sich die Anzeige beim nächsten Abruf von selbst.
 - **Chart ⇄ Tabelle und die Zeitraum-Auswahl bleiben bedienbar.** In den Bilanzen blätterst du also auch in der Karte durch Tage, Monate oder Jahre.
 - **Geparktes bleibt geparkt — und in der Karte lässt sich nichts zurückholen** (der Parkplatz liegt außerhalb des Vollbilds). Schneide die Anzeige deshalb **vorher** in eedc zu; beim Börsenpreis-Block etwa lassen sich einzelne Kennzahlen und die Kurve getrennt parken. Geparkt wird pro Gerät und Browser: Ein Wandtablet kann eine andere Auswahl zeigen als dein Rechner.
@@ -291,8 +291,13 @@ Die **Tag**-Sicht bringt den feingranularen Stunden-Tag ins Cockpit: ein ausgew�
   kein einzeln erfasstes Gerät erklärt
 - **Stundenwerte-Tabelle** mit den Spalten **Gesamtverbrauch** (= Eigenverbrauch + Netzbezug) und **Restverbrauch**
   (= Gesamtverbrauch − Wärmepumpe − Wallbox − sonstige erfasste Verbraucher); die Formel steht im Tooltip des Spaltenkopfs
-- **Tagesbilanz** als Kennzahl-Strip (Summen des Tages)
+- **Tagesbilanz** als Kennzahl-Strip (Summen des Tages) — die Kachel **„Ø-Preis Netz“** zeigt den Netzbezugspreis des
+  Tages; fehlen die Tagesdetails (Ladefehler), steht dort „—“ statt eines aus gerundeten Anzeigewerten zurückgerechneten Preises
 - Detail-Sektionen je nach vorhandenen Komponenten
+- Der Block **E-Mobilität** zeigt die Ladung des Tages, sobald sie gemessen ist: aus dem Ladezähler der Wallbox, sonst aus
+  ihrem Leistungsverlauf — gezählt werden deine privaten Geräte wie im Monat (die Karten „Heute" im E-Mobilitäts-Hub zeigen
+  dagegen jedes Gerät einzeln, auch einen Dienstwagen). Mit einem Kilometer-Sensor am E-Auto steht dort auch die Strecke des
+  Tages; den Verbrauch je 100 km gibt es nur im Monat
 - Im Block **Wärme/Klima** heißt die Arbeitszahl-Kachel am Tag **„AZ heute"**; mit zugeordnetem Vorlauf/Rücklauf
   steht dort das Element **„Temperaturen"** (Vorlauf, Rücklauf, Spreizung und Warmwasser je Stunde, darüber Ø Vorlauf
   und Ø Spreizung der Betriebsstunden, Gerätewahl ab zwei Wärmepumpen) — einzeln parkbar wie jedes Element
@@ -1111,13 +1116,17 @@ Für sonstige **Erzeuger** — ein BHKW, ein Windrad, eine kleine Wasserkraftanl
 >
 > ⚑ **Hattest du das Gerät bisher als *Erzeuger* angelegt** (mit Einspeise-Zähler und Erlös), stellst du die Kategorie um und ordnest den Zähler als „Abgabe" zu — eedc verschiebt nichts von allein. Der Daten-Checker weist auf Erzeuger hin, die so aussehen.
 >
+> **Unter *Komponenten → Sonstiges*** zeigt ein Abgabe-Gerät drei Kennzahlen: **Abgabe** (kWh über den Gesamtzeitraum), **Erlös** (die Summe deiner gepflegten Erlöse — ohne gepflegten Erlös steht dort „nicht bewertet") und **Monate** (Monate mit Abgabe). Der Verlauf zeigt die Abgabe je Monat, der Vergleich ihre Jahressummen, die Wirtschaftlichkeit den Posten *„Erlös aus der Abgabe"*. Eine Ersparnis- oder CO₂-Kachel gibt es bewusst nicht: abgegebener Strom ist kein Eigenverbrauch. Im **Monatsabschluss** hat ein Abgabe-Gerät die Felder **„Abgabe (kWh)"** und **„Erlös (€)"**; ein zugeordneter Sensor füllt die Abgabe vor.
+>
+> ⚠ **Monate vor der Umstellung** tragen ihren Wert noch im Feld *Erzeugung* — eedc liest ihn für ein Abgabe-Gerät nicht, Verlauf und Bilanz zeigen dort 0. Nachtragen: unter *Einstellungen → Daten → Monatsdaten* den Monat öffnen und den Wert ins Feld **„Abgabe (kWh)"** eintragen. Der **Daten-Checker** nennt dir diese Monate und bietet an der Meldung **„Wert entfernen"** an — damit verschwindet der alte Wert aus dem Feld *Erzeugung*, nachdem du ihn umgetragen hast. eedc löscht und verschiebt nichts von allein.
+>
 > ### ⛔ Was eedc bei Abgabe an Dritte weiterhin nicht kann
 >
 > **Ohne Zähler an der Übergabestelle gibt es keine Abgabe** — eedc schätzt keinen Anteil. Versorgt dieselbe Anlage dein Haus und die Abnehmer, ohne dass die Übergabe gemessen wird, bleibt es bei der bisherigen Grenze: Was du abgegeben hast, erscheint dann als dein Eigenverbrauch, und welcher Anteil überhaupt wo zählt, entscheidet dein Messkonzept, nicht eedc. Eine zweite Anlage ist nur dann der richtige Weg, wenn der Erzeuger einen wirklich getrennten Zählpunkt hat und deinen Haushalt gar nicht versorgt.
 
 > **Was „nicht bewertet" heißt und was nicht.** Nicht bewertet wird das **Gerät**: keine eigene Ertrags-Zeile, keine Wirtschaftlichkeit, kein CO₂-Urteil — dafür gibt es *„Ertrag/Jahr"*. Sein **Strom** dagegen zählt in der Bilanz deiner **Anlage** voll mit, und zwar auf beiden Seiten: als Menge (Eigenverbrauch, Autarkie, EV-Quote) **und** als Geld (Eigenverbrauchs-Ersparnis, Einspeise-Erlös). Das ist kein Widerspruch — die Kilowattstunde hat Netzbezug ersetzt oder wurde vergütet, unabhängig davon, ob eedc beurteilen kann, ob sich das Gerät gelohnt hat.
 
-> **Ein Erzeuger mit eigenem Vergütungssatz** — etwa eine Erweiterung mit einem neuen EEG-Satz — trägt sein Geld über das Feld **„Einspeise-Erlös (€)"** bei *Sonstiges/Erzeuger* (siehe [Einstellungen](HANDBUCH_EINSTELLUNGEN.md#5-investitionen--komponenten)). Dieser Betrag steht so im T-Konto, wie du ihn gepflegt hast; eedc rechnet ihn **nicht** nach, denn der Satz deiner Anlage ist ein anderer. Ohne gepflegten Betrag erscheint keine eigene Zeile — die eingespeisten Kilowattstunden sind dann bereits im Einspeise-Erlös der Anlage bewertet.
+> **Ein Erzeuger mit eigenem Vergütungssatz** — etwa eine Erweiterung mit einem neuen EEG-Satz — trägt sein Geld über das Feld **„Einspeise-Erlös (€)"** bei *Sonstiges/Erzeuger* (siehe [Einstellungen](HANDBUCH_EINSTELLUNGEN.md#3-komponenten)). Dieser Betrag steht so im T-Konto, wie du ihn gepflegt hast; eedc rechnet ihn **nicht** nach, denn der Satz deiner Anlage ist ein anderer. Ohne gepflegten Betrag erscheint keine eigene Zeile — die eingespeisten Kilowattstunden sind dann bereits im Einspeise-Erlös der Anlage bewertet.
 
 > ⚠ **Bei *Abgabe an Dritte* gilt der Absatz oben NICHT.** Was du abgibst, ist weder dein Eigenverbrauch noch deine Netz-Einspeisung — die abgegebenen Kilowattstunden tragen deshalb **in keiner** der beiden Geld-Größen etwas bei. Ihr Geld ist allein dein Feld **„Erlös (€)"** am Gerät. Pflegst du es nicht, bleibt der Strom ohne Bewertung, und die ROI-Zeile des Geräts sagt „nicht bewertet" — dafür gibt es ersatzweise „Ertrag/Jahr".
 >
@@ -1318,7 +1327,7 @@ Die Vergleichs- und Bewertungsfläche für mehrere PV-Prognosequellen — vier Q
 - **Kennzahl-Matrix Heute / Morgen / Übermorgen** mit VM/NM-Split am astronomischen Solar Noon (proportional)
 - **Stundenprofil-Diagramm** (IST grün, eedc orange, Solcast blau, OpenMeteo gelb)
 - **24-Stunden- und 7-Tage-Vergleich** tabellarisch, mit Wettersymbolen und farbkodierten Δ-Spalten (grün < 15 %, gelb 15–30 %, rot > 30 %)
-- **Genauigkeits-Tracking:** **MAE** (Streuung) und **MBE** (systematischer Bias, neutral gefärbt — Vorzeichen ist Information, keine Wertung). Ein **diagnostischer Modus** trennt Über- und Unterschätzung, sodass Asymmetrien sichtbar werden.
+- **Genauigkeits-Tracking:** **MAE** (Streuung) und **MBE** (systematischer Bias, neutral gefärbt — Vorzeichen ist Information, keine Wertung). Ein **diagnostischer Modus** trennt Über- und Unterschätzung, sodass Asymmetrien sichtbar werden. Der Umschalter **„Zeitpunkt: Day-Ahead | Mittag | Abend"** legt fest, welcher Stand je Quelle verglichen wird (Standard Day-Ahead; Mittag = der Stand um 12 Uhr); die eedc-Spalte ist die Prognose, die eedc an dem Tag angezeigt hat. Unter den Kennzahlen sagt ein Satz, welche Quelle an deiner Anlage zu diesem Zeitpunkt am besten trifft (ab 14 Tagen); eine Kopfzeile erscheint nur, wenn eedc seine Korrektur ausgesetzt hat, weil sie zuletzt schlechter war als die rohe Wetterprognose — Details im [Handbuch Prognosen §6](HANDBUCH_PROGNOSEN.md#6-genauigkeits-tracking-mae--bias).
 - **Lernfaktor-Status:** Ist der eedc-Lernfaktor noch nicht aktiv, zeigt ein Banner, wie viele der nötigen Tage gesammelt sind. Sobald genug Daten vorliegen, wechselt der Lernfaktor in eine **saisonale Kaskade** (Monatsfaktor ≥ 15 Tage → Quartalsfaktor ≥ 15 Tage → 30-Tage-Fenster).
 - **Reparatur bei IST-Lücke:** Bei unvollständigen IST-Werten erscheint ein ⚠-Symbol; ein Klick listet die fehlenden Stunden und bietet „Tag neu berechnen" (holt fehlende Snapshots nach).
 
