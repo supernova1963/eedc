@@ -158,19 +158,18 @@ class ZaehlerStehtChecks:
             mengen.append(f"Strings {fmt_zahl(gegen['strings'], 1)} kWh")
         return CheckErgebnis(
             kategorie=CheckKategorie.PV_ZAEHLER_STEHT.value,
-            schwere=CheckSeverity.WARNING,
+            schwere=CheckSeverity.WARNING, code="pv_zaehler_steht",
             meldung=(f"PV-Zähler {zaehler} {wann}, {obwohl} — Tag und Monat zeigen deshalb unplausible Werte; "
                      "Sensor in Home Assistant prüfen"),
             details=(
                 f"Über {n} volle Tage hat sich der Stand des Anlagenzählers nicht bewegt, während im selben Zeitraum "
                 f"{' und '.join(mengen)} dazukamen. Ohne Erzeugung kann das nicht sein — meist liefert der Sensor "
                 "einen eingefrorenen Wert (Integration hängt, Gerät nicht erreichbar, Zähler zurückgesetzt). eedc "
-                "rechnet in diesen Tagen mit „keine Erzeugung“; deshalb zeigen Cockpit → Tag und Monat z. B. eine "
-                "negative Autarkie. Prüfe den Sensor in Home Assistant (bzw. das MQTT-Topic); liefert er wieder "
+                "rechnet in diesen Tagen mit „keine Erzeugung“; deshalb zeigen Tages- und Monatsansicht im Cockpit z. B. "
+                "eine negative Autarkie. Prüfe den Sensor in Home Assistant (bzw. das MQTT-Topic); liefert er wieder "
                 "Werte, zählen die folgenden Tage richtig. Eine Nulleinspeisung, autarke Tage oder Schnee auf den "
                 "Modulen lösen diese Meldung nicht aus."
             ),
-            link="/einstellungen/datenquellen",
         )
 
 __all__ = [

@@ -137,3 +137,57 @@ export const KATEGORIE_REIHENFOLGE: string[] = [
   'vergleichspreis_fehlt',
   'wetterwert_fehlt',
 ]
+
+/**
+ * Lösungsweg-Anker je Kategorie (E3, Konzept §3.5): der Abschnitt der Kategorie in `HANDBUCH_DATEN_CHECKER.md` — der
+ * Rückfall des Lösungsweg-Panels für einen Befund ohne Code (seit E5 öffnet es am Anker des Codes). Dieselben Anker trägt der
+ * Katalog `backend/services/daten_checker/handgriffe.py` je Code; der Wächter
+ * `backend/tests/test_daten_checker_texte.py` hält beide und das Handbuch gleich. Kategorien ohne eigenen
+ * Abschnitt (E2 ⚑3) fallen auf das Kapitel 4 zurück.
+ */
+export const KATEGORIE_ANKER: Record<string, string> = {
+  stammdaten: '41-stammdaten',
+  strompreise: '42-strompreise',
+  investitionen: '43-investitionen',
+  monatsdaten_vollstaendigkeit: '44-monatsdaten--vollstaendigkeit',
+  monatsdaten_plausibilitaet: '45-monatsdaten--plausibilitaet',
+  geraetewerte_ohne_monatszeile: '44a-messwerte-ohne-monatszeile',
+  energieprofil_abdeckung: '46-energieprofil--zaehler-abdeckung',
+  mqtt_topic_abdeckung: '48-mqtt-topic-abdeckung',
+  zaehler_ruecksprung: '48a-zaehlerstaende--ruecksprung',
+  ha_zaehlersprung: '48b-zaehlerstaende--sprung-in-home-assistant',
+  ha_zaehler_rueckgang: '48c-zaehlerstaende--rueckgang-in-home-assistant',
+  sensor_mapping_lts: '49-sensor-mapping--ha-statistics',
+  energieprofil_plausibilitaet: '47-energieprofil--plausibilitaet',
+  provenance_conflict: '416-quellen-konflikte',
+  datenquelle_status: '49a-datenquellen--status',
+  datenquelle_drift: '417-datenquellen-drift',
+  pv_ueber_erfassung: '418-pv-doppelerfassung',
+  messpunkt: '48d-pv--messpunkt',
+  pv_zaehler_steht: '48e-pv--zaehler-steht',
+  emob_pool_pflege: '439-heimladung-je-auto',
+  emob_doppelzaehlung_tage: '419-ladung-doppelt-gezaehlt',
+  phev_anteil_unbestimmt: '420-phev-anteil',
+  sensor_mapping_einheit: '415-sensor-zuordnung--leistung--energie',
+  sensor_ohne_langzeitstatistik: '415a-sensor-ohne-langzeitstatistik',
+  wetterwert_fehlt: '425-wetterwerte-fehlende-monatswerte',
+  batterie_vorzeichen_historie: '421-batterie-vorzeichen-historie',
+  soc_nur_ein_speicher: '422-ladestand-mehrere-speicher',
+  tageswerte_fehlen: '410-energieprofil--fehlende-tageswerte',
+  zeitzone_abweichung: '412-zeitzone--abweichung-zu-home-assistant',
+  position_wiederkehrend: '413-sonstige-positionen--der-erfassungsort',
+  position_doppelerfassung: '413-sonstige-positionen--der-erfassungsort',
+  klima_modus_sensor: '414-klimaanlage--betriebsmodus',
+  klima_modus_wert: '414a-betriebsmodus--unbekannter-wert',
+  emob_zustand_wert: '426-e-mobilitaet--unbekannter-zustand',
+  emob_kennung_unbekannt: '427-e-mobilitaet--fahrzeug-unbekannt',
+  wp_eigener_tarif: '42a-eigener-waermepumpen-tarif',
+  zaehlerstand_reihe: '423-verbrauchszaehler-zaehlerstaende',
+  vergleichspreis_fehlt: '424-vergleichspreise-benzinpreis',
+}
+
+/** Der Anker des Lösungswegs eines Befunds (Code vor Kategorie, Rückfall Kapitel 4). */
+export function loesungswegAnker(kategorie: string, code?: string | null): string {
+  // E5: jeder Code hat seinen Abschnitt im Handbuch (`docs/daten-checker/<code>.md`, Anker = Code); ohne Code die Kategorie.
+  return code || KATEGORIE_ANKER[kategorie] || '4-kategorien-im-detail'
+}

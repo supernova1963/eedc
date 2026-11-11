@@ -17,6 +17,7 @@ Registry). Die `test_b5_*`-Dateien daneben gehören zur Wärme/Klima-Matrix (Pak
 HA-Export) — ein anderes B5.
 """
 
+from backend.tests.werkzeug_befund import befund_op, befund_params
 from datetime import date
 
 from backend.core.field_definitions import (
@@ -368,7 +369,7 @@ async def test_der_checker_benennt_den_unmoeglichen_warmwasser_wert(db):
     )
     treffer = [e for e in befunde if _WARMWASSER_MELDUNG in e.meldung]
     assert len(treffer) == 1, "genau eine Meldung, nicht je Monat eine"
-    assert "Nutzenergie Kuehlbetrieb" in treffer[0].details, (
+    assert "Nutzenergie Kühlbetrieb" in treffer[0].details, (
         "P-6: der Weg gehört dazu, nicht nur der Vorwurf"
     )
     assert "bleibt unverändert stehen" in treffer[0].details, (
@@ -377,9 +378,10 @@ async def test_der_checker_benennt_den_unmoeglichen_warmwasser_wert(db):
     )
     # N-393: der genannte Weg muss auch gehen. „bis du ihn selbst umträgst"
     # war ein Weg ins Leere — das Feld ist an der Klimaanlage nicht erreichbar.
-    assert treffer[0].action_kind == "feldwert_entfernen"
-    assert treffer[0].action_params["feld"] == "warmwasser_kwh"
-    assert treffer[0].action_params["monate"] == ["01/2025"]
+    assert befund_op(treffer[0]) == "feldwert_entfernen"
+    assert befund_params(treffer[0])["feld"] == "warmwasser_kwh"
+    assert befund_params(treffer[0]) == {"investition_id": treffer[0].investition_id, "feld": "warmwasser_kwh"}
+    assert "01/2025" in treffer[0].meldung + (treffer[0].details or "")  # die Monate nennt Text und Vorschau (E3)
 
 
 async def test_der_checker_schweigt_wenn_die_klimaanlage_kein_warmwasser_hat(db):

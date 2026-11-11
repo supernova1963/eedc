@@ -14,7 +14,7 @@
  * einen `kopfZusatz` (Anlage-Auswahl) in die Kopfleiste. Zahlen de-DE über `fmtZahl`.
  */
 import { useState, useEffect, useMemo, type ReactNode } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import { Plus, Calendar, Edit, Trash2, Columns, AlertTriangle, Database, Loader2, PenLine, ArrowRight } from 'lucide-react'
 import { Button, Card, Checkbox, Modal, EmptyState, Alert, Select } from '../components/ui'
 import { TableHead, TableBody, TableRow, TableHeader, TableCell } from '../components/ui'
@@ -23,6 +23,7 @@ import { MonatsdatenForm } from '../components/forms'
 import { DataLoadingState } from '../components/common'
 import { useMonatsdaten, useInvestitionen, useApiData, useAnlage } from '../hooks'
 import { useOeffneWizard } from '../v4/wizardHost'
+import { useMonatErfassenDeepLink } from '../hooks/useMonatErfassenDeepLink'
 import { monatsdatenApi, type AggregierteMonatsdaten } from '../api/monatsdaten'
 import { haStatisticsApi, type Monatswerte, type VerfuegbarerMonat } from '../api/haStatistics'
 import { investitionenApi, type InvestitionMonatsdaten } from '../api/investitionen'
@@ -352,20 +353,8 @@ export function MonatsdatenVerwaltung({ anlageId, kopfZusatz }: { anlageId: numb
     }
   }
 
-  // B5-Deep-Link: die V4-Fusszeile navigiert mit `?erfassen=YYYY-MM` hierher →
-  // Form für den offenen Monat öffnen. Param danach entfernen, damit Reload/Zurück
-  // ihn nicht erneut auslöst. EinstellungenV4 klappt parallel den Block auf.
-  const [searchParams, setSearchParams] = useSearchParams()
-  useEffect(() => {
-    const roh = searchParams.get('erfassen')
-    if (!roh) return
-    const [j, m] = roh.split('-').map(Number)
-    if (j && m >= 1 && m <= 12) oeffneMonat(j, m)
-    const next = new URLSearchParams(searchParams)
-    next.delete('erfassen')
-    setSearchParams(next, { replace: true })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams])
+  // B5/N-792/E4: Deep-Link `?erfassen=YYYY-MM[&geraet=&feld=]` — eine Lesestelle im Hook (wartet auf die Liste).
+  const { fokusFeld, fokusFertig } = useMonatErfassenDeepLink(loading, oeffneMonat)
 
   // Prüfe ob Legacy-Daten existieren.
   // F-31: getrennt gezählt, weil die beiden Fälle verschiedene Handlungen
@@ -939,6 +928,7 @@ export function MonatsdatenVerwaltung({ anlageId, kopfZusatz }: { anlageId: numb
           onCancel={() => { setShowForm(false); setHaVorausfuellung(null); setCreatePreset(null) }}
           haVorausfuellung={haVorausfuellung}
           voreingestellterMonat={createPreset}
+          fokusFeld={fokusFeld} onFokusFertig={fokusFertig}
         />
       </Modal>
 
@@ -956,6 +946,7 @@ export function MonatsdatenVerwaltung({ anlageId, kopfZusatz }: { anlageId: numb
             onSubmit={handleUpdate}
             onCancel={() => { setEditingData(null); setHaVorausfuellung(null) }}
             haVorausfuellung={haVorausfuellung}
+            fokusFeld={fokusFeld} onFokusFertig={fokusFertig}
           />
         )}
       </Modal>

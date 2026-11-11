@@ -7,7 +7,7 @@
 import logging
 from sqlalchemy import select
 from backend.models.anlage import Anlage
-from backend.services.daten_checker.kategorien import CheckErgebnis, CheckKategorie, CheckSeverity
+from backend.services.daten_checker.kategorien import Aktion, CheckErgebnis, CheckKategorie, CheckSeverity
 
 logger = logging.getLogger(__name__)
 
@@ -135,7 +135,7 @@ class SpeicherChecks:
             if not hat_batterie:
                 return []  # Keine Batterie-Aktivität → Kategorie nicht zeigen
             return [CheckErgebnis(
-                kategorie=kat, schwere=CheckSeverity.OK.value,
+                kategorie=kat, schwere=CheckSeverity.OK.value, code="batterie_vorzeichen_ok",
                 meldung="Batterie-Vorzeichen in der Historie konsistent (letzte 90 Tage)",
                 details=(
                     "Gespeichertes Batterie-Tagesnetto und frischer HA-Statistics-"
@@ -162,7 +162,7 @@ class SpeicherChecks:
             f"{neuester.isoformat()} wurden vor dem Vorzeichen-Fix (v3.45.7) "
             f"aggregiert und tragen das Batterie-Netto in vertauschter Richtung "
             f"(Laden/Entladen verdreht). Die Live-Ansicht ist NICHT betroffen — "
-            f"nur die gespeicherte Historie. „Zeitraum neu aggregieren“ rechnet "
+            f"nur die gespeicherte Historie. „Tage neu aufbauen“ rechnet "
             f"{range_von.isoformat()} bis {neuester.isoformat()} aus HA-Statistics "
             f"neu (max. {REAGGREGATE_RANGE_MAX_DAYS} Tage/Lauf)."
         )
@@ -178,18 +178,19 @@ class SpeicherChecks:
                 f"({aeltester.isoformat()} … {neuester.isoformat()})"
             ),
             details=summen_details,
-            action_kind="reaggregate_range",
-            action_params={
-                "anlage_id": anlage.id,
+            action=Aktion("reaggregate_range", {
                 "von": range_von.isoformat(),
                 "bis": neuester.isoformat(),
-            },
-            action_label="Zeitraum neu aggregieren",
+            }),
+            code="batterie_vorzeichen_tage",
+            werte={"tage": len(konflikt_tage), "von": aeltester.isoformat(), "bis": neuester.isoformat(),
+                   "bereich_von": range_von.isoformat(), "aelter_ausserhalb": rest_aelter},
         ))
 
         # 2) Einzeltag-Einträge (bestehender reaggregate_day-Pfad) — bis 15 Tage,
         #    neueste zuerst (Datums-Listen Default absteigend, Regel 0a).
         MAX_EINZEL = 15
+        weitere = max(0, len(konflikt_tage) - MAX_EINZEL)  # E5 V2: statt Restzeile `weitere` an der Gruppenzeile
         for d in sorted(konflikt_tage, reverse=True)[:MAX_EINZEL]:
             ergebnisse.append(CheckErgebnis(
                 kategorie=kat, schwere=CheckSeverity.WARNING.value,
@@ -198,20 +199,10 @@ class SpeicherChecks:
                     "Einzelnen Tag neu aus HA-Statistics aggregieren — schreibt das "
                     "Batterie-Netto in der korrigierten Richtung (ENTLADUNG positiv)."
                 ),
-                action_kind="reaggregate_day",
-                action_params={"anlage_id": anlage.id, "datum": d.isoformat()},
-                action_label="Tag reparieren",
+                action=Aktion("reaggregate_day", {"datum": d.isoformat()}),
+                code="batterie_vorzeichen_tag",
+                werte={"datum": d.isoformat(), **({"weitere": weitere} if weitere else {})},
             ))
-        if len(konflikt_tage) > MAX_EINZEL:
-            rest = len(konflikt_tage) - MAX_EINZEL
-            ergebnisse.append(CheckErgebnis(
-                kategorie=kat, schwere=CheckSeverity.INFO.value,
-                meldung=(
-                    f"… plus {rest} weitere(r) Tag(e) — am besten per "
-                    f"„Zeitraum neu aggregieren“."
-                ),
-            ))
-
         return ergebnisse
 
     async def _check_soc_nur_ein_speicher(self, anlage: Anlage) -> list[CheckErgebnis]:
@@ -289,7 +280,7 @@ class SpeicherChecks:
 
         if not alt_tage:
             return [CheckErgebnis(
-                kategorie=kat, schwere=CheckSeverity.OK.value,
+                kategorie=kat, schwere=CheckSeverity.OK.value, code="soc_ok",
                 meldung=(
                     f"Ladestand aller {len(mit_soc)} Speicher wird in der Historie "
                     f"getrennt geführt"
@@ -315,7 +306,7 @@ class SpeicherChecks:
             f"welches, entschied die Reihenfolge der Zuordnung. Betroffen sind die "
             f"Vollzyklen dieser Tage, die SoC-Hübe und die Speicher-Auswertungen im "
             f"Komponenten-Hub; Erzeugung, Verbrauch und Netzbezug sind es NICHT. "
-            f"„Zeitraum neu aggregieren“ rechnet {range_von.isoformat()} bis "
+            f"„Tage neu aufbauen“ rechnet {range_von.isoformat()} bis "
             f"{neuester.isoformat()} neu (max. {REAGGREGATE_RANGE_MAX_DAYS} Tage/Lauf)."
         )
         if rest_aelter > 0:
@@ -325,18 +316,15 @@ class SpeicherChecks:
             )
 
         return [CheckErgebnis(
-            kategorie=kat, schwere=CheckSeverity.WARNING.value,
+            kategorie=kat, schwere=CheckSeverity.WARNING.value, code="soc_nur_ein_speicher_tage",
             meldung=(
                 f"{len(alt_tage)} Tag(e) kennen nur den Ladestand eines von "
                 f"{len(mit_soc)} Speichern ({aeltester.isoformat()} … "
                 f"{neuester.isoformat()})"
             ),
             details=details,
-            action_kind="reaggregate_range",
-            action_params={
-                "anlage_id": anlage.id,
+            action=Aktion("reaggregate_range", {
                 "von": range_von.isoformat(),
                 "bis": neuester.isoformat(),
-            },
-            action_label="Zeitraum neu aggregieren",
+            }),
         )]

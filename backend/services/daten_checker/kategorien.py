@@ -4,7 +4,7 @@ Daten-Checker — Enums, Dataclasses & gemeinsame Labels.
 Reiner Move aus dem früheren Modul `daten_checker.py` (Tier-4 Achse C).
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional
 
@@ -295,19 +295,73 @@ class CheckKategorie(str, Enum):
 
 
 @dataclass
+class Ziel:
+    """Sprung-Ziel eines Befunds (Etappe E2, Konzept Daten-Checker §3.1 R2/§3.3) — gebaut nur über `ziele.py`.
+
+    `bereich` = Einstellungs-Kategorie (`einstellungenKatalog.tsx`) bzw. `komponenten-hub`; `block` = Block-Id im Bereich;
+    `params` = Deep-Link-Parameter (Schema Konzept §3.3: `erfassen`, `bearbeiten`, `neu`, `tarif`, `art`, `ab`, `geraet`,
+    `feld`, `karte`, `plan`, `wizard`; seit E4 liest jede Zielseite jeden davon — Wächter W-5 `src/test/sprungziele.test.ts`);
+    `anker` = das Element, auf dem der Sprung landen soll (Formular-Name, Feld-Schlüssel oder `data-karte`).
+    """
+    bereich: str
+    block: Optional[str] = None
+    params: dict = field(default_factory=dict)
+    anker: Optional[str] = None
+
+
+@dataclass
+class Aktion:
+    """Inline-Handgriff eines Befunds in **Plan/Execute-Form** (Etappe E3, Konzept §3.1 R6): `operation` ist ein Wert von
+    `repair_orchestrator.RepairOperationType`, `params` sind die Plan-Parameter ohne `anlage_id` (die Anlage trägt der
+    Prüflauf). Der Client ruft `POST /api/repair/plan` → Vorschau → `POST /api/repair/execute/{plan_id}`.
+    Der Knopf-Text kommt aus dem Katalog (`handgriffe.knopf_text`, `CheckErgebnis.knopf`)."""
+    operation: str
+    params: dict
+
+
+#: Parameter des Ziel-Schemas in der Reihenfolge, in der sie im Link stehen (Konzept §3.3; E4: volle Lesart). Jede Zielseite
+#: liest jeden Parameter, den ein Ziel-Bauer für sie erzeugt (W-5: `frontend/src/test/sprungziele.test.ts` liest
+#: `tests/fixtures/sprungziele.json`, erzeugt aus den Ziel-Bauern).
+ZIEL_PARAMETER = ("erfassen", "bearbeiten", "neu", "tarif", "art", "ab", "geraet", "feld", "karte", "plan", "wizard")
+
+
+def link_aus_ziel(ziel: Optional[Ziel]) -> Optional[str]:
+    """Der Link eines `Ziel` (E4: alle Parameter des Schemas). `block=` entfällt, wo `erfassen` den Monatsdaten-Block
+    selbst aufklappt; die Datenquellen-Fläche leitet ihren Block aus `geraet`/`feld` ab (kein Katalog-Block)."""
+    if ziel is None:
+        return None
+    if ziel.bereich == "komponenten-hub":
+        return f"/komponenten/{ziel.block}?geraet={ziel.params['geraet']}"
+    teile = [f"block={ziel.block}"] if ziel.block and "erfassen" not in ziel.params else []
+    teile += [f"{k}={ziel.params[k]}" for k in ZIEL_PARAMETER if ziel.params.get(k) is not None]
+    return f"/einstellungen/{ziel.bereich}" + (f"?{'&'.join(teile)}" if teile else "")
+
+
+@dataclass
+class Gruppe:
+    """Gruppenzeile eines Befunds (Etappe E5, Konzept §6 V2): gleiche Befunde eines Codes (je Gerät/Feld) stehen in der
+    Oberfläche als **eine** Zeile mit Gliedern — jedes Glied bleibt ein Befund mit eigenem Handgriff (Zählung unverändert).
+    Gebildet nach dem Prüflauf in `gruppen.py`; `titel`/`details` aus dem Katalog (`handgriffe.GRUPPEN`), `glied` aus dem
+    Datum bzw. Monat des Befunds, `weitere` = Befunde über der Anzeige-Grenze des Erzeugers (die frühere Restzeile)."""
+    schluessel: str
+    titel: str
+    glied: str
+    weitere: int = 0
+    details: Optional[str] = None
+
+
+@dataclass
 class CheckErgebnis:
+    """Ein Befund. Der Handgriff steht in `ziel` (Sprung) bzw. `action` (Aktion); die Altfelder `link`/`action_*` sind mit
+    Etappe E5 entfallen (Wächter W-3). `knopf` ist der Knopf-Text aller drei Klassen, abgeleitet aus Katalog und Klasse
+    (E5.7 L1); `gruppe` setzt der Gruppenbau nach dem Prüflauf (E5 V2). Kein Erzeuger setzt `knopf` oder `gruppe`."""
     kategorie: str
     schwere: str
     meldung: str
     details: Optional[str] = None
-    link: Optional[str] = None
-    # Etappe 6 v3.31.1: optionale Inline-Reparatur-Action.
-    # action_kind="reaggregate_day" + action_params={"anlage_id", "datum"}
-    # → Frontend rendert Knopf, der `/api/energie-profil/{id}/reaggregate-tag`
-    # ruft. Alle anderen Kategorien lassen diese Felder None.
-    action_kind: Optional[str] = None
-    action_params: Optional[dict] = None
-    action_label: Optional[str] = None
+    # E2: Sprung-Ziel (Teil B) bzw. Inline-Handgriff; die Klasse ist abgeleitet (Aktion · Sprung · Auskunft).
+    ziel: Optional[Ziel] = None
+    action: Optional[Aktion] = None
     # IA-V4 #243: optionale Komponenten-Zuordnung. Nur komponenten-bezogene
     # Checks (Stammdaten/Monatsdaten/Energieprofil-Abdeckung/E-Mob-Pflege je
     # Investition) füllen das Feld, damit der Komponenten-Hub seine Befunde
@@ -315,6 +369,26 @@ class CheckErgebnis:
     # (Plausibilität, Drift, Provenance) lassen es bewusst None — die gehören
     # in den Reparatur-Pfad, nicht in den Hub.
     investition_id: Optional[int] = None
+    # Etappe E1 «Diagnose-Paket» (10.11.2026, Konzept Daten-Checker §3.1 R5): die Zahlen der Meldung zusätzlich
+    # strukturiert — für das Diagnose-Paket und die Zahlen-Invarianz des Text-Golden-Masters; keine neue Rechnung,
+    # nur Werte, die der Erzeuger für seinen Text ohnehin hat. `code` = Befund-Schlüssel (Erhebung Teil B), seit E2
+    # an jedem Erzeuger (Wächter W-1, Katalog `handgriffe.py`).
+    werte: Optional[dict] = None
+    code: Optional[str] = None
+    gruppe: Optional[Gruppe] = None
+
+    @property
+    def klasse(self) -> str:
+        """Laufzeit-Klasse (R2): Aktion vor Sprung vor Auskunft. Der Katalog führt die Soll-Klasse je Code."""
+        return "aktion" if self.action else ("sprung" if self.ziel else "auskunft")
+
+    @property
+    def knopf(self) -> Optional[str]:
+        """Knopf-Text des einen Handgriffs (E5.7 L1): Aktion aus der Operation, Sprung aus dem Katalog, Auskunft «Was gilt»,
+        OK ohne Knopf (`handgriffe.knopf_fuer`)."""
+        from backend.services.daten_checker.handgriffe import knopf_fuer
+
+        return knopf_fuer(self)
 
 
 @dataclass
@@ -331,6 +405,9 @@ class DatenCheckResult:
     ergebnisse: list[CheckErgebnis]
     zusammenfassung: dict
     monatsdaten_abdeckung: Optional[MonatsdatenAbdeckung] = None
+    # E5 V4: Prüfungen, die in dieser Installation nicht laufen können (Abbruchpfade der Erzeuger: kein Home Assistant,
+    # MQTT-Import aus) — je `{"pruefung": …, "grund": …}`; die Oberfläche zählt sie im Kopf.
+    nicht_ausfuehrbar: list = field(default_factory=list)
 
 
 # ─── Konstanten / Labels ───────────────────────────────────────────────────
@@ -371,16 +448,12 @@ LINK_ENERGIEPROFIL = "/einstellungen/daten?block=energieprofil&karte=werkbank"
 # (Abgleich mit der HA-Statistik, danach der Tag neu aufgebaut); «Tag reparieren» allein liest an einem Kanal-Tag
 # denselben Spiegel, der die Abweichung trägt.
 AKTION_SPIEGEL_ABGLEICH_TAG = "spiegel_abgleich_tag"
-LABEL_SPIEGEL_ABGLEICH_TAG = "Aus Home Assistant neu übernehmen"
 
 
-def aktion_spiegel_abgleich_tag(anlage_id: int, datum) -> dict:
-    """Die drei Aktionsfelder eines ``CheckErgebnis`` für «Aus Home Assistant neu übernehmen» (``datum``: ``date``)."""
-    return {
-        "action_kind": AKTION_SPIEGEL_ABGLEICH_TAG,
-        "action_params": {"anlage_id": anlage_id, "datum": datum.isoformat()},
-        "action_label": LABEL_SPIEGEL_ABGLEICH_TAG,
-    }
+def aktion_spiegel_abgleich_tag(anlage_id: int, datum) -> Aktion:
+    """Die Aktion «Aus Home Assistant neu übernehmen» eines ``CheckErgebnis`` (``datum``: ``date``) — Operation
+    ``SPIEGEL_ABGLEICH_TAG`` (E3, ``services/repair_operationen_checker.py``). ``anlage_id`` bleibt Argument der Aufrufer."""
+    return Aktion(AKTION_SPIEGEL_ABGLEICH_TAG, {"datum": datum.isoformat()})
 
 
 def link_monat_erfassen(label: str) -> str:

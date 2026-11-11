@@ -29,10 +29,12 @@ from backend.core.berechnungen.betriebsart_gemessen import (
     modus_strom_zeile,
 )
 from backend.core.berechnungen.waermepumpe_kennzahl import (
+    abgrenzungs_grund,
     arbeitszahl,
     heizwaerme_kwh,
     waerme_gesamt_kwh,
 )
+from backend.core.investition_parameter import abgrenzung_stoerung
 from backend.core.field_definitions import (
     get_wp_strom_kwh,
     get_wp_warmwasser_kwh,
@@ -40,7 +42,9 @@ from backend.core.field_definitions import (
 )
 from backend.models.anlage import Anlage
 
+from .gruppen import je_geraet_begrenzt
 from .kategorien import CheckErgebnis, CheckKategorie, CheckSeverity
+from .ziele import ziel_monat
 from backend.core.zahlenformat import fmt_zahl
 
 
@@ -55,7 +59,7 @@ class WaermepumpeChecks:
     #: eedc schon früher, warum sie auffällig ist.
     ARBEITSZAHL_AUFFAELLIG = 7.0
 
-    #: Höchstens so viele Einzelmonate nennen — der Rest wird gezählt.
+    #: Höchstens so viele Einzelmonate **je Gerät** nennen — der Rest wird gezählt (E6.B N5).
     MAX_EINZEL = 6
 
     def _check_wp_arbeitszahl_unplausibel(self, anlage: Anlage) -> list[CheckErgebnis]:
@@ -110,6 +114,10 @@ class WaermepumpeChecks:
             if inv.typ != "waermepumpe":
                 continue
             name = inv.bezeichnung or f"#{inv.id}"
+            # E6.D D4: die Anwender-Angabe «Abgrenzung» (Fremdstrom/Fremdwärme) geht wie in der Anzeige
+            # (`waermepumpe_kennzahlen_je_geraet`, Monat je Gerät) als Grund in den Layer — dann gibt es keine Zahl,
+            # und die Meldung entfällt (Docstring oben: «Abgrenzung verletzt … ist der Fall bereits behandelt»).
+            abgrenzung = abgrenzungs_grund(abgrenzung_stoerung=abgrenzung_stoerung(inv))
             for imd in inv.monatsdaten:
                 daten = imd.verbrauch_daten or {}
                 # N-450: **mit `params`** — sonst nimmt die Lesetür den
@@ -149,6 +157,7 @@ class WaermepumpeChecks:
                         # dieselbe nennen).
                         hat_split=nenner_ist_feine_summe(daten, params),
                     ),
+                    abgrenzung_verletzt=abgrenzung,
                 )
                 if az.wert is None:
                     continue
@@ -160,9 +169,12 @@ class WaermepumpeChecks:
 
         # Datums-Listen absteigend (Regel 0a), Gerät als zweites Kriterium.
         treffer.sort(key=lambda t: (-t[2], -t[3], t[1]))
-        for inv_id, name, jahr, monat, wert in treffer[: self.MAX_EINZEL]:
+        # E5 V2: keine Restzeile mehr — die über der Grenze weggelassenen Monate je Gerät stehen als `weitere` an der
+        # Gruppenzeile (`gruppen.py`); E6.B N5: die Grenze gilt je Gerät.
+        auswahl, weitere = je_geraet_begrenzt(treffer, self.MAX_EINZEL)
+        for inv_id, name, jahr, monat, wert in auswahl:
             ergebnisse.append(CheckErgebnis(
-                kategorie=kat, schwere=CheckSeverity.WARNING.value,
+                kategorie=kat, schwere=CheckSeverity.WARNING.value, code="wp_arbeitszahl_zu_hoch",
                 meldung=(
                     f"{name}: Arbeitszahl {fmt_zahl(wert, 1)} im {monat:02d}/{jahr} — "
                     "höher, als eine Wärmepumpe leisten kann"
@@ -180,15 +192,8 @@ class WaermepumpeChecks:
                     "Kilowattstunden bleiben davon unberührt — sie sind richtig "
                     "und zählen in allen Mengen weiter mit."
                 ),
-                link="/einstellungen/investitionen",
-                investition_id=inv_id,
-            ))
-
-        if len(treffer) > self.MAX_EINZEL:
-            rest = len(treffer) - self.MAX_EINZEL
-            ergebnisse.append(CheckErgebnis(
-                kategorie=kat, schwere=CheckSeverity.INFO.value,
-                meldung=f"… plus {rest} weitere(r) Monat(e) mit derselben Auffälligkeit",
+                ziel=ziel_monat(jahr, monat, geraet=inv_id, feld="waerme_kwh"),
+                investition_id=inv_id, werte={"weitere": weitere[inv_id]} if weitere[inv_id] else None,
             ))
 
         return ergebnisse

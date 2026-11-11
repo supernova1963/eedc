@@ -23,6 +23,7 @@ test_standalone_s1_betriebsmodus_mqtt.py (Modus über MQTT, «leerer Payload ver
 
 from __future__ import annotations
 
+from backend.tests.werkzeug_befund import befund_link
 import importlib.util
 from datetime import date
 from types import SimpleNamespace
@@ -371,14 +372,25 @@ async def _checker(db):
 
 
 async def test_checker_kennung_unbekannt_mit_rohtext(db, monkeypatch):
-    anlage, wb, _ea = await _anlage(db, wb_live={FELD: "select.evcc_carport_vehicle_name"}, kennung="Smart")
+    anlage, wb, ea = await _anlage(db, wb_live={FELD: "select.evcc_carport_vehicle_name"}, kennung="Smart")
     _stelle_ha(monkeypatch, {"select.evcc_carport_vehicle_name": ("fremd", None)})
     erg = await (await _checker(db))._check_emob_kennung_unbekannt(anlage)
     assert len(erg) == 1
     m = erg[0]
     assert m.kategorie == "emob_kennung_unbekannt" and m.schwere == "info" and m.investition_id == wb.id
     assert "„fremd“" in m.meldung and "SMA eCharger 22" in m.meldung
-    assert "Kennung in der Steuerung" in m.details and m.link == "/einstellungen/investitionen"
+    assert "Kennung in der Steuerung" in m.details
+    # E6.D D3 (W-14): der Befund gehört zur Wallbox, der Sprung zum E-Auto — das Feld gibt es nur dort.
+    assert befund_link(m) == f"/einstellungen/komponenten?bearbeiten={ea.id}&feld=kennung_in_steuerung"
+
+
+async def test_checker_kennung_unbekannt_zwei_autos_oeffnet_uebersicht(db, monkeypatch):
+    """E6.D D3: mit zwei E-Autos kennt der Erzeuger das passende nicht — der Sprung öffnet die Komponenten-Übersicht."""
+    anlage, wb, _ea = await _anlage(db, wb_live={FELD: "select.evcc_carport_vehicle_name"}, kennung="Smart",
+                                    zweites_auto="id4")
+    _stelle_ha(monkeypatch, {"select.evcc_carport_vehicle_name": ("fremd", None)})
+    (m,) = await (await _checker(db))._check_emob_kennung_unbekannt(anlage)
+    assert m.investition_id == wb.id and befund_link(m) == "/einstellungen/komponenten"
     # Der Zustands-Check («fremder Wert») nimmt das Textfeld aus — ein Name ist kein unbekannter Kanon-Wert.
     assert await (await _checker(db))._check_emob_zustand_wert(anlage) == []
 

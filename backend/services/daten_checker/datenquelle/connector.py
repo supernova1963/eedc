@@ -11,8 +11,8 @@ from backend.services.daten_checker.kategorien import (
     CheckErgebnis,
     CheckKategorie,
     CheckSeverity,
-    LINK_INTEGRATION,
 )
+from backend.services.daten_checker.ziele import ziel_block
 
 
 def _letzter_abruf_satz(config: dict) -> str:
@@ -129,22 +129,22 @@ class ConnectorChecks:
         # gibt — dieselbe Klasse wie F-27/F-30.
         weg = (
             f"Der tägliche Abruf läuft um 03:30 Uhr{_letzter_abruf_satz(config)}. "
-            "Kommt trotzdem kein Snapshot dazu, lies den Zähler unter "
-            "Einstellungen → Integration → Import-Assistenten → Geräte-Connector "
+            "Kommt trotzdem kein Snapshot dazu, lies den Zähler im Geräte-Connector "
             "mit „Jetzt ablesen“ von Hand ab; scheitert der Abruf, steht der "
             "Grund dort und im Aktivitätsprotokoll."
         )
         return [CheckErgebnis(
             kategorie=CheckKategorie.DATENQUELLE_STATUS.value,
-            schwere=CheckSeverity.WARNING.value,
+            schwere=CheckSeverity.WARNING.value, code="connector_monatswert_fehlt",
             meldung=(
                 f"Connector „{geraet}“ liefert für "
                 f"{heute.month:02d}/{heute.year} keinen Wert"
             ),
             details=(
                 f"Nicht genügend Snapshots für {heute.month:02d}/{heute.year}. "
-                "Mindestens ein Snapshot vor und einer nach dem Monatsbeginn "
-                f"nötig. {bestand} {weg}"
+                "Nötig sind zwei verschiedene Snapshots: der erste vor dem "
+                "Monat oder im Monat, der zweite im Monat oder danach. "
+                f"{bestand} {weg}"
             ),
-            link=LINK_INTEGRATION,
+            ziel=ziel_block("integration", "import-buendel", wizard="connector"),
         )]

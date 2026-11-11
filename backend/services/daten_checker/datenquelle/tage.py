@@ -11,11 +11,11 @@ from backend.core.berechnungen import PV_KOMPONENTEN_PREFIXE
 from backend.services.daten_checker.kategorien import (
     CheckErgebnis,
     CheckKategorie,
+    Aktion,
     CheckSeverity,
-    LINK_DATENQUELLEN,
-    LINK_ENERGIEPROFIL,
 )
 from backend.core.zahlenformat import fmt_zahl
+from backend.services.daten_checker.ziele import ziel_datenquelle
 
 logger = logging.getLogger(__name__)
 
@@ -176,17 +176,20 @@ class TageChecks:
             # auch nichts zu bestätigen.
             return []
 
+        def _ok(meldung: str, details: str) -> list[CheckErgebnis]:
+            # E5 V3 (Teil B Nr 33 + 34): EINE OK-Zeile der Kategorie, zwei Wortlaute (alle Tage tragen Werte · die Lücken
+            # hat auch HA nicht).
+            return [CheckErgebnis(kategorie=kat, schwere=CheckSeverity.OK.value, code="tageswerte_ok",
+                                  meldung=meldung, details=details)]
+
         if not kandidaten:
-            return [CheckErgebnis(
-                kategorie=kat, schwere=CheckSeverity.OK.value,
-                meldung="Alle Tage mit zugeordnetem Zähler tragen Werte (letzte 90 Tage)",
-                details=(
-                    "Für jeden zugeordneten kWh-Zähler steht in der gespeicherten "
-                    "Tages-Zusammenfassung ein Wert. Tage, an denen die Zuordnung "
-                    "zwar steht, aber nie aggregiert wurde, würden hier mit einem "
-                    "Reparatur-Knopf erscheinen."
-                ),
-            )]
+            return _ok(
+                "Alle Tage mit zugeordnetem Zähler tragen Werte (letzte 90 Tage)",
+                "Für jeden zugeordneten kWh-Zähler steht in der gespeicherten "
+                "Tages-Zusammenfassung ein Wert. Tage, an denen die Zuordnung "
+                "zwar steht, aber nie aggregiert wurde, würden hier mit einem "
+                "Reparatur-Knopf erscheinen.",
+            )
 
         # LTS-Reads deckeln — ohne stilles Abschneiden (die Meldung nennt den Rest).
         MAX_LTS_READS = 45
@@ -224,17 +227,14 @@ class TageChecks:
                 befunde.append((datum_, fehlend))
 
         if not befunde:
-            return [CheckErgebnis(
-                kategorie=kat, schwere=CheckSeverity.OK.value,
-                meldung="Keine reparierbaren Tages-Lücken gefunden (letzte 90 Tage)",
-                details=(
-                    f"{len(kandidaten)} Tag(e) tragen für einen zugeordneten Zähler "
-                    f"keinen Wert — die HA-Langzeitstatistik liefert für diese Tage "
-                    f"aber ebenfalls nichts. eedc reicht nur so weit zurück wie HA "
-                    f"selbst; solche Lücken sind keine Fehlfunktion, sondern lassen "
-                    f"sich nicht mehr füllen."
-                ),
-            )]
+            return _ok(
+                "Keine reparierbaren Tages-Lücken gefunden (letzte 90 Tage)",
+                f"{len(kandidaten)} Tag(e) tragen für einen zugeordneten Zähler "
+                f"keinen Wert — die HA-Langzeitstatistik liefert für diese Tage "
+                f"aber ebenfalls nichts. eedc reicht nur so weit zurück wie HA "
+                f"selbst; solche Lücken sind keine Fehlfunktion, sondern lassen "
+                f"sich nicht mehr füllen.",
+            )
 
         befunde.sort(key=lambda x: x[0])
         aeltester, neuester = befunde[0][0], befunde[-1][0]
@@ -282,7 +282,7 @@ class TageChecks:
         )
         if reparatur_moeglich:
             summen_details += (
-                f" „Zeitraum neu aggregieren“ holt {range_von.isoformat()} bis "
+                f" „Tage neu aufbauen“ holt {range_von.isoformat()} bis "
                 f"{neuester.isoformat()} aus HA-Statistics nach "
                 f"(max. {REAGGREGATE_RANGE_MAX_DAYS} Tage/Lauf)."
             )
@@ -291,9 +291,9 @@ class TageChecks:
                 " Nachrechnen ist hier allerdings NICHT möglich: der Tages-Lauf "
                 "braucht zusätzlich eine Leistungs-Zuordnung (W), und dieser "
                 "Anlage ist keine zugeordnet. Der Zählerstand allein genügt ihm "
-                "nicht. Deshalb steht hier bewusst kein Knopf — er würde "
-                "durchlaufen und nichts schreiben. Zuerst unter Einstellungen → "
-                "Datenquellen einen Leistungssensor zuordnen (z. B. „Netz-"
+                "nicht. Deshalb steht hier kein Reparatur-Knopf — er würde "
+                "durchlaufen und nichts schreiben —, sondern „Sensor zuordnen“: "
+                "zuerst in den Datenquellen einen Leistungssensor zuordnen (z. B. „Netz-"
                 "Leistung“), danach erscheint die Reparatur hier."
             )
         if rest_aelter > 0:
@@ -310,7 +310,7 @@ class TageChecks:
         summen_details += (
             " Reichweite: die Tagesreparatur heilt Tages- und Stundenwerte, "
             "NICHT die Monatswerte. Für abgeschlossene Monate anschließend "
-            "Einstellungen → Integration → Statistik-Import: „Vorschau laden“ — "
+            "im Statistik-Import „Vorschau laden“ — "
             "bereits belegte Monate stehen dort unter „Konflikte“ und sind zum "
             "Überschreiben vorausgewählt, also vor dem Import einmal durchsehen."
         )
@@ -322,17 +322,17 @@ class TageChecks:
                 f"({aeltester.isoformat()} … {neuester.isoformat()})"
             ),
             details=summen_details,
-            link=(
-                LINK_ENERGIEPROFIL if reparatur_moeglich
-                else LINK_DATENQUELLEN
-            ),
-            action_kind="reaggregate_range" if reparatur_moeglich else None,
-            action_params={
-                "anlage_id": anlage.id,
+            action=Aktion("reaggregate_range", {
                 "von": range_von.isoformat(),
                 "bis": neuester.isoformat(),
-            } if reparatur_moeglich else None,
-            action_label="Zeitraum neu aggregieren" if reparatur_moeglich else None,
+            }) if reparatur_moeglich else None,
+            # E5 (E4 ⚑1, Master-Entscheid): ohne Reparaturweg springt der Befund auf das fehlende Feld (Leistung am Netz).
+            ziel=ziel_datenquelle(feld="netzbezug_w") if not reparatur_moeglich else None,
+            code="tageswerte_fehlen_tage",
+            werte={"tage": len(befunde), "von": aeltester.isoformat(), "bis": neuester.isoformat(),
+                   "komponenten": betroffene_keys, "reparatur_moeglich": reparatur_moeglich,
+                   "bereich_von": range_von.isoformat(), "aelter_ausserhalb": rest_aelter,
+                   "ungeprueft": ungeprueft},
         ))
 
         if not reparatur_moeglich:
@@ -341,6 +341,7 @@ class TageChecks:
             return ergebnisse
 
         MAX_EINZEL = 15
+        weitere = max(0, len(befunde) - MAX_EINZEL)  # E5 V2: statt Restzeile `weitere` an der Gruppenzeile
         for datum_, fehlend in sorted(befunde, key=lambda x: x[0], reverse=True)[:MAX_EINZEL]:
             teile = ", ".join(
                 f"{_key_label(k)} {fmt_zahl(v, 1)} kWh" for k, v in sorted(fehlend.items())
@@ -352,19 +353,9 @@ class TageChecks:
                     "Einzelnen Tag aus HA-Statistics nachaggregieren — schreibt "
                     "Tages- und Stundenwerte, nicht die Monatswerte."
                 ),
-                link=LINK_ENERGIEPROFIL,
-                action_kind="reaggregate_day",
-                action_params={"anlage_id": anlage.id, "datum": datum_.isoformat()},
-                action_label="Tag reparieren",
+                action=Aktion("reaggregate_day", {"datum": datum_.isoformat()}),
+                code="tageswerte_fehlen_tag",
+                werte={"datum": datum_.isoformat(), "ha_kwh": dict(sorted(fehlend.items())),
+                       **({"weitere": weitere} if weitere else {})},
             ))
-        if len(befunde) > MAX_EINZEL:
-            rest = len(befunde) - MAX_EINZEL
-            ergebnisse.append(CheckErgebnis(
-                kategorie=kat, schwere=CheckSeverity.INFO.value,
-                meldung=(
-                    f"… plus {rest} weitere(r) Tag(e) — am besten per "
-                    f"„Zeitraum neu aggregieren“."
-                ),
-            ))
-
         return ergebnisse

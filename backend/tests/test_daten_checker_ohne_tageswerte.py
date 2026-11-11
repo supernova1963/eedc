@@ -26,6 +26,7 @@ werden gestellt, damit der Test ohne DB und ohne HA läuft
 
 from __future__ import annotations
 
+from backend.tests.werkzeug_befund import befund_link, befund_op, befund_params
 from datetime import date
 from types import SimpleNamespace
 
@@ -99,12 +100,18 @@ async def test_ohne_jede_tageszeile_meldet_der_check_genau_das(monkeypatch):
     # Hinweis ohne Weg) — Zuordnung der kWh-Zähler bzw. Nachfüllen.
     assert "Datenquellen" in b.details
     assert "kWh" in b.details
-    assert b.link
+    # E4 (Teil B Nr 19): Auskunft — kein Sprung-Knopf; «Was gilt» öffnet den Lösungsweg, der Weg steht im Text.
+    assert befund_link(b) is None
 
 
 async def test_zeile_aus_aelterer_quelle_meldet_weiterhin_die_quelle(monkeypatch):
     """Gegenprobe: der Zweig, für den der alte Text gedacht war, bleibt intakt —
-    mit echtem Datum und echter Quelle statt Platzhaltern."""
+    mit echtem Datum und echter Quelle statt Platzhaltern. Seit E3 trägt die Zeile «Tage neu aufbauen» über das
+    jüngste Fenster der Bestandstage bis zum gemeldeten Tag (Kanal-Lage hier leer: alle Tage Bestand)."""
+    async def _keine_kanal_tage(_db, _aid, _von, _bis, **_k):
+        return {}
+
+    monkeypatch.setattr("backend.services.kanal.bilanz_leser.kanal_tage", _keine_kanal_tage)
     b = await _befund(
         _FakeDb(_tz_zeile("auto:monatsabschluss")), monkeypatch, ha_verfuegbar=True
     )
@@ -113,6 +120,7 @@ async def test_zeile_aus_aelterer_quelle_meldet_weiterhin_die_quelle(monkeypatch
     assert "2026-08-04" in b.details
     assert "auto:monatsabschluss" in b.details
     assert "vom ?" not in b.details
+    assert (befund_op(b), befund_params(b)) == ("reaggregate_range", {"von": "2026-07-05", "bis": "2026-08-04"})
 
 
 async def test_zeile_aus_ha_statistics_bleibt_ok(monkeypatch):

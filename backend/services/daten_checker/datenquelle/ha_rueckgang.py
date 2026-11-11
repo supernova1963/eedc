@@ -188,16 +188,24 @@ class HaRueckgangChecks:
                 + (
                     # #429 (jedema1805): die Zeilen eines ersetzten Sensors zählen weiter — der Text sagt es.
                     " Stammt der Rückgang von einem Sensor, den du inzwischen ersetzt hast, entfernt die "
-                    "Werkbank-Operation „Werte vor dem Sensorbeginn verwerfen“ seine Werte vor dem Beginn des neuen "
-                    "Sensors (Einstellungen → Daten → Energieprofil-Pflege); die Meldung verschwindet dann."
+                    "Operation „Werte vor dem Sensorbeginn verwerfen“ der Reparatur-Werkbank seine Werte vor dem Beginn "
+                    "des neuen Sensors; die Meldung verschwindet dann."
                     if any(r.zugeordnet_bis is not None for r in funde) else ""
                 )
             ),
             # Kein „Beheben"-Link — dieselbe Begründung wie `ha_sprung` (Lab 4.1.3-rc1): die Korrektur liegt in Home
             # Assistant, die Checker-Links navigieren nur innerhalb von eedc. Der Weg steht im Text.
-            link=None,
             # N-790: der Schritt nach der Korrektur in HA als Knopf (Abgleich + Tag des ersten Funds neu aufgebaut).
-            **aktion_spiegel_abgleich_tag(anlage.id, funde[0].tag),
+            action=aktion_spiegel_abgleich_tag(anlage.id, funde[0].tag),
+            # E1 (Diagnose-Paket): die Zahlen der Meldung und der genannten Funde strukturiert, ohne neue Rechnung.
+            code="ha_zaehler_rueckgang",
+            werte={"tage": len(funde), "funde": [
+                {"sensor": r.statistic_id, "tag": r.tag.isoformat(), "menge_kwh": round(r.menge_kwh, 3),
+                 "stunden": len(r.stunden),
+                 "groesste_stunde": datetime.fromtimestamp(r.groesste_stunde).isoformat(timespec="minutes"),
+                 "zugeordnet_bis": (None if r.zugeordnet_bis is None
+                                    else datetime.fromtimestamp(r.zugeordnet_bis).date().isoformat())}
+                for r in funde[:BEISPIELE]]},
         )]
 
 

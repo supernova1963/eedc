@@ -6,6 +6,7 @@ in HA korrigieren. Keine Probe liest die Uhr (Naht ``jetzt``)."""
 
 from __future__ import annotations
 
+from backend.tests.werkzeug_befund import befund_link, befund_op
 from datetime import datetime, timedelta
 
 import pytest
@@ -393,15 +394,17 @@ async def test_checker_nennt_stunde_sensor_menge_und_den_weg_in_ha(db):
 
     (e,) = await _Pruefer(db)._check_ha_zaehlersprung(a, jetzt=JETZT)
     assert e.kategorie == CheckKategorie.HA_ZAEHLERSPRUNG.value
+    # E1 (E0 ⚑2): die Meldung selbst im Volltext — Grundlinie für E2 (bisher hielt kein Test sie).
+    assert e.meldung == "1 Zählersprung/-sprünge in der Home-Assistant-Statistik — Tag und Monat zeigen sie mit"
+    assert e.code == "ha_zaehlersprung" and e.werte["spruenge"] == 1 and e.werte["funde"][0]["sensor"] == "sensor.pv_gesamt"
     assert "sensor.pv_gesamt" in e.details and "Stunde ab 23:00" in e.details
     assert "Wert anpassen" in e.details and "Monatsabschluss neu" in e.details
     # Der Link zeigt nicht auf eedcs Datenquellen (Lab 4.1.3-rc1: dort ist nichts falsch), sondern auf die
     # Energieprofil-Pflege. Der Schritt nach der Korrektur in HA (#429, „HA-Spiegel jetzt abgleichen") ist seit N-790
     # der Knopf der Meldung selbst: «Aus Home Assistant neu übernehmen» (Abgleich + Tag neu aufgebaut).
-    from backend.services.daten_checker.kategorien import LINK_DATENQUELLEN, LINK_ENERGIEPROFIL
-    assert e.link == LINK_ENERGIEPROFIL
-    assert e.link != LINK_DATENQUELLEN
-    assert e.action_kind == "spiegel_abgleich_tag"
+    # E4: eine Aktion trägt keinen Link mehr (Teil B Nr 3; das Übergangsfeld `altlink` ist entfallen).
+    assert befund_link(e) is None
+    assert befund_op(e) == "spiegel_abgleich_tag"
     assert "„Aus Home Assistant neu übernehmen“" in e.details
     # Außerhalb des Fensters (30 Tage) kein Befund.
     assert await _Pruefer(db)._check_ha_zaehlersprung(a, jetzt=JETZT + timedelta(days=60)) == []

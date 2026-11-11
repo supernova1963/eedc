@@ -14,10 +14,8 @@ from sqlalchemy import select
 from backend.core.field_definitions.heimladung import HEIMLADE_FELDER
 from backend.models.anlage import Anlage
 
-from .kategorien import (
-    CheckErgebnis, CheckKategorie, CheckSeverity, LINK_DATENQUELLEN,
-    LINK_INTEGRATION,
-)
+from .kategorien import CheckErgebnis, CheckKategorie, CheckSeverity
+from .ziele import ziel_block, ziel_datenquelle, ziel_datenquelle_schluessel
 
 
 #: #425: Die Energie-Felder eines E-Autos, die neben einer Wallbox mit Ladezähler
@@ -58,7 +56,7 @@ def _ha_live_entities(anlage: Anlage) -> dict[str, dict[str, str]]:
 def _meldung_ohne_langzeitstatistik(kat: str, inv, betroffen: list[str]) -> CheckErgebnis:
     """Das INFO je Gerät: welche Sensoren, was fehlt, der Weg in HA."""
     return CheckErgebnis(
-        kategorie=kat, schwere=CheckSeverity.INFO.value,
+        kategorie=kat, schwere=CheckSeverity.INFO.value, code="sensor_ohne_langzeitstatistik",
         meldung=(
             f"„{inv.bezeichnung}“: {len(betroffen)} Sensor(en) ohne Langzeitstatistik — "
             "Live ja, Tagesverlauf nein"
@@ -76,7 +74,6 @@ def _meldung_ohne_langzeitstatistik(kat: str, inv, betroffen: list[str]) -> Chec
             "entstehen die Stundenmittel aus der 5-Minuten-Mitschrift von eedc — ab der Zuordnung, "
             "nicht rückwirkend."
         ),
-        link=LINK_DATENQUELLEN,
         investition_id=inv.id,
     )
 
@@ -135,6 +132,20 @@ def _pflicht_ohne_eintrag(
     }
 
 
+def _sensor_orte(mapping: dict) -> dict[str, str]:
+    """Sensor-Id → Schlüssel ``basis:<key>`` bzw. ``inv:<id>:<feld>`` des Mappings (E4: «Beheben» springt auf das Feld des
+    ersten betroffenen Sensors, ``ziele.ziel_datenquelle_schluessel``)."""
+    orte: dict[str, str] = {}
+    for key, m in (mapping.get("basis") or {}).items():
+        if isinstance(m, dict) and m.get("sensor_id"):
+            orte.setdefault(m["sensor_id"], f"basis:{key}")
+    for inv_id, d in (mapping.get("investitionen") or {}).items():
+        for feld, m in ((d.get("felder") or {}).items() if isinstance(d, dict) else ()):
+            if isinstance(m, dict) and m.get("sensor_id"):
+                orte.setdefault(m["sensor_id"], f"inv:{inv_id}:{feld}")
+    return orte
+
+
 @dataclass
 class _LtsKontext:
     """Was die Befund-Phase von ``SensorChecks._check_sensor_mapping_lts`` braucht (RF-66, Bauform RF-1).
@@ -149,6 +160,7 @@ class _LtsKontext:
     stand_sensors: list[tuple[str, str]]
     missing: set[str] = field(default_factory=set)
     ohne_sum: set[str] = field(default_factory=set)
+    orte: dict[str, str] = field(default_factory=dict)  # E4: Sensor-Id → Mapping-Schlüssel (`_sensor_orte`)
 
 
 class SensorChecks:
@@ -251,18 +263,19 @@ class SensorChecks:
                 setting and setting.value and setting.value.get("enabled")
             )
             if not inbound_enabled_in_settings:
+                self._nicht_ausfuehrbar_merken("MQTT-Topic-Abdeckung", "MQTT-Import aus")
                 return []
             ergebnisse.append(CheckErgebnis(
-                kategorie=kat, schwere=CheckSeverity.INFO,
+                kategorie=kat, schwere=CheckSeverity.INFO, code="mqtt_subscriber_laeuft_nicht",
                 meldung="MQTT-Inbound aktiviert, Subscriber läuft jedoch nicht",
                 details=(
                     "Möglicherweise konnte beim letzten Start keine Verbindung "
                     "zum Broker aufgebaut werden. Prüfe Broker-Adresse und "
-                    "Zugangsdaten unter Einstellungen → Integration, oder "
+                    "Zugangsdaten der MQTT-Broker-Verbindung, oder "
                     "schalte dort „Daten über MQTT empfangen“ ab, wenn du keine "
                     "Live-Daten via MQTT brauchst."
                 ),
-                link=LINK_INTEGRATION,
+                ziel=ziel_block("integration", "mqtt-broker"),
             ))
             return ergebnisse
 
@@ -387,6 +400,8 @@ class SensorChecks:
 
         nie_empfangen: list[str] = []
         veraltet: list[tuple[str, int]] = []  # (topic, alter_minuten)
+        geraete_nie: list[int] = []  # E4: Gerät des ersten Topics je Befund (Sprung auf das Gerät)
+        geraete_alt: list[int] = []
 
         for entry in erwartet:
             mk = entry["match_key"]
@@ -412,11 +427,14 @@ class SensorChecks:
                 if pair:
                     _, ts = pair
 
+            inv_id = [int(mk[1])] if kind in ("inv_live", "inv_energy") and str(mk[1]).isdigit() else []
             if ts is None:
                 nie_empfangen.append(entry["topic"])
+                geraete_nie += inv_id
             elif now - ts > threshold:
                 age_min = int((now - ts).total_seconds() // 60)
                 veraltet.append((entry["topic"], age_min))
+                geraete_alt += inv_id
 
         if nie_empfangen:
             # Voller Topic-Pfad statt nur des letzten Segments (#389): „leistung_w"
@@ -426,7 +444,7 @@ class SensorChecks:
             if len(nie_empfangen) > 6:
                 beispiele += f" (+{len(nie_empfangen) - 6} weitere)"
             ergebnisse.append(CheckErgebnis(
-                kategorie=kat, schwere=CheckSeverity.WARNING,
+                kategorie=kat, schwere=CheckSeverity.WARNING, code="mqtt_topics_nie_empfangen",
                 meldung=f"{len(nie_empfangen)} MQTT-Topic(s) erwartet, nie empfangen",
                 details=(
                     "Der Subscriber läuft, aber für diese Topics liefert noch "
@@ -434,16 +452,16 @@ class SensorChecks:
                     "(HA-Automation, ioBroker, Node-RED) noch nicht eingerichtet, "
                     "oder Investitions-IDs nach Re-Import nicht in der Automation "
                     "nachgezogen. Felder, die du nicht über MQTT lieferst, stellst "
-                    "du unter Einstellungen → Datenquellen auf „Keine“ — dann "
+                    "du in den Datenquellen auf „Keine“ — dann "
                     "erwartet eedc sie hier nicht mehr. Optionale Felder "
                     "erwartet eedc hier nur, wenn du ihnen dort MQTT oder das "
                     "Gateway als Quelle zugeordnet hast. "
                     "Wenn du keine Live-Daten via MQTT brauchst, "
-                    "kannst du „Daten über MQTT empfangen“ unter "
-                    "Einstellungen → Integration abschalten. "
+                    "kannst du „Daten über MQTT empfangen“ in der "
+                    "MQTT-Broker-Verbindung abschalten. "
                     f"Betroffen: {beispiele}"
                 ),
-                link=LINK_INTEGRATION,
+                ziel=ziel_datenquelle(geraet=geraete_nie[0] if geraete_nie else None),
             ))
 
         if veraltet:
@@ -453,23 +471,23 @@ class SensorChecks:
             if len(veraltet) > 5:
                 beispiele += f" (+{len(veraltet) - 5} weitere)"
             ergebnisse.append(CheckErgebnis(
-                kategorie=kat, schwere=CheckSeverity.WARNING,
+                kategorie=kat, schwere=CheckSeverity.WARNING, code="mqtt_topics_veraltet",
                 meldung=f"{len(veraltet)} MQTT-Topic(s) mit veralteten Werten",
                 details=(
                     "Live-Topics sollten innerhalb 2 min, Energy-Topics innerhalb "
                     "10 min aktualisiert werden. Mögliche Ursache: "
                     "Publisher-Automation läuft nicht oder hat ihre Quelle "
                     "verloren. Wenn du keine Live-Daten via MQTT brauchst, "
-                    "kannst du „Daten über MQTT empfangen“ unter "
-                    "Einstellungen → Integration abschalten. "
+                    "kannst du „Daten über MQTT empfangen“ in der "
+                    "MQTT-Broker-Verbindung abschalten. "
                     f"Betroffen: {beispiele}"
                 ),
-                link=LINK_INTEGRATION,
+                ziel=ziel_datenquelle(geraet=geraete_alt[0] if geraete_alt else None),
             ))
 
         if not nie_empfangen and not veraltet:
             ergebnisse.append(CheckErgebnis(
-                kategorie=kat, schwere=CheckSeverity.OK,
+                kategorie=kat, schwere=CheckSeverity.OK, code="mqtt_ok",
                 meldung=f"Alle {len(erwartet)} erwarteten MQTT-Topics aktuell empfangen",
             ))
 
@@ -556,10 +574,9 @@ class SensorChecks:
 
         ha_service = get_ha_statistics_service()
         if not ha_service.is_available:
-            ergebnisse.append(CheckErgebnis(
-                kategorie=kat, schwere=CheckSeverity.INFO,
-                meldung="HA Long-Term-Statistics nicht erreichbar — Mapping-Prüfung übersprungen",
-            ))
+            # E5 V3 (Teil B Nr 116 ⇒ 21): keine eigene Zeile mehr — die Lage nennt `betriebsart_standalone` (Datenquelle –
+            # aktiver Pfad), die Kopfzeile zählt die Prüfung als nicht ausführbar (V4, Gegenprüfung N3).
+            self._nicht_ausfuehrbar_merken("Sensoren gegen die Langzeitstatistik", "Standalone")
             return ergebnisse
 
         # Summen-fähig statt nur „vorhanden" (2026-07-29): ein Sensor mit
@@ -580,7 +597,7 @@ class SensorChecks:
 
         ergebnisse.extend(self._lts_befunde(_LtsKontext(
             kat=kat, kwh_sensors=kwh_sensors, counter_sensors=counter_sensors, stand_sensors=stand_sensors,
-            missing=missing, ohne_sum=ohne_sum,
+            missing=missing, ohne_sum=ohne_sum, orte=_sensor_orte(mapping),
         )))
         return ergebnisse
 
@@ -720,12 +737,12 @@ class SensorChecks:
             if len(kwh_missing) > 5:
                 beispiele += f" (+{len(kwh_missing) - 5} weitere)"
             ergebnisse.append(CheckErgebnis(
-                kategorie=kat, schwere=CheckSeverity.WARNING,
+                kategorie=kat, schwere=CheckSeverity.WARNING, code="kwh_sensoren_nicht_in_lts",
                 meldung=f"{len(kwh_missing)} kWh-Sensor(en) nicht in HA-Long-Term-Statistics",
                 details=(
                     "Diese Sensoren haben kein state_class — typisch bei Modbus-"
                     "Roh-Werten oder Hersteller-Integrationen ohne Metadaten. "
-                    "Folgen: die Korrektur-Werkzeuge in der Datenverwaltung "
+                    "Folgen: die Korrektur-Werkzeuge der Reparatur-Werkbank "
                     "(Vollbackfill, Verlauf nachrechnen, Per-Tag-Reaggregation) "
                     "wirken auf diese Sensoren nicht — sie lesen alle aus HA's "
                     "LTS. Jeder Aussetzer ist permanent verloren, vergangene "
@@ -741,7 +758,7 @@ class SensorChecks:
                     "ohnehin pflegt, state_class per customize ergänzen). "
                     f"Betroffen: {beispiele}"
                 ),
-                link=LINK_DATENQUELLEN,
+                ziel=ziel_datenquelle_schluessel(ctx.orte.get(kwh_missing[0][0], "")),
             ))
 
         if counter_missing:
@@ -749,7 +766,7 @@ class SensorChecks:
             if len(counter_missing) > 5:
                 beispiele += f" (+{len(counter_missing) - 5} weitere)"
             ergebnisse.append(CheckErgebnis(
-                kategorie=kat, schwere=CheckSeverity.WARNING,
+                kategorie=kat, schwere=CheckSeverity.WARNING, code="counter_ohne_state_class",
                 meldung=(
                     f"{len(counter_missing)} Counter-Sensor(en) ohne state_class — "
                     "Korrektur-Werkzeuge wirken nicht"
@@ -757,8 +774,8 @@ class SensorChecks:
                 details=(
                     "Counter-Felder wie WP-Kompressor-Starts werden über den stündlichen "
                     "Snapshot-Service erfasst. Ohne state_class fehlt aber HA-Long-Term-"
-                    "Statistics: damit greifen die Korrektur-Werkzeuge in der "
-                    "Datenverwaltung nicht (Vollbackfill, Verlauf nachrechnen, "
+                    "Statistics: damit greifen die Korrektur-Werkzeuge der "
+                    "Reparatur-Werkbank nicht (Vollbackfill, Verlauf nachrechnen, "
                     "Per-Tag-Reaggregation lesen alle aus HA's LTS). Jeder Aussetzer "
                     "(HA-/EEDC-Neustart, Polling-Hänger) ist permanent verloren; im "
                     "Normalbetrieb fehlt zusätzlich häufig die letzte Stunde des Tages "
@@ -771,7 +788,7 @@ class SensorChecks:
                     "stattdessen per customize ergänzen. "
                     f"Betroffen: {beispiele}"
                 ),
-                link=LINK_DATENQUELLEN,
+                ziel=ziel_datenquelle_schluessel(ctx.orte.get(counter_missing[0][0], "")),
             ))
 
         if kwh_ohne_sum:
@@ -779,7 +796,7 @@ class SensorChecks:
             if len(kwh_ohne_sum) > 5:
                 beispiele += f" (+{len(kwh_ohne_sum) - 5} weitere)"
             ergebnisse.append(CheckErgebnis(
-                kategorie=kat, schwere=CheckSeverity.WARNING,
+                kategorie=kat, schwere=CheckSeverity.WARNING, code="kwh_ohne_summen_spalte",
                 meldung=(
                     f"{len(kwh_ohne_sum)} kWh-Sensor(en) ohne Summen-Spalte — "
                     "Tages- und Stundenwerte bleiben leer"
@@ -791,7 +808,7 @@ class SensorChecks:
                     "und keine Zählerstände — eedc kann daraus keine Stunden- und "
                     "Tagesdeltas bilden. Die Live-Ansicht ist NICHT betroffen, sie "
                     "rechnet aus den Watt-Sensoren; deshalb sieht man dort Werte, "
-                    "während Cockpit → Tag und die Stundenwerte auf 0 stehen. "
+                    "während die Tagesansicht im Cockpit und die Stundenwerte auf 0 stehen. "
                     "Lösung: in Home Assistant unter Einstellungen → Geräte & "
                     "Dienste → Helfer einen Verbrauchszähler auf diesen Sensor "
                     "anlegen, Zurücksetzen „nie“ (ohne Zyklus) — er führt die "
@@ -804,7 +821,7 @@ class SensorChecks:
                     "HA sammelt die Summenwerte erst ab der Umstellung. "
                     f"Betroffen: {beispiele}"
                 ),
-                link=LINK_DATENQUELLEN,
+                ziel=ziel_datenquelle_schluessel(ctx.orte.get(kwh_ohne_sum[0][0], "")),
             ))
 
         if counter_ohne_sum:
@@ -812,7 +829,7 @@ class SensorChecks:
             if len(counter_ohne_sum) > 5:
                 beispiele += f" (+{len(counter_ohne_sum) - 5} weitere)"
             ergebnisse.append(CheckErgebnis(
-                kategorie=kat, schwere=CheckSeverity.WARNING,
+                kategorie=kat, schwere=CheckSeverity.WARNING, code="counter_ohne_summen_spalte",
                 meldung=(
                     f"{len(counter_ohne_sum)} Counter-Sensor(en) ohne Summen-Spalte — "
                     "Korrektur-Werkzeuge wirken nicht"
@@ -835,7 +852,7 @@ class SensorChecks:
                     "(HA-Neustart nötig). "
                     f"Betroffen: {beispiele}"
                 ),
-                link=LINK_DATENQUELLEN,
+                ziel=ziel_datenquelle_schluessel(ctx.orte.get(counter_ohne_sum[0][0], "")),
             ))
 
         if stand_missing:
@@ -843,7 +860,7 @@ class SensorChecks:
             if len(stand_missing) > 5:
                 beispiele += f" (+{len(stand_missing) - 5} weitere)"
             ergebnisse.append(CheckErgebnis(
-                kategorie=kat, schwere=CheckSeverity.WARNING,
+                kategorie=kat, schwere=CheckSeverity.WARNING, code="stand_sensoren_nicht_in_lts",
                 meldung=(
                     f"{len(stand_missing)} Zählerstand-Sensor(en) nicht in "
                     "HA-Long-Term-Statistics"
@@ -867,32 +884,24 @@ class SensorChecks:
                     "Umstellung. "
                     f"Betroffen: {beispiele}"
                 ),
-                link=LINK_DATENQUELLEN,
+                ziel=ziel_datenquelle_schluessel(ctx.orte.get(stand_missing[0][0], "")),
             ))
 
-        if stand_sensors and not stand_missing:
-            ergebnisse.append(CheckErgebnis(
-                kategorie=kat, schwere=CheckSeverity.OK,
-                meldung=(
-                    f"Alle {len(stand_sensors)} Zählerstand-Sensor(en) in "
-                    "HA-Long-Term-Statistics verfügbar"
-                ),
-                details=(
-                    "Eine Summen-Spalte wird hier bewusst nicht verlangt — ein "
-                    "Zählerstand kommt aus dem Sensor-Zustand, nicht aus einer "
-                    "Verbrauchssumme."
-                ),
-            ))
-
+        # E5 V3 (Teil B Nr 122 + 123): eine OK-Zeile für Zählerstand- und kWh-Sensoren; beide Zahlen stehen darin.
+        teile = []
         if kwh_sensors and not kwh_missing and not kwh_ohne_sum:
+            teile.append(f"{len(kwh_sensors)} kWh-Sensor(en)")
+        if stand_sensors and not stand_missing:
+            teile.append(f"{len(stand_sensors)} Zählerstand-Sensor(en)")
+        if teile:
             ergebnisse.append(CheckErgebnis(
-                kategorie=kat, schwere=CheckSeverity.OK,
-                meldung=(
-                    f"Alle {len(kwh_sensors)} kWh-Sensor(en) im Mapping in "
-                    "HA-Long-Term-Statistics verfügbar"
-                ),
+                kategorie=kat, schwere=CheckSeverity.OK, code="stand_sensoren_ok",
+                meldung=f"Alle {' und '.join(teile)} in HA-Long-Term-Statistics verfügbar",
+                details=(
+                    "Für einen Zählerstand wird bewusst keine Summen-Spalte verlangt — er kommt aus dem "
+                    "Sensor-Zustand, nicht aus einer Verbrauchssumme."
+                ) if stand_sensors and not stand_missing else None,
             ))
-
 
         return ergebnisse
 
@@ -981,9 +990,9 @@ class SensorChecks:
 
         # Slots sammeln: (entity_id, label, erwartete_klasse) — nur Slots, deren
         # erwartete Einheit (aus FELD_EINHEITEN) Leistung oder Energie ist.
-        slots: list[tuple[str, str, str]] = []
+        slots: list[tuple[str, str, str, str]] = []  # E4: dazu der Mapping-Schlüssel (Sprung aufs Feld)
 
-        def _add(eid: Optional[str], schluessel: str, label: str) -> None:
+        def _add(eid: Optional[str], schluessel: str, label: str, ort: str) -> None:
             # N-310 — Basis-Key-Auflösung, siehe die ausführliche Begründung in
             # `_check_sensor_mapping_lts`. Hier wiegt sie schwerer als dort: zu
             # den acht kWh-Feldern je Innengerät kommt `leistung_w`, und damit
@@ -998,21 +1007,22 @@ class SensorChecks:
             # jetzt ist es die Regel aus `ZUSTAND_LIVE_FELDER`, die es trägt.
             erwartet = _klasse(FELD_EINHEITEN.get(basis_feld_key(schluessel)))
             if eid and erwartet:
-                slots.append((eid, label, erwartet))
+                slots.append((eid, label, erwartet, ort))
 
         # Live-Slots (basis + investitionen)
         basis_live, inv_live_map, _, _ = extract_live_config(anlage)
         for key, eid in basis_live.items():
-            _add(eid, key, f"{FELD_LABELS.get(basis_feld_key(key), key)} (Live)")
+            _add(eid, key, f"{FELD_LABELS.get(basis_feld_key(key), key)} (Live)", f"basis:{key}")
         for inv_id, live in inv_live_map.items():
             name = inv_label.get(str(inv_id), f"Inv. {inv_id}")
             for key, eid in live.items():
-                _add(eid, key, f"{name}: {feld_label_fuer_investition(inv_obj.get(str(inv_id)), key)} (Live)")
+                _add(eid, key, f"{name}: {feld_label_fuer_investition(inv_obj.get(str(inv_id)), key)} (Live)",
+                     f"inv:{inv_id}:{key}")
 
         # Basis-Zähler (mapping["basis"][mapping_key] = {strategie, sensor_id})
         for mk, m in (mapping.get("basis") or {}).items():
             if isinstance(m, dict) and m.get("strategie") == "sensor" and m.get("sensor_id"):
-                _add(m["sensor_id"], mk, FELD_LABELS.get(mk, mk))
+                _add(m["sensor_id"], mk, FELD_LABELS.get(mk, mk), f"basis:{mk}")
 
         # Investitions-Felder (kWh-Zähler etc.)
         for inv_id, inv_data in (mapping.get("investitionen") or {}).items():
@@ -1022,19 +1032,19 @@ class SensorChecks:
             for feld, m in (inv_data.get("felder") or {}).items():
                 if isinstance(m, dict) and m.get("strategie") == "sensor" and m.get("sensor_id"):
                     _add(m["sensor_id"], feld,
-                         f"{name}: {feld_label_fuer_investition(inv_obj.get(str(inv_id)), feld)}")
+                         f"{name}: {feld_label_fuer_investition(inv_obj.get(str(inv_id)), feld)}", f"inv:{inv_id}:{feld}")
 
         if not slots:
             return []
 
         from backend.services.ha_state_service import get_ha_state_service
-        units = await get_ha_state_service().get_sensor_units([eid for eid, _, _ in slots])
+        units = await get_ha_state_service().get_sensor_units([eid for eid, _, _, _ in slots])
         if not units:
             # HA nicht erreichbar (Standalone) → Einheit unbekannt, stiller Skip.
             return []
 
         ergebnisse: list[CheckErgebnis] = []
-        for eid, label, erwartet in slots:
+        for eid, label, erwartet, ort in slots:
             actual_unit = units.get(eid)
             actual = _klasse(actual_unit)
             # Nur die klare Leistung↔Energie-Verwechslung melden. Unbekannte/
@@ -1044,7 +1054,7 @@ class SensorChecks:
 
             if erwartet == "leistung":  # Energie-Sensor im Leistungs-Slot (#674)
                 ergebnisse.append(CheckErgebnis(
-                    kategorie=kat, schwere=CheckSeverity.ERROR,
+                    kategorie=kat, schwere=CheckSeverity.ERROR, code="leistungs_slot_energie_sensor",
                     meldung=(
                         f"Leistungs-Slot „{label}\" trägt einen Energie-Sensor "
                         f"(Einheit {actual_unit})"
@@ -1057,11 +1067,11 @@ class SensorChecks:
                         f"(klemmt auf 0). Bitte für „{label}\" einen Leistungssensor "
                         f"(W/kW) wählen; aktuell: {eid}."
                     ),
-                    link=LINK_DATENQUELLEN,
+                    ziel=ziel_datenquelle_schluessel(ort),
                 ))
             else:  # erwartet == "energie": Leistungssensor im kWh-Slot (#200)
                 ergebnisse.append(CheckErgebnis(
-                    kategorie=kat, schwere=CheckSeverity.WARNING,
+                    kategorie=kat, schwere=CheckSeverity.WARNING, code="energie_slot_leistungssensor",
                     meldung=(
                         f"Energie-Slot „{label}\" trägt einen Leistungssensor "
                         f"(Einheit {actual_unit})"
@@ -1073,7 +1083,7 @@ class SensorChecks:
                         "ableiten (ungenauer, anfällig für Lücken). Bitte für "
                         f"„{label}\" einen kWh-Zähler wählen; aktuell: {eid}."
                     ),
-                    link=LINK_DATENQUELLEN,
+                    ziel=ziel_datenquelle_schluessel(ort),
                 ))
 
         return ergebnisse

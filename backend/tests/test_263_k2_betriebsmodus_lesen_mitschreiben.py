@@ -33,6 +33,7 @@ Konzept: `docs/KONZEPT-263-klima-split.md` §3.3 · §6.
 
 from __future__ import annotations
 
+from backend.tests.werkzeug_befund import befund_link
 from datetime import date, datetime, timedelta
 
 import pytest
@@ -662,7 +663,8 @@ async def test_s1_checker_meldet_die_klimaanlage_ohne_modus_sensor(db):
     e = ergebnisse[0]
     assert e.schwere == "info"
     assert "Wohnzimmer" in e.meldung
-    assert e.link == "/einstellungen/datenquellen"
+    # E4: der Sprung landet auf dem Feld «Betriebsmodus» des Geräts.
+    assert befund_link(e) == f"/einstellungen/datenquellen?geraet={e.investition_id}&feld=betriebsmodus"
     assert e.investition_id is not None
     # Der Weg gehört in den Text, und die Erwartung auch: es gibt kein Backfill.
     assert "Betriebsmodus" in e.details

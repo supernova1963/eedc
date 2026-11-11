@@ -16,6 +16,7 @@ from backend.models.anlage import Anlage
 from backend.models.monatsdaten import Monatsdaten
 
 from .kategorien import CheckErgebnis, CheckSeverity
+from .ziele import ziel_monat_label
 
 
 # Theoretisches PV-Maximum pro kWp und Monat (kWh) für Mitteleuropa
@@ -34,6 +35,11 @@ _TOLERANZ_MIN_KWH = 5.0
 _TOLERANZ_ANTEIL = 0.02
 
 
+#: Feld-Schlüssel der Anzeige-Namen dieser Prüfungen — für das Sprung-Ziel (`ziele.ziel_monat_label`, Etappe E2).
+_FELD_KEY = {"Einspeisung": "einspeisung_kwh", "Netzbezug": "netzbezug_kwh", "PV-Erzeugung": "pv_erzeugung_kwh",
+             "Batterie-Ladung": "batterie_ladung_kwh", "Batterie-Entladung": "batterie_entladung_kwh"}
+
+
 #: Prüfung 0 (N-734): je Netzfeld, wofür es gebraucht wird — eine Liste für den Monat mit und ohne Zeile (N-751).
 _NETZFELDER_PRUEFUNG_0 = (
     ("einspeisung_erfasst", "Einspeisung", "Eigenverbrauch und Autarkie"),
@@ -45,11 +51,11 @@ def _details_mit_zeile(feld: str, folge: str) -> str:
     return (
         f"eedc braucht für jeden Monat einen erfassten Wert für {feld} — auch 0 ist ein Wert. "
         f"Für diesen Monat steht keiner in der Monatszeile (etwa nach einem Import, der nur "
-        f"Wallbox- oder PV-Werte enthielt). Cockpit → Monat nimmt ihn dann aus der HA-Statistik, "
-        f"sofern dort ein Zähler zugeordnet ist; sonst bleiben {folge} des Monats in Cockpit → Monat "
-        f"und Cockpit → Jahr leer. "
+        f"Wallbox- oder PV-Werte enthielt). Die Monatsansicht im Cockpit nimmt ihn dann aus der HA-Statistik, "
+        f"sofern dort ein Zähler zugeordnet ist; sonst bleiben {folge} des Monats in der Monats- "
+        f"und der Jahresansicht im Cockpit leer. "
         # N-736: die Fakten-Sichten nehmen den Monat aus der Bilanz (`meta.netz_erfasst`), statt mit 0 zu rechnen.
-        f"Übersicht, Jahresbericht, HA-Sensoren, Auswertungen → Tabelle und Aussichten → Finanzen "
+        f"Übersicht, Jahresbericht, HA-Sensoren, die Tabelle der Auswertungen und die Finanz-Aussicht "
         f"lassen den Monat bis dahin aus Eigenverbrauch, Autarkie, Ersparnis und CO₂ heraus (seine "
         f"PV-Erzeugung zählen sie weiter), der Community-Upload teilt ihn nicht; tragen die Tageswerte "
         f"des Monats das Feld, können sie es von dort nehmen. "
@@ -64,14 +70,14 @@ def _details_ohne_zeile(feld: str, folge: str) -> str:
     return (
         f"eedc braucht für jeden Monat einen erfassten Wert für {feld} — auch 0 ist ein Wert. Für diesen Monat gibt "
         f"es keinen Monatsabschluss, und an keinem seiner Tage hat ein Zähler {feld} gemessen; eedc rechnet das Feld "
-        f"deshalb nicht als 0: {folge} des Monats bleiben in Cockpit → Monat und Cockpit → Jahr leer („–“). "
-        f"Abhilfe: Datenquelle zuordnen (Einstellungen → Datenquellen — der Zähler zählt ab dann) oder den Monat im "
+        f"deshalb nicht als 0: {folge} des Monats bleiben in der Monats- und der Jahresansicht im Cockpit leer („–“). "
+        f"Abhilfe: Datenquelle zuordnen (der Zähler zählt ab dann) oder den Monat im "
         f"Monatsabschluss pflegen — ein leeres Feld ist keine 0."
     )
 
 
 def _netzfelder_nicht_erfasst(
-    kat, prefix: str, md_link: str, *, einspeisung_erfasst: bool, netzbezug_erfasst: bool, ohne_zeile: bool = False,
+    kat, prefix: str, *, einspeisung_erfasst: bool, netzbezug_erfasst: bool, ohne_zeile: bool = False,
 ) -> list[CheckErgebnis]:
     """Prüfung 0 der Plausibilität: ERROR je Netzfeld ohne erfassten Wert (N-734, ``netzfeld_ist_erfasst``) — die EINE
     Stelle der Regel. ⭐ N-751 (16.10.2026): ``ohne_zeile`` für den Monat ohne Monatszeile (Feld-Flags der Monats-Fakten
@@ -82,10 +88,10 @@ def _netzfelder_nicht_erfasst(
         if erfasst[flag]:
             continue
         ergebnisse.append(CheckErgebnis(
-            kategorie=kat, schwere=CheckSeverity.ERROR,
+            kategorie=kat, schwere=CheckSeverity.ERROR, code="md_feld_nicht_erfasst",
             meldung=f"{prefix}: {feld} nicht erfasst" + (" (Monat ohne Monatsabschluss)" if ohne_zeile else ""),
             details=_details_ohne_zeile(feld, folge) if ohne_zeile else _details_mit_zeile(feld, folge),
-            link=md_link,
+            ziel=ziel_monat_label(prefix, feld=_FELD_KEY[feld]),
         ))
     return ergebnisse
 
@@ -112,7 +118,6 @@ def _netzfelder_nicht_erfasst_ohne_zeile(kat, fakten, monate_mit_stunden: set[tu
     ``fakten``: die Monats-Fakten mit ``inkl_nur_tageswerte`` (eigener Aufruf im Orchestrator — die Fakten des Helfers
     ``_get_pv_erzeugung_map`` laden bewusst ohne das Flag, ``_helpers.py``)."""
     from backend.services.monats_fakten import TAGESWERT_ZAEHLER
-    from backend.services.daten_checker.kategorien import link_monat_erfassen
 
     ergebnisse: list[CheckErgebnis] = []
     for f in fakten:
@@ -122,7 +127,7 @@ def _netzfelder_nicht_erfasst_ohne_zeile(kat, fakten, monate_mit_stunden: set[tu
             continue
         prefix = f"{f.monat:02d}/{f.jahr}"
         ergebnisse += _netzfelder_nicht_erfasst(
-            kat, prefix, link_monat_erfassen(prefix), einspeisung_erfasst=f.meta.einspeisung_erfasst,
+            kat, prefix, einspeisung_erfasst=f.meta.einspeisung_erfasst,
             netzbezug_erfasst=f.meta.netzbezug_erfasst, ohne_zeile=True,
         )
     return ergebnisse
@@ -133,7 +138,7 @@ def _speicher_index(
 ) -> tuple[
     dict[tuple[int, int], tuple[float, float]],
     dict[tuple[int, int], float],
-    set[tuple[int, int]],
+    dict[tuple[int, int], int],
     dict[tuple[int, int], list[tuple[str, float]]],
 ]:
     """Speicher je Monat aus den Gerätezeilen: Ladung/Entladung, Netzladung, aktive Monate, Ladung ohne Entladung je Gerät."""
@@ -147,7 +152,8 @@ def _speicher_index(
     # noch nicht stillgelegt). Verhindert Warnungen für Monate VOR der ersten
     # Batterie-Installation (Issue #226 JanKgh: PV seit 11/2021, Speicher erst
     # ab 11/2022 — der Datenchecker monierte Batterie-Daten für 11/2021).
-    speicher_aktiv_monate: set[tuple[int, int]] = set()
+    # E6.D D3: je Monat der aktive Speicher mit der kleinsten Id — das Sprungziel der Legacy-Warnung (Wächter W-14).
+    speicher_aktiv_monate: dict[tuple[int, int], int] = {}
     # (e') Ladung erfasst, Entladung fehlt — JE GERÄT, nicht aggregiert.
     #
     # ⭐ Die Warnung darunter („Batterie-Entladung nicht erfasst") gibt es
@@ -161,7 +167,7 @@ def _speicher_index(
     # Lücke gerade verdeckt: zwei Speicher, einer davon vollständig, und
     # die Summe sieht heil aus. Der Anwender muss wissen, an welchem Gerät
     # das Feld fehlt — er füllt es dort.
-    speicher_ohne_entladung: dict[tuple[int, int], list[tuple[str, float]]] = {}
+    speicher_ohne_entladung: dict[tuple[int, int], list[tuple[str, float, int]]] = {}
     for inv in anlage.investitionen:
         if inv.typ == "speicher" and inv.aktiv:
             start = (inv.anschaffungsdatum.year, inv.anschaffungsdatum.month) if inv.anschaffungsdatum else None
@@ -177,7 +183,7 @@ def _speicher_index(
                 md_key = (md.jahr, md.monat)
                 if not _aktiv_im(md_key):
                     continue
-                speicher_aktiv_monate.add(md_key)
+                speicher_aktiv_monate[md_key] = min(inv.id, speicher_aktiv_monate.get(md_key, inv.id))
             for imd in inv.monatsdaten:
                 daten = imd.verbrauch_daten or {}
                 ladung = daten.get("ladung_kwh")
@@ -193,7 +199,7 @@ def _speicher_index(
                     and _aktiv_im(imd_key)
                 ):
                     speicher_ohne_entladung.setdefault(imd_key, []).append(
-                        (inv.bezeichnung or f"#{inv.id}", float(ladung))
+                        (inv.bezeichnung or f"#{inv.id}", float(ladung), inv.id)
                     )
                 if ladung is not None or entladung is not None:
                     key = imd_key
@@ -213,10 +219,12 @@ def _speicher_index(
 
 
 def _batterie_legacy_fehlt(
-    kat, prefix: str, md_link: str, md: Monatsdaten, *,
-    hat_speicher: bool, speicher_aktiv_monate: set, speicher_imd_monate: set,
+    kat, prefix: str, md: Monatsdaten, *,
+    hat_speicher: bool, speicher_aktiv_monate: dict, speicher_imd_monate: set,
 ) -> list[CheckErgebnis]:
-    """Batterie-Felder der Monatszeile fehlen (Legacy-Pfad, nur ohne Gerätezeilen im Monat)."""
+    """Batterie-Felder der Monatszeile fehlen (Legacy-Pfad, nur ohne Gerätezeilen im Monat). Die Felder «Batterie Ladung/
+    Entladung» der Monatszeile zeigt das Formular nur ohne Speicher (`MonatsdatenForm.tsx`, Abschnitt «Batterie
+    (optional)»); mit Speicher springt der Knopf in dessen Gerätezeile (E6.D D3, Wächter W-14)."""
     ergebnisse: list[CheckErgebnis] = []
     if (
         hat_speicher
@@ -226,23 +234,23 @@ def _batterie_legacy_fehlt(
         # Legacy-Felder nur prüfen wenn keine InvestitionMonatsdaten vorhanden
         if md.batterie_ladung_kwh is None:
             ergebnisse.append(CheckErgebnis(
-                kategorie=kat, schwere=CheckSeverity.WARNING,
+                kategorie=kat, schwere=CheckSeverity.WARNING, code="md_batterie_ladung_fehlt",
                 meldung=f"{prefix}: Batterie-Ladung nicht erfasst (Speicher vorhanden)",
                 details="Ohne Batterie-Daten wird der Gesamtverbrauch falsch berechnet",
-                link=md_link,
+                ziel=ziel_monat_label(prefix, geraet=speicher_aktiv_monate[(md.jahr, md.monat)], feld="ladung_kwh"),
             ))
         if md.batterie_entladung_kwh is None:
             ergebnisse.append(CheckErgebnis(
-                kategorie=kat, schwere=CheckSeverity.WARNING,
+                kategorie=kat, schwere=CheckSeverity.WARNING, code="md_batterie_entladung_fehlt",
                 meldung=f"{prefix}: Batterie-Entladung nicht erfasst (Speicher vorhanden)",
                 details="Ohne Batterie-Daten wird der Gesamtverbrauch falsch berechnet",
-                link=md_link,
+                ziel=ziel_monat_label(prefix, geraet=speicher_aktiv_monate[(md.jahr, md.monat)], feld="entladung_kwh"),
             ))
     return ergebnisse
 
 
 def _speicher_entladung_fehlt(
-    kat, prefix: str, md_link: str, md: Monatsdaten, *,
+    kat, prefix: str, md: Monatsdaten, *,
     speicher_ohne_entladung: dict,
 ) -> list[CheckErgebnis]:
     """(e') Ladung erfasst, Entladung fehlt — je Gerät (N-550)."""
@@ -258,9 +266,9 @@ def _speicher_entladung_fehlt(
     # beide: `speicher_ohne_entladung` ist nur befüllt, wo eine
     # IMD-Zeile mit Ladung existiert, und dann ist der Monat in
     # `speicher_imd_monate`.
-    for geraet, ladung_kwh in speicher_ohne_entladung.get((md.jahr, md.monat), []):
+    for geraet, ladung_kwh, inv_id in speicher_ohne_entladung.get((md.jahr, md.monat), []):
         ergebnisse.append(CheckErgebnis(
-            kategorie=kat, schwere=CheckSeverity.WARNING,
+            kategorie=kat, schwere=CheckSeverity.WARNING, code="md_geraet_entladung_fehlt",
             meldung=(
                 f"{prefix}: {geraet}: Entladung nicht erfasst "
                 f"(Ladung {fmt_zahl(ladung_kwh, 1)} kWh vorhanden)"
@@ -269,13 +277,13 @@ def _speicher_entladung_fehlt(
                 "Ohne Entladung gibt es keinen gemessenen Wirkungsgrad "
                 "und keine Speicher-Ersparnis"
             ),
-            link=md_link,
+            ziel=ziel_monat_label(prefix, geraet=inv_id, feld="entladung_kwh"),
         ))
     return ergebnisse
 
 
 def _negative_werte(
-    kat, prefix: str, md_link: str, md: Monatsdaten, *,
+    kat, prefix: str, md: Monatsdaten, *,
     pv_erzeugung: Optional[float],
 ) -> list[CheckErgebnis]:
     """Prüfung 1: negative Werte."""
@@ -290,15 +298,15 @@ def _negative_werte(
     ]:
         if wert is not None and wert < 0:
             ergebnisse.append(CheckErgebnis(
-                kategorie=kat, schwere=CheckSeverity.ERROR,
+                kategorie=kat, schwere=CheckSeverity.ERROR, code="md_feld_negativ",
                 meldung=f"{prefix}: {feld} ist negativ ({fmt_zahl(wert, 1)} kWh)",
-                link=md_link,
+                ziel=ziel_monat_label(prefix, feld=_FELD_KEY[feld]),
             ))
     return ergebnisse
 
 
 def _pv_ueber_maximum(
-    kat, prefix: str, md_link: str, md: Monatsdaten, *,
+    kat, prefix: str, md: Monatsdaten, *,
     pv_erzeugung: Optional[float], gesamt_kwp: float, pvgis_monat_map: dict, pr: float, pr_count: int,
 ) -> list[CheckErgebnis]:
     """Prüfung 2: PV-Erzeugung über der Obergrenze (PVGIS × Performance Ratio, sonst statisch)."""
@@ -329,16 +337,16 @@ def _pv_ueber_maximum(
                     f"im Monat {md.monat}: ca. {fmt_zahl(max_kwh, 0)} kWh"
                 )
             ergebnisse.append(CheckErgebnis(
-                kategorie=kat, schwere=CheckSeverity.WARNING,
+                kategorie=kat, schwere=CheckSeverity.WARNING, code="md_pv_ungewoehnlich_hoch",
                 meldung=f"{prefix}: PV-Erzeugung ungewöhnlich hoch ({fmt_zahl(pv_erzeugung, 0)} kWh)",
                 details=details,
-                link=md_link,
+                ziel=ziel_monat_label(prefix, feld="pv_erzeugung_kwh"),
             ))
     return ergebnisse
 
 
 def _beide_kernfelder_null(
-    kat, prefix: str, md_link: str, md: Monatsdaten, *,
+    kat, prefix: str, md: Monatsdaten, *,
     einspeisung_erfasst: bool, netzbezug_erfasst: bool,
 ) -> list[CheckErgebnis]:
     """Prüfung 4: Einspeisung und Netzbezug beide als 0 erfasst."""
@@ -370,7 +378,7 @@ def _beide_kernfelder_null(
         and md.einspeisung_kwh == 0 and md.netzbezug_kwh == 0
     ):
         ergebnisse.append(CheckErgebnis(
-            kategorie=kat, schwere=CheckSeverity.WARNING,
+            kategorie=kat, schwere=CheckSeverity.WARNING, code="md_einspeisung_netzbezug_null",
             meldung=f"{prefix}: Einspeisung und Netzbezug sind beide 0",
             details=(
                 "In den allermeisten Fällen fehlen hier schlicht die "
@@ -382,13 +390,13 @@ def _beide_kernfelder_null(
                 "bleibt dann als Auskunft stehen und sagt, womit eedc für "
                 "diesen Monat rechnet."
             ),
-            link=md_link,
+            ziel=ziel_monat_label(prefix, feld="einspeisung_kwh"),
         ))
     return ergebnisse
 
 
 def _energiebilanz_negativ(
-    kat, prefix: str, md_link: str, md: Monatsdaten, *,
+    kat, prefix: str, md: Monatsdaten, *,
     pv_erzeugung: Optional[float], speicher_imd_bat: dict, hat_speicher: bool,
 ) -> list[CheckErgebnis]:
     """Prüfung 6: die Energiebilanz des Monats ergibt einen negativen Gesamtverbrauch."""
@@ -416,7 +424,7 @@ def _energiebilanz_negativ(
 
         if hausverbrauch < -0.5:
             ergebnisse.append(CheckErgebnis(
-                kategorie=kat, schwere=CheckSeverity.ERROR,
+                kategorie=kat, schwere=CheckSeverity.ERROR, code="md_negativer_gesamtverbrauch",
                 meldung=f"{prefix}: Energiebilanz ergibt negativen Gesamtverbrauch ({fmt_zahl(hausverbrauch, 1)} kWh)",
                 details=(
                     f"PV {fmt_zahl(pv, 0)} – Einspeisung {fmt_zahl(md.einspeisung_kwh, 0)} "
@@ -426,7 +434,7 @@ def _energiebilanz_negativ(
                     f"Häufige Ursachen: vertauschte Einspeisungs-/Netzbezugs-Sensoren "
                     f"im Mapping oder fehlende Batterie-Daten."
                 ),
-                link=md_link,
+                ziel=ziel_monat_label(prefix, feld="netzbezug_kwh"),
             ))
         elif hat_speicher and (md.batterie_ladung_kwh is None or md.batterie_entladung_kwh is None):
             # Bilanz rechnerisch positiv, aber Batterie-Daten fehlen → Warnung dass Wert unzuverlässig
@@ -438,7 +446,7 @@ class MonatsdatenPlausibilitaetChecks:
     """Die zwei Prüfungen, die den Checker brauchen (Tageswerte aus der DB, Ausbau-Helfer von `MonatsdatenChecks`)."""
 
     async def _erzeugung_gegen_verwendung(
-        self, kat, prefix: str, md_link: str, anlage: Anlage, md: Monatsdaten, *,
+        self, kat, prefix: str, anlage: Anlage, md: Monatsdaten, *,
         pv_erzeugung: Optional[float], speicher_imd_bat: dict, speicher_imd_netzladung: dict,
     ) -> list[CheckErgebnis]:
         """Prüfungen 3 und 3b mit dem gemeinsamen, faulen Nachzug-Hinweis (eine Tageswert-Abfrage je Monat höchstens)."""
@@ -475,10 +483,10 @@ class MonatsdatenPlausibilitaetChecks:
             )
             vorspann = await _hole_nachzug_hinweis()
             ergebnisse.append(CheckErgebnis(
-                kategorie=kat, schwere=CheckSeverity.ERROR,
+                kategorie=kat, schwere=CheckSeverity.ERROR, code="md_einspeisung_groesser_pv",
                 meldung=f"{prefix}: Einspeisung ({fmt_zahl(md.einspeisung_kwh, 0)} kWh) > PV-Erzeugung ({fmt_zahl(pv_erzeugung, 0)} kWh)",
                 details=(vorspann or "") + details_3,
-                link=md_link,
+                ziel=ziel_monat_label(prefix, feld="einspeisung_kwh"),
             ))
 
         # 3b. Verwendungs-Stapel > Erzeugung (N51, Gernot 2026-07-29)
@@ -515,7 +523,7 @@ class MonatsdatenPlausibilitaetChecks:
             if stapel > pv_erzeugung + toleranz:
                 vorspann = await _hole_nachzug_hinweis()
                 ergebnisse.append(CheckErgebnis(
-                    kategorie=kat, schwere=CheckSeverity.WARNING,
+                    kategorie=kat, schwere=CheckSeverity.WARNING, code="md_mehr_pv_verwendet_als_erzeugt",
                     meldung=(
                         f"{prefix}: mehr PV verwendet als erzeugt? "
                         f"Einspeisung ({fmt_zahl(md.einspeisung_kwh, 0)}) + Speicherladung aus PV "
@@ -535,12 +543,12 @@ class MonatsdatenPlausibilitaetChecks:
                         "darüber meist zusätzlich). Rein diagnostisch — es wird "
                         "nichts automatisch korrigiert."
                     ),
-                    link=md_link,
+                    ziel=ziel_monat_label(prefix, feld="pv_erzeugung_kwh"),
                 ))
         return ergebnisse
 
     def _vorjahressprung(
-        self, kat, prefix: str, md_link: str, anlage: Anlage, md: Monatsdaten, *,
+        self, kat, prefix: str, anlage: Anlage, md: Monatsdaten, *,
         md_map: dict,
     ) -> list[CheckErgebnis]:
         """Prüfung 5: Einspeisung bzw. Netzbezug über dem Dreifachen des Vorjahresmonats."""
@@ -577,9 +585,9 @@ class MonatsdatenPlausibilitaetChecks:
                     continue
                 if vj_wert and vj_wert > 50 and wert is not None and wert > 3 * vj_wert:
                     ergebnisse.append(CheckErgebnis(
-                        kategorie=kat, schwere=CheckSeverity.WARNING,
+                        kategorie=kat, schwere=CheckSeverity.WARNING, code="md_feld_dreifach_vorjahr",
                         meldung=f"{prefix}: {feld} > 3× Vorjahr ({fmt_zahl(wert, 0)} vs. {fmt_zahl(vj_wert, 0)} kWh)",
                         details="Deutliche Abweichung zum Vorjahresmonat",
-                        link=md_link,
+                        ziel=ziel_monat_label(prefix, feld=_FELD_KEY[feld]),
                     ))
         return ergebnisse

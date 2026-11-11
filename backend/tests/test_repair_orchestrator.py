@@ -12,6 +12,8 @@ Akzeptanz-Tests (Konzept Sektion 5 + 8 Päckchen 4):
   4. plan_lookup nach Expiry → LookupError beim Execute
   5. Doppel-Execute → LookupError beim zweiten Aufruf
   6. RESET_CLOUD_IMPORT mit providers-Filter → nur passende Felder
+
+Schwesterdateien: test_repair_operationen_checker.py (die vier Operationen der Daten-Checker-Knöpfe, E3).
 """
 
 from __future__ import annotations
@@ -156,6 +158,87 @@ async def test_execute_reset_cloud_import_writes_null_and_repair(db):
     prov = md.source_provenance or {}
     assert prov.get("netzbezug_kwh", {}).get("source") == "repair"
     assert prov.get("einspeisung_kwh", {}).get("source") == "repair"
+
+
+# ── N-793: je Lauf eine Zeile im Aktivitätsprotokoll ────────────────────────
+
+
+async def _orchestrator_zeilen(db: AsyncSession) -> list:
+    from backend.models.activity_log import ActivityLog
+    zeilen = (await db.execute(select(ActivityLog).where(ActivityLog.kategorie == "repair"))).scalars().all()
+    return [z for z in zeilen if "plan_id" in (z.details_json or {})]
+
+
+async def test_execute_schreibt_genau_eine_protokollzeile(db):
+    """W-12 (N-793): ein Execute ⇒ genau eine neue Zeile aus dem Orchestrator, in derselben Sitzung (N-532)."""
+    anlage = await _make_anlage(db)
+    await _seed_cloud_md(db, anlage.id, 2026, 4)
+    assert await _orchestrator_zeilen(db) == []
+    req = RepairOperationRequest(anlage_id=anlage.id, operation=RepairOperationType.RESET_CLOUD_IMPORT, params={})
+    plan_obj = await plan(req, db)
+    assert await _orchestrator_zeilen(db) == []              # die Vorschau schreibt nichts
+    result = await execute(plan_obj.plan_id, db)
+
+    zeilen = await _orchestrator_zeilen(db)
+    assert len(zeilen) == 1
+    z = zeilen[0]
+    assert z.details_json["plan_id"] == str(plan_obj.plan_id)
+    assert z.details_json["operation"] == "reset_cloud_import"
+    assert z.details_json["actual_changes"] == result.actual_changes
+    assert z.anlage_id == anlage.id and z.erfolg is True
+    assert z.aktion == "Reparatur: Cloud-Import-Werte zurücksetzen"  # E5: ohne Bereich endet die Aktion nicht auf «— —»
+    assert z.details.startswith("Änderungen: ")
+
+
+async def test_protokollzeile_nennt_den_bereich_und_den_anwender_satz():
+    """Bereich aus den Parametern (Datum ISO), Anwender-Satz der Operation vor den Zählern."""
+    from types import SimpleNamespace
+
+    from backend.services import repair_protokoll as rp
+
+    aufrufe: list[dict] = []
+
+    class _Sitzung:
+        def add(self, eintrag):
+            aufrufe.append({"aktion": eintrag.aktion, "details": eintrag.details, "json": eintrag.details_json})
+
+    plan_obj = SimpleNamespace(
+        plan_id=uuid.uuid4(), anlage_id=3, operation=RepairOperationType.REAGGREGATE_RANGE,
+        operation_params={"von": date(2026, 1, 3), "bis": "2026-01-09", "mit_resnap": True},
+    )
+    await rp.protokolliere_lauf(plan_obj, {}, {"erfolgreich": 7}, _Sitzung())
+    plan_obj.operation, plan_obj.operation_params = RepairOperationType.REAGGREGATE_DAY, {"datum": "2026-11-02"}
+    await rp.protokolliere_lauf(plan_obj, {"quelle_text": "Zählerwerte aus Home Assistant."}, {}, _Sitzung())
+
+    assert aufrufe[0]["aktion"] == "Reparatur: Mehrere Tage neu aggregieren — 2026-01-03 – 2026-01-09"
+    assert aufrufe[0]["json"]["params"]["von"] == "2026-01-03"
+    assert aufrufe[0]["details"] == "Änderungen: erfolgreich 7"
+    assert aufrufe[1]["aktion"] == "Reparatur: Tag neu aggregieren — 2026-11-02"
+    assert aufrufe[1]["details"] == "Zählerwerte aus Home Assistant."
+
+
+async def test_wrapper_route_und_werkbank_route_protokollieren(db, monkeypatch):
+    """Routen-Beleg (N-793): «Kraftstoffpreise nachpflegen» über die Wrapper-Route (`_run_via_orchestrator`, wie die
+    Knöpfe im Daten-Checker) und ein Werkbank-Lauf über `POST /api/repair/execute/{plan_id}` — je eine Zeile."""
+    from backend.api.routes.energie_profil.repair import kraftstoffpreis_backfill_tages
+    from backend.api.routes.repair import execute_plan
+    from backend.services import kraftstoff_preis_service as kps
+
+    async def _ohne_netz(anlage_id, land, db):
+        return {"aktualisiert": 0}
+
+    monkeypatch.setattr(kps, "backfill_kraftstoffpreise", _ohne_netz)
+    anlage = await _make_anlage(db)
+    await kraftstoffpreis_backfill_tages(anlage.id, db=db)
+    zeilen = await _orchestrator_zeilen(db)
+    assert [(z.aktion, z.anlage_id) for z in zeilen] == [("Reparatur: Kraftstoffpreise nachpflegen", anlage.id)]
+
+    await _seed_cloud_md(db, anlage.id, 2026, 4)
+    plan_obj = await plan(RepairOperationRequest(
+        anlage_id=anlage.id, operation=RepairOperationType.RESET_CLOUD_IMPORT, params={}), db)
+    await execute_plan(plan_obj.plan_id, db=db)
+    zeilen = await _orchestrator_zeilen(db)
+    assert len(zeilen) == 2 and str(plan_obj.plan_id) in {z.details_json["plan_id"] for z in zeilen}
 
 
 async def test_force_override_breaks_manual_hierarchy(db):
@@ -316,7 +399,10 @@ async def test_plan_reaggregate_range_rejects_invalid_bounds(db):
                     "bis": heute.isoformat()},
         ), db)
     except ValueError as e:
-        assert "vor heute" in str(e), str(e)
+        # E6.D D6: ein Satz für den Vorschau-Kasten des Daten-Checkers, ohne Mechanik-Wort (W-4).
+        assert "Der laufende Tag lässt sich erst morgen neu aufbauen" in str(e), str(e)
+        from backend.services.daten_checker.handgriffe import MECHANIK_WOERTER
+        assert not [w for w in MECHANIK_WOERTER if w in str(e).lower()], str(e)
     else:
         raise AssertionError("ValueError für bis=heute erwartet")
 
@@ -565,3 +651,31 @@ async def test_die_schluessel_der_vorschau_sind_der_vertrag_mit_der_anzeige(db):
         "boundaries_changed", "slots_changed", "counter_fields_changed"
     }, (f"Die Schlüssel haben sich geändert: {sorted(p.estimated_changes)} — "
         "die Label-Map im Client zieht nicht von allein nach")
+
+
+def test_e5_actual_changes_nur_mengen():
+    """E5 (Nachmessung E3 ⚑5): Kennungen, Kalenderangaben und Wahrheitswerte der Operations-Antwort sind keine Mengen —
+    sie stehen weder in der Ergebnis- noch in der Protokollzeile."""
+    from backend.services.repair_protokoll import mengen
+
+    antwort = {"anlage_id": 1, "investition_id": 7, "monatsdaten_id": 3, "jahr": 2026, "monat": 5, "erfolg": True,
+               "gefuellt": 2, "geloescht": 0, "satz": "x", "monate": ["05/2026"]}
+    assert mengen(antwort) == {"gefuellt": 2, "geloescht": 0}
+
+
+async def test_e5_execute_nichts_zu_tun_ist_409_ohne_zeile(db, monkeypatch):
+    """E5: ein Plan «nichts zu tun» ⇒ Route 409 mit dem Satz, kein Lauf, keine Protokollzeile."""
+    from fastapi import HTTPException
+
+    from backend.api.routes.repair import execute_plan
+    from backend.services import repair_orchestrator as orch
+
+    anlage = await _make_anlage(db)
+    req = RepairOperationRequest(anlage_id=anlage.id, operation=RepairOperationType.RESET_CLOUD_IMPORT, params={})
+    plan_obj = await plan(req, db)
+    plan_obj.operation_preview["nichts_zu_tun"] = "Es gibt nichts zurückzusetzen."
+    with pytest.raises(HTTPException) as e:
+        await execute_plan(plan_obj.plan_id, db=db)
+    assert e.value.status_code == 409 and "Es gibt nichts zurückzusetzen." in e.value.detail
+    assert await _orchestrator_zeilen(db) == []
+    assert plan_obj.plan_id not in orch._results

@@ -43,7 +43,7 @@ Alles Einrichten und Datenpflegen liegt gesammelt unter **Einstellungen** (Zahnr
 
 Jede Kachel ist ein **Block** im Sinne von [Teil II §1.3](HANDBUCH_BEDIENUNG.md#13-das-block-modell-klappen-fokussieren-umsortieren-parken): Klick auf den Kopf klappt sie auf, und über das Vergrößern-Symbol (⤢) öffnest du den Inhalt als konzentrierte Vollbild-Ansicht — praktisch bei datendichten Flächen wie der Monatsdaten-Tabelle, dem Daten-Checker oder der Datenquellen-Zuordnung. Die Konfiguration passiert **direkt im Block** (früher lag vieles hinter „öffnen" auf eigenen Seiten).
 
-> **Direktlinks:** Viele Stellen in eedc verlinken direkt auf die passende Einstellungs-Kachel (z. B. „Beheben"-Links im Daten-Checker, „Bearbeiten" in den Komponenten-Sichten, das Zahnrad-Symbol in der Status-Fußzeile). Der Ziel-Block öffnet sich dann automatisch.
+> **Direktlinks:** Viele Stellen in eedc verlinken direkt auf die passende Einstellungs-Kachel (z. B. die Sprung-Knöpfe im Daten-Checker, „Bearbeiten" in den Komponenten-Sichten, das Zahnrad-Symbol in der Status-Fußzeile). Der Ziel-Block öffnet sich dann automatisch.
 
 ---
 
@@ -624,9 +624,22 @@ Diese Kachel enthält **nur die Pflege-Funktionen** des Energieprofils; die **An
 
 ### 5.3 Daten-Checker
 
-Der Daten-Checker prüft die Qualität deiner Daten in mehreren Kategorien — von Stammdaten und Strompreisen über Plausibilität der Monatsdaten bis zu Datenquellen-Konsistenz und HA-Long-Term-Statistics-Verfügbarkeit der zugeordneten Sensoren. Pro Befund gibt es Severity (❌ ERROR / ⚠️ WARNING / ℹ️ INFO / ✅ OK), erklärenden Text und einen „Beheben"-Link zur betroffenen Stelle. Der Prüf-Lauf und die Reparatur-Werkbank laufen inline im Block.
+Der Daten-Checker prüft die Qualität deiner Daten in mehreren Kategorien — von Stammdaten und Strompreisen über Plausibilität der Monatsdaten bis zu Datenquellen-Konsistenz und HA-Long-Term-Statistics-Verfügbarkeit der zugeordneten Sensoren. Pro Befund gibt es Severity (❌ ERROR / ⚠️ WARNING / ℹ️ INFO / ✅ OK), erklärenden Text, den Link „Lösungsweg" und **einen** Knopf, der sagt, was er tut: eine Reparatur mit Vorschau und „Anwenden", einen Sprung auf die betroffene Stelle („Gerät bearbeiten", „Monat erfassen", „Sensor zuordnen" …) oder „Was gilt". Oben stehen unter „Das kannst du jetzt tun" alle Befunde mit einem Reparatur-Knopf; im Kopf öffnet „Diagnose-Paket" den Text für eine Frage im Forum oder auf GitHub. Der Prüf-Lauf und die Reparatur-Werkbank laufen inline im Block.
 
 > **Vollständige Doku** mit allen Kategorien, Befund-Tabellen und Behebungs-Workflows: **[Daten-Checker-Handbuch](HANDBUCH_DATEN_CHECKER.md)**.
+
+**Der Sprung-Knopf landet auf dem Feld.** Der Knopf trägt die Stelle in der Adresse (`#/einstellungen/…?…`); jede Zielseite liest ihre Parameter einmal und entfernt sie danach — ein Neuladen oder „Zurück" öffnet nichts erneut:
+
+| Ziel | Parameter | Wirkung |
+| --- | --- | --- |
+| Datenquellen | `geraet=<Id>`, `feld=<Feld>` | Block des Gerätetyps und das Gerät aufgeklappt, die Feldzeile markiert (auch in „Weitere Größen erfassen") |
+| Komponenten | `bearbeiten=<Id>`, `feld=<Feld>` · `neu=<Typ>` | Formular des Geräts bzw. „neu" des Typs; der Cursor steht im Feld, zugeklappte Abschnitte des Formulars sind dabei offen |
+| Monatsdaten | `erfassen=JJJJ-MM`, `geraet=<Id>`, `feld=<Feld>` | der Monat (vorhanden ⇒ Bearbeiten), dort das Feld des Geräts |
+| Stammdaten | `block=strompreise&tarif=<Id>`·`tarif=neu&art=<Verwendung>&ab=<Datum>` · `block=anlage&feld=…` · `block=solarprognose&feld=system_losses` | Tarif am Feld bzw. neuer Tarif vorbelegt · gewählte Anlage am Feld · „Neue Prognose abrufen" an den Systemverlusten |
+| Integration | `block=import-buendel&wizard=connector` | der Geräte-Connector öffnet |
+| alle Kategorien | `block=<Block>` · `karte=werkbank` | Block aufklappen · zur Reparatur-Werkbank springen |
+
+Die Hervorhebung ist der gewohnte Fokus des Eingabefelds, keine eigene Farbe. Die Daten-Checker-Texte nennen keine Menüwege in eedc mehr — der Knopf ist der Weg.
 
 ### 5.4 Ersteinrichtung
 
@@ -1135,10 +1148,12 @@ Vollständiger **JSON-Export** einer Anlage und **Drag-&-Drop-Restore** — inli
 Das zentrale Werkzeug zur Fehlersuche — zwei Tabs, Debug-Umschalter und Neustart im Kopf.
 
 - **System-Logs:** Echtzeit-Logviewer (Ring-Puffer, max. 500 Einträge, gehen beim Neustart verloren). Filter nach Level (DEBUG/INFO/WARNING/ERROR), Modul und Freitext; Copy (als Markdown-Tabelle für GitHub-Issues) und Download (.txt).
-- **Aktivitäten:** persistentes Protokoll in der DB (überlebt Neustarts, Bereinigung nach 90 Tagen / max. 1000 Einträge). Filter nach Kategorie (Connector, Cloud-/Portal-Import, Backup, Monatsabschluss, HA-Statistiken, Scheduler-Jobs, MQTT, Community, Datenquellen-Zuordnung — jedes Zuordnen, Entfernen, Vorzeichen-Umkehren und jede Energie-Dashboard-Übernahme mit alter → neuer Quelle —, Komponenten — Anlegen, Löschen und Änderungen an Typ, Aktiv, Anschaffung oder Stilllegung —, HA-Export …), Status und Freitext.
-- **Debug** (Käfer): schaltet den Log-Level auf DEBUG (danach wieder aus — erhöhter Speicherverbrauch), kein Neustart nötig. **Neustart** (Pfeil): über Supervisor-API (Add-on) bzw. Container-Restart (Standalone), mit Bestätigung.
+- **Aktivitäten:** persistentes Protokoll in der DB (überlebt Neustarts, Bereinigung nach 90 Tagen / max. 1000 Einträge). Filter nach Kategorie (Connector, Cloud-/Portal-Import, Backup, Monatsabschluss, HA-Statistiken, Scheduler-Jobs, MQTT, Community, Datenquellen-Zuordnung — jedes Zuordnen, Entfernen, Vorzeichen-Umkehren und jede Energie-Dashboard-Übernahme mit alter → neuer Quelle —, Komponenten — Anlegen, Löschen und Änderungen an Typ, Aktiv, Anschaffung oder Stilllegung —, HA-Export, Reparatur — jeder Lauf der Reparatur-Werkbank und der Reparatur-Knöpfe im Daten-Checker …), Status und Freitext. Unter **Scheduler-Jobs** steht jede Nacht je Anlage mit HA-Spiegel eine Zeile des Abgleichs um 02:45, auch wenn nichts abweicht.
+- **Debug** (Käfer): schaltet den Log-Level auf DEBUG (danach wieder aus — erhöhter Speicherverbrauch), kein Neustart nötig. **Neustart** (Pfeil): über Supervisor-API (Add-on) bzw. Container-Restart (Standalone), mit Bestätigung. Ab dem Klick steht „Startet neu...“ am Knopf und darunter „eedc startet neu — die Seite lädt gleich von selbst.“; die Seite wartet, bis eedc wieder antwortet, und lädt sich neu; nach anderthalb Minuten ohne Antwort steht „Der Neustart dauert länger als erwartet — Seite neu laden.“ und der Knopf ist wieder frei.
 
 **Support-Workflow:** Debug an → Problem reproduzieren → System-Logs (Level WARNING, Modul-Filter) → Aktivitäten prüfen → Logs kopieren → in Issue einfügen → Debug wieder aus.
+
+Für eine Rückfrage im Forum reicht meist das **Diagnose-Paket** (*Einstellungen → Daten → Daten-Checker → Diagnose-Paket*): es trägt die letzten Nachtlauf- und Reparatur-Zeilen aus den Aktivitäten und die letzten Warnungen aus den System-Logs schon mit, dazu Version, Zuordnungen und Befunde — ohne Zugangsdaten ([Daten-Checker: Diagnose-Paket](HANDBUCH_DATEN_CHECKER.md#diagnose-paket)).
 
 ---
 

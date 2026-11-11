@@ -53,6 +53,7 @@ from backend.core.zahlenformat import fmt_zahl
 from backend.models.anlage import Anlage
 
 from .kategorien import CheckErgebnis, CheckKategorie, CheckSeverity
+from .ziele import ziel_datenquelle, ziel_tarif
 
 #: Das Fenster: die letzten zwölf abgeschlossenen Monate vor dem Prüfmonat.
 FENSTER_MONATE = 12
@@ -135,16 +136,16 @@ class WpTarifChecks:
         for v in pruefungen:
             komp_cent = tarif.wallbox_preis_effektiv_cent if v == "wallbox" else tarif.wp_preis_cent
             out += _feld_fehlt(v, fakten, komp_cent, tarif.netzbezug_stammpreis_cent)
-            out += _geklemmt(v, fakten)
+            out += _geklemmt(v, fakten, _geraet_mit_feld(anlage, tag, "wallbox" if v == "wallbox" else "waermepumpe"))
         out += await self._parallele_zaehler(anlage, ["waermepumpe"] if gemeinsam else verwendungen)
         if gemeinsam:
-            out += _gemeinsam_tage_und_wallbox(fakten)
-            out += await self._feld_an_wallbox_unter_gemeinsam(anlage, fenster)
+            out += _gemeinsam_tage_und_wallbox(fakten, _geraet_mit_feld(anlage, tag, "waermepumpe"))
+            out += await self._feld_an_wallbox_unter_gemeinsam(anlage, fenster, tarife["waermepumpe"].id)
         elif "wallbox" in verwendungen:
             out += await self._evcc_weicht_ab(anlage, fenster)
         return out
 
-    async def _feld_an_wallbox_unter_gemeinsam(self, anlage: Anlage, fenster) -> list[CheckErgebnis]:
+    async def _feld_an_wallbox_unter_gemeinsam(self, anlage: Anlage, fenster, tarif_id: int) -> list[CheckErgebnis]:
         """F12: ein «Netzbezug zum Wallbox-Tarif» an einer Wallbox (zugeordnet oder in einer Monatszeile des Fensters)
         zählt unter dem gemeinsamen Tarif nicht in der Stromrechnung — sonst stünde N_wb doppelt (N_g steht an der WP)."""
         from backend.models.investition import Investition, InvestitionMonatsdaten
@@ -164,7 +165,7 @@ class WpTarifChecks:
             if zugeordnet or (im_fenster and (vd or {}).get(FELD) is not None):
                 namen[inv_id] = name
         return [CheckErgebnis(
-            kategorie=_KAT, schwere=CheckSeverity.WARNING.value, investition_id=inv_id,
+            kategorie=_KAT, schwere=CheckSeverity.WARNING.value, code="wp_tarif_wallbox_netzbezug_zaehlt_nicht", ziel=ziel_tarif(tarif_id), investition_id=inv_id,
             meldung=f"{name}: «Netzbezug zum Wallbox-Tarif» zählt unter dem gemeinsamen Tarif nicht",
             details=(
                 f"Für Wärmepumpe und Wallbox gilt ein gemeinsamer Tarif (ein Zähler vor beiden Geräten). Den gemeinsamen "
@@ -190,7 +191,7 @@ class WpTarifChecks:
             n_sensor = (felder.get(FELD) or {}).get("sensor_id")
             if n_sensor and n_sensor == (felder.get(mengen_feld) or {}).get("sensor_id"):
                 out.append(CheckErgebnis(
-                    kategorie=_KAT, schwere=CheckSeverity.INFO.value, investition_id=inv.id,
+                    kategorie=_KAT, schwere=CheckSeverity.INFO.value, code="paralleler_zaehler", ziel=ziel_datenquelle(geraet=inv.id, feld=FELD), investition_id=inv.id,
                     meldung=f"{inv.bezeichnung}: paralleler Zähler — derselbe Sensor in «{mengen_label}» und «{label}»",
                     details=(
                         f"{inv.bezeichnung} misst «{label}» mit demselben Sensor wie «{mengen_label}» ({n_sensor}): ein "
@@ -205,7 +206,8 @@ class WpTarifChecks:
 
     async def _evcc_weicht_ab(self, anlage: Anlage, fenster) -> list[CheckErgebnis]:
         """F11: eine Wallbox-Zeile trägt neben dem gemessenen N einen gepflegten PV-/Netz-Anteil (evcc), und beide
-        weichen ab ⇒ WARNING mit den Monaten (es gilt N, der Zähler des Versorgers)."""
+        weichen ab ⇒ WARNING mit den Monaten (es gilt N, der Zähler des Versorgers). Der Sprung öffnet die Wallbox ohne
+        Feld (E6.D D3, Wächter W-14): ein Feld «Netzladung» gibt es an der Wallbox nicht."""
         from backend.core.field_definitions import get_eauto_ladung_kwh
         from backend.models.investition import Investition, InvestitionMonatsdaten
 
@@ -233,7 +235,7 @@ class WpTarifChecks:
             if abs(evcc_netz - float(d[FELD])) > max(ABWEICHUNG_KWH, TOLERANZ * ladung):
                 je_inv.setdefault(inv_id, (name, []))[1].append((j, m))
         return [CheckErgebnis(
-            kategorie=_KAT, schwere=CheckSeverity.WARNING.value, investition_id=inv_id,
+            kategorie=_KAT, schwere=CheckSeverity.WARNING.value, code="evcc_netzladung_abweichung", ziel=ziel_datenquelle(geraet=inv_id), investition_id=inv_id,
             meldung=f"{name}: Netzladung aus evcc weicht vom Netzbezug zum Wallbox-Tarif ab ({_monate_text(monate)})",
             details=(
                 f"In {_monate_text(monate)} trägt {name} neben dem «Netzbezug zum Wallbox-Tarif» einen PV-/Netz-Anteil "
@@ -252,7 +254,7 @@ def _vorrang_vor_gemeinsam(zeilen) -> list[CheckErgebnis]:
     if GEMEINSAM not in verwendungen:
         return []
     return [CheckErgebnis(
-        kategorie=_KAT, schwere=CheckSeverity.WARNING.value,
+        kategorie=_KAT, schwere=CheckSeverity.WARNING.value, code="eigener_tarif_vorrang", ziel=ziel_tarif(next(t.id for t in zeilen if t.verwendung == v)),
         meldung=f"Eigener {_KOMPONENTEN[v][0]}-Tarif hat Vorrang vor dem gemeinsamen Tarif «Wärmepumpe und Wallbox»",
         details=(
             f"Zum selben Stichtag gelten ein Tarif «{ 'Wärmepumpe' if v == 'waermepumpe' else 'Wallbox' }» und ein "
@@ -263,9 +265,26 @@ def _vorrang_vor_gemeinsam(zeilen) -> list[CheckErgebnis]:
     ) for v in ("waermepumpe", "wallbox") if v in verwendungen]
 
 
-def _gemeinsam_tage_und_wallbox(fakten) -> list[CheckErgebnis]:
+def _geraet_mit_feld(anlage: Anlage, tag: date, typ: str) -> Optional[int]:
+    """Das Gerät des Typs ``typ`` (Wärmepumpe bzw. Wallbox), das «Netzbezug zum …-Tarif» trägt — Sprungziel der
+    Meldungen ohne eigenes Gerät (E6.D D3 und H-E6-11 Option A, Wächter W-14): unter den heute aktiven das mit
+    zugeordnetem Feld, sonst das einzige; mehrdeutig ⇒ ``None`` (der Sprung öffnet dann die Zuordnung ohne Gerät und ohne
+    Feld). Beim gemeinsamen Zähler (F12) trägt die Wärmepumpe das Feld. Aus ``anlage.investitionen`` (vom Checker
+    geladen), keine eigene Abfrage."""
+    geraete = sorted(i.id for i in anlage.investitionen if i.typ == typ and i.ist_aktiv_an(tag))
+    mapping = ((anlage.sensor_mapping or {}).get("investitionen") or {})
+    mit_feld = [i for i in geraete if ((mapping.get(str(i)) or {}).get("felder") or {}).get(FELD)]
+    if len(mit_feld) == 1:
+        return mit_feld[0]
+    return geraete[0] if len(geraete) == 1 else None
+
+
+
+def _gemeinsam_tage_und_wallbox(fakten, wp_id: Optional[int] = None) -> list[CheckErgebnis]:
     """F12: INFO «Tage teilen nicht» (Monate mit gemeinsamem Zähler und Ladung > 0, Auftrag §3.4) und WARNING «N_wb > N_g»
-    (die Netzladung der Wallbox nach der bisherigen Regel übersteigt den gemeinsamen Netzbezug, §3.3)."""
+    (die Netzladung der Wallbox nach der bisherigen Regel übersteigt den gemeinsamen Netzbezug, §3.3). Der Sprung der
+    WARNING zeigt auf das Feld des gemeinsamen Zählers an der Wärmepumpe ``wp_id`` (E6.D D3) — nie «erstes Gerät mit dem
+    Feld»; ohne eindeutige Wärmepumpe die Zuordnung ohne Feld."""
     from backend.services.monats_fakten import komponenten_anteile_des_fakts
 
     tage, ueber = [], []
@@ -279,7 +298,7 @@ def _gemeinsam_tage_und_wallbox(fakten) -> list[CheckErgebnis]:
     out = []
     if tage:
         out.append(CheckErgebnis(
-            kategorie=_KAT, schwere=CheckSeverity.INFO.value,
+            kategorie=_KAT, schwere=CheckSeverity.INFO.value, code="gemeinsamer_zaehler_tage_ohne_teilung",
             meldung=f"Gemeinsamer Zähler Wärmepumpe + Wallbox: Tage teilen die Ersparnis nicht ({_monate_text(tage)})",
             details=(f"In {_monate_text(tage)} rechnet eedc die Stromrechnung mit dem gemeinsamen Netzbezug je Stunde. "
                      f"Die Eigenverbrauchs-Ersparnis teilt der einzelne Tag aber nicht in Wärmepumpe und Wallbox: dafür "
@@ -289,7 +308,8 @@ def _gemeinsam_tage_und_wallbox(fakten) -> list[CheckErgebnis]:
         ))
     if ueber:
         out.append(CheckErgebnis(
-            kategorie=_KAT, schwere=CheckSeverity.WARNING.value,
+            kategorie=_KAT, schwere=CheckSeverity.WARNING.value, code="wallbox_netzladung_groesser_gemeinsamer_netzbezug",
+            ziel=ziel_datenquelle(geraet=wp_id, feld=FELD) if wp_id is not None else ziel_datenquelle(),
             meldung=f"Netzladung der Wallbox größer als der gemeinsame Netzbezug ({_monate_text(ueber)})",
             details=(f"In {_monate_text(ueber)} ist die Netzladung der Wallbox (evcc-Wert bzw. Tagesquote) größer als der "
                      f"«Netzbezug zum WP-/Wallbox-Tarif (gemeinsamer Zähler)». eedc setzt den Wallbox-Teil auf den "
@@ -329,7 +349,7 @@ def _feld_fehlt(verwendung: str, fakten, komp_cent: float, haushalt_cent: float)
                    f"({fmt_zahl(haushalt_cent, 2)} ct) statt zum Wallbox-Tarif ({fmt_zahl(komp_cent, 2)} ct), und die "
                    f"Netzladung selbst ist eedcs Aufteilung (evcc bzw. Tagesquote), keine Messung")
     return [CheckErgebnis(
-        kategorie=_KAT, schwere=CheckSeverity.INFO.value,
+        kategorie=_KAT, schwere=CheckSeverity.INFO.value, code="wp_eigener_tarif_obergrenze",
         meldung=(
             f"Eigener {wort}-Tarif ({fmt_zahl(komp_cent, 2)} ct gegen {fmt_zahl(haushalt_cent, 2)} ct): Ersparnis und "
             f"Stromrechnung der letzten 12 Monate können zusammen um bis zu {fmt_zahl(obergrenze, 0)} € abweichen — "
@@ -346,7 +366,7 @@ def _feld_fehlt(verwendung: str, fakten, komp_cent: float, haushalt_cent: float)
     )]
 
 
-def _geklemmt(verwendung: str, fakten) -> list[CheckErgebnis]:
+def _geklemmt(verwendung: str, fakten, geraet_id: Optional[int] = None) -> list[CheckErgebnis]:
     """WARNING je Komponente: Monate, deren gemessenes N über der Gerätemenge (Toleranz 2 %) oder über dem Netzbezug
     (Wallbox: über dem Rest nach der WP) liegt — der Monat rechnet begrenzt (``komponenten_anteile``, F7)."""
     from backend.services.monats_fakten import komponenten_anteile_des_fakts
@@ -366,7 +386,7 @@ def _geklemmt(verwendung: str, fakten) -> list[CheckErgebnis]:
     out = []
     if ueber_menge:
         out.append(CheckErgebnis(
-            kategorie=_KAT, schwere=CheckSeverity.WARNING.value,
+            kategorie=_KAT, schwere=CheckSeverity.WARNING.value, code="tarif_mengenfeld_groesser_als_menge", ziel=ziel_datenquelle(geraet=geraet_id, feld=FELD) if geraet_id is not None else ziel_datenquelle(),
             meldung=f"«{label}» größer als der {mengen_wort} ({_monate_text(ueber_menge)})",
             details=(f"In {_monate_text(ueber_menge)} ist «{label}» größer als der {mengen_wort} des Geräts (Toleranz "
                      f"2 %). Mehr, als das Gerät verbraucht, kann der Versorger nicht zum {wort}-Tarif abgerechnet "
@@ -376,7 +396,7 @@ def _geklemmt(verwendung: str, fakten) -> list[CheckErgebnis]:
     if ueber_netz:
         rest = "den Netzbezug der Anlage" if verwendung != "wallbox" else "den Netzbezug nach dem WP-Anteil"
         out.append(CheckErgebnis(
-            kategorie=_KAT, schwere=CheckSeverity.WARNING.value,
+            kategorie=_KAT, schwere=CheckSeverity.WARNING.value, code="tarif_mengenfeld_groesser_als_rest", ziel=ziel_datenquelle(geraet=geraet_id, feld=FELD) if geraet_id is not None else ziel_datenquelle(),
             meldung=f"«{label}» größer als {rest} ({_monate_text(ueber_netz)})",
             details=(f"In {_monate_text(ueber_netz)} ist «{label}» größer als {rest}. Die Stromrechnung begrenzt den "
                      f"Anteil zum {wort}-Tarif darauf, die Herleitung sagt es"

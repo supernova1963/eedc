@@ -12,6 +12,7 @@ test_wp_klimaanlage_phase1.py.
 
 from __future__ import annotations
 
+from backend.tests.werkzeug_befund import befund_link
 from datetime import date
 
 import pytest
@@ -115,7 +116,8 @@ async def test_summanden_zugeordnet_schalter_aus_warning(db):
     assert e.schwere == "warning" and e.kategorie == "investitionen"
     assert e.meldung.startswith("WP Haus")
     assert "„Strom Heizen“ und „Strom Warmwasser“" in e.details
-    assert "Einstellungen → Komponenten → WP Haus → bearbeiten" in e.details
+    assert "Einschalten in der Wärmepumpe „WP Haus“" in e.details
+    assert befund_link(e).endswith("&feld=getrennte_strommessung")  # E4: der Knopf öffnet das Formular am Schalter
     assert "nicht aufgeteilt" in e.details
     assert e.investition_id is not None
 

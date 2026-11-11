@@ -1,0 +1,3 @@
+# Übergangsfeld `altlink=` an Daten-Checker-Erzeugern (Etappe E2 → E4) — seit E4 leer, das Feld ist entfallen.
+# Neu schreiben: python -m backend.tests.werkzeug_daten_checker_stellen --baseline. Format: datei::code#n<TAB>altlink<TAB>Grund
+

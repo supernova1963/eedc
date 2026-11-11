@@ -80,6 +80,11 @@ class RepairOperationType(str, Enum):
     #: feldgenau) — `services/verwerfen_vor_quellbeginn.py`.
     VERWERFEN_VOR_QUELLBEGINN = "verwerfen_vor_quellbeginn"
     SOLCAST_REWRITE = "solcast_rewrite"
+    #: E3 Daten-Checker (Konzept §3.2): Plan/Ausführen in `services/repair_operationen_checker.py`.
+    TEMPERATUR_AUS_MESSUNG = "temperatur_aus_messung"
+    FELDWERT_ENTFERNEN = "feldwert_entfernen"
+    GERAETEWERTE_LOESCHEN = "geraetewerte_loeschen"
+    SPIEGEL_ABGLEICH_TAG = "spiegel_abgleich_tag"
 
 
 # Maximaler Zeitbereich für REAGGREGATE_RANGE pro Lauf.
@@ -634,8 +639,8 @@ async def _plan_reaggregate_range(
     if bis < von:
         raise ValueError(f"bis ({bis}) liegt vor von ({von})")
     if bis >= date.today():
-        raise ValueError(
-            f"bis ({bis}) muss vor heute liegen — laufender Tag ist Snapshot-instabil"
+        raise ValueError(  # E6.D D6: der Satz erreicht den Anwender im Vorschau-Kasten des Daten-Checkers (W-4)
+            f"Der Bereich reicht bis heute ({bis:%d.%m.%Y}). Der laufende Tag lässt sich erst morgen neu aufbauen."
         )
     anzahl_tage = (bis - von).days + 1
     if anzahl_tage > REAGGREGATE_RANGE_MAX_DAYS:
@@ -1573,8 +1578,9 @@ async def plan(req: RepairOperationRequest, db: AsyncSession) -> RepairPlan:
         await _plan_solcast_rewrite(req, db)
         # Unreachable wegen NotImplementedError, hilft mypy
         raise NotImplementedError
-    else:
-        raise ValueError(f"Unbekannte Operation: {req.operation}")
+    else:  # E3: die Operationen der Daten-Checker-Knöpfe (unbekannte ⇒ ValueError dort)
+        from backend.services.repair_operationen_checker import plan_operation
+        estimated, warnings, op_preview = await plan_operation(req, db)
 
     # tz-aware UTC: Pydantic serialisiert dann mit `+00:00`-Marker, damit
     # Frontend `new Date(iso)` korrekt interpretiert (sonst wird naive UTC
@@ -1621,6 +1627,9 @@ async def execute(plan_id: UUID, db: AsyncSession) -> RepairResult:
             raise LookupError(f"Plan {plan_id} bereits ausgeführt")
         if plan_obj.expires_at <= datetime.now(timezone.utc):
             raise TimeoutError(f"Plan {plan_id} abgelaufen")
+    from backend.services.repair_protokoll import NichtsZuTun, mengen
+    if plan_obj.operation_preview.get("nichts_zu_tun"):  # E5: kein Lauf, keine Zeile (Route: 409)
+        raise NichtsZuTun(str(plan_obj.operation_preview["nichts_zu_tun"]))
 
     req = RepairOperationRequest(
         anlage_id=plan_obj.anlage_id,
@@ -1650,16 +1659,13 @@ async def execute(plan_id: UUID, db: AsyncSession) -> RepairResult:
         summary = await _execute_verwerfen_vor_quellbeginn(req, db)
     elif req.operation == RepairOperationType.SOLCAST_REWRITE:
         raise NotImplementedError("SOLCAST_REWRITE ist Päckchen 6")
-    else:
-        raise ValueError(f"Unbekannte Operation: {req.operation}")
+    else:  # E3: die Operationen der Daten-Checker-Knöpfe
+        from backend.services.repair_operationen_checker import execute_operation
+        summary = await execute_operation(req, db)
 
     audit_log_ids = await _audit_ids_since(db, audit_marker)
 
-    actual: dict[str, int] = {}
-    for k, v in summary.items():
-        if isinstance(v, int):
-            actual[k] = v
-    actual["audit_log_count"] = len(audit_log_ids)
+    actual = {**mengen(summary), "audit_log_count": len(audit_log_ids)}
 
     result = RepairResult(
         plan_id=plan_id,
@@ -1670,6 +1676,9 @@ async def execute(plan_id: UUID, db: AsyncSession) -> RepairResult:
         audit_log_ids=audit_log_ids,
         operation_summary=summary,
     )
+    # N-793: je Lauf eine Zeile im Aktivitätsprotokoll, in dieser Sitzung (eigenes Modul, Dateilänge).
+    from backend.services.repair_protokoll import protokolliere_lauf
+    await protokolliere_lauf(plan_obj, summary, actual, db)
 
     async with _lock:
         _results[plan_id] = result
