@@ -105,7 +105,7 @@ Jede Anzeige mit einem ⤢ hat eine solche Adresse — die Liste oben sind nur d
   url: <Adresse aus „Link / Einbetten">
   ```
 
-  Geprüft haben wir die eedc-Karte im Browser. Anwender nutzen sie auf einem Android-Wandtablet im **Fully Kiosk Browser**, auch mit einem **eingeschränkten Home-Assistant-Benutzer** — die Karte braucht keine Administrator-Rechte. In der Home-Assistant-App auf Handy oder Tablet ist sie weiter ungeprüft; ebenso die freie Kiosk-App [Kiosk Satellite](https://kiosksatellite.com), eine Alternative zu Fully Kiosk.
+  Geprüft haben wir die eedc-Karte im Browser. Anwender nutzen sie auf einem Android-Wandtablet im **Fully Kiosk Browser** und in der freien Kiosk-App [Kiosk Satellite](https://kiosksatellite.com), jeweils auch mit einem **eingeschränkten Home-Assistant-Benutzer** — die Karte braucht keine Administrator-Rechte; Kiosk Satellite meldet sich dafür mit einem langlebigen Zugriffstoken dieses Benutzers an. In der Home-Assistant-App auf Handy oder Tablet ist sie weiter ungeprüft.
 - **Bleibst du bei der Webseiten-Karte:** nach einem Neustart einmal **eedc** in der Seitenleiste öffnen und das Dashboard neu laden. Danach hält die Verbindung — im Test war eine Karte auch nach einer Viertelstunde ohne geöffnetes Panel noch erreichbar und ließ sich neu laden. Zeigt die Karte stattdessen einen eedc-Fehler wie „nicht erreichbar", ist das Add-on gerade nicht da (Neustart, Update); sie holt sich die Anzeige beim nächsten Abruf von selbst.
 - **Chart ⇄ Tabelle und die Zeitraum-Auswahl bleiben bedienbar.** In den Bilanzen blätterst du also auch in der Karte durch Tage, Monate oder Jahre.
 - **Geparktes bleibt geparkt — und in der Karte lässt sich nichts zurückholen** (der Parkplatz liegt außerhalb des Vollbilds). Schneide die Anzeige deshalb **vorher** in eedc zu; beim Börsenpreis-Block etwa lassen sich einzelne Kennzahlen und die Kurve getrennt parken. Geparkt wird pro Gerät und Browser: Ein Wandtablet kann eine andere Auswahl zeigen als dein Rechner.
@@ -1022,7 +1022,8 @@ Selektor, die Kacheln wechseln mit):
   PV-Ladezähler, etwa beim SMA eCharger), steht oben groß der **PV-Anteil heute** („67 %") mit der Herleitung
   („9,8 kWh PV ÷ 14,7 kWh") — beide Zahlen aus den Tageswerten dieser Wallbox, nichts geschätzt. Darunter Ladung heute
   (Tageswert aus dem Zähler, ohne ihn aus der Live-Leistung — derselbe Wert wie im Energiefluss) und PV-Ladung heute „(Anlage)". Fehlt eine der
-  beiden Mengen oder ist der PV-Wert größer als die Ladung (Zähler-Drift), heißt die Karte „Heute" und hat keine Kopfzahl.
+  beiden Mengen, heißt die Karte „Heute" und hat keine Kopfzahl. Ist der PV-Wert größer als die Ladung (zwei Zähler mit
+  unterschiedlicher Auflösung), steht dort 100 %.
   evcc liefert keinen PV-Ladezähler — seinen Solaranteil zeigt eedc nicht. Misst die Wallbox „Heim: PV" und „Heim: Netz"
   getrennt, aber keinen Gesamtzähler, gibt es keinen Tageswert der Wallbox und damit keine Kopfzahl.
 - **„Betrieb heute":** wie viele Stunden die Wallbox heute **geladen** hat, **verbunden** war, **gewartet** hat oder **fertig**

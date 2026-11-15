@@ -1,11 +1,31 @@
 # Was ist neu
 
-> **Stand:** November 2026 (v4.3.0)
+> **Stand:** November 2026 (v4.3.1)
 > **Diese Seite** zeigt pro Version, was sich für dich als Anwender geändert hat — kürzer als der technische [CHANGELOG](https://github.com/supernova1963/eedc-homeassistant/blob/main/CHANGELOG.md), ausführlicher als die Schnellübersicht-Tabelle in der [Übersicht](BENUTZERHANDBUCH.md#was-ist-neu-seit-v316).
 >
 > **Kein Banner, kein Pop-up:** eedc zeigt diese Liste nicht ungefragt an. HA-App-Nutzer sehen den Changelog ohnehin schon im Add-on-Store, GitHub-Releases haben einen eigenen. Wer wissen will, was neu ist, schaut hier rein — Pull statt Push.
 >
 > **Lesehinweis:** Die jüngsten Versionen stehen oben. Jeder Punkt verlinkt entweder auf die zuständige Hilfe-Sektion oder direkt auf die App-Funktion (sofern erreichbar). Anker-URLs (`?doc=was-ist-neu`) sind teilbar.
+
+---
+
+## v4.3.1 — 15. November 2026
+
+**Diagnose-Paket: eine Datei mit den Daten deiner Anlage.** Bitten wir dich in unserer Antwort im Forum oder auf GitHub um das Diagnose-Paket, stellt „Diagnose-Paket“ im Kopf des Daten-Checkers einen Auszug der Daten dieser Anlage als ZIP-Datei zusammen — Geräte, Tarife, Zuordnungen, Monats-, Tages- und Stundenwerte, Notizen, Protokolle und Prüfergebnisse, dazu ein lesender Abgleich mit Home Assistant. Das Fenster zeigt vorher mit den Zahlen dieses Pakets, was drin ist, und was nicht: keine Zugangsdaten, keine Straße, keine Fotos. „Herunterladen“ speichert die Datei: im Knopf dreht sich ein Kreisel, danach meldet das Fenster „Heruntergeladen“ mit dem Dateinamen und blendet „Schließen“ ein. Die Datei schickst du per E-Mail an die Adresse aus unserer Antwort, über etwa 10 MB als Freigabe-Link eines Cloud-Speichers. Das Fenster sagt, dass eedc die Datei nicht verschickt und sie nicht verschlüsselt ist. Das Paket läuft nach 15 Minuten ab, „Neu zusammenstellen“ baut es neu. Den Text zum Kopieren gibt es nicht mehr. Auf dem iPhone in der Home-Assistant-App öffnet ein Tipp auf den Dateinamen nach dem Herunterladen das Teilen-Blatt („In Dateien sichern“ oder gleich per Mail). → [Daten-Checker: Diagnose-Paket](HANDBUCH_DATEN_CHECKER.md#diagnose-paket)
+
+**Daten-Checker: Balkonkraftwerk-Schritte nur mit Balkonkraftwerk.** Beim „Verdacht auf PV-Doppelerfassung“ nennen die Details die Ursache am Balkonkraftwerk und die Prüfschritte dazu nur noch, wenn deine Anlage eines hat. Die Prüfung schaut auf genau die letzten 30 Tage, wie es im Text steht.
+
+**Monatsdaten: eine PV-Erzeugung je Monat.** Hat deine Anlage einen sonstigen Erzeuger (etwa ein BHKW), zählte das Formular eines Monats seine Erzeugung in „PV-Erzeugung (berechnet)“ mit — die Monatsdaten-Tabelle zeigt die PV-Erzeugung ohne ihn. Jetzt steht im Formular dieselbe Zahl wie in der Tabelle; der sonstige Erzeuger behält seine eigene Zeile. Gespeichert wurde die Summe nie. → [Einstellungen: Monatsdaten](HANDBUCH_EINSTELLUNGEN.md#51-monatsdaten--monatsabschluss)
+
+**Hilfe und Daten-Checker lesen sich wieder glatt.** Code im Fließtext (etwa `?doc=was-ist-neu` oben auf dieser Seite) steht wieder in der Zeile, statt als eigener Absatz auszubrechen — in der Hilfe, den Handbüchern, der Hilfe im Einrichtungs-Assistenten und im Lösungsweg-Fenster. Vier Befunde des Daten-Checkers und der Hinweis zu „Strom Heizbetrieb“ usw. in der Datenquellen-Zuordnung zeigen keine Sternchen mehr.
+
+**Prognose-Genauigkeit: der Mittagsstand ist ein Mittagsstand.** Den Zeitpunkt „Mittag“ hält eedc nur noch zwischen 12 und 14 Uhr fest. Lief eedc über Mittag nicht, etwa weil Home Assistant aus war, bleibt der Tag „nicht erhoben“ – bisher stand dort der Stand vom Nachmittag oder Abend, für eedc auch 0,0 kWh. Ein schon gespeicherter eedc-Mittagsstand von 0 kWh zeigt „—“. → [Prognosen: Genauigkeits-Tracking](HANDBUCH_PROGNOSEN.md#6-genauigkeits-tracking-mae--bias)
+
+**E-Mobilität am Tag: PV-Anteil höchstens 100 %.** Ist die PV-Ladung eines Tages etwas größer als die Ladung – zwei Zähler mit unterschiedlicher Auflösung –, zeigte *Cockpit → Tag* unter „PV-Anteil (Heim)“ Werte wie 140 %, und die Wallbox-Karte „Heute“ zeigte keinen PV-Anteil. Beide zeigen dann jetzt 100 %. → [Bedienung: Wallbox](HANDBUCH_BEDIENUNG.md#36-wallbox)
+
+**Daten-Checker „Quellen-Konflikte“ zählt nur die eigene Anlage.** Mit mehreren Anlagen zählte der Hinweis bei Anlage 1 auch Konflikte der Anlagen 10 bis 19 mit, ebenso bei den Geräten.
+
+**Backup: keine Zugangsdaten der Cloud-Importe in der Datei.** „Backup als JSON herunterladen“ lässt Benutzername, Passwort und Schlüssel der Cloud-Importe jetzt weg – der Restore hat sie nie übernommen; die Verbindungen richtest du nach dem Restore wie bisher neu ein. Der Hinweis unter dem Knopf nennt jetzt auch, dass die Datei mit der Datenquellen-Zuordnung den Solcast-API-Schlüssel enthält. → [Einstellungen: Backup](HANDBUCH_EINSTELLUNGEN.md#83-backup)
 
 ---
 
