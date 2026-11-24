@@ -70,9 +70,12 @@ def _schluesselwort_verstoesse(register: dict) -> list[str]:
 
 def test_w7a_jede_tabelle_und_spalte_hat_eine_klasse():
     assert _abweichungen(_tabellen_der_metadata(), reg.REGISTER) == []
-    assert len(reg.REGISTER) == 23 and len(reg.NIE) == 6
+    assert len(reg.REGISTER) == 24 and len(reg.NIE) == 6
     gesamt = sum(len(c) for c in _tabellen_der_metadata().values()) + 2
-    assert gesamt == 375, gesamt          # 28 Modell-Tabellen, 373 Spalten + migrations (Bauplan §3.2)
+    # 28 Modell-Tabellen, 373 Spalten + migrations (Bauplan §3.2); + `zuordnung_wechsel` (12 Spalten, Sensorwechsel B-1;
+    # + 3 Rand-Werte ansatz, stand_alt_ende, stand_neu_null, Sensorwechsel U2 a1 F1; + eingetragen_ts, U3-K B5;
+    # − falsch_seit_ts, lauf mit dem Korrektur-Kern, Weg B B3a)
+    assert gesamt == 389, gesamt
 
 
 def test_w7a_sprengsatz_neue_spalte():
@@ -127,10 +130,10 @@ def test_w7a_sprengsatz_api_token_rein():
 def test_w7b_jede_json_spalte_hat_eine_blattregel():
     schema = _tabellen_der_metadata()
     json_spalten = [(t, s) for t, tab in reg.REGISTER.items() if t != "migrations" for s in tab.spalten if schema[t][s]]
-    assert len(json_spalten) == 35
+    assert len(json_spalten) == 37        # + `zuordnung_wechsel.vorher`/`nachher` (Sensorwechsel B-1)
     klassen = [reg.REGISTER[t].spalten[s].klasse for t, s in json_spalten]
     assert {k: klassen.count(k) for k in set(klassen)} == {
-        "allowlist": 3, "raus": 1, "bereinigt:struktur": 1, "bereinigt:email": 4, "rein": 26}
+        "allowlist": 5, "raus": 1, "bereinigt:struktur": 1, "bereinigt:email": 4, "rein": 26}
     for t, s in json_spalten:
         sp = reg.REGISTER[t].spalten[s]
         assert sp.json and isinstance(sp.text_schluessel, frozenset) and isinstance(sp.text_unter, frozenset), (t, s)
@@ -138,7 +141,8 @@ def test_w7b_jede_json_spalte_hat_eine_blattregel():
             assert sp.oberschluessel, (t, s)
     mit_regel = [(t, s) for t, s in json_spalten if reg.REGISTER[t].spalten[s].text_schluessel
                  or reg.REGISTER[t].spalten[s].text_unter]
-    assert len(mit_regel) == 15          # 14 (Bauplan §3.2) + `korrekturprofile.lern_basis_pro_bin` (Register-Nachtrag 15.11.)
+    # 14 (Bauplan §3.2) + `korrekturprofile.lern_basis_pro_bin` (Register-Nachtrag 15.11.) + `zuordnung_wechsel.vorher/nachher`
+    assert len(mit_regel) == 17
     # Fremde Oberschlüssel-Zahlen bleiben nur in `investitionen.parameter` (Konzept §4.2, Einwertung Master S1).
     assert [(t, s) for t, s in json_spalten if reg.REGISTER[t].spalten[s].fremde_zahlen_bleiben] == [
         ("investitionen", "parameter")]
@@ -261,6 +265,47 @@ def test_w7b_einstellungen_kennen_jeden_settings_schluessel():
     im_code = _settings_schluessel_im_code()
     assert len(im_code) >= 8, sorted(im_code)
     assert im_code - set(reg.EINSTELLUNGEN) == set()
+
+
+def _settings_praefixe_im_code() -> set[str]:
+    """Präfix-Schlüssel der Tabelle ``settings`` (Sensorwechsel S3b): in Dateien, die ``models.settings`` importieren, jedes
+    ``<Settings>(key=P + …)``, ``<Settings>.key == P + …`` und ``<Settings>.key.like(P + …)`` — ``P`` als Literal oder als
+    modulweite Text-Konstante derselben Datei."""
+    out: set[str] = set()
+    for d in produktivbaum():
+        if "models.settings import" not in ast.unparse(d.baum):
+            continue
+        konst = {t.id: n.value.value for n in d.baum.body if isinstance(n, ast.Assign)
+                 and isinstance(n.value, ast.Constant) and isinstance(n.value.value, str)
+                 for t in n.targets if isinstance(t, ast.Name)}
+
+        def praefix(x: ast.AST) -> set[str]:
+            if not (isinstance(x, ast.BinOp) and isinstance(x.op, ast.Add)):
+                return set()
+            links = x.left
+            if isinstance(links, ast.Constant) and isinstance(links.value, str):
+                return {links.value}
+            return {konst[links.id]} if isinstance(links, ast.Name) and links.id in konst else set()
+
+        for n in ast.walk(d.baum):
+            if isinstance(n, ast.Call) and getattr(n.func, "id", "").startswith("Settings"):
+                out |= set().union(set(), *(praefix(k.value) for k in n.keywords if k.arg == "key"))
+            if (isinstance(n, ast.Compare) and isinstance(n.left, ast.Attribute) and n.left.attr == "key"
+                    and getattr(n.left.value, "id", "").startswith("Settings")):
+                out |= set().union(*map(praefix, n.comparators))
+            if (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == "like"
+                    and isinstance(n.func.value, ast.Attribute) and n.func.value.attr == "key"):
+                out |= set().union(set(), *map(praefix, n.args))
+    return out
+
+
+def test_w7b_einstellungen_kennen_jeden_settings_praefix():
+    """Ein Zustand unter einem Präfix (``korrektur_lauf:<lauf>``) ist kein «unbekannter» Schlüssel des Pakets mehr: jeder
+    Präfix im Code steht in ``register.EINSTELLUNGEN_PRAEFIX`` (Sensorwechsel S3b, Bauplan §10 Nr. 40)."""
+    im_code = _settings_praefixe_im_code()
+    assert "korrektur_lauf:" in im_code, sorted(im_code)
+    assert im_code - set(reg.EINSTELLUNGEN_PRAEFIX) == set()
+    assert set(reg.EINSTELLUNGEN_PRAEFIX) - im_code == set(), "ein Präfix im Register, den kein Code schreibt"
 
 
 def _parameter_quelle(x: ast.AST) -> bool:

@@ -42,19 +42,23 @@ import {
   repairApi,
 } from '../../api/repair'
 import { energieProfilApi } from '../../api/energie_profil'
-import { REPARATUR_AENDERUNG_LABELS } from '../../lib/constants'
+import { REPARATUR_AENDERUNG_LABELS, REPARATUR_AENDERUNG_LABELS_EINZAHL } from '../../lib/constants'
 import {
   baueRohdatenLoeschRueckfrage,
   baueRohdatenLoeschMeldung,
   ROHDATEN_LOESCH_BESCHREIBUNG,
 } from '../../pages/datenCheckerMeldungen'
-import { mitAnzahl } from '../../lib/plural'
+import { mitAnzahl, plural } from '../../lib/plural'
 import { useWerkbankPlanAusUrl } from '../../hooks/useWerkbankPlanAusUrl'
-import { VERWERFEN_LEER, VerwerfenParams, verwerfenParams, type VerwerfenWerte } from './VerwerfenParams'
+import { VERWERFEN_LEER, VerwerfenParams, verwerfenParams, zeitpunktInZukunft, type VerwerfenWerte } from './VerwerfenParams'
 
 /** Deutscher Name eines Vorschau-/Ergebnis-Zählers; unbekannte Schlüssel
- *  bleiben roh stehen, damit ein neuer Zähler nicht still verschwindet. */
-const aenderungLabel = (key: string) => REPARATUR_AENDERUNG_LABELS[key] ?? key
+ *  bleiben roh stehen, damit ein neuer Zähler nicht still verschwindet. Beim
+ *  Zähler 1 die Einzahl, wo die Map eine kennt (`REPARATUR_AENDERUNG_LABELS_EINZAHL`). */
+const aenderungLabel = (key: string, anzahl: number) => {
+  const mehrzahl = REPARATUR_AENDERUNG_LABELS[key] ?? key
+  return plural(anzahl, REPARATUR_AENDERUNG_LABELS_EINZAHL[key] ?? mehrzahl, mehrzahl)
+}
 
 // D14-8 (detLAN #113/#123, Gernot #128): „Energieprofil-Daten löschen" wandert als
 // Eintrag ins Werkbank-Auswahlfeld — EINE Reparatur-UI. Technisch bleibt es der
@@ -91,6 +95,8 @@ interface OperationParamsState {
   providers: string  // Komma-Liste, leer = alle
   // verwerfen_vor_quellbeginn (HA-Bauform S3, E-S3-5)
   verwerfen: VerwerfenWerte
+  // verwerfen_vor_zeitpunkt (Fund-Päckchen H): eigene Werte, die Feldliste ist eine andere
+  verwerfenZeit: VerwerfenWerte
   // geraetewerte_loeschen (E3): `YYYY-MM`
   monat: string
 }
@@ -104,6 +110,7 @@ const DEFAULT_PARAMS: OperationParamsState = {
   scope: 'beides',
   providers: '',
   verwerfen: VERWERFEN_LEER,
+  verwerfenZeit: VERWERFEN_LEER,
   monat: '',
 }
 
@@ -165,7 +172,7 @@ export default function RepairWorkbench({ anlageId, anlagenname }: Props) {
     setError(null)
   }, [
     params.datum, params.von, params.bis, params.mit_resnap,
-    params.range_confirmed, params.scope, params.providers, params.verwerfen, params.monat,
+    params.range_confirmed, params.scope, params.providers, params.verwerfen, params.verwerfenZeit, params.monat,
   ])
 
   // Operation-Wechsel: Plan-Vorschau + Result zurücksetzen
@@ -234,6 +241,8 @@ export default function RepairWorkbench({ anlageId, anlagenname }: Props) {
       }
       case 'verwerfen_vor_quellbeginn':
         return verwerfenParams(params.verwerfen)
+      case 'verwerfen_vor_zeitpunkt':
+        return verwerfenParams(params.verwerfenZeit)
       case 'spiegel_abgleich_tag':
         return { datum: params.datum }
       case 'geraetewerte_loeschen': {
@@ -255,6 +264,12 @@ export default function RepairWorkbench({ anlageId, anlagenname }: Props) {
     if (selectedOp === 'verwerfen_vor_quellbeginn' && (!params.verwerfen.kanal || !params.verwerfen.datum)) {
       return 'Bitte ein Feld mit Sensortausch und den Zeitpunkt wählen.'
     }
+    if (selectedOp === 'verwerfen_vor_zeitpunkt') {
+      if (!params.verwerfenZeit.kanal || !params.verwerfenZeit.datum) return 'Bitte ein Feld und den Zeitpunkt wählen.'
+      if (zeitpunktInZukunft(params.verwerfenZeit)) {
+        return 'Der Zeitpunkt liegt in der Zukunft — verworfen werden nur Werte, die eedc schon hat.'
+      }
+    }
     if (selectedOp === 'reaggregate_range') {
       if (!params.von || !params.bis) {
         return 'Bitte Start- und Enddatum auswählen.'
@@ -267,7 +282,7 @@ export default function RepairWorkbench({ anlageId, anlagenname }: Props) {
       const today = new Date()
       today.setHours(0, 0, 0, 0)
       if (bis >= today) {
-        return 'Enddatum muss vor heute liegen — der laufende Tag ist Snapshot-instabil.'
+        return 'Enddatum muss vor heute liegen — der laufende Tag ist noch nicht abgeschlossen.'
       }
       const tage = Math.round((bis.getTime() - von.getTime()) / 86_400_000) + 1
       if (tage > REAGGREGATE_RANGE_MAX_DAYS) {
@@ -537,6 +552,17 @@ interface ParamsEditorProps {
 }
 
 function OperationParamsEditor({ anlageId, operation, params, setParams, disabled }: ParamsEditorProps) {
+  if (operation === 'verwerfen_vor_zeitpunkt') {
+    return (
+      <VerwerfenParams
+        anlageId={anlageId}
+        alle
+        werte={params.verwerfenZeit}
+        onChange={(w) => setParams((p) => ({ ...p, verwerfenZeit: w }))}
+        disabled={disabled}
+      />
+    )
+  }
   if (operation === 'verwerfen_vor_quellbeginn') {
     return (
       <VerwerfenParams
@@ -716,7 +742,7 @@ function PlanPreviewBlock({
       <div className="mb-3 flex flex-wrap gap-2">
         {Object.entries(plan.estimated_changes).map(([k, v]) => (
           <span key={k} className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-xs text-gray-700 dark:text-gray-300">
-            <strong>{v}</strong> {aenderungLabel(k)}
+            <strong>{v}</strong> {aenderungLabel(k, v)}
           </span>
         ))}
       </div>
@@ -865,10 +891,10 @@ function HistoryList({ views }: { views: RepairPlanView[] }) {
             <div className="mt-1 text-xs text-gray-600 dark:text-gray-400 flex flex-wrap gap-2">
               {v.result
                 ? Object.entries(v.result.actual_changes).map(([k, val]) => (
-                    <span key={k}><strong>{val}</strong> {aenderungLabel(k)}</span>
+                    <span key={k}><strong>{val}</strong> {aenderungLabel(k, val)}</span>
                   ))
                 : Object.entries(v.plan.estimated_changes).map(([k, val]) => (
-                    <span key={k}>geschätzt <strong>{val}</strong> {aenderungLabel(k)}</span>
+                    <span key={k}>geschätzt <strong>{val}</strong> {aenderungLabel(k, val)}</span>
                   ))
               }
               {v.result && v.result.audit_log_ids.length > 0 && (
@@ -932,10 +958,9 @@ function formatTime(iso: string): string {
 function summarizeResult(result: RepairResult): string {
   const parts: string[] = []
   for (const [k, v] of Object.entries(result.actual_changes)) {
-    parts.push(`${v} ${k}`)
+    parts.push(`${v} ${aenderungLabel(k, v)}`)
   }
-  const audit = result.audit_log_ids.length
-  parts.push(`${audit} Audit-Log-Eintrag${audit === 1 ? '' : 'e'}`)
+  parts.push(mitAnzahl(result.audit_log_ids.length, 'Audit-Log-Eintrag', 'Audit-Log-Einträge'))
   const meta = OPERATION_META.find((o) => o.type === result.operation)
   const opLabel = meta?.label ?? result.operation
   // N-791: der Satz zur Quelle aus dem Backend (Tag ohne Leistungskurve: Zähler neu, Verlauf bleibt).

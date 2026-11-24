@@ -23,8 +23,8 @@ der unmittelbar nächsten Zeile zurückkommt (HA bucht den Tag doppelt); jede an
 selbst zeigt (``state`` vorher → nachher). Gelesen wird der Spiegel (``kanal_statistik``, Familie ``spiegel``) der
 letzten ``FENSTER_TAGE`` — keine HA-Abfrage.
 
-⛔ **Kein Reparatur-Knopf in eedc.** Die Quelle ist HAs Statistik; korrigiert wird dort (Entwicklerwerkzeuge →
-Statistik → „Wert anpassen"), und eedc zieht über den nächtlichen Konsistenzlauf (``kanal/konsistenz.py``, 02:45)
+⛔ **Kein Reparatur-Knopf in eedc.** Die Quelle ist HAs Statistik; korrigiert wird dort (Einstellungen → Werkzeuge →
+Statistik → „Summe anpassen"; vor HA 2026.11 unter Entwicklerwerkzeuge), und eedc zieht über den nächtlichen Konsistenzlauf (``kanal/konsistenz.py``, 02:45)
 selbst nach — oder sofort über den Knopf der Meldung «Aus Home Assistant neu übernehmen» (N-790: derselbe Lauf wie
 „HA-Spiegel jetzt abgleichen" in der Werkbank, MartyBr #429, danach der Tag des ersten Funds neu aufgebaut; er
 korrigiert nichts in eedc, er übernimmt HAs Korrektur). Monate, die mit dem Sprung schon gespeichert wurden („Aus HA laden", Sammelimport — Entscheid D3),
@@ -130,6 +130,13 @@ def _kandidaten(zeilen: Sequence[tuple[int, Optional[float], Optional[float]]]) 
     return out
 
 
+def rueckkehr_stunden(zeilen: Sequence[tuple[int, Optional[float], Optional[float]]]) -> frozenset[int]:
+    """``start_ts`` jeder Rückkehr-Zeile des Musters «kurz 0 und zurück» (``_kandidaten``, ohne die Tageszähler-Ausnahme) —
+    die Stunden, die der Befund «Zählerstand springt» (``standsprung.py``) dieser Prüfung überlässt. Ohne die Ausnahme, damit
+    auch eine Rückkehr, die diese Prüfung als Zyklus eines Tageszählers schweigt, dort nicht als Sprung erscheint."""
+    return frozenset(int(zeilen[j][0]) for _i, j, _m in _kandidaten(zeilen))
+
+
 def _groesster_tageszuwachs(zeilen: Sequence[tuple[int, Optional[float], Optional[float]]], ohne: set) -> float:
     """Größter Zuwachs des Stands (``state``) je lokalem Kalendertag — ohne die Rückkehr-Zeilen ``ohne`` (Indizes),
     deren Zuwachs beim Gesamtzähler das Phantom selbst wäre. Rückgänge (Resets) zählen nicht."""
@@ -225,8 +232,10 @@ class HaZaehlersprungChecks:
                 "Verbrauch bzw. Erzeugung dieser Stunde. eedc übernimmt die Statistik so, wie das Energie-Dashboard "
                 "von Home Assistant sie zeigt — der Sprung steht deshalb in Tag, Monat und Jahr. "
                 f"Gefunden in den letzten {FENSTER_TAGE} Tagen: {namen}. "
-                "Lösung in Home Assistant: Entwicklerwerkzeuge → Statistik → den Sensor suchen → beim Symbol "
-                "„Wert anpassen“ die genannte Stunde wählen und den Zuwachs auf die echte Menge setzen. eedc gleicht "
+                "Lösung in Home Assistant: Einstellungen → Werkzeuge → Statistik (in älteren Home-Assistant-Versionen: "
+                "Entwicklerwerkzeuge → Statistik) → den Sensor suchen → beim Symbol „Summe anpassen“ unter „Zeitpunkt "
+                "auswählen“ die Zeit des Sprungs in der genannten Stunde wählen, bei „Neuer Wert“ die echte Menge "
+                "eintragen und „Anpassen“ drücken. eedc gleicht "
                 "die korrigierte Statistik beim nächsten nächtlichen Abgleich von selbst ab — oder sofort hier mit „Aus "
                 "Home Assistant neu übernehmen“. Hast du den Monat schon "
                 "mit dem Sprung gespeichert („Aus HA laden“ oder Import), übernimm ihn danach im Monatsabschluss neu."
@@ -250,4 +259,4 @@ class HaZaehlersprungChecks:
 
 
 __all__ = ["BEISPIELE", "FENSTER_TAGE", "TAGESZAEHLER_FAKTOR", "TAGESZAEHLER_MIN_TAGE", "HaZaehlersprungChecks",
-           "Sprung", "finde_spruenge"]
+           "Sprung", "finde_spruenge", "rueckkehr_stunden"]

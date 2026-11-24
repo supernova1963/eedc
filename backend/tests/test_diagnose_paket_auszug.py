@@ -424,7 +424,7 @@ def _saat(t: str, s: str) -> str:
 def test_g2_je_json_spalte(voll_datei_db):
     con = voll_datei_db.roh()
     spalten = _json_spalten()
-    assert len(spalten) == 35
+    assert len(spalten) == 37        # + `zuordnung_wechsel.vorher`/`nachher` (Sensorwechsel B-1)
     for t, s in spalten:
         ziel = "id" if "id" in reg.REGISTER[t].spalten else reg.REGISTER[t].filterspalte
         wert = (1 if t == "anlagen" else az_ketten_id(t, ziel))
@@ -486,7 +486,8 @@ F4_BLEIBT = {"label": "kontakt melder@example.org", "kosten": "Rechnung von serv
 def _f4_saen(con: sqlite3.Connection) -> None:
     sm = json.loads(_sensor_mapping(1))
     sm["basis"]["pv"]["sensor_id"] = F4_SAAT["url"]
-    sm["historie_hinweis"]["felder"][0]["label"] = F4_BLEIBT["label"]
+    # Päckchen B (H3): `historie_hinweis` geht nicht mehr ins Paket — die Saat des Text-Blatts «label» liegt an einer Quelle.
+    sm["quellen"]["basis_energy_pv"]["label"] = F4_BLEIBT["label"]
     cc = json.loads(_connector_config())
     cc["last_fetch"] = F4_SAAT["zugang"]
     par = json.loads(_parameter())
@@ -522,6 +523,7 @@ def test_f4_bleibender_text_ohne_zugangsdaten(voll_datei_db, monkeypatch):
     sm = json.loads(an["zeilen"][0][an["spalten"].index("sensor_mapping")])
     assert sm["basis"]["pv"]["sensor_id"] == "https://<geschwärzt>@h/pfad"
     assert sm["quellen"]["basis_energy_pv"]["entity_id"] == "sensor.pv"
+    assert not isinstance(sm["historie_hinweis"], dict)   # Alt-Vermerk ohne Leser (Päckchen B, H3): nur noch die Marke
     inv = m["investitionen"]
     assert json.loads(inv["zeilen"][0][inv["spalten"].index("parameter")])["ausrichtung"] == "Süd"
     monkeypatch.setattr(bereinigung, "bereinige_zugang", lambda t: t)

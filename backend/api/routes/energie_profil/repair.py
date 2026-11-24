@@ -296,11 +296,11 @@ async def _pv_aus_luecke(
     Energie, die HA nachgeliefert hat. ``None``, wenn keine Stunde gebündelt ist.
     HA-Bauform S5 (E-S5-3): die Stunden über die Lesestelle (an einem Kanal-Tag die Mischzeilen mit den Kanal-Spannen).
     """
-    from backend.core.berechnungen.spannen import spanne
+    from backend.core.berechnungen.spannen import zeile_gebuendelt
     from backend.services.energie_profil.kanal_stunden import stunden_der_tage
 
     zeilen = await stunden_der_tage(db, anlage_id, datum, datum, felder=("pv_kw",))
-    summe = sum(z.pv_kw for z in zeilen if z.pv_kw is not None and spanne(z.spannen, "pv") > 1)
+    summe = sum(z.pv_kw for z in zeilen if z.pv_kw is not None and zeile_gebuendelt(z, "pv"))
     return round(summe, 2) if summe > 0 else None
 
 
@@ -636,6 +636,12 @@ async def _kanal_abgleich_lauf(db: AsyncSession, anlage_id: int) -> tuple[dict, 
             status_code=503,
             detail="Home Assistant ist nicht erreichbar — der Abgleich braucht die HA-Langzeitstatistik.",
         )
+    if erg.korrigiert:
+        # N-814: die verworfenen abgeleiteten Kanäle sofort nachziehen, nicht erst im nächsten Stundenlauf — sonst
+        # zeigt die E-Mobilität nach dem Knopf an den Tagen ab der Korrektur «—».
+        from backend.services.kanal.konsistenz import abgeleitete_nachziehen
+
+        await abgeleitete_nachziehen(get_session, anlage_id)
     return {
         "anlage_id": anlage_id, "hat_spiegel": True,
         "kanaele": erg.kanaele, "abschnitte": erg.abschnitte, "gleich": erg.gleich,
@@ -655,7 +661,7 @@ async def kanal_abgleich(
     Der Nachtjob (``scheduler.kanal_konsistenz_job`` → ``kanal/konsistenz.konsistenz_alle``) ruft je Anlage
     ``konsistenz_anlage``; diese Route ruft genau sie (``_kanal_abgleich_lauf``), mit denselben kurzen eigenen Sitzungen
     (``get_session``), damit kein HA-Abruf in einer offenen Schreib-Transaktion liegt. Wozu: nach einer Korrektur in
-    Home Assistant (Entwicklerwerkzeuge → Statistik → „Wert anpassen") zeigten die Tages-Kennzahlen bis zum nächsten
+    Home Assistant (Einstellungen → Werkzeuge → Statistik → „Summe anpassen") zeigten die Tages-Kennzahlen bis zum nächsten
     Morgen den alten Spiegel.
 
     Antwort: die Zähler des Laufs (``kanaele``, ``abschnitte``, ``gleich``, ``korrigiert`` je Kanal mit erster

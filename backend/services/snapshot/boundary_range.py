@@ -95,6 +95,18 @@ def tageszeile_ist_rueckwaerts(
     return False
 
 
+async def tageszeile_marken(db, anlage_id: int, datum: date, *, mit_mengen: bool = False):
+    """Die EINE Ladestelle der Marken einer Tageszeile (Sensorwechsel S3, Bauplan §9 Nr. 26): ``(source_provenance,
+    verworfen)`` — mit ``mit_mengen`` dazu ``komponenten_kwh`` (die Tages-Eingänge ``kanal_stunden.tages_eingaenge`` lesen
+    beides in einer Anweisung). Keine Zeile ⇒ ``None``."""
+    from sqlalchemy import select
+
+    from backend.models.tages_energie_profil import TagesZusammenfassung as TZ
+
+    spalten = [TZ.source_provenance, TZ.verworfen] + ([TZ.komponenten_kwh] if mit_mengen else [])
+    return (await db.execute(select(*spalten).where(TZ.anlage_id == anlage_id, TZ.datum == datum))).one_or_none()
+
+
 @dataclass(frozen=True)
 class BoundaryRange:
     """Typed Range über Snapshot-Zeitstempel für eine bestimmte Aggregat-Variante."""

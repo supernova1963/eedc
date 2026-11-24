@@ -4,9 +4,9 @@ Single Source of Truth für die **historische** (bisherige) Alternativkosten-
 Ersparnis, die im HA-Export und in der Aussichten-Finanzprognose in die
 Jahresersparnis / ROI / Amortisation einfließt:
 
-- **Wärmepumpe vs. Gas/Öl** — pro erfasstem Monat die hypothetischen
+- **Wärmepumpe vs. Gas/Öl** — je Wärmepumpe und Monat mit Wärme die hypothetischen
   Brennstoffkosten der Altanlage minus die tatsächlichen WP-Netz-Stromkosten,
-  plus anteilige fixe Zusatzkosten (Schornsteinfeger, Wartung, Grundpreis).
+  plus das Zwölftel der fixen Zusatzkosten (Schornsteinfeger, Wartung, Grundpreis).
 - **Balkonkraftwerk** — der BKW-Eigenverbrauch zum Netzbezugspreis bewertet.
 
 Die Formeln waren an mehreren Read-Sites dupliziert (`ha_export.py`,
@@ -24,6 +24,7 @@ importieren darf (Layer-Regel). Er wird im Caller resolved.
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Iterable, Optional
 
 from backend.core.berechnungen.betriebsart_gemessen import modus_strom_zeile
@@ -182,28 +183,35 @@ def berechne_wp_alternativkosten_ersparnis(
 
     Returns:
         Σ über alle WPs/Monate ``(gas_kosten − wp_stromkosten)`` plus die
-        anteiligen fixen Zusatzkosten ``Σ zusatzkosten_jahr × erfasste_Monate / 12``.
+        anteiligen fixen Zusatzkosten **je Wärmepumpe über ihre eigenen
+        gezählten Monate**: ``Σ_WP zusatzkosten_jahr_WP × gezählte_Monate_WP / 12``.
         Der **ganze** WP-Strom wird zum Netztarif belastet (SOLL Wärme/Klima
         S1b) — auch der Teil aus der eigenen PV. Sein Wert steht auf der
         PV-Seite als Eigenverbrauch; ihn hier ein zweites Mal abzuziehen
         zählte dieselbe Kilowattstunde doppelt (ADR-002/P9).
+
+    ⛔ **N-806 (21.11.2026): Sammelaufruf = Summe der Einzelaufrufe.** Bis hierher
+    stand der Zusatzkosten-Term HINTER der Geräteschleife: ``Σ zusatzkosten_jahr
+    aller WPs × |Vereinigung ihrer Monate| / 12``. Zwei Wärmepumpen nacheinander
+    (A Januar–Juni, B Juli–Dezember, je 600 €/Jahr) trugen so je 12 Zwölftel
+    statt je 6 — gemessen 1 466,65 € gegen Σ Gerätezeilen 866,64 € in Aussichten →
+    Finanzen; die Zerlegung je Gerät (``finanz_zerlegung.py``) wies die Differenz
+    als «Rest» aus. Jetzt zählt jede WP ihr Zwölftel nur in ihren eigenen Monaten,
+    wie die Gerätezeile (``services/wp_wirtschaftlichkeit.py::wp_ersparnis_zeile``).
     """
     ersparnis = 0.0
-    zusatzkosten_jahr_gesamt = 0.0
-    monate_gezaehlt: set[tuple[int, int]] = set()
     for wp in waermepumpen:
         # N-88/F2b: Eine WP, die nichts ersetzt hat, bringt gar nichts in diese
         # Summe ein — weder Brennstoff-Ersparnis noch die anteiligen fixen
-        # Zusatzkosten. Der `continue` steht VOR `zusatzkosten_jahr_gesamt`,
-        # sonst zahlte der Anwender den Schornsteinfeger einer Anlage, die es
-        # nie gab. Ihre Monate zählen auch nicht in `monate_gezaehlt`; die
-        # Zusatzkosten der übrigen WPs bleiben davon unberührt.
+        # Zusatzkosten (sonst zahlte der Anwender den Schornsteinfeger einer
+        # Anlage, die es nie gab). Die Zusatzkosten der übrigen WPs bleiben
+        # davon unberührt.
         if ersetzt_keine_heizung(
             (wp.parameter or {}).get(PARAM_WAERMEPUMPE["ALTER_ENERGIETRAEGER"])
         ):
             continue
         wp_agg = _wp_aggregate(wp.parameter)
-        zusatzkosten_jahr_gesamt += wp_agg["zusatzkosten_jahr"]
+        monate_wp = 0
         for (inv_id, jahr, monat), daten in historische_inv_daten.items():
             if inv_id != wp.id:
                 continue
@@ -236,9 +244,16 @@ def berechne_wp_alternativkosten_ersparnis(
             # mit 0 € (`services/wp_wirtschaftlichkeit.py::wp_ersparnis_zeile`) — ohne Wärme kein Vergleich, also
             # weder Stromkosten noch der Zwölftel Zusatzkosten der Altanlage (die Zeile kennt ihn dort auch nicht).
             # Bis hierher zog diese Summe den Strom des Monats ab: Aussichten, ROI-Fortschritt und die
-            # Jahres-Ersparnis des HA-Exports lagen unter Hub und Cockpit. Ein Monat mit Strom UND Wärme 0 bleibt
-            # wie bisher (er trägt 0 und zählt für die Zusatzkosten).
-            if thermisch <= 0 and strom > 0:
+            # Jahres-Ersparnis des HA-Exports lagen unter Hub und Cockpit.
+            # N-806 (21.11.2026): ein Monat mit Strom UND Wärme 0 (oder ohne erfasste Mengen) ist kein Betrieb —
+            # die Gerätezeile trägt 0 € (E4d, `null_ist_kein_betrieb`) bzw. keine Zeile, also auch kein Zwölftel
+            # Zusatzkosten. Bis hierher zählte er es (gemessen 55,19 € bei 662,28 €/Jahr gegen 0 € der Zeile).
+            # Damit gilt für jeden Monat ohne Wärme dieselbe Regel wie im Export-Sensor je Gerät
+            # (`ha_export/investition_sensoren.py::_wp_ersparnis_sensor`: `m_waerme <= 0` ⇒ übersprungen).
+            # Fund-Päckchen A (A2, 22.11.2026): ein Monat mit Wärme, aber ohne gemessenen Strom (0 oder nicht erfasst)
+            # trägt ebenfalls nichts — ohne Strom ist die Ersparnis nicht bestimmbar, die Gerätezeile hat keine Zeile
+            # (Entscheid H-2). Bis hierher zählte er Gas-Ersparnis und Zwölftel (gemessen 109,10 € bei 400 kWh Wärme).
+            if thermisch <= 0 or strom <= 0:
                 continue
             # B5/X-5 (05.09.2026, Entscheid E-B 18.08.): Kühlen ersetzt keine
             # Heizung — sein Strom gehört nicht in den Vergleich. Der Monats-
@@ -262,6 +277,29 @@ def berechne_wp_alternativkosten_ersparnis(
             # eine Mengenfrage (N-277/N-354), keine Preisfrage.
             wp_stromkosten = strom * monats_strompreis / 100
             ersparnis += gas_kosten - wp_stromkosten
-            monate_gezaehlt.add((jahr, monat))
-    ersparnis += zusatzkosten_jahr_gesamt * len(monate_gezaehlt) / 12
+            monate_wp += 1
+        # N-806: das Zwölftel je WP über IHRE gezählten Monate (je Schlüssel
+        # `(inv_id, jahr, monat)` steht ein Monat genau einmal).
+        ersparnis += wp_agg["zusatzkosten_jahr"] * monate_wp / 12
     return ersparnis
+
+
+def wp_zusatzkosten_jahr_heute(waermepumpen: Iterable, heute: date) -> float:
+    """Σ der fixen Zusatzkosten der Altheizung je Jahr über die Wärmepumpen, die **heute** in Betrieb sind — der Eingang
+    der Aussichten-Prognose (``aussichten/finanz_prognose.py``, ``gas_kosten_jahr``).
+
+    Regel wie N-228 an den Betriebskosten: in die Zukunft trägt nur, was im Monat von ``heute`` aktiv ist
+    (``ist_aktiv_im_monat``); eine stillgelegte Wärmepumpe ersetzt keine Heizung mehr. Eine Wärmepumpe, die nichts ersetzt
+    hat (N-88/F2b), trägt nichts.
+
+    ⛔ **Fund-Päckchen A (A4, 22.11.2026):** bis hierher summierte die Route die Zusatzkosten ALLER Wärmepumpen mit
+    Ersatz, auch stillgelegter — gemessen (A bis 30.06.2025 stillgelegt, B ab 07/2025, je 600 €/Jahr): 1 200 € statt 600 €
+    je Prognosejahr in ``wp_alternativ_ersparnis_euro`` und ``jahres_netto_ertrag_euro``.
+    """
+    return sum(
+        (_wp_aggregate(wp.parameter)["zusatzkosten_jahr"]
+         for wp in waermepumpen
+         if not ersetzt_keine_heizung((wp.parameter or {}).get(PARAM_WAERMEPUMPE["ALTER_ENERGIETRAEGER"]))
+         and wp.ist_aktiv_im_monat(heute.year, heute.month)),
+        0,
+    )

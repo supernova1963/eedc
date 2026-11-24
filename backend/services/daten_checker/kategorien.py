@@ -53,6 +53,21 @@ class CheckKategorie(str, Enum):
     # mit negativem Delta). eedc rechnet wie das HA-Energie-Dashboard ohne Rücksprung-Verwurf — die Stunde steht negativ
     # in Tag und Monat; diese Kategorie benennt sie über den ganzen Spiegel und den Reparaturweg in HA.
     HA_ZAEHLER_RUECKGANG = "ha_zaehler_rueckgang"
+    # Sensorwechsel U2 Lauf c (Rechenweg F12, Leitlinie Gernot 19.11.2026): HA führt nach einem Gerätetausch dieselbe Entität
+    # weiter und zählt den Sprung des Zählerstands (nach oben, oder ein Neubeginn nicht bei 0) als Menge der Stunde. eedc rechnet
+    # wie HA und berichtigt nichts; Erzeuger `datenquelle/standsprung.py`, Regel `core/berechnungen/zaehlerstand_sprung.py`.
+    HA_ZAEHLERSTAND_SPRINGT = "ha_zaehlerstand_springt"
+    # Sensorwechsel U3 a (Rechenweg G2): ein gespeicherter Monatswert eines Monats, den ein Wechsel berührt,
+    # weicht um mindestens 1 kWh von dem ab, was die Quelle heute für den Monat ergibt. Erzeuger
+    # `datenquelle/monatswert.py`, Vergleich `core/berechnungen/monatswert_vergleich.py`.
+    MONATSWERT_UEBERHOLT = "monatswert_ueberholt"
+    # Sensorwechsel U3 b (Rechenweg G4): der Zählerstand einer MQTT-Reihe springt (Sprung, Neubeginn nicht bei 0, Rückgang) —
+    # eedc zählt den Unterschied als Menge der Stunde. Erzeuger `datenquelle/mqtt_standsprung.py`; Sprung «Zähler getauscht».
+    MQTT_ZAEHLERSTAND_SPRINGT = "mqtt_zaehlerstand_springt"
+    # Sensorwechsel Weg B (Bauplan Nr. 179/180): beim Wechsel der Quelle hat der Anwender «Daten vor der Änderung löschen»
+    # gewählt — Auskunft je Feld: gelöscht vor …, Home Assistant führt den neuen Sensor seit …, ein Tag, der für das Feld nicht
+    # vollständig ist. Erzeuger `datenquelle/geloescht.py`.
+    DATEN_VOR_AENDERUNG_GELOESCHT = "daten_vor_aenderung_geloescht"
     # v3.24.1: Sensoren im Mapping, die nicht in HA-Long-Term-Statistics landen
     # (kein state_class) — Korrektur-Werkzeuge in der Datenverwaltung wirken
     # auf solche Sensoren nicht (Vollbackfill, Verlauf nachrechnen,
@@ -300,7 +315,8 @@ class Ziel:
 
     `bereich` = Einstellungs-Kategorie (`einstellungenKatalog.tsx`) bzw. `komponenten-hub`; `block` = Block-Id im Bereich;
     `params` = Deep-Link-Parameter (Schema Konzept §3.3: `erfassen`, `bearbeiten`, `neu`, `tarif`, `art`, `ab`, `geraet`,
-    `feld`, `karte`, `plan`, `wizard`; seit E4 liest jede Zielseite jeden davon — Wächter W-5 `src/test/sprungziele.test.ts`);
+    `feld`, `karte`, `plan`, `wizard`, seit N-799 S2 `befund` — der Sprung auf einen Befund des Checkers, seit Sensorwechsel U3 b
+    `getauscht` — «Zähler getauscht»; seit E4 liest jede Zielseite jeden davon — Wächter W-5 `src/test/sprungziele.test.ts`);
     `anker` = das Element, auf dem der Sprung landen soll (Formular-Name, Feld-Schlüssel oder `data-karte`).
     """
     bereich: str
@@ -322,7 +338,8 @@ class Aktion:
 #: Parameter des Ziel-Schemas in der Reihenfolge, in der sie im Link stehen (Konzept §3.3; E4: volle Lesart). Jede Zielseite
 #: liest jeden Parameter, den ein Ziel-Bauer für sie erzeugt (W-5: `frontend/src/test/sprungziele.test.ts` liest
 #: `tests/fixtures/sprungziele.json`, erzeugt aus den Ziel-Bauern).
-ZIEL_PARAMETER = ("erfassen", "bearbeiten", "neu", "tarif", "art", "ab", "geraet", "feld", "karte", "plan", "wizard")
+ZIEL_PARAMETER = ("erfassen", "bearbeiten", "neu", "tarif", "art", "ab", "geraet", "feld", "karte", "plan", "wizard",
+                  "befund", "getauscht")
 
 
 def link_aus_ziel(ziel: Optional[Ziel]) -> Optional[str]:
@@ -473,12 +490,27 @@ def link_monat_erfassen(label: str) -> str:
 # Safi105 #301). Die technischen Source-Strings aus core/source_priority.py
 # (z. B. "manual:form", "external:cloud_import:fronius_solarweb") sollen dem
 # Anwender als „manuell" / „Cloud-Import (Fronius)" begegnen.
+#: Herkünfte, die eedc selbst schreibt (`core/source_priority.py`), als Anwender-Wort (Päckchen «Kleineres» 16.11.2026,
+#: N3): `auto:kanal_tag` ist die Tageszeile eines Tags aus dem gespiegelten HA-Zähler — die Oberfläche nennt das
+#: «HA-Spiegel»; `legacy:unknown` ist der Bestand der Erst-Migration ohne bekannte Herkunft. `fallback:*` vergibt kein
+#: Produktivpfad (Kommentar dort) und bleibt ohne Wort.
+_QUELLE_WORT = {
+    "auto:monatsabschluss": "Monatsabschluss",
+    "auto:kanal_tag": "HA-Spiegel",
+    "auto:preserve_restore": "Wiederherstellung",
+    "auto:demo_data": "Demo-Daten",
+    "legacy:unknown": "Altbestand",
+}
+
+
 def _quelle_label(source: str) -> str:
     s = (source or "").strip()
     if not s:
         return ""
     if s == "repair":
         return "Reparatur"
+    if s in _QUELLE_WORT:
+        return _QUELLE_WORT[s]
     if s.startswith("manual:"):
         return "manuell"
     if s.startswith("external:ha_statistics"):

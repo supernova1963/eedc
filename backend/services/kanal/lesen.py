@@ -36,8 +36,13 @@ Wertspalte leer ist, ist kein Stand und zählt nirgends mit.
 deckt ``[von, bis)`` voll, wenn
 
 * (a) er einen Stand VOR ``von`` hat. Liegt seine erste Zeile bei oder nach ``von``, beginnt der Zeitraum vor dem
-  Kanal ⇒ ``beginnt_nach_von``. HA nennt dort still eine Teilmenge (Anfangsstand 0, ``recorder_statistics.py:1720f.``);
-  eedc nicht.
+  Kanal ⇒ ``beginnt_nach_von``. **Ausnahme — Beginn einer HA-Statistik** (``_ha_beginn_sql``, Entscheid Gernot 21.11.2026):
+  ist diese erste Zeile die erste, die Home Assistant für den Sensor führt, gilt davor der Stand 0 wie in HA
+  (Anfangsstand 0, ``recorder_statistics.py:1720f.``) — der Zeitraum ist gedeckt, die erste Stunde zählt mit ihrem ``sum``.
+  **Ebenso der erste Stand einer MQTT-Quelle** (``_mqtt_beginn_sql``, R-D1, Entscheid Gernot 22.11.2026): der Zeitraum ist
+  gedeckt, gezählt ab diesem Stand (die Quelle führt davor keinen; die Stunde des ersten Stands trägt keinen Zuwachs).
+  Liegt der Beginn der Quelle erst bei oder nach ``bis``, ist das Feld im Zeitraum gar nicht benötigt — das entscheidet
+  die Gruppenwahl (``bilanz_adapter.BewusstLeer.vor_beginn``), nicht diese Schicht.
 * (b) sein letzter Stand das Ende erreicht: es gibt eine Zeile mit ``start_ts ≥ ende − 3600``, wobei ``ende`` =
   ``min(bis, soll_ende(jetzt))``. Für einen abgeschlossenen Zeitraum ist das die Zeile der letzten Stunde vor ``bis``
   oder eine spätere; für den laufenden reicht der Stand, den der Stundenlauf schon geschrieben haben muss
@@ -254,6 +259,58 @@ def _offset_sql(kid: str, ts: str) -> str:
             f"ORDER BY q.gueltig_ab DESC LIMIT 1)")
 
 
+#: **Anfangsstand 0 am Beginn einer HA-Statistik** (Entscheid Gernot 21.11.2026: der Tag, an dem die Statistik eines Sensors
+#: beginnt, zeigt, was Home Assistant liefert; Bauplan Sensorwechsel Nr. 179/180). Die erste Zeile eines Kanals ist die erste
+#: Zeile der HA-Statistik, wenn sie zur Spiegel-Quelle der Entity gehört, deren Vorgeschichte das Nachfüllen ohne Grund
+#: abgeschlossen hat (``kanal_nachfuellung``: HA führt vor ihr keine Zeile) — dann gilt vor ihr der Stand 0 wie in HA
+#: (``recorder_statistics.py:1720f.``, Anfangsstand 0), die erste Stunde zählt mit ihrem ``sum``. Nur Mengen (``sum``).
+#: EINE Bedingung für alle Δ-Leser (zeitraum/reihe, stunden, deltas, zellen); die zwei HA-Leser, die Δ aus HA-Zeilen bilden
+#: (``ha_statistics_service.get_sensor_fensterwert``, ``get_hourly_slots_for_day``), fragen dasselbe als «HA führt keine Zeile
+#: davor». Allgemein, nicht nur nach einem Sensorwechsel — jede Zuordnung eines Sensors, dessen Statistik in HA beginnt.
+#: **Abgrenzung (Korrekturrunde WEGB-K, Nachmessung A1/A2):** die Quelle der ersten Zeile ist die **erste Quelle des Kanals**,
+#: die kein Platzhalter von «löschen» ist (``verwerfen.platzhalter_bedingung``) — die erste Zeile einer späteren Quelle derselben
+#: Entity (A → B → A, danach Werkbank) ist nie der Beginn der Statistik; und der Beginn gilt für die Entity, die die Marke
+#: bestätigt (ohne Grund) oder nach einem Wechsel «bleiben» weiterträgt (``ergebnis.beginn``, ``nachfuellen._bestaetigter_beginn``).
+#: Im Zweifel gilt die Regel nicht (dann fehlt die erste Stunde wie in v4.3.1) — nie ein Zählerstand als Menge.
+def _ha_beginn_sql(kid: str, ts: str) -> str:
+    return (f"(SELECT 1 FROM kanal_quelle q JOIN kanal_nachfuellung m ON m.kanal_id = q.kanal_id "
+            f"WHERE q.kanal_id = {kid} AND q.familie = 'spiegel' AND q.verworfen_ts IS NULL "
+            f"AND ((m.statistic_id = q.statistic_id AND json_extract(m.ergebnis, '$.grund') IS NULL) "
+            f"OR json_extract(m.ergebnis, '$.beginn') = q.statistic_id) "
+            f"AND q.gueltig_ab = (SELECT MAX(q2.gueltig_ab) FROM kanal_quelle q2 WHERE q2.kanal_id = {kid} "
+            f"AND q2.gueltig_ab <= {ts}) "
+            f"AND NOT EXISTS (SELECT 1 FROM kanal_quelle q3 WHERE q3.kanal_id = {kid} AND q3.gueltig_ab < q.gueltig_ab "
+            f"AND (q3.verworfen_ts IS NULL OR q3.statistic_id IS NOT NULL)) "
+            f"AND NOT EXISTS (SELECT 1 FROM kanal_statistik s0 WHERE s0.kanal_id = {kid} AND s0.start_ts < {ts}))")
+
+
+#: **Erster Stand einer MQTT-Quelle** (R-D1, Entscheid Gernot 22.11.2026, N-816/N-813 — bei MQTT zählt die Quelle): die erste
+#: Zeile eines Kanals ist der erste Stand seiner Quelle, wenn die für sie geltende Quelle eine Mitschrift mit MQTT-Kennung ist (nicht
+#: die HA-Stände von damals, ``nachfuellen.STAENDE_HA_PRAEFIX``), nicht verworfen, und vor ihr keine Quelle liegt außer einem
+#: Platzhalter von «löschen» (wie ``_ha_beginn_sql``). Vor diesem Stand führt eedc aus keiner Quelle einen Wert für das Feld;
+#: ab ihm zählt der Kanal (Anfangsstand = dieser Stand — anders als HA gibt eine MQTT-Quelle keine Menge vor ihrem ersten
+#: Stand an). Leser: ``_zeitraum_aus``/``stunden_stapel`` (Rand-Tag) und ``bilanz_adapter.BewusstLeer`` (Tage davor).
+def _mqtt_beginn_sql(kid: str, ts: str) -> str:
+    return (f"(SELECT 1 FROM kanal_quelle q WHERE q.kanal_id = {kid} AND q.familie = 'mitschrift' "
+            f"AND q.verworfen_ts IS NULL AND q.statistic_id IS NOT NULL AND q.statistic_id NOT LIKE 'sensor_snapshots:%' "
+            f"AND q.gueltig_ab = (SELECT MAX(q2.gueltig_ab) FROM kanal_quelle q2 WHERE q2.kanal_id = {kid} "
+            f"AND q2.gueltig_ab <= {ts}) "
+            f"AND NOT EXISTS (SELECT 1 FROM kanal_quelle q3 WHERE q3.kanal_id = {kid} AND q3.gueltig_ab < q.gueltig_ab "
+            f"AND (q3.verworfen_ts IS NULL OR q3.statistic_id IS NOT NULL)) "
+            f"AND NOT EXISTS (SELECT 1 FROM kanal_statistik s0 WHERE s0.kanal_id = {kid} AND s0.start_ts < {ts}))")
+
+
+#: Art des Quellbeginns an der ersten Zeile eines Kanals (``_quellbeginn_sql``): HA-Statistik (Anfangsstand 0) bzw. erster
+#: MQTT-Stand (Anfangsstand = dieser Stand); sonst keiner.
+BEGINN_HA = "ha"
+BEGINN_MQTT = "mqtt"
+
+
+def _quellbeginn_sql(kid: str, ts: str) -> str:
+    return (f"(CASE WHEN {_ha_beginn_sql(kid, ts)} = 1 THEN '{BEGINN_HA}' "
+            f"WHEN {_mqtt_beginn_sql(kid, ts)} = 1 THEN '{BEGINN_MQTT}' END)")
+
+
 # ── Randstände je Kanal und Grenze (die eine Anweisung von zeitraum/reihe) ──
 
 _RAND_SQL = f"""
@@ -271,7 +328,8 @@ WITH k(kid, art) AS (
 )
 SELECT p.kid, p.j,
     v.start_ts, {_wert_sql('v', 'p.art')}, {_offset_sql('p.kid', 'v.start_ts')},
-    n.start_ts, {_wert_sql('n', 'p.art')}, {_offset_sql('p.kid', 'n.start_ts')}
+    n.start_ts, {_wert_sql('n', 'p.art')}, {_offset_sql('p.kid', 'n.start_ts')},
+    CASE WHEN p.vor_rid IS NULL AND p.art = 'sum' AND n.start_ts IS NOT NULL THEN {_quellbeginn_sql('p.kid', 'n.start_ts')} END
 FROM p
 LEFT JOIN kanal_statistik v ON v.rowid = p.vor_rid
 LEFT JOIN kanal_statistik n ON n.rowid = p.nach_rid
@@ -282,16 +340,25 @@ class _Stand:
     start_ts: int
     roh: float
     offset: float
+    #: Nur am «nach»-Stand: diese Zeile ist die erste der HA-Statistik (``_ha_beginn_sql``) — davor gilt Anfangsstand 0.
+    ha_beginn: bool = False
+    #: Nur am «nach»-Stand: diese Zeile ist der erste Stand einer MQTT-Quelle (``_mqtt_beginn_sql``) — sie ist der Anfangsstand.
+    mqtt_beginn: bool = False
 
     @property
     def ende(self) -> int:
         return self.start_ts + _STUNDE
 
 
-def _stand(ts, roh, offset) -> Optional[_Stand]:
+def _stand(ts, roh, offset, beginn=None) -> Optional[_Stand]:
     if ts is None or roh is None:
         return None
-    return _Stand(int(ts), float(roh), float(offset or 0.0))
+    return _Stand(int(ts), float(roh), float(offset or 0.0), beginn == BEGINN_HA, beginn == BEGINN_MQTT)
+
+
+def _anfangsstand(f: _Stand) -> _Stand:
+    """Der Stand 0 vor der ersten Zeile einer HA-Statistik (``_ha_beginn_sql``), mit dem ``offset`` ihrer Quelle."""
+    return _Stand(f.start_ts - _STUNDE, 0.0, f.offset)
 
 
 def _kanalwert(art: str, st: Optional[_Stand]) -> Optional[float]:
@@ -310,9 +377,9 @@ async def _randstaende_laden(db: AsyncSession, kanaele: Sequence[Kanal], grenzen
     res = await db.execute(text(_RAND_SQL), {"kanaele": _kanal_json(kanaele), "grenzen": json.dumps(list(grenzen))})
     vor: dict[tuple[int, int], Optional[_Stand]] = {}
     nach: dict[tuple[int, int], Optional[_Stand]] = {}
-    for kid, j, v_ts, v_roh, v_off, n_ts, n_roh, n_off in res.all():
+    for kid, j, v_ts, v_roh, v_off, n_ts, n_roh, n_off, beginn in res.all():
         vor[(kid, grenzen[j])] = _stand(v_ts, v_roh, v_off)
-        nach[(kid, grenzen[j])] = _stand(n_ts, n_roh, n_off)
+        nach[(kid, grenzen[j])] = _stand(n_ts, n_roh, n_off, beginn)
     return vor, nach
 
 
@@ -372,6 +439,11 @@ def _zeitraum_aus(k: Kanal, von: int, bis: int, a: Optional[_Stand], f: Optional
     laufend = bis > se
     ende = min(bis, se)
     erreicht = (b is not None and b.start_ts >= ende - _STUNDE) or nach_bis is not None
+    ab_beginn = a is None and f is not None and f.ha_beginn and f.start_ts < bis
+    if ab_beginn:
+        a = _anfangsstand(f)               # die HA-Statistik beginnt im Zeitraum: Anfangsstand 0 wie HA
+    elif a is None and f is not None and f.mqtt_beginn and f.start_ts < bis:
+        a = f                              # R-D1: die MQTT-Quelle beginnt im Zeitraum — ihr erster Stand ist der Anfangsstand
 
     # Spannen über die beiden Ränder: die, in der `von` liegt, und die, in der das Ende (bis bzw. Soll-Ende) liegt.
     spannen: list[int] = []
@@ -460,6 +532,26 @@ async def zeitraum(db: AsyncSession, kanal: Kanal, von: int, bis: int, *, jetzt:
     return (await zeitraum_stapel(db, [kanal], von, bis, jetzt=jetzt))[kanal.key]
 
 
+async def zeitraeume_stapel(
+    db: AsyncSession, kanaele: Sequence[Kanal], fenster: Sequence[tuple[int, int]], *, jetzt: Optional[int] = None,
+) -> dict[str, list[Zeitraum]]:
+    """Je Kanal je Fenster ``(von, bis)`` ein ``Zeitraum`` — die Fenster dürfen sich überlappen oder Lücken lassen
+    (Sensorwechsel S2, B-5: Tage mit verschiedenem Tagesfenster in einem Bereich). Dieselbe Regel wie ``zeitraum``,
+    EINE Anweisung für alle Randstände."""
+    _nur_mengen(kanaele)
+    if not kanaele or not fenster:
+        return {}
+    for von, bis in fenster:
+        _pruefe_grenzen([von, bis])
+    jetzt = _jetzt(jetzt)
+    se = soll_ende(jetzt)
+    punkte = sorted({t for von, bis in fenster for t in (von, bis, min(bis, se))})
+    vor, nach = await _randstaende(db, kanaele, punkte)
+    return {k.key: [_zeitraum_aus(
+        k, von, bis, vor.get((k.id, von)), nach.get((k.id, von)), vor.get((k.id, bis)), nach.get((k.id, bis)),
+        vor.get((k.id, min(bis, se))), nach.get((k.id, min(bis, se))), jetzt) for von, bis in fenster] for k in kanaele}
+
+
 # ── stunden ─────────────────────────────────────────────────────────────────
 
 _STUNDEN_SQL = f"""
@@ -473,7 +565,8 @@ WITH k(kid, art) AS (
             AND {_wert_sql('s')} IS NOT NULL) AS nach_ts
     FROM k
 )
-SELECT r.kid, r.nach_ts, s.start_ts, {_wert_sql('s', 'r.art')}, s.familie, {_offset_sql('r.kid', 's.start_ts')}
+SELECT r.kid, r.nach_ts, s.start_ts, {_wert_sql('s', 'r.art')}, s.familie, {_offset_sql('r.kid', 's.start_ts')},
+    CASE WHEN r.vor_ts IS NULL AND r.art = 'sum' AND s.start_ts IS NOT NULL THEN {_quellbeginn_sql('r.kid', 's.start_ts')} END
 FROM r LEFT JOIN kanal_statistik s ON s.kanal_id = r.kid AND s.start_ts >= COALESCE(r.vor_ts, :von)
     AND s.start_ts < :bis AND {_wert_sql('s', 'r.art')} IS NOT NULL
 ORDER BY r.kid, s.start_ts
@@ -518,15 +611,23 @@ async def stunden_stapel(
     res = await db.execute(text(_STUNDEN_SQL), {"kanaele": _kanal_json(kanaele), "von": von, "bis": bis})
     zeilen: dict[int, list] = {k.id: [] for k in kanaele}
     nach_ts: dict[int, Optional[int]] = {}
-    for kid, n_ts, ts, roh, familie, off in res.all():
+    beginn: dict[int, int] = {}
+    mqtt_beginn: dict[int, int] = {}
+    for kid, n_ts, ts, roh, familie, off, art_beginn in res.all():
         nach_ts[kid] = n_ts
         if ts is not None:
             zeilen[kid].append((int(ts), float(roh), familie, float(off or 0.0)))
+            if art_beginn == BEGINN_HA:
+                beginn[kid] = int(ts)
+            elif art_beginn == BEGINN_MQTT:
+                mqtt_beginn[kid] = int(ts)
     out: dict[str, Stunden] = {}
     for k in kanaele:
         z = zeilen[k.id]
         vor = z[0] if z and z[0][0] < von else None
         im = z[1:] if vor is not None else z
+        if vor is None and im and beginn.get(k.id) == im[0][0]:
+            vor = (im[0][0] - _STUNDE, 0.0, im[0][2], im[0][3])     # Anfangsstand 0 wie HA (``_ha_beginn_sql``)
         werte = _stundenwerte(im, vor, k.art == ART_SUM)
         laufend = bis > se
         ende = min(bis, se)
@@ -535,9 +636,10 @@ async def stunden_stapel(
         spannen = [w.spanne for w in werte if w.spanne is not None]
         if letzte is not None and nach_ts.get(k.id) is not None and letzte + _STUNDE < bis:
             spannen.append(nach_ts[k.id] - letzte)
+        ab_mqtt_beginn = vor is None and im and mqtt_beginn.get(k.id) == im[0][0]   # R-D1: erster MQTT-Stand im Bereich
         if vor is None and not im:
             grund = GRUND_KEINE_ZEILE
-        elif vor is None:
+        elif vor is None and not ab_mqtt_beginn:
             grund = GRUND_BEGINNT_NACH_VON
         elif not erreicht:
             grund = GRUND_ENDET_VOR_BIS
@@ -557,17 +659,22 @@ async def stunden_stapel(
 # ── Zuwachs je (Wochentag, Uhrstunde) — die Gewichte eines Zeitfenster-Tarifs (HA-Bauform E4f) ──────────────────
 
 _ZELLEN_SQL = f"""
-WITH w(kid, vz, mi, von, bis) AS (
+WITH w0(kid, vz, mi, von, bis) AS (
     SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'),
            json_extract(value, '$[3]'), json_extract(value, '$[4]') FROM json_each(:wahl)
+), w AS (
+    SELECT w0.*, (SELECT MIN(s1.start_ts) FROM kanal_statistik s1 WHERE s1.kanal_id = w0.kid) AS erste FROM w0
 ), z AS (
-    SELECT w.kid, w.vz, w.mi, w.von, s.start_ts AS ts, s.sum + COALESCE({_offset_sql('w.kid', 's.start_ts')}, 0) AS wert
+    SELECT w.kid, w.vz, w.mi, w.von, s.start_ts AS ts, s.sum AS roh,
+        s.sum + COALESCE({_offset_sql('w.kid', 's.start_ts')}, 0) AS wert,
+        CASE WHEN s.start_ts = w.erste THEN {_ha_beginn_sql('w.kid', 's.start_ts')} END AS beginn
     FROM w JOIN kanal_statistik s ON s.kanal_id = w.kid
         AND s.start_ts >= COALESCE((SELECT MAX(s2.start_ts) FROM kanal_statistik s2 WHERE s2.kanal_id = w.kid
                                     AND s2.start_ts < w.von AND s2.sum IS NOT NULL), w.von)
         AND s.start_ts < w.bis AND s.sum IS NOT NULL
 ), d AS (
-    SELECT mi, von, ts, vz * (wert - LAG(wert) OVER (PARTITION BY mi, kid ORDER BY ts)) AS ch FROM z
+    SELECT mi, von, ts, vz * (wert - COALESCE(LAG(wert) OVER (PARTITION BY mi, kid ORDER BY ts),
+                                              CASE WHEN beginn = 1 THEN wert - roh END)) AS ch FROM z
 ), h AS (
     SELECT mi, ts, SUM(ch) AS kwh FROM d WHERE ts >= von AND ch IS NOT NULL GROUP BY mi, ts
 )
@@ -586,7 +693,8 @@ async def zellen_stapel(
     ``wahl``: je Eintrag ``(kanal, vorzeichen, zeitraum_nr, von, bis)``. Je Zeitraum und Stunde mit Zeile wird wie
     ``stunden`` der Zuwachs gebildet (HAs ``change``, auch über den Stand vor ``von``; ``sum + offset``), über die
     Kanäle des Zeitraums mit Vorzeichen summiert, auf 0 geklemmt und nach (Wochentag, Uhrstunde) der STUNDE (Beginn,
-    örtliche Zeit der Prozesszone — wie ``datetime.fromtimestamp``) zusammengefasst. Nur Mengen-Kanäle (``sum``).
+    örtliche Zeit der Prozesszone — wie ``datetime.fromtimestamp``) zusammengefasst. Nur Mengen-Kanäle (``sum``). Die erste
+    Zeile einer HA-Statistik zählt wie in ``stunden`` ab dem Anfangsstand 0 (``_ha_beginn_sql``).
 
     Returns: ``{zeitraum_nr: [(wochentag, stunde, kWh), …]}`` — ``wochentag`` wie ``datetime.weekday()`` (0 = Montag).
     """
@@ -605,6 +713,72 @@ async def zellen_stapel(
 
 async def stunden(db: AsyncSession, kanal: Kanal, von: int, bis: int, *, jetzt: Optional[int] = None) -> Stunden:
     return (await stunden_stapel(db, [kanal], von, bis, jetzt=jetzt))[kanal.key]
+
+
+# ── Zuwachs je Stunde, schlank (N-799: die Fenster-Lesestelle des Erfassungs-Stillstands) ──────────────────────────
+
+_DELTAS_SQL = f"""
+WITH k(kid) AS (SELECT value FROM json_each(:kanaele)), r AS (
+    SELECT k.kid, (SELECT MAX(s.start_ts) FROM kanal_statistik s WHERE s.kanal_id = k.kid AND s.start_ts < :von
+                   AND s.sum IS NOT NULL) AS vor_ts FROM k
+)
+SELECT r.kid, s.start_ts, s.sum, CASE WHEN r.vor_ts IS NULL THEN {_ha_beginn_sql('r.kid', 's.start_ts')} END
+FROM r JOIN kanal_statistik s ON s.kanal_id = r.kid
+    AND s.start_ts >= COALESCE(r.vor_ts, :von) AND s.start_ts < :bis AND s.sum IS NOT NULL
+ORDER BY r.kid, s.start_ts
+"""
+
+
+async def deltas_stapel(db: AsyncSession, kanaele: Sequence[Kanal], von: int,
+                        bis: int) -> dict[str, list[tuple[int, Optional[float], Optional[int]]]]:
+    """Je Mengen-Kanal und belegter Stunde in ``[von, bis)`` ``(start_ts, change, spanne)`` — **dieselben Zahlen wie**
+    ``stunden_stapel`` (HAs ``change`` auch über den Stand vor ``von``, ``sum + offset`` der geltenden Quelle, Spanne =
+    Abstand zum vorigen Stand; ``change``/``spanne`` ``None`` ohne vorigen Stand), aber als Tupel und ohne Abdeckung:
+    die Fenster-Lesestelle des Erfassungs-Stillstands (``kanal/stillstand.py``) liest Monate über mehrere Zähler, und je
+    Zeile ein ``Stundenwert`` samt Offset-Unterabfrage kostete dort die Hälfte der Laufzeit. Zwei Anweisungen (Stände,
+    Quellen-Offsets); Gleichheit mit ``stunden_stapel`` hält ``test_n799_stillstand_lesestelle.py`` fest."""
+    _nur_mengen(kanaele)
+    mengen = [k for k in kanaele if k.art == ART_SUM]
+    if not mengen or bis <= von:
+        return {}
+    ids = json.dumps([k.id for k in mengen])
+    offsets: dict[int, tuple[list[int], list[float]]] = {}
+    for kid, ab, off in (await db.execute(text(
+            'SELECT kanal_id, gueltig_ab, "offset" FROM kanal_quelle WHERE kanal_id IN (SELECT value FROM '
+            'json_each(:kanaele)) ORDER BY kanal_id, gueltig_ab'), {"kanaele": ids})).all():
+        ts_l, off_l = offsets.setdefault(int(kid), ([], []))
+        ts_l.append(int(ab))
+        off_l.append(float(off or 0.0))
+    je: dict[int, list] = {k.id: [] for k in mengen}
+    beginn: dict[int, int] = {}
+    for kid, ts, roh, ha_beginn in (await db.execute(text(_DELTAS_SQL), {"kanaele": ids, "von": von, "bis": bis})).all():
+        je[int(kid)].append((int(ts), float(roh)))
+        if ha_beginn:
+            beginn[int(kid)] = int(ts)
+    return {k.key: _deltas(je[k.id], offsets.get(k.id), von, beginn.get(k.id)) for k in mengen}
+
+
+def _deltas(zeilen: list[tuple[int, float]], offsets: Optional[tuple[list[int], list[float]]],
+            von: int, beginn: Optional[int] = None) -> list[tuple[int, Optional[float], Optional[int]]]:
+    """``(start_ts, change, spanne)`` je Zeile ab ``von`` — die erste Zeile davor ist der Stand vor ``von``; ``beginn``: die
+    erste Zeile einer HA-Statistik, vor ihr gilt der Anfangsstand 0 (``_ha_beginn_sql``)."""
+    from bisect import bisect_right
+
+    out: list[tuple[int, Optional[float], Optional[int]]] = []
+    v_ts: Optional[int] = None
+    v_wert = 0.0
+    for ts, roh in zeilen:
+        off = 0.0
+        if offsets:
+            i = bisect_right(offsets[0], ts) - 1
+            off = offsets[1][i] if i >= 0 else 0.0
+        wert = roh + off
+        if v_ts is None and ts == beginn:
+            v_ts, v_wert = ts - _STUNDE, off
+        if ts >= von:
+            out.append((ts, None, None) if v_ts is None else (ts, wert - v_wert, ts - v_ts))
+        v_ts, v_wert = ts, wert
+    return out
 
 
 # ── mittel ──────────────────────────────────────────────────────────────────

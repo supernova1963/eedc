@@ -44,6 +44,7 @@ from .waermepumpe import WaermepumpeChecks
 from .zaehler import ZaehlerChecks
 from .datenquelle import DatenquelleChecks
 from .wp_tarif import WpTarifChecks
+from .erfassung_stillstand import ErfassungStillstandChecks
 
 
 # ─── Service ─────────────────────────────────────────────────────────────────
@@ -59,6 +60,7 @@ class DatenChecker(
     ZaehlerChecks,
     DatenquelleChecks,
     WpTarifChecks,
+    ErfassungStillstandChecks,
     _CheckHelpers,
 ):
     """Prüft alle Daten einer Anlage auf Vollständigkeit und Plausibilität."""
@@ -67,6 +69,8 @@ class DatenChecker(
         self.db = db
         self._abdeckung: Optional[MonatsdatenAbdeckung] = None
         self._nicht_ausfuehrbar: list[dict] = []
+        # N-799 S3: die Tage, die der Befund `erfassung_stillstand` nennt — N-567 lässt sie aus.
+        self._erfassung_stillstand_tage: set = set()
 
     async def check_anlage(self, anlage_id: int) -> DatenCheckResult:
         """Führt alle Prüfungen für eine Anlage durch."""
@@ -143,6 +147,8 @@ class DatenChecker(
         ergebnisse.extend(await self._check_tage_ohne_kanal_deckung(anlage))
         # Nachträge II: Tage mit mehr Einspeisung als Erzeugung + Entladung.
         ergebnisse.extend(await self._check_einspeisung_ueber_erzeugung(anlage))
+        # N-799 S3: Stunden ohne Stundenwerte (Erfassungs-Stillstand, Lücke) — vor N-567, das dessen Tage auslässt.
+        ergebnisse.extend(await self._check_erfassung_stillstand(anlage))
         # N-567: Nachtrag nach eingefrorenem Zähler — nur benannt (eedc folgt HA).
         ergebnisse.extend(await self._check_nachtrag_nach_eingefrorenem_zaehler(anlage))
         # #425: dieselbe Menge für die Wallbox-Regel der Topic-Erwartung.
@@ -151,6 +157,15 @@ class DatenChecker(
         ergebnisse.extend(await self._check_ha_zaehlersprung(anlage))
         # N-639: Rückgang von HAs Summe — über den ganzen Spiegel (ein alter Monat trifft „Aus HA laden" genauso).
         ergebnisse.extend(await self._check_ha_rueckgang(anlage))
+        # Sensorwechsel U2 Lauf c (F12): HA zählt einen Zählerstand-Sprung derselben Entität als Menge — benannt, nicht berichtigt.
+        ergebnisse.extend(await self._check_ha_zaehlerstand_springt(anlage))
+        # Sensorwechsel U3 b (G4): der Zählerstand einer MQTT-Reihe springt — Stunde, Menge und «Zähler getauscht».
+        ergebnisse.extend(await self._check_mqtt_zaehlerstand_springt(anlage))
+        # Sensorwechsel Weg B: «Daten vor der Änderung löschen» — Auskunft je Feld (gelöscht vor …, HA führt den Sensor seit …).
+        ergebnisse.extend(await self._check_daten_vor_aenderung_geloescht(anlage))
+        # Sensorwechsel U3 a (G2): gespeicherter Monatswert eines vom Wechsel berührten Monats, der nicht mehr zur Quelle passt
+        # — «Monat öffnen».
+        ergebnisse.extend(await self._check_monatswert_ueberholt(anlage))
         ergebnisse.extend(await self._check_sensor_mapping_lts(anlage))
         ergebnisse.extend(await self._check_sensor_mapping_einheit(anlage))
         # P-433-3 S1: Vorlauf/Rücklauf/Zusatzheizung ohne `state_class: measurement` — Live ja, Tagesverlauf nein.

@@ -37,9 +37,11 @@ KATALOG_TS = REPO / "eedc" / "frontend" / "src" / "config" / "einstellungenKatal
 KONSTANTEN_TS = REPO / "eedc" / "frontend" / "src" / "lib" / "constants.ts"
 TEILE = ("Was eedc sieht", "Lösungsweg", "Was ohne Handlung gilt")
 #: Die drei Wege in Home Assistant (Erhebung Teil A M10, M23, M24) — Anfang eines kursiven Wegs.
-HA_WEGE = (("Einstellungen", "Geräte & Dienste", "Helfer"), ("Entwicklerwerkzeuge", "Statistik"), ("Helfer",))
+HA_WEGE = (("Einstellungen", "Geräte & Dienste", "Helfer"), ("Entwicklerwerkzeuge", "Statistik"), ("Helfer",),
+           ("Einstellungen", "Werkzeuge", "Statistik"))   # Lab-K H1: der Weg seit Home Assistant 2026.11
 MELDE_CODES = tuple(c for c in HANDGRIFFE if c.startswith(("drift_", "tageswerte_fehlen_"))
-                    and HANDGRIFFE[c].klasse != "ok") + ("ha_zaehlersprung", "ha_zaehler_rueckgang")
+                    and HANDGRIFFE[c].klasse != "ok") + ("ha_zaehlersprung", "ha_zaehler_rueckgang",
+                                                                      "ha_zaehlerstand_springt")
 _KURSIV = re.compile(r"(?<![*\w])\*(?!\*)([^*\n]+?)(?<!\*)\*(?![*\w])")
 _CODE = re.compile(r"`[^`\n]*`")
 _EEDC_LINK = re.compile(r"\]\((eedc:[^)\s]+)\)")
@@ -111,7 +113,7 @@ def test_je_code_eine_datei_und_keine_waise():
     ist = {p.stem for p in QUELLE.glob("*.md")}
     assert set(HANDGRIFFE) - ist == set(), f"Lösungsweg fehlt: {sorted(set(HANDGRIFFE) - ist)}"
     assert ist - set(HANDGRIFFE) == set(), f"Datei ohne Code: {sorted(ist - set(HANDGRIFFE))}"
-    assert len(ist) == len(HANDGRIFFE) == 182
+    assert len(ist) == len(HANDGRIFFE) == 187  # Weg B, Sitzung B3a: − zaehler_versatz, − zaehler_zeit_verworfen; Weg B, Sitzung B2: − zuordnung_grund_fehlt; Weg B: + daten_vor_aenderung_geloescht; 16.11.2026: + zaehler_versatz, + erfassung_stillstand (N-799 S3); + zuordnung_grund_fehlt (Sensorwechsel S4); + ha_zaehlerstand_springt (U2 Lauf c); + zaehler_zeit_verworfen, monatswert_ueberholt (U3 a); + mqtt_zaehlerstand_springt (U3 b)
 
 
 @pytest.mark.parametrize("code", list(HANDGRIFFE))
@@ -165,7 +167,9 @@ def test_sprengsatz_menuweg_und_link():
     assert not _weg_gueltig(_segmente("Cockpit → Tag"), katalog)
     assert _weg_gueltig(_segmente("Einstellungen → Daten → Energieprofil-Pflege"), katalog)
     assert _weg_gueltig(_segmente("Einstellungen → Komponenten → Wärmepumpe"), katalog)
-    assert _weg_gueltig(_segmente("Entwicklerwerkzeuge → Statistik → „Wert anpassen“"), katalog)
+    assert _weg_gueltig(_segmente("Entwicklerwerkzeuge → Statistik → „Summe anpassen“"), katalog)
+    assert _weg_gueltig(_segmente("Einstellungen → Werkzeuge → Statistik → „Summe anpassen“"), katalog)
+    assert not _weg_gueltig(_segmente("Einstellungen → Werkzeuge → Zustände"), katalog)
     with pytest.raises(ValueError):
         _ziel_aus_pfad("/einstellungen/datenquellen?feld=gibt_es_nicht")
 

@@ -10,12 +10,17 @@ from backend.models.mqtt_energy_snapshot import MqttEnergySnapshot
 # Triage 3.11.2026: registriert, damit `Base.metadata.create_all` (conftest, init_db) die Tabelle immer anlegt —
 # bis dahin hing sie an der Import-Reihenfolge (eine Testdatei allein lief ohne Tabelle).
 from backend.models.mqtt_live_snapshot import MqttLiveSnapshot
+# Sensorwechsel S3 (17.11.2026): ebenso die Zählerstand-Reihe — die Korrektur zählt und verwirft ihre Zeilen auch im Weg der
+# Werkbank; ohne Registrierung fehlte die Tabelle je nach Import-Reihenfolge in `create_all` (gemessen in der vollen Suite).
+from backend.models.sensor_snapshot import SensorSnapshot
 from backend.models.tages_energie_profil import TagesEnergieProfil, TagesZusammenfassung
 from backend.models.infothek import InfothekEintrag, InfothekDatei
 from backend.models.korrekturprofil import Korrekturprofil
 from backend.models.data_provenance_log import DataProvenanceLog
 from backend.models.emob_ladeblock import EmobLadeblock
 from backend.models.kanal import Kanal, KanalNachfuellung, KanalQuelle, KanalStatistik
+# Sensorwechsel mit Grund (B-1): die Zuordnungs-Wechsel je Zählerschlüssel.
+from backend.models.zuordnung_wechsel import ZuordnungWechsel
 
 __all__ = [
     "Anlage",
@@ -32,6 +37,7 @@ __all__ = [
     "ActivityLog",
     "MqttEnergySnapshot",
     "MqttLiveSnapshot",
+    "SensorSnapshot",
     "TagesEnergieProfil",
     "TagesZusammenfassung",
     "InfothekEintrag",
@@ -43,4 +49,5 @@ __all__ = [
     "KanalQuelle",
     "KanalStatistik",
     "KanalNachfuellung",
+    "ZuordnungWechsel",
 ]

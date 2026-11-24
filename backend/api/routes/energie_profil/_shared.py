@@ -184,7 +184,9 @@ class StundenWertResponse(BaseModel):
     # dieser Zeile ``n > 1`` reale Stunden trägt (HA hatte die Stunden davor
     # nicht geschrieben; die Energie steht hier wie im HA-Dashboard). ``None``
     # im Regelfall. Die Stundentabelle beschriftet die Zeile damit
-    # („enthält n Stunden"), statt sie als Spitze zu zeigen.
+    # („enthält n Stunden"), statt sie als Spitze zu zeigen. N-799: nach einem
+    # Stillstand der ganzen Erfassung (Kanal-Tag) trägt die Nachtragszeile
+    # ``n = k + 1``, jede Stunde des Stillstands ``n = 0`` („in späterer Zeile").
     spannen: Optional[dict[str, int]] = None
     # HA-Bauform S4 (S4-E2 A): was ``stunde`` meint — ``"beginn"`` = ``[h, h+1)``
     # (Kanal-Tag, HAs ``start_ts``), ``"ende"`` = Backward-Slot ``[h−1, h)``
@@ -207,18 +209,6 @@ class StundenAntwort(BaseModel):
     # Intervall liegt im Backward-Raster schon im Folgetag und fällt aus der
     # Liste. `None` heißt „an diesem Tag wurde kein Ladestand gemessen".
     soc_zuletzt_prozent: Optional[float] = None
-
-
-class WochenmusterPunkt(BaseModel):
-    """Durchschnittlicher Stundenwert pro Wochentag."""
-    wochentag: int      # 0=Mo, 1=Di, …, 6=So
-    stunde: int         # 0–23
-    pv_kw: Optional[float] = None
-    verbrauch_kw: Optional[float] = None
-    netzbezug_kw: Optional[float] = None
-    einspeisung_kw: Optional[float] = None
-    batterie_kw: Optional[float] = None
-    anzahl_tage: int = 0
 
 
 class HeatmapZelle(BaseModel):
@@ -328,6 +318,10 @@ class MonatsAuswertungResponse(BaseModel):
     # Ermöglicht dem Frontend, Warnhinweise zu Datenlücken anzuzeigen.
     stunden_fehlend_pv: int = 0
     stunden_fehlend_verbrauch: int = 0
+    #: N-799 E-5: Tage, deren Überschuss/Defizit/Direktverbrauch eine Fenster-Rechnung aus den Zählerständen enthält
+    #: (in den Summen) — und Tage, an denen die drei nicht rechenbar sind (NICHT in den Summen).
+    tage_mit_fenster_rechnung: int = 0
+    tage_ohne_stundenpaarung: int = 0
 
 
 class TagesZusammenfassungResponse(BaseModel):
@@ -713,9 +707,11 @@ class TagWerteResponse(BaseModel):
     netto_ertrag: Optional[float] = None
     netto_bilanz: Optional[float] = None
     # CO₂ — der **PV-Anteil** der kanonischen Bilanz (`berechne_co2_bilanz`,
-    # ADR-001/DI-2): Eigenverbrauch × Strommix-Faktor. WP-Wärme und
-    # E-Mobilitäts-Kilometer sind Monatsgrößen (`InvestitionMonatsdaten`) und auf
-    # Tagesebene nicht gemessen — dieser Wert enthält sie deshalb **nicht**.
+    # ADR-001/DI-2): Eigenverbrauch × Strommix-Faktor. Die CO₂-Einsparung von
+    # Wärmepumpe und E-Mobilität rechnet eedc nur je Monat (Eingänge Wärme, Strom,
+    # Kilometer und Netzladung des Monats, `core/calculations.py`) — dieser
+    # Wert enthält sie **nicht**, auch wenn die Tageszeile Wärme und Kilometer
+    # zeigt (`services/energie_profil/tage_werte.py`: nur `co2_pv_kg`).
     # Bis 2026-07-31 stand hier `erzeugung × Faktor` (F-6): das schrieb auch der
     # eingespeisten kWh die volle Netzstrom-Vermeidung gut.
     # None, wenn der Eigenverbrauch nicht erfasst ist (s. `eigenverbrauch`) —
@@ -724,6 +720,14 @@ class TagWerteResponse(BaseModel):
     # ── Tag-native Zusatzmetriken (kein Monats-Registry-Pendant) ──
     ueberschuss_kwh: Optional[float] = None
     defizit_kwh: Optional[float] = None
+    #: N-799 E-5/E-11: wie Direktverbrauch, Überschuss und Defizit entstanden sind — ``None`` = jede Stunde gepaart,
+    #: ``"fenster"`` = für die Stunden eines Erfassungs-Stillstands bzw. einer Lücke aus den Zählerständen gerechnet
+    #: (Wert vorhanden, gekennzeichnet), ``"nicht_rechenbar"`` = die drei Spalten sind ``None``. ``stundenpaarung_grund``
+    #: nennt die Stunden in Worten (``services/energie_profil/stundenpaarung.py``); ``mindest_netzladung_kwh`` ist die
+    #: Netzladung, die das Fenster mindestens trug, wenn die Begrenzung des Überschusses griff.
+    stundenpaarung: Optional[Literal["fenster", "nicht_rechenbar"]] = None
+    stundenpaarung_grund: Optional[str] = None
+    mindest_netzladung_kwh: Optional[float] = None
     peak_pv_kw: Optional[float] = None
     peak_netzbezug_kw: Optional[float] = None
     peak_einspeisung_kw: Optional[float] = None

@@ -19,6 +19,7 @@ export type RepairOperationType =
   | 'delete_monatsdaten'
   | 'reset_cloud_import'
   | 'verwerfen_vor_quellbeginn'
+  | 'verwerfen_vor_zeitpunkt'
   | 'solcast_rewrite'
   // E3 Daten-Checker (backend `services/repair_operationen_checker.py`)
   | 'temperatur_aus_messung'
@@ -146,8 +147,22 @@ export const OPERATION_META: OperationMeta[] = [
     label: 'Werte vor dem Sensorbeginn verwerfen',
     description:
       'Nach einem Sensortausch: verwirft für EIN Feld die Werte des alten Sensors vor dem Beginn des neuen — ' +
-      'im HA-Spiegel und in den Stunden- und Tageswerten, nur dieses Feld. Monate mit Abschluss bleiben unberührt. ' +
-      'Kein Rückweg: die Vorschau sagt, was danach weg ist.',
+      'im HA-Spiegel und in den Stunden- und Tageswerten dieses Felds (Monate mit Monatsabschluss bleiben unberührt). ' +
+      'Zählerstände, gespeicherte Monatswerte und alle anderen Felder bleiben; eedc bildet keine Tage neu. ' +
+      'Kein Rückweg in eedc: die Vorschau sagt, was danach geschieht.',
+    inWorkbench: true,
+  },
+  {
+    // Fund-Päckchen H (H1): Backend `services/verwerfen_vor_zeitpunkt.py`.
+    type: 'verwerfen_vor_zeitpunkt',
+    label: 'Werte eines Felds vor einem Zeitpunkt verwerfen',
+    description:
+      'Verwirft für EIN Feld alle Werte vor einem gewählten Zeitpunkt — im HA-Spiegel, in den Zählerständen und in ' +
+      'den Stunden- und Tageswerten dieses Felds, auch in Monaten mit Monatsabschluss —, als wäre seine Quelle erst ' +
+      'ab dann zugeordnet; danach bildet eedc die betroffenen Tage im Hintergrund für alle Felder neu — am Tag des ' +
+      'Zeitpunkts können sich auch Werte anderer Felder ändern, an den übrigen Tagen nur, was auch «Tag neu ' +
+      'aggregieren» ändert. Wetter, Preise und gespeicherte Monatswerte bleiben. ' +
+      'Kein Rückweg in eedc: die Vorschau sagt, was danach geschieht.',
     inWorkbench: true,
   },
   // E3 Daten-Checker: die Knöpfe der Befunde als Operationen (Labels wörtlich wie `repair_protokoll.OPERATION_LABELS`,
@@ -219,7 +234,8 @@ export interface KanalAbgleichErgebnis {
 
 /** MartyBr (simon42 #429): ein Satz, wann man den Abgleich braucht. */
 export const KANAL_ABGLEICH_BESCHREIBUNG =
-  'Nach einer Korrektur in Home Assistant (Entwicklerwerkzeuge → Statistik → „Wert anpassen"): ' +
+  'Nach einer Korrektur in Home Assistant (Einstellungen → Werkzeuge → Statistik → „Summe anpassen“; in älteren ' +
+  'Home-Assistant-Versionen unter Entwicklerwerkzeuge → Statistik): ' +
   'übernimmt sie sofort in den HA-Spiegel, aus dem die Tages- und Monats-Kennzahlen kommen — ' +
   'derselbe Abgleich wie nachts um 02:45. Stundenwerte baut er nicht neu.'
 
@@ -254,9 +270,10 @@ export const repairApi = {
   discard: (planId: string): Promise<void> =>
     api.delete(`/repair/plans/${planId}`),
 
-  /** Felder mit Sensortausch für „Werte vor dem Sensorbeginn verwerfen" (nur lesend). */
-  kanalAuswahl: (anlageId: number): Promise<{ kanaele: KanalAuswahlEintrag[] }> =>
-    api.get(`/repair/kanal-auswahl?anlage_id=${anlageId}`),
+  /** Felder mit Sensortausch für „Werte vor dem Sensorbeginn verwerfen"; mit `alle` jedes Feld mit Zähler- oder
+   * Stand-Kanal für „Werte eines Felds vor einem Zeitpunkt verwerfen" (nur lesend). */
+  kanalAuswahl: (anlageId: number, alle = false): Promise<{ kanaele: KanalAuswahlEintrag[] }> =>
+    api.get(`/repair/kanal-auswahl?anlage_id=${anlageId}${alle ? '&alle=true' : ''}`),
 
   /** HA-Spiegel jetzt abgleichen (direkter Pfad ohne Plan, wie das Löschen). */
   kanalAbgleich: (anlageId: number): Promise<KanalAbgleichErgebnis> =>

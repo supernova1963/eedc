@@ -65,6 +65,16 @@ def _texte(betroffen: list, mit_kanal: set[str]) -> tuple[str, str]:
             + _FOLGE_OHNE_KANAL.removeprefix("Folge: "))
 
 
+def _benannt(zeitpunkt: datetime, stunden: Optional[set[int]]) -> bool:
+    """Trägt die Kanal-Stunde vor dem Stand ``zeitpunkt`` (oder die Stunde, die mit ihm beginnt) einen Rückgang, den ein anderer
+    Befund nennt (``mqtt_standsprung.benannte_stunden``)? Die Reihe hält stündliche Stände: der Fall zwischen dem Stand davor und
+    ``zeitpunkt`` liegt in einer dieser zwei Kanal-Stunden."""
+    if not stunden:
+        return False
+    ts = int(zeitpunkt.timestamp())
+    return any(ts - 3600 <= h <= ts for h in stunden)
+
+
 class RuecksprungChecks:
     """Prüfung rückspringender Zählerstände."""
 
@@ -123,6 +133,8 @@ class RuecksprungChecks:
         from backend.services.snapshot.reader import (
             MQTT_AKTIV_TAGE, finde_zaehler_ruecksprunge, mqtt_zaehler_keys,
         )
+        from backend.services.zuordnung_wechsel.zeitpunkt import fortsetzungs_naehte
+        from backend.services.daten_checker.datenquelle.mqtt_standsprung import benannte_stunden
 
         kat = CheckKategorie.ZAEHLER_RUECKSPRUNG.value
 
@@ -162,10 +174,16 @@ class RuecksprungChecks:
             return FELD_LABELS.get(feld, FELD_LABELS.get(f"{feld}_kwh", feld))
 
         betroffen: list[tuple[str, int, datetime, float, float, str]] = []
+        benannt = await benannte_stunden(self.db, anlage.id)
         for sensor_key in sorted(keys):
+            # Sensorwechsel S4: ein Rücksprung an einer verzeichneten Fortsetzung ist erklärt (die Leser überbrücken ihn).
             spruenge = await finde_zaehler_ruecksprunge(
                 self.db, anlage.id, sensor_key, von, bis,
+                naehte=tuple(await fortsetzungs_naehte(self.db, anlage.id, sensor_key)),
             )
+            # Sensorwechsel U3 b (G4): einen Rückgang, den «Zählerstand springt (MQTT)» nennt, nennt
+            # dieser Befund nicht noch einmal (ein Befund je Ursache).
+            spruenge = [s for s in spruenge if not _benannt(s[0], benannt.get(sensor_key))]
             if spruenge:
                 zeitpunkt, vorher, nachher = spruenge[-1]  # der jüngste
                 betroffen.append(
@@ -201,8 +219,11 @@ class RuecksprungChecks:
             details=(
                 f"Ein Zählerstand muss fortlaufend steigen. Bei diesen Feldern "
                 f"fällt er in den letzten {RUECKSPRUNG_FENSTER_TAGE} Tagen "
-                f"wieder auf einen niedrigeren Wert zurück — typisch für ein "
-                f"Feld, das „heute“ oder „diesen Monat“ meint. {beleg} "
+                f"wieder auf einen niedrigeren Wert zurück — fällt er immer "
+                f"wieder zurück, typisch für ein Feld, das „heute“ oder „diesen "
+                f"Monat“ meint; fällt er einmal, kann auch ein neuer Zähler "
+                f"begonnen oder die Quelle eine Zeit lang einen anderen Stand "
+                f"gesendet haben. {beleg} "
                 f"{folge}"
                 f"Lösung: Schicke den fortlaufenden Stand statt des Tageswerts. "
                 f"Kommt der Wert aus einem Home-Assistant-Helfer, steht die "
@@ -210,6 +231,10 @@ class RuecksprungChecks:
                 f"Zurücksetzen auf „nie“ (ohne Zyklus). Kommt er aus einer "
                 f"eigenen App oder einem Skript, sende den Lebenszählerstand. "
                 f"eedc bildet Tag, Monat und Jahr daraus selbst — und exakt. "
+                f"Wurde der Zähler getauscht, trag den Tausch in den Datenquellen "
+                f"am Feld mit „Zähler getauscht (gleiche Quelle)“ ein; hat die "
+                f"Quelle eine Zeit lang einen falschen Stand gesendet, liegt der "
+                f"Fehler dort. "
                 f"Betroffen: {namen}"
             ),
             ziel=ziel_datenquelle_schluessel(_key),

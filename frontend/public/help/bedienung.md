@@ -364,9 +364,9 @@ Die **Tag**-Sicht bringt den feingranularen Stunden-Tag ins Cockpit: ein ausgew�
 > Stunden"** beschriftet, die leere Stunde davor ist keine 0. **Ladestand, Temperatur, Strahlung, Preise** und die
 > **Aufteilung je Gerät** (sie kommt vom Leistungssensor) liest eedc weiter aus den eigenen Stundenwerten. Deckt der
 > Spiegel einen Tag nicht (kein HA-Sensor, vor dem Beginn der Statistik), rechnet der Tag
-> wie bisher aus den gespeicherten Zählerständen. **Tage älter als zwei Jahre**, deren Stundenwerte eedc nach der
-> Aufbewahrungsfrist gelöscht hat, zeigen ihren Stunden-Verlauf wieder, soweit der Spiegel zurückreicht — dann ohne
-> Ladestand und Wetter.
+> wie bisher aus den gespeicherten Zählerständen. **Bis Version 4.3.1** hat eedc Stundenwerte nach zwei Jahren
+> gelöscht; diese Tage zeigen ihren Stunden-Verlauf, soweit der Spiegel zurückreicht — dann ohne Ladestand und Wetter.
+> **Ab Version 4.3.2** löscht eedc Stundenwerte nicht mehr von selbst; schon Gelöschtes kommt nicht zurück.
 >
 > **Welcher Tag, welche Stunde.** Ein Tag aus dem HA-Spiegel ist der **Kalendertag** von 0 bis 24 Uhr — wie im
 > HA-Energie-Dashboard; was zwischen 23 und 24 Uhr passiert (die Wallbox lädt nachts, der Speicher zieht Netzstrom),
@@ -377,6 +377,16 @@ Die **Tag**-Sicht bringt den feingranularen Stunden-Tag ins Cockpit: ein ausgew�
 > deckt in *Cockpit → Tag* dasselbe Fenster wie „heute" in *Cockpit → Live*. Liegen von einem Zähler für eine Zeit vor
 > der HA-Statistik nur Stände um Mitternacht vor, stimmen die Tagesmengen, und die Stunden zeigen den Tag als eine
 > Spanne („enthält n Stunden").
+>
+> **Stand die Erfassung still, sind drei Werte gerechnet.** Hat Home Assistant einige Stunden lang keine Werte geliefert
+> (der Rechner war aus, Home Assistant startete neu) und tragen die Zähler die Menge danach in einer Stunde nach, rechnet
+> eedc **Überschuss, Defizit und Direktverbrauch** des Tages für diese Stunden aus den Zählerständen statt aus
+> Stundenwerten. Die Bilanz des Tages trägt dann ein Rechner-Zeichen statt des Warndreiecks („aus Zählerständen gerechnet" statt
+> „geschätzt") mit einem Satz, der die Stunden nennt — und,
+> wenn in diesen Stunden mehr ins Netz und in den Speicher ging, als die PV erzeugt hat, wie viel der Speicher mindestens aus
+> dem Netz geladen hat —, und den Link **„Im Daten-Checker nachlesen"**. Lassen sich die drei Werte nicht bestimmen, steht „—" mit dem Grund. Die Mengen des Tages (Erzeugung,
+> Einspeisung, Netzbezug, Verbrauch, Speicher) stimmen in beiden Fällen. Was die Rechnung voraussetzt und welche Vorbehalte
+> sie hat: [Daten-Checker, „Stunden ohne Stundenwerte"](HANDBUCH_DATEN_CHECKER.md#erfassung_stillstand).
 
 Die Datenbasis sind kumulative Zähler-Snapshots (stündlich); die gespeicherten Stundenwerte folgen der Backward-Slot-Konvention (Slot N = Energie aus dem Intervall [N−1, N)), die Stunden eines Tages aus dem HA-Spiegel tragen ihren Beginn — beide sind als Bereich beschriftet. Fehlen Snapshots (z. B. durch eine HA-Statistik-Latenz oder einen Add-on-Neustart), weist eedc darauf hin und bietet eine Nachberechnung an — die Pflege dazu liegt unter [Einstellungen → Daten → Energieprofil-Pflege](HANDBUCH_EINSTELLUNGEN.md). An einem Tag aus dem HA-Spiegel ändert eine Nachberechnung die gespeicherten Stundenwerte, nicht die Zahlen aus dem Spiegel; eine falsche Zahl dort korrigierst du in Home Assistant ([Energieprofil §4](HANDBUCH_ENERGIEPROFIL.md#4-reparatur--pflege)).
 
@@ -575,7 +585,7 @@ Die **Erfassung** eines Monats (Zählerstände, Monatsabschluss) läuft über da
 
 Die **Jahr/Gesamt**-Sicht fasst die Anlage über ein ganzes Jahr zusammen — vom Backend über die Monate gerechnet: Mengen und Beträge als Summe, Quoten wie Autarkie aus den Monaten, die beide Größen tragen (steht ein Monat ohne Netzbezugswert im Jahr, sagt der Tooltip „aus 8 von 9 Monaten"). Über den Selektor an der Seite — mobil über die Jahres-Leiste — wählst du das Jahr; die Kennzahlen tragen einen Trend-Pfeil zum Vorjahr.
 
-> **„Gesamt" ist heute kein eigener Zeitraum, sondern steckt in einzelnen Kennzahlen.** Wo eine Zahl über die volle Laufzeit gilt, sagt sie es selbst — die Kachel **CO₂ kumuliert** trägt den Vermerk „gesamte Historie — nicht jahresgebunden" und bleibt beim Jahreswechsel stehen. Eine Selektor-Stellung, die die **ganze Seite** auf die Gesamtlaufzeit umschaltet, gibt es nicht; sie steht auf der Roadmap.
+> **„Gesamt" ist heute kein eigener Zeitraum, sondern steckt in einzelnen Kennzahlen.** Wo eine Zahl über die volle Laufzeit gilt, sagt sie es selbst — die Kachel **CO₂ kumuliert** trägt den Vermerk „gesamte Historie — nicht jahresgebunden" und bleibt beim Jahreswechsel stehen. Eine Selektor-Stellung, die die **ganze Seite** auf die Gesamtlaufzeit umschaltet, gibt es nicht und ist nicht geplant: die volle Laufzeit zeigen je Gerät der **Komponenten-Hub**, für die Anlage der **Jahresbericht** mit „Gesamtzeitraum“, die **Auswertungen** (Finanzen, Energie, Tabelle) mit „Alle Jahre“ und die Kachel **CO₂ kumuliert** hier auf der Seite.
 
 **Hero-Kennzahlen** — die drei wichtigsten Werte prominent, je mit Trend-Pfeil zum Vorjahr:
 
@@ -670,7 +680,7 @@ Die **Aussicht** bündelt alle vorwärtsgerichteten Analysen auf einer Seite. Ü
 
 **Stundenwerte mit IST:** Steht der Tages-Picker auf **heute**, zeigt die Stundentabelle neben der Prognose eine Spalte **PV IST** mit den bereits gemessenen Stunden; die Summenzeile addiert nur das Gemessene, künftige Stunden bleiben leer. Für andere Tage entfällt die Spalte — dort gibt es kein IST.
 
-**Prognose-Vergleich / Genauigkeit:** Die tiefergehende Bewertung mehrerer Prognosequellen (OpenMeteo, eedc kalibriert, Solcast, IST) mit MAE/Bias und Stundenprofilen findest du in [Auswertungen → Prognose](#43-prognose-genauigkeit-gegen-ist).
+**Prognose-Vergleich / Genauigkeit:** Die tiefergehende Bewertung mehrerer Prognosequellen (OpenMeteo, eedc kalibriert, Solcast, IST) mit MAPE/Bias und Stundenprofilen findest du in [Auswertungen → Prognose](#43-prognose-genauigkeit-gegen-ist).
 
 **Langfristig:**
 
@@ -1328,7 +1338,7 @@ Die Vergleichs- und Bewertungsfläche für mehrere PV-Prognosequellen — vier Q
 - **Kennzahl-Matrix Heute / Morgen / Übermorgen** mit VM/NM-Split am astronomischen Solar Noon (proportional)
 - **Stundenprofil-Diagramm** (IST grün, eedc orange, Solcast blau, OpenMeteo gelb)
 - **24-Stunden- und 7-Tage-Vergleich** tabellarisch, mit Wettersymbolen und farbkodierten Δ-Spalten (grün < 15 %, gelb 15–30 %, rot > 30 %)
-- **Genauigkeits-Tracking:** **MAE** (Streuung) und **MBE** (systematischer Bias, neutral gefärbt — Vorzeichen ist Information, keine Wertung). Ein **diagnostischer Modus** trennt Über- und Unterschätzung, sodass Asymmetrien sichtbar werden. Der Umschalter **„Zeitpunkt: Day-Ahead | Mittag | Abend"** legt fest, welcher Stand je Quelle verglichen wird (Standard Day-Ahead; Mittag = der Stand um 12 Uhr); die eedc-Spalte ist die Prognose, die eedc an dem Tag angezeigt hat. Unter den Kennzahlen sagt ein Satz, welche Quelle an deiner Anlage zu diesem Zeitpunkt am besten trifft (ab 14 Tagen); eine Kopfzeile erscheint nur, wenn eedc seine Korrektur ausgesetzt hat, weil sie zuletzt schlechter war als die rohe Wetterprognose — Details im [Handbuch Prognosen §6](HANDBUCH_PROGNOSEN.md#6-genauigkeits-tracking-mae--bias).
+- **Genauigkeits-Tracking:** **MAPE** (Streuung, in % vom IST) und **MBE** (systematischer Bias, neutral gefärbt — Vorzeichen ist Information, keine Wertung). Ein **diagnostischer Modus** trennt Über- und Unterschätzung, sodass Asymmetrien sichtbar werden. Der Umschalter **„Zeitpunkt: Day-Ahead | Mittag | Abend"** legt fest, welcher Stand je Quelle verglichen wird (Standard Day-Ahead; Mittag = der Stand um 12 Uhr); die eedc-Spalte ist die Prognose, die eedc an dem Tag angezeigt hat. Unter den Kennzahlen sagt ein Satz, welche Quelle an deiner Anlage zu diesem Zeitpunkt am besten trifft (ab 14 Tagen); eine Kopfzeile erscheint nur, wenn eedc seine Korrektur ausgesetzt hat, weil sie zuletzt schlechter war als die rohe Wetterprognose — Details im [Handbuch Prognosen §6](HANDBUCH_PROGNOSEN.md#6-genauigkeits-tracking-mape--bias).
 - **Lernfaktor-Status:** Ist der eedc-Lernfaktor noch nicht aktiv, zeigt ein Banner, wie viele der nötigen Tage gesammelt sind. Sobald genug Daten vorliegen, wechselt der Lernfaktor in eine **saisonale Kaskade** (Monatsfaktor ≥ 15 Tage → Quartalsfaktor ≥ 15 Tage → 30-Tage-Fenster).
 - **Reparatur bei IST-Lücke:** Bei unvollständigen IST-Werten erscheint ein ⚠-Symbol; ein Klick listet die fehlenden Stunden und bietet „Tag neu berechnen" (holt fehlende Snapshots nach).
 
@@ -1404,6 +1414,14 @@ Der interaktive Überblick über alle Monatswerte in einer sortierbaren Tabelle 
 > Eine nach Nennleistung gerechnete Tageszahl gibt es bewusst nicht — sie wäre von einer Messung
 > nicht zu unterscheiden. Der Stunden-Blick auf denselben Tag liegt in [Cockpit → Tag](#22-tag).
 
+> **Überschuss, Defizit und Direktverbrauch an Tagen mit Erfassungs-Ausfall (Tagesansicht).** Stand die Erfassung an
+> einem Tag einige Stunden still, trägt die Zahl in diesen drei Spalten ein Rechner-Zeichen statt des Warndreiecks („aus
+> Zählerständen gerechnet" statt „geschätzt"; das Wort steht in der CSV) — für
+> diese Stunden ist sie aus den Zählerständen gerechnet, nicht aus Stundenwerten. Unter der Tabelle steht je Tag der Satz mit den Stunden und der Link **„Im
+> Daten-Checker nachlesen"**. Lässt sich ein Tag nicht bestimmen, steht „—"; die Summenzeile sagt, wie viele Tage sie
+> auslässt bzw. wie viele mit Zähler-Rechnung sie enthält. Der CSV-Export trägt für solche Tage die Spalte „Kennzeichen
+> Überschuss/Defizit/Direktverbrauch". Hintergrund: [Daten-Checker, „Stunden ohne Stundenwerte"](HANDBUCH_DATEN_CHECKER.md#erfassung_stillstand).
+>
 > **Sonstiges als Spalte (Monat und Tag).** Der Spalten-Picker führt die Gruppe **„Sonstiges"** mit
 > zwei wählbaren Spalten: **Sonstiges Erzeugung (kWh)** und **Sonstiges Verbrauch (kWh)** — die
 > Summe deiner Geräte vom Typ *Sonstiges*, getrennt nach der bei ihnen gepflegten **Kategorie**
@@ -1476,7 +1494,7 @@ Der interaktive Überblick über alle Monatswerte in einer sortierbaren Tabelle 
 
 > Kompakte Werte-Blöcke sind zusätzlich direkt in Cockpit- und Komponenten-Sichten eingebettet; die volle Werkbank mit Picker und Export liegt hier.
 
-> **Die Spalte „CO₂-Einsparung (PV)"** zeigt bewusst nur den **PV-Anteil** (Eigenverbrauch × Strommix) — für Monate **und** Tage, damit sich Tageszeilen zum Monat aufaddieren. Wärmepumpe und E-Mobilität fehlen darin: ihre Bezugsgrößen (erzeugte Wärme, gefahrene Kilometer) erfasst eedc nur monatlich. Die **vollständige** Bilanz steht unter **Auswertungen → CO₂** (§4.4) und im Block „CO₂-Bilanz" in [Cockpit → Jahr/Gesamt](#24-jahrgesamt).
+> **Die Spalte „CO₂-Einsparung (PV)"** zeigt bewusst nur den **PV-Anteil** (Eigenverbrauch × Strommix) — für Monate **und** Tage, damit sich Tageszeilen zum Monat aufaddieren. Wärmepumpe und E-Mobilität fehlen darin: ihre CO₂-Einsparung rechnet eedc nur je Monat (aus erzeugter Wärme, Wärmepumpen-Strom, gefahrenen Kilometern und Netzladung des Monats), nicht je Tag. Die **vollständige** Bilanz steht unter **Auswertungen → CO₂** (§4.4) und im Block „CO₂-Bilanz" in [Cockpit → Jahr/Gesamt](#24-jahrgesamt).
 
 ---
 

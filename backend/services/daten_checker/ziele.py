@@ -34,7 +34,7 @@ from .kategorien import Ziel
 
 __all__ = [
     "BLOCK_IDS", "WIZARDS", "ziel_anlage", "ziel_block", "ziel_datenquelle", "ziel_komponente", "ziel_monat",
-    "ziel_datenquelle_schluessel", "ziel_monat_label", "ziel_tarif", "ziel_werkbank",
+    "ziel_datenquelle_schluessel", "ziel_monat_label", "ziel_tarif", "ziel_werkbank", "ziel_befund",
 ]
 
 #: Kategorie → Block-Ids, wörtlich aus `einstellungenKatalog.tsx` (`komponenten` ist datengetrieben, ohne Katalog-Block).
@@ -136,13 +136,16 @@ def ziel_komponente(inv_id: Optional[int] = None, feld: Optional[str] = None, ne
     return Ziel("komponenten", None, _ohne_none(bearbeiten=inv_id, feld=parameter or feld, neu=neu), anker=name)
 
 
-def ziel_datenquelle(feld: Optional[str] = None, geraet: Optional[int] = None) -> Ziel:
-    """Datenquellen-Zuordnung, optional das Gerät aufgeklappt und das Feld markiert (gelesen seit E4)."""
+def ziel_datenquelle(feld: Optional[str] = None, geraet: Optional[int] = None, getauscht: Optional[str] = None) -> Ziel:
+    """Datenquellen-Zuordnung, optional das Gerät aufgeklappt und das Feld markiert (gelesen seit E4); `getauscht=<Zeit>`
+    (ISO auf die Minute, örtlich) öffnet am Feld den Dialog «Zähler getauscht (gleiche Quelle)» mit vorbelegtem «Getauscht am»
+    (Befund `mqtt_zaehlerstand_springt`, Sensorwechsel U3 b). «Grund nachtragen» (`nachtrag=`) und der Dialog am versetzten
+    Abschnitt (`stueck=`) sind seit Weg B entfernt."""
     _monatsfeld(feld)
-    return Ziel("datenquellen", None, _ohne_none(geraet=geraet, feld=feld), anker=feld)
+    return Ziel("datenquellen", None, _ohne_none(geraet=geraet, feld=feld, getauscht=getauscht), anker=feld)
 
 
-def ziel_datenquelle_schluessel(schluessel: str) -> Ziel:
+def ziel_datenquelle_schluessel(schluessel: str, getauscht: Optional[str] = None) -> Ziel:
     """Wie `ziel_datenquelle`, aus einem gespeicherten Sensor-Schlüssel `inv:<id>:<feld>` bzw. `<präfix>:<feld>`
     (Laufzeit-Rohwert, H-E2-1). Ein Basis-Zähler heißt im Mapping `pv_gesamt`/`einspeisung`/`netzbezug`, auf der
     Datenquellen-Fläche `pv_gesamt_kwh` … (`datenquellen_mapping_sync.BASIS_ENERGY_FELD`, E4: der Anker der Fläche).
@@ -154,9 +157,9 @@ def ziel_datenquelle_schluessel(schluessel: str) -> Ziel:
     if geraet is None and feld is not None:
         feld = {basis: fid for fid, basis in BASIS_ENERGY_FELD.items()}.get(feld, feld)
     try:
-        return ziel_datenquelle(feld=feld, geraet=geraet)
+        return ziel_datenquelle(feld=feld, geraet=geraet, getauscht=getauscht)
     except ValueError:
-        return ziel_datenquelle(geraet=geraet)
+        return ziel_datenquelle(geraet=geraet, getauscht=getauscht)
 
 
 def ziel_tarif(id: Optional[int] = None, feld: Optional[str] = None, neu_art: Optional[str] = None,
@@ -176,6 +179,17 @@ def ziel_anlage(feld: str) -> Ziel:
 def ziel_werkbank(karte: str = "werkbank", plan: Optional[str] = None) -> Ziel:
     """Energieprofil-Pflege, zur Reparatur-Werkbank gesprungen (`karte=werkbank`); `plan=<id>` liest die Werkbank ab E3."""
     return Ziel("daten", "energieprofil", _ohne_none(karte=karte, plan=plan), anker=karte)
+
+
+def ziel_befund(code: str) -> Ziel:
+    """N-799 (E-11 c): der Daten-Checker, aufgeklappt beim Befund ``code`` mit offenem Lösungsweg (``befund=``). Für
+    Verweise AUS Sichten (Tagestabelle, Tagessicht) auf den Befund, der einen gekennzeichneten Wert erklärt — der Client
+    bildet denselben Pfad (``lib/zielPfad.ts::befundPfad``). Nur ein Code aus dem Katalog (``handgriffe.HANDGRIFFE``)."""
+    from .handgriffe import HANDGRIFFE
+
+    if code not in HANDGRIFFE:
+        raise ValueError(f"Daten-Checker-Ziel: Befund {code!r} steht nicht im Katalog")
+    return Ziel("daten", "datenchecker", {"befund": code}, anker=code)
 
 
 #: Assistenten, die ein Ziel öffnen darf (`wizard=`, E4): Schlüssel aus `frontend/src/v4/wizardHost.ts::WizardKey`, je

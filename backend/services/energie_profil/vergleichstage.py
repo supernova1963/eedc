@@ -125,6 +125,7 @@ async def tage_ohne_tagesvergleich(
         verworfen_der_tage,
     )
     from backend.services.kanal.bilanz_leser import mische_verworfen
+    from backend.services.kanal.stillstand import erster_tag_der_fenster_ueber_mitternacht
 
     folgetag = bis + timedelta(days=1) if bis is not None else None
     spalte = _SPALTE.get(achse)
@@ -142,18 +143,30 @@ async def tage_ohne_tagesvergleich(
     zeilen = (await db.execute(q)).all()
     marken = await verworfen_der_tage(db, anlage_id, von, bis, kanal=())     # ungemischt; gemischt wird unten
     kanal: set[date] = set()
+    stillstand: dict[date, date] = {}
     bereich = await _bereich(db, anlage_id, von, folgetag)
     if bereich is not None:
         luecken = (await tage_mit_kanal_luecke_ueber_mitternacht(db, anlage_id, *bereich, achse)
                    if spalte is not None else set())
-        fraglich = {t for z in zeilen for t in (z.datum, z.datum - timedelta(days=1))} | set(marken) | luecken
-        kanal = await _kanal_tage_unter(db, anlage_id, *bereich, fraglich)
+        # N-799 (E-8): dazu die Tage, an denen ein vor 00:00 begonnener Erfassungs-Stillstand endet — ihre Nachtragszeile
+        # trägt die Marke n = k + 1 erst beim Mischen, die Stundenzeile kennt sie nicht.
+        # N-799 S3: auch ein Fenster, das erst nach dem Bereich endet (Bereich endet mitten im Fenster) — sein Nachtragstag
+        # wird dafür mitgelesen, die Ausschlüsse unten schneiden auf den Bereich.
+        stillstand = await erster_tag_der_fenster_ueber_mitternacht(db, anlage_id, *bereich, ueber_bis=True)
+        fraglich = ({t for z in zeilen for t in (z.datum, z.datum - timedelta(days=1))} | set(marken) | luecken
+                    | set(stillstand))
+        kanal = await _kanal_tage_unter(db, anlage_id, bereich[0], max([bereich[1], *stillstand]), fraglich)
     rows_je_tag: dict[date, list] = defaultdict(list)
     for row in zeilen:
         if row.datum not in kanal:
             rows_je_tag[row.datum].append(row)
     gemischt = await _stunden_der_kanal_tage(db, anlage_id, kanal, spalte, rows_je_tag)
     tage = tage_um_mitternachtsbuendel(rows_je_tag, achse)
+    # N-799 S2: fällt der Nachtragstag eines Stillstands über Mitternacht heraus (Energie auf der Achse), dann jeder Tag,
+    # den das Fenster berührt — ein Drei-Tage-Lauf hat zwei Nulltage, die D − 1 allein nicht nennt.
+    for nachtrag_tag, erster in stillstand.items():
+        if nachtrag_tag in tage:
+            tage |= {erster + timedelta(days=i) for i in range((nachtrag_tag - erster).days + 1)}
 
     for datum, verworfen in marken.items():
         if achse in (mische_verworfen(verworfen) if datum in gemischt else verworfen):

@@ -47,7 +47,7 @@ import {
 
 /** Sprung-Parameter der Komponenten (E4, Konzept §3.3) und der Datenquellen-Fläche (Gerät aufklappen, Feld markieren). */
 const KOMPONENTEN_SPRUNG = ['bearbeiten', 'neu', 'feld'] as const
-const DATENQUELLEN_SPRUNG = ['geraet', 'feld'] as const
+const DATENQUELLEN_SPRUNG = ['geraet', 'feld', 'getauscht'] as const
 const WIZARD_SPRUNG = ['wizard'] as const
 /** Assistenten, die ein Sprung öffnen darf (`wizard=`, Backend `ziele.WIZARDS`). */
 const SPRUNG_WIZARDS: readonly WizardKey[] = ['connector']
@@ -188,8 +188,8 @@ function EinstellungenInner({ kategorie }: { kategorie: KategorieKey }) {
   // Monatsabschluss zu öffnen → dann muss der Monatsdaten-Block aufklappen (sonst
   // ist seine Form nicht gemountet). MonatsdatenVerwaltung liest denselben Param.
   // Konzept #192 B ergänzt den allgemeinen Fall: `?block=<id>` klappt einen
-  // beliebigen Katalog-Block auf. Der Historie-Hinweis der Datenquellen-Fläche
-  // schickt damit auf `daten?block=energieprofil&karte=werkbank` (Reparatur-Werkbank, #440) — ohne
+  // beliebigen Katalog-Block auf. Der Historie-Hinweis der Datenquellen-Fläche (bis Sensorwechsel S3b)
+  // schickte damit auf `daten?block=energieprofil&karte=werkbank` (Reparatur-Werkbank, #440) — ohne
   // ihn läge der Anwender in einer Kategorie mit zugeklappten Blöcken und
   // müsste raten, welcher gemeint ist.
   const [searchParams] = useSearchParams()

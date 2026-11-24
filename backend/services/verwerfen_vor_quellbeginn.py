@@ -2,7 +2,7 @@
 
 **Was sie tut.** Für **ein** zugeordnetes Feld (einen Zählerkanal ``basis:<feld>`` bzw. ``inv:<id>:<feld>``) und einen
 Zeitpunkt ``t`` (Vorbelegung: Beginn der jüngsten Quelle = des neuen Sensors) verwirft sie die Werte des alten Sensors
-in **beiden Schichten, feldgenau, ohne eine Zeile zu löschen** (außer den Kanalzeilen der älteren Quellen):
+in **beiden Schichten, feldgenau, ohne eine Zeile zu löschen** (außer den Kanalzeilen der älteren Quellen und den verzeichneten Wechseln davor):
 
 * **Kanalschicht** (``services/kanal/verwerfen.py``): ``kanal_statistik``-Zeilen der älteren Quellen mit ``start_ts < t``
   löschen; die ``kanal_quelle``-Zeilen bleiben als Herkunft mit Marke ``verworfen_ts``.
@@ -19,9 +19,16 @@ in **beiden Schichten, feldgenau, ohne eine Zeile zu löschen** (außer den Kana
   der Tageszeile — und ``TagesEnergieProfil.komponenten``: diese Spalte ist der **Leistungspfad** (Stundenmittel der
   Leistungssensoren, Bauplan S3-R6 / E-S3-1 H-1), nicht der Wert dieses Zählers (⛔ H-3 im Bericht E-S3-5; die Vorschau
   nennt, wie viele Stunden des Geräts er trägt).
+* **Verzeichnete Wechsel** des Felds bis zum Ende der ersten Stunde ab ``t`` (etwa ein Wechsel «bleiben» zum Sensor ab ``t``)
+  löscht sie über denselben Baustein wie «löschen» (``feld_loeschen.loesche_wechsel``, Bauplan Sensorwechsel Nr. 184/2): sonst
+  läse «Aus HA laden» vor ``t`` weiter den alten Sensor (Zuordnung zum Zeitpunkt). Ein späterer Wechsel bleibt, ebenso ein
+  «Zähler getauscht» (dieselbe Quelle) mit ``ab_ts`` nach ``t`` — sein Sprung zählte sonst wieder als Menge.
 
 **Ein Lauf, idempotent:** der zweite Lauf findet keine Kanalzeile und keinen Schlüssel mehr und sagt «nichts zu
-verwerfen». **Kein Rückweg:** die Vorschau sagt, dass die Werte danach weg sind. Aktivität in derselben Sitzung (N-532).
+verwerfen». **Kein Rückweg in eedc:** die Vorschau nennt die Sicherung der eedc-Datenbank. Aktivität in derselben Sitzung
+(N-532). Seit dem Rückbau des Korrektur-Kerns (Sensorwechsel Weg B, Sitzung B3a) wieder der Weg von v4.3.1; die Bestands-Bausteine
+(``bestand_ziele``, ``leere_bestand``, ``abschluss_monate``, ``_tz_zeilen``) teilt sie mit «Daten vor der Änderung löschen»
+(``services/feld_loeschen.py``) und dem Ansetzen eines Wechsels «bleiben» (``zuordnung_wechsel/korrektur.tage_neu_bilden_liste``).
 
 Schwesterdateien: ``services/kanal/verwerfen.py``, ``services/repair_orchestrator.py`` (``_plan_/_execute_verwerfen_…``),
 Tests ``test_werkbank_verwerfen_vor_quellbeginn.py``, ``test_werkbank_verwerfen_kommt_nicht_zurueck.py``.
@@ -206,12 +213,15 @@ async def _tep_daten(db: AsyncSession, anlage_id: int, bis_tag: date, ziele: Bes
         TagesEnergieProfil.anlage_id == anlage_id, TagesEnergieProfil.datum <= bis_tag, bed)))).all()]
 
 
-async def _tz_zeilen(db: AsyncSession, anlage_id: int, bis_tag: date, ziele: BestandZiele) -> list[TagesZusammenfassung]:
+async def _tz_zeilen(db: AsyncSession, anlage_id: int, bis_tag: date, ziele: BestandZiele,
+                     von_tag: Optional[date] = None) -> list[TagesZusammenfassung]:
+    """Tageszeilen mit einem Schlüssel des Felds bis ``bis_tag`` (``von_tag``: Untergrenze, ``None`` = von Beginn an)."""
     bed = _tz_bedingung(ziele)
     if bed is None:
         return []
+    unten = TagesZusammenfassung.datum >= von_tag if von_tag is not None else TagesZusammenfassung.datum.is_not(None)
     return list((await db.execute(select(TagesZusammenfassung).where(and_(
-        TagesZusammenfassung.anlage_id == anlage_id, TagesZusammenfassung.datum <= bis_tag, bed))
+        TagesZusammenfassung.anlage_id == anlage_id, TagesZusammenfassung.datum <= bis_tag, unten, bed))
         .order_by(TagesZusammenfassung.datum))).scalars().all())
 
 
@@ -398,13 +408,15 @@ def _quelle_satz(q: kv.QuelleInfo, t: int) -> str:
 
 
 def _spanne(tage: list[date]) -> str:
-    return f"{fmt_datum(tage[0])} … {fmt_datum(tage[-1])}" if tage else ""
+    if not tage:
+        return ""
+    return fmt_datum(tage[0]) if tage[0] == tage[-1] else f"{fmt_datum(tage[0])} … {fmt_datum(tage[-1])}"
 
 
 def _monate_text(monate: list[tuple[int, int]]) -> str:
-    """Bis sechs Monate einzeln, sonst «erster … letzter» — die Liste steht vollständig in ``operation_preview``."""
+    """Bis sechs Monate einzeln, sonst «erster bis letzter» — die Liste steht vollständig in ``operation_preview``."""
     namen = [f"{m:02d}/{j}" for j, m in monate]
-    return ", ".join(namen) if len(namen) <= 6 else f"{namen[0]} … {namen[-1]}"
+    return ", ".join(namen) if len(namen) <= 6 else f"{namen[0]} bis {namen[-1]}"
 
 
 def _saetze_kanal(la: Lage) -> list[str]:
@@ -412,7 +424,8 @@ def _saetze_kanal(la: Lage) -> list[str]:
          f"{la.kanal.juengste.statistic_id or ''} am {_zeit(la.kanal.juengste.gueltig_ab)}."]
     s += [_quelle_satz(q, la.t) for q in la.kanal.aeltere]
     if la.kanal.zeilen:
-        s.append(f"Kanal: {fmt_zahl(la.kanal.zeilen)} Stundenzeilen an {fmt_zahl(len(la.kanal.tage))} Tagen "
+        s.append(f"Kanal: {_anzahl(la.kanal.zeilen, 'Stundenzeile', 'Stundenzeilen')} an "
+                 f"{_anzahl(len(la.kanal.tage), 'Tag', 'Tagen')} "
                  f"({_spanne(list(la.kanal.tage))}) werden gelöscht; die Quellen bleiben als Herkunft mit Marke "
                  "«verworfen am» stehen.")
     return s
@@ -421,38 +434,50 @@ def _saetze_kanal(la: Lage) -> list[str]:
 def _saetze_bestand(la: Lage) -> list[str]:
     b, s = la.bestand, []
     if b.tage:
-        s.append(f"Bestand: an {fmt_zahl(len(b.tage))} Tagen ({_spanne(sorted(b.tage))}) werden nur die Werte dieses "
-                 f"Feldes geleert ({fmt_zahl(b.stundenzeilen)} Stundenzeilen, {fmt_zahl(b.tageszeilen)} Tageszeilen) "
+        s.append(f"Bestand: an {_anzahl(len(b.tage), 'Tag', 'Tagen')} ({_spanne(sorted(b.tage))}) werden nur die Werte "
+                 f"dieses Feldes geleert ({_anzahl(b.stundenzeilen, 'Stundenzeile', 'Stundenzeilen')}, "
+                 f"{_anzahl(b.tageszeilen, 'Tageszeile', 'Tageszeilen')}) "
                  "— Wetter, Prognose, Preise, Betriebsart, SoC und andere Geräte bleiben.")
     monate = la.abschluss_monate_betroffen()
     if monate:
-        s.append(f"{fmt_zahl(len(monate))} Monat(e) mit Abschluss bleiben im Bestand unberührt: {_monate_text(monate)}.")
+        s.append(f"{_anzahl(len(monate), 'Monat mit Abschluss bleibt', 'Monate mit Abschluss bleiben')} im Bestand "
+                 f"unberührt: {_monate_text(monate)}.")
     if la.ziele.mitbetroffen:
         s.append(f"Der Tageswert {', '.join(sorted(la.ziele.tz_keys))} trägt auch {', '.join(la.ziele.mitbetroffen)} "
                  "— er wird als Ganzes geleert.")
     if b.leistungspfad_stunden:
-        s.append(f"Die Leistungswerte des Geräts in {fmt_zahl(b.leistungspfad_stunden)} Stundenzeilen kommen von seinem "
+        s.append(f"Die Leistungswerte des Geräts in {_anzahl(b.leistungspfad_stunden, 'Stundenzeile', 'Stundenzeilen')} "
+                 "kommen von seinem "
                  "Leistungssensor, nicht von diesem Zähler — sie bleiben stehen.")
     return s
+
+
+def _anzahl(n: int, eins: str, mehr: str) -> str:
+    """«1 Tag» / «2 Tage» (Fund-Päckchen B, H1; wie ``zuordnung_wechsel.abfrage._anzahl`` und ``lib/plural.ts``)."""
+    return f"{fmt_zahl(n)} {eins if n == 1 else mehr}"
 
 
 def _saetze_danach(la: Lage) -> list[str]:
     s = []
     ohne = la.lesart1_ohne_werte()
     if ohne:
-        s.append(f"Danach haben {fmt_zahl(len(ohne))} Tage ({_spanne(ohne)}) keinen Wert dieses Feldes mehr: kein "
-                 "Kanal, und der Bestand trägt das Feld nicht mehr.")
+        s.append(f"Danach {'hat' if len(ohne) == 1 else 'haben'} {_anzahl(len(ohne), 'Tag', 'Tage')} ({_spanne(ohne)}) "
+                 "keinen Wert dieses Feldes mehr: kein Kanal, und der Bestand trägt das Feld nicht mehr.")
     if la.nur_kanal:
-        s.append(f"An {fmt_zahl(len(la.nur_kanal))} Tagen ({_spanne(list(la.nur_kanal))}), die nur der HA-Spiegel (bzw. die "
-                 "eigene Summe) trägt, gilt das Feld danach als nicht erfasst — die übrigen Felder des Tages bleiben "
+        s.append(f"An {_anzahl(len(la.nur_kanal), 'Tag', 'Tagen')} ({_spanne(list(la.nur_kanal))}), die nur der HA-Spiegel "
+                 "(bzw. die eigene Summe) trägt, gilt das Feld danach als nicht erfasst — die übrigen Felder des Tages bleiben "
                  "(auch in Monaten mit Abschluss).")
     mit = la.lesart1_mit_bestand()
     if mit:
-        s.append(f"{fmt_zahl(len(mit))} Tag(e) ({_spanne(mit)}) verlieren ihre Kanalzeilen, ihr Bestand bleibt "
-                 "unverändert (Monate mit Abschluss, der angebrochene Tag des Sensorwechsels).")
-    s.append("Kein Rückweg: die verworfenen Werte sind danach weg. «Tag neu aggregieren» für einen Tag davor holt die "
-             "Werte aus den gespeicherten Zählerständen zurück.")
+        s.append(f"{_anzahl(len(mit), 'Tag verliert seine', 'Tage verlieren ihre')} Kanalzeilen ({_spanne(mit)}), "
+                 f"{'sein' if len(mit) == 1 else 'ihr'} Bestand bleibt unverändert (Monate mit Abschluss, der angebrochene "
+                 "Tag des Sensorwechsels).")
+    s.append(SATZ_RUECKWEG)
     return s
+
+
+#: Der Rückweg (Sensorwechsel Weg B, B3a; B3b: «Das Verwerfen» statt «Die Korrektur» — die Korrektur gibt es nicht mehr).
+SATZ_RUECKWEG = "Das Verwerfen lässt sich in eedc nicht rückgängig machen — der Rückweg ist eine Sicherung der eedc-Datenbank."
 
 
 def klartext(la: Lage) -> list[str]:
@@ -493,12 +518,19 @@ def vorschau_daten(la: Lage) -> dict[str, Any]:
 
 async def fuehre_aus(db: AsyncSession, anlage_id: int, params: dict[str, Any]) -> dict[str, Any]:
     """Beide Schichten in EINER Sitzung, ein Commit. Aktivität in derselben Sitzung (N-532)."""
+    from backend.services import feld_loeschen
     from backend.services.activity_service import log_activity
 
     la = await lage(db, anlage_id, params)
     bestand = await leere_bestand(db, anlage_id, la.ziele, la.bis_tag, la.abschluss)
     geloescht = await kv.loesche_zeilen(db, la.kanal.kanal_id, la.t)
     markiert = await kv.markiere_quellen(db, la.kanal.kanal_id, la.t, int(datetime.now().timestamp())) if geloescht else 0
+    # Bauplan Sensorwechsel Nr. 184/2: verzeichnete Wechsel in der verworfenen Zeit aufheben, wie «löschen» (derselbe Baustein) —
+    # bis zum Ende der ersten Stunde ab ``t``: ein Wechsel «bleiben» gilt ab der vollen Stunde nach seiner Kanal-Quelle
+    # (``zuordnung_wechsel/ansatz``: ``ab_ts`` = G + 1 h). Ein späterer Wechsel bleibt, ebenso ein «Zähler getauscht» in der
+    # ersten Stunde ab ``t`` (WEGB-K, Nachmessung B1: die Vorgabe-Zeit ist an einem MQTT-Feld die Stunde des jüngsten Tauschs).
+    await feld_loeschen.loesche_wechsel(db, anlage_id, la.key, bis=datetime.fromtimestamp(la.t + 3600),
+                                        gleiche_quelle_bis=datetime.fromtimestamp(la.t))
     summary = {"kanal": la.key, "zeitpunkt": kv.text_aus_zeitpunkt(la.t), "kanalzeilen_geloescht": geloescht,
                "quellen_markiert": markiert, **bestand}
     if geloescht or bestand["felder_geleert"]:

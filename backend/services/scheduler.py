@@ -221,7 +221,7 @@ class EEDCScheduler:
                 replace_existing=True,
             )
 
-            # Energie-Profil Vortag: Täglich um 00:15 (Finalisierung + Cleanup)
+            # Energie-Profil Vortag: Täglich um 00:15 (Finalisierung; keine Löschfrist mehr, Nachtrag G)
             self._scheduler.add_job(
                 energie_profil_aggregation_job,
                 CronTrigger(hour=0, minute=15),
@@ -419,10 +419,18 @@ class EEDCScheduler:
             name="MQTT Live Snapshot",
             replace_existing=True,
         )
-        # MQTT Live Cleanup: Täglich um 03:05 (15 Tage Retention)
+        # MQTT Live Cleanup: Täglich um 03:18 (15 Tage Retention).
+        # ⚠ Nicht auf :05 und nicht auf ein Vielfaches von 5 Minuten (Lab 21.11.2026, F13): auf 03:05
+        # startete er in derselben Sekunde wie der Stundenlauf (`sensor_snapshot`, :05); sein Löschen
+        # endete, während der Stundenlauf aus einer schon lesenden Transaktion schreiben wollte — im
+        # WAL-Betrieb wartet das nicht auf `busy_timeout`, der Stundenlauf brach an allen Anlagen mit
+        # «database is locked» ab, Stände und Kanal der Stunde 02 fehlten bis 04:05. 03:18 liegt in
+        # keiner Minute eines anderen Jobs mit fester Uhrzeit; die ausgerichteten Takte (Auto-Publish
+        # */5 … */60, 5-Minuten-Snapshot */5) starten nur auf Vielfachen von 5.
+        # Test: `test_scheduler_job_registrierung.py::TestKeineZweiJobsInDerselbenMinute`.
         self._scheduler.add_job(
             mqtt_live_cleanup_job,
-            CronTrigger(hour=3, minute=5),
+            CronTrigger(hour=3, minute=18),
             id="mqtt_live_cleanup",
             name="MQTT Live Cleanup",
             replace_existing=True,
@@ -578,7 +586,7 @@ async def mqtt_live_snapshot_job() -> None:
 
 
 async def mqtt_live_cleanup_job() -> None:
-    """Löscht alte MQTT Live Snapshots (täglich um 03:05, 15 Tage Retention)."""
+    """Löscht alte MQTT Live Snapshots (täglich um 03:18, 15 Tage Retention)."""
     try:
         from backend.services.mqtt_live_history_service import cleanup_old_snapshots
         await cleanup_old_snapshots()
@@ -643,6 +651,9 @@ async def sensor_snapshot_job() -> None:
                 # SAVEPOINT, Fehler werden dort geloggt und vermerkt, nie hierher durchgereicht.
                 await schreibe_kanaele_im_stundenlauf(db, anlage, zeitpunkt)
 
+        # Sensorwechsel U2 a2 (Rechenweg F3): offene Wechsel «bleiben» ansetzen, sobald HA den neuen Sensor führt (wirft nie).
+        from backend.services.zuordnung_wechsel.ansatz import offene_ansetzen
+        await offene_ansetzen(jetzt=now)
         # HA-Bauform E2: Kanäle ohne Nachfüll-Marke (eben angelegt oder neue Entity) im Hintergrund nachfüllen —
         # NACH der Sitzung oben, damit kein HA-Abruf in ihrer Schreib-Transaktion liegt. Kanäle mit Marke
         # kosten dort keine HA-Abfrage.
@@ -651,6 +662,13 @@ async def sensor_snapshot_job() -> None:
             nachfuellen_anstossen()
         except Exception as e:
             logger.debug(f"Kanal-Nachfüllen nicht angestoßen: {type(e).__name__}: {e}")
+        # Sensorwechsel mit Grund (Bauplan §11 Nr. 46): offene Korrektur-Läufe (Füllen ausstehend, Tage unterbrochen)
+        # stündlich neu anstoßen — über `korrektur_lauf.starten`, also nie doppelt; auch nach der Sitzung oben.
+        try:
+            from backend.services.zuordnung_wechsel.korrektur_lauf import offene_anstossen
+            offene_anstossen()
+        except Exception as e:
+            logger.debug(f"Korrektur-Läufe nicht angestoßen: {type(e).__name__}: {e}")
 
         if total_snapshots > 0:
             logger.info(

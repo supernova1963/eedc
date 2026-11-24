@@ -25,11 +25,10 @@ den auch die Mitschrift nach ihrem Schreiben fortschreibt; seit E4e ``kosten.py`
   (``mittel_je_stunde``), Kanal-Einheit = Registry-Einheit, ``statistic_id`` = MQTT-Schlüssel
   (``mqtt_live_statistic_id``). Erster Lauf nur die abgeschlossene Stunde, nicht rückwirkend (E2/E-SG-7).
 * **Eigene Summe (MQTT/ohne HA)** — aus den Rohständen in ``mqtt_energy_snapshots`` mit HAs Regel
-  (``core/berechnungen/ha_summe.py``). Der heutige Deckel (R3) bleibt hier als **Schreibfilter**:
-  dieselbe Schwelle (``plausibility.schwelle_pv_einspeisung_stunde_kwh`` ×
-  ``spannen.deckel_fenster_stunden``) und derselbe Cap (``plausibility.cap_pv_einspeisung_stunde``)
-  wie der Tagespfad, auf denselben Achsen (``spannen.ACHSEN_MIT_DECKEL``). Eine verworfene Stunde
-  trägt den neuen Stand, aber keinen Zuwachs.
+  (``core/berechnungen/ha_summe.py``) — sie ist die ganze Regel: **kein Plausibilitätsdeckel** (Entscheid Gernot 22.11.2026,
+  Korrekturrunde WEGB-K, K7: ein gemeldeter Wert wird nicht still verworfen). Ein Sprung des Zählerstands zählt als Menge der
+  Stunde, bis der Anwender «Zähler getauscht» einträgt; der Daten-Checker nennt ihn (``mqtt_zaehlerstand_springt``). Schon
+  geschriebene Zeilen aus der Zeit des Deckels (Summe steht, Stand steigt) bleiben, wie sie sind.
 * **Mitschrift Betriebsart** — „Anteil der Stunde je Betriebsart" aus dem, was die
   Tagesaggregation ohnehin liest (``energie_profil/_helpers._get_betriebsmodus_history``). Die Quelle
   liegt nur dort vor, deshalb wird dort mitgeschrieben (``aggregator.aggregate_day``). Eine
@@ -72,12 +71,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.berechnungen.ha_summe import PeriodenSumme, ha_summe_der_periode
 from backend.core.berechnungen.slot_konvention import slot_start_ts
-from backend.core.berechnungen.spannen import (
-    ACHSEN_MIT_DECKEL,
-    DECKEL_FENSTER_MAX_STUNDEN,
-    achse_der_kategorie,
-    deckel_fenster_stunden,
-)
 from backend.core import zustands_kanon
 from backend.core.betriebsmodus import BETRIEBSMODUS_KANON
 from backend.core.field_definitions import basis_feld_key, einheit_fuer
@@ -110,7 +103,6 @@ EINHEIT_ANZAHL = ""
 #: Rohstände aus MQTT liegen höchstens so lange vor (``mqtt_energy_history_service``, Retention).
 MQTT_ROHSTAND_TAGE = 31
 _STUNDE = 3600
-_TOL = 1e-9
 #: Fenster, in dem die letzte Zeile eines Kanals im Regelfall liegt (ein Statement für alle).
 _NAH_STUNDEN = 48
 
@@ -313,6 +305,11 @@ async def _spiegel(db: AsyncSession, k: _Kontext, ha_svc) -> int:
                 logger.warning("Kanal-Spiegel: %s hat keine Kanal-Art im Katalog — übersprungen", sensor_key)
             continue
         gewuenscht[sensor_key] = (art, einheit)
+    from backend.services.zuordnung_wechsel.ansatz import offene_schluessel
+    from backend.services.zuordnung_wechsel.zeitpunkt import lade_wechsel
+
+    for key in offene_schluessel(await lade_wechsel(db, k.anlage.id)):   # U2 a2 (F3): erst der Dienst setzt die neue Quelle an
+        gewuenscht.pop(key, None)
     if not gewuenscht:
         return 0
     # ⭐ **Nur die Kanäle, die es schon gibt** (Lab-Durchlauf 4.1.3-rc1, 07.10.2026). Ein fehlender Kanal entsteht
@@ -365,7 +362,9 @@ async def _spiegel(db: AsyncSession, k: _Kontext, ha_svc) -> int:
             staende[key] = st
         zeilen = [_zeile(st.kanal.id, int(round(z["start_ts"])), FAMILIE_SPIEGEL,
                          sum=_mal(z["sum"], faktor), state=_mal(z["state"], faktor)) for z in roh]
-        if st.quelle is None or st.quelle.familie != FAMILIE_SPIEGEL or st.quelle.statistic_id != eid:
+        # Sensorwechsel S3: hinter einem verworfenen Abschnitt («löschen», Werkbank) beginnt immer eine neue Quelle.
+        if (st.quelle is None or st.quelle.familie != FAMILIE_SPIEGEL or st.quelle.statistic_id != eid
+                or st.quelle.verworfen_ts is not None):
             await _neue_spiegel_quelle(db, ha_svc, st, eid, zeilen, faktor)
         neue_zeilen.extend(zeilen)
     return await _zeilen_einfuegen(db, neue_zeilen)
@@ -760,61 +759,21 @@ def _stunden_start_ts(zeit: datetime) -> int:
     return _unix(_stunde_von(zeit))
 
 
-def _deckel_achse(inv, feld: str) -> bool:
-    """Liegt das Feld auf einer gedeckelten Achse? Zuordnung wie Tagespfad und Monatswert:
-    ``_categorize_counter`` → ``achse_der_kategorie`` ∈ ``ACHSEN_MIT_DECKEL``."""
-    from backend.services.snapshot.keys import _categorize_counter
-
-    kat = _categorize_counter(feld, getattr(inv, "typ", None) if inv is not None else None,
-                              getattr(inv, "parameter", None) if inv is not None else None)
-    return achse_der_kategorie(kat) in ACHSEN_MIT_DECKEL
-
-
-async def _laufbeginn(db: AsyncSession, kanal_id: int, letzte: KanalStatistik) -> int:
-    """``start_ts`` der ersten Zeile im letzten Lauf unveränderter Summe (R3 Nachträge II: das
-    Deckel-Fenster ist die Zeit seit der letzten Änderung). Gesucht wird nur so weit zurück, wie das
-    Fenster reicht (``DECKEL_FENSTER_MAX_STUNDEN``) — darüber hinaus ist das Fenster ohnehin voll."""
-    grenze = letzte.start_ts - DECKEL_FENSTER_MAX_STUNDEN * _STUNDE
-    geaendert = (await db.execute(
-        select(KanalStatistik.start_ts).where(and_(
-            KanalStatistik.kanal_id == kanal_id,
-            KanalStatistik.start_ts >= grenze,
-            func.abs(KanalStatistik.sum - letzte.sum) > _TOL,
-        )).order_by(KanalStatistik.start_ts.desc()).limit(1)
-    )).scalar_one_or_none()
-    erste = (await db.execute(
-        select(func.min(KanalStatistik.start_ts)).where(and_(
-            KanalStatistik.kanal_id == kanal_id,
-            KanalStatistik.start_ts > (geaendert if geaendert is not None else grenze - 1),
-        ))
-    )).scalar_one_or_none()
-    return erste if erste is not None else letzte.start_ts
-
-
 async def _eigene_summe_zeilen(
     db: AsyncSession, k: _Kontext, st: _KanalStand, sensor_key: str, mqtt_key: str,
     staende: list[tuple[datetime, float]],
 ) -> list[dict]:
-    from backend.services.snapshot.plausibility import (
-        cap_pv_einspeisung_stunde,
-        schwelle_pv_einspeisung_stunde_kwh,
-    )
-
     art, kanal = st.kanal.art, st.kanal
     je_stunde: dict[datetime, list[float]] = {}
     for ts, wert in staende:
         je_stunde.setdefault(_stunde_von(ts), []).append(wert)
 
-    neue_quelle = st.quelle is None or st.quelle.familie != FAMILIE_MITSCHRIFT or st.quelle.statistic_id != mqtt_key
+    neue_quelle = (st.quelle is None or st.quelle.familie != FAMILIE_MITSCHRIFT or st.quelle.statistic_id != mqtt_key
+                   or st.quelle.verworfen_ts is not None)   # Sensorwechsel S3: hinter einem verworfenen Abschnitt neu
     letzte = st.letzte if not neue_quelle else None
     vorher: Optional[PeriodenSumme] = None
     if letzte is not None and letzte.state is not None:
         vorher = PeriodenSumme(sum=float(letzte.sum or 0.0), state=float(letzte.state))
-    letzter_ts = letzte.start_ts if letzte is not None else None
-    feld = basis_feld_key(sensor_key.rpartition(":")[2])
-    inv = k.invs.get(sensor_key.split(":")[1]) if sensor_key.startswith("inv:") else None
-    gedeckelt = art == ART_SUM and _deckel_achse(inv, feld)
-    lauf_ab = (await _laufbeginn(db, kanal.id, letzte)) if (gedeckelt and letzte is not None and letzte.sum is not None) else None
 
     zeilen: list[dict] = []
     for stunde in sorted(je_stunde):
@@ -828,25 +787,8 @@ async def _eigene_summe_zeilen(
         ergebnis = ha_summe_der_periode(vorher, werte)
         if ergebnis is None:
             continue
-        basis_summe = vorher.sum if vorher is not None else 0.0
-        if gedeckelt:
-            n = max(1, (start_ts - letzter_ts) // _STUNDE) if letzter_ts is not None else 1
-            seit = ((start_ts - lauf_ab) // _STUNDE) if lauf_ab is not None else n
-            # Die kWp der ANLAGE, wie der Tagespfad (`tages_tabelle.py`; der Monats-Deckel `monatswert_deckel.py`
-            # ist seit HA-Bauform S5 E-S5-4 gestrichen) — keine Investitions-Nennleistung (P3-a betrifft sie nicht).
-            anlage = k.anlage
-            schwelle = schwelle_pv_einspeisung_stunde_kwh(getattr(anlage, "leistung_kwp", None),
-                                                          spanne=deckel_fenster_stunden(n, seit))
-            if schwelle is not None and cap_pv_einspeisung_stunde(
-                ergebnis.sum - basis_summe, schwelle, anlage_id=k.anlage.id, datum=stunde.date(),
-                stunde=stunde.hour, kategorie=f"kanal:{sensor_key}",
-            ) is None:
-                # Schreibfilter (R3): der Stand läuft weiter, der Zuwachs zählt nicht.
-                ergebnis = PeriodenSumme(sum=basis_summe, state=ergebnis.state)
-            if lauf_ab is None or abs(ergebnis.sum - basis_summe) > _TOL:
-                lauf_ab = start_ts
         zeilen.append(_zeile(kanal.id, start_ts, FAMILIE_MITSCHRIFT, sum=ergebnis.sum, state=ergebnis.state))
-        vorher, letzter_ts = ergebnis, start_ts
+        vorher = ergebnis
 
     if zeilen and neue_quelle:
         offset = 0.0
@@ -864,6 +806,7 @@ async def _eigene_summe_zeilen(
 
 async def _eigene_summe(db: AsyncSession, k: _Kontext) -> int:
     from backend.models.mqtt_energy_snapshot import MqttEnergySnapshot
+    from backend.services.kanal.naht import zeilen_mit_naehten
     from backend.services.snapshot.keys import (
         QUELLE_HA_ENERGY,
         QUELLE_KEINE_ENERGY,
@@ -927,9 +870,9 @@ async def _eigene_summe(db: AsyncSession, k: _Kontext) -> int:
     for sensor_key, von in offen.items():
         mk = auswahl[sensor_key]
         staende = [(ts, w) for ts, w in roh.get(mk, ()) if ts >= von]
-        if staende:
-            neue_zeilen.extend(await _eigene_summe_zeilen(
-                db, k, staende_kanal[sensor_key], sensor_key, mk, staende))
+        if staende:   # Sensorwechsel B-4: eine verzeichnete Fortsetzung teilt die Periode (kanal/naht.py)
+            neue_zeilen.extend(await zeilen_mit_naehten(
+                db, k, staende_kanal[sensor_key], sensor_key, mk, staende, von, _eigene_summe_zeilen))
     return await _zeilen_einfuegen(db, neue_zeilen)
 
 

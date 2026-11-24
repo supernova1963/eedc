@@ -10,7 +10,19 @@ bis E3/E4 behalten die Erzeuger ihr heutiges Verhalten, die Soll-Klasse steht nu
 
 **182 Codes seit E5** (Konzept §6): 194 Erzeuger − 6 Zusammenlegungen (V3: der Partner-Erzeuger ist entfallen, seine Zahlen
 steht in der Zeile des Ziel-Codes) − 6 Restzeilen «… plus n weitere» (V2: entfallen, n steht als `weitere` in der
-Gruppenzeile, `GRUPPEN`). Je Klasse: Sprung 117 · Aktion 18 · Auskunft 17 · OK 30.
+Gruppenzeile, `GRUPPEN`). Je Klasse: Sprung 117 · Aktion 18 · Auskunft 17 · OK 30. **Seit 16.11.2026 183** (`zaehler_versatz`,
+Aktion 19; ohne Heilweg zur Laufzeit eine Auskunft mit INFO); **seit N-799 S3 184** (`erfassung_stillstand`, Auskunft 18; ohne
+Fund eine OK-Zeile desselben Codes, damit der Link `befund=` aus der Tagestabelle immer einen Lösungsweg öffnet); **seit Sensorwechsel
+S4 185** (`zuordnung_grund_fehlt`, Sprung 118: «Grund nachtragen» öffnet den Dialog in den Datenquellen); **seit Sensorwechsel 4b-1**
+ist `zaehler_versatz` ein Sprung (Sprung 119, Aktion 18): «Grund nachtragen» öffnet denselben Dialog für das versetzte Stück und
+ersetzt «Tage neu aufbauen». **Seit Sensorwechsel U2 Lauf c 186** (`ha_zaehlerstand_springt`, Aktion 19; nur an Stand-Zählern zur
+Laufzeit eine Auskunft mit INFO). **Seit Sensorwechsel U3 a 188** (`zaehler_zeit_verworfen`, Auskunft 19; `monatswert_ueberholt`,
+Sprung 120 «Monat öffnen»). **Seit Sensorwechsel U3 b 189** (`mqtt_zaehlerstand_springt`, Sprung 121 «Zähler getauscht»: öffnet in
+den Datenquellen den Dialog «Zähler getauscht (gleiche Quelle)» mit vorbelegter Zeit). **Seit Sensorwechsel Weg B 190**
+(`daten_vor_aenderung_geloescht`, Auskunft 20: «Daten vor der Änderung löschen» je Feld); **seit Weg B, Sitzung B2 189**
+(`zuordnung_grund_fehlt` entfernt mit «Grund nachtragen» an einem verzeichneten Wechsel, Sprung 120); **seit Weg B, Sitzung B3a 187**
+(`zaehler_versatz` entfernt mit der Korrektur am versetzten Abschnitt, Sprung 119; `zaehler_zeit_verworfen` entfernt mit der
+verworfenen Zeit, Auskunft 19).
 
 `knopf_fuer` liefert den Knopf-Text der **Laufzeit**-Klasse (E5.7 L1): Aktion aus der Operation (`KNOPF_JE_OPERATION`),
 Sprung aus dem Katalog (`knopf`, bei einem Aktion-Code im Zweig ohne Reparaturweg `knopf_sprung`), Auskunft «Was gilt».
@@ -46,6 +58,7 @@ HANDGRIFFE: dict[str, Handgriff] = {
     'connector_monatswert_fehlt': Handgriff(SPRUNG, 'Zum Connector', '411-geraete-connector-ohne-monatswert'),  # Nr 1
     'ha_zaehler_rueckgang': Handgriff(AKTION, 'Aus Home Assistant neu übernehmen', '48c-zaehlerstaende--rueckgang-in-home-assistant'),  # Nr 2
     'ha_zaehlersprung': Handgriff(AKTION, 'Aus Home Assistant neu übernehmen', '48b-zaehlerstaende--sprung-in-home-assistant'),  # Nr 3
+    'ha_zaehlerstand_springt': Handgriff(AKTION, 'Aus Home Assistant neu übernehmen', '48h-zaehlerstaende--zaehlerstand-springt'),  # Sensorwechsel U2 Lauf c (F12); nur Stand-Zähler ⇒ Auskunft (INFO)
     'klima_modus_wert_unbekannt': Handgriff(AUSKUNFT, 'Was gilt', '414a-betriebsmodus--unbekannter-wert'),  # Nr 4
     'klima_kuehlanteil_geschaetzt': Handgriff(SPRUNG, 'Sensor zuordnen', '414-klimaanlage--betriebsmodus'),  # Nr 5
     'klima_modus_ok': Handgriff(OK, None, '414-klimaanlage--betriebsmodus'),  # Nr 6
@@ -68,6 +81,9 @@ HANDGRIFFE: dict[str, Handgriff] = {
     'drift_tag': Handgriff(AKTION, 'Aus Home Assistant neu übernehmen', '417-datenquellen-drift'),  # Nr 24
     'drift_komponente': Handgriff(AKTION, 'Aus Home Assistant neu übernehmen', '417-datenquellen-drift'),  # Nr 25
     'zaehler_ruecksprung': Handgriff(SPRUNG, 'Sensor wechseln', '48a-zaehlerstaende--ruecksprung'),  # Nr 26
+    'monatswert_ueberholt': Handgriff(SPRUNG, 'Monat öffnen', '48j-zaehlerstaende--gespeicherter-monatswert-passt-nicht-mehr'),  # Sensorwechsel U3 a (G2)
+    'mqtt_zaehlerstand_springt': Handgriff(SPRUNG, 'Zähler getauscht', '48k-zaehlerstaende--zaehlerstand-springt-mqtt'),  # Sensorwechsel U3 b (G4)
+    'daten_vor_aenderung_geloescht': Handgriff(AUSKUNFT, 'Was gilt', '48l-zaehlerstaende--daten-vor-der-aenderung-geloescht'),  # Weg B (Nr. 179)
     'batterie_vorzeichen_ok': Handgriff(OK, None, '421-batterie-vorzeichen-historie'),  # Nr 27
     'batterie_vorzeichen_tage': Handgriff(AKTION, 'Tage neu aufbauen', '421-batterie-vorzeichen-historie'),  # Nr 28
     'batterie_vorzeichen_tag': Handgriff(AKTION, 'Tag neu aufbauen', '421-batterie-vorzeichen-historie'),  # Nr 29
@@ -102,6 +118,7 @@ HANDGRIFFE: dict[str, Handgriff] = {
     'tage_ohne_kanal_deckung': Handgriff(AUSKUNFT, 'Was gilt', '46-energieprofil--zaehler-abdeckung'),  # Nr 62
     'einspeisung_groesser_erzeugung_tage': Handgriff(AKTION, 'Tage neu aufbauen', '47-energieprofil--plausibilitaet'),  # Nr 63
     'nachtrag_nach_eingefrorenem_zaehler': Handgriff(AUSKUNFT, 'Was gilt', '47-energieprofil--plausibilitaet'),  # Nr 64
+    'erfassung_stillstand': Handgriff(AUSKUNFT, 'Was gilt', '47-energieprofil--plausibilitaet'),  # N-799 S3 (16.11.2026); ohne Fund OK-Zeile desselben Codes (Ziel des Links befund=)
     'counter_spikes_ok': Handgriff(OK, None, '47-energieprofil--plausibilitaet'),  # Nr 65
     'counter_spike_tag': Handgriff(AKTION, 'Tag neu aufbauen', '47-energieprofil--plausibilitaet'),  # Nr 66
     'pv_erzeugung_fehlt_monate': Handgriff(SPRUNG, 'Monat öffnen', '43-investitionen'),  # Nr 67

@@ -190,6 +190,18 @@ async def loesche_zeilen(db: AsyncSession, kanal_id: int, t: int) -> int:
     return int(res.rowcount or 0)
 
 
+async def loesche_zeilen_zwischen(db: AsyncSession, kanal_id: int, unten: Optional[int], oben: int) -> int:
+    """Die Kanalzeilen in ``[unten, oben)`` löschen (``unten`` ``None`` = von Beginn an) — Ansetzen eines Wechsels «bleiben»
+    (``zuordnung_wechsel/ansatz.py``; bis Weg B, Sitzung B3a, auch die Korrektur). Returns: Zahl der gelöschten Zeilen."""
+    bed = [KanalStatistik.kanal_id == kanal_id, KanalStatistik.start_ts < oben]
+    if unten is not None:
+        bed.append(KanalStatistik.start_ts >= unten)
+    res = await db.execute(delete(KanalStatistik).where(and_(*bed)))
+    if res.rowcount:
+        await _merken_verwerfen(db, kanal_id)
+    return int(res.rowcount or 0)
+
+
 async def _merken_verwerfen(db: AsyncSession, kanal_id: int) -> None:
     """HA-Bauform S5 E-S5-1c (S5-R7c i): die gemerkten Kanal-Tage der Anlage verwerfen — ganz, weil die Marke
     «verworfen am» (``bewusst_leer``) jeden Tag der Anlage treffen kann."""
@@ -205,6 +217,67 @@ async def markiere_quellen(db: AsyncSession, kanal_id: int, t: int, jetzt_ts: in
     if res.rowcount:
         await _merken_verwerfen(db, kanal_id)
     return int(res.rowcount or 0)
+
+
+async def teile_quelle(db: AsyncSession, kanal_id: int, t: int, jetzt_ts: int) -> tuple[int, int]:
+    """Werkbank «Werte eines Felds vor einem Zeitpunkt verwerfen» (Fund-Päckchen H, H1 (a)): die Quelle **bei ``t`` teilen**.
+    Die Quelle, die bei ``t`` gilt (größtes ``gueltig_ab < t``), bekommt eine zweite Zeile derselben Entity ab ``t`` (Familie,
+    Kennung und ``offset`` wie sie — die Werte ab ``t`` lesen unverändert); danach tragen alle Quellen vor ``t`` die Marke
+    «verworfen am» (``markiere_quellen``). Getrennt wird nur eine unmarkierte Quelle — eine schon verworfene bleibt es auch ab
+    ``t``; beginnt eine Quelle genau bei ``t``, gibt es nichts zu teilen. Kein Schema, keine Zeile von ``kanal_statistik``
+    (die löscht ``loesche_zeilen``). Returns: ``(markierte Quellen, 1 wenn geteilt sonst 0)``."""
+    davor = (await db.execute(select(KanalQuelle).where(and_(
+        KanalQuelle.kanal_id == kanal_id, KanalQuelle.gueltig_ab < t)).order_by(KanalQuelle.gueltig_ab.desc())
+        .limit(1))).scalar_one_or_none()
+    ab_t = (await db.execute(select(func.count()).select_from(KanalQuelle).where(and_(
+        KanalQuelle.kanal_id == kanal_id, KanalQuelle.gueltig_ab == t)))).scalar_one()
+    geteilt = 0
+    if davor is not None and davor.verworfen_ts is None and not ab_t:
+        db.add(KanalQuelle(kanal_id=kanal_id, gueltig_ab=t, familie=davor.familie, statistic_id=davor.statistic_id,
+                           offset=davor.offset))
+        await db.flush()
+        geteilt = 1
+    return await markiere_quellen(db, kanal_id, t, jetzt_ts), geteilt
+
+
+def untergrenze_nach_verworfen(quellen: list[KanalQuelle]) -> Optional[int]:
+    """**Eine Bedeutung der Marke** (Fund-Päckchen H, H1 (b)): eine verworfene reale Quelle (``verworfen_ts`` mit Entity, kein
+    Platzhalter von «löschen») wird nie zurückgeholt — gleich, ob sie dieselbe oder eine andere Entity hat. Die Grenze, unter
+    die das Nachfüllen nicht schreibt: der Beginn der ersten unmarkierten Quelle nach der letzten markierten realen Quelle
+    (``None``: keine markierte reale Quelle; ``0`` ist nie das Ergebnis — ohne unmarkierte Quelle danach die Grenze
+    ``2**62``, es wird nichts gefüllt)."""
+    qs = sorted(quellen, key=lambda q: q.gueltig_ab)
+    marken = [i for i, q in enumerate(qs) if q.verworfen_ts is not None and q.statistic_id is not None]
+    if not marken:
+        return None
+    danach = [q.gueltig_ab for q in qs[marken[-1] + 1:] if q.verworfen_ts is None]
+    return danach[0] if danach else 2 ** 62
+
+
+def platzhalter_bedingung():
+    """Der **Platzhalter** eines Kanals (Sensorwechsel Weg B, Bauplan Nr. 180 Option A): eine verworfene Quelle ohne Entity
+    (``verworfen_ts`` gesetzt, ``statistic_id`` leer). Nur «Daten vor der Änderung löschen» legt ihn an
+    (``zum_platzhalter``); die Werkbank markiert reale Quellen und legt keinen an."""
+    return and_(KanalQuelle.verworfen_ts.is_not(None), KanalQuelle.statistic_id.is_(None))
+
+
+async def zum_platzhalter(db: AsyncSession, kanal_id: int, t: int, jetzt_ts: int) -> int:
+    """Die Quellen mit ``gueltig_ab < t`` zu EINEM Platzhalter zusammenfassen: er beginnt am frühesten Beginn (erste Quelle
+    oder erste Zeile, was früher liegt) und trägt die Marke «verworfen am» — die Zeit davor ist danach bewusst leer
+    (``bilanz_adapter.BewusstLeer``), und das Nachfüllen holt die Geschichte des neuen Sensors trotzdem
+    (``nachfuellen._erste_ohne_platzhalter``). Vorher die Zeilen vor ``t`` löschen (``loesche_zeilen``). Returns: Zahl der
+    ersetzten Quellen (0 = der Kanal hatte vor ``t`` keine)."""
+    alte = list((await db.execute(select(KanalQuelle).where(and_(
+        KanalQuelle.kanal_id == kanal_id, KanalQuelle.gueltig_ab < t)).order_by(KanalQuelle.gueltig_ab))).scalars().all())
+    if not alte:
+        return 0
+    beginn = alte[0].gueltig_ab
+    await db.execute(delete(KanalQuelle).where(and_(KanalQuelle.kanal_id == kanal_id, KanalQuelle.gueltig_ab < t)))
+    db.add(KanalQuelle(kanal_id=kanal_id, gueltig_ab=beginn, familie=alte[0].familie, statistic_id=None, offset=0.0,
+                       verworfen_ts=jetzt_ts))
+    await db.flush()
+    await _merken_verwerfen(db, kanal_id)
+    return len(alte)
 
 
 async def kanaele_mit_quellen(db: AsyncSession, anlage_id: int) -> list[tuple[Kanal, list[KanalQuelle]]]:

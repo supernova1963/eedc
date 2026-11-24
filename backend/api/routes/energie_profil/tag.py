@@ -356,6 +356,15 @@ class _TagKontext:
     d1_heiz_grund_keys: tuple = ()
     wp_waerme_tag: Optional[float] = None
     wp_strom_tag: Optional[float] = None
+    # ── _waerme_der_arbeitszahl (Fund-Päckchen A, A1) ──
+    az_werte_je_inv: dict = field(default_factory=dict)
+    az_heizung_je_inv: dict = field(default_factory=dict)
+    az_waerme_je_geraet: dict = field(default_factory=dict)
+    az_waerme_tag: Optional[float] = None
+    az_heizung_tag: Optional[float] = None
+    az_warmwasser_tag: Optional[float] = None
+    az_kaelte_tag: Optional[float] = None
+    wp_zeitraum_versetzt_je_inv: dict = field(default_factory=dict)
     # ── _geraete_mengen ──
     wp_beitrag_je_inv: dict = field(default_factory=dict)
     wp_kennzahlen_je_geraet: list = field(default_factory=list)
@@ -414,6 +423,7 @@ async def get_tag_detail(
     await _tag_preis(ctx)
     await _wp_strom_je_geraet(ctx)
     _waerme_tag(ctx)
+    _waerme_der_arbeitszahl(ctx)
     _geraete_mengen(ctx)
     _funktions_deckung(ctx)
     await _abgrenzung_tag(ctx)
@@ -737,6 +747,42 @@ def _waerme_tag(ctx: _TagKontext) -> None:
     ctx.wp_heizung_je_inv, ctx.wp_waerme_je_geraet = _wp_heizung_je_inv, _wp_waerme_je_geraet
 
 
+def _summe_der_geraete(je_inv: Optional[dict]) -> Optional[float]:
+    return sum(je_inv.values()) if je_inv else None
+
+
+def _waerme_der_arbeitszahl(ctx: _TagKontext) -> None:
+    """Phase von ``get_tag_detail`` (Fund-Päckchen A, A1, 22.11.2026): die Nutzenergie, mit der die Arbeitszahlen des
+    Tages rechnen — aus DEMSELBEN Zeitfenster wie der Strom (``waermepumpe_kennzahl``, Abschnitt «Ein Zeitfenster»).
+    An einem WP-Kanal-Tag nur die Stunden mit Strom desselben Geräts (``TagesEingaenge.werte_der_arbeitszahl``); sonst
+    bleibt die Nutzenergie, und ein Gerät, dessen Wärme außerhalb des Strom-Zeitraums gemessen ist, sperrt mit
+    ``GRUND_ZEITRAUM``. Die Kacheln (Wärme, Heizung, Warmwasser) zeigen weiter die gemessenen Mengen des Tages."""
+    from backend.core.berechnungen.waermepumpe_kennzahl import (
+        heizwaerme_je_geraet, waerme_gesamt_je_geraet, zeitraum_versetzt,
+    )
+
+    az = ctx.eingaenge.werte_der_arbeitszahl
+    if az is None:
+        fenster = ctx.tagesdetail.fenster_je_inv
+        ctx.wp_zeitraum_versetzt_je_inv = {i: zeitraum_versetzt(fenster.get(i, {})) for i in ctx.wp_strom_je_inv}
+        ctx.az_werte_je_inv, ctx.az_heizung_je_inv = ctx.tagesdetail.werte_je_inv, ctx.wp_heizung_je_inv
+        ctx.az_waerme_je_geraet, ctx.az_waerme_tag, ctx.az_heizung_tag = (
+            ctx.wp_waerme_je_geraet, ctx.wp_waerme_tag, ctx.wp_heizung_tag)
+        ctx.az_warmwasser_tag, ctx.az_kaelte_tag = ctx.detail.get("wp_warmwasser_kwh"), ctx.detail.get("wp_kaelte_kwh")
+        return
+    werte = {**ctx.tagesdetail.werte_je_inv, **az}
+    ctx.az_werte_je_inv = werte
+    ctx.az_heizung_je_inv = heizwaerme_je_geraet(werte.get("wp_heizung_kwh"), werte.get("wp_betriebsart_heizen_kwh"))
+    ctx.az_waerme_je_geraet = waerme_gesamt_je_geraet(
+        werte.get("wp_waerme_kwh"), ctx.az_heizung_je_inv, werte.get("wp_warmwasser_kwh"),
+    )
+    _waerme = sum(ctx.az_waerme_je_geraet.values())
+    ctx.az_waerme_tag = round(_waerme, 2) if _waerme > 0 else None
+    ctx.az_heizung_tag = _summe_der_geraete(ctx.az_heizung_je_inv)
+    ctx.az_warmwasser_tag = _summe_der_geraete(werte.get("wp_warmwasser_kwh"))
+    ctx.az_kaelte_tag = _summe_der_geraete(werte.get("wp_kaelte_kwh"))
+
+
 def _geraete_mengen(ctx: _TagKontext) -> None:
     """Phase von ``get_tag_detail`` (RF-71): D-Sicht 3 — die Mengen und Kennzahlen je Gerät des TAGES
     (``mengen_aus_tageswerten`` → ``kennzahlen_aus_mengen``, Geräte-Kreis der Strom-Beiträge, WK-16j/§7) und der
@@ -745,7 +791,7 @@ def _geraete_mengen(ctx: _TagKontext) -> None:
     from backend.services.waermepumpe_kennzahlen_je_geraet import kennzahlen_aus_mengen, mengen_aus_tageswerten
     from backend.services.waerme_klima_block import schranken_eingang
 
-    werte_je_inv = ctx.tagesdetail.werte_je_inv
+    werte_je_inv = ctx.az_werte_je_inv      # A1: die Nutzenergie im Zeitfenster des Stroms (`_waerme_der_arbeitszahl`)
     # ── D-Sicht 3: die Mengen je Gerät des TAGES ──────────────────────────
     #
     # ⚠ **Die zweite Mengen-Herkunft** (s. Modulkopf des Dienstes): Der Tag
@@ -776,8 +822,8 @@ def _geraete_mengen(ctx: _TagKontext) -> None:
             mengen_aus_tageswerten(
                 _inv,
                 strom_kwh=float(_inv_strom or 0.0),
-                waerme_kwh=float(ctx.wp_waerme_je_geraet.get(_inv_id_str, 0.0)),
-                heizung_kwh=float(ctx.wp_heizung_je_inv.get(_inv_id_str, 0.0)),
+                waerme_kwh=float(ctx.az_waerme_je_geraet.get(_inv_id_str, 0.0)),
+                heizung_kwh=float(ctx.az_heizung_je_inv.get(_inv_id_str, 0.0)),
                 warmwasser_kwh=float(_wp_ww_je_inv.get(_inv_id_str, 0.0)),
                 strom_heizen_kwh=float(_wp_strom_heizen_je_inv.get(_inv_id_str, 0.0)),
                 strom_warmwasser_kwh=float(_wp_strom_ww_je_inv.get(_inv_id_str, 0.0)),
@@ -785,6 +831,16 @@ def _geraete_mengen(ctx: _TagKontext) -> None:
                 modus_strom_kuehlen_kwh=(_b.kuehlen_kwh if _b else 0.0),
                 funktionsfremd_abzug_kwh=(beitrag_abzug_kwh(_b) if _b else 0.0),
                 waerme_ist_gesamt=bool(_wp_gesamtwaerme_je_inv.get(_inv_id_str)),
+                # N-805 (#446): je Gerät und Größe «hat einen Tageswert» (auch 0) — ein Schlüssel in `werte_je_inv`
+                # steht nur, wo der Zähler zugeordnet ist und der Tag Stände trägt (`get_tagesdetail_kwh`). Damit sagt
+                # die Gerätezeile an einem Tag ohne Warmwasserbereitung bzw. ohne Heizbetrieb dasselbe wie die
+                # Anlagenebene (`null_ist_gemessen=True` in `_arbeitszahl_je_funktion`), statt «kein Stromverbrauch
+                # erfasst»; ein Gerät ohne Stromzähler der Funktion behält diesen Satz samt Handgriff.
+                strom_heizen_gemessen=_inv_id_str in _wp_strom_heizen_je_inv,
+                strom_warmwasser_gemessen=_inv_id_str in _wp_strom_ww_je_inv,
+                heizung_gemessen=_inv_id_str in ctx.wp_heizung_je_inv,
+                warmwasser_gemessen=_inv_id_str in _wp_ww_je_inv,
+                zeitraum_versetzt=ctx.wp_zeitraum_versetzt_je_inv.get(_inv_id_str, False),
             ),
         ))
     ctx.wp_strom_ohne_waerme_tag, ctx.wp_geraete_ohne_waerme_tag = schranken_eingang(
@@ -998,10 +1054,12 @@ async def _abgrenzung_tag(ctx: _TagKontext) -> None:
         f.wp.geraete_verschieden for f in _wp_fakten_monat
     )
     ctx.stoerung_tag = _abgrenzung_stoerung_des_tages(wp_strom_je_inv, investitionen_by_id)
+    _versetzt = any(v for i, v in ctx.wp_zeitraum_versetzt_je_inv.items() if wp_strom_je_inv.get(i))  # A1
     ctx.wp_abgrenzung_tag = abgrenzungs_grund(
         abgrenzung_stoerung=ctx.stoerung_tag,
         bauarten_gemischt=len(_bauarten_tag) > 1,
         geraete_ohne_waerme=_geraete_ohne_waerme_monat,
+        zeitraum_versetzt=_versetzt,
         geraete_verschieden=_geraete_verschieden_monat,
     )
     # SOLL §3.2b je Funktion: die Deckung je Funktion (Kühlen ersetzt) aus `_funktions_deckung`.
@@ -1009,6 +1067,7 @@ async def _abgrenzung_tag(ctx: _TagKontext) -> None:
         abgrenzung_stoerung=ctx.stoerung_tag,
         bauarten_gemischt=len(_bauarten_tag) > 1,
         geraete_ohne_waerme=_geraete_ohne_waerme_monat,
+        zeitraum_versetzt=_versetzt,
         deckung_je_funktion=ctx.deckung_je_funktion_tag,
     )
 
@@ -1049,6 +1108,8 @@ def _schranke_und_kasten(ctx: _TagKontext) -> None:
     }
     _wp_abgrenzung_sperrt_tag = abgrenzungs_grund(
         abgrenzung_stoerung=ctx.stoerung_tag,
+        # A1: Wärme außerhalb des Strom-Zeitraums eines Geräts (Tagesränder aus Zählerständen).
+        zeitraum_versetzt=any(v for i, v in ctx.wp_zeitraum_versetzt_je_inv.items() if i in _wp_strom_geraete_tag),
         geraete_verschieden=bool(_wp_waerme_geraete_tag - _wp_strom_geraete_tag),
     )
     # W-18, als Eingang für BEIDES: die Sperre der Arbeitszahl und die Zeile im
@@ -1079,7 +1140,7 @@ def _schranke_und_kasten(ctx: _TagKontext) -> None:
         ("wp_strom_gesamt_kwh", "wp_strom_heizen_kwh", "wp_strom_warmwasser_kwh"),
     )
     ctx.wp_jaz_tag = systemarbeitszahl(
-        ctx.wp_waerme_tag, ctx.wp_strom_tag,
+        ctx.az_waerme_tag, ctx.wp_strom_tag,      # A1: die Wärme im Zeitfenster des Stroms
         # W-14 + E4: Strom in Funktionen ohne bewertete Nutzenergie. Am Tag
         # wiegt der Effekt am schwersten: ein Sommertag kann fast reiner
         # Kühlbetrieb sein.
@@ -1156,9 +1217,9 @@ def _arbeitszahl_je_funktion(ctx: _TagKontext) -> None:
     ctx.wp_az_funktion_tag = arbeitszahl_je_funktion(
         # R-2: dieselbe aufgelöste Heizwärme wie oben — `detail` trägt nur die
         # Achse, und die ist bei einem Gerät mit Betriebsart-Wärme leer.
-        heizung_kwh=ctx.wp_heizung_fn,
+        heizung_kwh=ctx.az_heizung_tag,         # A1: Zähler im Zeitfenster des Stroms (sonst = wp_heizung_fn)
         strom_heizen_kwh=ctx.wp_strom_heizen_fn,
-        warmwasser_kwh=ctx.wp_warmwasser_fn,
+        warmwasser_kwh=ctx.az_warmwasser_tag,
         strom_warmwasser_kwh=ctx.wp_strom_warmwasser_fn,
         hat_split=_wp_getrennte_strommessung_tag,
         # N-391: derselbe Eingang wie im Monat, nur aus dem Tagesdetail. Trägt
@@ -1211,7 +1272,7 @@ def _arbeitszahl_je_funktion(ctx: _TagKontext) -> None:
     # Anwender ohne Kältemengenzähler.
     _kaelte_grund_roh = _grund.get("wp_kaelte_kwh")
     ctx.wp_az_kuehlen_tag = arbeitszahl_kuehlen(
-        detail.get("wp_kaelte_kwh"),
+        ctx.az_kaelte_tag,                      # A1: die Kälte im Zeitfenster des Stroms
         ctx.stapel.kuehlen_kwh,
         abgrenzung_verletzt=(
             ctx.wp_abgrenzung_je_funktion_tag["kuehlen"]
@@ -1227,6 +1288,22 @@ def _arbeitszahl_je_funktion(ctx: _TagKontext) -> None:
         ),
         null_ist_gemessen=True,
     )
+
+
+async def _ohne_handgriff_im_tag(db, anlage_id: int, datum: date, investitionen_by_id: dict) -> frozenset[str]:
+    """Fund-Päckchen B: die Gründe, deren Handgriff im Tag nichts bewirkt — Kasten-Zeile ohne Handgriff (Grund bleibt).
+    H5: «Zähler messen verschiedene Zeiträume» rät zum Monatsabschluss, den der Tag nicht hat (Handbuch Wärme & Klima §4: im
+    Tag nichts zu tun). H4: «für diesen Tag keine Zählerstände» rät zur Werkbank — vor der ersten Zeile eines gelöschten Felds
+    einer Wärmepumpe hat sie nichts nachzurechnen («Daten vor der Änderung löschen», Handbuch Einstellungen §7.7c)."""
+    from backend.core.berechnungen.waermepumpe_kennzahl import GRUND_ZEITRAUM
+    from backend.core.tageswert_grund import GRUND_KEINE_ZAEHLERSTAENDE, TAGESWERT_GRUND_KURZ
+    from backend.services.daten_checker.datenquelle.geloescht import tag_vor_erster_zeile
+
+    ohne = {GRUND_ZEITRAUM}
+    wp = tuple(f"inv:{i}:" for i, inv in investitionen_by_id.items() if inv.typ == "waermepumpe")
+    if wp and await tag_vor_erster_zeile(db, anlage_id, datum, wp):
+        ohne.add(TAGESWERT_GRUND_KURZ[GRUND_KEINE_ZAEHLERSTAENDE])
+    return frozenset(ohne)
 
 
 async def _antwort(ctx: _TagKontext) -> TagDetailResponse:
@@ -1346,7 +1423,7 @@ async def _antwort(ctx: _TagKontext) -> TagDetailResponse:
             ("Arbeitszahl Kühlen", wp_az_kuehlen_tag.grund),
         # R-4: die Geräte-Ausstattungsgründe, dedupliziert gegen die Zeilen
         # darüber (WK-16h/N-502).
-        ], _wp_block_geraete),
+        ], _wp_block_geraete, ohne_handgriff=await _ohne_handgriff_im_tag(db, anlage.id, datum, investitionen_by_id)),
         # Bauschnitt 8: derselbe Wert, den die Kühlzahl eben als Zähler bekam.
         wp_kaelte_kwh=(
             round(detail["wp_kaelte_kwh"], 2)

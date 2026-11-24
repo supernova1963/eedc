@@ -13,6 +13,10 @@ war idempotent gegen Roh-Snapshots und konnte den Spike nicht heilen.
 Dieser SoT-Helper teilt eine einzige Schwellen-Definition zwischen Aggregator
 (präventiver Cap) und Daten-Checker (Detektor). Damit gilt: was der Aggregator
 nicht kappt, sieht der Checker nicht — und umgekehrt.
+
+Wo der Cap gilt: nur im Bestands-Tagespfad (``snapshot/tages_tabelle.py``, Tage ohne Kanal-Deckung). Die Eigene Summe
+der Kanäle (MQTT, ``services/kanal/schreiber.py``) deckelt seit der Korrekturrunde WEGB-K (K7, Entscheid Gernot
+22.11.2026) nicht mehr — ein Sprung zählt dort als Menge und nennt der Befund ``mqtt_zaehlerstand_springt``.
 """
 
 from __future__ import annotations
@@ -54,6 +58,25 @@ def schwelle_pv_einspeisung_stunde_kwh(
         return None
     n = spanne if spanne is not None and spanne > 1 else 1
     return float(kwp) * SPIKE_FAKTOR_STUNDE * n
+
+
+async def schwelle_der_anlage_stunde_kwh(db, anlage_id: int) -> Optional[float]:
+    """``schwelle_pv_einspeisung_stunde_kwh`` für die heutige Anlagenleistung (``anlagen_kwp`` wie Aggregator und Archiv-Nachzug,
+    mit Balkonkraftwerk, Referenzwert ``Anlage.leistung_kwp``) — für die Grenze «mehr, als eine Anlage in einer Stunde leisten
+    kann» der Befunde «Zählerstand springt» und der Rohstand-Prüfung (Sensorwechsel U3-K, B2 (b)/B7). ``None`` ohne kWp."""
+    from datetime import date
+
+    from sqlalchemy import select
+
+    from backend.core.berechnungen.anlagen_kwp import anlagen_kwp
+    from backend.models.anlage import Anlage
+    from backend.models.investition import Investition
+
+    anlage = await db.get(Anlage, anlage_id)
+    if anlage is None:
+        return None
+    invs = list((await db.execute(select(Investition).where(Investition.anlage_id == anlage_id))).scalars().all())
+    return schwelle_pv_einspeisung_stunde_kwh(anlagen_kwp(invs, date.today(), mit_bkw=True, referenzwert=anlage.leistung_kwp))
 
 
 def cap_pv_einspeisung_stunde(

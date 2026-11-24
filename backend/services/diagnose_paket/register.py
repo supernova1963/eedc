@@ -57,7 +57,7 @@ DETAILS_JSON_SCHLUESSEL = frozenset({
     "investition_id", "typ", "snapshots_entfernt", "kanaele_entfernt", "korrigiert", "gekuerzt", "datum",
     "reaggregation_fehler", "kanaele", "abschnitte", "gleich", "plan_id", "operation", "params", "actual_changes", "timestamp",
     "pv_erzeugung_kwh", "einspeisung_kwh", "netzbezug_kwh", "batterie_ladung_kwh", "batterie_entladung_kwh",
-    "wallbox_ladung_kwh", "gefuellt", "zeilen", "bloecke", "markiert", "live_fallback", "unknown", "deckel_verworfen",
+    "wallbox_ladung_kwh", "gefuellt", "zeilen", "bloecke", "markiert", "live_fallback", "unknown",
     "tagesstand_reihen", "kanal", "zeitpunkt", "kanalzeilen_geloescht", "quellen_markiert", "stundenzeilen_geleert",
     "tageszeilen_geleert", "felder_geleert", "pv", "speicher", "wallbox",
 })
@@ -90,6 +90,13 @@ EINSTELLUNGEN = {
     "custom_import_templates": ("anzahl",),
     "community_nachsende_lauf": ("stand", "anlagen", "lauf_erledigt"),
     "wetter_altbestand_nachzug": ("<anlage_id>",),
+}
+
+#: ``settings`` mit Schlüssel-Präfix (``<präfix><kennung>``) → was in ``lage.einstellungen`` darf; nur Zustände der Anlage des
+#: Pakets (``anlage_id``), Listen als Anzahl. ``korrektur_lauf:`` — Hintergrund-Lauf nach einem Sensorwechsel («löschen», «bleiben»;
+#: ``services/zuordnung_wechsel/korrektur_lauf.py``).
+EINSTELLUNGEN_PRAEFIX = {
+    "korrektur_lauf:": ("sensor_key", "status", "erledigt", "tage", "fehler", "beginn", "ende", "fuellen"),
 }
 
 #: ``gruppen``: Liste fester Gruppennamen aus dem Code (``aggregate_day`` an Kanal-Tagen, ``snapshot/boundary_range.py``) —
@@ -151,6 +158,12 @@ _FREI = Spalte(freitext=True)
 _LEER = _js()
 _PROV = _js("bereinigt:email", ts=_PROVENANCE_TS)
 
+#: Eine wirksame Quelle (``zuordnung_wechsel.vorher``/``nachher``): Oberschlüssel der Beschreibung, Text nur unter Art, Entität,
+#: MQTT-Schlüssel, Topic und Pfad.
+_ZUORDNUNG = _js("allowlist",
+                 ober=("art", "entity_id", "mqtt_key", "topic", "payload_typ", "json_pfad", "array_index", "faktor", "offset"),
+                 ts=("art", "entity_id", "mqtt_key", "topic", "payload_typ", "json_pfad"))
+
 REGISTER: dict[str, Tabelle] = {
     "activity_log": _tab(
         "anlage_oder_null", "id timestamp kategorie aktion erfolg details details_json anlage_id",
@@ -172,9 +185,10 @@ REGISTER: dict[str, Tabelle] = {
         # `updated_at`: ISO-Zeitstempel, maschinengeschrieben (`datetime.now().isoformat()` der bis N-241 offenen Schreibtür
         # `api/routes/sensor_mapping.py`; am HEAD Altbestand) — Register-Nachtrag, Master 15.11.
         # `solcast_config` bleibt außerhalb der Allowlist (Marke; Konzept: fällt heraus).
+        # `historie_hinweis` (Hinweis-Block «Zuordnung geändert») ist seit Sensorwechsel S3b ohne Schreiber und seit Weg B
+        # ohne Leser; ein Alt-Vermerk in Bestandsdaten bleibt im Mapping, wirkt nicht und geht nicht ins Paket (Päckchen B, H3).
         sensor_mapping=_js("allowlist",
-                           ober=("basis", "investitionen", "quellen", "invertieren", "historie_hinweis", "live_sensors",
-                                 "updated_at"),
+                           ober=("basis", "investitionen", "quellen", "invertieren", "live_sensors", "updated_at"),
                            ts=("sensor_id", "strategie", "quelle", "entity_id", "id", "label", "name", "seit",
                                "updated_at"),
                            tu=("live", "live_sensors")),
@@ -269,6 +283,12 @@ REGISTER: dict[str, Tabelle] = {
                               "lern_soll_stundenprofil_kwh", "pv_prognose_kaskade_stundenprofil", "komponenten_kwh",
                               "komponenten_starts", "verworfen", "nachtrag")},
         source_provenance=_PROV),
+    # Sensorwechsel mit Grund (B-1): `vorher`/`nachher` sind wirksame Quellen — dieselbe Klasse wie `anlagen.sensor_mapping`
+    # (Entität und MQTT-Topic als Text, keine Zugangsdaten; Form `services/zuordnung_wechsel/quelle.py`).
+    "zuordnung_wechsel": _tab(
+        "anlage", "id anlage_id sensor_key erklaert_ts ab_ts vorher nachher grund herkunft aufgehoben_durch "
+        "ansatz stand_alt_ende stand_neu_null eingetragen_ts",
+        vorher=_ZUORDNUNG, nachher=_ZUORDNUNG),
 }
 
 

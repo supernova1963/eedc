@@ -32,6 +32,7 @@ from backend.models.anlage import Anlage
 from backend.models.investition import Investition
 from backend.models.tages_energie_profil import TagesEnergieProfil, TagesZusammenfassung
 from backend.services.energie_profil._helpers import _speicher_investitionen
+from backend.services.energie_profil.abruf_bestand import abruf_mit_bestand, schreibe_stunde_ohne_menge
 from backend.services.energie_profil._provenance_helpers import (
     seed_tep_provenance,
     seed_tz_provenance,
@@ -112,8 +113,9 @@ _EXTERN_BEFUELLT_FELDER_RETTEN: tuple[str, ...] = (
 # * `soc_prozent` / `soc_je_speicher` / `strompreis_cent` — nur dann, wenn ihr
 #   Sensor keine Langzeitstatistik hat und der History-Fallback greift.
 #
-# ⚠ NICHT `boersenpreis_cent`: externe Quelle, rückwirkend abrufbar — dort gewinnt
-# immer der neue Abruf, auch ein leerer.
+# ⚠ NICHT `boersenpreis_cent` und das Wetter: externe Quelle, rückwirkend abrufbar — dort
+# gewinnt der neue Abruf, wo er liefert; liefert er nichts, bleibt der gespeicherte Wert
+# (Fund-Päckchen G, 23.11.2026; `abruf_bestand.py`, Klasse (d) im Wächter K3).
 #
 # Regel: **die Quelle gewinnt, wo sie liefert**; gerettet wird nur, was sonst leer
 # bliebe, und nur in Stunden, die der neue Lauf ohnehin schreibt (keine Zeile wird
@@ -363,10 +365,11 @@ def verrechne_stunde(
     # — Netz/Einspeisung gehen als „nicht gedeckt" hinein, damit die Marke
     # `…teilweise` die Lücke ausweist (P4) statt eine n-Stunden-Menge mit der
     # Deckung einer einzigen Stunde zu bewerten.
-    from backend.core.berechnungen.spannen import spanne as _spanne
+    # Nachtrag G: ebenso eine Stunde mit der Marke eines Erfassungs-Stillstands (`Weiche.slot_ohne_ladeanteil`).
+    from backend.core.berechnungen.spannen import ACHSEN_LADEANTEIL, zeile_gebuendelt as _zeile_gebuendelt
     _gebuendelt = any(
-        _spanne(zaehler.spannen, a) > 1 for a in ("wallbox", "pv", "netzbezug")
-    )
+        _zeile_gebuendelt(zaehler, a) for a in ACHSEN_LADEANTEIL
+    ) or kontext.weiche.slot_ohne_ladeanteil(h)
     akku.lade_stunden.append(stunde_aus_bilanzwerten(
         ladung=zaehler.wallbox_kw,
         netzbezug=None if _gebuendelt else zaehler.netzbezug_kw,
@@ -1000,8 +1003,9 @@ async def lade_zaehler_und_counter(
         # Ohne Fahrzeug-Zähler ruft der Aggregator die Tabelle genau wie vorher auf.
         _zusatz_lts = _ladebloecke.fahrzeug_zaehler_lts(anlage, invs_by_id, datum)
         lts_tabelle = await lts_aggregator.lts_tagestabelle(
-            anlage, invs_by_id, datum,
+            anlage, invs_by_id, datum, **await lts_aggregator.wechsel_kwargs(db, anlage.id),  # B-0 Sensorwechsel
             **({"zusatz_schluessel": _zusatz_lts} if _zusatz_lts else {}),
+            **await lts_aggregator.mischform_kwargs(db, anlage.id),   # Fund-Päckchen F: MQTT-Feld neben HA-Feldern
         )
     except Exception as e:
         logger.warning(
@@ -1061,10 +1065,10 @@ async def lade_zaehler_und_counter(
         )
 
     # ── Counter-Tagesdifferenzen (Issue #136: WP-Kompressor-Starts) ──────
-    # Boundary-Diff über das Tagesfenster. Wird hier — vor der Stunden-Schleife —
-    # geholt, weil die Stunden-Σ aus diesem Tageswert ABGELEITET wird (Counter-
-    # Daily-Drift Variante 2-light, KONZEPT-COUNTER-DAILY-DRIFT.md): eine Quelle
-    # pro Tag. {feld: {inv_id: wert}}, z.B. {"wp_starts_anzahl": {"5": 12}}.
+    # Boundary-Diff über den Kalendertag (der Tageswert von Monat, Sensoren und *Cockpit → Tag*). Die Stunden
+    # oben kommen seit F6 (23.11.2026) unverändert aus den Ständen im Fenster [Vortag 23:00, 23:00) und werden
+    # nicht mehr auf diesen Wert umgerechnet; die Invariante prüft sie gegen ``CounterStunden.fenster``.
+    # {feld: {inv_id: wert}}, z.B. {"wp_starts_anzahl": {"5": 12}}.
     komponenten_starts: dict = {}
     try:
         from backend.services.sensor_snapshot_service import get_daily_counter_deltas_by_inv
@@ -1077,28 +1081,8 @@ async def lade_zaehler_und_counter(
             f"{type(e).__name__}: {e}"
         )
 
-    # Stunden-Σ aus dem Boundary-Diff ableiten (SoT pro Tag). Bei sauberen
-    # Snapshots verhaltensneutral; bei NULL-Slots/Lücken wird die Stunden-Σ so
-    # reskaliert, dass Σ_h == Σ_inv komponenten_starts gilt. Nur wenn der
-    # Boundary-Diff für das Feld einen Wert lieferte — sonst bleibt die
-    # eigenständig gerechnete Stunden-Σ als Fallback erhalten (kein Datenverlust,
-    # wenn ausgerechnet die Tages-Boundary-Snapshots fehlen).
-    from backend.core.berechnungen import verteile_counter_auf_stunden
-
-    def _counter_aus_boundary(feld: str, stunden: dict, *, as_float: bool) -> dict:
-        je_inv = komponenten_starts.get(feld)
-        if not je_inv:
-            return stunden
-        return verteile_counter_auf_stunden(
-            stunden, float(sum(je_inv.values())), as_float=as_float
-        )
-
-    wp_starts_pro_stunde = _counter_aus_boundary(
-        "wp_starts_anzahl", wp_starts_pro_stunde, as_float=False
-    )
-    wp_betriebsstunden_pro_stunde = _counter_aus_boundary(
-        "wp_betriebsstunden", wp_betriebsstunden_pro_stunde, as_float=True
-    )
+    # F6 (Fund-Päckchen F, Entscheid Master 23.11.2026): keine Reskalierung der Stunden auf den Tageswert mehr — die
+    # Stunden tragen, was die Stände hergeben (Lücke ⇒ Bündel in der Stunde danach); der Tageswert bleibt der Kalendertag.
 
     return (
         invs, invs_by_id, kwh_pro_stunde, kwh_source_label,
@@ -1599,9 +1583,8 @@ async def komponenten_tagesgesamt_und_peaks(
     Returns:
         ``pv_marken`` — die #406-Herkunftsmarken je ``komponenten_kwh``-Sub-Key.
     """
-    # Counter-Tagesdifferenzen (`komponenten_starts`) wurden bereits vor der
-    # Stunden-Schleife geholt — die Stunden-Σ wird daraus abgeleitet (Counter-
-    # Daily-Drift Variante 2-light). Hier nur noch weiterverwenden.
+    # Counter-Tagesdifferenzen (`komponenten_starts`, Kalendertag) wurden bereits vor der
+    # Stunden-Schleife geholt; die Stunden werden seit F6 nicht mehr daraus abgeleitet. Hier nur noch weiterverwenden.
 
     # ── Tagesgesamt pro Komponente (Etappe 3c P3 + Etappe 4 v3.31.0) ─────
     # Etappe 4: wenn der Stunden-Pfad aus HA-LTS gespeist wurde, nutzen wir
@@ -1907,8 +1890,10 @@ async def pruefe_invarianten(
     db: AsyncSession,
     zusammenfassung: TagesZusammenfassung,
     invs_by_id: dict,
+    counter_fenster: Optional[dict] = None,
 ) -> None:
-    """``flush`` und die vier Pflicht-Invarianten (ADR-001 Berechnungs-Layer).
+    """``flush`` und die vier Pflicht-Invarianten (ADR-001 Berechnungs-Layer). ``counter_fenster``: je Counter-Feld die
+    Menge im Fenster der Stunden (``CounterStunden.fenster``, F6) — Bezug von ``pruefe_counter_konsistent``.
 
     Der ``flush`` gehoert hierher: die Invarianten lesen die eben geschriebenen
     ``TagesEnergieProfil``-Zeilen aus der Session zurueck, und dafuer muessen sie
@@ -1986,21 +1971,20 @@ async def pruefe_invarianten(
             # Zählerlücken wie HA: toleriert, aber sichtbar (Log-Hinweis).
             logger.info(f"Anlage {anlage.id}, {datum}: {bericht}")
 
-    # Counter-Daily-Drift (Variante 2-light, KONZEPT-COUNTER-DAILY-DRIFT.md):
-    # Σ_h TagesEnergieProfil.<feld> muss dem Tages-Boundary-Diff
-    # (TagesZusammenfassung.komponenten_starts) entsprechen. Die Stunden-Σ wird
-    # oben aus dem Boundary-Diff abgeleitet — diese Invariante macht eine
-    # verbleibende Drift sichtbar (analog kWh-Pfad, ADR-001). Warning, kein
-    # Tag-Verlust.
+    # Counter-Drift: Σ_h TagesEnergieProfil.<feld> gegen die Menge im Fenster der Stunden (F6, Fund-Päckchen F; bis
+    # 23.11.2026 gegen den Tageswert des Kalendertags, auf den die Stunden reskaliert wurden). Macht eine verbleibende
+    # Drift sichtbar (Spike-Kappe, Rücksprung, analog kWh-Pfad, ADR-001). Warning, kein Tag-Verlust.
     from backend.core.berechnungen import pruefe_counter_konsistent
 
     for feld in ("wp_starts_anzahl", "wp_betriebsstunden"):
-        je_inv = (zusammenfassung.komponenten_starts or {}).get(feld)
-        if not je_inv:
+        # F6: Bezug ist die Menge im Fenster der Stunden [Vortag 23:00, 23:00) — nicht der Tageswert (Kalendertag); der
+        # Unterschied der beiden Fenster ist keine Drift. Ohne beide Rand-Stände keine Prüfung.
+        fenster = (counter_fenster or {}).get(feld)
+        if fenster is None:
             continue
         stunden_map = {r.stunde: getattr(r, feld, None) for r in tep_rows}
         bericht = pruefe_counter_konsistent(
-            stunden_map, float(sum(je_inv.values())),
+            stunden_map, float(fenster),
             name=f"counter:{feld}", toleranz=0.5,
         )
         if not bericht.konsistent:
@@ -2134,6 +2118,11 @@ async def aggregate_day(
             f"{type(e).__name__}: {e}"
         )
 
+    # Fund-Päckchen G: Wetter und Börsenpreis — was der Abruf nicht liefert, bleibt wie gespeichert (VOR dem Löschen gelesen,
+    # als Eingang gesetzt, damit alles Abgeleitete aus denselben Zahlen entsteht; `abruf_bestand.py`).
+    abruf = await abruf_mit_bestand(anlage.id, datum, db, wetter_stunden, strompreis_stunden)
+    wetter_stunden, strompreis_stunden = abruf.wetter_stunden, abruf.strompreis
+
     (
         preserved_felder, preserved_quellen,
         preserved_komponenten_kwh, preserved_komponenten_starts,
@@ -2187,6 +2176,9 @@ async def aggregate_day(
 
     for punkt in punkte:
         verarbeite_stunde(punkt, kontext, akku, db, auto_writer)
+    for h in abruf.stunden_ohne_menge({int(p["zeit"].split(":")[0]) for p in punkte}):   # Fund-Päckchen H
+        schreibe_stunde_ohne_menge(h, kontext, db, auto_writer)
+    abruf.gti(akku)
 
     (
         boersenpreis_avg, boersenpreis_min, neg_stunden, einsp_neg_kwh,
@@ -2217,6 +2209,7 @@ async def aggregate_day(
         verworfen=(tages_tabelle.verworfen if tages_tabelle is not None else {}),
         nachtrag=(tages_tabelle.nachtrag if tages_tabelle is not None else None),
     )
+    abruf.tageswerte(zusammenfassung)
     # S5-R2 auf der fertigen Tageszeile, vor Provenance und Restore (gewinnt über die Preserve-Logik); an einem Kanal-Tag
     # die Mengen-Ableitungen (PR, §51-Menge, Heimladung) aus den Kanal-Stunden und die Herkunft `TZ_QUELLE_KANAL`.
     lade_anteil, tz_source_label = weiche.tageszeile(
@@ -2237,7 +2230,9 @@ async def aggregate_day(
     # Transienter Marker (nicht persistiert) für die Werkbank-Rückmeldung (N-791): Zähler neu, Leistungsverlauf erhalten.
     zusammenfassung.leistung_erhalten = bool(leistungserhalt and (leistungserhalt.komponenten or leistungserhalt.peaks))
 
-    await pruefe_invarianten(anlage, datum, db, zusammenfassung, invs_by_id)
+    await pruefe_invarianten(anlage, datum, db, zusammenfassung, invs_by_id, counter_fenster={
+        "wp_starts_anzahl": getattr(wp_starts_pro_stunde, "fenster", None),
+        "wp_betriebsstunden": getattr(wp_betriebsstunden_pro_stunde, "fenster", None)})
 
     # HA-Bauform E1: Betriebsart-Mitschrift („Anteil der Stunde je Betriebsart") — NACH dem
     # Bestand, in derselben Sitzung, eigener SAVEPOINT; ein Fehler dort berührt keine Zeile oben.

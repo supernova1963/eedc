@@ -46,6 +46,13 @@ export const KATEGORIE_LABELS: Record<string, string> = {
   ha_zaehlersprung: 'Zählerstände – Sprung in Home Assistant',
   // N-639: HAs Summe fällt (Anpassung nach unten) — eedc zeigt die negative Menge wie HA und nennt den Weg.
   ha_zaehler_rueckgang: 'Zählerstände – Rückgang in Home Assistant',
+  // Sensorwechsel U2 Lauf c (F12): derselbe Sensor springt (Gerätetausch) — HA zählt den Sprung, eedc nennt Stunde und Weg.
+  ha_zaehlerstand_springt: 'Zählerstände – Zählerstand springt',
+  // Sensorwechsel U3 a (G2): ein gespeicherter Monatswert passt nach einem Wechsel nicht mehr zur Quelle.
+  monatswert_ueberholt: 'Zählerstände – Gespeicherter Monatswert passt nicht mehr',
+  // Sensorwechsel U3 b (G4): der Zählerstand einer MQTT-Reihe springt — «Zähler getauscht» öffnet den Dialog mit der Zeit.
+  mqtt_zaehlerstand_springt: 'Zählerstände – Zählerstand springt (MQTT)',
+  daten_vor_aenderung_geloescht: 'Zählerstände – Daten vor der Änderung gelöscht',
   sensor_mapping_lts: 'Datenquellen – HA-Statistics',
   sensor_mapping_einheit: 'Datenquellen – Einheiten (Leistung/Energie)',
   // P-433-3 S1: Vorlauf/Rücklauf/Zusatzheizung ohne `state_class: measurement` — Live ja, Tagesverlauf nein.
@@ -109,6 +116,10 @@ export const KATEGORIE_REIHENFOLGE: string[] = [
   'zaehler_ruecksprung',
   'ha_zaehlersprung',
   'ha_zaehler_rueckgang',
+  'ha_zaehlerstand_springt',
+  'mqtt_zaehlerstand_springt',
+  'daten_vor_aenderung_geloescht',
+  'monatswert_ueberholt',
   'sensor_mapping_lts',
   'sensor_mapping_einheit',
   'sensor_ohne_langzeitstatistik',
@@ -157,6 +168,10 @@ export const KATEGORIE_ANKER: Record<string, string> = {
   zaehler_ruecksprung: '48a-zaehlerstaende--ruecksprung',
   ha_zaehlersprung: '48b-zaehlerstaende--sprung-in-home-assistant',
   ha_zaehler_rueckgang: '48c-zaehlerstaende--rueckgang-in-home-assistant',
+  ha_zaehlerstand_springt: '48h-zaehlerstaende--zaehlerstand-springt',
+  monatswert_ueberholt: '48j-zaehlerstaende--gespeicherter-monatswert-passt-nicht-mehr',
+  mqtt_zaehlerstand_springt: '48k-zaehlerstaende--zaehlerstand-springt-mqtt',
+  daten_vor_aenderung_geloescht: '48l-zaehlerstaende--daten-vor-der-aenderung-geloescht',
   sensor_mapping_lts: '49-sensor-mapping--ha-statistics',
   energieprofil_plausibilitaet: '47-energieprofil--plausibilitaet',
   provenance_conflict: '416-quellen-konflikte',

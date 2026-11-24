@@ -111,6 +111,12 @@ async def _stamm(db: AsyncSession, anlage_id: int) -> _Stamm:
     return await gemerkt(db, ("bilanz_stamm", anlage_id), _laden)
 
 
+async def bilanz_stamm(db: AsyncSession, anlage_id: int) -> _Stamm:
+    """Der öffentliche Zugang zu den Stammdaten der Bilanz (``anlage``, ``invs``, ``eintraege``) — für Leser außerhalb
+    dieser Datei (N-799 F12: ``kanal/stillstand.py`` griff auf ``_stamm`` zu)."""
+    return await _stamm(db, anlage_id)
+
+
 def _dc_grund(invs: Iterable, aktiv) -> Optional[str]:
     """Messpunkt-Vertrag (iii) der Wandlungsverluste (N-588): ein im Zeitraum aktiver DC-gekoppelter Speicher —
     ``dc_speicher`` bei gepflegter Kopplung, ``dc_speicher_angenommen``, wenn sie aus der Zuordnung zum Wechselrichter
@@ -161,14 +167,20 @@ def _gedeckt(z: Optional[Zeitraum], lueckentag: bool) -> tuple[bool, Optional[fl
     return False, None
 
 
+#: Weg B (F2): alle Felder der Gruppe sind im Zeitraum bewusst leer — die Wahl bleibt beim Bestand (keine Aussage), der
+#: Tag zählt aber nicht als «ohne Kanal-Deckung».
+GRUND_BEWUSST_LEER = "bewusst_leer"
+
+
 def waehle_und_komponiere(
     eintraege: Sequence, ergebnisse: dict[str, Zeitraum], traeger: Sequence[PvTraeger], *, lueckentag: bool,
-    dc_grund: Optional[str] = None,
+    dc_grund: Optional[str] = None, alle_bewusst_leer: bool = False,
 ) -> KanalZeitraum:
     """Die Quellenwahl der Gruppe (B-4) und — bei ``kanal`` — W2 auf den Δ. Reine Funktion. ``dc_grund``: siehe
     ``_dc_grund`` (Messpunkt-Vertrag (iii), N-588)."""
     if not eintraege:
-        return KanalZeitraum(Quellenwahl(QUELLE_BESTAND, {"": "keine_eingaenge"}, {}), None)
+        return KanalZeitraum(Quellenwahl(QUELLE_BESTAND, {"": GRUND_BEWUSST_LEER if alle_bewusst_leer else "keine_eingaenge"},
+                                         {}), None)
     deltas: dict[str, Optional[float]] = {}
     for e in eintraege:
         ok, d = _gedeckt(ergebnisse.get(e.schluessel), lueckentag)
@@ -239,9 +251,9 @@ async def tage_bilanz(
     if not tage:
         return {}
     stamm = await _stamm(db, anlage_id)
-    leer = await bewusst_leer(db, anlage_id)       # S4-R-V4: ein vor dem Tag verworfenes Feld ist nicht benötigt
-    je_tag = {t: leer.ohne(await stamm.eintraege(db, lambda i, t=t: i.ist_aktiv_an(t), t), *tagesfenster(t))
-              for t in tage}
+    leer = await bewusst_leer(db, anlage_id)       # S4-R-V4 + R-D1: verworfen bzw. vor dem Beginn seiner Quelle ⇒ nicht benötigt
+    roh = {t: await stamm.eintraege(db, lambda i, t=t: i.ist_aktiv_an(t), t) for t in tage}
+    je_tag = {t: leer.ohne(roh[t], *tagesfenster(t)) for t in tage}
     keys = {e.schluessel for lst in je_tag.values() for e in lst}
     grenzen = [tagesfenster(t)[0] for t in tage] + [tagesfenster(tage[-1])[1]]
     # Tage sind aufeinanderfolgend — die Grenzen stoßen lückenlos aneinander; an einem Umstellungstag bleibt das so.
@@ -251,8 +263,35 @@ async def tage_bilanz(
         ergebnisse = {k: liste[i] for k, liste in je.items()}
         aktiv_an = (lambda inv, t=t: inv.ist_aktiv_an(t))
         out[t] = waehle_und_komponiere(je_tag[t], ergebnisse, _traeger(stamm.invs, aktiv_an),
-                                       lueckentag=True, dc_grund=_dc_grund(stamm.invs, aktiv_an))
+                                       lueckentag=True, dc_grund=_dc_grund(stamm.invs, aktiv_an),
+                                       alle_bewusst_leer=leer.alle_verworfen(roh[t], *tagesfenster(t)))
     return out
+
+
+async def bewusst_leere_tage(db: AsyncSession, anlage_id: int, tage: Iterable[date], *,
+                             jetzt: Optional[int] = None) -> set[date]:
+    """Die Tage aus ``tage``, an denen JEDES Feld der Bilanz-Gruppe bewusst leer ist (``BewusstLeer``: vor der ersten
+    Zeile gelöscht bzw. verworfen) — dort gibt es nichts zu decken; kein Tag «ohne Kanal-Deckung» (Weg B, F2)."""
+    tage = sorted(set(tage))
+    if not tage:
+        return set()
+    erg = await tage_bilanz(db, anlage_id, tage[0], tage[-1], jetzt=jetzt)
+    return {t for t in tage if t in erg and erg[t].wahl.gruende.get("") == GRUND_BEWUSST_LEER}
+
+
+async def ha_statistik_beginn(db: AsyncSession, anlage_id: int) -> dict[str, int]:
+    """Je Mengen-Kanal der Anlage, dessen erste Zeile die erste der HA-Statistik ist (``lesen._ha_beginn_sql`` — dieselbe
+    Bedingung wie die Regel «Anfangsstand 0»), ihr ``start_ts``. EINE Anweisung. Leser: die Auskunft «Daten vor der Änderung
+    gelöscht» (``daten_checker/datenquelle/geloescht.py``)."""
+    from backend.services.kanal.lesen import _ha_beginn_sql
+
+    return {key: int(erste) for key, erste in (await db.execute(text(f"""
+        SELECT x.key, x.erste FROM (
+            SELECT k.id AS kid, k.key AS key,
+                (SELECT MIN(s.start_ts) FROM kanal_statistik s WHERE s.kanal_id = k.id AND s.sum IS NOT NULL) AS erste
+            FROM kanal k WHERE k.anlage_id = :a AND k.art = 'sum') x
+        WHERE x.erste IS NOT NULL AND {_ha_beginn_sql('x.kid', 'x.erste')} = 1
+    """), {"a": anlage_id})).all()}
 
 
 def _letzter_tag(jahr: int, monat: int) -> date:
@@ -501,12 +540,17 @@ def mische_verworfen(verworfen: Optional[dict]) -> dict:
 
 def mische_bilanz(kanal, stunden):
     """B-3/D4: Mengen, Gesamtverbrauch, Eigenverbrauch und Quoten aus dem Kanal-Tag; die stundengepaarten Größen
-    (Direktverbrauch, Überschuss, Defizit), der WP-Strom und die Zahl der Stunden aus den Stundenzeilen."""
+    (Direktverbrauch, Überschuss, Defizit) samt ihrem Kennzeichen (N-799 E-5: ``stundenpaarung``,
+    ``mindest_netzladung_kwh``, ``paarung_zeilen``), der WP-Strom und die Zahl der Stunden aus den Stundenzeilen."""
     return dataclasses.replace(
         kanal, direktverbrauch_kwh=stunden.direktverbrauch_kwh, ueberschuss_kwh=stunden.ueberschuss_kwh,
         defizit_kwh=stunden.defizit_kwh, wp_strom_kwh=stunden.wp_strom_kwh, stunden=stunden.stunden,
         # E4d: mit dem WP-Strom seine Marke „gemessen" (eine gemessene 0 ist erfasst, Bauplan §8a).
         wp_erfasst=getattr(stunden, "wp_erfasst", False),
+        # N-799 E-5: mit den stundengepaarten Größen ihr Kennzeichen (Fenster-Rechnung / nicht rechenbar).
+        stundenpaarung=getattr(stunden, "stundenpaarung", kanal.stundenpaarung),
+        mindest_netzladung_kwh=getattr(stunden, "mindest_netzladung_kwh", None),
+        paarung_zeilen=getattr(stunden, "paarung_zeilen", ()),
     )
 
 
@@ -600,13 +644,17 @@ async def monatswerte_mit_kanaelen(
     Damit gilt die Wahl für alle fünf Kalendermonats-Wege („Aus HA laden", alle Monatswerte, Import-Vorschau,
     Sammelimport, Monatsabschluss-Vorschlag); einen gespeicherten Vorbestand ersetzt der Sammelimport weiter nur mit
     ``ueberschreiben``. ``monate``: der Monat je Antwort (sonst ``antwort.jahr/monat``). Rückgabe in derselben
-    Reihenfolge."""
+    Reihenfolge. **Sensorwechsel U2 a1 (F7):** davor die Hülle ``zuordnung_wechsel/monat.monatswerte_je_abschnitt`` — ein
+    Schlüssel mit angesetztem Wechsel «bleiben» zählt im Monat jede Quelle in ihrer Geltungszeit (auch ohne Kanal-Deckung)."""
     from backend.services.kanal.geraete_leser import geraete_sensorwerte_kalendermonate
+    from backend.services.zuordnung_wechsel.monat import monatswerte_je_abschnitt
 
     antworten = list(antworten)
     if monate is None:
         monate = [(getattr(a, "jahr", None), getattr(a, "monat", None)) for a in antworten]
     monate = list(monate)
+    # Sensorwechsel U2 a1 (F7): zuerst der Monat je Geltungsabschnitt (alte + neue Entität), dann der Kanal-Ersatz.
+    antworten = await monatswerte_je_abschnitt(db, anlage_id, antworten, monate)
     gueltig = [m for m in monate if None not in m]
     ersatz = await kanal_kalendermonate(db, anlage_id, gueltig, jetzt=jetzt)
     for m, werte in (await geraete_sensorwerte_kalendermonate(db, anlage_id, gueltig, jetzt=jetzt)).items():
@@ -657,7 +705,7 @@ async def tagesdeltas(
 
 
 __all__ = [
-    "FASSUNG_WEG2", "KanalZeitraum", "TagesDeltas", "als_kanaltag", "als_monatssumme", "bilanz_ziele",
+    "FASSUNG_WEG2", "KanalZeitraum", "TagesDeltas", "als_kanaltag", "als_monatssumme", "bilanz_stamm", "bilanz_ziele",
     "ist_bilanz_schluessel", "tagesdeltas",
     "kanal_kalendermonate", "kanal_kompositionen", "kanal_monate", "kanal_tage", "lade_monats_summen", "mische_bilanz", "mische_komponenten", "mische_verworfen",
     "monate_bilanz", "monatswerte_mit_kanaelen", "tage_bilanz", "waehle_und_komponiere",

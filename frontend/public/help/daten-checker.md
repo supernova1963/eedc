@@ -26,6 +26,10 @@
    8c. [Zählerstände – Rückgang in Home Assistant](#48c-zaehlerstaende--rueckgang-in-home-assistant)
    8d. [PV – Messpunkt (Anlagenzähler und Strings)](#48d-pv--messpunkt)
    8e. [PV – Zähler steht](#48e-pv--zaehler-steht)
+   8h. [Zählerstände – Zählerstand springt](#48h-zaehlerstaende--zaehlerstand-springt)
+   8j. [Zählerstände – Gespeicherter Monatswert passt nicht mehr](#48j-zaehlerstaende--gespeicherter-monatswert-passt-nicht-mehr)
+   8k. [Zählerstände – Zählerstand springt (MQTT)](#48k-zaehlerstaende--zaehlerstand-springt-mqtt)
+   8l. [Zählerstände – Daten vor der Änderung gelöscht](#48l-zaehlerstaende--daten-vor-der-aenderung-geloescht)
    9. [Datenquellen – HA-Statistics](#49-sensor-mapping--ha-statistics)
    9a. [Datenquellen – Status](#49a-datenquellen--status)
    10. [Energieprofil – fehlende Tageswerte](#410-energieprofil--fehlende-tageswerte)
@@ -87,7 +91,7 @@ Die Prüfung läuft pro Anlage, ist nicht zeitgesteuert und liest immer den aktu
   Knopf, der sagt, was er tut <a name="sprung-aufs-feld"></a>:
   - **Ändert eedc etwas** (z. B. „Temperatur aus Messung übernehmen“, „Wert entfernen“, „Benzinpreise nachtragen“, „Wetterreihe nachziehen“, „Tag neu aufbauen“, „Tage neu aufbauen“, „Aus Home Assistant neu übernehmen“), zeigt der erste Klick eine **Vorschau** unter der Zeile: eine Zeile, was sich ändert (etwa „Monate erhalten eine Ø Temperatur: 7 (09/2025, …)“), darunter die Hinweise der Reparatur-Werkbank. Erst **„Anwenden“** führt aus; **„Abbrechen“** verwirft die Vorschau. Danach steht über der Liste ein Satz, was geschehen ist, und der Daten-Checker prüft neu. Lösch-Aktionen tragen in der Vorschau das Wort **„endgültig“** und einen roten Knopf; eine zusätzliche Rückfrage gibt es nicht. Ist nichts zu tun (etwa weil das Feld am Gerät vorgesehen ist), sagt die Vorschau das und bietet kein „Anwenden“. „Aus Home Assistant neu übernehmen“ nennt dazu die Bedingung: wirksam, wenn du in Home Assistant korrigiert hast. Die Vorschau gilt eine Stunde („gültig bis …“); **„Details in der Werkbank“** öffnet sie in der Reparatur-Werkbank. Es läuft immer nur ein Vorgang.
   - **Musst du etwas eintragen oder auswählen**, führt der Knopf auf das betroffene **Feld** — er heißt nach dem Ziel, etwa „Gerät bearbeiten“, „Monat erfassen“, „Monat öffnen“, „Sensor zuordnen“, „Tarif bearbeiten“, „Anlage bearbeiten“: in der **Datenquellen-Zuordnung** klappen Block und Gerät auf, die Feldzeile ist markiert (auch in „Weitere Größen erfassen“); im **Komponenten-Formular** steht der Cursor im Feld — liegt es in einem zugeklappten Abschnitt (etwa „Weitere Angaben & Kosten“ oder „Netzladung & Arbitrage“), öffnet er sich; beim Sprung sind alle zugeklappten Abschnitte dieses Formulars offen. Unter **Strompreise** öffnet sich der betroffene Tarif am Feld oder „Neuen Tarif anlegen“ mit Verwendung und Beginn vorbelegt (etwa für eine Lücke); unter **Anlage** die gewählte Anlage am Feld (z. B. Inbetriebnahme), unter **Solarprognose** „Neue Prognose abrufen“ an den Systemverlusten; im **Monatsabschluss** der Monat am Feld des Geräts. Der Geräte-Connector öffnet direkt. Kennt der Befund das Gerät nicht (etwa eine Summe über alle Autos), landet der Knopf beim ersten passenden Gerät bzw. auf der Seite. Fehlt einem Reparatur-Befund die Quelle (keine Leistungs-Zuordnung), heißt sein Knopf „Sensor zuordnen“ und führt zur fehlenden Zuordnung.
-  - **Ist nichts zu tun oder liegt der Weg außerhalb von eedc**, öffnet **„Was gilt“** den Lösungsweg. Ein Weg in **Home Assistant** (Entwicklerwerkzeuge, Statistik, „Wert anpassen“; Helfer; `state_class`) steht im Text des Befunds; Wege in eedc nennt der Text nicht — der Knopf ist der Weg.
+  - **Ist nichts zu tun oder liegt der Weg außerhalb von eedc**, öffnet **„Was gilt“** den Lösungsweg. Ein Weg in **Home Assistant** (Einstellungen → Werkzeuge → Statistik, in älteren Home-Assistant-Versionen Entwicklerwerkzeuge → Statistik, „Summe anpassen“; Helfer; `state_class`) steht im Text des Befunds; Wege in eedc nennt der Text nicht — der Knopf ist der Weg.
 - **Lösungsweg:** Der Link öffnet **den Abschnitt dieses Befunds** ([alle Befunde](#alle-befunde)) **neben der Liste** (auf dem Handy als Fenster): *Was eedc sieht* · *Lösungsweg* in nummerierten Schritten — Schritte in eedc sind anklickbar, Schritte in Home Assistant stehen als Text, der letzte ist *Erneut prüfen* — · *Was ohne Handlung gilt*. Bei Abweichungen zu Home Assistant ist der letzte Schritt, deine Frage im Forum oder auf GitHub zu stellen — um das Diagnose-Paket bitten wir dich dort, wenn wir es brauchen. Das Fenster bleibt beim Scrollen neben der Liste stehen und holt sich ins Bild, auch wenn du es aus der letzten Kategorie öffnest. Im Browser öffnet **„In eigenem Fenster öffnen“** den Abschnitt in einem eigenen Tab; innerhalb von Home Assistant (Seitenmenü oder App) fehlt dieser Knopf, weil ein eigenes Fenster dort keine Anmeldung hätte — direkt geöffnet (Port 8099) gibt es ihn.
 
 Die Komponenten-Seiten (Block **Daten-Qualität**) zeigen die Befunde ihres Geräts mit denselben Knöpfen.
@@ -194,13 +198,14 @@ Einzelne Befunde haben über Releases hinweg ihre Stufe gewechselt. Beispiele:
 ### 3.1 Alle Befunde <a name="alle-befunde"></a>
 
 <!-- erzeugt: scripts/daten-checker-handbuch.py §3 Anfang — nicht von Hand ändern -->
-eedc prüft **38 Kategorien** mit **182 Befunden** (gezählt an `CheckKategorie` und am Katalog der Handgriffe). Jeder Befund trägt genau einen Handgriff: eine **Aktion** mit Vorschau, einen **Sprung** an die Stelle, wo du ihn behebst, oder die **Auskunft** «Was gilt»; bestandene Prüfungen stehen gefaltet im Kopf ihrer Kategorie.
+eedc prüft **42 Kategorien** mit **187 Befunden** (gezählt an `CheckKategorie` und am Katalog der Handgriffe). Jeder Befund trägt genau einen Handgriff: eine **Aktion** mit Vorschau, einen **Sprung** an die Stelle, wo du ihn behebst, oder die **Auskunft** «Was gilt»; bestandene Prüfungen stehen gefaltet im Kopf ihrer Kategorie.
 
 | Befund | Abschnitt | Klasse | Knopf |
 | --- | --- | --- | --- |
 | [Geräte-Connector liefert für den laufenden Monat keinen Wert](#connector_monatswert_fehlt) `connector_monatswert_fehlt` | §4.11 | Sprung | Zum Connector |
 | [Zählerstand in der Statistik von Home Assistant gefallen](#ha_zaehler_rueckgang) `ha_zaehler_rueckgang` | §4.8c | Aktion | Aus Home Assistant neu übernehmen |
 | [Zählersprung in der Statistik von Home Assistant](#ha_zaehlersprung) `ha_zaehlersprung` | §4.8b | Aktion | Aus Home Assistant neu übernehmen |
+| [Zählerstand springt in der Statistik von Home Assistant](#ha_zaehlerstand_springt) `ha_zaehlerstand_springt` | §4.8h | Aktion | Aus Home Assistant neu übernehmen |
 | [Betriebsmodus-Sensor liefert einen Wert, den eedc nicht kennt](#klima_modus_wert_unbekannt) `klima_modus_wert_unbekannt` | §4.14a | Auskunft | Was gilt |
 | [Kühlanteil wird geschätzt — Stromzähler für den Kühlbetrieb fehlt](#klima_kuehlanteil_geschaetzt) `klima_kuehlanteil_geschaetzt` | §4.14 | Sprung | Sensor zuordnen |
 | [Heiz- und Kühlstrom werden aufgeteilt](#klima_modus_ok) `klima_modus_ok` | §4.14 | bestanden | — |
@@ -223,6 +228,9 @@ eedc prüft **38 Kategorien** mit **182 Befunden** (gezählt an `CheckKategorie`
 | [Abweichung zu Home Assistant an einem Tag (PV)](#drift_tag) `drift_tag` | §4.17 | Aktion | Aus Home Assistant neu übernehmen |
 | [Ein Gerät weicht an Tagen von Home Assistant ab](#drift_komponente) `drift_komponente` | §4.17 | Aktion | Aus Home Assistant neu übernehmen |
 | [Zählerstand springt zwischendurch zurück](#zaehler_ruecksprung) `zaehler_ruecksprung` | §4.8a | Sprung | Sensor wechseln |
+| [Gespeicherter Monatswert passt nicht mehr zur Quelle](#monatswert_ueberholt) `monatswert_ueberholt` | §4.8j | Sprung | Monat öffnen |
+| [Zählerstand springt in einer MQTT-Reihe](#mqtt_zaehlerstand_springt) `mqtt_zaehlerstand_springt` | §4.8k | Sprung | Zähler getauscht |
+| [Daten vor der Änderung gelöscht](#daten_vor_aenderung_geloescht) `daten_vor_aenderung_geloescht` | §4.8l | Auskunft | Was gilt |
 | [Batterie-Richtung in der Historie stimmt](#batterie_vorzeichen_ok) `batterie_vorzeichen_ok` | §4.21 | bestanden | — |
 | [Tage mit vertauschtem Batterie-Vorzeichen](#batterie_vorzeichen_tage) `batterie_vorzeichen_tage` | §4.21 | Aktion | Tage neu aufbauen |
 | [Ein Tag mit vertauschtem Batterie-Vorzeichen](#batterie_vorzeichen_tag) `batterie_vorzeichen_tag` | §4.21 | Aktion | Tag neu aufbauen |
@@ -257,6 +265,7 @@ eedc prüft **38 Kategorien** mit **182 Befunden** (gezählt an `CheckKategorie`
 | [Tage mit Mengen aus den gespeicherten Stundenwerten](#tage_ohne_kanal_deckung) `tage_ohne_kanal_deckung` | §4.6 | Auskunft | Was gilt |
 | [Tage mit mehr Einspeisung als Erzeugung](#einspeisung_groesser_erzeugung_tage) `einspeisung_groesser_erzeugung_tage` | §4.7 | Aktion | Tage neu aufbauen |
 | [Nachtrag nach eingefrorenem Zähler](#nachtrag_nach_eingefrorenem_zaehler) `nachtrag_nach_eingefrorenem_zaehler` | §4.7 | Auskunft | Was gilt |
+| [Stunden ohne Stundenwerte](#erfassung_stillstand) `erfassung_stillstand` | §4.7 | Auskunft | Was gilt |
 | [Keine unmöglichen Stundenwerte](#counter_spikes_ok) `counter_spikes_ok` | §4.7 | bestanden | — |
 | [Unmöglicher Stundenwert an einem Tag](#counter_spike_tag) `counter_spike_tag` | §4.7 | Aktion | Tag neu aufbauen |
 | [PV-Erzeugung fehlt in Monaten](#pv_erzeugung_fehlt_monate) `pv_erzeugung_fehlt_monate` | §4.3 | Sprung | Monat öffnen |
@@ -445,7 +454,7 @@ Im **Standalone-Betrieb** kommen die Werte über MQTT (`eedc/<anlage>/…`-Topic
 
 > **Wo die Zuordnung entsteht:** Welche Quelle (HA-Sensor / MQTT / Connector) welches Feld speist, legst du zentral unter [Einstellungen → Datenquellen](HANDBUCH_EINSTELLUNGEN.md#7-datenquellen--feld-zentrische-zuordnung) fest — die feld-zentrische Zuordnungs-Fläche hat die früheren getrennten Assistenten „Sensor-Mapping" und „MQTT-Inbound" abgelöst. Die Verbindungen (HA-Token, MQTT-Broker) richtest du unter [Einstellungen → Integration](HANDBUCH_EINSTELLUNGEN.md#6-integration) ein.
 >
-> **Vom Befund zur Zuordnung:** Der Sprung-Knopf an einem Befund der Kategorien 7, 9, 10 oder 16 (etwa „Sensor zuordnen“) öffnet die Datenquellen-Zuordnung beim betroffenen Gerät mit markiertem Feld ([Sprung aufs Feld](#sprung-aufs-feld)); in Home Assistant liegt der Weg (Helfer, `state_class`, „Wert anpassen“) im Text des Befunds.
+> **Vom Befund zur Zuordnung:** Der Sprung-Knopf an einem Befund der Kategorien 7, 9, 10 oder 16 (etwa „Sensor zuordnen“) öffnet die Datenquellen-Zuordnung beim betroffenen Gerät mit markiertem Feld ([Sprung aufs Feld](#sprung-aufs-feld)); in Home Assistant liegt der Weg (Helfer, `state_class`, „Summe anpassen“) im Text des Befunds.
 
 ---
 
@@ -1355,16 +1364,24 @@ Für die genannten Monate fehlt der Strom der Wärmepumpe — ohne getrennte Str
 Messung «Strom Heizen» und «Strom Warmwasser» (an einer Split-Klimaanlage nur «Strom Heizen»). Ohne ihn fehlen der
 Verbrauch der Wärmepumpe und ihre Arbeitszahl in diesen Monaten.
 
+Genannt wird auch ein Monat, in dem der Strom mit **0 kWh** eingetragen ist, obwohl die Wärmepumpe in diesem Monat Wärme
+abgegeben hat (die Meldung sagt dann „fehlt oder ist 0 kWh bei erfasster Wärme“ und nennt diese Monate getrennt). Wärme
+ohne Strom gibt es nicht — meist hat der Stromzähler in diesem Monat nicht gezählt oder der Wert wurde nicht übernommen.
+Ein Monat mit Strom und Wärme 0 (die Wärmepumpe lief nicht) und ein Monat nur mit Strom (Bereitschaft) sind kein Befund.
+Sind ohne «Getrennte Strommessung» nur «Strom Heizen»/«Strom Warmwasser» zugeordnet, nennt das der Befund
+„Strom Heizen/Warmwasser zugeordnet, aber „Getrennte Strommessung“ ist aus“.
+
 **Lösungsweg**
 1. Am Befund **«Monat öffnen»** klicken — der Monatsabschluss des ersten betroffenen Monats öffnet sich beim Stromfeld
    der Wärmepumpe.
-2. Den Wert eintragen und speichern, die übrigen Monate der Meldung ebenso. Mit zugeordnetem Sensor holt
+2. Den gemessenen Wert eintragen (statt der 0, wo die Meldung sie nennt) und speichern, die übrigen Monate der Meldung
+   ebenso. Liegt der Fehler am Zähler oder Sensor in Home Assistant, dort zuerst berichtigen. Mit zugeordnetem Sensor holt
    [«Monatsdaten aus HA-Statistik laden»](eedc:/einstellungen/integration?block=ha-statistik-import) mehrere Monate auf
    einmal.
 3. Erneut prüfen: im Daten-Checker **«Aktualisieren»** — die nachgetragenen Monate sind aus der Zeile verschwunden.
 
 **Was ohne Handlung gilt**
-Die Monate bleiben ohne Wärmepumpen-Strom; Verbrauch, Kosten und Arbeitszahl des Geräts rechnen für sie nicht.
+Die Monate bleiben ohne Wärmepumpen-Strom; Verbrauch, Kosten und Arbeitszahl des Geräts rechnen für sie nicht. Trägt ein solcher Monat Wärme, zählt er so lange auch keine Ersparnis gegenüber der alten Heizung (ohne Strom ist sie nicht bestimmbar).
 
 #### Eine Stromseite der Wärmepumpe fehlt <a name="wp_seite_fehlt_monate"></a>
 
@@ -2196,7 +2213,7 @@ nächste Monat gegen den vorletzten Stand und weist zwei Monate als einen aus �
 1. Am Befund **«Monat erfassen»** klicken — der Monatsabschluss dieses Monats öffnet sich.
 2. Einspeisung und Netzbezug eintragen und speichern — die Messwerte gehören dann wieder dazu. Das ist der Regelfall.
 3. Nur wenn die Werte wirklich weg sollen: in der
-   [Reparatur-Werkbank](eedc:/einstellungen/daten?block=energieprofil&karte=werkbank) die Operation «Messwerte ohne
+   [Reparatur-Werkbank](eedc:/einstellungen/daten?block=energieprofil&karte=werkbank) (*Einstellungen → Daten → Energieprofil-Pflege*) die Operation «Messwerte ohne
    Monatszeile entfernen» wählen, den Monat wählen, **«Plan erstellen»**, die Vorschau lesen und anwenden — das ist
    endgültig.
 4. Erneut prüfen: im Daten-Checker **«Aktualisieren»** — der Monat ist aus der Liste verschwunden.
@@ -2529,7 +2546,7 @@ dem Energieprofil. Live-Anzeigen aus den Leistungs-Sensoren (W) funktionieren we
 > ist eine Aufgabe für dich: *Kein Zähler zugeordnet* · *Zähler zugeordnet, aber für diesen Tag liegen keine Zählerstände
 > vor* · *Der Zähler ist an diesem Tag zurückgesprungen*. Der mittlere Fall ist der Regelfall kurz nach einer Zuordnung:
 > Der **Monats**wert steht da, weil er aus der Langzeitstatistik von Home Assistant kommt — **Tages**werte entstehen erst
-> ab der Zuordnung. Frühere Tage lassen sich in der Reparatur-Werkbank nachrechnen.
+> ab der Zuordnung. Für einen Tag ohne Zählerstände bildet eedc keinen Tageswert.
 
 > **Wer hier ausgenommen ist:** **Split-Klimaanlagen** (Wärmepumpenart *Luft-Luft*) werden nicht nach Wärme gefragt, eine
 > **Brauchwasser-Wärmepumpe** nicht nach Heizwärme. Das **E-Auto** wird für den Ladezähler übersprungen, wenn eine
@@ -2716,7 +2733,9 @@ Eine automatische Umrechnung beim Start gibt es bewusst nicht.
 An diesen Tagen kommen PV, Netz und Speicher weder aus der Langzeitstatistik von Home Assistant noch aus eigenen
 Zählerständen. eedc liest ihre Mengen deshalb aus den gespeicherten Stunden- und Tageswerten — so wie vor der Umstellung.
 Typisch sind Tage vor dem ersten gespeicherten Zählerstand. Die Details nennen auch die Zahl der Tage mit der neuen
-Deckung.
+Deckung. Ein Feld, dessen Statistik in Home Assistant (bei MQTT: dessen erster Zählerstand) erst später beginnt, macht
+einen Tag nicht mehr zu einem solchen Tag: vor seinem Beginn hat dieses Feld keinen Wert, die übrigen zählen aus den
+Kanälen weiter — wie in Home Assistant.
 
 **Lösungsweg**
 1. Nichts zu tun — das ist kein Fehler. Der Knopf **«Was gilt»** am Befund öffnet diesen Text.
@@ -2752,8 +2771,8 @@ Nachtrag als unmöglicher Wert gemeldet. Dieselbe Regel entscheidet beim Rechnen
 > einem Tag, dessen Mengen aus der Langzeitstatistik kommen, ist eine hohe Stunde die Zahl von Home Assistant, wie im
 > Energie-Dashboard; ein Sprung mit dem typischen Muster (Sensor fällt kurz auf 0 und kehrt zurück) meldet
 > [§4.8b](#48b-zaehlerstaende--sprung-in-home-assistant). **Ein reiner Sprung ohne dieses Muster** bekommt an einem
-> solchen Tag **keinen** Befund: prüfe ihn in Home Assistant unter *Entwicklerwerkzeuge → Statistik* und berichtige ihn
-> dort.
+> solchen Tag **keinen** Befund: prüfe ihn in Home Assistant unter
+> *Einstellungen → Werkzeuge → Statistik* (in älteren Home-Assistant-Versionen: *Entwicklerwerkzeuge → Statistik*) und berichtige ihn dort.
 
 > **Ältere Tage** (über 30 Tage) prüft die Stundenwert-Prüfung nicht — die beiden Tagesprüfungen (Einspeisung über
 > Erzeugung, Nachtrag) sehen alle gespeicherten Tage: dort stehen meist schon berichtigte Werte, und für den aktuellen
@@ -2777,7 +2796,7 @@ vertauscht, oder das Vorzeichen eines kombinierten Netz-Sensors ist umgekehrt.
 2. Danach am Befund **«Tage neu aufbauen»** klicken, die Vorschau lesen und **«Anwenden»** — eedc baut die Tage aus
    eigenen Stundenwerten neu (höchstens 31 Tage je Lauf). Kommen alle Tage aus der Statistik von Home Assistant, heißt
    der Knopf **«Aus Home Assistant neu übernehmen»** und übernimmt nur den jüngsten Tag — dann vorher die Statistik in
-   Home Assistant unter *Entwicklerwerkzeuge → Statistik* berichtigen; nach dem erneuten Prüfen steht der Knopf am
+   Home Assistant unter *Einstellungen → Werkzeuge → Statistik* (in älteren Home-Assistant-Versionen: *Entwicklerwerkzeuge → Statistik*) berichtigen; nach dem erneuten Prüfen steht der Knopf am
    nächsten Tag. Steht am Befund nur
    **«Was gilt»**, kommen die Mengen aus eedcs eigenen Zählerständen; dann wirkt die berichtigte Zuordnung auf die
    folgenden Tage.
@@ -2798,14 +2817,82 @@ aus Zählerständen gerechnet ist. Dieselbe Form hat ein Zählersprung nach eine
 **Lösungsweg**
 1. Die genannten Mengen prüfen (der Knopf **«Was gilt»** am Befund öffnet diesen Text). Stimmen sie, ist nichts zu tun.
 2. Stimmt eine nicht, liegt der Fehler in der Zähler-Historie der Quelle: in Home Assistant unter
-   *Entwicklerwerkzeuge → Statistik* beim Sensor mit „Wert anpassen“ berichtigen. Danach den Tag in der
-   [Reparatur-Werkbank](eedc:/einstellungen/daten?block=energieprofil&karte=werkbank) neu holen: «Aus Home Assistant
+   *Einstellungen → Werkzeuge → Statistik* (in älteren Home-Assistant-Versionen: *Entwicklerwerkzeuge → Statistik*) beim Sensor mit „Summe anpassen“ berichtigen. Danach den Tag in der
+   [Reparatur-Werkbank](eedc:/einstellungen/daten?block=energieprofil&karte=werkbank) (*Einstellungen → Daten → Energieprofil-Pflege*) neu holen: «Aus Home Assistant
    neu übernehmen» für einen Tag aus der Statistik von Home Assistant, sonst «Tag neu aggregieren».
 3. Erneut prüfen: im Daten-Checker **«Aktualisieren»** — die Zeile bleibt, solange ein solcher Nachtrag in den Tagen steht.
 
 **Was ohne Handlung gilt**
 Der Nachtrag zählt im Tag und im Monat mit, wie in Home Assistant. Die Menge geht nicht verloren, sie steht nur gebündelt
 in einer Stunde.
+
+#### Stunden ohne Stundenwerte <a name="erfassung_stillstand"></a>
+
+**Was eedc sieht**
+An diesen Tagen hat die Erfassung für einige Stunden keine Stundenwerte geliefert: sie stand still — etwa während Home
+Assistant neu startete oder der Rechner aus war — oder es fehlten Werte. Danach haben die Zähler die Menge dieser Stunden
+auf einmal nachgetragen, und sie steht in einer einzigen Stunde. Die Meldung nennt je Tag die Stunden, die Mengen je
+Zähler und wie eedc Überschuss, Defizit und Direktverbrauch dieses Tages bestimmt hat: aus den Zählerständen gerechnet,
+nicht bestimmbar (die drei Spalten bleiben leer) oder wie an jedem anderen Tag, wenn die nachgetragene Menge kaum PV
+enthält. Reicht ein Ausfall über mehrere Tage, steht die Menge dieser Tage am letzten. Steht die Erfassung so oft still,
+dass es zur Art der Erfassung gehört, sagt die Meldung das in einem Satz. In der Tagestabelle tragen Überschuss, Defizit
+und Direktverbrauch eines solchen Tages ein Rechner-Zeichen statt des Warndreiecks («aus Zählerständen gerechnet» statt
+«geschätzt»); der Link «Im Daten-Checker nachlesen» öffnet diesen Text, auch für Tage, die älter als 90 Tage sind.
+
+**Lösungsweg**
+1. Die genannten Tage ansehen. Ein einzelner Ausfall braucht keine Handlung: die Mengen stimmen, und eedc rechnet die drei
+   Spalten des Tages aus den Zählerständen, so gut es geht.
+2. Steht die Erfassung oft oder lange, die Ursache in Home Assistant suchen: läuft der Rechner durch, startet Home
+   Assistant regelmäßig neu, verliert die Integration des Wechselrichters oder Zählers die Verbindung? Kommen die Zähler über
+   MQTT: Fehlten Zählerstände, lief eedc in diesen Stunden nicht (eedc oder der Rechner aus) oder hatte nach einem Neustart
+   noch keinen Stand vom Sender — prüfen, ob eedc durchläuft. Standen die Zählerstände still, hat der Sender keine neuen
+   geliefert: am Sender (Gerät, Skript, Gateway) prüfen, ob er durchläuft und die Verbindung zum Broker hält. Die
+   Stundenwerte eines vergangenen Ausfalls lassen sich nicht nachholen — auch Home Assistant bzw. der Sender hat sie nicht.
+3. Erneut prüfen: im Daten-Checker **«Aktualisieren»** — die Zeile bleibt, solange ein solcher Tag in den letzten 90 Tagen
+   liegt, und steht danach unter den bestandenen Prüfungen.
+
+**Was ohne Handlung gilt**
+Die Summen stimmen: Erzeugung, Einspeisung, Netzbezug, Verbrauch und Speicher zählen im Tag, im Monat und im Jahr
+vollständig. Die Stundenwerte dieser Stunden lassen sich nicht nachholen; die Menge steht in der Stunde, in der die Zähler
+sie nachgetragen haben. Sichten, die Stunde gegen Stunde stellen, lassen diese Stunden aus: die Verbrauchsprognose und die
+Tagesprognose, die Leistungsspitzen des Monats, die Heatmap, die Auswertungen des Speichers (Speichergröße, Netzladung,
+Ladepreis — dort steht «nicht bestimmbar (Erfassungslücke)») und der Vergleich mit Tagen davor.
+
+Überschuss, Defizit und Direktverbrauch eines solchen Tages sind für diese Stunden aus den Zählerständen gerechnet. Die
+Rechnung hat zwei Vorbehalte, beide mit bekannter Richtung:
+- Lädt der Speicher in diesen Stunden aus dem Netz, sind Überschuss und Defizit um diese Ladung zu hoch und der
+  Direktverbrauch um sie zu niedrig. Ging mehr ins Netz und in den Speicher, als die PV erzeugt hat, nennt die Meldung,
+  wie viel der Speicher mindestens aus dem Netz geladen hat; der Überschuss ist dann auf die PV-Menge begrenzt.
+- Die Rechnung aus Stundenwerten verrechnet je Stunde, was ins Netz und in den Speicher ging (Einspeisung und Ladung), mit
+  dem, was aus dem Netz und aus dem Speicher kam (Netzbezug und Entladung). Für die Stunden des Ausfalls kann die Rechnung
+  aus den Zählerständen das nicht und liegt deshalb etwas darüber: Überschuss und Defizit höchstens zu hoch,
+  Direktverbrauch höchstens zu niedrig. An einer Beispielanlage sind es über ganze Tage gerechnet im Mittel 0,8 kWh
+  je Tag; ein Ausfall von wenigen Stunden liegt darunter, einer über mehrere Tage deutlich darüber.
+
+Können die drei Spalten nicht bestimmt werden — die Zähler haben ihre Mengen nicht für dieselben Stunden nachgetragen, oder
+der Speicher ist für den Tag nur als Saldo von Ladung und Entladung gespeichert —, bleiben sie leer, und die Summe des
+Monats nennt, wie viele Tage ihr fehlen. Der Sensor «Überschuss heute», den eedc an Home Assistant gibt, hat an einem
+solchen Tag keinen Wert (nicht 0). Die Speicher-Auswertung «Hätte mehr Kapazität geholfen?» zählt die Netzladung dieser
+Stunden nicht mit.
+
+Was eedc nicht erkennt oder nicht kennzeichnet:
+- Ohne Zähler für den Netzbezug und mindestens einen weiteren Zähler (PV oder Einspeisung) erkennt eedc keinen Ausfall —
+  ebenso wenig an einer Anlage mit Speicher, wenn Ladung und Entladung des Speichers keine eigenen Zähler haben.
+- Ein Ausfall in der Nacht, nach dem nur ein Zähler eine Menge nachträgt, wird nicht erkannt.
+- Steht nur ein einzelner Zähler, während die übrigen weiterlaufen, ist das kein erkennbarer Ausfall der Erfassung.
+- Ein Ausfall von nur einer Stunde bleibt wie bisher: die Menge zweier Stunden steht in einer.
+- Ein Zähler, der nur in groben Schritten (0,1 kWh oder mehr) meldet, und eine Erfassung, die regelmäßig stehen bleibt,
+  werden nicht gekennzeichnet — dort zählt die nachgetragene Menge als eine Stunde.
+- Einen Stillstand (Zähler melden weiter, aber unverändert) kennzeichnet eedc an Tagen, die es aus eigenen Zählerständen statt
+  aus der Statistik von Home Assistant rechnet, nicht; dort nennt der Befund «Nachtrag nach eingefrorenem Zähler» eine solche
+  Stunde. Fehlen an einem solchen Tag Zählerstände ganz (etwa weil eedc in diesen Stunden nicht lief), steht die Menge in
+  der ersten Stunde danach, und dieser Befund nennt den Tag, wenn die nachgetragene Menge PV enthält — für Tage, die eedc
+  seit dieser Version gebildet hat; ein älterer Tag trägt die Stunden, wie sie damals gespeichert wurden (die Menge der
+  Lücke gleichmäßig verteilt), bis er neu gebildet wird.
+- Der PV-Anteil einer Heimladung und die Kosten der Stunde, in der die Menge nachgetragen wurde, bleiben eine Näherung:
+  eedc bewertet die Menge mit dem Preis dieser einen Stunde.
+- Ein Ausfall, der länger als 90 Tage dauert, wird nur in seinen letzten 90 Tagen erkannt.
+- Im Diagnose-Paket steht die Kennzeichnung nicht; sie entsteht beim Lesen und lässt sich aus den Daten nachrechnen.
 
 #### Keine unmöglichen Stundenwerte <a name="counter_spikes_ok"></a>
 
@@ -2833,7 +2920,7 @@ eigenen Stundenwerten.
 1. Am Befund **«Tag neu aufbauen»** klicken, die Vorschau lesen und **«Anwenden»** — eedc holt die Zählerstände des Tages
    neu und rechnet den Tag in einem Schritt neu.
 2. Sind mehrere Tage betroffen, in der
-   [Reparatur-Werkbank](eedc:/einstellungen/daten?block=energieprofil&karte=werkbank) «Mehrere Tage neu aggregieren» mit
+   [Reparatur-Werkbank](eedc:/einstellungen/daten?block=energieprofil&karte=werkbank) (*Einstellungen → Daten → Energieprofil-Pflege*) «Mehrere Tage neu aggregieren» mit
    dem passenden Von-/Bis-Bereich nutzen; das reicht auch für Tage, die älter als 30 Tage sind.
 3. Erneut prüfen: im Daten-Checker **«Aktualisieren»** — der Tag ist verschwunden, oder an der Stelle steht «Keine
    Counter-Spikes in den letzten 30 Tagen».
@@ -2991,23 +3078,34 @@ den fortlaufenden Stand schicken.
 > systematisch zu niedrig und im Monatsabschluss per Knopfdruck ein gespeicherter Wert. Die Reparatur liegt beim Absender;
 > sobald die Reihe wieder fortlaufend ist, verschwindet der Befund von selbst.
 
+**Ein Befund je Ursache** (seit Sensorwechsel U3): wechselt der Stand dauerhaft die Höhe — er beginnt neu, aber nicht bei 0,
+oder fällt um weniger als ein Zehntel und bleibt dort —, nennt [§4.8k](#48k-zaehlerstaende--zaehlerstand-springt-mqtt) die
+Stunde mit dem Weg «Zähler getauscht». Diese Prüfung lässt solche Rückgänge aus. Ein Zähler, der täglich oder
+monatlich auf null geht, und ein Stand, der kurz fällt und gleich wieder auf der alten Höhe ist, bleiben hier.
+
 ---
 
 #### Zählerstand springt zwischendurch zurück <a name="zaehler_ruecksprung"></a>
 
 **Was eedc sieht**
 Ein Zählerstand muss fortlaufend steigen. Bei den genannten Feldern fällt der per MQTT gelieferte Stand in den letzten
-30 Tagen mindestens einmal auf einen niedrigeren Wert zurück — typisch für ein Feld, das „heute“ oder „diesen Monat“
-meint statt des Gesamtstands. eedc bildet eine Menge aus zwei Ständen; liegt dazwischen ein Neubeginn, ist ihre
+30 Tagen mindestens einmal auf einen niedrigeren Wert zurück — fällt er immer wieder zurück, typisch für ein Feld, das
+„heute“ oder „diesen Monat“ meint statt des Gesamtstands; fällt er einmal, kann auch ein neuer Zähler begonnen oder die
+Quelle eine Zeit lang einen anderen Stand gesendet haben (dann nennt oft auch „Zählerstand springt (MQTT)“ den Sprung). eedc bildet eine Menge aus zwei Ständen; liegt dazwischen ein Neubeginn, ist ihre
 Differenz keine Menge. Die Meldung nennt die Felder, wie oft es passiert ist, und belegt den jüngsten Fall mit beiden
-Ständen.
+Ständen. Ein Rückgang an einem Wechsel, den eedc als Fortsetzung kennt (Zähler getauscht oder neuer Sensor für dasselbe
+Gerät, Handbuch Einstellungen §7.7), zählt nicht — dort ist der neue Stand der Beginn des neuen Zählers.
 
 **Lösungsweg**
 1. Am Befund **«Sensor wechseln»** klicken — die Datenquellen-Zuordnung öffnet sich beim betroffenen Feld. Dort siehst
-   du, woher der Wert kommt.
+   du, woher der Wert kommt. Wählst du dort eine andere Quelle und hat das Feld schon eigene Werte, fragt eedc vor dem
+   Speichern **„Warum wechselt die Quelle?"** (Handbuch Einstellungen §7.7).
 2. Den fortlaufenden Stand schicken statt des Tageswerts: Kommt der Wert aus einem Helfer von Home Assistant, unter
    *Einstellungen → Geräte & Dienste → Helfer* den Verbrauchszähler öffnen und das Zurücksetzen auf „nie“ (ohne Zyklus)
-   stellen. Kommt er aus einer eigenen App oder einem Skript, dort den Lebenszählerstand senden.
+   stellen. Kommt er aus einer eigenen App oder einem Skript, dort den Lebenszählerstand senden. Wurde der Zähler
+   getauscht, in den [Datenquellen](eedc:/einstellungen/datenquellen) am Feld das Symbol „Zähler getauscht (gleiche
+   Quelle)“ öffnen und den Tausch eintragen; hat die Quelle eine Zeit lang einen falschen Stand gesendet, liegt der Fehler
+   dort.
 3. Erneut prüfen: im Daten-Checker **«Aktualisieren»** — der Befund verschwindet von selbst, sobald in den letzten
    30 Tagen kein Rücksprung mehr liegt; es gibt nichts zu quittieren.
 
@@ -3038,8 +3136,8 @@ alte Stand in der unmittelbar nächsten Stunde zurückkommt — dann hat Home As
 **Grenzen:** Ein Gesamtzähler mit weniger als drei Tagen eigener Historie und ein Monatszähler in seinen ersten drei
 Tagen gelten als Tageszähler (ihr Sprung wäre entsprechend klein); ein Aussetzer über zwei oder mehr Stunden am
 Tageszähler ist von einem Tagesbeginn nach einer Lücke nicht zu trennen und wird nicht gemeldet. Die Prüfung erkennt nur
-dieses Muster (Rücksetzen und Rückkehr). Springt die Summe in Home Assistant ohne Rücksetzen, meldet weder sie noch die
-Prüfung auf unmögliche Stundenwerte ([§4.7](#47-energieprofil--plausibilitaet)) an einem solchen Tag etwas.
+dieses Muster (Rücksetzen und Rückkehr). Springt der Zählerstand ohne Rücksetzen (etwa nach einem Gerätetausch bei
+gleichem Sensor), nennt ihn [§4.8h](#48h-zaehlerstaende--zaehlerstand-springt).
 
 ---
 
@@ -3053,8 +3151,9 @@ von Home Assistant sie zeigt — der Sprung steht deshalb in Tag, Monat und Jahr
 30 Tage Sensor, Tag, Stunde und die Menge des Sprungs.
 
 **Lösungsweg**
-1. In Home Assistant unter *Entwicklerwerkzeuge → Statistik* den genannten Sensor suchen, beim Symbol „Wert anpassen“
-   die genannte Stunde wählen und den Zuwachs auf die echte Menge setzen.
+1. In Home Assistant unter *Einstellungen → Werkzeuge → Statistik* (in älteren Home-Assistant-Versionen: *Entwicklerwerkzeuge → Statistik*) den genannten Sensor suchen und beim Symbol „Summe anpassen“ den Dialog
+   „Eine Statistik anpassen“ öffnen: unter „Zeitpunkt auswählen“ die Zeit des Sprungs in der genannten Stunde wählen, bei
+   „Neuer Wert“ die echte Menge eintragen und „Anpassen“ drücken.
 2. Zurück in eedc am Befund **«Aus Home Assistant neu übernehmen»** klicken, die Vorschau lesen und **«Anwenden»** —
    eedc holt die berichtigte Statistik und baut den Tag des ersten Funds neu auf. Ohne Klick gleicht eedc die
    Statistik beim nächtlichen Abgleich von selbst ab.
@@ -3075,7 +3174,7 @@ ihn nicht selbst ab: die Quelle ist die Statistik in Home Assistant.
 
 Das Gegenstück zum Sprung: Die Summe eines Sensors in der Langzeitstatistik von Home Assistant **fällt** in einer
 Stunde, statt zu steigen. Meist wurde der Wert in Home Assistant nachträglich nach unten angepasst (unter
-*Entwicklerwerkzeuge → Statistik* mit „Wert anpassen“, mit einer zu großen Korrektur oder an der falschen Stunde), oder
+*Einstellungen → Werkzeuge → Statistik* (in älteren Home-Assistant-Versionen: *Entwicklerwerkzeuge → Statistik*) mit „Summe anpassen“, mit einer zu großen Korrektur oder an der falschen Stunde), oder
 ein Sensor hat einen kleineren Zählerstand gemeldet. Home Assistant bucht das als negative Menge, und eedc übernimmt die
 Statistik so, wie das Energie-Dashboard sie zeigt — der Rückgang steht als Abzug in Tag, Monat und Jahr, und
 «Aus HA laden» schlägt für den Monat einen zu kleinen oder negativen Wert vor.
@@ -3115,13 +3214,14 @@ Einspeisen — jede Richtung hat ihr eigenes Feld. Die Meldung nennt je Sensor u
 wird die ganze übernommene Statistik, nicht nur die letzten 30 Tage.
 
 **Lösungsweg**
-1. In Home Assistant unter *Entwicklerwerkzeuge → Statistik* den genannten Sensor suchen, beim Symbol „Wert anpassen“
-   die genannte Stunde wählen und die Menge auf den echten Wert setzen.
+1. In Home Assistant unter *Einstellungen → Werkzeuge → Statistik* (in älteren Home-Assistant-Versionen: *Entwicklerwerkzeuge → Statistik*) den genannten Sensor suchen und beim Symbol „Summe anpassen“ den Dialog
+   „Eine Statistik anpassen“ öffnen: unter „Zeitpunkt auswählen“ die Zeit des Rückgangs in der genannten Stunde wählen,
+   bei „Neuer Wert“ den echten Wert eintragen und „Anpassen“ drücken.
 2. Zurück in eedc am Befund **«Aus Home Assistant neu übernehmen»** klicken, die Vorschau lesen und **«Anwenden»**. Ohne
    Klick gleicht eedc die berichtigte Statistik beim nächtlichen Abgleich von selbst ab.
 3. Stammt der Rückgang von einem Sensor, den du inzwischen ersetzt hast (die Meldung sagt „Vorgänger-Sensor, zugeordnet
    bis …“): statt in Home Assistant zu berichtigen, in der
-   [Reparatur-Werkbank](eedc:/einstellungen/daten?block=energieprofil&karte=werkbank) die Operation «Werte vor dem
+   [Reparatur-Werkbank](eedc:/einstellungen/daten?block=energieprofil&karte=werkbank) (*Einstellungen → Daten → Energieprofil-Pflege*) die Operation «Werte vor dem
    Sensorbeginn verwerfen» ausführen.
 4. Hast du einen betroffenen Monat schon gespeichert (mit «Aus HA laden» oder per Import), den Monat unter
    [Monatsdaten](eedc:/einstellungen/daten?block=monatsdaten) öffnen und mit «Aus HA laden» neu übernehmen — ein
@@ -3314,7 +3414,7 @@ zurückgesetzt). Geprüft werden die letzten 31 abgeschlossenen Tage.
 1. Den Sensor in Home Assistant prüfen (im Standalone-Betrieb das MQTT-Topic): Hängt die Integration, ist das Gerät
    erreichbar, wurde der Zähler zurückgesetzt? Der Knopf **«Was gilt»** am Befund öffnet diesen Text.
 2. Liefert der Sensor wieder Werte, zählen die folgenden Tage richtig. Die Tage, an denen er stand, berichtigst du bei
-   Bedarf in Home Assistant unter *Entwicklerwerkzeuge → Statistik* mit „Wert anpassen“.
+   Bedarf in Home Assistant unter *Einstellungen → Werkzeuge → Statistik* (in älteren Home-Assistant-Versionen: *Entwicklerwerkzeuge → Statistik*) mit „Summe anpassen“.
 3. Erneut prüfen: im Daten-Checker **«Aktualisieren»** — die Zeile bleibt, solange der Stillstand in den geprüften
    31 Tagen liegt.
 
@@ -3322,6 +3422,283 @@ zurückgesetzt). Geprüft werden die letzten 31 abgeschlossenen Tage.
 eedc rechnet an diesen Tagen mit „keine Erzeugung“ und biegt nichts zurecht; Tages- und Monatsansicht im Cockpit zeigen
 deshalb unplausible Werte, etwa eine negative Autarkie. Nulleinspeisung, autarke Tage, Schnee auf den Modulen oder ein
 einzelner stehender String lösen diese Meldung nicht aus.
+
+### 4.8h Zählerstände – Zählerstand springt <a name="48h-zaehlerstaende--zaehlerstand-springt"></a>
+
+Wird das Gerät hinter einem Zähler getauscht und Home Assistant führt **denselben Sensor** weiter, springt sein Stand: Zeigt
+der neue Zähler mehr als der alte, zählt Home Assistant den Unterschied als Verbrauch bzw. Erzeugung der Stunde des Tauschs;
+beginnt der neue Zähler nicht bei 0, hält Home Assistant das für einen neuen Zählerlauf und zählt seinen ganzen Stand. eedc
+übernimmt die Statistik so, wie das Energie-Dashboard von Home Assistant sie zeigt, und berichtigt nichts — der Sprung steht in
+Tag, Monat und Jahr. Diese Kategorie nennt bis zu fünf solche Stunden mit Feld, Sensor, Stunde und Menge; weitere zählt die letzte Zeile. Geprüft wird die ganze
+übernommene Statistik.
+
+**Woran eedc einen Sprung erkennt.** Die Menge der Stunde wird mit dem größten Tagesverbrauch des Zählers im Jahr davor
+verglichen und durch die Tage seit seinem letzten Zuwachs geteilt (mindestens 1). Ein Sprung nach oben ist ein Befund ab dem
+Zehnfachen — wenn der Zähler schon ein Jahr mit gewöhnlichem Betrieb kennt (ein Jahr Statistik, an mindestens 14 Tagen etwas
+gezählt, an einem davon mindestens 1 kWh) oder die Menge mehr ist, als eine Anlage in einer Stunde leisten kann (100 kWh oder
+1,5 × die Anlagenleistung in kWp, was größer ist; nur bei kWh). Ein Neubeginn, der nicht bei 0 liegt, ist ein Befund ab dem
+Dreifachen. Beginnt eine Statistik mit einem Stand über 100 kWh bzw. 1,5 × die Anlagenleistung in kWp statt bei 0 (eine importierte Statistik, ein Zähler,
+der beim ersten Wert springt), nennt der Befund ihre erste Stunde («die Statistik beginnt mit diesem Stand statt bei 0») —
+eedc zählt sie wie Home Assistant ganz ([Handbuch Einstellungen §7.7c](HANDBUCH_EINSTELLUNGEN.md#77c-was-passiert-wenn)).
+Verglichen werden nur Stunden desselben Sensors.
+
+**Was kein Befund ist.** Eine Stunde, die nach einer Lücke die Menge mehrerer Stunden nachträgt; ein großer Verbrauch nach
+langer Ruhe (Wallbox nach Wochen, Wärmepumpe im ersten kalten Monat, PV nach Schnee); die erste gewöhnliche Stunde eines
+Zählers, der bisher nur Standby kannte; ein Zähler, der in den Tagen davor an weniger als 14 Tagen etwas gezählt hat
+(Neubeginn); ein Zähler, der bei 0 neu beginnt; ein Sensor, der kurz 0 gemeldet hat und
+zurückkehrt ([§4.8b](#48b-zaehlerstaende--sprung-in-home-assistant)); der Wechsel zwischen zwei Sensoren
+([Handbuch Einstellungen §7.7a](HANDBUCH_EINSTELLUNGEN.md#77a-die-frage-beim-wechsel-zwei-antworten)); die erste Stunde einer
+neuen Statistik bis zu dieser Grenze. Ein gefallener Zählerstand steht in
+[§4.8c](#48c-zaehlerstaende--rueckgang-in-home-assistant) bzw. bei Verbrauchszählern in [§4.23](#423-verbrauchszaehler-zaehlerstaende).
+
+**Zählerstände** (Gas, Wasser, Öl, Kilometerstand): Tag und Tabelle rechnen dort mit dem Stand, den der Sensor anzeigt, nicht
+mit der Summe der Statistik — „Summe anpassen“ in Home Assistant ändert daran nichts. Bei gefahrenen Kilometern liest der
+Monatswert die Summe (siehe unten). Der Befund ist dann eine Auskunft: er nennt den
+Weg, den getauschten Zähler als eigenes Gerät zu führen, und wie ein späterer Tausch ohne Sprung bleibt.
+
+**Summe beginnt neu, Stand läuft weiter** (gefahrene Kilometer, Feld „Gefahrene km“): Tag und Tabelle zählen die Zunahme des Kilometerstands, der
+Monatswert (Vorschlag im Monatsabschluss, «Aus HA laden») die Summe der Statistik in Home Assistant. Beginnt Home Assistant die
+Summe mitten in der Reihe neu — meist nach einer Lücke in der Statistik —, während der Stand weiterläuft, stehen für denselben
+Monat zwei Zahlen. Der Befund nennt den Tag mit beiden Tageszahlen (Stand und Summe) und die Stunde des Neubeginns; „Summe
+anpassen“ an dieser Stunde bringt die Summe auf die Zunahme des Stands; nach „Aus Home Assistant neu übernehmen“ zählen Tag,
+Tabelle und Monatswert dieselbe Zahl. Ein schon gespeicherter Monat ändert sich erst, wenn du ihn neu übernimmst oder von
+Hand berichtigst.
+
+---
+
+#### Zählerstand springt in der Statistik von Home Assistant <a name="ha_zaehlerstand_springt"></a>
+
+**Was eedc sieht**
+In einer Stunde ist der Zählerstand eines Sensors gesprungen — meist, weil das Gerät dahinter getauscht wurde und Home
+Assistant denselben Sensor weiterführt. Zeigt der neue Zähler mehr als der alte, zählt Home Assistant den Unterschied als
+Verbrauch bzw. Erzeugung dieser Stunde; beginnt der neue Zähler nicht bei 0, zählt es seinen ganzen Stand. eedc übernimmt die
+Statistik so, wie das Energie-Dashboard von Home Assistant sie zeigt, und berichtigt nichts — der Sprung steht deshalb in Tag,
+Monat und Jahr. Die Meldung nennt je Fund Feld, Sensor, Tag, Stunde und die Menge, die eedc wie Home Assistant dafür zählt.
+
+Dasselbe gilt, wenn die Statistik eines Sensors in Home Assistant gar nicht bei 0 beginnt, sondern mit einem großen Stand —
+etwa, weil sie importiert wurde: Home Assistant zählt diesen Stand als Menge der ersten Stunde, eedc ebenso. Die Meldung sagt
+dann „die Statistik beginnt mit diesem Stand statt bei 0“. eedc nennt das nur, wenn der Stand mehr
+ist, als eine Anlage in einer Stunde erzeugen oder verbrauchen kann.
+
+Ein dritter Fall betrifft die **gefahrenen Kilometer** (Feld „Gefahrene km“): Tag und Tabelle zählen die Zunahme des Kilometerstands, der Monatswert
+(Vorschlag im Monatsabschluss, „Aus HA laden“) die Summe der Statistik. Beginnt Home Assistant die Summe mitten in der Reihe
+neu — meist nach einer Lücke in der Statistik —, während der Stand weiterläuft, stehen für denselben Monat zwei Zahlen. Die
+Meldung sagt dann „die Summe beginnt neu, der Stand läuft weiter“ und nennt den Tag mit beiden Tageszahlen.
+
+**Lösungsweg**
+1. In Home Assistant unter *Einstellungen → Werkzeuge → Statistik* (in älteren Home-Assistant-Versionen: *Entwicklerwerkzeuge → Statistik*) den genannten Sensor suchen und beim Symbol „Summe anpassen“ den Dialog
+   „Eine Statistik anpassen“ öffnen: unter „Zeitpunkt auswählen“ die Zeit des Sprungs in der genannten Stunde wählen, bei
+   „Neuer Wert“ die echte Menge eintragen und „Anpassen“ drücken. Beginnt die Statistik mit einem großen Stand, ist das
+   die erste Stunde der Statistik, und die echte Menge ist das, was in dieser ersten Stunde wirklich gezählt wurde.
+2. Zurück in eedc am Befund **«Aus Home Assistant neu übernehmen»** klicken, die Vorschau lesen und **«Anwenden»** —
+   eedc holt die berichtigte Statistik und baut den Tag des größten Funds neu auf. Ohne Klick gleicht eedc die
+   Statistik beim nächtlichen Abgleich von selbst ab.
+3. Hast du einen betroffenen Monat schon gespeichert (mit «Aus HA laden» oder per Import), den Monat unter
+   [Monatsdaten](eedc:/einstellungen/daten?block=monatsdaten) öffnen und mit «Aus HA laden» neu übernehmen — ein
+   gespeicherter Monat ändert sich nicht von allein.
+4. **Zählerstand** (Gas, Wasser, Öl, Kilometerstand; die Meldung sagt es): hier rechnen Tag und Tabelle mit dem Stand, den
+   der Sensor anzeigt, und „Summe anpassen“ ändert daran nichts (bei gefahrenen Kilometern liest der Monatswert die Summe,
+   siehe Schritt 5). Wurde der Zähler getauscht, führe den neuen als eigenes Gerät: unter
+   *Einstellungen → Komponenten* am alten Gerät ein «Stilllegungsdatum (optional)» setzen, den Haken «Aktiv (in
+   Berechnungen berücksichtigen)» stehen lassen und den neuen Zähler als eigenes Gerät anlegen (Handbuch Einstellungen,
+   Verbrauchszähler). Beim nächsten Tausch zählt kein Sprung, wenn du in Home Assistant für den neuen Zähler einen eigenen
+   Sensor oder Helfer anlegst, ihn in eedc unter [Datenquellen](eedc:/einstellungen/datenquellen) dem Feld zuordnest
+   und im Dialog «Bisherige Werte bleiben» wählst.
+5. **Summe beginnt neu, der Stand läuft weiter** (gefahrene Kilometer; die Meldung sagt es) — zwei Wege.
+   **Weg 1, die Summe in Home Assistant berichtigen:** wie in Schritt 1 „Summe
+   anpassen“ öffnen, unter „Zeitpunkt auswählen“ die genannte Stunde wählen und bei „Neuer Wert“ die Zunahme des Stands in
+   dieser Stunde eintragen (der Unterschied der beiden Stände, die die Meldung in Klammern nennt), dann „Anpassen“. Danach
+   Schritt 2 und, für gespeicherte Monate, Schritt 3 — oder den Monat unter
+   [Monatsdaten](eedc:/einstellungen/daten?block=monatsdaten) von Hand berichtigen. Damit zählen Tag, Tabelle und Monatswert
+   dieselbe Zahl (auf den Kilometer genau); die Kilometer der Lücke stehen dann im Tag des Neubeginns, wie der Stand sie
+   zeigt. Ein schon gespeicherter Monat ändert sich erst, wenn du ihn neu übernimmst oder von Hand berichtigst.
+
+   **Weg 2, die Werte vor der Stunde des Neubeginns verwerfen** — wenn die Kilometer davor ohnehin nicht stimmen (etwa
+   weil vorher ein falscher Sensor zugeordnet war) und eedc das Feld erst ab dieser Stunde zählen soll:
+   1. In eedc unter *Einstellungen → Daten → Energieprofil-Pflege* die [Reparatur-Werkbank](eedc:/einstellungen/daten?block=energieprofil&karte=werkbank) öffnen und unter
+      „Operation“ **«Werte eines Felds vor einem Zeitpunkt verwerfen»** wählen.
+   2. Unter „Feld“ das Feld aus der Meldung wählen („… · Gefahrene km“ mit dem Namen deines Autos), unter
+      „Verwerfen vor (Tag)“ den Tag und unter „Uhrzeit“ die Stunde aus der Meldung („am …, Stunde ab …“).
+   3. **«Plan erstellen»** und die Vorschau lesen: sie nennt, was gelöscht wird (die Stunden des Felds im HA-Spiegel,
+      seine Zählerstände und seine Stunden- und Tageswerte vor dem Zeitpunkt), dass eedc den Tag des Zeitpunkts für alle
+      Felder neu bildet (Werte anderer Felder können sich an diesem Tag ändern), was bleibt (Wetter, Preise, Prognosen und
+      die gespeicherten Monatswerte — mit den Monaten; an den übrigen neu gebildeten Tagen ändert sich an den anderen
+      Feldern nur, was dort auch „Tag neu aggregieren“ ändern würde), und endet mit „Das lässt sich nicht rückgängig
+      machen.“
+   4. **«Operation ausführen»** — eedc bildet die betroffenen Tage im Hintergrund neu.
+
+   Danach zeigt das Feld vor dem Zeitpunkt „—“ in Tag und Tabelle; der Tag des Neubeginns zählt die Kilometer ab der
+   gewählten Stunde (die Stunde selbst zeigt „—“, sie hat keinen Stand davor); die Kilometer, um die der Stand über die
+   Lücke gesprungen ist, zählen nicht mehr. Diesen Tag bildet eedc für alle Felder neu — aus der Statistik von Home
+   Assistant bzw. den gespeicherten Zählerständen —, die Werte anderer Felder können sich an diesem Tag ändern. Home Assistant behält seine Statistik; eedc holt die Zeit vor dem Zeitpunkt
+   nicht wieder — auch nicht mit «Aus Home Assistant neu übernehmen» oder „Tag neu aggregieren“. Gespeicherte Monatswerte bleiben, wie sie sind: soll ein
+   Monat zu den verbliebenen Werten passen, berichtige ihn unter
+   [Monatsdaten](eedc:/einstellungen/daten?block=monatsdaten) von Hand. Der Rückweg ist eine Sicherung der
+   eedc-Datenbank von vorher.
+6. Erneut prüfen: im Daten-Checker **«Aktualisieren»** — nach den Schritten 1 und 2 (bzw. 5, Weg 1 oder 2) ist der Befund
+   aus der Liste verschwunden. Ein Sprung an einem Zählerstand (Schritt 4) bleibt stehen; die Zeile erklärt ihn weiterhin.
+
+Bleibt der Befund danach: stell deine Frage im Forum oder auf GitHub. Bitten wir dich dort um das Diagnose-Paket:
+im Kopf des Daten-Checkers **«Diagnose-Paket»** öffnen, **«Herunterladen»** und die Datei
+an die Adresse aus unserer Antwort schicken.
+
+**Was ohne Handlung gilt**
+Der Sprung bleibt in Tag, Monat und Jahr stehen — in eedc wie im Energie-Dashboard von Home Assistant. eedc schneidet ihn
+nicht selbst ab: die Quelle ist die Statistik in Home Assistant. Beginnt die Summe neu (gefahrene Kilometer), bleiben Tag
+und Tabelle bei der Zunahme des Stands und der Monatswert bei der Summe — für den Monat stehen weiter zwei Zahlen.
+
+### 4.8j Zählerstände – Gespeicherter Monatswert passt nicht mehr <a name="48j-zaehlerstaende--gespeicherter-monatswert-passt-nicht-mehr"></a>
+
+Ein Wechsel der Quelle mit «Bisherige Werte bleiben» oder ein eingetragener Zählertausch ändert, was eedc für einen Monat
+aus der Quelle bildet. Ein Monatswert, den du vorher gespeichert hast (Monatsabschluss, «Aus HA laden», Import),
+bleibt dabei, wie er ist — und alles, was eedc für diesen Monat zeigt, rechnet mit ihm. Diese Kategorie nennt einen solchen
+Monat, wenn der gespeicherte Wert und der Wert, den die Quelle heute für den ganzen Monat ergibt, um mindestens 1 kWh
+auseinanderliegen (dieselbe Schwelle wie die Vorschau von «Monatsdaten aus HA-Statistik laden»).
+
+**Was kein Befund ist.** Ein Monat, den kein Wechsel berührt; ein Monat nach dem Monat, in dem der Wechsel eingetragen wurde
+(diesen Wert hast du schon mit dem Wechsel gespeichert); ein Monat ohne gespeicherten Wert; ein Monat, für den eedc heute
+keinen vollen Wert hat; der laufende Monat; ein
+Wert, den du im Monatsabschluss mit «gespeicherten behalten» bewusst behalten hast. Nicht geprüft werden der
+Anlagen-PV-Zähler (sein Monatswert ist die Summe je Modul) und Felder, deren Werte eedc nicht stündlich mitschreibt.
+
+---
+
+#### Gespeicherter Monatswert passt nicht mehr zur Quelle <a name="monatswert_ueberholt"></a>
+
+**Was eedc sieht**
+Für diesen Monat ist ein Monatswert gespeichert, und ein Wechsel der Quelle («Bisherige Werte bleiben») oder ein eingetragener
+Zählertausch hat seither geändert, was die Quelle für diesen Monat ergibt — um mindestens 1 kWh. eedc prüft
+nur Monate bis zu dem Monat, in dem der Wechsel eingetragen wurde; einen späteren Monat hast du schon mit dem Wechsel gespeichert. Die
+Meldung nennt Feld und Monat, die Details den gespeicherten Wert, den Wert der Quelle und seit wann er gilt. Alles, was eedc für
+diesen Monat zeigt, rechnet mit dem gespeicherten Wert.
+
+**Lösungsweg**
+1. Am Befund **«Monat öffnen»** klicken — das Formular des Monats öffnet sich: bei Einspeisung oder Netzbezug der Anlage beim
+   Feld, bei einem Gerät beim Gerät; dort das Feld aus der Meldung suchen.
+2. Den Wert der Quelle aus den Details in das Feld eintragen. Steht unter dem Feld «Sensor meldet …», genügt
+   **«Sensorwert übernehmen»**, wenn dort derselbe Wert steht.
+3. **«Speichern & abschließen»** klicken.
+4. Soll der gespeicherte Wert bleiben (etwa, weil er von einem geeichten Zähler abgelesen ist): im Formular beim Feld
+   **«gespeicherten behalten»** wählen und speichern — dann nennt eedc den Monat nicht mehr.
+5. Erneut prüfen: im Daten-Checker **«Aktualisieren»** — der Monat ist aus der Liste verschwunden.
+
+**Was ohne Handlung gilt**
+Der gespeicherte Monatswert bleibt, und eedc rechnet den Monat weiter mit ihm. Tageswerte und die Tagesansicht folgen der
+Quelle; Monat und Tage dieses Monats passen dann um die genannte Abweichung nicht zueinander. eedc ändert keinen gespeicherten
+Wert von selbst.
+
+### 4.8k Zählerstände – Zählerstand springt (MQTT) <a name="48k-zaehlerstaende--zaehlerstand-springt-mqtt"></a>
+
+Bei MQTT ist der Zählerstand, den der Publisher sendet, die Quelle; eedc bildet daraus je Stunde die Menge nach der Regel von
+Home Assistant und berichtigt nichts. Wechselt der Stand die Höhe — der Zähler oder das Gerät wurde getauscht, oder ein anderes
+Gerät sendet auf demselben Topic —, zählt diese Regel den Unterschied als Menge der Stunde: einen Sprung nach oben ganz, einen
+Neubeginn, der nicht bei 0 liegt, mit dem ganzen neuen Stand, einen Fall um weniger als ein Zehntel als negative Menge. Meldet
+das Gerät innerhalb einer Stunde kurz 0 oder sendet ein anderes Gerät kurz seinen Stand, zählt sie den ganzen Stand, obwohl am
+Ende der Stunde wieder der alte Zähler steht. Diese
+Kategorie nennt bis zu fünf solche Stunden mit Feld, Zeit und Menge (weitere zählt die letzte Zeile); der Knopf «Zähler getauscht» öffnet in den Datenquellen den Dialog
+mit der Zeit des Sprungs. Geprüft werden alle Stunden, die eedc für das Feld aus MQTT führt.
+
+**Woran eedc einen Sprung erkennt.** Wie in [§4.8h](#48h-zaehlerstaende--zaehlerstand-springt): die Menge der Stunde wird mit
+dem größten Tagesverbrauch des Zählers im Jahr davor verglichen und durch die Tage seit seinem letzten Zuwachs geteilt; ein
+Sprung nach oben ist ein Befund ab dem Zehnfachen — wenn der Zähler schon ein Jahr mit gewöhnlichem Betrieb kennt oder die Menge
+mehr ist, als eine Anlage in einer Stunde leisten kann —, ein Neubeginn ab dem Dreifachen. Ein Rückgang (die Stunde zählt weniger
+als −0,01 kWh) ist immer ein Befund, ebenso eine Stunde, deren Menge um mindestens neun Zehntel des Stands davor über dem liegt,
+was der Zählerstand selbst gewachsen ist (kurz eine andere Höhe). Für die letzten 31 Tage gilt ein Sprung nach oben nur, wenn
+der Stand in der Stunde eindeutig die Höhe wechselt oder sich mit einem einzelnen Schritt ändert, der fast die ganze Menge der
+Stunde trägt und mehr als zehnmal so groß ist wie die Schritte der 24 Stunden davor.
+
+**Was kein Befund ist.** Ein Zähler, der täglich oder monatlich bei 0 neu beginnt
+([§4.8a](#48a-zaehlerstaende--ruecksprung)); eine Stunde, die nach einer Lücke die Menge mehrerer Stunden nachträgt;
+ein Zähler mit weniger als 14 Tagen mit Zuwachs (Neubeginn); die erste gewöhnliche Stunde nach Wochen mit nur Standby (eine
+Wallbox vor dem ersten Auto, eine Wärmepumpe nach dem Sommer); ein Stand, der um weniger als ein Zehntel fällt und in der
+nächsten Stunde zurückkehrt; eine Stunde, an der ein Zählertausch schon eingetragen
+ist. **PV- und Einspeise-Felder** gehören dazu wie jedes andere Feld: der Sprung steht bis zum Eintrag in Tag und Monat, und
+diese Kategorie nennt ihn. **Grenze:** an einem Tag, den eedc aus den gespeicherten Stundenwerten liest (Tag ohne Kanal-Deckung),
+zählt die Stunde des Sprungs an PV und Einspeisung weiter nicht (die Plausibilitätsgrenze dieses Wegs greift, auch für ihre echte
+Menge), der Befund nennt sie trotzdem; ebenso bleibt eine Stunde, die eedc vor dieser Version so gespeichert hat, ohne Befund
+([Handbuch Einstellungen §7.7c](HANDBUCH_EINSTELLUNGEN.md#77c-was-passiert-wenn)).
+
+---
+
+#### Zählerstand springt in einer MQTT-Reihe <a name="mqtt_zaehlerstand_springt"></a>
+
+**Was eedc sieht**
+Bei MQTT ist der Zählerstand, den der Publisher sendet, die Quelle; eedc bildet daraus je Stunde die Menge nach der Regel von
+Home Assistant. In der genannten Stunde wechselt der Stand die Höhe: er springt nach oben, beginnt neu, aber nicht bei 0, oder
+fällt um weniger als ein Zehntel — oder er zeigt innerhalb der Stunde kurz eine andere Höhe (etwa 0 oder den Stand eines anderen
+Geräts) und steht danach wieder auf dem alten Zähler. eedc zählt den Unterschied bzw. den ganzen Stand als Menge dieser Stunde —
+in Tag, Monat und Jahr. So sieht es aus, wenn der Zähler oder das Gerät getauscht wurde, das Gerät kurz 0 meldet oder ein anderes
+Gerät auf demselben Topic sendet. Die Meldung nennt Feld, Tag und Uhrzeit, die Details den Stand davor und danach und die Menge,
+die eedc für die Stunde zählt. Steht die Stunde nur auf einem einzelnen Schritt, der viel größer ist als die Schritte davor,
+aber nicht schneller, als die Anlage zählen kann (etwa eine Ladung, wenn das Gerät seinen Stand nur selten sendet), sagen die
+Details, dass eedc einen Tausch nicht von gezählter Menge unterscheiden kann.
+
+**Lösungsweg**
+1. Am Befund **«Zähler getauscht»** klicken — in den Datenquellen öffnet sich beim Feld der Dialog **«Zähler getauscht (gleiche
+   Quelle)»**; **«Getauscht am»** steht auf der Zeit, zu der der Zählerstand springt bzw. zurückkehrt.
+2. Die Sätze im Dialog lesen: Sie nennen die Zeit, zu der der Stand springt, und den Stand davor und danach – bei einem
+   einzelnen Schritt auch die Menge, die nach dem Eintrag nicht zählt, und dass für diese Stunde danach kein weiterer Tausch
+   eintragbar ist –, und — ist die Stunde schon gespeichert — was sie danach zählt. Kann eedc den Schritt nicht von gezähltem
+   Verbrauch unterscheiden, steht dort «Ob das ein Tausch ist oder eine gezählte Menge, erkennt eedc nicht.»
+3. Nur bei einem Tausch: **«Eintragen»** klicken. Darüber steht «Ein Eintrag lässt sich nicht zurücknehmen.» Nennen die
+   Details einen einzelnen Schritt («eedc erkennt den Unterschied nicht») und war es gezählte Menge (etwa eine Ladung), nichts
+   eintragen — der Wert stimmt.
+4. Erneut prüfen: im Daten-Checker **«Aktualisieren»** — nach dem Eintrag ist die Stunde aus der Liste verschwunden. Steht im
+   Dialog statt **«Eintragen»** ein Satz, dass die Stunde danach weniger als nichts zählte, ist nichts eingetragen: die Zeit
+   unter **«Getauscht am»** prüfen. Sagt er, dass der neue Zähler noch nichts gemeldet hat, den Tausch eintragen, sobald er
+   meldet.
+
+Stimmt der Sprung (der Zähler hat wirklich so viel gezählt), ist nichts zu tun. Für die letzten 31 Tage prüft eedc dazu die
+gespeicherten Zählerstände: die Prüfung nennt eine Stunde nur, wenn der Stand dort die Höhe wechselt oder sich mit einem
+einzelnen Schritt ändert, der fast die ganze Menge der Stunde trägt und deutlich größer ist als die Schritte der 24 Stunden
+davor. Ändert er sich gleichmäßig (etwa beim Laden), in zwei ähnlich großen Schritten oder mit einem Schritt, wie er in den 24
+Stunden davor schon vorkam, nennt sie die Stunde nicht — die Menge zählt. Ob an einer Zeit ein Tausch eingetragen wird,
+entscheidest du: der Dialog **«Zähler getauscht (gleiche Quelle)»** trägt auch dort ein, wo die Prüfung nichts nennt, und sagt
+dann «Einen Sprung sieht eedc an dieser Zeit nicht.»
+Sendet der Publisher den Tageswert statt des fortlaufenden Stands, gilt [Zählerstand springt zwischendurch zurück](#zaehler_ruecksprung).
+
+**Was ohne Handlung gilt**
+Die Stunde zählt den Unterschied der Zählerstände als Menge, und Tag, Monat und Jahr enthalten ihn. Nach dem Eintrag zählt die
+Stunde nur, was der alte Zähler bis zu seinem letzten und der neue ab seinem ersten Stand gezählt hat (aus den gespeicherten
+Zählerständen der letzten 31 Tage; ältere sind nicht mehr gespeichert — dann zählt die Stunde des Tauschs keinen Zuwachs). Die
+Live-Anzeige rechnet direkt aus den Zählerständen: sie zeigt den Sprung am Tag des Sprungs unter „heute“ und am Tag danach
+unter „gestern“, auch nach dem Eintrag.
+
+### 4.8l Zählerstände – Daten vor der Änderung gelöscht <a name="48l-zaehlerstaende--daten-vor-der-aenderung-geloescht"></a>
+
+Wechselt die Quelle eines Felds, das schon eigene Werte hat, fragt eedc: «Bisherige Werte bleiben» oder «Daten vor der Änderung
+löschen». Mit «löschen» gehen nur die Daten dieses Felds aus der Zeit vor der Änderung weg; das Feld verhält sich danach, als
+wäre der neue Sensor von Anfang an zugeordnet — was Home Assistant für ihn führt, übernimmt eedc, davor zeigt das Feld «—».
+Diese Kategorie nennt je solchem Feld eine Auskunft: wann gelöscht wurde, seit wann Home Assistant den neuen Sensor führt, ob
+der erste Tag für das Feld nur teilweise zählt (der Sensor beginnt in Home Assistant mitten am Tag — eedc zählt den Tag wie Home
+Assistant ab dieser Stunde), und die Monate mit gespeichertem Monatswert, die bleiben. Nach einer ersten Zuordnung ohne
+«löschen» gibt es diese Auskunft nicht, auch wenn der erste Tag dort ebenso nur ab der ersten Stunde der Statistik zählt
+([Handbuch Einstellungen §7.7c](HANDBUCH_EINSTELLUNGEN.md#77c-was-passiert-wenn)).
+
+---
+
+#### Daten vor der Änderung gelöscht <a name="daten_vor_aenderung_geloescht"></a>
+
+**Was eedc sieht**
+Beim Wechsel der Quelle dieses Felds wurde «Daten vor der Änderung löschen» gewählt. Die Daten dieses Felds aus der Zeit vor
+der Änderung sind gelöscht; seitdem verhält sich das Feld, als wäre der neue Sensor von Anfang an zugeordnet: Was Home
+Assistant für ihn führt, übernimmt eedc, für die Zeit davor zeigt das Feld «—». Die Meldung nennt das Feld und den Zeitpunkt
+der Änderung. Die Details sagen, seit wann Home Assistant den neuen Sensor führt, und — beginnt er mitten an einem Tag — dass
+dieser Tag für das Feld nicht vollständig ist: eedc zählt ihn wie Home Assistant erst ab dieser Stunde. Bei einer Quelle ohne
+Statistik in Home Assistant (MQTT) sprechen sie von der neuen Quelle und nennen den Zeitpunkt ihres ersten gespeicherten
+Zählerstands: ab ihm zählt eedc. Dazu nennen die Details die Monate mit gespeichertem Monatswert; die bleiben, wie sie sind.
+
+**Lösungsweg**
+1. Die Angabe lesen. Stimmt sie, ist nichts zu tun: die Auskunft beschreibt, was beim Wechsel gewählt wurde.
+2. Soll ein gespeicherter Monatswert eines genannten Monats zum neuen Sensor passen: unter
+   [«Monatsdaten»](eedc:/einstellungen/daten?block=monatsdaten) am Monat den Stift wählen und den Wert des Felds überschreiben,
+   oder den Monat mit **«Aus HA laden»** aus Home Assistant holen. Führt Home Assistant den neuen Sensor nur für einen Teil des
+   Monats, schlägt «Aus HA laden» nur diesen Teil vor.
+3. Erneut prüfen: im Daten-Checker **«Aktualisieren»** — die Zeile bleibt; sie sagt, was für dieses Feld gilt.
+
+**Was ohne Handlung gilt**
+Die gelöschten Daten kommen nicht zurück. Was Home Assistant für den neuen Sensor führt, zeigt eedc wie Home Assistant; davor
+zeigt das Feld «—». eedc schätzt, verteilt und überbrückt nichts. Gespeicherte Monatswerte bleiben, wie sie sind.
 
 ### 4.9 Datenquellen – HA-Statistics <a name="49-sensor-mapping--ha-statistics"></a>
 
@@ -3392,7 +3769,7 @@ deshalb stehen dort Werte, während die Tagesansicht im Cockpit und die Stundenw
    `state_class: total_increasing` per `customize` setzen (Neustart von Home Assistant nötig).
 2. Am Befund **«Anderen Sensor wählen»** klicken — die Datenquellen-Zuordnung öffnet sich am ersten betroffenen Feld; dort den
    Helfer zuordnen.
-3. Die Tage danach in der [Reparatur-Werkbank](eedc:/einstellungen/daten?block=energieprofil&karte=werkbank) mit «Mehrere
+3. Die Tage danach in der [Reparatur-Werkbank](eedc:/einstellungen/daten?block=energieprofil&karte=werkbank) (*Einstellungen → Daten → Energieprofil-Pflege*) mit «Mehrere
    Tage neu aggregieren» neu berechnen — Home Assistant sammelt die Summenwerte erst ab der Umstellung.
 4. Erneut prüfen: im Daten-Checker **«Aktualisieren»** — die Zeile ist verschwunden, sobald jeder genannte Sensor eine
    Summen-Spalte hat.
@@ -3506,7 +3883,7 @@ kWh-Zähler: Es müssen die kWh-Zeilen belegt sein, nicht nur die Watt-Zeilen.
 1. Nach der Einrichtung zuerst den nächsten Lauf abwarten.
 2. Bleibt die Zeile: in der [Datenquellen-Zuordnung](eedc:/einstellungen/datenquellen) die kWh-Zähler zuordnen
    (Einspeisung, Netzbezug, PV und die Komponenten).
-3. Zurückliegende Tage holt in der [Reparatur-Werkbank](eedc:/einstellungen/daten?block=energieprofil&karte=werkbank) die
+3. Zurückliegende Tage holt in der [Reparatur-Werkbank](eedc:/einstellungen/daten?block=energieprofil&karte=werkbank) (*Einstellungen → Daten → Energieprofil-Pflege*) die
    Operation «Lücken aus HA-LTS nachfüllen».
 4. Erneut prüfen: im Daten-Checker **«Aktualisieren»** — statt dieser Zeile nennt die Kategorie die aktive Quelle als
    bestanden.
@@ -3527,7 +3904,7 @@ aufgebaut sind, gilt sie als Quelle.
    einem Tag aus eedcs eigener Erfassung; Tage dazwischen, die eedc direkt aus Home Assistant führt, behalten ihre
    Mengen — die Vorschau nennt sie.
 2. Steht am Befund kein solcher Knopf, gibt es in diesem Fenster keinen Tag, den eedc neu aufbauen müsste. Einen einzelnen
-   Tag baut in der [Reparatur-Werkbank](eedc:/einstellungen/daten?block=energieprofil&karte=werkbank) die Operation «Tag neu
+   Tag baut in der [Reparatur-Werkbank](eedc:/einstellungen/daten?block=energieprofil&karte=werkbank) (*Einstellungen → Daten → Energieprofil-Pflege*) die Operation «Tag neu
    aggregieren» neu auf.
 3. Erneut prüfen: im Daten-Checker **«Aktualisieren»** — statt dieser Zeile nennt die Kategorie die Statistik von Home
    Assistant als aktive Quelle.
@@ -3700,7 +4077,7 @@ im Cockpit, Energieprofil, Tagesabschlüsse.
 2. Standalone (eigener Container): dort die Umgebungsvariable `TZ` auf die Zeitzone von Home Assistant setzen, die die
    Details nennen (in `docker-compose.yml` unter `environment`), und den Container neu starten.
 3. Bereits gespeicherte Tage ändern sich dadurch nicht. Sie lassen sich danach in der
-   [Reparatur-Werkbank](eedc:/einstellungen/daten?block=energieprofil&karte=werkbank) mit «Mehrere Tage neu aggregieren» neu
+   [Reparatur-Werkbank](eedc:/einstellungen/daten?block=energieprofil&karte=werkbank) (*Einstellungen → Daten → Energieprofil-Pflege*) mit «Mehrere Tage neu aggregieren» neu
    berechnen.
 4. Erneut prüfen: im Daten-Checker **«Aktualisieren»** — die Zeile ist verschwunden.
 
@@ -3928,7 +4305,11 @@ und anfällig für Lücken. Die Meldung nennt das Feld, die Details die zugeordn
 
 **Lösungsweg**
 1. Am Befund **«Sensor wechseln»** klicken — die Datenquellen-Zuordnung öffnet sich an diesem Feld.
-2. Dort einen fortlaufenden kWh-Zähler wählen.
+2. Dort einen fortlaufenden kWh-Zähler wählen. Hat das Feld schon eigene Werte, fragt eedc vor dem Speichern
+   **„Warum wechselt die Quelle?"** — hier passt meist **„Daten vor der Änderung löschen — das Feld beginnt mit dem neuen
+   Sensor neu"**: die Werte dieses Felds aus der Zeit davor gehen weg, und eedc übernimmt, was Home Assistant für den neuen
+   Zähler führt. Unter **„Was danach geschieht"** steht vorher, welche gespeicherten Monatswerte bleiben; das Löschen lässt
+   sich nicht rückgängig machen (Handbuch Einstellungen, §7.7a „Die Frage beim Wechsel: zwei Antworten“).
 3. Erneut prüfen: im Daten-Checker **«Aktualisieren»** — die Zeile ist verschwunden.
 
 **Was ohne Handlung gilt**
@@ -4022,7 +4403,7 @@ Der angezeigte Wert kommt weiter aus der höchstprioren Quelle. Der Hinweis ist 
 
 > **Liest eedc deine Anlage aus der Statistik von Home Assistant,** nimmt es PV, Einspeisung, Netzbezug und Speicher an solchen Tagen direkt von dort — die eedc-Seite des Vergleichs *ist* dann die Zahl von Home Assistant, und eine Abweichung der alten gespeicherten Tageszeile wird nicht mehr gemeldet (die Tagesansicht im Cockpit zeigt sie ohnehin nicht). Wallbox, E-Auto, Wärmepumpe und sonstige Geräte kommen an einem solchen Tag ebenfalls von dort, wenn sie zugeordnet sind; nur ein Gerät ohne solchen Wert liest die Prüfung aus der gespeicherten Tageszeile. Ein bloßes Neuberechnen des Tages ändert daran nichts — deshalb trägt die Zeile an einer solchen Anlage **«Aus Home Assistant neu übernehmen»** (zuerst der Abgleich mit Home Assistant, dann der Tag); ohne diese Verbindung heißt der Knopf **«Tag neu aufbauen»**. Massen-Reparaturen gibt es bewusst nur in der Reparatur-Werkbank, damit sie aktiv gewählt werden.
 >
-> **Nach einer Korrektur in Home Assistant** (etwa unter *Entwicklerwerkzeuge → Statistik*) trägt eedc bis zum nächtlichen Abgleich um 02:45 noch den alten Stand. So lange bleibt der Drift-Eintrag stehen; danach verschwindet er von selbst. Ob der Abgleich gelaufen ist, steht unter *Einstellungen → System → Protokolle* (Reiter **Aktivitäten**, Kategorie **„Scheduler-Jobs"**): eine Zeile je Nacht und Anlage, auch wenn nichts abweicht. Sofort geht es mit **«Aus Home Assistant neu übernehmen»** an der Zeile.
+> **Nach einer Korrektur in Home Assistant** (etwa unter *Einstellungen → Werkzeuge → Statistik* (in älteren Home-Assistant-Versionen: *Entwicklerwerkzeuge → Statistik*)) trägt eedc bis zum nächtlichen Abgleich um 02:45 noch den alten Stand. So lange bleibt der Drift-Eintrag stehen; danach verschwindet er von selbst. Ob der Abgleich gelaufen ist, steht unter *Einstellungen → System → Protokolle* (Reiter **Aktivitäten**, Kategorie **„Scheduler-Jobs"**): eine Zeile je Nacht und Anlage, auch wenn nichts abweicht. Sofort geht es mit **«Aus Home Assistant neu übernehmen»** an der Zeile.
 >
 > **Verglichen wird nur, was Home Assistant für den Tag auch liefern konnte.** Ein Zähler ohne Summen-Spalte (§4.9) taucht hier nicht als Lücke auf — sonst meldete der Vergleich Phantom-Drift und böte einen Knopf an, der korrekte Werte mit 0 überschreibt.
 >
@@ -4052,14 +4433,26 @@ eedc und Home Assistant zeigen für diese Tage dieselben Zahlen.
 **Was eedc sieht**
 Für diesen Tag steht in eedc eine andere PV-Erzeugung als in der Langzeitstatistik von Home Assistant (mindestens 2 kWh und
 5 % Unterschied). Mehrere solche Tage stehen als eine Zeile «n Tage weichen von Home Assistant ab» mit einem Glied je Tag,
-die größten Abweichungen vorn.
+die größten Abweichungen vorn. Geprüft werden die Tage der letzten 90 Tage bis gestern.
+
+**Benannte Grenze — die Stunde 23–24 Uhr:** die Prüfung der PV liest den Vergleichswert aus Home Assistant von 23 Uhr des
+Vortags bis 23 Uhr; eedc zeigt an Tagen aus dem Home-Assistant-Spiegel den Kalendertag (0 bis 24 Uhr). Weil PV zwischen 23 und
+24 Uhr praktisch nichts erzeugt, ändert das den Vergleich nicht. Am **ersten Tag einer Statistik** gibt es zwei Fälle, in
+denen ein Tag erscheint, obwohl eedc und Home Assistant dieselbe Zahl zeigen: dem Vergleichswert fehlt die Stunde 23–24 Uhr
+(nur wenn sie mindestens 2 kWh und 5 % trägt); und beginnt die Statistik mit einem großen ersten Wert (etwa eine importierte
+Statistik), lässt der Vergleichswert diese Stunde als unplausibel aus, Tagesansicht und Home Assistant zählen sie. Im zweiten
+Fall zeigt der Tag den großen ersten Wert wie Home Assistant, und „Zählerstand springt“ nennt diese erste Stunde — ist er dort
+falsch, berichtige ihn dort (Schritt 1). Erkennen: zeigen die Tagesansicht in eedc und Home Assistant für den genannten Tag
+dieselbe Zahl, ist ungenau allein der Vergleichswert; dann ist nichts zu tun. Wallbox, E-Auto, Wärmepumpe, Sonstiges,
+Einspeisung und Netzbezug vergleicht der Daten-Checker an solchen Tagen mit dem Kalendertag von Home Assistant (Befund „Ein
+Gerät weicht an Tagen von Home Assistant ab“).
 
 **Lösungsweg**
 1. In Home Assistant prüfen, welcher Wert stimmt. Ist die Statistik dort falsch (etwa ein Zählersprung), sie unter
-   *Entwicklerwerkzeuge → Statistik* beim Sensor mit „Wert anpassen“ für diesen Tag berichtigen.
+   *Einstellungen → Werkzeuge → Statistik* (in älteren Home-Assistant-Versionen: *Entwicklerwerkzeuge → Statistik*) beim Sensor mit „Summe anpassen“ für diesen Tag berichtigen.
 2. Zurück in eedc am Befund **«Aus Home Assistant neu übernehmen»** klicken (ohne Spiegel heißt der Knopf «Tag neu
    aufbauen»), die Vorschau lesen und **«Anwenden»**. Für viele Tage auf einmal: in der
-   [Reparatur-Werkbank](eedc:/einstellungen/daten?block=energieprofil&karte=werkbank) «Mehrere Tage neu aggregieren».
+   [Reparatur-Werkbank](eedc:/einstellungen/daten?block=energieprofil&karte=werkbank) (*Einstellungen → Daten → Energieprofil-Pflege*) «Mehrere Tage neu aggregieren».
 3. Erneut prüfen: im Daten-Checker **«Aktualisieren»** — der Tag ist aus der Zeile verschwunden.
 
 Bleibt der Befund danach: stell deine Frage im Forum oder auf GitHub. Bitten wir dich dort um das Diagnose-Paket:
@@ -4076,16 +4469,27 @@ eedc zeigen für diesen Tag verschiedene Zahlen, bis einer der beiden berichtigt
 Für eine Komponente (Wallbox, E-Auto, Wärmepumpe, Sonstiges, Einspeisung oder Netzbezug) steht in eedc an einem oder
 mehreren Tagen ein anderer Wert als in der Langzeitstatistik von Home Assistant — mindestens 2 kWh und 5 % Unterschied.
 Es gibt eine Zeile je Gerät, nicht je Tag; sie nennt den Tag mit der größten Abweichung und beide Zahlen. Diese Werte
-tragen Wirtschaftlichkeit und CO₂-Bilanz mit — eine Abweichung an der Wallbox kostet genauso wie eine an der PV.
+tragen Wirtschaftlichkeit und CO₂-Bilanz mit — eine Abweichung an der Wallbox kostet genauso wie eine an der PV. Geprüft werden
+die Tage der letzten 90 Tage bis gestern.
+
+**Welcher Tag verglichen wird:** zeigt eedc ein Gerät an einem Tag aus dem Home-Assistant-Spiegel (der Kalendertag, 0 bis
+24 Uhr), vergleicht die Prüfung mit dem Kalendertag von Home Assistant; liest eedc den Tag aus den gespeicherten Werten,
+vergleicht sie wie diese von 23 Uhr des Vortags bis 23 Uhr. Ein Gerät, das nachts an zwei Tagen verschieden läuft, und der
+erste Tag einer Statistik erscheinen deshalb nicht mehr, wenn eedc und Home Assistant dieselbe Zahl zeigen.
+
+**Benannte Grenze — eine fehlende Stunde in Home Assistant:** führt Home Assistant für ein Gerät die Stunde 23–24 Uhr nicht
+(etwa weil der Sensor in dieser Stunde nicht lesbar war), obwohl seine Statistik davor läuft, prüft der Daten-Checker dieses
+Gerät an den beiden Tagen um diese Stunde nicht — eedc setzt für die fehlende Stunde keinen Wert ein. Ebenso bleibt der
+letzte geprüfte Tag (gestern) ungeprüft, solange Home Assistant die Stunde 23–24 Uhr von gestern noch nicht geschrieben hat.
 
 **Lösungsweg**
 1. In Home Assistant prüfen, welcher Wert stimmt. Ist die Statistik dort falsch (etwa ein Zählersprung), sie unter
-   *Entwicklerwerkzeuge → Statistik* beim Sensor mit „Wert anpassen“ berichtigen.
+   *Einstellungen → Werkzeuge → Statistik* (in älteren Home-Assistant-Versionen: *Entwicklerwerkzeuge → Statistik*) beim Sensor mit „Summe anpassen“ berichtigen.
 2. Zurück in eedc am Befund **«Aus Home Assistant neu übernehmen»** klicken, die Vorschau lesen und **«Anwenden»**.
    Liest eedc deine Anlage aus der Statistik von Home Assistant, übernimmt der Knopf die Statistik aller gespiegelten
    Zähler der Anlage neu (ab der ersten abweichenden Stunde) und baut den genannten Tag danach auf. Sonst heißt er «Tag neu aufbauen» und baut nur
    den genannten Tag neu; für alle Tage des Geräts auf einmal: in der
-   [Reparatur-Werkbank](eedc:/einstellungen/daten?block=energieprofil&karte=werkbank) «Mehrere Tage neu aggregieren».
+   [Reparatur-Werkbank](eedc:/einstellungen/daten?block=energieprofil&karte=werkbank) (*Einstellungen → Daten → Energieprofil-Pflege*) «Mehrere Tage neu aggregieren».
 3. Erneut prüfen: im Daten-Checker **«Aktualisieren»** — das Gerät ist aus der Liste verschwunden oder nennt weniger Tage.
 
 Bleibt der Befund danach: stell deine Frage im Forum oder auf GitHub. Bitten wir dich dort um das Diagnose-Paket:
@@ -4407,15 +4811,17 @@ eedc heilt den Bruch nicht selbst: dafür müsste es raten, welcher der beiden S
    ([Monatsdaten](eedc:/einstellungen/daten?block=monatsdaten)); stimmt er, ist der Bruch echt und bleibt stehen.
 4. **Umstieg auf eedc 4.0.25:** bis dahin schrieb eedc für Verbrauchszähler die Verbrauchssumme von Home Assistant statt
    des Zählerstands. Dann fällt die Reihe genau einmal, an der Umstellung, und es ist nichts kaputt. In der
-   [Reparatur-Werkbank](eedc:/einstellungen/daten?block=energieprofil&karte=werkbank) mit «Mehrere Tage neu aggregieren»
+   [Reparatur-Werkbank](eedc:/einstellungen/daten?block=energieprofil&karte=werkbank) (*Einstellungen → Daten → Energieprofil-Pflege*) mit «Mehrere Tage neu aggregieren»
    zieht eedc die Historie nach, soweit Home Assistant sie noch hat.
 5. Erneut prüfen: im Daten-Checker **«Aktualisieren»** — die Zeile ist verschwunden oder nennt weniger Stellen; ein
    Bruch aus einem Zählerwechsel bleibt auch nach der Stilllegung stehen — die Zeile erklärt ihn weiterhin, solange
    die Reihe des alten Zählers den niedrigeren Stand enthält.
 
 **Was ohne Handlung gilt**
-Für Zeiträume über eine Bruchstelle zeigt eedc für diesen Zähler keine Differenz; Zeiträume davor und danach rechnen
-normal. Andere Zahlen sind nicht berührt — der Zähler geht in keine Bewertung ein.
+Liegt der Stand am Ende eines Zeitraums unter dem am Anfang, zeigt eedc für diesen Zähler dort keine Differenz; steigt
+er nach dem Bruch wieder über den Anfang, zeigt eedc die Differenz der beiden Stände, und der Bruch bleibt darin
+unsichtbar. Zeiträume davor und danach rechnen normal, und andere Zahlen sind nicht berührt — der Zähler geht in keine
+Bewertung ein.
 
 #### Verbrauchszähler auf „nicht aktiv“ gesetzt <a name="zaehler_nicht_aktiv"></a>
 

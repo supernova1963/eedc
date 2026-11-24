@@ -33,7 +33,9 @@ export interface StundenWert {
    *  dieser Zeile n > 1 reale Stunden trägt — HA hatte die Stunden davor nicht
    *  geschrieben, die Energie steht hier wie im HA-Energie-Dashboard. Fehlt
    *  bzw. `null` im Regelfall. Achsen: pv · einspeisung · netzbezug · batterie
-   *  · waermepumpe · wallbox · sonstige. */
+   *  · waermepumpe · wallbox · sonstige. N-799: nach einem Stillstand der ganzen
+   *  Erfassung trägt die Nachtragszeile n = k + 1 und jede Stunde des Stillstands
+   *  n = 0 (keine eigene Menge, `zeileOhneEigeneMenge`). */
   spannen?: Record<string, number> | null
   /** HA-Bauform S4 (S4-E2 A): was `stunde` meint — `"beginn"` = `[h, h+1)` (Kanal-Tag),
    *  `"ende"` = Backward-Slot `[h−1, h)` (Bestandstag). Beschriftung über `stundenBereich`. */
@@ -49,17 +51,6 @@ export interface StundenAntwort {
    *  jüngste Messwert gemeint; sein Intervall liegt backward schon im
    *  Folgetag und fehlt deshalb in der Liste. */
   soc_zuletzt_prozent?: number | null
-}
-
-export interface WochenmusterPunkt {
-  wochentag: number   // 0=Mo … 6=So
-  stunde: number
-  pv_kw: number | null
-  verbrauch_kw: number | null
-  netzbezug_kw: number | null
-  einspeisung_kw: number | null
-  batterie_kw: number | null
-  anzahl_tage: number
 }
 
 export interface TagesZusammenfassung {
@@ -178,6 +169,14 @@ export interface TagWerte {
   // Tag-native Zusatzmetriken (kein Monats-Pendant)
   ueberschuss_kwh: number | null
   defizit_kwh: number | null
+  /** N-799: wie Direktverbrauch, Überschuss und Defizit entstanden sind — `null`/fehlend = jede Stunde gepaart,
+   *  `fenster` = für die Stunden eines Erfassungs-Stillstands bzw. einer Lücke aus den Zählerständen gerechnet (Wert da,
+   *  gekennzeichnet), `nicht_rechenbar` = die drei Werte sind `null`. `stundenpaarung_grund` ist der Satz dazu (Backend
+   *  `services/energie_profil/stundenpaarung.py`); `mindest_netzladung_kwh` die Netzladung, die das Fenster mindestens
+   *  trug, wenn der Überschuss auf die PV-Menge begrenzt ist. */
+  stundenpaarung?: 'fenster' | 'nicht_rechenbar' | null
+  stundenpaarung_grund?: string | null
+  mindest_netzladung_kwh?: number | null
   peak_pv_kw: number | null
   peak_netzbezug_kw: number | null
   peak_einspeisung_kw: number | null
@@ -543,6 +542,10 @@ export interface MonatsAuswertung {
   boersenpreis_avg_cent: number | null
   negative_preis_stunden: number | null
   einspeisung_neg_preis_kwh: number | null
+  /** N-799: Tage, deren Überschuss/Defizit/Direktverbrauch eine Zähler-Rechnung enthält (in den Summen), und Tage, an
+   *  denen die drei nicht rechenbar sind (nicht in den Summen). */
+  tage_mit_fenster_rechnung?: number
+  tage_ohne_stundenpaarung?: number
 }
 
 export interface VollbackfillResult {
@@ -896,9 +899,6 @@ export interface WaermeTemperaturStunden {
 export const energieProfilApi = {
   getStunden: (anlageId: number, datum: string): Promise<StundenAntwort> =>
     api.get(`/energie-profil/${anlageId}/stunden?datum=${datum}`),
-
-  getWochenmuster: (anlageId: number, von: string, bis: string): Promise<WochenmusterPunkt[]> =>
-    api.get(`/energie-profil/${anlageId}/wochenmuster?von=${von}&bis=${bis}`),
 
   getTage: (anlageId: number, von: string, bis: string): Promise<TagesZusammenfassung[]> =>
     api.get(`/energie-profil/${anlageId}/tage?von=${von}&bis=${bis}`),

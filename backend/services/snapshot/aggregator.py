@@ -4,7 +4,8 @@ Snapshot-Aggregator.
 Liest Boundary-Snapshots aus `sensor_snapshots` (mit Self-Healing über
 `reader.get_snapshot()`) und liefert stündliche kWh-Werte nach Energiefluss-
 Kategorie, stündliche Counter-Inkremente pro Feld und Tages-Counter-Deltas
-pro Investition. Lückenfüllung via linearer Interpolation (Issue #145).
+pro Investition. Eine Lücke zwischen zwei Ständen bleibt leer, die erste Stunde
+danach trägt die Menge (N-817, wie HA; bis 23.11.2026 linear gefüllt, #145).
 
 Slot-Konvention seit Etappe 3c P2 (KONZEPT-ENERGIEPROFIL-3C.md):
 - Hourly-Konsumenten gehen über `BoundaryRange.for_hourly_slots()` —
@@ -25,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.core.berechnungen.betriebsart_gemessen import (
     geraetefeld_oder_innengeraete,
 )
+from backend.core.berechnungen.zaehler_naht import gehobene_staende, hebung_am, trennende, ueber_naht
 from backend.core.betriebsmodus import BETRIEBSART_NUTZENERGIE_FELD, HEIZEN, KUEHLEN
 from backend.core.field_definitions import FEINE_STROM_FELDER, WP_GESAMT_STROM_FELDER
 from backend.core.tageswert_grund import (
@@ -57,8 +59,9 @@ from backend.services.snapshot.reader import (
     letzter_stand_vor,
     mqtt_zaehler_keys,
     reihe_im_fenster,
-    tageswert_aus_reihe,
+    tageswert_ueber_abschnitte,
 )
+from backend.services.zuordnung_wechsel.zeitpunkt import fortsetzungs_naehte
 from backend.services.snapshot.tages_tabelle import (
     TabellenEintrag,
     TagesTabelle,
@@ -170,10 +173,14 @@ async def _tageswert_aus_raendern(
     # vor der dieser Docstring warnt. Die Regel selbst steht jetzt als reine
     # Funktion in `reader.tageswert_aus_reihe`; hier wird geladen und
     # protokolliert.
-    zwischenstaende = [w for _ts, w in await reihe_im_fenster(
-        db, anlage_id, sensor_key, ts_start, ts_ende
-    )]
-    wert = tageswert_aus_reihe(s0, s1, zwischenstaende)
+    from backend.services.zuordnung_wechsel.zeitpunkt import fortsetzungs_naehte
+
+    reihe = await reihe_im_fenster(db, anlage_id, sensor_key, ts_start, ts_ende)
+    zwischenstaende = [w for _ts, w in reihe]
+    # Sensorwechsel B-3: über eine Fortsetzungs-Naht keine Differenz — Summe der Abschnitte (ohne Naht wörtlich
+    # `tageswert_aus_reihe`).
+    wert = tageswert_ueber_abschnitte([(ts_start, s0), *reihe, (ts_ende, s1)],
+                                      await fortsetzungs_naehte(db, anlage_id, sensor_key))
     if wert is None:
         logger.info(
             f"Zähler-Rücksprung im Tagesfenster für anlage={anlage_id} "
@@ -252,32 +259,17 @@ def stunden_slot_art(s0: float, s1: float) -> tuple[float, str]:
     return max(0.0, d), SLOT_MENGE
 
 
-def _fill_gaps_linear(snaps_per_hour: dict[int, Optional[float]]) -> None:
-    """
-    Füllt None-Werte in {stunde: wert}-Dict per linearer Interpolation
-    zwischen dem letzten und dem nächsten verfügbaren Wert (Issue #145).
+async def _zaehlwerk_tag(db: AsyncSession, anlage_id: int, sensor_key: str, tag_start: datetime, tag_ende: datetime,
+                         snap_start: float, snap_ende: float) -> float:
+    """Tages-Δ eines Zählwerks (L7): ohne Fortsetzungs-Naht im Tag wörtlich ``Ende − Anfang``; mit Naht je Abschnitt
+    (``zaehler_naht.zaehlwerk_menge`` über die Reihe des Tages, B-3)."""
+    from backend.core.berechnungen.zaehler_naht import zaehlwerk_menge
 
-    Ränder: fehlt der Wert am Anfang (h=0..k) oder Ende (h=m..24), wird NICHT
-    extrapoliert — die Randwerte bleiben None und die betroffenen
-    Stunden-Deltas fallen bei der Delta-Bildung wie bisher raus. Das ist
-    bewusst: ohne Ankerpunkt an mindestens einer Seite gibt es keine
-    sinnvolle Schätzung.
-
-    Arbeitet in-place.
-    """
-    hours_with_values = sorted(h for h, v in snaps_per_hour.items() if v is not None)
-    if len(hours_with_values) < 2:
-        return  # keine Interpolation ohne mindestens zwei Ankerpunkte möglich
-
-    # Zwischen-Lücken interpolieren (nur solche, die von bekannten Werten eingerahmt sind)
-    for a, b in zip(hours_with_values, hours_with_values[1:]):
-        if b - a <= 1:
-            continue  # keine Lücke zwischen a und b
-        v_a = snaps_per_hour[a]
-        v_b = snaps_per_hour[b]
-        for h in range(a + 1, b):
-            # lineare Interpolation: v_a + (v_b - v_a) * (h - a) / (b - a)
-            snaps_per_hour[h] = v_a + (v_b - v_a) * (h - a) / (b - a)
+    naehte = await fortsetzungs_naehte(db, anlage_id, sensor_key)
+    if not ueber_naht(tag_start, tag_ende, naehte):
+        return snap_ende - snap_start
+    reihe = await reihe_im_fenster(db, anlage_id, sensor_key, tag_start, tag_ende)
+    return zaehlwerk_menge([(tag_start, snap_start), *reihe, (tag_ende, snap_ende)], naehte)
 
 
 async def get_hourly_kwh_by_category(
@@ -295,7 +287,7 @@ async def get_hourly_kwh_by_category(
 
 
 async def _snapshot_eintraege(
-    db: AsyncSession, anlage, investitionen_by_id: dict, datum: date,
+    db: AsyncSession, anlage, investitionen_by_id: dict, datum: date, *, mqtt_keys: Optional[set[str]] = None,
 ) -> tuple[list[TabellenEintrag], dict[str, Optional[str]], dict]:
     """Die zugeordneten Zähler des Tages — HA-Sensor **oder** MQTT, eine Auswahl.
 
@@ -306,6 +298,9 @@ async def _snapshot_eintraege(
     Stunde eine zweite Liste (`*_hourly_eintraege`, MQTT nur der letzten
     7 Tage) — dieselbe Auswahl zweimal, mit zwei Grenzen.
 
+    ``mqtt_keys``: die MQTT-Schlüssel, wenn der Aufrufer sie schon gelesen hat (Fund-Päckchen D: der Kanal-Leser liest sie
+    einmal je Lauf statt je Tag, ``kanal/bilanz_adapter.zaehler_eintraege``); sonst EINE Abfrage hier.
+
     Returns:
         ``(eintraege, entity_je_key, quellen_energy)`` — ``entity_je_key`` ist
         die HA-Entity je ``sensor_key`` (``None`` für MQTT-only) für den
@@ -313,7 +308,8 @@ async def _snapshot_eintraege(
     """
     sensor_mapping = anlage.sensor_mapping or {}
     quellen_energy = extract_quellen_energy(anlage)  # C2b-Read-Through
-    mqtt_keys = await mqtt_zaehler_keys(db, anlage.id)  # N-328b, jede Historie
+    if mqtt_keys is None:
+        mqtt_keys = await mqtt_zaehler_keys(db, anlage.id)  # N-328b, jede Historie
     eintraege: list[TabellenEintrag] = []
     entity_je_key: dict[str, Optional[str]] = {}
 
@@ -370,6 +366,59 @@ async def _snapshot_eintraege(
     return eintraege, entity_je_key, quellen_energy
 
 
+async def slots_aus_staenden(
+    db: AsyncSession, anlage_id: int, sk: str, entity_id: Optional[str], rng: BoundaryRange, quellen_energy,
+) -> tuple[dict[int, tuple[float, int]], bool]:
+    """Die Slots ``{h: (menge, n)}`` EINES Zählers aus seinen 25 Ständen (T3, R4, B-3, N-817) und ob ein Tagesreset darin
+    war — die Slot-Bildung von {@link snapshot_tagestabelle}, auch für ein Feld, das allein über MQTT kommt, an einem Tag
+    aus HAs Statistik (``lts_aggregator.lts_tagestabelle``, Fund-Päckchen F: Quelle je Feld an Tagen ohne Stundenwerte).
+
+    Eine Lücke zwischen zwei Ständen bleibt leer; ihre Menge steht im ersten Slot danach als Bündel mit Spanne ``n``
+    (N-817, wie HA)."""
+    staende: dict[int, Optional[float]] = {}
+    for offset in rng.boundary_offsets:
+        staende[offset] = await get_snapshot(
+            db, anlage_id, sk, entity_id, rng.boundary_at(offset),
+            quellen_energy=quellen_energy,
+        )
+    alle_naehte = await fortsetzungs_naehte(db, anlage_id, sk)     # B-3
+    # U2 a1 (F5): eine Naht mit Rand-Ständen hebt die Stände beim Laden und teilt nicht; geteilt wird nur an den übrigen.
+    staende = gehobene_staende(staende, rng.boundary_at, alle_naehte)
+    naehte = trennende(alle_naehte)
+
+    vorher: Optional[tuple[datetime, float]] = None
+    if staende.get(-1) is not None:
+        vorher = (rng.boundary_at(-1), staende[-1])
+    elif any(staende.get(h) is not None for h in range(24)):
+        vorher = await letzter_stand_vor(             # T3: Anker vor dem Fenster
+            db, anlage_id, sk, rng.boundary_at(-1),
+            sensor_id=entity_id, quellen_energy=quellen_energy,
+        )
+        if vorher is not None and len(naehte) != len(alle_naehte):
+            vorher = (vorher[0], vorher[1] + hebung_am(vorher[0], alle_naehte))
+    slots: dict[int, tuple[float, int]] = {}
+    tagesreset = False
+    for h in range(24):
+        stand = staende.get(h)
+        if stand is None:
+            continue                                # N-817: Lücke — die Menge trägt der nächste Stand als Bündel
+        ts_h = rng.boundary_at(h)
+        if vorher is not None:
+            # B-3: der Naht-Slot zählt nur den neuen Abschnitt — mit Ständen zur vollen Stunde nichts.
+            wert, art = ((0.0, SLOT_MENGE) if ueber_naht(vorher[0], ts_h, naehte)
+                         else stunden_slot_art(vorher[1], stand))
+            tagesreset = tagesreset or art == SLOT_TAGESRESET
+            if round(wert, 3) == 0:
+                n = 1                               # R2: 0 über n Stunden ist 0 je Stunde
+            elif vorher[0] == rng.boundary_at(h - 1):
+                n = 1                               # Nachbarstand
+            else:
+                n = max(1, round((ts_h.timestamp() - vorher[0].timestamp()) / 3600))
+            slots[h] = (wert, n)
+        vorher = (ts_h, stand)
+    return slots, tagesreset
+
+
 async def snapshot_tagestabelle(
     db: AsyncSession,
     anlage,
@@ -384,8 +433,13 @@ async def snapshot_tagestabelle(
     Zähler die 25 Stände Vortag 23:00 … heute 23:00 (`get_snapshot`, mit
     Self-Healing), dann:
 
-    * **E1 (präzisiert):** lineare Interpolation (#145) **nur zwischen Ständen
-      innerhalb des Fensters** (`_fill_gaps_linear`).
+    * **Lücke zwischen zwei Ständen (N-817, Entscheid Gernot 22./23.11.2026 —
+      wie HA):** die Stunden ohne Stand bleiben leer; die Menge der Lücke steht
+      in der ersten Stunde danach als **Bündel** mit Spanne (Stand danach −
+      letzter Stand davor, ``n`` aus den Zeitstempeln). Bis 23.11.2026 füllte
+      `_fill_gaps_linear` (#145) die Stände dazwischen linear — Stundenmengen,
+      die keine Quelle führt. Σ Stunden = Tageswert bleibt (die Randstände trägt
+      das Bündel).
     * **T3:** fehlt der Stand am Fensterbeginn, trägt der letzte vorhandene
       Stand davor (`reader.letzter_stand_vor`, beliebig weit zurück). Der
       erste belegte Slot ist dann ein **Bündel** mit Spanne aus den
@@ -421,40 +475,9 @@ async def snapshot_tagestabelle(
     }
     for sk in [*eigene_keys, *zusatz]:
         entity_id = entity_je_key.get(sk) if sk not in zusatz else zusatz[sk]
-        staende: dict[int, Optional[float]] = {}
-        for offset in rng.boundary_offsets:
-            staende[offset] = await get_snapshot(
-                db, anlage.id, sk, entity_id, rng.boundary_at(offset),
-                quellen_energy=quellen_energy,
-            )
-        _fill_gaps_linear(staende)                       # E1: nur innen
-
-        vorher: Optional[tuple[datetime, float]] = None
-        if staende.get(-1) is not None:
-            vorher = (rng.boundary_at(-1), staende[-1])
-        elif any(staende.get(h) is not None for h in range(24)):
-            vorher = await letzter_stand_vor(             # T3: Anker vor dem Fenster
-                db, anlage.id, sk, rng.boundary_at(-1),
-                sensor_id=entity_id, quellen_energy=quellen_energy,
-            )
-        slots: dict[int, tuple[float, int]] = {}
-        for h in range(24):
-            stand = staende.get(h)
-            if stand is None:
-                continue
-            ts_h = rng.boundary_at(h)
-            if vorher is not None:
-                wert, art = stunden_slot_art(vorher[1], stand)
-                if art == SLOT_TAGESRESET:
-                    tagesreset.add(sk)
-                if round(wert, 3) == 0:
-                    n = 1                               # R2: 0 über n Stunden ist 0 je Stunde
-                elif vorher[0] == rng.boundary_at(h - 1):
-                    n = 1                               # Nachbarstand (auch interpoliert)
-                else:
-                    n = max(1, round((ts_h.timestamp() - vorher[0].timestamp()) / 3600))
-                slots[h] = (wert, n)
-            vorher = (ts_h, stand)
+        slots, reset = await slots_aus_staenden(db, anlage.id, sk, entity_id, rng, quellen_energy)
+        if reset:
+            tagesreset.add(sk)
         if slots:
             slots_je_key[sk] = slots
 
@@ -524,7 +547,7 @@ async def get_daily_counter_deltas_by_inv(
             )
             if snap_start is None or snap_ende is None:
                 continue
-            delta_count = snap_ende - snap_start
+            delta_count = await _zaehlwerk_tag(db, anlage.id, sensor_key, tag_start, tag_ende, snap_start, snap_ende)
             if delta_count < 0:
                 # Counter-Reset (Firmware-Update o.ä.) — als 0 werten, nicht als Lücke
                 logger.warning(
@@ -1087,6 +1110,10 @@ class TagesDetail:
     #: frühestes ``bis``) — sie warnt damit eher zu viel als zu wenig (P4).
     abdeckung_von: Optional[datetime] = None
     abdeckung_bis: Optional[datetime] = None
+    #: Fund-Päckchen A (A1): je Gerät und gelesenem Feld der gemessene Zeitraum ``(von, bis)`` — ``None`` heißt
+    #: Tagesrand. Die Arbeitszahl des Tages fragt damit, ob Wärme und Strom eines Geräts denselben Zeitraum decken
+    #: (``waermepumpe_kennzahl.zeitraum_versetzt``); die Marke oben beantwortet nur den Block.
+    fenster_je_inv: dict[str, dict[str, tuple]] = dc_field(default_factory=dict)
 
 
 #: **(typ, mapping-feld) → semantischer Ausgabe-Key** — die Feldmenge, die
@@ -1197,6 +1224,7 @@ class _TagesDetailKontext:
     felder_je: dict = dc_field(default_factory=dict)
     abdeckung_von: Optional[datetime] = None
     abdeckung_bis: Optional[datetime] = None
+    fenster_je: dict = dc_field(default_factory=dict)
 
     async def diff(
         self, sensor_key: str, sensor_id: Optional[str], *, rng: BoundaryRange,
@@ -1281,8 +1309,12 @@ def _wallbox_deckt(ctx: _TagesDetailKontext, sensor_mapping: dict, investitionen
     )
 
 
-def _abdeckung(ctx: _TagesDetailKontext, menge: "TagesRandMenge") -> None:
-    """R-4: die weiteste Einschränkung über alle gelesenen Felder (RF-72: Teil von ``_geraet_oder_innengeraete``)."""
+def _abdeckung(ctx: _TagesDetailKontext, menge: "TagesRandMenge", inv_id_str: str, feld: str) -> None:
+    """R-4: die weiteste Einschränkung über alle gelesenen Felder (RF-72: Teil von ``_geraet_oder_innengeraete``); dazu
+    der Zeitraum dieses Felds (A1, ``TagesDetail.fenster_je_inv``)."""
+    ctx.fenster_je.setdefault(inv_id_str, {})[feld] = (
+        None if menge.ab_tagesbeginn else menge.seit, None if menge.bis_tagesende else menge.bis,
+    )
     if not menge.ab_tagesbeginn:
         ctx.abdeckung_von = (
             menge.seit if ctx.abdeckung_von is None
@@ -1295,13 +1327,29 @@ def _abdeckung(ctx: _TagesDetailKontext, menge: "TagesRandMenge") -> None:
         )
 
 
+def _kanal_rand_menge(z) -> "TagesRandMenge":
+    """Sensorwechsel B-5, Bauplan §9 Nr. 24: **die Abdeckungs-Marke folgt der Quelle des Werts.** Kommt der Wert eines
+    Zählers aus dem Kanal (``kanal/feld_leser.kanal_feldzeitraeume``), entsteht seine Marke aus ``gedeckt_von``/
+    ``gedeckt_bis`` des Kanal-Zeitraums nach derselben Regel wie bei der Reihe (``_tagesdetail_boundary_diff_mit_grund``):
+    ein Stand vor dem Fenster deckt den Tagesbeginn (R1), ein letzter Stand vor dem Fensterende nennt «gemessen bis».
+    ``voll`` ist eine Auflösungsregel, keine Deckung — ohne diese Marke verschwiege die Sicht, dass der Wert an einem Tag
+    mit einem Stand je Tag nur bis 00:00 reicht (ADR-002/P4)."""
+    return TagesRandMenge(
+        wert_kwh=z.delta, seit=datetime.fromtimestamp(z.gedeckt_von), bis=datetime.fromtimestamp(z.gedeckt_bis),
+        ab_tagesbeginn=z.gedeckt_von <= z.von, bis_tagesende=z.gedeckt_bis >= z.bis,
+    )
+
+
 async def _geraet_oder_innengeraete(
     ctx: _TagesDetailKontext, inv_id_str: str, feld: str, out_key: str, felder: dict, kandidaten,
-    rng_typ: BoundaryRange,
+    rng_typ: BoundaryRange, kanal: dict,
 ) -> tuple[Optional[float], dict[str, float]]:
     """Phase von ``get_tagesdetail_kwh`` (RF-72): ein Feld EINES Geräts — Gerätefeld und seine Innengerät-Kopien
     je mit Zähler (N-328b) als Randstand-Differenz im Fenster ``rng_typ``, W-18-Grund je fehlendem Feld, Abdeckung;
     dann die EINE Regel ``geraetefeld_oder_innengeraete`` (Gerätefeld ODER Σ Innengeräte, nie addiert).
+    **Kanal vor Reihe** (Sensorwechsel B-5): trägt der eigene Kanal eines Zählers das Fenster voll (``kanal``, aus
+    ``kanal/feld_leser.kanal_feldzeitraeume`` über dasselbe Fenster), gilt sein Δ statt der Randstand-Differenz — je Zähler;
+    die Abdeckungs-Marke dann aus dem Kanal-Zeitraum (``_kanal_rand_menge``, §9 Nr. 24).
     Rückgabe ``(Tageswert des Geräts oder None, gelesene Felder)``."""
     # ⭐ Bauschnitt 6: Gerätefeld UND seine Innengerät-Kopien (Suffix
     # `-<id>`). Bis dahin las diese Schleife allein den exakten Key — ein
@@ -1322,6 +1370,10 @@ async def _geraet_oder_innengeraete(
         if not feld_hat_zaehler(cfg, sensor_key, ctx.quellen_energy, ctx.mqtt_keys):
             _merke_grund(ctx, out_key, GRUND_NICHT_ZUGEORDNET)
             continue
+        if sensor_key in kanal:
+            werte_geraet[k] = kanal[sensor_key].delta
+            _abdeckung(ctx, _kanal_rand_menge(kanal[sensor_key]), inv_id_str, k)  # die Marke folgt der Quelle (§9 Nr. 24)
+            continue
         menge, grund = await ctx.diff(
             sensor_key, cfg.get("sensor_id") if isinstance(cfg, dict) else None,
             rng=rng_typ,
@@ -1331,7 +1383,7 @@ async def _geraet_oder_innengeraete(
             continue
         werte_geraet[k] = menge.wert_kwh
         # R-4: die weiteste Einschränkung über alle gelesenen Felder.
-        _abdeckung(ctx, menge)
+        _abdeckung(ctx, menge, inv_id_str, k)
     # Die EINE Regel für Gerät vs. Innengeräte — dieselbe, mit der der
     # Monat und der Nenner (Zweig 1, `modus_strom_zeile`) auflösen.
     return geraetefeld_oder_innengeraete(werte_geraet, feld), werte_geraet
@@ -1351,11 +1403,19 @@ async def _typ_summe(ctx: _TagesDetailKontext, inv_id_str: str, inv, inv_data: d
     rng_typ = _fenster_je_typ(ctx, typ)
     felder = inv_data.get("felder", {}) or {}
     kandidaten = zaehler_feld_kandidaten(inv_id_str, felder, ctx.mqtt_keys)
+    # Sensorwechsel B-5: die Feld-Auskunft «Kanal vor Reihe» für alle Zähler dieses Geräts über dasselbe Fenster.
+    from backend.services.kanal.feld_leser import kanal_feldzeitraeume
+
+    start_off, end_off = rng_typ.boundary_offsets
+    kanal = await kanal_feldzeitraeume(ctx.db, ctx.anlage.id, [
+        f"inv:{inv_id_str}:{k}" for (t, feld) in TAGESDETAIL_AUSGABE if t == typ
+        for k in (feld, *innengeraet_felder(feld, kandidaten))
+    ], rng_typ.boundary_at(start_off), rng_typ.boundary_at(end_off))
     for (t, feld), out_key in TAGESDETAIL_AUSGABE.items():
         if t != typ:
             continue
         d, werte_geraet = await _geraet_oder_innengeraete(
-            ctx, inv_id_str, feld, out_key, felder, kandidaten, rng_typ,
+            ctx, inv_id_str, feld, out_key, felder, kandidaten, rng_typ, kanal,
         )
         if d is None:
             continue
@@ -1422,6 +1482,7 @@ async def get_tagesdetail_kwh(
         felder_je_inv=ctx.felder_je,
         abdeckung_von=ctx.abdeckung_von,
         abdeckung_bis=ctx.abdeckung_bis,
+        fenster_je_inv=ctx.fenster_je,
     )
 
 
@@ -1450,10 +1511,15 @@ async def get_hourly_counter_sum_by_feld(
     Snapshots gebildet und über alle Investitionen aufaddiert. Negative Deltas
     (Counter-Reset) werden als 0 gewertet.
 
+    **Lücke (Fund-Päckchen F, F6, wie N-817):** eine Stunde ohne Stand am Ende bleibt leer; die erste Stunde mit Stand
+    trägt die Menge seit dem letzten Stand davor (Bündel). Bis 23.11.2026 reskalierte ``aggregate_day`` die Stunden auf
+    den Tageswert (``verteile_counter_auf_stunden``) — auch an Tagen ohne Lücke, weil der Tageswert den Kalendertag liest
+    und die Stunden das Fenster ``[Vortag 23:00, 23:00)``.
+
     Returns:
-        {h: count} für h in 0..23. Fehlt der Snapshot bei beiden Endpunkten
-        einer Stunde, ist count None (Lücke). Fehlt der Counter komplett
-        (kein Mapping), wird ein leeres Dict zurückgegeben.
+        ``CounterStunden`` ``{h: count}`` für h in 0..23 (``None`` = kein Stand am Slot-Ende bzw. noch keiner davor) mit
+        ``fenster`` (Menge im Fenster der Stunden, Bezug der Invariante). Fehlt der Counter komplett (kein Mapping), wird
+        ein leeres Dict zurückgegeben.
     """
     sensor_mapping = anlage.sensor_mapping or {}
     quellen_energy = extract_quellen_energy(anlage)  # C2b-Read-Through
@@ -1479,6 +1545,8 @@ async def get_hourly_counter_sum_by_feld(
 
     rng = BoundaryRange.for_hourly_slots(datum)
     snaps_per_inv: dict[str, dict[int, Optional[float]]] = {}
+    alle_je = {sk: await fortsetzungs_naehte(db, anlage.id, sk) for sk, _ in relevant_invs}   # B-3
+    naehte_je = {sk: trennende(n) for sk, n in alle_je.items()}       # U2 a1 (F5): Nähte mit Rand-Ständen heben beim Laden
     for sensor_key, entity_id in relevant_invs:
         snaps: dict[int, Optional[float]] = {}
         for offset in rng.boundary_offsets:
@@ -1487,7 +1555,7 @@ async def get_hourly_counter_sum_by_feld(
                 db, anlage.id, sensor_key, entity_id, ts,
                 quellen_energy=quellen_energy,
             )
-        snaps_per_inv[sensor_key] = snaps
+        snaps_per_inv[sensor_key] = gehobene_staende(snaps, rng.boundary_at, alle_je[sensor_key])
 
     # Plausibilitäts-Cap pro Stunde: Counter wie WP-Kompressor-Starts haben
     # physikalische Obergrenzen (Mindeststillstand-/-laufzeit), realistisch
@@ -1495,33 +1563,72 @@ async def get_hourly_counter_sum_by_feld(
     # #184) können dagegen Werte in der Größenordnung 10⁴ produzieren, die in
     # einer einzelnen Stunden-Zelle stehenbleiben, während der Tages-Pfad sie
     # über die Boundary-Diff wegfrisst (→ sichtbar als Drift zwischen Tagestab
-    # und Stundentab, Forum-Befund Martin 2026-05-11).
-    MAX_PLAUSIBLE_COUNTER_PER_HOUR = 200
-
+    # und Stundentab, Forum-Befund Martin 2026-05-11). Ein Bündel über n Stunden
+    # (F6) hat die Grenze n-fach.
     as_float = feld in FLOAT_COUNTER_FELDER
-    result: dict[int, Optional[float]] = {}
-    for slot_idx, prev_off, curr_off in rng.slot_pairs:
-        any_value = False
-        total = 0.0
-        for sensor_key, _ in relevant_invs:
-            s0 = snaps_per_inv[sensor_key][prev_off]
-            s1 = snaps_per_inv[sensor_key][curr_off]
-            if s0 is None or s1 is None:
-                continue
-            d = s1 - s0
-            if d < 0:
-                d = 0  # Counter-Reset → 0 (Warnung wäre redundant zur Tages-Aggregation)
-            elif d > MAX_PLAUSIBLE_COUNTER_PER_HOUR:
+    summe: dict[int, float] = {}
+    for sensor_key, _ in relevant_invs:
+        for slot_idx, d in _counter_slots(snaps_per_inv[sensor_key], rng, naehte_je[sensor_key]).items():
+            if d > MAX_PLAUSIBLE_COUNTER_PER_HOUR * _spanne_des_slots(slot_idx, snaps_per_inv[sensor_key]):
                 logger.warning(
                     f"Unplausibler Counter-Spike {feld} für anlage={anlage.id} "
                     f"key={sensor_key} ({datum} h={slot_idx}): {d:.0f} > "
-                    f"{MAX_PLAUSIBLE_COUNTER_PER_HOUR} → 0"
+                    f"{MAX_PLAUSIBLE_COUNTER_PER_HOUR} je Stunde → 0"
                 )
                 d = 0
-            total += d if as_float else int(round(d))
-            any_value = True
-        if not any_value:
-            result[slot_idx] = None
-        else:
-            result[slot_idx] = round(total, 3) if as_float else int(total)
+            summe[slot_idx] = summe.get(slot_idx, 0.0) + (d if as_float else int(round(d)))
+    result = CounterStunden({h: (None if h not in summe else (round(summe[h], 3) if as_float else int(summe[h])))
+                             for h in range(24)})
+    result.fenster = _counter_fenster(snaps_per_inv, rng, naehte_je, as_float)
     return result
+
+
+#: Höchstmenge eines Counters je Stunde (WP-Starts, Betriebsstunden) — darüber ein Spike (#184), der Slot zählt 0.
+MAX_PLAUSIBLE_COUNTER_PER_HOUR = 200
+
+
+class CounterStunden(dict):
+    """``{h: Wert}`` der Stunden eines Counters (wie bisher ein ``dict``) samt ``fenster``: die Menge im Fenster der
+    Stunden ``[Vortag 23:00, 23:00)`` aus den Rand-Ständen (Fund-Päckchen F, F6) — der Bezug der Invariante
+    ``pruefe_counter_konsistent``; ``None``, wenn ein Rand-Stand fehlt oder eine Naht im Fenster liegt (dann keine Prüfung)."""
+
+    fenster: Optional[float] = None
+
+
+def _spanne_des_slots(slot_idx: int, snaps: dict[int, Optional[float]]) -> int:
+    """Die Stunden, die der Slot trägt: 1 bis zum letzten Stand davor (Bündel nach einer Lücke, F6)."""
+    n = 1
+    while slot_idx - n >= -1 and snaps.get(slot_idx - n) is None:
+        n += 1
+    return n
+
+
+def _counter_slots(snaps: dict[int, Optional[float]], rng: BoundaryRange, naehte) -> dict[int, float]:
+    """Die Slot-Mengen EINES Counters (Fund-Päckchen F, F6, Entscheid Master 23.11.2026 — wie N-817): ohne Stand am
+    Slot-Ende kein Wert; nach einer Lücke trägt der erste Slot mit Stand die Menge seit dem letzten Stand davor (Bündel,
+    keine Verteilung, keine Reskalierung). Ein Rücksprung (Counter-Reset) und ein Slot über eine Naht (B-3) zählen 0."""
+    out: dict[int, float] = {}
+    anker: Optional[int] = None
+    for slot_idx, prev_off, curr_off in rng.slot_pairs:
+        if snaps.get(prev_off) is not None:
+            anker = prev_off
+        s1 = snaps.get(curr_off)
+        if anker is None or s1 is None:
+            continue
+        d = s1 - snaps[anker]
+        if d < 0 or ueber_naht(rng.boundary_at(anker), rng.boundary_at(curr_off), naehte):
+            d = 0  # Counter-Reset → 0 (Warnung wäre redundant zur Tages-Aggregation); B-3: Naht-Slot 0
+        out[slot_idx] = d
+    return out
+
+
+def _counter_fenster(snaps_per_inv: dict, rng: BoundaryRange, naehte_je: dict, as_float: bool) -> Optional[float]:
+    """Σ (Stand 23:00 − Stand Vortag 23:00) je Counter — die Menge im Fenster der Stunden (F6); ``None`` ohne beide
+    Rand-Stände oder mit einer Naht im Fenster."""
+    summe = 0.0
+    for sk, snaps in snaps_per_inv.items():
+        s0, s1 = snaps.get(-1), snaps.get(23)
+        if s0 is None or s1 is None or ueber_naht(rng.boundary_at(-1), rng.boundary_at(23), naehte_je[sk]):
+            return None
+        summe += max(0.0, s1 - s0)
+    return round(summe, 3) if as_float else float(int(round(summe)))

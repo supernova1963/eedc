@@ -20,6 +20,7 @@ import { describe, it, expect } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import {
   TagWerteTabelle, spanneDerZeile, summeVerbrauchTag, verworfenHerkunft,
+  zeileOhneEigeneMenge, TEXT_ZEILE_ENTHAELT, TEXT_ZEILE_SPAETER,
 } from './TagWerteTabelle'
 import { baueChartDaten, stundenTooltipLabel } from './TagVerlaufChart'
 import { baueTagesMeldung } from '../../pages/datenCheckerMeldungen'
@@ -135,14 +136,52 @@ describe('Tagesverlauf-Chart — gebündelter Balken ist beschriftet', () => {
 
   // HA-Bauform S4 (S4-E2 A): die Achse nennt die Stunde als Bereich — ein Bestandstag (ohne `raster` = Ende) trägt im
   // Slot 3 die Stunde [2, 3) ⇒ „2–3".
-  it('der Tooltip nennt die Spanne des gebündelten Balkens', () => {
-    expect(stundenTooltipLabel('2–3', punkte)).toBe('2–3 · enthält 2 Stunden (Lücke in Home Assistant)')
+  it('der Tooltip nennt die Spanne des gebündelten Balkens (neutral für Lücke und Stillstand, N-799)', () => {
+    expect(stundenTooltipLabel('2–3', punkte)).toBe('2–3 · enthält 2 Stunden (in Home Assistant nachgetragen)')
   })
   it('eine gewöhnliche Stunde bleibt der Bereich', () => {
     expect(stundenTooltipLabel('3–4', punkte)).toBe('3–4')
   })
   it('die Achse trägt den Bereich (keine lange Beschriftung am Tick)', () => {
     expect(punkte[3].stunde).toBe('2–3')
+  })
+})
+
+describe('Erfassungs-Stillstand (N-799, E-11 a) — Nachtragszeile n > 1, Nullzeile n = 0', () => {
+  // Kanal-Tag (Beginn-Raster): die Erfassung stand in Stunde 6 und 7, Stunde 8 trägt den Nachtrag (n = 3).
+  const daten: StundenWert[] = [
+    stunde(6, { pv_kw: 0, netzbezug_kw: 0, einspeisung_kw: 0, raster: 'beginn', spannen: { pv: 0, netzbezug: 0, einspeisung: 0 } }),
+    stunde(7, { pv_kw: 0, netzbezug_kw: 0, einspeisung_kw: 0, raster: 'beginn', spannen: { pv: 0, netzbezug: 0, einspeisung: 0 } }),
+    stunde(8, { pv_kw: 3.0, netzbezug_kw: 1.2, einspeisung_kw: 0.4, raster: 'beginn', spannen: { pv: 3, netzbezug: 3, einspeisung: 3 } }),
+    stunde(9, { pv_kw: 1.0, netzbezug_kw: 0.1, einspeisung_kw: 0.2, raster: 'beginn' }),
+  ]
+  const KEINE: SerieInfo[] = []
+
+  it('zeileOhneEigeneMenge liest nur die Marke 0', () => {
+    expect(zeileOhneEigeneMenge(daten[0])).toBe(true)
+    expect(zeileOhneEigeneMenge(daten[2])).toBe(false)
+    expect(zeileOhneEigeneMenge(daten[3])).toBe(false)
+    expect(zeileOhneEigeneMenge(undefined)).toBe(false)
+    // spanneDerZeile bleibt ≥ 1 — die Nullzeile ist keine Mehr-Stunden-Zeile
+    expect(spanneDerZeile(daten[0])).toBe(1)
+  })
+
+  it('Tabelle: Nullzeilen «· in späterer Zeile», Nachtragszeile «· enthält 3 h», beide mit Tooltip', () => {
+    render(<TagWerteTabelle daten={daten} extraSerien={KEINE} erzeugerSerien={KEINE} datum="2026-11-12" verworfen={{}} />)
+    expect(screen.getAllByText(/in späterer Zeile/)).toHaveLength(2)
+    expect(screen.getAllByText(/enthält 3 h/)).toHaveLength(1)
+    expect(screen.getAllByTitle(TEXT_ZEILE_SPAETER)).toHaveLength(2)
+    expect(screen.getAllByTitle(TEXT_ZEILE_ENTHAELT(3))).toHaveLength(1)
+    expect(TEXT_ZEILE_ENTHAELT(3)).toContain('Lücke oder einem Stillstand')
+  })
+
+  it('Chart: Tooltip neutral, Nullzeile nennt die spätere Stunde', () => {
+    const p = baueChartDaten({
+      daten, extraErzeuger: [], extraVerbraucher: [], erzeugerSerien: [], pvAufgeschluesselt: false, zeigePvRest: false,
+    })
+    expect(stundenTooltipLabel('6–7', p)).toBe('6–7 · Energie in einer späteren Stunde (Erfassung stand)')
+    expect(stundenTooltipLabel('8–9', p)).toBe('8–9 · enthält 3 Stunden (in Home Assistant nachgetragen)')
+    expect(stundenTooltipLabel('9–10', p)).toBe('9–10')
   })
 })
 
@@ -191,5 +230,22 @@ describe('Tages-Komponenten — Zählerpfad vor Leistungspfad (§2)', () => {
     )
     expect(d.sonstiges_erzeugung_kwh).toBe(5.5)
     expect(d.sonstiges_verbrauch_kwh).toBe(2.0)
+  })
+})
+
+describe('Kompressor-Starts und Betriebsstunden am Tag — der Tageswert der Antwort (Nachtrag F, N1)', () => {
+  // Messung `golden-master/funde-f-2026-11-23/test_mess_n1_kachel.py` (aggregate_day, Stände in sensor_snapshots):
+  // 5 Starts / 0,5 h am Vortag 23–24 Uhr ⇒ Stunden Σ 5 / 0,5, Tageswert (Kalendertag) 0 / 0 ⇒ `wp_starts` null.
+  const nacht = [stunde(0, { wp_starts_anzahl: 5, wp_betriebsstunden: 0.5 })]
+
+  it('Starts am Vortag 23–24 Uhr zählen nicht zum Tag (Kalendertag wie Home Assistant und Monat)', () => {
+    const d = baueTagAlsMonat(tagWerte('2026-10-28', { wp_starts: null, wp_betriebszeit_min: null }), nacht, [])
+    expect(d.wp_starts_summe_monat).toBeNull()
+    expect(d.wp_betriebsstunden_summe_monat).toBeNull()
+  })
+  it('Starts am Tag 23–24 Uhr zählen zum Tag, obwohl die Stunden sie erst am Folgetag tragen', () => {
+    const d = baueTagAlsMonat(tagWerte('2026-10-28', { wp_starts: 3, wp_betriebszeit_min: 45 }), [], [])
+    expect(d.wp_starts_summe_monat).toBe(3)
+    expect(d.wp_betriebsstunden_summe_monat).toBe(0.75)
   })
 })

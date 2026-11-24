@@ -21,8 +21,8 @@ der Kanal-Gruppen aus den Kanal-Stunden (``spanne > 3600`` ⇒ ``{achse: n}``, d
 Achsen aus der herangezogenen Bestandszeile. Jede Mischzeile trägt ``raster = "beginn"`` — ``forward_werte_je_backward_
 zeile`` paart sie zeilengleich.
 
-**Welche Stunden es gibt:** eine Stunde mit einer der beiden Stundenzeilen oder mit einem Kanal-Wert. Fehlen beide (Tag
-älter als die 730-Tage-Aufbewahrung, Bauplan §1 Nr. 4), trägt die Mischzeile die Kanal-Mengen, die übrigen Felder sind
+**Welche Stunden es gibt:** eine Stunde mit einer der beiden Stundenzeilen oder mit einem Kanal-Wert. Fehlen beide (Tag,
+dessen Stundenzeilen bis 4.3.1 nach 730 Tagen gelöscht wurden, Bauplan §1 Nr. 4), trägt die Mischzeile die Kanal-Mengen, die übrigen Felder sind
 leer; eine Stunde ohne Zeile in allen dreien ist keine Zeile (keine 0, S3-R2).
 
 Schwesterdateien: ``services/kanal/stunden_leser.py`` (der Kanal-Stundentag), ``services/kanal/stunden_adapter.py``
@@ -35,12 +35,12 @@ import dataclasses
 import re
 from dataclasses import dataclass
 from datetime import date, timedelta
-from typing import Any, Iterable, Mapping, Optional, Sequence
+from typing import Any, Callable, Iterable, Mapping, Optional, Sequence
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.berechnungen.energie import (
-    SONSTIGES_KOMPONENTEN_PREFIX, WAERMEPUMPE_KOMPONENTEN_PREFIXE, WALLBOX_KOMPONENTEN_PREFIXE,
+    SONSTIGES_KOMPONENTEN_PREFIX, WAERMEPUMPE_KOMPONENTEN_PREFIXE, WALLBOX_KOMPONENTEN_PREFIXE, verbraucher_als_betrag,
 )
 from backend.core.berechnungen.slot_konvention import (
     FORWARD_FELDER, RASTER_BEGINN, RASTER_ENDE, bestandszeile_fuer_stundenbeginn,
@@ -97,6 +97,12 @@ class Mischzeile:
         if name in FORWARD_FELDER:
             return getattr(object.__getattribute__(self, "_vorwaerts"), name, None)
         return getattr(object.__getattribute__(self, "_zeile"), name, None)
+
+    def setze_kanal_feld(self, name: str, wert) -> None:
+        """Ein Feld setzen, das die Zeile aus den Kanälen trägt (sonst nichts) — N-799: die Marke beim Mischen."""
+        kanal = object.__getattribute__(self, "_kanal")
+        if name in kanal:
+            kanal[name] = wert
 
 
 def aus_kanal_gruppe(zeile: Any, feld: str) -> bool:
@@ -160,7 +166,8 @@ async def stunden_des_tages(db: AsyncSession, anlage_id: int, datum: date, zeile
     k = await kanal_stunden(db, anlage_id, datum)
     if k is None:
         return [z for z in zeilen if z.datum == datum]
-    return mische_stunden(datum, zeilen, *k)
+    from backend.services.energie_profil.stillstand_marke import markiere_stillstand  # N-799: Marke je Aufruf
+    return (await markiere_stillstand(db, anlage_id, {datum: mische_stunden(datum, zeilen, *k)}))[datum]
 
 
 async def stunden_der_kanal_tage(
@@ -183,7 +190,8 @@ async def stunden_der_kanal_tage(
     for d, (gruppensatz, ks) in (await adapter_der_tage(db, anlage_id, tage, gruppen)).items():
         zeilen = [*zeilen_je_tag.get(d, ()), *zeilen_je_tag.get(d + timedelta(days=1), ())]
         out[d] = _mische(d, zeilen, achsen_der_gruppen(gruppensatz), ks)
-    return out
+    from backend.services.energie_profil.stillstand_marke import markiere_stillstand  # N-799: Marke je Aufruf
+    return dict(await markiere_stillstand(db, anlage_id, out))
 
 
 async def adapter_der_tage(db: AsyncSession, anlage_id: int, tage: Sequence[date],
@@ -264,7 +272,7 @@ def stundenzeilen_mit_kanaelen(zeilen: Sequence[Any], kanal_stunden_je_tag: Mapp
 # ── Die eine Ladefunktion der Stundenleser (HA-Bauform S5, Etappe E-S5-1; Bauplan S5 §3 (A), §4 S5-R1) ──────────────
 #
 # Jeder Leser, der Stundenmengen braucht (Speicher-Simulation, Ladepreis, Ladeblöcke, Verbrauchs-/Korrekturprofil,
-# Preis-Aggregator, Grundlast, Prognose-IST, Wochenmuster …), holt seine Stundenzeilen hier statt mit einem eigenen
+# Preis-Aggregator, Grundlast, Prognose-IST …), holt seine Stundenzeilen hier statt mit einem eigenen
 # `select(TagesEnergieProfil)`: an einem Kanal-Tag der Bilanz die Mischzeilen (Kanal-Mengen + Bahnen der Stundenzeile,
 # S4-R-3b), an jedem anderen Tag die Stundenzeile unverändert. Damit rechnet jede Kennzahl an einem Kanal-Tag mit
 # denselben Stunden wie *Cockpit → Tag* (`tage-werte`), und an einem Bestandstag bekommt der Leser dieselbe Zeile wie
@@ -343,14 +351,14 @@ async def _kanal_tage_ab_erstem_stand(db: AsyncSession, anlage_id: int, von: dat
 
 async def kanaele_der_achse(db: AsyncSession, anlage_id: int, von: date, bis: date, achse: str) -> set[str]:
     """Die Kanal-Schlüssel, deren Spannen die Achse ``achse`` einer Mischzeile tragen können: die Zähler mit
-    ``achse_der_kategorie(kategorie) == achse`` — Bilanz-Achsen aus dem Bilanz-Stamm (``bilanz_leser._stamm``, dieselben
+    ``achse_der_kategorie(kategorie) == achse`` — Bilanz-Achsen aus dem Bilanz-Stamm (``bilanz_leser.bilanz_stamm``, dieselben
     Einträge wie ``tage_bilanz``), Geräte-Achsen aus allen Zählern des Tages (``bilanz_adapter.zaehler_eintraege``, wie
     ``stunden_leser._tageszaehler``) — über jede Menge aktiver Investitionen ``von`` … ``bis`` (eine Obermenge je Tag)."""
     from backend.core.berechnungen.spannen import achse_der_kategorie
     from backend.services.kanal.bilanz_adapter import BILANZ_ACHSEN, zaehler_eintraege
-    from backend.services.kanal.bilanz_leser import _stamm
+    from backend.services.kanal.bilanz_leser import bilanz_stamm
 
-    stamm = await _stamm(db, anlage_id)
+    stamm = await bilanz_stamm(db, anlage_id)
     stichtage = {von} | {t for i in stamm.invs for t in (i.anschaffungsdatum,
                          i.stilllegungsdatum + timedelta(days=1) if i.stilllegungsdatum else None)
                          if t is not None and von < t <= bis}
@@ -576,9 +584,15 @@ async def komponenten_der_tage(db: AsyncSession, anlage_id: int, von: date, bis:
     Tageszeile.
 
     ``komponenten_je_tag`` ``None`` (HA-Bauform S5, E-S5-2): die Lesestelle lädt die Tageszeilen ``von`` … ``bis``
-    selbst (jede Zeile, auch ohne Komponenten — ``None``), der Aufrufer liest keine Mengen-Spalte (Wächter S5-R6)."""
+    selbst (jede Zeile, auch ohne Komponenten — ``None``), der Aufrufer liest keine Mengen-Spalte (Wächter S5-R6).
+
+    **Eine Schreibweise je Schlüssel (Fund-Päckchen F, F3):** die Verbraucher-Schlüssel der Tageszeilen (Wallbox, E-Auto,
+    Wärmepumpe) als Betrag wie die Beitragsschicht und die Kanäle (``energie.verbraucher_als_betrag``) — ein Tag mit
+    Live-Σ-Wert (negativ) und ein Tag aus dem Zähler summieren sich sonst gegeneinander. Die Zeilen bleiben gespeichert,
+    wie sie sind."""
     if komponenten_je_tag is None:
         komponenten_je_tag = await _komponenten_der_tageszeilen(db, anlage_id, von, bis)
+    komponenten_je_tag = {d: verbraucher_als_betrag(k) for d, k in komponenten_je_tag.items()}
     out = dict(komponenten_je_tag)
     gemischt = await _bilanz_gemischt(db, anlage_id, von, bis, komponenten_je_tag)
     if gemischt:
@@ -806,6 +820,9 @@ class TagesEingaenge:
     #: Die WP-Gruppe des Tages kommt aus den Kanälen (Stunden im Beginn-Raster).
     wp_aus_kanal: bool = False
     emob_aus_kanal: bool = False
+    #: Fund-Päckchen A (A1): an einem WP-Kanal-Tag die WP-Ausgabe-Schlüssel je Gerät mit der Nutzenergie nur aus den
+    #: Stunden, in denen Strom desselben Geräts gemessen ist (``mengen_im_stromfenster``) — Eingang der Arbeitszahl.
+    werte_der_arbeitszahl: Optional[dict] = None
 
     @property
     def wp_kwh_je_inv(self) -> dict[str, float]:
@@ -819,8 +836,8 @@ def _summe_stunden(werte) -> float:
 
 
 def _tages_delta(gs) -> dict[str, float]:
-    """Je Kanal der Gruppe das Tages-Δ als Σ seiner Stunden (S3-R4: Σ Stunden ≡ Tag)."""
-    return {k: sum(v for v in m if v is not None) for k, m in gs.mengen.items() if any(v is not None for v in m)}
+    """Je Kanal der Gruppe das Tages-Δ als Σ seiner Stunden (S3-R4: Σ Stunden ≡ Tag) — ohne Zeile am Lückentag 0 (N-818)."""
+    return {k: sum(v for v in m if v is not None) for k, m in gs.mengen.items()}
 
 
 def kanal_werte_je_inv(delta: Mapping[str, float], invs_by_id: Mapping[str, Any], datum: date, typen: frozenset[str],
@@ -978,6 +995,10 @@ async def _wp_aus_kanaelen(db: AsyncSession, anlage, invs_by_id, datum: date, wp
     delta = _tages_delta(wp)
     e.tz_komp = {**(e.tz_komp or {}), **_wp_komponenten(wp, delta)}
     e.detail = detail_aus_kanaelen(e.detail, delta, invs_by_id, datum, frozenset({"waermepumpe"}), False)
+    from backend.core.berechnungen.waermepumpe_kennzahl import mengen_im_stromfenster
+
+    e.werte_der_arbeitszahl = kanal_werte_je_inv({**delta, **mengen_im_stromfenster(wp.mengen, wp.spannen)}, invs_by_id,
+                                                 datum, frozenset({"waermepumpe"}), False)[0]
     e.gemessen_je_inv = _gemessen_aus_delta(delta)
     # Der Modus-Split des Tages aus den abgeleiteten Kanälen «Strom je Betriebsart» (alle erfassten Betriebsarten, Σ der
     # Stunden) und ihrer Abdeckung ``modus_abdeckung_h`` — wie der Kanal-Monat (``kanal_split_ohne_abschluss``); Bezug
@@ -1030,24 +1051,19 @@ async def tages_eingaenge(db: AsyncSession, anlage, invs_by_id: Mapping[str, Any
     Umschaltstelle Bestand ↔ Kanal dieser Sichten (HA-Bauform S4 E-S4-1, Bauplan §8: «Umschaltstelle = ein Aufruf»)."""
     from sqlalchemy import select
 
-    from backend.models.tages_energie_profil import TagesZusammenfassung
     from backend.services.energie_profil import lade_modus_split_tag
     from backend.services.kanal.bilanz_leser import bilanz_ziele, kanal_tage, mische_komponenten
     from backend.services.snapshot.aggregator import get_betriebsart_strom_tageswerte, get_tagesdetail_kwh
-    from backend.services.snapshot.boundary_range import tageszeile_ist_rueckwaerts
+    from backend.services.snapshot.boundary_range import tageszeile_ist_rueckwaerts, tageszeile_marken
     from backend.services.snapshot.komponenten_beitraege import wallbox_deckt_ladung_ab
 
     # N-434/N-435: die Tageszeile zuerst — ihre Herkunft bestimmt an Bestandstagen das Fenster der WP-Zähler.
-    tz_zeile = (await db.execute(
-        select(TagesZusammenfassung.komponenten_kwh, TagesZusammenfassung.source_provenance,
-               TagesZusammenfassung.verworfen).where(
-            TagesZusammenfassung.anlage_id == anlage.id, TagesZusammenfassung.datum == datum,
-        ))).one_or_none()
-    tz_komp = tz_zeile[0] if tz_zeile else None
+    tz_zeile = await tageszeile_marken(db, anlage.id, datum, mit_mengen=True)
+    tz_komp = tz_zeile[2] if tz_zeile else None
     kanal = (await kanal_tage(db, anlage.id, datum, datum)).get(datum)
     if kanal is not None:
         tz_komp = mische_komponenten(tz_komp, kanal, (await bilanz_ziele(db, anlage.id, [datum]))[datum])
-    rueckwaerts = tageszeile_ist_rueckwaerts(tz_zeile[1] if tz_zeile else None, tz_zeile[2] if tz_zeile else None)
+    rueckwaerts = tageszeile_ist_rueckwaerts(tz_zeile[0] if tz_zeile else None, tz_zeile[1] if tz_zeile else None)
     kanal_tag = kanal is not None
     e = TagesEingaenge(
         tz_komp=tz_komp, rueckwaerts=rueckwaerts,
@@ -1511,17 +1527,18 @@ def einspeisung_neg_preis_der_kanal_stunden(ks: KanalStunden, boerse: Mapping[in
     return round(summe, 3) if summe > 0 else None
 
 
-def ladeanteil_der_kanal_stunden(ks: KanalStunden):
+def ladeanteil_der_kanal_stunden(ks: KanalStunden, ohne_anteil: Optional[Callable[[int], bool]] = None):
     """Der PV-/Netz-/Speicher-Anteil der Heimladung eines Kanal-Tags (N-141 Weg c, N-569) aus den Kanal-Stunden — je
     Stunde ``stunde_aus_bilanzwerten`` (Ladung ``wallbox_kw``, Netz, Einspeisung, Speicher-Spalte), mit der Bündel-Regel
     von ``aggregator.verrechne_stunde`` (trägt Ladung, PV oder Netzbezug mehr als eine reale Stunde, geht die Stunde als
-    «nicht gedeckt» ein), dann ``leite_pv_anteil_ab``."""
+    «nicht gedeckt» ein), dann ``leite_pv_anteil_ab``. ``ohne_anteil(stunde)``: die Stunden eines Erfassungs-Stillstands
+    ebenso (Nachtrag G, ``mengen_weiche.Weiche.kanal_stunde_ohne_ladeanteil``)."""
     from backend.core.berechnungen.pv_anteil_ladung import leite_pv_anteil_ab, stunde_aus_bilanzwerten
-    from backend.core.berechnungen.spannen import spanne
+    from backend.core.berechnungen.spannen import ACHSEN_LADEANTEIL, zeile_gebuendelt
 
     stunden = []
     for z in ks.zeilen:
-        gebuendelt = any(spanne(z.spannen, a) > 1 for a in ("wallbox", "pv", "netzbezug"))
+        gebuendelt = any(zeile_gebuendelt(z, a) for a in ACHSEN_LADEANTEIL) or bool(ohne_anteil and ohne_anteil(z.stunde))
         stunden.append(stunde_aus_bilanzwerten(
             ladung=z.wallbox_kw,
             netzbezug=None if gebuendelt else z.netzbezug_kw,
@@ -1538,11 +1555,14 @@ UEBERSCHUSS_FELDER = ("pv_kw", "verbrauch_kw", "einspeisung_kw", "netzbezug_kw",
 def _ueberschuss_defizit(zeilen: Sequence[Any], tageszeilen_form: bool) -> tuple[Optional[float], Optional[float]]:
     """Überschuss und Defizit eines Kanal-Tags aus seinen Mischzeilen (``bilanz_aus_stundenrows``, Σ max(0, PV − Verbrauch)
     je Stunde) — ``(None, None)`` ohne PV oder Verbrauch (wie ``tage-werte``). ``tageszeilen_form``: wie ``aggregate_day``
-    sie in die Tageszeile schrieb (zwei Stellen, 0 ⇒ ``None``, ``aggregator.nur_positiv``)."""
-    from backend.core.berechnungen.tagesbilanz import bilanz_aus_stundenrows
+    sie in die Tageszeile schrieb (zwei Stellen, 0 ⇒ ``None``, ``aggregator.nur_positiv``).
+
+    N-799 E-5: ein Tag mit Fenster-Rechnung liefert ihre Werte (Monats-Rollup, ``/tage`` und der HA-Sensor zählen ihn
+    mit); ein Tag «nicht rechenbar» (``PAARUNG_NICHT_RECHENBAR``) liefert ``(None, None)`` — wie ``tage-werte``."""
+    from backend.core.berechnungen.tagesbilanz import PAARUNG_NICHT_RECHENBAR, bilanz_aus_stundenrows
 
     b = bilanz_aus_stundenrows(zeilen)
-    if not (b.pv_erfasst and b.verbrauch_erfasst):
+    if not (b.pv_erfasst and b.verbrauch_erfasst) or b.stundenpaarung == PAARUNG_NICHT_RECHENBAR:
         return None, None
     if not tageszeilen_form:
         return b.ueberschuss_kwh, b.defizit_kwh

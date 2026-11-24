@@ -931,6 +931,11 @@ class EnergieprofilChecks:
         )).all()]
         kanal = await self._bilanz_kanal_tage(anlage, tage)
         ohne = [d for d in tage if d not in kanal]
+        if ohne:
+            from backend.services.kanal.bilanz_leser import bewusst_leere_tage
+
+            leer = await bewusst_leere_tage(self.db, anlage.id, ohne)
+            ohne = [d for d in ohne if d not in leer]
         if not ohne:
             return []
         return [CheckErgebnis(
@@ -1106,7 +1111,7 @@ class EnergieprofilChecks:
         # HA-Bauform S5 (E-S5-2, Bauplan §10f): Kanal-Tage zählen nicht — an einem Tag, dessen Bilanz-Gruppe aus den
         # Kanälen kommt, wirkt kein Deckel; Cockpit → Tag nennt dort HAs Zahl (Lesart-1-Regel, Wächter S5-R6 erlaubt).
         kanal = await self._bilanz_kanal_tage(anlage, [b[0] for b in befunde])
-        befunde = [b for b in befunde if b[0] not in kanal]
+        befunde = [b for b in befunde if b[0] not in kanal and b[0] not in self._erfassung_stillstand_tage]  # N-799 S3
         if not befunde:
             return []
         befunde.sort(key=lambda t: t[0], reverse=True)
@@ -1151,7 +1156,8 @@ class EnergieprofilChecks:
                 + " ".join(teile) + " "
                 "Dieselbe Form hat ein Zählersprung nach einer Nacht ohne Erzeugung; stimmt eine "
                 "dieser Mengen nicht, liegt der Fehler in der Zähler-Historie der Quelle — in Home Assistant "
-                "korrigierst du sie in den Entwicklerwerkzeugen unter „Statistik“ mit „Wert anpassen“."
+                "korrigierst du sie unter Einstellungen → Werkzeuge → Statistik (in älteren Home-Assistant-Versionen: "
+                "Entwicklerwerkzeuge → Statistik) mit „Summe anpassen“."
             ),
             code="nachtrag_nach_eingefrorenem_zaehler", werte={"tage": len(befunde), "von": aeltester.isoformat(), "bis": neuester.isoformat(), "nach_lts": len(lts), "nach_zaehler": len(zaehler)},  # E1: angehängt (Dateilänge)
         )]

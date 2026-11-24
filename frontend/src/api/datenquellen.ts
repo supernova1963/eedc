@@ -227,26 +227,10 @@ export interface DatenquellenVerfuegbarkeit {
   mqtt: boolean
 }
 
-/** Ein Feld, dessen Zuordnung seit dem letzten Quittieren geändert wurde. */
-export interface HistorieHinweisFeld {
-  id: string
-  label: string
-}
-
-/** Konzept #192 B: Zuordnungen wirken ab jetzt — die gespeicherten Tages- und
- *  Stundenwerte tragen die Zuordnung ihres Aggregationslaufs. `null`, solange
- *  nichts geändert wurde (oder die Anlage noch keine Historie hat). */
-export interface HistorieHinweis {
-  felder: HistorieHinweisFeld[]
-  /** ISO-Zeitpunkt der ERSTEN Änderung seit dem letzten Quittieren. */
-  seit: string
-}
-
 export interface DatenquellenResponse {
   anlage_id: number
   gruppen: DatenquelleGruppe[]
   verfuegbarkeit: DatenquellenVerfuegbarkeit
-  historie_hinweis: HistorieHinweis | null
 }
 
 /** Ein HA-Sensor-Kandidat für den HA-Sensor-Picker (Schritt B). */
@@ -289,8 +273,123 @@ export interface QuelleSaveResult {
   gespeichert: boolean
   field_id: string
   quelle: string
-  /** Konzept #192 B: offener Historie-Hinweis nach dieser Änderung. */
-  historie_hinweis: HistorieHinweis | null
+  /** Sensorwechsel mit Grund: je Korrektur der Hintergrund-Lauf (leer ohne Korrektur); U2 Lauf b: auch der Lauf eines
+   *  Wechsels «bleiben» (`art: 'ansetzen'`). */
+  korrektur: KorrekturLaufStart[]
+  /** U2 Lauf b: je Wechsel «bleiben», den eedc noch nicht wie Home Assistant rechnet, der Grund als Satz. */
+  wartet?: WartenderWechsel[]
+}
+
+/** Antwort auf eine fragepflichtige Quellen-Änderung: `fortsetzung` («Bisherige Werte bleiben») oder `loeschen` («Daten vor
+ *  der Änderung löschen», Weg B). */
+export type WechselGrund = 'fortsetzung' | 'loeschen'
+
+export interface GrundAngabe {
+  grund: WechselGrund
+  /** Nur bei «bleiben» zwischen zwei HA-Sensoren mit Überlappung: «Der neue Sensor zählt ab» (örtlich, ISO ohne Zone). */
+  zaehlt_ab?: string
+}
+
+/** U2 Lauf b: was «Bisherige Werte bleiben» zwischen zwei HA-Sensoren tut (Backend `zuordnung_wechsel/bleiben.angaben`) —
+ *  jede Zahl, Stunde und jeder Satz kommt vom Backend, der Client rechnet nichts. */
+export interface BleibenAngaben {
+  /** Warum eedc den Wechsel noch nicht wie Home Assistant rechnet (`null` = es rechnet ihn). */
+  wartet: string | null
+  /** Beginn der ersten Stundenzeile des neuen Sensors in Home Assistant. */
+  seit: string | null
+  ueberlappung: boolean | null
+  /** Die Stunde, ab der der neue Sensor zählt. */
+  zaehlt_ab: string | null
+  /** Nur bei Überlappung: Vorgabe und zulässiger Bereich für «Der neue Sensor zählt ab». */
+  zaehlt_ab_vorgabe: string | null
+  zaehlt_ab_frueheste: string | null
+  zaehlt_ab_spaeteste: string | null
+  stunden: number | null
+  tage: number | null
+  monate: string[]
+  saetze: string[]
+}
+
+/** U2 Lauf b: ein Wechsel «bleiben», den eedc noch nicht wie Home Assistant rechnet (`GET …/wartende-wechsel`). */
+export interface WartenderWechsel {
+  sensor_key: string
+  label: string
+  wartet: string
+  satz: string
+}
+
+/** Weg B: was «Daten vor der Änderung löschen» tut (Backend `feld_loeschen.angaben`) — Sätze und die Monate mit gespeichertem
+ *  Monatswert (`YYYY-MM`); der Client zeigt nur. */
+export interface LoeschenAngaben {
+  saetze: string[]
+  monate: string[]
+}
+
+/** Antwort der Prüf-Route je Zählerschlüssel (`…/quelle/pruefen`, `…/presets/apply/pruefen`). */
+export interface QuellePruefung {
+  grund_erforderlich: boolean
+  erster_wert: string | null
+  tage: number
+  stand_alt: number | null
+  stand_neu: number | null
+  sensor_key: string | null
+  label: string | null
+  /** Die Änderung wird verzeichnet (eigene Werte, die wirksame Quelle wechselt). */
+  verzeichnet: boolean
+  /** Weg B: was «Daten vor der Änderung löschen» tut (nur an der Prüfung beim Wechsel). */
+  loeschen?: LoeschenAngaben | null
+  /** U2 Lauf b: nur zwischen zwei HA-Sensoren — was «Bisherige Werte bleiben» tut. */
+  bleiben?: BleibenAngaben | null
+  /** U3 b: bei MQTT bzw. zwischen Home Assistant und MQTT der Satz zu «Bisherige Werte bleiben» (sonst der allgemeine). */
+  bleiben_satz?: string | null
+}
+
+export interface KorrekturLaufStart {
+  lauf: string
+  sensor_key: string
+  label: string
+  tage_neu: number
+  zaehlerstaende_geloescht: number
+  /** `ansetzen` = der Lauf eines Wechsels «bleiben» (U2 Lauf b); `loeschen` = «Daten vor der Änderung löschen» (Weg B);
+   *  fehlt bei einer Korrektur. */
+  art?: LaufArt
+}
+
+/** Wer einen Lauf angelegt hat: das Ansetzen eines Wechsels «bleiben» (U2 Lauf b) oder «löschen» (Weg B); `korrektur` nur noch
+ *  an einem Lauf der früheren Korrektur aus einer älteren Datenbank (seit Weg B, Sitzung B3a, legt ihn niemand mehr an). */
+export type LaufArt = 'korrektur' | 'ansetzen' | 'loeschen'
+
+/** Fortschritt eines Korrektur-Laufs (`GET …/korrektur-lauf/{lauf}`). */
+export interface KorrekturLaufStand {
+  lauf: string
+  sensor_key: string | null
+  status: 'laeuft' | 'fertig'
+  tage: number
+  erledigt: number
+  fehler: { tag: string | null; grund: string }[]
+  beginn: string | null
+  ende: string | null
+  fuellen_offen: boolean
+  /** U2 Lauf b: `ansetzen` = der Nachlauf eines Wechsels «bleiben» (kein «Korrektur»-Text). */
+  art?: LaufArt
+}
+
+/** Ein laufender Korrektur-Lauf der Anlage (`GET …/korrektur-laeufe`) — die Fläche zeigt beim Laden seinen Fortschritt. */
+export interface KorrekturLaufLaufend {
+  lauf: string
+  sensor_key: string | null
+  label: string
+  beginn: string | null
+}
+
+/** Einstieg «Zähler getauscht (gleiche Quelle)»: Weg je Quelle zur Stunde des Tauschs (Backend `zaehler_getauscht.py`). */
+export interface ZaehlerGetauschtAntwort {
+  weg: 'home_assistant' | 'fortsetzung' | 'ohne_werte' | 'keine_quelle' | 'vor_erstem_wert' | 'nicht_moeglich' | 'negative_menge' | 'noch_nicht_gemeldet'
+  sensor_key: string | null
+  saetze: string[]
+  eintragen: boolean
+  getauscht_am: string | null
+  eingetragen?: boolean
 }
 
 /** Transform-Konfiguration für eine MQTT-Gateway-Quelle (§2b). */
@@ -354,6 +453,17 @@ function themaPfad(anlageId: number, investitionId: number, themaId: string, ein
   return `${pfad}?investition_id=${investitionId}`
 }
 
+/** Der Body der Quellen-Route — derselbe für Prüfen und Senden (Vorschau = Lauf). */
+function quelleBody(quelle: string, gateway?: GatewayQuelleConfig, entityId?: string, grund?: GrundAngabe) {
+  return {
+    quelle, ...(gateway ?? {}),
+    ...(entityId ? { entity_id: entityId } : {}),
+    ...(grund ? {
+      grund: grund.grund, ...(grund.zaehlt_ab ? { zaehlt_ab: grund.zaehlt_ab } : {}),
+    } : {}),
+  }
+}
+
 export const datenquellenApi = {
   getFelder: (anlageId: number) =>
     api.get<DatenquellenResponse>(`/datenquellen/${anlageId}/felder`),
@@ -363,29 +473,52 @@ export const datenquellenApi = {
    *  NICHT Teil der Quellen-Wahl — dafür `setInvert` (quellen-unabhängig). */
   setQuelle: (
     anlageId: number, fieldId: string, quelle: string,
-    gateway?: GatewayQuelleConfig, entityId?: string,
+    gateway?: GatewayQuelleConfig, entityId?: string, grund?: GrundAngabe,
   ) =>
     api.post<QuelleSaveResult>(
       `/datenquellen/${anlageId}/felder/${encodeURIComponent(fieldId)}/quelle`,
-      {
-        quelle, ...(gateway ?? {}),
-        ...(entityId ? { entity_id: entityId } : {}),
-      },
+      quelleBody(quelle, gateway, entityId, grund),
     ),
 
-  /** Quittiert den Historie-Hinweis („Verstanden", Konzept #192 B). Sagt NICHT,
-   *  dass die Vergangenheit nachgezogen wurde — das weiß nur der Anwender. */
-  quittiereHistorieHinweis: (anlageId: number) =>
-    api.delete<{ quittiert: boolean }>(`/datenquellen/${anlageId}/historie-hinweis`),
+  /** Sensorwechsel: dieselbe Änderung prüfen, BEVOR sie gesendet wird (schreibt nichts). Die Antwort sagt, was «bleiben»
+   *  (`bleiben`, `bleiben_satz`) und «löschen» (`loeschen`) tun. */
+  pruefeQuelle: (
+    anlageId: number, fieldId: string, quelle: string,
+    gateway?: GatewayQuelleConfig, entityId?: string, grund?: GrundAngabe,
+  ) =>
+    api.post<QuellePruefung>(
+      `/datenquellen/${anlageId}/felder/${encodeURIComponent(fieldId)}/quelle/pruefen`,
+      quelleBody(quelle, gateway, entityId, grund),
+    ),
+
+  /** Einstieg «Zähler getauscht (gleiche Quelle)»: erst prüfen (Weg und Sätze), dann eintragen. */
+  pruefeZaehlerGetauscht: (anlageId: number, fieldId: string, getauschtAm?: string) =>
+    api.post<ZaehlerGetauschtAntwort>(
+      `/datenquellen/${anlageId}/felder/${encodeURIComponent(fieldId)}/zaehler-getauscht/pruefen`,
+      getauschtAm ? { getauscht_am: getauschtAm } : {},
+    ),
+  zaehlerGetauscht: (anlageId: number, fieldId: string, getauschtAm?: string) =>
+    api.post<ZaehlerGetauschtAntwort>(
+      `/datenquellen/${anlageId}/felder/${encodeURIComponent(fieldId)}/zaehler-getauscht`,
+      getauschtAm ? { getauscht_am: getauschtAm } : {},
+    ),
+
+  /** Fortschritt eines Laufs («löschen», «bleiben»). */
+  korrekturLauf: (anlageId: number, lauf: string) =>
+    api.get<KorrekturLaufStand>(`/datenquellen/${anlageId}/korrektur-lauf/${encodeURIComponent(lauf)}`),
+
+  /** U2 Lauf b: die Wechsel «bleiben», die eedc noch nicht wie Home Assistant rechnet, je mit dem Grund (Fläche). */
+  wartendeWechsel: (anlageId: number) =>
+    api.get<WartenderWechsel[]>(`/datenquellen/${anlageId}/wartende-wechsel`),
+
+  /** Die laufenden Korrektur-Läufe der Anlage (die Fläche zeigt sie beim Laden, auch nach dem Neuladen der Seite). */
+  korrekturLaeufe: (anlageId: number) =>
+    api.get<KorrekturLaufLaufend[]>(`/datenquellen/${anlageId}/korrektur-laeufe`),
 
   /** Vorzeichen-Umkehr eines Feldes setzen — QUELLEN-UNABHÄNGIG (Wert-Eigenschaft,
    *  gilt für jede Quelle; am Read-Endwert angewendet). */
   setInvert: (anlageId: number, fieldId: string, invertieren: boolean) =>
-    api.post<{
-      field_id: string
-      invertieren: boolean
-      historie_hinweis: HistorieHinweis | null
-    }>(
+    api.post<{ field_id: string; invertieren: boolean }>(
       `/datenquellen/${anlageId}/felder/${encodeURIComponent(fieldId)}/invert`,
       { invertieren },
     ),
@@ -406,7 +539,11 @@ export const datenquellenApi = {
   uebernehmeEnergyVorschlaege: (
     anlageId: number, basis: Record<string, string>, investitionen: Record<string, Record<string, string>>,
   ) =>
-    api.post<{ gespeichert: boolean; anzahl: number; felder: string[] }>(
+    api.post<{
+      gespeichert: boolean; anzahl: number; felder: string[]
+      /** Sensorwechsel mit Grund: Felder mit eigenen Werten, deren Quelle gewechselt hätte — nicht übernommen. */
+      uebersprungen: { field_id: string; label: string }[]
+    }>(
       `/datenquellen/${anlageId}/energy-vorschlaege/uebernehmen`, { basis, investitionen },
     ),
 
